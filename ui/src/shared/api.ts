@@ -1,4 +1,5 @@
 import type { ZodType } from 'zod'
+import { DAEMON_ERROR } from './daemonErrors'
 import {
   actionQueueHistoryResponseSchema,
   actionQueueResponseSchema,
@@ -75,8 +76,8 @@ const appendProject = (path: string, projectId: string | undefined): string => {
 
 /** Map a server-side proxy errorCode to an ApiErrorKind. */
 const errorCodeToKind = (errorCode: unknown): ApiErrorKind => {
-  if (errorCode === 'NO_DAEMON') return 'unreachable'
-  if (errorCode === 'PROXY_FAILED') return 'stale-daemon'
+  if (errorCode === DAEMON_ERROR.NO_DAEMON) return 'unreachable'
+  if (errorCode === DAEMON_ERROR.PROXY_FAILED) return 'stale-daemon'
   return 'other'
 }
 
@@ -297,12 +298,7 @@ export const invokeAction = async (
       error?: string
       errorCode?: string
     }
-    const kind: ApiErrorKind =
-      body.errorCode === 'NO_DAEMON'
-        ? 'unreachable'
-        : body.errorCode === 'PROXY_FAILED'
-          ? 'stale-daemon'
-          : 'other'
+    const kind = errorCodeToKind(body.errorCode)
     throw new ApiError(
       `POST /api/actions/${op} → ${r.status}${body.error ? `: ${body.error}` : ''}`,
       kind,

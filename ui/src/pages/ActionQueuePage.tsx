@@ -1,13 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ApiErrorPanel } from '@/components/ApiErrorPanel'
+import { FallbackSurface } from '@/components/FallbackSurface'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
 import { OriginTree } from '@/widgets/OriginTree'
 import ArcChainRail from '@/widgets/ArcChainRail'
 import { ArcTree } from '@/widgets/ArcTree'
 import {
-  ApiError,
   fetchEvents,
   fetchProposalDetail,
   invokeAction,
@@ -28,7 +27,7 @@ import type {
 } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
 import { taskHash, proposalHash } from '@/shared/routing'
-import { getFallbackCopy, logFallbackError } from '@/shared/uiFallback'
+import { resolveFallback } from '@/shared/uiFallback'
 
 // ---- Helpers ----
 
@@ -185,24 +184,17 @@ const DIAGNOSE_OP = 'diagnose-failure'
 export const PROCESS_LEVEL_OPS = new Set(['restart-daemon', 'restart-all-daemon-killed'])
 
 /**
- * Maps a mutation error to a human-readable message. When the error is a typed
- * `ApiError`, the `kind` field drives a specific remedy message so the user
- * knows how to recover (start vs. restart the daemon). Falls back to the raw
- * message for non-ApiError throws.
+ * Maps a mutation error to a human-readable message. Delegates to
+ * `resolveFallback` — the single seam that reads `ApiError.kind` and owns the
+ * remedy copy — so the daemon start/restart guidance stays in one place rather
+ * than being re-derived here. Returns the headline joined with the remedy when
+ * one is known, otherwise just the headline.
  *
  * Exported for unit-testing the mapping logic in isolation.
  */
 export function actionErrorMessage(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.kind === 'unreachable') {
-      return 'Daemon not running — action not applied. Start it with: mars daemon start'
-    }
-    if (err.kind === 'stale-daemon') {
-      return 'Daemon unreachable (stale port) — action not applied. Restart it with: mars daemon restart'
-    }
-    return err.message
-  }
-  return (err as Error).message
+  const fb = resolveFallback(err, 'action')
+  return fb.remedy ? `${fb.headline} ${fb.remedy}` : fb.headline
 }
 
 /**
@@ -390,12 +382,6 @@ const TracesSection = ({ taskId }: TracesProps) => {
     },
   })
 
-  useEffect(() => {
-    if (initial.isError) {
-      logFallbackError(initial.error)
-    }
-  }, [initial.isError, initial.error])
-
   if (initial.isPending) {
     return (
       <div>
@@ -407,15 +393,12 @@ const TracesSection = ({ taskId }: TracesProps) => {
     )
   }
   if (initial.isError || !initial.data) {
-    const { headline, detail } = getFallbackCopy('trace events', initial.error)
     return (
       <div>
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Traces
         </dt>
-        <dd className="text-error">
-          {headline}{detail !== null ? ` ${detail}` : null}
-        </dd>
+        <FallbackSurface error={initial.error} of="trace events" variant="inline" />
       </div>
     )
   }
@@ -1058,10 +1041,7 @@ export const ActionQueuePage = () => {
 
       <section className="flex min-w-0 flex-1 flex-col">
         {empty && activeError ? (
-          <ApiErrorPanel
-            error={activeError.message}
-            kind={activeError instanceof ApiError ? activeError.kind : undefined}
-          />
+          <FallbackSurface error={activeError} of="action queue" variant="pane" />
         ) : empty && projectsEmpty ? (
           <div
             className="flex h-full items-center justify-center px-6 text-center"

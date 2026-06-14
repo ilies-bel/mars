@@ -1,4 +1,5 @@
 import type { KpiKey } from '@/shared/schemas'
+import { FallbackSurface } from '@/components/FallbackSurface'
 import { useKpis } from '@/entities/kpi/useKpis'
 import { useKpiArcs } from '@/entities/kpi/useKpiArcs'
 import { kpiBand, kpiBandCue } from '@/entities/kpi/bands'
@@ -87,9 +88,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
           )}
 
           {error && !isLoading && (
-            <p className="text-sm text-error">
-              Failed to load arcs: {error.message}
-            </p>
+            <FallbackSurface error={error} of="arcs" variant="inline" />
           )}
 
           {!isLoading && !error && arcs.length === 0 && (

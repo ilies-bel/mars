@@ -24,6 +24,7 @@ import { ActionQueuePage } from '@/pages/ActionQueuePage'
 import { EventsPage } from '@/pages/EventsPage'
 import { KpiDetailPage } from '@/pages/KpiDetailPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
+import { FallbackBoundary } from '@/components/FallbackBoundary'
 
 /** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
 const ROUTE_BASE: Record<RouteName, string> = {
@@ -72,50 +73,60 @@ const AppInner = () => {
       <FrameworkUpdateBanner />
       <NavBar hash={hash} />
       <div className="min-h-0 flex-1">
-        {route === 'kpi' && kpiKey !== null ? (
-          <KpiDetailPage kpiKey={kpiKey} />
-        ) : route === 'progress' ? (
-          <ProgressPage />
-        ) : route === 'events' ? (
-          <EventsPage />
-        ) : (
-          <ActionQueuePage />
-        )}
+        <FallbackBoundary of="this view" variant="pane">
+          {route === 'kpi' && kpiKey !== null ? (
+            <KpiDetailPage kpiKey={kpiKey} />
+          ) : route === 'progress' ? (
+            <ProgressPage />
+          ) : route === 'events' ? (
+            <EventsPage />
+          ) : (
+            <ActionQueuePage />
+          )}
+        </FallbackBoundary>
       </div>
       {taskId ? (
-        <TaskDetailDrawer
-          taskId={taskId}
-          onClose={() => clearTaskHash(hash)}
-          tasks={tasks ?? []}
-          proposals={proposals}
-          activeStepName={activeStepName}
-        />
+        <FallbackBoundary of="task detail" variant="inline">
+          <TaskDetailDrawer
+            taskId={taskId}
+            onClose={() => clearTaskHash(hash)}
+            tasks={tasks ?? []}
+            proposals={proposals}
+            activeStepName={activeStepName}
+          />
+        </FallbackBoundary>
       ) : null}
       {proposal ? (
-        <ProposalDetailDrawer
-          proposal={proposal}
-          onClose={() => {
-            if (typeof window !== 'undefined') window.location.hash = '#/progress'
-          }}
-          tasks={tasks ?? []}
-        />
+        <FallbackBoundary of="proposal detail" variant="inline">
+          <ProposalDetailDrawer
+            proposal={proposal}
+            onClose={() => {
+              if (typeof window !== 'undefined') window.location.hash = '#/progress'
+            }}
+            tasks={tasks ?? []}
+          />
+        </FallbackBoundary>
       ) : null}
       {proposalNodeId ? (
-        <ProposalNodeDrawer
-          proposalId={proposalNodeId}
-          proposals={proposals}
-          tasks={tasks ?? []}
-          onClose={() => {
-            if (typeof window !== 'undefined') window.location.hash = '#/progress'
-          }}
-        />
+        <FallbackBoundary of="proposal" variant="inline">
+          <ProposalNodeDrawer
+            proposalId={proposalNodeId}
+            proposals={proposals}
+            tasks={tasks ?? []}
+            onClose={() => {
+              if (typeof window !== 'undefined') window.location.hash = '#/progress'
+            }}
+          />
+        </FallbackBoundary>
       ) : null}
       {showReleaseNotes ? (
-        <ReleaseNotesDrawer
-          onClose={() => {
-            if (typeof window !== 'undefined') window.location.hash = '#/progress'
-          }}
-        />
+        <FallbackBoundary of="release notes" variant="inline">
+          <ReleaseNotesDrawer
+            onClose={() => {
+              if (typeof window !== 'undefined') window.location.hash = '#/progress'
+            }}
+          />
+        </FallbackBoundary>
       ) : null}
     </div>
   )

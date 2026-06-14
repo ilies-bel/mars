@@ -15,6 +15,7 @@
 
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { DAEMON_ERROR } from '../src/shared/daemonErrors.ts'
 
 /** Mirror of the orchestrator's ActionDescriptor (received over the wire). */
 export interface ActionDescriptor {
@@ -57,6 +58,34 @@ export const readDaemonHttpPort = async (
     return Number.isInteger(port) && port > 0 ? port : null
   } catch {
     return null
+  }
+}
+
+/**
+ * Single owner of the daemon-connectivity envelope shared by every proxy fn:
+ * read the published port, synthesize a 503 (`NO_DAEMON`) when the daemon is
+ * not running, run the caller's fetch, and convert any transport throw into a
+ * 502 (`PROXY_FAILED`). The wire-contract error codes are the same ones the
+ * client maps to `ApiError.kind` (see `errorCodeToKind` in `shared/api.ts`).
+ */
+const withDaemon = async (
+  stateDir: string,
+  call: (port: number) => Promise<DaemonActionResult>,
+): Promise<DaemonActionResult> => {
+  const port = await readDaemonHttpPort(stateDir)
+  if (port === null) {
+    return {
+      status: 503,
+      body: { ok: false, error: 'daemon not running', errorCode: DAEMON_ERROR.NO_DAEMON },
+    }
+  }
+  try {
+    return await call(port)
+  } catch (err) {
+    return {
+      status: 502,
+      body: { ok: false, error: (err as Error).message, errorCode: DAEMON_ERROR.PROXY_FAILED },
+    }
   }
 }
 
@@ -149,25 +178,12 @@ export const fetchKpiSeries = async (stateDir: string): Promise<KpiSeries> => {
 export const proxyGet = async (
   stateDir: string,
   path: string,
-): Promise<DaemonActionResult> => {
-  const port = await readDaemonHttpPort(stateDir)
-  if (port === null) {
-    return {
-      status: 503,
-      body: { ok: false, error: 'daemon not running', errorCode: 'NO_DAEMON' },
-    }
-  }
-  try {
+): Promise<DaemonActionResult> =>
+  withDaemon(stateDir, async (port) => {
     const res = await fetch(`http://127.0.0.1:${port}${path}`)
     const body = await res.json().catch(() => ({}))
     return { status: res.status, body }
-  } catch (err) {
-    return {
-      status: 502,
-      body: { ok: false, error: (err as Error).message, errorCode: 'PROXY_FAILED' },
-    }
-  }
-}
+  })
 
 /**
  * Forward a POST with a JSON body to the daemon, relaying its status + parsed
@@ -180,15 +196,8 @@ export const proxyPost = async (
   stateDir: string,
   path: string,
   body: unknown,
-): Promise<DaemonActionResult> => {
-  const port = await readDaemonHttpPort(stateDir)
-  if (port === null) {
-    return {
-      status: 503,
-      body: { ok: false, error: 'daemon not running', errorCode: 'NO_DAEMON' },
-    }
-  }
-  try {
+): Promise<DaemonActionResult> =>
+  withDaemon(stateDir, async (port) => {
     const res = await fetch(`http://127.0.0.1:${port}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -196,13 +205,7 @@ export const proxyPost = async (
     })
     const responseBody = await res.json().catch(() => ({}))
     return { status: res.status, body: responseBody }
-  } catch (err) {
-    return {
-      status: 502,
-      body: { ok: false, error: (err as Error).message, errorCode: 'PROXY_FAILED' },
-    }
-  }
-}
+  })
 
 /**
  * Forward a recovery action to the daemon. `op` is the verb from the registry;
@@ -214,26 +217,13 @@ export const proxyAction = async (
   stateDir: string,
   op: string,
   entityId?: string,
-): Promise<DaemonActionResult> => {
-  const port = await readDaemonHttpPort(stateDir)
-  if (port === null) {
-    return {
-      status: 503,
-      body: { ok: false, error: 'daemon not running', errorCode: 'NO_DAEMON' },
-    }
-  }
-  const path =
-    entityId === undefined
-      ? `/actions/${op}`
-      : `/actions/${op}/${encodeURIComponent(entityId)}`
-  try {
+): Promise<DaemonActionResult> =>
+  withDaemon(stateDir, async (port) => {
+    const path =
+      entityId === undefined
+        ? `/actions/${op}`
+        : `/actions/${op}/${encodeURIComponent(entityId)}`
     const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST' })
     const body = await res.json().catch(() => ({}))
     return { status: res.status, body }
-  } catch (err) {
-    return {
-      status: 502,
-      body: { ok: false, error: (err as Error).message, errorCode: 'PROXY_FAILED' },
-    }
-  }
-}
+  })

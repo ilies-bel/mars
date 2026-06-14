@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ApiErrorPanel } from '@/components/ApiErrorPanel'
+import { FallbackSurface } from '@/components/FallbackSurface'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useProgress } from '@/hooks/useProgress'
-import { ApiError } from '@/shared/api'
 import {
   readExplicitViewFromUrl,
   readProgressStateFromUrl,
@@ -142,10 +141,7 @@ export const ProgressPage = () => {
         ) : null}
         {error && tasks === null ? (
           <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
-            <ApiErrorPanel
-              error={error.message}
-              kind={error instanceof ApiError ? error.kind : undefined}
-            />
+            <FallbackSurface error={error} of="tasks" variant="pane" />
           </main>
         ) : activeTab === 'topology' ? (
           <TopologyView
