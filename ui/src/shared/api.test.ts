@@ -694,6 +694,30 @@ describe('ApiError kind — fetchTasks classifies errors correctly', () => {
       expect((err as ApiError).message).toContain('405')
     }
   })
+
+  it('throws ApiError kind:stale-daemon on 502 with errorCode PROXY_FAILED', async () => {
+    fetchSpy.mockResolvedValue(json({ errorCode: 'PROXY_FAILED' }, 502))
+    try {
+      await fetchTasks()
+      throw new Error('expected fetchTasks to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('stale-daemon')
+      expect((err as ApiError).status).toBe(502)
+    }
+  })
+
+  it('throws ApiError kind:unreachable on 503 with errorCode NO_DAEMON', async () => {
+    fetchSpy.mockResolvedValue(json({ errorCode: 'NO_DAEMON' }, 503))
+    try {
+      await fetchTasks()
+      throw new Error('expected fetchTasks to throw')
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError)
+      expect((err as ApiError).kind).toBe('unreachable')
+      expect((err as ApiError).status).toBe(503)
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------

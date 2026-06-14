@@ -73,6 +73,13 @@ const appendProject = (path: string, projectId: string | undefined): string => {
   return `${path}${sep}project=${encodeURIComponent(projectId)}`
 }
 
+/** Map a server-side proxy errorCode to an ApiErrorKind. */
+const errorCodeToKind = (errorCode: unknown): ApiErrorKind => {
+  if (errorCode === 'NO_DAEMON') return 'unreachable'
+  if (errorCode === 'PROXY_FAILED') return 'stale-daemon'
+  return 'other'
+}
+
 const fetchJson = async <T>(path: string, schema: ZodType<T>): Promise<T> => {
   let r: Response
   try {
@@ -89,8 +96,20 @@ const fetchJson = async <T>(path: string, schema: ZodType<T>): Promise<T> => {
   if (!r.ok) {
     const ct = r.headers.get('content-type') ?? ''
     const isJson = ct.includes('application/json')
-    const kind: ApiErrorKind =
-      (r.status === 404 || r.status === 405) && isJson ? 'stale-daemon' : 'other'
+    let kind: ApiErrorKind
+    if (isJson) {
+      const body = await r.json().catch(() => null) as { errorCode?: unknown } | null
+      const errorCode = body?.errorCode
+      if (errorCode) {
+        kind = errorCodeToKind(errorCode)
+      } else if (r.status === 404 || r.status === 405) {
+        kind = 'stale-daemon'
+      } else {
+        kind = 'other'
+      }
+    } else {
+      kind = 'other'
+    }
     throw new ApiError(`GET ${path} → ${r.status}`, kind, r.status)
   }
   const ct = r.headers.get('content-type') ?? ''
@@ -159,13 +178,6 @@ export const fetchActionQueueHistory = async (
   const qs = params.toString()
   const path = qs ? `/api/action-queue/history?${qs}` : '/api/action-queue/history'
   return fetchJson(path, actionQueueHistoryResponseSchema)
-}
-
-/** Map a server-side proxy errorCode to an ApiErrorKind. */
-const errorCodeToKind = (errorCode: unknown): ApiErrorKind => {
-  if (errorCode === 'NO_DAEMON') return 'unreachable'
-  if (errorCode === 'PROXY_FAILED') return 'stale-daemon'
-  return 'other'
 }
 
 /**

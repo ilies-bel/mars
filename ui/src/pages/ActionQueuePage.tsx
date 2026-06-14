@@ -782,6 +782,8 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
 
 export const ActionQueuePage = () => {
   const { items, error, projectsError, projectsEmpty } = useActionQueue()
+  /** The first non-null error from either query — drives the ApiErrorPanel. */
+  const activeError = error ?? projectsError
   const {
     items: historyItems,
     nextCursor: historyNextCursor,
@@ -1047,16 +1049,19 @@ export const ActionQueuePage = () => {
           </div>
         </div>
 
-        {(error || projectsError) ? (
+        {activeError ? (
           <div className="border-t border-iron/40 bg-iron/10 px-4 py-1.5 font-mono text-[10px] text-iron">
-            {(error ?? projectsError)!.message}
+            {activeError.message}
           </div>
         ) : null}
       </aside>
 
       <section className="flex min-w-0 flex-1 flex-col">
-        {empty && (error || projectsError) ? (
-          <ApiErrorPanel error={(error ?? projectsError)!.message} />
+        {empty && activeError ? (
+          <ApiErrorPanel
+            error={activeError.message}
+            kind={activeError instanceof ApiError ? activeError.kind : undefined}
+          />
         ) : empty && projectsEmpty ? (
           <div
             className="flex h-full items-center justify-center px-6 text-center"
