@@ -74,6 +74,22 @@ export interface DaemonStatusPayload {
     kind: 'triage' | 'implement' | 'refine' | 'glossary-write' | 'adr-add'
   }>
   counts: { draft: number; queued: number; running: number; verifying: number; merging: number; 'vega-reconciling': number }
+  /**
+   * Git HEAD SHA captured when the daemon process started (dev install only).
+   * Null when the install is prod or when git was unavailable at startup.
+   */
+  sourceSha: string | null
+  /**
+   * Most-recently-sampled git HEAD SHA (updated by the periodic staleness
+   * check). Null until the first successful check or when git is unavailable.
+   */
+  currentSha: string | null
+  /**
+   * True when the daemon is running source code from a commit that is no
+   * longer HEAD — i.e. main has advanced since the daemon started. Always
+   * false on prod installs and when either SHA is null.
+   */
+  isStale: boolean
 }
 
 const NEWLINE = 0x0a

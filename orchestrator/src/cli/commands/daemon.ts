@@ -183,6 +183,9 @@ const daemonStatus: Command = {
       startedAt: string
       inFlight: ReadonlyArray<{ taskId: string; kind: string }>
       counts: Record<string, number>
+      sourceSha: string | null
+      currentSha: string | null
+      isStale: boolean
     }
     deps.out(`pid:        ${data.pid}`)
     deps.out(`startedAt:  ${data.startedAt}`)
@@ -191,6 +194,11 @@ const daemonStatus: Command = {
     )
     deps.out(`inFlight:   ${data.inFlight.length}`)
     for (const f of data.inFlight) deps.out(`  ${f.kind} ${f.taskId}`)
+    if (data.isStale && data.sourceSha !== null && data.currentSha !== null) {
+      deps.out(
+        `⚠ running code from ${data.sourceSha.slice(0, 7)}; HEAD is now ${data.currentSha.slice(0, 7)} — run \`mars daemon restart\``,
+      )
+    }
     return { code: 0 }
   },
 }

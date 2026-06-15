@@ -12,6 +12,7 @@ import {
 import { readFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { dirname, resolve as resolvePath } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { resolveContext } from '../context'
 import {
   addBlockers,
@@ -43,7 +44,9 @@ import {
 } from '../../outbox/subscribers/blocker-resolution'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
-import { resolveGitBin } from '../lib/git/internal'
+import { exec, resolveGitBin } from '../lib/git/internal'
+import { classifyInstallRoute } from './install-route'
+import { isStaleDev } from './dev-staleness'
 import { initSettings } from '../lib/settings'
 import {
   getDefaultTaskStore,
@@ -530,6 +533,25 @@ export const startDaemon = async (
   // release(), where release() is the closure commitInFlight returns.
   const tracker = createTaskFlightTracker()
   const startedAt = new Date().toISOString()
+
+  // Dev-install source staleness detection. Capture the git HEAD SHA once at
+  // startup so a periodic tick can detect when main has advanced while the
+  // daemon keeps running the old in-memory code. Gate on dev install only;
+  // prod binaries are handled by self-update.ts. On any git error, leave
+  // sourceSha null so we never surface a spurious warning.
+  const sourceDir = dirname(fileURLToPath(import.meta.url))
+  let sourceSha: string | null = null
+  if (classifyInstallRoute() === 'dev') {
+    try {
+      const { stdout } = await exec(resolveGitBin(), ['rev-parse', 'HEAD'], { cwd: sourceDir })
+      sourceSha = stdout.trim() || null
+    } catch {
+      // git unavailable or not a git repo — leave null, never warn
+    }
+  }
+  let currentSha: string | null = sourceSha
+  let isStale = false
+
   let shuttingDown = false
   // When false, `drain()` is a no-op, new bus events skip enqueue, and
   // mutating RPCs (`add`, `continue`, `restart`, structured-write…) are
@@ -1754,6 +1776,9 @@ export const startDaemon = async (
       startedAt,
       inFlight: tracker.inFlightSnapshot(),
       counts,
+      sourceSha,
+      currentSha,
+      isStale,
     }
   }
 
@@ -2533,6 +2558,30 @@ export const startDaemon = async (
   const githubUpdatePoll = setInterval(runUpdatePoll, UPDATE_POLL_INTERVAL_MS)
   githubUpdatePoll.unref()
 
+  // ── Dev-install staleness check ──────────────────────────────────────────
+  // Periodically compares the git HEAD at startup against the current HEAD.
+  // When they differ, marks the daemon stale so `mars daemon status` renders
+  // a restart warning. Active only for dev installs (prod is handled by
+  // self-update.ts). On any git error the check is a no-op — we never flip
+  // isStale to false once it is true. .unref() so the interval never
+  // prevents a clean shutdown. Override interval via MARS_DEV_STALENESS_CHECK_MS.
+  const DEV_STALENESS_CHECK_MS = Number(process.env.MARS_DEV_STALENESS_CHECK_MS ?? 60_000)
+  const devStalenessCheck = setInterval(() => {
+    void (async () => {
+      try {
+        const { stdout } = await exec(resolveGitBin(), ['rev-parse', 'HEAD'], { cwd: sourceDir })
+        const head = stdout.trim() || null
+        if (isStaleDev(sourceSha, head, classifyInstallRoute())) {
+          currentSha = head
+          isStale = true
+        }
+      } catch {
+        // git unavailable — leave isStale unchanged
+      }
+    })()
+  }, DEV_STALENESS_CHECK_MS)
+  devStalenessCheck.unref()
+
   // ── Poll-fallback tick ────────────────────────────────────────────────────
   // drain() is otherwise purely event-driven (bus 'task.added'/'task.queued'
   // and dispatcher finally-blocks). If a drain pass throws and exits, or a
@@ -2817,6 +2866,7 @@ export const startDaemon = async (
     shuttingDown = true
     clearInterval(pollFallback)
     clearInterval(githubUpdatePoll)
+    clearInterval(devStalenessCheck)
     clearInterval(staleSweep)
     clearInterval(observabilityWatchdog)
     clearInterval(phantomWatchdog)
