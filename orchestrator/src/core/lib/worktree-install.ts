@@ -174,6 +174,14 @@ export const detectInstallSites = async (
 /** Extra install attempts after the initial try (mirrors ENOTEMPTY_MAX_RETRIES). */
 const WORKSPACE_DEP_INSTALL_MAX_RETRIES = 2
 
+/**
+ * Extra build attempts after the initial try. Only used when the build exits
+ * non-zero with BOTH stdout AND stderr empty — a transient race (store-lock /
+ * bin-resolution), never a real compiler error. A compiler error always emits
+ * diagnostics to stdout or stderr and is NOT retried.
+ */
+const WORKSPACE_DEP_BUILD_MAX_RETRIES = 2
+
 export const buildWorkspaceDepsForSite = async (
   site: InstallSite,
   worktreeRoot: string,
@@ -307,10 +315,30 @@ export const buildWorkspaceDepsForSite = async (
     }
 
     log?.(`[setup:install] building workspace dep (${rel}) before install so its dist is packed`)
-    const r = await runner('pnpm', ['run', 'build'], depDir, {
+    let r = await runner('pnpm', ['run', 'build'], depDir, {
       timeoutMs,
       env: { CI: 'true' },
     })
+    // Retry ONLY on the known-transient signature: non-zero exit with BOTH
+    // stdout AND stderr empty. A real compiler error (tsc, tsup) always emits
+    // diagnostics to stdout or stderr — if either has content we surface the
+    // failure immediately so real type errors are never masked by a retry.
+    for (
+      let attempt = 1;
+      attempt <= WORKSPACE_DEP_BUILD_MAX_RETRIES &&
+      r.exitCode !== 0 &&
+      r.stderr.trim() === '' &&
+      r.stdout.trim() === '';
+      attempt++
+    ) {
+      log?.(
+        `[setup:install] workspace dep (${rel}) transient build exit ${r.exitCode} (no output) — retrying (attempt ${attempt}/${WORKSPACE_DEP_BUILD_MAX_RETRIES})`,
+      )
+      r = await runner('pnpm', ['run', 'build'], depDir, {
+        timeoutMs,
+        env: { CI: 'true' },
+      })
+    }
     if (r.exitCode !== 0) {
       // Include BOTH stderr and stdout: `tsc --noEmit`, `tsup`'s DTS pass,
       // and several other build tools emit failure detail on stdout, not

@@ -396,6 +396,86 @@ describe('worktree-install', () => {
       ).rejects.toThrow(/workspace dep build failed/)
     })
 
+    it('retries a transient pnpm run build failure (empty stdout+stderr) and succeeds on the retry', async () => {
+      // Mirrors the real Mars cascade (PRD 9e657468 / mars-53f935be) where
+      // `pnpm run build exited 2` with EMPTY stderr was a transient bin-race,
+      // not a compiler error — the same build passed on re-run.
+      mkdirSync(resolve(workDir, 'orchestrator'))
+      writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'orchestrator', 'package.json'),
+        JSON.stringify({
+          name: 'orch',
+          dependencies: { '@mars/workflow': 'file:../packages/workflow' },
+        }),
+      )
+      mkdirSync(resolve(workDir, 'packages', 'workflow'), { recursive: true })
+      writeFileSync(resolve(workDir, 'packages', 'workflow', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'packages', 'workflow', 'package.json'),
+        JSON.stringify({ name: '@mars/workflow', scripts: { build: 'tsup' } }),
+      )
+
+      let buildAttempts = 0
+      const runner = async (cmd: string, args: readonly string[]): Promise<RunSubprocessResult> => {
+        if (cmd === 'pnpm' && args[0] === 'run' && args[1] === 'build') {
+          buildAttempts++
+          if (buildAttempts === 1) {
+            // Transient: non-zero exit, both stdout and stderr empty
+            return { exitCode: 2, stdout: '', stderr: '' }
+          }
+          return ok()
+        }
+        return ok()
+      }
+
+      await expect(
+        installWorktreeDeps({ worktreeRoot: workDir, runner }),
+      ).resolves.toBeDefined()
+      expect(buildAttempts).toBe(2)
+    })
+
+    it('does NOT retry a pnpm run build failure that has diagnostic output (stderr or stdout)', async () => {
+      // A real tsc/tsup compiler error always emits diagnostics — retrying
+      // would waste minutes on a deterministic failure. Assert exactly 1 build
+      // attempt so we never mask real type errors behind a retry.
+      mkdirSync(resolve(workDir, 'orchestrator'))
+      writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'orchestrator', 'package.json'),
+        JSON.stringify({
+          name: 'orch',
+          dependencies: { '@mars/workflow': 'file:../packages/workflow' },
+        }),
+      )
+      mkdirSync(resolve(workDir, 'packages', 'workflow'), { recursive: true })
+      writeFileSync(resolve(workDir, 'packages', 'workflow', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'packages', 'workflow', 'package.json'),
+        JSON.stringify({ name: '@mars/workflow', scripts: { build: 'tsc --noEmit' } }),
+      )
+
+      let buildAttempts = 0
+      const runner = async (cmd: string, args: readonly string[]): Promise<RunSubprocessResult> => {
+        if (cmd === 'pnpm' && args[0] === 'run' && args[1] === 'build') {
+          buildAttempts++
+          // Failure with diagnostic output on stdout (tsc --noEmit style)
+          return {
+            exitCode: 2,
+            stdout: "src/index.ts(1,1): error TS2307: Cannot find module '@mars/workflow'.\n",
+            stderr: '',
+          }
+        }
+        return ok()
+      }
+
+      await expect(
+        installWorktreeDeps({ worktreeRoot: workDir, runner }),
+      ).rejects.toThrow(/workspace dep build failed/)
+      // Must not retry — exactly 1 build attempt for a failure with output
+      expect(buildAttempts).toBe(1)
+    })
+
     it('surfaces stdout in the workspace-dep build error (tsc/tsup emit failure detail on stdout)', async () => {
       // The original link:-pre-build regression (3c78adcc) surfaced as
       // `workspace dep build failed (orchestrator): pnpm run build exited 2`
