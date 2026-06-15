@@ -14,7 +14,7 @@ import { getCompositionRootClient } from '../core/store/task-store'
 import { getRepoRoot } from '../core/context'
 
 /**
- * `WorkflowStore` adapter over the orchestrator's `.mars/queue.db`.
+ * `WorkflowStore` adapter over the orchestrator's consolidated `.mars/mars.db`.
  *
  * The @mars/workflow engine persists run + step lifecycle into two tables it
  * defines — `workflow_runs` and `workflow_step_runs`, keyed by
@@ -22,9 +22,11 @@ import { getRepoRoot } from '../core/context'
  * store-sqlite.ts) backs those tables with `node:sqlite`; here we mirror its
  * column/SQL shape exactly but route through the orchestrator's existing
  * libsql `Client` (same connection `queue.ts` uses), so the engine's
- * checkpoint-resume state lives alongside the task queue in one file.
+ * checkpoint-resume state lives alongside the task queue in one file. (The old
+ * `queue.db`/`state.db` split was merged into `mars.db`; any leftover files are
+ * stale post-merge artifacts.)
  *
- * Resume is the whole point of co-locating with `.mars/queue.db`: the daemon
+ * Resume is the whole point of co-locating in `.mars/mars.db`: the daemon
  * dispatches `runWorkflow(..., { runId: task.id })`, so a `mars continue`
  * re-dispatch of the same task id finds the prior run's `'completed'` step
  * records here and short-circuits them.

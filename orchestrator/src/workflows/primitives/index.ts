@@ -198,16 +198,16 @@ const resolveWorktree = (ctx: MarsCtx, override?: WorktreeRef): WorktreeRef => {
   return wt
 }
 
+/** Read the run's dispatch input (never throws; `{}` when absent). */
+const input = (ctx: MarsCtx): MarsWorkflowInput => ctx.input ?? {}
+
 /**
  * The task id a primitive operates on. Precedence: explicit `opts` override →
  * `ctx.input.taskId` (dispatch fact) → `ctx.runId` (the daemon dispatches with
  * runId === task.id, so this is the common case).
  */
 const resolveTaskId = (ctx: MarsCtx, override?: string): string =>
-  override ?? ctx.input?.taskId ?? ctx.runId
-
-/** Read the run's dispatch input (never throws; `{}` when absent). */
-const input = (ctx: MarsCtx): MarsWorkflowInput => ctx.input ?? {}
+  override ?? input(ctx).taskId ?? ctx.runId
 
 /** Build the per-phase {@link TraceCtx} a primitive threads into git shell-outs. */
 const buildPhaseCtx = (

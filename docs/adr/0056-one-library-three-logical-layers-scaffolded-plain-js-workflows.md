@@ -4,6 +4,20 @@
 
 Proposed (DDD restructure strategy). **Supersedes ADR-0047.**
 
+> **Amended 2026-06-15 — realized API shape.** Two authoring-surface
+> details below were corrected to match what was built. The scaffolded
+> file shape is `export default defineWorkflow({ id, fn })` (an imperative
+> `async fn(ctx)` whose body calls `ctx.step(name, …)`), **not**
+> `{ id, kind, steps }` — there is no declarative `steps` config. Dispatch
+> facts arrive on `ctx.input`. The no-stranded-entity write funnel is the
+> injected **`ctx.services.store`** (the Arc-backed task store), **not**
+> `ctx.arc` — `ctx.arc` was never built. The architectural decision (one
+> library, three layers, scaffolded plain-JS workflows composing engine
+> step primitives) is unchanged; only these two names are corrected. See
+> `orchestrator/docs/implement-pipeline.md` and
+> `orchestrator/src/init/templates/workflows/workflow-contract.md` for the
+> authoritative current surface.
+
 ## Context
 
 ADR-0047 planned Mars as a *layered npm framework* extracted bottom-up into an
@@ -38,8 +52,11 @@ already proven.
 
 **Workflows are not a package — they are scaffolded into the consumer repo.**
 `mars init` writes the official workflows as plain-JS files into
-`.mars/workflows/*.js`. Each file imports step primitives from the installed
-`mars` lib and `export default defineWorkflow({ id, kind, steps })`. The daemon
+`.mars/workflows/*.js`. Each file imports `defineWorkflow` + the step primitives
+from the installed `mars` lib (the single `mars/workflow` surface) and
+`export default defineWorkflow({ id, fn })`, where `fn` is an imperative
+`async fn(ctx)` whose body wraps each durable unit in `ctx.step(name, …)` and
+reads dispatch facts off `ctx.input`. The daemon
 **dynamically imports** `.mars/workflows/*.js` at boot and on `mars daemon
 reload`, registering each into the workflow registry. This is the realisation of
 "the project is a framework allowing other people to implement their own workflow
@@ -47,9 +64,9 @@ on the `.mars` folder, configurable on plain JS — the workflows we ship are ju
 one implementation."
 
 Custom workflows are **sandboxed**: they compose engine step primitives and may
-write to the DB **only** through injected arc services (`ctx.arc`), never the raw
-store. The no-stranded-entity invariant (ADR-0052) therefore holds for custom
-flows too.
+write task state **only** through the injected Arc-backed store on
+`ctx.services.store` — which the primitives use internally — never a raw client.
+The no-stranded-entity invariant (ADR-0052) therefore holds for custom flows too.
 
 ## Consequences
 

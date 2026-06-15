@@ -674,7 +674,7 @@ export const startDaemon = async (
       // The implement pipeline now runs on the in-house @mars/workflow engine
       // rather than Mastra. Two seams are wired here:
       //   - `store`    — the engine's run/step checkpoint persistence, backed
-      //                  by `.mars/queue.db` (createQueueWorkflowStore).
+      //                  by `.mars/mars.db` (createQueueWorkflowStore).
       //   - `services` — the orchestrator's TaskStore from the composition
       //                  root, read inside the workflow as `ctx.services.store`
       //                  (replaces the Mastra RequestContext('taskStore')).
