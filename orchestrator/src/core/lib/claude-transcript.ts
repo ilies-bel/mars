@@ -3,17 +3,26 @@
  *
  * Claude Code persists every `claude -p` session as
  *   ~/.claude/projects/<encoded-cwd>/<session-id>.jsonl
- * where `<encoded-cwd>` is the launching cwd with every `/` replaced by
- * `-`. Mars records the per-task session-id history on
- * `tasks.claude_session_ids` (append-only JSON array; see
- * `claude-session-ids.ts`), and the worker process spawn cwd is the
- * task's worktree path (see implement-workflow.ts ~line 924).
+ * where `<encoded-cwd>` is the launching cwd with every `/` AND every
+ * `.` replaced by `-`. Empirically verified against
+ * `~/.claude/projects/`: e.g. `/private/tmp/mars-test-dot.encode/sub`
+ * lands at `-private-tmp-mars-test-dot-encode-sub` (the mid-segment dot
+ * also collapses), and `/Users/me/.mars/worktrees/x` lands at
+ * `-Users-me--mars-worktrees-x` (the leading `.` of a dot-segment
+ * becomes a second dash). Mars records the per-task session-id history
+ * in `task_claude_sessions` (see `claude-session-ids.ts`), and the
+ * worker process spawn cwd is the task's worktree path (see
+ * implement-workflow.ts).
  *
  * Combining the two:
- *   1. Read tasks.claude_session_ids → string[].
+ *   1. Read the task's session ids → string[].
  *   2. Read tasks.worktree_path → absolute path of the worktree root.
- *   3. Encode the cwd by replacing every `/` with `-`.
+ *   3. Encode the cwd by replacing every `/` and `.` with `-`.
  *   4. For each sessionId: ~/.claude/projects/<encoded>/<sessionId>.jsonl
+ *   5. If the dir holds extra `*.jsonl` files (Claude Code rotated the
+ *      session id mid-task, or our stored ids drifted), include those
+ *      too — otherwise we silently report "no transcripts" while real
+ *      events sit on disk.
  *
  * Slice J reads these directly. There is no fallback to mastra.db (the
  * file is deleted at orchestrator startup; see slice A) and no fallback
@@ -21,7 +30,7 @@
  * was retired in the @mars/workflow port; see PRD 436f14c7).
  */
 
-import { access, stat } from 'node:fs/promises'
+import { access, readdir, stat } from 'node:fs/promises'
 import { constants as fsConstants, createReadStream } from 'node:fs'
 import { homedir } from 'node:os'
 import { resolve as resolvePath } from 'node:path'
@@ -62,17 +71,21 @@ export interface TranscriptEvent {
 
 /**
  * Encode a launching cwd into the directory name Claude Code uses to
- * store its transcripts. The convention is "replace every `/` with `-`"
- * — applied to the absolute path verbatim, including the leading slash.
+ * store its transcripts. The convention — derived empirically from
+ * `~/.claude/projects/` — is "replace every `/` AND every `.` with `-`",
+ * applied to the absolute path verbatim, including the leading slash.
  *
- *   /Users/foo/bar    →  -Users-foo-bar
- *   /tmp/mars-x/y     →  -tmp-mars-x-y
+ *   /Users/foo/bar               →  -Users-foo-bar
+ *   /Users/me/.mars/worktrees/x  →  -Users-me--mars-worktrees-x
+ *   /private/tmp/dot.in.middle   →  -private-tmp-dot-in-middle
  *
- * Claude does not collapse leading `--` for paths that begin with `//`,
- * nor does it special-case the root. We mirror its behaviour with a
- * pure character replacement.
+ * The leading `.` of a dot-segment therefore collapses with the slash
+ * before it into a `--` (e.g. `/.mars` → `--mars`). Mid-segment dots
+ * collapse too. Claude does not special-case the root. We mirror its
+ * behaviour with a pure character replacement.
  */
-export const encodeClaudeCwd = (cwd: string): string => cwd.split('/').join('-')
+export const encodeClaudeCwd = (cwd: string): string =>
+  cwd.replace(/[/.]/g, '-')
 
 const projectsDir = (home: string): string => resolvePath(home, '.claude', 'projects')
 
@@ -123,6 +136,14 @@ FROM tasks t WHERE t.id = ?`,
  * locations, which the report surfaces as "no transcripts recorded for
  * this task").
  *
+ * **Enumeration fallback.** After locating the stored session ids, we
+ * also scan the encoded dir for any `*.jsonl` files we did not already
+ * list. Claude Code sometimes rotates the session id mid-task (so the
+ * file on disk is named differently from what Mars recorded), and
+ * historically our stored ids have drifted from the real ones. Without
+ * this fallback, deep-reflect would report zero events even when real
+ * transcripts sit on disk under unfamiliar session ids.
+ *
  * `homeDir` is injectable for tests. Production callers omit it and
  * resolve under `os.homedir()`.
  */
@@ -139,15 +160,38 @@ export const resolveTranscriptLocationsForTask = async (
   const encoded = encodeClaudeCwd(row.worktreePath)
   const sessionDir = resolvePath(projectsDir(home), encoded)
 
+  const seen = new Set<string>()
   const out: TranscriptLocation[] = []
   for (const sessionId of row.claudeSessionIds) {
     const path = resolvePath(sessionDir, `${sessionId}.jsonl`)
+    seen.add(`${sessionId}.jsonl`)
     out.push({
       sessionId,
       path,
       exists: await fileExists(path),
     })
   }
+
+  // Enumeration fallback. Pick up any `.jsonl` files in the encoded dir
+  // that the stored session ids do not name. A missing directory (the
+  // common case for a task whose worker never wrote a transcript) is
+  // not an error — readdir throws ENOENT and we just skip.
+  try {
+    const entries = await readdir(sessionDir)
+    for (const name of entries) {
+      if (!name.endsWith('.jsonl')) continue
+      if (seen.has(name)) continue
+      seen.add(name)
+      out.push({
+        sessionId: name.slice(0, -'.jsonl'.length),
+        path: resolvePath(sessionDir, name),
+        exists: true,
+      })
+    }
+  } catch {
+    // Directory absent or unreadable — nothing to enumerate.
+  }
+
   return out
 }
 

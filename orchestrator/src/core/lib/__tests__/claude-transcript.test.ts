@@ -79,14 +79,28 @@ const setWorktreePath = async (
 }
 
 describe('encodeClaudeCwd', () => {
-  it('replaces every / with - (matches Claude Code convention)', async () => {
+  it('replaces every / and . with - (matches Claude Code on-disk dir naming)', async () => {
     const repo = setupRepo()
     try {
       const { tx } = await loadModules(repo)
+      // Plain ASCII path — only slashes are rewritten.
       expect(tx.encodeClaudeCwd('/foo/bar')).toBe('-foo-bar')
-      expect(tx.encodeClaudeCwd('/Users/x/project/.mars/worktrees/mars-abc')).toBe(
-        '-Users-x-project-.mars-worktrees-mars-abc',
+      // A `/.mars/` segment collapses to `--mars-` (the leading dot of
+      // the dot-segment becomes a second dash). This was the original
+      // bug — the resolver looked under `-Users-...-.mars-...` while
+      // Claude Code stored the transcript under `-Users-...--mars-...`.
+      expect(
+        tx.encodeClaudeCwd('/Users/x/project/.mars/worktrees/mars-abc'),
+      ).toBe('-Users-x-project--mars-worktrees-mars-abc')
+      // Mid-segment dots collapse too (empirically verified against a
+      // real `/private/tmp/mars-test-dot.encode/sub` run).
+      expect(tx.encodeClaudeCwd('/private/tmp/dot.in.middle')).toBe(
+        '-private-tmp-dot-in-middle',
       )
+      // Multiple consecutive dot-segments along the same path.
+      expect(
+        tx.encodeClaudeCwd('/Users/me/.cache/fleet/.mars/worktrees/x'),
+      ).toBe('-Users-me--cache-fleet--mars-worktrees-x')
       expect(tx.encodeClaudeCwd('/')).toBe('-')
     } finally {
       delete process.env.MARS_REPO
@@ -153,6 +167,65 @@ describe('resolveTranscriptLocationsForTask', () => {
       homeDir,
     })
     expect(locations).toEqual([])
+  })
+
+  it('falls back to enumerating *.jsonl when the stored session id is absent but the dir holds other transcripts', async () => {
+    const { q, tx } = await loadModules(repo)
+    const t = await q.enqueueTask('p', undefined, { skipTriage: true })
+    // A real Mars worktree-style path so the encoder change is exercised
+    // end-to-end (the `/.mars/` segment must encode to `--mars-`).
+    const worktreePath = '/tmp/proj/.mars/worktrees/mars-xyz'
+    await setWorktreePath(q, t.id, worktreePath)
+    await setSessionIds(q, t.id, ['stored-but-missing'])
+
+    const encoded = tx.encodeClaudeCwd(worktreePath)
+    expect(encoded).toBe('-tmp-proj--mars-worktrees-mars-xyz')
+
+    // Write a real transcript file under a DIFFERENT session id — this
+    // is the on-disk reality for tasks whose stored id drifted from
+    // Claude Code's rotated id.
+    writeTranscriptFile(homeDir, encoded, 'real-on-disk', [
+      '{"type":"user"}',
+    ])
+
+    const locations = await tx.resolveTranscriptLocationsForTask(t.id, { homeDir })
+    expect(locations).toHaveLength(2)
+    // First entry: the stored id, marked exists=false so callers can
+    // still see the miss.
+    expect(locations[0]).toMatchObject({
+      sessionId: 'stored-but-missing',
+      exists: false,
+    })
+    // Second entry: the orphan transcript discovered by enumeration.
+    expect(locations[1]).toMatchObject({
+      sessionId: 'real-on-disk',
+      exists: true,
+    })
+    expect(locations[1].path.endsWith('real-on-disk.jsonl')).toBe(true)
+  })
+
+  it('readAllTranscriptsForTask streams events from the enumeration-fallback orphan transcript', async () => {
+    const { q, tx } = await loadModules(repo)
+    const t = await q.enqueueTask('p', undefined, { skipTriage: true })
+    const worktreePath = '/tmp/proj/.mars/worktrees/mars-orphan'
+    await setWorktreePath(q, t.id, worktreePath)
+    await setSessionIds(q, t.id, ['stored-only-no-file'])
+
+    const encoded = tx.encodeClaudeCwd(worktreePath)
+    writeTranscriptFile(homeDir, encoded, 'orphan-sid', [
+      '{"type":"user","n":1}',
+      '{"type":"assistant","n":2}',
+    ])
+
+    const events: number[] = []
+    for await (const ev of tx.readAllTranscriptsForTask(t.id, { homeDir })) {
+      const raw = ev.raw as { n?: number }
+      if (typeof raw.n === 'number') events.push(raw.n)
+    }
+    // The stored session id has no file (skipped), but the orphan is
+    // enumerated and read end-to-end. Without the fallback, this would
+    // return [] and deep-reflect would report "0 events".
+    expect(events).toEqual([1, 2])
   })
 })
 
