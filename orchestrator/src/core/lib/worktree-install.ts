@@ -192,7 +192,18 @@ export const buildWorkspaceDepsForSite = async (
   const deps = { ...manifest.dependencies, ...manifest.devDependencies }
   const built = new Set<string>()
   for (const spec of Object.values(deps)) {
-    const m = /^(?:file:|link:|workspace:)(.+)$/.exec(spec)
+    // Only `file:` and `workspace:` specs pack a copy into the consumer's
+    // node_modules — those are the ones that need a built `dist/` on disk
+    // before the consumer's install runs. `link:` deps are symlinks (pnpm
+    // does no packing), so pre-building is pointless and actively harmful:
+    // the linked package is typically its OWN install site, and running
+    // `pnpm install` + `pnpm run build` against it from here races with the
+    // linked package's own setup that's running in parallel — and worse,
+    // the linked package's build (e.g. `tsc --noEmit`) routinely depends on
+    // workspace deps whose dist won't exist until that other site finishes.
+    // Skip `link:` entirely; the linked package's own install site owns its
+    // install+build.
+    const m = /^(?:file:|workspace:)(.+)$/.exec(spec)
     if (!m) continue
     const depDir = resolve(site.dir, m[1].replace(/^workspace:/, ''))
     // Stay inside the worktree; ignore deps that escape the checkout.

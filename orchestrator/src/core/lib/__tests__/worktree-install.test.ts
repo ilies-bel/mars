@@ -243,6 +243,61 @@ describe('worktree-install', () => {
       expect(calls[0].args[0]).toBe('install')
     })
 
+    it('skips link: workspace deps (symlinks consume live source — no dist to pre-build)', async () => {
+      // The root package.json dogfoods the orchestrator with
+      //   "mars": "link:./orchestrator"
+      // pnpm creates node_modules/mars as a symlink to orchestrator/; nothing
+      // gets packed. Running `pnpm run build` (=tsc --noEmit) in orchestrator
+      // here also races with the orchestrator install site that's
+      // concurrently building @mars/workflow and installing orchestrator's
+      // own deps — the typecheck blew up because workflow's dist wasn't
+      // packed yet. Skip link: entirely; the linked package's own install
+      // site (if any) handles its install+build.
+      writeFileSync(resolve(workDir, 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'package.json'),
+        JSON.stringify({
+          name: 'root',
+          dependencies: { mars: 'link:./orchestrator' },
+        }),
+      )
+      mkdirSync(resolve(workDir, 'orchestrator'))
+      writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'orchestrator', 'package.json'),
+        JSON.stringify({
+          name: 'mars',
+          scripts: { build: 'tsc --noEmit' },
+        }),
+      )
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+      await installWorktreeDeps({ worktreeRoot: workDir, runner })
+
+      // No `pnpm run build` should run in the linked dir — neither from the
+      // root site (link: skipped) nor from the orchestrator site (no
+      // workspace deps of its own in this test).
+      const buildCalls = calls.filter(
+        (c) => c.args[0] === 'run' && c.args[1] === 'build',
+      )
+      expect(buildCalls).toEqual([])
+      // And the linked dir is never re-installed by the root site — that
+      // would race with the orchestrator site installing itself.
+      const orchInstallsFromRoot = calls.filter(
+        (c) =>
+          c.cwd === resolve(workDir, 'orchestrator') &&
+          c.args[0] === 'install' &&
+          c.args.includes('--frozen-lockfile'),
+      )
+      // Exactly one frozen install in orchestrator — the orchestrator site's
+      // own install. None spawned by the root site as a link:-dep prebuild.
+      expect(orchInstallsFromRoot).toHaveLength(1)
+    })
+
     it('throws when a workspace dep build fails (it would only fail typecheck later otherwise)', async () => {
       mkdirSync(resolve(workDir, 'orchestrator'))
       writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
