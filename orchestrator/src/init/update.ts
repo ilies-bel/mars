@@ -47,7 +47,14 @@ export interface UpdateWorkflowsOptions {
    * skip-on-conflict (the safe choice — never lose the user's edits).
    */
   yes: boolean
-  /** Prompt seam. Only called for diverged owned files when `yes` is false. */
+  /**
+   * Non-interactive mode that APPLIES the new template to every diverged owned
+   * file, overwriting the user's local edits. Mutually independent from `yes`,
+   * which is skip-on-conflict. If BOTH are somehow passed, `acceptAll` wins
+   * (accept beats skip) — but the CLI guards against that combination.
+   */
+  acceptAll: boolean
+  /** Prompt seam. Only called for diverged owned files when `yes` is false and `acceptAll` is false. */
   readLine: LineReader
   /** Output sink. */
   out: (s: string) => void
@@ -67,7 +74,7 @@ const isAccept = (answer: string): boolean => {
 export const updateWorkflows = async (
   opts: UpdateWorkflowsOptions,
 ): Promise<UpdateWorkflowsResult> => {
-  const { repoRoot, stateDir, yes, readLine, out } = opts
+  const { repoRoot, stateDir, yes, acceptAll, readLine, out } = opts
   const copies = planWorkflowCopies(repoRoot)
   const ownedSet = new Set(readOwnedWorkflowPaths(stateDir))
 
@@ -103,9 +110,18 @@ export const updateWorkflows = async (
       continue
     }
 
-    // Diverged + owned — show the diff and (unless --yes) prompt accept/skip.
+    // Diverged + owned — show the diff and (unless --accept-all/--yes) prompt.
     out(`[mars update] ${c.rel} has changed in this release:`)
     out(unifiedDiff(onDisk, template, c.rel))
+
+    // acceptAll wins over yes (accept beats skip — but CLI guards the combo).
+    if (acceptAll) {
+      copyFileSync(c.src, c.dest)
+      out(`[mars update] ${c.rel}: --accept-all set — applied new template`)
+      records.push({ rel: c.rel, outcome: 'accepted' })
+      newlyOwned.push(c.rel)
+      continue
+    }
 
     if (yes) {
       out(`[mars update] ${c.rel}: --yes set — keeping your version (skip)`)

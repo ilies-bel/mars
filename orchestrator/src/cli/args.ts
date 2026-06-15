@@ -87,6 +87,9 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--force-orphans',
   '--yes',
   '-y',
+  '--no-edit',
+  // mars update non-interactive accept-all mode (mutually exclusive with --yes).
+  '--accept-all',
   // mars init single-entry wizard routing (ADR-0058). `--wizard` forces the
   // wizard even on a non-TTY; `--wizard-off` skips it on a TTY. Boolean
   // WizardPrompts (e.g. project registration) also live here.

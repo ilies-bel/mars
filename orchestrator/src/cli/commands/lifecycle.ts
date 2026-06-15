@@ -428,15 +428,23 @@ const list: Command = {
 const update: Command = {
   path: 'update',
   summary: 'refresh framework files; diff (never clobber) user-owned workflows',
-  usage: 'usage: mars update [--yes] [--verbose] [-f|--config <path>]',
+  usage: 'usage: mars update [--yes | --accept-all] [--verbose] [-f|--config <path>]',
   run: async (args, deps) => {
     const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
     const yes =
       boolFlags.has('--yes') ||
       args.positional.includes('-y') ||
       boolFlags.has('--no-edit')
+    const acceptAll = boolFlags.has('--accept-all')
     const verbose = boolFlags.has('--verbose')
     const configPath = args.flags['--config']
+
+    if (yes && acceptAll) {
+      deps.err(
+        'error: --yes (keep your edits) and --accept-all (take new templates) are mutually exclusive',
+      )
+      return { code: 1 }
+    }
 
     // Phase 1: refresh the framework-owned files (CLAUDE.md, supervisors, …)
     // via the daemon-routed init workflow with force overwrite. Its
@@ -496,6 +504,7 @@ const update: Command = {
       repoRoot: deps.ctx.repoRoot,
       stateDir: deps.ctx.stateDir,
       yes,
+      acceptAll,
       readLine: realLineReader,
       out: (s: string): void => deps.out(s),
     })

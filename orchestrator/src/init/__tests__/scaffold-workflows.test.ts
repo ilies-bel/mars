@@ -206,6 +206,7 @@ describe('updateWorkflows — ADR-0057 ownership', () => {
       repoRoot,
       stateDir,
       yes: false,
+      acceptAll: false,
       readLine: throwReader,
       out: (s) => out.push(s),
     })
@@ -228,6 +229,7 @@ describe('updateWorkflows — ADR-0057 ownership', () => {
       repoRoot,
       stateDir,
       yes: false,
+      acceptAll: false,
       readLine: throwReader, // must NOT be called for unchanged files
       out: () => {},
     })
@@ -247,6 +249,7 @@ describe('updateWorkflows — ADR-0057 ownership', () => {
       repoRoot,
       stateDir,
       yes: false,
+      acceptAll: false,
       readLine: acceptReader,
       out: (s) => out.push(s),
     })
@@ -269,6 +272,7 @@ describe('updateWorkflows — ADR-0057 ownership', () => {
       repoRoot,
       stateDir,
       yes: false,
+      acceptAll: false,
       readLine: declineReader,
       out: () => {},
     })
@@ -289,6 +293,7 @@ describe('updateWorkflows — ADR-0057 ownership', () => {
       repoRoot,
       stateDir,
       yes: true,
+      acceptAll: false,
       readLine: throwReader, // must NOT prompt under --yes
       out: () => {},
     })
@@ -311,6 +316,7 @@ describe('updateWorkflows — ADR-0057 ownership', () => {
       repoRoot,
       stateDir,
       yes: false,
+      acceptAll: false,
       readLine: throwReader, // must NOT prompt for an unowned file
       out: (s) => out.push(s),
     })
@@ -336,6 +342,7 @@ describe('updateWorkflows — ADR-0057 ownership', () => {
       repoRoot,
       stateDir,
       yes: true, // CI path: skip-on-conflict
+      acceptAll: false,
       readLine: throwReader,
       out: () => {},
     })
@@ -344,6 +351,50 @@ describe('updateWorkflows — ADR-0057 ownership', () => {
       const name = c.rel.split('/').pop()!
       expect(readFileSync(destOf(name), 'utf8')).toBe(sentinels[c.rel])
     }
+  })
+
+  it('--accept-all applies the new template non-interactively (never calls readLine)', async () => {
+    const tmpl = readFileSync(planWorkflowCopies(repoRoot)[0]!.src, 'utf8')
+    const rel = planWorkflowCopies(repoRoot)[0]!.rel
+    const name = rel.split('/').pop()!
+    mkdirSync(resolve(repoRoot, WORKFLOWS_DEST_REL), { recursive: true })
+    writeFileSync(destOf(name), '// diverged-owned\n' + tmpl, 'utf8')
+    writeInitManifest(stateDir, [rel])
+
+    const out: string[] = []
+    const res = await updateWorkflows({
+      repoRoot,
+      stateDir,
+      yes: false,
+      acceptAll: true,
+      readLine: throwReader, // must NOT be called when acceptAll is true
+      out: (s) => out.push(s),
+    })
+    expect(res.records.find((r) => r.rel === rel)!.outcome).toBe('accepted')
+    expect(readFileSync(destOf(name), 'utf8')).toBe(tmpl)
+    expect(out.join('\n')).toContain('--accept-all set')
+  })
+
+  it('--accept-all does NOT touch a diverged UNOWNED file (ownership rules unchanged)', async () => {
+    const tmpl = readFileSync(planWorkflowCopies(repoRoot)[0]!.src, 'utf8')
+    const rel = planWorkflowCopies(repoRoot)[0]!.rel
+    const name = rel.split('/').pop()!
+    const handEdited = '// hand-edited, not in manifest\n' + tmpl
+    mkdirSync(resolve(repoRoot, WORKFLOWS_DEST_REL), { recursive: true })
+    writeFileSync(destOf(name), handEdited, 'utf8')
+    // Manifest does NOT list this workflow → unowned.
+    writeInitManifest(stateDir, ['CLAUDE.md'])
+
+    const res = await updateWorkflows({
+      repoRoot,
+      stateDir,
+      yes: false,
+      acceptAll: true,
+      readLine: throwReader,
+      out: () => {},
+    })
+    expect(res.records.find((r) => r.rel === rel)!.outcome).toBe('untouched')
+    expect(readFileSync(destOf(name), 'utf8')).toBe(handEdited)
   })
 })
 
@@ -417,5 +468,39 @@ describe('mars update — command wiring (in-process)', () => {
     })
     expect(r.code).toBe(1)
     expect(r.err.join('\n')).toContain('refusing to overwrite')
+  })
+
+  it('--accept-all applies new templates non-interactively', async () => {
+    const tmpl = readFileSync(planWorkflowCopies(repoRoot)[0]!.src, 'utf8')
+    const rel = planWorkflowCopies(repoRoot)[0]!.rel
+    const name = rel.split('/').pop()!
+    const userContent = '// cli-accept-all\n' + tmpl
+    mkdirSync(resolve(repoRoot, WORKFLOWS_DEST_REL), { recursive: true })
+    writeFileSync(destOf(name), userContent, 'utf8')
+    writeInitManifest(stateDir, [rel])
+
+    const fake = makeFakeDaemon((req) =>
+      req.op === 'init' ? { status: 'ok', message: 'ok', written: [] } : {},
+    )
+    const r = await runCommandInProcess(['update', '--accept-all'], {
+      store: stubStore,
+      ctx: fakeCtx(),
+      daemon: fake,
+    })
+    expect(r.code).toBe(0)
+    expect(readFileSync(destOf(name), 'utf8')).toBe(tmpl)
+  })
+
+  it('--yes and --accept-all together error out as mutually exclusive', async () => {
+    const fake = makeFakeDaemon((req) =>
+      req.op === 'init' ? { status: 'ok', message: 'ok', written: [] } : {},
+    )
+    const r = await runCommandInProcess(['update', '--yes', '--accept-all'], {
+      store: stubStore,
+      ctx: fakeCtx(),
+      daemon: fake,
+    })
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('mutually exclusive')
   })
 })
