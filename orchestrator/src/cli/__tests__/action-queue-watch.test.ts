@@ -51,6 +51,7 @@ const makeRow = (
   errorKind: 'unknown',
   actions: [],
   staleWorktreeDetail: null,
+  devServerUrl: null,
   diagnosis: null,
   failureReasonCode: null,
   ...overrides,

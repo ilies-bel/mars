@@ -110,6 +110,18 @@ export interface HttpServerDeps {
    */
   dismissProposal: (id: string) => Promise<void>
   /**
+   * Validate a task parked at the preview gate (status 'awaiting-validation'):
+   * kill its dev server, mark it validated, and re-queue so the merge
+   * continuation runs. Throws when the task is not awaiting validation.
+   */
+  validateTask: (id: string) => Promise<void>
+  /**
+   * Reject a task parked at the preview gate: kill its dev server, fail the
+   * task (worktree preserved), and resolve the awaiting-validation action-queue
+   * row. Throws when the task is not awaiting validation.
+   */
+  rejectTask: (id: string) => Promise<void>
+  /**
    * Run a cheap Haiku investigation over the worktree diff, persist the result
    * onto the actionQueue item payload, and return the explanation text. Read-only:
    * never mutates the worktree. Concurrent calls for the same id must be
@@ -242,7 +254,14 @@ const sendError = (
  * declares. Each maps `POST /actions/:op/:id` to the matching daemon handler.
  * `restart-daemon` is handled separately (it has no `:id`).
  */
-type EntityOp = 'restart' | 'unblock' | 'purge' | 'prune-worktree' | 'dismiss'
+type EntityOp =
+  | 'restart'
+  | 'unblock'
+  | 'purge'
+  | 'prune-worktree'
+  | 'dismiss'
+  | 'validate'
+  | 'reject'
 
 const TRACE_EVENT_KIND_SET = new Set<TraceEventKind>(TRACE_EVENT_KINDS)
 const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
@@ -344,6 +363,8 @@ const handleEventsRequest = async (
  *   POST /actions/purge/:id      → drop a task + worktree
  *   POST /actions/prune-worktree/:id → remove a stale worktree
  *   POST /actions/dismiss/:id    → reject a draft proposal (draft → dismissed)
+ *   POST /actions/validate/:id   → approve a preview-gated task (→ merge)
+ *   POST /actions/reject/:id     → reject a preview-gated task (→ failed)
  *   POST /actions/restart-daemon → re-exec the daemon
  *
  * The server uses an OS-assigned port (port 0). Callers discover the port via
@@ -359,6 +380,8 @@ export const startHttpServer = async (
     purge: deps.purgeTask,
     'prune-worktree': deps.pruneWorktree,
     dismiss: deps.dismissProposal,
+    validate: deps.validateTask,
+    reject: deps.rejectTask,
   }
 
   const server: Server = createServer((req, res) => {

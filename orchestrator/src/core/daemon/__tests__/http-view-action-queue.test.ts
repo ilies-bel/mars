@@ -448,6 +448,8 @@ describe('GET /view/action-queue via HTTP server', () => {
       purgeTask: async () => {},
       pruneWorktree: async () => {},
   dismissProposal: async () => {},
+  validateTask: async () => {},
+  rejectTask: async () => {},
       investigateWorktree: async () => ({ explanation: '' }),
       diagnoseFailure: async () => ({ diagnosis: '' }),
       restartDaemon: async () => {},
@@ -472,6 +474,7 @@ describe('GET /view/action-queue via HTTP server', () => {
             errorKind: 'failed-task',
             actions: [],
             staleWorktreeDetail: null,
+            devServerUrl: null,
             diagnosis: null,
             failureReasonCode: null,
           }

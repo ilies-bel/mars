@@ -48,6 +48,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--tag',
   '--files',
   '--verify',
+  '--preview',
   '--done',
   '--type',
   '--wrapper',
@@ -288,6 +289,9 @@ export const parseTaskType = (
 export interface TaskSpec {
   files: readonly string[]
   verifyCmd: string | null
+  /** HITL preview command (e.g. 'npm run dev'); null when the task merges
+   * automatically. See core `TaskSpec.previewCmd`. */
+  previewCmd: string | null
   doneCriteria: readonly string[]
   taskType: 'auto' | 'checkpoint'
 }
@@ -303,11 +307,13 @@ export const parseTaskSpec = (
   const filesList = args.multiFlags['--files'] ?? []
   const doneList = args.multiFlags['--done'] ?? []
   const verifyRaw = args.flags['--verify']
+  const previewRaw = args.flags['--preview']
   const typeRaw = args.flags['--type']
   const anySpec =
     filesList.length > 0 ||
     doneList.length > 0 ||
     verifyRaw !== undefined ||
+    previewRaw !== undefined ||
     typeRaw !== undefined
   if (!anySpec) return { ok: true, value: undefined }
 
@@ -322,6 +328,7 @@ export const parseTaskSpec = (
     value: {
       files: filesList,
       verifyCmd: verifyRaw ?? null,
+      previewCmd: previewRaw ?? null,
       doneCriteria: doneList,
       taskType,
     },

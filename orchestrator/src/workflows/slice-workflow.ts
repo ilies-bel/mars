@@ -1096,6 +1096,9 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
           spec: {
             files,
             verifyCmd,
+            // Slicer output does not auto-gate on a preview server; the preview
+            // gate is opt-in via `mars task add --preview "<cmd>"`.
+            previewCmd: null,
             doneCriteria: slice.acceptanceCriteria,
             taskType: slice.taskType,
             sliceKind: slice.kind,
@@ -1131,6 +1134,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
             spec: {
               files: sub.files ?? [],
               verifyCmd: null,
+              previewCmd: null,
               doneCriteria: sub.acceptanceCriteria,
               taskType: 'auto',
               sliceKind: 'coder',

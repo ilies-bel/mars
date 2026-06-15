@@ -62,6 +62,12 @@ import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
  * - `dismiss`                  — reject a draft proposal: flips its status from
  *                                `draft` → `dismissed` and drops the action-queue
  *                                row.
+ * - `validate`                 — approve a task parked at the preview gate: kill
+ *                                its dev server, mark it validated, and re-queue
+ *                                so the merge continuation runs (per-task).
+ * - `reject`                   — reject a task parked at the preview gate: kill
+ *                                its dev server and fail the task (worktree
+ *                                preserved); nothing merges (per-task).
  */
 export type ActionOp =
   | 'restart'
@@ -74,6 +80,8 @@ export type ActionOp =
   | 'restart-all-daemon-killed'
   | 'copy'
   | 'dismiss'
+  | 'validate'
+  | 'reject'
 
 /**
  * A declarative recovery action. No executable code — the daemon owns the

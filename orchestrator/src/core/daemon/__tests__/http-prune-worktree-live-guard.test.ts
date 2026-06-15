@@ -51,6 +51,8 @@ const makeDeps = (
   purgeTask: async () => {},
   pruneWorktree,
   dismissProposal: async () => {},
+  validateTask: async () => {},
+  rejectTask: async () => {},
   investigateWorktree: async () => ({ explanation: '' }),
   diagnoseFailure: async () => ({ diagnosis: '' }),
   restartDaemon: async () => {},

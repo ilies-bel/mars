@@ -752,6 +752,7 @@ export const startDaemon = async (
             ? {
                 files: [...task.spec.files],
                 verifyCmd: task.spec.verifyCmd,
+                previewCmd: task.spec.previewCmd ?? null,
                 doneCriteria: [...task.spec.doneCriteria],
                 taskType: task.spec.taskType,
                 readFirst: [...(task.spec.readFirst ?? [])],
@@ -775,6 +776,7 @@ export const startDaemon = async (
         isMainDirtyVerifyError,
         isContextExhaustedAbortError,
         isOriginWorktreeMissingAbortError,
+        isPreviewGateError,
       } = await import('../../workflows/implement-workflow')
       // Read the failure off RunResult.error (the engine puts the thrown Error
       // there verbatim on the `failed` path). The detectors flatten the cause
@@ -810,6 +812,16 @@ export const startDaemon = async (
       // dead-end. The operator resolves via the raised item.
       if (result.status === 'failed' && isOriginWorktreeMissingAbortError(resultError)) {
         log(`[implement] ${task.id} failed: origin worktree missing; recovery cannot attach (action-queue item raised)`)
+        return
+      }
+      // Preview gate: the merge step started a live dev server, parked the task
+      // in 'awaiting-validation', and raised the action-queue row, then threw
+      // this sentinel so the merge step stays resumable. The task is
+      // intentionally parked, NOT failed — suppress the failure write and the
+      // `task.completed` emit. The operator's Validate click re-queues it and
+      // the engine re-enters merge past the gate.
+      if (result.status === 'failed' && isPreviewGateError(resultError)) {
+        log(`[implement] ${task.id} parked awaiting-validation: preview server up, waiting for operator Validate/Reject`)
         return
       }
       log(`[implement] ${task.id} -> ${result.status}`)
@@ -1660,6 +1672,16 @@ export const startDaemon = async (
       )
     }
 
+    // If the task was parked at the preview gate, a detached dev server is
+    // still running off its worktree. Reap it before we tear the worktree down
+    // so dropping/purging a parked task never orphans the server.
+    if (task.devServerPid !== null) {
+      const { killDevServer } = await import('../lib/dev-server')
+      await killDevServer(task.devServerPid).catch(() => {
+        // best-effort — the drop proceeds regardless
+      })
+    }
+
     const { existsSync: exists } = await import('node:fs')
     const { execFile } = await import('node:child_process')
     const { promisify } = await import('node:util')
@@ -2362,7 +2384,16 @@ export const startDaemon = async (
       // here match IN_FLIGHT_STATUSES above; they are inlined to avoid a
       // dependency on that internal Set from the closure.
       const task = await getTask(id)
-      if (task && (task.status === 'running' || task.status === 'verifying' || task.status === 'merging')) {
+      if (
+        task &&
+        (task.status === 'running' ||
+          task.status === 'verifying' ||
+          task.status === 'merging' ||
+          // A task parked at the preview gate has a live dev server running off
+          // this worktree; pruning it would kill the preview the operator is
+          // reviewing. Resolve it via Validate/Reject first.
+          task.status === 'awaiting-validation')
+      ) {
         throw Object.assign(
           new Error(
             `task ${id} is in flight (status=${task.status}); cannot prune its worktree while live`,
@@ -2381,6 +2412,17 @@ export const startDaemon = async (
     dismissProposal: async (id) => {
       const { rejectProposal } = await import('../proposals')
       await rejectProposal(id)
+    },
+    validateTask: async (id) => {
+      const { coreValidateTask } = await import('./validate-task')
+      await coreValidateTask(id)
+      // Re-queue emitted so the dispatcher re-enters the workflow and the merge
+      // step runs past the gate (previewValidated=true now).
+      bus.emit('task.queued', { taskId: id })
+    },
+    rejectTask: async (id) => {
+      const { coreRejectTask } = await import('./validate-task')
+      await coreRejectTask(id)
     },
     investigateWorktree,
     diagnoseFailure,

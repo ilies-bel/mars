@@ -252,6 +252,12 @@ const actionQueueBaseSchema = z.object({
    * The UI uses this to render the Resolution block and suppress action buttons.
    */
   resolution: actionQueueResolutionSchema.nullish(),
+  /**
+   * Live preview dev-server URL for an 'awaiting-validation' row (e.g.
+   * `http://127.0.0.1:4321`). Null/absent on every other row kind. Rendered as a
+   * clickable link the operator opens before clicking Validate / Reject.
+   */
+  devServerUrl: z.string().nullable().optional(),
 })
 
 // Detail block carried by every 'stale-worktree' row — absent on all other kinds.
@@ -297,6 +303,10 @@ const draftProposalItemSchema = actionQueueBaseSchema.extend({
   kind: z.literal('draft-proposal'),
 })
 
+const awaitingValidationItemSchema = actionQueueBaseSchema.extend({
+  kind: z.literal('awaiting-validation'),
+})
+
 /**
  * One node in the alert's Proposal-to-Attempt chain.
  * Ordered oldest → newest: proposal head (if any), origin task (attemptIndex=1),
@@ -332,6 +342,7 @@ export const actionQueueItemSchema = z.discriminatedUnion('kind', [
   failedTaskItemSchema,
   staleWorktreeItemSchema,
   draftProposalItemSchema,
+  awaitingValidationItemSchema,
   arcFailedItemSchema,
 ])
 

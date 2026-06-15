@@ -178,5 +178,6 @@ export const kindBadgeLabel = (kind: string): string => {
   if (kind === 'failed-task') return 'failed'
   if (kind === 'stale-worktree') return 'stale wt'
   if (kind === 'draft-proposal') return 'draft'
+  if (kind === 'awaiting-validation') return 'validate'
   return kind
 }

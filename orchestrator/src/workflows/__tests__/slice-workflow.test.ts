@@ -143,7 +143,7 @@ describe('slicerOutputSchema: readFirst + prescriptiveAction', () => {
             'orchestrator/src/core/workflows/__tests__/slice-workflow.test.ts',
           ],
           creates: [],
-          verifyCmd: 'cd orchestrator && npx tsc --noEmit',
+          verifyCmd: 'cd orchestrator && npx tsc --noEmit', previewCmd: null,
           taskType: 'auto',
         },
       ],
@@ -259,7 +259,7 @@ describe('composeTaskPrompt: readFirst and prescriptiveAction sections', () => {
     blockedBy: [] as number[],
     modifies: [] as string[],
     creates: [] as string[],
-    verifyCmd: null,
+    verifyCmd: null, previewCmd: null,
     taskType: 'auto' as const,
     readFirst: ['orchestrator/src/core/workflows/slice-workflow.ts'],
     prescriptiveAction:
@@ -418,7 +418,7 @@ describe('slicerOutputSchema: modifies + creates', () => {
           prescriptiveAction: 'Edit fooFn in src/existing.ts to return number.',
           modifies: ['src/existing.ts'],
           creates: ['src/new.test.ts'],
-          verifyCmd: 'cd src && npx vitest run new.test.ts',
+          verifyCmd: 'cd src && npx vitest run new.test.ts', previewCmd: null,
           taskType: 'auto',
         },
       ],
@@ -517,7 +517,7 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
     const task = await queue.enqueueTask('p', undefined, {
       spec: {
         files,
-        verifyCmd: 'cd src && npx vitest run new.test.ts',
+        verifyCmd: 'cd src && npx vitest run new.test.ts', previewCmd: null,
         doneCriteria: ['a'],
         taskType: 'auto',
       },
@@ -559,7 +559,7 @@ describe('enqueueTask round-trip: slicer split lands in tasks.files_json', () =>
     const task = await queue.enqueueTask('p', undefined, {
       spec: {
         files,
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         doneCriteria: slice.acceptanceCriteria,
         taskType: slice.taskType,
       },
@@ -610,7 +610,7 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
         prescriptiveAction: 'In fooFn (src/foo.ts:1), change return type to void.',
         modifies: [] as string[],
         creates: [] as string[],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         taskType: 'auto' as const,
       },
     ],
@@ -1302,7 +1302,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         prescriptiveAction: 'Remove the legacy_data_col column from the cost-tracking table in README.md.',
         modifies: [] as string[],
         creates: [] as string[],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         taskType: 'auto' as const,
       },
       {
@@ -1315,7 +1315,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         prescriptiveAction: 'Delete the legacy_data_col field from the ClaudeUsage type and its parser in claude-usage.ts.',
         modifies: [] as string[],
         creates: [] as string[],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         taskType: 'auto' as const,
       },
       {
@@ -1328,7 +1328,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         prescriptiveAction: 'Remove legacy_data_col from the INSERT statement and the ReflectSignal type in reflect-signals.ts.',
         modifies: [] as string[],
         creates: [] as string[],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         taskType: 'auto' as const,
       },
       {
@@ -1341,7 +1341,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         prescriptiveAction: 'Remove `SUM(s.legacy_data_col)` from the SELECT in the aggregation query in reflect-query.ts.',
         modifies: [] as string[],
         creates: [] as string[],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         taskType: 'auto' as const,
       },
       {
@@ -1355,7 +1355,7 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
         prescriptiveAction: 'In queue.ts, remove the `legacy_data_col REAL` column definition from the CREATE TABLE tasks DDL and drop it from all INSERT/SELECT statements.',
         modifies: [] as string[],
         creates: [] as string[],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         taskType: 'auto' as const,
       },
     ],
@@ -1456,7 +1456,7 @@ describe('composeTaskPrompt: parent digest replaces full PRD dump', () => {
       'In composeTaskPrompt (slice-workflow.ts), inline proposal.title, proposal.solution, and proposal.outOfScope into the returned template string.',
     modifies: [] as string[],
     creates: [] as string[],
-    verifyCmd: null,
+    verifyCmd: null, previewCmd: null,
     taskType: 'auto' as const,
   }
 
@@ -1641,7 +1641,7 @@ describe('composeTaskPrompt: Files section', () => {
       prescriptiveAction: 'In fooFn (src/foo.ts:1), add logging.',
       modifies: ['src/foo.ts', 'src/bar.ts'],
       creates: [] as string[],
-      verifyCmd: null,
+      verifyCmd: null, previewCmd: null,
       taskType: 'auto' as const,
     }
     const prompt = composeTaskPrompt(proposal, slice, 1, 1)
@@ -1662,7 +1662,7 @@ describe('composeTaskPrompt: Files section', () => {
       prescriptiveAction: 'Create src/new.test.ts with a test for barFn.',
       modifies: [] as string[],
       creates: ['src/new.test.ts'],
-      verifyCmd: null,
+      verifyCmd: null, previewCmd: null,
       taskType: 'auto' as const,
     }
     const prompt = composeTaskPrompt(proposal, slice, 1, 1)
@@ -1683,7 +1683,7 @@ describe('composeTaskPrompt: Files section', () => {
         'Create loadManifest() in NEW: orchestrator/src/manifest/load.ts.',
       modifies: [] as string[],
       creates: ['NEW: orchestrator/src/manifest/load.ts'],
-      verifyCmd: null,
+      verifyCmd: null, previewCmd: null,
       taskType: 'auto' as const,
     }
     const prompt = composeTaskPrompt(proposal, slice, 1, 1)
@@ -1703,7 +1703,7 @@ describe('composeTaskPrompt: Files section', () => {
       prescriptiveAction: 'Review src/index.ts and decide if changes needed.',
       modifies: [] as string[],
       creates: [] as string[],
-      verifyCmd: null,
+      verifyCmd: null, previewCmd: null,
       taskType: 'auto' as const,
     }
     // Must not throw and must not emit the section at all (HITL / empty-files case).
@@ -1725,7 +1725,7 @@ describe('composeTaskPrompt: Files section', () => {
         'Extend existingFn in src/existing.ts and create src/brand-new/load.ts.',
       modifies: ['src/existing.ts'],
       creates: ['NEW: src/brand-new/load.ts', 'src/another.test.ts'],
-      verifyCmd: null,
+      verifyCmd: null, previewCmd: null,
       taskType: 'auto' as const,
     }
     const prompt = composeTaskPrompt(proposal, slice, 1, 1)
@@ -1798,7 +1798,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           prescriptiveAction: 'Create the DataModel interface in src/models/index.ts with id and name fields.',
           modifies: [] as string[],
           creates: [] as string[],
-          verifyCmd: null,
+          verifyCmd: null, previewCmd: null,
           taskType: 'auto' as const,
         },
         {
@@ -1811,7 +1811,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           prescriptiveAction: 'Create getDataModel() in src/services/data.ts returning DataModel from src/models/index.ts.',
           modifies: [] as string[],
           creates: [] as string[],
-          verifyCmd: null,
+          verifyCmd: null, previewCmd: null,
           taskType: 'auto' as const,
         },
         {
@@ -1824,7 +1824,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           prescriptiveAction: 'In DataView.tsx, call getDataModel() from src/services/data.ts and render model.name in an <h1>.',
           modifies: [] as string[],
           creates: [] as string[],
-          verifyCmd: null,
+          verifyCmd: null, previewCmd: null,
           taskType: 'auto' as const,
         },
       ],
@@ -1917,7 +1917,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           prescriptiveAction: 'Add doA() export to src/a.ts.',
           modifies: [] as string[],
           creates: [] as string[],
-          verifyCmd: null,
+          verifyCmd: null, previewCmd: null,
           taskType: 'auto' as const,
         },
         {
@@ -1930,7 +1930,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           prescriptiveAction: 'Add doB() export to src/b.ts.',
           modifies: [] as string[],
           creates: [] as string[],
-          verifyCmd: null,
+          verifyCmd: null, previewCmd: null,
           taskType: 'auto' as const,
         },
         {
@@ -1943,7 +1943,7 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
           prescriptiveAction: 'Add doC() export to src/c.ts.',
           modifies: [] as string[],
           creates: [] as string[],
-          verifyCmd: null,
+          verifyCmd: null, previewCmd: null,
           taskType: 'auto' as const,
         },
       ],
@@ -2019,7 +2019,7 @@ describe('dropAlreadySatisfiedSlices: pre-flight drop of already-shipped slices'
     prescriptiveAction: 'Add `mySymbol` to the module.',
     modifies: [] as string[],
     creates: [] as string[],
-    verifyCmd: null,
+    verifyCmd: null, previewCmd: null,
     taskType: 'auto' as const,
     ...overrides,
   })
@@ -2425,6 +2425,7 @@ describe('enqueueTask round-trip: hitl slice kind and subDeliverable land on tas
       spec: {
         files: sliceFilesForPersistence(slice),
         verifyCmd: slice.verifyCmd,
+        previewCmd: null,
         doneCriteria: slice.acceptanceCriteria,
         taskType: slice.taskType,
         sliceKind: slice.kind,
@@ -2454,7 +2455,7 @@ describe('enqueueTask round-trip: hitl slice kind and subDeliverable land on tas
     const task = await queue.enqueueTask('p', undefined, {
       spec: {
         files: [],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         doneCriteria: ['done'],
         taskType: 'auto',
         sliceKind: 'coder',
@@ -2504,7 +2505,7 @@ describe('enqueueTask round-trip: slicer intent lands on emitted task row', () =
       intent: sliceTitle.slice(0, 200),
       spec: {
         files: ['orchestrator/src/workflows/slice-workflow.ts'],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         doneCriteria: ['intent is non-empty on every emitted task'],
         taskType: 'auto',
       },
@@ -2530,7 +2531,7 @@ describe('enqueueTask round-trip: slicer intent lands on emitted task row', () =
       intent: longTitle.slice(0, 200),
       spec: {
         files: [],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         doneCriteria: ['done'],
         taskType: 'auto',
       },
@@ -2571,12 +2572,12 @@ describe('Slice 1: TDD philosophy is a standing Session instruction, not per-Tas
       'In composeTaskPrompt (slice-workflow.ts), remove any reference to TDD_WORKER_BRIEF from the returned template string.',
     modifies: [] as string[],
     creates: [] as string[],
-    verifyCmd: null,
+    verifyCmd: null, previewCmd: null,
     taskType: 'auto' as const,
   }
   const spec = {
     files: [] as string[],
-    verifyCmd: null,
+    verifyCmd: null, previewCmd: null,
     doneCriteria: ['a'],
     taskType: 'auto' as const,
   }
@@ -2699,7 +2700,7 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
                   'Add `alreadyShipped` function to src/alreadyShipped.ts.',
                 creates: ['src/alreadyShipped.ts'],
                 modifies: [],
-                verifyCmd: null,
+                verifyCmd: null, previewCmd: null,
                 taskType: 'auto',
               },
               {
@@ -2712,7 +2713,7 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
                 prescriptiveAction: 'Add `otherFn` to src/other.ts.',
                 creates: [],
                 modifies: [],
-                verifyCmd: null,
+                verifyCmd: null, previewCmd: null,
                 taskType: 'auto',
               },
             ],
@@ -2767,7 +2768,7 @@ describe('runSlice: actionQueue summary for pre-flight dropped slices', () => {
                 prescriptiveAction: 'Add `missingFn` to src/missing.ts.',
                 creates: ['src/missing.ts'],
                 modifies: [],
-                verifyCmd: null,
+                verifyCmd: null, previewCmd: null,
                 taskType: 'auto',
               },
             ],
@@ -2858,7 +2859,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
           'In scripts/release.sh, add a step that pushes the release tag.',
         modifies: [] as string[],
         creates: [] as string[],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         taskType: 'auto' as const,
         subDeliverable: {
           title: 'Release verification script',
@@ -3043,7 +3044,7 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
           prescriptiveAction: 'Optimise parseToken() in src/parser.ts.',
           modifies: [] as string[],
           creates: [] as string[],
-          verifyCmd: null,
+          verifyCmd: null, previewCmd: null,
           taskType: 'auto' as const,
         },
       ],
@@ -3163,7 +3164,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
           'In scripts/release.sh, add a step that pushes the release tag.',
         modifies: [] as string[],
         creates: [] as string[],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         taskType: 'auto' as const,
         subDeliverable: {
           title: 'Release verification script',
@@ -3470,7 +3471,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
           prescriptiveAction: 'Optimise parseToken() in src/parser.ts.',
           modifies: [] as string[],
           creates: [] as string[],
-          verifyCmd: null,
+          verifyCmd: null, previewCmd: null,
           taskType: 'auto' as const,
         },
       ],

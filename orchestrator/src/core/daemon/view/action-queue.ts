@@ -17,7 +17,11 @@ import {
 } from '../../lib/failure-kinds'
 import { derivedRowActions } from '../../lib/derived-row-actions'
 
-export type DerivedActionQueueKind = 'failed-task' | 'stale-worktree' | 'draft-proposal'
+export type DerivedActionQueueKind =
+  | 'failed-task'
+  | 'stale-worktree'
+  | 'draft-proposal'
+  | 'awaiting-validation'
 export type DerivedActionQueueFilter = 'open' | 'all'
 
 /** Resolution metadata carried by resolved rows in history responses. */
@@ -58,6 +62,12 @@ export interface ActionQueueRow {
   errorKind: string
   actions: { id: string; label: string; op: string; needsConfirm?: boolean; hint?: string }[]
   staleWorktreeDetail: StaleWorktreeDetail | null
+  /**
+   * Live preview dev-server URL for an `awaiting-validation` row (e.g.
+   * `http://127.0.0.1:4321`). Null on every other row kind. The UI renders it
+   * as a clickable link the operator opens before clicking Validate / Reject.
+   */
+  devServerUrl: string | null
   diagnosis: { text: string; diagnosedAt: string } | null
   /**
    * Failure-reason catalog code (`tasks.failure_reason_code` / actionQueue-row
@@ -207,6 +217,7 @@ export const buildActionQueueView = async ({
   const toUiKind = (k: string): DerivedActionQueueKind => {
     if (k === 'stale-worktree') return 'stale-worktree'
     if (k === 'draft-proposal') return 'draft-proposal'
+    if (k === 'awaiting-validation') return 'awaiting-validation'
     return 'failed-task'
   }
 
@@ -483,6 +494,16 @@ export const buildActionQueueView = async ({
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 
+    // Surface the live preview URL for awaiting-validation rows. The merge
+    // primitive stamps it into the row payload at raise time (and persists the
+    // same value on the task row), so the payload is the authoritative,
+    // restart-safe source the projection reads.
+    const devServerUrl =
+      uiKind === 'awaiting-validation' &&
+      typeof row.payload.devServerUrl === 'string'
+        ? row.payload.devServerUrl
+        : null
+
     rows.push({
       id: row.id,
       kind: uiKind,
@@ -495,6 +516,7 @@ export const buildActionQueueView = async ({
       errorKind,
       actions,
       staleWorktreeDetail,
+      devServerUrl,
       diagnosis,
       failureReasonCode,
       fixForTaskId,
@@ -555,6 +577,7 @@ export const buildActionQueueView = async ({
       errorKind: 'daemon-killed-batch',
       actions: batchActions,
       staleWorktreeDetail: null,
+      devServerUrl: null,
       diagnosis: null,
       failureReasonCode: null,
     })
@@ -607,6 +630,7 @@ export const buildActionQueueHistoryView = async ({
   const toUiKind = (k: string): DerivedActionQueueKind => {
     if (k === 'stale-worktree') return 'stale-worktree'
     if (k === 'draft-proposal') return 'draft-proposal'
+    if (k === 'awaiting-validation') return 'awaiting-validation'
     return 'failed-task'
   }
 
@@ -849,6 +873,9 @@ export const buildActionQueueHistoryView = async ({
       errorKind,
       actions: [], // Resolved rows are read-only; no actions.
       staleWorktreeDetail,
+      // Resolved rows are historical: the preview server (if any) has been
+      // reaped on Validate/Reject, so there is no live URL to surface.
+      devServerUrl: null,
       diagnosis,
       failureReasonCode,
       fixForTaskId,

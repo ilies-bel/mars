@@ -44,6 +44,11 @@ export const ACTION_QUEUE_KINDS = [
   'draft-proposal',
   'slices-dropped',
   'hitl-slice-needs-operator',
+  // A task finished verify cleanly and carries a preview command: a live dev
+  // server is running off its worktree and the task is parked in
+  // 'awaiting-validation' until the operator clicks Validate (→ merge) or
+  // Reject (→ failed). The row carries the dev-server URL in its payload.
+  'awaiting-validation',
   // A durable Subscriber's handler has thrown on the same event K times in
   // a row; its cursor is blocked (ADR-0032). The operator surface for an
   // otherwise-silent stall — there is no DLQ.

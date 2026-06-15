@@ -179,7 +179,14 @@ const stripComments = (src: string): string => {
       i = end + 2
       continue
     }
-    // string literal — copy verbatim, but do not look inside for comments
+    // string literal — copy verbatim, but do not look inside for comments.
+    // Single/double-quoted strings cannot span a raw newline (real JS lexing),
+    // so terminate the scan at an unescaped newline. Without this, a stray
+    // quote inside a comment (e.g. `124/"timed out"`) would put the walker
+    // into a string state that swallows the `//` markers of later comment
+    // lines, leaking commented-out POSIX-shell prose into the audit and
+    // producing a false positive. Backticks (template literals) may span
+    // newlines, so they keep scanning across lines.
     if (ch === "'" || ch === '"' || ch === '`') {
       const quote = ch
       out += quote
@@ -191,6 +198,7 @@ const stripComments = (src: string): string => {
           i += 2
           continue
         }
+        if ((quote === "'" || quote === '"') && c === '\n') break
         out += c
         i += 1
         if (c === quote) break

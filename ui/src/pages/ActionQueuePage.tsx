@@ -49,7 +49,12 @@ export type KindFilter = 'all' | 'alerts' | 'drafts'
 /** Pure helper: returns true when `item` should be shown for the given `filter`. */
 export function matchesKindFilter(item: ActionQueueItem, filter: KindFilter): boolean {
   if (filter === 'all') return true
-  if (filter === 'alerts') return item.kind === 'failed-task' || item.kind === 'stale-worktree'
+  if (filter === 'alerts')
+    return (
+      item.kind === 'failed-task' ||
+      item.kind === 'stale-worktree' ||
+      item.kind === 'awaiting-validation'
+    )
   return item.kind === 'draft-proposal'
 }
 
@@ -606,7 +611,8 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
             <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
               {item.title || '(no title)'}
             </h2>
-            {item.kind === 'failed-task' && item.body ? (
+            {(item.kind === 'failed-task' || item.kind === 'awaiting-validation') &&
+            item.body ? (
               <p className="mt-2 whitespace-pre-wrap font-mono text-[12px] text-fg/80">
                 {item.body}
               </p>
@@ -681,6 +687,30 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
               </div>
             </>
           )}
+          {/* Preview gate: clickable live dev-server URL the operator opens
+              before clicking Validate / Reject in the action bar above. */}
+          {item.kind === 'awaiting-validation' && item.devServerUrl ? (
+            <div>
+              <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+                Live preview
+              </dt>
+              <dd>
+                <a
+                  href={item.devServerUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  data-testid="aq-preview-url"
+                  className="break-all font-mono text-[12px] text-fg underline decoration-iron/50 underline-offset-2 transition-colors hover:text-fg hover:decoration-fg"
+                >
+                  {item.devServerUrl}
+                </a>
+                <p className="mt-1 text-[10px] text-iron/70">
+                  Opens in a new tab. Validate to merge, or Reject to stop the
+                  merge and fail the task (its worktree is kept).
+                </p>
+              </dd>
+            </div>
+          ) : null}
           {/* Diagnosis before the origin chain so context is established first. */}
           {item.diagnosis ? (
             <div>
@@ -847,6 +877,7 @@ export const ActionQueuePage = () => {
     'draft-proposal': true,
     'failed-task': true,
     'stale-worktree': true,
+    'awaiting-validation': true,
     'arc-failed': true,
   })
 
@@ -859,6 +890,7 @@ export const ActionQueuePage = () => {
     'draft-proposal': filtered.filter((i) => i.kind === 'draft-proposal'),
     'failed-task': filtered.filter((i) => i.kind === 'failed-task'),
     'stale-worktree': filtered.filter((i) => i.kind === 'stale-worktree'),
+    'awaiting-validation': filtered.filter((i) => i.kind === 'awaiting-validation'),
     'arc-failed': filtered.filter((i) => i.kind === 'arc-failed'),
   }), [filtered])
 
@@ -912,6 +944,7 @@ export const ActionQueuePage = () => {
           ) : filtered.length > 0 ? (
             <div>
               {([
+                ['awaiting-validation', 'Awaiting validation'],
                 ['failed-task', 'Failed tasks'],
                 ['draft-proposal', 'Drafts'],
                 ['arc-failed', 'Failed arcs'],

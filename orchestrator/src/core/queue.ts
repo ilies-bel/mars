@@ -3,9 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
-import { assertNotRecoveryEdge } from './lib/blocker-invariant'
 import { openLibsql } from './lib/libsql'
-import { buildEventInsert, withWriteTx } from './lib/outbox'
+import { buildEventInsert } from './lib/outbox'
 import { Arc } from './arc'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
 
@@ -15,6 +14,13 @@ export type TaskStatus =
   | 'queued'
   | 'running'
   | 'verifying'
+  // Parked after a clean verify when the task carries a preview command: a
+  // live dev server is running off the worktree and the task waits for a human
+  // to Validate (→ merge) or Reject (→ failed) via the action queue. Like
+  // 'blocked', this is a non-dispatchable parking status; the gate is a
+  // workflow boundary (the worker returns and holds no merge lock) so it
+  // survives daemon restarts. See the awaiting-validation action-queue kind.
+  | 'awaiting-validation'
   | 'merging'
   | 'vega-reconciling'
   | 'done'
@@ -36,6 +42,9 @@ export const NON_DISPATCHABLE_STATUSES: readonly TaskStatus[] = [
   'blocked',
   'running',
   'verifying',
+  // Parked at the preview gate; only an explicit operator Validate re-queues
+  // the task for its merge continuation. The dispatcher must never pick it up.
+  'awaiting-validation',
   'merging',
   'vega-reconciling',
   'done',
@@ -192,6 +201,17 @@ export interface SubDeliverableSpec {
 export interface TaskSpec {
   files: readonly string[]
   verifyCmd: string | null
+  /**
+   * Human-in-the-loop preview command. When non-null, the merge step does NOT
+   * merge automatically: after a clean verify it starts this command as a live
+   * dev server off the task's worktree, parks the task in 'awaiting-validation',
+   * and raises an action-queue row with a clickable URL plus Validate / Reject
+   * buttons. The exact command is authored on the task definition
+   * (`mars task add ... --preview "npm run dev"`); tasks with no preview command
+   * merge as before. Distinct from `verifyCmd`, which runs to completion and
+   * gates on exit code; the preview command is long-running and gates on a human.
+   */
+  previewCmd: string | null
   doneCriteria: readonly string[]
   taskType: TaskType
   /**
@@ -222,6 +242,7 @@ export interface TaskSpec {
 export const EMPTY_TASK_SPEC: TaskSpec = {
   files: [],
   verifyCmd: null,
+  previewCmd: null,
   doneCriteria: [],
   taskType: 'auto',
 }
@@ -298,6 +319,26 @@ export interface Task {
    * A populated value is always a 40-character hex string.
    */
   integrationHeadSha: string | null
+  /**
+   * Live URL of the preview dev server for a task parked in
+   * 'awaiting-validation' (e.g. `http://127.0.0.1:4321`). NULL whenever no
+   * preview server is running. Persisted so the action-queue row's clickable
+   * link survives a daemon restart.
+   */
+  devServerUrl: string | null
+  /**
+   * OS process id of the running preview dev server, NULL whenever none is
+   * running. Persisted so the process can be reaped on Validate/Reject or by
+   * the startup reconciler after a crash.
+   */
+  devServerPid: number | null
+  /**
+   * True once the operator clicked Validate on this task's preview gate. The
+   * merge step gates only while this is false; after Validate the daemon flips
+   * it true and re-queues, and the re-dispatched merge runs past the gate.
+   * False on every task that never carries a preview command.
+   */
+  previewValidated: boolean
   /**
    * Recipe-specific payload preserved with a recovery task. NULL for every
    * non-recovery row. Slice F.2 stores `{ recipe, dirtyMainHash }` here for
@@ -607,6 +648,33 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // COLUMN migration runs in the junction-tables section below.
   if (!names.has('verify_cmd')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN verify_cmd TEXT`)
+  }
+  // preview_cmd: human-in-the-loop preview command (e.g. 'npm run dev'). When
+  // set, the merge step starts it as a live dev server off the worktree and
+  // parks the task in 'awaiting-validation' until the operator Validates or
+  // Rejects via the action queue. NULL on tasks that merge automatically.
+  if (!names.has('preview_cmd')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN preview_cmd TEXT`)
+  }
+  // dev_server_url / dev_server_pid: live coordinates of the preview dev server
+  // for a task parked in 'awaiting-validation'. Persisted (not just in-memory)
+  // so the clickable URL survives a daemon restart and the process can be
+  // reaped on Validate/Reject or on startup reconcile. Both NULL otherwise.
+  if (!names.has('dev_server_url')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN dev_server_url TEXT`)
+  }
+  if (!names.has('dev_server_pid')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN dev_server_pid INTEGER`)
+  }
+  // preview_validated: durable, restart-safe marker that the operator clicked
+  // Validate on the preview gate. The merge step gates only when previewCmd is
+  // set AND this is 0/NULL; once the daemon's validate handler flips it to 1
+  // and re-queues, the re-dispatched merge re-enters past the gate and merges.
+  // Stays 0/NULL on tasks that never gate.
+  if (!names.has('preview_validated')) {
+    await c.execute(
+      `ALTER TABLE tasks ADD COLUMN preview_validated INTEGER NOT NULL DEFAULT 0`,
+    )
   }
   if (!names.has('task_type')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN task_type TEXT`)
@@ -962,7 +1030,8 @@ export const migrateQueueSchema = async (): Promise<void> => {
     const tasksSql = tasksSqlRow?.sql ?? ''
     const tasksNeedCheckRebuild =
       !tasksSql.includes('CHECK (status IN') ||
-      !tasksSql.includes("'under_investigation'")
+      !tasksSql.includes("'under_investigation'") ||
+      !tasksSql.includes("'awaiting-validation'")
 
     const healFkRows = await c.execute(
       `PRAGMA foreign_key_list(self_heal_attempts)`,
@@ -1081,7 +1150,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             id                   TEXT    PRIMARY KEY,
             prompt               TEXT    NOT NULL,
             status               TEXT    NOT NULL
-                                         CHECK (status IN ('draft','triaging','queued','running','verifying','merging','vega-reconciling','done','failed','dropped','blocked','under_investigation')),
+                                         CHECK (status IN ('draft','triaging','queued','running','verifying','awaiting-validation','merging','vega-reconciling','done','failed','dropped','blocked','under_investigation')),
             plan_functional      TEXT,
             plan_technical       TEXT,
             branch               TEXT,
@@ -1109,6 +1178,10 @@ export const migrateQueueSchema = async (): Promise<void> => {
             failed_phase         TEXT,
             resume_from          TEXT,
             verify_cmd           TEXT,
+            preview_cmd          TEXT,
+            dev_server_url       TEXT,
+            dev_server_pid       INTEGER,
+            preview_validated    INTEGER NOT NULL DEFAULT 0,
             task_type            TEXT,
             read_first_json      TEXT,
             prescriptive_action  TEXT,
@@ -1129,7 +1202,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             failure_reason, failure_reason_code, recovery_payload,
             fix_for_task_id, failure_signature, kind, priority, tag, tags_json,
             origin_id, parent_proposal_id, slice_index, failed_phase, resume_from,
-            verify_cmd, task_type, read_first_json,
+            verify_cmd, preview_cmd, dev_server_url, dev_server_pid, preview_validated, task_type, read_first_json,
             prescriptive_action, slice_kind, sub_deliverable_json,
             integration_head_sha, followup_dedup_key, intent, created_at, updated_at
           )
@@ -1142,7 +1215,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             COALESCE(priority, 0), tag, tags_json,
             COALESCE(origin_id, id),
             parent_proposal_id, slice_index, failed_phase, resume_from,
-            verify_cmd, task_type, read_first_json,
+            verify_cmd, preview_cmd, dev_server_url, dev_server_pid, COALESCE(preview_validated, 0), task_type, read_first_json,
             prescriptive_action, slice_kind, sub_deliverable_json,
             integration_head_sha, followup_dedup_key, COALESCE(intent, ''), created_at, updated_at
           FROM tasks
@@ -1808,11 +1881,12 @@ SELECT
   t.failed_phase, t.resume_from,
   (SELECT json_group_array(path ORDER BY position)
      FROM task_spec_files WHERE task_id = t.id) AS files_json,
-  t.verify_cmd,
+  t.verify_cmd, t.preview_cmd,
   (SELECT json_group_array(criterion ORDER BY position)
      FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
   t.task_type, t.read_first_json, t.prescriptive_action, t.slice_kind,
-  t.sub_deliverable_json, t.integration_head_sha, t.intent, t.created_at, t.updated_at
+  t.sub_deliverable_json, t.integration_head_sha,
+  t.dev_server_url, t.dev_server_pid, t.preview_validated, t.intent, t.created_at, t.updated_at
 FROM tasks t`
 
 export const rowToTask = (row: Record<string, unknown>): Task => {
@@ -1869,6 +1943,12 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     failedPhase: coerceFailedPhase(row.failed_phase),
     spec: rowToTaskSpec(row),
     integrationHeadSha: (row.integration_head_sha as string | null) ?? null,
+    devServerUrl: (row.dev_server_url as string | null) ?? null,
+    devServerPid:
+      row.dev_server_pid === null || row.dev_server_pid === undefined
+        ? null
+        : Number(row.dev_server_pid),
+    previewValidated: Number(row.preview_validated ?? 0) === 1,
     recoveryPayload: (row.recovery_payload as string | null) ?? null,
     intent: (row.intent as string | null) ?? '',
     createdAt: row.created_at as string,
@@ -1895,6 +1975,7 @@ const parseStringArray = (raw: unknown): string[] => {
 const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
   const rawFiles = (row.files_json as string | null) ?? null
   const rawVerify = (row.verify_cmd as string | null) ?? null
+  const rawPreview = (row.preview_cmd as string | null) ?? null
   const rawDone = (row.done_criteria_json as string | null) ?? null
   const rawType = (row.task_type as string | null) ?? null
   const rawReadFirst = (row.read_first_json as string | null) ?? null
@@ -1904,6 +1985,7 @@ const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
   const anySet =
     rawFiles !== null ||
     rawVerify !== null ||
+    rawPreview !== null ||
     rawDone !== null ||
     rawType !== null ||
     rawReadFirst !== null ||
@@ -1922,6 +2004,7 @@ const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
   return {
     files: parseStringArray(rawFiles),
     verifyCmd: rawVerify,
+    previewCmd: rawPreview,
     doneCriteria: parseStringArray(rawDone),
     taskType: isTaskType(rawType) ? rawType : 'auto',
     readFirst: parseStringArray(rawReadFirst),
@@ -2007,6 +2090,9 @@ export const updateTask = async (
       | 'error'
       | 'failedPhase'
       | 'integrationHeadSha'
+      | 'devServerUrl'
+      | 'devServerPid'
+      | 'previewValidated'
       | 'failureReason'
       | 'failureSignature'
     > & {
@@ -2087,6 +2173,18 @@ export const updateTask = async (
   if (patch.integrationHeadSha !== undefined) {
     fields.push('integration_head_sha = ?')
     args.push(patch.integrationHeadSha)
+  }
+  if (patch.devServerUrl !== undefined) {
+    fields.push('dev_server_url = ?')
+    args.push(patch.devServerUrl)
+  }
+  if (patch.devServerPid !== undefined) {
+    fields.push('dev_server_pid = ?')
+    args.push(patch.devServerPid)
+  }
+  if (patch.previewValidated !== undefined) {
+    fields.push('preview_validated = ?')
+    args.push(patch.previewValidated ? 1 : 0)
   }
   if (patch.failureReason !== undefined) {
     fields.push('failure_reason = ?')

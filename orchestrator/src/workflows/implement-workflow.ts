@@ -41,6 +41,8 @@ export {
   isOriginWorktreeMissingAbortError,
   CODER_EXIT_NONZERO_ABORT_MESSAGE,
   isCoderExitNonzeroAbortError,
+  PREVIEW_GATE_MESSAGE,
+  isPreviewGateError,
   // Prompt briefs + system-prompt assembly
   COMMIT_FOOTER,
   DEVIATION_RULES,

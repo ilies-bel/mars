@@ -82,7 +82,7 @@ describe('junction-table read path: spec files', () => {
       spec: {
         files: ['src/a.ts', 'src/b.ts'],
         doneCriteria: [],
-        verifyCmd: null,
+        verifyCmd: null, previewCmd: null,
         taskType: 'auto',
       },
     })
@@ -112,7 +112,7 @@ describe('junction-table read path: done criteria', () => {
       spec: {
         files: [],
         doneCriteria: ['all tests pass', 'type-checks clean'],
-        verifyCmd: 'npm test',
+        verifyCmd: 'npm test', previewCmd: null,
         taskType: 'auto',
       },
     })

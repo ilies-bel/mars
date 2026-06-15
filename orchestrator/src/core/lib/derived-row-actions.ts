@@ -21,7 +21,10 @@
 import type { ActionDescriptor } from './failure-kinds'
 
 /** The non-failure derived action-queue row kinds. */
-export type DerivedRowKind = 'stale-worktree' | 'draft-proposal'
+export type DerivedRowKind =
+  | 'stale-worktree'
+  | 'draft-proposal'
+  | 'awaiting-validation'
 
 /**
  * Resolve the recovery menu for a non-failure derived row kind. Returns an
@@ -53,6 +56,12 @@ export const derivedRowActions = (rowKind: string, entityId?: string): ActionDes
         hint: entityId ? `/mars:grill ${entityId}` : '/mars:grill',
       },
       { id: 'dismiss', label: 'Dismiss', op: 'dismiss', needsConfirm: true },
+    ]
+  }
+  if (rowKind === 'awaiting-validation') {
+    return [
+      { id: 'validate', label: 'Validate', op: 'validate' },
+      { id: 'reject', label: 'Reject', op: 'reject', needsConfirm: true },
     ]
   }
   return []
