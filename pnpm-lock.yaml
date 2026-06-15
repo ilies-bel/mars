@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      mars:
+        specifier: link:./orchestrator
+        version: link:orchestrator
     devDependencies:
       knip:
         specifier: ^6.14.0

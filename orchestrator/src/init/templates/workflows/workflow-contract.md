@@ -27,22 +27,37 @@ bundle refresh (`npm run mars:bundle:refresh`).
 
 ## Module shape
 
-Each template is a plain ES module that default-exports a workflow object:
+Each template is a plain ES module that default-exports a workflow defined with
+`defineWorkflow`. Everything — the `defineWorkflow` helper and the four git
+step-primitives (`setupWorktree`, `runAgent`, `verify`, `merge`) — is imported
+from the single `mars/workflow` surface:
 
 ```js
-export default {
+import {
+  defineWorkflow,
+  setupWorktree, runAgent, verify, merge,
+} from 'mars/workflow'
+
+export default defineWorkflow({
   id: 'task',
   async fn(ctx, input) {
-    await ctx.step('setup', async () => { /* … */ })
-    // native control flow is the source of truth; each durable unit is a step.
-    return { /* output */ }
+    const kind = input.kind ?? 'task'
+    const worktree = await ctx.step('setup',  () => setupWorktree(ctx, { kind }))
+    await ctx.step('code',   () => runAgent(ctx, { prompt: input.prompt, tags: input.tags }))
+    await ctx.step('verify', () => verify(ctx, { kind }))
+    return  ctx.step('merge',  () => merge(ctx, { kind }))
   },
-}
+})
 ```
 
 - `id` — the workflow id (load-bearing trace-view label).
 - `fn(ctx, input)` — the imperative body. `ctx.step(name, fn)` wraps each
   durable unit; durability is checkpoint-resume keyed on the run id.
+- The primitives take `(ctx, opts)`: `ctx` is the run context, `opts` a small
+  bag of per-call options that all default. The plumbing (Arc task store, trace
+  store, worktree ref, event sink, step handle) is pulled off `ctx` for you —
+  the worktree `setupWorktree` provisions is remembered for `verify`/`merge`.
+  Every task-state write funnels through the Arc aggregate (ADR-0052).
 - Failures **THROW** — the engine records the step failed. Do not swallow.
 
 ## Ownership & update semantics
@@ -57,5 +72,5 @@ export default {
 
 ## Marker
 
-Every scaffolded template carries the `// @mars-workflow-template:v1` marker on
+Every scaffolded template carries the `// @mars-workflow-template:v2` marker on
 its first line so tooling can recognise an unedited template.

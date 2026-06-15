@@ -1,4 +1,4 @@
-// @mars-workflow-template:v1
+// @mars-workflow-template:v2
 //
 // task-workflow.js — the default end-to-end task pipeline.
 //
@@ -7,27 +7,28 @@
 // will never silently overwrite it — when the bundled template changes it shows
 // you a diff and lets you merge by hand.
 //
-// A workflow is a plain JS module exporting a `defineWorkflow({ id, fn })`
-// object. `ctx.step(name, fn)` wraps each durable unit; failures THROW.
-//
-// The four steps COMPOSE the orchestrator's exported git step-primitives
-// (ADR-0056): `setupWorktree`, `runAgent`, `verify`, `merge`. They are imported
-// from `mars/workflow-primitives` — the stable seam the orchestrator publishes
-// for exactly this. Each primitive routes every task-state write through the
-// injected Arc store (`ctx.services.store`, ADR-0052), so this custom workflow
-// CANNOT strand a task or bypass the aggregate — the funnel is baked in.
+// EVERYTHING is imported from the single `mars/workflow` surface: the
+// `defineWorkflow` definition helper AND the four git step-primitives
+// (`setupWorktree`, `runAgent`, `verify`, `merge`). Each primitive takes
+// `(ctx, opts)` — `ctx` is the run context the engine hands you, and `opts` is
+// a small bag of per-call options that all default. You never touch the
+// plumbing: the Arc task store, the trace store, the worktree ref, the event
+// sink, and the step handle are all pulled off `ctx` for you (the worktree
+// `setupWorktree` provisions is remembered for `verify`/`merge`). Every
+// task-state write still funnels through the Arc aggregate (ADR-0052), so this
+// workflow CANNOT strand a task.
 
-/** @typedef {import('@mars/workflow').WorkflowCtx} WorkflowCtx */
+/** @typedef {import('mars/workflow').WorkflowCtx} WorkflowCtx */
 
 import {
-  buildPrimitiveTrace,
+  defineWorkflow,
   setupWorktree,
   runAgent,
   verify,
   merge,
-} from 'mars/workflow-primitives'
+} from 'mars/workflow'
 
-export default {
+export default defineWorkflow({
   id: 'task',
   /**
    * @param {WorkflowCtx} ctx
@@ -45,69 +46,44 @@ export default {
    * }} input
    */
   async fn(ctx, input) {
-    const store = ctx.services.store
-    const integrationBranch = input.integrationBranch ?? 'main'
     const kind = input.kind ?? 'task'
-    // One trace context for the whole run (spans + git shell-out attribution).
-    const trace = await buildPrimitiveTrace(ctx.runId, input.taskId)
 
     // setup → provision/attach the worktree on `task/<id>` and install deps.
-    const worktree = await ctx.step('setup', (handle) =>
-      setupWorktree({
-        taskId: input.taskId,
-        integrationBranch,
+    // The resolved worktree is remembered on `ctx` for verify/merge below.
+    await ctx.step('setup', () =>
+      setupWorktree(ctx, {
         kind,
-        recoveryPayload: input.recoveryPayload ?? null,
-        fixForTaskId: input.fixForTaskId ?? null,
-        store,
-        trace,
-        handle,
+        integrationBranch: input.integrationBranch,
+        recoveryPayload: input.recoveryPayload,
+        fixForTaskId: input.fixForTaskId,
       }),
     )
 
-    // code → the coder (headless `claude -p`) implements the task prompt.
-    await ctx.step('code', (handle) =>
-      runAgent({
-        taskId: input.taskId,
+    // code → the coder implements the task prompt inside the worktree.
+    await ctx.step('code', () =>
+      runAgent(ctx, {
         prompt: input.prompt,
-        plan: input.plan ?? null,
-        tags: input.tags ?? ['coder'],
+        plan: input.plan,
+        tags: input.tags,
         kind,
-        spec: input.spec ?? null,
-        integrationBranch,
-        resumeFromCodePhase: input.resumeFromCodePhase ?? false,
-        worktree,
-        store,
-        trace,
-        emit: (event) => ctx.emit('claude-event', event),
-        handle,
+        spec: input.spec,
+        integrationBranch: input.integrationBranch,
+        resumeFromCodePhase: input.resumeFromCodePhase,
       }),
     )
 
     // verify → scope-aware typecheck → tests → lint. Throws on any failure.
     await ctx.step('verify', () =>
-      verify({
-        taskId: input.taskId,
+      verify(ctx, {
         kind,
-        integrationBranch,
-        recoveryPayload: input.recoveryPayload ?? null,
-        worktree,
-        store,
-        trace,
+        integrationBranch: input.integrationBranch,
+        recoveryPayload: input.recoveryPayload,
       }),
     )
 
     // merge → serialized fast-forward into the integration branch (Vega on conflict).
     return await ctx.step('merge', () =>
-      merge({
-        taskId: input.taskId,
-        kind,
-        integrationBranch,
-        worktree,
-        store,
-        trace,
-        emit: (event) => ctx.emit('vcs-supervisor-event', event),
-      }),
+      merge(ctx, { kind, integrationBranch: input.integrationBranch }),
     )
   },
-}
+})

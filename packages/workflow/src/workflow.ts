@@ -108,6 +108,20 @@ export interface WorkflowCtx<Services = unknown> {
 
   /** Emit a fine-grained progress event (also logged at info). */
   emit(event: string, payload?: unknown): void;
+
+  /**
+   * The {@link StepHandle} of the step currently executing, or `null` when no
+   * step is in flight (i.e. directly inside the workflow body, between steps,
+   * or after a step settles). Set by the engine for the duration of a step's
+   * `fn` and cleared afterwards.
+   *
+   * This exists so a helper invoked inside a step — e.g. a domain primitive
+   * called as `ctx.step('s', () => primitive(ctx))` — can reach the live
+   * handle (to record sha / transcript key / summary) WITHOUT the caller
+   * having to thread `handle` through every call. Steps run sequentially
+   * within a run, so there is never more than one in flight at a time.
+   */
+  readonly currentStep: StepHandle | null;
 }
 
 /** A workflow function: `(ctx, input) => Promise<output>`. */
@@ -223,6 +237,7 @@ export async function runWorkflow<I, O, Services = unknown>(
     logger: runLogger,
     signal,
     services,
+    currentStep: null,
     emit(event: string, payload?: unknown): void {
       const evt: WorkflowEvent = {
         runId,
@@ -247,6 +262,13 @@ export async function runWorkflow<I, O, Services = unknown>(
         signal,
         seenNames,
         onEvent: options.onEvent,
+        // Publish the live step handle onto ctx for the duration of the step so
+        // helpers invoked inside it (domain primitives) can reach it without
+        // the caller threading `handle`. Cleared back to null when the step
+        // settles. `currentStep` is readonly to consumers; the engine owns it.
+        setCurrentStep: (handle) => {
+          (ctx as { currentStep: StepHandle | null }).currentStep = handle;
+        },
       });
     },
   };
@@ -276,6 +298,13 @@ interface RunStepArgs<T> {
   signal: AbortSignal;
   seenNames: Set<string>;
   onEvent: ((event: WorkflowEvent) => void) | undefined;
+  /**
+   * Publish the live {@link StepHandle} onto the run ctx for the duration of
+   * this step (called with the handle before `fn` runs, and with `null` once
+   * the step settles). Lets a primitive invoked inside the step reach the
+   * handle via `ctx.currentStep` without the caller threading it.
+   */
+  setCurrentStep: (handle: StepHandle | null) => void;
 }
 
 async function runStep<T>(args: RunStepArgs<T>): Promise<T> {
@@ -346,6 +375,11 @@ async function runStep<T>(args: RunStepArgs<T>): Promise<T> {
   });
   stepLogger.info({ event: 'step.started', attempt }, 'step.started');
 
+  // Publish the live handle onto the run ctx so primitives invoked inside this
+  // step can reach it (sha / transcript key / summary) without it being passed
+  // through their args. Cleared in the finally below — including on throw —
+  // so `ctx.currentStep` is null whenever no step is in flight.
+  args.setCurrentStep(handle);
   try {
     const result = await fn(handle);
     const finishedAt = Date.now();
@@ -386,6 +420,9 @@ async function runStep<T>(args: RunStepArgs<T>): Promise<T> {
     });
     stepLogger.error({ event: 'step.failed', attempt, err: err.message }, 'step.failed');
     throw err;
+  } finally {
+    // Clear the published handle: no step is in flight once this one settles.
+    args.setCurrentStep(null);
   }
 }
 

@@ -1,4 +1,4 @@
-// @mars-workflow-template:v1
+// @mars-workflow-template:v2
 //
 // write-workflow.js — the structured-write pipeline (glossary / ADR / docs).
 //
@@ -6,11 +6,14 @@
 // edit freely. `mars update` shows a diff instead of overwriting your edits.
 //
 // Structured writes are deterministic, no-LLM edits to CONTEXT.md / docs/adr/**
-// merged back through the serialized merge lock.
+// merged back through the serialized merge lock. The steps below are
+// hand-written placeholders for you to flesh out.
 
-/** @typedef {import('@mars/workflow').WorkflowCtx} WorkflowCtx */
+/** @typedef {import('mars/workflow').WorkflowCtx} WorkflowCtx */
 
-export default {
+import { defineWorkflow } from 'mars/workflow'
+
+export default defineWorkflow({
   id: 'write',
   /**
    * @param {WorkflowCtx} ctx
@@ -34,4 +37,4 @@ export default {
 
     return { target: input.target, status: 'done' }
   },
-}
+})

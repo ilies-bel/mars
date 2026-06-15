@@ -1,4 +1,4 @@
-// @mars-workflow-template:v1
+// @mars-workflow-template:v2
 //
 // diagnose-workflow.js — read-only diagnosis of a stuck/failed task.
 //
@@ -6,11 +6,15 @@
 // edit freely. `mars update` shows a diff instead of overwriting your edits.
 //
 // Diagnosis proposes no action of its own — it records a structured verdict the
-// operator (or the action queue) acts on afterward.
+// operator (or the action queue) acts on afterward. It does not yet compose the
+// git step-primitives (it has no worktree to verify/merge); the steps below are
+// hand-written placeholders for you to flesh out.
 
-/** @typedef {import('@mars/workflow').WorkflowCtx} WorkflowCtx */
+/** @typedef {import('mars/workflow').WorkflowCtx} WorkflowCtx */
 
-export default {
+import { defineWorkflow } from 'mars/workflow'
+
+export default defineWorkflow({
   id: 'diagnose',
   /**
    * @param {WorkflowCtx} ctx
@@ -34,4 +38,4 @@ export default {
 
     return { taskId: input.taskId, status: 'diagnosed' }
   },
-}
+})

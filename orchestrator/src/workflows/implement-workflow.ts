@@ -1,25 +1,21 @@
-import { defineWorkflow, type StepHandle, type WorkflowCtx } from '@mars/workflow'
+import { defineWorkflow } from '@mars/workflow'
 import { z } from 'zod'
-
-import { nullTraceStore } from '../core/lib/run-tool'
-import { resolveContext } from '../core/context'
-import type { ClaudeEvent } from '../core/lib/claude-stream'
-import { resolveOriginIdForTask } from '../core/lib/origin'
-import { type DomainTaskStore as TaskStore } from '../core/store/task-store'
-import { openTraceEventStore, type TraceEventStore } from '../core/lib/trace-events-store'
 
 // ── ADR-0056 git step-primitive surface ────────────────────────────────────
 // The four reusable primitives now live in `./primitives`. The bundled
 // implement pipeline below is one composition over them; scaffolded
-// `.mars/workflows/*.js` files import the same primitives. Every task-state
-// write inside a primitive routes through the injected Arc-backed `store`
-// (ADR-0052), so neither this workflow nor a custom one can strand a task.
+// `.mars/workflows/*.js` files import the same primitives (via `mars/workflow`).
+// Every task-state write inside a primitive routes through `ctx.services.store`
+// (ADR-0052), so neither this workflow nor a custom one can strand a task. The
+// primitives now take `(ctx, opts)` and pull store / trace / worktree / emit /
+// handle off `ctx` themselves — this pipeline is the canonical example of the
+// authoring API.
 import {
   setupWorktree,
   runAgent,
   verify as verifyPrimitive,
   merge as mergePrimitive,
-  type PrimitiveTraceArgs,
+  type MarsServices,
 } from './primitives'
 
 // Pure helpers + failure sentinels were hoisted to `./primitives/shared` so the
@@ -71,11 +67,11 @@ export type { PostCoderStateArgs, PostCoderState } from './primitives/shared'
 // thin composition over the corresponding `./primitives` function.
 // ---------------------------------------------------------------------------
 
-// Services injected at `runWorkflow` time. The daemon wires `{ store: TaskStore }`
-// from the composition root; the primitives read it as the Arc write funnel.
-export interface ImplementServices {
-  store: TaskStore
-}
+// Services injected at `runWorkflow` time. The daemon wires
+// `{ store, traceStore }` from the composition root; the primitives read
+// `store` as the Arc write funnel and `traceStore` for spans/events.
+// Re-exported from the primitives module so there is one MarsServices type.
+export type { MarsServices }
 
 // Validated workflow input.
 const implementInputSchema = z.object({
@@ -115,51 +111,31 @@ export interface ImplementOutput {
 export const implementWorkflow = defineWorkflow<
   ImplementInput,
   ImplementOutput,
-  ImplementServices
+  MarsServices
 >({
   id: 'implement',
   inputSchema: implementInputSchema,
-  fn: async (
-    ctx: WorkflowCtx<ImplementServices>,
-    input: ImplementInput,
-  ): Promise<ImplementOutput> => {
-    const store = ctx.services.store
-
-    // One trace store for every shell-out across all four phases. Opened once;
-    // failure to open is non-fatal (nullTraceStore drops events silently).
-    const workflowTraceStore: TraceEventStore =
-      (await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)) ??
-      nullTraceStore
-    // Resolve origin id once for stable trace attribution across the workflow.
-    const workflowOriginId = await resolveOriginIdForTask(input.taskId).catch(
-      () => input.taskId,
-    )
-    const trace: PrimitiveTraceArgs = {
-      workflowInstanceId: ctx.runId,
-      originId: workflowOriginId,
-      taskId: input.taskId,
-      traceStore: workflowTraceStore,
-    }
+  fn: async (ctx, input): Promise<ImplementOutput> => {
+    // The primitives pull store / trace / worktree / emit / handle off `ctx`
+    // (and `ctx.currentStep` inside a step). This pipeline passes the explicit
+    // per-task fields (taskId, integrationBranch, …) so it is robust even where
+    // ctx.runId !== taskId. The four step NAMES are load-bearing (checkpoint-
+    // resume + trace-view labels) and unchanged.
 
     // ── setup-worktree ─────────────────────────────────────────────────────
-    const worktree = await ctx.step(
-      'setup-worktree',
-      (handle: StepHandle) =>
-        setupWorktree({
-          taskId: input.taskId,
-          integrationBranch: input.integrationBranch,
-          kind: input.kind,
-          recoveryPayload: input.recoveryPayload,
-          fixForTaskId: input.fixForTaskId,
-          store,
-          trace,
-          handle,
-        }),
+    const worktree = await ctx.step('setup-worktree', () =>
+      setupWorktree(ctx, {
+        taskId: input.taskId,
+        integrationBranch: input.integrationBranch,
+        kind: input.kind,
+        recoveryPayload: input.recoveryPayload,
+        fixForTaskId: input.fixForTaskId,
+      }),
     )
 
     // ── run-claude-code ─────────────────────────────────────────────────────
-    await ctx.step('run-claude-code', (handle: StepHandle) =>
-      runAgent({
+    await ctx.step('run-claude-code', () =>
+      runAgent(ctx, {
         taskId: input.taskId,
         prompt: input.prompt,
         plan: input.plan,
@@ -169,37 +145,28 @@ export const implementWorkflow = defineWorkflow<
         integrationBranch: input.integrationBranch,
         resumeFromCodePhase: input.resumeFromCodePhase,
         worktree,
-        store,
-        trace,
-        emit: (event: ClaudeEvent) => ctx.emit('claude-event', event),
-        handle,
       }),
     )
 
     // ── verify ───────────────────────────────────────────────────────────
     await ctx.step('verify', () =>
-      verifyPrimitive({
+      verifyPrimitive(ctx, {
         taskId: input.taskId,
         kind: input.kind,
         integrationBranch: input.integrationBranch,
         recoveryPayload: input.recoveryPayload,
         worktree,
-        store,
-        trace,
       }),
     )
 
     // ── merge ──────────────────────────────────────────────────────────────
     // verify throws on failure, so reaching here always means verify passed.
     return await ctx.step('merge', () =>
-      mergePrimitive({
+      mergePrimitive(ctx, {
         taskId: input.taskId,
         kind: input.kind,
         integrationBranch: input.integrationBranch,
         worktree,
-        store,
-        trace,
-        emit: (event: ClaudeEvent) => ctx.emit('vcs-supervisor-event', event),
       }),
     )
   },

@@ -16,21 +16,28 @@
  *   - scaffolded `.mars/workflows/<kind>-workflow.js` files (which import the
  *     primitives and call them with what `ctx` / `ctx.services` provides).
  *
- * Each primitive takes an explicit args object — NOT the raw `ctx` — so a
- * plain-JS scaffolded workflow can call it with values it already has in hand
- * (`ctx.services.store`, `ctx.runId`, `ctx.emit`, the resolved worktree ref,
- * the integration branch, a trace store). This keeps the primitives runnable
- * outside the bundled workflow without dragging the engine's `WorkflowCtx`
- * shape into their signatures.
+ * Each primitive takes `(ctx, opts)` — the engine `WorkflowCtx` plus a small
+ * bag of per-call domain options. ALL plumbing (the Arc `store`, the trace
+ * store, the live step handle, the `emit` sink, the resolved worktree ref) is
+ * pulled from `ctx` / `ctx.services` internally, so a scaffolded `.mars/
+ * workflows/*.js` file calls them as `setupWorktree(ctx, { kind })` and never
+ * touches the plumbing. This is the Claude-SDK-style "options bag with
+ * defaults" ergonomics (ADR-0056).
+ *
+ * `ctx.services` is typed {@link MarsServices} (`{ store, traceStore }`,
+ * injected by the daemon at `runWorkflow`). The per-task trace context and the
+ * worktree ref are resolved lazily on first use and memoised on `ctx` (see
+ * `resolveTrace` / `resolveWorktree`) so the user never calls a `buildTrace`
+ * helper or threads the worktree between steps.
  *
  * CRITICAL — no-stranded-entity invariant (ADR-0052). Every primitive that
- * mutates task state routes that mutation through the injected `store`
+ * mutates task state routes that mutation through `ctx.services.store`
  * (the Arc-backed `DomainTaskStore`) and the failure handler's `store` arg,
  * exactly as the former inline step bodies did. A custom workflow that calls
  * these primitives therefore CANNOT bypass Arc — the write funnel is baked into
  * the primitive, not left to the caller.
  */
-import type { StepHandle } from '@mars/workflow'
+import type { StepHandle, WorkflowCtx } from '@mars/workflow'
 
 import { runTool, nullTraceStore, type TraceCtx } from '../../core/lib/run-tool'
 import {
@@ -93,55 +100,86 @@ import {
 } from './shared'
 
 // ---------------------------------------------------------------------------
-// Shared primitive args
+// Services + ctx plumbing (resolved internally, never passed by the user)
 // ---------------------------------------------------------------------------
 
 /**
- * Trace/identity context every primitive needs to wrap its work in a span and
- * attribute its shell-outs. The bundled workflow fills these from `ctx` and the
- * resolved origin id; a scaffolded workflow fills them from `ctx.runId` plus a
- * trace store it opened (or `nullTraceStore`).
+ * The `services` bag the daemon injects at `runWorkflow` time and the primitives
+ * read off `ctx.services`. Task-state writes funnel through `store` (the Arc
+ * aggregate, ADR-0052); trace events/spans go to `traceStore` (opened once at
+ * daemon boot). A scaffolded workflow never constructs this — it is given.
  */
-export interface PrimitiveTraceArgs {
+export interface MarsServices {
+  /** Arc-backed task store — the sole task-state write funnel (ADR-0052). */
+  store: TaskStore
+  /** Workflow-level trace store; `nullTraceStore` disables span/event capture. */
+  traceStore: TraceEventStore
+}
+
+/** The engine ctx a Mars primitive operates on. */
+export type MarsCtx = WorkflowCtx<MarsServices>
+
+/**
+ * Internal trace/identity context every primitive needs to wrap its work in a
+ * span and attribute its shell-outs. Resolved from `ctx` by {@link resolveTrace}
+ * — never passed by the caller.
+ */
+interface PrimitiveTraceArgs {
   /** Engine run id (`ctx.runId`); used as `workflowInstanceId` on spans. */
   workflowInstanceId: string
   /** Stable origin attribution for every trace event. */
   originId: string
-  /**
-   * The owning task id stamped on each span. Pass the concrete child task id
-   * for implement-arc steps and `null` for slicer-level steps (generate-slices,
-   * auto-linker-direction, action-quality-reprompt) that have no direct task.
-   */
+  /** The owning task id stamped on each span. */
   taskId: string | null
   /** Workflow-level trace store; `nullTraceStore` disables span/event capture. */
   traceStore: TraceEventStore
 }
 
+// Per-ctx memoised trace context. originId is a DB round-trip, so resolve it
+// once per run and reuse across all four primitives. Keyed on the ctx object so
+// a fresh run (fresh ctx) re-resolves.
+const traceCache = new WeakMap<object, Promise<PrimitiveTraceArgs>>()
+
 /**
- * Build a {@link PrimitiveTraceArgs} from a workflow run id, opening the shared
- * workflow trace store best-effort and resolving a stable origin id. This is
- * the one-liner a scaffolded `.mars/workflows/*.js` calls to get the same
- * tracing the bundled implement pipeline wires by hand:
- *
- * ```js
- * const trace = await buildPrimitiveTrace(ctx.runId, input.taskId)
- * const wt = await setupWorktree({ ..., trace, store: ctx.services.store })
- * ```
- *
- * Failure to open the trace store collapses to `nullTraceStore` (spans/events
- * are silently dropped) so a custom workflow never fails on observability.
+ * Resolve (and memoise on `ctx`) the trace context for this run. The trace
+ * store comes from `ctx.services.traceStore` (opened at daemon boot — no
+ * per-run re-open); the origin id is resolved best-effort and falls back to the
+ * task id. A null/absent traceStore collapses to `nullTraceStore` so a custom
+ * workflow never fails on observability.
  */
-export const buildPrimitiveTrace = async (
-  workflowInstanceId: string,
-  taskId: string,
-): Promise<PrimitiveTraceArgs> => {
-  const { openTraceEventStore } = await import('../../core/lib/trace-events-store')
-  const traceStore: TraceEventStore =
-    (await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)) ??
-    nullTraceStore
-  const originId = await resolveOriginIdForTask(taskId).catch(() => taskId)
-  return { workflowInstanceId, originId, taskId, traceStore }
+const resolveTrace = (ctx: MarsCtx, taskId: string): Promise<PrimitiveTraceArgs> => {
+  let p = traceCache.get(ctx)
+  if (!p) {
+    p = (async (): Promise<PrimitiveTraceArgs> => {
+      const traceStore = ctx.services?.traceStore ?? nullTraceStore
+      const originId = await resolveOriginIdForTask(taskId).catch(() => taskId)
+      return { workflowInstanceId: ctx.runId, originId, taskId, traceStore }
+    })()
+    traceCache.set(ctx, p)
+  }
+  return p
 }
+
+// Per-ctx memoised worktree ref. `setupWorktree` stashes its result here so
+// `verify`/`merge` can read it without the user threading it between steps
+// ("magic"). An explicit `opts.worktree` override always wins.
+const worktreeCache = new WeakMap<object, WorktreeRef>()
+
+/** Resolve the worktree ref: explicit override wins, else the memoised one. */
+const resolveWorktree = (ctx: MarsCtx, override?: WorktreeRef): WorktreeRef => {
+  const wt = override ?? worktreeCache.get(ctx)
+  if (!wt) {
+    throw new Error(
+      'no worktree available: call setupWorktree(ctx, ...) before verify/merge, ' +
+        'or pass { worktree } explicitly.',
+    )
+  }
+  return wt
+}
+
+/** The task id a primitive operates on: explicit override, else the run id. */
+const resolveTaskId = (ctx: MarsCtx, override?: string): string =>
+  override ?? ctx.runId
 
 /** Build the per-phase {@link TraceCtx} a primitive threads into git shell-outs. */
 const buildPhaseCtx = (
@@ -163,22 +201,29 @@ const spanStore = (trace: PrimitiveTraceArgs): TraceEventStore | undefined =>
 // setupWorktree
 // ---------------------------------------------------------------------------
 
-export interface SetupWorktreeArgs {
+/** Per-call domain options for {@link setupWorktree}. All fields default. */
+export interface SetupWorktreeOpts {
+  /** Pipeline kind. Default `'task'`. `'fix'` attaches to the origin worktree. */
+  kind?: 'task' | 'fix' | 'diagnose'
+  /** Merge target. Default `'main'`. */
+  integrationBranch?: string
+  /** Serialised recovery payload (`tasks.recovery_payload`); only on `kind:'fix'`. Default null. */
+  recoveryPayload?: string | null
+  /** The origin task a recovery recovers (`tasks.fix_for_task_id`). Default null. */
+  fixForTaskId?: string | null
+  /** Override the task id (defaults to `ctx.runId`). */
+  taskId?: string
+}
+
+/** Internal arg bag for the setupWorktree body — resolved from (ctx, opts). */
+interface SetupWorktreeArgs {
   taskId: string
   integrationBranch: string
   kind: 'task' | 'fix' | 'diagnose'
-  /** Serialised recovery payload (`tasks.recovery_payload`); only on `kind:'fix'`. */
   recoveryPayload: string | null
-  /** The origin task a recovery recovers (`tasks.fix_for_task_id`). */
   fixForTaskId: string | null
-  /** Arc-backed task store — ALL task-state writes route through this. */
   store: TaskStore
   trace: PrimitiveTraceArgs
-  /**
-   * Optional engine step handle. When supplied the primitive records the
-   * integration HEAD sha on the step record (`handle.setSha`); a scaffolded
-   * workflow that has no handle can omit it.
-   */
   handle?: Pick<StepHandle, 'setSha'>
 }
 
@@ -201,10 +246,38 @@ export interface SetupWorktreeResult {
  *     failure attempts an in-place lockfile repair before escalating to a
  *     fix-task.
  *
- * Every task-state write goes through `args.store` (the Arc funnel), so a
- * custom workflow composing this primitive cannot strand a task.
+ * Every task-state write goes through `ctx.services.store` (the Arc funnel), so
+ * a custom workflow composing this primitive cannot strand a task.
+ *
+ * Usage from a scaffolded workflow:
+ * ```js
+ * const worktree = await ctx.step('setup', () => setupWorktree(ctx, { kind }))
+ * ```
+ * Stashes the resolved worktree on `ctx` so later `verify`/`merge` calls read
+ * it without the caller threading it.
  */
 export const setupWorktree = async (
+  ctx: MarsCtx,
+  opts: SetupWorktreeOpts = {},
+): Promise<SetupWorktreeResult> => {
+  const taskId = resolveTaskId(ctx, opts.taskId)
+  const result = await setupWorktreeImpl({
+    taskId,
+    integrationBranch: opts.integrationBranch ?? 'main',
+    kind: opts.kind ?? 'task',
+    recoveryPayload: opts.recoveryPayload ?? null,
+    fixForTaskId: opts.fixForTaskId ?? null,
+    store: ctx.services.store,
+    trace: await resolveTrace(ctx, taskId),
+    handle: ctx.currentStep ?? undefined,
+  })
+  // Memoise so verify/merge can read the worktree without re-threading it.
+  // WorktreeRef and SetupWorktreeResult are the same { path, branch } shape.
+  worktreeCache.set(ctx, { path: result.path, branch: result.branch })
+  return result
+}
+
+const setupWorktreeImpl = async (
   args: SetupWorktreeArgs,
 ): Promise<SetupWorktreeResult> => {
   const { taskId, integrationBranch, store, trace, handle } = args
@@ -480,7 +553,30 @@ export const setupWorktree = async (
 // runAgent
 // ---------------------------------------------------------------------------
 
-export interface RunAgentArgs {
+/** Per-call domain options for {@link runAgent}. Only `prompt` is required. */
+export interface RunAgentOpts {
+  /** The task prompt fed to the coder. REQUIRED. */
+  prompt: string
+  /** Optional plan sections injected into the composed prompt. Default null. */
+  plan?: { functional: string; technical: string } | null
+  /** Routing tags (selects the Worker). Default `['coder']`. */
+  tags?: TaskTag[]
+  /** Pipeline kind. Default `'task'`. `'fix'` routes to the Fixer. */
+  kind?: 'task' | 'fix' | 'diagnose'
+  /** Structured task spec. Default null. */
+  spec?: TaskSpec | null
+  /** Merge target. Default `'main'`. */
+  integrationBranch?: string
+  /** True when re-dispatched after a code-phase failure (prepends a resume banner). Default false. */
+  resumeFromCodePhase?: boolean
+  /** Override the task id (defaults to `ctx.runId`). */
+  taskId?: string
+  /** Override the worktree (defaults to the one stashed by setupWorktree). */
+  worktree?: WorktreeRef
+}
+
+/** Internal arg bag for the runAgent body — resolved from (ctx, opts). */
+interface RunAgentArgs {
   taskId: string
   prompt: string
   plan: { functional: string; technical: string } | null
@@ -488,13 +584,10 @@ export interface RunAgentArgs {
   kind: 'task' | 'fix' | 'diagnose'
   spec: TaskSpec | null
   integrationBranch: string
-  /** True when re-dispatched after a code-phase failure (prepends a resume banner). */
   resumeFromCodePhase: boolean
-  /** Resolved worktree ref from {@link setupWorktree}. */
   worktree: WorktreeRef
   store: TaskStore
   trace: PrimitiveTraceArgs
-  /** Forward fine-grained coder progress (`ctx.emit('claude-event', …)`). */
   emit?: (event: ClaudeEvent) => void
   handle?: Pick<StepHandle, 'setTranscriptKey'>
 }
@@ -515,8 +608,36 @@ export interface RunAgentResult {
  * Context-budget hard abort (exitCode 138 + "context budget exhausted") is
  * handled here exactly as before: stamp the task failed, spawn the resume
  * fix-task through `store`, and throw the context-exhausted sentinel.
+ *
+ * Usage from a scaffolded workflow:
+ * ```js
+ * await ctx.step('code', () => runAgent(ctx, { prompt: input.prompt, tags: input.tags }))
+ * ```
+ * Coder progress is forwarded to `ctx.emit('claude-event', …)` internally.
  */
-export const runAgent = async (args: RunAgentArgs): Promise<RunAgentResult> => {
+export const runAgent = async (
+  ctx: MarsCtx,
+  opts: RunAgentOpts,
+): Promise<RunAgentResult> => {
+  const taskId = resolveTaskId(ctx, opts.taskId)
+  return runAgentImpl({
+    taskId,
+    prompt: opts.prompt,
+    plan: opts.plan ?? null,
+    tags: opts.tags ?? ['coder'],
+    kind: opts.kind ?? 'task',
+    spec: opts.spec ?? null,
+    integrationBranch: opts.integrationBranch ?? 'main',
+    resumeFromCodePhase: opts.resumeFromCodePhase ?? false,
+    worktree: resolveWorktree(ctx, opts.worktree),
+    store: ctx.services.store,
+    trace: await resolveTrace(ctx, taskId),
+    emit: (event: ClaudeEvent) => ctx.emit('claude-event', event),
+    handle: ctx.currentStep ?? undefined,
+  })
+}
+
+const runAgentImpl = async (args: RunAgentArgs): Promise<RunAgentResult> => {
   const { taskId, integrationBranch, worktree, store, trace, emit, handle } = args
   const worktreePath = worktree.path
   const branch = worktree.branch
@@ -706,7 +827,22 @@ export const runAgent = async (args: RunAgentArgs): Promise<RunAgentResult> => {
 // verify
 // ---------------------------------------------------------------------------
 
-export interface VerifyArgs {
+/** Per-call domain options for {@link verify}. All fields default. */
+export interface VerifyOpts {
+  /** Pipeline kind. Default `'task'`. `'diagnose'` short-circuits. */
+  kind?: 'task' | 'fix' | 'diagnose'
+  /** Merge target. Default `'main'`. */
+  integrationBranch?: string
+  /** Serialised recovery payload; only on `kind:'fix'`. Default null. */
+  recoveryPayload?: string | null
+  /** Override the task id (defaults to `ctx.runId`). */
+  taskId?: string
+  /** Override the worktree (defaults to the one stashed by setupWorktree). */
+  worktree?: WorktreeRef
+}
+
+/** Internal arg bag for the verify body — resolved from (ctx, opts). */
+interface VerifyArgs {
   taskId: string
   kind: 'task' | 'fix' | 'diagnose'
   integrationBranch: string
@@ -736,8 +872,29 @@ export interface VerifyResult {
  *
  * Returns `{ verified: true }` on success. The throw model means reaching the
  * caller's merge step always implies verify passed.
+ *
+ * Usage from a scaffolded workflow:
+ * ```js
+ * await ctx.step('verify', () => verify(ctx, { kind }))
+ * ```
  */
-export const verify = async (args: VerifyArgs): Promise<VerifyResult> => {
+export const verify = async (
+  ctx: MarsCtx,
+  opts: VerifyOpts = {},
+): Promise<VerifyResult> => {
+  const taskId = resolveTaskId(ctx, opts.taskId)
+  return verifyImpl({
+    taskId,
+    kind: opts.kind ?? 'task',
+    integrationBranch: opts.integrationBranch ?? 'main',
+    recoveryPayload: opts.recoveryPayload ?? null,
+    worktree: resolveWorktree(ctx, opts.worktree),
+    store: ctx.services.store,
+    trace: await resolveTrace(ctx, taskId),
+  })
+}
+
+const verifyImpl = async (args: VerifyArgs): Promise<VerifyResult> => {
   const { taskId, integrationBranch, worktree, store, trace } = args
   const worktreePath = worktree.path
   const branch = worktree.branch
@@ -935,14 +1092,26 @@ export const verify = async (args: VerifyArgs): Promise<VerifyResult> => {
 // merge
 // ---------------------------------------------------------------------------
 
-export interface MergeArgs {
+/** Per-call domain options for {@link merge}. All fields default. */
+export interface MergeOpts {
+  /** Pipeline kind. Default `'task'`. `'diagnose'` removes the worktree, marks done. */
+  kind?: 'task' | 'fix' | 'diagnose'
+  /** Merge target. Default `'main'`. */
+  integrationBranch?: string
+  /** Override the task id (defaults to `ctx.runId`). */
+  taskId?: string
+  /** Override the worktree (defaults to the one stashed by setupWorktree). */
+  worktree?: WorktreeRef
+}
+
+/** Internal arg bag for the merge body — resolved from (ctx, opts). */
+interface MergeArgs {
   taskId: string
   kind: 'task' | 'fix' | 'diagnose'
   integrationBranch: string
   worktree: WorktreeRef
   store: TaskStore
   trace: PrimitiveTraceArgs
-  /** Forward Vega conflict-resolution events (`ctx.emit('vcs-supervisor-event', …)`). */
   emit?: (event: ClaudeEvent) => void
 }
 
@@ -965,9 +1134,32 @@ export interface MergeOutput {
  *     task failed and spawns a fix-task,
  *   - on success removes the worktree and marks the task done.
  *
- * All task-state writes route through `store`.
+ * All task-state writes route through `ctx.services.store`.
+ *
+ * Usage from a scaffolded workflow:
+ * ```js
+ * return await ctx.step('merge', () => merge(ctx, { kind }))
+ * ```
+ * Vega conflict-resolution events are forwarded to
+ * `ctx.emit('vcs-supervisor-event', …)` internally.
  */
-export const merge = async (args: MergeArgs): Promise<MergeOutput> => {
+export const merge = async (
+  ctx: MarsCtx,
+  opts: MergeOpts = {},
+): Promise<MergeOutput> => {
+  const taskId = resolveTaskId(ctx, opts.taskId)
+  return mergeImpl({
+    taskId,
+    kind: opts.kind ?? 'task',
+    integrationBranch: opts.integrationBranch ?? 'main',
+    worktree: resolveWorktree(ctx, opts.worktree),
+    store: ctx.services.store,
+    trace: await resolveTrace(ctx, taskId),
+    emit: (event: ClaudeEvent) => ctx.emit('vcs-supervisor-event', event),
+  })
+}
+
+const mergeImpl = async (args: MergeArgs): Promise<MergeOutput> => {
   const { taskId, integrationBranch, worktree, store, trace, emit } = args
   const worktreePath = worktree.path
   const branch = worktree.branch

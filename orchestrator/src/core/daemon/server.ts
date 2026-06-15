@@ -742,7 +742,7 @@ export const startDaemon = async (
         },
         {
           store: workflowStore,
-          services: { store: taskStore },
+          services: { store: taskStore, traceStore },
           runId: task.id,
           logger: workflowLogger,
           onEvent,

@@ -8,7 +8,7 @@
   },
   "exports": {
     ".": "./src/cli.ts",
-    "./workflow-primitives": "./src/workflows/primitives/index.ts"
+    "./workflow": "./src/workflows/authoring.ts"
   },
   "scripts": {
     "sync-claude-templates": "bash ./scripts/sync-claude-templates.sh",
