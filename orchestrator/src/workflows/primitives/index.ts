@@ -186,16 +186,42 @@ const resolveTrace = (ctx: MarsCtx, taskId: string): Promise<PrimitiveTraceArgs>
 // ("magic"). An explicit `opts.worktree` override always wins.
 const worktreeCache = new WeakMap<object, WorktreeRef>()
 
-/** Resolve the worktree ref: explicit override wins, else the memoised one. */
-const resolveWorktree = (ctx: MarsCtx, override?: WorktreeRef): WorktreeRef => {
-  const wt = override ?? worktreeCache.get(ctx)
-  if (!wt) {
-    throw new Error(
-      'no worktree available: call setupWorktree(ctx, ...) before verify/merge, ' +
-        'or pass { worktree } explicitly.',
-    )
+/**
+ * Resolve the worktree ref. Precedence:
+ *   1. explicit `opts.worktree` override,
+ *   2. the per-ctx in-memory cache `setupWorktree` populated this run,
+ *   3. the worktree persisted on the task row (`worktreePath`/`branch`).
+ *
+ * The third fallback is what makes step-resume work: on `mars continue` the
+ * engine short-circuits the already-completed `setup` step, so it never
+ * repopulates the cache for the fresh `ctx` — but `setupWorktree` recorded
+ * `worktreePath`/`branch` on the task row (see updateTask in setupWorktree), so
+ * a re-run of just `verify`/`merge` can recover the ref from the store. Without
+ * this, `mars continue` after a merge-preflight failure loops forever on
+ * "no worktree available".
+ */
+const resolveWorktree = async (
+  ctx: MarsCtx,
+  taskId: string,
+  store: TaskStore,
+  override?: WorktreeRef,
+): Promise<WorktreeRef> => {
+  const cached = override ?? worktreeCache.get(ctx)
+  if (cached) return cached
+  // Cache miss (a resumed run): recover from the persisted task row.
+  const task = await getTask(taskId, store)
+  if (task?.worktreePath != null && task.branch != null) {
+    const recovered: WorktreeRef = {
+      path: task.worktreePath,
+      branch: task.branch,
+    }
+    worktreeCache.set(ctx, recovered)
+    return recovered
   }
-  return wt
+  throw new Error(
+    'no worktree available: call setupWorktree(ctx, ...) before verify/merge, ' +
+      'or pass { worktree } explicitly.',
+  )
 }
 
 /** Read the run's dispatch input (never throws; `{}` when absent). */
@@ -648,8 +674,8 @@ export const runAgent = async (
   const resumeFromCodePhase =
     opts.resumeFromCodePhase ?? input(ctx).resumeFromCodePhase ?? false
   const model = opts.model
-  const worktree = resolveWorktree(ctx, opts.worktree)
   const store: TaskStore = ctx.services.store
+  const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
   const emit = (event: ClaudeEvent): void => ctx.emit('claude-event', event)
   const handle: Pick<StepHandle, 'setTranscriptKey'> | undefined =
@@ -915,8 +941,8 @@ export const verify = async (
     opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
   const recoveryPayload =
     opts.recoveryPayload ?? input(ctx).recoveryPayload ?? null
-  const worktree = resolveWorktree(ctx, opts.worktree)
   const store: TaskStore = ctx.services.store
+  const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
 
   const worktreePath = worktree.path
@@ -1164,8 +1190,8 @@ export const merge = async (
   const kind = opts.kind ?? input(ctx).kind ?? 'task'
   const integrationBranch =
     opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
-  const worktree = resolveWorktree(ctx, opts.worktree)
   const store: TaskStore = ctx.services.store
+  const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
   const emit = (event: ClaudeEvent): void =>
     ctx.emit('vcs-supervisor-event', event)
