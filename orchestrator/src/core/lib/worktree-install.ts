@@ -269,7 +269,8 @@ export const buildWorkspaceDepsForSite = async (
       throw new Error(
         `[setup:install] workspace dep install failed (${rel}): pnpm ${depInstallArgs.join(' ')} exited ${installRes.exitCode}\n` +
           `pnpm-debug.log: ${debugLogPath}\n` +
-          `stderr (truncated):\n${installRes.stderr.slice(0, 1000)}`,
+          `stderr (truncated):\n${installRes.stderr.slice(0, 1000)}\n` +
+          `stdout (truncated):\n${installRes.stdout.slice(0, 1000)}`,
       )
     }
 
@@ -298,7 +299,8 @@ export const buildWorkspaceDepsForSite = async (
           throw new Error(
             `[setup:install] workspace dep re-install failed (${rel}): pnpm ${depInstallArgs.join(' ')} exited ${reInstallRes.exitCode}\n` +
               `pnpm-debug.log: ${debugLogPath}\n` +
-              `stderr (truncated):\n${reInstallRes.stderr.slice(0, 1000)}`,
+              `stderr (truncated):\n${reInstallRes.stderr.slice(0, 1000)}\n` +
+              `stdout (truncated):\n${reInstallRes.stdout.slice(0, 1000)}`,
           )
         }
       }
@@ -310,9 +312,16 @@ export const buildWorkspaceDepsForSite = async (
       env: { CI: 'true' },
     })
     if (r.exitCode !== 0) {
+      // Include BOTH stderr and stdout: `tsc --noEmit`, `tsup`'s DTS pass,
+      // and several other build tools emit failure detail on stdout, not
+      // stderr. The original `link:` pre-build regression (3c78adcc) surfaced
+      // here as `workspace dep build failed (orchestrator): pnpm run build
+      // exited 2` with empty stderr — the actual TS error went to stdout and
+      // was discarded, leaving operators with no diagnostic.
       throw new Error(
         `[setup:install] workspace dep build failed (${rel}): pnpm run build exited ${r.exitCode}\n` +
-          `stderr (truncated):\n${r.stderr.slice(0, 1000)}`,
+          `stderr (truncated):\n${r.stderr.slice(0, 1000)}\n` +
+          `stdout (truncated):\n${r.stdout.slice(0, 1000)}`,
       )
     }
 
