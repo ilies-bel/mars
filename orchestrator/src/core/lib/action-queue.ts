@@ -59,6 +59,10 @@ export const ACTION_QUEUE_KINDS = [
   // its recorded PID was dead, or its updatedAt exceeded the wall-clock ceiling.
   // The daemon auto-failed the task and freed its in-flight slot.
   'phantom-task',
+  // Outbox events table lag (MAX(id) - MIN(cursor)) exceeded
+  // MARS_OUTBOX_LAG_WARN_THRESHOLD; a subscriber is wedged and blocking
+  // retention pruning.
+  'outbox-lag',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
