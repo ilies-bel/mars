@@ -2674,6 +2674,26 @@ export const startDaemon = async (
   }, OBSERVABILITY_WATCHDOG_MS)
   observabilityWatchdog.unref()
 
+  // ── Outbox sweeper ────────────────────────────────────────────────────────
+  // Periodically prunes aged events from the outbox and raises a dedup'd
+  // action-queue item for any subscriber whose cursor lag exceeds the
+  // configured threshold (MARS_OUTBOX_LAG_WARN_THRESHOLD). .unref() so
+  // the interval never prevents a clean shutdown.
+  const MARS_OUTBOX_PRUNE_INTERVAL_MS = Number(
+    process.env.MARS_OUTBOX_PRUNE_INTERVAL_MS ?? 60_000,
+  )
+  const { sweepOutbox } = await import('./outbox-sweeper')
+  const outboxSweep = setInterval(() => {
+    void (async () => {
+      try {
+        await sweepOutbox(resolveContext().stateDbPath)
+      } catch (err) {
+        log(`[outbox-sweep] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, MARS_OUTBOX_PRUNE_INTERVAL_MS)
+  outboxSweep.unref()
+
   // ── Phantom-task watchdog ─────────────────────────────────────────────────
   // Periodically sweeps for tasks stuck in 'running' or 'verifying' with no
   // live subprocess, preventing a dead worker from holding an in-flight slot

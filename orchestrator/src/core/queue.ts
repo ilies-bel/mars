@@ -1261,8 +1261,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // Wire-bus outbox: events published by library code land atomically with the
   // state writes they describe (same queue.db, same libsql transaction).
   // Cursor-based fan-out consumers poll for id > cursor.
-  // TODO(retention): rows grow unbounded; a future pass should cap by age or
-  // per-subscriber MIN(cursor) once subscriber cursors are tracked.
+  // Retention is enforced periodically by orchestrator/src/core/daemon/outbox-sweeper.ts (prune by age + wedged-subscriber lag detection).
   await c.execute(`
     CREATE TABLE IF NOT EXISTS events (
       id      INTEGER PRIMARY KEY AUTOINCREMENT,
