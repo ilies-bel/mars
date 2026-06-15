@@ -6,7 +6,10 @@ interface ImplementInput {
   qa: 'full' | 'none';
 }
 
-async function implement(ctx: WorkflowCtx, input: ImplementInput): Promise<{ verified: boolean }> {
+async function implement(
+  ctx: WorkflowCtx<unknown, ImplementInput>,
+  input: ImplementInput,
+): Promise<{ verified: boolean }> {
   await ctx.step('setup', () => '/tmp/wt');
   await ctx.step('code', () => ({ sha: 'deadbeef' }));
   let verified = false;

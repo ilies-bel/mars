@@ -69,6 +69,38 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
 })
 
 // ---------------------------------------------------------------------------
+// Per-step model override (Agent-SDK parity). runAgent(ctx, { model }) rebuilds
+// the resolved Worker via createWorker({ ...config, model }) so the override
+// threads through buildWorker to the spawn path for BOTH runtimes. These tests
+// pin that invariant at the Worker layer (the runAgent body relies on it).
+// ---------------------------------------------------------------------------
+describe('createWorker model override — Agent-SDK { prompt, model } parity', () => {
+  it('overrides only the model, preserving every other Worker config field', () => {
+    const base: WorkerConfig = Workers.Coder.config
+    const overridden = createWorker({ ...base, model: 'claude-opus-4-7' })
+    expect(overridden.config.model).toBe('claude-opus-4-7')
+    // Identity of the Worker is otherwise unchanged: role, runtime, provider,
+    // permission posture, tool denials, and context budget all carry through.
+    expect(overridden.config.name).toBe(base.name)
+    expect(overridden.config.runtime).toBe(base.runtime)
+    expect(overridden.config.provider).toBe(base.provider)
+    expect(overridden.config.permissionMode).toBe(base.permissionMode)
+    expect(overridden.config.disallowedTools).toEqual(base.disallowedTools)
+    expect(overridden.config.maxContextTokens).toBe(base.maxContextTokens)
+    expect(overridden.runtime).toBe(base.runtime)
+  })
+
+  it('works for the Fixer Worker too (override applies to any resolved role)', () => {
+    const overridden = createWorker({
+      ...Workers.Fixer.config,
+      model: 'claude-haiku-4-5-20251001',
+    })
+    expect(overridden.config.model).toBe('claude-haiku-4-5-20251001')
+    expect(overridden.config.name).toBe('Fixer')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Acceptance criterion 3: onEvent hook delivers every event in order.
 // ---------------------------------------------------------------------------
 describe('worker.run() — live event stream via onEvent', () => {

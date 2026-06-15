@@ -115,59 +115,16 @@ export const implementWorkflow = defineWorkflow<
 >({
   id: 'implement',
   inputSchema: implementInputSchema,
-  fn: async (ctx, input): Promise<ImplementOutput> => {
-    // The primitives pull store / trace / worktree / emit / handle off `ctx`
-    // (and `ctx.currentStep` inside a step). This pipeline passes the explicit
-    // per-task fields (taskId, integrationBranch, …) so it is robust even where
-    // ctx.runId !== taskId. The four step NAMES are load-bearing (checkpoint-
-    // resume + trace-view labels) and unchanged.
-
-    // ── setup-worktree ─────────────────────────────────────────────────────
-    const worktree = await ctx.step('setup-worktree', () =>
-      setupWorktree(ctx, {
-        taskId: input.taskId,
-        integrationBranch: input.integrationBranch,
-        kind: input.kind,
-        recoveryPayload: input.recoveryPayload,
-        fixForTaskId: input.fixForTaskId,
-      }),
-    )
-
-    // ── run-claude-code ─────────────────────────────────────────────────────
-    await ctx.step('run-claude-code', () =>
-      runAgent(ctx, {
-        taskId: input.taskId,
-        prompt: input.prompt,
-        plan: input.plan,
-        tags: input.tags,
-        kind: input.kind,
-        spec: input.spec ?? null,
-        integrationBranch: input.integrationBranch,
-        resumeFromCodePhase: input.resumeFromCodePhase,
-        worktree,
-      }),
-    )
-
-    // ── verify ───────────────────────────────────────────────────────────
-    await ctx.step('verify', () =>
-      verifyPrimitive(ctx, {
-        taskId: input.taskId,
-        kind: input.kind,
-        integrationBranch: input.integrationBranch,
-        recoveryPayload: input.recoveryPayload,
-        worktree,
-      }),
-    )
-
-    // ── merge ──────────────────────────────────────────────────────────────
-    // verify throws on failure, so reaching here always means verify passed.
-    return await ctx.step('merge', () =>
-      mergePrimitive(ctx, {
-        taskId: input.taskId,
-        kind: input.kind,
-        integrationBranch: input.integrationBranch,
-        worktree,
-      }),
-    )
+  fn: async (ctx): Promise<ImplementOutput> => {
+    // Every primitive defaults its options from `ctx.input` (the parsed
+    // ImplementInput) and pulls all plumbing — store / trace / worktree / emit
+    // / handle — off `ctx`. So each step is just `primitive(ctx)`; the worktree
+    // `setup-worktree` provisions is memoised on `ctx` for verify/merge. The
+    // four step NAMES stay load-bearing (checkpoint-resume + trace labels).
+    await ctx.step('setup-worktree', () => setupWorktree(ctx))
+    await ctx.step('run-claude-code', () => runAgent(ctx))
+    // verify throws on failure, so reaching merge always means verify passed.
+    await ctx.step('verify', () => verifyPrimitive(ctx))
+    return await ctx.step('merge', () => mergePrimitive(ctx))
   },
 })

@@ -116,8 +116,29 @@ export interface MarsServices {
   traceStore: TraceEventStore
 }
 
-/** The engine ctx a Mars primitive operates on. */
-export type MarsCtx = WorkflowCtx<MarsServices>
+/**
+ * The dispatch-level facts a Mars workflow run is parameterised by. Exposed on
+ * `ctx.input` (engine, after any `inputSchema` parse) so a primitive can read a
+ * field as its default without the author copying it out of the `input`
+ * argument into every options bag. Every field is optional here: a custom
+ * workflow may dispatch a partial input, and a primitive's explicit `opts`
+ * value always wins over `ctx.input`, which in turn wins over the hard default.
+ */
+export interface MarsWorkflowInput {
+  taskId?: string
+  prompt?: string
+  plan?: { functional: string; technical: string } | null
+  tags?: TaskTag[]
+  kind?: 'task' | 'fix' | 'diagnose'
+  integrationBranch?: string
+  spec?: TaskSpec | null
+  resumeFromCodePhase?: boolean
+  recoveryPayload?: string | null
+  fixForTaskId?: string | null
+}
+
+/** The engine ctx a Mars primitive operates on (input typed as {@link MarsWorkflowInput}). */
+export type MarsCtx = WorkflowCtx<MarsServices, MarsWorkflowInput>
 
 /**
  * Internal trace/identity context every primitive needs to wrap its work in a
@@ -177,9 +198,16 @@ const resolveWorktree = (ctx: MarsCtx, override?: WorktreeRef): WorktreeRef => {
   return wt
 }
 
-/** The task id a primitive operates on: explicit override, else the run id. */
+/**
+ * The task id a primitive operates on. Precedence: explicit `opts` override →
+ * `ctx.input.taskId` (dispatch fact) → `ctx.runId` (the daemon dispatches with
+ * runId === task.id, so this is the common case).
+ */
 const resolveTaskId = (ctx: MarsCtx, override?: string): string =>
-  override ?? ctx.runId
+  override ?? ctx.input?.taskId ?? ctx.runId
+
+/** Read the run's dispatch input (never throws; `{}` when absent). */
+const input = (ctx: MarsCtx): MarsWorkflowInput => ctx.input ?? {}
 
 /** Build the per-phase {@link TraceCtx} a primitive threads into git shell-outs. */
 const buildPhaseCtx = (
@@ -215,18 +243,6 @@ export interface SetupWorktreeOpts {
   taskId?: string
 }
 
-/** Internal arg bag for the setupWorktree body — resolved from (ctx, opts). */
-interface SetupWorktreeArgs {
-  taskId: string
-  integrationBranch: string
-  kind: 'task' | 'fix' | 'diagnose'
-  recoveryPayload: string | null
-  fixForTaskId: string | null
-  store: TaskStore
-  trace: PrimitiveTraceArgs
-  handle?: Pick<StepHandle, 'setSha'>
-}
-
 export interface SetupWorktreeResult {
   path: string
   branch: string
@@ -260,28 +276,27 @@ export const setupWorktree = async (
   ctx: MarsCtx,
   opts: SetupWorktreeOpts = {},
 ): Promise<SetupWorktreeResult> => {
+  // Resolve dispatch facts: explicit opts → ctx.input → hard default. Plumbing
+  // (store / trace / handle) is pulled off ctx; the author never passes it.
   const taskId = resolveTaskId(ctx, opts.taskId)
-  const result = await setupWorktreeImpl({
-    taskId,
-    integrationBranch: opts.integrationBranch ?? 'main',
-    kind: opts.kind ?? 'task',
-    recoveryPayload: opts.recoveryPayload ?? null,
-    fixForTaskId: opts.fixForTaskId ?? null,
-    store: ctx.services.store,
-    trace: await resolveTrace(ctx, taskId),
-    handle: ctx.currentStep ?? undefined,
-  })
+  const integrationBranch =
+    opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
+  const kind = opts.kind ?? input(ctx).kind ?? 'task'
+  const recoveryPayload =
+    opts.recoveryPayload ?? input(ctx).recoveryPayload ?? null
+  const fixForTaskId = opts.fixForTaskId ?? input(ctx).fixForTaskId ?? null
+  const store: TaskStore = ctx.services.store
+  const trace = await resolveTrace(ctx, taskId)
+  const handle: Pick<StepHandle, 'setSha'> | undefined =
+    ctx.currentStep ?? undefined
+
+  const result = await runSetupWorktree()
   // Memoise so verify/merge can read the worktree without re-threading it.
   // WorktreeRef and SetupWorktreeResult are the same { path, branch } shape.
   worktreeCache.set(ctx, { path: result.path, branch: result.branch })
   return result
-}
 
-const setupWorktreeImpl = async (
-  args: SetupWorktreeArgs,
-): Promise<SetupWorktreeResult> => {
-  const { taskId, integrationBranch, store, trace, handle } = args
-
+  async function runSetupWorktree(): Promise<SetupWorktreeResult> {
   // Check blockers BEFORE the span: an abort here means no setup work ran, so
   // no span should be emitted.
   if (await hasIncompleteBlockers(taskId, store)) {
@@ -294,7 +309,7 @@ const setupWorktreeImpl = async (
   // and throw the sentinel; never silently recreate (that would discard the
   // origin's in-progress work).
   const attachOriginWorktreeForFix = async (): Promise<WorktreeRef> => {
-    const originTaskId = args.fixForTaskId
+    const originTaskId = fixForTaskId
     if (originTaskId === null) {
       throw new Error(
         `recovery ${taskId} has kind='fix' but no fixForTaskId; cannot resolve origin worktree`,
@@ -387,16 +402,16 @@ const setupWorktreeImpl = async (
       // Ordinary recovery (kind=fix) tasks attach to the origin's worktree;
       // a main-commiter recovery (also kind=fix) carves its own fresh worktree.
       let isMainCommiterFix = false
-      if (args.kind === 'fix' && args.recoveryPayload != null) {
+      if (kind === 'fix' && recoveryPayload != null) {
         const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
           '../../core/lib/main-dirty'
         )
         isMainCommiterFix =
-          parseMainCommiterPayload(args.recoveryPayload)?.recipe ===
+          parseMainCommiterPayload(recoveryPayload)?.recipe ===
           MAIN_COMMITER_RECIPE
       }
       const attachesToOrigin = recoveryAttachesToOrigin(
-        args.kind,
+        kind,
         isMainCommiterFix,
       )
       const ref = attachesToOrigin
@@ -547,16 +562,21 @@ const setupWorktreeImpl = async (
       return { path: ref.path, branch: ref.branch }
     },
   })
+  }
 }
 
 // ---------------------------------------------------------------------------
 // runAgent
 // ---------------------------------------------------------------------------
 
-/** Per-call domain options for {@link runAgent}. Only `prompt` is required. */
+/**
+ * Per-call domain options for {@link runAgent}. Every field defaults — `prompt`
+ * falls back to `ctx.input.prompt`, so a step can be as terse as
+ * `runAgent(ctx)`. Pass `prompt` explicitly only to override the dispatch input.
+ */
 export interface RunAgentOpts {
-  /** The task prompt fed to the coder. REQUIRED. */
-  prompt: string
+  /** The task prompt fed to the coder. Defaults to `ctx.input.prompt`. */
+  prompt?: string
   /** Optional plan sections injected into the composed prompt. Default null. */
   plan?: { functional: string; technical: string } | null
   /** Routing tags (selects the Worker). Default `['coder']`. */
@@ -573,23 +593,14 @@ export interface RunAgentOpts {
   taskId?: string
   /** Override the worktree (defaults to the one stashed by setupWorktree). */
   worktree?: WorktreeRef
-}
-
-/** Internal arg bag for the runAgent body — resolved from (ctx, opts). */
-interface RunAgentArgs {
-  taskId: string
-  prompt: string
-  plan: { functional: string; technical: string } | null
-  tags: TaskTag[]
-  kind: 'task' | 'fix' | 'diagnose'
-  spec: TaskSpec | null
-  integrationBranch: string
-  resumeFromCodePhase: boolean
-  worktree: WorktreeRef
-  store: TaskStore
-  trace: PrimitiveTraceArgs
-  emit?: (event: ClaudeEvent) => void
-  handle?: Pick<StepHandle, 'setTranscriptKey'>
+  /**
+   * Override the model for this step. Mirrors the Agent SDK's per-call
+   * `{ prompt, model }`: precedence is `opts.model ?? MARS_WORKER_MODEL (Coder
+   * only) ?? the selected Worker's pinned default`. Applies to whichever Worker
+   * the tags/kind resolve to (Coder, Fixer, or an operator-declared Worker),
+   * so a step can run on a heavier model without editing Worker configs.
+   */
+  model?: string
 }
 
 export interface RunAgentResult {
@@ -617,28 +628,33 @@ export interface RunAgentResult {
  */
 export const runAgent = async (
   ctx: MarsCtx,
-  opts: RunAgentOpts,
+  opts: RunAgentOpts = {},
 ): Promise<RunAgentResult> => {
+  // Resolve dispatch facts: explicit opts → ctx.input → hard default. Plumbing
+  // (store / trace / emit / handle / worktree) is pulled off ctx.
   const taskId = resolveTaskId(ctx, opts.taskId)
-  return runAgentImpl({
-    taskId,
-    prompt: opts.prompt,
-    plan: opts.plan ?? null,
-    tags: opts.tags ?? ['coder'],
-    kind: opts.kind ?? 'task',
-    spec: opts.spec ?? null,
-    integrationBranch: opts.integrationBranch ?? 'main',
-    resumeFromCodePhase: opts.resumeFromCodePhase ?? false,
-    worktree: resolveWorktree(ctx, opts.worktree),
-    store: ctx.services.store,
-    trace: await resolveTrace(ctx, taskId),
-    emit: (event: ClaudeEvent) => ctx.emit('claude-event', event),
-    handle: ctx.currentStep ?? undefined,
-  })
-}
+  const prompt = opts.prompt ?? input(ctx).prompt
+  if (prompt === undefined) {
+    throw new Error(
+      `runAgent: no prompt — pass { prompt } or dispatch the run with ctx.input.prompt (task ${taskId})`,
+    )
+  }
+  const plan = opts.plan ?? input(ctx).plan ?? null
+  const tags: TaskTag[] = opts.tags ?? input(ctx).tags ?? ['coder']
+  const kind = opts.kind ?? input(ctx).kind ?? 'task'
+  const spec = opts.spec ?? input(ctx).spec ?? null
+  const integrationBranch =
+    opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
+  const resumeFromCodePhase =
+    opts.resumeFromCodePhase ?? input(ctx).resumeFromCodePhase ?? false
+  const model = opts.model
+  const worktree = resolveWorktree(ctx, opts.worktree)
+  const store: TaskStore = ctx.services.store
+  const trace = await resolveTrace(ctx, taskId)
+  const emit = (event: ClaudeEvent): void => ctx.emit('claude-event', event)
+  const handle: Pick<StepHandle, 'setTranscriptKey'> | undefined =
+    ctx.currentStep ?? undefined
 
-const runAgentImpl = async (args: RunAgentArgs): Promise<RunAgentResult> => {
-  const { taskId, integrationBranch, worktree, store, trace, emit, handle } = args
   const worktreePath = worktree.path
   const branch = worktree.branch
 
@@ -665,18 +681,18 @@ const runAgentImpl = async (args: RunAgentArgs): Promise<RunAgentResult> => {
   }
 
   const originId = await resolveOriginIdForTask(taskId)
-  const primaryTag: TaskTag = args.tags.find(isTaskTag) ?? 'coder'
-  const basePrompt = args.resumeFromCodePhase
-    ? `## Code-phase resume\n\nPrior progress is already in this worktree. Run \`git log -p\` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.\n\n${args.prompt}`
-    : args.prompt
+  const primaryTag: TaskTag = tags.find(isTaskTag) ?? 'coder'
+  const basePrompt = resumeFromCodePhase
+    ? `## Code-phase resume\n\nPrior progress is already in this worktree. Run \`git log -p\` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.\n\n${prompt}`
+    : prompt
   const fullPrompt = composePrompt(
     basePrompt,
-    args.plan,
+    plan,
     primaryTag,
-    args.spec ?? null,
+    spec ?? null,
     taskId,
     worktreePath,
-    args.kind,
+    kind,
   )
 
   // Registry workers: merge operator-declared Workers so their tag sets are
@@ -690,8 +706,15 @@ const runAgentImpl = async (args: RunAgentArgs): Promise<RunAgentResult> => {
       allWorkers[worker.config.name] = worker
     }
   }
+  const selectedWorker =
+    kind === 'fix' ? Workers.Fixer : pickWorkerForTags(tags, allWorkers)
+  // Per-step model override (Agent-SDK parity): rebuild the chosen Worker with
+  // the requested model so it threads through buildWorker to both the headless
+  // and pty spawn paths. Undefined ⇒ keep the Worker's pinned default.
   const worker =
-    args.kind === 'fix' ? Workers.Fixer : pickWorkerForTags(args.tags, allWorkers)
+    model !== undefined && model !== selectedWorker.config.model
+      ? createWorker({ ...selectedWorker.config, model })
+      : selectedWorker
 
   const r = await runWorkerWithSpan({
     worker,
@@ -841,17 +864,6 @@ export interface VerifyOpts {
   worktree?: WorktreeRef
 }
 
-/** Internal arg bag for the verify body — resolved from (ctx, opts). */
-interface VerifyArgs {
-  taskId: string
-  kind: 'task' | 'fix' | 'diagnose'
-  integrationBranch: string
-  recoveryPayload: string | null
-  worktree: WorktreeRef
-  store: TaskStore
-  trace: PrimitiveTraceArgs
-}
-
 export interface VerifyResult {
   verified: true
 }
@@ -882,24 +894,21 @@ export const verify = async (
   ctx: MarsCtx,
   opts: VerifyOpts = {},
 ): Promise<VerifyResult> => {
+  // Resolve dispatch facts: explicit opts → ctx.input → hard default.
   const taskId = resolveTaskId(ctx, opts.taskId)
-  return verifyImpl({
-    taskId,
-    kind: opts.kind ?? 'task',
-    integrationBranch: opts.integrationBranch ?? 'main',
-    recoveryPayload: opts.recoveryPayload ?? null,
-    worktree: resolveWorktree(ctx, opts.worktree),
-    store: ctx.services.store,
-    trace: await resolveTrace(ctx, taskId),
-  })
-}
+  const kind = opts.kind ?? input(ctx).kind ?? 'task'
+  const integrationBranch =
+    opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
+  const recoveryPayload =
+    opts.recoveryPayload ?? input(ctx).recoveryPayload ?? null
+  const worktree = resolveWorktree(ctx, opts.worktree)
+  const store: TaskStore = ctx.services.store
+  const trace = await resolveTrace(ctx, taskId)
 
-const verifyImpl = async (args: VerifyArgs): Promise<VerifyResult> => {
-  const { taskId, integrationBranch, worktree, store, trace } = args
   const worktreePath = worktree.path
   const branch = worktree.branch
 
-  if (args.kind === 'diagnose') {
+  if (kind === 'diagnose') {
     return { verified: true }
   }
 
@@ -914,7 +923,7 @@ const verifyImpl = async (args: VerifyArgs): Promise<VerifyResult> => {
     getCommandOutput: () => capturedVerifyOutput,
     fn: async (): Promise<VerifyResult> => {
       // Verify-time dirty-main check (non-fix only).
-      if (args.kind !== 'fix') {
+      if (kind !== 'fix') {
         try {
           const {
             checkIntegrationBranchDirty,
@@ -994,8 +1003,8 @@ const verifyImpl = async (args: VerifyArgs): Promise<VerifyResult> => {
         '../../core/lib/main-dirty'
       )
       const commiterPayload =
-        args.recoveryPayload != null
-          ? parseMainCommiterPayload(args.recoveryPayload)
+        recoveryPayload != null
+          ? parseMainCommiterPayload(recoveryPayload)
           : null
       const steps =
         commiterPayload?.recipe === MAIN_COMMITER_RECIPE
@@ -1104,17 +1113,6 @@ export interface MergeOpts {
   worktree?: WorktreeRef
 }
 
-/** Internal arg bag for the merge body — resolved from (ctx, opts). */
-interface MergeArgs {
-  taskId: string
-  kind: 'task' | 'fix' | 'diagnose'
-  integrationBranch: string
-  worktree: WorktreeRef
-  store: TaskStore
-  trace: PrimitiveTraceArgs
-  emit?: (event: ClaudeEvent) => void
-}
-
 export interface MergeOutput {
   taskId: string
   success: boolean
@@ -1147,24 +1145,21 @@ export const merge = async (
   ctx: MarsCtx,
   opts: MergeOpts = {},
 ): Promise<MergeOutput> => {
+  // Resolve dispatch facts: explicit opts → ctx.input → hard default.
   const taskId = resolveTaskId(ctx, opts.taskId)
-  return mergeImpl({
-    taskId,
-    kind: opts.kind ?? 'task',
-    integrationBranch: opts.integrationBranch ?? 'main',
-    worktree: resolveWorktree(ctx, opts.worktree),
-    store: ctx.services.store,
-    trace: await resolveTrace(ctx, taskId),
-    emit: (event: ClaudeEvent) => ctx.emit('vcs-supervisor-event', event),
-  })
-}
+  const kind = opts.kind ?? input(ctx).kind ?? 'task'
+  const integrationBranch =
+    opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
+  const worktree = resolveWorktree(ctx, opts.worktree)
+  const store: TaskStore = ctx.services.store
+  const trace = await resolveTrace(ctx, taskId)
+  const emit = (event: ClaudeEvent): void =>
+    ctx.emit('vcs-supervisor-event', event)
 
-const mergeImpl = async (args: MergeArgs): Promise<MergeOutput> => {
-  const { taskId, integrationBranch, worktree, store, trace, emit } = args
   const worktreePath = worktree.path
   const branch = worktree.branch
 
-  if (args.kind === 'diagnose') {
+  if (kind === 'diagnose') {
     await removeWorktree(
       { path: worktreePath, branch },
       true,

@@ -1,4 +1,4 @@
-// @mars-workflow-template:v2
+// @mars-workflow-template:v3
 //
 // task-workflow.js — the default end-to-end task pipeline.
 //
@@ -8,15 +8,18 @@
 // you a diff and lets you merge by hand.
 //
 // EVERYTHING is imported from the single `mars/workflow` surface: the
-// `defineWorkflow` definition helper AND the four git step-primitives
-// (`setupWorktree`, `runAgent`, `verify`, `merge`). Each primitive takes
-// `(ctx, opts)` — `ctx` is the run context the engine hands you, and `opts` is
-// a small bag of per-call options that all default. You never touch the
-// plumbing: the Arc task store, the trace store, the worktree ref, the event
-// sink, and the step handle are all pulled off `ctx` for you (the worktree
-// `setupWorktree` provisions is remembered for `verify`/`merge`). Every
-// task-state write still funnels through the Arc aggregate (ADR-0052), so this
-// workflow CANNOT strand a task.
+// `defineWorkflow` helper AND the four git step-primitives (`setupWorktree`,
+// `runAgent`, `verify`, `merge`). Each primitive takes `(ctx, opts?)` and
+// DEFAULTS every option from `ctx.input` — the dispatch facts the daemon ran
+// this task with (prompt, kind, branch, recovery payload, …). So a step is just
+// `primitive(ctx)`. You pass an options bag ONLY to override a field, e.g.
+// `runAgent(ctx, { model: 'claude-opus-4-7' })`.
+//
+// You never touch the plumbing: the Arc task store, the trace store, the
+// worktree ref, the event sink, and the step handle are all pulled off `ctx`
+// for you (the worktree `setupWorktree` provisions is remembered for
+// `verify`/`merge`). Every task-state write still funnels through the Arc
+// aggregate (ADR-0052), so this workflow CANNOT strand a task.
 
 /** @typedef {import('mars/workflow').WorkflowCtx} WorkflowCtx */
 
@@ -30,60 +33,21 @@ import {
 
 export default defineWorkflow({
   id: 'task',
-  /**
-   * @param {WorkflowCtx} ctx
-   * @param {{
-   *   taskId: string,
-   *   prompt: string,
-   *   plan?: unknown,
-   *   tags?: string[],
-   *   kind?: 'task' | 'fix' | 'diagnose',
-   *   spec?: unknown,
-   *   integrationBranch?: string,
-   *   resumeFromCodePhase?: boolean,
-   *   recoveryPayload?: string | null,
-   *   fixForTaskId?: string | null,
-   * }} input
-   */
-  async fn(ctx, input) {
-    const kind = input.kind ?? 'task'
-
+  /** @param {WorkflowCtx} ctx */
+  async fn(ctx) {
     // setup → provision/attach the worktree on `task/<id>` and install deps.
     // The resolved worktree is remembered on `ctx` for verify/merge below.
-    await ctx.step('setup', () =>
-      setupWorktree(ctx, {
-        kind,
-        integrationBranch: input.integrationBranch,
-        recoveryPayload: input.recoveryPayload,
-        fixForTaskId: input.fixForTaskId,
-      }),
-    )
+    await ctx.step('setup', () => setupWorktree(ctx))
 
     // code → the coder implements the task prompt inside the worktree.
-    await ctx.step('code', () =>
-      runAgent(ctx, {
-        prompt: input.prompt,
-        plan: input.plan,
-        tags: input.tags,
-        kind,
-        spec: input.spec,
-        integrationBranch: input.integrationBranch,
-        resumeFromCodePhase: input.resumeFromCodePhase,
-      }),
-    )
+    // Override the model per step like the Agent SDK's { prompt, model }:
+    //   runAgent(ctx, { model: 'claude-opus-4-7' })
+    await ctx.step('code', () => runAgent(ctx))
 
     // verify → scope-aware typecheck → tests → lint. Throws on any failure.
-    await ctx.step('verify', () =>
-      verify(ctx, {
-        kind,
-        integrationBranch: input.integrationBranch,
-        recoveryPayload: input.recoveryPayload,
-      }),
-    )
+    await ctx.step('verify', () => verify(ctx))
 
     // merge → serialized fast-forward into the integration branch (Vega on conflict).
-    return await ctx.step('merge', () =>
-      merge(ctx, { kind, integrationBranch: input.integrationBranch }),
-    )
+    return await ctx.step('merge', () => merge(ctx))
   },
 })

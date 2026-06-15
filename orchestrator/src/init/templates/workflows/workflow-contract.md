@@ -40,24 +40,33 @@ import {
 
 export default defineWorkflow({
   id: 'task',
-  async fn(ctx, input) {
-    const kind = input.kind ?? 'task'
-    const worktree = await ctx.step('setup',  () => setupWorktree(ctx, { kind }))
-    await ctx.step('code',   () => runAgent(ctx, { prompt: input.prompt, tags: input.tags }))
-    await ctx.step('verify', () => verify(ctx, { kind }))
-    return  ctx.step('merge',  () => merge(ctx, { kind }))
+  async fn(ctx) {
+    await ctx.step('setup',  () => setupWorktree(ctx))
+    await ctx.step('code',   () => runAgent(ctx))
+    await ctx.step('verify', () => verify(ctx))
+    return  ctx.step('merge',  () => merge(ctx))
   },
 })
 ```
 
 - `id` — the workflow id (load-bearing trace-view label).
-- `fn(ctx, input)` — the imperative body. `ctx.step(name, fn)` wraps each
-  durable unit; durability is checkpoint-resume keyed on the run id.
-- The primitives take `(ctx, opts)`: `ctx` is the run context, `opts` a small
-  bag of per-call options that all default. The plumbing (Arc task store, trace
-  store, worktree ref, event sink, step handle) is pulled off `ctx` for you —
-  the worktree `setupWorktree` provisions is remembered for `verify`/`merge`.
-  Every task-state write funnels through the Arc aggregate (ADR-0052).
+- `fn(ctx)` — the imperative body. `ctx.step(name, fn)` wraps each durable
+  unit; durability is checkpoint-resume keyed on the run id.
+- **`ctx.input`** — the validated input this task was dispatched with (prompt,
+  kind, integration branch, recovery payload, …). Every primitive DEFAULTS its
+  options from `ctx.input`, so a step is just `primitive(ctx)` — you never copy
+  fields out of an `input` argument into each call (there is no `input`
+  argument). Read `ctx.input.foo` directly if your own step logic needs it.
+- The primitives take `(ctx, opts?)`: `opts` is a small bag you pass ONLY to
+  OVERRIDE a `ctx.input` default. Precedence is `opts.field ?? ctx.input.field
+  ?? hard default`. The plumbing (Arc task store, trace store, worktree ref,
+  event sink, step handle) is pulled off `ctx` for you — the worktree
+  `setupWorktree` provisions is remembered for `verify`/`merge`. Every
+  task-state write funnels through the Arc aggregate (ADR-0052).
+- **Per-step model** — like the Agent SDK's `query({ prompt, model })`,
+  `runAgent(ctx, { model: 'claude-opus-4-7' })` pins the model for that step.
+  Omit it to use the resolved Worker's default. Precedence: `opts.model ??
+  MARS_WORKER_MODEL` (Coder only) `?? the Worker's pinned model`.
 - Failures **THROW** — the engine records the step failed. Do not swallow.
 
 ## Ownership & update semantics
@@ -72,5 +81,5 @@ export default defineWorkflow({
 
 ## Marker
 
-Every scaffolded template carries the `// @mars-workflow-template:v2` marker on
+Every scaffolded template carries the `// @mars-workflow-template:v3` marker on
 its first line so tooling can recognise an unedited template.

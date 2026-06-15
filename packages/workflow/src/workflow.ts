@@ -80,11 +80,22 @@ export interface StepHandle {
  * argument. It owns run identity, the step contract, the logger, the
  * progress emitter, and the run's abort signal.
  */
-export interface WorkflowCtx<Services = unknown> {
+export interface WorkflowCtx<Services = unknown, Input = unknown> {
   /** Stable run identity; keys every step record. */
   readonly runId: string;
   /** The workflow's name. */
   readonly workflowId: string;
+  /**
+   * The validated input this run was dispatched with (the same object handed
+   * to `fn` as its second argument, after any `inputSchema` parse).
+   *
+   * Exposed on `ctx` so a domain primitive invoked as
+   * `ctx.step('s', () => primitive(ctx))` can read dispatch-level facts
+   * (prompt, kind, branch, …) as defaults WITHOUT the author copying them out
+   * of the `input` argument into every primitive's options bag. A primitive's
+   * explicit option always overrides the corresponding `ctx.input` field.
+   */
+  readonly input: Input;
   /** Run-scoped logger; steps get a child of it. */
   readonly logger: Logger;
   /** Abort signal for the whole run. */
@@ -126,7 +137,7 @@ export interface WorkflowCtx<Services = unknown> {
 
 /** A workflow function: `(ctx, input) => Promise<output>`. */
 export type WorkflowFn<I, O, Services = unknown> = (
-  ctx: WorkflowCtx<Services>,
+  ctx: WorkflowCtx<Services, I>,
   input: I,
 ) => Promise<O>;
 
@@ -231,12 +242,13 @@ export async function runWorkflow<I, O, Services = unknown>(
   // invocation, so a resumed run can re-reach a name it completed before.
   const seenNames = new Set<string>();
 
-  const ctx: WorkflowCtx<Services> = {
+  const ctx: WorkflowCtx<Services, I> = {
     runId,
     workflowId,
     logger: runLogger,
     signal,
     services,
+    input: parsedInput,
     currentStep: null,
     emit(event: string, payload?: unknown): void {
       const evt: WorkflowEvent = {

@@ -1,4 +1,4 @@
-// @mars-workflow-template:v2
+// @mars-workflow-template:v3
 //
 // fix-workflow.js — the recovery pipeline for a failed task.
 //
@@ -9,12 +9,13 @@
 // origin failure, no blockers, no retry budget.
 //
 // Like the task pipeline, a fix COMPOSES the four git step-primitives from the
-// single `mars/workflow` surface. With `kind: 'fix'` the primitives do the
-// recovery-specific thing automatically: `setupWorktree` ATTACHES to the
-// origin's worktree+branch (via `fixForTaskId`) and stacks the fix commit there
-// rather than carving a fresh worktree, and `runAgent` routes to the Fixer
-// (Opus, recovery resilience). Every primitive takes `(ctx, opts)` and pulls
-// all plumbing off `ctx`; every task-state write funnels through the Arc
+// single `mars/workflow` surface, and each primitive DEFAULTS its options from
+// `ctx.input`. A fix task is dispatched with `ctx.input.kind === 'fix'`, so the
+// primitives automatically do the recovery-specific thing: `setupWorktree`
+// ATTACHES to the origin's worktree+branch (via `ctx.input.fixForTaskId`) and
+// stacks the fix commit there rather than carving a fresh worktree, and
+// `runAgent` routes to the Fixer (Opus, recovery resilience). Every primitive
+// pulls all plumbing off `ctx`; every task-state write funnels through the Arc
 // aggregate (ADR-0052).
 
 /** @typedef {import('mars/workflow').WorkflowCtx} WorkflowCtx */
@@ -29,57 +30,16 @@ import {
 
 export default defineWorkflow({
   id: 'fix',
-  /**
-   * @param {WorkflowCtx} ctx
-   * @param {{
-   *   taskId: string,
-   *   prompt: string,
-   *   plan?: unknown,
-   *   tags?: string[],
-   *   spec?: unknown,
-   *   integrationBranch?: string,
-   *   resumeFromCodePhase?: boolean,
-   *   recoveryPayload?: string | null,
-   *   fixForTaskId?: string | null,
-   * }} input
-   */
-  async fn(ctx, input) {
-    // Recovery: kind is always 'fix' for this pipeline.
-    const kind = 'fix'
-
-    // setup → attach to the origin worktree (fixForTaskId) and install deps.
-    await ctx.step('setup', () =>
-      setupWorktree(ctx, {
-        kind,
-        integrationBranch: input.integrationBranch,
-        recoveryPayload: input.recoveryPayload,
-        fixForTaskId: input.fixForTaskId,
-      }),
-    )
+  /** @param {WorkflowCtx} ctx */
+  async fn(ctx) {
+    // setup → attach to the origin worktree (ctx.input.fixForTaskId), install deps.
+    await ctx.step('setup', () => setupWorktree(ctx))
 
     // fix-code → the Fixer (Opus) attempts the repair on the origin's branch.
-    await ctx.step('fix-code', () =>
-      runAgent(ctx, {
-        prompt: input.prompt,
-        plan: input.plan,
-        tags: input.tags,
-        kind,
-        spec: input.spec,
-        integrationBranch: input.integrationBranch,
-        resumeFromCodePhase: input.resumeFromCodePhase,
-      }),
-    )
+    await ctx.step('fix-code', () => runAgent(ctx))
 
-    await ctx.step('verify', () =>
-      verify(ctx, {
-        kind,
-        integrationBranch: input.integrationBranch,
-        recoveryPayload: input.recoveryPayload,
-      }),
-    )
+    await ctx.step('verify', () => verify(ctx))
 
-    return await ctx.step('merge', () =>
-      merge(ctx, { kind, integrationBranch: input.integrationBranch }),
-    )
+    return await ctx.step('merge', () => merge(ctx))
   },
 })

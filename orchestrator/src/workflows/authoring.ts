@@ -9,11 +9,14 @@
  *
  * export default defineWorkflow({
  *   id: 'task',
- *   async fn(ctx, input) {
- *     const worktree = await ctx.step('setup', () => setupWorktree(ctx, { kind: input.kind }))
- *     await ctx.step('code',   () => runAgent(ctx, { prompt: input.prompt, tags: input.tags }))
- *     await ctx.step('verify', () => verify(ctx, { kind: input.kind }))
- *     return  ctx.step('merge',  () => merge(ctx, { kind: input.kind }))
+ *   async fn(ctx) {
+ *     // Every primitive defaults its options from ctx.input (the dispatch
+ *     // facts), so a step is just `primitive(ctx)`. Pass an options bag only
+ *     // to override a field (e.g. runAgent(ctx, { model: 'claude-opus-4-7' })).
+ *     await ctx.step('setup',  () => setupWorktree(ctx))
+ *     await ctx.step('code',   () => runAgent(ctx))
+ *     await ctx.step('verify', () => verify(ctx))
+ *     return  ctx.step('merge',  () => merge(ctx))
  *   },
  * })
  * ```
@@ -29,18 +32,18 @@
  * its heavy dependency graph into every user-file import.
  */
 
-// ── Engine: workflow definition + the types an author references ──────────────
+// ── Engine: the workflow definition helper + the one ctx type an author types ─
+// Kept deliberately small. `WorkflowCtx` is what a `@typedef` / TS signature
+// references; `StepHandle`/`WorkflowEvent`/etc. are advanced and importable
+// straight from `@mars/workflow` if ever needed.
 export { defineWorkflow } from '@mars/workflow'
-export type {
-  Workflow,
-  WorkflowCtx,
-  WorkflowFn,
-  StepHandle,
-  StepOptions,
-  WorkflowEvent,
-} from '@mars/workflow'
+export type { WorkflowCtx } from '@mars/workflow'
 
 // ── Domain primitives: the four composable steps (`(ctx, opts)`) ──────────────
+// Each defaults every field from `ctx.input`, so the terse form is just
+// `runAgent(ctx)`. The `*Opts` types are exported for authors who want to type
+// an explicit override bag; plumbing types (MarsServices) and per-call result
+// types stay internal to `./primitives`.
 export {
   setupWorktree,
   runAgent,
@@ -48,14 +51,9 @@ export {
   merge,
 } from './primitives'
 export type {
-  MarsServices,
-  MarsCtx,
+  MarsWorkflowInput,
   SetupWorktreeOpts,
-  SetupWorktreeResult,
   RunAgentOpts,
-  RunAgentResult,
   VerifyOpts,
-  VerifyResult,
   MergeOpts,
-  MergeOutput,
 } from './primitives'
