@@ -178,6 +178,39 @@ shell, and they load only `project,local` setting sources (the worktree's
 own `.claude/settings.json`) — never the host user's `~/.claude/`. MCP is
 fully disabled and session files are not persisted to disk.
 
+### Events outbox retention
+
+The `events` table (events outbox) is pruned on a recurring timer inside the
+daemon. The prune cadence defaults to 60 seconds and is tunable without a
+restart.
+
+**Deletion rule (two-axis, per ADR-0031/ADR-0032).** A row is deleted only
+when **both** conditions hold:
+
+1. Its `id` is `≤ MIN(cursor)` over the `subscribers` table — i.e. every
+   registered subscriber has already consumed past that event.
+2. Its `ts` is older than `MARS_OUTBOX_MAX_AGE_SECONDS` — i.e. the row is
+   not "freshly landed" regardless of subscriber state.
+
+This two-axis rule prevents: (a) deleting events a slow subscriber hasn't
+seen yet, and (b) accumulating unbounded history when all subscribers are
+caught up.
+
+**Wedged-subscriber guard.** If any subscriber's cursor lag (distance behind
+the latest event id) exceeds `MARS_OUTBOX_LAG_WARN_THRESHOLD`, the prune
+sweep raises exactly one action-queue item (`kind='outbox.subscriber-lagging'`)
+so the operator can investigate before the subscriber is evicted or the
+outbox grows unbounded.
+
+**Env knobs** (all reloadable via `mars daemon reload`):
+
+- `MARS_OUTBOX_MAX_AGE_SECONDS` — minimum age before a fully-consumed row is
+  eligible for deletion. Default `604800` (7 days).
+- `MARS_OUTBOX_PRUNE_INTERVAL_MS` — how often the prune sweep fires.
+  Default `60000` (60 s).
+- `MARS_OUTBOX_LAG_WARN_THRESHOLD` — subscriber lag (in event ids) that
+  triggers an action-queue warning. Default `100000`.
+
 ## Observing Claude runs in Studio
 
 Both Claude dispatches (the `code` step and the `vcs-supervisor` invocation in
