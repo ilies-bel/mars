@@ -25,6 +25,7 @@ import { EventsPage } from '@/pages/EventsPage'
 import { KpiDetailPage } from '@/pages/KpiDetailPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
+import { AlertNotifier } from '@/shared/notifications/alertNotifier'
 
 /** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
 const ROUTE_BASE: Record<RouteName, string> = {
@@ -70,6 +71,7 @@ const AppInner = () => {
   const route = resolvePageRoute(hash)
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
+      <AlertNotifier />
       <FrameworkUpdateBanner />
       <NavBar hash={hash} />
       <div className="min-h-0 flex-1">

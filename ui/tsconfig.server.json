@@ -14,5 +14,5 @@
     "noEmit": true,
     "types": ["bun"]
   },
-  "include": ["server", "bin", "src/**/*.test.ts", "src/lib/focusSubgraph.ts"]
+  "include": ["server", "bin"]
 }

@@ -1,6 +1,13 @@
 import { useProgress } from '@/hooks/useProgress'
 import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
 import { detectRoute, actionQueueCount } from '@/shared/routing'
+import {
+  notificationsSupported,
+  notificationPermission,
+  requestNotificationPermission,
+  setNotificationsEnabled,
+  useNotificationsEnabled,
+} from '@/shared/notifications/notificationPrefs'
 import { ProjectSelector } from './ProjectSelector'
 
 interface NavBarProps {
@@ -23,6 +30,57 @@ const CountBadge = ({ count }: CountBadgeProps) =>
       {count}
     </span>
   )
+
+/**
+ * Toggle for desktop notifications on new failed-task / stale-worktree alerts.
+ * Turning on prompts for browser permission and only enables on a `granted`
+ * result; turning off just clears the opt-in. Reflects unsupported and
+ * browser-blocked (denied) states so the control never looks broken.
+ */
+const NotificationsToggle = () => {
+  const enabled = useNotificationsEnabled()
+
+  if (!notificationsSupported()) {
+    return (
+      <span
+        className="font-mono text-[11px] uppercase tracking-wide text-iron/50"
+        title="This browser does not support desktop notifications"
+      >
+        Alerts ✕
+      </span>
+    )
+  }
+
+  const blocked = notificationPermission() === 'denied'
+
+  const onClick = async (): Promise<void> => {
+    if (enabled) {
+      setNotificationsEnabled(false)
+      return
+    }
+    const result = await requestNotificationPermission()
+    setNotificationsEnabled(result === 'granted')
+  }
+
+  const label = enabled ? 'Alerts 🔔' : 'Alerts 🔕'
+  const title = blocked
+    ? 'Notifications are blocked in your browser settings — unblock this site to enable'
+    : enabled
+      ? 'Desktop notifications on for new alerts — click to turn off'
+      : 'Click to get desktop notifications for new alerts'
+
+  return (
+    <button
+      type="button"
+      onClick={() => void onClick()}
+      title={title}
+      aria-pressed={enabled}
+      className={linkClass(enabled)}
+    >
+      {label}
+    </button>
+  )
+}
 
 export const NavBar = ({ hash }: NavBarProps) => {
   const route = detectRoute(hash)
@@ -53,6 +111,9 @@ export const NavBar = ({ hash }: NavBarProps) => {
         <a className={linkClass(route === 'events')} href="#/events">
           Events
         </a>
+      </span>
+      <span className="ml-auto">
+        <NotificationsToggle />
       </span>
     </nav>
   )
