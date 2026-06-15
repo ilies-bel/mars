@@ -716,17 +716,31 @@ export const runAgent = async (
       ? createWorker({ ...selectedWorker.config, model })
       : selectedWorker
 
+  // Salt the session key with retryCount so each restart attempt derives a
+  // distinct Claude session id. Without the salt, toClaudeSessionId produces
+  // the same UUID on every attempt (taskId is fixed), and `claude --session-id`
+  // fails with "Session ID <uuid> is already in use" — killing the run before
+  // it does any work. retryCount is stable for the lifetime of one attempt and
+  // bumps only on restart, so the key is stable within an attempt and distinct
+  // across attempts.
+  //
+  // retryCount === 0 keeps the key equal to taskId so first-attempt UUIDs are
+  // byte-identical to their historical values (zero behaviour change for the
+  // common path). Only restarts (retryCount > 0) get a fresh, non-colliding id.
+  //
+  // Both spawn paths normalise the key to a valid UUID via toClaudeSessionId
+  // (PTY in providers.ts, headless/stream in claudeStreamArgs) before it
+  // reaches `claude --session-id`, so a non-UUID task id is acceptable here.
+  const taskForSession = await getTask(taskId, store)
+  const retryCount = taskForSession?.retryCount ?? 0
+  const sessionKey = retryCount > 0 ? `${taskId}#${retryCount}` : taskId
+
   const r = await runWorkerWithSpan({
     worker,
     prompt: fullPrompt,
     runOptions: {
       cwd: worktreePath,
-      // Use taskId as the session key so pty traces and the Stop-hook
-      // installer are keyed to this task rather than falling back to 'anon'.
-      // Both spawn paths normalise this to a valid UUID via toClaudeSessionId
-      // (PTY in providers.ts, headless/stream in claudeStreamArgs) before it
-      // reaches `claude --session-id`, so a non-UUID task id is acceptable here.
-      sessionId: taskId,
+      sessionId: sessionKey,
       systemPrompt: resolveWorkerSystemPrompt(primaryTag),
       onEvent: async (event) => {
         emit?.(event)

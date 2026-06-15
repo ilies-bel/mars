@@ -134,3 +134,62 @@ describe('toClaudeSessionId', () => {
     expect(args[sysIdx + 1]).toBe(SEARCH_TOOL_SYSTEM_PROMPT)
   })
 })
+
+describe('session-key composition (restart-collision avoidance)', () => {
+  const SAMPLE_TASK_ID = 'mars-9afa7df6'
+
+  // Helper that mirrors the composition in primitives/index.ts exactly:
+  //   retryCount === 0  =>  sessionKey = taskId
+  //   retryCount > 0   =>  sessionKey = `${taskId}#${retryCount}`
+  function composeSessionKey(taskId: string, retryCount: number): string {
+    return retryCount > 0 ? `${taskId}#${retryCount}` : taskId
+  }
+
+  it('retryCount === 0: session key equals taskId (no salt)', () => {
+    expect(composeSessionKey(SAMPLE_TASK_ID, 0)).toBe(SAMPLE_TASK_ID)
+  })
+
+  it('retryCount === 0: toClaudeSessionId(key) produces a stable UUID (first-attempt UUID unchanged)', () => {
+    const key = composeSessionKey(SAMPLE_TASK_ID, 0)
+    const uuid = toClaudeSessionId(key)
+    expect(uuid).toMatch(UUID_RE)
+    // Deterministic: same key → same UUID always
+    expect(uuid).toBe(toClaudeSessionId(key))
+  })
+
+  it('retryCount === 1: key differs from retryCount === 0 key', () => {
+    const key0 = composeSessionKey(SAMPLE_TASK_ID, 0)
+    const key1 = composeSessionKey(SAMPLE_TASK_ID, 1)
+    expect(key1).not.toBe(key0)
+  })
+
+  it('retryCount === 2: key differs from both retryCount === 0 and === 1 keys', () => {
+    const key0 = composeSessionKey(SAMPLE_TASK_ID, 0)
+    const key1 = composeSessionKey(SAMPLE_TASK_ID, 1)
+    const key2 = composeSessionKey(SAMPLE_TASK_ID, 2)
+    expect(key2).not.toBe(key0)
+    expect(key2).not.toBe(key1)
+  })
+
+  it('toClaudeSessionId yields three distinct UUIDs across attempts 0, 1, and 2', () => {
+    const uuid0 = toClaudeSessionId(composeSessionKey(SAMPLE_TASK_ID, 0))
+    const uuid1 = toClaudeSessionId(composeSessionKey(SAMPLE_TASK_ID, 1))
+    const uuid2 = toClaudeSessionId(composeSessionKey(SAMPLE_TASK_ID, 2))
+
+    // All are valid UUIDs
+    expect(uuid0).toMatch(UUID_RE)
+    expect(uuid1).toMatch(UUID_RE)
+    expect(uuid2).toMatch(UUID_RE)
+
+    // All are distinct — no restart collision
+    expect(uuid1).not.toBe(uuid0)
+    expect(uuid2).not.toBe(uuid0)
+    expect(uuid2).not.toBe(uuid1)
+  })
+
+  it('retryCount === 1 key still normalises to a valid UUID via toClaudeSessionId', () => {
+    const key1 = composeSessionKey(SAMPLE_TASK_ID, 1)
+    expect(key1).toBe('mars-9afa7df6#1')
+    expect(toClaudeSessionId(key1)).toMatch(UUID_RE)
+  })
+})
