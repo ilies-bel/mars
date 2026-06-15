@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -139,30 +140,48 @@ export const mergeMcpJson = (repoRoot: string): void => {
 
   if (!existsSync(destPath)) {
     writeFileSync(destPath, JSON.stringify(template, null, 2) + '\n')
-    return
+  } else {
+    let existing: Record<string, unknown>
+    try {
+      existing = JSON.parse(readFileSync(destPath, 'utf8')) as Record<string, unknown>
+    } catch (err) {
+      throw new Error(
+        `.mcp.json at ${destPath} is malformed JSON and cannot be merged: ${(err as Error).message}`,
+      )
+    }
+
+    const existingServers =
+      typeof existing['mcpServers'] === 'object' && existing['mcpServers'] !== null
+        ? (existing['mcpServers'] as Record<string, unknown>)
+        : {}
+
+    const merged: Record<string, unknown> = {
+      ...existing,
+      mcpServers: {
+        ...existingServers,
+        codegraph: codegraphEntry,
+      },
+    }
+
+    writeFileSync(destPath, JSON.stringify(merged, null, 2) + '\n')
   }
 
-  let existing: Record<string, unknown>
+  // Non-fatal PATH probe: advise the user if codegraph is absent so they
+  // know why graph tools are inert (ADR-0062 — codegraph is a soft dep).
+  // Runs on both fresh-write and merge paths. Swallow any spawn errors so
+  // the probe itself never breaks init.
   try {
-    existing = JSON.parse(readFileSync(destPath, 'utf8')) as Record<string, unknown>
-  } catch (err) {
-    throw new Error(
-      `.mcp.json at ${destPath} is malformed JSON and cannot be merged: ${(err as Error).message}`,
+    const probe = spawnSync(
+      process.platform === 'win32' ? 'where' : 'which',
+      ['codegraph'],
+      { encoding: 'utf8', shell: false },
     )
+    if (!probe.error && probe.status !== 0) {
+      process.stderr.write(
+        '[mars init] codegraph not found on PATH — graph tools will be inert until you install it (npm i -g codegraph && codegraph index). See ADR-0062.\n',
+      )
+    }
+  } catch {
+    // Swallow — never let the PATH probe break init
   }
-
-  const existingServers =
-    typeof existing['mcpServers'] === 'object' && existing['mcpServers'] !== null
-      ? (existing['mcpServers'] as Record<string, unknown>)
-      : {}
-
-  const merged: Record<string, unknown> = {
-    ...existing,
-    mcpServers: {
-      ...existingServers,
-      codegraph: codegraphEntry,
-    },
-  }
-
-  writeFileSync(destPath, JSON.stringify(merged, null, 2) + '\n')
 }

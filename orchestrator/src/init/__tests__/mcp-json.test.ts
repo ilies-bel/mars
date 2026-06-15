@@ -13,8 +13,13 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mergeMcpJson } from '../scaffold'
+
+// Default: codegraph is present (status 0). Individual tests override as needed.
+vi.mock('node:child_process', () => ({
+  spawnSync: vi.fn().mockReturnValue({ status: 0, error: undefined }),
+}))
 
 describe('mergeMcpJson', () => {
   let root: string
@@ -133,5 +138,46 @@ describe('mergeMcpJson', () => {
       command: 'codegraph',
       args: ['serve', '--mcp'],
     })
+  })
+})
+
+describe('codegraph-nudge', () => {
+  let root: string
+  // MockInstance types don't align cleanly across overloaded process.stderr.write;
+  // we only access .mock.calls, so a structural type is safe here.
+  let stderrSpy: { mock: { calls: unknown[][] } }
+
+  beforeEach(() => {
+    root = mkdtempSync(resolve(tmpdir(), 'mars-mcp-nudge-'))
+    stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+    vi.restoreAllMocks()
+  })
+
+  it('emits no warning when codegraph is found on PATH', async () => {
+    const { spawnSync } = await import('node:child_process')
+    vi.mocked(spawnSync).mockReturnValue({ status: 0, error: undefined } as ReturnType<typeof spawnSync>)
+
+    mergeMcpJson(root)
+
+    const nudges = stderrSpy.mock.calls.filter((c) =>
+      typeof c[0] === 'string' && c[0].includes('codegraph not found'),
+    )
+    expect(nudges).toHaveLength(0)
+  })
+
+  it('emits exactly one warning when codegraph is absent from PATH', async () => {
+    const { spawnSync } = await import('node:child_process')
+    vi.mocked(spawnSync).mockReturnValue({ status: 1, error: undefined } as ReturnType<typeof spawnSync>)
+
+    mergeMcpJson(root)
+
+    const nudges = stderrSpy.mock.calls.filter((c) =>
+      typeof c[0] === 'string' && c[0].includes('[mars init] codegraph not found'),
+    )
+    expect(nudges).toHaveLength(1)
   })
 })
