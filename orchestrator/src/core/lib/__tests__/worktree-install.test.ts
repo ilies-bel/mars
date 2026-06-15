@@ -298,6 +298,80 @@ describe('worktree-install', () => {
       expect(orchInstallsFromRoot).toHaveLength(1)
     })
 
+    it('handles the canonical mars graph (root link:->orch + orch file:->workflow) without ever building orch', async () => {
+      // This is the exact install topology this repo dogfoods on:
+      //   root         → link:./orchestrator                       (must skip pre-build)
+      //   orchestrator → file:../packages/workflow                 (pre-builds workflow)
+      //   packages/workflow                                         (standalone install site)
+      //
+      // The historical setup bug — "workspace dep build failed (orchestrator):
+      // pnpm run build exited 2" — fired when the root site treated link: like
+      // file:/workspace: and ran `pnpm run build` (=tsc --noEmit) in
+      // orchestrator concurrently with the orchestrator site's own setup.
+      // Codify the invariants for this specific graph here, separate from the
+      // narrower "skips link:" unit test above, so a future regression in
+      // either dimension (link: handling OR file: pre-build ordering) is
+      // caught against the real-world shape and not just a simplified graph.
+      writeFileSync(resolve(workDir, 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'package.json'),
+        JSON.stringify({
+          name: 'root',
+          dependencies: { mars: 'link:./orchestrator' },
+        }),
+      )
+      mkdirSync(resolve(workDir, 'orchestrator'))
+      writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'orchestrator', 'package.json'),
+        JSON.stringify({
+          name: 'mars',
+          scripts: { build: 'tsc --noEmit' },
+          dependencies: { '@mars/workflow': 'file:../packages/workflow' },
+        }),
+      )
+      mkdirSync(resolve(workDir, 'packages', 'workflow'), { recursive: true })
+      writeFileSync(resolve(workDir, 'packages', 'workflow', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'packages', 'workflow', 'package.json'),
+        JSON.stringify({ name: '@mars/workflow', scripts: { build: 'tsup' } }),
+      )
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+      await installWorktreeDeps({ worktreeRoot: workDir, runner })
+
+      const orchDir = resolve(workDir, 'orchestrator')
+      const wfDir = resolve(workDir, 'packages', 'workflow')
+
+      // Invariant 1: `pnpm run build` NEVER runs in orchestrator. The root
+      // site's link: dep must be skipped; pre-building orchestrator (tsc
+      // --noEmit) would race with workflow's still-unpacked dist and is the
+      // exact failure mode this guards against.
+      const orchBuilds = calls.filter(
+        (c) => c.cwd === orchDir && c.args[0] === 'run' && c.args[1] === 'build',
+      )
+      expect(orchBuilds).toEqual([])
+
+      // Invariant 2: workflow IS pre-built (it's a file: dep, dist must be
+      // packed before the orchestrator site installs).
+      const wfBuilds = calls.filter(
+        (c) => c.cwd === wfDir && c.args[0] === 'run' && c.args[1] === 'build',
+      )
+      expect(wfBuilds).toHaveLength(1)
+
+      // Invariant 3: orchestrator is installed exactly once — its own site's
+      // install. The root site's link: dep must NOT trigger a second install
+      // in orchestrator (which would race on pnpm's store lock).
+      const orchInstalls = calls.filter(
+        (c) => c.cwd === orchDir && c.args[0] === 'install',
+      )
+      expect(orchInstalls).toHaveLength(1)
+    })
+
     it('throws when a workspace dep build fails (it would only fail typecheck later otherwise)', async () => {
       mkdirSync(resolve(workDir, 'orchestrator'))
       writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
