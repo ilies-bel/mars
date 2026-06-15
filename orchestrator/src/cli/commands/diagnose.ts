@@ -118,7 +118,6 @@ const diagnoseRun: Command = {
     try {
       result = await deps.daemon.sendRequest(
         { op: 'diagnose-failure', id: taskId },
-        { autoSpawn: false },
       )
     } catch (err) {
       deps.err(`diagnose run: ${errorMessage(err)}`)
@@ -150,7 +149,6 @@ const diagnoseInvestigate: Command = {
     try {
       result = await deps.daemon.sendRequest(
         { op: 'investigate', id: taskId },
-        { autoSpawn: false },
       )
     } catch (err) {
       deps.err(`diagnose investigate: ${errorMessage(err)}`)

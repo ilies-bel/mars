@@ -65,16 +65,19 @@ const init: Command = {
       ReturnType<typeof import('../../workflows/init-workflow').runInit>
     >
     try {
-      result = (await deps.daemon.sendRequest({
-        op: 'init',
-        opts: {
-          force,
-          dryRun,
-          verbose,
-          ...(configPath ? { configPath } : {}),
-          wizardChoices,
+      result = (await deps.daemon.sendRequest(
+        {
+          op: 'init',
+          opts: {
+            force,
+            dryRun,
+            verbose,
+            ...(configPath ? { configPath } : {}),
+            wizardChoices,
+          },
         },
-      })) as typeof result
+        { autoSpawn: true },
+      )) as typeof result
     } catch (err: unknown) {
       const e = err as Error & { code?: string }
       if (e.code?.startsWith('init-config:')) {

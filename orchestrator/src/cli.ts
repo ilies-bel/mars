@@ -315,11 +315,11 @@ Commands:
                                 Requires a running daemon.
   diagnose run <task-id>        trigger daemon-side failure diagnosis (Sonnet
                                 root-cause); prints the diagnosis text. The
-                                daemon must already be running (--no-spawn).
+                                daemon must already be running; will not auto-start.
   diagnose investigate <task-id>
                                 trigger daemon-side worktree investigation
                                 (Haiku triage); prints the explanation. The
-                                daemon must already be running (--no-spawn).
+                                daemon must already be running; will not auto-start.
   diagnose set <task-id> --from <-|path>
                                 record a diagnose Chore's verdict against a
                                 stuck task. Input is a JSON object with kind

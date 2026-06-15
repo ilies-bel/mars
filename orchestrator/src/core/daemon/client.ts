@@ -64,7 +64,7 @@ export const sendRequest = async (
   req: DaemonRequest,
   opts: ClientOptions = {},
 ): Promise<unknown> => {
-  await ensureRunning({ autoSpawn: true, ...opts })
+  await ensureRunning({ autoSpawn: false, ...opts })
   const { socket } = daemonPaths()
 
   return new Promise((resolve, reject) => {

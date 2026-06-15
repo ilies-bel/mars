@@ -4,8 +4,8 @@
  * (`mars daemon --detach` / `--stop`) are normalised by the group fallback,
  * which re-dispatches to the canonical leaf.
  *
- * All daemon-control RPCs use `{ autoSpawn: false }` so a control command
- * never accidentally spawns the very daemon it is inspecting.
+ * All daemon-control RPCs require the daemon to be running — they never
+ * auto-spawn it. This is the global default; see client.ts sendRequest().
  */
 
 import { spawn } from 'node:child_process'
@@ -43,14 +43,12 @@ const daemonStop: Command = {
       if (force) {
         await deps.daemon.sendRequest(
           { op: 'shutdown', force: true },
-          { autoSpawn: false },
         )
         deps.out('daemon stopping (force; in-flight tasks abandoned)')
         return { code: 0 }
       }
       const data = (await deps.daemon.sendRequest(
         { op: 'shutdown', drain: true },
-        { autoSpawn: false },
       )) as { inFlight: number; draining: boolean }
       if (data.inFlight === 0) {
         deps.out('daemon stopping')
@@ -79,7 +77,6 @@ const daemonKill: Command = {
     try {
       const data = (await deps.daemon.sendRequest(
         { op: 'kill' },
-        { autoSpawn: false },
       )) as { killed: ReadonlyArray<{ taskId: string; kind: string }> }
       if (data.killed.length === 0) {
         deps.out('daemon killed (no in-flight tasks)')
@@ -113,7 +110,6 @@ const daemonReload: Command = {
     try {
       const data = (await deps.daemon.sendRequest(
         { op: 'reload-config' },
-        { autoSpawn: false },
       )) as {
         caps: {
           implement: number
@@ -156,7 +152,6 @@ const daemonSetFlag: Command = {
     try {
       const data = (await deps.daemon.sendRequest(
         { op: 'set-flag', flag, value },
-        { autoSpawn: false },
       )) as { flag: string; value: string }
       deps.out(`flag ${data.flag}=${data.value}`)
     } catch (err) {
@@ -183,7 +178,6 @@ const daemonStatus: Command = {
     }
     const data = (await deps.daemon.sendRequest(
       { op: 'status' },
-      { autoSpawn: false },
     )) as {
       pid: number
       startedAt: string
@@ -235,7 +229,6 @@ const daemonRestart: Command = {
       try {
         await deps.daemon.sendRequest(
           { op: 'shutdown', force: true },
-          { autoSpawn: false },
         )
       } catch (err) {
         const msg = errorMessage(err)

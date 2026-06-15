@@ -297,7 +297,6 @@ const sync: Command = {
     if (liveness.alive) {
       const summary = (await deps.daemon.sendRequest(
         { op: 'sync' },
-        { autoSpawn: false },
       )) as ReconcileSummary
       deps.out('sync complete (via daemon):')
       printReconcile(
