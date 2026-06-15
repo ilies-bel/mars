@@ -774,6 +774,7 @@ export const startDaemon = async (
       const {
         isBlockersAbortError,
         isMainDirtyVerifyError,
+        isMainDirtyMergeError,
         isContextExhaustedAbortError,
         isOriginWorktreeMissingAbortError,
         isPreviewGateError,
@@ -796,6 +797,14 @@ export const startDaemon = async (
       // pair is needed there.)
       if (result.status === 'failed' && isMainDirtyVerifyError(resultError)) {
         log(`[implement] ${task.id} parked blocked: integration branch dirty at verify; main-commiter spawned/attached`)
+        return
+      }
+      // Merge-time dirty-main detection. The merge step parked the source
+      // `blocked` behind a `main-commiter` recovery and threw a sentinel.
+      // Suppress the misleading `task.completed status=failed` emit. The task
+      // re-enters the merge step (not from scratch) once the committer unblocks it.
+      if (result.status === 'failed' && isMainDirtyMergeError(resultError)) {
+        log(`[implement] ${task.id} parked blocked: integration branch dirty at merge; main-commiter spawned/attached`)
         return
       }
       // A context-budget exhaustion abort marks the task `failed` with cause

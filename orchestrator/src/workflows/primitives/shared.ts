@@ -92,6 +92,13 @@ export const MAIN_DIRTY_VERIFY_MESSAGE =
 export const isMainDirtyVerifyError = (err: unknown): boolean =>
   errorHaystack(err).includes('verify:main-dirty')
 
+// Thrown by the merge step's dirty-main check.
+export const MAIN_DIRTY_MERGE_MESSAGE =
+  'integration branch dirty before merge; parked behind main-commiter recovery'
+
+export const isMainDirtyMergeError = (err: unknown): boolean =>
+  errorHaystack(err).includes('merge:main-dirty')
+
 // Thrown by the code step when the context token budget fires.
 export const CONTEXT_EXHAUSTED_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} aborted by context-budget ceiling: coder hit the context token limit`

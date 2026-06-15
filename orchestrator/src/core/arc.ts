@@ -1178,7 +1178,7 @@ export class Arc {
     sourceTaskId: string
     dirtyMainHash: string | null
     integrationBranch: string
-    dispatchPhase: 'dispatch' | 'verify'
+    dispatchPhase: 'dispatch' | 'verify' | 'merge'
     recipePrompt: string
     sourceOriginId: string
     traceStore: TraceEventStore
@@ -1270,7 +1270,7 @@ export class Arc {
         kind: 'recovery_spawned',
         taskId: fixTaskId,
         originId: input.sourceOriginId,
-        phase: input.dispatchPhase === 'verify' ? 'verify' : 'setup',
+        phase: input.dispatchPhase === 'verify' ? 'verify' : input.dispatchPhase === 'merge' ? 'merge' : 'setup',
         payload: {
           recipe: MAIN_COMMITER_RECIPE,
           sourceTaskId: input.sourceTaskId,

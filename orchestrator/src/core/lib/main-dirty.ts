@@ -337,7 +337,7 @@ export const findActiveMainCommitter = async (
  */
 export const SOURCE_ERROR_SUMMARY = (
   integrationBranch: string,
-  dispatchPhase: 'dispatch' | 'verify',
+  dispatchPhase: 'dispatch' | 'verify' | 'merge',
 ): string =>
   `dirty integration branch (${integrationBranch}) detected at ${dispatchPhase}; parked behind main-commiter recovery`
 
@@ -358,7 +358,7 @@ export interface SpawnOrAttachInput {
   /** Integration branch label captured at detection time. */
   integrationBranch: string
   /** Which phase tripped detection — drives the recorded `failure_reason`. */
-  dispatchPhase: 'dispatch' | 'verify'
+  dispatchPhase: 'dispatch' | 'verify' | 'merge'
   /** Pre-rendered recipe body. */
   recipePrompt: string
   /** Origin id of the source, so the recovery row inherits it. */

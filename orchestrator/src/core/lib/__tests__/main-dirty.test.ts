@@ -522,6 +522,109 @@ describe('spawnOrAttachMainCommitter', () => {
   })
 })
 
+describe('spawnOrAttachMainCommitter with dispatchPhase merge', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('spawns a committer with dispatchPhase=merge and parks source blocked (not failed)', async () => {
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const src = await queue.enqueueTask('source-merge', undefined, {
+      skipTriage: true,
+    })
+
+    const { spawnOrAttachMainCommitter } = await import('../main-dirty')
+    const resolution = await spawnOrAttachMainCommitter({
+      sourceTaskId: src.id,
+      detection: {
+        dirty: true,
+        hash: 'merge'.padEnd(64, '0'),
+        statusOutput: ' M README.md\n',
+      },
+      integrationBranch: 'main',
+      dispatchPhase: 'merge',
+      recipePrompt: 'merge-phase committer prompt',
+      sourceOriginId: src.id,
+      traceStore: nullTraceStore,
+    })
+
+    expect(resolution.spawned).toBe(true)
+    expect(resolution.fixTaskId).toMatch(/^fix-[0-9a-f]{8}$/)
+
+    // Source must be blocked, NOT failed.
+    const after = await queue.getTask(src.id)
+    expect(after?.status).toBe('blocked')
+    expect(after?.status).not.toBe('failed')
+
+    // Committer row is in place.
+    const committer = await queue.getTask(resolution.fixTaskId)
+    expect(committer?.kind).toBe('fix')
+    expect(committer?.fixForTaskId).toBe(src.id)
+
+    // Blocker edge is present.
+    const c = queue.resolveQueueClient()
+    const edges = await c.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+      args: [src.id, resolution.fixTaskId],
+    })
+    expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(1)
+  })
+
+  it('attaches a merge-phase source to an existing dispatch-phase committer at the same hash', async () => {
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const src1 = await queue.enqueueTask('source-dispatch', undefined, {
+      skipTriage: true,
+    })
+    const src2 = await queue.enqueueTask('source-merge', undefined, {
+      skipTriage: true,
+    })
+    const detection = {
+      dirty: true as const,
+      hash: 'mergededup'.padEnd(64, '0'),
+      statusOutput: ' M file.ts\n',
+    }
+
+    const { spawnOrAttachMainCommitter } = await import('../main-dirty')
+    const first = await spawnOrAttachMainCommitter({
+      sourceTaskId: src1.id,
+      detection,
+      integrationBranch: 'main',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'p',
+      sourceOriginId: src1.id,
+      traceStore: nullTraceStore,
+    })
+    expect(first.spawned).toBe(true)
+
+    // src2 hits the same hash at merge time — must attach, not spawn fresh.
+    const second = await spawnOrAttachMainCommitter({
+      sourceTaskId: src2.id,
+      detection,
+      integrationBranch: 'main',
+      dispatchPhase: 'merge',
+      recipePrompt: 'p',
+      sourceOriginId: src2.id,
+      traceStore: nullTraceStore,
+    })
+    expect(second.spawned).toBe(false)
+    expect(second.fixTaskId).toBe(first.fixTaskId)
+
+    const src2After = await queue.getTask(src2.id)
+    expect(src2After?.status).toBe('blocked')
+  })
+})
+
 describe('attachToExistingFixTask preserves the ADR-0040 leaf invariant', () => {
   let repo: string
 

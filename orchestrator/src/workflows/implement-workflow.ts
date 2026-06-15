@@ -35,6 +35,8 @@ export {
   isBlockersAbortError,
   MAIN_DIRTY_VERIFY_MESSAGE,
   isMainDirtyVerifyError,
+  MAIN_DIRTY_MERGE_MESSAGE,
+  isMainDirtyMergeError,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
   isContextExhaustedAbortError,
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,

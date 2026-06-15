@@ -96,6 +96,7 @@ import {
   CODER_EXIT_NONZERO_ABORT_MESSAGE,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
   MAIN_DIRTY_VERIFY_MESSAGE,
+  MAIN_DIRTY_MERGE_MESSAGE,
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
   PREVIEW_GATE_MESSAGE,
 } from './shared'
@@ -1324,65 +1325,125 @@ export const merge = async (
           )
         }
         if (targetStatus.kind === 'dirty') {
-          const DIRTY_TARGET_SIGNATURE = 'merge:preflight/uncommitted-changes'
-          const errorMsg = `merge target ${targetStatus.targetPath} has uncommitted changes blocking fast-forward\n${targetStatus.statusOutput}`
-          await updateTask(
-            taskId,
-            {
-              status: 'failed',
-              error: errorMsg,
-              failedPhase: 'merge',
-              failureReason: DIRTY_TARGET_SIGNATURE,
-              failureReasonCode: DIRTY_TARGET_SIGNATURE,
-              failureSignature: DIRTY_TARGET_SIGNATURE,
-            },
-            store,
-          )
-          raiseActionQueueItem({
-            kind: 'failed',
-            category: 'orchestrator',
-            priority: 'high',
-            title: `Merge blocked: ${integrationBranch} has uncommitted changes — clean and continue ${taskId}`,
-            body: [
-              `Task \`${taskId}\` reached the merge step with committed work on branch \`${branch}\`, but the merge target (\`${integrationBranch}\`) has uncommitted tracked changes on paths that the fast-forward would update.`,
-              '',
-              `This is an operator/environment condition, not a code defect. The task's committed work is intact on branch \`${branch}\`.`,
-              '',
-              `**To unblock:**`,
-              `1. Clean \`${integrationBranch}\`: commit, stash, or discard the uncommitted changes listed below.`,
-              `2. Run \`mars continue ${taskId}\` — this re-attempts just the merge step without re-running the coder.`,
-              `   (\`mars restart ${taskId}\` also works but discards the committed branch and re-runs from scratch.)`,
-              '',
-              `Dirty paths at failure time (may be stale — re-check before acting):`,
-              '```',
-              targetStatus.statusOutput,
-              '```',
-            ].join('\n'),
-            payload: {
-              taskId,
-              branch,
-              integrationBranch,
-              targetPath: targetStatus.targetPath,
-              statusOutput: targetStatus.statusOutput,
-            },
-            context: { repoRoot: process.env.MARS_REPO ?? null },
-            raisedBy: 'merge:preflight:dirty-target',
-            signature: `${taskId}:${DIRTY_TARGET_SIGNATURE}`,
-            originTaskId: taskId,
-            occurrence: {
-              at: new Date().toISOString(),
-              taskId,
-              integrationBranch,
-            },
-          }).catch((err) => {
-            console.error(
-              `[merge:preflight] task ${taskId} dirty-target action-queue raise errored:`,
-              err,
-            )
+          // Re-probe via checkIntegrationBranchDirty to get the dedup hash
+          // (checkMergeTargetStatus does not compute one). If main was cleaned
+          // between the preflight and now (a race), fall through to the normal
+          // merge attempt.
+          const {
+            checkIntegrationBranchDirty,
+            MAIN_COMMITER_RECIPE,
+            spawnOrAttachMainCommitter,
+          } = await import('../../core/lib/main-dirty')
+          const { loadRecipeCatalog } = await import('../../core/lib/recipes')
+          const mergeCtx = resolveContext()
+          const detection = await checkIntegrationBranchDirty({
+            repoRoot: mergeCtx.repoRoot,
+            integrationBranch,
+            traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
           })
-          throw new Error(
-            `task ${taskId} merge:preflight detected dirty target ${integrationBranch}`,
-          )
+
+          if (!detection.dirty) {
+            // Race: main was cleaned between preflight and re-probe — proceed.
+            console.log(
+              `[main-dirty] merge-time: task ${taskId} re-probe found clean after preflight dirty; proceeding to merge attempt`,
+            )
+          } else {
+            const catalog = await loadRecipeCatalog(mergeCtx.stateDir)
+            const recipe = catalog.get(MAIN_COMMITER_RECIPE)
+            if (recipe) {
+              const resolution = await spawnOrAttachMainCommitter({
+                sourceTaskId: taskId,
+                detection,
+                integrationBranch,
+                dispatchPhase: 'merge',
+                recipePrompt: recipe.prompt,
+                sourceOriginId: trace.originId,
+                traceStore: trace.traceStore,
+                store,
+              })
+              if (resolution.attachedToStatus === 'done') {
+                console.log(
+                  `[main-dirty] merge-time: task ${taskId} found done committer at same hash; falling through to merge attempt`,
+                )
+              } else {
+                console.log(
+                  `[main-dirty] merge-time: task ${taskId} parked blocked on main-commiter ${resolution.fixTaskId} (${
+                    resolution.spawned
+                      ? 'spawned fresh'
+                      : `attached to existing committer in status=${resolution.attachedToStatus}`
+                  })`,
+                )
+                throw new Error(
+                  `task ${taskId} merge:main-dirty: ${MAIN_DIRTY_MERGE_MESSAGE}`,
+                )
+              }
+            } else {
+              // Recipe missing from catalog — fall back to the hard-fail +
+              // manual action-queue item so a broken/stripped catalog still
+              // surfaces something actionable.
+              const DIRTY_TARGET_SIGNATURE = 'merge:preflight/uncommitted-changes'
+              const errorMsg = `merge target ${targetStatus.targetPath} has uncommitted changes blocking fast-forward\n${targetStatus.statusOutput}`
+              await updateTask(
+                taskId,
+                {
+                  status: 'failed',
+                  error: errorMsg,
+                  failedPhase: 'merge',
+                  failureReason: DIRTY_TARGET_SIGNATURE,
+                  failureReasonCode: DIRTY_TARGET_SIGNATURE,
+                  failureSignature: DIRTY_TARGET_SIGNATURE,
+                },
+                store,
+              )
+              raiseActionQueueItem({
+                kind: 'failed',
+                category: 'orchestrator',
+                priority: 'high',
+                title: `Merge blocked: ${integrationBranch} has uncommitted changes — clean and continue ${taskId}`,
+                body: [
+                  `Task \`${taskId}\` reached the merge step with committed work on branch \`${branch}\`, but the merge target (\`${integrationBranch}\`) has uncommitted tracked changes on paths that the fast-forward would update.`,
+                  '',
+                  `This is an operator/environment condition, not a code defect. The task's committed work is intact on branch \`${branch}\`.`,
+                  '',
+                  `The \`${MAIN_COMMITER_RECIPE}\` recipe is missing from the catalog, so automatic recovery could not be spawned.`,
+                  '',
+                  `**To unblock:**`,
+                  `1. Clean \`${integrationBranch}\`: commit, stash, or discard the uncommitted changes listed below.`,
+                  `2. Run \`mars continue ${taskId}\` — this re-attempts just the merge step without re-running the coder.`,
+                  `   (\`mars restart ${taskId}\` also works but discards the committed branch and re-runs from scratch.)`,
+                  '',
+                  `Dirty paths at failure time (may be stale — re-check before acting):`,
+                  '```',
+                  targetStatus.statusOutput,
+                  '```',
+                ].join('\n'),
+                payload: {
+                  taskId,
+                  branch,
+                  integrationBranch,
+                  targetPath: targetStatus.targetPath,
+                  statusOutput: targetStatus.statusOutput,
+                },
+                context: { repoRoot: process.env.MARS_REPO ?? null },
+                raisedBy: 'merge:preflight:dirty-target',
+                signature: `${taskId}:${DIRTY_TARGET_SIGNATURE}`,
+                originTaskId: taskId,
+                occurrence: {
+                  at: new Date().toISOString(),
+                  taskId,
+                  integrationBranch,
+                },
+              }).catch((err) => {
+                console.error(
+                  `[merge:preflight] task ${taskId} dirty-target action-queue raise errored:`,
+                  err,
+                )
+              })
+              throw new Error(
+                `task ${taskId} merge:preflight detected dirty target ${integrationBranch}`,
+              )
+            }
+          }
         }
         if (targetStatus.kind === 'error') {
           const errorMsg = `merge pre-flight git status failed: ${targetStatus.error.message}`.slice(0, 1000)
@@ -1483,7 +1544,8 @@ export const merge = async (
           error instanceof Error &&
           (error.message.includes('merge:preflight') ||
             error.message.includes('merge pre-flight failed') ||
-            error.message.includes('merge aborted; vcs-supervisor could not reconcile'))
+            error.message.includes('merge aborted; vcs-supervisor could not reconcile') ||
+            error.message.includes('merge:main-dirty'))
         ) {
           throw error
         }
