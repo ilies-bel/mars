@@ -73,6 +73,17 @@ export interface ReconcileSummary {
   mergingFinalized: number
   mergingRequeued: number
   stalledProposalsSliced: number
+  /**
+   * Origins flipped to 'done' by replaying a completed recovery's propagation
+   * at startup. Covers the case where the task.completed event for the fix task
+   * was never delivered (daemon crash between FF-merge and outbox delivery).
+   */
+  recoveryPropagated: number
+  /**
+   * Dependents re-queued as a downstream effect of a recovery-done propagation
+   * replayed during startup reconcile.
+   */
+  recoveryDependentsRequeued: number
 }
 
 /**
@@ -106,4 +117,6 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   mergingFinalized: 0,
   mergingRequeued: 0,
   stalledProposalsSliced: 0,
+  recoveryPropagated: 0,
+  recoveryDependentsRequeued: 0,
 })

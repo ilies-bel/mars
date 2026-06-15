@@ -195,6 +195,133 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
   })
 })
 
+describe('runStartupReconcile — recovery-done propagation', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('flips a failed origin to done and re-queues its dependents when the fix task is done but propagation was missed', async () => {
+    const { q, reconcile } = await loadModules(repo)
+
+    // Create the origin task and force it to 'failed' (simulating the
+    // retry-budget-exhaustion state after a failed code run).
+    const origin = await q.enqueueTask('origin task', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
+      args: [origin.id],
+    })
+
+    // Create a dependent blocked on the origin.
+    const dependent = await q.enqueueTask('dependent task', undefined, { skipTriage: true })
+    const now = new Date().toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+      args: [dependent.id, origin.id, now],
+    })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [dependent.id],
+    })
+
+    // Insert a done fix task pointing at the origin — this simulates a
+    // recovery that completed (its FF-merge landed) but whose task.completed
+    // event was never delivered to the propagation subscriber (e.g. daemon
+    // crash between the merge commit and the outbox drain).
+    const fixId = 'fix-reconcile-test-001'
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, created_at, updated_at) VALUES (?, ?, 'done', 'fix', ?, ?, ?)`,
+      args: [fixId, 'fix for origin', origin.id, now, now],
+    })
+
+    // Run reconcile — the recovery-done-propagation step should detect the
+    // stranded scenario and replay propagateRecoveryDone().
+    const summary = await reconcile.runStartupReconcile(makeDeps())
+
+    // Origin must be flipped to 'done'.
+    const updatedOrigin = await q.getTask(origin.id)
+    expect(updatedOrigin?.status).toBe('done')
+
+    // Dependent must be re-queued because its blocker (origin) is now done.
+    const updatedDependent = await q.getTask(dependent.id)
+    expect(updatedDependent?.status).toBe('queued')
+
+    // Summary counters must reflect one propagation and one re-queued dependent.
+    expect(summary.recoveryPropagated).toBe(1)
+    expect(summary.recoveryDependentsRequeued).toBe(1)
+  })
+
+  it('is idempotent — second pass is a no-op when the origin is already done', async () => {
+    const { q, reconcile } = await loadModules(repo)
+
+    const origin = await q.enqueueTask('already-done origin', undefined, { skipTriage: true })
+    const now = new Date().toISOString()
+    // Origin already done before the reconcile runs (normal completion).
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+      args: [origin.id],
+    })
+
+    // Done fix task pointing at the origin.
+    const fixId = 'fix-reconcile-test-002'
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, created_at, updated_at) VALUES (?, ?, 'done', 'fix', ?, ?, ?)`,
+      args: [fixId, 'fix for done origin', origin.id, now, now],
+    })
+
+    const first = await reconcile.runStartupReconcile(makeDeps())
+    expect(first.recoveryPropagated).toBe(0) // origin already done → no-op
+
+    const second = await reconcile.runStartupReconcile(makeDeps())
+    expect(second.recoveryPropagated).toBe(0)
+
+    // Origin stays done.
+    const updated = await q.getTask(origin.id)
+    expect(updated?.status).toBe('done')
+  })
+
+  it('does not touch fix tasks that are not yet done', async () => {
+    const { q, reconcile } = await loadModules(repo)
+
+    const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+    const now = new Date().toISOString()
+
+    // Fix task still running — should NOT trigger propagation.
+    const fixId = 'fix-reconcile-test-003'
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, created_at, updated_at) VALUES (?, ?, 'running', 'fix', ?, ?, ?)`,
+      args: [fixId, 'running fix', origin.id, now, now],
+    })
+
+    // Block the origin on the in-progress fix task (real scenario: origin waits
+    // for its recovery). This edge prevents the orphaned-blocked-scan from
+    // spuriously re-queuing the origin before our step runs.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [origin.id],
+    })
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+      args: [origin.id, fixId, now],
+    })
+
+    const summary = await reconcile.runStartupReconcile(makeDeps())
+
+    // No propagation — the fix task hasn't completed yet.
+    expect(summary.recoveryPropagated).toBe(0)
+
+    // Origin stays blocked (fix task still in-progress).
+    const updated = await q.getTask(origin.id)
+    expect(updated?.status).toBe('blocked')
+  })
+})
+
 describe('runStartupReconcile — blocker-drift repair precedes orphan scan', () => {
   let repo: string
 

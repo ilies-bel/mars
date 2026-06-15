@@ -45,22 +45,27 @@ export type { ReconcileSummary } from './reconciler'
  *  3. Orphaned-blocked scan — re-queue any `blocked` task whose blocker
  *     edges have all resolved or been removed.  This is the fix for the
  *     wedge case where `dropTask` deleted edges but left dependents blocked.
- *  4. Reseed dispatch — emit task.added / task.queued for all draft/queued
+ *  4. Recovery-done propagation — replay any completed recovery (kind='fix',
+ *     status='done') whose origin was never flipped to 'done'. Covers the
+ *     missed-event case where a daemon crash between FF-merge and outbox
+ *     delivery left the origin in 'failed' and its dependents stranded in
+ *     'blocked'. Idempotent; swallows its own errors.
+ *  5. Reseed dispatch — emit task.added / task.queued for all draft/queued
  *     rows so the dispatch loop picks them up.
- *  5. Requeue stale-running — tasks that were `running` when the prior
+ *  6. Requeue stale-running — tasks that were `running` when the prior
  *     daemon died are re-queued from setup (no retry budget burn).
- *  6. Orphan span sweep — mark any unclosed step spans from prior daemons
+ *  7. Orphan span sweep — mark any unclosed step spans from prior daemons
  *     as killed so the Agents page never shows permanently-live sessions.
- *  7. Verifying recovery — if worktree survives, clear and re-queue; else
+ *  8. Verifying recovery — if worktree survives, clear and re-queue; else
  *     mark failed.
- *  8. Merging recovery — if the FF already landed, finalize to done; else
+ *  9. Merging recovery — if the FF already landed, finalize to done; else
  *     clear worktree and re-queue.
- *  9. Stalled-proposal slice — pick up prd-ready proposals that were
+ * 10. Stalled-proposal slice — pick up prd-ready proposals that were
  *     promoted while the daemon was offline.
  *
  * Error semantics are preserved verbatim from the original hand-called
- * sequence: steps 1, 2, 3, 6 and 9 swallow their own errors (log + continue);
- * steps 4, 5, 7 and 8 do not, so a throw inside them rejects the whole pass.
+ * sequence: steps 1, 2, 3, 4, 7 and 10 swallow their own errors (log + continue);
+ * steps 5, 6, 8 and 9 do not, so a throw inside them rejects the whole pass.
  * This orchestrator therefore does NOT add a blanket per-step try/catch —
  * each step owns its error policy.
  */

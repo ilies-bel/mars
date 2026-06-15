@@ -91,7 +91,61 @@ const orphanedBlockedScan: Reconciler = {
 }
 
 /**
- * 4. Reseed dispatch — emit task.added / task.queued for all draft/queued rows
+ * 4. Recovery-done propagation — replay any completed recovery (kind='fix',
+ *    status='done') whose origin task was never flipped to 'done'. This
+ *    covers the case where the task.completed outbox event was not delivered
+ *    to the subscriber that runs the propagate block in server.ts (e.g. a
+ *    daemon crash between the FF-merge commit and outbox drain). Without this
+ *    step a missed event strands the origin in 'failed'/'blocked' and its
+ *    dependents permanently in 'blocked', because the old startup-reconcile
+ *    pass had no rule for this scenario and a daemon restart did not clear it.
+ *
+ *    Idempotent: propagateRecoveryDone() is a no-op when the origin is
+ *    already 'done'. Error semantics: swallows its own errors (like steps
+ *    1–3) so a transient DB hiccup does not abort the rest of the pass.
+ */
+const recoveryDonePropagation: Reconciler = {
+  name: 'recovery-done-propagation',
+  async run({ log, bus }) {
+    try {
+      const { resolveQueueClient, TASK_SEL, rowToTask } = await import('../queue')
+      const r = await resolveQueueClient().execute(
+        `${TASK_SEL} WHERE t.kind = 'fix' AND t.status = 'done' AND t.fix_for_task_id IS NOT NULL`,
+      )
+      const doneFixes = r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
+
+      let propagated = 0
+      let requeued = 0
+      for (const fix of doneFixes) {
+        const result = await Arc.load(fix.fixForTaskId!).propagateRecoveryDone()
+        if (result.originFlipped) {
+          log(
+            `[reconcile] recovery ${fix.id} propagated done to origin ${result.originTaskId}; closed ${result.actionQueueItemsClosed} actionQueue item(s)`,
+          )
+          propagated++
+          if (result.unblock) {
+            for (const o of result.unblock.outcomes) {
+              if (o.outcome === 'queued') {
+                log(
+                  `[reconcile] task ${o.taskId} re-queued after recovery propagated done to origin ${result.originTaskId}`,
+                )
+                bus.emit('task.queued', { taskId: o.taskId })
+                requeued++
+              }
+            }
+          }
+        }
+      }
+      return { recoveryPropagated: propagated, recoveryDependentsRequeued: requeued }
+    } catch (err) {
+      log(`[reconcile] recovery-done-propagation failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
+ * 5. Reseed dispatch — emit task.added / task.queued for all draft/queued rows
  *    so the dispatch loop picks them up. Pure bus side-effect; no summary
  *    contribution.
  */
@@ -109,7 +163,7 @@ const reseedDispatch: Reconciler = {
 }
 
 /**
- * 5. Requeue stale-running — tasks that were `running` when the prior daemon
+ * 6. Requeue stale-running — tasks that were `running` when the prior daemon
  *    died are re-queued from setup (no retry budget burn).
  */
 const requeueStaleRunning: Reconciler = {
@@ -127,7 +181,7 @@ const requeueStaleRunning: Reconciler = {
 }
 
 /**
- * 6. Orphan span sweep — mark any unclosed step spans from prior daemons as
+ * 7. Orphan span sweep — mark any unclosed step spans from prior daemons as
  *    killed. Skipped when `traceStore` is unavailable (standalone path).
  */
 const orphanSpanSweep: Reconciler = {
@@ -148,7 +202,7 @@ const orphanSpanSweep: Reconciler = {
 }
 
 /**
- * 7. Verifying recovery — if the worktree survives, clear and re-queue (or
+ * 8. Verifying recovery — if the worktree survives, clear and re-queue (or
  *    restore to blocked when incomplete blockers exist); else mark failed.
  *    Delegates to the shared `recoverPhase` loop.
  */
@@ -163,7 +217,7 @@ const verifyingRecovery: Reconciler = {
 }
 
 /**
- * 8. Merging recovery — if the FF already landed, finalize to done; else clear
+ * 9. Merging recovery — if the FF already landed, finalize to done; else clear
  *    worktree and re-queue (or restore to blocked when incomplete blockers
  *    exist). Delegates to the shared `recoverPhase` loop.
  */
@@ -178,7 +232,7 @@ const mergingRecovery: Reconciler = {
 }
 
 /**
- * 9. Stalled-proposal slice — pick up prd-ready proposals promoted while the
+ * 10. Stalled-proposal slice — pick up prd-ready proposals promoted while the
  *    daemon was offline. With a `handleProposalSlice` callback (daemon path),
  *    slice them; when null (standalone path), just report them.
  */
@@ -209,13 +263,14 @@ const stalledProposalSlice: Reconciler = {
 
 /**
  * The ordered startup-reconcile registry. Order is load-bearing and matches
- * the historical hand-called sequence 1→9. To add a step, insert a
+ * the historical hand-called sequence 1→10. To add a step, insert a
  * `Reconciler` at the correct position; the boot path iterates this array.
  */
 export const RECONCILERS: readonly Reconciler[] = [
   daemonKilledSweep,
   blockerDriftRepair,
   orphanedBlockedScan,
+  recoveryDonePropagation,
   reseedDispatch,
   requeueStaleRunning,
   orphanSpanSweep,
