@@ -1106,12 +1106,55 @@ export const findOpenReflectionDraftForKpi = async (
 }
 
 /**
- * Flip a proposal's status from 'prd-ready' to 'sliced' and emit
+ * Atomically claim a 'prd-ready' proposal for slicing by flipping its status
+ * to the intermediate 'slicing' marker. The conditional UPDATE is the only
+ * defence against the prd-ready→sliced TOCTOU race: two concurrent slice
+ * triggers (e.g. promote auto-slice + a manual `mars proposal slice` RPC, or
+ * a slice that overlaps with a daemon restart) both used to read 'prd-ready'
+ * and BOTH generated a full slice-set because the status flip only fired
+ * after the slow Slicer LLM call completed. With the claim, the second
+ * caller's UPDATE matches zero rows and the call must abort before doing any
+ * slicer work or task inserts.
+ *
+ * Returns true iff exactly one row was updated — i.e. this caller won the
+ * claim. A false return means the proposal is not 'prd-ready' (already
+ * 'slicing', already 'sliced', or in some other lifecycle state). The
+ * complementary `markProposalSliced` completes the flip from 'slicing' to
+ * 'sliced'; the slice workflow's compensating revert path returns it to
+ * 'prd-ready' on failure so a crashed/failed slice is re-claimable.
+ */
+export const claimProposalForSlicing = async (
+  idOrPrefix: string,
+): Promise<boolean> => {
+  await initProposals()
+  const resolved = await resolveProposalId(idOrPrefix)
+  if (resolved.kind === 'ambiguous') {
+    throw new Error(
+      `ambiguous prefix '${idOrPrefix}' matches ${resolved.count} proposals`,
+    )
+  }
+  if (resolved.kind === 'none') {
+    throw new Error(`proposal ${idOrPrefix} not found`)
+  }
+  const id = resolved.id
+  const c = stateClient()
+  const r = await c.execute({
+    sql: `UPDATE proposals SET status = 'slicing', updated_at = ? WHERE id = ? AND status = 'prd-ready'`,
+    args: [Date.now(), id],
+  })
+  return r.rowsAffected === 1
+}
+
+/**
+ * Flip a proposal's status from 'slicing' to 'sliced' and emit
  * proposal.sliced on the event bus. Called by the slice workflow's
  * generate-slices step (Phase 4) after tasks have been successfully
- * inserted into queue.db. Emitting the event here — in proposals.ts,
- * alongside the other lifecycle transitions — keeps proposal state
- * management centralised.
+ * inserted into queue.db. The conditional UPDATE (status='slicing')
+ * pairs with `claimProposalForSlicing` so only the caller that holds the
+ * claim can finalise the transition — a stale caller whose claim was
+ * already reverted by a compensating path will see zero rows updated.
+ * Emitting the event here — in proposals.ts, alongside the other
+ * lifecycle transitions — keeps proposal state management centralised.
  */
 export const markProposalSliced = async (
   idOrPrefix: string,
@@ -1129,9 +1172,15 @@ export const markProposalSliced = async (
   }
   const id = resolved.id
   const c = stateClient()
-  await c.execute({
-    sql: `UPDATE proposals SET status = 'sliced', updated_at = ? WHERE id = ?`,
+  const r = await c.execute({
+    sql: `UPDATE proposals SET status = 'sliced', updated_at = ? WHERE id = ? AND status = 'slicing'`,
     args: [Date.now(), id],
   })
+  if (r.rowsAffected !== 1) {
+    const current = await getProposal(id)
+    throw new Error(
+      `cannot mark proposal ${id} sliced: expected status='slicing', found '${current?.status ?? 'missing'}'`,
+    )
+  }
   await emitProposalBusEvent('proposal.sliced', { proposalId: id, taskCount })
 }

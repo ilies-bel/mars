@@ -9,6 +9,7 @@ interface ProposalsMod {
   promoteProposal: typeof import('../proposals').promoteProposal
   rejectProposal: typeof import('../proposals').rejectProposal
   markProposalSliced: typeof import('../proposals').markProposalSliced
+  claimProposalForSlicing: typeof import('../proposals').claimProposalForSlicing
   initProposals: typeof import('../proposals').initProposals
   setProposalField: typeof import('../proposals').setProposalField
   addProposalUserStory: typeof import('../proposals').addProposalUserStory
@@ -104,6 +105,11 @@ describe('proposal bus events', () => {
     await p.addProposalUserStory(proposal.id, 'As a user I can do something')
     await p.promoteProposal(proposal.id)
 
+    // The atomic claim flips 'prd-ready' -> 'slicing'; markProposalSliced
+    // only flips 'slicing' -> 'sliced', so we must claim first or the
+    // conditional UPDATE matches zero rows.
+    const claimed = await p.claimProposalForSlicing(proposal.id)
+    expect(claimed).toBe(true)
     await p.markProposalSliced(proposal.id, 3)
 
     const events = await getEvents(q, 'proposal.sliced')

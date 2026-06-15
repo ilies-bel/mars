@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
-import { getProposal, markProposalSliced } from '../core/proposals'
+import { claimProposalForSlicing, getProposal, markProposalSliced } from '../core/proposals'
 import { getDefaultStateStore } from '../core/store/state-store'
 import { enqueueTask, updateTask } from '../core/queue'
 import { Arc } from '../core/arc'
@@ -903,13 +903,28 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     const inputData = input
     const proposal = await getProposal(inputData.proposalId)
     if (!proposal) throw new Error(`proposal ${inputData.proposalId} not found`)
-    if (proposal.status !== 'prd-ready') {
+    // Atomic claim — flip 'prd-ready' to 'slicing' in a single conditional
+    // UPDATE so a second concurrent runSlice (e.g. promote auto-slice racing
+    // a direct `mars proposal slice` RPC, or a daemon restart re-exposing
+    // the same prd-ready proposal) sees zero rows affected and aborts before
+    // generating a duplicate slice-set. The read-only `proposal.status`
+    // check this replaces was a TOCTOU race: both callers used to read
+    // 'prd-ready' and both ran the slicer.
+    const claimed = await claimProposalForSlicing(inputData.proposalId)
+    if (!claimed) {
+      const current = await getProposal(inputData.proposalId)
       throw new Error(
-        `proposal ${proposal.id} is '${proposal.status}'; only prd-ready proposals can be sliced`,
+        `proposal ${proposal.id} is not claimable for slicing (status='${current?.status ?? 'missing'}'; already slicing or sliced)`,
       )
     }
-
-    const traceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
+    // From this point on, every failure path must revert the claim
+    // ('slicing' -> 'prd-ready') so the daemon's auto-slice loop and a
+    // direct `mars proposal slice` can re-attempt. The outer try/catch
+    // below is that compensating revert; it is a superset of the existing
+    // inner cleanup, which targets the post-Phase-4 'sliced' -> 'prd-ready'
+    // window specifically.
+    try {
+      const traceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
     let slicedTaskCount = 0
     const r = await runWorkerWithSpan({
       worker: Workers.Slicer,
@@ -1282,6 +1297,25 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     }
 
     return { proposalId: proposal.id, status: 'sliced', taskIds }
+    } catch (error: unknown) {
+      // Compensating revert for the atomic claim. Covers every failure
+      // path between the claim above and a successful return — including
+      // failures that fire BEFORE the inner Phase 1-5 catch (slicer process
+      // failure, parse failure, validation failure) and would otherwise
+      // strand the proposal at 'slicing' with no surviving tasks. The WHERE
+      // matches both 'slicing' and 'sliced' so the same revert handles
+      // post-Phase-4 failures too; if the inner catch already reverted to
+      // 'prd-ready', the UPDATE matches zero rows and is a harmless no-op.
+      // Best-effort — a revert failure must not mask the original cause.
+      const revertStore = await getDefaultStateStore()
+      await revertStore
+        .execute({
+          sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ? WHERE id = ? AND status IN ('slicing', 'sliced')`,
+          args: [Date.now(), proposal.id],
+        })
+        .catch(() => {})
+      throw error
+    }
     }),
 })
 
