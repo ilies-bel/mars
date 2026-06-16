@@ -582,6 +582,10 @@ export const startDaemon = async (
   let drainRunning = false
   let drainAgain = false
 
+  // Tracks the last time any RPC request was received. Used by the idle-timeout
+  // timer to determine when the daemon has been genuinely inactive.
+  let lastActivityAt = Date.now()
+
   // Forward-declared so dispatchers can call it from finally; assigned after
   // both dispatchers exist.
   let drain: () => Promise<void> = async () => {}
@@ -2161,6 +2165,7 @@ export const startDaemon = async (
   })
 
   const handleRequest = async (req: DaemonRequest): Promise<DaemonResponse> => {
+    lastActivityAt = Date.now()
     rpcDeps ??= buildRpcDeps()
     return dispatchRpc(rpcRegistry, req, rpcDeps)
   }
@@ -2930,6 +2935,36 @@ export const startDaemon = async (
   }, BLOCKER_RESOLUTION_DRAIN_MS)
   blockerResolutionDrain.unref()
 
+  // ── Idle-shutdown timeout ─────────────────────────────────────────────────
+  // When no RPC request has arrived for IDLE_TIMEOUT_MS and no tasks are in
+  // flight, the daemon shuts itself down gracefully. Background sweepers do
+  // NOT reset the clock — only incoming handleRequest calls count as activity.
+  // Set MARS_IDLE_TIMEOUT_MS=0 to disable entirely (e.g. during manual testing
+  // or when the daemon is kept alive by a process supervisor).
+  // .unref() so this timer never keeps the process alive on its own.
+  const IDLE_TIMEOUT_MS = Number(process.env.MARS_IDLE_TIMEOUT_MS ?? 15 * 60_000)
+  const IDLE_CHECK_MS = Number(process.env.MARS_IDLE_CHECK_MS ?? 30_000)
+  let idleTimeout: ReturnType<typeof setInterval> | undefined
+  if (IDLE_TIMEOUT_MS > 0) {
+    idleTimeout = setInterval(() => {
+      if (shuttingDown) return
+      if (drainRunning) return
+      if (tracker.inFlightCount() > 0) {
+        // While tasks are running, keep resetting the idle clock so the timeout
+        // only starts counting once the daemon is truly quiet.
+        lastActivityAt = Date.now()
+        return
+      }
+      if (Date.now() - lastActivityAt >= IDLE_TIMEOUT_MS) {
+        log(
+          `[idle-timeout] no activity for ${Math.round(IDLE_TIMEOUT_MS / 60_000)}m and no tasks in flight — shutting down`,
+        )
+        void shutdown(false)
+      }
+    }, IDLE_CHECK_MS)
+    idleTimeout.unref()
+  }
+
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
@@ -2947,6 +2982,7 @@ export const startDaemon = async (
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
+    clearInterval(idleTimeout)
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.
