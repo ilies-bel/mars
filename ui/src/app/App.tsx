@@ -2,7 +2,7 @@ import { NavBar } from '@/widgets/NavBar'
 import { TaskDetailDrawer } from '@/widgets/TaskDetailDrawer'
 import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
 import { ProposalNodeDrawer } from '@/widgets/ProposalNodeDrawer'
-import { ReleaseNotesDrawer } from '@/widgets/ReleaseNotesDrawer'
+import { ReleaseNotesModal } from '@/widgets/ReleaseNotesModal'
 import { useHashRoute } from '@/shared/useHashRoute'
 import {
   parseKpiRoute,
@@ -123,7 +123,7 @@ const AppInner = () => {
       ) : null}
       {showReleaseNotes ? (
         <FallbackBoundary of="release notes" variant="inline">
-          <ReleaseNotesDrawer
+          <ReleaseNotesModal
             onClose={() => {
               if (typeof window !== 'undefined') window.location.hash = '#/progress'
             }}

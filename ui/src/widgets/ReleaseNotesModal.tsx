@@ -1,15 +1,15 @@
 /**
- * Release Notes drawer — right-side panel listing landed arcs, opened via
- * `#/release-notes`. Mirrors the styling vocabulary of TaskDetailDrawer and
- * ProposalDetailDrawer: same header shape, same scrim, same 180 ms exit
- * animation, same Escape-to-close behaviour.
+ * Release Notes modal — centered dialog listing landed arcs, opened via
+ * `#/release-notes`. Mirrors the accessibility vocabulary of TaskDetailDrawer
+ * and ProposalDetailDrawer: same header shape, same 180 ms exit animation,
+ * same Escape-to-close behaviour.
  *
  * Each row shows the arc title, a human-friendly `landedAt` date, and a
  * subtle "+N recovery" badge when the arc required at least one recovery task.
  * Clicking a row expands its detail inline: the full prompt and, when present,
  * the structured spec (files, verifyCmd, doneCriteria).
  *
- * On open, the drawer:
+ * On open, the modal:
  *   1. Captures `lastViewedAt` from the cursor query to determine unseen entries.
  *   2. POSTs the cursor to mark all current entries as viewed.
  *   3. Renders a "new since you were away" divider just above the oldest unseen
@@ -24,8 +24,8 @@ import { relativeTime } from '@/shared/time'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { computeUnseen } from '@/shared/useReleaseNotesAutoOpen'
 
-interface ReleaseNotesDrawerProps {
-  /** Clears the `#/release-notes` hash so the drawer closes. */
+interface ReleaseNotesModalProps {
+  /** Clears the `#/release-notes` hash so the modal closes. */
   onClose: () => void
 }
 
@@ -105,10 +105,10 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
   )
 }
 
-// ── Main drawer ────────────────────────────────────────────────────────────
+// ── Main modal ─────────────────────────────────────────────────────────────
 
-export const ReleaseNotesDrawer = ({ onClose }: ReleaseNotesDrawerProps) => {
-  const drawerRef = useRef<HTMLElement>(null)
+export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
+  const dialogRef = useRef<HTMLElement>(null)
   const [closing, setClosing] = useState(false)
   // Synchronous guard — prevents double-scheduling the close timer.
   const closingRef = useRef(false)
@@ -129,7 +129,7 @@ export const ReleaseNotesDrawer = ({ onClose }: ReleaseNotesDrawerProps) => {
   })
 
   // Capture firstUnseenIndex the moment both queries are first available.
-  // Frozen in a ref so the divider reflects state AT drawer-open time, not
+  // Frozen in a ref so the divider reflects state AT modal-open time, not
   // after the cursor POST updates the query and the view re-renders.
   const capturedRef = useRef<{ value: number | null } | null>(null)
   if (capturedRef.current === null && data !== undefined && cursorData !== undefined) {
@@ -174,11 +174,11 @@ export const ReleaseNotesDrawer = ({ onClose }: ReleaseNotesDrawerProps) => {
     setTimeout(() => onClose(), 180)
   }, [onClose])
 
-  // On open: save the previously focused element and move focus into the drawer.
+  // On open: save the previously focused element and move focus into the modal.
   // On close (cleanup): restore focus to where it was.
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null
-    drawerRef.current?.focus()
+    dialogRef.current?.focus()
     return () => {
       prev?.focus?.()
     }
@@ -193,7 +193,7 @@ export const ReleaseNotesDrawer = ({ onClose }: ReleaseNotesDrawerProps) => {
         return
       }
       if (e.key === 'Tab') {
-        const container = drawerRef.current
+        const container = dialogRef.current
         if (!container) return
         const focusable = [
           ...container.querySelectorAll<HTMLElement>(
@@ -231,133 +231,136 @@ export const ReleaseNotesDrawer = ({ onClose }: ReleaseNotesDrawerProps) => {
 
   return (
     <>
-      {/* Scrim — sits at z-40 (below the drawer's z-50) */}
+      {/* Scrim — full-viewport backdrop at z-40 (below the dialog's z-50) */}
       <div
         data-testid="release-notes-overlay"
         aria-hidden="true"
         data-closing={closing ? 'true' : undefined}
-        className="drawer-scrim fixed inset-0 z-40 hidden bg-fg/40 xl:block"
+        className="modal-scrim fixed inset-0 z-40 bg-fg/40"
         onClick={handleClose}
       />
-      <aside
-        ref={drawerRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Release Notes"
-        data-testid="release-notes-drawer"
-        data-closing={closing ? 'true' : undefined}
-        tabIndex={-1}
-        className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-iron/40 bg-bg outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
-      >
-        <header className="flex items-center justify-between border-b border-iron/40 px-4 py-3">
-          <h2 className="font-mono text-sm uppercase tracking-wide text-iron">
-            Release Notes
-          </h2>
-          <button
-            type="button"
-            onClick={handleClose}
-            aria-label="Close release notes"
-            data-testid="release-notes-close"
-            className="rounded border border-iron/40 px-2 py-0.5 font-mono text-xs text-iron hover:bg-iron/10"
-          >
-            Close
-          </button>
-        </header>
+      {/* Centering wrapper at z-50 */}
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <aside
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Release Notes"
+          data-testid="release-notes-drawer"
+          data-closing={closing ? 'true' : undefined}
+          tabIndex={-1}
+          className="modal-panel flex w-full max-w-[560px] max-h-[85vh] flex-col rounded-lg border border-iron/40 bg-bg shadow-2xl outline-none"
+        >
+          <header className="flex items-center justify-between border-b border-iron/40 px-4 py-3">
+            <h2 className="font-mono text-sm uppercase tracking-wide text-iron">
+              Release Notes
+            </h2>
+            <button
+              type="button"
+              onClick={handleClose}
+              aria-label="Close release notes"
+              data-testid="release-notes-close"
+              className="rounded border border-iron/40 px-2 py-0.5 font-mono text-xs text-iron hover:bg-iron/10"
+            >
+              Close
+            </button>
+          </header>
 
-        <div className="flex-1 overflow-y-auto">
-          {isPending ? (
-            <p
-              data-testid="release-notes-loading"
-              className="px-4 py-6 font-mono text-xs text-iron"
-            >
-              Loading…
-            </p>
-          ) : isError ? (
-            <p
-              data-testid="release-notes-error"
-              className="px-4 py-6 font-mono text-xs text-error"
-            >
-              Failed to load release notes.
-            </p>
-          ) : data === undefined || data.length === 0 ? (
-            <p
-              data-testid="release-notes-empty"
-              className="px-4 py-6 font-mono text-xs text-iron"
-            >
-              No work has landed yet.
-            </p>
-          ) : (
-            <ul data-testid="release-notes-list">
-              {data.map((entry, i) => {
-                const isExpanded = expandedId === entry.originId
-                const isOldestUnseen = firstUnseenIndex !== null && i === firstUnseenIndex
-                // Show the "new since you were away" divider just above the
-                // oldest unseen entry (between index firstUnseenIndex-1 and
-                // firstUnseenIndex in the newest-first list).
-                const showDividerAbove =
-                  firstUnseenIndex !== null &&
-                  i === firstUnseenIndex &&
-                  firstUnseenIndex > 0
-                return (
-                  <Fragment key={entry.originId}>
-                    {showDividerAbove ? (
-                      <li
-                        role="separator"
-                        data-testid="unseen-divider"
-                        className="flex items-center gap-2 px-4 py-1.5"
-                      >
-                        <span className="h-px flex-1 bg-accent/40" aria-hidden="true" />
-                        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-accent">
-                          new since you were away
-                        </span>
-                        <span className="h-px flex-1 bg-accent/40" aria-hidden="true" />
-                      </li>
-                    ) : null}
-                    <li
-                      ref={isOldestUnseen ? oldestUnseenRef : null}
-                      data-testid="release-note-row"
-                      data-oldest-unseen={isOldestUnseen ? 'true' : undefined}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => toggleExpand(entry.originId)}
-                        aria-expanded={isExpanded}
-                        className="flex w-full items-start gap-2 border-b border-iron/20 px-4 py-3 text-left hover:bg-iron/5"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="break-words text-sm font-medium text-fg">
-                            {entry.title}
-                          </p>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                            <span className="font-mono text-[11px] text-iron">
-                              {relativeTime(entry.landedAt)}
-                            </span>
-                            {entry.detail.recoveryCount > 0 ? (
-                              <span
-                                data-testid="recovery-badge"
-                                className="rounded border border-iron/30 px-1 font-mono text-[10px] text-muted"
-                              >
-                                +{entry.detail.recoveryCount} recovery
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-                        <span
-                          className="mt-1 shrink-0 font-mono text-[10px] text-muted"
-                          aria-hidden="true"
+          <div className="flex-1 overflow-y-auto">
+            {isPending ? (
+              <p
+                data-testid="release-notes-loading"
+                className="px-4 py-6 font-mono text-xs text-iron"
+              >
+                Loading…
+              </p>
+            ) : isError ? (
+              <p
+                data-testid="release-notes-error"
+                className="px-4 py-6 font-mono text-xs text-error"
+              >
+                Failed to load release notes.
+              </p>
+            ) : data === undefined || data.length === 0 ? (
+              <p
+                data-testid="release-notes-empty"
+                className="px-4 py-6 font-mono text-xs text-iron"
+              >
+                No work has landed yet.
+              </p>
+            ) : (
+              <ul data-testid="release-notes-list">
+                {data.map((entry, i) => {
+                  const isExpanded = expandedId === entry.originId
+                  const isOldestUnseen = firstUnseenIndex !== null && i === firstUnseenIndex
+                  // Show the "new since you were away" divider just above the
+                  // oldest unseen entry (between index firstUnseenIndex-1 and
+                  // firstUnseenIndex in the newest-first list).
+                  const showDividerAbove =
+                    firstUnseenIndex !== null &&
+                    i === firstUnseenIndex &&
+                    firstUnseenIndex > 0
+                  return (
+                    <Fragment key={entry.originId}>
+                      {showDividerAbove ? (
+                        <li
+                          role="separator"
+                          data-testid="unseen-divider"
+                          className="flex items-center gap-2 px-4 py-1.5"
                         >
-                          {isExpanded ? '▾' : '▸'}
-                        </span>
-                      </button>
-                      {isExpanded ? <EntryDetail entry={entry} /> : null}
-                    </li>
-                  </Fragment>
-                )
-              })}
-            </ul>
-          )}
-        </div>
-      </aside>
+                          <span className="h-px flex-1 bg-accent/40" aria-hidden="true" />
+                          <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-accent">
+                            new since you were away
+                          </span>
+                          <span className="h-px flex-1 bg-accent/40" aria-hidden="true" />
+                        </li>
+                      ) : null}
+                      <li
+                        ref={isOldestUnseen ? oldestUnseenRef : null}
+                        data-testid="release-note-row"
+                        data-oldest-unseen={isOldestUnseen ? 'true' : undefined}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(entry.originId)}
+                          aria-expanded={isExpanded}
+                          className="flex w-full items-start gap-2 border-b border-iron/20 px-4 py-3 text-left hover:bg-iron/5"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="break-words text-sm font-medium text-fg">
+                              {entry.title}
+                            </p>
+                            <div className="mt-0.5 flex flex-wrap items-center gap-2">
+                              <span className="font-mono text-[11px] text-iron">
+                                {relativeTime(entry.landedAt)}
+                              </span>
+                              {entry.detail.recoveryCount > 0 ? (
+                                <span
+                                  data-testid="recovery-badge"
+                                  className="rounded border border-iron/30 px-1 font-mono text-[10px] text-muted"
+                                >
+                                  +{entry.detail.recoveryCount} recovery
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                          <span
+                            className="mt-1 shrink-0 font-mono text-[10px] text-muted"
+                            aria-hidden="true"
+                          >
+                            {isExpanded ? '▾' : '▸'}
+                          </span>
+                        </button>
+                        {isExpanded ? <EntryDetail entry={entry} /> : null}
+                      </li>
+                    </Fragment>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+        </aside>
+      </div>
     </>
   )
 }

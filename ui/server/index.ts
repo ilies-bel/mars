@@ -251,7 +251,9 @@ export const startServer = async (
 
         if (path === '/api/release-notes') {
           const r = await proxyGet(ctx.stateDir, '/view/release-notes')
-          return jsonResponse(r.status, r.body)
+          if (r.status !== 200) return jsonResponse(r.status, r.body)
+          const body = r.body as { entries?: unknown }
+          return jsonResponse(200, body.entries ?? [])
         }
 
         // GET /api/trace-events — proxy the daemon's unified trace surface.

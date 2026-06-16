@@ -194,3 +194,64 @@ html, body, #root {
     transition: opacity 200ms;
   }
 }
+
+/* ── Modal entrance / exit animations ───────────────────────────────────────
+ * Enter: fades + scales up from 95% over 260 ms.
+ * Exit:  fades + scales back down over 180 ms (snappier than enter).
+ * GPU-only: animates opacity + transform, never size/position.
+ * -------------------------------------------------------------------------*/
+.modal-panel {
+  transition:
+    opacity   260ms cubic-bezier(0.32, 0.72, 0, 1),
+    transform 260ms cubic-bezier(0.32, 0.72, 0, 1);
+  opacity: 1;
+  transform: scale(1);
+}
+
+@starting-style {
+  .modal-panel {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+.modal-panel[data-closing="true"] {
+  transition:
+    opacity   180ms cubic-bezier(0.32, 0.72, 0, 1),
+    transform 180ms cubic-bezier(0.32, 0.72, 0, 1);
+  opacity: 0;
+  transform: scale(0.95);
+  pointer-events: none;
+}
+
+/* Modal scrim — fades in with the dialog, fades out faster */
+.modal-scrim {
+  transition: opacity 260ms cubic-bezier(0.32, 0.72, 0, 1);
+  opacity: 1;
+}
+
+@starting-style {
+  .modal-scrim {
+    opacity: 0;
+  }
+}
+
+.modal-scrim[data-closing="true"] {
+  transition: opacity 180ms cubic-bezier(0.32, 0.72, 0, 1);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Reduced motion — keep opacity fade, drop the scale */
+@media (prefers-reduced-motion: reduce) {
+  .modal-panel,
+  .modal-panel[data-closing="true"] {
+    transform: none !important;
+    transition: opacity 200ms;
+  }
+
+  .modal-scrim,
+  .modal-scrim[data-closing="true"] {
+    transition: opacity 200ms;
+  }
+}

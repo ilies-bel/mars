@@ -178,7 +178,7 @@ describe('first-run rule', () => {
 
 // The hook is tested by directly simulating its effect logic, since the full
 // React rendering path is not exercised here (that is covered in
-// ReleaseNotesDrawer.test.tsx). We verify:
+// ReleaseNotesModal.test.tsx). We verify:
 //   - firstUnseenIndex=1 when NEWEST+MIDDLE are unseen and entries=[NEWEST,MIDDLE,OLDEST]
 //   - auto-open navigates to releaseNotesHash()
 

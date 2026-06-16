@@ -1,5 +1,5 @@
 /**
- * Unit tests for the ReleaseNotesDrawer widget.
+ * Unit tests for the ReleaseNotesModal widget.
  *
  * `useQuery` is mocked at the module boundary (the project's hook-mocking
  * convention) so each test drives a fixed query result synchronously inside
@@ -93,7 +93,7 @@ mock.module('@tanstack/react-query', () => ({
 
 // computeUnseen is a pure function imported directly — no need to mock it.
 
-const { ReleaseNotesDrawer } = await import('./ReleaseNotesDrawer')
+const { ReleaseNotesModal } = await import('./ReleaseNotesModal')
 
 // ---------------------------------------------------------------------------
 // Render helper
@@ -106,14 +106,14 @@ const render = (result: QueryResult, cursor?: ReleaseNotesCursor): string => {
   } else {
     nextCursorResult = { isPending: false, isError: false, data: { lastViewedAt: null } }
   }
-  return renderToStaticMarkup(<ReleaseNotesDrawer onClose={() => {}} />)
+  return renderToStaticMarkup(<ReleaseNotesModal onClose={() => {}} />)
 }
 
 // ---------------------------------------------------------------------------
 // Empty state
 // ---------------------------------------------------------------------------
 
-describe('ReleaseNotesDrawer – empty state', () => {
+describe('ReleaseNotesModal – empty state', () => {
   it('shows the empty-state message when there are no landed arcs', () => {
     const html = render(empty())
     expect(html).toContain('No work has landed yet.')
@@ -125,7 +125,7 @@ describe('ReleaseNotesDrawer – empty state', () => {
 // Populated list
 // ---------------------------------------------------------------------------
 
-describe('ReleaseNotesDrawer – populated list', () => {
+describe('ReleaseNotesModal – populated list', () => {
   it('renders a row for each entry with its title', () => {
     const html = render(loaded([ENTRY_NO_RECOVERY, ENTRY_WITH_RECOVERY]))
     expect(html).toContain('Add the release notes feed')
@@ -154,7 +154,7 @@ describe('ReleaseNotesDrawer – populated list', () => {
 // Loading and error states
 // ---------------------------------------------------------------------------
 
-describe('ReleaseNotesDrawer – loading state', () => {
+describe('ReleaseNotesModal – loading state', () => {
   it('shows the loading message while the query is pending', () => {
     const html = render(LOADING)
     expect(html).toContain('Loading…')
@@ -163,7 +163,7 @@ describe('ReleaseNotesDrawer – loading state', () => {
   })
 })
 
-describe('ReleaseNotesDrawer – error state', () => {
+describe('ReleaseNotesModal – error state', () => {
   it('shows the error message when the query fails', () => {
     const html = render(ERROR_RESULT)
     expect(html).toContain('Failed to load release notes.')
@@ -175,7 +175,7 @@ describe('ReleaseNotesDrawer – error state', () => {
 // Header
 // ---------------------------------------------------------------------------
 
-describe('ReleaseNotesDrawer – header', () => {
+describe('ReleaseNotesModal – header', () => {
   it('renders the "Release Notes" heading and a Close button', () => {
     const html = render(empty())
     expect(html).toContain('>Release Notes<')
@@ -183,7 +183,7 @@ describe('ReleaseNotesDrawer – header', () => {
     expect(html).toContain('>Close<')
   })
 
-  it('has the drawer role and aria-modal for accessibility', () => {
+  it('has the dialog role and aria-modal for accessibility', () => {
     const html = render(empty())
     expect(html).toContain('role="dialog"')
     expect(html).toContain('aria-modal="true"')
@@ -219,7 +219,7 @@ const ENTRY_OLDER: ReleaseNoteEntry = {
 
 const LAST_VIEWED_BETWEEN = '2026-06-03T00:00:00.000Z' // NEWER and NEWEST are unseen
 
-describe('ReleaseNotesDrawer – unseen divider', () => {
+describe('ReleaseNotesModal – unseen divider', () => {
   it('renders the divider when there are unseen entries and a prior cursor', () => {
     // Two unseen (NEWEST, NEWER) and one seen (OLDER) in newest-first order
     const html = render(
