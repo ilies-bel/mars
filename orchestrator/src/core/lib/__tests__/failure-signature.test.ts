@@ -353,6 +353,22 @@ describe('matchFull rules are checked against full output', () => {
     expect(classifyError(assertionWithTableText)).toBe('test-assertion-error')
   })
 
+  it('computeFailureSignature produces merge:vcs-supervisor-aborted/rebase-no-in-progress-state for the guard early-abort message', () => {
+    // mergeBranch Step 1: git rebase exits non-zero but leaves no rebase-merge/
+    // or rebase-apply/ state (e.g. uncommitted worktree changes blocked the
+    // rebase before it could conflict). The guard detects isRebaseInProgress()=false
+    // and returns aborted:true with this specific first-line so classification
+    // routes to a named slug rather than /unclassified.
+    const errorOutput = [
+      'rebase produced no in-progress state: nothing to reconcile (rebase exit 1)',
+      'error: cannot rebase: You have unstaged changes.',
+      'error: Please commit or stash them.',
+    ].join('\n')
+    expect(
+      computeFailureSignature('merge:vcs-supervisor-aborted', errorOutput),
+    ).toBe('merge:vcs-supervisor-aborted/rebase-no-in-progress-state')
+  })
+
   it('computeFailureSignature produces verify:test/test-libsql-not-an-error for the real libsql comment-only SQL error shape', () => {
     // The actual error captured when runMigration (src/db/migrate.ts) splits a
     // SQL migration file on '--> statement-breakpoint' and passes the leading

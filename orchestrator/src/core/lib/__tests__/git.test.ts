@@ -1265,3 +1265,91 @@ describe('attachToOriginWorktree (recovery attaches to origin worktree)', () => 
     ).rejects.toBeInstanceOf(OriginWorktreeMissingError)
   })
 })
+
+describe('mergeBranch — no-rebase-state guard: does not spawn Vega when git rebase exits non-zero without creating state', () => {
+  // Acceptance criterion: when git rebase exits non-zero but leaves NO
+  // rebase-merge/ or rebase-apply/ directory (i.e. the rebase was blocked
+  // before it could conflict — e.g. uncommitted changes in the worktree),
+  // mergeBranch must:
+  //   1. NOT call onVegaStart (Vega is not spawned)
+  //   2. Return merged:false, aborted:true
+  //   3. Set output to a first-line that begins "rebase produced no in-progress state"
+  //   4. Produce a classifiable failure signature (not /unclassified)
+
+  let repo: string
+  let worktreeDir: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-merge-nostate-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    writeFileSync(resolve(repo, 'src.ts'), 'const x = 1\n')
+    execFileSync('git', ['add', '.'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+
+    // Task branch: changes src.ts to x = 2
+    execFileSync('git', ['checkout', '-q', '-b', 'task/no-state-test'], { cwd: repo })
+    writeFileSync(resolve(repo, 'src.ts'), 'const x = 2\n')
+    execFileSync('git', ['commit', '-q', '-am', 'task commit'], { cwd: repo })
+
+    // Main: changes src.ts to x = 999 (would conflict on rebase)
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    writeFileSync(resolve(repo, 'src.ts'), 'const x = 999\n')
+    execFileSync('git', ['commit', '-q', '-am', 'main commit'], { cwd: repo })
+
+    // Create linked worktree for task branch
+    worktreeDir = mkdtempSync(resolve(tmpdir(), 'mars-merge-nostate-wt-'))
+    rmSync(worktreeDir, { recursive: true, force: true })
+    execFileSync('git', ['worktree', 'add', worktreeDir, 'task/no-state-test'], { cwd: repo })
+
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    try {
+      execFileSync('git', ['worktree', 'remove', '--force', worktreeDir], { cwd: repo })
+    } catch {}
+    rmSync(worktreeDir, { recursive: true, force: true })
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('aborts without spawning Vega when git rebase fails before creating rebase-merge/ state', async () => {
+    // Inject an unstaged change in the worktree. `git rebase` refuses to
+    // start when there are unstaged changes — it exits non-zero with
+    // "cannot rebase: You have unstaged changes." and does NOT create a
+    // rebase-merge/ or rebase-apply/ directory. The guard must detect
+    // isRebaseInProgress()=false and abort with a classifiable message
+    // instead of dispatching Vega with a false-premise prompt.
+    writeFileSync(resolve(worktreeDir, 'src.ts'), 'const x = dirty\n')
+
+    const { mergeBranch } = await import('../git/merge')
+    const { computeFailureSignature } = await import('../failure-signature')
+
+    let vegaStarts = 0
+    const result = await mergeBranch({
+      branch: 'task/no-state-test',
+      worktreePath: worktreeDir,
+      integrationBranch: 'main',
+      lockTimeoutMs: 5_000,
+      onVegaStart: () => {
+        vegaStarts += 1
+      },
+    })
+
+    // Guard fires: Vega must NOT be spawned
+    expect(vegaStarts).toBe(0)
+    // Merge must abort (not succeed)
+    expect(result.merged).toBe(false)
+    expect(result.aborted).toBe(true)
+    // First-line of output must name the real cause
+    expect(result.output).toMatch(/rebase produced no in-progress state/)
+    // The output must classify to the named slug, NOT /unclassified, so it
+    // routes to the Investigator rather than first-principles recovery.
+    const sig = computeFailureSignature('merge:vcs-supervisor-aborted', result.output)
+    expect(sig).toBe('merge:vcs-supervisor-aborted/rebase-no-in-progress-state')
+  })
+})

@@ -226,6 +226,18 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /CONFLICT|fix conflicts/i,
   },
   {
+    // merge:vcs-supervisor-aborted/rebase-no-in-progress-state fires when
+    // mergeBranch's guard detects that git rebase exited non-zero WITHOUT
+    // leaving a rebase-merge/ or rebase-apply/ state directory on disk.
+    // This means git aborted the rebase before it could conflict (e.g.
+    // uncommitted changes in the worktree blocked the rebase, an invalid
+    // upstream ref, or an empty-commit stop). mergeBranch returns aborted=true
+    // with this specific first-line rather than dispatching Vega with a
+    // false-premise "rebase is in progress" prompt.
+    errorClass: 'rebase-no-in-progress-state',
+    match: /rebase produced no in-progress state/i,
+  },
+  {
     // merge:crashed when git cannot acquire the index lock because another
     // git process is running (or crashed and left a stale .git/index.lock).
     // The distinguishing signal is on the second line of the error, not the

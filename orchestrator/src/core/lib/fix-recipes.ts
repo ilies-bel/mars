@@ -1252,6 +1252,22 @@ const testLibsqlNotAnErrorRecipe: FixRecipe = {
 //     Operator fix for mars-c5b48744: `mars restart mars-c5b48744` — the
 //     merge step will retry; any fresh failure will now classify as
 //     `not-fast-forward` and route to the existing recipe.
+//
+// • merge:vcs-supervisor-aborted/rebase-no-in-progress-state
+//     mergeBranch Step 1's guard fires: git rebase exited non-zero WITHOUT
+//     leaving a rebase-merge/ or rebase-apply/ state directory on disk.
+//     This means git aborted the rebase before it could conflict (e.g.
+//     uncommitted changes in the worktree blocked the rebase, an invalid
+//     upstream ref, or an empty-commit stop). There is no conflict to
+//     reconcile and Vega is NOT spawned (the guard was added to close the
+//     false-premise Vega dispatch that previously produced
+//     merge:vcs-supervisor-aborted/unclassified). No recipe — each
+//     occurrence's root cause varies; the Investigator produces a targeted
+//     follow-up task. Operator fix: inspect the worktree for uncommitted
+//     changes or other blockers, clean up, then `mars restart <task-id>`.
+//     Investigated 2026-06-20 (task mars-225f3d27, root-caused from origin
+//     mars-c6cab686 / recovery fix-64929590 where a no-op rebase idled for
+//     ~2h until the phantom-task watchdog killed it).
 
 // • verify:test/unclassified (task mars-d4f3ea6d, origin 436f14c7)
 //     Test `worker-stage-bindings.test.ts` line 45 expected `Workers.Triager.run(`

@@ -386,10 +386,34 @@ export const mergeBranch = async ({
       )
       output += rebaseResult.stdout + rebaseResult.stderr
       if (rebaseResult.exitCode !== 0) {
-        // Deterministic fast-forward has failed: we are about to hand the
-        // conflict to a live Vega (Claude) session. Signal the transition out of
-        // the idempotent `merging` phase before spawning, so the task shows as
-        // `vega-reconciling` for the full duration of the session.
+        // Guard: only dispatch Vega when git left a real rebase-in-progress
+        // state on disk (.git/rebase-merge/ or .git/rebase-apply/). If the
+        // rebase exited non-zero WITHOUT creating that state (e.g. uncommitted
+        // changes in the worktree blocked the rebase before it could conflict,
+        // an invalid upstream ref, or an empty-commit stop), there is nothing
+        // for Vega to reconcile. Dispatching it anyway with the hardcoded
+        // "rebase is in progress" premise produces a false-premise prompt that
+        // Vega correctly refuses, and the refusal's first-line wording matches
+        // no classifier rule → merge:vcs-supervisor-aborted/unclassified →
+        // first-principles recovery that inherits the same un-reconcilable
+        // state and idles until the phantom-task watchdog kills it.
+        const rebaseInProgress = await isRebaseInProgress(worktreePath, mergeCtx)
+        if (!rebaseInProgress) {
+          return {
+            merged: false,
+            conflictResolved: false,
+            aborted: true,
+            output: `rebase produced no in-progress state: nothing to reconcile (rebase exit ${rebaseResult.exitCode})\n${output}`,
+            supervisorConversation,
+            vegaSessionId: null,
+            retriesAttempted,
+          }
+        }
+
+        // Genuine rebase conflict: transition to the Vega-reconciling phase.
+        // Signal the transition out of the idempotent `merging` phase before
+        // spawning, so the task shows as `vega-reconciling` for the full
+        // duration of the session.
         await onVegaStart?.()
 
         const preSha = (
