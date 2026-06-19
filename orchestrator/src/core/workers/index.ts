@@ -151,7 +151,7 @@ export interface Worker {
   run(prompt: string, options: RunOptions): Promise<RunClaudeResult>
 }
 
-const CLAUDE_OPUS_MODEL = 'claude-opus-4-8'
+const CLAUDE_OPUS_MODEL = 'claude-opus-4-7'
 const CLAUDE_SONNET_MODEL = 'claude-sonnet-4-6'
 
 // codegraph nudge appended to the system prompt of the workers that benefit

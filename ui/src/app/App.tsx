@@ -95,7 +95,6 @@ const AppInner = () => {
             tasks={tasks ?? []}
             proposals={proposals}
             activeStepName={activeStepName}
-            projectId={projectId ?? undefined}
           />
         </FallbackBoundary>
       ) : null}

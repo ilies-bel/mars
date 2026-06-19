@@ -43,6 +43,8 @@ export {
   isOriginWorktreeMissingAbortError,
   CODER_EXIT_NONZERO_ABORT_MESSAGE,
   isCoderExitNonzeroAbortError,
+  CODER_UNCOMMITTED_ABORT_MESSAGE,
+  isCoderUncommittedAbortError,
   PREVIEW_GATE_MESSAGE,
   isPreviewGateError,
   // Prompt briefs + system-prompt assembly

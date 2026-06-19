@@ -115,7 +115,6 @@ export interface DaemonDeps {
   handleUpdate(id: string, patch: DaemonUpdatePatch): Promise<void>
   handleContinue(id: string): Promise<ContinueResult>
   handleRestart(id: string): Promise<void>
-  handleCancel(id: string): Promise<void>
   handlePurge(id: string, force: boolean): Promise<void>
   handleArcPurge(
     id: string,

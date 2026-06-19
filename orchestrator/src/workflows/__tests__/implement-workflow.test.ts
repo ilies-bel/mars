@@ -10,11 +10,13 @@ import {
   DEVIATION_RULES,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
   CODER_EXIT_NONZERO_ABORT_MESSAGE,
+  CODER_UNCOMMITTED_ABORT_MESSAGE,
   composePrompt,
   detectPostCoderState,
   failureExcerpt,
   isBlockersAbortError,
   isCoderExitNonzeroAbortError,
+  isCoderUncommittedAbortError,
   isContextExhaustedAbortError,
   isOriginWorktreeMissingAbortError,
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
@@ -667,6 +669,33 @@ describe('isCoderExitNonzeroAbortError — coder non-zero exit sentinel', () => 
     const wrapped = new Error('Step run-claude-code failed: something')
     Object.assign(wrapped, { cause })
     expect(isCoderExitNonzeroAbortError(wrapped)).toBe(true)
+  })
+})
+
+describe('isCoderUncommittedAbortError — coder-left-uncommitted sentinel', () => {
+  it('recognises the sentinel the code step throws on a dirty-no-commits tree', () => {
+    const err = new Error(CODER_UNCOMMITTED_ABORT_MESSAGE('mars-c6cab686'))
+    expect(isCoderUncommittedAbortError(err)).toBe(true)
+  })
+
+  it('does not false-positive on unrelated errors', () => {
+    expect(isCoderUncommittedAbortError(new Error('some other failure'))).toBe(false)
+    expect(isCoderUncommittedAbortError(new Error('verify command exited 1'))).toBe(false)
+    // The coder-exit-nonzero sentinel is a DISTINCT self-handled abort and must
+    // not be mistaken for the uncommitted one — the daemon routes both, but the
+    // failureReason / recovery brief differ.
+    expect(
+      isCoderUncommittedAbortError(new Error(CODER_EXIT_NONZERO_ABORT_MESSAGE('mars-abc12345', 1))),
+    ).toBe(false)
+    expect(isCoderUncommittedAbortError(null)).toBe(false)
+    expect(isCoderUncommittedAbortError(undefined)).toBe(false)
+  })
+
+  it('recognises the sentinel through a wrapped cause chain', () => {
+    const cause = new Error(CODER_UNCOMMITTED_ABORT_MESSAGE('mars-c6cab686'))
+    const wrapped = new Error('Step run-claude-code failed: something')
+    Object.assign(wrapped, { cause })
+    expect(isCoderUncommittedAbortError(wrapped)).toBe(true)
   })
 })
 

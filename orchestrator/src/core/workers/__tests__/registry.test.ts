@@ -153,9 +153,9 @@ describe('Planner / Slicer / Triager pinned config', () => {
   }
 
   it('Planner and Slicer pin opus on high effort; Triager pins sonnet on medium effort', () => {
-    expect(WORKER_CONFIGS.Planner.model).toBe('claude-opus-4-8')
+    expect(WORKER_CONFIGS.Planner.model).toBe('claude-opus-4-7')
     expect(WORKER_CONFIGS.Planner.effort).toBe('high')
-    expect(WORKER_CONFIGS.Slicer.model).toBe('claude-opus-4-8')
+    expect(WORKER_CONFIGS.Slicer.model).toBe('claude-opus-4-7')
     expect(WORKER_CONFIGS.Slicer.effort).toBe('high')
     expect(WORKER_CONFIGS.Triager.model).toBe('claude-sonnet-4-6')
     expect(WORKER_CONFIGS.Triager.effort).toBe('medium')
@@ -171,7 +171,7 @@ describe('Fixer pinned config', () => {
     // Fixer intentionally stays on Opus even though Coder uses Sonnet.
     // Recovery tasks deal with broken/partially-applied code where extra
     // reasoning headroom pays off.
-    expect(valueAfter(args, '--model')).toBe('claude-opus-4-8')
+    expect(valueAfter(args, '--model')).toBe('claude-opus-4-7')
     expect(valueAfter(args, '--effort')).toBe('high')
     expect(args).toContain('--dangerously-skip-permissions')
   })

@@ -124,6 +124,26 @@ export const CODER_EXIT_NONZERO_ABORT_MESSAGE = (
 export const isCoderExitNonzeroAbortError = (err: unknown): boolean =>
   /coder for task .+ exited -?\d+ before completing/.test(errorHaystack(err))
 
+// Thrown by the code step when the coder exits 0 but leaves real work
+// UNCOMMITTED on the branch (dirty tree, 0 commits ahead of integration).
+// Without this the dirty-no-commits worktree falls straight through: verify's
+// has-diff gate reads 0 commits ahead and PASSES it as a benign no-op, then the
+// merge step rebases an empty branch and dispatches the vcs-supervisor with a
+// prompt hardcoded to "a rebase just conflicted / is in progress" — which is
+// false, so Vega aborts (merge:vcs-supervisor-aborted) and the first-principles
+// recovery inherits the same uncommittable tree and idles until the phantom-task
+// watchdog ceiling kills it. (Observed end-to-end on task mars-c6cab686 /
+// fix-64929590, 2026-06-19: a forgotten `git commit` cost ~2h of wall-clock.)
+// Catching it here, at the earliest point, converts the silent fall-through into
+// one cheap recovery whose only job is to commit the work already in the tree.
+export const CODER_UNCOMMITTED_ABORT_MESSAGE = (taskId: string): string =>
+  `coder for task ${taskId} left uncommitted work (dirty tree, 0 commits ahead)`
+
+export const isCoderUncommittedAbortError = (err: unknown): boolean =>
+  /coder for task .+ left uncommitted work \(dirty tree, 0 commits ahead\)/.test(
+    errorHaystack(err),
+  )
+
 // Thrown by the merge step's preview gate when a task carries a previewCmd and
 // has not yet been validated. The step starts a live dev server, parks the task
 // in 'awaiting-validation', raises the action-queue row, then throws this so the

@@ -13,8 +13,6 @@ import {
   TaskDetailBody,
   applyNavigate,
   crumbLabel,
-  buildTaskUrl,
-  buildSpansUrl,
 } from './TaskDetailDrawer'
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -1207,87 +1205,5 @@ describe('TaskDetailDrawer – EvalChip accessibility', () => {
     expect(html).toContain('unknown-metric')
     // No aria-label injected for unlisted metrics
     expect(html).not.toContain('aria-label="unknown-metric')
-  })
-})
-
-// ── Project-scoped fetch URLs ──────────────────────────────────────────────────
-
-/**
- * The drawer must forward the active project id to its two fetch calls so the
- * UI server queries the correct project DB.  The URL-building helpers are
- * exported for direct testing — effects don't run under renderToStaticMarkup.
- *
- * Behaviour spec:
- *   - When projectId is omitted/undefined → bare URL (no ?project= param)
- *   - When projectId is provided → append ?project=<id> (or &project=<id>)
- *   - Task id and project id are both URL-encoded
- */
-describe('buildTaskUrl – /api/tasks/:id with optional project param', () => {
-  it('returns the bare URL when projectId is omitted', () => {
-    expect(buildTaskUrl('mars-abc123')).toBe('/api/tasks/mars-abc123')
-  })
-
-  it('returns the bare URL when projectId is explicitly undefined', () => {
-    expect(buildTaskUrl('mars-abc123', undefined)).toBe('/api/tasks/mars-abc123')
-  })
-
-  it('appends ?project= when projectId is provided', () => {
-    expect(buildTaskUrl('mars-abc123', 'p_proj123')).toBe(
-      '/api/tasks/mars-abc123?project=p_proj123',
-    )
-  })
-
-  it('URL-encodes both the task id and project id', () => {
-    expect(buildTaskUrl('mars abc', 'proj id')).toBe(
-      '/api/tasks/mars%20abc?project=proj%20id',
-    )
-  })
-})
-
-describe('buildSpansUrl – /api/step-spans with optional project param', () => {
-  it('returns the bare taskId URL when projectId is omitted', () => {
-    expect(buildSpansUrl({ taskId: 'mars-abc' })).toBe('/api/step-spans?taskId=mars-abc')
-  })
-
-  it('returns the bare originId URL when projectId is omitted', () => {
-    expect(buildSpansUrl({ originId: 'origin-1' })).toBe(
-      '/api/step-spans?originId=origin-1',
-    )
-  })
-
-  it('appends &project= to the taskId URL when projectId is provided', () => {
-    expect(buildSpansUrl({ taskId: 'mars-abc', projectId: 'p_proj' })).toBe(
-      '/api/step-spans?taskId=mars-abc&project=p_proj',
-    )
-  })
-
-  it('appends &project= to the originId URL when projectId is provided', () => {
-    expect(buildSpansUrl({ originId: 'origin-1', projectId: 'p_proj' })).toBe(
-      '/api/step-spans?originId=origin-1&project=p_proj',
-    )
-  })
-
-  it('URL-encodes the project id in the spans URL', () => {
-    expect(buildSpansUrl({ taskId: 'mars-abc', projectId: 'proj/id' })).toBe(
-      '/api/step-spans?taskId=mars-abc&project=proj%2Fid',
-    )
-  })
-})
-
-describe('TaskDetailDrawer – accepts projectId prop without crashing', () => {
-  it('renders the drawer structure when projectId is provided', () => {
-    const html = renderToStaticMarkup(
-      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} projectId="p_proj123" />,
-    )
-    expect(html).toContain('data-testid="task-detail-drawer"')
-    expect(html).toContain('role="dialog"')
-  })
-
-  it('renders the same drawer structure when projectId is omitted (backward compat)', () => {
-    const html = renderToStaticMarkup(
-      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
-    )
-    expect(html).toContain('data-testid="task-detail-drawer"')
-    expect(html).toContain('role="dialog"')
   })
 })

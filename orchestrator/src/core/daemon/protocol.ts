@@ -31,7 +31,6 @@ export type DaemonRequest =
     }
   | { op: 'continue'; id: string }
   | { op: 'restart'; id: string }
-  | { op: 'cancel'; id: string }
   | { op: 'purge'; id: string; force?: boolean }
   | { op: 'arc-purge'; id: string; force?: boolean }
   | { op: 'drop'; id: string; force?: boolean }

@@ -94,6 +94,7 @@ import {
   resolveWorkerSystemPrompt,
   BLOCKERS_ABORT_MESSAGE,
   CODER_EXIT_NONZERO_ABORT_MESSAGE,
+  CODER_UNCOMMITTED_ABORT_MESSAGE,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
   MAIN_DIRTY_VERIFY_MESSAGE,
   MAIN_DIRTY_MERGE_MESSAGE,
@@ -856,18 +857,26 @@ export const runAgent = async (
     throw new Error(CODER_EXIT_NONZERO_ABORT_MESSAGE(taskId, r.exitCode))
   }
 
-  // Classify the worktree end-state for the run log (best-effort).
+  // Classify the worktree end-state. A `dirty-no-commits` tree (the coder did
+  // real work but never ran `git commit`) is NOT benign: it silently falls
+  // through verify (the has-diff gate reads 0 commits ahead and PASSES it as a
+  // no-op) into merge, which rebases an empty branch and dispatches the
+  // vcs-supervisor with a "rebase just conflicted / is in progress" prompt that
+  // is false — Vega aborts, no recipe matches, and the first-principles recovery
+  // idles until the phantom-task watchdog ceiling kills it (~2h; observed on
+  // mars-c6cab686 / fix-64929590). Catch it here, at the earliest point, and
+  // spawn exactly one cheap recovery whose only job is to commit the work that
+  // is already in the worktree — mirroring the coder-exit-nonzero handler above.
+  // Classifier failures (`error`) stay best-effort: log and fall through, so a
+  // transient git hiccup never blocks an otherwise-good run.
+  let postState: Awaited<ReturnType<typeof detectPostCoderState>> | null = null
   try {
-    const postState = await detectPostCoderState({
+    postState = await detectPostCoderState({
       worktreePath,
       integrationBranch,
       traceCtx: buildPhaseCtx(trace, taskId, 'code'),
     })
-    if (postState.kind === 'dirty-no-commits') {
-      console.log(
-        `[post-coder] task ${taskId}: dirty tree with 0 commits ahead of ${integrationBranch} — ${postState.dirtyFiles.length} uncommitted path(s):\n  ${postState.dirtyFiles.join('\n  ')}`,
-      )
-    } else if (postState.kind === 'error') {
+    if (postState.kind === 'error') {
       console.warn(
         `[post-coder] task ${taskId}: classifier error: ${postState.error}`,
       )
@@ -877,6 +886,42 @@ export const runAgent = async (
       `[post-coder] task ${taskId}: classifier threw, continuing:`,
       err,
     )
+  }
+
+  if (postState?.kind === 'dirty-no-commits') {
+    const dirtyList = postState.dirtyFiles.join('\n  ')
+    console.log(
+      `[post-coder] task ${taskId}: dirty tree with 0 commits ahead of ${integrationBranch} — coder left ${postState.dirtyFiles.length} uncommitted path(s):\n  ${dirtyList}`,
+    )
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: `coder exited cleanly but left ${postState.dirtyFiles.length} uncommitted path(s) — 0 commits ahead of ${integrationBranch}:\n  ${dirtyList}`,
+        failedPhase: 'code',
+        failureReason: 'coder-left-uncommitted',
+        failureReasonCode: 'coder-left-uncommitted',
+      },
+      store,
+    )
+    await handleTaskFailureWithFixTask({
+      taskId,
+      failingStep: 'code:coder-left-uncommitted',
+      errorOutput: `The coder finished but never committed. The worktree at ${worktreePath} holds completed work as uncommitted changes (${postState.dirtyFiles.length} path(s), 0 commits ahead of ${integrationBranch}). DO NOT redo the work — it is already on disk. Your job: review the uncommitted tree (\`git -C ${worktreePath} status\` / \`git -C ${worktreePath} diff\`), then \`git add -A\` and \`git commit\` it with a message describing the change, run the task's verify command, and exit. Save your work.`,
+      branch,
+      store,
+      recipeContext: {
+        targetPath: worktreePath,
+        statusOutput: `The previous coder left completed work UNCOMMITTED (${postState.dirtyFiles.length} uncommitted path(s), 0 commits ahead of ${integrationBranch}):\n  ${dirtyList}\n\nThe work is done — it just was never committed. Commit it (\`git add -A && git commit\`), do not re-implement it.`,
+        targetBranch: branch,
+        integrationBranch,
+        originalPrompt: '',
+      },
+    })
+    console.log(
+      `[post-coder] task ${taskId}: uncommitted-work recovery fix-task spawned`,
+    )
+    throw new Error(CODER_UNCOMMITTED_ABORT_MESSAGE(taskId))
   }
 
   const usage = summarizeUsage(r.conversation)

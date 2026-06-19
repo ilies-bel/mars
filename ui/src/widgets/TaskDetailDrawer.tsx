@@ -106,42 +106,6 @@ interface TaskDetailDrawerProps {
    * leave this undefined — the timeline renders normally with no active row.
    */
   activeStepName?: string
-  /**
-   * Active project id. When provided, both the task-detail fetch and the
-   * step-spans fetch are scoped to this project via `?project=<id>`. Omit
-   * (or pass `undefined`) for the default/single-project case — the param is
-   * then omitted from the URL, matching the pre-existing behaviour.
-   */
-  projectId?: string
-}
-
-// ── URL helpers (exported for testing) ───────────────────────────────────────
-
-/**
- * Builds the `/api/tasks/:id` URL. Appends `?project=<id>` when `projectId`
- * is provided so the UI server queries the correct project DB.
- */
-export const buildTaskUrl = (taskId: string, projectId?: string): string => {
-  const base = `/api/tasks/${encodeURIComponent(taskId)}`
-  if (!projectId) return base
-  return `${base}?project=${encodeURIComponent(projectId)}`
-}
-
-/**
- * Builds the `/api/step-spans` URL from either a `taskId` or `originId`
- * discriminant. Appends `&project=<id>` when `projectId` is provided.
- */
-export const buildSpansUrl = (
-  opts:
-    | { taskId: string; projectId?: string }
-    | { originId: string; projectId?: string },
-): string => {
-  const base =
-    'originId' in opts
-      ? `/api/step-spans?originId=${encodeURIComponent(opts.originId)}`
-      : `/api/step-spans?taskId=${encodeURIComponent(opts.taskId)}`
-  if (!opts.projectId) return base
-  return `${base}&project=${encodeURIComponent(opts.projectId)}`
 }
 
 type LoadState =
@@ -835,7 +799,6 @@ export const TaskDetailDrawer = ({
   stepSpans,
   initialTrail,
   activeStepName,
-  projectId,
 }: TaskDetailDrawerProps) => {
   const drawerRef = useRef<HTMLElement>(null)
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
@@ -949,7 +912,7 @@ export const TaskDetailDrawer = ({
     // timeline while the new one is in flight.
     setFetchedSpans(null)
     const f = fetchImpl ?? fetch
-    f(buildTaskUrl(currentId, projectId))
+    f(`/api/tasks/${encodeURIComponent(currentId)}`)
       .then(async (res) => {
         if (cancelled) return
         if (res.status === 404) {
@@ -978,8 +941,8 @@ export const TaskDetailDrawer = ({
         const rawTask = raw.task as { originId?: string | null } | null
         const isProposal = proposals?.some((p) => p.id === currentId) ?? false
         const spansUrl = isProposal
-          ? buildSpansUrl({ originId: rawTask?.originId ?? currentId, projectId })
-          : buildSpansUrl({ taskId: currentId, projectId })
+          ? `/api/step-spans?originId=${encodeURIComponent(rawTask?.originId ?? currentId)}`
+          : `/api/step-spans?taskId=${encodeURIComponent(currentId)}`
         f(spansUrl)
           .then(async (spansRes) => {
             if (cancelled || !spansRes.ok) return
@@ -999,7 +962,7 @@ export const TaskDetailDrawer = ({
     return () => {
       cancelled = true
     }
-  }, [currentId, fetchImpl, stepSpans, projectId])
+  }, [currentId, fetchImpl, stepSpans])
 
   // Compute the focus subgraph from props. This is independent of the detail
   // fetch so it renders immediately — the operator sees relationship context
