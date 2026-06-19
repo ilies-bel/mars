@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Unit tests for the ReleaseNotesModal widget.
  *
@@ -9,9 +10,14 @@
  *   - Loading and error states
  *   - "new since you were away" divider above the oldest unseen entry
  *   - scrollIntoView is invoked on the oldest-unseen ref
+ *   - click-outside (scrim) dismissal triggers the 180 ms exit animation
+ *     and calls onClose
  */
-import { mock, describe, expect, it } from 'bun:test'
+import { mock, describe, expect, it, vi } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import type { Root } from 'react-dom/client'
 import type { ReleaseNoteEntry, ReleaseNotesCursor } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
@@ -283,5 +289,54 @@ describe('ReleaseNotesModal – unseen divider', () => {
     )
     // NEWER is the oldest unseen (index 1); it should have data-oldest-unseen
     expect(html).toContain('data-oldest-unseen="true"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Click-outside (scrim) dismissal
+// ---------------------------------------------------------------------------
+
+describe('ReleaseNotesModal – click-outside dismissal', () => {
+  it('calls onClose after clicking the backdrop overlay', async () => {
+    vi.useFakeTimers()
+
+    const onClose = vi.fn()
+    nextResult = empty()
+    nextCursorResult = { isPending: false, isError: false, data: { lastViewedAt: null } }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    let root: Root | null = null
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ReleaseNotesModal onClose={onClose} />)
+      })
+
+      const overlay = container.querySelector('[data-testid="release-notes-overlay"]') as HTMLElement
+      expect(overlay).not.toBeNull()
+
+      // Click the scrim — handleClose fires synchronously, sets closing=true
+      await act(async () => {
+        overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+
+      // The panel signals the exit animation immediately via data-closing
+      expect(overlay.getAttribute('data-closing')).toBe('true')
+
+      // Advance past the 180 ms exit-animation delay
+      await act(async () => {
+        vi.advanceTimersByTime(200)
+      })
+
+      expect(onClose).toHaveBeenCalledTimes(1)
+    } finally {
+      await act(async () => {
+        root?.unmount()
+      })
+      document.body.removeChild(container)
+      vi.useRealTimers()
+    }
   })
 })

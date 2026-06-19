@@ -39,6 +39,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "happy-dom": "^20.10.6",
     "knip": "^6.14.0",
     "tailwindcss": "^4.1.0",
     "tsx": "^4.21.0",
