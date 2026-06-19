@@ -371,6 +371,145 @@ describe('alert-dismisser outbox subscriber', () => {
     expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
   })
 
+  // ── Regression: signature-keyed 'failed'/'diagnose-inconclusive' rows ────────
+  // Rows raised WITHOUT originTaskId get a kind:signature fingerprint and
+  // origin_task_id=NULL.  Before the fix, neither resolveAllRowsForTask (which
+  // matched on origin_task_id or payload.taskId) nor dismissAlertsOnStatusChange
+  // (which matched on the origin fingerprint) could ever find them, so they
+  // stayed open forever even after the task reached done/dropped/queued.
+  //
+  // Confirmed live: gustave (.mars/mars.db) had 5 rows of this class with
+  // kind IN ('failed','diagnose-inconclusive'), origin_task_id=NULL, and
+  // no payload.taskId — all created by pre-fix raise sites that used the task
+  // id directly as the `signature` value.
+  //
+  // Fix: both resolveAllRowsForTask and dismissAlertsOnStatusChange now also
+  // close rows where kind IN ('failed','diagnose-inconclusive') AND
+  // signature = taskId AND origin_task_id IS NULL.
+
+  it('resolves a signature-keyed kind=failed row (no originTaskId) when task.completed fires', async () => {
+    // Regression: before the fix, resolveAllRowsForTask only matched on
+    // origin_task_id or payload.taskId, so a signature-keyed row was never
+    // auto-dismissed after the task finished cleanly.
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-sig-keyed-failed'
+
+    // Raise WITHOUT originTaskId → kind:signature fingerprint, origin_task_id=NULL.
+    // This mirrors the pre-fix raise pattern used in queue-retry.ts,
+    // action-queue-repopulator.ts, and other call sites before ADR-0051
+    // centralised arc-origin resolution.
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${taskId} failed`,
+      body: 'stuck',
+      payload: {},
+      context: {},
+      raisedBy: 'test:signature-keyed',
+      signature: taskId,
+      // originTaskId intentionally absent — mirrors pre-fix raise sites.
+    })
+
+    await ad.ensureAlertDismisser(client)
+    await publish(pub, client, 'task.completed', { taskId, result: { status: 'done' } })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    expect(processed).toBe(1)
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+  })
+
+  it('resolves a signature-keyed kind=diagnose-inconclusive row (no originTaskId) when task.completed fires', async () => {
+    // Regression: diagnose-followup.ts originally raised without originTaskId,
+    // keying the row on parentTaskId as a bare signature. Fix: 8eda7f21 added
+    // originTaskId to new raises, but rows already in the DB stayed open.
+    // resolveAllRowsForTask now catches them via the signature predicate.
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-sig-keyed-diagnose'
+
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'diagnose-inconclusive',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Diagnose for ${taskId} inconclusive`,
+      body: 'no verdict',
+      payload: { parentTaskId: taskId },
+      context: {},
+      raisedBy: 'test:diagnose-signature-keyed',
+      signature: taskId,
+      // originTaskId intentionally absent — mirrors pre-fix diagnose-followup.ts.
+    })
+
+    await ad.ensureAlertDismisser(client)
+    await publish(pub, client, 'task.completed', { taskId, result: { status: 'done' } })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    expect(processed).toBe(1)
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+  })
+
+  it('does NOT auto-resolve a signature-keyed failed row on task.failed (ADR-0028 NO-OP preserved)', async () => {
+    // Verifies that the fix does not break the task.failed NO-OP policy:
+    // a failed task's row must remain open so the operator can act on it.
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-sig-keyed-noop'
+
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${taskId} failed`,
+      body: 'stuck',
+      payload: {},
+      context: {},
+      raisedBy: 'test:signature-keyed',
+      signature: taskId,
+    })
+
+    await ad.ensureAlertDismisser(client)
+    await publish(pub, client, 'task.failed', { taskId, error: 'boom' })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    // task.failed is a NO-OP: the row must stay open for the operator.
+    expect(processed).toBe(0)
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('open')
+  })
+
+  it('resolves a signature-keyed failed row when task is re-queued (task.queued eviction via dismissAlertsOnStatusChange)', async () => {
+    // Verifies that the dismissAlertsOnStatusChange fix reaches signature-keyed
+    // rows on the legacy task.queued path — a task that is restarted should not
+    // leave a stale "needs attention" card in the action queue.
+    const { q, actionQueue, ad, pub } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+    const taskId = 'T-sig-keyed-requeued'
+
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: `Task ${taskId} failed`,
+      body: 'stuck',
+      payload: {},
+      context: {},
+      raisedBy: 'test:signature-keyed',
+      signature: taskId,
+    })
+
+    await ad.ensureAlertDismisser(client)
+    await publish(pub, client, 'task.queued', { taskId })
+
+    const { processed } = await ad.drainAlertDismissals(client)
+
+    expect(processed).toBe(1)
+    expect((await actionQueue.getActionQueueItem(itemId))!.state).toBe('resolved')
+  })
+
   describe('ADR-0054: task.under_investigation does NOT close the alert (level-triggered)', () => {
     it('updateTask under_investigation inserts a task.under_investigation event in the outbox', async () => {
       // The event is still emitted — it just no longer drives alert dismissal.

@@ -1016,9 +1016,21 @@ export const dismissAlertsOnStatusChange = async (
   await initActionQueue()
   const c = stateClient()
   const fingerprint = await resolvedOriginFingerprint(taskId)
+  // Two predicates cover both row shapes for this task:
+  //   - fingerprint = origin-keyed hash — the normal path for rows that were
+  //     raised with originTaskId (the vast majority of current rows).
+  //   - kind IN ('failed','diagnose-inconclusive') AND signature = taskId
+  //     AND origin_task_id IS NULL — signature-keyed rows created by pre-fix
+  //     raise sites. Those sites used the task id directly as the signature
+  //     value, so this predicate is safe and specific to task-owned rows.
   const rows = await c.execute({
-    sql: `SELECT id FROM action_queue_items WHERE fingerprint = ? AND state = 'open'`,
-    args: [fingerprint],
+    sql: `SELECT id FROM action_queue_items
+           WHERE (fingerprint = ?
+                  OR (kind IN ('failed', 'diagnose-inconclusive')
+                      AND signature = ?
+                      AND origin_task_id IS NULL))
+             AND state = 'open'`,
+    args: [fingerprint, taskId],
   })
   const ids: string[] = []
   const note = `status-changed → ${newStatus}`
@@ -1140,11 +1152,17 @@ export const listResolvedActionQueueItems = async ({
  * `task.dropped` to ensure no orphaned row survives after a task ends
  * cleanly (ADR-0028/0030).
  *
- * Two columns are checked so that rows raised through the arc-resolution path
- * (where `origin_task_id` holds the proposal/origin id while the actual task
- * id is stored in `payload.taskId`) are also caught:
+ * Three predicates cover the known row shapes:
  *   - `origin_task_id = :taskId` — the normal path (task is its own arc root)
  *   - `json_extract(payload, '$.taskId') = :taskId` — the arc-resolved path
+ *     (where `origin_task_id` holds the proposal/origin id while the actual
+ *     task id is stored in `payload.taskId`)
+ *   - `kind IN ('failed','diagnose-inconclusive') AND signature = :taskId
+ *      AND origin_task_id IS NULL` — signature-keyed rows created by pre-fix
+ *     raise sites that did not pass `originTaskId`. Those raise sites used the
+ *     task id directly as the `signature` value, so matching on it is safe and
+ *     specific. Without this arm such rows never matched either of the first two
+ *     predicates and stayed open forever even after their task reached done.
  *
  * Idempotent — rows that are already resolved/dismissed are untouched.
  */
@@ -1158,8 +1176,11 @@ export const resolveAllRowsForTask = async (
              SET state = 'resolved',
                  resolved_at = ?
            WHERE (origin_task_id = ?
-                  OR json_extract(payload, '$.taskId') = ?)
+                  OR json_extract(payload, '$.taskId') = ?
+                  OR (kind IN ('failed', 'diagnose-inconclusive')
+                      AND signature = ?
+                      AND origin_task_id IS NULL))
              AND state = 'open'`,
-    args: [new Date().toISOString(), taskId, taskId],
+    args: [new Date().toISOString(), taskId, taskId, taskId],
   })
 }
