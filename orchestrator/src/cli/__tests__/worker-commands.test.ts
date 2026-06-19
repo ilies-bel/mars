@@ -57,7 +57,7 @@ describe('mars worker list', () => {
   it('prints model identifiers for the built-in workers', () => {
     const result = runCli(['worker', 'list'], ENV())
     expect(result.stdout).toContain('claude-sonnet-4-6')
-    expect(result.stdout).toContain('claude-opus-4-7')
+    expect(result.stdout).toContain('claude-opus-4-8')
   })
 
   it('shows a newly added worker after mars worker add', () => {
