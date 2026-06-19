@@ -70,7 +70,7 @@ export const corePurgeTask = async (
       cascadedFixTaskIds: [],
     }
   }
-  if (task.status !== 'failed' && task.status !== 'done') {
+  if (task.status !== 'failed' && task.status !== 'done' && task.status !== 'cancelled') {
     throw new Error(
       `task ${id} is ${task.status}; refuse to purge in-flight tasks`,
     )

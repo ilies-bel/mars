@@ -586,6 +586,11 @@ export const startDaemon = async (
   // timer to determine when the daemon has been genuinely inactive.
   let lastActivityAt = Date.now()
 
+  // Per-task AbortControllers for in-flight implement runs. Keyed by task.id.
+  // Created in dispatchImplement before runWorkflow; deleted in its finally.
+  // handleCancel reads this map to abort the workflow run's AbortSignal.
+  const runAbortControllers = new Map<string, AbortController>()
+
   // Forward-declared so dispatchers can call it from finally; assigned after
   // both dispatchers exist.
   let drain: () => Promise<void> = async () => {}
@@ -743,6 +748,9 @@ export const startDaemon = async (
       // the row across the re-queue (coreContinueTask does not clear it),
       // which is how we distinguish a resume from a first-time dispatch.
       const resumeFromCodePhase = task.failedPhase === 'code' && !!task.worktreePath
+      // Register an AbortController for this run so handleCancel can abort it.
+      const runController = new AbortController()
+      runAbortControllers.set(task.id, runController)
       const result = await runWorkflow(
         workflowToRun,
         {
@@ -773,8 +781,10 @@ export const startDaemon = async (
           runId: task.id,
           logger: workflowLogger,
           onEvent,
+          signal: runController.signal,
         },
       )
+      runAbortControllers.delete(task.id)
       const {
         isBlockersAbortError,
         isMainDirtyVerifyError,
@@ -912,6 +922,7 @@ export const startDaemon = async (
       // semaphore slot and inFlight entry are released on every exit path and
       // drain() re-arms the loop. drain() has its own internal catch, so the
       // fire-and-forget `void` here can never leak a rejection.
+      runAbortControllers.delete(task.id)
       releaseTracking()
       release(sems.implement)
       void drain()
@@ -1627,6 +1638,87 @@ export const startDaemon = async (
     return result
   }
 
+  // Statuses where the task is mid-merge: interrupting the merge risks a
+  // half-applied fast-forward or an orphaned .merge.lock. Cancel is refused.
+  const MERGE_STATUSES = new Set<Task['status']>(['merging', 'vega-reconciling'])
+
+  const handleCancel = async (id: string): Promise<void> => {
+    const task = await getTask(id)
+    if (!task) throw new Error(`task ${id} not found`)
+
+    // Refuse terminal tasks.
+    if (
+      task.status === 'done' ||
+      task.status === 'dropped' ||
+      task.status === 'cancelled' ||
+      task.status === 'failed'
+    ) {
+      throw new Error(
+        `task ${id} is already in terminal status '${task.status}'; cannot cancel`,
+      )
+    }
+
+    // Refuse mid-merge: the merge step holds a file lock and fast-forwards
+    // into main. Interrupting it risks a half-applied merge or orphaned .merge.lock.
+    if (MERGE_STATUSES.has(task.status)) {
+      throw new Error(
+        `task ${id} is merging; refuse to cancel mid-merge — wait for the merge to finish or fail`,
+      )
+    }
+
+    // Determine if an in-flight slot exists (running subprocess).
+    const inFlightEntry = tracker.inFlightSnapshot().find((e) => e.taskId === id)
+    const pid = inFlightEntry?.pid
+
+    // Mirror the watchdog: mark status BEFORE reclaiming the slot so there
+    // is never a window where the slot is free but the task still reads running.
+    // The IllegalTransitionError guard on updateTask prevents the implement
+    // dispatcher's catch block from re-writing status='failed' after the SIGKILL,
+    // so no task.failed outbox event fires, no recovery is spawned, and no
+    // action-queue item is raised.
+    await updateTask(id, {
+      status: 'cancelled',
+      error: 'cancelled by operator (mars cancel)',
+    })
+    log(`[cancel] ${id} status set to cancelled`)
+
+    // Abort the workflow run's AbortSignal so the @mars/workflow engine can
+    // begin tearing down steps gracefully before the SIGKILL lands.
+    const controller = runAbortControllers.get(id)
+    if (controller) {
+      controller.abort()
+    }
+
+    // Kill the subprocess: SIGTERM first, then SIGKILL after a grace period.
+    if (pid !== undefined) {
+      try {
+        process.kill(pid, 'SIGTERM')
+        log(`[cancel] ${id} sent SIGTERM to pid ${pid}`)
+      } catch {
+        // Process may have already exited.
+      }
+      // Grace window: wait ~2.5 s before SIGKILL.
+      await new Promise<void>((resolve) => setTimeout(resolve, 2500))
+      if (isProcessAlive(pid)) {
+        try {
+          process.kill(pid, 'SIGKILL')
+          log(`[cancel] ${id} sent SIGKILL to pid ${pid} (still alive after grace)`)
+        } catch {
+          // best-effort
+        }
+      }
+    }
+
+    // Free the in-flight slot so drain() can pick up the next queued task.
+    if (inFlightEntry) {
+      tracker.forceRelease(id)
+      release(sems.implement)
+      void drain()
+    }
+
+    log(`[cancel] ${id} cancelled (pid=${pid ?? 'none'}, slot=${inFlightEntry ? 'freed' : 'none'})`)
+  }
+
   const handlePurge = async (id: string, force: boolean): Promise<void> => {
     const { corePurgeTask } = await import('./purge-task')
     const { getRepoRoot } = await import('../context')
@@ -2145,6 +2237,7 @@ export const startDaemon = async (
     handleUpdate,
     handleContinue,
     handleRestart,
+    handleCancel,
     handlePurge,
     handleArcPurge,
     handleDrop,

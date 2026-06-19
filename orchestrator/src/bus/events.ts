@@ -61,7 +61,7 @@ export const EventMap = {
   // still produces a terminal event the closer can consume (ADR-0030).
   'task.terminal': z.object({
     taskId: z.string(),
-    reason: z.enum(['done', 'dropped', 'failed', 'purged']),
+    reason: z.enum(['done', 'dropped', 'failed', 'purged', 'cancelled']),
   }),
   'task.priority_changed': z.object({
     taskId: z.string(),

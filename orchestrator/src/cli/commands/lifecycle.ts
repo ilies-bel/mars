@@ -131,6 +131,27 @@ const makeContinueRestart = (verb: 'continue' | 'restart'): Command => ({
   },
 })
 
+const cancel: Command = {
+  path: 'cancel',
+  summary: 'stop an in-flight task: kill agent, free slot, set status=cancelled (worktree preserved)',
+  usage: 'usage: mars cancel <id>',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    if (!id) {
+      deps.err('usage: mars cancel <id>')
+      return { code: 1 }
+    }
+    try {
+      await deps.daemon.sendRequest({ op: 'cancel', id })
+    } catch (err) {
+      deps.err(`${id}: ${errorMessage(err)}`)
+      return { code: 1 }
+    }
+    deps.out(`cancelled ${id}`)
+    return { code: 0 }
+  },
+}
+
 const purge: Command = {
   path: 'purge',
   summary: 'purge tasks (worktree + branch + row)',
@@ -527,6 +548,7 @@ export const lifecycleCommands: readonly Command[] = [
   makeSetPlan('technical'),
   makeContinueRestart('continue'),
   makeContinueRestart('restart'),
+  cancel,
   purge,
   unblock,
   recover,

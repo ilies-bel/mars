@@ -28,6 +28,12 @@ export type TaskStatus =
   | 'dropped'
   | 'blocked'
   | 'under_investigation'
+  // Terminal status set by `mars cancel <id>`. Worktree and branch are
+  // preserved for later inspection. Not a failure: no recovery task is
+  // spawned, no action-queue alert is raised. A cancelled blocker does NOT
+  // unblock dependents — they stay blocked, same as the failed-blocker
+  // behaviour. Purgeable via `mars purge` (commit-ahead guard still applies).
+  | 'cancelled'
 
 /**
  * Transient lifecycle phase between a freshly-promoted task (draft → triaging)
@@ -53,6 +59,8 @@ export const NON_DISPATCHABLE_STATUSES: readonly TaskStatus[] = [
   // Operator-triggered parking status: the worktree is under human investigation;
   // the task MUST NOT be re-dispatched until explicitly re-queued.
   'under_investigation',
+  // Terminal: operator cancelled via `mars cancel`. Never re-dispatch.
+  'cancelled',
 ] as const
 
 export const isDispatchableStatus = (status: TaskStatus): boolean =>
@@ -1031,7 +1039,8 @@ export const migrateQueueSchema = async (): Promise<void> => {
     const tasksNeedCheckRebuild =
       !tasksSql.includes('CHECK (status IN') ||
       !tasksSql.includes("'under_investigation'") ||
-      !tasksSql.includes("'awaiting-validation'")
+      !tasksSql.includes("'awaiting-validation'") ||
+      !tasksSql.includes("'cancelled'")
 
     const healFkRows = await c.execute(
       `PRAGMA foreign_key_list(self_heal_attempts)`,
@@ -1150,7 +1159,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             id                   TEXT    PRIMARY KEY,
             prompt               TEXT    NOT NULL,
             status               TEXT    NOT NULL
-                                         CHECK (status IN ('draft','triaging','queued','running','verifying','awaiting-validation','merging','vega-reconciling','done','failed','dropped','blocked','under_investigation')),
+                                         CHECK (status IN ('draft','triaging','queued','running','verifying','awaiting-validation','merging','vega-reconciling','done','failed','dropped','blocked','under_investigation','cancelled')),
             plan_functional      TEXT,
             plan_technical       TEXT,
             branch               TEXT,
@@ -2128,14 +2137,17 @@ export const updateTask = async (
         : null
   }
 
-  // Guard: terminal statuses are immutable.  A task that reached 'done' or
-  // 'dropped' must never be moved to a different status — the daemon,
-  // Invalidator, and UI all treat those as absorbing states.
+  // Guard: terminal statuses are immutable.  A task that reached 'done',
+  // 'dropped', or 'cancelled' must never be moved to a different status — the
+  // daemon, Invalidator, and UI all treat those as absorbing states. 'cancelled'
+  // is terminal: the implement-dispatcher's catch block may attempt a
+  // status:'failed' write after a SIGKILL; that write must silently fail here so
+  // no recovery is spawned and no task.failed outbox event is emitted.
   if (
     patch.status !== undefined &&
     previousStatus !== null &&
     patch.status !== previousStatus &&
-    (previousStatus === 'done' || previousStatus === 'dropped')
+    (previousStatus === 'done' || previousStatus === 'dropped' || previousStatus === 'cancelled')
   ) {
     throw new IllegalTransitionError(id, previousStatus, patch.status)
   }
@@ -2232,6 +2244,14 @@ export const updateTask = async (
           error: patch.error ?? patch.failureReason ?? '',
         }),
         buildEventInsert('task.terminal', { taskId: id, reason: 'failed' }),
+      )
+    } else if (patch.status === 'cancelled') {
+      // Emit task.terminal so the Invalidator (alert-dismisser) closes any
+      // open action-queue rows. Do NOT emit task.failed — that would trigger
+      // the recovery-spawn subscriber and the action-queue-repopulator, which
+      // must NOT fire for cancelled tasks (cancel is not a failure).
+      eventStmts.push(
+        buildEventInsert('task.terminal', { taskId: id, reason: 'cancelled' }),
       )
     } else if (patch.status === 'dropped') {
       eventStmts.push(
