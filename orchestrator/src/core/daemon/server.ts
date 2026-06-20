@@ -2880,14 +2880,33 @@ export const startDaemon = async (
   const OBSERVABILITY_SWEEP_MS = Number(
     process.env.MARS_OBSERVABILITY_SWEEP_MS ?? 60 * 60_000,
   )
-  const { sweepObservability } = await import('./observability-sweeper')
+  const { sweepObservability, sweepRetention } = await import('./observability-sweeper')
   const observabilitySweep = setInterval(() => {
     void (async () => {
       try {
-        const deleted = await sweepObservability(resolveContext().stateDbPath)
+        const dbPath = resolveContext().stateDbPath
+
+        // Primary time-based telemetry prune (3-day window).
+        const deleted = await sweepObservability(dbPath)
         if (deleted > 0) {
           log(
             `[observability-sweep] pruned ${deleted} telemetry row(s) older than 3 days`,
+          )
+        }
+
+        // Secondary retention sweep: row-count cap on trace_events (50 000
+        // rows / 30 days) and orphan prune of subscriber_processed_events.
+        // Runs in the same interval so no extra timer is needed.
+        const retention = await sweepRetention(dbPath)
+        const retentionTotal =
+          retention.traceEventsByAge +
+          retention.traceEventsByCount +
+          retention.subscriberProcessedEvents
+        if (retentionTotal > 0) {
+          log(
+            `[retention-sweep] pruned ${retention.traceEventsByAge} trace_events by age,` +
+              ` ${retention.traceEventsByCount} by count,` +
+              ` ${retention.subscriberProcessedEvents} subscriber_processed_events orphans`,
           )
         }
       } catch (err) {

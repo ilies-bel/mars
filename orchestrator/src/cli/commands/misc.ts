@@ -270,6 +270,83 @@ const observabilityGroup: Command = {
   },
 }
 
+// ── db ────────────────────────────────────────────────────────────────────
+
+const dbCompact: Command = {
+  path: 'db compact',
+  summary: 'prune all high-volume tables, checkpoint the WAL, then VACUUM',
+  usage: 'usage: mars db compact',
+  run: async (_args, deps) => {
+    const { pruneRetention, RETENTION_BATCH_SIZE } = await import(
+      '../../core/lib/retention-prune'
+    )
+    const { openLibsql } = await import('../../core/lib/libsql')
+
+    deps.out('Pruning high-volume tables…')
+
+    // Run repeated batched passes until a full pass produces no deletions so
+    // large DBs are fully cleaned without any single write-lock exceeding the
+    // batch ceiling.
+    let totalTraceByAge = 0
+    let totalTraceByCount = 0
+    let totalSPE = 0
+
+    while (true) {
+      const r = await pruneRetention(deps.ctx.stateDbPath, {
+        batchSize: RETENTION_BATCH_SIZE,
+      })
+      totalTraceByAge += r.traceEventsByAge
+      totalTraceByCount += r.traceEventsByCount
+      totalSPE += r.subscriberProcessedEvents
+      if (
+        r.traceEventsByAge === 0 &&
+        r.traceEventsByCount === 0 &&
+        r.subscriberProcessedEvents === 0
+      ) {
+        break
+      }
+    }
+
+    const totalTrace = totalTraceByAge + totalTraceByCount
+    deps.out(
+      `  trace_events:               ${totalTrace} row(s) removed` +
+        ` (by-age: ${totalTraceByAge}, by-count: ${totalTraceByCount})`,
+    )
+    deps.out(
+      `  subscriber_processed_events: ${totalSPE} orphaned row(s) removed`,
+    )
+
+    // WAL checkpoint: move WAL pages into the main DB file.
+    const client = openLibsql({ url: `file:${deps.ctx.stateDbPath}` })
+    try {
+      deps.out('Running WAL checkpoint…')
+      await client.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+      deps.out('  checkpoint complete')
+
+      // VACUUM: rewrite the DB file to reclaim freed pages on disk.
+      // This briefly takes a write lock on the whole file — safe for a manual
+      // operator command but never called from the hot daemon sweep.
+      deps.out('Running VACUUM…')
+      await client.execute('VACUUM')
+      deps.out('  VACUUM complete')
+    } finally {
+      client.close()
+    }
+
+    return { code: 0 }
+  },
+}
+
+const dbGroup: Command = {
+  path: 'db',
+  summary: 'database maintenance subcommands',
+  usage: 'usage: mars db compact',
+  run: (_args, deps) => {
+    deps.err('usage: mars db compact')
+    return { code: 2 }
+  },
+}
+
 // ── cut ──────────────────────────────────────────────────────────────────
 
 const cutVerify: Command = {
@@ -453,6 +530,8 @@ export const miscCommands: readonly Command[] = [
   projectGroup,
   observabilityPrune,
   observabilityGroup,
+  dbCompact,
+  dbGroup,
   cutVerify,
   cutGroup,
   statusline,
