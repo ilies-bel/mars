@@ -10,10 +10,18 @@ import { logFallbackError, resolveFallback, type Fallback } from './uiFallback'
  * The `error` arm carries an already-resolved {@link Fallback} (copy + remedy +
  * dev detail), so a caller renders `<FallbackSurface error={state.fallback} />`
  * with no further error plumbing.
+ *
+ * The `stale` arm is produced when a *background refetch* fails but prior data
+ * is still available (`query.isError && query.data !== undefined`). Consumers
+ * should render the stale data normally and surface a thin,
+ * non-blocking `<ReconnectingStrip fallback={state.fallback} />` above it.
+ * Only a true initial-load failure (no prior data) produces `kind: 'error'`
+ * and warrants the full-pane `<FallbackSurface variant="pane">` takeover.
  */
 export type RemoteState<T> =
   | { kind: 'loading' }
   | { kind: 'error'; fallback: Fallback; error: unknown }
+  | { kind: 'stale'; data: T; fallback: Fallback; error: unknown }
   | { kind: 'empty' }
   | { kind: 'ready'; data: T }
 
@@ -54,11 +62,13 @@ export function useRead<T>(
 
   if (query.isError) {
     logFallbackError(query.error)
-    return {
-      kind: 'error',
-      fallback: resolveFallback(query.error, opts.of),
-      error: query.error,
+    const fallback = resolveFallback(query.error, opts.of)
+    if (query.data !== undefined) {
+      // Background refetch failed but prior data is still available — keep
+      // data visible and surface a thin strip rather than a full-pane takeover.
+      return { kind: 'stale', data: query.data, fallback, error: query.error }
     }
+    return { kind: 'error', fallback, error: query.error }
   }
 
   if (query.data === undefined) {
