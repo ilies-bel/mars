@@ -10,6 +10,7 @@
  * transaction.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -194,4 +195,36 @@ describe('transcript-append:task.completed subscriber', () => {
     expect(await traceEventCount(client, 'task-hotel')).toBe(1);
     expect(await traceEventCount(client, 'task-india')).toBe(1);
   });
+
+  // ── EventEmitter wiring ───────────────────────────────────────────────────
+  // Confirms the daemon bus.on('task.completed', ...) pattern works correctly:
+  // emitting task.completed on an EventEmitter triggers the subscriber and
+  // writes exactly one trace_events row.
+
+  it('bus.on wiring: emitting task.completed via EventEmitter writes exactly one trace_events row (test (a))', async () => {
+    const emitter = new EventEmitter()
+    const readTranscript = async () =>
+      JSON.stringify([{ type: 'assistant', content: 'wired' }])
+    const subscriber = buildTranscriptAppendSubscriber(client, readTranscript)
+
+    // Reproduce the daemon bus.on registration pattern from server.ts.
+    let nextId = 0
+    const pending: Promise<void>[] = []
+    emitter.on('task.completed', ({ taskId }: { taskId: string }) => {
+      const id = nextId++
+      pending.push(
+        subscriber.handler({
+          id,
+          type: 'task.completed',
+          payload: { taskId, result: null },
+          ts: Date.now(),
+        } as BusEvent),
+      )
+    })
+
+    emitter.emit('task.completed', { taskId: 'task-emitter-wired', status: 'done' })
+    await Promise.all(pending)
+
+    expect(await traceEventCount(client, 'task-emitter-wired')).toBe(1)
+  })
 });

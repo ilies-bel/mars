@@ -244,6 +244,23 @@ const loadTaskTranscript = async (
     }
   }
 
+  // Durable transcript read path (PRD: deep-reflect transcript durability).
+  // Prefer the trace_events payload.transcript persisted by the
+  // transcript-append subscriber (or upsertTranscript / runWorkerWithSpan).
+  // This frees deep-reflect from depending on the ephemeral
+  // ~/.claude/projects/ tree; the on-disk stream stays as the fallback so
+  // arcs that pre-date the durable subscriber still resolve via the JSONL.
+  const durable = await loadDurableTranscript(store, taskId)
+  if (durable !== null) {
+    return {
+      conversation: durable.conversation,
+      verifyOutput,
+      hasTranscript: durable.conversation.length > 0,
+      toolCallCounts: durable.toolCallCounts,
+      transcriptNotes: [],
+    }
+  }
+
   const stream = await loadTranscriptStream(taskId)
   return {
     conversation: stream.conversation,
@@ -252,6 +269,62 @@ const loadTaskTranscript = async (
     toolCallCounts: stream.toolCallCounts,
     transcriptNotes: stream.notes,
   }
+}
+
+interface DurableTranscript {
+  conversation: ClaudeEvent[]
+  toolCallCounts: Record<string, number>
+}
+
+/**
+ * Read the durable Claude transcript for a task from `trace_events`.
+ *
+ * Returns the most recent `step_ended` event whose payload carries a
+ * non-empty `transcript` string, parsed back into `ClaudeEvent[]`.
+ * Returns `null` when no such row exists — the caller falls back to the
+ * on-disk JSONL stream.
+ */
+const loadDurableTranscript = async (
+  store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
+  taskId: string,
+): Promise<DurableTranscript | null> => {
+  const r = await store.query({
+    sql: `SELECT payload
+            FROM trace_events
+           WHERE kind = 'step_ended' AND task_id = ?
+             AND json_extract(payload, '$.transcript') IS NOT NULL
+           ORDER BY timestamp DESC
+           LIMIT 1`,
+    args: [taskId],
+  })
+  if (r.rows.length === 0) return null
+  const row = r.rows[0] as unknown as { payload: string }
+  let payload: Record<string, unknown>
+  try {
+    payload = JSON.parse(row.payload) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  const transcriptRaw = payload.transcript
+  if (typeof transcriptRaw !== 'string' || transcriptRaw.length === 0) {
+    return null
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(transcriptRaw)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(parsed)) return null
+  const conversation: ClaudeEvent[] = []
+  const toolCallCounts: Record<string, number> = {}
+  for (const raw of parsed) {
+    const event = coerceClaudeEvent(raw)
+    if (!event) continue
+    conversation.push(event)
+    countToolCalls(event, toolCallCounts)
+  }
+  return { conversation, toolCallCounts }
 }
 
 const summariseSignals = (rows: ReadonlyArray<TaskSignalRow>) => {

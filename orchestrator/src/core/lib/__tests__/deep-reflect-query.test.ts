@@ -131,6 +131,61 @@ describe('listDeepReflectArcCandidates', () => {
   })
 })
 
+describe('loadDeepReflectArc — durable transcript read path', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns durable transcript events from trace_events when no JSONL file exists on disk (test (b))', async () => {
+    // This test verifies Half 2: loadDeepReflectArc prefers the trace_events
+    // transcript over the filesystem fallback when the durable row is present.
+    const { q, dq } = await loadModules(repo)
+
+    // Create a task. By default it has no claude_session_ids, so the
+    // filesystem fallback (readAllTranscriptsForTask) returns empty.
+    const task = await q.enqueueTask('durable transcript test', undefined, {
+      skipTriage: true,
+    })
+
+    // Insert a trace_events row the way the transcript-append subscriber would,
+    // carrying the conversation transcript in the payload.
+    const events = [
+      { type: 'assistant', content: 'durable reply from trace_events' },
+    ]
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO trace_events (id, timestamp, kind, severity, task_id, phase, payload)
+            VALUES (?, ?, 'step_ended', 'info', ?, 'code', ?)`,
+      args: [
+        `transcript-append-${task.id}-0`,
+        new Date().toISOString(),
+        task.id,
+        JSON.stringify({
+          stepName: 'code',
+          workflowInstanceId: `transcript-append-${task.id}`,
+          outcome: 'success',
+          durationMs: 0,
+          transcript: JSON.stringify(events),
+        }),
+      ],
+    })
+
+    const arc = await dq.loadDeepReflectArc(task.id)
+    expect(arc).not.toBeNull()
+    const taskEntry = arc!.tasks[0]
+    expect(taskEntry.conversation).toHaveLength(1)
+    expect(taskEntry.conversation[0].type).toBe('assistant')
+    expect(taskEntry.hasTranscript).toBe(true)
+    expect(taskEntry.transcriptNotes).toHaveLength(0)
+  })
+})
+
 describe('capConversationJson', () => {
   it('passes through small payloads unchanged', async () => {
     const repo = setupRepo()

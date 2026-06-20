@@ -42,6 +42,13 @@ import {
   drainBlockerResolution,
   ensureBlockerResolutionSubscriber,
 } from '../../outbox/subscribers/blocker-resolution'
+import {
+  buildTranscriptAppendSubscriber,
+  ensureTranscriptAppendSchema,
+} from '../../outbox/subscribers/transcript-append'
+import { readAllTranscriptsForTask } from '../lib/claude-transcript'
+import type { ClaudeEvent } from '../lib/claude-stream'
+import { createHash } from 'node:crypto'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { exec, resolveGitBin } from '../lib/git/internal'
@@ -1239,6 +1246,57 @@ export const startDaemon = async (
   bus.on('proposal.promoted',  () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.sliced',    () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.deleted',   () => { viewStreamHub.broadcast('progress') })
+
+  // Durable transcript append (deep-reflect durability). On every
+  // task.completed, persist the resolved Claude transcript for the task into
+  // trace_events so deep-reflect no longer depends on the ephemeral
+  // ~/.claude/projects/ tree. Wired onto the existing EventEmitter delivery
+  // path rather than starting the real outbox dispatcher (which is dead
+  // code at this commit) — see the transcript-append subscriber for the
+  // exactly-once-per-(task) dedup contract. The event id is derived from
+  // taskId via SHA-1 so dedup is task-scoped and cannot collide across
+  // daemon restarts (each task.completed is unique to one task lifetime,
+  // so a stable-per-task id is the right key).
+  const compositionClient = getCompositionRootClient()
+  await ensureTranscriptAppendSchema(compositionClient)
+  const transcriptAppendSubscriber = buildTranscriptAppendSubscriber(
+    compositionClient,
+    async (taskId: string): Promise<string | null> => {
+      const events: ClaudeEvent[] = []
+      for await (const evt of readAllTranscriptsForTask(taskId)) {
+        if (!evt.raw || typeof evt.raw !== 'object' || Array.isArray(evt.raw)) {
+          continue
+        }
+        const o = evt.raw as Record<string, unknown>
+        if (typeof o.type !== 'string') continue
+        events.push(o as unknown as ClaudeEvent)
+      }
+      return events.length > 0 ? JSON.stringify(events) : null
+    },
+  )
+  const stableTranscriptEventId = (taskId: string): number => {
+    // Top 6 bytes of SHA-1 — 48 bits, safely below Number.MAX_SAFE_INTEGER.
+    return createHash('sha1')
+      .update(`task.completed:${taskId}`)
+      .digest()
+      .readUIntBE(0, 6)
+  }
+  bus.on('task.completed', (e: { taskId: string }) => {
+    void (async () => {
+      try {
+        await transcriptAppendSubscriber.handler({
+          id: stableTranscriptEventId(e.taskId),
+          type: 'task.completed',
+          payload: { taskId: e.taskId, result: null },
+          ts: Date.now(),
+        })
+      } catch (err) {
+        log(
+          `[transcript-append] ${e.taskId} failed: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    })()
+  })
 
   // Post-task-completion KPI-drift trigger. Runs fire-and-forget so a trigger
   // failure never affects the task-completion path. Only active when
