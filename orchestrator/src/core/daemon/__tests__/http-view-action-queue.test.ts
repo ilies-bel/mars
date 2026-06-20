@@ -337,6 +337,57 @@ describe('buildActionQueueView — stale-worktree row', () => {
       expect(rows).toHaveLength(1)
       expect(rows[0]!.staleWorktreeDetail!.empty).toBe(false)
     })
+
+    it('degrades to empty=false when a git probe hangs, without blocking /view/action-queue', async () => {
+      // Simulate a wedged worktree by placing a fake `git` that sleeps 30s on PATH.
+      // The 3-second timeout added to execFileSync must kill it and fall through
+      // to the conservative empty=false default — the whole call must resolve
+      // well within the sleep duration.
+      const fakeGitDir = mkdtempSync(resolvePath(tmpdir(), 'mars-fake-git-'))
+      const fakeGit = join(fakeGitDir, 'git')
+      writeFileSync(fakeGit, '#!/bin/sh\nexec sleep 30\n')
+      execFileSync('chmod', ['+x', fakeGit])
+
+      // The worktree directory must exist so the code enters the git-probe branch.
+      const fakeWtTaskId = 'wedged-wt-task'
+      const fakeWtDir = join(fakeGitDir, '.mars', 'worktrees', fakeWtTaskId)
+      mkdirSync(fakeWtDir, { recursive: true })
+
+      const originalPath = process.env.PATH
+      try {
+        // Prepend the fake git directory so `execFileSync('git', ...)` finds it first.
+        process.env.PATH = `${fakeGitDir}:${String(originalPath)}`
+
+        const start = Date.now()
+        const rows = await buildActionQueueView({
+          stateStore: makeStateStore([
+            makeRow({
+              id: 'row-wedged-git',
+              kind: 'stale-worktree',
+              priority: 'normal',
+              title: 'Wedged git',
+              body: 'Git hangs',
+              payload: {},
+              context: { taskId: fakeWtTaskId },
+            }),
+          ]),
+          taskStore: makeTaskStore([
+            makeTask({ id: fakeWtTaskId, status: 'done', prompt: 'Wedged task' }),
+          ]),
+          repoRoot: fakeGitDir,
+          filter: 'open',
+        })
+        const elapsed = Date.now() - start
+
+        // Must return within ~5 s (3 s timeout + buffer) — not block for 30 s.
+        expect(elapsed).toBeLessThan(5000)
+        // The timed-out probe must fall through to the conservative default.
+        expect(rows[0]!.staleWorktreeDetail!.empty).toBe(false)
+      } finally {
+        process.env.PATH = originalPath
+        try { rmSync(fakeGitDir, { recursive: true, force: true }) } catch { /* best-effort */ }
+      }
+    }, 8000) // allow up to 8 s: 3 s git timeout + overhead
   })
 })
 

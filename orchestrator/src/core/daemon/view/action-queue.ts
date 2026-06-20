@@ -369,14 +369,14 @@ export const buildActionQueueView = async ({
           const base = execFileSync(
             'git',
             ['-C', worktreePath, 'merge-base', 'HEAD', 'main'],
-            { encoding: 'utf8' },
+            { encoding: 'utf8', timeout: 3000, killSignal: 'SIGKILL' },
           ).trim()
           let hasDiff = false
           try {
             execFileSync(
               'git',
               ['-C', worktreePath, 'diff', '--quiet', `${base}..HEAD`],
-              { encoding: 'utf8' },
+              { encoding: 'utf8', timeout: 3000, killSignal: 'SIGKILL' },
             )
           } catch {
             hasDiff = true
@@ -386,11 +386,11 @@ export const buildActionQueueView = async ({
             : execFileSync(
                 'git',
                 ['-C', worktreePath, 'status', '--porcelain'],
-                { encoding: 'utf8' },
+                { encoding: 'utf8', timeout: 3000, killSignal: 'SIGKILL' },
               ).trim()
           empty = !hasDiff && porcelain === ''
         } catch {
-          // git unavailable or worktree not a git repo — conservative
+          // git unavailable, worktree not a git repo, or probe timed out — conservative
           empty = false
         }
       }
@@ -744,14 +744,14 @@ export const buildActionQueueHistoryView = async ({
           const base = execFileSync(
             'git',
             ['-C', worktreePath, 'merge-base', 'HEAD', 'main'],
-            { encoding: 'utf8' },
+            { encoding: 'utf8', timeout: 3000, killSignal: 'SIGKILL' },
           ).trim()
           let hasDiff = false
           try {
             execFileSync(
               'git',
               ['-C', worktreePath, 'diff', '--quiet', `${base}..HEAD`],
-              { encoding: 'utf8' },
+              { encoding: 'utf8', timeout: 3000, killSignal: 'SIGKILL' },
             )
           } catch {
             hasDiff = true
@@ -761,10 +761,11 @@ export const buildActionQueueHistoryView = async ({
             : execFileSync(
                 'git',
                 ['-C', worktreePath, 'status', '--porcelain'],
-                { encoding: 'utf8' },
+                { encoding: 'utf8', timeout: 3000, killSignal: 'SIGKILL' },
               ).trim()
           empty = !hasDiff && porcelain === ''
         } catch {
+          // git unavailable, worktree not a git repo, or probe timed out — conservative
           empty = false
         }
       }
