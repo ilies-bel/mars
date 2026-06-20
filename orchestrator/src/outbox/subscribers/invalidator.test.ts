@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createClient, type Client } from '@libsql/client';
 import { publishWithRetry } from '../../bus/publisher.js';
 import { registerSubscriber, getCursor } from '../../bus/subscribers.js';
-import { ensureInboxSchema, closeInboxRow as _closeInboxRow } from '../../core/lib/inbox.js';
+import { ensureStallSchema } from '../stall.js';
 import {
   INVALIDATOR_SUBSCRIBER,
   ensureInvalidator,
@@ -13,7 +13,7 @@ import {
 } from './invalidator.js';
 
 /**
- * File-backed libsql client with the production `events` + inbox schemas.
+ * File-backed libsql client with the production `events` + subscriber_stalls schemas.
  * File-backed (not :memory:) so a second connection to the same path sees
  * the same data, which lets us simulate a daemon restart mid-test.
  */
@@ -27,7 +27,7 @@ async function makeClient(dir: string): Promise<Client> {
       ts      INTEGER NOT NULL DEFAULT (unixepoch())
     )
   `);
-  await ensureInboxSchema(client);
+  await ensureStallSchema(client);
   return client;
 }
 
@@ -69,11 +69,11 @@ describe('Invalidator outbox subscriber', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('auto-closes an inbox row whose justifying condition is resolved', async () => {
+  it('auto-closes a stall row whose justifying condition is resolved', async () => {
     // Register first so the cursor is at the current outbox head.
     await ensureInvalidator(client);
 
-    // Simulate: a subscriber stalled on event 5 → inbox row raised.
+    // Simulate: a subscriber stalled on event 5 → stall row raised.
     await insertStallRow(client, 'sub-a', 5);
     expect(await stallRowExists(client, 'sub-a', 5)).toBe(true);
 
@@ -123,7 +123,7 @@ describe('Invalidator outbox subscriber', () => {
     }
   });
 
-  it('does not close an inbox row whose justifying condition still holds', async () => {
+  it('does not close a stall row whose justifying condition still holds', async () => {
     await ensureInvalidator(client);
 
     // Insert a stall row but do NOT publish subscriber.unstalled.

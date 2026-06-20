@@ -26,11 +26,12 @@ export const EventMap = {
     failureSignature: z.string(),
     failingStep: z.string(),
     /**
-     * The arc origin id for the blocked task. When present, the inbox-raiser
-     * keys the action-queue row on this value (origin-fingerprint dedup) so
-     * all slices of the same arc collapse onto a single inbox row.
-     * Optional for backward compatibility — emit sites that cannot cheaply
-     * resolve the origin omit this field; the subscriber falls back to taskId.
+     * The arc origin id for the blocked task. When present, the
+     * action-queue-raiser keys the action-queue row on this value
+     * (origin-fingerprint dedup) so all slices of the same arc collapse onto
+     * a single action-queue item. Optional for backward compatibility — emit
+     * sites that cannot cheaply resolve the origin omit this field; the
+     * subscriber falls back to taskId.
      */
     originId: z.string().optional(),
   }),
@@ -134,7 +135,7 @@ export const EventMap = {
   /**
    * Emitted once when a durable Subscriber's handler has failed
    * STALL_THRESHOLD consecutive times on the same event id and its cursor
-   * is blocked (ADR-0032). Written to the Outbox alongside the inbox row.
+   * is blocked (ADR-0032). Written to the Outbox alongside the stall row.
    */
   'subscriber.stalled': z.object({
     subscriberId: z.string(),
@@ -144,7 +145,7 @@ export const EventMap = {
   /**
    * Emitted when a previously-stalled Subscriber successfully processes the
    * event it was blocked on. The Invalidator subscriber reacts to this event
-   * to close the corresponding `subscriber_stalls` inbox row.
+   * to close the corresponding `subscriber_stalls` stall row.
    */
   'subscriber.unstalled': z.object({
     subscriberId: z.string(),
@@ -153,8 +154,8 @@ export const EventMap = {
   /**
    * Emitted when a coder surfaces a question to the operator during task
    * execution. The question-raise Outbox Subscriber converts this event into
-   * a durable action-queue inbox row so a daemon restart between the event
-   * write and the inbox raise cannot lose the question.
+   * a durable action-queue item so a daemon restart between the event
+   * write and the action-queue raise cannot lose the question.
    */
   'task.question': z.object({
     taskId: z.string(),
@@ -166,7 +167,7 @@ export const EventMap = {
    * the Invalidator (alert-dismisser) can subscribe here to resolve the open
    * action-queue row — the alert disappears immediately from the queue.
    * If the stale-worktree sweep later finds the worktree still stale it
-   * calls raiseInboxItem, which creates a FRESH open row (de-duped only on
+   * calls raiseActionQueueItem, which creates a FRESH open row (de-duped only on
    * state='open'). Payload mirrors task.queued (ADR-0027/0030).
    */
   'task.under_investigation': z.object({

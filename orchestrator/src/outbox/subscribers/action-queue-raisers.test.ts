@@ -1,5 +1,5 @@
 /**
- * Inbox-raiser Outbox Subscribers — behaviour tests.
+ * Action-queue-raiser Outbox Subscribers — behaviour tests.
  *
  * These tests drive the subscriber handlers directly (without a running
  * dispatcher) so every assertion is synchronous and deterministic.
@@ -30,7 +30,7 @@ import type { BusEvent } from '../../bus/events.js';
  * resolveOriginIdForTask() open the fresh test DB.
  */
 function setupRepo(): string {
-  const repo = mkdtempSync(join(tmpdir(), 'mars-inbox-raisers-test-'));
+  const repo = mkdtempSync(join(tmpdir(), 'mars-action-queue-raisers-test-'));
   execFileSync('git', ['init', '-q'], { cwd: repo });
   mkdirSync(join(repo, '.mars'), { recursive: true });
   return repo;
@@ -38,14 +38,14 @@ function setupRepo(): string {
 
 /**
  * File-backed libsql client pointing at the same path stateClient() would
- * use for the given repo root. Includes all tables the inbox-raiser subscriber
+ * use for the given repo root. Includes all tables the action-queue-raiser subscriber
  * writes to or reads from.
  */
 async function makeClient(repo: string): Promise<Client> {
   const dbPath = resolve(repo, '.mars', 'mars.db');
   const client = createClient({ url: `file:${dbPath}` });
 
-  // Action-queue inbox tables (written by raiseActionQueueItem).
+  // Action-queue tables (written by raiseActionQueueItem).
   await client.execute(`
     CREATE TABLE IF NOT EXISTS action_queue_items (
       id              TEXT    PRIMARY KEY,
@@ -156,11 +156,11 @@ async function openRowForTask(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('inbox-raiser:task.blocked subscriber', () => {
+describe('action-queue-raiser:task.blocked subscriber', () => {
   let tmpDir: string;
   let client: Client;
-  let buildInboxRaiserSubscribers: typeof import('./inbox-raisers.js').buildInboxRaiserSubscribers;
-  let ensureInboxRaiserSchema: typeof import('./inbox-raisers.js').ensureInboxRaiserSchema;
+  let buildActionQueueRaiserSubscribers: typeof import('./action-queue-raisers.js').buildActionQueueRaiserSubscribers;
+  let ensureActionQueueRaiserSchema: typeof import('./action-queue-raisers.js').ensureActionQueueRaiserSchema;
 
   beforeEach(async () => {
     tmpDir = setupRepo();
@@ -178,12 +178,12 @@ describe('inbox-raiser:task.blocked subscriber', () => {
     client = await makeClient(tmpDir);
 
     // Dynamic import AFTER resetModules so we get the fresh module instances.
-    const mod = await import('./inbox-raisers.js');
-    buildInboxRaiserSubscribers = mod.buildInboxRaiserSubscribers;
-    ensureInboxRaiserSchema = mod.ensureInboxRaiserSchema;
+    const mod = await import('./action-queue-raisers.js');
+    buildActionQueueRaiserSubscribers = mod.buildActionQueueRaiserSubscribers;
+    ensureActionQueueRaiserSchema = mod.ensureActionQueueRaiserSchema;
 
     // Create the subscriber_processed_events dedup table on the shared client.
-    await ensureInboxRaiserSchema(client);
+    await ensureActionQueueRaiserSchema(client);
   });
 
   afterEach(() => {
@@ -193,10 +193,10 @@ describe('inbox-raiser:task.blocked subscriber', () => {
   });
 
   // ── Acceptance criterion 1 ─────────────────────────────────────────────
-  // Each triggering state-change event raises exactly one inbox row.
+  // Each triggering state-change event raises exactly one action-queue item.
 
-  it('raises exactly one inbox row when a task.blocked event is processed', async () => {
-    const [subscriber] = buildInboxRaiserSubscribers(client);
+  it('raises exactly one action-queue item when a task.blocked event is processed', async () => {
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(blockedEvent(1, 'task-alpha'));
 
     expect(await openRowCount(client)).toBe(1);
@@ -207,7 +207,7 @@ describe('inbox-raiser:task.blocked subscriber', () => {
   });
 
   it('records kind=failed, category=orchestrator, priority=high on the new row', async () => {
-    const [subscriber] = buildInboxRaiserSubscribers(client);
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(blockedEvent(2, 'task-bravo'));
 
     const r = await client.execute({
@@ -228,9 +228,9 @@ describe('inbox-raiser:task.blocked subscriber', () => {
   // ── Acceptance criterion 2 ─────────────────────────────────────────────
   // Replaying the same triggering event raises zero additional rows.
 
-  it('replaying the same event id raises zero additional inbox rows', async () => {
+  it('replaying the same event id raises zero additional action-queue rows', async () => {
     const event = blockedEvent(42, 'task-charlie');
-    const [subscriber] = buildInboxRaiserSubscribers(client);
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
 
     // First delivery
     await subscriber.handler(event);
@@ -248,17 +248,17 @@ describe('inbox-raiser:task.blocked subscriber', () => {
   });
 
   // ── Acceptance criterion 3 ─────────────────────────────────────────────
-  // A daemon restart between the state-write and the inbox raise still
+  // A daemon restart between the state-write and the action-queue raise still
   // results in exactly one row appearing on next start.
 
   it('after a restart with no prior processing, the first delivery creates exactly one row', async () => {
     // Simulates: event written to outbox, daemon crashes before subscriber
     // processes it (processedOnce dedup table is empty). On restart a fresh
-    // subscriber instance processes the event and the inbox row appears.
+    // subscriber instance processes the event and the action-queue item appears.
     const event = blockedEvent(99, 'task-delta');
 
     // Fresh subscriber — no dedup row in DB yet
-    const [subscriber] = buildInboxRaiserSubscribers(client);
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(event);
 
     expect(await openRowCount(client)).toBe(1);
@@ -272,12 +272,12 @@ describe('inbox-raiser:task.blocked subscriber', () => {
     // second raise.
     const event = blockedEvent(7, 'task-echo');
 
-    const [sub1] = buildInboxRaiserSubscribers(client);
+    const [sub1] = buildActionQueueRaiserSubscribers(client);
     await sub1.handler(event);
     expect(await openRowCount(client)).toBe(1);
 
     // Restart: new subscriber instance, same file-backed DB (dedup row persists)
-    const [sub2] = buildInboxRaiserSubscribers(client);
+    const [sub2] = buildActionQueueRaiserSubscribers(client);
     await sub2.handler(event);
 
     // Dedup row in DB prevented re-raise
@@ -289,7 +289,7 @@ describe('inbox-raiser:task.blocked subscriber', () => {
   // Multiple task.blocked events for the same task collapse into one row.
 
   it('two distinct task.blocked events for the same task produce one open row (origin-fingerprint dedup)', async () => {
-    const [subscriber] = buildInboxRaiserSubscribers(client);
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
 
     // Different event ids → processedOnce allows both, but origin-fingerprint
     // dedup inside raiseActionQueueItem collapses them into one row.
@@ -302,8 +302,8 @@ describe('inbox-raiser:task.blocked subscriber', () => {
     expect(row!.seenCount).toBe(2);
   });
 
-  it('different tasks each get their own inbox row', async () => {
-    const [subscriber] = buildInboxRaiserSubscribers(client);
+  it('different tasks each get their own action-queue row', async () => {
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
     await subscriber.handler(blockedEvent(20, 'task-golf'));
     await subscriber.handler(blockedEvent(21, 'task-hotel'));
 
@@ -312,10 +312,10 @@ describe('inbox-raiser:task.blocked subscriber', () => {
 
   // ── Arc-origin threading (finding #6 of lineage audit) ────────────────
   // A blocked slice (id != originId) must produce a row keyed on the arc
-  // origin so all slices of the same arc collapse onto a single inbox item.
+  // origin so all slices of the same arc collapse onto a single action-queue item.
 
   it('a blocked slice (id != originId) yields a row fingerprinted on origin:<originId>, collapsing onto the arc', async () => {
-    const [subscriber] = buildInboxRaiserSubscribers(client);
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
 
     // First slice of the arc blocked — originId points to the arc root.
     await subscriber.handler(
@@ -341,7 +341,7 @@ describe('inbox-raiser:task.blocked subscriber', () => {
   });
 
   it('a blocked slice (id != originId) does NOT produce a row keyed on the slice id', async () => {
-    const [subscriber] = buildInboxRaiserSubscribers(client);
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
 
     await subscriber.handler(
       blockedEvent(60, 'slice-juliet', { originId: 'origin-juliet' }),
@@ -360,7 +360,7 @@ describe('inbox-raiser:task.blocked subscriber', () => {
   // ── DB-based arc-origin resolution (ADR-0051 violation fix) ───────────
   // When originId is absent from the event payload but the task row in the DB
   // carries an origin_id, raiseActionQueueItem must resolve through the DB so
-  // the inbox row is keyed on the true arc root — not the raw (fix/descendant)
+  // the action-queue item is keyed on the true arc root — not the raw (fix/descendant)
   // task id.
 
   it('a raiser called with a fix/descendant taskId whose task row has origin_id resolves to the arc origin', async () => {
@@ -370,7 +370,7 @@ describe('inbox-raiser:task.blocked subscriber', () => {
             VALUES ('fix-task-kilo', '', 'blocked', '', '', 'arc-root-kilo')`,
     });
 
-    const [subscriber] = buildInboxRaiserSubscribers(client);
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
 
     // Fire event with the fix task id; no originId in the payload (simulates
     // older events where the field was not yet threaded in).
@@ -395,7 +395,7 @@ describe('inbox-raiser:task.blocked subscriber', () => {
                    ('fix-lima-2', '', 'blocked', '', '', 'arc-root-lima')`,
     });
 
-    const [subscriber] = buildInboxRaiserSubscribers(client);
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
 
     await subscriber.handler(blockedEvent(200, 'fix-lima-1'));
     await subscriber.handler(blockedEvent(201, 'fix-lima-2'));

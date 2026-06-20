@@ -6,7 +6,7 @@
  * file-backed SQLite client mirrors the real daemon setup: a single
  * `mars.db` that holds both the outbox `events` table and the
  * `action_queue_items` table, so the processedOnce dedup row and the
- * inbox write are co-located and covered by the same write transaction.
+ * action-queue write are co-located and covered by the same write transaction.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -41,7 +41,7 @@ async function makeClient(dir: string): Promise<Client> {
     )
   `);
 
-  // Action-queue inbox tables (the subscriber's side-effect destination).
+  // Action-queue tables (the subscriber's side-effect destination).
   await client.execute(`
     CREATE TABLE IF NOT EXISTS action_queue_items (
       id              TEXT    PRIMARY KEY,
@@ -149,9 +149,9 @@ describe('question-raiser:task.question subscriber', () => {
   });
 
   // ── Acceptance criterion 1 ─────────────────────────────────────────────
-  // Each coder question event raises exactly one inbox row.
+  // Each coder question event raises exactly one action-queue item.
 
-  it('raises exactly one inbox row when a task.question event is processed', async () => {
+  it('raises exactly one action-queue item when a task.question event is processed', async () => {
     const [subscriber] = buildQuestionRaiseSubscribers(client);
     await subscriber.handler(questionEvent(1, 'task-alpha'));
 
@@ -197,7 +197,7 @@ describe('question-raiser:task.question subscriber', () => {
   // ── Acceptance criterion 2 ─────────────────────────────────────────────
   // Replaying the same triggering event raises zero additional rows.
 
-  it('replaying the same event id raises zero additional inbox rows', async () => {
+  it('replaying the same event id raises zero additional action-queue rows', async () => {
     const event = questionEvent(42, 'task-delta');
     const [subscriber] = buildQuestionRaiseSubscribers(client);
 
@@ -217,13 +217,13 @@ describe('question-raiser:task.question subscriber', () => {
   });
 
   // ── Acceptance criterion 3 ─────────────────────────────────────────────
-  // A daemon restart between the state-write and the inbox raise still
+  // A daemon restart between the state-write and the action-queue raise still
   // results in exactly one row appearing on next start.
 
   it('after a restart with no prior processing, the first delivery creates exactly one row', async () => {
     // Simulates: event written to outbox, daemon crashes before subscriber
     // processes it (processedOnce dedup table is empty). On restart a fresh
-    // subscriber instance processes the event and the inbox row appears.
+    // subscriber instance processes the event and the action-queue item appears.
     const event = questionEvent(99, 'task-echo');
 
     // Fresh subscriber — no dedup row in DB yet
@@ -235,10 +235,10 @@ describe('question-raiser:task.question subscriber', () => {
 
   it('processedOnce dedup persists across subscriber instances, preventing a double-raise on restart', async () => {
     // Simulates: first subscriber instance processes the event successfully
-    // (processedOnce commits dedup row + inbox row) but the cursor advance
-    // fails before the daemon dies. On restart a second subscriber instance
-    // sees the same event (cursor still behind). The persisted dedup row
-    // must prevent a second inbox raise.
+    // (processedOnce commits dedup row + action-queue write) but the cursor
+    // advance fails before the daemon dies. On restart a second subscriber
+    // instance sees the same event (cursor still behind). The persisted dedup
+    // row must prevent a second action-queue raise.
     const event = questionEvent(7, 'task-foxtrot');
 
     const [sub1] = buildQuestionRaiseSubscribers(client);
@@ -269,7 +269,7 @@ describe('question-raiser:task.question subscriber', () => {
     expect(await openRowCount(client)).toBe(2);
   });
 
-  it('different tasks each get their own inbox row', async () => {
+  it('different tasks each get their own action-queue row', async () => {
     const [subscriber] = buildQuestionRaiseSubscribers(client);
     await subscriber.handler(questionEvent(20, 'task-hotel'));
     await subscriber.handler(questionEvent(21, 'task-india'));

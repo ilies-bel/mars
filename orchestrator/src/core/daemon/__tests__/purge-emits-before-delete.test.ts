@@ -8,7 +8,7 @@
  *   (a) events table contains a task.dropped event whose ts is ≤ the
  *       deletion timestamp (both committed in the same atomic tx; the INSERT
  *       precedes DELETE FROM tasks in execution order).
- *   (b) the inbox row is gone after drainAlertDismissals runs.
+ *   (b) the action-queue row is gone after drainAlertDismissals runs.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -82,7 +82,7 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('emits task.dropped in the same tx as DELETE, and drainAlertDismissals clears the inbox row', async () => {
+  it('emits task.dropped in the same tx as DELETE, and drainAlertDismissals clears the action-queue row', async () => {
     const { q, actionQueue, ad, pt } = await loadModules(repo)
     const client = q.resolveQueueClient()
 
@@ -90,7 +90,7 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
     const task = await q.enqueueTask('purge-emit test', undefined, { skipTriage: true })
     await q.updateTask(task.id, { status: 'failed', error: 'test failure' })
 
-    // Raise an open inbox row for the task.
+    // Raise an open action-queue row for the task.
     const itemId = await actionQueue.raiseActionQueueItem({
       kind: 'failed',
       category: 'orchestrator',
@@ -137,7 +137,7 @@ describe('corePurgeTask — task.dropped emitted before DELETE', () => {
     // Event ts ≤ afterSec — at or before the deletion timestamp.
     expect(eventTs).toBeLessThanOrEqual(afterSec)
 
-    // (b) Inbox row is cleared by drainAlertDismissals consuming the task.dropped event.
+    // (b) Action-queue row is cleared by drainAlertDismissals consuming the task.dropped event.
     await ad.drainAlertDismissals(client)
     const item = await actionQueue.getActionQueueItem(itemId)
     expect(item!.state).toBe('resolved')

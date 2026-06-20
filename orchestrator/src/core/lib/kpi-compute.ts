@@ -245,8 +245,9 @@ export async function computeCostPerArcDistribution(
  *
  * NOTE: Condition 3 requires action_queue_items to be queryable via the same
  * TaskStore surface. In production, action_queue_items lives in state.db (a
- * separate database from queue.db). When the table is not found the inbox check
- * is silently skipped — condition 2 (recovery edge) remains fully enforced.
+ * separate database from queue.db). When the table is not found the
+ * action-queue check is silently skipped — condition 2 (recovery edge) remains
+ * fully enforced.
  */
 export async function computeAutonomousCompletionRate(
   surface: TaskStore,
@@ -278,25 +279,25 @@ export async function computeAutonomousCompletionRate(
   )
 
   // Arc IDs disqualified by a 'task-blocked' action-queue item
-  let nonAutonomousByInbox = new Set<string>()
+  let nonAutonomousByActionQueue = new Set<string>()
   try {
-    const inboxResult = await surface.query({
+    const actionQueueResult = await surface.query({
       sql: `SELECT DISTINCT COALESCE(t.origin_id, t.id) AS arc_id
             FROM tasks t
             INNER JOIN action_queue_items a ON a.origin_task_id = t.id
             WHERE a.kind = 'task-blocked'`,
       args: [],
     })
-    nonAutonomousByInbox = new Set(
-      inboxResult.rows.map(r => (r as unknown as { arc_id: string }).arc_id),
+    nonAutonomousByActionQueue = new Set(
+      actionQueueResult.rows.map(r => (r as unknown as { arc_id: string }).arc_id),
     )
   } catch {
-    // action_queue_items not in this store's database — inbox check skipped
+    // action_queue_items not in this store's database — action-queue check skipped
   }
 
   const autonomousCount = doneArcsResult.rows.filter(r => {
     const arcId = (r as unknown as { arc_id: string }).arc_id
-    return !nonAutonomousByRecovery.has(arcId) && !nonAutonomousByInbox.has(arcId)
+    return !nonAutonomousByRecovery.has(arcId) && !nonAutonomousByActionQueue.has(arcId)
   }).length
 
   return { value: autonomousCount / sampleCount, sampleCount }
@@ -423,7 +424,7 @@ export async function listFailureRateArcs(
  * List autonomous-completion-rate arcs in the window.
  * Population = done arcs in window.
  * PASS (autonomous) = no recovery edge, no task-blocked action-queue item.
- * FAIL = disqualified by recovery task or inbox item.
+ * FAIL = disqualified by recovery task or action-queue item.
  * Mirrors computeAutonomousCompletionRate().
  */
 export async function listAutonomousArcs(
@@ -472,26 +473,26 @@ export async function listAutonomousArcs(
   )
 
   // Disqualified by task-blocked action-queue item
-  let nonAutonomousByInbox = new Set<string>()
+  let nonAutonomousByActionQueue = new Set<string>()
   try {
-    const inboxResult = await surface.query({
+    const actionQueueResult = await surface.query({
       sql: `SELECT DISTINCT COALESCE(t.origin_id, t.id) AS arc_id
             FROM tasks t
             INNER JOIN action_queue_items a ON a.origin_task_id = t.id
             WHERE a.kind = 'task-blocked'`,
       args: [],
     })
-    nonAutonomousByInbox = new Set(
-      inboxResult.rows.map(r => (r as unknown as { arc_id: string }).arc_id),
+    nonAutonomousByActionQueue = new Set(
+      actionQueueResult.rows.map(r => (r as unknown as { arc_id: string }).arc_id),
     )
   } catch {
-    // action_queue_items not in this store's database — inbox check skipped
+    // action_queue_items not in this store's database — action-queue check skipped
   }
 
   return doneArcsResult.rows.map((row) => {
     const r = row as unknown as { arc_id: string; origin_task_id: string; title: string }
     const passed =
-      !nonAutonomousByRecovery.has(r.arc_id) && !nonAutonomousByInbox.has(r.arc_id)
+      !nonAutonomousByRecovery.has(r.arc_id) && !nonAutonomousByActionQueue.has(r.arc_id)
     return {
       arcId: r.arc_id,
       originTaskId: r.origin_task_id,

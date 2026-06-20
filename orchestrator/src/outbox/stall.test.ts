@@ -61,7 +61,7 @@ describe('StallAwareDispatcher', () => {
     return Number((r.rows[0] as unknown as { n: number | bigint }).n);
   }
 
-  it('three consecutive failures raise exactly one inbox row that names subscriber, event id, and last error', async () => {
+  it('three consecutive failures raise exactly one stall row that names subscriber, event id, and last error', async () => {
     await registerSubscriber(client, 'sub-a', { replay: true });
     await publishWithRetry(client, 'task.queued', { taskId: 'x1' });
 
@@ -103,7 +103,7 @@ describe('StallAwareDispatcher', () => {
     expect(attempt).toBeGreaterThanOrEqual(STALL_THRESHOLD);
   });
 
-  it('a fourth failure on the same event id does not raise an additional inbox row', async () => {
+  it('a fourth failure on the same event id does not raise an additional stall row', async () => {
     await registerSubscriber(client, 'sub-b', { replay: true });
     await publishWithRetry(client, 'task.queued', { taskId: 'x2' });
 

@@ -8,20 +8,20 @@ import type { BusEvent } from '../../bus/events.js';
 import { raiseActionQueueItem } from '../../core/lib/action-queue.js';
 
 /**
- * Ensure the schema required by inbox-raiser subscribers is present on
+ * Ensure the schema required by action-queue-raiser subscribers is present on
  * `client`. Creates the `subscriber_processed_events` dedup table if it does
  * not exist. Idempotent — safe to call on every startup.
  */
-export async function ensureInboxRaiserSchema(client: Client): Promise<void> {
+export async function ensureActionQueueRaiserSchema(client: Client): Promise<void> {
   await ensureProcessedOnceSchema(client);
 }
 
 /**
- * Build the Outbox Subscribers that durably raise action-queue (inbox) items
+ * Build the Outbox Subscribers that durably raise action-queue items
  * in reaction to state-change events.
  *
  * Each subscriber wraps its handler in {@link processedOnce} so that
- * replaying the same event id never produces additional inbox rows. The
+ * replaying the same event id never produces additional action-queue rows. The
  * action-queue write is routed through {@link raiseActionQueueItem} so that
  * arc-key normalization, origin resolution via `resolveOriginIdForTask`, and
  * origin-fingerprint dedup all happen at the single raise path (ADR-0051).
@@ -29,13 +29,13 @@ export async function ensureInboxRaiserSchema(client: Client): Promise<void> {
  * @param client  The shared `mars.db` client used for the per-subscriber
  *   processedOnce dedup table.
  */
-export function buildInboxRaiserSubscribers(client: Client): Subscriber[] {
-  return [taskBlockedInboxRaiser(client)];
+export function buildActionQueueRaiserSubscribers(client: Client): Subscriber[] {
+  return [taskBlockedActionQueueRaiser(client)];
 }
 
 /**
  * Subscriber that converts `task.blocked` outbox events into durable
- * action-queue inbox items. One open item per arc origin (origin-fingerprint
+ * action-queue items. One open item per arc origin (origin-fingerprint
  * dedup inside {@link raiseActionQueueItem}); a subsequent `task.blocked`
  * event for the same arc bumps `seen_count` on the existing open row rather
  * than inserting a duplicate.
@@ -46,9 +46,9 @@ export function buildInboxRaiserSubscribers(client: Client): Subscriber[] {
  * arc surfaces as exactly one row regardless of which slice triggered the
  * block.
  */
-function taskBlockedInboxRaiser(client: Client): Subscriber {
+function taskBlockedActionQueueRaiser(client: Client): Subscriber {
   return {
-    name: 'inbox-raiser:task.blocked',
+    name: 'action-queue-raiser:task.blocked',
     handler: async (event: BusEvent): Promise<void> => {
       if (event.type !== 'task.blocked') return;
 
@@ -66,7 +66,7 @@ function taskBlockedInboxRaiser(client: Client): Subscriber {
       // prevents duplicate raises from event-replay.
       const { ran } = await processedOnce({
         client,
-        subscriberId: 'inbox-raiser:task.blocked',
+        subscriberId: 'action-queue-raiser:task.blocked',
         eventId: event.id,
         sideEffect: async (_tx) => {
           // Event-level dedup only. The action-queue write is routed through
@@ -93,7 +93,7 @@ function taskBlockedInboxRaiser(client: Client): Subscriber {
           failingStep: p.failingStep,
         },
         context: {},
-        raisedBy: 'outbox:inbox-raiser:task.blocked',
+        raisedBy: 'outbox:action-queue-raiser:task.blocked',
         signature: `task.blocked:${p.taskId}`,
         originTaskId: p.originId ?? p.taskId,
       });

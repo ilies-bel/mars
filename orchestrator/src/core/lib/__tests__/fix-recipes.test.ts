@@ -1141,7 +1141,7 @@ describe('fix-recipes', () => {
     // failure paths in mergeBranch (git.ts) produce first-line messages that
     // previously classified as /unclassified. The not-fast-forward rule's
     // `match` regex was extended to cover both shapes so they route to the
-    // existing recipe instead of raising a no-recipe inbox item.
+    // existing recipe instead of raising a no-recipe action-queue item.
     it('has a registered recipe under merge:vcs-supervisor-aborted/not-fast-forward', () => {
       expect(hasRecipe('merge:vcs-supervisor-aborted/not-fast-forward')).toBe(true)
     })

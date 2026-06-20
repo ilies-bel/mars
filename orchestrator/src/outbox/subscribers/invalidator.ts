@@ -4,18 +4,17 @@ import {
   fetchPending,
   advanceCursor,
 } from '../../bus/subscribers.js';
-import { closeInboxRow } from '../../core/lib/inbox.js';
 
 /**
  * The Invalidator: a durable Outbox Subscriber that auto-closes
- * `subscriber_stalls` inbox rows when the condition that raised them resolves.
+ * `subscriber_stalls` rows when the condition that raised them resolves.
  *
  * When a Subscriber's handler stalls (STALL_THRESHOLD consecutive failures on
  * the same event id), `startStallAwareDispatcher` inserts a
  * `subscriber_stalls` row AND publishes a `subscriber.stalled` event.
  * When the handler eventually succeeds, it publishes `subscriber.unstalled`
  * to the Outbox. The Invalidator consumes `subscriber.unstalled` events from
- * its durable cursor and deletes the corresponding inbox row.
+ * its durable cursor and deletes the corresponding stall row.
  *
  * Durability guarantee: if the daemon is killed after the `subscriber.unstalled`
  * event is written but before this subscriber processes it, the event is
@@ -34,11 +33,11 @@ export async function ensureInvalidator(client: Client): Promise<void> {
 
 /**
  * Process every `subscriber.unstalled` event the Invalidator has not yet
- * acknowledged, closing the corresponding `subscriber_stalls` inbox row for
- * each. All other event types advance the cursor without side effect.
+ * acknowledged, closing the corresponding `subscriber_stalls` row for each.
+ * All other event types advance the cursor without side effect.
  *
- * @param client  The libsql client carrying the outbox and inbox tables.
- * @returns       The count of inbox rows that were closed.
+ * @param client  The libsql client carrying the outbox and subscriber_stalls tables.
+ * @returns       The count of stall rows that were closed.
  */
 export async function drainInvalidations(
   client: Client,
@@ -52,7 +51,10 @@ export async function drainInvalidations(
         subscriberId: string;
         eventId: number;
       };
-      await closeInboxRow(client, subscriberId, eventId);
+      await client.execute({
+        sql: 'DELETE FROM subscriber_stalls WHERE subscriber_id = ? AND event_id = ?',
+        args: [subscriberId, eventId],
+      });
       processed++;
     }
     await advanceCursor(client, INVALIDATOR_SUBSCRIBER, event.id);

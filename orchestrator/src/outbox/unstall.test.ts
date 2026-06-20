@@ -4,7 +4,7 @@
  * When a stalled Subscriber's handler eventually succeeds:
  *   1. Its cursor advances past the blocking event (no operator action needed).
  *   2. A `subscriber.unstalled` event is published to the Outbox.
- *   3. The Invalidator processes that event and auto-closes the inbox row.
+ *   3. The Invalidator processes that event and auto-closes the stall row.
  *   4. Re-stalling on the same (subscriber, event) after the row is closed
  *      inserts a fresh row — the previous one is not "reopened".
  */
@@ -146,12 +146,12 @@ describe('Subscriber unstall flow', () => {
     );
   });
 
-  it('inbox row is closed automatically via the Invalidator path when the stall clears', async () => {
+  it('stall row is closed automatically via the Invalidator path when the stall clears', async () => {
     // Register Invalidator first (no events yet → cursor = 0) so it sees
     // the subscriber.unstalled event that will be emitted later.
     await ensureInvalidator(client);
     await registerSubscriber(client, 'sub-c', { replay: true });
-    await publishWithRetry(client, 'task.queued', { taskId: 'inbox-close-test' });
+    await publishWithRetry(client, 'task.queued', { taskId: 'stall-close-test' });
 
     let callCount = 0;
 
@@ -173,7 +173,7 @@ describe('Subscriber unstall flow', () => {
       ),
     ).notify();
 
-    // Wait for the stall to be declared — the inbox row must exist first.
+    // Wait for the stall to be declared — the stall row must exist first.
     await vi.waitFor(
       async () => expect(await stallRowCount()).toBe(1),
       { timeout: 2_000 },
@@ -197,7 +197,7 @@ describe('Subscriber unstall flow', () => {
     expect(await stallRowCount()).toBe(0);
   });
 
-  it('raises a fresh inbox row when the Subscriber re-stalls after the previous row was closed', async () => {
+  it('raises a fresh stall row when the Subscriber re-stalls after the previous row was closed', async () => {
     await registerSubscriber(client, 'sub-d', { replay: true });
     await publishWithRetry(client, 'task.queued', { taskId: 're-stall-test' });
 
@@ -223,7 +223,7 @@ describe('Subscriber unstall flow', () => {
       { timeout: 2_000 },
     );
 
-    // Simulate the Invalidator closing the inbox row (as it does in production
+    // Simulate the Invalidator closing the stall row (as it does in production
     // when subscriber.unstalled is emitted and drained).
     await client.execute({
       sql: 'DELETE FROM subscriber_stalls WHERE subscriber_id = ?',
@@ -253,7 +253,7 @@ describe('Subscriber unstall flow', () => {
       ),
     ).notify();
 
-    // A fresh inbox row must be raised — the previously closed row is not reopened.
+    // A fresh stall row must be raised — the previously closed row is not reopened.
     await vi.waitFor(
       async () => expect(await stallRowCount()).toBe(1),
       { timeout: 2_000 },

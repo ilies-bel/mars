@@ -641,7 +641,7 @@ describe('takeKpiSnapshot — autonomous_completion_rate column', () => {
     expect(snapshot.autonomous_completion_rate).toBe(0)
   })
 
-  it('Arc with a task-blocked inbox item is NOT counted as autonomous', async () => {
+  it('Arc with a task-blocked action-queue item is NOT counted as autonomous', async () => {
     const store = await makeStore()
     await insertTask(store, { id: 'blocked-task', status: 'done' })
     await store.execute({

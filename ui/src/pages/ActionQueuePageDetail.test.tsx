@@ -369,7 +369,7 @@ describe('actionQueue detail – origin/recovery navigation', () => {
 // Open-task-detail affordance: failed-task rows expose the shared drawer.
 // ---------------------------------------------------------------------------
 
-describe('inbox detail – Open task detail affordance', () => {
+describe('action-queue detail – Open task detail affordance', () => {
   it('renders the Open task detail button for a real failed-task row', () => {
     const qc = makeClient({ taskId: 't-1' })
     const html = renderDetail(BASE_ITEM, qc)

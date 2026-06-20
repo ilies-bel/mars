@@ -17,17 +17,18 @@ export async function ensureQuestionRaiseSchema(client: Client): Promise<void> {
 }
 
 /**
- * Build the Outbox Subscriber that durably raises action-queue (inbox) items
+ * Build the Outbox Subscriber that durably raises action-queue items
  * in reaction to `task.question` events emitted by a coder during task
  * execution.
  *
  * The subscriber wraps its handler in {@link processedOnce} so that replaying
- * the same event id never produces additional inbox rows. The dedup row and
- * the inbox write land in the same write transaction on `client`, so a daemon
- * restart between the outbox write and the inbox raise cannot result in a
- * missing or duplicate item — either both commit or neither does.
+ * the same event id never produces additional action-queue rows. The dedup row
+ * and the action-queue write land in the same write transaction on `client`,
+ * so a daemon restart between the outbox write and the action-queue raise
+ * cannot result in a missing or duplicate item — either both commit or neither
+ * does.
  *
- * Each question event produces its own inbox row (no origin-fingerprint
+ * Each question event produces its own action-queue item (no origin-fingerprint
  * collapse — questions are independent operator tasks).
  *
  * @param client  The shared `mars.db` client. Must hold both the outbox
@@ -41,7 +42,7 @@ export function buildQuestionRaiseSubscribers(client: Client): Subscriber[] {
 
 /**
  * Subscriber that converts `task.question` outbox events into durable
- * action-queue inbox items. Each question event produces exactly one open
+ * action-queue items. Each question event produces exactly one open
  * item; replaying the same event id is structurally blocked by
  * processedOnce's dedup row.
  */

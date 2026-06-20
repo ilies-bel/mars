@@ -14,7 +14,7 @@ export const STALL_THRESHOLD = 3;
 export type StallAwareDispatcher = Dispatcher;
 
 /**
- * Create the `subscriber_stalls` inbox table that stores stall notifications.
+ * Create the `subscriber_stalls` table that stores stall notifications.
  * Idempotent — safe to call on every startup.
  *
  * Must be called before {@link startStallAwareDispatcher} so that stall rows
@@ -37,7 +37,7 @@ export async function ensureStallSchema(client: Client): Promise<void> {
  * consecutive-failure tracking. When a handler fails {@link STALL_THRESHOLD}
  * times in a row on the same event id:
  *
- *   1. A single inbox row is inserted into `subscriber_stalls` (PRIMARY KEY
+ *   1. A single stall row is inserted into `subscriber_stalls` (PRIMARY KEY
  *      dedup prevents duplicates on further failures in the same run or after
  *      a restart).
  *   2. A `subscriber.stalled` event is written to the Outbox so observers can
@@ -47,8 +47,8 @@ export async function ensureStallSchema(client: Client): Promise<void> {
  * not advance until the handler eventually succeeds. Other Subscribers
  * continue to advance independently.
  *
- * Call {@link ensureStallSchema} before this function to ensure the inbox
- * table exists.
+ * Call {@link ensureStallSchema} before this function to ensure the
+ * `subscriber_stalls` table exists.
  */
 export function startStallAwareDispatcher(
   client: Client,
@@ -58,14 +58,14 @@ export function startStallAwareDispatcher(
   // In-memory consecutive-failure counters. Keyed `subscriberId:eventId`.
   // Reset to 0 on a successful handler return. Losing this state across
   // a restart only delays the re-raise by STALL_THRESHOLD additional failures
-  // — the inbox row's PRIMARY KEY dedup collapses the re-insert, keeping
+  // — the stall row's PRIMARY KEY dedup collapses the re-insert, keeping
   // exactly one row per (subscriber, event).
   const failureCounts = new Map<string, number>();
 
   // Tracks which (subscriber, event) pairs have already triggered a stall
   // declaration in this process lifetime. Prevents re-emitting the
   // `subscriber.stalled` Outbox event on every additional failure past the
-  // threshold (the inbox row dedup handles the DB side; this handles the
+  // threshold (the stall row dedup handles the DB side; this handles the
   // event side).
   const declared = new Set<string>();
 
@@ -93,7 +93,7 @@ export function startStallAwareDispatcher(
             eventId: event.id,
           }).catch(() => {
             // Best-effort: Outbox emission failure must not mask the handler
-            // success. The inbox row will remain open until the next successful
+            // success. The stall row will remain open until the next successful
             // attempt re-emits the event.
           });
         }
@@ -108,7 +108,7 @@ export function startStallAwareDispatcher(
         if (count >= STALL_THRESHOLD && !declared.has(key)) {
           declared.add(key);
 
-          // Insert inbox row. PRIMARY KEY dedup means a re-insert after a
+          // Insert stall row. PRIMARY KEY dedup means a re-insert after a
           // restart is a silent no-op, so the operator always sees at most
           // one open row per (subscriber, event).
           await client

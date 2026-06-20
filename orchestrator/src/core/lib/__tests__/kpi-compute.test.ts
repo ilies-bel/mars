@@ -496,7 +496,7 @@ describe('computeCostPerArcDistribution — dangling-origin arc', () => {
 describe('computeAutonomousCompletionRate — fixture cases', () => {
   it('clean done-Arc IS counted as autonomous', async () => {
     const store = await makeStore()
-    // Single task: done, no recovery edge, no inbox item
+    // Single task: done, no recovery edge, no action-queue item
     await insertTask(store, { id: 'clean-arc', status: 'done' })
 
     const result = await computeAutonomousCompletionRate(store, WINDOW)
@@ -527,7 +527,7 @@ describe('computeAutonomousCompletionRate — fixture cases', () => {
     expect(result.value).toBe(0)
   })
 
-  it('Arc with a task-blocked inbox item is NOT counted as autonomous', async () => {
+  it('Arc with a task-blocked action-queue item is NOT counted as autonomous', async () => {
     const store = await makeStore()
     // Task reached done but had a task-blocked action-queue item raised against it
     await insertTask(store, {
