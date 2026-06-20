@@ -39,6 +39,9 @@ export interface DaemonClient {
     opts?: {
       autoSpawn?: boolean
       onSpawnNotice?: (pid: number, logFile: string) => void
+      /** Repo root override forwarded to the daemon transport so the socket
+       *  path is resolved under `<repo>/.mars/` rather than CWD/MARS_REPO. */
+      repo?: string
     },
   ): Promise<unknown>
 }

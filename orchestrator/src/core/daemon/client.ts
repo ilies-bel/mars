@@ -17,13 +17,17 @@ const CONNECT_TIMEOUT_MS = 5_000
 interface ClientOptions {
   autoSpawn?: boolean
   onSpawnNotice?: (pid: number, logFile: string) => void
+  /** Repo root override — when supplied, the daemon socket and spawn target
+   *  are resolved under `<repo>/.mars/` rather than the CWD/MARS_REPO default. */
+  repo?: string
 }
 
 const spawnDaemon = async (
+  repo: string | undefined,
   onSpawnNotice?: (pid: number, logFile: string) => void,
 ): Promise<void> => {
-  const { socket, logFile } = daemonPaths()
-  const ctx = resolveContext()
+  const { socket, logFile, pidFile } = daemonPaths(repo)
+  const ctx = resolveContext(repo)
   const { command, baseArgs } = resolveLaunchCommand()
 
   const child = spawn(command, [...baseArgs, '--repo', ctx.repoRoot, 'daemon', 'start', '--foreground'], {
@@ -37,7 +41,6 @@ const spawnDaemon = async (
   while (Date.now() - start < CONNECT_TIMEOUT_MS) {
     await new Promise((r) => setTimeout(r, CONNECT_RETRY_INTERVAL_MS))
     if (await tryConnectSocket(socket)) {
-      const pidFile = daemonPaths().pidFile
       const pid = readDaemonPid(pidFile) ?? child.pid ?? 0
       onSpawnNotice?.(pid, logFile)
       return
@@ -49,14 +52,14 @@ const spawnDaemon = async (
 }
 
 const ensureRunning = async (opts: ClientOptions): Promise<void> => {
-  const liveness = await isDaemonAlive()
+  const liveness = await isDaemonAlive(opts.repo)
   if (!liveness.alive) {
     if (opts.autoSpawn === false) {
       throw new Error(
         `mars daemon not running (${liveness.reason}) and auto-spawn disabled. Start it with: mars daemon start`,
       )
     }
-    await spawnDaemon(opts.onSpawnNotice)
+    await spawnDaemon(opts.repo, opts.onSpawnNotice)
   }
 }
 
@@ -65,7 +68,7 @@ export const sendRequest = async (
   opts: ClientOptions = {},
 ): Promise<unknown> => {
   await ensureRunning({ autoSpawn: false, ...opts })
-  const { socket } = daemonPaths()
+  const { socket } = daemonPaths(opts.repo)
 
   return new Promise((resolve, reject) => {
     const sock = createConnection(socket)

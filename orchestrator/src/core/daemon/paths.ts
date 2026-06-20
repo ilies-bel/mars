@@ -12,8 +12,8 @@ export interface DaemonPaths {
   httpPortFile: string
 }
 
-export const daemonPaths = (): DaemonPaths => {
-  const ctx = resolveContext()
+export const daemonPaths = (repo?: string): DaemonPaths => {
+  const ctx = resolveContext(repo)
   return {
     socket: resolve(ctx.stateDir, 'watch.sock'),
     pidFile: resolve(ctx.stateDir, 'watch.pid'),
@@ -103,8 +103,8 @@ export type DaemonLiveness = { alive: true; pid: number } | { alive: false; reas
  *                     (rare; socket externally removed).
  * - `no-pid`:         neither socket nor pid file present (clean state).
  */
-export const isDaemonAlive = async (): Promise<DaemonLiveness> => {
-  const { socket, pidFile } = daemonPaths()
+export const isDaemonAlive = async (repo?: string): Promise<DaemonLiveness> => {
+  const { socket, pidFile } = daemonPaths(repo)
 
   if (existsSync(socket)) {
     // Socket file present — attempt a connection.

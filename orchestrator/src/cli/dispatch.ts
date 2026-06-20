@@ -82,7 +82,18 @@ export const makeProductionDeps = async (
   let resolvedStore: ReturnType<typeof getDefaultDomainTaskStore> | undefined
 
   const deps = {
-    daemon: { sendRequest },
+    // Wrap sendRequest so every daemon-routed mutation inherits the resolved
+    // --repo value. Commands call `deps.daemon.sendRequest(req)` with no opts;
+    // the wrapper injects `repo` before forwarding to the real transport, so
+    // the daemon socket is resolved under <repo>/.mars/ rather than CWD/MARS_REPO.
+    // Per-call opts (autoSpawn, onSpawnNotice, or an explicit repo override)
+    // are spread last and therefore take precedence over the default `repo`.
+    daemon: {
+      sendRequest: (
+        req: Parameters<typeof sendRequest>[0],
+        opts?: Parameters<typeof sendRequest>[1],
+      ) => sendRequest(req, { repo, ...opts }),
+    },
     out: (s: string): void => {
       console.log(s)
     },

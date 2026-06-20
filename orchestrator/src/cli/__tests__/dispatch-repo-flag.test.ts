@@ -94,6 +94,117 @@ afterEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
+describe('daemonPaths --repo override', () => {
+  it('returns socket and pid paths under the override repo, not CWD/MARS_REPO', async () => {
+    // Point MARS_REPO at repoA so the CWD-derived default is repoA.
+    vi.resetModules()
+    process.env.MARS_REPO = repoA
+    const { __resetContextCacheForTests } = await import('../../core/context')
+    __resetContextCacheForTests()
+
+    const { daemonPaths } = await import('../../core/daemon/paths')
+
+    // Explicitly override to repoB — paths must live under repoB/.mars/
+    const paths = daemonPaths(repoB)
+    expect(paths.socket).toBe(resolve(repoB, '.mars', 'watch.sock'))
+    expect(paths.pidFile).toBe(resolve(repoB, '.mars', 'watch.pid'))
+    expect(paths.logFile).toBe(resolve(repoB, '.mars', 'watch.log'))
+  })
+
+  it('returns paths under the default repo when no override is given', async () => {
+    vi.resetModules()
+    process.env.MARS_REPO = repoA
+    const { __resetContextCacheForTests } = await import('../../core/context')
+    __resetContextCacheForTests()
+
+    const { daemonPaths } = await import('../../core/daemon/paths')
+
+    // No override — paths must live under repoA/.mars/ (from MARS_REPO)
+    const paths = daemonPaths()
+    expect(paths.socket).toBe(resolve(repoA, '.mars', 'watch.sock'))
+  })
+})
+
+describe('makeProductionDeps daemon.sendRequest --repo injection', () => {
+  it('injects --repo into every sendRequest call so the transport targets the override repo', async () => {
+    // MARS_REPO points at repoA; --repo is repoB.
+    vi.resetModules()
+    process.env.MARS_REPO = repoA
+
+    // Intercept the real sendRequest to capture what opts it receives.
+    const capturedOpts: Array<unknown> = []
+    vi.doMock('../../core/daemon/client', () => ({
+      sendRequest: async (_req: unknown, opts: unknown) => {
+        capturedOpts.push(opts)
+        return {}
+      },
+    }))
+
+    try {
+      const { makeProductionDeps } = await import('../dispatch')
+      const deps = await makeProductionDeps(repoB)
+
+      // Simulate a command calling daemon.sendRequest with no opts.
+      await deps.daemon.sendRequest({ op: 'add', prompt: 'noop', skipTriage: true })
+
+      // The wrapper must have injected repo: repoB before forwarding.
+      expect(capturedOpts[0]).toMatchObject({ repo: repoB })
+    } finally {
+      vi.doUnmock('../../core/daemon/client')
+    }
+  })
+
+  it('also injects --repo for a second daemon-routed command (glossary-write)', async () => {
+    vi.resetModules()
+    process.env.MARS_REPO = repoA
+
+    const capturedOpts: Array<unknown> = []
+    vi.doMock('../../core/daemon/client', () => ({
+      sendRequest: async (_req: unknown, opts: unknown) => {
+        capturedOpts.push(opts)
+        return {}
+      },
+    }))
+
+    try {
+      const { makeProductionDeps } = await import('../dispatch')
+      const deps = await makeProductionDeps(repoB)
+
+      await deps.daemon.sendRequest({ op: 'glossary-write', kind: 'set', term: 'T', definition: 'D' })
+
+      expect(capturedOpts[0]).toMatchObject({ repo: repoB })
+    } finally {
+      vi.doUnmock('../../core/daemon/client')
+    }
+  })
+
+  it('per-call opts take precedence over the injected --repo', async () => {
+    vi.resetModules()
+    process.env.MARS_REPO = repoA
+
+    const capturedOpts: Array<unknown> = []
+    vi.doMock('../../core/daemon/client', () => ({
+      sendRequest: async (_req: unknown, opts: unknown) => {
+        capturedOpts.push(opts)
+        return {}
+      },
+    }))
+
+    try {
+      const { makeProductionDeps } = await import('../dispatch')
+      const deps = await makeProductionDeps(repoB)
+
+      // A caller that explicitly passes its own repo override should win.
+      const explicitRepo = repoA
+      await deps.daemon.sendRequest({ op: 'add', prompt: 'noop', skipTriage: true }, { repo: explicitRepo })
+
+      expect(capturedOpts[0]).toMatchObject({ repo: explicitRepo })
+    } finally {
+      vi.doUnmock('../../core/daemon/client')
+    }
+  })
+})
+
 describe('makeProductionDeps --repo flag', () => {
   it('binds deps.store to the --repo path, not to MARS_REPO', async () => {
     // Set up both repos: repoA is the "default" (MARS_REPO), repoB is the
