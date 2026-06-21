@@ -21,7 +21,7 @@ import {
   raiseActionQueueItem,
 } from '../../core/lib/action-queue'
 import { actionQueueRaiseSchema } from '../action-queue-raise-schema'
-import type { Command } from '../command'
+import type { Command, CommandDeps } from '../command'
 import { errorMessage } from './shared'
 import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
 
@@ -42,7 +42,7 @@ const readStdin = async (): Promise<string> => {
  * Read the daemon's HTTP port from the port file published by `listen(0)`.
  * Returns null when the file is absent or contains a non-integer value.
  */
-const readDaemonPort = async (stateDir: string): Promise<number | null> => {
+export const readDaemonPort = async (stateDir: string): Promise<number | null> => {
   try {
     const raw = (await readFile(join(stateDir, 'http.port'), 'utf8')).trim()
     const port = Number(raw)
@@ -56,7 +56,7 @@ const readDaemonPort = async (stateDir: string): Promise<number | null> => {
  * Fetch the action queue view from the daemon's derived-view endpoint.
  * Throws when the daemon is unreachable or returns a non-2xx response.
  */
-const fetchActionQueueView = async (
+export const fetchActionQueueView = async (
   port: number,
   filter: string,
 ): Promise<ActionQueueRow[]> => {
@@ -65,6 +65,23 @@ const fetchActionQueueView = async (
   )
   if (!res.ok) throw new Error(`daemon returned ${res.status}`)
   return (await res.json()) as ActionQueueRow[]
+}
+
+/**
+ * Render the full detail header and body for an action-queue row.
+ * Shared by `action-queue show` and the top-level `show` command's alert fallback
+ * so both produce identical output.
+ */
+export const renderActionQueueDetail = (deps: CommandDeps, row: ActionQueueRow): void => {
+  deps.out(`id:        ${row.id}`)
+  deps.out(`title:     ${row.title}`)
+  deps.out(`kind:      ${row.kind}`)
+  deps.out(`entity:    ${row.entityId}`)
+  deps.out(`priority:  ${row.priority}`)
+  deps.out(`at:        ${row.at}`)
+  deps.out(`dag:       ${JSON.stringify(row.dag)}`)
+  deps.out('')
+  deps.out(row.body)
 }
 
 const actionQueueList: Command = {
@@ -154,15 +171,7 @@ const actionQueueShow: Command = {
       deps.err(`no action queue item matching ${id}`)
       return { code: 1 }
     }
-    deps.out(`id:        ${row.id}`)
-    deps.out(`title:     ${row.title}`)
-    deps.out(`kind:      ${row.kind}`)
-    deps.out(`entity:    ${row.entityId}`)
-    deps.out(`priority:  ${row.priority}`)
-    deps.out(`at:        ${row.at}`)
-    deps.out(`dag:       ${JSON.stringify(row.dag)}`)
-    deps.out('')
-    deps.out(row.body)
+    renderActionQueueDetail(deps, row)
     return { code: 0 }
   },
 }

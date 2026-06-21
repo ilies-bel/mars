@@ -14,10 +14,15 @@ import type { Command, CommandDeps } from '../command'
 import { renderTaskDetail } from './task'
 import { renderProposalDetail } from './proposal'
 import { errorMessage } from './shared'
+import {
+  readDaemonPort,
+  fetchActionQueueView,
+  renderActionQueueDetail,
+} from './action-queue'
 
 const show: Command = {
   path: 'show',
-  summary: 'show a task or proposal by id',
+  summary: 'show a task, proposal, or alert by id',
   usage: 'usage: mars show <id>',
   run: async (args, deps) => {
     const id = args.positional[0]
@@ -41,7 +46,22 @@ const show: Command = {
       await renderProposalDetail(deps, idea, true)
       return { code: 0 }
     }
-    deps.err(`no task or proposal matching ${id}`)
+    const port = await readDaemonPort(deps.ctx.stateDir)
+    if (port !== null) {
+      try {
+        const rows = await fetchActionQueueView(port, 'all')
+        const alertRow =
+          rows.find((r) => r.id === id || r.entityId === id) ??
+          rows.find((r) => r.id.startsWith(id) || r.entityId.startsWith(id))
+        if (alertRow) {
+          renderActionQueueDetail(deps, alertRow)
+          return { code: 0 }
+        }
+      } catch {
+        // Daemon unreachable — fall through to not-found.
+      }
+    }
+    deps.err(`no task, proposal, or alert matching ${id}`)
     return { code: 1 }
   },
 }

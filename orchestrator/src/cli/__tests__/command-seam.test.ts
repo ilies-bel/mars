@@ -14,9 +14,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   runCommandInProcess,
   makeFakeDaemon,
@@ -25,6 +25,7 @@ import {
 import type { DomainTaskStore } from '../../core/store/task-store'
 import type { OrchestratorContext } from '../../core/context'
 import type { DaemonRequest } from '../../core/daemon/protocol'
+import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
 
 let repo: string
 
@@ -67,6 +68,7 @@ beforeEach(() => {
   repo = setupRepo()
 })
 afterEach(() => {
+  vi.unstubAllGlobals()
   delete process.env.MARS_REPO
   rmSync(repo, { recursive: true, force: true })
 })
@@ -296,5 +298,86 @@ describe('where (pure pass-through over ctx)', () => {
     })
     expect(r.code).toBe(0)
     expect(r.out.join('\n')).toContain(`repo:           ${ctx.repoRoot}`)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// mars show — alert fallback
+// ---------------------------------------------------------------------------
+
+describe('mars show (alert fallback)', () => {
+  const FAKE_PORT = 19999
+
+  const makeAlertRow = (
+    overrides: Partial<ActionQueueRow> & Pick<ActionQueueRow, 'id'>,
+  ): ActionQueueRow => ({
+    kind: 'failed-task',
+    entityId: `entity-${overrides.id}`,
+    priority: 'normal',
+    title: `Title for ${overrides.id}`,
+    body: `Body for ${overrides.id}`,
+    at: '2026-01-01T00:00:00.000Z',
+    dag: null,
+    errorKind: 'unknown',
+    actions: [],
+    staleWorktreeDetail: null,
+    devServerUrl: null,
+    diagnosis: null,
+    failureReasonCode: null,
+    ...overrides,
+  })
+
+  it('renders alert detail and returns code 0 when the id matches an action-queue alert', async () => {
+    const alertRow = makeAlertRow({
+      id: 'aq-show-seam-01',
+      entityId: 'mars-task-seam-01',
+      kind: 'failed-task',
+      priority: 'high',
+      title: 'Seam alert title',
+      body: 'Seam alert body text',
+      at: '2026-03-01T12:00:00.000Z',
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [alertRow],
+    }))
+    writeFileSync(join(repo, '.mars', 'http.port'), String(FAKE_PORT))
+    const opts = await baseOpts()
+
+    const r = await runCommandInProcess(['show', 'aq-show-seam-01'], opts)
+
+    expect(r.code).toBe(0)
+    const out = r.out.join('\n')
+    expect(out).toContain('id:        aq-show-seam-01')
+    expect(out).toContain('title:     Seam alert title')
+    expect(out).toContain('kind:      failed-task')
+    expect(out).toContain('entity:    mars-task-seam-01')
+    expect(out).toContain('priority:  high')
+    expect(out).toContain('at:        2026-03-01T12:00:00.000Z')
+    expect(out).toContain('Seam alert body text')
+  })
+
+  it('returns code 1 with updated error when id matches no task, proposal, or alert', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [],
+    }))
+    writeFileSync(join(repo, '.mars', 'http.port'), String(FAKE_PORT))
+    const opts = await baseOpts()
+
+    const r = await runCommandInProcess(['show', 'mars-nope-zz99'], opts)
+
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('no task, proposal, or alert matching mars-nope-zz99')
+  })
+
+  it('still returns code 1 with updated error when daemon is not running (port file absent)', async () => {
+    // No http.port written — daemon not running.
+    const opts = await baseOpts()
+
+    const r = await runCommandInProcess(['show', 'mars-nope-nodaemon'], opts)
+
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('no task, proposal, or alert matching mars-nope-nodaemon')
   })
 })
