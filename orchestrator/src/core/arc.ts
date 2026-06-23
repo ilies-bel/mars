@@ -973,10 +973,12 @@ export class Arc {
     }
     const prompt = recipe.buildPrompt(recipeContextWithSource)
     const fixTaskId = `fix-${randomUUID().slice(0, 8)}`
-    // Shared remediations run at top priority — every other queued task is
-    // waiting on this one resource (e.g. a clean main). Non-shared fix-tasks
-    // stay at default priority; they only unblock the single source.
-    const fixPriority = shared ? MAX_PRIORITY : 0
+    // All recovery tasks run at top priority — recovery resumes already-started
+    // work and should preempt fresh queued tasks. Shared recipes additionally
+    // reuse a single in-flight fix-task across multiple sources (e.g. a clean
+    // main blocks everyone); that deduplication behaviour is orthogonal to the
+    // priority and is unchanged.
+    const fixPriority = MAX_PRIORITY
 
     await s.batch(
       [

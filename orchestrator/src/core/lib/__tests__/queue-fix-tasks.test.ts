@@ -181,6 +181,9 @@ describe('queue-fix-tasks', () => {
 
     const fix = await q.getTask(r.fixTaskId)
     expect(fix?.status).toBe('queued')
+    // Non-shared recovery tasks run at MAX_PRIORITY (3) so they preempt fresh
+    // queued tasks and resume already-started work ahead of new work.
+    expect(fix?.priority).toBe(3)
     expect(fix?.fixForTaskId).toBe(t.id)
     expect(fix?.failureSignature).toBe('sig1')
     expect(fix?.author?.kind).toBe('agent')
