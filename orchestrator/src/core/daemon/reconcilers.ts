@@ -109,6 +109,7 @@ const recoveryDonePropagation: Reconciler = {
   async run({ log, bus }) {
     try {
       const { resolveQueueClient, TASK_SEL, rowToTask } = await import('../queue')
+      const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import('../lib/main-dirty')
       const r = await resolveQueueClient().execute(
         `${TASK_SEL} WHERE t.kind = 'fix' AND t.status = 'done' AND t.fix_for_task_id IS NOT NULL`,
       )
@@ -117,6 +118,17 @@ const recoveryDonePropagation: Reconciler = {
       let propagated = 0
       let requeued = 0
       for (const fix of doneFixes) {
+        // Guard: main-committer recoveries clean the integration branch but do
+        // NOT deliver the origin task's work. Re-queue source tasks via
+        // releaseMainCommitterDependents instead of marking the origin done.
+        // (Bug mars-4d66145d: no-op main-committer falsely marked origin done
+        // and cascade-unblocked dependents before the work shipped.)
+        if (parseMainCommiterPayload(fix.recoveryPayload)?.recipe === MAIN_COMMITER_RECIPE) {
+          const release = await Arc.releaseMainCommitterDependents(fix.id, log)
+          requeued += release.released
+          continue
+        }
+
         const result = await Arc.load(fix.fixForTaskId!).propagateRecoveryDone()
         if (result.originFlipped) {
           log(

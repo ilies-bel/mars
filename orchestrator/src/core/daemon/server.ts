@@ -1588,26 +1588,42 @@ export const startDaemon = async (
         // task (kind='fix', non-null fixForTaskId) reaches done, flip
         // the origin row to done, close any actionQueue items keyed on the
         // origin, and propagate the unblock to its dependents.
+        //
+        // EXCEPTION — main-committer recoveries (recipe='main-commiter'): their
+        // role is to clean the integration branch, NOT to deliver the origin
+        // task's work. Calling propagateRecoveryDone() for them would falsely
+        // mark the origin task done and cascade-unblock its dependents before
+        // the work is actually shipped (bug mars-4d66145d). Skip propagation
+        // for main-committers; the Arc.unblockByCompletion() path below will
+        // re-queue the source task so it retries against the now-clean branch.
         if (after.kind === 'fix' && after.fixForTaskId !== null) {
           try {
-            const propagation = await Arc.load(
-              after.fixForTaskId,
-            ).propagateRecoveryDone()
-            if (propagation.originFlipped) {
+            const { parseMainCommiterPayload: parseMCP, MAIN_COMMITER_RECIPE: MCR } =
+              await import('../lib/main-dirty')
+            if (parseMCP(after.recoveryPayload)?.recipe === MCR) {
               log(
-                `[propagate] recovery ${id} flipped origin ${propagation.originTaskId} to done; closed ${propagation.actionQueueItemsClosed} actionQueue item(s)`,
+                `[propagate] main-committer ${id} done; skipping propagateRecoveryDone for origin ${after.fixForTaskId} — source task will be re-queued via unblockByCompletion`,
               )
-              if (propagation.unblock) {
-                for (const o of propagation.unblock.outcomes) {
-                  if (o.outcome === 'queued') {
-                    log(
-                      `[unblock] task ${o.taskId} re-queued after recovery ${id} propagated done to origin ${propagation.originTaskId}`,
-                    )
-                    bus.emit('task.queued', { taskId: o.taskId })
-                  } else if (o.outcome === 'failed') {
-                    log(
-                      `[unblock] task ${o.taskId} failed at unblock (retry budget exhausted) after recovery ${id} propagated done to origin ${propagation.originTaskId}`,
-                    )
+            } else {
+              const propagation = await Arc.load(
+                after.fixForTaskId,
+              ).propagateRecoveryDone()
+              if (propagation.originFlipped) {
+                log(
+                  `[propagate] recovery ${id} flipped origin ${propagation.originTaskId} to done; closed ${propagation.actionQueueItemsClosed} actionQueue item(s)`,
+                )
+                if (propagation.unblock) {
+                  for (const o of propagation.unblock.outcomes) {
+                    if (o.outcome === 'queued') {
+                      log(
+                        `[unblock] task ${o.taskId} re-queued after recovery ${id} propagated done to origin ${propagation.originTaskId}`,
+                      )
+                      bus.emit('task.queued', { taskId: o.taskId })
+                    } else if (o.outcome === 'failed') {
+                      log(
+                        `[unblock] task ${o.taskId} failed at unblock (retry budget exhausted) after recovery ${id} propagated done to origin ${propagation.originTaskId}`,
+                      )
+                    }
                   }
                 }
               }

@@ -4,11 +4,14 @@
  *  - on committer success, stale failed-committer actionQueue rows (at a DIFFERENT
  *    hash) get superseded.
  *  - releaseMainCommitterDependents re-queues tasks blocked on a dead committer.
+ *  - Regression (mars-4d66145d): main-committer done must NOT mark origin done
+ *    or cascade-unblock dependents; source task must be re-queued instead.
  *
  * Pattern follows the existing F.1 blocker-invariant tests: a temp repo and
  * a per-test reset of the queue/actionQueue singletons via `vi.resetModules()`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -435,5 +438,149 @@ describe('releaseMainCommitterDependents', () => {
       args: [t2.id, first.fixTaskId],
     })
     expect(Number((poisonEdge.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: mars-4d66145d — main-committer done must NOT mark source done
+//
+// When a main-committer (recipe='main-commiter') completes as 'done', the
+// recovery-done-propagation reconciler previously called propagateRecoveryDone()
+// which falsely flipped the source task to 'done' and cascade-unblocked its
+// dependents. The fix skips propagation for main-committers and instead calls
+// releaseMainCommitterDependents so the source task is re-queued to retry.
+// ---------------------------------------------------------------------------
+
+describe('main-committer done: source task re-queued, not marked done (mars-4d66145d)', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-mc-done-guard-test-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('re-queues the source task instead of marking it done when the main-committer completes', async () => {
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
+      const m = await import('../../lib/main-dirty')
+      const r = await import('../../lib/run-tool')
+      return { ...m, nullTraceStore: r.nullTraceStore }
+    })()
+
+    // Source task is blocked on the main-committer (simulates dispatch:main-dirty)
+    const src = await queue.enqueueTask('implement-license-slice-3', undefined, { skipTriage: true })
+    const detection = { dirty: true as const, hash: 'ff'.repeat(32), statusOutput: 'M some-file.ts' }
+    const resolution = await spawnOrAttachMainCommitter({
+      sourceTaskId: src.id,
+      detection,
+      integrationBranch: 'main',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'commit the dirty files',
+      sourceOriginId: src.id,
+      traceStore: nullTraceStore,
+    })
+    expect((await queue.getTask(src.id))?.status).toBe('blocked')
+
+    // Main-committer "completes" (cleaned the branch, no slice code delivered)
+    await queue.updateTask(resolution.fixTaskId, { status: 'done' })
+
+    // Run the recovery-done-propagation reconciler step
+    const { RECONCILERS } = await import('../reconcilers')
+    const step = RECONCILERS.find((r) => r.name === 'recovery-done-propagation')!
+    await step.run({ log: () => {}, bus: new EventEmitter(), traceStore: null, handleProposalSlice: null })
+
+    // Source task MUST be re-queued so it can retry, NOT falsely marked done
+    const srcAfter = await queue.getTask(src.id)
+    expect(srcAfter?.status).toBe('queued')
+    expect(srcAfter?.status).not.toBe('done')
+  })
+
+  it('does NOT cascade-unblock downstream tasks when main-committer completes (mars-4d66145d)', async () => {
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
+      const m = await import('../../lib/main-dirty')
+      const r = await import('../../lib/run-tool')
+      return { ...m, nullTraceStore: r.nullTraceStore }
+    })()
+
+    // Source task (blocked on committer) with a downstream that should stay blocked
+    const src = await queue.enqueueTask('implement-license-slice-3', undefined, { skipTriage: true })
+    const downstream = await queue.enqueueTask('slice-9-ui', undefined, { skipTriage: true })
+
+    // Wire downstream → src blocker edge
+    const qc = queue.resolveQueueClient()
+    await qc.execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
+            VALUES (?, ?, 'confirmed', datetime('now'))`,
+      args: [downstream.id, src.id],
+    })
+    await qc.execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [downstream.id],
+    })
+
+    const detection = { dirty: true as const, hash: 'ee'.repeat(32), statusOutput: 'M dirty.ts' }
+    const resolution = await spawnOrAttachMainCommitter({
+      sourceTaskId: src.id,
+      detection,
+      integrationBranch: 'main',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'clean the branch',
+      sourceOriginId: src.id,
+      traceStore: nullTraceStore,
+    })
+
+    // Committer completes
+    await queue.updateTask(resolution.fixTaskId, { status: 'done' })
+
+    // Run reconciler step
+    const { RECONCILERS } = await import('../reconcilers')
+    const step = RECONCILERS.find((r) => r.name === 'recovery-done-propagation')!
+    await step.run({ log: () => {}, bus: new EventEmitter(), traceStore: null, handleProposalSlice: null })
+
+    // Source re-queued; downstream still blocked (its blocker src is now queued, not done)
+    expect((await queue.getTask(src.id))?.status).toBe('queued')
+    // Downstream must remain blocked — src hasn't delivered its work yet
+    expect((await queue.getTask(downstream.id))?.status).toBe('blocked')
+  })
+
+  it('a regular (non-main-committer) fix task still marks the origin done', async () => {
+    // Regression guard: ensure we didn't accidentally break the normal recovery path
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+
+    const origin = await queue.enqueueTask('origin-task', undefined, { skipTriage: true })
+    // Force origin to 'failed' (normal failure state before a recovery runs)
+    await queue.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
+      args: [origin.id],
+    })
+
+    // Create a regular fix task (no main-committer recovery_payload)
+    const fixId = `fix-test-${Math.random().toString(36).slice(2, 10)}`
+    const now = new Date().toISOString()
+    await queue.resolveQueueClient().execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, origin_id, priority, created_at, updated_at)
+            VALUES (?, 'fix prompt', 'done', 'fix', ?, ?, 1, ?, ?)`,
+      args: [fixId, origin.id, origin.id, now, now],
+    })
+
+    // Run the reconciler step
+    const { RECONCILERS } = await import('../reconcilers')
+    const step = RECONCILERS.find((r) => r.name === 'recovery-done-propagation')!
+    await step.run({ log: () => {}, bus: new EventEmitter(), traceStore: null, handleProposalSlice: null })
+
+    // Normal recovery MUST flip origin to done
+    expect((await queue.getTask(origin.id))?.status).toBe('done')
   })
 })
