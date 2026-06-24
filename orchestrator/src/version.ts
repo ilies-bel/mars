@@ -4,4 +4,4 @@
 //
 // The constant is inlined at the source level so a compiled binary
 // does not need package.json alongside it at runtime.
-export const MARS_VERSION = "0.1.0"
+export const MARS_VERSION = "0.1.1"

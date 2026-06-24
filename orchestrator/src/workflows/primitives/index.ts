@@ -107,6 +107,26 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
 // ---------------------------------------------------------------------------
+// Session-key construction (exported for regression tests)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a per-invocation session key for a Claude Code dispatch.
+ *
+ * Format: `<taskId>#<8-hex-random>` — the taskId prefix keeps logs attributable
+ * while the random suffix guarantees uniqueness across parallel dispatches and
+ * `mars continue` re-entries that would otherwise collide on the same session ID
+ * (fix df826e9b, 2026-06-24).
+ *
+ * Both spawn paths (PTY and headless/stream) normalise the key to a valid UUID
+ * via `toClaudeSessionId` before it reaches `claude --session-id`, so a
+ * non-UUID key is acceptable here.
+ */
+export function buildSessionKey(taskId: string): string {
+  return `${taskId}#${randomUUID().slice(0, 8)}`
+}
+
+// ---------------------------------------------------------------------------
 // Services + ctx plumbing (resolved internally, never passed by the user)
 // ---------------------------------------------------------------------------
 
@@ -765,7 +785,7 @@ export const runAgent = async (
   // UUID via toClaudeSessionId (PTY in providers.ts, headless/stream in
   // claudeStreamArgs) before it reaches `claude --session-id`, so a non-UUID
   // key is acceptable here.
-  const sessionKey = `${taskId}#${randomUUID().slice(0, 8)}`
+  const sessionKey = buildSessionKey(taskId)
 
   const r = await runWorkerWithSpan({
     worker,
