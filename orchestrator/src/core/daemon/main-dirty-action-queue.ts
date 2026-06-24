@@ -15,6 +15,7 @@
  *    committer. Overrides the generic `action-queue-repopulator` row for this
  *    specific recovery so the operator sees the affected cohort at a glance.
  */
+import { execFileSync } from 'node:child_process'
 import { raiseActionQueueItem, supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
 import { getDefaultTaskStore } from '../store/task-store'
 import { MAIN_COMMITER_RECIPE } from '../lib/main-dirty'
@@ -209,15 +210,19 @@ export const raiseAggregatedMainCommiterFailureRow = async (
 
 /**
  * On committer FAILURE, release every task that is currently blocked solely
- * because of this committer. Each dependent's `task_blockers` edge pointing at
- * `committerTaskId` is deleted; if no other active (non-terminal) blocker
- * remains the task is flipped from `blocked` back to `queued` so it can
- * re-dispatch once the operator cleans main.
+ * because of this committer — BUT only when main is actually clean.
  *
- * This prevents the deadlock where a permanently-failed committer left its
- * dependents blocked forever. The companion fix in `main-dirty.ts` (removing
- * `'failed'` from `ACTIVE_COMMITTER_STATUSES`) ensures new tasks at dispatch
- * time also never attach to a failed committer — they always spawn a fresh one.
+ * Precondition check: runs `git status --porcelain` in `repoRoot`. If main is
+ * still dirty, releasing dependents would immediately re-park them behind a
+ * NEW committer (they re-detect dirty main at dispatch → spawn fresh committer →
+ * block → new committer fails → loop). Instead, keep dependents blocked and
+ * rely on the operator action-queue item already raised by
+ * `raiseAggregatedMainCommiterFailureRow` to surface the problem.
+ *
+ * When main IS clean (the committer failure raced with a concurrent merge that
+ * happened to clean the branch), release proceeds as before: each dependent's
+ * `task_blockers` edge to `committerTaskId` is deleted; tasks with no remaining
+ * active blockers are flipped from `blocked` back to `queued`.
  *
  * Tasks with other active blockers (besides the failed committer) have their
  * committer edge removed but remain in `blocked` state, waiting for those
@@ -228,9 +233,43 @@ export const raiseAggregatedMainCommiterFailureRow = async (
 export const releaseMainCommitterDependents = async (
   committerTaskId: string,
   log: (msg: string) => void,
+  repoRoot: string,
 ): Promise<void> => {
-  // ADR-0052 sole-writer: the status write (blocked -> queued), the edge
-  // delete, and the task.unblocked emit all live in the Arc aggregate now.
+  // Guard: verify main is clean before releasing dependents. A failed committer
+  // over a still-dirty main must NOT re-queue dependents — they would re-detect
+  // dirty main, park behind a new committer, and repeat until retry budgets
+  // are exhausted. Keep them blocked; the operator action-queue item already
+  // raised by raiseAggregatedMainCommiterFailureRow tells the human what happened.
+  if (!repoRoot) {
+    log(
+      `[main-dirty] committer ${committerTaskId}: repoRoot not set; keeping dependents blocked for safety`,
+    )
+    return
+  }
+  let mainIsDirty: boolean
+  try {
+    const statusOutput = execFileSync('git', ['status', '--porcelain'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    })
+    mainIsDirty = statusOutput.trim().length > 0
+  } catch (err) {
+    // Cannot check git status — err on the side of caution.
+    log(
+      `[main-dirty] committer ${committerTaskId}: could not check git status at ${repoRoot}: ${(err as Error).message}; keeping dependents blocked`,
+    )
+    return
+  }
+
+  if (mainIsDirty) {
+    log(
+      `[main-dirty] committer ${committerTaskId} failed and main is still dirty; dependents kept blocked — operator must resolve`,
+    )
+    return
+  }
+
+  // Main is clean. ADR-0052 sole-writer: the status write (blocked -> queued),
+  // the edge delete, and the task.unblocked emit all live in the Arc aggregate.
   // This is a thin delegating wrapper with no task-table write of its own.
   await Arc.releaseMainCommitterDependents(committerTaskId, log)
 }

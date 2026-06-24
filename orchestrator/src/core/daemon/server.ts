@@ -1512,13 +1512,19 @@ export const startDaemon = async (
             const payload = parseMainCommiterPayload(after.recoveryPayload)
             if (payload && payload.recipe === MAIN_COMMITER_RECIPE) {
               await raiseAggregatedMainCommiterFailureRow(after.id, log)
-              // Release dependents blocked on the dead committer so they
-              // aren't permanently wedged. Each blocked task's edge to this
-              // committer is removed; tasks with no remaining active blockers
-              // are flipped back to 'queued' and will re-dispatch once the
-              // operator resolves the dirty-main state.
+              // Release dependents blocked on the dead committer — but only
+              // when main is actually clean. If main is still dirty, releasing
+              // dependents re-parks them behind a new committer immediately,
+              // burning retry budgets in a guaranteed loop. The git-status
+              // guard inside releaseMainCommitterDependents enforces this;
+              // when dirty it keeps dependents blocked so the operator can
+              // resolve via the action-queue item raised above.
               try {
-                await releaseMainCommitterDependents(after.id, log)
+                await releaseMainCommitterDependents(
+                  after.id,
+                  log,
+                  process.env.MARS_REPO ?? '',
+                )
               } catch (releaseErr) {
                 log(
                   `[main-dirty] error releasing dependents of failed committer ${after.id}: ${(releaseErr as Error).message}`,

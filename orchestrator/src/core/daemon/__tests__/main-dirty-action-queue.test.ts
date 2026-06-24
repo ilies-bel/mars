@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -272,6 +272,15 @@ describe('releaseMainCommitterDependents', () => {
     repo = mkdtempSync(resolve(tmpdir(), 'mars-release-committer-test-'))
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
     mkdirSync(resolve(repo, '.mars'), { recursive: true })
+    // Create an initial commit with a .gitignore so `git status --porcelain`
+    // returns clean output by default. The releaseMainCommitterDependents guard
+    // checks git status before deciding whether to release dependents; tests
+    // that want a "clean" main rely on this baseline.
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
+    writeFileSync(resolve(repo, '.gitignore'), '.mars/\n')
+    execFileSync('git', ['add', '.gitignore'], { cwd: repo })
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: repo })
     process.env.MARS_REPO = repo
     vi.resetModules()
   })
@@ -320,9 +329,10 @@ describe('releaseMainCommitterDependents', () => {
     // Fail the committer.
     await queue.updateTask(res.fixTaskId, { status: 'failed', error: 'verify failed' })
 
-    // Release dependents.
+    // Release dependents. Main is clean (no uncommitted changes after initial
+    // commit), so the git-status guard passes and dependents are re-queued.
     const { releaseMainCommitterDependents } = await import('../main-dirty-action-queue')
-    await releaseMainCommitterDependents(res.fixTaskId, noopLog)
+    await releaseMainCommitterDependents(res.fixTaskId, noopLog, repo)
 
     // Both tasks must now be queued.
     expect((await queue.getTask(src1.id))?.status).toBe('queued')
@@ -367,10 +377,11 @@ describe('releaseMainCommitterDependents', () => {
       args: [src.id, prereq.id],
     })
 
-    // Fail the committer and release.
+    // Fail the committer and release. Main is clean, so the git-status guard
+    // passes and Arc processes the edge removal (committer edge removed, prereq edge kept).
     await queue.updateTask(res.fixTaskId, { status: 'failed', error: 'oops' })
     const { releaseMainCommitterDependents } = await import('../main-dirty-action-queue')
-    await releaseMainCommitterDependents(res.fixTaskId, noopLog)
+    await releaseMainCommitterDependents(res.fixTaskId, noopLog, repo)
 
     // Task still blocked because the independent prereq is alive.
     expect((await queue.getTask(src.id))?.status).toBe('blocked')
@@ -438,6 +449,105 @@ describe('releaseMainCommitterDependents', () => {
       args: [t2.id, first.fixTaskId],
     })
     expect(Number((poisonEdge.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // Core invariant: dependents released ONLY when main is clean
+  // -------------------------------------------------------------------------
+
+  it('keeps dependents blocked when main is still dirty after committer failure', async () => {
+    // Simulates the re-park loop scenario: committer fails, main is still dirty.
+    // Releasing dependents now would re-dispatch them into the same dirty state
+    // and spawn another committer, burning retry budgets until hard failure.
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
+      const m = await import('../../lib/main-dirty')
+      const r = await import('../../lib/run-tool')
+      return { ...m, nullTraceStore: r.nullTraceStore }
+    })()
+
+    const src = await queue.enqueueTask('task-waiting-on-dirty-main', undefined, { skipTriage: true })
+    const detection = { dirty: true as const, hash: 'dc'.repeat(32), episodeHash: null, statusOutput: 'M leftover.ts' }
+    const res = await spawnOrAttachMainCommitter({
+      sourceTaskId: src.id,
+      detection,
+      integrationBranch: 'main',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'commit leftover',
+      sourceOriginId: src.id,
+      traceStore: nullTraceStore,
+    })
+
+    expect((await queue.getTask(src.id))?.status).toBe('blocked')
+
+    // Fail the committer.
+    await queue.updateTask(res.fixTaskId, { status: 'failed', error: 'install frozen-lockfile failed' })
+
+    // Make main dirty: stage a file but don't commit (simulates leftover from a
+    // previous failed worktree merge).
+    writeFileSync(resolve(repo, 'leftover.ts'), 'uncommitted changes from prior run')
+    execFileSync('git', ['add', 'leftover.ts'], { cwd: repo })
+
+    // Attempt to release — the guard must detect dirty main and abort.
+    const { releaseMainCommitterDependents } = await import('../main-dirty-action-queue')
+    await releaseMainCommitterDependents(res.fixTaskId, noopLog, repo)
+
+    // Dependent MUST remain blocked — releasing it would trigger the re-park loop.
+    expect((await queue.getTask(src.id))?.status).toBe('blocked')
+
+    // Blocker edge to the failed committer must still exist (not removed).
+    const c = queue.resolveQueueClient()
+    const edges = await c.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
+      args: [res.fixTaskId],
+    })
+    expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(1)
+  })
+
+  it('releases dependents when main is clean at the time of committer failure', async () => {
+    // Simulates the case where a concurrent merge cleaned main before
+    // releaseMainCommitterDependents runs: the guard finds main clean and
+    // proceeds with the normal release path.
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
+      const m = await import('../../lib/main-dirty')
+      const r = await import('../../lib/run-tool')
+      return { ...m, nullTraceStore: r.nullTraceStore }
+    })()
+
+    const src = await queue.enqueueTask('task-clean-main', undefined, { skipTriage: true })
+    const detection = { dirty: true as const, hash: 'fe'.repeat(32), episodeHash: null, statusOutput: '' }
+    const res = await spawnOrAttachMainCommitter({
+      sourceTaskId: src.id,
+      detection,
+      integrationBranch: 'main',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'commit the mess',
+      sourceOriginId: src.id,
+      traceStore: nullTraceStore,
+    })
+
+    expect((await queue.getTask(src.id))?.status).toBe('blocked')
+
+    // Fail the committer; main is clean (no uncommitted files in repo).
+    await queue.updateTask(res.fixTaskId, { status: 'failed', error: 'session-id collision' })
+
+    // Verify main is actually clean before calling release.
+    const { releaseMainCommitterDependents } = await import('../main-dirty-action-queue')
+    await releaseMainCommitterDependents(res.fixTaskId, noopLog, repo)
+
+    // Dependent must be re-queued: main is clean, release proceeds normally.
+    expect((await queue.getTask(src.id))?.status).toBe('queued')
+
+    // Blocker edge must be gone.
+    const c = queue.resolveQueueClient()
+    const edges = await c.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ?`,
+      args: [res.fixTaskId],
+    })
+    expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(0)
   })
 })
 
