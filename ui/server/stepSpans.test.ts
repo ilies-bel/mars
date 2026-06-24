@@ -93,11 +93,42 @@ describe('GET /api/step-spans', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('returns 400 when originId is missing', async () => {
+  it('returns 400 when neither taskId nor originId is given', async () => {
     const res = await fetch(`${baseUrl}/api/step-spans`)
     expect(res.status).toBe(400)
     const body = (await res.json()) as { error: string }
-    expect(body.error).toBe('originId query parameter is required')
+    expect(body.error).toBe('taskId or originId query parameter is required')
+  })
+
+  it('scopes by taskId when the drawer shows a single task', async () => {
+    // The task drawer fetches ?taskId=<id> for a single task; the proxy must
+    // forward it (it previously demanded originId and 400'd every such open).
+    const store = await openTraceEventStore(dbPath)
+    try {
+      // Two tasks in the same arc — taskId scoping must return only the asked one.
+      await store.record({
+        kind: 'step_started',
+        taskId: 'task-x',
+        originId: 'arc-1',
+        phase: 'code',
+        payload: { stepName: 'code', workflowInstanceId: 'wf-x', workerName: 'Coder' },
+      })
+      await store.record({
+        kind: 'step_started',
+        taskId: 'task-y',
+        originId: 'arc-1',
+        phase: 'code',
+        payload: { stepName: 'recover', workflowInstanceId: 'wf-y', workerName: 'Fixer' },
+      })
+    } finally {
+      await store.close()
+    }
+
+    const res = await fetch(`${baseUrl}/api/step-spans?taskId=task-x`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as StepSpansBody
+    expect(body.spans).toHaveLength(1)
+    expect(body.spans[0]!.taskId).toBe('task-x')
   })
 
   it('returns an empty spans array when no trace events exist for the originId', async () => {

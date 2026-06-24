@@ -414,15 +414,24 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
-        // GET /api/step-spans?originId=<id> — step timeline for a task arc.
+        // GET /api/step-spans?taskId=<id> | ?originId=<id> — step timeline.
         // Proxied to the daemon's GET /view/step-spans so the daemon remains
-        // the sole reader of the trace store.
+        // the sole reader of the trace store. The drawer scopes by `taskId`
+        // when showing a single task and by `originId` for a proposal/arc; the
+        // daemon accepts either, so forward whichever is present rather than
+        // demanding `originId` (which 400'd every task-scoped open).
         if (path === '/api/step-spans' && req.method === 'GET') {
+          const taskId = url.searchParams.get('taskId')
           const originId = url.searchParams.get('originId')
-          if (!originId) {
-            return jsonResponse(400, { error: 'originId query parameter is required' })
+          if (!taskId && !originId) {
+            return jsonResponse(400, {
+              error: 'taskId or originId query parameter is required',
+            })
           }
-          const r = await proxyGet(ctx.stateDir, `/view/step-spans?originId=${encodeURIComponent(originId)}`)
+          const qs = taskId
+            ? `taskId=${encodeURIComponent(taskId)}`
+            : `originId=${encodeURIComponent(originId!)}`
+          const r = await proxyGet(ctx.stateDir, `/view/step-spans?${qs}`)
           return jsonResponse(r.status, r.body)
         }
 

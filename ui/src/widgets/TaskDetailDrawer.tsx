@@ -72,6 +72,15 @@ interface TaskDetailDrawerProps {
   /** Clears the `#/task/<id>` hash so the drawer closes. */
   onClose: () => void
   /**
+   * Fired when the detail fetch for the currently-shown node returns 404 — the
+   * task has been purged from the DB. The currently-shown id (which may differ
+   * from `taskId` after a drill-in) is passed so the caller can drop the stale
+   * node from the graph (e.g. invalidate the progress query) and dismiss the
+   * drawer instead of leaving a dead "not found" panel open over a stale graph.
+   * Omit it and the drawer falls back to rendering the not-found message.
+   */
+  onPurged?: (purgedId: string) => void
+  /**
    * Override the fetcher in tests. Production callers omit it; the drawer
    * hits `/api/tasks/:id` via the runtime `fetch`.
    */
@@ -793,6 +802,7 @@ const ProposalStepTimeline = ({
 export const TaskDetailDrawer = ({
   taskId,
   onClose,
+  onPurged,
   fetchImpl,
   tasks,
   proposals,
@@ -805,6 +815,21 @@ export const TaskDetailDrawer = ({
   const [closing, setClosing] = useState(false)
   // Synchronous guard — prevents double-scheduling the close timer.
   const closingRef = useRef(false)
+
+  // Held in a ref so the detail-fetch effect can fire the latest callback
+  // without re-running when App passes a fresh inline arrow each render.
+  const onPurgedRef = useRef(onPurged)
+  onPurgedRef.current = onPurged
+
+  // The graph (tasks + proposals) the drawer already holds, mirrored into refs
+  // so the 404 handler can ask "is this id still in the graph?" without adding
+  // these props to the fetch effect's deps (which would re-fire the fetch on
+  // every graph refresh). A 404 for an id the graph still knows about is a
+  // transient/source-divergence case — NOT a purge — so we must not self-close.
+  const tasksRef = useRef(tasks)
+  tasksRef.current = tasks
+  const proposalsRef = useRef(proposals)
+  proposalsRef.current = proposals
 
   // Drill-in breadcrumb trail. The LAST element is the currently-shown task;
   // it always starts as (and, for a single task, stays) `[taskId]`.
@@ -916,6 +941,20 @@ export const TaskDetailDrawer = ({
       .then(async (res) => {
         if (cancelled) return
         if (res.status === 404) {
+          // A 404 only means "purged" when the id is also absent from the graph
+          // the drawer already holds. The detail endpoint (local SQLite via
+          // findTaskById) and the graph (daemon /view/*) are distinct sources,
+          // so a node can exist in the graph yet 404 on detail — a proposal/arc
+          // node, a cross-project id, or a transient divergence. Self-closing on
+          // those flashes the drawer open-then-shut. Only hand the id to onPurged
+          // when the graph no longer knows it; otherwise show the not-found panel.
+          const stillInGraph =
+            (tasksRef.current?.some((t) => t.id === currentId) ?? false) ||
+            (proposalsRef.current?.some((p) => p.id === currentId) ?? false)
+          if (onPurgedRef.current && !stillInGraph) {
+            onPurgedRef.current(currentId)
+            return
+          }
           setState({ kind: 'not-found' })
           return
         }

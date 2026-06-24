@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { NavBar } from '@/widgets/NavBar'
 import { TaskDetailDrawer } from '@/widgets/TaskDetailDrawer'
 import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
@@ -47,6 +48,7 @@ const clearTaskHash = (closeHash: string): void => {
 }
 
 const AppInner = () => {
+  const qc = useQueryClient()
   const hash = useHashRoute()
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
@@ -92,6 +94,13 @@ const AppInner = () => {
           <TaskDetailDrawer
             taskId={taskId}
             onClose={() => clearTaskHash(hash)}
+            onPurged={() => {
+              // The node was purged from the DB. Drop it from the (now-stale)
+              // progress graph and close the drawer rather than leaving a dead
+              // "not found" panel open over a node that no longer exists.
+              void qc.invalidateQueries({ queryKey: ['progress'] })
+              clearTaskHash(hash)
+            }}
             tasks={tasks ?? []}
             proposals={proposals}
             activeStepName={activeStepName}
