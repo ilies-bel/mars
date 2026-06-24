@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { isAbsolute, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { constants as fsConstants } from 'node:fs'
 import { parseClaudeStreamLine, type ClaudeEvent } from '../claude-stream'
 import { getLatestContextSize } from '../claude-usage'
@@ -211,7 +211,70 @@ interface ClaudeStreamArgsOptions {
   // Caller-supplied disallowed tools. Unioned with AGENT_TO_USER_DENIED_TOOLS;
   // duplicates collapse. The agent-to-user denial cannot be removed by a caller.
   disallowedTools?: ReadonlyArray<string>
+  // Inline MCP config JSON string passed to `claude --mcp-config`. Because
+  // every dispatched worker runs under `--strict-mcp-config`, the consumer
+  // repo's `.mcp.json` is NOT auto-discovered — only servers handed in via
+  // `--mcp-config` load. We inject the codegraph server here so workers get
+  // `codegraph_*` tools (see codegraphMcpConfigJson / runClaudeCode). Omitted
+  // when empty so unit tests that build args without a cwd stay flag-free.
+  mcpConfig?: string
 }
+
+// Resolve the main checkout root for a worker `cwd`. A dispatched worker runs
+// inside a worktree (`.mars/worktrees/<id>/`), but codegraph's index lives in
+// the MAIN checkout's `.codegraph/` (built once over the integration branch).
+// `git rev-parse --git-common-dir` from a worktree points at the main repo's
+// `.git`; its parent is the main checkout root that holds `.codegraph/`.
+// Falls back to `cwd` when git resolution fails (non-git dir, missing git) so
+// the caller still gets a usable path rather than throwing.
+export const resolveCodegraphRoot = (cwd: string): string => {
+  try {
+    const res = spawnSync(
+      'git',
+      ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+      { encoding: 'utf8' },
+    )
+    if (res.status === 0) {
+      const commonDir = res.stdout.trim()
+      // .../<repo>/.git -> .../<repo>; a bare or detached layout that does not
+      // end in `.git` is left to its own parent, which is still the repo root.
+      if (commonDir.length > 0) return dirname(commonDir)
+    }
+  } catch {
+    // git absent or spawn failed — fall through to cwd.
+  }
+  return cwd
+}
+
+// Build the inline `--mcp-config` JSON for the codegraph stdio server used by
+// dispatched Mars WORKERS (via claudeStreamArgs / runClaudeCode).
+//
+// This config is INTENTIONALLY DIFFERENT from the interactive-session template
+// in src/init/templates/mcp.json and must stay that way:
+//
+//   templates/mcp.json (interactive)    this function (workers)
+//   ─────────────────────────────────   ──────────────────────────────────────
+//   serve --mcp                         serve --mcp --no-watch --path <root>
+//   cwd-resolved index                  pinned to main checkout's .codegraph/
+//   file watcher ON (correct for a      --no-watch: host daemon already watches
+//   dev sitting in the main checkout)   the main tree; per-worker watcher adds
+//                                       only churn on a short-lived worktree
+//
+// DO NOT add `--path`/`--no-watch` to the template (it would break interactive
+// cwd-resolution) and DO NOT remove them from this function (workers run inside
+// a worktree that has no .codegraph/ index of its own).
+//
+// See also: templates/mcp.json `_comment` field for the symmetric pointer.
+export const codegraphMcpConfigJson = (repoRoot: string): string =>
+  JSON.stringify({
+    mcpServers: {
+      codegraph: {
+        type: 'stdio',
+        command: 'codegraph',
+        args: ['serve', '--mcp', '--no-watch', '--path', repoRoot],
+      },
+    },
+  })
 
 // Agent-to-user tools denied for every dispatched Session. No human is
 // listening on a dispatched run, so a call to either tool errors at the
@@ -299,6 +362,10 @@ export const claudeStreamArgs = (
   'stream-json',
   '--verbose',
   ...permissionFlags(options.permissionMode),
+  // Inject MCP servers explicitly: under --strict-mcp-config the worker loads
+  // ONLY what --mcp-config supplies, so without this the consumer's .mcp.json
+  // (codegraph) is silently ignored and `codegraph_*` tools never appear.
+  ...(options.mcpConfig ? ['--mcp-config', options.mcpConfig] : []),
   '--strict-mcp-config',
   '--setting-sources',
   'project,local',
@@ -487,6 +554,9 @@ export const runClaudeCode = async ({
       bare,
       agent,
       disallowedTools,
+      // Pin codegraph to the main checkout's index so the worker — which runs
+      // inside a worktree — queries the same authoritative graph the host built.
+      mcpConfig: codegraphMcpConfigJson(resolveCodegraphRoot(cwd)),
     }),
     cwd,
     async ({ stream, line }) => {

@@ -1,4 +1,5 @@
 {
+  "_comment": "INTERACTIVE-SESSION config only: bare 'serve --mcp' uses cwd-resolved index with the file watcher ON — correct for a developer sitting in the main checkout. Mars WORKERS use a different config built by codegraphMcpConfigJson() in src/core/lib/git/claude.ts: it adds '--path <main-checkout-root>' (pins the worktree to the already-built index) and '--no-watch' (avoids a redundant per-worker watcher). The two configs are INTENTIONALLY DIVERGENT — do not add '--path'/'--no-watch' here, and do not strip them from the dispatch path.",
   "mcpServers": {
     "codegraph": {
       "type": "stdio",
