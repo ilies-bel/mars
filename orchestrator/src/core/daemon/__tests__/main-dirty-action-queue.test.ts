@@ -56,7 +56,7 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
       skipTriage: true,
     })
 
-    const detection = { dirty: true as const, hash: 'aa'.repeat(32), statusOutput: '' }
+    const detection = { dirty: true as const, hash: 'aa'.repeat(32), episodeHash: null, statusOutput: '' }
     const resolution = await spawnOrAttachMainCommitter({
       sourceTaskId: src1.id,
       detection,
@@ -108,7 +108,7 @@ describe('raiseAggregatedMainCommiterFailureRow', () => {
     const src = await queue.enqueueTask('a', undefined, { skipTriage: true })
     const resolution = await spawnOrAttachMainCommitter({
       sourceTaskId: src.id,
-      detection: { dirty: true, hash: 'bb'.repeat(32), statusOutput: '' },
+      detection: { dirty: true, hash: 'bb'.repeat(32), episodeHash: null, statusOutput: '' },
       integrationBranch: 'main',
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
@@ -164,7 +164,7 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
     })
     const old = await spawnOrAttachMainCommitter({
       sourceTaskId: oldSrc.id,
-      detection: { dirty: true, hash: 'a'.repeat(64), statusOutput: '' },
+      detection: { dirty: true, hash: 'a'.repeat(64), episodeHash: null, statusOutput: '' },
       integrationBranch: 'main',
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
@@ -190,7 +190,7 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
     })
     const fresh = await spawnOrAttachMainCommitter({
       sourceTaskId: newSrc.id,
-      detection: { dirty: true, hash: 'b'.repeat(64), statusOutput: '' },
+      detection: { dirty: true, hash: 'b'.repeat(64), episodeHash: null, statusOutput: '' },
       integrationBranch: 'main',
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
@@ -225,7 +225,7 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
     })
     const c = await spawnOrAttachMainCommitter({
       sourceTaskId: src.id,
-      detection: { dirty: true, hash: 'c'.repeat(64), statusOutput: '' },
+      detection: { dirty: true, hash: 'c'.repeat(64), episodeHash: null, statusOutput: '' },
       integrationBranch: 'main',
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
@@ -292,7 +292,7 @@ describe('releaseMainCommitterDependents', () => {
 
     const src1 = await queue.enqueueTask('task-one', undefined, { skipTriage: true })
     const src2 = await queue.enqueueTask('task-two', undefined, { skipTriage: true })
-    const detection = { dirty: true as const, hash: 'ab'.repeat(32), statusOutput: '' }
+    const detection = { dirty: true as const, hash: 'ab'.repeat(32), episodeHash: null, statusOutput: '' }
 
     const res = await spawnOrAttachMainCommitter({
       sourceTaskId: src1.id,
@@ -352,7 +352,7 @@ describe('releaseMainCommitterDependents', () => {
 
     const res = await spawnOrAttachMainCommitter({
       sourceTaskId: src.id,
-      detection: { dirty: true, hash: 'cd'.repeat(32), statusOutput: '' },
+      detection: { dirty: true, hash: 'cd'.repeat(32), episodeHash: null, statusOutput: '' },
       integrationBranch: 'main',
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
@@ -398,7 +398,7 @@ describe('releaseMainCommitterDependents', () => {
       return { ...m, nullTraceStore: r.nullTraceStore }
     })()
 
-    const detection = { dirty: true as const, hash: 'ef'.repeat(32), statusOutput: '' }
+    const detection = { dirty: true as const, hash: 'ef'.repeat(32), episodeHash: null, statusOutput: '' }
 
     // Task T1 triggers the first committer C1.
     const t1 = await queue.enqueueTask('first task', undefined, { skipTriage: true })
@@ -478,7 +478,7 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
 
     // Source task is blocked on the main-committer (simulates dispatch:main-dirty)
     const src = await queue.enqueueTask('implement-license-slice-3', undefined, { skipTriage: true })
-    const detection = { dirty: true as const, hash: 'ff'.repeat(32), statusOutput: 'M some-file.ts' }
+    const detection = { dirty: true as const, hash: 'ff'.repeat(32), episodeHash: null, statusOutput: 'M some-file.ts' }
     const resolution = await spawnOrAttachMainCommitter({
       sourceTaskId: src.id,
       detection,
@@ -529,7 +529,7 @@ describe('main-committer done: source task re-queued, not marked done (mars-4d66
       args: [downstream.id],
     })
 
-    const detection = { dirty: true as const, hash: 'ee'.repeat(32), statusOutput: 'M dirty.ts' }
+    const detection = { dirty: true as const, hash: 'ee'.repeat(32), episodeHash: null, statusOutput: 'M dirty.ts' }
     const resolution = await spawnOrAttachMainCommitter({
       sourceTaskId: src.id,
       detection,

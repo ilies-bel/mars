@@ -465,6 +465,7 @@ describe('main-commiter recovery — verify step exemption', () => {
     const payload = serialiseMainCommiterPayload({
       recipe: MAIN_COMMITER_RECIPE,
       dirtyMainHash: 'deadbeef',
+      episodeHash: null,
       integrationBranch: 'main',
     })
     const commiterPayload = parseMainCommiterPayload(payload)

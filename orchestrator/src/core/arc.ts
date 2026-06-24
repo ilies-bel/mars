@@ -1179,6 +1179,8 @@ export class Arc {
   async spawnMainCommitterRecovery(input: {
     sourceTaskId: string
     dirtyMainHash: string | null
+    /** HEAD-aware episode key for done-suppression; null when git rev-parse HEAD failed. */
+    episodeHash: string | null
     integrationBranch: string
     dispatchPhase: 'dispatch' | 'verify' | 'merge'
     recipePrompt: string
@@ -1193,6 +1195,7 @@ export class Arc {
       // Empty string when hash compute failed — keeps the payload shape stable
       // and signals "no dedup possible" to anyone reading.
       dirtyMainHash: input.dirtyMainHash ?? '',
+      episodeHash: input.episodeHash,
       integrationBranch: input.integrationBranch,
     }
     await s.batch(
