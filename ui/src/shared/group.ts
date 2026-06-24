@@ -49,21 +49,28 @@ const columnFor = (t: Task): ColumnKey | null => {
   }
 }
 
-const toUI = (t: Task): UITask => ({
-  id: t.id,
-  title: titleFromPrompt(t.prompt),
-  status: t.status,
-  role: roleFromTask(t),
-  failed: t.status === 'failed',
-  dropReason: t.dropReason ?? null,
-  retryCount: t.retryCount ?? 0,
-  blockerTaskId: t.blockerTaskId ?? null,
-  spec: t.spec ?? null,
-  createdAt: t.createdAt,
-  updatedAt: t.updatedAt,
-})
+const toUI = (t: Task, byId: Map<string, Task>): UITask => {
+  const originPrompt =
+    t.originId != null && t.originId !== t.id
+      ? (byId.get(t.originId)?.prompt ?? t.prompt)
+      : t.prompt
+  return {
+    id: t.id,
+    title: titleFromPrompt(originPrompt),
+    status: t.status,
+    role: roleFromTask(t),
+    failed: t.status === 'failed',
+    dropReason: t.dropReason ?? null,
+    retryCount: t.retryCount ?? 0,
+    blockerTaskId: t.blockerTaskId ?? null,
+    spec: t.spec ?? null,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  }
+}
 
 export const groupTasks = (tasks: Task[]): Snapshot => {
+  const byId = new Map(tasks.map(t => [t.id, t]))
   const columns: Snapshot['columns'] = {
     backlog: [],
     in_progress: [],
@@ -75,7 +82,7 @@ export const groupTasks = (tasks: Task[]): Snapshot => {
   for (const t of tasks) {
     const key = columnFor(t)
     if (key === null) continue
-    const ui = toUI(t)
+    const ui = toUI(t, byId)
     columns[key].push(ui)
     if (key === 'in_progress') inProgress++
     else if (key === 'done') done++
