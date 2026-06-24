@@ -103,6 +103,7 @@ import {
 } from './shared'
 import { startDevServer } from '../../core/lib/dev-server'
 import { resolveTaskCwd } from '../../core/lib/resolve-task-cwd'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
 // ---------------------------------------------------------------------------
@@ -748,24 +749,23 @@ export const runAgent = async (
       ? createWorker({ ...selectedWorker.config, model })
       : selectedWorker
 
-  // Salt the session key with retryCount so each restart attempt derives a
-  // distinct Claude session id. Without the salt, toClaudeSessionId produces
-  // the same UUID on every attempt (taskId is fixed), and `claude --session-id`
-  // fails with "Session ID <uuid> is already in use" — killing the run before
-  // it does any work. retryCount is stable for the lifetime of one attempt and
-  // bumps only on restart, so the key is stable within an attempt and distinct
-  // across attempts.
+  // Generate a fresh random invocation token per coder/recovery dispatch so
+  // concurrent and rapid-resume runs NEVER collide on the same Claude session
+  // UUID. The previous retryCount-based salt was insufficient because:
+  //   (a) `mars continue` does not increment retryCount, so a code-phase
+  //       re-entry after a kill reused the same UUID while Claude still held it,
+  //       producing "Session ID <uuid> is already in use" exits.
+  //   (b) Under parallel recovery the orchestrator can spawn multiple code
+  //       phases faster than Claude releases session bookkeeping, causing the
+  //       same collision even when retryCount differs across tasks.
   //
-  // retryCount === 0 keeps the key equal to taskId so first-attempt UUIDs are
-  // byte-identical to their historical values (zero behaviour change for the
-  // common path). Only restarts (retryCount > 0) get a fresh, non-colliding id.
-  //
-  // Both spawn paths normalise the key to a valid UUID via toClaudeSessionId
-  // (PTY in providers.ts, headless/stream in claudeStreamArgs) before it
-  // reaches `claude --session-id`, so a non-UUID task id is acceptable here.
-  const taskForSession = await getTask(taskId, store)
-  const retryCount = taskForSession?.retryCount ?? 0
-  const sessionKey = retryCount > 0 ? `${taskId}#${retryCount}` : taskId
+  // A per-invocation random suffix makes every dispatch unconditionally unique.
+  // The session key is still prefixed with taskId so traces/logs remain
+  // attributable to the task. Both spawn paths normalise the key to a valid
+  // UUID via toClaudeSessionId (PTY in providers.ts, headless/stream in
+  // claudeStreamArgs) before it reaches `claude --session-id`, so a non-UUID
+  // key is acceptable here.
+  const sessionKey = `${taskId}#${randomUUID().slice(0, 8)}`
 
   const r = await runWorkerWithSpan({
     worker,
@@ -1071,6 +1071,88 @@ export const verify = async (
             `[main-dirty] verify-time check threw, continuing with verify: ${
               err instanceof Error ? err.message : String(err)
             }`,
+          )
+        }
+      }
+
+      // Branch-contamination guard (best-effort, non-fatal on git errors):
+      // A task branch that was repointed onto the integration main line from
+      // outside the normal workflow (e.g. by a concurrent restart/recovery
+      // race rewriting the branch ref) would otherwise cause verify to run
+      // against mismatched code and produce misleading errors like "Conflicting
+      // declarations" when multiple tasks' commits are combined on one branch.
+      // Catch it early with a clear `verify:branch-contaminated` signal.
+      //
+      // Check: `git merge-base --is-ancestor HEAD <integrationBranch>` exits 0
+      // iff HEAD is already reachable from the integration branch without any
+      // task-specific work on top — i.e. the branch was repointed to a commit
+      // that is already on the main timeline. That is the contamination signal.
+      //
+      // Not applied to fix tasks (they run on the origin's branch, which is
+      // expected to start on the integration timeline and then add commits).
+      if (kind !== 'fix') {
+        try {
+          const ancestorResult = await runTool(
+            {
+              tool: 'git',
+              argv: ['merge-base', '--is-ancestor', 'HEAD', integrationBranch],
+              cwd: worktreePath,
+              expectsFailure: true,
+              taskId,
+              originId: trace.originId,
+              phase: 'verify',
+            },
+            trace.traceStore,
+          )
+          if (ancestorResult.exitCode === 0) {
+            // HEAD is on the integration timeline — branch was contaminated.
+            const headShortResult = await runTool(
+              {
+                tool: 'git',
+                argv: ['rev-parse', '--short', 'HEAD'],
+                cwd: worktreePath,
+                expectsFailure: true,
+                taskId,
+                originId: trace.originId,
+                phase: 'verify',
+              },
+              trace.traceStore,
+            )
+            const headShort = headShortResult.stdout.trim() || 'unknown'
+            const contamMsg = `branch HEAD ${headShort} is already an ancestor of ${integrationBranch} — task branch was repointed onto the integration timeline (parallel recovery/restart race)`
+            const contamSignature = computeFailureSignature(
+              'verify:branch-contaminated',
+              contamMsg,
+            )
+            await updateTask(
+              taskId,
+              {
+                status: 'failed',
+                error: contamMsg,
+                failedPhase: 'verify',
+                failureReason: 'verify:branch-contaminated',
+                failureSignature: contamSignature,
+                failureReasonCode: contamSignature,
+              },
+              store,
+            )
+            throw new Error(
+              `task ${taskId} verify:branch-contaminated: ${contamMsg}`,
+            )
+          }
+        } catch (guardErr) {
+          // Re-throw contamination sentinel so it stops the pipeline.
+          if (
+            guardErr instanceof Error &&
+            guardErr.message.includes('verify:branch-contaminated')
+          ) {
+            throw guardErr
+          }
+          // Other git failures (e.g. timeout, git not found) are non-fatal;
+          // fall through to the standard verify steps.
+          console.warn(
+            `[verify] task ${taskId} branch-contamination guard threw, continuing:`,
+            guardErr instanceof Error ? guardErr.message : guardErr,
           )
         }
       }

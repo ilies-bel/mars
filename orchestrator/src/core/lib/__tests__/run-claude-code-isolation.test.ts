@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { buildWorkerEnv, claudeStreamArgs } from '../git/claude'
+import { randomUUID } from 'node:crypto'
+import {
+  buildWorkerEnv,
+  claudeStreamArgs,
+  codegraphMcpConfigJson,
+  resolveCodegraphRoot,
+  toClaudeSessionId,
+} from '../git/claude'
 
 describe('claudeStreamArgs isolation flags', () => {
   it('includes --strict-mcp-config', () => {
@@ -43,6 +50,24 @@ describe('claudeStreamArgs isolation flags', () => {
     expect(exclDyn).toBeLessThan(disallowed)
   })
 
+  it('omits --mcp-config when no mcpConfig is supplied', () => {
+    expect(claudeStreamArgs('hi')).not.toContain('--mcp-config')
+  })
+
+  it('emits --mcp-config <json> immediately before --strict-mcp-config when supplied', () => {
+    const json = codegraphMcpConfigJson('/repo')
+    const args = claudeStreamArgs('hi', { mcpConfig: json })
+    const mcp = args.indexOf('--mcp-config')
+    expect(mcp).toBeGreaterThanOrEqual(0)
+    expect(args[mcp + 1]).toBe(json)
+    // The value must precede --strict-mcp-config so the worker actually loads it.
+    expect(mcp).toBeLessThan(args.indexOf('--strict-mcp-config'))
+    // And, like the other isolation flags, sit after the permission flag and
+    // before --disallowedTools.
+    expect(mcp).toBeGreaterThan(args.indexOf('--dangerously-skip-permissions'))
+    expect(mcp).toBeLessThan(args.indexOf('--disallowedTools'))
+  })
+
   it('keeps the pre-existing flags', () => {
     const args = claudeStreamArgs('hi')
     expect(args).toContain('-p')
@@ -53,6 +78,72 @@ describe('claudeStreamArgs isolation flags', () => {
     const disallowedIdx = args.indexOf('--disallowedTools')
     expect(disallowedIdx).toBeGreaterThanOrEqual(0)
     expect(args[disallowedIdx + 1]).toBe('AskUserQuestion,SendUserMessage')
+  })
+})
+
+describe('codegraphMcpConfigJson', () => {
+  it('builds a stdio codegraph server pinned to the given root via --path', () => {
+    const json = codegraphMcpConfigJson('/Users/me/repo')
+    const parsed = JSON.parse(json) as {
+      mcpServers: { codegraph: { type: string; command: string; args: string[] } }
+    }
+    const cg = parsed.mcpServers.codegraph
+    expect(cg.type).toBe('stdio')
+    expect(cg.command).toBe('codegraph')
+    expect(cg.args).toEqual(['serve', '--mcp', '--no-watch', '--path', '/Users/me/repo'])
+  })
+
+  it('produces valid, stable JSON', () => {
+    expect(codegraphMcpConfigJson('/a')).toBe(codegraphMcpConfigJson('/a'))
+    expect(() => JSON.parse(codegraphMcpConfigJson('/a'))).not.toThrow()
+  })
+})
+
+describe('resolveCodegraphRoot', () => {
+  it('returns the parent of the git common dir for a real repo (this checkout)', () => {
+    // Run against this orchestrator's own checkout: the resolved root must be a
+    // directory whose .git common dir parent we land on — i.e. it does not
+    // throw and returns a non-empty absolute path.
+    const root = resolveCodegraphRoot(process.cwd())
+    expect(typeof root).toBe('string')
+    expect(root.length).toBeGreaterThan(0)
+  })
+
+  it('falls back to cwd when the path is not a git repository', () => {
+    // The OS temp root is (essentially) never a git repo; git rev-parse fails
+    // and we must hand back the input unchanged rather than throw.
+    const notARepo = '/'
+    expect(resolveCodegraphRoot(notARepo)).toBe(notARepo)
+  })
+})
+
+describe('session key uniqueness (per-invocation randomization)', () => {
+  it('distinct per-invocation suffixes on the same taskId produce distinct Claude session UUIDs', () => {
+    // The session key format is `${taskId}#${randomUUID().slice(0, 8)}`.
+    // Since toClaudeSessionId is a deterministic UUID v5 function, distinctness
+    // is guaranteed iff the inputs differ — which the random suffix ensures.
+    const taskId = 'test-task-abc123'
+    const uuid1 = toClaudeSessionId(`${taskId}#deadbeef`)
+    const uuid2 = toClaudeSessionId(`${taskId}#cafebabe`)
+    expect(uuid1).not.toBe(uuid2)
+  })
+
+  it('toClaudeSessionId is stable for the same key (no internal randomness)', () => {
+    // toClaudeSessionId must be deterministic: randomness lives only in the
+    // per-invocation key, not inside the UUID derivation itself.
+    const key = 'test-task-abc123#deadbeef'
+    expect(toClaudeSessionId(key)).toBe(toClaudeSessionId(key))
+  })
+
+  it('per-invocation random suffixes never collide across 200 simulated dispatches', () => {
+    // Probabilistic sanity check. Each suffix is 8 hex chars (32 bits of
+    // randomness), so expected collision probability for 200 calls is ~1e-6.
+    // This always passes in practice and documents the uniqueness contract.
+    const taskId = 'concurrent-task-xyz'
+    const sessionIds = Array.from({ length: 200 }, () =>
+      toClaudeSessionId(`${taskId}#${randomUUID().slice(0, 8)}`),
+    )
+    expect(new Set(sessionIds).size).toBe(200)
   })
 })
 

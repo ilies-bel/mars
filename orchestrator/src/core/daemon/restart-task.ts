@@ -1,6 +1,7 @@
 import type { WorkflowStore } from '@mars/workflow'
 import { getTask, hasIncompleteBlockers, updateTask } from '../queue'
 import { supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
+import { getDefaultTaskStore } from '../store/task-store'
 
 export type RestartErrorCode = 'NOT_FOUND' | 'WRONG_STATUS'
 
@@ -52,6 +53,29 @@ export const coreRestartTask = async (
     const allowed = [...allowedStatuses].join('/')
     throw new RestartTaskError(
       `task ${id} is ${task.status}; only ${allowed} tasks can be restarted`,
+      'WRONG_STATUS',
+    )
+  }
+
+  // Guard: refuse if an in-flight recovery (fix-task) is currently active for
+  // this task. `mars restart` wipes the worktree and branch, so it would tear
+  // down the fix task's worktree from underneath it — corrupting the recovery
+  // and leaving the fix task's commits dangling. The operator should wait for
+  // the in-flight recovery to complete, then decide whether the result is
+  // satisfactory or whether a restart is still needed.
+  const taskStore = await getDefaultTaskStore()
+  const inflightRows = await taskStore.query({
+    sql: `SELECT id FROM tasks
+           WHERE fix_for_task_id = ?
+             AND status IN ('queued','running','verifying','merging','vega-reconciling','draft','blocked')
+           ORDER BY created_at DESC
+           LIMIT 1`,
+    args: [id],
+  })
+  if (inflightRows.rows.length > 0) {
+    const recoveryId = (inflightRows.rows[0] as unknown as { id: string }).id
+    throw new RestartTaskError(
+      `task ${id} has an in-flight recovery task ${recoveryId}; wait for the recovery to complete before restarting (or use 'mars continue' to resume once it finishes)`,
       'WRONG_STATUS',
     )
   }
