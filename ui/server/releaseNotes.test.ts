@@ -151,4 +151,66 @@ describe('buildReleaseNotes', () => {
     ]
     expect(buildReleaseNotes(tasks)).toEqual([])
   })
+
+  it('excludes arc when origin is failed (not done) and only a recovery task has landed', () => {
+    // The origin task is NOT in the done-set (it is failed/running).
+    // Only the recovery committer task is done. The arc must not appear.
+    const tasks = [
+      makeTask({
+        id: 'fix-93407679',
+        originId: 'mars-a18a627c',
+        fixForTaskId: 'mars-a18a627c',
+        kind: 'fix',
+        prompt: '# Main committer You are a focused recovery agent.',
+        intent: null,
+        updatedAt: '2026-05-01T12:00:00.000Z',
+        status: 'done',
+      }),
+      // origin mars-a18a627c is failed — intentionally absent from done-set
+    ]
+    const entries = buildReleaseNotes(tasks)
+    expect(entries).toHaveLength(0)
+  })
+
+  it('includes a normal arc with a done origin and reports the correct recoveryCount', () => {
+    const tasks = [
+      makeTask({
+        id: 'arc-abc',
+        originId: 'arc-abc',
+        intent: 'Add dark mode',
+        updatedAt: '2026-05-10T00:00:00.000Z',
+      }),
+    ]
+    const entries = buildReleaseNotes(tasks)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]!.originId).toBe('arc-abc')
+    expect(entries[0]!.title).toBe('Add dark mode')
+    expect(entries[0]!.detail.recoveryCount).toBe(0)
+  })
+
+  it('folds a done recovery into the origin entry, titled by the origin', () => {
+    const tasks = [
+      makeTask({
+        id: 'arc-xyz',
+        originId: 'arc-xyz',
+        intent: 'Refactor auth',
+        updatedAt: '2026-05-10T08:00:00.000Z',
+      }),
+      makeTask({
+        id: 'fix-xyz',
+        originId: 'arc-xyz',
+        fixForTaskId: 'arc-xyz',
+        kind: 'fix',
+        prompt: '# Main committer You are a focused recovery agent.',
+        intent: null,
+        updatedAt: '2026-05-10T09:00:00.000Z',
+      }),
+    ]
+    const entries = buildReleaseNotes(tasks)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]!.originId).toBe('arc-xyz')
+    expect(entries[0]!.title).toBe('Refactor auth')
+    expect(entries[0]!.detail.recoveryCount).toBe(1)
+    expect(entries[0]!.landedAt).toBe('2026-05-10T09:00:00.000Z')
+  })
 })

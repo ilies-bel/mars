@@ -84,6 +84,9 @@ const isRecovery = (task: {
  * Only done tasks contribute. Recovery tasks are folded into their origin arc
  * entry. The arc's `landedAt` is the latest `updatedAt` among all done tasks
  * in the arc (i.e. the moment the arc fully landed).
+ *
+ * Arcs without a landed (done, non-recovery) origin task are excluded. A bare
+ * recovery with no landed origin does not represent shipped work.
  */
 export const listReleaseNotes = async (
   taskStore: TaskStoreForReleaseNotes,
@@ -105,9 +108,11 @@ export const listReleaseNotes = async (
 
   const entries: ReleaseNoteEntry[] = []
   for (const [arcKey, group] of arcMap) {
-    // Origin task: id === arcKey and not a recovery. Falls back to first task.
-    const originTask =
-      group.find((t) => t.id === arcKey && !isRecovery(t)) ?? group[0]!
+    // Origin task: id === arcKey and not a recovery.
+    // If no landed origin exists in the done-set, the arc is excluded — a
+    // recovery task with no landed origin is not a release note.
+    const originTask = group.find((t) => t.id === arcKey && !isRecovery(t))
+    if (!originTask) continue
 
     // landedAt = latest updatedAt in the arc.
     let landedAt = originTask.updatedAt

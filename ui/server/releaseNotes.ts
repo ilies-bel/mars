@@ -88,6 +88,9 @@ const buildTitle = (intent: string | null, prompt: string): string => {
  * (fixForTaskId set or kind 'fix'/'diagnose') are folded into their origin arc
  * rather than emitting their own entries. The arc's `landedAt` is the latest
  * `updatedAt` among all done tasks in the arc.
+ *
+ * Arcs without a landed (done, non-recovery) origin task are excluded. A bare
+ * recovery with no landed origin does not represent shipped work.
  */
 export const buildReleaseNotes = (
   tasks: TaskForReleaseNotes[],
@@ -110,10 +113,10 @@ export const buildReleaseNotes = (
   const entries: ReleaseNoteEntry[] = []
   for (const [arcKey, group] of arcMap) {
     // Origin task: the task whose id === arcKey and is not a recovery task.
-    // Falls back to the first task in the group when no clear origin exists
-    // (e.g. the origin task is still running and only a recovery has landed).
-    const originTask =
-      group.find((t) => t.id === arcKey && !isRecovery(t)) ?? group[0]!
+    // If no landed origin exists in the done-set, the arc is excluded — a
+    // recovery task with no landed origin is not a release note.
+    const originTask = group.find((t) => t.id === arcKey && !isRecovery(t))
+    if (!originTask) continue
 
     // landedAt = latest updated_at among all done tasks in the arc.
     let landedAt = originTask.updatedAt
