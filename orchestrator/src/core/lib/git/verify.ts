@@ -16,6 +16,55 @@ import {
  */
 export const TSC_DECOY_MARKER = 'This is not the tsc command you are looking for'
 
+/**
+ * Patterns in verify-step output that indicate an infrastructure failure
+ * (embedded-PostgreSQL shutdown, Spring context initialisation error, or
+ * connection-refused to an embedded port) rather than a genuine code-level
+ * assertion failure.
+ *
+ * Background: when multiple tasks run their verify steps in parallel, each
+ * gradle/Spring build spins up its own embedded-PG instance.  One build's
+ * Gradle daemon teardown (or an OS-level OOM eviction) can shut down another
+ * build's database mid-suite, producing the "the database system is shutting
+ * down" FATAL that cascades into dozens of phantom integration-test failures
+ * and empty Spring-context init errors.  These are infrastructure flakes, not
+ * code regressions.
+ *
+ * A verify step whose output matches any of these patterns is eligible for a
+ * single retry by the verify primitive (see `primitives/index.ts`).  Genuine
+ * assertion failures (JUnit `AssertionFailedError`, TypeScript type errors,
+ * `NullPointerException`, …) do NOT match these patterns and are never
+ * silently swallowed.
+ *
+ * Note: empty output is intentionally NOT treated as an infra failure here.
+ * An empty failure is ambiguous — it could be a Spring context init error
+ * caused by an infra race, but it could also be a genuine process crash or
+ * timeout.  If the empty-output case proves prevalent in practice it can be
+ * added as a separate heuristic.
+ */
+export const VERIFY_INFRA_FAILURE_PATTERNS: readonly RegExp[] = [
+  /FATAL: the database system is shutting down/i,
+  /the database system is shutting down/i,
+  /org\.springframework\.dao\.DataAccessResourceFailureException/,
+  /org\.springframework\.context\.ApplicationContextException/,
+  /Connection refused.*\d+/i,
+]
+
+/**
+ * Returns `true` when the given verify-step output matches at least one
+ * infrastructure-failure pattern (embedded-PG shutdown or Spring context init
+ * error) rather than a genuine assertion failure.  Used by the verify
+ * primitive to decide whether to retry once before counting the failure as a
+ * real task failure.
+ *
+ * Empty or whitespace-only output returns `false` — treat it as ambiguous and
+ * fall through to standard failure handling.
+ */
+export const isInfraFailureOutput = (output: string): boolean => {
+  if (!output || output.trim() === '') return false
+  return VERIFY_INFRA_FAILURE_PATTERNS.some((p) => p.test(output))
+}
+
 // True when the step is an `npx tsc …` invocation. Used in two places
 // inside verifyChanges: the pre-flight presence guard and the post-flight
 // decoy-output guard.

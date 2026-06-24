@@ -53,8 +53,10 @@ import {
   loadVerifyScopes,
   selectVerifySteps,
   getChangedFiles,
+  isInfraFailureOutput,
 } from '../../core/lib/git/verify'
 import { mergeBranch, checkMergeTargetStatus } from '../../core/lib/git/merge'
+import { acquireLock } from '../../core/lib/git/lock'
 import {
   createWorker,
   pickWorkerForTags,
@@ -62,7 +64,7 @@ import {
   type Worker,
 } from '../../core/workers'
 import { isTaskTag, type TaskTag, type TaskSpec } from '../../core/queue'
-import { resolveContext } from '../../core/context'
+import { resolveContext, getStateDir } from '../../core/context'
 import {
   installWorktreeDeps,
   repairInstallInPlace,
@@ -104,7 +106,7 @@ import {
 import { startDevServer } from '../../core/lib/dev-server'
 import { resolveTaskCwd } from '../../core/lib/resolve-task-cwd'
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 // ---------------------------------------------------------------------------
 // Session-key construction (exported for regression tests)
@@ -1202,13 +1204,49 @@ export const verify = async (
         commiterPayload?.recipe === MAIN_COMMITER_RECIPE
           ? []
           : selectVerifySteps(scopes, changedFiles)
-      const r = await verifyChanges({
+
+      // Serialize verify runs so DB-heavy builds (embedded-PG, Gradle) do not
+      // tear down each other's database mid-suite.  This mirrors the merge
+      // serialization (.merge.lock) but uses a longer timeout because
+      // embedded-PG + Gradle suites can run for 30+ minutes.
+      const releaseVerifyLock = await acquireLock(
+        resolve(getStateDir(), '.verify.lock'),
+        60 * 60 * 1000, // 60 min ceiling — generous for slow gradle/embedded-PG suites
+      )
+      let r = await verifyChanges({
         cwd: verifyCwd,
         steps,
         branch,
         integrationBranch,
         traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
-      })
+      }).finally(() => releaseVerifyLock())
+
+      // Infra-failure retry (once only): if any failed step output matches an
+      // infrastructure-failure pattern (embedded-PG shutdown mid-suite, Spring
+      // context init error), retry the full suite once before counting the
+      // failures as real regressions.  Genuine assertion failures still surface
+      // because the retry runs on a clean, serially-acquired DB — the retry
+      // just removes phantom failures caused by concurrent infra contention.
+      if (!r.passed) {
+        const failedSteps = r.steps.filter((s) => !s.passed)
+        if (failedSteps.some((s) => isInfraFailureOutput(s.output))) {
+          console.log(
+            `[verify] task ${taskId}: infra failure detected in ${failedSteps.length} step(s) ` +
+              `(embedded-PG shutdown or Spring context init); retrying once`,
+          )
+          const releaseRetryLock = await acquireLock(
+            resolve(getStateDir(), '.verify.lock'),
+            60 * 60 * 1000,
+          )
+          r = await verifyChanges({
+            cwd: verifyCwd,
+            steps,
+            branch,
+            integrationBranch,
+            traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
+          }).finally(() => releaseRetryLock())
+        }
+      }
 
       const verifyOutput = r.steps
         .map((s) => `=== ${s.name} (${s.passed ? 'pass' : 'fail'}) ===\n${s.output}`)
