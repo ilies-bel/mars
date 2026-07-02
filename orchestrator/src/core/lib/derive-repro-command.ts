@@ -96,7 +96,12 @@ export const deriveReproCommand = (
     if (testScript) {
       return `cd ${cwd} && ${testScript}`
     }
-    return `cd ${cwd} && npx vitest run`
+    // No package.json or no `test` script — cannot infer the test command for
+    // non-JS repos (Gradle, Cargo, pytest …). Return null so the caller omits
+    // the reproduce section rather than emitting a wrong npx/vitest hint.
+    // Callers that have `ranVerifySteps` already use buildVerifyReproHint, which
+    // is language-agnostic; this path is the fallback for older task records.
+    return null
   }
 
   return null

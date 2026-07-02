@@ -80,13 +80,13 @@ describe('deriveReproCommand', () => {
       expect(cmd).toBe(`cd ${worktree} && npm test`)
     })
 
-    it('falls back to `npx vitest run` when the test script value is an empty string', () => {
+    it('returns null when the test script value is an empty string (cannot infer runner for non-JS repos)', () => {
       writeFileSync(
         resolve(worktree, 'package.json'),
         JSON.stringify({ scripts: { test: '' } }),
       )
       const cmd = deriveReproCommand('verify:test', worktree)
-      expect(cmd).toBe(`cd ${worktree} && npx vitest run`)
+      expect(cmd).toBeNull()
     })
 
     it('prefers pnpm over yarn when both lockfiles are present', () => {
@@ -100,24 +100,24 @@ describe('deriveReproCommand', () => {
       expect(cmd).toBe(`cd ${worktree} && pnpm test`)
     })
 
-    it('falls back to `npx vitest run` when package.json has no test script', () => {
+    it('returns null when package.json has no test script (non-JS repo fallback)', () => {
       writeFileSync(
         resolve(worktree, 'package.json'),
         JSON.stringify({ scripts: { build: 'tsc' } }),
       )
       const cmd = deriveReproCommand('verify:test', worktree)
-      expect(cmd).toBe(`cd ${worktree} && npx vitest run`)
+      expect(cmd).toBeNull()
     })
 
-    it('falls back to `npx vitest run` when package.json is missing entirely', () => {
+    it('returns null when package.json is missing entirely (non-JS repo — e.g. Gradle)', () => {
       const cmd = deriveReproCommand('verify:test', worktree)
-      expect(cmd).toBe(`cd ${worktree} && npx vitest run`)
+      expect(cmd).toBeNull()
     })
 
-    it('falls back to `npx vitest run` when package.json is malformed', () => {
+    it('returns null when package.json is malformed', () => {
       writeFileSync(resolve(worktree, 'package.json'), '{ not json')
       const cmd = deriveReproCommand('verify:test', worktree)
-      expect(cmd).toBe(`cd ${worktree} && npx vitest run`)
+      expect(cmd).toBeNull()
     })
   })
 
