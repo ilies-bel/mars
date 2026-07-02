@@ -35,7 +35,7 @@ export const useProgress = (): State => {
   const projectsEmpty = projectsSettled && projectsError === null && projects.length === 0
   const query = useQuery({
     queryKey: ['progress', projectId],
-    queryFn: () => fetchProgress(projectId ?? undefined),
+    queryFn: ({ signal }) => fetchProgress(projectId ?? undefined, signal),
     enabled: projectId !== null || projectsEmpty,
   })
 

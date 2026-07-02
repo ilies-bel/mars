@@ -81,12 +81,16 @@ const errorCodeToKind = (errorCode: unknown): ApiErrorKind => {
   return 'other'
 }
 
-const fetchJson = async <T>(path: string, schema: ZodType<T>): Promise<T> => {
+const fetchJson = async <T>(path: string, schema: ZodType<T>, signal?: AbortSignal): Promise<T> => {
   let r: Response
   try {
-    r = await fetch(`${BASE}${path}`)
+    r = await fetch(`${BASE}${path}`, signal ? { signal } : undefined)
   } catch (err) {
     if (err instanceof TypeError) {
+      // On some platforms an aborted fetch raises TypeError instead of
+      // DOMException(AbortError).  Re-throw as-is so React Query can
+      // recognise it as a cancellation rather than a network error.
+      if (signal?.aborted) throw err
       throw new ApiError(
         `GET ${path} → cannot reach the mars-ui API server. Start it with \`cd ui && npm run dev:server\` (or \`npm run dev:all\` to run UI + API together).`,
         'unreachable',
@@ -137,9 +141,10 @@ export const fetchTasks = async (projectId?: string): Promise<Task[]> => {
 
 export const fetchProgress = async (
   projectId?: string,
+  signal?: AbortSignal,
 ): Promise<{ tasks: ProgressTask[]; proposals: ProgressProposalNode[]; aggregates: { doneToday: number; doneTotal: number; failedOpen: number } }> => {
   const path = appendProject('/api/progress', projectId)
-  const data = await fetchJson(path, progressResponseSchema)
+  const data = await fetchJson(path, progressResponseSchema, signal)
   return { tasks: data.tasks, proposals: data.proposals, aggregates: data.aggregates }
 }
 

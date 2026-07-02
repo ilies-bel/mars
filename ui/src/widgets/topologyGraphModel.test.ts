@@ -5,14 +5,23 @@ import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
   arcKeyFromComboId,
   buildG6Data,
+  CARD_HALF_H,
+  CARD_HALF_W,
   CLUSTER_STYLE,
+  type CollisionBox,
+  type CollisionCard,
   computeStateMap,
   dataSignature,
   dominant,
   type ElementSnapshot,
+  LAYOUT_COL,
+  LAYOUT_ROW,
+  layeredPositions,
+  MAX_COLLISION_PASSES,
   pulseOpacity,
   PULSE_MIN_OPACITY,
   PULSE_PERIOD_MS,
+  resolveCardCollisions,
   rollupByProposal,
   type Rollup,
 } from './topologyGraphModel'
@@ -413,6 +422,161 @@ describe('pulseOpacity', () => {
     for (let t = 0; t < PULSE_PERIOD_MS; t += frameDuration) {
       const diff = Math.abs(pulseOpacity(t + frameDuration) - pulseOpacity(t))
       expect(diff).toBeLessThan(0.05)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// layeredPositions — convergence-capped layout
+// ---------------------------------------------------------------------------
+
+describe('layeredPositions', () => {
+  it('produces finite, centred positions for a 100-node linear chain', () => {
+    const nodeIds = Array.from({ length: 100 }, (_, i) => `n${i}`)
+    // Chain: n0 → n1 → … → n99 (one node per rank)
+    const edges = nodeIds.slice(1).map((id, i) => ({
+      id: `e${i}`,
+      source: nodeIds[i]!,
+      target: id,
+    }))
+    const pos = layeredPositions(nodeIds, edges)
+
+    expect(pos.size).toBe(100)
+    for (const [, p] of pos) {
+      expect(isFinite(p.x)).toBe(true)
+      expect(isFinite(p.y)).toBe(true)
+      // A 100-node chain has 100 ranks; max half-extent = 49 * LAYOUT_COL
+      expect(Math.abs(p.x)).toBeLessThanOrEqual(50 * LAYOUT_COL)
+      // Chain has 1 node per rank → y is always 0
+      expect(p.y).toBeCloseTo(0, 5)
+    }
+  })
+
+  it('places all 100 disconnected nodes at x=0 with distinct, finite y values', () => {
+    const nodeIds = Array.from({ length: 100 }, (_, i) => `n${i}`)
+    const pos = layeredPositions(nodeIds, [])
+
+    expect(pos.size).toBe(100)
+    const positions = [...pos.values()]
+
+    // All nodes share rank 0 → all at x = 0 after centering
+    for (const p of positions) {
+      expect(p.x).toBeCloseTo(0, 5)
+      expect(isFinite(p.y)).toBe(true)
+    }
+
+    // All y values are distinct (spaced by LAYOUT_ROW)
+    const ys = positions.map((p) => Math.round(p.y))
+    expect(new Set(ys).size).toBe(100)
+
+    // y extent is bounded: |y| ≤ 50 * LAYOUT_ROW (99 nodes span 99 * ROW total)
+    for (const p of positions) {
+      expect(Math.abs(p.y)).toBeLessThanOrEqual(50 * LAYOUT_ROW)
+    }
+  })
+
+  it('positions are centred near (0,0) for a diamond graph', () => {
+    // root → a, root → b; a → leaf, b → leaf
+    const nodeIds = ['root', 'a', 'b', 'leaf']
+    const edges = [
+      { id: 'e1', source: 'root', target: 'a' },
+      { id: 'e2', source: 'root', target: 'b' },
+      { id: 'e3', source: 'a', target: 'leaf' },
+      { id: 'e4', source: 'b', target: 'leaf' },
+    ]
+    const pos = layeredPositions(nodeIds, edges)
+    expect(pos.size).toBe(4)
+    for (const [, p] of pos) {
+      expect(isFinite(p.x)).toBe(true)
+      expect(isFinite(p.y)).toBe(true)
+    }
+    // root and leaf should be symmetrically on the x axis (y ≈ 0)
+    expect(pos.get('root')!.y).toBeCloseTo(0, 5)
+    expect(pos.get('leaf')!.y).toBeCloseTo(0, 5)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveCardCollisions — convergence + bounded-positions
+// ---------------------------------------------------------------------------
+
+describe('resolveCardCollisions', () => {
+  // A box far from the action so it doesn't affect card-card tests.
+  const FAR_BOX: CollisionBox = { w: 10, h: 10, cx: 10_000, cy: 10_000 }
+
+  it('separates two overlapping cards and returns converged=true', () => {
+    const cards: CollisionCard[] = [
+      { id: 'a', x: 0, y: 0 },
+      { id: 'b', x: 10, y: 0 }, // 10 px apart — well within CW = CARD_HALF_W*2+12
+    ]
+    const converged = resolveCardCollisions(cards, FAR_BOX)
+    expect(converged).toBe(true)
+    const dx = Math.abs(cards[0]!.x - cards[1]!.x)
+    // After resolution, cards must be at least CW apart in x or y.
+    const dy = Math.abs(cards[0]!.y - cards[1]!.y)
+    const minSep = CARD_HALF_W * 2 + 12 - 0.5
+    expect(dx >= minSep || dy >= CARD_HALF_H * 2 + 12 - 0.5).toBe(true)
+  })
+
+  it('returns converged=true immediately when cards do not overlap', () => {
+    const cards: CollisionCard[] = [
+      { id: 'a', x: -2000, y: -2000 },
+      { id: 'b', x: 2000, y: 2000 },
+    ]
+    const converged = resolveCardCollisions(cards, FAR_BOX)
+    expect(converged).toBe(true)
+    // Positions unchanged (well outside any overlap zone)
+    expect(cards[0]!.x).toBeCloseTo(-2000, 1)
+    expect(cards[1]!.x).toBeCloseTo(2000, 1)
+  })
+
+  it('pushes cards outside the open-combo box exclusion zone', () => {
+    const box: CollisionBox = { w: 200, h: 150, cx: 0, cy: 0 }
+    // Card placed exactly at the centre of the box.
+    const cards: CollisionCard[] = [{ id: 'a', x: 0, y: 0 }]
+    resolveCardCollisions(cards, box)
+    // After resolution the card must be outside the exclusion zone
+    // (halfW = box.w/2 + CARD_HALF_W + 16, halfH = box.h/2 + CARD_HALF_H + 16)
+    const halfW = box.w / 2 + CARD_HALF_W + 16
+    const halfH = box.h / 2 + CARD_HALF_H + 16
+    const outside = Math.abs(cards[0]!.x) >= halfW || Math.abs(cards[0]!.y) >= halfH
+    expect(outside).toBe(true)
+  })
+
+  it('produces finite positions for a 100-card fixture and converges within cap', () => {
+    // 100 cards laid out in a 10×10 grid spaced well enough to converge fast.
+    const cards: CollisionCard[] = Array.from({ length: 100 }, (_, i) => ({
+      id: `c${i}`,
+      x: (i % 10) * 300,
+      y: Math.floor(i / 10) * 200,
+    }))
+    const converged = resolveCardCollisions(cards, FAR_BOX)
+
+    expect(converged).toBe(true)
+    for (const c of cards) {
+      expect(isFinite(c.x)).toBe(true)
+      expect(isFinite(c.y)).toBe(true)
+    }
+  })
+
+  it('does not diverge (positions stay bounded) even if cap is hit', () => {
+    // Worst case: 100 cards all at the same position.  The cap will be hit
+    // (40 passes is not enough for 100 overlapping cards) but positions must
+    // stay finite and not grow without bound.
+    const cards: CollisionCard[] = Array.from({ length: 100 }, (_, i) => ({
+      id: `c${i}`,
+      x: 0,
+      y: 0,
+    }))
+    const converged = resolveCardCollisions(cards, FAR_BOX, CARD_HALF_W, CARD_HALF_H, MAX_COLLISION_PASSES)
+    // May or may not converge — the important thing is positions are bounded.
+    void converged
+    const MAX_DRIFT = 100 * (CARD_HALF_W * 2 + 12) // generous upper bound
+    for (const c of cards) {
+      expect(isFinite(c.x)).toBe(true)
+      expect(isFinite(c.y)).toBe(true)
+      expect(Math.abs(c.x)).toBeLessThan(MAX_DRIFT)
+      expect(Math.abs(c.y)).toBeLessThan(MAX_DRIFT)
     }
   })
 })

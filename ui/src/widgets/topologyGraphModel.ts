@@ -323,6 +323,228 @@ export const dataSignature = (
   return `${tasks.length}/${proposals.length}#${taskSig}#${propSig}`
 }
 
+// ---------------------------------------------------------------------------
+// Layout geometry — sizes derived from the G6 config in TopologyView.tsx.
+// Keep these in sync with the `node.style.size` and `combo.style.collapsedSize`
+// values in the Graph constructor. They are the single source of truth for
+// spacing so the layout and collision algorithms don't carry magic numbers.
+// ---------------------------------------------------------------------------
+
+/** Task-node rect dimensions — must match `node.style.size` in TopologyView.tsx. */
+export const NODE_W = 148
+export const NODE_H = 32
+
+/** Collapsed combo card dimensions — must match `combo.style.collapsedSize`. */
+export const COMBO_COLLAPSED_W = 168
+export const COMBO_COLLAPSED_H = 46
+
+/** Column pitch (x-spacing) for the inner LR dagre layout, derived from node width. */
+export const LAYOUT_COL = NODE_W + 52 // 200: node width + 52 px gap
+
+/** Row pitch (y-spacing) for the inner LR dagre layout, derived from node height. */
+export const LAYOUT_ROW = NODE_H + 24 // 56: node height + 24 px gap
+
+/**
+ * Half-width exclusion radius for closed combo cards used by the collision
+ * resolver.  Derived from the combo collapsed width plus a 40 px margin so
+ * neighbouring cards don't crowd each other.
+ */
+export const CARD_HALF_W = Math.round(COMBO_COLLAPSED_W / 2) + 40 // 124
+
+/**
+ * Half-height exclusion radius for closed combo cards.
+ * Derived from combo collapsed height plus a 41 px margin.
+ */
+export const CARD_HALF_H = Math.round(COMBO_COLLAPSED_H / 2) + 41 // 64
+
+/** Maximum passes for the card-card collision resolution loop. */
+export const MAX_COLLISION_PASSES = 40
+
+// ---------------------------------------------------------------------------
+// Inner-graph layout
+// ---------------------------------------------------------------------------
+
+/**
+ * Deterministic LR layered layout over a small subgraph.
+ *
+ * Uses longest-path ranking + alternating barycentre sweeps to minimise edge
+ * crossings.  Returns id → {x, y} centred on (0, 0).  Spacing is derived from
+ * NODE_W / NODE_H so it stays in sync with the G6 node config.
+ *
+ * Pure and side-effect-free; testable without a canvas.
+ */
+export const layeredPositions = (
+  nodeIds: string[],
+  innerEdges: ReadonlyArray<EdgeData>,
+): Map<string, { x: number; y: number }> => {
+  const idset = new Set(nodeIds)
+  const succ = new Map<string, string[]>(nodeIds.map((id) => [id, []]))
+  const pred = new Map<string, string[]>(nodeIds.map((id) => [id, []]))
+  const indeg = new Map<string, number>(nodeIds.map((id) => [id, 0]))
+  for (const e of innerEdges) {
+    const s = String(e.source)
+    const t = String(e.target)
+    if (!idset.has(s) || !idset.has(t)) continue
+    succ.get(s)!.push(t)
+    pred.get(t)!.push(s)
+    indeg.set(t, indeg.get(t)! + 1)
+  }
+  const rank = new Map<string, number>(nodeIds.map((id) => [id, 0]))
+  const queue = nodeIds.filter((id) => indeg.get(id) === 0)
+  const seen = new Set<string>(queue)
+  while (queue.length) {
+    const cur = queue.shift() as string
+    for (const nx of succ.get(cur)!) {
+      if (rank.get(nx)! < rank.get(cur)! + 1) rank.set(nx, rank.get(cur)! + 1)
+      if (!seen.has(nx)) {
+        seen.add(nx)
+        queue.push(nx)
+      }
+    }
+  }
+  const byRank = new Map<number, string[]>()
+  for (const id of nodeIds) {
+    const r = rank.get(id)!
+    if (!byRank.has(r)) byRank.set(r, [])
+    byRank.get(r)!.push(id)
+  }
+  const rankKeys = [...byRank.keys()].sort((a, b) => a - b)
+  const order = new Map<string, number>()
+  for (const r of rankKeys) byRank.get(r)!.forEach((id, i) => order.set(id, i))
+  const bary = (id: string, neighbours: Map<string, string[]>): number => {
+    const ns = neighbours.get(id)!
+    if (!ns.length) return order.get(id)!
+    return ns.reduce((s, n) => s + order.get(n)!, 0) / ns.length
+  }
+  for (let sweep = 0; sweep < 6; sweep++) {
+    const forward = sweep % 2 === 0
+    const seq = forward ? rankKeys.slice(1) : rankKeys.slice(0, -1).reverse()
+    for (const r of seq) {
+      const ids = byRank.get(r)!
+      const ref = forward ? pred : succ
+      ids.sort((a, b) => bary(a, ref) - bary(b, ref))
+      ids.forEach((id, i) => order.set(id, i))
+    }
+  }
+  const out = new Map<string, { x: number; y: number }>()
+  rankKeys.forEach((r, ci) => {
+    const ids = byRank.get(r)!
+    const y0 = -((ids.length - 1) * LAYOUT_ROW) / 2
+    ids.forEach((id, i) => out.set(id, { x: ci * LAYOUT_COL, y: y0 + i * LAYOUT_ROW }))
+  })
+  const offX = -((rankKeys.length - 1) * LAYOUT_COL) / 2
+  for (const [id, p] of out) out.set(id, { x: p.x + offX, y: p.y })
+  return out
+}
+
+// ---------------------------------------------------------------------------
+// Card collision resolution
+// ---------------------------------------------------------------------------
+
+/** Position of a collapsed combo card used by resolveCardCollisions. */
+export interface CollisionCard {
+  id: string
+  x: number
+  y: number
+}
+
+/** Bounding box of the expanded combo (centre + dimensions). */
+export interface CollisionBox {
+  w: number
+  h: number
+  cx: number
+  cy: number
+}
+
+/**
+ * Resolve card-card and card-box collisions using axis-aligned AABB separation.
+ *
+ * Cards start at their `x`/`y` positions and are pushed outward from the open
+ * combo box and from each other.  The algorithm:
+ *   1. Initial box clearance — push every card outside the open combo's zone.
+ *   2. Iterative pair separation (up to maxPasses) — separate overlapping cards.
+ *      Box clearance re-runs at the end of every pass so pair pushes don't slide
+ *      cards back into the box (this is what makes the convergence check correct).
+ *
+ * Modifies `cards` in place.
+ *
+ * @param cardHalfW  Half-width collision radius (default: CARD_HALF_W).
+ * @param cardHalfH  Half-height collision radius (default: CARD_HALF_H).
+ * @param maxPasses  Iteration cap (default: MAX_COLLISION_PASSES).
+ * @returns `true` when the layout settled before hitting the cap.
+ */
+export const resolveCardCollisions = (
+  cards: CollisionCard[],
+  box: CollisionBox,
+  cardHalfW = CARD_HALF_W,
+  cardHalfH = CARD_HALF_H,
+  maxPasses = MAX_COLLISION_PASSES,
+): boolean => {
+  /** Minimum gap between a card edge and the open combo box edge (px). */
+  const BOX_GAP = 16
+  /** Minimum gap between two adjacent card edges (px). */
+  const CARD_GAP = 12
+
+  const halfW = box.w / 2 + cardHalfW + BOX_GAP
+  const halfH = box.h / 2 + cardHalfH + BOX_GAP
+  const CW = cardHalfW * 2 + CARD_GAP
+  const CH = cardHalfH * 2 + CARD_GAP
+
+  const clearBox = (m: CollisionCard): boolean => {
+    const dx = m.x - box.cx
+    const dy = m.y - box.cy
+    const penX = halfW - Math.abs(dx)
+    const penY = halfH - Math.abs(dy)
+    if (penX > 0 && penY > 0) {
+      if (penX <= penY) m.x = box.cx + (dx >= 0 ? halfW : -halfW)
+      else m.y = box.cy + (dy >= 0 ? halfH : -halfH)
+      return true
+    }
+    return false
+  }
+
+  // Initial box clearance before pair iteration starts.
+  for (const m of cards) clearBox(m)
+
+  for (let pass = 0; pass < maxPasses; pass++) {
+    let moved = false
+    for (let i = 0; i < cards.length; i++) {
+      for (let j = i + 1; j < cards.length; j++) {
+        const a = cards[i]!
+        const b = cards[j]!
+        const dx = b.x - a.x
+        const dy = b.y - a.y
+        const penX = CW - Math.abs(dx)
+        const penY = CH - Math.abs(dy)
+        if (penX > 0 && penY > 0) {
+          if (penX <= penY) {
+            const s = ((dx === 0 ? 1 : Math.sign(dx)) * penX) / 2
+            a.x -= s
+            b.x += s
+          } else {
+            const s = ((dy === 0 ? 1 : Math.sign(dy)) * penY) / 2
+            a.y -= s
+            b.y += s
+          }
+          moved = true
+        }
+      }
+    }
+    // Box clearance after each pair pass — pair pushes can slide cards back into
+    // the box.  Tracking whether clearBox moved anything is what makes the
+    // convergence check correct (the original `moved` only tracked pair moves).
+    for (const m of cards) {
+      if (clearBox(m)) moved = true
+    }
+    if (!moved) return true // converged before cap
+  }
+  return false // hit cap without full convergence
+}
+
+// ---------------------------------------------------------------------------
+// Pulse animation
+// ---------------------------------------------------------------------------
+
 /**
  * Period and minimum stroke-opacity for the 'In progress' node pulse.
  * Period matches the board view's CSS animation (1.6 s).

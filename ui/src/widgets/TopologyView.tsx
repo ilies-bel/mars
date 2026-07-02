@@ -38,24 +38,40 @@
  * collapse run with animation OFF.
  */
 
-import { useEffect, useRef } from 'react'
-import { Graph, type ComboData, type EdgeData, type IPointerEvent, type NodeData } from '@antv/g6'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Graph, type ComboData, type IPointerEvent, type NodeData } from '@antv/g6'
 import { chainForProposal, chainForTask, type ChainResult } from '@/shared/chainTrace'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
   ACTIVE_ACCENT,
   buildG6Data,
   CANVAS_SURFACE,
+  CARD_HALF_H,
+  CARD_HALF_W,
   CLUSTER_STYLE,
+  type CollisionBox,
   computeStateMap,
   dataSignature,
   EDGE_BLOCK,
+  layeredPositions,
   PROPOSAL_STROKE,
   PROPOSAL_TEXT,
+  resolveCardCollisions,
   arcKeyFromComboId,
   pulseOpacity,
 } from './topologyGraphModel'
 import type { Cluster } from '@/shared/schemas'
+
+// ---------------------------------------------------------------------------
+// Typed imperative handle — replaces __mars* private-property casts.
+// Set by the mount effect; read by the selectedProposalId effect so both use
+// the same single-open machinery without any cast into G6 internals.
+// ---------------------------------------------------------------------------
+
+interface TopologyHandle {
+  toggle: (comboId: string) => void
+  collapse: () => void
+}
 
 // ---------------------------------------------------------------------------
 // Props (contract kept stable for ProgressPage)
@@ -107,6 +123,9 @@ export const TopologyView = ({
 }: TopologyViewProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const graphRef = useRef<Graph | null>(null)
+  // Typed imperative handle set by the mount effect; read by the selectedProposalId
+  // effect so both go through the same single-open machinery without G6 casts.
+  const handleRef = useRef<TopologyHandle | null>(null)
 
   // Live mutable state shared by the imperative G6 handlers. Kept in refs so
   // they survive re-renders without recreating the graph.
@@ -127,9 +146,22 @@ export const TopologyView = ({
   // Tracks the externally-driven selectedProposalId so we only react to changes
   // and don't echo our own onSelectProposal callbacks back into a drill-in.
   const lastSelectedRef = useRef<string | null | undefined>(undefined)
-  const lastSignatureRef = useRef<string>('')
+
+  // React state for navigation UI overlays.  Updated from inside G6 event
+  // handlers via stable setter refs (same pattern as onSelectProposalRef).
+  const [openComboTitle, setOpenComboTitle] = useState<string | null>(null)
+  const setOpenComboTitleRef = useRef(setOpenComboTitle)
+  setOpenComboTitleRef.current = setOpenComboTitle
+
+  const [hintText, setHintText] = useState<string | null>(null)
+  const setHintTextRef = useRef(setHintText)
+  setHintTextRef.current = setHintText
 
   const empty = tasks.length === 0
+
+  // Stable data signature computed in useMemo so the rebuild effect can list
+  // it as a proper dependency — no eslint-disable needed.
+  const sig = useMemo(() => dataSignature(tasks, proposals), [tasks, proposals])
 
   useEffect(() => {
     if (empty || !containerRef.current) return
@@ -156,7 +188,6 @@ export const TopologyView = ({
     window.addEventListener('unhandledrejection', onRejection)
 
     const { nodes, edges, combos } = buildG6Data(propsRef.current.tasks, proposals)
-    lastSignatureRef.current = dataSignature(propsRef.current.tasks, proposals)
 
     const graph = new Graph({
       container,
@@ -204,6 +235,7 @@ export const TopologyView = ({
           stroke: (d: ComboData) => clusterStyle(d.data?.dom).stroke,
           strokeOpacity: 1,
           pointerEvents: (d: ComboData) => (d.style?.collapsed === false ? 'none' : 'auto'),
+          cursor: (d: ComboData) => (d.style?.collapsed === false ? 'default' : 'pointer'),
           lineWidth: 1.5,
           radius: 10,
           shadowColor: 'rgba(0,0,0,0.4)',
@@ -289,76 +321,6 @@ export const TopologyView = ({
       cloudHome.set(id, [x, y])
     }
 
-    // Deterministic LR layered layout over a small subgraph. Longest-path rank
-    // + barycentre sweeps. Returns id -> {x,y} centred on (0,0).
-    const layeredPositions = (
-      nodeIds: string[],
-      innerEdges: EdgeData[],
-    ): Map<string, { x: number; y: number }> => {
-      const idset = new Set(nodeIds)
-      const succ = new Map<string, string[]>(nodeIds.map((id) => [id, []]))
-      const pred = new Map<string, string[]>(nodeIds.map((id) => [id, []]))
-      const indeg = new Map<string, number>(nodeIds.map((id) => [id, 0]))
-      for (const e of innerEdges) {
-        const s = String(e.source)
-        const t = String(e.target)
-        if (!idset.has(s) || !idset.has(t)) continue
-        succ.get(s)!.push(t)
-        pred.get(t)!.push(s)
-        indeg.set(t, indeg.get(t)! + 1)
-      }
-      const rank = new Map<string, number>(nodeIds.map((id) => [id, 0]))
-      const queue = nodeIds.filter((id) => indeg.get(id) === 0)
-      const seen = new Set<string>(queue)
-      while (queue.length) {
-        const cur = queue.shift() as string
-        for (const nx of succ.get(cur)!) {
-          if (rank.get(nx)! < rank.get(cur)! + 1) rank.set(nx, rank.get(cur)! + 1)
-          if (!seen.has(nx)) {
-            seen.add(nx)
-            queue.push(nx)
-          }
-        }
-      }
-      const byRank = new Map<number, string[]>()
-      for (const id of nodeIds) {
-        const r = rank.get(id)!
-        if (!byRank.has(r)) byRank.set(r, [])
-        byRank.get(r)!.push(id)
-      }
-      const rankKeys = [...byRank.keys()].sort((a, b) => a - b)
-      const order = new Map<string, number>()
-      for (const r of rankKeys) byRank.get(r)!.forEach((id, i) => order.set(id, i))
-      const bary = (id: string, neighbours: Map<string, string[]>): number => {
-        const ns = neighbours.get(id)!
-        if (!ns.length) return order.get(id)!
-        return ns.reduce((s, n) => s + order.get(n)!, 0) / ns.length
-      }
-      for (let sweep = 0; sweep < 6; sweep++) {
-        const forward = sweep % 2 === 0
-        const seq = forward ? rankKeys.slice(1) : rankKeys.slice(0, -1).reverse()
-        for (const r of seq) {
-          const ids = byRank.get(r)!
-          const ref = forward ? pred : succ
-          ids.sort((a, b) => bary(a, ref) - bary(b, ref))
-          ids.forEach((id, i) => order.set(id, i))
-        }
-      }
-      const COL = 200
-      const ROW = 56
-      const pos = new Map<string, { x: number; y: number }>()
-      rankKeys.forEach((r, ci) => {
-        const ids = byRank.get(r)!
-        const y0 = -((ids.length - 1) * ROW) / 2
-        ids.forEach((id, i) => pos.set(id, { x: ci * COL, y: y0 + i * ROW }))
-      })
-      const ranks = rankKeys.length
-      const offX = -((ranks - 1) * COL) / 2
-      const out = new Map<string, { x: number; y: number }>()
-      for (const [id, p] of pos) out.set(id, { x: p.x + offX, y: p.y })
-      return out
-    }
-
     const nextFrame = (): Promise<void> =>
       new Promise((res) => {
         let done = false
@@ -372,14 +334,7 @@ export const TopologyView = ({
         setTimeout(fin, 100)
       })
 
-    interface Box {
-      w: number
-      h: number
-      cx: number
-      cy: number
-    }
-
-    const comboRenderBox = (comboId: string): Box | null => {
+    const comboRenderBox = (comboId: string): CollisionBox | null => {
       try {
         const element = (graph as unknown as { context?: { element?: { getElement?: (id: string) => unknown } } })
           .context?.element
@@ -439,67 +394,24 @@ export const TopologyView = ({
       requestAnimationFrame(stepFn)
     }
 
-    const CARD_HALF_W = 124
-    const CARD_HALF_H = 64
-
-    const pushOutward = (openId: string, box: Box): void => {
-      const GAP = 16
-      const halfW = box.w / 2 + CARD_HALF_W + GAP
-      const halfH = box.h / 2 + CARD_HALF_H + GAP
-      const CW = CARD_HALF_W * 2 + 12
-      const CH = CARD_HALF_H * 2 + 12
+    const pushOutward = (openId: string, box: CollisionBox): void => {
       const cards: Array<{ id: string; from: [number, number]; x: number; y: number }> = []
       for (const c of graph.getComboData()) {
         if (c.id === openId || c.style?.collapsed === false) continue
         const home = cloudHome.get(String(c.id)) ?? graph.getElementPosition(c.id)
         cards.push({ id: String(c.id), from: [home[0]!, home[1]!], x: home[0]!, y: home[1]! })
       }
-      const clearBox = (m: { x: number; y: number }): void => {
-        const dx = m.x - box.cx
-        const dy = m.y - box.cy
-        const penX = halfW - Math.abs(dx)
-        const penY = halfH - Math.abs(dy)
-        if (penX > 0 && penY > 0) {
-          if (penX <= penY) m.x = box.cx + (dx >= 0 ? halfW : -halfW)
-          else m.y = box.cy + (dy >= 0 ? halfH : -halfH)
-        }
+      // Try to derive card collision radii from a measured closed combo; fall
+      // back to the config-derived constants if the combo isn't rendered yet.
+      const sampleMeasured = cards[0] ? comboRenderBox(cards[0].id) : null
+      const halfW = sampleMeasured ? Math.ceil(sampleMeasured.w / 2) + 40 : CARD_HALF_W
+      const halfH = sampleMeasured ? Math.ceil(sampleMeasured.h / 2) + 41 : CARD_HALF_H
+
+      const converged = resolveCardCollisions(cards, box, halfW, halfH)
+      if (!converged) {
+        console.warn('[topology] pushOutward hit iteration cap; cards may still overlap — increase MAX_COLLISION_PASSES if this recurs')
       }
-      for (const m of cards) clearBox(m)
-      for (let pass = 0; pass < 40; pass++) {
-        let moved = false
-        for (let i = 0; i < cards.length; i++) {
-          for (let j = i + 1; j < cards.length; j++) {
-            const a = cards[i]!
-            const b = cards[j]!
-            const dx = b.x - a.x
-            const dy = b.y - a.y
-            const penX = CW - Math.abs(dx)
-            const penY = CH - Math.abs(dy)
-            if (penX > 0 && penY > 0) {
-              if (penX <= penY) {
-                const s = ((dx === 0 ? 1 : Math.sign(dx)) * penX) / 2
-                a.x -= s
-                b.x += s
-              } else {
-                const s = ((dy === 0 ? 1 : Math.sign(dy)) * penY) / 2
-                a.y -= s
-                b.y += s
-              }
-              moved = true
-            }
-          }
-        }
-        for (const m of cards) clearBox(m)
-        if (!moved) break
-      }
-      for (const m of cards) {
-        const dx = m.x - box.cx
-        const dy = m.y - box.cy
-        if (Math.abs(dx) < halfW && Math.abs(dy) < halfH) {
-          if (halfW - Math.abs(dx) <= halfH - Math.abs(dy)) m.x = box.cx + (dx >= 0 ? halfW : -halfW)
-          else m.y = box.cy + (dy >= 0 ? halfH : -halfH)
-        }
-      }
+
       const moves: Move[] = []
       for (const m of cards) {
         if (Math.abs(m.x - m.from[0]) < 0.5 && Math.abs(m.y - m.from[1]) < 0.5) continue
@@ -557,6 +469,9 @@ export const TopologyView = ({
       graph.updateComboData([{ id: comboId, style: { x: anchor[0], y: anchor[1] } }])
 
       openComboIdRef.current = comboId
+      // Update breadcrumb chip with the combo's label.
+      const comboMeta = graph.getComboData().find((c) => c.id === comboId)
+      setOpenComboTitleRef.current(String(comboMeta?.data?.label ?? ''))
 
       await nextFrame()
       const box =
@@ -588,6 +503,7 @@ export const TopologyView = ({
       await graph.translateElementTo({ [comboId]: [anchor[0], anchor[1]] }, false).catch(() => {})
 
       openComboIdRef.current = null
+      setOpenComboTitleRef.current(null)
       restoreNudged()
       await graph.draw()
     }
@@ -630,14 +546,12 @@ export const TopologyView = ({
       if (open !== null) void toggleCombo(open)
     }
 
-    // Expose the toggle on the graph instance so the external selectedProposalId
-    // effect can drive the SAME single-open machinery (no duplicate code path).
-    ;(graph as unknown as { __marsToggle?: (id: string) => void; __marsCollapse?: () => void }).__marsToggle = (
-      id: string,
-    ) => {
-      void toggleCombo(id)
+    // Expose toggle/collapse via the typed handle ref so the selectedProposalId
+    // effect can drive the same single-open machinery without any G6 casts.
+    handleRef.current = {
+      toggle: (id: string) => void toggleCombo(id),
+      collapse: () => collapse(),
     }
-    ;(graph as unknown as { __marsCollapse?: () => void }).__marsCollapse = () => collapse()
 
     // ---- event wiring -----------------------------------------------------
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -695,11 +609,28 @@ export const TopologyView = ({
         const id = String((ev.target as { id?: string }).id)
         const c = graph.getComboData().find((x) => x.id === id)
         if (c && c.style?.collapsed === false) return // expanded → it's a box, not a card
+        // Show the navigation hint for collapsed combo cards.
+        setHintTextRef.current('double-click to open')
         schedule(() => hoverProposal(id))
       })
       graph.on('node:pointerleave', () => clearHover())
-      graph.on('combo:pointerleave', () => clearHover())
-      graph.on('canvas:click', () => clearHover())
+      graph.on('combo:pointerleave', () => {
+        setHintTextRef.current(null)
+        clearHover()
+      })
+      graph.on('canvas:click', () => {
+        setHintTextRef.current(null)
+        clearHover()
+      })
+      // Single-click on a collapsed combo: show the "double-click to open" hint
+      // prominently (touch-friendly, and good for users who discover the graph
+      // without hovering first).
+      graph.on('combo:click', (ev: IPointerEvent) => {
+        const id = String((ev.target as { id?: string }).id)
+        const c = graph.getComboData().find((x) => x.id === id)
+        if (!c || c.style?.collapsed === false) return
+        setHintTextRef.current('double-click to open')
+      })
 
       // single-click a task node → open its drawer (task nodes are visible only
       // when their combo is expanded). Combo single-click does NOT navigate.
@@ -716,6 +647,7 @@ export const TopologyView = ({
 
     return () => {
       ++pulseGenRef.current // cancel in-progress pulse rAF loop
+      handleRef.current = null
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('error', onWindowError, true)
       window.removeEventListener('unhandledrejection', onRejection)
@@ -728,14 +660,17 @@ export const TopologyView = ({
       graphRef.current = null
       litRef.current = null
       openComboIdRef.current = null
+      setOpenComboTitleRef.current(null)
+      setHintTextRef.current(null)
       cloudHome.clear()
       nudgeHome.clear()
     }
     // Recreate the graph only when the structural data signature changes, or the
     // empty/non-empty boundary flips. (Filter/selection props are applied via
     // the separate effects below without rebuilding the graph.)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empty, dataSignature(tasks, proposals)])
+    // `sig` is computed via useMemo([tasks, proposals]) so it is a stable string
+    // that changes exactly when buildG6Data output would change.
+  }, [empty, sig])
 
   // Re-apply the dim/highlight map when filter props change (no graph rebuild).
   // Uses the same pure resolver as the hover handlers so the two can't drift.
@@ -751,22 +686,21 @@ export const TopologyView = ({
 
   // Drive drill-in from the external selectedProposalId control.
   useEffect(() => {
-    const graph = graphRef.current
-    if (!graph) return
     if (lastSelectedRef.current === selectedProposalId) return
     lastSelectedRef.current = selectedProposalId
+
+    const handle = handleRef.current
+    if (!handle) return
 
     const targetCombo = selectedProposalId ? `combo:${selectedProposalId}` : null
     const open = openComboIdRef.current
     // already in the desired state — nothing to do (prevents echo loops)
     if ((targetCombo ?? null) === (open ?? null)) return
 
-    // Fire the toggle through the same single-open machinery the dblclick uses.
-    // The component stores the toggle on the graph instance during mount; reach
-    // it through a custom hook attached below.
-    const driver = (graph as unknown as { __marsToggle?: (id: string) => void; __marsCollapse?: () => void })
-    if (targetCombo) driver.__marsToggle?.(targetCombo)
-    else driver.__marsCollapse?.()
+    // Fire through the typed handle so both this effect and the dblclick handler
+    // use the same single-open machinery — no G6 internals casts needed.
+    if (targetCombo) handle.toggle(targetCombo)
+    else handle.collapse()
   }, [selectedProposalId])
 
   if (empty) {
@@ -786,11 +720,24 @@ export const TopologyView = ({
         style={{ background: CANVAS_SURFACE }}
         aria-label={`Task topology graph, ${tasks.length} task${tasks.length === 1 ? '' : 's'}. Use the Board tab for a screen-reader and keyboard accessible view.`}
       />
-      {/* Navigation hint — quiet, top-right inside the canvas */}
+      {/* Breadcrumb chip — visible while a combo is drilled-in.
+          Tells the user which arc is open and how to exit. */}
+      {openComboTitle && (
+        <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[260px] items-center gap-1.5 truncate rounded bg-[#1a0f0a]/80 px-2 py-1 font-mono text-[10.5px] text-muted-dark ring-1 ring-[#3a2820]/60">
+          <span className="truncate">{openComboTitle}</span>
+          <span className="shrink-0 opacity-50">· Esc to collapse</span>
+        </div>
+      )}
+      {/* Navigation hint — quiet, top-right inside the canvas.
+          Changes to a specific action hint when hovering a collapsed combo. */}
       <div className="pointer-events-none absolute right-3 top-3 z-10 text-right font-mono text-[10.5px] leading-relaxed text-muted-dark opacity-70">
         scroll = zoom · drag = pan
         <br />
-        hover → trace · double-click → expand / collapse
+        {hintText ? (
+          <span className="font-semibold opacity-100">{hintText}</span>
+        ) : (
+          'hover → trace · double-click → expand / collapse'
+        )}
       </div>
       {/* Status legend — bottom, over the canvas */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-center justify-end gap-3 px-4 py-2 font-mono text-[11px] text-muted-dark">
