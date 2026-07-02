@@ -128,12 +128,16 @@ invoking — this CLAUDE.md note may lag the CLI.
 ## Blockers
 
 Blocker edges live in the `task_blockers` junction table (`task_id` waits
-on `blocker_task_id`). A task in `blocked` only flips to `queued` once
-**every** one of its blockers reaches `done` — and a successful recovery
-counts as its origin reaching `done`, so a recovered blocker unblocks the
-whole chain. The daemon's `onBlockerTaskCompleted` runs on each
-completion, and `recoverBlockedTasks` re-checks at daemon startup so a
-crash between completion and unblock doesn't strand work.
+on `blocker_task_id`). When a task is enqueued with `--blocked-by <id>`,
+if any named blocker is not yet `done`, the task lands immediately in
+`status='blocked'` (never `'queued'`); if all named blockers are already
+`done`, it lands in `'queued'`. A `blocked` task only flips to `queued`
+once **every** one of its blockers reaches `done` — and a successful
+recovery counts as its origin reaching `done`, so a recovered blocker
+unblocks the whole chain. The blocker-resolution outbox subscriber
+(`drainBlockerResolution`) drives this on each completion; a startup
+reconcile sweep (`blockerDriftRepair`) normalises any legacy rows that
+slipped through so a crash never strands dependents permanently.
 
 When a task fails, the orchestrator spawns exactly **one** recovery task
 per origin failure to finish or fix the work. A recovery task is itself

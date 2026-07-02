@@ -103,8 +103,11 @@ free-prose still works and degrades to prompt-only.
 ## Blockers
 
 Blocker edges live in the `task_blockers` junction table (`task_id`
-waits on `blocker_task_id`). A task in `blocked` only flips to
-`queued` once **every** one of its blockers reaches `done` — and a
+waits on `blocker_task_id`). When a task is enqueued with
+`--blocked-by <id>`, if any named blocker is not yet `done`, the task
+lands in `status='blocked'` immediately; if all named blockers are
+already `done`, it lands in `'queued'`. A `blocked` task only flips
+to `queued` once **every** one of its blockers reaches `done` — and a
 successful recovery counts as its origin reaching `done`, so a
 recovered blocker unblocks the whole chain.
 

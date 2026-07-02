@@ -1355,9 +1355,25 @@ export const startDaemon = async (
       plan ?? undefined,
       Object.keys(opts).length > 0 ? opts : undefined,
     )
+    // Track whether we parked this task as 'blocked' after adding edges so
+    // we suppress the task.queued/task.added events that would race dispatch.
+    let blockedByIncomplete = false
     if (blockerIds && blockerIds.length > 0) {
       try {
         await addBlockers(task.id, blockerIds)
+        // Mirror handleBlock's post-add re-evaluation: if the task is still in
+        // a pre-dispatch state and at least one blocker is not yet done, park
+        // it as 'blocked' so the dispatcher never picks it up while a
+        // prerequisite is outstanding.  The blocker-resolution drain (outbox
+        // subscriber) flips it to 'queued' when the last blocker completes and
+        // the periodic interval emits task.queued to trigger drain().
+        if (
+          (task.status === 'queued' || task.status === 'draft') &&
+          (await hasIncompleteBlockers(task.id))
+        ) {
+          await updateTask(task.id, { status: 'blocked' })
+          blockedByIncomplete = true
+        }
       } catch (err) {
         // ADR-0052 (Arc = sole writer): route the error-recovery cleanup
         // through the Arc aggregate's atomic drop (pre-delete task.dropped/
@@ -1371,12 +1387,14 @@ export const startDaemon = async (
         throw err
       }
     }
-    if (task.status === 'queued') {
-      bus.emit('task.queued', { taskId: task.id })
-    } else if (task.status === 'draft') {
-      bus.emit('task.added', { taskId: task.id })
+    if (!blockedByIncomplete) {
+      if (task.status === 'queued') {
+        bus.emit('task.queued', { taskId: task.id })
+      } else if (task.status === 'draft') {
+        bus.emit('task.added', { taskId: task.id })
+      }
     }
-    return task
+    return blockedByIncomplete ? { ...task, status: 'blocked' } : task
   }
 
   const handleBlock = async (
