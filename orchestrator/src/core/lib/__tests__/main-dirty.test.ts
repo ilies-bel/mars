@@ -402,11 +402,12 @@ describe('spawnOrAttachMainCommitter', () => {
     expect(second.fixTaskId).not.toBe(first.fixTaskId)
   })
 
-  it('does NOT respawn when a committer at the same hash has already reached DONE', async () => {
-    // Regression test for the 1325-committer loop: a done committer must
-    // suppress re-spawn for the same (headSha, dirtyFiles) state. Without
-    // this fix, every dispatch tick after the committer finished would find
-    // no "active" committer and spawn a fresh one.
+  it('respawns a fresh committer when the existing committer at the same hash reached DONE', async () => {
+    // Invariant 2 (ADR-2026-07-03): a done committer never absorbs new dirty-main
+    // detections. The verify gate enforces that a committer only reaches `done`
+    // when the integration checkout was actually clean; if main is re-dirty after
+    // the committer completes, that is a genuinely new episode requiring a fresh
+    // committer — not a suppression.
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
     const src1 = await queue.enqueueTask('source-1', undefined, {
@@ -415,8 +416,6 @@ describe('spawnOrAttachMainCommitter', () => {
     const src2 = await queue.enqueueTask('source-2', undefined, {
       skipTriage: true,
     })
-    // episodeHash must be the same for both detections so the done-suppression
-    // guard fires when the second source arrives after the first committer is done.
     const detection = {
       dirty: true as const,
       hash: 'aa'.repeat(32),
@@ -445,16 +444,13 @@ describe('spawnOrAttachMainCommitter', () => {
       sourceOriginId: src2.id,
       traceStore: nullTraceStore,
     })
-    // Must NOT spawn a fresh committer — done committer suppresses re-spawn
-    // for the same episode (same episodeHash = same HEAD + same file-set).
-    expect(second.spawned).toBe(false)
-    expect(second.fixTaskId).toBe(first.fixTaskId)
-    expect(second.attachedToStatus).toBe('done')
+    // Done committer does NOT satisfy dedup → fresh committer spawned.
+    expect(second.spawned).toBe(true)
+    expect(second.fixTaskId).not.toBe(first.fixTaskId)
 
-    // src2 must NOT be blocked on the done committer (attaching to a done
-    // task would create a phantom blocker that can never resolve).
+    // src2 is blocked on the FRESH committer, not the done one.
     const src2After = await queue.getTask(src2.id)
-    expect(src2After?.status).not.toBe('blocked')
+    expect(src2After?.status).toBe('blocked')
     const c = queue.resolveQueueClient()
     const poisonEdge = await c.execute({
       sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
@@ -464,10 +460,10 @@ describe('spawnOrAttachMainCommitter', () => {
   })
 
   it('allows a fresh committer when HEAD advances (even with the same dirty file set)', async () => {
-    // After the fix: the file-set-only hash (detection.hash) is the SAME across
-    // HEAD advances — what changes is the episode hash (detection.episodeHash).
-    // When a done committer's episodeHash doesn't match the new detection's
-    // episodeHash, done-suppression does NOT fire, allowing a fresh spawn.
+    // Dedup uses file-set-only hash (detection.hash), which is the SAME across
+    // HEAD advances. Done committers never satisfy dedup (invariant 2) — so
+    // after HEAD advances and the same files are still dirty, a fresh committer
+    // is always spawned rather than suppressed.
     //
     // Scenario: dirty.txt is present before AND after HEAD advances. The first
     // committer (done) handled the old episode. The new episode (new HEAD +
@@ -531,7 +527,7 @@ describe('spawnOrAttachMainCommitter', () => {
       sourceOriginId: src2.id,
       traceStore: nullTraceStore,
     })
-    // Different episode (new HEAD) → done-suppression doesn't fire → fresh spawn.
+    // Done committer never satisfies dedup → fresh spawn regardless of HEAD.
     expect(second.spawned).toBe(true)
     expect(second.fixTaskId).not.toBe(first.fixTaskId)
   })
@@ -766,6 +762,126 @@ describe('attachToExistingFixTask preserves the ADR-0040 leaf invariant', () => 
     await expect(
       queue.addBlockers(other.id, [resolution.fixTaskId]),
     ).rejects.toBeInstanceOf(RecoveryTaskBlockerError)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Integration-clean verify check (invariant 1)
+// These tests exercise the `checkIntegrationBranchDirty` call that the verify
+// primitive makes on the integration checkout (repoRoot) for main-committer tasks.
+// A non-empty result means verify FAILS the committer task; an empty result means
+// verify passes.
+// ---------------------------------------------------------------------------
+
+describe('main-committer verify: integration-clean check', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('committer-done-but-dirty: returns dirty when the integration checkout is still dirty after committer ran', async () => {
+    // Simulates the verify-time check the primitives/verify step runs for a
+    // main-committer task. If the integration checkout is non-empty at this
+    // point, the verify step must fail the committer task (non-recoverable).
+    //
+    // Scenario: main-committer ran but the integration branch working tree
+    // still has uncommitted files (e.g. git stash refused to capture them).
+    const { checkIntegrationBranchDirty } = await import('../main-dirty')
+
+    // Simulate integration checkout still dirty.
+    writeFileSync(resolve(repo, 'leftover.ts'), 'uncommitted\n')
+
+    const result = await checkIntegrationBranchDirty({
+      repoRoot: repo,
+      integrationBranch: 'main',
+      traceCtx: { store: nullTraceStore, phase: 'verify' },
+    })
+
+    // dirty:true means the verify step would fail the committer task.
+    expect(result.dirty).toBe(true)
+    expect(result.statusOutput).toContain('leftover.ts')
+    expect(result.hash).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('committer cleaned successfully: returns clean when integration checkout is empty after committer ran', async () => {
+    // Simulates the verify-time check after the committer successfully committed
+    // or stashed all dirty files. The integration checkout is clean →
+    // checkIntegrationBranchDirty returns dirty:false → verify passes.
+    const { checkIntegrationBranchDirty } = await import('../main-dirty')
+
+    // No uncommitted files — the committer cleaned everything.
+    const result = await checkIntegrationBranchDirty({
+      repoRoot: repo,
+      integrationBranch: 'main',
+      traceCtx: { store: nullTraceStore, phase: 'verify' },
+    })
+
+    expect(result.dirty).toBe(false)
+    expect(result.hash).toBeNull()
+    expect(result.statusOutput).toBe('')
+  })
+
+  it('done committer does not absorb new dirty-main detections: spawns fresh even at same episodeHash', async () => {
+    // Invariant 2: done committers are NOT checked in the dedup step.
+    // If a committer reaches `done` and then dirt is detected again at the same
+    // (hash, episodeHash), a fresh committer must be spawned — not suppressed.
+    // This prevents the broken behavior where a committer that completed without
+    // actually cleaning main would absorb subsequent dirty-main detections.
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const src1 = await queue.enqueueTask('source-1', undefined, { skipTriage: true })
+    const src2 = await queue.enqueueTask('source-2', undefined, { skipTriage: true })
+
+    const detection = {
+      dirty: true as const,
+      hash: 'cc'.repeat(32),
+      episodeHash: 'dd'.repeat(32),
+      statusOutput: ' M file.ts\n',
+    }
+    const { spawnOrAttachMainCommitter } = await import('../main-dirty')
+
+    const first = await spawnOrAttachMainCommitter({
+      sourceTaskId: src1.id,
+      detection,
+      integrationBranch: 'main',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'p',
+      sourceOriginId: src1.id,
+      traceStore: nullTraceStore,
+    })
+    expect(first.spawned).toBe(true)
+
+    // Committer reaches done (e.g. it ran but integration was still dirty — the
+    // verify failure guard would catch it, but conceptually the done state means
+    // a new detection must always spawn fresh).
+    await queue.updateTask(first.fixTaskId, { status: 'done' })
+
+    // Re-detect dirt at the EXACT SAME hash and episodeHash.
+    const second = await spawnOrAttachMainCommitter({
+      sourceTaskId: src2.id,
+      detection,
+      integrationBranch: 'main',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'p',
+      sourceOriginId: src2.id,
+      traceStore: nullTraceStore,
+    })
+
+    // Must spawn fresh — done committer never absorbs new detections.
+    expect(second.spawned).toBe(true)
+    expect(second.fixTaskId).not.toBe(first.fixTaskId)
+
+    // src2 is blocked on the fresh committer.
+    const src2After = await queue.getTask(src2.id)
+    expect(src2After?.status).toBe('blocked')
   })
 })
 

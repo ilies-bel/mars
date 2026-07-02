@@ -39,10 +39,11 @@ export interface MainDirtyDispatchInput {
  * parked behind a `main-commiter` recovery and the caller must NOT dispatch
  * the workflow. Returns `false` when:
  * - the integration branch is clean, or
- * - the recipe is missing from the catalog (verify-time check still applies), or
- * - the only matching committer is already `done` — a done committer can no
- *   longer unblock dependents, so attaching to it would create a phantom
- *   blocker; in this case normal dispatch must proceed.
+ * - the recipe is missing from the catalog (verify-time check still applies).
+ *
+ * Done committers no longer suppress parking (invariant 2): a done committer
+ * proves main was clean when it verified, but if main is dirty again a fresh
+ * committer must clean it. The source task is parked behind the fresh committer.
  */
 export const runMainDirtyDispatchCheck = async (
   input: MainDirtyDispatchInput,
@@ -86,12 +87,6 @@ export const runMainDirtyDispatchCheck = async (
     sourceOriginId: originId,
     traceStore,
   })
-  if (resolution.attachedToStatus === 'done') {
-    log(
-      `[main-dirty] dispatch-time: task ${task.id} found existing committer ${resolution.fixTaskId} at same hash already in status=done; not attached / left for normal dispatch`,
-    )
-    return false
-  }
   log(
     `[main-dirty] dispatch-time: task ${task.id} parked blocked on main-commiter ${resolution.fixTaskId} (${
       resolution.spawned

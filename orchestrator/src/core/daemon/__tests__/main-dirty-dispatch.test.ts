@@ -1,8 +1,10 @@
 /**
- * Regression test for the phantom-blocker bug: when the integration branch
- * is dirty at a hash that matches an existing committer in status='done',
- * runMainDirtyDispatchCheck must return false — not park the source task
- * behind a dead committer that can never unblock it.
+ * Tests for runMainDirtyDispatchCheck behavior when a done committer exists.
+ *
+ * Invariant 2 (2026-07-03): done committers never satisfy the dedup — a done
+ * committer means the integration branch was clean when it verified. If main
+ * is dirty again (new detection), a fresh committer must be spawned and the
+ * source task must be parked behind it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -37,9 +39,12 @@ describe('runMainDirtyDispatchCheck', () => {
   })
 
   it(
-    'returns false (not parked) when the only committer at this hash is already done — phantom-blocker regression',
+    'spawns a fresh committer and parks the source when the only committer at this hash is already done',
     async () => {
-      // Dirty the repo to trigger the dirty-main detection.
+      // Invariant 2: a done committer never absorbs new dirty-main detections.
+      // A done committer only proves main was clean when it verified; if main is
+      // dirty again, a fresh committer must clean it. The source task must be
+      // parked behind the fresh committer (not the dead done one).
       writeFileSync(resolve(repo, 'README.md'), 'dirty\n')
 
       const { checkIntegrationBranchDirty, spawnOrAttachMainCommitter, MAIN_COMMITER_RECIPE } =
@@ -71,12 +76,12 @@ describe('runMainDirtyDispatchCheck', () => {
       })
       expect(committerRes.spawned).toBe(true)
 
-      // Mark the committer done (simulates it successfully completing).
+      // Mark the committer done (simulates it completing — but main is still dirty
+      // because e.g. git stash couldn't capture all files).
       await queue.updateTask(committerRes.fixTaskId, { status: 'done' })
 
       // --- test phase ---
-      // A second task represents a re-dispatched (or newly enqueued) task
-      // that hits the same dirty hash after the committer is already done.
+      // A second task hits the same dirty hash after the committer is already done.
       const testTask = await queue.enqueueTask('test task', undefined, { skipTriage: true })
 
       const mockCatalog = {
@@ -98,24 +103,24 @@ describe('runMainDirtyDispatchCheck', () => {
         log: (msg) => logs.push(msg),
       })
 
-      // Must NOT be parked — done committer is not a live blocker.
-      expect(parked).toBe(false)
+      // Must be parked — done committer is NOT satisfied as dedup; a fresh
+      // committer was spawned and testTask is blocked behind it.
+      expect(parked).toBe(true)
 
-      // Source task must not be blocked.
+      // Source task must be blocked (on the fresh committer).
       const testTaskAfter = await queue.getTask(testTask.id)
-      expect(testTaskAfter?.status).not.toBe('blocked')
+      expect(testTaskAfter?.status).toBe('blocked')
 
-      // No blocker edge between testTask and the done committer.
+      // No blocker edge between testTask and the OLD done committer.
       const c = queue.resolveQueueClient()
-      const edges = await c.execute({
+      const edgesToOld = await c.execute({
         sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
         args: [testTask.id, committerRes.fixTaskId],
       })
-      expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(0)
+      expect(Number((edgesToOld.rows[0] as unknown as { n: number }).n)).toBe(0)
 
-      // Log must say "not attached", not "parked blocked".
-      expect(logs.some((l) => l.includes('not attached'))).toBe(true)
-      expect(logs.every((l) => !l.includes('parked blocked'))).toBe(true)
+      // Log must include "parked blocked" (not "not attached").
+      expect(logs.some((l) => l.includes('parked blocked'))).toBe(true)
     },
     30_000,
   )

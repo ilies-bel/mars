@@ -497,44 +497,15 @@ export const spawnOrAttachMainCommitter = async (
     }
   }
 
-  // Step 2: Runaway-spawn guard. If a DONE committer handled the exact same
-  // dirty EPISODE (same HEAD sha + same file-set), this is likely a detection
-  // tick racing against the committer's cleanup. Suppress re-spawn: the dirty
-  // state was already handled in this episode, and spawning again would loop
-  // indefinitely (detect dirty → spawn → done → detect dirty → spawn …).
-  //
-  // This check is SCOPED TO THE EPISODE (headSha + files) not the file-set
-  // alone — so if HEAD advances and the same files are still dirty, that is a
-  // genuinely new episode and gets a fresh committer.
-  //
-  // Skip when episodeHash is null (git rev-parse HEAD failed): the missing
-  // guard is acceptable; the worst case is one extra spawn, not a loop.
-  if (input.detection.episodeHash !== null) {
-    const placeholders = ['done'].map(() => '?').join(',')
-    const doneRow = await s.query({
-      sql: `SELECT id, status FROM tasks
-             WHERE kind = 'fix'
-               AND status IN (${placeholders})
-               AND json_extract(recovery_payload, '$.recipe') = ?
-               AND json_extract(recovery_payload, '$.episodeHash') = ?
-             ORDER BY created_at DESC
-             LIMIT 1`,
-      args: ['done', MAIN_COMMITER_RECIPE, input.detection.episodeHash],
-    })
-    if (doneRow.rows.length > 0) {
-      const doneCommitter = doneRow.rows[0] as unknown as { id: string; status: string }
-      // Do NOT attach the source to the done committer — done tasks cannot
-      // unblock dependents. Return spawned:false so the caller knows a
-      // committer (now done) already handled this episode.
-      return {
-        fixTaskId: doneCommitter.id,
-        spawned: false,
-        attachedToStatus: 'done',
-      }
-    }
-  }
-
-  // Step 3: No active committer, no done episode suppressor — spawn fresh.
+  // Step 2: No active committer — spawn fresh.
+  // Done committers are intentionally NOT checked here. A done committer only
+  // proves that main was clean when the committer verified; it does NOT prove
+  // that main is still clean now (the verify gate enforces that invariant). If
+  // main is still dirty after a committer finishes (e.g. because git stash
+  // refused to capture some files), the committer's verify fails and the task
+  // reaches `failed` — not `done` — so the action queue surfaces it to a human.
+  // If a done committer exists and we re-detect dirt, that is a genuinely new
+  // dirty episode: spawn a fresh committer to handle it.
   const arc = Arc.load(input.sourceOriginId, s)
   const { fixTaskId } = await arc.spawnMainCommitterRecovery({
     sourceTaskId: input.sourceTaskId,

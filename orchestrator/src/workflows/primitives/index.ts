@@ -1063,22 +1063,16 @@ export const verify = async (
                 traceStore: trace.traceStore,
                 store,
               })
-              if (resolution.attachedToStatus === 'done') {
-                console.log(
-                  `[main-dirty] verify-time: task ${taskId} found done committer at same hash; falling through to standard verify`,
-                )
-              } else {
-                console.log(
-                  `[main-dirty] verify-time: task ${taskId} parked blocked on main-commiter ${resolution.fixTaskId} (${
-                    resolution.spawned
-                      ? 'spawned fresh'
-                      : `attached to existing committer in status=${resolution.attachedToStatus}`
-                  })`,
-                )
-                throw new Error(
-                  `task ${taskId} verify:main-dirty: ${MAIN_DIRTY_VERIFY_MESSAGE}`,
-                )
-              }
+              console.log(
+                `[main-dirty] verify-time: task ${taskId} parked blocked on main-commiter ${resolution.fixTaskId} (${
+                  resolution.spawned
+                    ? 'spawned fresh'
+                    : `attached to existing committer in status=${resolution.attachedToStatus}`
+                })`,
+              )
+              throw new Error(
+                `task ${taskId} verify:main-dirty: ${MAIN_DIRTY_VERIFY_MESSAGE}`,
+              )
             } else {
               console.log(
                 `[main-dirty] verify-time: integration branch is dirty but recipe '${MAIN_COMMITER_RECIPE}' is missing from the catalog; falling through to standard verify`,
@@ -1193,7 +1187,7 @@ export const verify = async (
         branch,
         buildPhaseCtx(trace, taskId, 'verify'),
       )
-      const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
+      const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE, checkIntegrationBranchDirty } = await import(
         '../../core/lib/main-dirty'
       )
       const commiterPayload =
@@ -1245,6 +1239,42 @@ export const verify = async (
             integrationBranch,
             traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
           }).finally(() => releaseRetryLock())
+        }
+      }
+
+      // Main-committer invariant: the integration checkout must be clean after
+      // the committer ran. A committer task may only succeed if
+      // `git status --porcelain` on the integration branch's primary checkout
+      // (repoRoot, not the committer worktree) is empty. If the checkout is
+      // still dirty — e.g. because git stash refused to capture ignored files,
+      // or the committer exited without committing anything meaningful — the
+      // verify step must fail so the task escalates to the action queue for
+      // operator review (non-recoverable per ADR-0040).
+      //
+      // Only fires when `verifyChanges` already passed: no point stacking a
+      // second failure message on top of an already-failed verify run.
+      if (r.passed && commiterPayload?.recipe === MAIN_COMMITER_RECIPE) {
+        const postClean = await checkIntegrationBranchDirty({
+          repoRoot: verifyCtx.repoRoot,
+          integrationBranch,
+          traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
+        })
+        if (postClean.dirty) {
+          r = {
+            passed: false,
+            steps: [
+              ...r.steps,
+              {
+                name: 'integration-clean',
+                passed: false,
+                output:
+                  `verify:main-committer-still-dirty — integration branch ${integrationBranch} is still dirty after main-committer ran.\n` +
+                  `The committer exited without cleaning the integration checkout (e.g. git stash refused to capture some files, or the committer did not commit).\n` +
+                  `Operator action required — dirty files:\n${postClean.statusOutput}`,
+                tier: 'task' as const,
+              },
+            ],
+          }
         }
       }
 
@@ -1569,22 +1599,16 @@ export const merge = async (
                 traceStore: trace.traceStore,
                 store,
               })
-              if (resolution.attachedToStatus === 'done') {
-                console.log(
-                  `[main-dirty] merge-time: task ${taskId} found done committer at same hash; falling through to merge attempt`,
-                )
-              } else {
-                console.log(
-                  `[main-dirty] merge-time: task ${taskId} parked blocked on main-commiter ${resolution.fixTaskId} (${
-                    resolution.spawned
-                      ? 'spawned fresh'
-                      : `attached to existing committer in status=${resolution.attachedToStatus}`
-                  })`,
-                )
-                throw new Error(
-                  `task ${taskId} merge:main-dirty: ${MAIN_DIRTY_MERGE_MESSAGE}`,
-                )
-              }
+              console.log(
+                `[main-dirty] merge-time: task ${taskId} parked blocked on main-commiter ${resolution.fixTaskId} (${
+                  resolution.spawned
+                    ? 'spawned fresh'
+                    : `attached to existing committer in status=${resolution.attachedToStatus}`
+                })`,
+              )
+              throw new Error(
+                `task ${taskId} merge:main-dirty: ${MAIN_DIRTY_MERGE_MESSAGE}`,
+              )
             } else {
               // Recipe missing from catalog — fall back to the hard-fail +
               // manual action-queue item so a broken/stripped catalog still
