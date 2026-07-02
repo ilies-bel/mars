@@ -103,12 +103,12 @@ export const ActionQueueRow = memo(({
           {item.priority}
         </span>
       </div>
-      <div className="mt-1 break-words font-mono text-[12px] text-fg">
+      <div className="mt-1 line-clamp-4 break-words font-mono text-[12px] text-fg">
         {item.title || '(no title)'}
       </div>
       <div className="mt-1 flex items-center justify-between gap-2">
-        <span className="font-mono text-[10px] text-iron/70">
-          {formatTime(item.at)}
+        <span className="font-mono text-[10px] text-iron/70" title={formatTime(item.at)}>
+          {relativeTime(item.at)}
         </span>
         {onRestart !== null && (
           <button
@@ -148,8 +148,8 @@ const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
       <span className="font-mono text-[11px] text-fg">
         {resolution.resolution ?? '(closed)'}
       </span>
-      <span className="font-mono text-[10px] text-iron/70">
-        {formatTime(resolution.resolvedAt)}
+      <span className="font-mono text-[10px] text-iron/70" title={formatTime(resolution.resolvedAt)}>
+        {relativeTime(resolution.resolvedAt)}
         {resolution.resolvedBy ? ` · ${resolution.resolvedBy}` : null}
       </span>
       {resolution.resolutionNote ? (
@@ -503,18 +503,22 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
 
   return (
     <>
-      <div>
-        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-          Problem
-        </dt>
-        <dd className="whitespace-pre-wrap text-fg">{p.problem || <span className="text-iron/70">(none)</span>}</dd>
-      </div>
-      <div>
-        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
-          Solution
-        </dt>
-        <dd className="whitespace-pre-wrap text-fg">{p.solution || <span className="text-iron/70">(none)</span>}</dd>
-      </div>
+      {p.problem ? (
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Problem
+          </dt>
+          <dd className="whitespace-pre-wrap text-fg">{p.problem}</dd>
+        </div>
+      ) : null}
+      {p.solution ? (
+        <div>
+          <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+            Solution
+          </dt>
+          <dd className="whitespace-pre-wrap text-fg">{p.solution}</dd>
+        </div>
+      ) : null}
       {p.userStories.length > 0 ? (
         <div>
           <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
@@ -632,7 +636,7 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
       </header>
 
       <main className="flex-1 px-6 py-4">
-        <dl className="flex flex-col gap-4 font-mono text-[12px]">
+        <dl className="flex flex-col gap-4 font-mono text-[12px] max-w-[75ch]">
           {/* Resolution block — shown for resolved history rows; suppresses ActionBar. */}
           {item.resolution ? (
             <ResolutionBlock resolution={item.resolution} />
@@ -671,8 +675,8 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 <dd>
                   {item.staleWorktreeDetail.investigation ? (
                     <>
-                      <p className="mb-1 text-[10px] text-iron/60">
-                        {formatTime(item.staleWorktreeDetail.updatedAt)}
+                      <p className="mb-1 text-[10px] text-iron/60" title={formatTime(item.staleWorktreeDetail.updatedAt)}>
+                        {relativeTime(item.staleWorktreeDetail.updatedAt)}
                       </p>
                       <p className="whitespace-pre-wrap text-fg">
                         {item.staleWorktreeDetail.investigation}
@@ -718,8 +722,8 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 Diagnosis
               </dt>
               <dd>
-                <p className="mb-1 text-[10px] text-iron/60">
-                  {formatTime(item.diagnosis.diagnosedAt)}
+                <p className="mb-1 text-[10px] text-iron/60" title={formatTime(item.diagnosis.diagnosedAt)}>
+                  {relativeTime(item.diagnosis.diagnosedAt)}
                 </p>
                 <p className="whitespace-pre-wrap text-fg">
                   {item.diagnosis.text}

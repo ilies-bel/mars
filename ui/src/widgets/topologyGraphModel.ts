@@ -13,6 +13,7 @@
 
 import type { ComboData, EdgeData, NodeData } from '@antv/g6'
 import { blockerKey, type ChainResult } from '@/shared/chainTrace'
+import { titleFromPrompt } from '@/shared/promptTitle'
 import type { Cluster, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 
 /**
@@ -122,10 +123,7 @@ const comboId = (arcKey: string): string => `combo:${arcKey}`
 export const arcKeyFromComboId = (id: string): string => id.replace(/^combo:/, '')
 
 /** First non-empty line of a task's prompt, used as its node label. */
-const taskLabel = (t: ProgressTask): string => {
-  const first = t.prompt.split('\n')[0]?.trim()
-  return first && first.length > 0 ? first : t.id
-}
+const taskLabel = (t: ProgressTask): string => titleFromPrompt(t.prompt) || t.id
 
 export interface G6GraphData {
   nodes: NodeData[]
@@ -179,7 +177,7 @@ export const buildG6Data = (
     const firstTask = rootTask ?? arcTasks[0]
     const label = proposal
       ? proposal.title
-      : (firstTask!.prompt.split('\n')[0]?.trim() || arcKey)
+      : (titleFromPrompt(firstTask!.prompt) || arcKey)
 
     // Compute arc cluster rollup inline
     const counts = emptyCounts()

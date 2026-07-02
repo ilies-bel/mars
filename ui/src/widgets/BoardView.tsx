@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ProposalCard } from '@/components/ProposalCard'
 import type { Cluster, DraftFeature, ProgressTask } from '@/shared/schemas'
 import type { Role, UITask } from '@/shared/types'
+import { titleFromPrompt } from '@/shared/promptTitle'
 import { Column } from '@/widgets/Column'
 
 // ---------------------------------------------------------------------------
@@ -15,15 +16,6 @@ const ALL_TABS: readonly ActiveTab[] = ['Queued', 'In progress', 'Blocked', 'Fai
 
 // Priority for the default tab: leftmost non-empty of Failed, In progress, Queued
 const DEFAULT_TAB_PRIORITY: readonly ActiveTab[] = ['Failed', 'In progress', 'Queued']
-
-// ---------------------------------------------------------------------------
-// Helpers (used only by this module)
-// ---------------------------------------------------------------------------
-
-const titleFromPrompt = (prompt: string): string => {
-  const first = prompt.split(/\r?\n/, 1)[0]?.trim() ?? ''
-  return first.length > 0 ? first : prompt.trim()
-}
 
 const roleFromStatus = (status: ProgressTask['status']): Role => {
   switch (status) {
