@@ -225,6 +225,98 @@ describe('deriveReproCommand', () => {
     it('returns the worktree root unchanged when no project layout is found', () => {
       expect(resolveVerifyCwd(worktree)).toBe(worktree)
     })
+
+    it('uses verifyCwd from manifest when the TS heuristic finds no project (non-JS repo)', () => {
+      // Non-JS layout: no package.json/tsconfig.json anywhere.
+      // The manifest has exactly one non-root supervisor with verifyCwd set.
+      const marsDir = resolve(worktree, '.mars', 'supervisors')
+      mkdirSync(marsDir, { recursive: true })
+      writeFileSync(
+        resolve(marsDir, 'manifest.json'),
+        JSON.stringify({
+          version: 1,
+          supervisors: [
+            { name: 'backend', scope: 'service-a', verifyCwd: 'service-a' },
+          ],
+          removed: [],
+        }),
+      )
+      expect(resolveVerifyCwd(worktree)).toBe(resolve(worktree, 'service-a'))
+    })
+
+    it('ignores the manifest when multiple distinct verifyCwds exist (ambiguous multi-supervisor)', () => {
+      const marsDir = resolve(worktree, '.mars', 'supervisors')
+      mkdirSync(marsDir, { recursive: true })
+      writeFileSync(
+        resolve(marsDir, 'manifest.json'),
+        JSON.stringify({
+          version: 1,
+          supervisors: [
+            { name: 'svc-a', scope: 'service-a', verifyCwd: 'service-a' },
+            { name: 'svc-b', scope: 'service-b', verifyCwd: 'service-b' },
+          ],
+          removed: [],
+        }),
+      )
+      // Falls back to worktree root — no TS project, no unambiguous manifest cwd.
+      expect(resolveVerifyCwd(worktree)).toBe(worktree)
+    })
+
+    it('TS heuristic takes priority over manifest when the root is itself a TS project', () => {
+      // Root has package.json + tsconfig.json → TS check fires before manifest lookup.
+      writeFileSync(resolve(worktree, 'package.json'), '{}')
+      writeFileSync(resolve(worktree, 'tsconfig.json'), '{}')
+      const marsDir = resolve(worktree, '.mars', 'supervisors')
+      mkdirSync(marsDir, { recursive: true })
+      writeFileSync(
+        resolve(marsDir, 'manifest.json'),
+        JSON.stringify({
+          version: 1,
+          supervisors: [
+            {
+              name: 'orchestrator',
+              scope: 'orchestrator',
+              verifyCwd: 'orchestrator',
+            },
+          ],
+          removed: [],
+        }),
+      )
+      expect(resolveVerifyCwd(worktree)).toBe(worktree)
+    })
+
+    it('ignores root-scoped supervisor (scope ".") when looking for manifest override', () => {
+      const marsDir = resolve(worktree, '.mars', 'supervisors')
+      mkdirSync(marsDir, { recursive: true })
+      writeFileSync(
+        resolve(marsDir, 'manifest.json'),
+        JSON.stringify({
+          version: 1,
+          supervisors: [{ name: 'root', scope: '.', verifyCwd: '.' }],
+          removed: [],
+        }),
+      )
+      expect(resolveVerifyCwd(worktree)).toBe(worktree)
+    })
+
+    it('tolerates a manifest with no verifyCwd fields and falls back to TS heuristic', () => {
+      const marsDir = resolve(worktree, '.mars', 'supervisors')
+      mkdirSync(marsDir, { recursive: true })
+      writeFileSync(
+        resolve(marsDir, 'manifest.json'),
+        JSON.stringify({
+          version: 1,
+          // No verifyCwd field on any entry — older manifest format.
+          supervisors: [{ name: 'backend', scope: 'orchestrator' }],
+          removed: [],
+        }),
+      )
+      const sub = resolve(worktree, 'orchestrator')
+      mkdirSync(sub)
+      writeFileSync(resolve(sub, 'package.json'), '{}')
+      writeFileSync(resolve(sub, 'tsconfig.json'), '{}')
+      expect(resolveVerifyCwd(worktree)).toBe(sub)
+    })
   })
 })
 

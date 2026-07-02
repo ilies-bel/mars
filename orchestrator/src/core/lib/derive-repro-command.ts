@@ -2,6 +2,80 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 /**
+ * Walk up from `worktreeRoot` looking for `.mars/supervisors/manifest.json`
+ * and return the parsed list of supervisor entries.
+ *
+ * The manifest lives at `<repoRoot>/.mars/supervisors/manifest.json`. For a
+ * Mars worktree at `<repoRoot>/.mars/worktrees/<id>/` we must walk up three
+ * levels to reach the repo root; for tests, the manifest is placed directly
+ * under `<worktreeRoot>/.mars/supervisors/manifest.json` (level 0). Walking
+ * up at most 6 directories covers both layouts without scanning the entire
+ * filesystem.
+ *
+ * Returns an empty array when the manifest is absent, unreadable, or
+ * malformed — callers treat an empty result as "no override available".
+ */
+export const readSupervisorsManifest = (
+  worktreeRoot: string,
+): Array<{ scope: string; verifyCwd?: string }> => {
+  let manifestPath: string | null = null
+  let dir = worktreeRoot
+  for (let i = 0; i < 6; i++) {
+    const candidate = resolve(dir, '.mars', 'supervisors', 'manifest.json')
+    if (existsSync(candidate)) {
+      manifestPath = candidate
+      break
+    }
+    const parent = resolve(dir, '..')
+    if (parent === dir) break
+    dir = parent
+  }
+  if (manifestPath === null) return []
+
+  let raw: string
+  try {
+    raw = readFileSync(manifestPath, 'utf8')
+  } catch {
+    return []
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    !('supervisors' in parsed) ||
+    !Array.isArray((parsed as { supervisors: unknown }).supervisors)
+  ) {
+    return []
+  }
+  const result: Array<{ scope: string; verifyCwd?: string }> = []
+  for (const s of (parsed as { supervisors: unknown[] }).supervisors) {
+    if (
+      typeof s === 'object' &&
+      s !== null &&
+      'scope' in s &&
+      typeof (s as { scope: unknown }).scope === 'string'
+    ) {
+      const entry: { scope: string; verifyCwd?: string } = {
+        scope: (s as { scope: string }).scope,
+      }
+      if (
+        'verifyCwd' in s &&
+        typeof (s as { verifyCwd: unknown }).verifyCwd === 'string'
+      ) {
+        entry.verifyCwd = (s as { verifyCwd: string }).verifyCwd
+      }
+      result.push(entry)
+    }
+  }
+  return result
+}
+
+/**
  * A verify step that actually ran during the verify phase, carrying enough
  * information to build a precise reproduce command without guessing the
  * toolchain from the step name.
@@ -25,18 +99,40 @@ export interface RanVerifyStep {
  * same heuristic; keeping the implementation here and importing from
  * the workflow guarantees they cannot drift.
  *
- * Heuristic: a directory is a project if it has both `package.json` and
- * `tsconfig.json`. Worktree root wins; otherwise fall back to
- * `<worktreeRoot>/orchestrator`; otherwise return the worktree root
- * unchanged.
+ * Resolution order:
+ *
+ * 1. TS-specific heuristic: a directory is a project if it has both
+ *    `package.json` AND `tsconfig.json`. Worktree root wins; otherwise
+ *    fall back to `<worktreeRoot>/orchestrator`.
+ * 2. Config override from the supervisors manifest
+ *    (`.mars/supervisors/manifest.json`). Activated only when the TS
+ *    heuristic finds no project — covers non-JS monorepos (Kotlin,
+ *    Python, Rust, …) that lack package.json/tsconfig.json. The override
+ *    is used only when exactly one non-root `verifyCwd` value appears
+ *    across all supervisor entries; multiple distinct values are
+ *    ambiguous and fall through to the default.
+ * 3. Worktree root unchanged (safe default for single-project repos
+ *    whose verify commands run from the repo root).
  */
 export const resolveVerifyCwd = (worktreeRoot: string): string => {
+  // 1. TS-specific heuristic.
   const hasProject = (dir: string): boolean =>
     existsSync(resolve(dir, 'package.json')) &&
     existsSync(resolve(dir, 'tsconfig.json'))
   if (hasProject(worktreeRoot)) return worktreeRoot
   const orchestrator = resolve(worktreeRoot, 'orchestrator')
   if (hasProject(orchestrator)) return orchestrator
+
+  // 2. Supervisors manifest override for non-JS monorepos.
+  const entries = readSupervisorsManifest(worktreeRoot)
+  const cwds = new Set(
+    entries
+      .map((e) => e.verifyCwd ?? e.scope)
+      .filter((v) => v !== '.' && v !== ''),
+  )
+  if (cwds.size === 1) return resolve(worktreeRoot, [...cwds][0])
+
+  // 3. Default.
   return worktreeRoot
 }
 

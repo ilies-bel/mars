@@ -157,6 +157,12 @@ export const writeSupervisors = (
       persona: r.spec.persona,
       kind: r.spec.kind,
       scope,
+      // verifyCwd declares where verify commands should run for this supervisor.
+      // Defaults to scope so resolveVerifyCwd/resolveTaskCwd can use it as a
+      // first-class override for non-JS monorepos (Kotlin, Python, Rust, …)
+      // where the TS-specific heuristic (package.json + tsconfig.json) does
+      // not fire.
+      verifyCwd: scope,
       path: relPath,
       outcome: r.outcome,
       triedSlugs: r.triedSlugs,

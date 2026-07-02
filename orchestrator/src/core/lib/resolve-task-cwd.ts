@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { resolveVerifyCwd } from './derive-repro-command'
+import { readSupervisorsManifest, resolveVerifyCwd } from './derive-repro-command'
 
 /**
  * Resolve the project subdirectory the implementor agent should treat as
@@ -9,7 +9,7 @@ import { resolveVerifyCwd } from './derive-repro-command'
  * stays at the worktree root so Mars CLI commands resolve `repoRoot()`
  * correctly and slices that span multiple subprojects still work.
  *
- * Heuristic:
+ * Resolution order:
  *
  * 1. If `files` is empty there is no signal to lean on; fall back to
  *    {@link resolveVerifyCwd}, which is the same heuristic verify uses.
@@ -19,10 +19,15 @@ import { resolveVerifyCwd } from './derive-repro-command'
  * 3. Walk that prefix upward — from the most-specific directory down to
  *    (but not including) the worktree root — and return the first
  *    directory under `worktreeRoot` that contains both `package.json`
- *    AND `tsconfig.json`.
- * 4. If nothing along the chain qualifies (e.g. files span multiple
- *    top-level subprojects, so the common prefix is empty), fall back to
- *    {@link resolveVerifyCwd}.
+ *    AND `tsconfig.json` (TS-specific heuristic).
+ * 4. Config override from the supervisors manifest: find the supervisor
+ *    whose `scope` is the longest prefix of (or exact match for) the
+ *    common file path prefix. Uses `verifyCwd` if declared, otherwise
+ *    `scope`. Covers non-JS monorepos (Kotlin, Python, Rust, …) where
+ *    the TS heuristic never fires. When no supervisor scope matches the
+ *    file prefix, this step is skipped.
+ * 5. Fall back to {@link resolveVerifyCwd} (handles the single-supervisor
+ *    non-JS case and the root-project case).
  */
 export const resolveTaskCwd = (
   worktreeRoot: string,
@@ -47,6 +52,37 @@ export const resolveTaskCwd = (
     if (hasProject(candidate)) return candidate
     segments.pop()
   }
+
+  // TS heuristic found no project. Try matching the common file prefix
+  // against supervisor scopes in the manifest. Pick the most specific
+  // (longest) scope that is a prefix of the common segments.
+  const entries = readSupervisorsManifest(worktreeRoot)
+  let best: { scopeLength: number; verifyCwd: string } | null = null
+  for (const entry of entries) {
+    const scopeSegs = entry.scope
+      .split('/')
+      .filter((s) => s.length > 0 && s !== '.')
+    if (scopeSegs.length === 0) continue
+    if (scopeSegs.length > commonSegments.length) continue
+    const isPrefix = scopeSegs.every((seg, i) => commonSegments[i] === seg)
+    if (!isPrefix) continue
+    const verifyCwd = entry.verifyCwd ?? entry.scope
+    if (verifyCwd === '.' || verifyCwd === '') continue
+    if (best === null || scopeSegs.length > best.scopeLength) {
+      best = { scopeLength: scopeSegs.length, verifyCwd }
+    }
+  }
+  if (best !== null) return resolve(worktreeRoot, best.verifyCwd)
+
+  // When the manifest had non-root entries but none matched the file
+  // prefix, we cannot safely guess which supervisor's verifyCwd applies.
+  // Return the worktree root rather than letting resolveVerifyCwd's
+  // single-supervisor heuristic pick an unrelated scope.
+  const hasNonRootEntries = entries.some((e) => {
+    const v = e.verifyCwd ?? e.scope
+    return v !== '.' && v !== ''
+  })
+  if (hasNonRootEntries) return worktreeRoot
 
   return resolveVerifyCwd(worktreeRoot)
 }

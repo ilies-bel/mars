@@ -103,4 +103,76 @@ describe('resolveTaskCwd', () => {
     const cwd = resolveTaskCwd(worktree, ['src/foo.ts'])
     expect(cwd).toBe(worktree)
   })
+
+  describe('manifest-based fallback for non-JS monorepos', () => {
+    const seedManifest = (supervisors: Array<{ name: string; scope: string; verifyCwd?: string }>) => {
+      const marsDir = resolve(worktree, '.mars', 'supervisors')
+      mkdirSync(marsDir, { recursive: true })
+      writeFileSync(
+        resolve(marsDir, 'manifest.json'),
+        JSON.stringify({ version: 1, supervisors, removed: [] }),
+      )
+    }
+
+    it('uses the matching supervisor scope when files live under that scope and TS heuristic fails', () => {
+      // Non-JS monorepo: two services, no package.json/tsconfig.json.
+      seedManifest([
+        { name: 'svc-a', scope: 'service-a', verifyCwd: 'service-a' },
+        { name: 'svc-b', scope: 'service-b', verifyCwd: 'service-b' },
+      ])
+      const cwd = resolveTaskCwd(worktree, [
+        'service-a/src/Foo.kt',
+        'service-a/src/Bar.kt',
+      ])
+      expect(cwd).toBe(resolve(worktree, 'service-a'))
+    })
+
+    it('picks the most specific matching supervisor for deeply-nested files', () => {
+      seedManifest([
+        { name: 'root', scope: '.', verifyCwd: '.' },
+        {
+          name: 'backend',
+          scope: 'packages/backend',
+          verifyCwd: 'packages/backend',
+        },
+      ])
+      const cwd = resolveTaskCwd(worktree, [
+        'packages/backend/src/Main.kt',
+        'packages/backend/test/MainTest.kt',
+      ])
+      expect(cwd).toBe(resolve(worktree, 'packages/backend'))
+    })
+
+    it('falls back to worktree root when no supervisor scope matches the file common prefix', () => {
+      seedManifest([
+        { name: 'svc-a', scope: 'service-a', verifyCwd: 'service-a' },
+      ])
+      // Files are in service-b/ — no matching supervisor.
+      const cwd = resolveTaskCwd(worktree, ['service-b/src/Foo.kt'])
+      expect(cwd).toBe(worktree)
+    })
+
+    it('still uses the TS heuristic when applicable, ignoring any manifest entry', () => {
+      // A JS subproject exists alongside a manifest — TS heuristic should win.
+      const sub = resolve(worktree, 'orchestrator')
+      mkdirSync(sub)
+      writeFileSync(
+        resolve(sub, 'package.json'),
+        JSON.stringify({ scripts: { test: 'vitest run' } }),
+      )
+      writeFileSync(resolve(sub, 'tsconfig.json'), '{}')
+      seedManifest([
+        {
+          name: 'orchestrator',
+          scope: 'orchestrator',
+          verifyCwd: 'orchestrator',
+        },
+      ])
+      const cwd = resolveTaskCwd(worktree, [
+        'orchestrator/src/foo.ts',
+        'orchestrator/src/bar.ts',
+      ])
+      expect(cwd).toBe(sub)
+    })
+  })
 })
