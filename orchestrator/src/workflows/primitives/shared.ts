@@ -346,6 +346,7 @@ export const composePrompt = (
   if (specBlock !== null) sections.push(specBlock)
   sections.push(CODING_DISCIPLINE)
   sections.push(COMMIT_FOOTER)
+  sections.push(COMPLETION_REPORT_CONTRACT)
   return sections.join('\n\n')
 }
 
@@ -363,6 +364,101 @@ export const failureExcerpt = (
   if (output.length <= tailMax + headMax) return output
   return `${output.slice(0, headMax)}\n…[middle elided]…\n${output.slice(-tailMax)}`
 }
+
+// ---------------------------------------------------------------------------
+// Completion-report grammar (exported for the verify-phase gate)
+// ---------------------------------------------------------------------------
+
+/** The info-string that marks the fenced completion-report block. */
+export const COMPLETION_REPORT_FENCE = 'completion-report'
+
+export type CompletionReportLine = {
+  status: 'done' | 'partial' | 'blocked'
+  criterion: string
+  evidence: string
+}
+
+/**
+ * Typed result of parsing a completion-report block from coder output.
+ *
+ *  - `parsed`      — block was found and every line is well-formed.
+ *  - `absent`      — no completion-report fenced block was found in text.
+ *  - `unparseable` — block was found but at least one line is malformed.
+ */
+export type CompletionReport =
+  | { kind: 'parsed'; lines: CompletionReportLine[] }
+  | { kind: 'absent' }
+  | { kind: 'unparseable'; raw: string }
+
+/**
+ * Extract and parse the LAST completion-report fenced block in `text`.
+ *
+ * Total: never throws. Malformed input → typed `unparseable` result.
+ */
+export const parseCompletionReport = (text: string): CompletionReport => {
+  try {
+    const openTag = '```' + COMPLETION_REPORT_FENCE
+    const lastOpen = text.lastIndexOf(openTag)
+    if (lastOpen === -1) return { kind: 'absent' }
+
+    const bodyStart = lastOpen + openTag.length
+    // Closing fence is '```' on its own line after the opening tag.
+    const closeIdx = text.indexOf('\n```', bodyStart)
+    const raw =
+      closeIdx === -1
+        ? text.slice(bodyStart).trim()
+        : text.slice(bodyStart, closeIdx).trim()
+
+    if (raw.length === 0) return { kind: 'unparseable', raw: '' }
+
+    const lines: CompletionReportLine[] = []
+    for (const rawLine of raw.split('\n')) {
+      const trimmed = rawLine.trim()
+      if (trimmed.length === 0) continue
+      // Format: - <status> <criterion> — evidence: <evidence>   (em dash U+2014)
+      const match = trimmed.match(
+        /^-\s+(done|partial|blocked)\s+(.+?)\s+—\s+evidence:\s+(.+)$/,
+      )
+      if (!match) return { kind: 'unparseable', raw }
+      lines.push({
+        status: match[1] as 'done' | 'partial' | 'blocked',
+        criterion: match[2].trim(),
+        evidence: match[3].trim(),
+      })
+    }
+
+    if (lines.length === 0) return { kind: 'unparseable', raw }
+    return { kind: 'parsed', lines }
+  } catch {
+    return { kind: 'unparseable', raw: '' }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Completion-report contract brief (injected into every composed prompt)
+// ---------------------------------------------------------------------------
+
+/**
+ * Brief appended to every Coder task prompt requiring a machine-parseable
+ * completion report.  Phrased as a contract (parsed by verify), not a pep
+ * talk — the gate enforces it.
+ */
+export const COMPLETION_REPORT_CONTRACT = [
+  '## Completion report',
+  '',
+  'Your FINAL message MUST end with the fenced block below. The verify phase',
+  'parses it; an absent or malformed report fails verification.',
+  '',
+  '```' + COMPLETION_REPORT_FENCE,
+  '- [done|partial|blocked] <criterion or inferred goal> — evidence: <file:line | commit sha | test name>',
+  '```',
+  '',
+  'Rules:',
+  '- One line per `<done>` criterion when the task has a structured spec.',
+  '- For free-prose tasks, one line per top-level goal you inferred (state',
+  '  each explicitly — do not collapse multiple goals into one line).',
+  '- `partial` and `blocked` lines MUST name what remains and why.',
+].join('\n')
 
 // ---------------------------------------------------------------------------
 // Post-coder worktree classifier
