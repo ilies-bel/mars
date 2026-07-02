@@ -9,7 +9,10 @@
  *     injected sources (no write path is ever invoked).
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
 import {
   buildAlert,
   listAlerts,
@@ -134,6 +137,34 @@ describe('buildAlert', () => {
 })
 
 describe('listAlerts / showAlert', () => {
+  // listAlerts → alertForStaleWorktree → resolveOriginIdForTask calls
+  // getDefaultTaskStore(), which requires an isolated temp store when running
+  // under vitest. Set one up via the established vi.resetModules() pattern so
+  // the queue client singleton picks up the hermetic MARS_REPO.
+  let repo: string
+  let listAlertsLocal: typeof listAlerts
+  let showAlertLocal: typeof showAlert
+  let buildAlertLocal: typeof buildAlert
+
+  beforeEach(async () => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-alert-test-'))
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+    vi.resetModules()
+    process.env.MARS_REPO = repo
+    const alertMod = await import('./alert')
+    listAlertsLocal = alertMod.listAlerts
+    showAlertLocal = alertMod.showAlert
+    buildAlertLocal = alertMod.buildAlert
+    const queueMod = await import('../queue')
+    await queueMod.migrateQueueSchema()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
   const failedArc: FailedArcRecord = {
     arcId: 'mars-failed01',
     goal: 'Cut the operator dismiss endpoint',
@@ -158,7 +189,7 @@ describe('listAlerts / showAlert', () => {
       listFailedArcs: vi.fn(async () => [failedArc]),
       listStaleWorktrees: vi.fn(async () => [staleRecord]),
     }
-    const alerts = await listAlerts(sources)
+    const alerts = await listAlertsLocal(sources)
 
     expect(alerts).toHaveLength(2)
     const arcAlert = alerts.find((a) => a.kind === 'arc-failed')
@@ -179,11 +210,11 @@ describe('listAlerts / showAlert', () => {
       listFailedArcs: async () => [failedArc],
       listStaleWorktrees: async () => [],
     }
-    const hit = await showAlert('mars-failed01', sources)
+    const hit = await showAlertLocal('mars-failed01', sources)
     expect(hit?.arcId).toBe('mars-failed01')
     expect(hit?.kind).toBe('arc-failed')
 
-    const miss = await showAlert('mars-does-not-exist', sources)
+    const miss = await showAlertLocal('mars-does-not-exist', sources)
     expect(miss).toBeNull()
   })
 
@@ -198,14 +229,14 @@ describe('listAlerts / showAlert', () => {
       listFailedArcs: async () => [failedArc],
       listStaleWorktrees: async () => [staleRecord],
     }
-    buildAlert(
+    buildAlertLocal(
       'arc-x',
       resolveFailureKind('verify:has-diff/no-commits-ahead', ''),
       'tail',
       { goal: 'g', traceTail: 'tail', descendants: [], chain: [] },
     )
-    await listAlerts(sources)
-    await showAlert('mars-failed01', sources)
+    await listAlertsLocal(sources)
+    await showAlertLocal('mars-failed01', sources)
 
     expect(raiseSpy).not.toHaveBeenCalled()
     raiseSpy.mockRestore()

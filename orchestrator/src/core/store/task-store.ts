@@ -29,6 +29,8 @@
 
 import type { Client, InStatement, InValue, ResultSet } from '@libsql/client'
 import { execFile } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import {
   resolveQueueClient,
@@ -455,13 +457,85 @@ export const createTaskStore = (client: Client | null): DomainTaskStore => {
 let cachedDefaultStore: DomainTaskStore | null = null
 
 /**
+ * Compute the candidate `.mars/` stateDir for cross-boundary guard checks
+ * WITHOUT calling `resolveContext()` (which has a `mkdirSync` side effect).
+ *
+ * - When `MARS_REPO` is explicitly set, derive stateDir from it directly.
+ * - When `MARS_REPO` is absent and the CWD sits inside a worktree, infer the
+ *   parent `.mars/` from the CWD path (the worktree path always contains
+ *   `/.mars/worktrees/<id>`).
+ * - Returns `null` when neither source is available (ordinary production daemon
+ *   without an explicit repo binding — guard skips in that case).
+ */
+const computeStateDirForGuard = (): string | null => {
+  const marsRepo = process.env.MARS_REPO
+  if (marsRepo) return resolve(marsRepo) + sep + '.mars'
+
+  const cwd = process.cwd()
+  const marker = sep + '.mars' + sep + 'worktrees' + sep
+  const idx = cwd.indexOf(marker)
+  if (idx !== -1) return cwd.slice(0, idx) + sep + '.mars'
+
+  return null
+}
+
+/**
  * Composition-root accessor: the single process-wide `DomainTaskStore` over
  * `.mars/mars.db`. Lazily runs the queue migration and constructs the store
  * around the seam-internal libsql client. This is the only sanctioned way for
  * production modules to obtain a store when one was not threaded in via DI.
+ *
+ * Two cross-boundary write guards are applied on the default-resolution path
+ * BEFORE `resolveContext()` (which has a `mkdirSync` side effect) is called:
+ *
+ * 1. **Worktree guard**: if the process CWD is inside the SAME
+ *    `<stateDir>/worktrees/<id>/` as the store would resolve to, we are a
+ *    dispatched Worker about to contaminate the PARENT production database
+ *    (forensic incident 2026-07-02). The stateDir is computed without side
+ *    effects so this throws before any filesystem mutation.
+ *
+ * 2. **Vitest guard**: when running under vitest (`process.env.VITEST`) with
+ *    `MARS_REPO` explicitly set, the resolved `.mars/` must reside inside the
+ *    OS temp directory. A non-temp `MARS_REPO` means the test forgot to use an
+ *    isolated store and would write to a real database. Use `createTaskStore()`
+ *    or set `MARS_REPO` to a `mkdtempSync()` path.
  */
 export const getDefaultTaskStore = async (): Promise<DomainTaskStore> => {
   if (cachedDefaultStore) return cachedDefaultStore
+
+  const cwd = process.cwd()
+  const stateDir = computeStateDirForGuard()
+
+  if (stateDir !== null) {
+    // ── Guard 1: worktree cross-boundary write prevention ──────────────────
+    // Only fires when CWD is inside THIS stateDir's worktrees/ — not when
+    // MARS_REPO is set to a completely different (e.g. temp) directory whose
+    // worktrees/ subtree has no overlap with the actual CWD.
+    if (cwd.startsWith(stateDir + sep + 'worktrees' + sep)) {
+      throw new Error(
+        `[mars] getDefaultTaskStore() refused: process CWD is inside a worktree ` +
+          `(${cwd}). This would write to the PARENT production database at ` +
+          `${stateDir}/mars.db. ` +
+          `Use createTaskStore() with an isolated client, or inject the store via DI.`,
+      )
+    }
+
+    // ── Guard 2: vitest hermetic store enforcement ─────────────────────────
+    // Only applies when VITEST is running, blocking non-temp stores before
+    // any write reaches the DB.
+    if (process.env.VITEST) {
+      const td = tmpdir()
+      if (!stateDir.startsWith(td + sep) && !stateDir.startsWith(td + '/')) {
+        throw new Error(
+          `[mars] getDefaultTaskStore() resolved to ${stateDir}/mars.db which is NOT ` +
+            `inside the system temp directory (${td}). ` +
+            `Tests must use an isolated store: set MARS_REPO to a mkdtempSync() path ` +
+            `or use createTaskStore() with a :memory: client.`,
+        )
+      }
+    }
+  }
+
   await migrateQueueSchema()
   cachedDefaultStore = createTaskStore(resolveQueueClient())
   return cachedDefaultStore
@@ -471,9 +545,23 @@ export const getDefaultTaskStore = async (): Promise<DomainTaskStore> => {
  * Synchronous composition-root accessor for call sites that only need domain
  * methods and cannot await. The migration is driven on first domain call by
  * queue.ts's own defensive `migrateQueueSchema()` guards.
+ *
+ * Applies the same worktree cross-boundary guard as {@link getDefaultTaskStore}
+ * to prevent dispatched Workers from writing to the parent production database.
  */
-export const getDefaultDomainTaskStore = (): DomainTaskStore =>
-  createTaskStore(resolveQueueClient())
+export const getDefaultDomainTaskStore = (): DomainTaskStore => {
+  const cwd = process.cwd()
+  const stateDir = computeStateDirForGuard()
+  if (stateDir !== null && cwd.startsWith(stateDir + sep + 'worktrees' + sep)) {
+    throw new Error(
+      `[mars] getDefaultDomainTaskStore() refused: process CWD is inside a worktree ` +
+        `(${cwd}). This would write to the PARENT production database at ` +
+        `${stateDir}/mars.db. ` +
+        `Use createTaskStore() with an isolated client, or inject the store via DI.`,
+    )
+  }
+  return createTaskStore(resolveQueueClient())
+}
 
 /**
  * Composition-root-only access to the underlying libsql `Client` for the

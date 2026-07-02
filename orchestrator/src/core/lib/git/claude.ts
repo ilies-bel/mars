@@ -424,8 +424,14 @@ export const claudeStreamArgs = (
 //   - CLAUDE* / CLAUDECODE*  — session id, entrypoint, execpath, effort, …
 //   - AI_AGENT               — generic "running inside an agent" marker
 //   - CMUX_*                 — the cmux terminal harness (CMUX_CLAUDE_PID, …)
+//   - MARS_REPO              — repo-root binding; a Worker running inside
+//                              .mars/worktrees/<id>/ must resolve its own
+//                              context from CWD, NOT inherit the parent's
+//                              MARS_REPO (otherwise tests inside the worktree
+//                              resolve to the PRODUCTION .mars/mars.db and
+//                              contaminate it — forensic incident 2026-07-02).
 // ANTHROPIC_API_KEY, PATH, and everything unrelated are preserved.
-const HOST_AGENT_ENV_RE = /^(?:CLAUDE(?:CODE)?(?:$|_)|CMUX_|AI_AGENT$)/i
+const HOST_AGENT_ENV_RE = /^(?:CLAUDE(?:CODE)?(?:$|_)|CMUX_|AI_AGENT$|MARS_REPO$)/i
 export const buildWorkerEnv = (): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const key of Object.keys(env)) {
