@@ -392,3 +392,7 @@ _Avoid_: terminal ui, curses app, ncurses, text ui, console ui
 **Context graph**:
 The task detail drawer's vertical mini-graph of a focused task's lineage — its originating Proposal, blocker chain, and one downstream hop — laid out top-to-bottom; distinct from the main Progress Topology canvas.
 _Avoid_: subgraph, mini-graph, focus subgraph, context subgraph
+
+**Lease**:
+Exclusive human ownership claim on a parked task's worktree. Taken with mars attach, released with mars release; a leased or awaiting-human task is exempt from the phantom watchdog, and lease expiry raises an action-queue row instead of auto-failing.
+_Avoid_: lock, claim, checkout
