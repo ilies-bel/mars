@@ -25,6 +25,7 @@ export type DerivedRowKind =
   | 'stale-worktree'
   | 'draft-proposal'
   | 'awaiting-validation'
+  | 'awaiting-human'
 
 /**
  * Resolve the recovery menu for a non-failure derived row kind. Returns an
@@ -62,6 +63,29 @@ export const derivedRowActions = (rowKind: string, entityId?: string): ActionDes
     return [
       { id: 'validate', label: 'Validate', op: 'validate' },
       { id: 'reject', label: 'Reject', op: 'reject', needsConfirm: true },
+    ]
+  }
+  if (rowKind === 'awaiting-human') {
+    return [
+      {
+        id: 'attach',
+        label: 'Attach',
+        op: 'copy',
+        hint: entityId ? `mars attach ${entityId}` : 'mars attach <id>',
+      },
+      {
+        id: 'release',
+        label: 'Release',
+        op: 'copy',
+        hint: entityId ? `mars release ${entityId}` : 'mars release <id>',
+      },
+      {
+        id: 'abort',
+        label: 'Abort',
+        op: 'copy',
+        hint: entityId ? `mars release --abort ${entityId}` : 'mars release --abort <id>',
+        needsConfirm: true,
+      },
     ]
   }
   return []

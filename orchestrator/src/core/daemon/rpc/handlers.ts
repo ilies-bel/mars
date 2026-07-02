@@ -267,6 +267,16 @@ const diagnoseFailureHandler = handler('diagnose-failure', async (req, deps) => 
   return { ok: true, data: result }
 })
 
+const attachHandler = handler('attach', async (req, deps) => {
+  const result = await deps.handleAttach(req.id, req.leaseOwner)
+  return { ok: true, data: result }
+})
+
+const releaseLeaseHandler = handler('release-lease', async (req, deps) => {
+  await deps.handleReleaseLease(req.id, req.abort ?? false)
+  return { ok: true }
+})
+
 const shutdownHandler = handler('shutdown', async (req, deps) => {
   // Three modes:
   //   drain=true  → stop picking new work, wait for in-flight to
@@ -418,6 +428,8 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   pingHandler,
   investigateHandler,
   diagnoseFailureHandler,
+  attachHandler,
+  releaseLeaseHandler,
   shutdownHandler,
   killHandler,
 ]

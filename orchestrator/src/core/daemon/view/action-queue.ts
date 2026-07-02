@@ -146,6 +146,16 @@ export interface TaskForActionQueue {
    * id in `fixForTaskId` so the UI can link back.
    */
   fixForTaskId?: string | null
+  /**
+   * Live lease owner for an 'awaiting-human' task. Preferred over the
+   * action-queue payload snapshot because `mars attach` updates the task row
+   * without touching the payload — the task row is always current.
+   */
+  leaseOwner?: string | null
+  /** ISO timestamp when the current lease was acquired. */
+  leasedAt?: string | null
+  /** Optional human note attached to the lease. */
+  leaseNote?: string | null
 }
 
 /**
@@ -516,21 +526,37 @@ export const buildActionQueueView = async ({
         ? row.payload.devServerUrl
         : null
 
-    // Surface the lease state for awaiting-human rows. The park primitive
-    // stamps owner/timestamp/note into the row payload at raise time.
-    const leaseState: ActionQueueRow['leaseState'] =
-      uiKind === 'awaiting-human' &&
-      typeof row.payload.leaseOwner === 'string' &&
-      typeof row.payload.leasedAt === 'string'
-        ? {
-            leaseOwner: row.payload.leaseOwner,
-            leasedAt: row.payload.leasedAt,
-            leaseNote:
-              typeof row.payload.leaseNote === 'string'
-                ? row.payload.leaseNote
-                : null,
-          }
+    // Surface the lease state for awaiting-human rows.
+    // Prefer live task-row values over the action-queue payload snapshot:
+    // the payload is written at park time and is NOT updated by `mars attach`,
+    // while the task row's lease columns reflect the current owner after attach.
+    const leaseState: ActionQueueRow['leaseState'] = (() => {
+      if (uiKind !== 'awaiting-human') return null
+      const t = taskById.get(entityId)
+      // Use task-row values when the task is found (leaseOwner/leasedAt may be
+      // undefined when the field was not included by the store — fall through).
+      const owner =
+        t !== undefined && t.leaseOwner !== undefined
+          ? t.leaseOwner
+          : typeof row.payload.leaseOwner === 'string'
+            ? row.payload.leaseOwner
+            : null
+      const at =
+        t !== undefined && t.leasedAt !== undefined
+          ? t.leasedAt
+          : typeof row.payload.leasedAt === 'string'
+            ? row.payload.leasedAt
+            : null
+      const note =
+        t !== undefined && t.leaseNote !== undefined
+          ? t.leaseNote
+          : typeof row.payload.leaseNote === 'string'
+            ? row.payload.leaseNote
+            : null
+      return owner !== null && at !== null
+        ? { leaseOwner: owner, leasedAt: at, leaseNote: note }
         : null
+    })()
 
     rows.push({
       id: row.id,

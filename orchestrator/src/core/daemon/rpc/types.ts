@@ -153,6 +153,16 @@ export interface DaemonDeps {
   handleStatus(): Promise<DaemonStatusPayload>
   investigateWorktree(id: string): Promise<unknown>
   diagnoseFailure(id: string): Promise<unknown>
+  handleAttach(
+    id: string,
+    leaseOwner: string,
+  ): Promise<{
+    worktreePath: string
+    branch: string
+    title: string
+    doneCriteria: readonly string[]
+  }>
+  handleReleaseLease(id: string, abort: boolean): Promise<void>
 }
 
 /** The `patch` shape carried by the `update` op (matches protocol). */

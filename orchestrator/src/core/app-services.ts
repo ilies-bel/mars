@@ -419,6 +419,9 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           branch: t.branch,
           updatedAt: t.updatedAt,
           fixForTaskId: t.fixForTaskId ?? null,
+          leaseOwner: t.leaseOwner,
+          leasedAt: t.leasedAt,
+          leaseNote: t.leaseNote,
         }))
       },
     }
@@ -512,6 +515,9 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           branch: t.branch,
           updatedAt: t.updatedAt,
           fixForTaskId: t.fixForTaskId ?? null,
+          leaseOwner: t.leaseOwner,
+          leasedAt: t.leasedAt,
+          leaseNote: t.leaseNote,
         }))
       },
     }

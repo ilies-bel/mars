@@ -6,6 +6,8 @@
  * Mutations route through `deps.daemon`; reads through `deps.store`.
  */
 
+import { spawnSync } from 'node:child_process'
+import { userInfo, hostname } from 'node:os'
 import { resolveProposalId, getProposal } from '../../core/proposals'
 import { readMaybeFile } from '../args'
 import type { TaskStatus } from '../../core/queue'
@@ -541,6 +543,113 @@ const update: Command = {
   },
 }
 
+const attach: Command = {
+  path: 'attach',
+  summary: 'take the lease on a parked awaiting-human task',
+  usage: 'usage: mars attach <task-id>',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    if (!id) {
+      deps.err('usage: mars attach <task-id>')
+      return { code: 1 }
+    }
+
+    const leaseOwner = `${userInfo().username}@${hostname()}`
+
+    let data: {
+      worktreePath: string
+      branch: string
+      title: string
+      doneCriteria: readonly string[]
+    }
+    try {
+      data = (await deps.daemon.sendRequest({ op: 'attach', id, leaseOwner })) as typeof data
+    } catch (err) {
+      deps.err(`${id}: ${errorMessage(err)}`)
+      return { code: 1 }
+    }
+
+    deps.out(`task:      ${data.title.replace(/\s+/g, ' ').slice(0, 80)}`)
+    deps.out(`worktree:  ${data.worktreePath}`)
+    deps.out(`branch:    ${data.branch}`)
+    if (data.doneCriteria.length > 0) {
+      deps.out('')
+      deps.out('done criteria:')
+      for (const criterion of data.doneCriteria) {
+        deps.out(`  - [ ] ${criterion}`)
+      }
+    }
+    deps.out('')
+    deps.out(`hint: cd ${data.worktreePath} && claude`)
+    return { code: 0 }
+  },
+}
+
+const release: Command = {
+  path: 'release',
+  summary: 'release the lease on an awaiting-human task and resume the pipeline',
+  usage: 'usage: mars release <task-id> [--abort]',
+  run: async (args, deps) => {
+    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
+    const id = args.positional.filter((a) => !a.startsWith('--'))[0]
+    const abort = flagSet.has('--abort')
+
+    if (!id) {
+      deps.err('usage: mars release <task-id> [--abort]')
+      return { code: 1 }
+    }
+
+    // Read task to validate status and find the worktree path for the dirty check.
+    const task = await deps.store.getTask(id)
+    if (!task) {
+      deps.err(`task ${id} not found`)
+      return { code: 1 }
+    }
+    if (task.status !== 'awaiting-human') {
+      deps.err(
+        `task ${id} is ${task.status}; can only release an 'awaiting-human' task`,
+      )
+      return { code: 1 }
+    }
+    if (task.leaseOwner === null) {
+      deps.err(`task ${id} has no active lease; use 'mars attach ${id}' first`)
+      return { code: 1 }
+    }
+
+    // Uncommitted-changes guard: refuse if the worktree has staged or
+    // unstaged changes. The pipeline's has-diff/commits-ahead checks treat
+    // uncommitted work as invisible — the same rule that binds Workers binds
+    // humans.
+    const worktreePath = task.worktreePath
+    if (worktreePath) {
+      const gitResult = spawnSync(
+        'git',
+        ['-C', worktreePath, 'status', '--porcelain'],
+        { encoding: 'utf8', timeout: 5000 },
+      )
+      if (gitResult.status === 0 && (gitResult.stdout ?? '').trim() !== '') {
+        deps.err(`worktree ${worktreePath} has uncommitted changes`)
+        deps.err('commit or stash your changes before releasing the lease')
+        return { code: 1 }
+      }
+    }
+
+    try {
+      await deps.daemon.sendRequest({ op: 'release-lease', id, abort })
+    } catch (err) {
+      deps.err(`${id}: ${errorMessage(err)}`)
+      return { code: 1 }
+    }
+
+    if (abort) {
+      deps.out(`${id}: lease released — task routed to failure path`)
+    } else {
+      deps.out(`${id}: lease released — task re-queued for pipeline continuation`)
+    }
+    return { code: 0 }
+  },
+}
+
 export const lifecycleCommands: readonly Command[] = [
   show,
   makeSetPlan('functional'),
@@ -555,4 +664,6 @@ export const lifecycleCommands: readonly Command[] = [
   block,
   list,
   update,
+  attach,
+  release,
 ]

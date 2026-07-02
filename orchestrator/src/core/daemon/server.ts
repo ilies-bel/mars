@@ -2209,6 +2209,75 @@ export const startDaemon = async (
 
   // ── Network: UDS server ───────────────────────────────────────────────────
 
+  // `mars attach <id>`: take the worktree lease on an 'awaiting-human' task.
+  // Validates that the task is parked and has no existing owner, then stamps
+  // leaseOwner + leasedAt and returns the info the CLI prints to the operator.
+  const handleAttach = async (
+    id: string,
+    leaseOwner: string,
+  ): Promise<{
+    worktreePath: string
+    branch: string
+    title: string
+    doneCriteria: readonly string[]
+  }> => {
+    const task = await getTask(id)
+    if (!task) throw new Error(`task ${id} not found`)
+    if (task.status !== 'awaiting-human') {
+      throw new Error(
+        `task ${id} is in status '${task.status}'; attach is only valid on 'awaiting-human' tasks`,
+      )
+    }
+    if (task.leaseOwner !== null) {
+      throw new Error(
+        `task ${id} already has an active lease (owner: ${task.leaseOwner}); release it first`,
+      )
+    }
+    const now = new Date().toISOString()
+    await updateTask(id, { leaseOwner, leasedAt: now })
+    const worktreePath =
+      task.worktreePath ?? resolvePath(resolveContext().stateDir, 'worktrees', id)
+    return {
+      worktreePath,
+      branch: task.branch ?? `task/${id}`,
+      title: task.prompt,
+      doneCriteria: task.spec?.doneCriteria ?? [],
+    }
+  }
+
+  // `mars release <id>` / `mars release --abort <id>`: release the worktree
+  // lease on an 'awaiting-human' task. Normal release re-queues the task for
+  // pipeline continuation; --abort routes it through the failure path.
+  const handleReleaseLease = async (id: string, abort: boolean): Promise<void> => {
+    const task = await getTask(id)
+    if (!task) throw new Error(`task ${id} not found`)
+    if (task.status !== 'awaiting-human') {
+      throw new Error(
+        `task ${id} is in status '${task.status}'; can only release a lease on an 'awaiting-human' task`,
+      )
+    }
+    if (task.leaseOwner === null) {
+      throw new Error(`task ${id} has no active lease`)
+    }
+    if (abort) {
+      await updateTask(id, {
+        status: 'failed',
+        leaseOwner: null,
+        leasedAt: null,
+        leaseNote: null,
+        error: 'aborted by operator via `mars release --abort`',
+        failureReason: 'operator aborted human work',
+      })
+      bus.emit('task.failed', {
+        taskId: id,
+        error: 'operator aborted human work',
+      })
+    } else {
+      await Arc.load(id).releaseLease(id)
+      bus.emit('task.queued', { taskId: id })
+    }
+  }
+
   // ── RPC command seam (ADR daemon-command-seam; mirrors ADR-0023) ──────────
   // The 27-case `switch (req.op)` is now a flat op-keyed registry of leaf
   // handlers in `./rpc/`. `handleRequest` keeps its socket-facing signature and
@@ -2259,6 +2328,8 @@ export const startDaemon = async (
     handleStatus,
     investigateWorktree,
     diagnoseFailure,
+    handleAttach,
+    handleReleaseLease,
   })
 
   const handleRequest = async (req: DaemonRequest): Promise<DaemonResponse> => {
