@@ -396,3 +396,7 @@ _Avoid_: subgraph, mini-graph, focus subgraph, context subgraph
 **Lease**:
 Exclusive human ownership claim on a parked task's worktree. Taken with mars attach, released with mars release; a leased or awaiting-human task is exempt from the phantom watchdog, and lease expiry raises an action-queue row instead of auto-failing.
 _Avoid_: lock, claim, checkout
+
+**awaiting-human (task)**:
+Parked task state: the workflow suspended at an awaitHuman step and a human may take the Lease and work in the task's worktree in their own session. Pipeline resumes at verify on release. Generalizes the --preview awaiting-validation gate.
+_Avoid_: paused, parked, HITL state
