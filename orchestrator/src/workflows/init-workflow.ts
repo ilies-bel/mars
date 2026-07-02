@@ -39,6 +39,7 @@ const verifyStepSchema = z.object({
   cmd: z.string(),
   args: z.array(z.string()),
   required: z.boolean(),
+  tier: z.enum(['task', 'integration']).optional(),
 })
 
 const supervisorSpecSchema = z.object({
@@ -54,47 +55,49 @@ const supervisorSpecSchema = z.object({
 const VERIFY_DEFAULTS_BY_SUPERVISOR: Record<string, VerifyStepEntry[]> = {
   'node-backend-supervisor': [
     { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
-    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true, tier: 'integration' },
     { name: 'lint', cmd: 'npx', args: ['biome', 'check', '.'], required: false },
   ],
   'react-supervisor': [
     { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
-    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true, tier: 'integration' },
     { name: 'lint', cmd: 'npx', args: ['biome', 'check', '.'], required: false },
   ],
   'vue-supervisor': [
     { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
-    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true, tier: 'integration' },
   ],
   'svelte-supervisor': [
     { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
-    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true, tier: 'integration' },
   ],
   'angular-supervisor': [
     { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
-    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true },
+    { name: 'test', cmd: 'npm', args: ['test', '--silent'], required: true, tier: 'integration' },
   ],
   'go-supervisor': [
-    { name: 'test', cmd: 'go', args: ['test', './...'], required: true },
+    { name: 'test', cmd: 'go', args: ['test', './...'], required: true, tier: 'integration' },
     { name: 'vet', cmd: 'go', args: ['vet', './...'], required: false },
   ],
   'rust-supervisor': [
-    { name: 'test', cmd: 'cargo', args: ['test'], required: true },
+    { name: 'test', cmd: 'cargo', args: ['test'], required: true, tier: 'integration' },
     { name: 'clippy', cmd: 'cargo', args: ['clippy', '--', '-D', 'warnings'], required: false },
   ],
   'python-backend-supervisor': [
-    { name: 'test', cmd: 'pytest', args: ['-q'], required: true },
+    { name: 'test', cmd: 'pytest', args: ['-q'], required: true, tier: 'integration' },
   ],
   'jvm-backend-supervisor': [
-    { name: 'build', cmd: './gradlew', args: ['build'], required: true },
-    { name: 'test', cmd: './gradlew', args: ['test'], required: true },
+    // gradlew build runs compile + test — it is expensive and classified as integration.
+    { name: 'build', cmd: './gradlew', args: ['build'], required: true, tier: 'integration' },
+    { name: 'test', cmd: './gradlew', args: ['test'], required: true, tier: 'integration' },
   ],
   'flutter-supervisor': [
     { name: 'analyze', cmd: 'flutter', args: ['analyze'], required: true },
-    { name: 'test', cmd: 'flutter', args: ['test'], required: true },
+    { name: 'test', cmd: 'flutter', args: ['test'], required: true, tier: 'integration' },
   ],
   'ios-supervisor': [],
   'android-supervisor': [
+    // assembleDebug is compilation only (no test execution) — task tier.
     { name: 'build', cmd: './gradlew', args: ['assembleDebug'], required: true },
   ],
 }

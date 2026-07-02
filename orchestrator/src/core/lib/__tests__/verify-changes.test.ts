@@ -440,6 +440,149 @@ describe('getChangedFiles', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Tier-gate model (ADR: gate stack with per-gate tiers)
+// ---------------------------------------------------------------------------
+// The verify recipe step gains a `tier` field: 'task' (cheap; runs during the
+// per-task verify phase) or 'integration' (expensive; deferred to the
+// integration boundary). Default when absent: 'task'.
+//
+// The verify phase runs ONLY tier:'task' gates. Integration-tier gates are
+// parsed and recorded but NOT executed; they appear in the step results with
+// passed:true and output "deferred to integration".
+//
+// Per-gate outcomes (name, tier, passed, duration) are attached to each
+// VerifyStep so the run-timeline view can surface them.
+// ---------------------------------------------------------------------------
+describe('tier-gate model', () => {
+  it('defers integration-tier steps without running them', async () => {
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [
+        { name: 'typecheck', ...truthyCmd, required: true },
+        {
+          name: 'full-suite',
+          cmd: 'node',
+          args: ['-e', 'process.stderr.write("SHOULD NOT RUN"); process.exit(1)'],
+          required: true,
+          tier: 'integration' as const,
+        },
+      ],
+    })
+    expect(r.passed).toBe(true)
+    expect(r.steps).toHaveLength(2)
+    const deferred = r.steps.find((s) => s.name === 'full-suite')
+    expect(deferred?.tier).toBe('integration')
+    expect(deferred?.passed).toBe(true)
+    expect(deferred?.output).toContain('deferred to integration')
+    // The integration step must not have actually run (output must not contain SHOULD NOT RUN)
+    expect(deferred?.output).not.toContain('SHOULD NOT RUN')
+  })
+
+  it('runs task-tier steps and records tier:task and a duration', async () => {
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [{ name: 'typecheck', ...truthyCmd, required: true }],
+    })
+    expect(r.passed).toBe(true)
+    expect(r.steps).toHaveLength(1)
+    const step = r.steps[0]
+    expect(step.tier).toBe('task')
+    expect(typeof step.duration).toBe('number')
+    expect(step.duration).toBeGreaterThanOrEqual(0)
+  })
+
+  it('steps without an explicit tier default to tier:task', async () => {
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [{ name: 'lint', ...truthyCmd, required: false }],
+    })
+    expect(r.steps[0].tier).toBe('task')
+  })
+
+  it('a required task-tier failure stops subsequent required task steps; integration steps are still deferred', async () => {
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [
+        { name: 'typecheck', ...falsyCmd, required: true },
+        {
+          name: 'full-suite',
+          cmd: 'node',
+          args: ['-e', 'process.exit(0)'],
+          required: true,
+          tier: 'integration' as const,
+        },
+        { name: 'second-task', ...truthyCmd, required: true },
+      ],
+    })
+    // Overall: failed because typecheck (required) failed
+    expect(r.passed).toBe(false)
+    // typecheck ran and failed
+    expect(r.steps[0].name).toBe('typecheck')
+    expect(r.steps[0].passed).toBe(false)
+    expect(r.steps[0].tier).toBe('task')
+    // full-suite is deferred (integration tier) — not blocked by typecheck failure
+    expect(r.steps[1].name).toBe('full-suite')
+    expect(r.steps[1].tier).toBe('integration')
+    expect(r.steps[1].passed).toBe(true)
+    // second-task is a required task step AFTER a required failure — skipped
+    expect(r.steps).toHaveLength(2)
+  })
+
+  it('integration-tier steps do not affect the required-failure outcome', async () => {
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [
+        {
+          name: 'full-suite',
+          cmd: 'node',
+          args: ['-e', 'process.exit(0)'],
+          required: true,
+          tier: 'integration' as const,
+        },
+      ],
+    })
+    // A single integration-tier step produces passed:true (deferred, not a failure)
+    expect(r.passed).toBe(true)
+  })
+
+  it('loadVerifyScopes propagates tier from the manifest', async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), 'mars-tier-load-'))
+    try {
+      const manifestPath = resolve(dir, 'supervisors.json')
+      writeFileSync(
+        manifestPath,
+        JSON.stringify({
+          supervisors: [
+            {
+              name: 'node-backend-supervisor',
+              scope: '.',
+              verify: [
+                { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], required: true },
+                { name: 'test', cmd: 'npm', args: ['test'], required: true, tier: 'integration' },
+                { name: 'lint', cmd: 'npx', args: ['eslint', '.'], required: false },
+              ],
+            },
+          ],
+        }),
+      )
+      const scopes = await loadVerifyScopes(manifestPath)
+      expect(scopes).toHaveLength(1)
+      const steps = scopes[0].steps
+      const typecheck = steps.find((s) => s.name === 'typecheck')
+      const test = steps.find((s) => s.name === 'test')
+      const lint = steps.find((s) => s.name === 'lint')
+      // tier explicitly set to 'integration' is propagated
+      expect(test?.tier).toBe('integration')
+      // tier not set → absent (defaults to 'task' at runtime)
+      expect(typecheck?.tier).toBeUndefined()
+      expect(lint?.tier).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // main-commiter verify exemption (regression for task d0f9b1d4)
 // ---------------------------------------------------------------------------
 // A main-commiter recovery task's sole success criterion is a clean working

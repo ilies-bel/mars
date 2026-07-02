@@ -84,6 +84,17 @@ export interface VerifyStep {
   args?: readonly string[]
   /** Absolute directory the step ran in. */
   stepDir?: string
+  /**
+   * The gate tier: 'task' means the step ran in the per-task verify phase;
+   * 'integration' means the step was deferred to the integration boundary
+   * and was NOT run. Absent on the `has-diff` built-in gate.
+   */
+  tier?: 'task' | 'integration'
+  /**
+   * Wall-clock milliseconds from step start to finish. Absent for deferred
+   * integration-tier steps and for the built-in `has-diff` gate.
+   */
+  duration?: number
 }
 
 export interface VerifyStepSpec {
@@ -98,6 +109,14 @@ export interface VerifyStepSpec {
    * a narrower scope (e.g. `'apps/web'`) runs in that subdirectory.
    */
   dir?: string
+  /**
+   * 'task': cheap gate (typecheck, lint, diff-affected tests). Runs during
+   * the per-task verify phase. Default when absent.
+   * 'integration': expensive gate (full test suite). Parsed and validated
+   * but NOT run during the per-task verify phase; recorded as deferred with
+   * a trace note "deferred to integration".
+   */
+  tier?: 'task' | 'integration'
 }
 
 /**
@@ -416,6 +435,19 @@ export const verifyChanges = async (
   const results: VerifyStep[] = []
   let stoppedOnRequired = false
   for (const spec of args.steps) {
+    // Integration-tier steps are always deferred to the integration boundary —
+    // they are NOT run during the per-task verify phase. Record them as deferred
+    // with a trace note so the run-timeline view can surface them.
+    if (spec.tier === 'integration') {
+      results.push({
+        name: spec.name,
+        tier: 'integration',
+        passed: true,
+        output: 'deferred to integration — runs at integration boundary',
+      })
+      continue
+    }
+
     if (stoppedOnRequired && spec.required) continue
     // Each step runs in its own scope directory rather than from one
     // flattened working directory: the root scope ('.' or unset) runs in
@@ -440,6 +472,7 @@ export const verifyChanges = async (
       if (!hasTsconfig || !hasBin) {
         results.push({
           name: spec.name,
+          tier: 'task',
           passed: true,
           output: `typecheck skipped: no real TypeScript toolchain detected in ${stepCwd} (tsconfig.json present: ${hasTsconfig}, local tsc binary found: ${hasBin})`,
           cmd: spec.cmd,
@@ -450,6 +483,7 @@ export const verifyChanges = async (
       }
     }
 
+    const stepStart = performance.now()
     const result = await runVerifyStep(
       spec.name,
       spec.cmd,
@@ -457,6 +491,7 @@ export const verifyChanges = async (
       stepCwd,
       verifyCtx,
     )
+    const duration = Math.round(performance.now() - stepStart)
 
     // Post-flight decoy guard: if `npx tsc` exited non-zero with the
     // well-known placeholder message, treat it as a skip rather than a
@@ -466,19 +501,23 @@ export const verifyChanges = async (
     if (isNpxTscStep(spec) && !result.passed && result.output.includes(TSC_DECOY_MARKER)) {
       results.push({
         ...result,
+        tier: 'task',
+        duration,
         passed: true,
         output: `typecheck skipped (decoy tsc detected — TypeScript not installed): ${result.output}`,
       })
       continue
     }
 
-    results.push(result)
+    results.push({ ...result, tier: 'task', duration })
     if (!result.passed && spec.required) {
       stoppedOnRequired = true
     }
   }
 
   const requiredFailed = args.steps.some((spec, i) => {
+    // Integration-tier steps are always deferred (passed:true) and never block
+    if (spec.tier === 'integration') return false
     const r = results[i]
     return spec.required && r && !r.passed
   })
@@ -493,6 +532,7 @@ interface ManifestSupervisorEntry {
     cmd: string
     args: readonly string[]
     required?: boolean
+    tier?: string
   }>
 }
 
@@ -563,12 +603,15 @@ export const loadVerifyScopes = async (
     }
     for (const v of verify) {
       if (steps.has(v.name)) continue
+      const tier: 'task' | 'integration' | undefined =
+        v.tier === 'task' || v.tier === 'integration' ? v.tier : undefined
       steps.set(v.name, {
         name: v.name,
         cmd: v.cmd,
         args: [...v.args],
         required: v.required ?? true,
         dir: scope,
+        ...(tier !== undefined ? { tier } : {}),
       })
     }
   }

@@ -1248,10 +1248,33 @@ export const verify = async (
         }
       }
 
+      // Enrich each step header with tier and duration for the run-timeline view.
       const verifyOutput = r.steps
-        .map((s) => `=== ${s.name} (${s.passed ? 'pass' : 'fail'}) ===\n${s.output}`)
+        .map((s) => {
+          const tierBadge =
+            s.tier === 'integration'
+              ? ' [integration:deferred]'
+              : s.tier === 'task'
+                ? ' [task]'
+                : ''
+          const durationBadge =
+            s.duration !== undefined ? ` ${s.duration}ms` : ''
+          return `=== ${s.name} (${s.passed ? 'pass' : 'fail'})${tierBadge}${durationBadge} ===\n${s.output}`
+        })
         .join('\n\n')
-      capturedVerifyOutput = verifyOutput
+      // Append a structured gate-outcomes block so the run-timeline view can
+      // surface per-gate metrics (name, tier, passed, duration) without parsing
+      // free-form step output.
+      const gateOutcomes = r.steps.map((s) => ({
+        name: s.name,
+        tier: s.tier ?? 'task',
+        passed: s.passed,
+        ...(s.duration !== undefined ? { duration: s.duration } : {}),
+      }))
+      capturedVerifyOutput =
+        verifyOutput +
+        '\n\n=== gate outcomes ===\n' +
+        JSON.stringify(gateOutcomes, null, 2)
 
       if (!r.passed) {
         const failed = r.steps.filter((s) => !s.passed)

@@ -22,6 +22,12 @@ export interface VerifyStepEntry {
    * steps compiled from a manifest.json `scopes[]` entry.
    */
   cwd?: string
+  /**
+   * 'task': cheap gate (typecheck, lint). Runs in the per-task verify phase.
+   * 'integration': expensive gate (full test suite). Deferred to integration
+   * boundary; not run during per-task verify. Omit for the default 'task'.
+   */
+  tier?: 'task' | 'integration'
 }
 
 export interface SlimInitInput {
