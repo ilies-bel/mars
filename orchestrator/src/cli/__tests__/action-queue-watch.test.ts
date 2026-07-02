@@ -13,6 +13,9 @@
  *                              copy no-POST, confirmed override
  *   - deriveActionKeys:        de-duplicated key assignment from action ids
  *   - clearResolvedPendingOps: pending indicator clears when agent result arrives
+ *   - parseSGRMouse:           SGR sequence parser — click coords, wheel events,
+ *                              ignored button types, non-mouse input
+ *   - LIST_ROW_Y_START:        click-Y to row-index formula
  *
  * The Ink rendering layer is not exercised here (no ink-testing-library in the
  * test deps). What we test is the observable contract: given inputs, the exported
@@ -34,6 +37,8 @@ import {
   shouldRefreshNow,
   resolveCursor,
   classifySSEFrame,
+  parseSGRMouse,
+  LIST_ROW_Y_START,
 } from '../action-queue-watch'
 import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
 
@@ -646,5 +651,153 @@ describe('classifySSEFrame', () => {
   it('returns null for a pure comment frame (SSE spec §8.8)', () => {
     // Multi-line comment followed by data but no event: line.
     expect(classifySSEFrame(': keep-alive comment\ndata: {}')).toBeNull()
+  })
+})
+
+// ─── parseSGRMouse ────────────────────────────────────────────────────────────
+//
+// The SGR mouse sequence parser drives three behavioural guarantees:
+//
+//   1. CLICK → ROW INDEX:
+//      A left-press at terminal y=3 (the first data row in list view, since
+//      LIST_ROW_Y_START=3) maps to rowIndex=0. The formula rowIndex = y - LIST_ROW_Y_START
+//      must produce non-negative indices for rows that are visible.
+//
+//   2. WHEEL → SCROLL:
+//      wheel-up and wheel-down events drive cursor movement in the list.
+//      The parser must surface these as distinct kinds so callers can
+//      increment/decrement the cursor index without further parsing.
+//
+//   3. FILTERED EVENTS:
+//      Right-click (pb=2), middle-click (pb=1), drag (pb=32+33), and motion
+//      (pb=35) must return null — the TUI ignores those event types entirely.
+//
+// Ink strips the leading ESC from unrecognised CSI sequences before reaching
+// the useInput handler, so the parser expects '[<Pb;Px;PyM' / '[<Pb;Px;Pym'.
+
+describe('parseSGRMouse', () => {
+  // ── left click ──────────────────────────────────────────────────────────
+
+  it('returns left-press for a left button press (pb=0, M)', () => {
+    const ev = parseSGRMouse('[<0;5;3M')
+    expect(ev).not.toBeNull()
+    expect(ev?.kind).toBe('left-press')
+    expect(ev?.x).toBe(5)
+    expect(ev?.y).toBe(3)
+  })
+
+  it('returns left-release for a left button release (pb=0, m)', () => {
+    const ev = parseSGRMouse('[<0;10;7m')
+    expect(ev).not.toBeNull()
+    expect(ev?.kind).toBe('left-release')
+    expect(ev?.x).toBe(10)
+    expect(ev?.y).toBe(7)
+  })
+
+  it('parses large coordinate values correctly', () => {
+    // Terminals with SGR extended mode support coords well beyond 255.
+    const ev = parseSGRMouse('[<0;120;45M')
+    expect(ev?.kind).toBe('left-press')
+    expect(ev?.x).toBe(120)
+    expect(ev?.y).toBe(45)
+  })
+
+  // ── wheel events ─────────────────────────────────────────────────────────
+
+  it('returns wheel-up for pb=64', () => {
+    const ev = parseSGRMouse('[<64;1;5M')
+    expect(ev?.kind).toBe('wheel-up')
+    expect(ev?.x).toBe(1)
+    expect(ev?.y).toBe(5)
+  })
+
+  it('returns wheel-down for pb=65', () => {
+    const ev = parseSGRMouse('[<65;1;5M')
+    expect(ev?.kind).toBe('wheel-down')
+    expect(ev?.x).toBe(1)
+    expect(ev?.y).toBe(5)
+  })
+
+  // ── filtered event types ──────────────────────────────────────────────────
+
+  it('returns null for middle-click (pb=1)', () => {
+    expect(parseSGRMouse('[<1;5;3M')).toBeNull()
+  })
+
+  it('returns null for right-click (pb=2)', () => {
+    expect(parseSGRMouse('[<2;5;3M')).toBeNull()
+  })
+
+  it('returns null for mouse motion without button held (pb=35)', () => {
+    expect(parseSGRMouse('[<35;10;5M')).toBeNull()
+  })
+
+  it('returns null for left-button drag (pb=32)', () => {
+    // pb=32 means left-button is held while moving — motion event, not click.
+    expect(parseSGRMouse('[<32;10;5M')).toBeNull()
+  })
+
+  // ── non-mouse input ───────────────────────────────────────────────────────
+
+  it('returns null for regular keyboard input', () => {
+    expect(parseSGRMouse('q')).toBeNull()
+    expect(parseSGRMouse('j')).toBeNull()
+    expect(parseSGRMouse('')).toBeNull()
+  })
+
+  it('returns null for a CSI arrow sequence (not a mouse event)', () => {
+    // Arrow keys arrive as '[A', '[B' etc. — must not be mistaken for mouse.
+    expect(parseSGRMouse('[A')).toBeNull()
+    expect(parseSGRMouse('[B')).toBeNull()
+  })
+
+  it('returns null when the SGR prefix is present but format is malformed', () => {
+    // Missing y component.
+    expect(parseSGRMouse('[<0;5M')).toBeNull()
+    // Extra text after the terminator.
+    expect(parseSGRMouse('[<0;5;3Mfoo')).toBeNull()
+    // Non-numeric button code.
+    expect(parseSGRMouse('[<x;5;3M')).toBeNull()
+  })
+
+  it('returns null for the full sequence with ESC intact (Ink strips it)', () => {
+    // The parser expects the ESC-stripped form that Ink delivers to useInput.
+    expect(parseSGRMouse('\x1b[<0;5;3M')).toBeNull()
+  })
+})
+
+// ─── LIST_ROW_Y_START — click-to-row-index mapping ────────────────────────────
+//
+// With alternateScreen:true, Ink renders from terminal row y=1.
+// The list view lays out:
+//   y=1  header bar
+//   y=2  blank (marginTop={1} on the rows container)
+//   y=3  first data row   ← LIST_ROW_Y_START
+//
+// rowIndex = clickY - LIST_ROW_Y_START  (0-indexed, negative = outside list)
+
+describe('LIST_ROW_Y_START — click coords to row index', () => {
+  it('is 3, matching the layout: header(1) + blank margin(1) = rows start at y=3', () => {
+    expect(LIST_ROW_Y_START).toBe(3)
+  })
+
+  it('click at y=3 maps to rowIndex=0 (first row)', () => {
+    const clickY = parseSGRMouse('[<0;1;3M')?.y ?? -1
+    expect(clickY - LIST_ROW_Y_START).toBe(0)
+  })
+
+  it('click at y=4 maps to rowIndex=1 (second row)', () => {
+    const clickY = parseSGRMouse('[<0;1;4M')?.y ?? -1
+    expect(clickY - LIST_ROW_Y_START).toBe(1)
+  })
+
+  it('click at y=2 (blank line / header area) maps to a negative rowIndex — outside the list', () => {
+    const clickY = parseSGRMouse('[<0;1;2M')?.y ?? -1
+    expect(clickY - LIST_ROW_Y_START).toBeLessThan(0)
+  })
+
+  it('click at y=1 (header bar) maps to a negative rowIndex — outside the list', () => {
+    const clickY = parseSGRMouse('[<0;1;1M')?.y ?? -1
+    expect(clickY - LIST_ROW_Y_START).toBeLessThan(0)
   })
 })

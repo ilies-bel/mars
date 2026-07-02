@@ -26,18 +26,31 @@
  *   restart-all-daemon-killed  → POST /actions/restart-all-daemon-killed
  *
  * Keybindings (always):
- *   - j/k or arrows : move cursor
+ *   - arrows        : move cursor (↑/↓)
+ *   - PgUp / PgDn   : jump 10 rows
  *   - enter         : open detail view
- *   - b or escape   : back from detail / dismiss confirm
+ *   - escape        : back from detail / dismiss confirm
  *   - q or ctrl-c   : quit
+ *   - click         : select row (single), open detail (click selected / double-click)
+ *   - wheel         : scroll list
  *
  * Keybindings (dynamic, from selected row's actions[]):
  *   First available letter from each hyphen-split action id word, de-duplicated.
  *   Shown in the footer as e.g. [d]iagnose [r]estart [p]urge.
+ *
+ * Mouse support:
+ *   SGR extended mouse tracking (\x1b[?1002h\x1b[?1006h) is enabled on mount
+ *   when stdout is a TTY. Mouse sequences arrive via Ink's useInput as ESC-stripped
+ *   CSI strings (e.g. '[<0;5;3M'). Tracking is disabled on all exit paths —
+ *   Ink unmount, process.exit() — so the shell is never left swallowing mouse input.
+ *   Non-TTY environments degrade gracefully: no mouse, no crashes, no garbage bytes.
+ *
+ *   Alternate-screen buffer (\x1b[?1049h) is used so the TUI always renders from
+ *   terminal row 1 — required for pixel-accurate row click mapping.
  */
 
-import React, { useEffect, useState, useCallback } from 'react'
-import { Box, Text, render, useApp, useInput } from 'ink'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
+import { Box, Text, render, useApp, useInput, type DOMElement } from 'ink'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getStateDir } from '../core/context'
@@ -191,6 +204,54 @@ export const clearResolvedPendingOps = (
   return result
 }
 
+// ─── SGR mouse parsing ────────────────────────────────────────────────────────
+
+/**
+ * A parsed SGR extended mouse event. Coordinates are 1-indexed terminal
+ * positions (column x, row y). Only events relevant to the TUI are surfaced
+ * — right-click, middle-click, and motion events are filtered out (null).
+ */
+export type SGRMouseEvent = {
+  kind: 'left-press' | 'left-release' | 'wheel-up' | 'wheel-down'
+  x: number
+  y: number
+}
+
+/**
+ * Parse an SGR extended mouse sequence from raw input as received by Ink's
+ * useInput handler.
+ *
+ * Ink strips the leading ESC from unrecognised CSI sequences before passing
+ * them to the useInput callback. The expected input format is therefore:
+ *   '[<Pb;Px;PyM'  (button press)
+ *   '[<Pb;Px;Pym'  (button release)
+ *
+ * Button codes used:
+ *   0  = left button click
+ *   64 = scroll wheel up
+ *   65 = scroll wheel down
+ *
+ * Returns null for sequences that are not left-click or wheel events
+ * (right-click, middle-click, drag, motion-only, or non-SGR input) so the
+ * caller can safely ignore them with no branching.
+ *
+ * Exported for unit testing — the parser is pure and has no side effects.
+ */
+export function parseSGRMouse(input: string): SGRMouseEvent | null {
+  const m = /^\[<(\d+);(\d+);(\d+)([Mm])$/.exec(input)
+  if (!m) return null
+  const pb = parseInt(m[1]!, 10)
+  const x = parseInt(m[2]!, 10)
+  const y = parseInt(m[3]!, 10)
+  const isPress = m[4] === 'M'
+  if (pb === 64) return { kind: 'wheel-up', x, y }
+  if (pb === 65) return { kind: 'wheel-down', x, y }
+  if (pb === 0 && isPress) return { kind: 'left-press', x, y }
+  if (pb === 0 && !isPress) return { kind: 'left-release', x, y }
+  // Ignore: right/middle click (pb 1,2), drag (pb 32+), motion (pb 35), etc.
+  return null
+}
+
 // ─── display helpers ──────────────────────────────────────────────────────────
 
 const formatRelativeMs = (ts: number, now: number): string => {
@@ -215,7 +276,7 @@ const kindColor = (kind: ActionQueueRow['kind']): string => {
 
 // ─── ActionMenu ───────────────────────────────────────────────────────────────
 
-/** Renders the dynamic action key menu for the selected or detail row. */
+/** Renders the dynamic action key menu for the selected row (list view). */
 const ActionMenu: React.FC<{ actions: ActionQueueRow['actions'] }> = ({ actions }) => {
   if (actions.length === 0) return null
   const keys = deriveActionKeys(actions)
@@ -260,9 +321,11 @@ interface DetailProps {
   row: ActionQueueRow
   now: number
   pending: boolean
+  /** Ref attached to the container of individual action lines for mouse hit-testing. */
+  actionsBoxRef: React.Ref<DOMElement>
 }
 
-const Detail: React.FC<DetailProps> = ({ row, now, pending }) => {
+const Detail: React.FC<DetailProps> = ({ row, now, pending, actionsBoxRef }) => {
   const ts = Date.parse(row.at)
   const rel = Number.isNaN(ts) ? row.at : formatRelativeMs(ts, now)
   return (
@@ -348,13 +411,20 @@ const Detail: React.FC<DetailProps> = ({ row, now, pending }) => {
       )}
       {row.actions.length > 0 && (
         <Box marginTop={1} flexDirection="column">
-          <Text dimColor>actions:</Text>
-          <ActionMenu actions={row.actions} />
+          <Text dimColor>actions (click or press key):</Text>
+          {/* Each action on its own line for individual mouse click targeting. */}
+          <Box ref={actionsBoxRef} flexDirection="column">
+            {Object.entries(deriveActionKeys(row.actions)).map(([key, action]) => (
+              <Box key={action.id}>
+                <Text dimColor>[</Text>
+                <Text>{key}</Text>
+                <Text dimColor>] </Text>
+                <Text>{action.label}</Text>
+              </Box>
+            ))}
+          </Box>
         </Box>
       )}
-      <Box marginTop={1}>
-        <Text dimColor>b back · q quit</Text>
-      </Box>
     </Box>
   )
 }
@@ -455,6 +525,19 @@ export const resolveCursor = (
   return Math.min(prevIndex, rows.length - 1)
 }
 
+/**
+ * The terminal row (1-indexed) where the first data row renders in list view.
+ *
+ * In alternate-screen mode, Ink starts rendering at y=1.
+ * The list view layout is:
+ *   y=1  header bar
+ *   y=2  blank (marginTop={1} on the rows container)
+ *   y=3  first data row
+ *
+ * Exported for use in tests that verify click-to-row-index mapping.
+ */
+export const LIST_ROW_Y_START = 3
+
 const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
   const { exit } = useApp()
   const [state, setState] = useState<AppState>({
@@ -473,6 +556,85 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
     copiedHint: null,
     refreshDeferred: false,
   })
+
+  // ── mouse support ─────────────────────────────────────────────────────────
+
+  /**
+   * Last left-press position and timestamp, used to detect double-click or
+   * click on the already-selected row (both open detail view).
+   */
+  const lastClickRef = useRef<{ y: number; timeMs: number } | null>(null)
+
+  /**
+   * Ref attached to the actions list container in the detail view. Used to
+   * compute absolute terminal Y positions for action click hit-testing.
+   */
+  const detailActionsBoxRef = useRef<DOMElement>(null)
+
+  /**
+   * Maps terminal Y coordinates (1-indexed) to the action at that Y.
+   * Updated after every render while the detail view is visible.
+   */
+  const actionHitYRef = useRef<Map<number, ActionQueueRow['actions'][number]>>(new Map())
+
+  // Enable SGR extended mouse tracking on mount; disable on all exit paths.
+  // Only enabled when stdout is a TTY (graceful degradation in CI/pipes).
+  useEffect(() => {
+    if (!process.stdout.isTTY) return
+
+    process.stdout.write('\x1b[?1002h\x1b[?1006h')
+
+    const cleanup = (): void => {
+      if (process.stdout.isTTY) {
+        process.stdout.write('\x1b[?1002l\x1b[?1006l')
+      }
+    }
+    // Cover the process.exit() path (Ink unmount may not run in that case).
+    process.on('exit', cleanup)
+    return (): void => {
+      process.removeListener('exit', cleanup)
+      cleanup()
+    }
+  }, [])
+
+  // After every render, update the action click hit-regions for the detail view.
+  // Running after every render (no deps) keeps positions correct on resize and
+  // content change. The update is O(depth of yoga tree × number of actions).
+  useEffect(() => {
+    if (!state.detailId || !detailActionsBoxRef.current) {
+      actionHitYRef.current = new Map()
+      return
+    }
+    const detailRow = state.rows.find((r) => r.id === state.detailId)
+    if (!detailRow || detailRow.actions.length === 0) {
+      actionHitYRef.current = new Map()
+      return
+    }
+
+    // Compute absolute top (0-indexed Ink-space) by walking the yoga node tree.
+    // With alternate-screen mode, Ink's coordinate origin is terminal row 1,
+    // so terminal_y = absoluteInkTop + 1.
+    let absoluteTop = 0
+    let node: DOMElement | null = detailActionsBoxRef.current
+    while (node !== null) {
+      const layout = (node as DOMElement).yogaNode?.getComputedLayout()
+      if (!layout) break
+      absoluteTop += layout.top
+      const parent = node.parentNode as DOMElement | null
+      if (!parent || !parent.yogaNode) break
+      node = parent
+    }
+    const firstActionTerminalY = absoluteTop + 1
+
+    const map = new Map<number, ActionQueueRow['actions'][number]>()
+    const keyEntries = Object.entries(deriveActionKeys(detailRow.actions))
+    keyEntries.forEach(([, action], i) => {
+      map.set(firstActionTerminalY + i, action)
+    })
+    actionHitYRef.current = map
+  })
+
+  // ── data fetching ─────────────────────────────────────────────────────────
 
   const refresh = useCallback(async (): Promise<void> => {
     const baseUrl = resolveDaemonBaseUrl(stateDir)
@@ -698,6 +860,79 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
   const selected = state.rows[state.lastCursorIndex] ?? null
 
   useInput((input, key) => {
+    // ── SGR mouse events ────────────────────────────────────────────────────
+    // Ink strips the leading ESC from unrecognised CSI sequences; SGR mouse
+    // events arrive as '[<Pb;Px;PyM' / '[<Pb;Px;Pym'. Handle them first so
+    // they don't accidentally trigger letter-key handlers.
+    const mouseEv = parseSGRMouse(input)
+    if (mouseEv !== null) {
+      // Overlays suppress mouse events (same as keyboard).
+      if (state.copiedHint !== null || state.confirm !== null) return
+
+      if (mouseEv.kind === 'wheel-up') {
+        setState((prev) => {
+          const newIndex = Math.max(prev.lastCursorIndex - 1, 0)
+          return { ...prev, lastCursorIndex: newIndex, cursorRowId: prev.rows[newIndex]?.id ?? null }
+        })
+        return
+      }
+
+      if (mouseEv.kind === 'wheel-down') {
+        setState((prev) => {
+          const newIndex =
+            prev.rows.length === 0
+              ? 0
+              : Math.min(prev.lastCursorIndex + 1, prev.rows.length - 1)
+          return { ...prev, lastCursorIndex: newIndex, cursorRowId: prev.rows[newIndex]?.id ?? null }
+        })
+        return
+      }
+
+      if (mouseEv.kind === 'left-press') {
+        // Detail view: check if click lands on an action hint line.
+        if (state.detailId !== null) {
+          const action = actionHitYRef.current.get(mouseEv.y)
+          if (action) {
+            const detailRow = state.rows.find((r) => r.id === state.detailId)
+            if (detailRow) {
+              if (action.needsConfirm) {
+                setState((prev) => ({ ...prev, confirm: { row: detailRow, action } }))
+              } else {
+                void fireAction(detailRow, action)
+              }
+            }
+          }
+          return
+        }
+
+        // List view: click selects a row; click on the selected row (or
+        // double-click within 500 ms) opens detail.
+        const rowIndex = mouseEv.y - LIST_ROW_Y_START
+        if (rowIndex >= 0 && rowIndex < state.rows.length) {
+          const clickedRow = state.rows[rowIndex]!
+          const now = Date.now()
+          const isDoubleOrRepeat =
+            lastClickRef.current !== null &&
+            lastClickRef.current.y === mouseEv.y &&
+            now - lastClickRef.current.timeMs < 500
+          lastClickRef.current = { y: mouseEv.y, timeMs: now }
+
+          if (isDoubleOrRepeat || rowIndex === state.lastCursorIndex) {
+            setState((prev) => ({ ...prev, detailId: clickedRow.id }))
+          } else {
+            setState((prev) => ({
+              ...prev,
+              lastCursorIndex: rowIndex,
+              cursorRowId: clickedRow.id,
+            }))
+          }
+        }
+      }
+      return
+    }
+
+    // ── keyboard events ─────────────────────────────────────────────────────
+
     // A copy hint overlay is up — any key dismisses it.
     if (state.copiedHint !== null) {
       setState((prev) => ({ ...prev, copiedHint: null }))
@@ -719,7 +954,7 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
 
     // Detail view.
     if (state.detailId !== null) {
-      if (input === 'b' || key.escape) {
+      if (key.escape) {
         setState((prev) => ({ ...prev, detailId: null }))
         return
       }
@@ -749,7 +984,7 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
       exit()
       return
     }
-    if (input === 'j' || key.downArrow) {
+    if (key.downArrow) {
       setState((prev) => {
         const newIndex =
           prev.rows.length === 0
@@ -763,9 +998,34 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
       })
       return
     }
-    if (input === 'k' || key.upArrow) {
+    if (key.upArrow) {
       setState((prev) => {
         const newIndex = Math.max(prev.lastCursorIndex - 1, 0)
+        return {
+          ...prev,
+          cursorRowId: prev.rows[newIndex]?.id ?? null,
+          lastCursorIndex: newIndex,
+        }
+      })
+      return
+    }
+    if (key.pageDown) {
+      setState((prev) => {
+        const newIndex =
+          prev.rows.length === 0
+            ? 0
+            : Math.min(prev.lastCursorIndex + 10, prev.rows.length - 1)
+        return {
+          ...prev,
+          cursorRowId: prev.rows[newIndex]?.id ?? null,
+          lastCursorIndex: newIndex,
+        }
+      })
+      return
+    }
+    if (key.pageUp) {
+      setState((prev) => {
+        const newIndex = Math.max(prev.lastCursorIndex - 10, 0)
         return {
           ...prev,
           cursorRowId: prev.rows[newIndex]?.id ?? null,
@@ -862,6 +1122,7 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
             row={detailRow}
             now={state.now}
             pending={!!state.pendingOps[detailRow.id]}
+            actionsBoxRef={detailActionsBoxRef}
           />
         ) : (
           <Box>
@@ -879,7 +1140,7 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
           </Box>
         )}
         <Box marginTop={1}>
-          <Text dimColor>b back · q quit</Text>
+          <Text dimColor>esc back · q quit</Text>
         </Box>
       </Box>
     )
@@ -945,12 +1206,14 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
         </Box>
       )}
       <Box marginTop={1}>
-        <Text dimColor>j/k move · enter detail · q quit</Text>
+        <Text dimColor>
+          ↑/↓ move{state.rows.length > 10 ? ' · PgUp/PgDn' : ''} · enter detail · click select · q quit
+        </Text>
       </Box>
     </Box>
   )
 }
 
 export const runActionQueueWatch = (): void => {
-  render(<ActionQueueWatchApp stateDir={getStateDir()} />)
+  render(<ActionQueueWatchApp stateDir={getStateDir()} />, { alternateScreen: true })
 }
