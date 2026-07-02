@@ -35,7 +35,7 @@ Usage:
   mars [--repo <path>] <command> [args]
 
 Commands:
-  init [--force] [--dry-run] [--verbose] [--yes] [--wizard] [--wizard-off] [-f|--config <path>]
+  init [--force] [--dry-run] [--verbose] [--yes] [--wizard] [--wizard-off] [-f|--config <path>] [--skip-doctor]
                                 detect tech stack and generate specialized supervisors
                                 in .mars/supervisors/ (skeleton + workflow contract).
                                 Recurses into subdirectories (depth cap 6) to merge
@@ -393,6 +393,10 @@ Commands:
                                 available===true; silent otherwise. Exits 0
                                 always.
   where                         print resolved repo + state directory
+  doctor                        preflight: verify claude CLI, git, Node, codegraph,
+                                daemon status, mars.db. Exits non-zero on FAIL.
+                                'mars init' runs this automatically (--skip-doctor
+                                to bypass).
   help                          show this message
   --version, -v                 print mars version and exit
 
@@ -489,7 +493,9 @@ Flags:
   --wizard           force the wizard (even off a terminal)
   --wizard-off       skip the wizard on a terminal
   -f, --config <p>   read stack from a declarative TOML config (skips detection
-                     and the wizard; a [wizard] table supplies wizard answers)`,
+                     and the wizard; a [wizard] table supplies wizard answers)
+  --skip-doctor      bypass the automatic preflight check (claude/git/Node).
+                     Use in CI or when the environment is already validated.`,
   update: `mars update [--yes] [--verbose] [-f|--config <path>]
 
 Re-run init in update-mode on an existing repo. Refreshes the
@@ -1028,7 +1034,66 @@ Subcommands:
 
 Show top-level help, or detailed help for a single command. Equivalent
 to 'mars <command> --help'.`,
+  doctor: `mars doctor
+
+Preflight check. Verify that every runtime prerequisite is present and
+healthy before running tasks. Prints one PASS/WARN/FAIL line per check.
+Exits non-zero when any check returns FAIL.
+
+Checks:
+  PASS/FAIL  claude CLI    found on PATH and 'claude --version' exits 0
+  PASS/FAIL  git           found on PATH
+  PASS/FAIL  Node.js       version >= 22.13.0
+  PASS/WARN  codegraph     optional code-intelligence binary (ADR-0062)
+  PASS/WARN  daemon        running; warns on stale dev install
+  PASS/WARN  mars.db       .mars/mars.db present and readable
+
+'mars init' runs the same checks automatically (pass --skip-doctor to
+bypass) and fails fast on claude/git/Node FAIL items.`,
+  'task add': `mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [flags]
+
+Enqueue a runnable task directly (status='queued'; skips triage). Agent
+runners can pick it up immediately.
+
+Prompt input channels (exactly one):
+  "<prompt>"              inline literal string
+  @<file>                 read prompt body from file (no shell expansion;
+                          safe for \${...}, backticks, \$(...)). Missing file
+                          is a hard error.
+  --prompt-file <path>    same as @<file>, explicit flag form
+  -                       read prompt body from stdin
+
+Structured-task flags (all optional):
+  --files <path> ...       files the coder should focus on (repeatable)
+  --verify "<cmd>"         shell command the orchestrator runs to verify the
+                           work; non-zero exit → task fails
+  --preview "<cmd>"        optional dev-server command for UI-review tasks
+  --done "<criterion>" ... acceptance criteria checklist (repeatable)
+  --type auto|checkpoint   task type: 'checkpoint' pauses for human review
+                           before merging; 'auto' (default) merges directly
+
+Other flags:
+  --intent <text>          one-line summary stored on the task; derived from
+                           the first sentence of the prompt when omitted
+  --priority 0..3          dispatch priority (0 = lowest, 3 = highest)
+  --tag <tag>              routing tag, repeatable; first tag selects the Worker
+                           ('coder' is the default)
+  --blocked-by <id>        blocker task id; repeatable. Task will not dispatch
+                           until every listed blocker reaches 'done'
+  --author kind:name       override detected author (human|agent)
+
+Plan flags:
+  --functional <text|@file>   functional plan text
+  --technical <text|@file>    technical plan text
+  --functional-file <path>    read functional plan from a file
+  --technical-file <path>     read technical plan from a file
+
+Examples:
+  mars task add "Fix the slicer" --files src/slicer.ts --verify "npm test" --done "tests pass"
+  mars task add @prompt.txt --type checkpoint --priority 2
+  mars task add "Add auth" --blocked-by mars-task-1234`,
 }
+
 
 const printCommandHelp = (cmd: string): boolean => {
   const text = COMMAND_HELP[cmd]
@@ -1082,6 +1147,11 @@ const main = async (): Promise<number> => {
   }
 
   if (rest.some((a) => HELP_FLAGS.has(a))) {
+    // Try the longest non-help prefix first so 'mars task add --help' looks up
+    // 'task add' before falling back to 'task'. Strip help flags from rest to
+    // build the sub-path tokens.
+    const subTokens = rest.filter((a) => !HELP_FLAGS.has(a))
+    if (subTokens.length > 0 && printCommandHelp(`${cmd} ${subTokens.join(' ')}`)) return 0
     if (printCommandHelp(cmd)) return 0
     console.log(usage)
     return 0

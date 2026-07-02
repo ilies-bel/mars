@@ -15,7 +15,7 @@ const init: Command = {
   path: 'init',
   summary: 'detect tech stack and generate supervisors',
   usage:
-    'usage: mars init [--force] [--dry-run] [--verbose] [--yes] [--wizard] [--wizard-off] [-f|--config <path>]',
+    'usage: mars init [--force] [--dry-run] [--verbose] [--yes] [--wizard] [--wizard-off] [-f|--config <path>] [--skip-doctor]',
   run: async (args, deps) => {
     const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
     const force = boolFlags.has('--force')
@@ -24,7 +24,29 @@ const init: Command = {
     const yes = boolFlags.has('--yes') || boolFlags.has('-y')
     const wizardForced = boolFlags.has('--wizard')
     const wizardOff = boolFlags.has('--wizard-off')
+    const skipDoctor = boolFlags.has('--skip-doctor')
     const configPath = args.flags['--config']
+
+    // Preflight: run doctor checks and fail fast on hard failures (claude, git,
+    // Node version). WARN-only checks (codegraph, daemon, DB) are printed but do
+    // not block init. Pass --skip-doctor to bypass entirely (e.g. in CI or when
+    // the operator knows the environment is already validated).
+    if (!skipDoctor) {
+      const { runDoctorChecks, realProbes } = await import('./doctor')
+      // Pass null for dbPath — the DB doesn't exist yet before init runs.
+      const checks = await runDoctorChecks(realProbes, null)
+      const failures = checks.filter((c) => c.status === 'FAIL')
+      const warns = checks.filter((c) => c.status === 'WARN')
+      if (warns.length > 0) {
+        for (const w of warns) deps.out(`[mars init] WARN ${w.label}: ${w.message}`)
+      }
+      if (failures.length > 0) {
+        deps.err('[mars init] preflight failed — fix the following before running init:')
+        for (const f of failures) deps.err(`  FAIL ${f.label}: ${f.message}`)
+        deps.err('[mars init] pass --skip-doctor to bypass these checks')
+        return { code: 1 }
+      }
+    }
 
     // Single-entry routing (ADR-0058). `mars init` is ONE command; whether it
     // runs the TTY wizard or a fully non-interactive path is decided here:
@@ -114,8 +136,21 @@ const init: Command = {
 
     deps.out('wrote:')
     for (const w of result.written ?? []) deps.out(`  ${w}`)
-    const { resolveLauncher, printUiDiscoveryHint } = await import('../ui')
-    printUiDiscoveryHint(deps.ctx.repoRoot, resolveLauncher())
+
+    // Next-steps epilogue — print a concise workflow cheat-sheet so first-time
+    // users know what to do immediately after init.
+    const repoArg = deps.ctx.repoRoot
+    deps.out('')
+    deps.out('Next steps:')
+    deps.out(`  mars task add "describe the task"  \\`)
+    deps.out(`    --files src/foo.ts               \\`)
+    deps.out(`    --verify "npm test"               \\`)
+    deps.out(`    --done "tests pass"                 # enqueue your first task`)
+    deps.out(`  mars list                             # show all tasks`)
+    deps.out(`  mars action-queue watch               # interactive to-do TUI`)
+    deps.out(`  mars ui --repo ${repoArg}    # read-only Kanban dashboard`)
+    deps.out(`  mars reflect                          # generate proposals from recent tasks`)
+    deps.out(`  mars doctor                           # re-check prerequisites any time`)
     return { code: 0 }
   },
 }
