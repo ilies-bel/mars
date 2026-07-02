@@ -414,6 +414,21 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/runs/:taskId — proxy the daemon's run-timeline endpoint.
+        // Returns all workflow runs for the task with per-step status, duration,
+        // token counts, and transcript references (claudeSessionId).
+        if (path.startsWith('/api/runs/') && req.method === 'GET') {
+          const taskId = decodeURIComponent(path.slice('/api/runs/'.length))
+          if (!taskId) {
+            return jsonResponse(400, { error: 'taskId is required' })
+          }
+          const result = await proxyGet(
+            ctx.stateDir,
+            `/view/runs/${encodeURIComponent(taskId)}`,
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
         // GET /api/step-spans?taskId=<id> | ?originId=<id> — step timeline.
         // Proxied to the daemon's GET /view/step-spans so the daemon remains
         // the sole reader of the trace store. The drawer scopes by `taskId`

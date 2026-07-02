@@ -43,6 +43,38 @@ export interface StepSpan {
   evalResults?: Array<{ label: string; value: number | string | null; warn: boolean }>
 }
 
+/** A single step within a workflow run entry. */
+export interface RunTimelineStep {
+  stepName: string
+  phase: string | null
+  workerName: string | null
+  status: 'completed' | 'failed' | 'killed' | 'running'
+  startedAt: string
+  endedAt: string | null
+  durationMs: number | null
+  inputTokens: number | null
+  outputTokens: number | null
+  cacheReadTokens: number | null
+  /** Claude session id — transcript reference for LLM-backed steps. */
+  claudeSessionId: string | null
+  /** Failure reason when status is 'failed' or 'killed'. */
+  failureReason: string | null
+}
+
+/** One workflow run with its ordered step list. */
+export interface RunTimelineEntry {
+  runId: string
+  startedAt: string
+  endedAt: string | null
+  steps: RunTimelineStep[]
+}
+
+/** Full run history for a task, as returned by GET /api/runs/:taskId. */
+export interface RunTimeline {
+  taskId: string
+  runs: RunTimelineEntry[]
+}
+
 // ── Drill-in trail helpers ────────────────────────────────────────────────────
 
 /**
@@ -101,6 +133,12 @@ interface TaskDetailDrawerProps {
    * static rendering to control the timeline content directly.
    */
   stepSpans?: StepSpan[]
+  /**
+   * Pre-loaded run timeline. When provided the run timeline renders immediately
+   * without fetching `/api/runs/:taskId`. Omit in production; pass in tests or
+   * static rendering to control the run timeline content directly.
+   */
+  runTimeline?: RunTimeline
   /**
    * Seeds the drill-in breadcrumb trail. Test-only seam: production callers
    * omit it and the trail initialises to `[taskId]`. When supplied it must end
@@ -799,6 +837,169 @@ const ProposalStepTimeline = ({
   )
 }
 
+/**
+ * Run timeline panel — shows all workflow runs for a task, each with its
+ * ordered step list, status, duration, token counts, and failure reason.
+ * When a run has more than 8 steps the step list collapses by default so
+ * the panel stays scannable at a glance.
+ *
+ * Returns null when the task has no recorded runs (quiet empty state).
+ */
+const RunTimelineSection = ({ timeline }: { timeline: RunTimeline }) => {
+  if (timeline.runs.length === 0) return null
+
+  return (
+    <section
+      data-testid="run-timeline"
+      className="border-b border-iron/20 px-4 py-3"
+    >
+      <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+        Run timeline
+      </h3>
+      <div className="flex flex-col gap-2">
+        {timeline.runs.map((run, runIdx) => {
+          const runDurationMs =
+            run.endedAt != null
+              ? new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()
+              : null
+          const isInFlight = run.endedAt === null
+          const collapsed = run.steps.length > 8
+
+          const stepList = (
+            <ol className="mt-1 flex flex-col">
+              {run.steps.map((step, stepIdx) => {
+                const isLast = stepIdx === run.steps.length - 1
+                const rowTextClass =
+                  step.status === 'running'
+                    ? 'text-warn'
+                    : step.status === 'failed'
+                      ? 'text-error'
+                      : step.status === 'killed'
+                        ? 'text-ochre'
+                        : 'text-fg'
+                const dotClass =
+                  step.status === 'running'
+                    ? 'bg-warn border-warn/60 motion-safe:animate-pulse'
+                    : step.status === 'failed'
+                      ? 'bg-error/80 border-error/60'
+                      : step.status === 'killed'
+                        ? 'bg-ochre/80 border-ochre/60'
+                        : 'bg-muted/40 border-muted/30'
+
+                return (
+                  <li
+                    key={`${run.runId}-${step.stepName}-${stepIdx}`}
+                    data-testid="run-step-row"
+                    data-status={step.status}
+                    className={`relative flex items-start gap-2 rounded pl-5 pr-2 py-1 font-mono text-xs ${rowTextClass}`}
+                  >
+                    <span
+                      className="absolute left-0 top-0 flex h-full flex-col items-center"
+                      aria-hidden="true"
+                    >
+                      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full border ${dotClass}`} />
+                      {!isLast && <span className="mt-0.5 w-px flex-1 bg-border/60" />}
+                    </span>
+                    <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-2 gap-y-0.5">
+                      <span className="min-w-[6rem] font-semibold">{step.stepName}</span>
+                      {step.workerName != null ? (
+                        <span className="shrink-0 text-muted">{step.workerName}</span>
+                      ) : null}
+                      <span className="shrink-0 text-muted">
+                        {step.status === 'running'
+                          ? 'running…'
+                          : step.status === 'completed'
+                            ? 'done'
+                            : step.status}
+                      </span>
+                      {step.durationMs != null ? (
+                        <span className="ml-auto shrink-0 text-muted">
+                          {formatDuration(step.durationMs)}
+                        </span>
+                      ) : null}
+                      {step.inputTokens != null || step.outputTokens != null ? (
+                        <span className="w-full font-mono text-[10px] text-muted">
+                          {step.inputTokens != null ? `in:${step.inputTokens}` : null}
+                          {step.outputTokens != null ? ` out:${step.outputTokens}` : null}
+                          {step.cacheReadTokens != null && step.cacheReadTokens > 0
+                            ? ` cache:${step.cacheReadTokens}`
+                            : null}
+                        </span>
+                      ) : null}
+                      {step.claudeSessionId != null ? (
+                        <span
+                          className="w-full font-mono text-[10px] text-muted"
+                          title={step.claudeSessionId}
+                        >
+                          session:{step.claudeSessionId.slice(0, 8)}
+                        </span>
+                      ) : null}
+                      {(step.status === 'failed' || step.status === 'killed') &&
+                      step.failureReason != null ? (
+                        <p className="w-full break-words text-[10px] text-error/80">
+                          {step.failureReason}
+                        </p>
+                      ) : null}
+                    </div>
+                  </li>
+                )
+              })}
+            </ol>
+          )
+
+          return (
+            <div
+              key={run.runId}
+              data-testid="run-entry"
+              className="overflow-hidden rounded border border-iron/15 bg-panel"
+            >
+              {collapsed ? (
+                <details>
+                  <summary className="flex cursor-pointer items-center justify-between px-3 py-2 font-mono text-[11px] text-iron">
+                    <span className="flex items-center gap-1.5">
+                      Run {runIdx + 1}
+                      {isInFlight ? (
+                        <span
+                          aria-label="in flight"
+                          className="inline-block h-1.5 w-1.5 rounded-full bg-warn motion-safe:animate-pulse"
+                        />
+                      ) : null}
+                    </span>
+                    <span className="text-muted">
+                      {run.steps.length} steps
+                      {runDurationMs != null ? ` · ${formatDuration(runDurationMs)}` : ''}
+                    </span>
+                  </summary>
+                  <div className="border-t border-iron/10 px-1 pb-1">{stepList}</div>
+                </details>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between px-3 py-2 font-mono text-[11px] text-iron">
+                    <span className="flex items-center gap-1.5">
+                      Run {runIdx + 1}
+                      {isInFlight ? (
+                        <span
+                          aria-label="in flight"
+                          className="inline-block h-1.5 w-1.5 rounded-full bg-warn motion-safe:animate-pulse"
+                        />
+                      ) : null}
+                    </span>
+                    <span className="text-muted">
+                      {run.steps.length} step{run.steps.length !== 1 ? 's' : ''}
+                      {runDurationMs != null ? ` · ${formatDuration(runDurationMs)}` : ''}
+                    </span>
+                  </div>
+                  <div className="border-t border-iron/10 px-1 pb-1">{stepList}</div>
+                </>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
 export const TaskDetailDrawer = ({
   taskId,
   onClose,
@@ -807,6 +1008,7 @@ export const TaskDetailDrawer = ({
   tasks,
   proposals,
   stepSpans,
+  runTimeline,
   initialTrail,
   activeStepName,
 }: TaskDetailDrawerProps) => {
@@ -842,6 +1044,13 @@ export const TaskDetailDrawer = ({
    * when the `stepSpans` prop is set.
    */
   const [fetchedSpans, setFetchedSpans] = useState<StepSpan[] | null>(null)
+
+  /**
+   * Run timeline fetched from the API for the currently-shown task. Null until
+   * the task detail fetch succeeds and the runs request completes. Ignored
+   * when the `runTimeline` prop is set.
+   */
+  const [fetchedRuns, setFetchedRuns] = useState<RunTimeline | null>(null)
 
   // Distinguish an external open from our own drill-in. Both arrive as a
   // changed `taskId` prop (a self-nav writes the hash, which re-derives the
@@ -933,9 +1142,10 @@ export const TaskDetailDrawer = ({
   useEffect(() => {
     let cancelled = false
     setState({ kind: 'loading' })
-    // Reset spans on every (re)load so a drill-in never shows the prior task's
-    // timeline while the new one is in flight.
+    // Reset spans and run timeline on every (re)load so a drill-in never shows
+    // the prior task's data while the new one is in flight.
     setFetchedSpans(null)
+    setFetchedRuns(null)
     const f = fetchImpl ?? fetch
     f(`/api/tasks/${encodeURIComponent(currentId)}`)
       .then(async (res) => {
@@ -970,28 +1180,43 @@ export const TaskDetailDrawer = ({
         }
         setState({ kind: 'ready', task: parsed.data })
 
-        // When the caller pre-loaded spans, the timeline reads off the prop —
-        // skip the spans fetch entirely.
-        if (stepSpans !== undefined) return
+        // Skip secondary fetches only when the caller has pre-loaded all
+        // optional panel data (spans + run timeline both present as props).
+        if (stepSpans !== undefined && runTimeline !== undefined) return
 
-        // Fetch step spans. Scope by taskId when viewing a task so sibling
-        // slices' spans are excluded; scope by originId when viewing a proposal
-        // node (drill-in from the subgraph) to show the full arc timeline.
         const rawTask = raw.task as { originId?: string | null } | null
         const isProposal = proposals?.some((p) => p.id === currentId) ?? false
-        const spansUrl = isProposal
-          ? `/api/step-spans?originId=${encodeURIComponent(rawTask?.originId ?? currentId)}`
-          : `/api/step-spans?taskId=${encodeURIComponent(currentId)}`
-        f(spansUrl)
-          .then(async (spansRes) => {
-            if (cancelled || !spansRes.ok) return
-            const spansData = (await spansRes.json()) as { spans: StepSpan[] }
-            if (!cancelled) setFetchedSpans(spansData.spans)
-          })
-          .catch(() => {
-            // Step spans are optional display data — a failed fetch silently
-            // leaves the timeline section absent rather than erroring the drawer.
-          })
+
+        // Fetch step spans when caller hasn't pre-loaded them.
+        if (stepSpans === undefined) {
+          const spansUrl = isProposal
+            ? `/api/step-spans?originId=${encodeURIComponent(rawTask?.originId ?? currentId)}`
+            : `/api/step-spans?taskId=${encodeURIComponent(currentId)}`
+          f(spansUrl)
+            .then(async (spansRes) => {
+              if (cancelled || !spansRes.ok) return
+              const spansData = (await spansRes.json()) as { spans: StepSpan[] }
+              if (!cancelled) setFetchedSpans(spansData.spans)
+            })
+            .catch(() => {
+              // Step spans are optional display data — a failed fetch silently
+              // leaves the timeline section absent rather than erroring the drawer.
+            })
+        }
+
+        // Fetch run timeline when caller hasn't pre-loaded it.
+        if (runTimeline === undefined) {
+          f(`/api/runs/${encodeURIComponent(currentId)}`)
+            .then(async (runsRes) => {
+              if (cancelled || !runsRes.ok) return
+              const runsData = (await runsRes.json()) as RunTimeline
+              if (!cancelled) setFetchedRuns(runsData)
+            })
+            .catch(() => {
+              // Run timeline is optional display data — a failed fetch silently
+              // leaves the section absent rather than erroring the drawer.
+            })
+        }
       })
       .catch((err: unknown) => {
         if (cancelled) return
@@ -1001,7 +1226,7 @@ export const TaskDetailDrawer = ({
     return () => {
       cancelled = true
     }
-  }, [currentId, fetchImpl, stepSpans])
+  }, [currentId, fetchImpl, stepSpans, runTimeline])
 
   // Compute the focus subgraph from props. This is independent of the detail
   // fetch so it renders immediately — the operator sees relationship context
@@ -1033,6 +1258,8 @@ export const TaskDetailDrawer = ({
   // The resolved spans to render: prefer the prop (for testing / static
   // rendering), otherwise use the spans fetched from the API.
   const resolvedSpans = stepSpans !== undefined ? stepSpans : fetchedSpans
+  // Same resolution for the run timeline data.
+  const resolvedRunTimeline = runTimeline !== undefined ? runTimeline : fetchedRuns
 
   // True when the drawer is focused on a proposal node rather than a leaf task.
   // Determines whether to use ProposalStepTimeline (grouped) or StepTimeline (flat).
@@ -1198,6 +1425,14 @@ export const TaskDetailDrawer = ({
         isProposal
           ? <ProposalStepTimeline spans={resolvedSpans} activeStepName={activeStepName} />
           : <StepTimeline spans={resolvedSpans} activeStepName={activeStepName} />
+      ) : null}
+
+      {/* Run timeline — renders when run data is available (prop or fetched).
+          Shows all workflow runs with per-step status, durations, token counts,
+          and failure reasons. Returns nothing when no runs are recorded yet
+          (quiet empty state). */}
+      {resolvedRunTimeline !== null && resolvedRunTimeline.runs.length > 0 ? (
+        <RunTimelineSection timeline={resolvedRunTimeline} />
       ) : null}
 
       {state.kind === 'not-found' ? (

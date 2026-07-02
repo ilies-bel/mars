@@ -7,7 +7,7 @@ import type {
   ProgressTask,
   Task,
 } from '@/shared/schemas'
-import type { StepSpan } from './TaskDetailDrawer'
+import type { RunTimeline, RunTimelineEntry, RunTimelineStep, StepSpan } from './TaskDetailDrawer'
 import {
   TaskDetailDrawer,
   TaskDetailBody,
@@ -1205,5 +1205,249 @@ describe('TaskDetailDrawer – EvalChip accessibility', () => {
     expect(html).toContain('unknown-metric')
     // No aria-label injected for unlisted metrics
     expect(html).not.toContain('aria-label="unknown-metric')
+  })
+})
+
+// ── Run timeline ──────────────────────────────────────────────────────────────
+
+/**
+ * The run timeline renders inside TaskDetailDrawer when `runTimeline` is passed
+ * as a prop. Shows all workflow runs for the task with per-step status,
+ * durations, token counts, and failure reasons.
+ *
+ * In production the drawer fetches from /api/runs/:taskId; the prop path
+ * exists so tests can verify rendering without a live server.
+ */
+
+const makeRTStep = (
+  overrides: Partial<RunTimelineStep> & { stepName: string },
+): RunTimelineStep => ({
+  stepName: overrides.stepName,
+  phase: null,
+  workerName: null,
+  status: 'completed',
+  startedAt: '2026-01-01T10:00:00.000Z',
+  endedAt: '2026-01-01T10:00:01.000Z',
+  durationMs: 1000,
+  inputTokens: null,
+  outputTokens: null,
+  cacheReadTokens: null,
+  claudeSessionId: null,
+  failureReason: null,
+  ...overrides,
+})
+
+const makeRTRun = (overrides?: Partial<RunTimelineEntry>): RunTimelineEntry => ({
+  runId: 'wf-run-001',
+  startedAt: '2026-01-01T10:00:00.000Z',
+  endedAt: '2026-01-01T10:00:30.000Z',
+  steps: [],
+  ...overrides,
+})
+
+const makeRunTimeline = (overrides?: Partial<RunTimeline>): RunTimeline => ({
+  taskId: 'task-t1',
+  runs: [],
+  ...overrides,
+})
+
+describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
+  it('renders the run-timeline section when runTimeline has at least one run', () => {
+    const timeline = makeRunTimeline({
+      runs: [makeRTRun({ steps: [makeRTStep({ stepName: 'setup' })] })],
+    })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('data-testid="run-timeline"')
+  })
+
+  it('does not render the run-timeline section when runTimeline prop is omitted', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} />,
+    )
+    expect(html).not.toContain('data-testid="run-timeline"')
+  })
+
+  it('quiet empty state: renders nothing when runs array is empty', () => {
+    const timeline = makeRunTimeline({ runs: [] })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).not.toContain('data-testid="run-timeline"')
+  })
+
+  it('renders one run-entry per run', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({ runId: 'wf-1', steps: [makeRTStep({ stepName: 'setup' })] }),
+        makeRTRun({ runId: 'wf-2', steps: [makeRTStep({ stepName: 'code' })] }),
+      ],
+    })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    const runCount = (html.match(/data-testid="run-entry"/g) ?? []).length
+    expect(runCount).toBe(2)
+  })
+
+  it('renders one run-step-row per step', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({ stepName: 'setup' }),
+            makeRTStep({ stepName: 'run-claude-code' }),
+            makeRTStep({ stepName: 'verify' }),
+          ],
+        }),
+      ],
+    })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    const rowCount = (html.match(/data-testid="run-step-row"/g) ?? []).length
+    expect(rowCount).toBe(3)
+  })
+
+  it('shows step names in the rendered rows', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({ stepName: 'setup' }),
+            makeRTStep({ stepName: 'run-claude-code' }),
+          ],
+        }),
+      ],
+    })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('setup')
+    expect(html).toContain('run-claude-code')
+  })
+
+  it('shows per-step token counts when present', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'run-claude-code',
+              inputTokens: 1234,
+              outputTokens: 567,
+              cacheReadTokens: 890,
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('in:1234')
+    expect(html).toContain('out:567')
+    expect(html).toContain('cache:890')
+  })
+
+  it('does not show token span when both inputTokens and outputTokens are null', () => {
+    const timeline = makeRunTimeline({
+      runs: [makeRTRun({ steps: [makeRTStep({ stepName: 'setup' })] })],
+    })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).not.toContain('in:')
+    expect(html).not.toContain('out:')
+  })
+
+  it('shows failure reason inline for a failed step', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'run-claude-code',
+              status: 'failed',
+              failureReason: 'context window exceeded',
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('context window exceeded')
+    expect(html).toContain('data-status="failed"')
+  })
+
+  it('marks a running step with data-status="running"', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          endedAt: null,
+          steps: [
+            makeRTStep({
+              stepName: 'run-claude-code',
+              status: 'running',
+              endedAt: null,
+              durationMs: null,
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('data-status="running"')
+  })
+
+  it('uses semantic color tokens, not raw palette colors', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({ stepName: 'a', status: 'failed' }),
+            makeRTStep({ stepName: 'b', status: 'running', endedAt: null, durationMs: null }),
+          ],
+        }),
+      ],
+    })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).not.toContain('text-red-400')
+    expect(html).not.toContain('text-amber-400')
+    expect(html).toContain('text-error')
+    expect(html).toContain('text-warn')
+  })
+
+  it('collapses step list inside <details> when run has more than 8 steps', () => {
+    const steps = Array.from({ length: 9 }, (_, i) =>
+      makeRTStep({ stepName: `step-${i}` }),
+    )
+    const timeline = makeRunTimeline({ runs: [makeRTRun({ steps })] })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    // A <details> element must be present for long runs.
+    expect(html).toContain('<details')
+    // All steps are still in the static HTML (the collapse is interactive-only).
+    const rowCount = (html.match(/data-testid="run-step-row"/g) ?? []).length
+    expect(rowCount).toBe(9)
+  })
+
+  it('does not wrap step list in <details> when run has 8 or fewer steps', () => {
+    const steps = Array.from({ length: 4 }, (_, i) =>
+      makeRTStep({ stepName: `step-${i}` }),
+    )
+    const timeline = makeRunTimeline({ runs: [makeRTRun({ steps })] })
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).not.toContain('<details')
   })
 })
