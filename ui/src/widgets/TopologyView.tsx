@@ -781,9 +781,10 @@ export const TopologyView = ({
     <main className="relative flex min-h-0 flex-1 overflow-hidden bg-bg">
       <div
         ref={containerRef}
+        role="img"
         className="dag-canvas absolute inset-0 h-full w-full"
         style={{ background: CANVAS_SURFACE }}
-        aria-label="Task dependency graph"
+        aria-label={`Task topology graph, ${tasks.length} task${tasks.length === 1 ? '' : 's'}. Use the Board tab for a screen-reader and keyboard accessible view.`}
       />
       {/* Navigation hint — quiet, top-right inside the canvas */}
       <div className="pointer-events-none absolute right-3 top-3 z-10 text-right font-mono text-[10.5px] leading-relaxed text-muted-dark opacity-70">

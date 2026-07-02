@@ -26,7 +26,7 @@ interface CountBadgeProps {
 
 const CountBadge = ({ count }: CountBadgeProps) =>
   count === 0 ? null : (
-    <span className="absolute -top-1 -right-1 rounded-full bg-iron/60 px-1 font-mono text-[9px] leading-none text-fg">
+    <span aria-hidden="true" className="absolute -top-1 -right-1 rounded-full bg-iron/60 px-1 font-mono text-[9px] leading-none text-fg">
       {count}
     </span>
   )
@@ -97,13 +97,21 @@ export const NavBar = ({ hash }: NavBarProps) => {
       <span className="mx-1 h-3 w-px bg-iron/30" aria-hidden="true" />
       <span className="relative">
         <CountBadge count={actionCount} />
-        <a className={linkClass(route === 'action-queue')} href="#/action-queue">
+        <a
+          className={linkClass(route === 'action-queue')}
+          href="#/action-queue"
+          aria-label={actionCount > 0 ? `Action queue, ${actionCount} items` : undefined}
+        >
           Action queue
         </a>
       </span>
       <span className="relative">
         <CountBadge count={progressCount} />
-        <a className={linkClass(route === 'progress')} href="#/progress">
+        <a
+          className={linkClass(route === 'progress')}
+          href="#/progress"
+          aria-label={progressCount > 0 ? `Progress, ${progressCount} open tasks` : undefined}
+        >
           Progress
         </a>
       </span>

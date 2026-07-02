@@ -43,7 +43,8 @@ export const FrameworkUpdateBannerInner = ({
   onDismiss,
 }: BannerInnerProps) => (
   <div
-    role="banner"
+    role="region"
+    aria-label="Framework update notification"
     className="flex items-center justify-between gap-3 bg-flame/10 px-4 py-2 text-sm text-fg"
   >
     <span>

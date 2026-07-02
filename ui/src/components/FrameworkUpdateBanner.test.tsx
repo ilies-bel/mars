@@ -150,3 +150,20 @@ describe('FrameworkUpdateBannerInner – dismiss control', () => {
     expect(html).toContain('Dismiss update banner')
   })
 })
+
+describe('FrameworkUpdateBannerInner – landmark role', () => {
+  it('uses role=region so it does not create a second page-level banner landmark', () => {
+    const html = renderToStaticMarkup(
+      <FrameworkUpdateBannerInner {...defaultProps} />,
+    )
+    expect(html).toContain('role="region"')
+    expect(html).not.toContain('role="banner"')
+  })
+
+  it('carries an accessible label that identifies the region to screen readers', () => {
+    const html = renderToStaticMarkup(
+      <FrameworkUpdateBannerInner {...defaultProps} />,
+    )
+    expect(html).toContain('aria-label="Framework update notification"')
+  })
+})

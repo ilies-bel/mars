@@ -3,9 +3,13 @@
  * not render under `renderToStaticMarkup` or jsdom once G6 is constructed. So
  * the testable value lives in the PURE model (see topologyGraphModel.test.ts).
  *
- * Here we cover only the empty-state path, which short-circuits BEFORE G6 is
- * ever constructed and is therefore safe under the static renderer. We do NOT
- * attempt to instantiate G6 in tests.
+ * Here we cover:
+ *  - The empty-state path, which short-circuits BEFORE G6 is ever constructed.
+ *  - The non-empty container wrapper attrs (role, aria-label). The wrapper is
+ *    pure JSX — G6 is only instantiated inside useEffect, which `renderToStaticMarkup`
+ *    does not invoke, so these tests are safe under the static renderer.
+ *
+ * We do NOT attempt to instantiate G6 in tests.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -16,6 +20,25 @@ import { TopologyView } from './TopologyView'
 const noTasks: ProgressTask[] = []
 const noProposals: ProgressProposalNode[] = []
 
+const stubTask = (id: string): ProgressTask => ({
+  id,
+  prompt: `Task ${id}`,
+  status: 'queued',
+  plan: null,
+  branch: null,
+  worktreePath: null,
+  error: null,
+  dropReason: null,
+  retryCount: 0,
+  blockerTaskId: null,
+  blockedBy: [],
+  spec: null,
+  createdAt: '2024-01-01T00:00:00Z',
+  updatedAt: '2024-01-01T00:00:00Z',
+  cluster: 'Queued',
+  parentProposalId: null,
+})
+
 describe('TopologyView – empty state', () => {
   it('renders the empty-state message when there are no tasks', () => {
     const html = renderToStaticMarkup(<TopologyView tasks={noTasks} proposals={noProposals} />)
@@ -25,7 +48,7 @@ describe('TopologyView – empty state', () => {
   it('does not construct any canvas/graph chrome in the empty state', () => {
     // The empty path returns a plain <main> with a <p>; no graph container.
     const html = renderToStaticMarkup(<TopologyView tasks={noTasks} proposals={noProposals} />)
-    expect(html).not.toContain('Task dependency graph')
+    expect(html).not.toContain('dag-canvas')
     expect(html.length).toBeGreaterThan(0)
   })
 
@@ -40,5 +63,36 @@ describe('TopologyView – empty state', () => {
       />,
     )
     expect(html).toContain('No active tasks')
+  })
+})
+
+describe('TopologyView – accessible canvas container', () => {
+  it('exposes the canvas container as an image landmark for assistive technology', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[stubTask('t-1')]} proposals={noProposals} />,
+    )
+    expect(html).toContain('role="img"')
+  })
+
+  it('includes the task count in the accessible label', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[stubTask('t-1'), stubTask('t-2')]} proposals={noProposals} />,
+    )
+    expect(html).toContain('2 tasks')
+  })
+
+  it('uses singular "task" when only one task is present', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[stubTask('t-1')]} proposals={noProposals} />,
+    )
+    expect(html).toContain('1 task')
+    expect(html).not.toContain('1 tasks')
+  })
+
+  it('points to the Board tab as the accessible alternative', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[stubTask('t-1')]} proposals={noProposals} />,
+    )
+    expect(html).toContain('Board tab')
   })
 })
