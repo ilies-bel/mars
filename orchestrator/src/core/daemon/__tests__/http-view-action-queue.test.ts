@@ -526,6 +526,7 @@ describe('GET /view/action-queue via HTTP server', () => {
             actions: [],
             staleWorktreeDetail: null,
             devServerUrl: null,
+  leaseState: null,
             diagnosis: null,
             failureReasonCode: null,
           }

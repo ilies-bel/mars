@@ -25,6 +25,18 @@
  * A task that is NOT in the inFlightEntries snapshot is also checked against
  * the wall-clock ceiling; if it exceeds the ceiling, it is phantom-failed even
  * without a slot to reclaim (the slot was already leaked somehow).
+ *
+ * PARKED STATUSES ARE NEVER SWEPT:
+ * Tasks in 'awaiting-human' or 'awaiting-validation' have no managed subprocess
+ * by design — the human or operator owns the worktree session. These statuses
+ * are intentionally excluded from PHANTOM_STATUSES; the watchdog MUST NOT
+ * phantom-fail them regardless of age.
+ *
+ * LEASE EXPIRY:
+ * `sweepExpiredLeases` is the companion function for 'awaiting-human'. When a
+ * lease's age exceeds MARS_LEASE_EXPIRY_MS the function raises a level-triggered
+ * action-queue row (ADR-0048) — it NEVER auto-fails the task. The operator
+ * resolves the lease explicitly (release → re-queue, or drop).
  */
 
 import { listTasks, updateTask } from '../queue'
@@ -41,6 +53,16 @@ const resolvedCeilingMs = (): number => {
   if (!raw) return DEFAULT_CEILING_MS
   const parsed = Number(raw)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CEILING_MS
+}
+
+/** Default lease expiry window: 4 hours. */
+export const DEFAULT_LEASE_EXPIRY_MS = 4 * 60 * 60_000
+
+const resolvedLeaseExpiryMs = (): number => {
+  const raw = process.env.MARS_LEASE_EXPIRY_MS
+  if (!raw) return DEFAULT_LEASE_EXPIRY_MS
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LEASE_EXPIRY_MS
 }
 
 /**
@@ -192,4 +214,73 @@ export const sweepPhantomTasks = async (
   }
 
   return { failed }
+}
+
+/**
+ * Sweep tasks parked in 'awaiting-human' whose lease has exceeded the expiry
+ * window and raise a level-triggered action-queue row for each (ADR-0048).
+ *
+ * NEVER auto-fails the task — lease expiry is an advisory alert, not a kill
+ * signal. The operator resolves the situation explicitly (release the lease and
+ * re-queue, or drop the task). This upholds the phantom-watchdog rule: a task
+ * in a parked status with an active lease is NEVER phantom-failed.
+ *
+ * The action-queue row's `signature` is `lease-expiry:<taskId>`, so repeated
+ * sweep detections bump `seen_count` on the existing row rather than spawning
+ * siblings (level-triggered, ADR-0048).
+ *
+ * @param nowMs  Current timestamp override for testing.
+ * @returns      IDs of tasks whose expired lease triggered a new alert row.
+ */
+export const sweepExpiredLeases = async (
+  nowMs?: number,
+): Promise<{ alerted: string[] }> => {
+  const now = nowMs ?? Date.now()
+  const expiry = resolvedLeaseExpiryMs()
+  const tasks = await listTasks('awaiting-human')
+  const alerted: string[] = []
+
+  for (const task of tasks) {
+    if (!task.leasedAt) continue
+    const leasedMs = Date.parse(task.leasedAt)
+    if (!Number.isFinite(leasedMs)) continue
+    const ageMs = now - leasedMs
+    if (ageMs <= expiry) continue
+
+    const ageMinutes = Math.round(ageMs / 60_000)
+    await raiseActionQueueItem({
+      kind: 'awaiting-human',
+      category: 'daemon',
+      priority: 'normal',
+      title: `Lease expired: task ${task.id} awaiting human for ${ageMinutes} min`,
+      body:
+        `Task ${task.id} has been parked in 'awaiting-human' for ${ageMinutes} min ` +
+        `(expiry threshold: ${Math.round(expiry / 60_000)} min). ` +
+        `Lease holder: ${task.leaseOwner ?? 'unknown'}. ` +
+        `Release the lease to resume the pipeline, or drop the task if the work is abandoned.`,
+      payload: {
+        taskId: task.id,
+        leaseOwner: task.leaseOwner,
+        leasedAt: task.leasedAt,
+        leaseNote: task.leaseNote,
+        ageMinutes,
+      },
+      context: { taskId: task.id },
+      raisedBy: 'daemon:phantom-task-watchdog',
+      signature: `lease-expiry:${task.id}`,
+      originTaskId: task.id,
+      occurrence: {
+        leaseOwner: task.leaseOwner,
+        ageMinutes,
+        detectedAt: new Date(now).toISOString(),
+      },
+    }).catch(() => {
+      // Non-fatal: the task remains parked and the operator will see it via
+      // status/list even if the action-queue write failed.
+    })
+
+    alerted.push(task.id)
+  }
+
+  return { alerted }
 }

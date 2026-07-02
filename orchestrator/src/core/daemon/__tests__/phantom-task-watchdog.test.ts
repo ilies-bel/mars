@@ -19,9 +19,11 @@ interface ActionQueueModule {
 
 interface WatchdogModule {
   sweepPhantomTasks: typeof import('../phantom-task-watchdog').sweepPhantomTasks
+  sweepExpiredLeases: typeof import('../phantom-task-watchdog').sweepExpiredLeases
   buildPhantomBody: typeof import('../phantom-task-watchdog').buildPhantomBody
   PHANTOM_TASK_KIND: typeof import('../phantom-task-watchdog').PHANTOM_TASK_KIND
   DEFAULT_CEILING_MS: typeof import('../phantom-task-watchdog').DEFAULT_CEILING_MS
+  DEFAULT_LEASE_EXPIRY_MS: typeof import('../phantom-task-watchdog').DEFAULT_LEASE_EXPIRY_MS
 }
 
 const setupRepo = (): string => {
@@ -346,5 +348,156 @@ describe('sweepPhantomTasks — PID liveness', () => {
     expect(failed).toContain(task.id)
     const reloaded = await q.getTask(task.id)
     expect(reloaded?.status).toBe('failed')
+  })
+})
+
+// ── Parked-state immunity ────────────────────────────────────────────────────
+
+describe('sweepPhantomTasks — parked state immunity', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_PHANTOM_WATCHDOG_CEILING_MS
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('never phantom-fails a task in awaiting-human, even when older than the ceiling', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('human work', undefined, { skipTriage: true })
+
+    // Park the task as awaiting-human with an old leasedAt (well past the ceiling).
+    const oldLeasedAt = new Date(nowMs - 31 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'awaiting-human', leased_at = ?, lease_owner = ?, updated_at = ? WHERE id = ?`,
+      args: [oldLeasedAt, 'operator@example.com', oldLeasedAt, task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    const { failed } = await watchdog.sweepPhantomTasks([], reclaimSlot, undefined, nowMs)
+
+    // Must NOT appear in failed list.
+    expect(failed).not.toContain(task.id)
+    // Status must remain awaiting-human.
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('awaiting-human')
+    // No phantom action-queue items raised.
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items.filter((i) => i.kind === watchdog.PHANTOM_TASK_KIND)).toHaveLength(0)
+    // reclaimSlot was never called.
+    expect(reclaimSlot).not.toHaveBeenCalled()
+  })
+})
+
+// ── Lease expiry alerts ──────────────────────────────────────────────────────
+
+describe('sweepExpiredLeases', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_LEASE_EXPIRY_MS
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('raises an awaiting-human action-queue row for a task whose lease has expired', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('human work', undefined, { skipTriage: true })
+
+    // Lease acquired well beyond the default 4-hour expiry.
+    const expiredLeasedAt = new Date(nowMs - (4 * 60 + 5) * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'awaiting-human', leased_at = ?, lease_owner = ?, updated_at = ? WHERE id = ?`,
+      args: [expiredLeasedAt, 'alice', expiredLeasedAt, task.id],
+    })
+
+    const { alerted } = await watchdog.sweepExpiredLeases(nowMs)
+
+    // Task ID appears in alerted list.
+    expect(alerted).toContain(task.id)
+
+    // An 'awaiting-human' action-queue row was raised (NOT a 'phantom-task' row).
+    const items = await actionQueue.listActionQueueItems('open')
+    const leaseItems = items.filter((i) => i.kind === 'awaiting-human')
+    expect(leaseItems).toHaveLength(1)
+    expect(leaseItems[0].context).toEqual(expect.objectContaining({ taskId: task.id }))
+
+    // Task status is still awaiting-human — NOT failed.
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('awaiting-human')
+  })
+
+  it('does NOT alert when the lease is within the expiry window', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('human work', undefined, { skipTriage: true })
+
+    // Lease acquired 30 minutes ago — well within the 4-hour default expiry.
+    const recentLeasedAt = new Date(nowMs - 30 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'awaiting-human', leased_at = ?, lease_owner = ?, updated_at = ? WHERE id = ?`,
+      args: [recentLeasedAt, 'alice', recentLeasedAt, task.id],
+    })
+
+    const { alerted } = await watchdog.sweepExpiredLeases(nowMs)
+
+    expect(alerted).not.toContain(task.id)
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items.filter((i) => i.kind === 'awaiting-human')).toHaveLength(0)
+  })
+
+  it('respects MARS_LEASE_EXPIRY_MS override', async () => {
+    process.env.MARS_LEASE_EXPIRY_MS = String(10 * 60_000) // 10-minute expiry
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('human work', undefined, { skipTriage: true })
+
+    // Lease acquired 15 minutes ago — exceeds the 10-minute custom expiry.
+    const expiredLeasedAt = new Date(nowMs - 15 * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'awaiting-human', leased_at = ?, lease_owner = ?, updated_at = ? WHERE id = ?`,
+      args: [expiredLeasedAt, 'bob', expiredLeasedAt, task.id],
+    })
+
+    const { alerted } = await watchdog.sweepExpiredLeases(nowMs)
+
+    expect(alerted).toContain(task.id)
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items.filter((i) => i.kind === 'awaiting-human')).toHaveLength(1)
+
+    // Task still parked — NOT failed.
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('awaiting-human')
+  })
+
+  it('re-detection bumps seen_count on the existing row (level-triggered, ADR-0048)', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('human work', undefined, { skipTriage: true })
+
+    const expiredLeasedAt = new Date(nowMs - (4 * 60 + 5) * 60_000).toISOString()
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'awaiting-human', leased_at = ?, lease_owner = ?, updated_at = ? WHERE id = ?`,
+      args: [expiredLeasedAt, 'alice', expiredLeasedAt, task.id],
+    })
+
+    // First sweep
+    await watchdog.sweepExpiredLeases(nowMs)
+    // Second sweep (re-detection)
+    await watchdog.sweepExpiredLeases(nowMs + 5000)
+
+    // Still only ONE action-queue item (dedup by signature).
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items.filter((i) => i.kind === 'awaiting-human')).toHaveLength(1)
   })
 })

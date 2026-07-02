@@ -53,6 +53,7 @@ const makeRow = (
   actions: [],
   staleWorktreeDetail: null,
   devServerUrl: null,
+  leaseState: null,
   diagnosis: null,
   failureReasonCode: null,
   ...overrides,

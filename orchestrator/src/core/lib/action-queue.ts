@@ -49,6 +49,12 @@ export const ACTION_QUEUE_KINDS = [
   // 'awaiting-validation' until the operator clicks Validate (→ merge) or
   // Reject (→ failed). The row carries the dev-server URL in its payload.
   'awaiting-validation',
+  // A task has been parked in 'awaiting-human': an operator holds a worktree
+  // lease and is working interactively in the task's worktree. The row carries
+  // the lease owner, timestamp, and optional note in its payload. Raised on
+  // park and again (level-triggered, ADR-0048) if the lease expires without
+  // activity.
+  'awaiting-human',
   // A durable Subscriber's handler has thrown on the same event K times in
   // a row; its cursor is blocked (ADR-0032). The operator surface for an
   // otherwise-silent stall — there is no DLQ.

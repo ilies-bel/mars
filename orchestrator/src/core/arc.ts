@@ -758,6 +758,84 @@ export class Arc {
   }
 
   /**
+   * Park a task in `'awaiting-human'` with an operator-owned worktree lease
+   * (ADR-0052 sole-writer). The pipeline resumes when the lease is released
+   * (see `releaseLease`). Compatible with ADR-0063 (no-attach): the human
+   * opens their own interactive session; the daemon never attaches to a running
+   * pty. No managed subprocess — the phantom watchdog MUST NOT sweep this task.
+   *
+   * Raises an `'awaiting-human'` action-queue item so the operator can see the
+   * parked task and its lease state. The item is level-triggered (ADR-0048):
+   * re-detection on an expired lease bumps `seen_count` rather than spawning a
+   * sibling row.
+   */
+  async parkForHuman(
+    taskId: string,
+    options: { leaseOwner: string; leaseNote?: string | null },
+  ): Promise<void> {
+    const now = new Date().toISOString()
+    await updateTask(taskId, {
+      status: 'awaiting-human',
+      leaseOwner: options.leaseOwner,
+      leasedAt: now,
+      leaseNote: options.leaseNote ?? null,
+    })
+    await raiseActionQueueItem({
+      kind: 'awaiting-human',
+      category: 'daemon',
+      priority: 'normal',
+      title: `Task ${taskId} parked — awaiting human`,
+      body:
+        `Task ${taskId} is parked in its worktree. ` +
+        `Lease holder: ${options.leaseOwner}. ` +
+        `Work in the worktree interactively, then release the lease to resume the pipeline.` +
+        (options.leaseNote ? ` Note: ${options.leaseNote}` : ''),
+      payload: {
+        taskId,
+        leaseOwner: options.leaseOwner,
+        leasedAt: now,
+        leaseNote: options.leaseNote ?? null,
+      },
+      context: { taskId },
+      raisedBy: 'arc:park-for-human',
+      signature: taskId,
+      originTaskId: taskId,
+      occurrence: {
+        leaseOwner: options.leaseOwner,
+        leasedAt: now,
+        parkedAt: now,
+      },
+    }).catch(() => {
+      // Non-fatal: task is already parked and the action-queue write failed.
+      // The task row itself reflects the parked state; the operator can still
+      // discover it via list/status.
+    })
+  }
+
+  /**
+   * Release the worktree lease on an `'awaiting-human'` task and re-queue it
+   * for pipeline continuation (ADR-0052 sole-writer). Clears all lease fields
+   * and transitions the task to `'queued'`.
+   *
+   * Throws if the task is not currently in `'awaiting-human'`.
+   */
+  async releaseLease(taskId: string): Promise<void> {
+    const task = await getTask(taskId)
+    if (!task) throw new Error(`task ${taskId} not found`)
+    if (task.status !== 'awaiting-human') {
+      throw new Error(
+        `task ${taskId} is in status '${task.status}'; can only release a lease on an 'awaiting-human' task`,
+      )
+    }
+    await updateTask(taskId, {
+      status: 'queued',
+      leaseOwner: null,
+      leasedAt: null,
+      leaseNote: null,
+    })
+  }
+
+  /**
    * Reprioritize a still-queued task (ADR-0052 sole-writer). Relocated
    * bit-for-bit from `queue.ts:setTaskPriority`: the priority `UPDATE tasks SET
    * priority = …, updated_at = …` is a non-lifecycle column write (no status

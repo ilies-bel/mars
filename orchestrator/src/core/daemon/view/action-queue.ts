@@ -22,6 +22,7 @@ export type DerivedActionQueueKind =
   | 'stale-worktree'
   | 'draft-proposal'
   | 'awaiting-validation'
+  | 'awaiting-human'
 export type DerivedActionQueueFilter = 'open' | 'all'
 
 /** Resolution metadata carried by resolved rows in history responses. */
@@ -68,6 +69,16 @@ export interface ActionQueueRow {
    * as a clickable link the operator opens before clicking Validate / Reject.
    */
   devServerUrl: string | null
+  /**
+   * Lease state for an `awaiting-human` row. Null on every other row kind.
+   * The UI renders the owner, timestamp, and optional note so the operator
+   * can see who holds the worktree and why.
+   */
+  leaseState: {
+    leaseOwner: string
+    leasedAt: string
+    leaseNote: string | null
+  } | null
   diagnosis: { text: string; diagnosedAt: string } | null
   /**
    * Failure-reason catalog code (`tasks.failure_reason_code` / actionQueue-row
@@ -218,6 +229,7 @@ export const buildActionQueueView = async ({
     if (k === 'stale-worktree') return 'stale-worktree'
     if (k === 'draft-proposal') return 'draft-proposal'
     if (k === 'awaiting-validation') return 'awaiting-validation'
+    if (k === 'awaiting-human') return 'awaiting-human'
     return 'failed-task'
   }
 
@@ -504,6 +516,22 @@ export const buildActionQueueView = async ({
         ? row.payload.devServerUrl
         : null
 
+    // Surface the lease state for awaiting-human rows. The park primitive
+    // stamps owner/timestamp/note into the row payload at raise time.
+    const leaseState: ActionQueueRow['leaseState'] =
+      uiKind === 'awaiting-human' &&
+      typeof row.payload.leaseOwner === 'string' &&
+      typeof row.payload.leasedAt === 'string'
+        ? {
+            leaseOwner: row.payload.leaseOwner,
+            leasedAt: row.payload.leasedAt,
+            leaseNote:
+              typeof row.payload.leaseNote === 'string'
+                ? row.payload.leaseNote
+                : null,
+          }
+        : null
+
     rows.push({
       id: row.id,
       kind: uiKind,
@@ -517,6 +545,7 @@ export const buildActionQueueView = async ({
       actions,
       staleWorktreeDetail,
       devServerUrl,
+      leaseState,
       diagnosis,
       failureReasonCode,
       fixForTaskId,
@@ -578,6 +607,7 @@ export const buildActionQueueView = async ({
       actions: batchActions,
       staleWorktreeDetail: null,
       devServerUrl: null,
+      leaseState: null,
       diagnosis: null,
       failureReasonCode: null,
     })
@@ -631,6 +661,7 @@ export const buildActionQueueHistoryView = async ({
     if (k === 'stale-worktree') return 'stale-worktree'
     if (k === 'draft-proposal') return 'draft-proposal'
     if (k === 'awaiting-validation') return 'awaiting-validation'
+    if (k === 'awaiting-human') return 'awaiting-human'
     return 'failed-task'
   }
 
@@ -877,6 +908,8 @@ export const buildActionQueueHistoryView = async ({
       // Resolved rows are historical: the preview server (if any) has been
       // reaped on Validate/Reject, so there is no live URL to surface.
       devServerUrl: null,
+      // Resolved rows: the lease has been released, so no active lease state.
+      leaseState: null,
       diagnosis,
       failureReasonCode,
       fixForTaskId,

@@ -21,6 +21,13 @@ export type TaskStatus =
   // workflow boundary (the worker returns and holds no merge lock) so it
   // survives daemon restarts. See the awaiting-validation action-queue kind.
   | 'awaiting-validation'
+  // Parked for operator-owned interactive work in the task's worktree. A
+  // human holds a lease (leaseOwner / leasedAt / leaseNote) and works in
+  // their own session; the pipeline resumes when the lease is released.
+  // No managed subprocess — the phantom watchdog MUST NOT sweep this status.
+  // Compatible with ADR-0063 (no-attach): the human opens their own session;
+  // the daemon never attaches to a running pty.
+  | 'awaiting-human'
   | 'merging'
   | 'vega-reconciling'
   | 'done'
@@ -45,6 +52,9 @@ export const NON_DISPATCHABLE_STATUSES: readonly TaskStatus[] = [
   // Parked at the preview gate; only an explicit operator Validate re-queues
   // the task for its merge continuation. The dispatcher must never pick it up.
   'awaiting-validation',
+  // Parked for operator-owned interactive work; the dispatcher must never pick
+  // it up — resumption is explicit (lease release → re-queue).
+  'awaiting-human',
   'merging',
   'vega-reconciling',
   'done',
@@ -354,6 +364,22 @@ export interface Task {
    * predate the column but have not been backfilled yet).
    */
   intent: string
+  /**
+   * Owner identifier for a task parked in 'awaiting-human' (e.g. a username or
+   * process label). NULL on every non-parked row and when no explicit owner was
+   * supplied.
+   */
+  leaseOwner: string | null
+  /**
+   * ISO timestamp when the current worktree lease was acquired. NULL when no
+   * active lease is held (i.e. the task is not in 'awaiting-human').
+   */
+  leasedAt: string | null
+  /**
+   * Optional human note attached to the lease describing the intended work.
+   * NULL when none was provided.
+   */
+  leaseNote: string | null
   createdAt: string
   updatedAt: string
 }
@@ -731,6 +757,18 @@ export const migrateQueueSchema = async (): Promise<void> => {
       `UPDATE tasks SET intent = SUBSTR(CASE WHEN INSTR(prompt, '. ') > 0 AND (INSTR(prompt, CHAR(10)) = 0 OR INSTR(prompt, '. ') < INSTR(prompt, CHAR(10))) THEN SUBSTR(prompt, 1, INSTR(prompt, '. ')) WHEN INSTR(prompt, CHAR(10)) > 0 THEN SUBSTR(prompt, 1, INSTR(prompt, CHAR(10)) - 1) ELSE prompt END, 1, 200) WHERE intent = ''`, // arch-guard:migration-write
     )
   }
+  // lease_owner / leased_at / lease_note: operator-owned worktree lease fields
+  // for tasks parked in 'awaiting-human'. All three are NULL on non-parked rows
+  // and when the task has never held a lease.
+  if (!names.has('lease_owner')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN lease_owner TEXT`)
+  }
+  if (!names.has('leased_at')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN leased_at TEXT`)
+  }
+  if (!names.has('lease_note')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN lease_note TEXT`)
+  }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
   )
@@ -1031,7 +1069,8 @@ export const migrateQueueSchema = async (): Promise<void> => {
     const tasksNeedCheckRebuild =
       !tasksSql.includes('CHECK (status IN') ||
       !tasksSql.includes("'under_investigation'") ||
-      !tasksSql.includes("'awaiting-validation'")
+      !tasksSql.includes("'awaiting-validation'") ||
+      !tasksSql.includes("'awaiting-human'")
 
     const healFkRows = await c.execute(
       `PRAGMA foreign_key_list(self_heal_attempts)`,
@@ -1150,7 +1189,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             id                   TEXT    PRIMARY KEY,
             prompt               TEXT    NOT NULL,
             status               TEXT    NOT NULL
-                                         CHECK (status IN ('draft','triaging','queued','running','verifying','awaiting-validation','merging','vega-reconciling','done','failed','dropped','blocked','under_investigation')),
+                                         CHECK (status IN ('draft','triaging','queued','running','verifying','awaiting-validation','awaiting-human','merging','vega-reconciling','done','failed','dropped','blocked','under_investigation')),
             plan_functional      TEXT,
             plan_technical       TEXT,
             branch               TEXT,
@@ -1190,6 +1229,9 @@ export const migrateQueueSchema = async (): Promise<void> => {
             integration_head_sha TEXT,
             followup_dedup_key   TEXT,
             intent               TEXT    NOT NULL DEFAULT '',
+            lease_owner          TEXT,
+            leased_at            TEXT,
+            lease_note           TEXT,
             created_at           TEXT    NOT NULL,
             updated_at           TEXT    NOT NULL
           )
@@ -1204,7 +1246,9 @@ export const migrateQueueSchema = async (): Promise<void> => {
             origin_id, parent_proposal_id, slice_index, failed_phase, resume_from,
             verify_cmd, preview_cmd, dev_server_url, dev_server_pid, preview_validated, task_type, read_first_json,
             prescriptive_action, slice_kind, sub_deliverable_json,
-            integration_head_sha, followup_dedup_key, intent, created_at, updated_at
+            integration_head_sha, followup_dedup_key, intent,
+            lease_owner, leased_at, lease_note,
+            created_at, updated_at
           )
           SELECT
             id, prompt, status, plan_functional, plan_technical,
@@ -1217,7 +1261,9 @@ export const migrateQueueSchema = async (): Promise<void> => {
             parent_proposal_id, slice_index, failed_phase, resume_from,
             verify_cmd, preview_cmd, dev_server_url, dev_server_pid, COALESCE(preview_validated, 0), task_type, read_first_json,
             prescriptive_action, slice_kind, sub_deliverable_json,
-            integration_head_sha, followup_dedup_key, COALESCE(intent, ''), created_at, updated_at
+            integration_head_sha, followup_dedup_key, COALESCE(intent, ''),
+            lease_owner, leased_at, lease_note,
+            created_at, updated_at
           FROM tasks
         `)
         // Re-run the legacy origin_id backfill inside the rebuild to ensure
@@ -1886,7 +1932,9 @@ SELECT
      FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
   t.task_type, t.read_first_json, t.prescriptive_action, t.slice_kind,
   t.sub_deliverable_json, t.integration_head_sha,
-  t.dev_server_url, t.dev_server_pid, t.preview_validated, t.intent, t.created_at, t.updated_at
+  t.dev_server_url, t.dev_server_pid, t.preview_validated, t.intent,
+  t.lease_owner, t.leased_at, t.lease_note,
+  t.created_at, t.updated_at
 FROM tasks t`
 
 export const rowToTask = (row: Record<string, unknown>): Task => {
@@ -1951,6 +1999,9 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     previewValidated: Number(row.preview_validated ?? 0) === 1,
     recoveryPayload: (row.recovery_payload as string | null) ?? null,
     intent: (row.intent as string | null) ?? '',
+    leaseOwner: (row.lease_owner as string | null) ?? null,
+    leasedAt: (row.leased_at as string | null) ?? null,
+    leaseNote: (row.lease_note as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -2095,6 +2146,9 @@ export const updateTask = async (
       | 'previewValidated'
       | 'failureReason'
       | 'failureSignature'
+      | 'leaseOwner'
+      | 'leasedAt'
+      | 'leaseNote'
     > & {
       /**
        * Typed catalog code for the failure (e.g. `verify:main-dirty`).
@@ -2185,6 +2239,18 @@ export const updateTask = async (
   if (patch.previewValidated !== undefined) {
     fields.push('preview_validated = ?')
     args.push(patch.previewValidated ? 1 : 0)
+  }
+  if (patch.leaseOwner !== undefined) {
+    fields.push('lease_owner = ?')
+    args.push(patch.leaseOwner)
+  }
+  if (patch.leasedAt !== undefined) {
+    fields.push('leased_at = ?')
+    args.push(patch.leasedAt)
+  }
+  if (patch.leaseNote !== undefined) {
+    fields.push('lease_note = ?')
+    args.push(patch.leaseNote)
   }
   if (patch.failureReason !== undefined) {
     fields.push('failure_reason = ?')
