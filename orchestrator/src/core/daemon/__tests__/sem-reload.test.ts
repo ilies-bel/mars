@@ -100,3 +100,85 @@ describe('setSemLimit', () => {
     )
   })
 })
+
+describe('phantom-watchdog reclaim must not double-release the implement sem', () => {
+  // Regression: the phantom-task watchdog's reclaim callback used to call BOTH
+  // tracker.forceRelease(id) AND release(sems[kind]). But for an alive-but-
+  // stalled verify the task's own dispatchImplement is still awaiting its
+  // workflow and WILL release the sem in its `finally`. Releasing in the
+  // watchdog too is a second release for one acquire — each spurious release
+  // wakes an extra waiter (dispatch past the cap) or drives inUse below the
+  // true in-flight count, permanently defeating the implement cap. The fix
+  // makes reclaim tracker-only (mirroring handleDrop(force=true)); the
+  // dispatcher `finally` is the SOLE sem releaser. These tests model both
+  // failure modes with the pure sem primitives.
+
+  it('single releaser keeps inUse correct when a permit is held across a phantom sweep', async () => {
+    // cap=1 saturated by one dispatcher holding a permit.
+    const sem = makeSem(1)
+    await acquire(sem)
+    expect(sem.inUse).toBe(1)
+
+    // A second dispatch is queued, correctly blocked by the cap.
+    let secondAcquired = false
+    const queued = acquire(sem).then(() => {
+      secondAcquired = true
+    })
+    expect(sem.waiters.length).toBe(1)
+    expect(secondAcquired).toBe(false)
+
+    // Phantom watchdog fires for the in-flight task. With the fix it does NOT
+    // touch the sem (tracker-only forceRelease). So the queued acquire stays
+    // blocked — the cap still holds.
+    await Promise.resolve()
+    expect(secondAcquired).toBe(false)
+    expect(sem.waiters.length).toBe(1)
+
+    // The stalled dispatcher's workflow eventually settles; its `finally`
+    // releases exactly once, handing the slot to the one waiter.
+    release(sem)
+    await Promise.resolve()
+    expect(secondAcquired).toBe(true)
+    expect(sem.inUse).toBe(1) // one out, one in — never above cap, never below 0
+    expect(sem.waiters.length).toBe(0)
+
+    await queued
+  })
+
+  it('the buggy DOUBLE release would over-dispatch past the cap (guards the regression)', async () => {
+    // This test documents WHY the extra release is wrong: if the watchdog
+    // released the sem AND the dispatcher `finally` released it, one acquire
+    // yields two releases → two waiters wake → concurrency exceeds the cap.
+    const sem = makeSem(1)
+    await acquire(sem) // the phantom task holds the only permit
+
+    let a = false
+    let b = false
+    const wa = acquire(sem).then(() => {
+      a = true
+    })
+    const wb = acquire(sem).then(() => {
+      b = true
+    })
+    expect(sem.waiters.length).toBe(2)
+
+    // Simulate the OLD bug: watchdog release + dispatcher finally release = 2.
+    // Each release() hands the freed slot directly to a waiter (no inUse bump),
+    // so BOTH waiters wake even though only one permit was ever legitimately
+    // freed.
+    release(sem) // watchdog (the erroneous extra one)
+    release(sem) // dispatcher finally
+    await Promise.resolve()
+
+    // Both waiters woke: 2 tasks now "running" under a cap of 1 — the exact
+    // over-dispatch the fix prevents. And inUse (still 1) now UNDERSTATES the
+    // true holder count (2), so the drain gate `inUse < limit` reads false-open
+    // and keeps admitting more work — the self-reinforcing cap corruption.
+    expect(a).toBe(true)
+    expect(b).toBe(true)
+    expect(sem.inUse).toBe(1) // corrupted: understates the 2 live holders
+    expect(sem.limit).toBe(1)
+
+    await Promise.all([wa, wb])
+  })
+})

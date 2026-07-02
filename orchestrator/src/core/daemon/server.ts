@@ -2859,9 +2859,11 @@ export const startDaemon = async (
   //     ceiling (hung subprocess case) — the task is auto-failed as a backstop.
   //
   // For each phantom: marks the task failed with failedPhase set, calls
-  // forceRelease + release(sem) to free the slot, triggers drain() so queued
-  // work resumes, and raises exactly one action-queue item (dedup by taskId
-  // prevents a retry storm). .unref() so the timer never prevents shutdown.
+  // forceRelease (tracker-only; the dispatcher's own finally is the sole
+  // semaphore releaser — see the reclaim callback below) to free the slot,
+  // triggers drain() so queued work resumes, and raises exactly one
+  // action-queue item (dedup by taskId prevents a retry storm). .unref() so
+  // the timer never prevents shutdown.
   const PHANTOM_WATCHDOG_MS = Number(
     process.env.MARS_PHANTOM_WATCHDOG_MS ?? 5 * 60_000,
   )
@@ -2871,9 +2873,20 @@ export const startDaemon = async (
       try {
         const { failed } = await sweepPhantomTasks(
           tracker.inFlightSnapshot(),
-          (id, kind) => {
+          (id, _kind) => {
+            // Mirror handleDrop(force=true): force-clear ONLY the tracker entry
+            // and let drain() reclaim the slot once the dispatcher's own release
+            // closure runs. Do NOT release(sems[kind]) here — the phantom task's
+            // dispatchImplement is (almost always) still awaiting its workflow
+            // (an alive-but-stalled verify, or a dead subprocess whose awaited
+            // runWorkflow will still reject and unwind), and its `finally`
+            // (release(sems.implement)) is the SOLE semaphore releaser. Releasing
+            // here as well double-releases one acquire: each spurious release
+            // either wakes an extra waiter (dispatch past the cap) or drives
+            // inUse below the true in-flight count, permanently defeating the
+            // implement cap. Under overload this is self-reinforcing (more
+            // concurrent verifies -> more 30-min stalls -> more double-releases).
             tracker.forceRelease(id)
-            release(sems[kind])
             void drain()
           },
         )
