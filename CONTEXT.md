@@ -400,3 +400,7 @@ _Avoid_: lock, claim, checkout
 **awaiting-human (task)**:
 Parked task state: the workflow suspended at an awaitHuman step and a human may take the Lease and work in the task's worktree in their own session. Pipeline resumes at verify on release. Generalizes the --preview awaiting-validation gate.
 _Avoid_: paused, parked, HITL state
+
+**Completion report**:
+Machine-parseable fenced block a Coder must emit as its final message: one done/partial/blocked line per done-criterion with evidence (file:line, commit sha, test name). Parsed by the completeness verify gate; absent or unsubstantiated reports fail verification.
+_Avoid_: self-report, summary, final report
