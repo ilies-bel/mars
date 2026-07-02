@@ -57,10 +57,10 @@ export const TaskCard = memo(({ task, index }: Props) => {
         openDrawer()
       }}
     >
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex min-w-0 items-start justify-between gap-2">
         <a
           href={`#/task/${encodeURIComponent(task.id)}`}
-          className="break-all font-mono text-meta text-muted hover:text-fg hover:underline"
+          className="block min-w-0 truncate font-mono text-meta text-muted hover:text-fg hover:underline"
         >
           {task.id}
         </a>
@@ -77,7 +77,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
         </div>
       </div>
       <div
-        className={`text-body font-medium leading-snug text-fg ${
+        className={`line-clamp-3 text-body font-medium leading-snug text-fg ${
           task.status === 'dropped' ? 'line-through' : ''
         }`}
       >
@@ -103,46 +103,55 @@ export const TaskCard = memo(({ task, index }: Props) => {
         </div>
       ) : null}
       {spec !== null ? (
-        <div className="flex flex-col gap-1 border-t border-border/50 pt-2 font-mono text-micro text-muted">
-          {spec.files.length > 0 ? (
-            <div>
-              <span className="font-semibold text-fg/60">files</span>
-              <ul className="mt-0.5 space-y-0.5">
-                {spec.files.map((f) => (
-                  <li key={f} className="truncate pl-2">
-                    {f}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {(spec.readFirst ?? []).length > 0 ? (
-            <div>
-              <span className="font-semibold text-fg/60">read first</span>
-              <ol className="mt-0.5 list-decimal space-y-0.5 pl-4">
-                {(spec.readFirst ?? []).map((f) => (
-                  <li key={f} className="truncate">
-                    {f}
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ) : null}
-          {spec.prescriptiveAction ? (
-            <div>
-              <span className="font-semibold text-fg/60">action</span>
-              <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap pl-2">
-                {spec.prescriptiveAction}
-              </p>
-            </div>
-          ) : null}
-          {spec.verifyCmd ? (
-            <div>
-              <span className="font-semibold text-fg/60">verify</span>
-              <code className="mt-0.5 block truncate pl-2">{spec.verifyCmd}</code>
-            </div>
-          ) : null}
-        </div>
+        <details
+          className="border-t border-border/50 pt-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 py-0.5 font-mono text-micro font-semibold text-muted/80 hover:text-fg">
+            <span className="text-fg/60">spec</span>
+            <span className="opacity-40 text-[9px]">▾</span>
+          </summary>
+          <div className="flex flex-col gap-1 pt-1 font-mono text-micro text-muted">
+            {spec.files.length > 0 ? (
+              <div>
+                <span className="font-semibold text-fg/60">files</span>
+                <ul className="mt-0.5 space-y-0.5">
+                  {spec.files.map((f) => (
+                    <li key={f} className="truncate pl-2">
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {(spec.readFirst ?? []).length > 0 ? (
+              <div>
+                <span className="font-semibold text-fg/60">read first</span>
+                <ol className="mt-0.5 list-decimal space-y-0.5 pl-4">
+                  {(spec.readFirst ?? []).map((f) => (
+                    <li key={f} className="truncate">
+                      {f}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ) : null}
+            {spec.prescriptiveAction ? (
+              <div>
+                <span className="font-semibold text-fg/60">action</span>
+                <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap pl-2">
+                  {spec.prescriptiveAction}
+                </p>
+              </div>
+            ) : null}
+            {spec.verifyCmd ? (
+              <div>
+                <span className="font-semibold text-fg/60">verify</span>
+                <code className="mt-0.5 block truncate pl-2">{spec.verifyCmd}</code>
+              </div>
+            ) : null}
+          </div>
+        </details>
       ) : null}
       <div className="flex items-center justify-between gap-2">
         <RoleTag role={task.role} />

@@ -24,7 +24,7 @@ export const Column = ({ label, tasks, startIndex, accent = 'muted' }: Props) =>
   })
 
   return (
-    <section className="flex h-full min-h-0 min-w-0 flex-1 basis-0 flex-col gap-2 rounded-lg border border-border bg-panel p-3">
+    <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-lg border border-border bg-panel p-3">
       <header className="flex items-center justify-between px-1 py-0.5">
         <span
           className={`font-sans text-[11px] font-semibold tracking-[0.1em] ${

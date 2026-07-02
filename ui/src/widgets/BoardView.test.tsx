@@ -193,6 +193,98 @@ describe('BoardView – search filter on cluster columns', () => {
   })
 })
 
+describe('BoardView – mobile responsive tab strip (single-column below breakpoint)', () => {
+  it('renders a tab strip with a button for each cluster status', () => {
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={emptyByCluster()} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('data-testid="board-tab-strip"')
+    expect(html).toContain('data-tab="Queued"')
+    expect(html).toContain('data-tab="In progress"')
+    expect(html).toContain('data-tab="Blocked"')
+    expect(html).toContain('data-tab="Failed"')
+  })
+
+  it('omits the Proposals tab when there are no visible drafts', () => {
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={emptyByCluster()} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).not.toContain('data-tab="Proposals"')
+  })
+
+  it('includes the Proposals tab when drafts are present', () => {
+    const d1 = draft('p1', 'Feature Alpha')
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={emptyByCluster()} drafts={[d1]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('data-tab="Proposals"')
+  })
+
+  it('defaults the active tab to Failed when failed tasks are present', () => {
+    const t = task({ id: 'f1', cluster: 'Failed', status: 'failed' })
+    const byCluster = { ...emptyByCluster(), Failed: [t] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    // The Failed tab button carries aria-selected=true; Queued does not
+    expect(html).toMatch(/data-tab="Failed"[^>]*aria-selected="true"/)
+    expect(html).toMatch(/data-tab="Queued"[^>]*aria-selected="false"/)
+  })
+
+  it('defaults to In progress when no failures but in-progress tasks exist', () => {
+    const t = task({ id: 'r1', cluster: 'In progress', status: 'running' })
+    const byCluster = { ...emptyByCluster(), 'In progress': [t] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toMatch(/data-tab="In progress"[^>]*aria-selected="true"/)
+    expect(html).toMatch(/data-tab="Failed"[^>]*aria-selected="false"/)
+  })
+
+  it('defaults to Queued when board is empty (no failed, no in-progress)', () => {
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={emptyByCluster()} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toMatch(/data-tab="Queued"[^>]*aria-selected="true"/)
+  })
+
+  it('marks non-active cluster column wrappers as hidden on mobile (class starts with "hidden")', () => {
+    const t = task({ id: 'f1', cluster: 'Failed', status: 'failed' })
+    const byCluster = { ...emptyByCluster(), Failed: [t] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    // Active column wrapper (Failed) should NOT start with hidden
+    expect(html).toMatch(/data-cluster="Failed"[^>]*class="flex/)
+    // Inactive column wrappers should start with hidden
+    expect(html).toMatch(/data-cluster="Queued"[^>]*class="hidden/)
+    expect(html).toMatch(/data-cluster="In progress"[^>]*class="hidden/)
+    expect(html).toMatch(/data-cluster="Blocked"[^>]*class="hidden/)
+  })
+
+  it('shows count badges for tabs with tasks', () => {
+    const t = task({ id: 'f1', cluster: 'Failed', status: 'failed' })
+    const byCluster = { ...emptyByCluster(), Failed: [t] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    // Count "1" should appear near the Failed tab
+    expect(html).toContain('>1<')
+  })
+})
+
 describe('BoardView – proposal filter on Proposals column', () => {
   it('shows only the selected proposal draft when a filter is active', () => {
     const d1 = draft('p1', 'Feature Alpha')
