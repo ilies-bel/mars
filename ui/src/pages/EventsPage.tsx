@@ -249,46 +249,51 @@ const EventRow = memo(({ event }: EventRowProps) => {
 
   const body = (
     <>
-      <span className="text-iron/60">{relativeTime(event.timestamp)}</span>{' '}
-      <span
-        className={`font-mono text-[10px] uppercase ${event.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(event.severity)}`}
-      >
-        [{event.severity}]
-      </span>{' '}
-      <span className="font-mono text-[10px] text-iron">{event.kind}</span>
-      {logLineSource ? (
+      {/* Single-line metadata + summary — flex so the summary can truncate
+          instead of stretching the row and causing page-level horizontal scroll. */}
+      <div className="flex min-w-0 items-baseline gap-x-1 overflow-hidden">
+        <span className="shrink-0 text-iron/60">{relativeTime(event.timestamp)}</span>
         <span
-          className="ml-1 rounded bg-iron/20 px-1 font-mono text-[9px] text-iron/80"
-          data-testid={`event-row-source-${event.id}`}
+          className={`shrink-0 font-mono text-[10px] uppercase ${event.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(event.severity)}`}
         >
-          {logLineSource}
+          [{event.severity}]
         </span>
-      ) : null}
-      {event.phase ? (
-        <span className="font-mono text-[10px] text-iron/60">
-          {' '}
-          · {event.phase}
+        <span className="shrink-0 font-mono text-[10px] text-iron">{event.kind}</span>
+        {logLineSource ? (
+          <span
+            className="shrink-0 rounded bg-iron/20 px-1 font-mono text-[9px] text-iron/80"
+            data-testid={`event-row-source-${event.id}`}
+          >
+            {logLineSource}
+          </span>
+        ) : null}
+        {event.phase ? (
+          <span className="shrink-0 font-mono text-[10px] text-iron/60">
+            · {event.phase}
+          </span>
+        ) : null}
+        {event.taskId ? (
+          <span className="shrink-0 font-mono text-[10px] text-iron/70">
+            {truncateId(event.taskId)}
+          </span>
+        ) : null}
+        <span className={`min-w-0 truncate ${marsToolTextClass(event)}`}>
+          {summarizeTraceEvent(event)}
         </span>
-      ) : null}
-      {event.taskId ? (
-        <span className="ml-2 font-mono text-[10px] text-iron/70">
-          {truncateId(event.taskId)}
-        </span>
-      ) : null}{' '}
-      <span className={marsToolTextClass(event)}>{summarizeTraceEvent(event)}</span>
-      {hasFields ? (
-        <button
-          type="button"
-          onClick={toggleFields}
-          className="ml-2 font-mono text-[9px] text-iron/60 underline hover:text-iron"
-          data-testid={`event-row-fields-toggle-${event.id}`}
-        >
-          {fieldsExpanded ? 'hide fields' : 'fields'}
-        </button>
-      ) : null}
+        {hasFields ? (
+          <button
+            type="button"
+            onClick={toggleFields}
+            className="shrink-0 font-mono text-[9px] text-iron/60 underline hover:text-iron"
+            data-testid={`event-row-fields-toggle-${event.id}`}
+          >
+            {fieldsExpanded ? 'hide fields' : 'fields'}
+          </button>
+        ) : null}
+      </div>
       {fieldsExpanded && logLineFields ? (
         <pre
-          className="mt-1 overflow-x-auto font-mono text-[10px] text-iron/70"
+          className="mt-1 max-w-full overflow-x-auto font-mono text-[10px] text-iron/70"
           data-testid={`event-row-fields-${event.id}`}
         >
           {JSON.stringify(logLineFields, null, 2)}
@@ -558,10 +563,12 @@ export const EventsPage = () => {
         </div>
       </div>
 
-      {/* Virtualized events list — dedicated scroll container keeps filters sticky */}
+      {/* Virtualized events list — dedicated scroll container keeps filters sticky.
+          overflow-x-hidden prevents page-level horizontal scroll; individual
+          expanded-fields <pre> elements scroll within themselves via overflow-x-auto. */}
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-auto"
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
         data-testid="events-list"
       >
         {initial.isPending ? (

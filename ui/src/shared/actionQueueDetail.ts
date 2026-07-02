@@ -33,6 +33,120 @@ export const humanizeFailureCode = (code: string): string => {
   return code.replace(/[_-]/g, ' ')
 }
 
+// ---------------------------------------------------------------------------
+// Claude-event gist helpers (log_line payloads that carry a ClaudeEvent in
+// their `fields` key). These are never exported — the public surface is
+// summarizeTraceEvent.
+// ---------------------------------------------------------------------------
+
+const CLAUDE_EVENT_TYPES = new Set([
+  'assistant',
+  'user',
+  'tool_use',
+  'tool_result',
+  'thinking_tokens',
+  'system',
+])
+
+const CLAUDE_GIST_TRUNCATE = 60
+
+const isPlainObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * Produce a scannable one-liner from a claude-event fields object.
+ * Handles the four shapes emitted by the Claude Code SDK:
+ *   - assistant with tool_use content  → "→ ToolName: <short input>"
+ *   - user/tool_result content         → "← result (N chars, ok|error)"
+ *   - thinking_tokens / system         → "thinking (+N tokens)"
+ *   - assistant with usage (no tools)  → "assistant turn (in N / out N / cache N)"
+ */
+const gistFromClaudeFields = (fields: Record<string, unknown>): string => {
+  const type = typeof fields.type === 'string' ? fields.type : ''
+
+  if (type === 'assistant') {
+    const msg = fields.message
+    if (isPlainObj(msg)) {
+      const content = Array.isArray(msg.content) ? (msg.content as unknown[]) : []
+
+      // Prefer tool_use gist: the turn invoked a tool.
+      const toolUseBlock = content.find(
+        (b): b is Record<string, unknown> => isPlainObj(b) && b.type === 'tool_use',
+      )
+      if (toolUseBlock) {
+        const name = typeof toolUseBlock.name === 'string' ? toolUseBlock.name : 'tool'
+        const input = toolUseBlock.input
+        let desc = ''
+        if (isPlainObj(input)) {
+          // description field first (human-readable intent), then command (Bash input)
+          desc =
+            (typeof input.description === 'string' ? input.description : '') ||
+            (typeof input.command === 'string' ? input.command : '')
+        }
+        const truncated =
+          desc.length > CLAUDE_GIST_TRUNCATE
+            ? `${desc.slice(0, CLAUDE_GIST_TRUNCATE)}…`
+            : desc
+        return `→ ${name}${truncated ? `: ${truncated}` : ''}`
+      }
+
+      // No tool_use: summarize token usage.
+      const usage = msg.usage
+      if (isPlainObj(usage)) {
+        const inp = typeof usage.input_tokens === 'number' ? usage.input_tokens : 0
+        const out = typeof usage.output_tokens === 'number' ? usage.output_tokens : 0
+        const cache =
+          typeof usage.cache_read_input_tokens === 'number'
+            ? usage.cache_read_input_tokens
+            : 0
+        return `assistant turn (in ${inp} / out ${out} / cache ${cache})`
+      }
+    }
+    return 'assistant'
+  }
+
+  if (type === 'user') {
+    const msg = fields.message
+    if (isPlainObj(msg)) {
+      const content = Array.isArray(msg.content) ? (msg.content as unknown[]) : []
+      const toolResultBlock = content.find(
+        (b): b is Record<string, unknown> => isPlainObj(b) && b.type === 'tool_result',
+      )
+      if (toolResultBlock) {
+        const c = toolResultBlock.content
+        const chars =
+          typeof c === 'string' ? c.length : (JSON.stringify(c)?.length ?? 0)
+        return `← result (${chars} chars, ${toolResultBlock.is_error === true ? 'error' : 'ok'})`
+      }
+    }
+    return 'user'
+  }
+
+  if (type === 'tool_result') {
+    const c = fields.content
+    const chars = typeof c === 'string' ? c.length : (JSON.stringify(c)?.length ?? 0)
+    return `← result (${chars} chars, ${fields.is_error === true ? 'error' : 'ok'})`
+  }
+
+  if (type === 'thinking_tokens' || type === 'system') {
+    const budget =
+      typeof fields.budget_tokens === 'number' ? fields.budget_tokens : null
+    return budget !== null ? `thinking (+${budget} tokens)` : 'thinking'
+  }
+
+  return type
+}
+
+/**
+ * True when a log_line payload's `fields` object looks like a claude-event
+ * (i.e. carries one of the known SDK event `type` values). Used to gate the
+ * gist path in summarizeTraceEvent.
+ */
+const isClaudeEventFields = (fields: unknown): fields is Record<string, unknown> =>
+  isPlainObj(fields) &&
+  typeof (fields as Record<string, unknown>).type === 'string' &&
+  CLAUDE_EVENT_TYPES.has((fields as Record<string, unknown>).type as string)
+
 /**
  * Build a one-line summary of a trace event payload. Defers to the kind so
  * the Traces section reads more like a timeline than a JSON dump.
@@ -98,6 +212,11 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
   }
 
   if (event.kind === 'log_line') {
+    // When `fields` carries a claude-event object, produce a human gist
+    // instead of returning the raw msg (which can be a long JSON dump).
+    if (isClaudeEventFields(p.fields)) {
+      return gistFromClaudeFields(p.fields)
+    }
     return typeof p.msg === 'string' ? p.msg : '(no message)'
   }
 

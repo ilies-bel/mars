@@ -205,6 +205,176 @@ describe('isMarsToolEvent / marsToolTextClass', () => {
   })
 })
 
+describe('summarizeTraceEvent — log_line claude-event gist', () => {
+  const makeClaudeLogLine = (fields: Record<string, unknown>): TraceEvent => ({
+    id: 'e-ce',
+    timestamp: '2026-01-01T00:00:00Z',
+    kind: 'log_line',
+    severity: 'info',
+    taskId: 't1',
+    originId: null,
+    phase: 'code',
+    payload: {
+      level: 'info',
+      msg: 'claude-event',
+      source: 'workflow',
+      fields,
+    },
+  })
+
+  it('tool_use: produces → ToolName: <description>', () => {
+    expect(
+      summarizeTraceEvent(
+        makeClaudeLogLine({
+          type: 'assistant',
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                name: 'Bash',
+                input: { command: 'ls -la', description: 'List files in directory' },
+              },
+            ],
+            usage: { input_tokens: 100, output_tokens: 10, cache_read_input_tokens: 0 },
+          },
+        }),
+      ),
+    ).toBe('→ Bash: List files in directory')
+  })
+
+  it('tool_use: falls back to command when description is absent', () => {
+    expect(
+      summarizeTraceEvent(
+        makeClaudeLogLine({
+          type: 'assistant',
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                name: 'Bash',
+                input: { command: 'git status' },
+              },
+            ],
+          },
+        }),
+      ),
+    ).toBe('→ Bash: git status')
+  })
+
+  it('tool_use: truncates long description at 60 chars with ellipsis', () => {
+    const longDesc = 'a'.repeat(80)
+    const result = summarizeTraceEvent(
+      makeClaudeLogLine({
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              name: 'Bash',
+              input: { command: longDesc },
+            },
+          ],
+        },
+      }),
+    )
+    expect(result.startsWith('→ Bash: ')).toBe(true)
+    expect(result.endsWith('…')).toBe(true)
+    // prefix + 60 chars + ellipsis
+    expect(result.length).toBeLessThanOrEqual('→ Bash: '.length + 60 + 1)
+  })
+
+  it('tool_result: produces ← result (N chars, ok) for user message with tool_result', () => {
+    expect(
+      summarizeTraceEvent(
+        makeClaudeLogLine({
+          type: 'user',
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu1',
+                content: 'hello world',
+                is_error: false,
+              },
+            ],
+          },
+        }),
+      ),
+    ).toBe('← result (11 chars, ok)')
+  })
+
+  it('tool_result: produces ← result (N chars, error) when is_error is true', () => {
+    expect(
+      summarizeTraceEvent(
+        makeClaudeLogLine({
+          type: 'user',
+          message: {
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu1',
+                content: 'Permission denied',
+                is_error: true,
+              },
+            ],
+          },
+        }),
+      ),
+    ).toBe('← result (17 chars, error)')
+  })
+
+  it('thinking_tokens: produces thinking (+N tokens)', () => {
+    expect(
+      summarizeTraceEvent(
+        makeClaudeLogLine({
+          type: 'thinking_tokens',
+          budget_tokens: 5000,
+        }),
+      ),
+    ).toBe('thinking (+5000 tokens)')
+  })
+
+  it('system event: produces thinking (+N tokens) when budget is present', () => {
+    expect(
+      summarizeTraceEvent(
+        makeClaudeLogLine({
+          type: 'system',
+          budget_tokens: 2048,
+        }),
+      ),
+    ).toBe('thinking (+2048 tokens)')
+  })
+
+  it('usage: produces assistant turn (in N / out N / cache N) when no tool_use', () => {
+    expect(
+      summarizeTraceEvent(
+        makeClaudeLogLine({
+          type: 'assistant',
+          message: {
+            content: [{ type: 'text', text: 'Hello, world!' }],
+            usage: { input_tokens: 200, output_tokens: 30, cache_read_input_tokens: 150 },
+          },
+        }),
+      ),
+    ).toBe('assistant turn (in 200 / out 30 / cache 150)')
+  })
+
+  it('non-claude-event log_line: still returns payload.msg unchanged', () => {
+    expect(
+      summarizeTraceEvent({
+        id: 'e2',
+        timestamp: '2026-01-01T00:00:00Z',
+        kind: 'log_line',
+        severity: 'info',
+        taskId: null,
+        originId: null,
+        phase: null,
+        payload: { level: 'info', msg: 'daemon started', source: 'daemon' },
+      }),
+    ).toBe('daemon started')
+  })
+})
+
 describe('severityColor', () => {
   it('uses design-token classes for error, warn, and info', () => {
     expect(severityColor('error')).toBe('text-error')
