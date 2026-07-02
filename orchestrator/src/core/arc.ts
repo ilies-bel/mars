@@ -1393,6 +1393,7 @@ export class Arc {
   async addBlocker(
     taskId: string,
     blockerIds: readonly string[],
+    options?: { provenance?: 'file-overlap' | 'inferred' },
   ): Promise<void> {
     if (blockerIds.length === 0) return
     await migrateQueueSchema()
@@ -1430,11 +1431,14 @@ export class Arc {
       await assertNotRecoveryEdge(taskId, blockerId, { client: s })
     }
     const now = new Date().toISOString()
+    const provenance = options?.provenance ?? 'inferred'
     // Causal writers default to 'confirmed' state. The Linker writes
-    // 'pending-review' rows via a separate entry point.
+    // 'pending-review' rows via a separate entry point. provenance tags
+    // whether the edge was forced by file overlap ('file-overlap') or
+    // proposed by an LLM ('inferred').
     const stmts = unique.map((blockerId) => ({
-      sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-      args: [taskId, blockerId, now],
+      sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, provenance, created_at) VALUES (?, ?, 'confirmed', ?, ?)`,
+      args: [taskId, blockerId, provenance, now],
     }))
     await s.batch(stmts, 'write')
     await Arc.maybeAssertArcInvariant(taskId, s)

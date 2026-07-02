@@ -1331,6 +1331,22 @@ export const migrateQueueSchema = async (): Promise<void> => {
       await c.execute(`PRAGMA foreign_keys = ON`)
     }
   }
+  // ── task_blockers: add provenance column if missing ──────────────────────
+  // Tracks whether each blocker edge was determined mechanically from
+  // declared file overlap ('file-overlap') or by the auto-linker LLM
+  // direction judge / slicer LLM ('inferred'). Defaults to 'inferred' so
+  // pre-existing edges are treated as LLM-produced (safe: they are).
+  {
+    const tbProvCols = await c.execute(`PRAGMA table_info(task_blockers)`)
+    const tbProvNames = new Set(
+      tbProvCols.rows.map((r) => (r as unknown as { name: string }).name),
+    )
+    if (!tbProvNames.has('provenance')) {
+      await c.execute(
+        `ALTER TABLE task_blockers ADD COLUMN provenance TEXT NOT NULL DEFAULT 'inferred'`,
+      )
+    }
+  }
   // ── task_blockers: add CHECK (state IN …) if missing ─────────────────────
   // SQLite cannot add CHECK constraints via ALTER TABLE, so we use the table-
   // rebuild pattern. Detection: query sqlite_master for the CREATE TABLE sql.

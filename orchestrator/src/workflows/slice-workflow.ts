@@ -553,6 +553,50 @@ export type DirectionVerdict =
   | { hasDependency: false }
   | { hasDependency: true; aBlocksB: boolean }
 
+/**
+ * Provenance of an injected blocker edge: determined mechanically from
+ * declared file overlap ('file-overlap') or by the auto-linker LLM direction
+ * judge ('inferred'). Persisted in task_blockers so the operator can see why
+ * an edge exists.
+ */
+export type EdgeProvenance = 'file-overlap' | 'inferred'
+
+/**
+ * A single blocker edge injected by the auto-linker, tagged with its
+ * provenance. dependerIdx is the 0-based index of the slice that waits;
+ * blockerOneBased is the 1-based index of its blocker.
+ */
+export type InjectedEdge = {
+  dependerIdx: number
+  blockerOneBased: number
+  provenance: EdgeProvenance
+}
+
+/**
+ * An inferred edge that was dropped by the cycle guard because adding it
+ * would have created a cycle. Mechanical (file-overlap) edges are never
+ * dropped — only inferred edges can be removed to break cycles.
+ */
+export type DroppedCycleEdge = {
+  dependerIdx: number
+  blockerOneBased: number
+}
+
+/**
+ * Return value of injectAutoLinkerBlockers: the list of edges injected and
+ * the list of inferred edges dropped by the cycle guard.
+ */
+export type AutoLinkerResult = {
+  /** Edges successfully injected, tagged with their provenance. */
+  injected: InjectedEdge[]
+  /**
+   * Inferred (LLM-proposed) edges that were dropped because they would have
+   * created a cycle in the dependency graph. Mechanical edges are never
+   * dropped. Callers should log these for traceability.
+   */
+  droppedCycles: DroppedCycleEdge[]
+}
+
 const directionVerdictSchema = z.union([
   z.object({ hasDependency: z.literal(false) }),
   z.object({ hasDependency: z.literal(true), aBlocksB: z.boolean() }),
@@ -579,7 +623,9 @@ Answer in valid JSON only — no prose, no markdown:
 - No ordering constraint → {"hasDependency": false}`
 
 /**
- * Two-stage auto-linker: inject blockedBy edges the slicer LLM forgot.
+ * Three-stage auto-linker: inject blockedBy edges the slicer LLM forgot.
+ * Returns the injected edges with provenance and any inferred edges dropped
+ * by the cycle guard (callers should log droppedCycles for traceability).
  *
  * Stage 1 — Schema-drop fast path (no LLM needed, direction is certain):
  *   Any slice whose title/whatToBuild matches SCHEMA_DROP_PATTERNS is
@@ -588,18 +634,28 @@ Answer in valid JSON only — no prose, no markdown:
  *   behaviour of the former injectSchemaDropBlockers (motivation: PRD
  *   1b7498f6-remove-all-usd-cost-usd-mentions-from-th).
  *
- * Stage 2 — General heuristic + LLM direction:
- *   For every non-schema-drop pair, compute textual closeness (shared
- *   identifiers across title/whatToBuild/prescriptiveAction and shared file
- *   paths in modifies/creates). Close pairs proceed to the injected
- *   judgeDirection callback; only pairs the callback labels as dependent get
- *   an edge, in the direction the callback specifies.
+ * Stage 1.5 — File-overlap mechanical edges (no LLM, direction deterministic):
+ *   Any two non-schema-drop slices sharing ≥1 declared file (modifies ∪
+ *   creates) get a forced sequential edge. Direction is always earlier
+ *   (lower proposal index) blocks later — deterministic, no LLM. These
+ *   edges are tagged 'file-overlap' so the operator can see why they exist.
  *
- * Invariants (same as the former injectSchemaDropBlockers):
+ * Stage 2 — General heuristic + LLM direction:
+ *   For every pair not already handled by Stage 1 or Stage 1.5, compute
+ *   textual closeness. Close pairs proceed to the injected judgeDirection
+ *   callback; only pairs the callback labels as dependent get an edge, in
+ *   the direction the callback specifies. File-overlap pairs are excluded
+ *   from Stage 2 — mechanical edge wins; an LLM edge for such a pair
+ *   would be redundant or conflict, and is never requested.
+ *
+ * Invariants:
  *   - Idempotent: merges into existing blockedBy via a Set.
- *   - Acyclic: a full DFS cycle check is run before every edge insertion.
+ *   - Acyclic: cycle check before every inferred edge insertion. Inferred
+ *     edges that would create a cycle are DROPPED (never mechanical edges);
+ *     dropped edges are returned in result.droppedCycles for logging.
  *   - Drop↔drop pairs skipped in Stage 1 (avoids multi-column-drop cycles).
- *   - Schema-drop pairs excluded from Stage 2 (already handled in Stage 1).
+ *   - Schema-drop pairs excluded from Stages 1.5 and 2.
+ *   - File-overlap pairs excluded from Stage 2 (mechanical wins).
  *   - judgeDirection errors / 'no dependency' verdicts leave the graph unchanged.
  *
  * Mutates `slices` in place; exported for unit testing.
@@ -617,12 +673,16 @@ export const injectAutoLinkerBlockers = async (
     a: { title: string; whatToBuild: string; prescriptiveAction?: string },
     b: { title: string; whatToBuild: string; prescriptiveAction?: string },
   ) => Promise<DirectionVerdict>,
-): Promise<void> => {
+): Promise<AutoLinkerResult> => {
+  const injected: InjectedEdge[] = []
+  const droppedCycles: DroppedCycleEdge[] = []
+
   // ── Stage 1: Schema-drop fast path ──────────────────────────────────────
   const schemaDropIndices: number[] = []
   for (let i = 0; i < slices.length; i += 1) {
     if (isSchemaDropSlice(slices[i])) schemaDropIndices.push(i)
   }
+  const schemaDropSet = new Set(schemaDropIndices)
 
   for (const dropIdx of schemaDropIndices) {
     const drop = slices[dropIdx]
@@ -649,13 +709,49 @@ export const injectAutoLinkerBlockers = async (
     drop.blockedBy = Array.from(merged).sort((a, b) => a - b)
   }
 
-  // ── Stage 2: General heuristic + LLM direction ──────────────────────────
-  const schemaDropSet = new Set(schemaDropIndices)
+  // ── Stage 1.5: File-overlap mechanical edges ─────────────────────────────
+  // Any two non-schema-drop slices that share ≥1 declared file (modifies ∪
+  // creates) get a forced sequential edge. Direction is deterministic:
+  // earlier in proposal order (lower index) blocks later (higher index).
+  // No LLM involvement — this is a mechanical, non-overridable constraint.
+  // Schema-drop pairs are excluded: Stage 1 already handles those with
+  // domain-specific direction logic.
+  const fileOverlapPairSet = new Set<string>() // keys: "${i}:${j}" with i < j
+  for (let i = 0; i < slices.length; i += 1) {
+    if (schemaDropSet.has(i)) continue
+    const filesI = new Set([...(slices[i].modifies ?? []), ...(slices[i].creates ?? [])])
+    if (filesI.size === 0) continue
+    for (let j = i + 1; j < slices.length; j += 1) {
+      if (schemaDropSet.has(j)) continue
+      const filesJ = [...(slices[j].modifies ?? []), ...(slices[j].creates ?? [])]
+      if (!filesJ.some((f) => filesI.has(f))) continue
 
+      fileOverlapPairSet.add(`${i}:${j}`)
+      // Earlier (i) blocks later (j). i < j guarantees a forward-only edge
+      // that cannot form a cycle among mechanical edges themselves.
+      const blockerOneBased = i + 1
+      const depender = slices[j]
+      const merged = new Set<number>(depender.blockedBy)
+      if (!merged.has(blockerOneBased)) {
+        merged.add(blockerOneBased)
+        depender.blockedBy = Array.from(merged).sort((a, b) => a - b)
+        injected.push({ dependerIdx: j, blockerOneBased, provenance: 'file-overlap' })
+      }
+    }
+  }
+
+  // ── Stage 2: General heuristic + LLM direction ──────────────────────────
+  // File-overlap pairs are excluded — mechanical edge already covers them,
+  // and the LLM would either add a redundant or a conflicting edge. Cycle
+  // guard drops inferred edges (never mechanical ones) and records them in
+  // droppedCycles so the caller can log the decision for traceability.
   for (let i = 0; i < slices.length; i += 1) {
     for (let j = i + 1; j < slices.length; j += 1) {
       // Pairs involving schema-drop slices were resolved in Stage 1.
       if (schemaDropSet.has(i) || schemaDropSet.has(j)) continue
+      // File-overlap pairs were resolved mechanically in Stage 1.5.
+      // Mechanical edge wins — LLM is not consulted for these pairs.
+      if (fileOverlapPairSet.has(`${i}:${j}`)) continue
 
       // Closeness check — skip pairs without a meaningful textual link.
       if (!isCloseEnough(slices[i], slices[j])) continue
@@ -668,15 +764,22 @@ export const injectAutoLinkerBlockers = async (
       const dependerIdx = verdict.aBlocksB ? j : i
       const blockerOneBased = blockerIdx + 1
 
-      // Full cycle check before injecting the edge.
-      if (wouldCreateCycle(slices, dependerIdx, blockerOneBased)) continue
+      // Cycle guard: inferred edges are dropped (never mechanical edges)
+      // if they would create a cycle. Record the drop for traceability.
+      if (wouldCreateCycle(slices, dependerIdx, blockerOneBased)) {
+        droppedCycles.push({ dependerIdx, blockerOneBased })
+        continue
+      }
 
       const depender = slices[dependerIdx]
       const merged = new Set<number>(depender.blockedBy)
       merged.add(blockerOneBased)
       depender.blockedBy = Array.from(merged).sort((a, b) => a - b)
+      injected.push({ dependerIdx, blockerOneBased, provenance: 'inferred' })
     }
   }
+
+  return { injected, droppedCycles }
 }
 
 /**
@@ -946,11 +1049,13 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     const parsed = parseSlicerOutput(r.stdout)
     // Repair: the slicer LLM routinely forgets to wire dependency edges
     // between related slices. Stage 1 handles schema-drop ↔ consumer edges
-    // deterministically; Stage 2 uses textual closeness + LLM direction for
-    // other close pairs. Both stages are non-fatal — errors and 'no
-    // dependency' verdicts leave the graph unchanged. Injected indices are
-    // always in range so the validation loop below still passes.
-    await injectAutoLinkerBlockers(parsed.slices, async (a, b) => {
+    // deterministically; Stage 1.5 handles file-overlap pairs mechanically
+    // (earlier slice blocks later — no LLM); Stage 2 uses textual closeness +
+    // LLM direction for remaining pairs not already covered by Stage 1 or 1.5.
+    // Both stages are non-fatal — errors and 'no dependency' verdicts leave the
+    // graph unchanged. Injected indices are always in range so the validation
+    // loop below still passes.
+    const autoLinkerResult = await injectAutoLinkerBlockers(parsed.slices, async (a, b) => {
       const rr = await runWorkerWithSpan({
         worker: Workers.Slicer,
         prompt: buildDirectionJudgementPrompt(a, b),
@@ -968,6 +1073,31 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
         return { hasDependency: false }
       }
     })
+    // Log any inferred edges dropped by the cycle guard to the trace so the
+    // operator can see what was trimmed and why. Best-effort — a trace
+    // failure must not block the slice workflow.
+    if (autoLinkerResult.droppedCycles.length > 0 && traceStore) {
+      await traceStore
+        .record({
+          kind: 'log_line',
+          taskId: null,
+          originId: inputData.proposalId,
+          phase: null,
+          payload: {
+            level: 'warn',
+            source: 'auto-linker',
+            msg: `Dropped ${autoLinkerResult.droppedCycles.length} inferred edge(s) to prevent cycles`,
+            droppedCycles: autoLinkerResult.droppedCycles,
+          },
+        })
+        .catch(() => {})
+    }
+    // Build a provenance map for Phase 2 so each persisted task_blockers row
+    // carries the right 'file-overlap' | 'inferred' tag.
+    const edgeProvenanceMap = new Map<string, EdgeProvenance>()
+    for (const edge of autoLinkerResult.injected) {
+      edgeProvenanceMap.set(`${edge.dependerIdx}:${edge.blockerOneBased}`, edge.provenance)
+    }
     // Pre-flight drop: remove any slice whose creates files already exist
     // on disk and already export every backtick-declared symbol. Blocker
     // edges pointing at dropped slices are removed from surviving slices.
@@ -1183,11 +1313,19 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       }
       // Phase 2: wire blockers using the resolved task ids. Routes through the
       // Arc aggregate (ADR-0052 sole-writer for task_blockers); Arc.addBlocker
-      // carries the ADR-0040 leaf-node guard internally.
+      // carries the ADR-0040 leaf-node guard internally. The provenance map
+      // from the auto-linker determines whether each edge is 'file-overlap'
+      // (mechanical, forced by shared declared files) or 'inferred' (from
+      // the slicer LLM or the auto-linker direction judge).
       for (let i = 0; i < total; i += 1) {
         const deps = parsed.slices[i].blockedBy
         for (const dep of deps) {
-          await Arc.load(taskIds[i], taskStore).addBlocker(taskIds[i], [taskIds[dep - 1]])
+          const provenance = edgeProvenanceMap.get(`${i}:${dep}`) ?? 'inferred'
+          await Arc.load(taskIds[i], taskStore).addBlocker(
+            taskIds[i],
+            [taskIds[dep - 1]],
+            { provenance },
+          )
         }
       }
       // Phase 2b: wire each hitl slice task to block on its Coder sub-task.

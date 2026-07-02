@@ -1241,6 +1241,152 @@ describe('injectAutoLinkerBlockers: general producer→consumer edges (Stage 2)'
   })
 })
 
+describe('injectAutoLinkerBlockers: file-overlap mechanical edges (Stage 1.5)', () => {
+  it('forces a sequential edge for two slices sharing a declared file, with earlier blocking later', async () => {
+    const slices = [
+      {
+        title: 'Add auth middleware',
+        whatToBuild: 'Add JWT middleware to src/middleware/auth.ts',
+        modifies: [] as string[],
+        creates: ['src/middleware/auth.ts'],
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Wire auth middleware into routes',
+        whatToBuild: 'Import auth middleware in src/routes/api.ts and src/middleware/auth.ts',
+        modifies: ['src/middleware/auth.ts'] as string[],
+        creates: [] as string[],
+        blockedBy: [] as number[],
+      },
+    ]
+
+    let judgeCallCount = 0
+    const judge = async (): Promise<DirectionVerdict> => {
+      judgeCallCount++
+      return { hasDependency: false }
+    }
+
+    const result = await injectAutoLinkerBlockers(slices, judge)
+
+    // File-overlap detected: both slices declare src/middleware/auth.ts
+    // Direction: slice 0 (earlier) blocks slice 1 (later)
+    expect(slices[1].blockedBy).toEqual([1])
+    expect(slices[0].blockedBy).toEqual([])
+    // The judge must NOT be called for the overlapping pair — mechanical wins
+    expect(judgeCallCount).toBe(0)
+    // The injected edge should be tagged 'file-overlap'
+    expect(result.injected).toEqual([
+      { dependerIdx: 1, blockerOneBased: 1, provenance: 'file-overlap' },
+    ])
+  })
+
+  it('does not call the judge for file-overlap pairs (mechanical wins over inferred)', async () => {
+    // Two slices share a file → mechanical edge is forced.
+    // If the judge were called, it might propose an edge in EITHER direction.
+    // We verify the judge is never called for overlapping pairs.
+    const slices = [
+      {
+        title: 'Create database schema',
+        whatToBuild: 'Write migrations in db/schema.ts',
+        modifies: [] as string[],
+        creates: ['db/schema.ts'],
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Seed database with initial data',
+        whatToBuild: 'Add seed data in db/schema.ts',
+        modifies: ['db/schema.ts'] as string[],
+        creates: [] as string[],
+        blockedBy: [] as number[],
+      },
+    ]
+
+    let judgeCallCount = 0
+    // Judge would propose the OPPOSITE direction if called — but mechanical wins
+    const judge = async (): Promise<DirectionVerdict> => {
+      judgeCallCount++
+      return { hasDependency: true, aBlocksB: false } // would say: slice 1 blocks slice 0
+    }
+
+    await injectAutoLinkerBlockers(slices, judge)
+
+    // Mechanical edge (slice 0 blocks slice 1) must be in place
+    expect(slices[1].blockedBy).toEqual([1])
+    expect(slices[0].blockedBy).toEqual([])
+    // LLM was never consulted — mechanical edge takes priority
+    expect(judgeCallCount).toBe(0)
+  })
+
+  it('breaks cycles by dropping inferred edges, never mechanical ones', async () => {
+    // Chain of file-overlap mechanical edges: 0 blocks 1, 1 blocks 2.
+    // The LLM then proposes (for the non-overlapping pair 0↔2): 2 blocks 0.
+    // That would close the cycle 0→1→2→0. The cycle guard must drop the
+    // inferred edge (2 blocks 0) and keep both mechanical edges.
+    const slices = [
+      {
+        title: 'Define processOrder schema',
+        whatToBuild: 'Write processOrder types in src/orders/schema.ts',
+        prescriptiveAction: 'Export `OrderSchema` from src/orders/schema.ts.',
+        modifies: [] as string[],
+        creates: ['src/orders/schema.ts'],
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Implement processOrder handler',
+        whatToBuild: 'Add processOrder handler using the schema',
+        prescriptiveAction: 'Import `OrderSchema` in src/orders/handler.ts.',
+        modifies: ['src/orders/schema.ts'] as string[], // shares file with slice 0 → mechanical: 0 blocks 1
+        creates: ['src/orders/handler.ts'],
+        blockedBy: [] as number[],
+      },
+      {
+        title: 'Wire processOrder into routes',
+        whatToBuild: 'Register processOrder in the router',
+        prescriptiveAction: 'Import `processOrder` from src/orders/handler.ts in src/router.ts.',
+        modifies: ['src/orders/handler.ts'] as string[], // shares file with slice 1 → mechanical: 1 blocks 2
+        creates: [] as string[],
+        blockedBy: [] as number[],
+      },
+    ]
+
+    // After Stage 1.5:
+    //   slices[1].blockedBy = [1]  (mechanical: 0 blocks 1)
+    //   slices[2].blockedBy = [2]  (mechanical: 1 blocks 2)
+    //
+    // LLM for pair (0, 2) — no shared files, but shares 'processOrder' identifier:
+    //   aBlocksB: false → B (index 2) blocks A (index 0) → dependerIdx=0, blockerOneBased=3
+    //   This would close cycle: 0 waits for 2 (new edge), 2 waits for 1, 1 waits for 0.
+    //   wouldCreateCycle must detect it and drop the edge.
+    const judge = async (
+      _a: { title: string },
+      b: { title: string },
+    ): Promise<DirectionVerdict> => {
+      // Pair (0, 2): 'routes' slice should block the 'schema' slice — cycle!
+      if (b.title.includes('routes')) {
+        return { hasDependency: true, aBlocksB: false } // B (routes=2) blocks A (schema=0)
+      }
+      return { hasDependency: false }
+    }
+
+    const result = await injectAutoLinkerBlockers(slices, judge)
+
+    // Both mechanical edges must survive
+    expect(slices[1].blockedBy).toContain(1) // 0 blocks 1
+    expect(slices[2].blockedBy).toContain(2) // 1 blocks 2
+    // The inferred edge (2 blocks 0) must have been DROPPED — it would close the cycle
+    expect(slices[0].blockedBy).not.toContain(3)
+    // The dropped cycle must be reported in the result
+    expect(result.droppedCycles.length).toBeGreaterThan(0)
+    // Both mechanical edges must appear in injected with 'file-overlap' provenance
+    expect(result.injected).toContainEqual(
+      expect.objectContaining({ dependerIdx: 1, blockerOneBased: 1, provenance: 'file-overlap' }),
+    )
+    expect(result.injected).toContainEqual(
+      expect.objectContaining({ dependerIdx: 2, blockerOneBased: 2, provenance: 'file-overlap' }),
+    )
+  })
+})
+
 describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   // Integration-level pin for the 1b7498f6 regression. The
   // injectSchemaDropBlockers unit tests above prove the helper

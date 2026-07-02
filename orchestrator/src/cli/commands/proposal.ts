@@ -70,6 +70,39 @@ export const renderProposalDetail = async (
     deps.out(
       `tasks:      ${proposalTasks.map((t) => `${t.id} (${t.status})`).join(', ')}`,
     )
+    // Show slice dependency edges with provenance so operators can see which
+    // edges were forced by file overlap vs proposed by an LLM.
+    try {
+      const edgeResult = await deps.store.query({
+        sql: `SELECT tb.task_id, tb.blocker_task_id, tb.provenance,
+                     t1.slice_index AS depender_slice, t2.slice_index AS blocker_slice
+              FROM task_blockers tb
+              JOIN tasks t1 ON tb.task_id = t1.id
+              JOIN tasks t2 ON tb.blocker_task_id = t2.id
+              WHERE t1.parent_proposal_id = ?
+                AND t2.parent_proposal_id = ?
+                AND tb.provenance IN ('file-overlap', 'inferred')
+              ORDER BY t2.slice_index, t1.slice_index`,
+        args: [idea.id, idea.id],
+      })
+      if (edgeResult.rows.length > 0) {
+        deps.out(`slice-deps:`)
+        for (const row of edgeResult.rows) {
+          const r = row as unknown as {
+            blocker_task_id: string
+            task_id: string
+            provenance: string
+            blocker_slice: number | null
+            depender_slice: number | null
+          }
+          deps.out(
+            `  ${r.blocker_task_id} (slice ${r.blocker_slice ?? '?'}) → ${r.task_id} (slice ${r.depender_slice ?? '?'}) [${r.provenance}]`,
+          )
+        }
+      }
+    } catch {
+      // Best-effort: provenance query failures must not break proposal show.
+    }
   }
 }
 
