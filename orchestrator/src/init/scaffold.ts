@@ -20,8 +20,13 @@ const TEMPLATE_CLAUDE_MD = resolve(TEMPLATES_DIR, 'CLAUDE.md')
  * Bundled template for the repo-root `.mcp.json` that registers the codegraph
  * MCP server. Delivered via the scaffold path (NOT via the `.claude/` bundle)
  * because `.mcp.json` lives at the repo root, not inside `.claude/`.
+ *
+ * Note: `templates/mcp.json` (no leading dot) is the source-level documentation
+ * copy that includes a `_comment` explaining the interactive-vs-worker config
+ * divergence. That comment is framework-internal and MUST NOT be delivered to
+ * consumers. `templates/.mcp.json` is the clean consumer-facing template.
  */
-const TEMPLATE_MCP_JSON = resolve(TEMPLATES_DIR, 'mcp.json')
+const TEMPLATE_MCP_JSON = resolve(TEMPLATES_DIR, '.mcp.json')
 
 export interface ScaffoldClaudeOptions {
   repoRoot: string
