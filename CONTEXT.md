@@ -404,3 +404,7 @@ _Avoid_: paused, parked, HITL state
 **Completion report**:
 Machine-parseable fenced block a Coder must emit as its final message: one done/partial/blocked line per done-criterion with evidence (file:line, commit sha, test name). Parsed by the completeness verify gate; absent or unsubstantiated reports fail verification.
 _Avoid_: self-report, summary, final report
+
+**Gate tier**:
+Classification on every verify gate: 'task' gates are cheap and run per-task in the worktree (typecheck, lint, diff-affected tests, completeness); 'integration' gates are expensive and run once, serialized under the merge lock, against the merged tree (full suites).
+_Avoid_: verify level, check tier
