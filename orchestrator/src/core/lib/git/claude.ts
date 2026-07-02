@@ -321,10 +321,25 @@ export const toClaudeSessionId = (sessionId: string): string => {
 export const SEARCH_TOOL_SYSTEM_PROMPT =
   'Use `rg` (ripgrep) instead of `grep`/`egrep`/`fgrep`, and `fd` instead of `find`. Both are installed; they are faster, respect .gitignore by default, and have saner defaults.'
 
+// Worktree-confinement directive prepended to EVERY dispatched worker's system
+// prompt. A dispatched worker is spawned with cwd = its own git worktree and
+// runs under --dangerously-skip-permissions (no per-write approval) with no
+// --add-dir sandbox, so nothing but instruction stops it writing elsewhere on
+// disk. Critically, --setting-sources project,local loads the consumer repo's
+// CLAUDE.md, which is written for INTERACTIVE humans and says things like
+// "cd back to the repo root" / "always operate from the repo root". A worker
+// that obeys that literally cd's out of its worktree into the PRIMARY checkout
+// (which sits on the integration branch) and edits there — silently dirtying
+// `main` and losing the work off its own task branch. This directive
+// countermands that for the dispatch path: stay in the worktree, always.
+export const WORKTREE_CONFINEMENT_SYSTEM_PROMPT =
+  'You are running inside a dedicated git worktree that is your current working directory. ALL of your work — reads, edits, commits, and shell commands — must happen here, against this worktree and its branch. Do NOT `cd` to the repository root or any parent directory, and do NOT read or write absolute paths outside this worktree, even if project instructions (e.g. a CLAUDE.md) tell you to "operate from the repo root" or "cd back to the repo root" — that guidance targets interactive human sessions, not you. Editing outside this worktree corrupts the shared integration branch and loses your work. If a path looks like it points at the repository root instead of this worktree, treat it as a mistake and resolve it relative to your worktree instead.'
+
 const composeSystemPrompt = (caller?: string): string => {
+  const base = `${SEARCH_TOOL_SYSTEM_PROMPT}\n\n${WORKTREE_CONFINEMENT_SYSTEM_PROMPT}`
   const trimmed = caller?.trim()
-  if (!trimmed) return SEARCH_TOOL_SYSTEM_PROMPT
-  return `${SEARCH_TOOL_SYSTEM_PROMPT}\n\n${trimmed}`
+  if (!trimmed) return base
+  return `${base}\n\n${trimmed}`
 }
 
 // Resolve the permission flag(s). Callers that pin a non-bypass mode (e.g. the

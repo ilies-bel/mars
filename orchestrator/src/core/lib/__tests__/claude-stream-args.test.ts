@@ -3,6 +3,7 @@ import {
   claudeStreamArgs,
   SEARCH_TOOL_SYSTEM_PROMPT,
   toClaudeSessionId,
+  WORKTREE_CONFINEMENT_SYSTEM_PROMPT,
 } from '../git/claude'
 
 const UUID_RE =
@@ -131,7 +132,27 @@ describe('toClaudeSessionId', () => {
     const args = claudeStreamArgs('hello')
     const sysIdx = args.indexOf('--system-prompt')
     expect(sysIdx).toBeGreaterThanOrEqual(0)
-    expect(args[sysIdx + 1]).toBe(SEARCH_TOOL_SYSTEM_PROMPT)
+    // Base system prompt = search-tool guidance + worktree confinement, in that
+    // order, when no caller prompt is supplied.
+    expect(args[sysIdx + 1]).toBe(
+      `${SEARCH_TOOL_SYSTEM_PROMPT}\n\n${WORKTREE_CONFINEMENT_SYSTEM_PROMPT}`,
+    )
+  })
+
+  it('always injects the worktree-confinement directive so a dispatched worker cannot cd to the repo root and dirty the integration branch', () => {
+    // With no caller prompt.
+    const bare = claudeStreamArgs('hello')
+    const bareSys = bare[bare.indexOf('--system-prompt') + 1]
+    expect(bareSys).toContain(WORKTREE_CONFINEMENT_SYSTEM_PROMPT)
+
+    // And when a caller supplies its own system prompt, the confinement
+    // directive is still present (prepended as part of the base).
+    const withCaller = claudeStreamArgs('hello', {
+      systemPrompt: 'caller-specific guidance',
+    })
+    const callerSys = withCaller[withCaller.indexOf('--system-prompt') + 1]
+    expect(callerSys).toContain(WORKTREE_CONFINEMENT_SYSTEM_PROMPT)
+    expect(callerSys).toContain('caller-specific guidance')
   })
 })
 
