@@ -33,6 +33,7 @@ import {
   clearResolvedPendingOps,
   shouldRefreshNow,
   resolveCursor,
+  classifySSEFrame,
 } from '../action-queue-watch'
 import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
 
@@ -585,5 +586,64 @@ describe('resolveCursor', () => {
   it('empty rows: returns 0 regardless of prevRowId and prevIndex', () => {
     expect(resolveCursor([], 'row-a', 5)).toBe(0)
     expect(resolveCursor([], null, 0)).toBe(0)
+  })
+})
+
+// ─── classifySSEFrame ─────────────────────────────────────────────────────────
+//
+// The SSE frame classifier drives two behavioural guarantees:
+//
+//   1. CONNECTED-STATE ON CONNECTION, NOT FIRST DATA EVENT:
+//      The `hello` frame (sent immediately by the daemon on subscribe) causes
+//      the client to flip `live → true`.  The client must NOT wait for an
+//      `action-queue` or `tasks` event, which may never arrive on an empty
+//      queue.  `classifySSEFrame` returning `"hello"` is the predicate that
+//      gates this flip.
+//
+//   2. PORT RE-RESOLUTION ON RECONNECT:
+//      `resolveDaemonBaseUrl` is called inside `connect()` on each attempt —
+//      not captured in a closure at mount time.  The test at line 137 above
+//      already covers this ("re-reads the file on each call").
+//
+// Tests below verify the classification contract that the SSE loop relies on.
+
+describe('classifySSEFrame', () => {
+  it('returns "hello" for the subscribe acknowledgement frame', () => {
+    // This is the frame that drives connected-state: live → true must happen
+    // when classifySSEFrame returns "hello", not only when "action-queue" arrives.
+    expect(classifySSEFrame('event: hello\ndata: {}')).toBe('hello')
+  })
+
+  it('returns "action-queue" for action-queue invalidation events', () => {
+    expect(classifySSEFrame('event: action-queue\ndata: {}')).toBe('action-queue')
+  })
+
+  it('returns "tasks" for task invalidation events', () => {
+    expect(classifySSEFrame('event: tasks\ndata: {}')).toBe('tasks')
+  })
+
+  it('returns null for SSE comment lines (heartbeat pings)', () => {
+    // Daemon sends `: ping\n\n` every 30 s.  Comments must not be mistaken for
+    // named events; the heartbeat timeout is reset by the raw data arriving,
+    // not by the frame classifier.
+    expect(classifySSEFrame(': ping')).toBeNull()
+  })
+
+  it('returns null for empty frames (e.g. trailing split artefact)', () => {
+    expect(classifySSEFrame('')).toBeNull()
+    expect(classifySSEFrame('   ')).toBeNull()
+  })
+
+  it('returns null for frames without an event: line', () => {
+    expect(classifySSEFrame('data: {}')).toBeNull()
+  })
+
+  it('trims leading/trailing whitespace before classifying', () => {
+    expect(classifySSEFrame('  event: hello\ndata: {}  ')).toBe('hello')
+  })
+
+  it('returns null for a pure comment frame (SSE spec §8.8)', () => {
+    // Multi-line comment followed by data but no event: line.
+    expect(classifySSEFrame(': keep-alive comment\ndata: {}')).toBeNull()
   })
 })

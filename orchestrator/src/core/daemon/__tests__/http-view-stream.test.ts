@@ -6,8 +6,9 @@
  *   - Greeting: event: hello emitted on connect
  *   - Fan-out: hub.broadcast('tasks') is received by connected clients within 1s
  *   - Cleanup: disconnecting a client removes it from the hub (no leak)
+ *   - Heartbeat: `: ping` comment arrives after the configured interval
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -174,6 +175,59 @@ describe('GET /view/stream', () => {
       expect(hub.size()).toBe(0)
     } finally {
       await close()
+    }
+  })
+
+  it('sends a `: ping` heartbeat comment after the 30 s interval', async () => {
+    // Use fake timers so we don't have to wait 30 real seconds.
+    vi.useFakeTimers()
+    const hub = new ViewStreamHub()
+    // Import the server after enabling fake timers so the setInterval inside
+    // the route handler uses the fake clock.
+    const { startHttpServer } = await import('../http-server')
+    const { port, close } = await startHttpServer(makeDeps({ viewStreamHub: hub }))
+
+    const abortCtrl = new AbortController()
+    try {
+      // Use real timers for the fetch itself so the HTTP handshake completes.
+      const resPromise = vi.waitFor(
+        () => fetch(`http://127.0.0.1:${port}/view/stream`, { signal: abortCtrl.signal }),
+        { timeout: 2000 },
+      )
+      const res = await resPromise
+      const reader = res.body!.getReader()
+
+      // Drain the hello greeting.
+      const hello = await vi.waitFor(
+        async () => {
+          const { value } = await reader.read()
+          const text = new TextDecoder().decode(value)
+          if (!text.includes('event: hello')) throw new Error('no hello yet')
+          return text
+        },
+        { timeout: 2000 },
+      )
+      expect(hello).toContain('event: hello')
+
+      // Advance the fake clock by 30 s to fire the heartbeat setInterval.
+      vi.advanceTimersByTime(30_000)
+
+      // Read the ping that the interval should have written to the socket.
+      const ping = await vi.waitFor(
+        async () => {
+          const { value } = await reader.read()
+          const text = new TextDecoder().decode(value)
+          if (!text.includes(': ping')) throw new Error('no ping yet')
+          return text
+        },
+        { timeout: 2000 },
+      )
+      expect(ping).toContain(': ping')
+      reader.cancel()
+    } finally {
+      abortCtrl.abort()
+      await close()
+      vi.useRealTimers()
     }
   })
 })

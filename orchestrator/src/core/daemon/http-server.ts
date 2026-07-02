@@ -569,12 +569,27 @@ export const startHttpServer = async (
       // Send the hello greeting so the client knows the stream is live.
       res.write('event: hello\ndata: {}\n\n')
 
+      // Send a periodic SSE comment (`: ping`) every 30 s so clients can
+      // distinguish "healthy but quiet" from a half-open / dead socket.
+      const heartbeatInterval = setInterval(() => {
+        try {
+          res.write(': ping\n\n')
+        } catch {
+          clearInterval(heartbeatInterval)
+        }
+      }, 30_000)
+
       const hub = deps.viewStreamHub
       if (hub) {
         const client = hub.add(res)
         const cleanup = (): void => {
           hub.remove(client)
+          clearInterval(heartbeatInterval)
         }
+        req.on('close', cleanup)
+        req.on('error', cleanup)
+      } else {
+        const cleanup = (): void => clearInterval(heartbeatInterval)
         req.on('close', cleanup)
         req.on('error', cleanup)
       }

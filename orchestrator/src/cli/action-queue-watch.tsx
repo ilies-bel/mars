@@ -359,6 +359,25 @@ const Detail: React.FC<DetailProps> = ({ row, now, pending }) => {
   )
 }
 
+// ─── SSE frame classifier ─────────────────────────────────────────────────────
+
+/**
+ * Classify a raw SSE frame (text between two `\n\n` delimiters) and return the
+ * event name, or null when the frame carries no named event.
+ *
+ * - SSE comments (lines beginning with `:`) and empty frames return null.
+ * - Named events return the value after `event: ` (e.g. `"hello"`, `"tasks"`).
+ *
+ * Exported for testing: the caller decides what to do with the event name.
+ */
+export function classifySSEFrame(frame: string): string | null {
+  const trimmed = frame.trim()
+  if (!trimmed || trimmed.startsWith(':')) return null
+  const eventLine = trimmed.split('\n').find((l) => l.startsWith('event:'))
+  if (!eventLine) return null
+  return eventLine.slice('event:'.length).trim() || null
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 interface AppState {
@@ -369,7 +388,23 @@ interface AppState {
   lastCursorIndex: number
   detailId: string | null
   error: string | null
+  /**
+   * True when the SSE stream is connected and the daemon has sent the `hello`
+   * acknowledgement. Managed exclusively by the SSE connect loop — not by the
+   * HTTP data refresh.
+   */
   live: boolean
+  /**
+   * True when the SSE stream was live but heartbeats have stopped arriving,
+   * indicating the connection is stale (half-open socket or daemon hang).
+   */
+  streamStale: boolean
+  /**
+   * Consecutive SSE connect failures since the last successful connection.
+   * Used to show a degraded state after repeated failures instead of the
+   * eternally-optimistic "connecting…".
+   */
+  streamFailures: number
   now: number
   /** rowId → op — rows with an in-flight agent op (diagnose-failure / investigate). */
   pendingOps: Record<string, string>
@@ -429,6 +464,8 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
     detailId: null,
     error: null,
     live: false,
+    streamStale: false,
+    streamFailures: 0,
     now: Date.now(),
     pendingOps: {},
     confirm: null,
@@ -440,7 +477,7 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
   const refresh = useCallback(async (): Promise<void> => {
     const baseUrl = resolveDaemonBaseUrl(stateDir)
     if (!baseUrl) {
-      setState((prev) => ({ ...prev, error: 'daemon not running — start with `mars daemon start`', live: false }))
+      setState((prev) => ({ ...prev, error: 'daemon not running — start with `mars daemon start`' }))
       return
     }
     try {
@@ -456,7 +493,6 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
           cursorRowId: rows[newIndex]?.id ?? null,
           lastCursorIndex: newIndex,
           error: null,
-          live: true,
           now: Date.now(),
           pendingOps,
           refreshDeferred: false,
@@ -467,7 +503,6 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
       setState((prev) => ({
         ...prev,
         error: message,
-        live: false,
         now: Date.now(),
         refreshDeferred: false,
       }))
@@ -481,61 +516,111 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
 
   // SSE stream: re-fetch the full projection whenever the daemon emits an
   // 'action-queue' or 'tasks' event. Reconnects automatically after drops.
+  //
+  // Live-state management:
+  //   • `live` flips to true when the daemon sends `event: hello` (stream
+  //     established and acknowledged), NOT when the first data event arrives.
+  //     This means an empty queue still shows "live" immediately.
+  //   • `streamStale` flips to true when no data (including heartbeat pings)
+  //     has arrived within STALE_AFTER_MS — the socket is half-open or hung.
+  //   • `streamFailures` counts consecutive failed connect attempts so we can
+  //     show "stream down — retrying (n)" instead of "connecting…" forever.
+  //   • On every reconnect, `resolveDaemonBaseUrl(stateDir)` is called fresh
+  //     so a restarted daemon's new ephemeral port is picked up automatically.
   useEffect(() => {
     let cancelled = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let abortCtrl: AbortController | null = null
+    // How long to wait without any data before declaring the stream stale.
+    // The daemon sends a heartbeat every 30 s; 75 s = 2.5 × heartbeat interval.
+    const STALE_AFTER_MS = 75_000
 
     const connect = async (): Promise<void> => {
       if (cancelled) return
+      // Re-read the port file on every attempt so a daemon restart on a new
+      // ephemeral port is picked up without restarting the TUI.
       const baseUrl = resolveDaemonBaseUrl(stateDir)
       if (!baseUrl) {
         if (!cancelled) reconnectTimer = setTimeout(() => void connect(), 2000)
         return
       }
       abortCtrl = new AbortController()
+      let heartbeatTimer: ReturnType<typeof setTimeout> | null = null
+
+      const resetHeartbeat = (): void => {
+        if (heartbeatTimer !== null) clearTimeout(heartbeatTimer)
+        heartbeatTimer = setTimeout(() => {
+          if (!cancelled) {
+            setState((prev) => ({ ...prev, live: false, streamStale: true }))
+          }
+        }, STALE_AFTER_MS)
+      }
+
       try {
         const res = await fetch(`${baseUrl}/view/stream`, {
           signal: abortCtrl.signal,
         })
         if (!res.ok || !res.body) {
+          setState((prev) => ({
+            ...prev,
+            live: false,
+            streamFailures: prev.streamFailures + 1,
+          }))
           if (!cancelled) reconnectTimer = setTimeout(() => void connect(), 2000)
           return
         }
+        // Connection established: start heartbeat watchdog and reset failure counter.
+        setState((prev) => ({ ...prev, streamFailures: 0 }))
+        resetHeartbeat()
+
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buffer = ''
         while (!cancelled) {
           const { done, value } = await reader.read()
           if (done) break
+          // Any data from the server (including heartbeat pings) resets the
+          // stale watchdog — we know the connection is alive.
+          resetHeartbeat()
           buffer += decoder.decode(value, { stream: true })
           // SSE frames are delimited by double newlines.
           const frames = buffer.split('\n\n')
           buffer = frames.pop() ?? ''
           for (const frame of frames) {
             if (cancelled) break
-            const eventLine = frame
-              .trim()
-              .split('\n')
-              .find((l) => l.startsWith('event:'))
-            if (eventLine) {
-              const name = eventLine.slice('event:'.length).trim()
-              if (name === 'action-queue' || name === 'tasks') {
-                setState((prev) => {
-                  if (shouldRefreshNow(prev)) {
-                    void refresh()
-                    return prev
-                  }
-                  return { ...prev, refreshDeferred: true }
-                })
-              }
+            const name = classifySSEFrame(frame)
+            if (name === 'hello') {
+              // Daemon acknowledged the subscription — stream is live.
+              setState((prev) => ({
+                ...prev,
+                live: true,
+                streamStale: false,
+                streamFailures: 0,
+              }))
+            } else if (name === 'action-queue' || name === 'tasks') {
+              setState((prev) => {
+                if (shouldRefreshNow(prev)) {
+                  void refresh()
+                  return prev
+                }
+                return { ...prev, refreshDeferred: true }
+              })
             }
           }
         }
       } catch {
-        // Absorb abort errors; fall through to reconnect.
+        // Absorb abort/network errors; fall through to reconnect.
+      } finally {
+        if (heartbeatTimer !== null) {
+          clearTimeout(heartbeatTimer)
+          heartbeatTimer = null
+        }
       }
-      if (!cancelled) reconnectTimer = setTimeout(() => void connect(), 2000)
+
+      if (!cancelled) {
+        setState((prev) => ({ ...prev, live: false, streamFailures: prev.streamFailures + 1 }))
+        reconnectTimer = setTimeout(() => void connect(), 2000)
+      }
     }
 
     void connect()
@@ -817,8 +902,12 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
         <Text color="yellow">{staleCount} stale</Text>
         <Text> · </Text>
         <Text color="magenta">{draftCount} drafts</Text>
-        {state.live ? (
+        {state.live && !state.streamStale ? (
           <Text dimColor> · live</Text>
+        ) : state.streamStale ? (
+          <Text color="yellow"> · stale</Text>
+        ) : state.streamFailures >= 3 ? (
+          <Text color="yellow"> · stream down — retrying ({state.streamFailures})</Text>
         ) : (
           <Text dimColor> · connecting…</Text>
         )}
