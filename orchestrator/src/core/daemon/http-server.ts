@@ -40,6 +40,52 @@ export interface StepSpan {
   evalResults?: Array<{ label: string; value: number | string | null; warn: boolean }>
 }
 
+/** A single step within a run timeline, returned by GET /view/runs/:taskId. */
+export interface RunTimelineStep {
+  stepName: string
+  phase: string | null
+  workerName: string | null
+  status: 'completed' | 'failed' | 'killed' | 'running'
+  startedAt: string
+  endedAt: string | null
+  durationMs: number | null
+  /** Input tokens consumed by this step (LLM-backed steps only). */
+  inputTokens: number | null
+  /** Output tokens produced by this step (LLM-backed steps only). */
+  outputTokens: number | null
+  /** Cache-read tokens for this step (LLM-backed steps only). */
+  cacheReadTokens: number | null
+  /** Claude session ID — the transcript reference for LLM-backed steps. */
+  claudeSessionId: string | null
+  /** Failure reason when status is 'failed' or 'killed'. */
+  failureReason: string | null
+}
+
+/**
+ * All steps for a single workflow run, identified by its workflowInstanceId.
+ * A task can have multiple runs (resume / recovery), each with its own id.
+ */
+export interface RunTimelineEntry {
+  /** The @mars/workflow workflowInstanceId for this run. */
+  runId: string
+  /** ISO-8601 timestamp of the earliest step_started event in this run. */
+  startedAt: string
+  /** ISO-8601 timestamp of the latest step_ended event in this run, or null if any step is still running. */
+  endedAt: string | null
+  steps: RunTimelineStep[]
+}
+
+/**
+ * Full run timeline for a task — all workflow runs in chronological order,
+ * each containing its ordered step list.
+ *
+ * Returned by GET /view/runs/:taskId.
+ */
+export interface RunTimeline {
+  taskId: string
+  runs: RunTimelineEntry[]
+}
+
 /** Wire shape returned by GET /view/framework-update. */
 export interface FrameworkUpdateState {
   installed: string
@@ -546,6 +592,26 @@ export const startHttpServer = async (
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return
+    }
+
+    // GET /view/runs/:taskId — full run timeline for a task: all workflow runs
+    // (identified by workflowInstanceId) in chronological order, each with its
+    // ordered step list. Each step surfaces status, duration, token usage, the
+    // Claude session id (transcript reference), and failure reason. Pure read;
+    // no draining gate.
+    {
+      const runsMatch =
+        req.method === 'GET' && req.url
+          ? req.url.match(/^\/view\/runs\/([^/?]+)(?:\?.*)?$/)
+          : null
+      if (runsMatch && runsMatch[1]) {
+        const taskId = decodeURIComponent(runsMatch[1])
+        deps.appServices
+          .viewRunTimeline(taskId)
+          .then((timeline) => sendJson(res, 200, timeline))
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
     }
 
     // GET /view/step-spans?originId=<id>&taskId=<id> — step timeline for a task arc.

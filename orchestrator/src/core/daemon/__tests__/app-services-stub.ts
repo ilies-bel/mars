@@ -38,6 +38,7 @@ export const stubAppServices = (
   viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
   viewProposal: async () => null,
   viewStepSpans: async () => ({ spans: [] }),
+  viewRunTimeline: async (taskId) => ({ taskId, runs: [] }),
   viewSessions: async () => ({ sessions: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
   viewReleaseNotes: async () => ({ entries: [] }),

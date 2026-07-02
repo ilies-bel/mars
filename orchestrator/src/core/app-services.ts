@@ -65,6 +65,8 @@ import type { Session } from './daemon/view/sessions'
 import type { ProgressTask, ProposalNode } from './daemon/view/progress'
 import type {
   StepSpan,
+  RunTimeline,
+  RunTimelineStep,
   FrameworkUpdateState,
   DraftFeature,
   StaleWorktreeAlert,
@@ -119,6 +121,7 @@ export interface AppServices {
   viewProposal: (id: string) => Promise<Proposal | null>
   // ── trace-derived views ─────────────────────────────────────────────────────
   viewStepSpans: (params: { originId?: string; taskId?: string }) => Promise<{ spans: StepSpan[] }>
+  viewRunTimeline: (taskId: string) => Promise<RunTimeline>
   viewSessions: (agentName: string) => Promise<{ sessions: Session[] }>
   viewTerminalEvents: () => Promise<{ events: TerminalEvent[] }>
   viewReleaseNotes: () => Promise<{ entries: ReleaseNoteEntry[] }>
@@ -209,6 +212,128 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
 
     return { spans }
+  }
+
+  const viewRunTimeline: AppServices['viewRunTimeline'] = async (taskId) => {
+    const [started, ended] = await Promise.all([
+      traceStore.query({ taskId, kind: ['step_started'], limit: 1000 }),
+      traceStore.query({ taskId, kind: ['step_ended'], limit: 1000 }),
+    ])
+
+    // Map (workflowInstanceId, stepName) → ended event for O(n) pairing.
+    const endedMap = new Map<string, (typeof ended)[0]>()
+    for (const e of ended) {
+      const wfId = e.payload.workflowInstanceId
+      const stepName = e.payload.stepName
+      if (typeof wfId === 'string' && typeof stepName === 'string') {
+        endedMap.set(`${wfId}\0${stepName}`, e)
+      }
+    }
+
+    // Group step_started events by workflowInstanceId.
+    // Note: the trace store returns events in DESC order (newest first), so we
+    // sort each run's steps by startedAt ascending after collecting them all.
+    const runMap = new Map<string, RunTimelineStep[]>()
+
+    for (const s of started) {
+      const wfId = s.payload.workflowInstanceId
+      const stepName = s.payload.stepName
+      if (typeof wfId !== 'string' || typeof stepName !== 'string') continue
+
+      if (!runMap.has(wfId)) {
+        runMap.set(wfId, [])
+      }
+
+      const key = `${wfId}\0${stepName}`
+      const endEvent = endedMap.get(key)
+
+      const outcome = endEvent
+        ? typeof endEvent.payload.outcome === 'string'
+          ? endEvent.payload.outcome
+          : 'completed'
+        : 'running'
+
+      const status =
+        outcome === 'completed' || outcome === 'failed' || outcome === 'killed'
+          ? outcome
+          : 'running'
+
+      // Extract token usage from usageSignals (LLM steps only).
+      const usageSignals =
+        endEvent?.payload.usageSignals &&
+        typeof endEvent.payload.usageSignals === 'object' &&
+        !Array.isArray(endEvent.payload.usageSignals)
+          ? (endEvent.payload.usageSignals as Record<string, unknown>)
+          : null
+
+      const step: RunTimelineStep = {
+        stepName,
+        phase: s.phase,
+        workerName:
+          typeof s.payload.workerName === 'string' ? s.payload.workerName : null,
+        status,
+        startedAt: s.timestamp,
+        endedAt: endEvent ? endEvent.timestamp : null,
+        durationMs:
+          endEvent && typeof endEvent.payload.durationMs === 'number'
+            ? endEvent.payload.durationMs
+            : null,
+        inputTokens:
+          usageSignals && typeof usageSignals.inputTokens === 'number'
+            ? usageSignals.inputTokens
+            : null,
+        outputTokens:
+          usageSignals && typeof usageSignals.outputTokens === 'number'
+            ? usageSignals.outputTokens
+            : null,
+        cacheReadTokens:
+          usageSignals && typeof usageSignals.cacheReadTokens === 'number'
+            ? usageSignals.cacheReadTokens
+            : null,
+        claudeSessionId:
+          endEvent && typeof endEvent.payload.sessionId === 'string'
+            ? endEvent.payload.sessionId
+            : null,
+        failureReason:
+          endEvent && typeof endEvent.payload.failureReason === 'string'
+            ? endEvent.payload.failureReason
+            : null,
+      }
+
+      runMap.get(wfId)!.push(step)
+    }
+
+    // Sort steps within each run by startedAt ascending (workflow order), then
+    // derive the run's own startedAt from its first step so runs can be sorted.
+    const runs = Array.from(runMap.entries()).map(([runId, steps]) => {
+      steps.sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+
+      // endedAt for the run is the latest endedAt among all steps, or null
+      // when any step is still running (no matching step_ended yet).
+      const hasRunning = steps.some((s) => s.status === 'running')
+      const endedAts = steps
+        .map((s) => s.endedAt)
+        .filter((t): t is string => t !== null)
+      const runEndedAt =
+        hasRunning || endedAts.length === 0
+          ? null
+          : [...endedAts].sort().at(-1) ?? null
+
+      // runStartedAt is the earliest step_started timestamp in this run.
+      const runStartedAt = steps[0]?.startedAt ?? ''
+
+      return {
+        runId,
+        startedAt: runStartedAt,
+        endedAt: runEndedAt,
+        steps,
+      }
+    })
+
+    // Sort runs chronologically by their earliest step_started timestamp.
+    runs.sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+
+    return { taskId, runs }
   }
 
   const viewSessions: AppServices['viewSessions'] = (agentName) =>
@@ -558,6 +683,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewProposals,
     viewProposal,
     viewStepSpans,
+    viewRunTimeline,
     viewSessions,
     viewTerminalEvents,
     viewReleaseNotes,
