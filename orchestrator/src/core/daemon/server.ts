@@ -785,6 +785,8 @@ export const startDaemon = async (
         isContextExhaustedAbortError,
         isOriginWorktreeMissingAbortError,
         isPreviewGateError,
+        isAwaitHumanError,
+        extractAwaitHumanStepName,
       } = await import('../../workflows/implement-workflow')
       // Read the failure off RunResult.error (the engine puts the thrown Error
       // there verbatim on the `failed` path). The detectors flatten the cause
@@ -840,6 +842,38 @@ export const startDaemon = async (
         log(`[implement] ${task.id} parked awaiting-validation: preview server up, waiting for operator Validate/Reject`)
         return
       }
+      // awaitHuman gate: the primitive parked the task in 'awaiting-human',
+      // raised the action-queue row, and threw this sentinel so the step does
+      // NOT checkpoint as 'completed'. Patch the step record to 'completed' now
+      // so the engine short-circuits it on re-dispatch (after the operator
+      // releases the lease via `mars release <id>`), preventing a double-park
+      // or double-notify. The task stays in 'awaiting-human' until released.
+      if (result.status === 'failed' && isAwaitHumanError(resultError)) {
+        const stepName = extractAwaitHumanStepName(resultError)
+        if (stepName !== null) {
+          try {
+            const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
+            const wfStore = createQueueWorkflowStore()
+            const step = await wfStore.getStep(task.id, stepName)
+            if (step !== undefined && step.status !== 'completed') {
+              await wfStore.putStep({
+                ...step,
+                status: 'completed',
+                finishedAt: Date.now(),
+                resultJson: JSON.stringify({ parkedForHuman: true }),
+              })
+            }
+          } catch (patchErr) {
+            log(
+              `[implement] ${task.id} await-human: step-completion patch errored (non-fatal): ${
+                patchErr instanceof Error ? patchErr.message : String(patchErr)
+              }`,
+            )
+          }
+        }
+        log(`[implement] ${task.id} parked awaiting-human: lease holder = workflow:await-human`)
+        return
+      }
       log(`[implement] ${task.id} -> ${result.status}`)
       bus.emit('task.completed', { taskId: task.id, status: result.status })
     } catch (err) {
@@ -869,6 +903,7 @@ export const startDaemon = async (
       // recovery routing. Detect them and suppress the re-update, same as the
       // context-exhausted / origin-worktree-missing self-handled aborts.
       let isCoderSelfHandledAbort = false
+      let isAwaitHumanAbort = false
       try {
         const {
           isBlockersAbortError,
@@ -876,12 +911,14 @@ export const startDaemon = async (
           isOriginWorktreeMissingAbortError,
           isCoderExitNonzeroAbortError,
           isCoderUncommittedAbortError,
+          isAwaitHumanError: isAwaitHumanErrorFn,
         } = await import('../../workflows/implement-workflow')
         isBlockersAbort = isBlockersAbortError(err)
         isContextExhaustedAbort = isContextExhaustedAbortError(err)
         isOriginWorktreeMissingAbort = isOriginWorktreeMissingAbortError(err)
         isCoderSelfHandledAbort =
           isCoderExitNonzeroAbortError(err) || isCoderUncommittedAbortError(err)
+        isAwaitHumanAbort = isAwaitHumanErrorFn(err)
       } catch (importErr) {
         log(
           `[implement] ${task.id} could not load blockers-abort detector (${
@@ -906,6 +943,11 @@ export const startDaemon = async (
         // re-update so the generic implement:crashed signature does not clobber
         // the precise one and mis-route the recovery.
         log(`[implement] ${task.id} coder self-handled abort (exception path); task already marked failed, recovery spawned`)
+      } else if (isAwaitHumanAbort) {
+        // The awaitHuman primitive already parked the task in 'awaiting-human'
+        // and raised the action-queue row before throwing. Suppress the re-update
+        // so the task stays parked rather than flipping to 'failed'.
+        log(`[implement] ${task.id} await-human abort (exception path); task already parked awaiting-human`)
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
         try {

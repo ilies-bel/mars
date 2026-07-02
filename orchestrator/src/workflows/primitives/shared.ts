@@ -157,6 +157,32 @@ export const PREVIEW_GATE_MESSAGE = (taskId: string): string =>
 export const isPreviewGateError = (err: unknown): boolean =>
   errorHaystack(err).includes('parked at preview gate; awaiting operator validation')
 
+// Thrown by the awaitHuman primitive when a task is parked for live human work.
+//
+// The sentinel embeds the step name so the daemon can locate the correct
+// workflow_step_runs row and patch it to 'completed'. Once 'completed', the
+// engine short-circuits the step on every future re-dispatch (after the
+// operator releases the lease), making the park idempotent keyed on
+// (runId, stepName). This mirrors the preview-gate sentinel but for the
+// 'awaiting-human' status instead of 'awaiting-validation'.
+export const AWAIT_HUMAN_MESSAGE = (taskId: string, stepName: string): string =>
+  `task ${taskId} parked at await-human step '${stepName}'; awaiting lease release`
+
+export const isAwaitHumanError = (err: unknown): boolean =>
+  errorHaystack(err).includes(`parked at await-human step`)
+
+/**
+ * Extract the step name embedded in the AWAIT_HUMAN_MESSAGE sentinel so the
+ * daemon can locate and complete the matching workflow_step_runs row.
+ *
+ * Returns null when the haystack does not carry a step name (e.g. a wrapped
+ * generic Error that is not the sentinel).
+ */
+export const extractAwaitHumanStepName = (err: unknown): string | null => {
+  const m = errorHaystack(err).match(/parked at await-human step '([^']+)'/)
+  return m?.[1] ?? null
+}
+
 // ---------------------------------------------------------------------------
 // Prompt briefs + system-prompt assembly
 // ---------------------------------------------------------------------------

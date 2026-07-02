@@ -49,6 +49,7 @@ export {
   runAgent,
   verify,
   merge,
+  awaitHuman,
 } from './primitives'
 export type {
   MarsWorkflowInput,
@@ -56,4 +57,5 @@ export type {
   RunAgentOpts,
   VerifyOpts,
   MergeOpts,
+  AwaitHumanOpts,
 } from './primitives'

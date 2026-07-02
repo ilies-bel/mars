@@ -211,6 +211,44 @@ The outer `try/catch` stamps any genuinely-unhandled `mergeBranch` throw
 as a crash (`updateTask` failed + handler + **throw**) so the row never
 strands at `merging`.
 
+### 5. `awaitHuman` → `void` (throws, then short-circuits on resume)
+
+An optional human-in-the-loop gate that parks the pipeline for live human
+work and resumes automatically once the operator releases the lease.
+
+1. `updateTask({ status: 'awaiting-human', leaseOwner: 'workflow:await-human',
+   leasedAt, leaseNote })` through the Arc write funnel (ADR-0052).
+2. `raiseActionQueueItem({ kind: 'awaiting-human', ... })` — level-triggered
+   (ADR-0048): bumps `seen_count` on re-detection rather than spawning siblings.
+3. Throws `AWAIT_HUMAN_MESSAGE(taskId, stepName)`. The sentinel embeds the
+   step name so the daemon can locate the matching `workflow_step_runs` row.
+
+The daemon catches `isAwaitHumanError`, calls
+`wfStore.putStep({ status: 'completed', resultJson: { parkedForHuman: true } })`
+on the failing step record, then returns without emitting `task.completed`.
+After this patch:
+
+- **Daemon restart** — step record is already `'completed'`; the engine
+  short-circuits it on any future re-dispatch. No double-park, no double-notify.
+- **`mars release <id>`** — transitions the task to `'queued'`; daemon
+  re-dispatches. The engine short-circuits the `'completed'` `awaitHuman` step
+  and re-enters the workflow at the NEXT step (e.g. `merge`).
+- **Lease expiry** — the phantom-task watchdog raises an escalation
+  action-queue row (`sweepExpiredLeases`) but NEVER auto-fails the task
+  (ADR-0048).
+- **`mars release <id> --abort`** — fails the task and emits `task.failed`;
+  the worktree is retained for operator inspection.
+
+Options: `note` (shown in the action-queue row body); `taskId` override.
+The timeout option is advisory-only and handled externally by the watchdog.
+
+Usage:
+```js
+await ctx.step('await-human', () => awaitHuman(ctx, {
+  note: 'QA your changes, then run `mars release <id>`',
+}))
+```
+
 ## Failure model: steps throw
 
 Every terminal failure does its self-heal side-effects **and then

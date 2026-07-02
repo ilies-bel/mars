@@ -47,6 +47,9 @@ export {
   isCoderUncommittedAbortError,
   PREVIEW_GATE_MESSAGE,
   isPreviewGateError,
+  AWAIT_HUMAN_MESSAGE,
+  isAwaitHumanError,
+  extractAwaitHumanStepName,
   // Prompt briefs + system-prompt assembly
   COMMIT_FOOTER,
   DEVIATION_RULES,

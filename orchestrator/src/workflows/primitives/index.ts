@@ -102,6 +102,7 @@ import {
   MAIN_DIRTY_MERGE_MESSAGE,
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
   PREVIEW_GATE_MESSAGE,
+  AWAIT_HUMAN_MESSAGE,
 } from './shared'
 import { startDevServer } from '../../core/lib/dev-server'
 import { resolveTaskCwd } from '../../core/lib/resolve-task-cwd'
@@ -1813,4 +1814,120 @@ export const merge = async (
       }
     },
   })
+}
+
+// ---------------------------------------------------------------------------
+// awaitHuman
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-call domain options for {@link awaitHuman}. All fields default.
+ */
+export interface AwaitHumanOpts {
+  /**
+   * Human-readable note shown in the action-queue row body. Displayed to the
+   * operator alongside the task id and lease holder. Default null.
+   */
+  note?: string | null
+  /**
+   * Override the task id (defaults to `ctx.runId`).
+   */
+  taskId?: string
+}
+
+/**
+ * Park the task in 'awaiting-human' and durably suspend the pipeline until
+ * the operator releases the lease via `mars release <id>`.
+ *
+ * **Behaviour:**
+ *   1. Transitions the task to `'awaiting-human'` via `updateTask` (Arc
+ *      funnel, ADR-0052) and raises an `'awaiting-human'` action-queue row so
+ *      the operator sees it immediately.
+ *   2. Throws {@link AWAIT_HUMAN_MESSAGE} — the sentinel embeds the step name
+ *      so the daemon can patch the workflow_step_runs row to `'completed'`,
+ *      making the park idempotent keyed on `(runId, stepName)`.
+ *   3. After the daemon patches the step, no re-park or double-notify occurs
+ *      on daemon restart: the engine short-circuits 'completed' steps.
+ *   4. On `mars release <id>` the task re-queues and the engine re-enters the
+ *      workflow past this step (already 'completed'), continuing to verify →
+ *      merge.
+ *
+ * Lease expiry alerts are raised by the phantom-task watchdog
+ * (`sweepExpiredLeases`) and never auto-fail the task (ADR-0048).
+ *
+ * Options precedence: `opts.field ?? ctx.input.field ?? default` (ADR-0056).
+ *
+ * Usage from a scaffolded workflow:
+ * ```js
+ * await ctx.step('await-human', () => awaitHuman(ctx, { note: 'QA your changes' }))
+ * ```
+ */
+export const awaitHuman = async (
+  ctx: MarsCtx,
+  opts: AwaitHumanOpts = {},
+): Promise<void> => {
+  // Resolve dispatch facts: explicit opts → ctx.input → hard default.
+  const taskId = resolveTaskId(ctx, opts.taskId)
+  const note = opts.note ?? null
+  // The step name is embedded in the sentinel so the daemon can complete the
+  // step record and prevent double-parks on re-dispatch (idempotency).
+  const stepName = ctx.currentStep?.name ?? 'await-human'
+  const store: TaskStore = ctx.services.store
+  const now = new Date().toISOString()
+
+  // Transition to 'awaiting-human' through the Arc write funnel (ADR-0052).
+  // Uses the same field set as Arc.parkForHuman so the task row is consistent
+  // with the server's attach/release paths.
+  await updateTask(
+    taskId,
+    {
+      status: 'awaiting-human',
+      leaseOwner: 'workflow:await-human',
+      leasedAt: now,
+      leaseNote: note,
+    },
+    store,
+  )
+
+  // Raise the action-queue row so the operator sees the parked task.
+  // Level-triggered (ADR-0048): if the daemon restarts and re-detects, it
+  // bumps seen_count rather than spawning a sibling row.
+  raiseActionQueueItem({
+    kind: 'awaiting-human',
+    category: 'daemon',
+    priority: 'normal',
+    title: `Task ${taskId} parked — awaiting human`,
+    body:
+      `Task ${taskId} is parked in its worktree awaiting human work. ` +
+      `Release the lease to resume the pipeline.` +
+      (note ? ` Note: ${note}` : ''),
+    payload: {
+      taskId,
+      leaseOwner: 'workflow:await-human',
+      leasedAt: now,
+      leaseNote: note,
+    },
+    context: { taskId },
+    raisedBy: 'primitive:await-human',
+    signature: taskId,
+    originTaskId: taskId,
+    occurrence: {
+      leaseOwner: 'workflow:await-human',
+      leasedAt: now,
+      parkedAt: now,
+    },
+  }).catch((err) => {
+    console.error(
+      `[await-human] task ${taskId} action-queue raise errored:`,
+      err,
+    )
+  })
+
+  // Throw the sentinel so the daemon can:
+  // 1. Detect the park and suppress the failure write/emit (task is
+  //    intentionally parked, not failed).
+  // 2. Patch this step's workflow_step_runs record to 'completed' so the
+  //    engine short-circuits it on the next re-dispatch — no double-park,
+  //    no double-notify, even after a daemon restart.
+  throw new Error(AWAIT_HUMAN_MESSAGE(taskId, stepName))
 }

@@ -29,6 +29,7 @@ import {
   runAgent,
   verify,
   merge,
+  // awaitHuman,  // uncomment to enable the human-in-the-loop gate (see below)
 } from 'mars/workflow'
 
 export default defineWorkflow({
@@ -46,6 +47,18 @@ export default defineWorkflow({
 
     // verify → scope-aware typecheck → tests → lint. Throws on any failure.
     await ctx.step('verify', () => verify(ctx))
+
+    // ── Human-in-the-loop gate (optional) ────────────────────────────────
+    // Uncomment awaitHuman in the import above and add a step here to pause
+    // the pipeline for QA or iterative work before the branch merges.
+    // The task parks in 'awaiting-human', raises an action-queue row, and
+    // suspends until you run `mars release <task-id>`. After release the
+    // pipeline re-enters at the NEXT step (merge) — no re-park, no
+    // double-notify, even after a daemon restart.
+    //
+    //   await ctx.step('await-human', () => awaitHuman(ctx, {
+    //     note: 'QA your changes in the worktree, then run `mars release <id>`',
+    //   }))
 
     // merge → serialized fast-forward into the integration branch (Vega on conflict).
     return await ctx.step('merge', () => merge(ctx))
