@@ -246,25 +246,23 @@ export const resolveCodegraphRoot = (cwd: string): string => {
   return cwd
 }
 
-// Build the inline `--mcp-config` JSON for the codegraph stdio server used by
-// dispatched Mars WORKERS (via claudeStreamArgs / runClaudeCode).
+// Build the inline `--mcp-config` JSON for the codegraph stdio server.
 //
-// This config is INTENTIONALLY DIFFERENT from the interactive-session template
-// in src/init/templates/mcp.json and must stay that way:
+// NOTE: as of ADR-0062, dispatched Mars WORKERS no longer receive the codegraph
+// MCP server at all — they use the codegraph CLI directly (see
+// CODEGRAPH_CLI_SYSTEM_PROMPT below). This function is preserved as a utility
+// for callers that opt in explicitly (e.g. interactive tooling), but
+// runClaudeCode no longer passes it via mcpConfig.
 //
-//   templates/mcp.json (interactive)    this function (workers)
-//   ─────────────────────────────────   ──────────────────────────────────────
-//   serve --mcp                         serve --mcp --no-watch --path <root>
-//   cwd-resolved index                  pinned to main checkout's .codegraph/
-//   file watcher ON (correct for a      --no-watch: host daemon already watches
-//   dev sitting in the main checkout)   the main tree; per-worker watcher adds
-//                                       only churn on a short-lived worktree
+// Interactive-session template context (src/init/templates/mcp.json):
+//   serve --mcp            — bare, cwd-resolved index, file watcher ON
+// Worker config (this function, no longer called by default):
+//   serve --mcp --no-watch --path <root>  — pinned, no per-worker watcher
 //
-// DO NOT add `--path`/`--no-watch` to the template (it would break interactive
-// cwd-resolution) and DO NOT remove them from this function (workers run inside
-// a worktree that has no .codegraph/ index of its own).
+// DO NOT restore the mcpConfig injection in runClaudeCode without updating
+// CODEGRAPH_CLI_SYSTEM_PROMPT and the divergence note in templates/mcp.json.
 //
-// See also: templates/mcp.json `_comment` field for the symmetric pointer.
+// See also: templates/mcp.json `_comment` field for the interactive-session side.
 export const codegraphMcpConfigJson = (repoRoot: string): string =>
   JSON.stringify({
     mcpServers: {
@@ -335,8 +333,23 @@ export const SEARCH_TOOL_SYSTEM_PROMPT =
 export const WORKTREE_CONFINEMENT_SYSTEM_PROMPT =
   'You are running inside a dedicated git worktree that is your current working directory. ALL of your work — reads, edits, commits, and shell commands — must happen here, against this worktree and its branch. Do NOT `cd` to the repository root or any parent directory, and do NOT read or write absolute paths outside this worktree, even if project instructions (e.g. a CLAUDE.md) tell you to "operate from the repo root" or "cd back to the repo root" — that guidance targets interactive human sessions, not you. Editing outside this worktree corrupts the shared integration branch and loses your work. If a path looks like it points at the repository root instead of this worktree, treat it as a mistake and resolve it relative to your worktree instead.'
 
+// Codegraph CLI guidance injected into every dispatched worker's system prompt.
+// Workers no longer receive the codegraph MCP server (removed to cut the fixed
+// token tax from schema + instruction injection on every task). Instead, they
+// invoke the codegraph CLI directly — cheaper per-query and more legible than
+// grep+Read sweeps. Three concrete invocations covering the most common needs:
+//
+//   codegraph query <SymbolName>          # locate a symbol definition
+//   codegraph callees <functionName>      # trace how a function works (what it calls)
+//   codegraph callers <symbolName>        # who calls this; also: codegraph impact <symbolName>
+//
+// If codegraph is not on PATH, fall back to rg/fd+Read silently — do not error
+// or loop on the missing binary. (codegraph is a soft dependency per ADR-0062.)
+export const CODEGRAPH_CLI_SYSTEM_PROMPT =
+  'The `codegraph` CLI provides fast code intelligence — prefer it over `rg`/grep+Read sweeps when it is on PATH. Three invocations that cover most needs:\n\n  codegraph query <SymbolName>          # locate a symbol definition\n  codegraph callees <functionName>      # trace how a function works (what it calls)\n  codegraph callers <symbolName>        # who calls this; also: codegraph impact <symbolName> for change-impact analysis\n\nIf `codegraph` is not on PATH, fall back to `rg`/`fd`+Read silently — do not error or loop on the missing binary.'
+
 const composeSystemPrompt = (caller?: string): string => {
-  const base = `${SEARCH_TOOL_SYSTEM_PROMPT}\n\n${WORKTREE_CONFINEMENT_SYSTEM_PROMPT}`
+  const base = `${SEARCH_TOOL_SYSTEM_PROMPT}\n\n${WORKTREE_CONFINEMENT_SYSTEM_PROMPT}\n\n${CODEGRAPH_CLI_SYSTEM_PROMPT}`
   const trimmed = caller?.trim()
   if (!trimmed) return base
   return `${base}\n\n${trimmed}`
@@ -569,9 +582,10 @@ export const runClaudeCode = async ({
       bare,
       agent,
       disallowedTools,
-      // Pin codegraph to the main checkout's index so the worker — which runs
-      // inside a worktree — queries the same authoritative graph the host built.
-      mcpConfig: codegraphMcpConfigJson(resolveCodegraphRoot(cwd)),
+      // No mcpConfig: workers use the codegraph CLI directly (see
+      // CODEGRAPH_CLI_SYSTEM_PROMPT) rather than the MCP server, eliminating
+      // the fixed token tax from schema + instruction injection on every task.
+      // Interactive sessions still get the MCP via .mcp.json (mars init).
     }),
     cwd,
     async ({ stream, line }) => {

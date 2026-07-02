@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   claudeStreamArgs,
+  CODEGRAPH_CLI_SYSTEM_PROMPT,
   SEARCH_TOOL_SYSTEM_PROMPT,
   toClaudeSessionId,
   WORKTREE_CONFINEMENT_SYSTEM_PROMPT,
@@ -132,10 +133,10 @@ describe('toClaudeSessionId', () => {
     const args = claudeStreamArgs('hello')
     const sysIdx = args.indexOf('--system-prompt')
     expect(sysIdx).toBeGreaterThanOrEqual(0)
-    // Base system prompt = search-tool guidance + worktree confinement, in that
-    // order, when no caller prompt is supplied.
+    // Base system prompt = search-tool guidance + worktree confinement +
+    // codegraph CLI guidance, in that order, when no caller prompt is supplied.
     expect(args[sysIdx + 1]).toBe(
-      `${SEARCH_TOOL_SYSTEM_PROMPT}\n\n${WORKTREE_CONFINEMENT_SYSTEM_PROMPT}`,
+      `${SEARCH_TOOL_SYSTEM_PROMPT}\n\n${WORKTREE_CONFINEMENT_SYSTEM_PROMPT}\n\n${CODEGRAPH_CLI_SYSTEM_PROMPT}`,
     )
   })
 
@@ -153,6 +154,48 @@ describe('toClaudeSessionId', () => {
     const callerSys = withCaller[withCaller.indexOf('--system-prompt') + 1]
     expect(callerSys).toContain(WORKTREE_CONFINEMENT_SYSTEM_PROMPT)
     expect(callerSys).toContain('caller-specific guidance')
+  })
+
+  it('injects codegraph CLI guidance into every worker system prompt', () => {
+    // Workers use the codegraph CLI directly instead of the MCP server.
+    // The guidance must always be present so workers know the real verbs.
+    const bare = claudeStreamArgs('hello')
+    const bareSys = bare[bare.indexOf('--system-prompt') + 1]
+    expect(bareSys).toContain(CODEGRAPH_CLI_SYSTEM_PROMPT)
+
+    // Still present when a caller appends its own prompt.
+    const withCaller = claudeStreamArgs('hello', {
+      systemPrompt: 'my custom guidance',
+    })
+    const callerSys = withCaller[withCaller.indexOf('--system-prompt') + 1]
+    expect(callerSys).toContain(CODEGRAPH_CLI_SYSTEM_PROMPT)
+    expect(callerSys).toContain('my custom guidance')
+  })
+
+  it('codegraph CLI guidance references real CLI verbs (query / callees / callers)', () => {
+    // Guard against accidentally shipping placeholder text or invented flags.
+    // These verbs were verified against `codegraph --help`.
+    expect(CODEGRAPH_CLI_SYSTEM_PROMPT).toContain('codegraph query')
+    expect(CODEGRAPH_CLI_SYSTEM_PROMPT).toContain('codegraph callees')
+    expect(CODEGRAPH_CLI_SYSTEM_PROMPT).toContain('codegraph callers')
+  })
+
+  it('codegraph CLI guidance includes a silent fallback for when codegraph is absent', () => {
+    // codegraph is a soft dependency (ADR-0062); workers must not error-loop
+    // if it is not on PATH.
+    expect(CODEGRAPH_CLI_SYSTEM_PROMPT).toMatch(/not on PATH/i)
+    expect(CODEGRAPH_CLI_SYSTEM_PROMPT).toMatch(/fall back/i)
+  })
+
+  it('worker args do not include a codegraph MCP server when no mcpConfig is supplied', () => {
+    // runClaudeCode no longer passes mcpConfig, so the default claudeStreamArgs
+    // call must not produce --mcp-config at all — i.e. the codegraph MCP server
+    // is absent from the dispatched-worker config.
+    const args = claudeStreamArgs('hello')
+    expect(args).not.toContain('--mcp-config')
+    // Double-check: no JSON blob mentioning the codegraph server sneaks in.
+    const joined = args.join(' ')
+    expect(joined).not.toContain('"codegraph"')
   })
 })
 
