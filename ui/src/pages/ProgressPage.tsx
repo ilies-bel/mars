@@ -21,7 +21,7 @@ export const ProgressPage = () => {
   // readProgressStateFromUrl() returns defaults in non-browser environments.
   const [initialUrlState] = useState(() => readProgressStateFromUrl())
 
-  const { byCluster, tasks, proposals, error, connected } = useProgress()
+  const { byCluster, tasks, proposals, aggregates, error, connected } = useProgress()
   const { proposals: drafts } = useProposals()
 
   // Resolve the initial active tab with the following precedence:
@@ -88,15 +88,17 @@ export const ProgressPage = () => {
   }, [activeTab, searchQuery, selectedProposalId])
 
   const inProgressCount = byCluster['In progress'].length
-  const failedCount = byCluster.Failed.length
-  const doneCount = (tasks ?? []).filter((t) => t.status === 'done').length
+  // Use server-side aggregate counts so done/failed are accurate even though
+  // terminal task rows are excluded from the progress graph projection.
+  const doneToday = aggregates.doneToday
+  const failedCount = aggregates.failedOpen
 
   return (
     <div className="flex h-full w-full min-h-0 overflow-hidden bg-bg">
       <div className="flex min-w-0 flex-1 flex-col">
         <TopStripe
           inProgress={inProgressCount}
-          done={doneCount}
+          doneToday={doneToday}
           failed={failedCount}
           connected={connected}
         />

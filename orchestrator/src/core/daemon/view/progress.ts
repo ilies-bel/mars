@@ -14,6 +14,18 @@ export type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed'
 export type ProposalSource = 'reflection' | 'human' | 'planner'
 
 /**
+ * Cheap aggregate counts for the Progress-tab header.
+ * - doneToday: tasks that completed (status='done') in the last 24 hours.
+ * - doneTotal: all-time done task count.
+ * - failedOpen: tasks currently in status='failed'.
+ */
+export interface ProgressAggregates {
+  doneToday: number
+  doneTotal: number
+  failedOpen: number
+}
+
+/**
  * Minimal proposal representation used as a DAG node in the Topology view.
  * Only proposals referenced by at least one in-scope task are returned.
  */
@@ -101,6 +113,10 @@ export interface ProposalReader {
   listByIds(ids: string[]): Promise<ProposalNode[]>
 }
 
+export interface AggregateReader {
+  readAggregates(): Promise<ProgressAggregates>
+}
+
 /**
  * Maps a task to its Progress-tab cluster, or `null` if the task is out of
  * scope (draft/done/dropped). All failed tasks are always in scope — there
@@ -143,7 +159,8 @@ const normaliseSource = (raw: unknown): ProposalSource => {
 
 /**
  * Build the Progress view payload: tasks in scope with their cluster tag,
- * plus the proposals referenced by those tasks.
+ * plus the proposals referenced by those tasks, plus cheap aggregate counts
+ * for the header (doneToday, doneTotal, failedOpen).
  *
  * This is the authoritative implementation of the Progress tab logic,
  * served by the daemon's GET /view/progress endpoint.
@@ -151,8 +168,12 @@ const normaliseSource = (raw: unknown): ProposalSource => {
 export const buildProgressView = async (
   taskStore: ProgressTaskStore,
   proposalReader: ProposalReader,
-): Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[] }> => {
-  const rows = await taskStore.listProgressTasks()
+  aggregateReader: AggregateReader,
+): Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[]; aggregates: ProgressAggregates }> => {
+  const [rows, aggregates] = await Promise.all([
+    taskStore.listProgressTasks(),
+    aggregateReader.readAggregates(),
+  ])
   const tasks: ProgressTask[] = []
   const proposalIdSet = new Set<string>()
 
@@ -207,7 +228,7 @@ export const buildProgressView = async (
   }
 
   const proposals = await proposalReader.listByIds([...proposalIdSet])
-  return { tasks, proposals }
+  return { tasks, proposals, aggregates }
 }
 
 // ── DB adapters (for daemon use) ─────────────────────────────────────────────
@@ -276,6 +297,30 @@ export const createProgressTaskStore = (client: Client): ProgressTaskStore => ({
         updatedAt: ro.updated_at as string,
       }
     })
+  },
+})
+
+/**
+ * Create an AggregateReader backed by a libsql Client.
+ * Executes three cheap COUNT queries:
+ *   - doneToday: tasks completed in the last 24 hours (rolling window).
+ *   - doneTotal: all-time completed task count.
+ *   - failedOpen: tasks currently in status='failed'.
+ */
+export const createAggregateReader = (client: Client): AggregateReader => ({
+  async readAggregates() {
+    const r = await client.execute(`
+      SELECT
+        (SELECT COUNT(*) FROM tasks WHERE status = 'done' AND updated_at >= datetime('now', '-1 day')) AS done_today,
+        (SELECT COUNT(*) FROM tasks WHERE status = 'done') AS done_total,
+        (SELECT COUNT(*) FROM tasks WHERE status = 'failed') AS failed_open
+    `)
+    const row = r.rows[0] as unknown as Record<string, unknown>
+    return {
+      doneToday: Number(row?.done_today ?? 0),
+      doneTotal: Number(row?.done_total ?? 0),
+      failedOpen: Number(row?.failed_open ?? 0),
+    }
   },
 })
 

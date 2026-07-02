@@ -137,10 +137,10 @@ export const fetchTasks = async (projectId?: string): Promise<Task[]> => {
 
 export const fetchProgress = async (
   projectId?: string,
-): Promise<{ tasks: ProgressTask[]; proposals: ProgressProposalNode[] }> => {
+): Promise<{ tasks: ProgressTask[]; proposals: ProgressProposalNode[]; aggregates: { doneToday: number; doneTotal: number; failedOpen: number } }> => {
   const path = appendProject('/api/progress', projectId)
   const data = await fetchJson(path, progressResponseSchema)
-  return { tasks: data.tasks, proposals: data.proposals }
+  return { tasks: data.tasks, proposals: data.proposals, aggregates: data.aggregates }
 }
 
 export const fetchProposalsPayload = async (projectId?: string): Promise<ProposalsPayload> => {

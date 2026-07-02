@@ -62,7 +62,7 @@ import type { ActionQueueRow, DerivedActionQueueFilter } from './daemon/view/act
 import type { TerminalEvent } from './daemon/view/terminal-events'
 import type { ReleaseNoteEntry } from './daemon/view/release-notes'
 import type { Session } from './daemon/view/sessions'
-import type { ProgressTask, ProposalNode } from './daemon/view/progress'
+import type { ProgressAggregates, ProgressTask, ProposalNode } from './daemon/view/progress'
 import type {
   StepSpan,
   RunTimeline,
@@ -116,7 +116,7 @@ export interface AppServices {
   listKpiArcs: (key: KpiKey) => Promise<KpiArcsResult>
   // ── task / progress / proposals views ───────────────────────────────────────
   viewTasks: () => Promise<{ tasks: unknown[] }>
-  viewProgress: () => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[] }>
+  viewProgress: () => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[]; aggregates: ProgressAggregates }>
   viewProposals: () => Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[] }>
   viewProposal: (id: string) => Promise<Proposal | null>
   // ── trace-derived views ─────────────────────────────────────────────────────
@@ -147,12 +147,13 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       .then((tasks) => ({ tasks }))
 
   const viewProgress: AppServices['viewProgress'] = async () => {
-    const { buildProgressView, createProgressTaskStore, createProposalReader } =
+    const { buildProgressView, createProgressTaskStore, createProposalReader, createAggregateReader } =
       await import('./daemon/view/progress')
     const client = getCompositionRootClient()
     return buildProgressView(
       createProgressTaskStore(client),
       createProposalReader(client),
+      createAggregateReader(client),
     )
   }
 

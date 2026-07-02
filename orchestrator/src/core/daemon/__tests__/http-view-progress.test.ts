@@ -128,7 +128,7 @@ describe('GET /view/progress', () => {
       makeDeps({
         viewProgress: async () => {
           called = true
-          return { tasks: [], proposals: [] }
+          return { tasks: [], proposals: [], aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 } }
         },
       }),
     )
@@ -176,6 +176,7 @@ describe('GET /view/progress', () => {
         viewProgress: async () => ({
           tasks: mockTasks,
           proposals: mockProposals,
+          aggregates: { doneToday: 12, doneTotal: 1422, failedOpen: 2 },
         }),
       }),
     )
@@ -185,6 +186,7 @@ describe('GET /view/progress', () => {
       const body = (await res.json()) as {
         tasks: ProgressTask[]
         proposals: ProposalNode[]
+        aggregates: { doneToday: number; doneTotal: number; failedOpen: number }
       }
       expect(body.tasks).toHaveLength(1)
       expect(body.tasks[0]!.id).toBe('task-1')
@@ -192,6 +194,7 @@ describe('GET /view/progress', () => {
       expect(body.tasks[0]!.parentProposalId).toBe('prop-1')
       expect(body.proposals).toHaveLength(1)
       expect(body.proposals[0]!.id).toBe('prop-1')
+      expect(body.aggregates).toEqual({ doneToday: 12, doneTotal: 1422, failedOpen: 2 })
     } finally {
       await close()
     }

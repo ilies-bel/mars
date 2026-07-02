@@ -152,6 +152,21 @@ export const progressResponseSchema = z.object({
    * Drives Proposal nodes and provenance edges in the DAG view.
    */
   proposals: z.array(progressProposalNodeSchema).optional().default([]),
+  /**
+   * Cheap aggregate counts for the header strip. Optional so the UI
+   * degrades gracefully against a stale daemon that predates this field.
+   * - doneToday: tasks completed in the last 24 hours (rolling window).
+   * - doneTotal: all-time done count.
+   * - failedOpen: tasks currently in status='failed'.
+   */
+  aggregates: z
+    .object({
+      doneToday: z.number(),
+      doneTotal: z.number(),
+      failedOpen: z.number(),
+    })
+    .optional()
+    .default({ doneToday: 0, doneTotal: 0, failedOpen: 0 }),
 })
 
 export const todoResponseSchema = z.object({

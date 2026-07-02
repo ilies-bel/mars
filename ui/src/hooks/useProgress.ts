@@ -5,10 +5,17 @@ import { useSseConnected } from '@/shared/sseStatus'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { Cluster, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 
+interface Aggregates {
+  doneToday: number
+  doneTotal: number
+  failedOpen: number
+}
+
 interface State {
   tasks: ProgressTask[] | null
   proposals: ProgressProposalNode[]
   byCluster: Record<Cluster, ProgressTask[]>
+  aggregates: Aggregates
   error: Error | null
   connected: boolean
 }
@@ -34,6 +41,7 @@ export const useProgress = (): State => {
 
   const tasks = query.data?.tasks ?? null
   const proposals = query.data?.proposals ?? []
+  const aggregates: Aggregates = query.data?.aggregates ?? { doneToday: 0, doneTotal: 0, failedOpen: 0 }
 
   const byCluster = useMemo(() => {
     const clusters = emptyByCluster()
@@ -53,5 +61,5 @@ export const useProgress = (): State => {
 
   const error = query.error ?? null
 
-  return { tasks, proposals, byCluster, error, connected }
+  return { tasks, proposals, byCluster, aggregates, error, connected }
 }

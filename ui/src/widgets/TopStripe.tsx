@@ -3,11 +3,12 @@ import { releaseNotesHash } from '@/shared/routing'
 interface Props {
   inProgress: number
   failed: number
-  done: number
+  /** Tasks completed in the last 24 hours (rolling window). */
+  doneToday: number
   connected: boolean
 }
 
-export const TopStripe = ({ inProgress, failed, done, connected }: Props) => (
+export const TopStripe = ({ inProgress, failed, doneToday, connected }: Props) => (
   <header className="flex h-12 items-center justify-between border-b border-border bg-bg px-6">
     <div className="flex items-center gap-3">
       <h1 className="text-[14px] font-semibold text-fg">Tasks</h1>
@@ -25,7 +26,16 @@ export const TopStripe = ({ inProgress, failed, done, connected }: Props) => (
       <div className="flex items-center gap-2.5 font-mono text-[12px] tracking-wide">
         <span className="font-bold text-flame">{inProgress} IN PROGRESS</span>
         <span className="text-muted">·</span>
-        <span className="font-semibold text-muted">{done} DONE</span>
+        <button
+          type="button"
+          title="Tasks completed in the last 24 hours — click to view release notes"
+          onClick={() => {
+            window.location.hash = releaseNotesHash()
+          }}
+          className="cursor-pointer font-semibold text-muted hover:text-fg"
+        >
+          {doneToday} DONE TODAY
+        </button>
         <span className="text-muted">·</span>
         <span className="font-semibold text-muted">{failed} FAILED</span>
       </div>

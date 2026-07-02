@@ -34,7 +34,7 @@ export const stubAppServices = (
     arcs: [],
   }),
   viewTasks: async () => ({ tasks: [] }),
-  viewProgress: async () => ({ tasks: [], proposals: [] }),
+  viewProgress: async () => ({ tasks: [], proposals: [], aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 } }),
   viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
   viewProposal: async () => null,
   viewStepSpans: async () => ({ spans: [] }),

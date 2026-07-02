@@ -10,6 +10,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildProgressView,
+  type AggregateReader,
+  type ProgressAggregates,
   type ProgressTaskRow,
   type ProgressTaskStore,
   type ProposalReader,
@@ -19,6 +21,10 @@ import {
 
 const noProposals: ProposalReader = {
   listByIds: async () => [],
+}
+
+const zeroAggregates: AggregateReader = {
+  readAggregates: async () => ({ doneToday: 0, doneTotal: 0, failedOpen: 0 }),
 }
 
 const makeRow = (overrides: Partial<ProgressTaskRow> = {}): ProgressTaskRow => ({
@@ -59,7 +65,7 @@ const makeStore = (rows: ProgressTaskRow[]): ProgressTaskStore => ({
 describe('buildProgressView — arc topology fields', () => {
   it('surfaces originId on a regular task (kind=task, self-referencing origin)', async () => {
     const row = makeRow({ id: 'task-abc', originId: 'task-abc', kind: 'task', fixForTaskId: null })
-    const { tasks } = await buildProgressView(makeStore([row]), noProposals)
+    const { tasks } = await buildProgressView(makeStore([row]), noProposals, zeroAggregates)
     expect(tasks).toHaveLength(1)
     expect(tasks[0].originId).toBe('task-abc')
     expect(tasks[0].kind).toBe('task')
@@ -74,7 +80,7 @@ describe('buildProgressView — arc topology fields', () => {
       fixForTaskId: 'task-abc',
       kind: 'fix',
     })
-    const { tasks } = await buildProgressView(makeStore([row]), noProposals)
+    const { tasks } = await buildProgressView(makeStore([row]), noProposals, zeroAggregates)
     expect(tasks).toHaveLength(1)
     expect(tasks[0].id).toBe('fix-1')
     expect(tasks[0].originId).toBe('task-abc')
@@ -84,7 +90,7 @@ describe('buildProgressView — arc topology fields', () => {
 
   it('passes null for originId/fixForTaskId/kind when DB columns are null', async () => {
     const row = makeRow({ originId: null, fixForTaskId: null, kind: null })
-    const { tasks } = await buildProgressView(makeStore([row]), noProposals)
+    const { tasks } = await buildProgressView(makeStore([row]), noProposals, zeroAggregates)
     expect(tasks).toHaveLength(1)
     expect(tasks[0].originId).toBeNull()
     expect(tasks[0].fixForTaskId).toBeNull()
@@ -94,9 +100,35 @@ describe('buildProgressView — arc topology fields', () => {
   it('excludes out-of-scope tasks (done/dropped) while retaining arc fields for in-scope tasks', async () => {
     const inScope = makeRow({ id: 'in-1', status: 'failed', originId: 'origin-1', kind: 'task' })
     const outOfScope = makeRow({ id: 'out-1', status: 'done', originId: 'origin-1', kind: 'task' })
-    const { tasks } = await buildProgressView(makeStore([inScope, outOfScope]), noProposals)
+    const { tasks } = await buildProgressView(makeStore([inScope, outOfScope]), noProposals, zeroAggregates)
     expect(tasks).toHaveLength(1)
     expect(tasks[0].id).toBe('in-1')
     expect(tasks[0].originId).toBe('origin-1')
+  })
+})
+
+// ── Aggregate counts ──────────────────────────────────────────────────────────
+
+describe('buildProgressView — aggregate counts', () => {
+  it('includes aggregate counts from the reader in the returned payload', async () => {
+    const expected: ProgressAggregates = { doneToday: 7, doneTotal: 142, failedOpen: 3 }
+    const reader: AggregateReader = { readAggregates: async () => expected }
+    const { aggregates } = await buildProgressView(makeStore([]), noProposals, reader)
+    expect(aggregates).toEqual(expected)
+  })
+
+  it('does not conflate aggregate counts with in-scope task rows', async () => {
+    const row = makeRow({ id: 'q-1', status: 'queued' })
+    const reader: AggregateReader = {
+      readAggregates: async () => ({ doneToday: 5, doneTotal: 99, failedOpen: 2 }),
+    }
+    const { tasks, aggregates } = await buildProgressView(makeStore([row]), noProposals, reader)
+    // Only in-scope (non-done/dropped) rows appear in the task list.
+    expect(tasks).toHaveLength(1)
+    expect(tasks[0].id).toBe('q-1')
+    // Aggregate counts come from the reader, not from the task rows.
+    expect(aggregates.doneTotal).toBe(99)
+    expect(aggregates.doneToday).toBe(5)
+    expect(aggregates.failedOpen).toBe(2)
   })
 })
