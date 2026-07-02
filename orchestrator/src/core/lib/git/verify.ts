@@ -7,6 +7,7 @@ import {
   resolveGitBin,
   type TraceCtx,
 } from './internal'
+import { parseCompletionReport } from '../../../workflows/primitives/shared'
 
 /**
  * The output marker emitted by the npm decoy `tsc` placeholder when
@@ -648,6 +649,230 @@ export const selectVerifySteps = (
     }
   }
   return selected
+}
+
+// ---------------------------------------------------------------------------
+// Completeness gate — always-on, tier: 'task'
+// ---------------------------------------------------------------------------
+
+/**
+ * Arguments for {@link checkCompletenessGate}.
+ *
+ * Injected at the call site in the verify primitive so the gate can work
+ * without loading task rows or a DB handle.
+ */
+export interface CompletenessGateArgs {
+  /** Full concatenated text from the coder's transcript (all assistant + result events). */
+  coderText: string
+  /** Repo-root-relative paths of files changed by this task (from `git diff --name-only`). */
+  changedFiles: ReadonlyArray<string>
+  /** Absolute path to the task's git worktree root. */
+  worktreePath: string
+  /** The task branch (for commit SHA reachability checks). */
+  branch: string
+  /** Optional trace context. */
+  traceCtx?: TraceCtx
+}
+
+/**
+ * Returns true when the file path looks like a test/spec file that may
+ * exist pre-task (not necessarily in the diff).
+ */
+const isTestFilePath = (filePath: string): boolean =>
+  /\.(test|spec)\.[a-zA-Z0-9]+$/.test(filePath) ||
+  filePath.includes('__tests__') ||
+  filePath.includes('/__test__/') ||
+  filePath.includes('/test/')
+
+/**
+ * Normalise a file path: forward slashes only, strip any leading `./`.
+ */
+const normalizeFilePath = (p: string): string =>
+  p.replace(/\\/g, '/').replace(/^\.\//, '')
+
+// Matches the full evidence string as a commit SHA (7–40 hex chars).
+const COMMIT_SHA_RE = /^[0-9a-f]{7,40}$/i
+
+// Matches `path/to/file.ext` or `path/to/file.ext:42` — a path ending in a
+// dotted extension, optionally followed by a colon and line number.
+const FILE_PATH_RE = /^([^\s]+\.[a-zA-Z0-9]{1,10})(:\d+)?$/
+
+/**
+ * Spot-check one evidence string against physical reality.
+ *
+ *  - Commit SHA  → object must exist in the repo (`git cat-file -e <sha>^{commit}`).
+ *  - File path   → regular files must appear in the diff; test files must exist on disk.
+ *  - Anything else (test names, descriptions) → accepted without a check.
+ *
+ * Returns `{ ok: true }` or `{ ok: false, reason: string }`.
+ */
+const checkEvidenceClaim = async (
+  evidence: string,
+  changedFiles: ReadonlyArray<string>,
+  worktreePath: string,
+  _branch: string,
+  traceCtx?: TraceCtx,
+): Promise<{ ok: boolean; reason?: string }> => {
+  const trimmed = evidence.trim()
+
+  // ── Commit SHA ──────────────────────────────────────────────────────────
+  if (COMMIT_SHA_RE.test(trimmed)) {
+    try {
+      const r = await execProbe(
+        resolveGitBin(),
+        ['cat-file', '-e', `${trimmed}^{commit}`],
+        { cwd: worktreePath },
+        traceCtx,
+      )
+      if (r.exitCode === 0) return { ok: true }
+      return { ok: false, reason: `commit ${trimmed} not found in repository` }
+    } catch {
+      return { ok: false, reason: `could not verify commit ${trimmed}` }
+    }
+  }
+
+  // ── File path (with optional :line suffix) ───────────────────────────
+  const fileMatch = FILE_PATH_RE.exec(trimmed)
+  if (fileMatch) {
+    const filePath = normalizeFilePath(fileMatch[1])
+
+    if (isTestFilePath(filePath)) {
+      // Test files may be pre-existing — just check they exist on disk.
+      const fullPath = resolve(worktreePath, filePath)
+      if (existsSync(fullPath)) return { ok: true }
+      // Try matching against changedFiles as a fallback (e.g. newly added test).
+      if (changedFiles.some((cf) => cf === filePath || cf.endsWith('/' + filePath))) {
+        return { ok: true }
+      }
+      return {
+        ok: false,
+        reason: `test file "${filePath}" does not exist in the worktree`,
+      }
+    }
+
+    // Regular files must appear in the task's diff.
+    if (
+      changedFiles.some(
+        (cf) =>
+          cf === filePath ||
+          cf.endsWith('/' + filePath) ||
+          filePath.endsWith('/' + cf),
+      )
+    ) {
+      return { ok: true }
+    }
+    // Also accept if the file actually exists in the worktree — covers cases
+    // where the path is absolute or the diff list is incomplete.
+    const fullPath = resolve(worktreePath, filePath)
+    if (existsSync(fullPath)) return { ok: true }
+
+    return {
+      ok: false,
+      reason: `file "${filePath}" is not in the task's changed files and does not exist in the worktree`,
+    }
+  }
+
+  // ── Non-verifiable evidence (test names, descriptions) ──────────────────
+  return { ok: true }
+}
+
+/**
+ * Always-on completeness gate (tier: 'task').
+ *
+ * Parses the coder's completion report from the persisted transcript text
+ * and returns a {@link VerifyStep} with one of four verdicts:
+ *
+ *  - `passed: false`, output starts with `missing-completion-report:` —
+ *    the report is absent or malformed.
+ *  - `passed: false`, output starts with `incomplete:` —
+ *    one or more criteria are `partial` or `blocked`.
+ *  - `passed: false`, output starts with `unsubstantiated-completion:` —
+ *    all criteria are `done` but at least one evidence claim cannot be
+ *    verified against the diff / on-disk state / git history.
+ *  - `passed: true` — all criteria done and every verifiable claim confirmed.
+ *
+ * No LLM call is made anywhere in this gate.
+ */
+export const checkCompletenessGate = async (
+  args: CompletenessGateArgs,
+): Promise<VerifyStep> => {
+  const { coderText, changedFiles, worktreePath, branch, traceCtx } = args
+
+  const report = parseCompletionReport(coderText)
+
+  // ── Verdict 1: missing or unparseable ───────────────────────────────────
+  if (report.kind === 'absent') {
+    return {
+      name: 'completeness',
+      passed: false,
+      tier: 'task',
+      output:
+        'missing-completion-report: no completion-report fenced block found in the coder\'s final message.\n' +
+        'Ensure the FINAL message ends with a ```completion-report block as required by the task contract.',
+    }
+  }
+  if (report.kind === 'unparseable') {
+    return {
+      name: 'completeness',
+      passed: false,
+      tier: 'task',
+      output:
+        `missing-completion-report: a completion-report block was found but could not be parsed (malformed lines).\n` +
+        `Every line must match: - [done|partial|blocked] <criterion> — evidence: <evidence>\n` +
+        `Raw block:\n${report.raw}`,
+    }
+  }
+
+  // ── Verdict 2: partial or blocked criteria ───────────────────────────────
+  const unmetLines = report.lines.filter((l) => l.status !== 'done')
+  if (unmetLines.length > 0) {
+    const detail = unmetLines
+      .map((l) => `  - [${l.status}] ${l.criterion} — evidence: ${l.evidence}`)
+      .join('\n')
+    return {
+      name: 'completeness',
+      passed: false,
+      tier: 'task',
+      output:
+        `incomplete: ${unmetLines.length} criterion/criteria not marked done.\n` +
+        `Unmet criteria (the recovery Chore must address these):\n${detail}`,
+    }
+  }
+
+  // ── Verdict 3: evidence spot-check ──────────────────────────────────────
+  const unsubstantiated: string[] = []
+  for (const line of report.lines) {
+    const check = await checkEvidenceClaim(
+      line.evidence,
+      changedFiles,
+      worktreePath,
+      branch,
+      traceCtx,
+    )
+    if (!check.ok) {
+      unsubstantiated.push(
+        `  - ${line.criterion}: evidence "${line.evidence}" — ${check.reason}`,
+      )
+    }
+  }
+  if (unsubstantiated.length > 0) {
+    return {
+      name: 'completeness',
+      passed: false,
+      tier: 'task',
+      output:
+        `unsubstantiated-completion: ${unsubstantiated.length} evidence claim(s) could not be verified.\n` +
+        `Unsubstantiated claims (the recovery Chore must provide real evidence):\n${unsubstantiated.join('\n')}`,
+    }
+  }
+
+  // ── Verdict 4: pass ─────────────────────────────────────────────────────
+  return {
+    name: 'completeness',
+    passed: true,
+    tier: 'task',
+    output: `all ${report.lines.length} criterion/criteria done and evidence verified`,
+  }
 }
 
 /**

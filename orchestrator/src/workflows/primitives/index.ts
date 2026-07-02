@@ -54,7 +54,9 @@ import {
   selectVerifySteps,
   getChangedFiles,
   isInfraFailureOutput,
+  checkCompletenessGate,
 } from '../../core/lib/git/verify'
+import { readAllTranscriptsForTask } from '../../core/lib/claude-transcript'
 import { mergeBranch, checkMergeTargetStatus } from '../../core/lib/git/merge'
 import { acquireLock } from '../../core/lib/git/lock'
 import {
@@ -1276,6 +1278,53 @@ export const verify = async (
               },
             ],
           }
+        }
+      }
+
+      // Always-on completeness gate (tier: 'task'). Only runs when all other
+      // checks have passed — if typecheck/lint/etc. already failed, focus the
+      // recovery Chore on those first before surfacing completeness issues.
+      if (r.passed) {
+        // Collect all text from the coder's transcript (assistant turns + result
+        // events). parseCompletionReport finds the LAST completion-report block.
+        const coderTextParts: string[] = []
+        for await (const evt of readAllTranscriptsForTask(taskId)) {
+          const raw = evt.raw
+          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+          const o = raw as Record<string, unknown>
+          if (o.type === 'result' && typeof o.result === 'string') {
+            coderTextParts.push(o.result)
+          } else if (o.type === 'assistant') {
+            const msg = o.message
+            if (msg && typeof msg === 'object' && !Array.isArray(msg)) {
+              const content = (msg as Record<string, unknown>).content
+              if (Array.isArray(content)) {
+                for (const block of content) {
+                  if (
+                    block &&
+                    typeof block === 'object' &&
+                    !Array.isArray(block)
+                  ) {
+                    const b = block as Record<string, unknown>
+                    if (b.type === 'text' && typeof b.text === 'string') {
+                      coderTextParts.push(b.text)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        const completenessStep = await checkCompletenessGate({
+          coderText: coderTextParts.join('\n'),
+          changedFiles,
+          worktreePath,
+          branch,
+          traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
+        })
+        r = {
+          passed: completenessStep.passed,
+          steps: [...r.steps, completenessStep],
         }
       }
 
