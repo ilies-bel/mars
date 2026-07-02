@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import {
   detectRoute,
+  isKnownRoute,
   actionQueueCount,
   parseTaskRoute,
   parseTaskOrigin,
@@ -62,6 +63,51 @@ describe('detectRoute', () => {
   it('returns events for the #/events hash', () => {
     expect(detectRoute('#/events')).toBe('events')
     expect(detectRoute('#/events/anything')).toBe('events')
+  })
+
+  it('returns kpi for the bare #/kpi index route', () => {
+    // Nav highlight and page routing both depend on detectRoute — the KPI index
+    // page (#/kpi) must light up the KPIS nav link, not the Action Queue.
+    expect(detectRoute('#/kpi')).toBe('kpi')
+  })
+
+  it('returns kpi for a #/kpi/<key> detail route', () => {
+    expect(detectRoute('#/kpi/failure_rate')).toBe('kpi')
+    expect(detectRoute('#/kpi/cost_per_arc')).toBe('kpi')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isKnownRoute — gate for unknown-hash redirect in App
+// ---------------------------------------------------------------------------
+
+describe('isKnownRoute', () => {
+  it('returns true for the empty / root hash (Action Queue default)', () => {
+    expect(isKnownRoute('')).toBe(true)
+    expect(isKnownRoute('#')).toBe(true)
+    expect(isKnownRoute('#/')).toBe(true)
+  })
+
+  it('returns true for named page routes', () => {
+    expect(isKnownRoute('#/action-queue')).toBe(true)
+    expect(isKnownRoute('#/action-queue/sub')).toBe(true)
+    expect(isKnownRoute('#/progress')).toBe(true)
+    expect(isKnownRoute('#/events')).toBe(true)
+    expect(isKnownRoute('#/kpi')).toBe(true)
+    expect(isKnownRoute('#/kpi/cost_per_arc')).toBe(true)
+  })
+
+  it('returns true for overlay routes', () => {
+    expect(isKnownRoute('#/task/mars-123')).toBe(true)
+    expect(isKnownRoute('#/proposal/prop-1')).toBe(true)
+    expect(isKnownRoute('#/proposal-node/p-1')).toBe(true)
+    expect(isKnownRoute('#/release-notes')).toBe(true)
+  })
+
+  it('returns false for completely unknown hashes', () => {
+    expect(isKnownRoute('#/bogus')).toBe(false)
+    expect(isKnownRoute('#/foo-bar')).toBe(false)
+    expect(isKnownRoute('#/kpis')).toBe(false)
   })
 })
 
@@ -283,6 +329,13 @@ describe('resolvePageRoute', () => {
 
   it('returns progress when the release-notes overlay hash is present', () => {
     expect(resolvePageRoute('#/release-notes')).toBe('progress')
+  })
+
+  it('returns kpi for the bare #/kpi index route', () => {
+    // App renders KpiIndexPage when route === "kpi" && kpiKey === null.
+    // resolvePageRoute must return "kpi" (not "action-queue") for bare #/kpi
+    // so the correct page and the correct nav highlight are rendered.
+    expect(resolvePageRoute('#/kpi')).toBe('kpi')
   })
 })
 

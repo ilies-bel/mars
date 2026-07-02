@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { NavBar } from '@/widgets/NavBar'
 import { TaskDetailDrawer } from '@/widgets/TaskDetailDrawer'
@@ -6,6 +7,7 @@ import { ProposalNodeDrawer } from '@/widgets/ProposalNodeDrawer'
 import { ReleaseNotesModal } from '@/widgets/ReleaseNotesModal'
 import { useHashRoute } from '@/shared/useHashRoute'
 import {
+  isKnownRoute,
   parseKpiRoute,
   parseProposalRoute,
   parseProposalNodeRoute,
@@ -24,6 +26,7 @@ import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/ActionQueuePage'
 import { EventsPage } from '@/pages/EventsPage'
 import { KpiDetailPage } from '@/pages/KpiDetailPage'
+import { KpiIndexPage } from '@/pages/KpiIndexPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
 import { AlertNotifier } from '@/shared/notifications/alertNotifier'
@@ -33,7 +36,7 @@ const ROUTE_BASE: Record<RouteName, string> = {
   'action-queue': '#/action-queue',
   progress: '#/progress',
   events: '#/events',
-  kpi: '#/events',
+  kpi: '#/kpi',
 }
 
 /**
@@ -49,7 +52,22 @@ const clearTaskHash = (closeHash: string): void => {
 
 const AppInner = () => {
   const qc = useQueryClient()
-  const hash = useHashRoute()
+  const rawHash = useHashRoute()
+
+  // Redirect unknown hashes to #/progress so the URL always matches what is
+  // rendered. replaceState is used (not assign) to avoid adding a history
+  // entry that the back button would return to.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (!isKnownRoute(rawHash)) {
+      history.replaceState(null, '', '#/progress')
+    }
+  }, [rawHash])
+
+  // For rendering, treat unknown hashes as #/progress so the nav highlight and
+  // page selection are correct even on the first render before the effect runs.
+  const hash = isKnownRoute(rawHash) ? rawHash : '#/progress'
+
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
   const proposalNodeId = parseProposalNodeRoute(hash)
@@ -80,6 +98,8 @@ const AppInner = () => {
         <FallbackBoundary of="this view" variant="pane">
           {route === 'kpi' && kpiKey !== null ? (
             <KpiDetailPage kpiKey={kpiKey} />
+          ) : route === 'kpi' ? (
+            <KpiIndexPage />
           ) : route === 'progress' ? (
             <ProgressPage />
           ) : route === 'events' ? (

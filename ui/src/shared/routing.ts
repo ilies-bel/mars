@@ -8,14 +8,38 @@ export type RouteName = 'action-queue' | 'progress' | 'events' | 'kpi'
  *
  * #/progress[/…]        → progress
  * #/events[/…]          → events
- * #/kpi/<key>           → kpi
+ * #/kpi or #/kpi/<key>  → kpi
  * everything else       → action-queue  (default; also covers #/todo legacy)
  */
 export const detectRoute = (hash: string): RouteName => {
   if (hash.startsWith('#/progress')) return 'progress'
   if (hash.startsWith('#/events')) return 'events'
-  if (hash.startsWith('#/kpi/')) return 'kpi'
+  if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return 'kpi'
   return 'action-queue'
+}
+
+/**
+ * Returns true when `hash` matches a page route, overlay route, or the empty
+ * root — i.e. the router can handle it without a redirect.
+ *
+ * Used by App to detect truly unknown hashes (e.g. `#/typo`) so they can be
+ * redirected to `#/progress` via `history.replaceState` rather than silently
+ * rendering the Action Queue under the wrong URL.
+ */
+export const isKnownRoute = (hash: string): boolean => {
+  // Empty / root hashes → Action Queue (intentional default)
+  if (hash === '' || hash === '#' || hash === '#/') return true
+  // Named page routes
+  if (hash.startsWith('#/action-queue')) return true
+  if (hash.startsWith('#/progress')) return true
+  if (hash.startsWith('#/events')) return true
+  if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return true
+  // Overlay routes (task drawer, proposal drawers, release notes)
+  if (hash.startsWith('#/task/')) return true
+  if (hash.startsWith('#/proposal/')) return true
+  if (hash.startsWith('#/proposal-node/')) return true
+  if (hash === '#/release-notes') return true
+  return false
 }
 
 /**
