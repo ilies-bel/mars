@@ -1,12 +1,23 @@
 import { runClaudeCode } from './git/claude'
 import { getRepoRoot } from '../context'
-import { createProposal } from '../proposals'
+import { createHash } from 'node:crypto'
+import {
+  createProposal,
+  findOpenReflectionDraftByFingerprint,
+  appendProposalNotes,
+} from '../proposals'
 import type { ReflectCorpus } from './reflect-query'
 
 export interface ReflectionSuggestion {
   title: string
   prompt: string
   rationale: string | null
+  /** Stable snake_case slug for the root cause (e.g. typecheck_failure). */
+  rootCauseKey: string
+  /** Task IDs where this root cause was observed. */
+  affectedTaskIds: string[]
+  /** Number of tasks affected by this root cause. */
+  frequency: number
 }
 
 export interface TokenAnalysis {
@@ -62,6 +73,19 @@ provided tokenSummary. Specifically:
   tasks consume ≥ 70% of a success's tokens, the loop is leaking tokens
   on dead ends.
 
+AGGREGATE BY ROOT CAUSE: emit ONE suggestion per root cause, not per
+affected task. If the same root cause (e.g. typecheck failures) is
+observed across multiple tasks, emit a SINGLE suggestion that cites all
+affected task IDs in \`affectedTaskIds\`. Never emit near-duplicate
+suggestions that differ only in which specific task they mention.
+
+FREQUENCY FLOOR: skip a pattern that affects only ONE task unless:
+- that task consumed ≥ 2× the window median weighted tokens, OR
+- the fix addresses a high-severity issue (correctness, security, or
+  data-loss risk).
+Single-task observations that don't meet this bar belong in
+tokenAnalysis.notes only, not in suggestions.
+
 For each suggestion, prefer token-grounded ones over generic cleanups.
 Categories, in priority order:
 (a) **token sinks**: a specific step or task pattern that is burning
@@ -100,15 +124,21 @@ no markdown — just the JSON. Shape:
       "title": "short imperative title (≤ 60 chars)",
       "category": "token|failure|cache|drift",
       "prompt": "self-contained Mars task prompt that a fresh agent can act on without further context. Include file paths, the symptom, the suggested fix, and the verification command. End with 'Save your work.'",
-      "rationale": "1–2 sentences citing the evidence: task ids, weighted token counts, error patterns"
+      "rationale": "1–2 sentences citing the evidence: task ids, weighted token counts, error patterns",
+      "rootCauseKey": "snake_case_slug stable across runs (e.g. typecheck_failure, cache_miss_code_step)",
+      "affectedTaskIds": ["task-id-1", "task-id-2"],
+      "frequency": 2
     }
   ]
 }
 
 Rules:
 - At most 5 suggestions. Fewer is better.
+- ONE suggestion per root cause — aggregate, do not duplicate.
 - Each suggestion must be actionable today, not aspirational.
 - Drop suggestions you cannot ground in the data.
+- Keep \`rootCauseKey\` stable: use the same snake_case slug every time you
+  observe the same root cause pattern across different runs.
 - Do NOT emit dollar amounts, monetary values, or currency symbols — cite
   weighted tokens and multiples-of-median only.
 - If there are no high-quality suggestions, return {"suggestions": []}
@@ -289,8 +319,26 @@ export const runReflector = async (
     const title = typeof obj.title === 'string' ? obj.title.trim() : ''
     const prompt = typeof obj.prompt === 'string' ? obj.prompt.trim() : ''
     const rationale = typeof obj.rationale === 'string' ? obj.rationale.trim() : null
+    const rootCauseKey =
+      typeof obj.rootCauseKey === 'string' ? obj.rootCauseKey.trim() : ''
+    const affectedTaskIds = Array.isArray(obj.affectedTaskIds)
+      ? (obj.affectedTaskIds as unknown[]).filter(
+          (id): id is string => typeof id === 'string',
+        )
+      : []
+    const frequency =
+      typeof obj.frequency === 'number'
+        ? obj.frequency
+        : affectedTaskIds.length || 1
     if (!title || !prompt) continue
-    suggestions.push({ title, prompt, rationale: rationale || null })
+    suggestions.push({
+      title,
+      prompt,
+      rationale: rationale || null,
+      rootCauseKey,
+      affectedTaskIds,
+      frequency,
+    })
   }
 
   return {
@@ -301,17 +349,58 @@ export const runReflector = async (
   }
 }
 
-export const persistSuggestions = async (
-  suggestions: readonly ReflectionSuggestion[],
-  _sourceTaskId: string,
-): Promise<void> => {
-  for (const s of suggestions) {
+/**
+ * Persist one suggestion as a proposal, deduplicating by root-cause fingerprint.
+ *
+ * If an open draft already exists with the same fingerprint (source +
+ * rootCauseKey), append the new evidence to its notes instead of creating a
+ * duplicate proposal. This collapses repeated observations of the same root
+ * cause across separate reflection runs into a single actionable draft.
+ *
+ * Called from both persistSuggestions (token-level reflection) and
+ * applyVerdicts (deep-reflection save path), which justifies the extraction.
+ */
+const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<void> => {
+  if (s.rootCauseKey) {
+    const fingerprint = createHash('sha256')
+      .update(`reflection:${s.rootCauseKey}:`)
+      .digest('hex')
+      .slice(0, 32)
+    const existing = await findOpenReflectionDraftByFingerprint(fingerprint)
+    if (existing) {
+      const parts: string[] = []
+      if (s.affectedTaskIds.length > 0) {
+        parts.push(`Also observed in: ${s.affectedTaskIds.join(', ')}`)
+      }
+      if (s.rationale) parts.push(s.rationale)
+      if (parts.length > 0) {
+        await appendProposalNotes(existing.id, parts.join('\n'))
+      }
+      return
+    }
     await createProposal(s.title, {
       source: 'reflection',
       author: { kind: 'agent', name: 'reflector' },
       solution: s.prompt,
       notes: s.rationale ?? '',
+      fingerprint,
     })
+    return
+  }
+  await createProposal(s.title, {
+    source: 'reflection',
+    author: { kind: 'agent', name: 'reflector' },
+    solution: s.prompt,
+    notes: s.rationale ?? '',
+  })
+}
+
+export const persistSuggestions = async (
+  suggestions: readonly ReflectionSuggestion[],
+  _sourceTaskId: string,
+): Promise<void> => {
+  for (const s of suggestions) {
+    await persistOneSuggestion(s)
   }
 }
 
@@ -321,6 +410,9 @@ export interface VerdictedSuggestion {
   title: string
   prompt: string
   rationale: string | null
+  rootCauseKey: string
+  affectedTaskIds: string[]
+  frequency: number
   verdict: SuggestionVerdict
   targetId?: string | null
   dupOf?: string | null
@@ -357,12 +449,10 @@ export const applyVerdicts = async (
       absorbed += 1
       continue
     }
-    await createProposal(s.title, {
-      source: 'reflection',
-      author: { kind: 'agent', name: 'reflector' },
-      solution: s.prompt,
-      notes: s.rationale ?? '',
-    })
+    // Route through the same fingerprint dedup as persistSuggestions so that
+    // deep-reflection 'save' verdicts also merge into existing open drafts
+    // rather than creating duplicates.
+    await persistOneSuggestion(s)
     saved += 1
     savedSuggestions.push(s)
   }

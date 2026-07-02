@@ -250,6 +250,15 @@ export const initProposals = async (): Promise<void> => {
   if (!colNames.has('kpi_tag')) {
     await c.execute(`ALTER TABLE proposals ADD COLUMN kpi_tag TEXT`)
   }
+  // Root-cause fingerprint: a stable hash(source, rootCauseKey, kpiTag) that
+  // lets the reflector merge evidence from separate runs into one draft instead
+  // of emitting near-duplicate proposals for the same underlying pattern.
+  if (!colNames.has('fingerprint')) {
+    await c.execute(`ALTER TABLE proposals ADD COLUMN fingerprint TEXT`)
+  }
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_proposals_fingerprint ON proposals(fingerprint) WHERE fingerprint IS NOT NULL`,
+  )
   // Run after the queue migration has had a chance to migrate
   // `tasks.blocker_id` out into `task_blockers` rows, since that migration
   // reads `task_suggestions` and we are about to drop it.
@@ -458,6 +467,8 @@ export interface CreateProposalOptions {
   outOfScope?: string
   notes?: string
   kpiTag?: string
+  /** Stable fingerprint for root-cause dedup across reflection runs. */
+  fingerprint?: string
 }
 
 export const createProposal = async (
@@ -481,6 +492,7 @@ export const createProposal = async (
   const outOfScope = opts?.outOfScope ?? ''
   const notes = opts?.notes ?? ''
   const kpiTag = opts?.kpiTag ?? null
+  const fingerprint = opts?.fingerprint ?? null
   // Detect whether the legacy goal/story/technical columns still exist as
   // NOT NULL — pre-existing repos do, fresh repos don't. Write to both
   // sets when present so the legacy NOT NULL constraint is satisfied.
@@ -494,8 +506,8 @@ export const createProposal = async (
               (id, goal, story, technical,
                title, problem, solution, out_of_scope, notes,
                status, source, author_kind, author_name,
-               kpi_tag, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`,
+               kpi_tag, fingerprint, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         title,
@@ -510,6 +522,7 @@ export const createProposal = async (
         authorKind,
         authorName,
         kpiTag,
+        fingerprint,
         now,
         now,
       ],
@@ -519,8 +532,8 @@ export const createProposal = async (
       sql: `INSERT INTO proposals
               (id, title, problem, solution, out_of_scope, notes,
                status, source, author_kind, author_name,
-               kpi_tag, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)`,
+               kpi_tag, fingerprint, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         title,
@@ -532,6 +545,7 @@ export const createProposal = async (
         authorKind,
         authorName,
         kpiTag,
+        fingerprint,
         now,
         now,
       ],
@@ -1103,6 +1117,57 @@ export const findOpenReflectionDraftForKpi = async (
   if (r.rows.length === 0) return null
   const row = r.rows[0] as unknown as { id: string; title: string }
   return { id: row.id, title: row.title }
+}
+
+/**
+ * Return the most recent open (status='draft') reflection-sourced proposal
+ * with the given fingerprint, or null if none exists.
+ *
+ * Used by the reflector's persist path to merge evidence from subsequent runs
+ * into the same draft instead of emitting duplicate proposals for the same
+ * root cause.
+ */
+export const findOpenReflectionDraftByFingerprint = async (
+  fingerprint: string,
+): Promise<{ id: string; notes: string } | null> => {
+  await initProposals()
+  const c = stateClient()
+  const r = await c.execute({
+    sql: `SELECT id, notes FROM proposals
+           WHERE source = 'reflection'
+             AND status = 'draft'
+             AND fingerprint = ?
+           ORDER BY created_at DESC
+           LIMIT 1`,
+    args: [fingerprint],
+  })
+  if (r.rows.length === 0) return null
+  const row = r.rows[0] as unknown as { id: string; notes: string }
+  return { id: row.id, notes: row.notes ?? '' }
+}
+
+/**
+ * Append a line of text to a proposal's notes field. Idempotent in the sense
+ * that each call adds a newline-separated block; it does not deduplicate the
+ * content itself. Used by the reflector to accumulate evidence from multiple
+ * runs into a single open draft.
+ */
+export const appendProposalNotes = async (
+  id: string,
+  addition: string,
+): Promise<void> => {
+  await initProposals()
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE proposals
+             SET notes = CASE WHEN notes = '' OR notes IS NULL
+                              THEN ?
+                              ELSE notes || char(10) || ?
+                         END,
+                 updated_at = ?
+           WHERE id = ?`,
+    args: [addition, addition, Date.now(), id],
+  })
 }
 
 /**

@@ -241,3 +241,67 @@ describe('collectAssistantText', () => {
     expect(collectAssistantText(conversation)).toBe('hello\nworld')
   })
 })
+
+describe('aggregation and frequency-floor in SYNTHESIS_INSTRUCTIONS', () => {
+  it('instructs the model to emit ONE suggestion per root cause', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    const instructionPortion = prompt.split('Token summary')[0]
+    expect(instructionPortion).toMatch(/ONE suggestion per root cause/i)
+  })
+
+  it('instructs the model to apply a frequency floor (skip single-task patterns)', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    const instructionPortion = prompt.split('Token summary')[0]
+    // The floor condition: single task only qualifies if ≥2× median or high-severity
+    expect(instructionPortion).toMatch(/only ONE task/i)
+    expect(instructionPortion).toMatch(/2×/i)
+  })
+
+  it('prompt schema includes rootCauseKey, affectedTaskIds, and frequency fields', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    expect(prompt).toMatch(/"rootCauseKey"/)
+    expect(prompt).toMatch(/"affectedTaskIds"/)
+    expect(prompt).toMatch(/"frequency"/)
+  })
+
+  it('instructs the model to keep rootCauseKey stable across runs', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    const instructionPortion = prompt.split('Token summary')[0]
+    expect(instructionPortion).toMatch(/rootCauseKey.*stable|stable.*rootCauseKey/i)
+  })
+})
+
+describe('suggestion parsing includes new fields', () => {
+  it('parses rootCauseKey, affectedTaskIds, and frequency from LLM output', () => {
+    const fixtureJson = JSON.stringify({
+      tokenAnalysis: {
+        headline: 'Normal spend.',
+        tokenHeavyTasks: [],
+        tokenHeavySteps: [],
+        cacheHealth: null,
+        successVsFailureTokens: null,
+        notes: '',
+      },
+      suggestions: [
+        {
+          title: 'Fix repeated typecheck failures',
+          category: 'failure',
+          prompt: 'Fix the typecheck errors... Save your work.',
+          rationale: '3 tasks failed with TS2345 across 45k tokens',
+          rootCauseKey: 'typecheck_failure',
+          affectedTaskIds: ['task-aaa', 'task-bbb', 'task-ccc'],
+          frequency: 3,
+        },
+      ],
+    })
+
+    const parsed = extractFirstJsonDocument(fixtureJson) as Record<string, unknown>
+    expect(parsed).not.toBeNull()
+    const suggestions = parsed.suggestions as Array<Record<string, unknown>>
+    expect(suggestions).toHaveLength(1)
+    const s = suggestions[0]
+    expect(s.rootCauseKey).toBe('typecheck_failure')
+    expect(s.affectedTaskIds).toEqual(['task-aaa', 'task-bbb', 'task-ccc'])
+    expect(s.frequency).toBe(3)
+  })
+})

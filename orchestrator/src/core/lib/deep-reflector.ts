@@ -358,6 +358,17 @@ const parseSuggestions = (raw: unknown): VerdictedSuggestion[] => {
     const prompt = typeof o.prompt === 'string' ? o.prompt.trim() : ''
     const rationale =
       typeof o.rationale === 'string' ? o.rationale.trim() : null
+    const rootCauseKey =
+      typeof o.rootCauseKey === 'string' ? o.rootCauseKey.trim() : ''
+    const affectedTaskIds = Array.isArray(o.affectedTaskIds)
+      ? (o.affectedTaskIds as unknown[]).filter(
+          (id): id is string => typeof id === 'string',
+        )
+      : []
+    const frequency =
+      typeof o.frequency === 'number'
+        ? o.frequency
+        : affectedTaskIds.length || 1
     const verdict: SuggestionVerdict = parseVerdict(o.verdict)
     const targetId =
       typeof o.target_id === 'string'
@@ -376,6 +387,9 @@ const parseSuggestions = (raw: unknown): VerdictedSuggestion[] => {
       title,
       prompt,
       rationale: rationale || null,
+      rootCauseKey,
+      affectedTaskIds,
+      frequency,
       verdict,
       targetId,
       dupOf,
