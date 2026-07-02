@@ -1815,9 +1815,10 @@ export const startDaemon = async (
       .catch(() => false)
 
     const result = await dropTask(id)
-    // Action-queue rows are closed by the Invalidator off the
-    // task.terminal{purged} event dropTask emits in-tx before the row is
-    // deleted; no inline supersede (ADR-0027/0030).
+    // Action-queue rows are closed by Arc.drop() inline (belt-and-suspenders
+    // resolveAllRowsForTask + supersedeActionQueueItemsForOrigin before the
+    // DELETE) AND by the Invalidator consuming the task.dropped event emitted
+    // in the same atomic tx as DELETE FROM tasks (ADR-0027/0030/0041/0048).
     log(
       `[drop] ${id} (was ${result.previousStatus}; force=${force}, ` +
         `incoming=${result.edgesRemoved.incoming}, outgoing=${result.edgesRemoved.outgoing}, ` +

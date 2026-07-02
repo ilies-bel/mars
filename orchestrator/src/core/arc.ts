@@ -61,6 +61,7 @@ import { getRetryBudget, markTaskFailed } from './queue-retry'
 import { computeFailureSignature } from './lib/failure-signature'
 import {
   raiseActionQueueItem,
+  resolveAllRowsForTask,
   supersedeActionQueueItemsForOrigin,
 } from './lib/action-queue'
 import {
@@ -1513,6 +1514,20 @@ export class Arc {
   async drop(): Promise<DropTaskResult> {
     await migrateQueueSchema()
     const id = this.arcId
+
+    // Belt-and-suspenders: close action-queue rows for this task and its
+    // cascaded fix tasks inline, before the task row is deleted. The primary
+    // path is event-driven: drop() emits task.dropped in the same atomic tx
+    // as DELETE FROM tasks (below), and the Invalidator drains that event to
+    // resolve open rows (ADR-0027/0030). This inline call ensures stale cards
+    // clear immediately even if the daemon's event drain has not run yet.
+    // supersedeActionQueueItemsForOrigin uses the arc fingerprint so it also
+    // covers cascaded fix tasks that share the same origin_id as this task.
+    // Both calls are idempotent with the event-based closures (a row already
+    // resolved is a silent no-op).
+    await resolveAllRowsForTask(id)
+    await supersedeActionQueueItemsForOrigin(id, 'origin-dropped', 'drop:pre-delete')
+
     // Populated inside the atomic; consumed after so the action-queue raise
     // remains best-effort and is intentionally separated from the DB transaction.
     const orphanedDeps: { depId: string; originId: string }[] = []
