@@ -12,6 +12,15 @@ import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 const TASK_GRAPH_LIMIT = 30
 const PROMPT_PREVIEW_CHARS = 200
 
+/**
+ * Maximum number of other non-done tasks in the graph for triage to consider
+ * the graph "trivially small". When the open graph has at most this many
+ * other tasks there is nothing meaningful to be blocked by, so the LLM call
+ * is skipped. Set to 0 (skip only when the graph is completely empty — no
+ * other non-done tasks exist that could plausibly block the new task).
+ */
+const TRIVIAL_GRAPH_SIZE = 0
+
 const triageInputSchema = z.object({
   taskId: z.string(),
 })
@@ -81,6 +90,16 @@ export interface TriageResult {
   actionable: boolean
   blockerCount: number
   reason: string
+  /**
+   * When present, indicates that the LLM triage step was skipped because the
+   * answer was already obvious from existing task structure. The value names
+   * which rule fired:
+   * - `'has-blockers'`   — the task already carried explicit blocker edges
+   * - `'structured-spec'` — the task has a declared files + done-criteria spec
+   * - `'trivial-graph'`  — the open task graph is empty or trivially small
+   * Absent (undefined) when LLM triage ran normally.
+   */
+  triageSkipReason?: string
 }
 
 // One imperative step ('generate-triage', load-bearing as the trace-view
@@ -103,6 +122,53 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
       const taskGraph = buildTaskGraph(allTasks, task.id)
 
       const traceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
+
+      // Skip the LLM call when the answer is already obvious from existing
+      // task structure. Three rules (any one is sufficient):
+      //   has-blockers   — author declared explicit blocker edges; respect them.
+      //   structured-spec — task carries files + done-criteria; scope is known.
+      //   trivial-graph  — open graph is empty or has ≤ TRIVIAL_GRAPH_SIZE tasks;
+      //                    nothing meaningful to be blocked by.
+      const openTasks = allTasks.filter((t) => t.id !== task.id && t.status !== 'done')
+      const existingBlockers = await store.listBlockers(task.id)
+
+      const triageSkipReason: string | null = (() => {
+        if (existingBlockers.length > 0) return 'has-blockers'
+        if (
+          task.spec !== null &&
+          task.spec.files.length > 0 &&
+          task.spec.doneCriteria.length > 0
+        ) return 'structured-spec'
+        if (openTasks.length <= TRIVIAL_GRAPH_SIZE) return 'trivial-graph'
+        return null
+      })()
+
+      if (triageSkipReason !== null) {
+        await traceStore
+          ?.record({
+            kind: 'log_line',
+            taskId: task.id,
+            originId: input.taskId,
+            payload: {
+              level: 'info',
+              msg: `triage skipped: ${triageSkipReason}`,
+              source: 'workflow',
+              fields: { skipReason: triageSkipReason },
+            },
+          })
+          .catch(() => undefined)
+
+        await store.promoteDraftToQueued(task.id)
+
+        return {
+          taskId: task.id,
+          actionable: true,
+          blockerCount: existingBlockers.length,
+          reason: `triage skipped: ${triageSkipReason}`,
+          triageSkipReason,
+        }
+      }
+
       const r = await runWorkerWithSpan({
         worker: Workers.Triager,
         prompt: buildPrompt(task, taskGraph),
