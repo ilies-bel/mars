@@ -82,6 +82,7 @@ import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, typ
 import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
+import { setInstallSemCap } from '../lib/worktree-install'
 import { probeDuckDBLock } from './duckdb-lock'
 import {
   assertProposalsSourceFresh,
@@ -578,8 +579,13 @@ export const startDaemon = async (
     'glossary-write': structuredWriteSem,
     'adr-add': structuredWriteSem,
   }
+  // Install concurrency semaphore: caps parallel worktree dep-installs to
+  // prevent concurrent tsup/esbuild prepare scripts from OOM-killing the process.
+  // Lives in worktree-install.ts as a module-level semaphore; the daemon
+  // sets the initial cap here and updates it on `reload-config`.
+  setInstallSemCap(initialCaps.setupInstall)
   log(
-    `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit}`,
+    `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit} setup-install=${initialCaps.setupInstall}`,
   )
 
   // Drain single-flight gate. While `drainRunning` is true, a second call

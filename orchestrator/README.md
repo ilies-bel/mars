@@ -167,6 +167,12 @@ env vars below without restarting); a kill + restart also picks them up.
 - `MARS_MAX_STRUCTURED_WRITE` (default `1`) — shared cap for
   `glossary-write` and `adr-add`. Both serialize on `.mars/.merge.lock`
   downstream, so a second slot would just sit waiting.
+- `MARS_MAX_SETUP_INSTALL` (default `2`) — concurrent worktree dependency
+  installs. The `packages/workflow` prepare script (tsup/esbuild + DTS) is
+  the per-install memory peak; unlimited parallelism OOM-kills the process.
+  Git worktree creation is NOT gated; only the `pnpm install` portion is
+  serialised. Lowering reduces peak memory; raising speeds up multi-worktree
+  setup on machines with ample RAM.
 
 Excess work queues into in-memory pending sets and drains as slots free
 — it is not dropped. Restarting the daemon re-reads `draft` / `queued`

@@ -7,6 +7,8 @@ export interface DaemonCaps {
   triage: number
   refine: number
   structuredWrite: number
+  /** Maximum concurrent worktree dependency installs (MARS_MAX_SETUP_INSTALL). Default 2. */
+  setupInstall: number
 }
 
 export interface SelfEvolveConfig {
@@ -24,6 +26,7 @@ const DEFAULTS: DaemonCaps = {
   triage: 8,
   refine: 6,
   structuredWrite: 1,
+  setupInstall: 2,
 }
 
 const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
@@ -66,6 +69,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
     triage: envInt('MARS_MAX_TRIAGE', DEFAULTS.triage),
     refine: envInt('MARS_MAX_REFINE', DEFAULTS.refine),
     structuredWrite: envInt('MARS_MAX_STRUCTURED_WRITE', DEFAULTS.structuredWrite),
+    setupInstall: envInt('MARS_MAX_SETUP_INSTALL', DEFAULTS.setupInstall),
   }
 
   const envAutoTrigger = envBool(
@@ -98,6 +102,10 @@ export const loadDaemonConfig = (): DaemonConfig => {
         c.structuredWrite ?? c['structured-write'],
         envCaps.structuredWrite,
       ),
+      setupInstall: positiveInt(
+        c.setupInstall ?? c['setup-install'],
+        envCaps.setupInstall,
+      ),
     }
     const se = parsed.selfEvolve ?? {}
     if (typeof se.autoTrigger === 'boolean') {
@@ -117,6 +125,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
       triage: fileCaps.triage ?? envCaps.triage,
       refine: fileCaps.refine ?? envCaps.refine,
       structuredWrite: fileCaps.structuredWrite ?? envCaps.structuredWrite,
+      setupInstall: fileCaps.setupInstall ?? envCaps.setupInstall,
     },
     selfEvolve: {
       autoTrigger: fileAutoTrigger ?? envAutoTrigger,

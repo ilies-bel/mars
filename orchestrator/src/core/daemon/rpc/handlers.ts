@@ -18,6 +18,7 @@ import { existsSync, unlinkSync } from 'node:fs'
 import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget'
 import { loadDaemonConfig } from '../config'
 import { setSemLimit } from '../server'
+import { setInstallSemCap } from '../../lib/worktree-install'
 import { updateTask } from '../../queue'
 import type { DaemonRequest, DaemonResponse } from '../protocol'
 import type { DaemonDeps, RpcHandler } from './types'
@@ -208,8 +209,11 @@ const reloadConfigHandler = handler('reload-config', async (_req, deps) => {
   // structuredWriteSem is shared by 'glossary-write' and 'adr-add';
   // update once via the captured reference.
   setSemLimit(deps.sems.structuredWrite, caps.structuredWrite)
+  // Install semaphore lives in worktree-install.ts as a module-level singleton;
+  // update it via the exported setter so the new cap takes effect immediately.
+  setInstallSemCap(caps.setupInstall)
   deps.log(
-    `concurrency reloaded: implement=${caps.implement} triage=${caps.triage} refine=${caps.refine} structured-write=${caps.structuredWrite}`,
+    `concurrency reloaded: implement=${caps.implement} triage=${caps.triage} refine=${caps.refine} structured-write=${caps.structuredWrite} setup-install=${caps.setupInstall}`,
   )
   void deps.drain()
   return {
@@ -220,6 +224,7 @@ const reloadConfigHandler = handler('reload-config', async (_req, deps) => {
         triage: caps.triage,
         refine: caps.refine,
         'structured-write': caps.structuredWrite,
+        'setup-install': caps.setupInstall,
       },
     },
   }

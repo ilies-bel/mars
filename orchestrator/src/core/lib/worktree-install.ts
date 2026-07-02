@@ -10,6 +10,97 @@ export const DEFAULT_INSTALL_TIMEOUT_MS = 8 * 60_000
 /** Maximum time to wait for a declared .d.ts/.d.cts file to appear after build. */
 export const DECLARATION_WAIT_TIMEOUT_MS = 30_000
 
+// ---------------------------------------------------------------------------
+// Install concurrency semaphore
+//
+// Limits how many worktree dependency installs run concurrently. The prepare
+// script (tsup / esbuild + DTS) in packages/workflow is the per-install
+// memory peak; allowing unlimited parallel installs OOM-kills the process
+// (SIGKILL / exit 137) on memory-constrained hosts.
+//
+// Initialized from MARS_MAX_SETUP_INSTALL env var (default 2). The daemon
+// calls setInstallSemCap() at startup and on `mars daemon reload` to keep
+// the cap hot-reloadable without restarting, mirroring the per-kind
+// setSemLimit pattern in core/daemon/server.ts.
+// ---------------------------------------------------------------------------
+
+const _readInstallEnvInt = (name: string, fallback: number): number => {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return fallback
+  const n = Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
+
+const _installSem = {
+  limit: _readInstallEnvInt('MARS_MAX_SETUP_INSTALL', 2),
+  inUse: 0,
+  waiters: [] as Array<() => void>,
+}
+
+const _acquireInstallSem = (): Promise<void> => {
+  if (_installSem.inUse < _installSem.limit) {
+    _installSem.inUse += 1
+    return Promise.resolve()
+  }
+  return new Promise<void>((resolve) => _installSem.waiters.push(resolve))
+}
+
+// When a waiter exists, hand the slot directly to it without bouncing inUse —
+// otherwise a parallel acquire could slip in between decrement and resume.
+const _releaseInstallSem = (): void => {
+  const next = _installSem.waiters.shift()
+  if (next) {
+    next()
+    return
+  }
+  _installSem.inUse = Math.max(0, _installSem.inUse - 1)
+}
+
+/**
+ * Update the install concurrency cap at runtime.
+ *
+ * Raising the cap immediately wakes up to `delta` waiting install slots.
+ * Lowering does NOT cancel in-flight installs — `_releaseInstallSem` will
+ * simply not hand off to new acquirers until `inUse` drops below the new
+ * limit naturally.
+ *
+ * Called by the daemon at startup and by the `reload-config` RPC handler
+ * on `mars daemon reload`, mirroring the `setSemLimit` pattern used by
+ * the per-kind dispatch semaphores in `core/daemon/server.ts`.
+ */
+export const setInstallSemCap = (newLimit: number): void => {
+  if (!Number.isInteger(newLimit) || newLimit < 1) {
+    throw new Error('limit must be a positive integer')
+  }
+  const delta = newLimit - _installSem.limit
+  _installSem.limit = newLimit
+  if (delta > 0 && _installSem.waiters.length > 0) {
+    const wakeCount = Math.min(delta, _installSem.waiters.length)
+    for (let i = 0; i < wakeCount; i++) {
+      const next = _installSem.waiters.shift()
+      if (next) {
+        _installSem.inUse += 1
+        next()
+      }
+    }
+  }
+}
+
+/**
+ * Returns the semaphore's live state.
+ *
+ * @internal Exported for testing and daemon observability.
+ */
+export const getInstallSemState = (): {
+  limit: number
+  inUse: number
+  waiting: number
+} => ({
+  limit: _installSem.limit,
+  inUse: _installSem.inUse,
+  waiting: _installSem.waiters.length,
+})
+
 /**
  * Poll `fs.stat` until `filePath` exists and has non-zero size, or until
  * `timeoutMs` elapses. Resolves when the file appears; throws on timeout.
@@ -507,68 +598,79 @@ export const installWorktreeDeps = async ({
   const start = Date.now()
   const results = await Promise.all(
     sites.map(async (site) => {
-      const [cmd, args] = installCommand(site.manager)
-      const rel = relative(worktreeRoot, site.dir) || '.'
-      // Build any local workspace `file:`/`workspace:` deps (e.g.
-      // `@mars/workflow`) BEFORE installing, so pnpm packs a copy that
-      // carries the built `dist/` (and its type declarations). Without this,
-      // a fresh worktree gets a dist-less copy and every task fails
-      // `verify:typecheck` with TS2307.
-      await buildWorkspaceDepsForSite(
-        site,
-        worktreeRoot,
-        effectiveRunner,
-        log,
-        timeoutMs,
-      )
-      const t0 = Date.now()
-      let r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
-
-      // Retry on transient ENOTEMPTY filesystem race (macOS npm ci cleanup race).
-      // This occurs when a prior process holds file descriptors open in node_modules
-      // while npm tries to rmdir the stale tree before a fresh install. The failed
-      // cleanup leaves a partially corrupt node_modules behind, so each retry must
-      // clear it first — otherwise the second install hits ENOENT chmod errors on
-      // the half-removed tree (e.g. node_modules/esbuild/bin/esbuild).
-      //
-      // We allow up to ENOTEMPTY_MAX_RETRIES additional attempts: a single retry
-      // was empirically not enough — the race can recur when the same fs handle
-      // holder (a concurrent worktree install, a Spotlight indexer) is still
-      // active a moment later. The rm() between attempts uses node's built-in
-      // retry to absorb brief EBUSY/EPERM races on the cleanup itself.
-      const ENOTEMPTY_MAX_RETRIES = 2
-      for (
-        let attempt = 1;
-        attempt <= ENOTEMPTY_MAX_RETRIES && r.exitCode !== 0 && /ENOTEMPTY/.test(r.stderr);
-        attempt++
-      ) {
-        log?.(
-          `[setup:install] ${site.manager} (${rel}) ENOTEMPTY race detected — retrying (attempt ${attempt}/${ENOTEMPTY_MAX_RETRIES})`,
+      // Gate the entire per-site install (workspace dep build + frozen install)
+      // behind the install semaphore. The prepare script (tsup / esbuild + DTS)
+      // in packages/workflow is the per-install memory peak; without this gate,
+      // parallel worktree setups ran concurrent tsup invocations and OOM-killed
+      // the process (SIGKILL / exit 137). Worktree git operations stay parallel;
+      // only the dependency-install step is serialised up to the cap.
+      await _acquireInstallSem()
+      try {
+        const [cmd, args] = installCommand(site.manager)
+        const rel = relative(worktreeRoot, site.dir) || '.'
+        // Build any local workspace `file:`/`workspace:` deps (e.g.
+        // `@mars/workflow`) BEFORE installing, so pnpm packs a copy that
+        // carries the built `dist/` (and its type declarations). Without this,
+        // a fresh worktree gets a dist-less copy and every task fails
+        // `verify:typecheck` with TS2307.
+        await buildWorkspaceDepsForSite(
+          site,
+          worktreeRoot,
+          effectiveRunner,
+          log,
+          timeoutMs,
         )
-        await rm(resolve(site.dir, 'node_modules'), {
-          recursive: true,
-          force: true,
-          maxRetries: 5,
-          retryDelay: 200,
-        })
-        r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
-      }
+        const t0 = Date.now()
+        let r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
 
-      const durationMs = Date.now() - t0
-      log?.(
-        `[setup:install] ${site.manager} (${rel}) exit=${r.exitCode} duration=${(durationMs / 1000).toFixed(1)}s`,
-      )
-      const result: InstallResult = {
-        ...site,
-        exitCode: r.exitCode,
-        stdout: r.stdout,
-        stderr: r.stderr,
-        durationMs,
+        // Retry on transient ENOTEMPTY filesystem race (macOS npm ci cleanup race).
+        // This occurs when a prior process holds file descriptors open in node_modules
+        // while npm tries to rmdir the stale tree before a fresh install. The failed
+        // cleanup leaves a partially corrupt node_modules behind, so each retry must
+        // clear it first — otherwise the second install hits ENOENT chmod errors on
+        // the half-removed tree (e.g. node_modules/esbuild/bin/esbuild).
+        //
+        // We allow up to ENOTEMPTY_MAX_RETRIES additional attempts: a single retry
+        // was empirically not enough — the race can recur when the same fs handle
+        // holder (a concurrent worktree install, a Spotlight indexer) is still
+        // active a moment later. The rm() between attempts uses node's built-in
+        // retry to absorb brief EBUSY/EPERM races on the cleanup itself.
+        const ENOTEMPTY_MAX_RETRIES = 2
+        for (
+          let attempt = 1;
+          attempt <= ENOTEMPTY_MAX_RETRIES && r.exitCode !== 0 && /ENOTEMPTY/.test(r.stderr);
+          attempt++
+        ) {
+          log?.(
+            `[setup:install] ${site.manager} (${rel}) ENOTEMPTY race detected — retrying (attempt ${attempt}/${ENOTEMPTY_MAX_RETRIES})`,
+          )
+          await rm(resolve(site.dir, 'node_modules'), {
+            recursive: true,
+            force: true,
+            maxRetries: 5,
+            retryDelay: 200,
+          })
+          r = await effectiveRunner(cmd, args, site.dir, { timeoutMs })
+        }
+
+        const durationMs = Date.now() - t0
+        log?.(
+          `[setup:install] ${site.manager} (${rel}) exit=${r.exitCode} duration=${(durationMs / 1000).toFixed(1)}s`,
+        )
+        const result: InstallResult = {
+          ...site,
+          exitCode: r.exitCode,
+          stdout: r.stdout,
+          stderr: r.stderr,
+          durationMs,
+        }
+        if (r.exitCode !== 0) {
+          throw new WorktreeInstallError(site, r)
+        }
+        return result
+      } finally {
+        _releaseInstallSem()
       }
-      if (r.exitCode !== 0) {
-        throw new WorktreeInstallError(site, r)
-      }
-      return result
     }),
   )
   return { sites: results, totalDurationMs: Date.now() - start }
