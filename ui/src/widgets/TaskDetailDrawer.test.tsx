@@ -1451,3 +1451,47 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
     expect(html).not.toContain('<details')
   })
 })
+
+// ── LoadState: loading and error branches ─────────────────────────────────────
+
+describe('TaskDetailDrawer – load state branches', () => {
+  it('renders skeleton rows while loading (initial state)', () => {
+    // The component initialises to { kind: 'loading' } — no prop injection needed.
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+    )
+    expect(html).toContain('data-testid="task-detail-loading"')
+    // The body and error panels must be absent in loading state.
+    expect(html).not.toContain('data-testid="task-detail-body"')
+    expect(html).not.toContain('data-testid="task-detail-error"')
+  })
+
+  it('renders a FallbackSurface error panel on fetch error', () => {
+    // Uses the test-only initialState seam to exercise the error branch
+    // synchronously (renderToStaticMarkup does not run useEffect).
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="mars-abc123"
+        onClose={() => {}}
+        initialState={{ kind: 'error', message: 'HTTP 503' }}
+      />,
+    )
+    expect(html).toContain('data-testid="task-detail-error"')
+    // FallbackSurface pane variant renders with data-testid="api-error-panel"
+    expect(html).toContain('data-testid="api-error-panel"')
+    // Error body and skeleton must be absent.
+    expect(html).not.toContain('data-testid="task-detail-body"')
+    expect(html).not.toContain('data-testid="task-detail-loading"')
+  })
+
+  it('error panel carries a role=alert for screen readers', () => {
+    const html = renderToStaticMarkup(
+      <TaskDetailDrawer
+        taskId="mars-abc123"
+        onClose={() => {}}
+        initialState={{ kind: 'error', message: 'request failed' }}
+      />,
+    )
+    expect(html).toContain('role="alert"')
+  })
+})

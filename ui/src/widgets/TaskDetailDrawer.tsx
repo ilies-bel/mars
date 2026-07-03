@@ -25,6 +25,7 @@ import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
 import { relativeTime } from '@/shared/time'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
+import { FallbackSurface } from '@/components/FallbackSurface'
 import { OriginTree } from './OriginTree'
 
 /** A single step execution span — one step_started event paired with its step_ended (if any). */
@@ -153,6 +154,13 @@ interface TaskDetailDrawerProps {
    * leave this undefined — the timeline renders normally with no active row.
    */
   activeStepName?: string
+  /**
+   * Seeds the drawer body load state. Test-only seam: production callers omit
+   * it and the state initialises to `{ kind: 'loading' }`. Use in
+   * `renderToStaticMarkup` tests to exercise the 'loading' and 'error' render
+   * branches without running effects.
+   */
+  initialState?: LoadState
 }
 
 type LoadState =
@@ -1011,9 +1019,10 @@ export const TaskDetailDrawer = ({
   runTimeline,
   initialTrail,
   activeStepName,
+  initialState,
 }: TaskDetailDrawerProps) => {
   const drawerRef = useRef<HTMLElement>(null)
-  const [state, setState] = useState<LoadState>({ kind: 'loading' })
+  const [state, setState] = useState<LoadState>(initialState ?? { kind: 'loading' })
   const [closing, setClosing] = useState(false)
   // Synchronous guard — prevents double-scheduling the close timer.
   const closingRef = useRef(false)
@@ -1433,6 +1442,25 @@ export const TaskDetailDrawer = ({
           (quiet empty state). */}
       {resolvedRunTimeline !== null && resolvedRunTimeline.runs.length > 0 ? (
         <RunTimelineSection timeline={resolvedRunTimeline} />
+      ) : null}
+
+      {state.kind === 'loading' ? (
+        <div
+          data-testid="task-detail-loading"
+          className="flex-1 p-4"
+          aria-busy="true"
+          aria-label="Loading task details"
+        >
+          <div className="mb-3 h-4 w-3/4 animate-pulse rounded bg-iron/20" />
+          <div className="mb-3 h-4 w-1/2 animate-pulse rounded bg-iron/20" />
+          <div className="mb-3 h-4 w-2/3 animate-pulse rounded bg-iron/20" />
+        </div>
+      ) : null}
+
+      {state.kind === 'error' ? (
+        <div data-testid="task-detail-error" className="flex-1">
+          <FallbackSurface error={new Error(state.message)} of="task details" variant="pane" />
+        </div>
       ) : null}
 
       {state.kind === 'not-found' ? (
