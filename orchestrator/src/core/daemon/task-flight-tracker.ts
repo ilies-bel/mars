@@ -68,6 +68,19 @@ export interface InFlightEntry {
    * detect dead workers before the wall-clock ceiling fires.
    */
   pid?: number
+  /**
+   * Millisecond timestamp of the most recent claude-event received for this
+   * task. Updated by `tracker.recordActivity()` as events stream in, throttled
+   * to approximately once per minute at the call site.
+   *
+   * When an in-flight entry has a live PID, the phantom-task watchdog uses
+   * this field — not `task.updatedAt` — for the wall-clock ceiling check,
+   * so a long-running coder that is actively producing output is never
+   * ceiling-killed due to a stale row timestamp.
+   *
+   * Absent when no events have been received yet (process just started).
+   */
+  lastActivityMs?: number
 }
 
 /**
@@ -147,6 +160,21 @@ export interface TaskFlightTracker {
    * before the wall-clock ceiling fires. No-op if `taskId` is not in flight.
    */
   recordPid(taskId: string, pid: number): void
+
+  // ── Activity heartbeat ────────────────────────────────────────────────────
+  /**
+   * Record a millisecond timestamp of the most recent observed event activity
+   * for an in-flight task (e.g. a claude-event streamed from the coder).
+   *
+   * Call this on each significant event, throttled to ~once per minute at the
+   * call site to avoid lock contention. The phantom-task watchdog uses this
+   * timestamp — rather than `task.updatedAt` — for the wall-clock ceiling
+   * check when the task's PID is alive, so a healthy long-running coder is
+   * never killed for having a stale row timestamp.
+   *
+   * No-op if `taskId` is not in flight.
+   */
+  recordActivity(taskId: string, ms: number): void
 }
 
 export const createTaskFlightTracker = (): TaskFlightTracker => {
@@ -215,6 +243,11 @@ export const createTaskFlightTracker = (): TaskFlightTracker => {
     recordPid: (taskId, pid) => {
       const entry = inFlight.get(taskId)
       if (entry) entry.pid = pid
+    },
+
+    recordActivity: (taskId, ms) => {
+      const entry = inFlight.get(taskId)
+      if (entry) entry.lastActivityMs = ms
     },
   }
 }

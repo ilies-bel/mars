@@ -9,11 +9,32 @@
  *     carries a PID and `isProcessAlive(pid)` returns false, the task is
  *     phantom immediately — no ceiling wait needed.
  *
- *  2. Wall-clock ceiling (stack-agnostic backstop): if the task's `updatedAt`
- *     is older than MARS_PHANTOM_WATCHDOG_CEILING_MS (default: 30 min), and
- *     we either have no PID or the PID is alive, the task is treated as
- *     phantom. This catches the "subprocess hung forever" case where the child
- *     process is technically alive but will never produce output.
+ *  2. Wall-clock ceiling (stack-agnostic backstop): catches the "subprocess
+ *     hung forever" case where the child process is technically alive but will
+ *     never produce output. The ceiling is applied differently depending on
+ *     whether a PID and activity heartbeat are available:
+ *
+ *     a. NO PID in the in-flight entry: ceiling is checked against
+ *        `task.updatedAt`. This is the original behaviour; any task-table
+ *        write (including a status transition) resets the window.
+ *
+ *     b. ALIVE PID + heartbeat (`entry.lastActivityMs` is set): ceiling is
+ *        checked against `entry.lastActivityMs` — the last claude-event
+ *        activity timestamp recorded by the dispatcher. An alive coder that
+ *        is streaming output keeps this fresh (~once per minute), so a
+ *        legitimately long run (100+ minutes) is NEVER ceiling-killed.
+ *        Only a process that is alive but has produced no events for longer
+ *        than the ceiling triggers a kill.
+ *
+ *     c. ALIVE PID + no heartbeat yet (process just started, or heartbeat
+ *        path not wired for this dispatch kind): the task is NOT ceiling-killed.
+ *        The dead-PID check in (1) remains the only kill path until the first
+ *        heartbeat arrives. This eliminates false positives from the window
+ *        between process spawn and the first event.
+ *
+ *     The "alive pid must never be ceiling-killed on updatedAt staleness alone"
+ *     rule is enforced by routing alive-PID tasks through (b) or (c) — never
+ *     through (a).
  *
  * For each detected phantom:
  *  - The task row is updated to status='failed' with failedPhase set.
@@ -137,16 +158,19 @@ export const sweepPhantomTasks = async (
         if (!alive(entry.pid)) {
           phantomReason = 'dead-pid'
         }
-        // Alive PID ⟹ not phantom by PID check; fall through to ceiling check
-        // as the "suspenders" backstop.
-        if (phantomReason === null) {
-          const updatedMs = Date.parse(task.updatedAt)
-          if (Number.isFinite(updatedMs) && now - updatedMs > ceiling) {
+        // Alive PID: never ceiling-kill based on updatedAt staleness alone.
+        // Use the activity heartbeat (lastActivityMs) instead — a coder
+        // streaming output keeps this fresh, so long runs are never killed.
+        // If no heartbeat data yet (process just started), skip the ceiling
+        // check entirely; only the dead-PID path applies.
+        if (phantomReason === null && entry.lastActivityMs !== undefined) {
+          if (now - entry.lastActivityMs > ceiling) {
             phantomReason = 'ceiling'
           }
         }
       } else {
-        // No PID available — rely solely on the wall-clock ceiling.
+        // No PID available — rely solely on the wall-clock ceiling against
+        // updatedAt. This is the bare-ceiling backstop for orphaned rows.
         const updatedMs = Date.parse(task.updatedAt)
         if (!Number.isFinite(updatedMs) || now - updatedMs <= ceiling) continue
         phantomReason = 'ceiling'

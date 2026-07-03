@@ -741,8 +741,27 @@ export const startDaemon = async (
       // Mastra's workflow writer purely for live UI tailing and were not
       // persisted here; we drop them to keep the daemon log readable and let
       // the per-step transcript (keyed by claudeSessionId) carry the detail.
+      //
+      // Heartbeat: on each `claude-event` we update the in-flight entry's
+      // `lastActivityMs` so the phantom-task watchdog can distinguish a
+      // healthy long-running coder from a genuinely hung one. We also touch
+      // `task.updatedAt` in the DB (throttled to ~once per minute) so the
+      // row stays observable by monitoring tools.
+      let lastDbHeartbeatMs = 0
+      const HEARTBEAT_INTERVAL_MS = 60_000
       const onEvent = (evt: WorkflowEvent): void => {
-        if (evt.event === 'claude-event' || evt.event === 'vcs-supervisor-event') return
+        if (evt.event === 'claude-event') {
+          const nowMs = Date.now()
+          tracker.recordActivity(task.id, nowMs)
+          if (nowMs - lastDbHeartbeatMs >= HEARTBEAT_INTERVAL_MS) {
+            lastDbHeartbeatMs = nowMs
+            // Best-effort: a failed heartbeat write is non-fatal — the
+            // in-memory lastActivityMs is the authoritative liveness signal.
+            void updateTask(task.id, {}).catch(() => {})
+          }
+          return
+        }
+        if (evt.event === 'vcs-supervisor-event') return
         log(`[implement] ${task.id} ${evt.step ?? 'run'}:${evt.event}`)
       }
       // Detect a code-phase resume: the task was continued (not restarted)
@@ -2992,9 +3011,21 @@ export const startDaemon = async (
   //  1. PID liveness: if an in-flight entry carries a recorded PID and
   //     isProcessAlive(pid) returns false, the task is auto-failed immediately
   //     without waiting for the wall-clock ceiling.
-  //  2. Wall-clock ceiling: if updatedAt exceeds MARS_PHANTOM_WATCHDOG_CEILING_MS
-  //     (default 30 min) — or the PID is alive but updatedAt still exceeds the
-  //     ceiling (hung subprocess case) — the task is auto-failed as a backstop.
+  //  2. Wall-clock ceiling: applied differently by PID availability:
+  //     a. No PID: checked against task.updatedAt (bare-ceiling backstop).
+  //     b. Alive PID + lastActivityMs set: checked against lastActivityMs so
+  //        a healthy long-running coder is never killed for having a stale row.
+  //        The dispatchImplement onEvent callback keeps lastActivityMs fresh
+  //        (~once per minute) via tracker.recordActivity().
+  //     c. Alive PID + no lastActivityMs: NOT ceiling-killed. Dead-PID is the
+  //        only kill path until the first heartbeat arrives.
+  //
+  // Recovery: phantom kills do NOT spawn a recovery task. The operator receives
+  // an action-queue item and can restart or drop the task explicitly. This is
+  // intentional for both dead-PID kills (the coder is gone; recovery would
+  // start from whatever state the row was in) and alive-PID hung-process kills
+  // (the process is stuck; recovery would likely re-hang). An operator restart
+  // (`mars restart`) is the appropriate resolution in both cases.
   //
   // For each phantom: marks the task failed with failedPhase set, calls
   // forceRelease (tracker-only; the dispatcher's own finally is the sole

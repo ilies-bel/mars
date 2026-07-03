@@ -325,29 +325,101 @@ describe('sweepPhantomTasks — PID liveness', () => {
     expect(reclaimSlot).not.toHaveBeenCalled()
   })
 
-  it('falls back to ceiling check when PID is alive but beyond the ceiling', async () => {
+  it('alive pid + stale heartbeat exceeds ceiling is treated as phantom', async () => {
     const { q, watchdog } = await loadModules(repo)
     const nowMs = Date.now()
     const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
 
-    // Age exceeds 30-min ceiling
+    // updatedAt is old — but that alone does NOT trigger ceiling for alive PIDs.
     await q.resolveQueueClient().execute({
       sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
       args: [OLD_UPDATED_AT(nowMs), task.id],
     })
 
     const inFlightEntries = [
-      { taskId: task.id, kind: 'implement' as const, startedAt: nowMs - 35 * 60_000, pid: 12345 },
+      {
+        taskId: task.id,
+        kind: 'implement' as const,
+        startedAt: nowMs - 35 * 60_000,
+        pid: 12345,
+        // lastActivityMs is also stale (35 min ago) — process is hung
+        lastActivityMs: nowMs - 35 * 60_000,
+      },
     ]
-    const isAlive = vi.fn().mockReturnValue(true) // PID is alive but task has exceeded ceiling
+    const isAlive = vi.fn().mockReturnValue(true) // PID is alive but heartbeat stale
     const reclaimSlot = vi.fn()
 
     const { failed } = await watchdog.sweepPhantomTasks(inFlightEntries, reclaimSlot, isAlive, nowMs)
 
-    // Should still be failed: alive PID but wall-clock ceiling exceeded
+    // Should be failed: alive PID but heartbeat activity ceiling exceeded
     expect(failed).toContain(task.id)
     const reloaded = await q.getTask(task.id)
     expect(reloaded?.status).toBe('failed')
+  })
+
+  it('alive pid + stale row + recent heartbeat is NOT phantom', async () => {
+    const { q, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
+
+    // updatedAt is old — row would trigger ceiling if checked in isolation
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
+      args: [OLD_UPDATED_AT(nowMs), task.id],
+    })
+
+    const inFlightEntries = [
+      {
+        taskId: task.id,
+        kind: 'implement' as const,
+        startedAt: nowMs - 35 * 60_000,
+        pid: 12345,
+        // lastActivityMs is recent (1 min ago) — heartbeat is alive
+        lastActivityMs: nowMs - 1 * 60_000,
+      },
+    ]
+    const isAlive = vi.fn().mockReturnValue(true) // PID is alive
+    const reclaimSlot = vi.fn()
+
+    const { failed } = await watchdog.sweepPhantomTasks(inFlightEntries, reclaimSlot, isAlive, nowMs)
+
+    // Must NOT be killed: alive PID + recent heartbeat overrides stale updatedAt
+    expect(failed).not.toContain(task.id)
+    expect(reclaimSlot).not.toHaveBeenCalled()
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('running')
+  })
+
+  it('alive pid + no heartbeat data yet is NOT ceiling-killed', async () => {
+    const { q, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
+
+    // updatedAt is old — but process just started and no heartbeat has fired
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
+      args: [OLD_UPDATED_AT(nowMs), task.id],
+    })
+
+    const inFlightEntries = [
+      {
+        taskId: task.id,
+        kind: 'implement' as const,
+        startedAt: nowMs - 35 * 60_000,
+        pid: 12345,
+        // No lastActivityMs — heartbeat has not fired yet for this task
+      },
+    ]
+    const isAlive = vi.fn().mockReturnValue(true) // PID is alive
+    const reclaimSlot = vi.fn()
+
+    const { failed } = await watchdog.sweepPhantomTasks(inFlightEntries, reclaimSlot, isAlive, nowMs)
+
+    // Must NOT be killed on updatedAt staleness alone when PID is alive
+    expect(failed).not.toContain(task.id)
+    expect(reclaimSlot).not.toHaveBeenCalled()
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('running')
   })
 })
 

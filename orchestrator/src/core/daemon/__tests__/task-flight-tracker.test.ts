@@ -159,6 +159,35 @@ describe('TaskFlightTracker — dispatch-storm invariant', () => {
     expect(() => tracker.recordPid('nobody', 99)).not.toThrow()
   })
 
+  it('recordActivity stores lastActivityMs on an existing in-flight entry', () => {
+    const tracker = createTaskFlightTracker()
+    tracker.commitInFlight('t1', 'implement')
+
+    tracker.recordActivity('t1', 1_700_000_000_000)
+
+    const snap = tracker.inFlightSnapshot()
+    const entry = snap.find((e) => e.taskId === 't1')
+    expect(entry?.lastActivityMs).toBe(1_700_000_000_000)
+  })
+
+  it('recordActivity updates lastActivityMs on repeated calls', () => {
+    const tracker = createTaskFlightTracker()
+    tracker.commitInFlight('t1', 'implement')
+
+    tracker.recordActivity('t1', 1_000)
+    tracker.recordActivity('t1', 2_000)
+
+    const snap = tracker.inFlightSnapshot()
+    const entry = snap.find((e) => e.taskId === 't1')
+    expect(entry?.lastActivityMs).toBe(2_000)
+  })
+
+  it('recordActivity is a no-op for a task not in flight', () => {
+    const tracker = createTaskFlightTracker()
+    // Should not throw even if the task is not in flight.
+    expect(() => tracker.recordActivity('nobody', Date.now())).not.toThrow()
+  })
+
   it('pending sets are per-kind, drainable in insertion order, and clearable', () => {
     const tracker = createTaskFlightTracker()
     tracker.enqueuePending('a', 'triage')
