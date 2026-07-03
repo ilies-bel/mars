@@ -51,6 +51,7 @@ import {
   MAIN_COMMITER_RECIPE,
   SOURCE_ERROR_SUMMARY,
   VERIFY_MAIN_DIRTY_CODE,
+  parseMainCommiterPayload,
   serialiseMainCommiterPayload,
   type MainCommiterPayload,
 } from './lib/main-dirty'
@@ -2022,6 +2023,18 @@ export class Arc {
       return { blockerTaskId, outcomes: [] }
     }
 
+    // Main-committer intercept (mars-984de140 / bug mars-64da6c7d class).
+    // A `main-commiter` recovery cleans the integration branch but does NOT
+    // deliver any blocked task's work. When one completes, all tasks that were
+    // parked behind it must be re-queued (or re-enter their continue lane) so
+    // verify/merge can actually run. The retry-budget check is deliberately
+    // bypassed for these dependents: their retry_count was inflated by
+    // repeated dirty-main encounters, not by genuine code-phase failures, and
+    // any budget-fail here would leave committed-but-unmerged work stranded.
+    const isCompletingMainCommitter =
+      completingTask?.kind === 'fix' &&
+      parseMainCommiterPayload(completingTask.recoveryPayload)?.recipe === MAIN_COMMITER_RECIPE
+
     const store = await getDefaultTaskStore()
     const now = new Date().toISOString()
 
@@ -2040,7 +2053,10 @@ export class Arc {
 
     for (const row of r.rows as unknown as BlockedDependentRow[]) {
       const retryCount = Number(row.retry_count ?? 0)
-      if (retryBudgetExhausted(retryCount, budget)) {
+      // Skip the retry-budget fail path when the completing blocker is a
+      // main-committer — those tasks were parked for dirty-main, not because
+      // their code phase failed too many times. Fall through to re-queue.
+      if (!isCompletingMainCommitter && retryBudgetExhausted(retryCount, budget)) {
         // Before failing on budget, check whether this dependent has its own
         // non-failed recovery task.  If so, defer to that recovery rather than
         // racing it with a spurious budget-fail.
@@ -2800,7 +2816,7 @@ export class Arc {
     store: DomainTaskStore,
   ): Promise<{ id: string; status: string } | null> {
     const r = await store.query({
-      sql: `SELECT id, status FROM tasks
+      sql: `SELECT id, status, recovery_payload FROM tasks
              WHERE kind = 'fix'
                AND fix_for_task_id = ?
                AND status NOT IN ('failed', 'dropped')
@@ -2809,6 +2825,13 @@ export class Arc {
       args: [taskId],
     })
     if (r.rows.length === 0) return null
-    return r.rows[0] as unknown as { id: string; status: string }
+    const row = r.rows[0] as unknown as { id: string; status: string; recovery_payload: string | null }
+    // Main-committers clean the integration branch but do NOT deliver the
+    // origin task's work. Treating a done main-committer as "own recovery"
+    // would cause propagateRecoveryDone() to falsely mark the origin done
+    // before verify/merge ever ran (bug mars-984de140 / false-done class).
+    // Return null so the caller uses the normal re-queue or budget-fail path.
+    if (parseMainCommiterPayload(row.recovery_payload)?.recipe === MAIN_COMMITER_RECIPE) return null
+    return { id: row.id, status: row.status }
   }
 }
