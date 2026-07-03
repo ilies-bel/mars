@@ -92,6 +92,10 @@ export interface DaemonDeps {
   getAcceptingWork(): boolean
   /** Flip the LIVE `acceptingWork` flag (drain / shutdown / kill toggle it). */
   setAcceptingWork(value: boolean): void
+  /** Read the LIVE `isPaused` flag (true while operator pause is in effect). */
+  getIsPaused(): boolean
+  /** Flip the LIVE `isPaused` flag (pause / resume toggle it). */
+  setIsPaused(value: boolean): void
   /** Kick the drain loop (reload-config raises caps then re-drains). */
   drain(): Promise<void>
   /** The daemon's graceful-exit routine (shutdown delegates to it). */

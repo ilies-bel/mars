@@ -42,9 +42,9 @@ const fakeTracker = (overrides: Partial<TaskFlightTracker> = {}): TaskFlightTrac
  */
 const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
   deps: DaemonDeps
-  state: { accepting: boolean; drained: number; shutdownCalls: boolean[] }
+  state: { accepting: boolean; paused: boolean; drained: number; shutdownCalls: boolean[] }
 } => {
-  const state = { accepting: true, drained: 0, shutdownCalls: [] as boolean[] }
+  const state = { accepting: true, paused: false, drained: 0, shutdownCalls: [] as boolean[] }
   const notImpl = (name: string) => () => {
     throw new Error(`unexpected call to ${name}`)
   }
@@ -61,6 +61,10 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     getAcceptingWork: () => state.accepting,
     setAcceptingWork: (v) => {
       state.accepting = v
+    },
+    getIsPaused: () => state.paused,
+    setIsPaused: (v) => {
+      state.paused = v
     },
     drain: async () => {
       state.drained += 1
@@ -104,8 +108,8 @@ describe('RPC registry', () => {
   it('registers exactly one leaf per protocol op, no duplicates', () => {
     // Every handler op is unique (buildRpcRegistry throws on dup).
     expect(() => buildRpcRegistry(allRpcHandlers)).not.toThrow()
-    // Spot-check the count matches the 31-op protocol surface (29 + proposal.approve + proposal.reslice).
-    expect(rpcRegistry.size).toBe(31)
+    // Spot-check the count matches the 33-op protocol surface (31 + pause + resume).
+    expect(rpcRegistry.size).toBe(33)
   })
 
   it('rejects duplicate ops', () => {
@@ -190,6 +194,63 @@ describe('inline-case leaves reach live closure state', () => {
     const res = await dispatchRpc(rpcRegistry, { op: 'shutdown' }, deps)
     expect(res.ok).toBe(false)
     expect((res as { error: string }).error).toMatch(/in flight/)
+  })
+})
+
+describe('pause / resume', () => {
+  it('pause sets isPaused and returns inFlight count', async () => {
+    const { deps, state } = makeDeps({ tracker: fakeTracker({ inFlightCount: () => 3 }) })
+    expect(state.paused).toBe(false)
+    const res = await dispatchRpc(rpcRegistry, { op: 'pause' }, deps)
+    expect(res).toEqual({ ok: true, data: { paused: true, inFlight: 3 } })
+    expect(state.paused).toBe(true)
+  })
+
+  it('resume clears isPaused and kicks drain', async () => {
+    const { deps, state } = makeDeps()
+    // Start paused
+    state.paused = true
+    const res = await dispatchRpc(rpcRegistry, { op: 'resume' }, deps)
+    expect(res).toEqual({ ok: true, data: { paused: false } })
+    expect(state.paused).toBe(false)
+    // drain() was called once by resumeHandler
+    expect(state.drained).toBe(1)
+  })
+
+  it('pause → task add (work-spawning op) is still accepted while paused', async () => {
+    // Pause only stops dispatch, not DB mutations. Work-spawning ops remain
+    // accepted (acceptingWork=true; only isPaused=true prevents drain).
+    const task = { id: 't1' }
+    const handleAdd = vi.fn().mockResolvedValue(task) as DaemonDeps['handleAdd']
+    const { deps, state } = makeDeps({ handleAdd })
+    state.paused = true
+    // acceptingWork is still true — the DRAINING gate must not trigger
+    const res = await dispatchRpc(
+      rpcRegistry,
+      { op: 'add', prompt: 'do a thing' },
+      deps,
+    )
+    expect(res).toEqual({ ok: true, data: task })
+    expect(handleAdd).toHaveBeenCalledOnce()
+  })
+
+  it('status includes isPaused=true while paused', async () => {
+    const payload = {
+      pid: 1,
+      startedAt: 'now',
+      inFlight: [],
+      counts: {},
+      sourceSha: null,
+      currentSha: null,
+      isStale: false,
+      isPaused: true,
+    }
+    const { deps } = makeDeps({
+      handleStatus: vi.fn().mockResolvedValue(payload) as DaemonDeps['handleStatus'],
+    })
+    const res = await dispatchRpc(rpcRegistry, { op: 'status' }, deps)
+    expect(res.ok).toBe(true)
+    expect((res as { ok: true; data: typeof payload }).data.isPaused).toBe(true)
   })
 })
 

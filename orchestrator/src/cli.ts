@@ -215,7 +215,7 @@ Commands:
                                 matching task row). Keeps failed worktrees and
                                 any in-flight worktree (queued/running/verifying/
                                 merging). The bigger hammer versus clean.
-  daemon <start|stop|restart|kill|status|reload|set-flag> [flags]
+  daemon <start|stop|restart|kill|status|reload|set-flag|pause|resume> [flags]
                                 run the orchestration daemon. 'start' forks to
                                 background (also --detach). 'stop' stops
                                 accepting new tasks then waits for in-flight to
@@ -230,7 +230,10 @@ Commands:
                                 defaults) without restarting. 'set-flag
                                 recovery <on|off>' toggles the
                                 MARS_RECOVERY_DISABLED kill-switch in-memory
-                                (not persisted across restarts).
+                                (not persisted across restarts). 'pause'
+                                suspends dispatch while keeping the daemon
+                                alive (in-flight tasks continue). 'resume'
+                                re-enables dispatch after a pause.
   sync                          run the daemon's startup reconcile on demand:
                                 re-queue orphaned-blocked tasks (blocked with
                                 no live blocker edges), finalize landed merges,
@@ -732,7 +735,7 @@ Flags (clean only):
 Errors during 'git worktree remove' are caught, logged with the directory
 path, and counted; the verb still processes remaining worktrees and exits
 0 unless every action failed.`,
-  daemon: `mars daemon <start|stop|restart|kill|status|reload|set-flag> [flags]
+  daemon: `mars daemon <start|stop|restart|kill|status|reload|set-flag|pause|resume> [flags]
 
 Run the orchestration daemon. CLI write ops auto-spawn it when needed.
 
@@ -757,7 +760,14 @@ Subcommands:
                      Currently only 'recovery' is supported: 'on' sets
                      MARS_RECOVERY_DISABLED=1 (fix-task/Investigator spawns
                      are suppressed); 'off' unsets it. Not persisted —
-                     a daemon restart re-reads the spawn env.`,
+                     a daemon restart re-reads the spawn env.
+  pause              suspend dispatch: stop acquiring new work while keeping
+                     the daemon alive. In-flight tasks continue to completion.
+                     Task add/unblock/purge/restart still work (state
+                     mutations; they do not dispatch). Survives reload but
+                     NOT a daemon restart. Use 'resume' to re-enable.
+  resume             re-enable dispatch after a pause. Kicks the drain loop
+                     so any tasks queued during the pause are dispatched.`,
   triage: `mars triage [<task-id>]
 
 Run triage once on one draft, or all drafts in parallel. Haiku assesses

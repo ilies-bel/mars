@@ -414,6 +414,24 @@ const killHandler = handler('kill', async (_req, deps) => {
   }
 })
 
+const pauseHandler = handler('pause', async (_req, deps) => {
+  deps.setIsPaused(true)
+  deps.log(
+    `daemon paused; dispatch suspended (inFlight=${deps.tracker.inFlightCount()})`,
+  )
+  return {
+    ok: true,
+    data: { paused: true, inFlight: deps.tracker.inFlightCount() },
+  }
+})
+
+const resumeHandler = handler('resume', async (_req, deps) => {
+  deps.setIsPaused(false)
+  void deps.drain()
+  deps.log('daemon resumed; dispatch re-enabled')
+  return { ok: true, data: { paused: false } }
+})
+
 /**
  * The full leaf set. Order is help/discovery order; the registry rejects
  * duplicate ops. Mirrors `cli/commands/index.ts`'s `allCommands`.
@@ -448,6 +466,8 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   diagnoseFailureHandler,
   attachHandler,
   releaseLeaseHandler,
+  pauseHandler,
+  resumeHandler,
   shutdownHandler,
   killHandler,
 ]

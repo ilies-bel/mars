@@ -65,6 +65,8 @@ export type DaemonRequest =
   | { op: 'diagnose-failure'; id: string }
   | { op: 'attach'; id: string; leaseOwner: string }
   | { op: 'release-lease'; id: string; abort?: boolean }
+  | { op: 'pause' }
+  | { op: 'resume' }
 
 export type DaemonResponse =
   | { ok: true; data?: unknown }
@@ -96,6 +98,12 @@ export interface DaemonStatusPayload {
    * false on prod installs and when either SHA is null.
    */
   isStale: boolean
+  /**
+   * True when the operator has called `mars daemon pause` and the dispatch
+   * loop is suspended. In-flight tasks continue; no new work is dispatched.
+   * Cleared by `mars daemon resume`. Does NOT survive a daemon restart.
+   */
+  isPaused: boolean
 }
 
 const NEWLINE = 0x0a

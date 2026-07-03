@@ -567,6 +567,11 @@ export const startDaemon = async (
   // refused. Flipped by `shutdown { drain: true }` so in-flight tasks
   // finish without any new work landing on top of them.
   let acceptingWork = true
+  // When true, the dispatch loop is suspended by an operator `mars daemon pause`.
+  // Unlike acceptingWork=false (shutdown), tasks added while paused still reach
+  // the pending sets so resume immediately dispatches them. In-flight tasks
+  // continue to completion. Does NOT survive a daemon restart.
+  let isPaused = false
 
   // Per-kind concurrency caps. glossary-write and adr-add share one pool
   // because they both contend on the same merge lock downstream — a second
@@ -1193,6 +1198,7 @@ export const startDaemon = async (
   // the running drain re-enters once it finishes — no double-pick races.
   drain = async (): Promise<void> => {
     if (!acceptingWork) return
+    if (isPaused) return
     if (drainRunning) {
       drainAgain = true
       return
@@ -2054,6 +2060,7 @@ export const startDaemon = async (
       sourceSha,
       currentSha,
       isStale,
+      isPaused,
     }
   }
 
@@ -2445,6 +2452,10 @@ export const startDaemon = async (
     getAcceptingWork: () => acceptingWork,
     setAcceptingWork: (value: boolean) => {
       acceptingWork = value
+    },
+    getIsPaused: () => isPaused,
+    setIsPaused: (value: boolean) => {
+      isPaused = value
     },
     drain: () => drain(),
     shutdown: (force?: boolean) => shutdown(force),
@@ -3036,7 +3047,7 @@ export const startDaemon = async (
   // operation it is a no-op. .unref() so it never keeps the process alive.
   const POLL_FALLBACK_MS = Number(process.env.MARS_DRAIN_POLL_MS ?? 30_000)
   const pollFallback = setInterval(() => {
-    if (!acceptingWork || drainRunning || tracker.inFlightCount() > 0) return
+    if (!acceptingWork || isPaused || drainRunning || tracker.inFlightCount() > 0) return
     void (async () => {
       try {
         const [drafts, queued] = await Promise.all([
