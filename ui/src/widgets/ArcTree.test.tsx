@@ -41,7 +41,8 @@ const dagWithRecovery: DagContext = {
   blocking: [],
   descendants: [{ id: 'mars-fix', status: 'running', summary: 'recovery task' }],
   proposalId: null,
-  edges: [{ from: 'mars-center', to: 'mars-fix', kind: 'recovers' }],
+  // Daemon emits recovers edges as { from: recoveryTask, to: originTask }
+  edges: [{ from: 'mars-fix', to: 'mars-center', kind: 'recovers' }],
 }
 
 const dagFull: DagContext = {
@@ -52,7 +53,7 @@ const dagFull: DagContext = {
   edges: [
     { from: 'mars-blocker', to: 'mars-center', kind: 'blocks' },
     { from: 'mars-center', to: 'mars-child', kind: 'blocks' },
-    { from: 'mars-center', to: 'mars-fix', kind: 'recovers' },
+    { from: 'mars-fix', to: 'mars-center', kind: 'recovers' },
   ],
 }
 
@@ -69,13 +70,13 @@ describe('dagContextSchema – edges field', () => {
       proposalId: null,
       edges: [
         { from: 'a', to: 'entity-1', kind: 'blocks' },
-        { from: 'entity-1', to: 'b', kind: 'recovers' },
+        { from: 'b', to: 'entity-1', kind: 'recovers' },
       ],
     }
     const result = dagContextSchema.parse(raw)
     expect(result.edges).toHaveLength(2)
     expect(result.edges[0]).toEqual({ from: 'a', to: 'entity-1', kind: 'blocks' })
-    expect(result.edges[1]).toEqual({ from: 'entity-1', to: 'b', kind: 'recovers' })
+    expect(result.edges[1]).toEqual({ from: 'b', to: 'entity-1', kind: 'recovers' })
   })
 
   it('rejects an unknown edge kind', () => {
@@ -200,6 +201,23 @@ describe('buildArcTree – kind assignment', () => {
     const rows = buildArcTree(dagWithBlocker, 'mars-center', 'failed')
     const blocker = rows.find((r) => r.id === 'mars-aaa')
     expect(blocker?.kind).toBe('TASK')
+  })
+
+  it("assigns FIX to the recovery task (fix-*) with realistic recovery→origin edge", () => {
+    // The daemon emits recovers edges as { from: recoveryTask, to: originTask }.
+    // e.g. fix-78dac451 recovered mars-b4370733 → edge is fix→origin.
+    const dagRealistic: DagContext = {
+      blockers: [],
+      blocking: [],
+      descendants: [{ id: 'fix-78dac451', status: 'running', summary: 'Recovery run' }],
+      proposalId: null,
+      edges: [{ from: 'fix-78dac451', to: 'mars-b4370733', kind: 'recovers' }],
+    }
+    const rows = buildArcTree(dagRealistic, 'mars-b4370733', 'failed')
+    const fix = rows.find((r) => r.id === 'fix-78dac451')
+    const origin = rows.find((r) => r.id === 'mars-b4370733')
+    expect(fix?.kind).toBe('FIX')
+    expect(origin?.kind).toBe('TASK')
   })
 
   it("assigns kind 'PROPOSAL' when id matches dag.proposalId", () => {

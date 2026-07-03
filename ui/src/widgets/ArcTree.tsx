@@ -60,9 +60,11 @@ export const buildArcTree = (
   entityId: string,
   entityStatus: string,
 ): ArcTreeRow[] => {
-  // IDs reached via `recovers` edges → kind 'FIX'
+  // IDs reached via `recovers` edges → kind 'FIX'.
+  // The daemon emits recovers edges as { from: recoveryTask, to: originTask },
+  // so the recovery (fix-*) task is the e.from endpoint.
   const recoveryTargets = new Set(
-    dag.edges.filter((e) => e.kind === 'recovers').map((e) => e.to),
+    dag.edges.filter((e) => e.kind === 'recovers').map((e) => e.from),
   )
 
   const kindOf = (id: string): ArcTreeRowKind => {
