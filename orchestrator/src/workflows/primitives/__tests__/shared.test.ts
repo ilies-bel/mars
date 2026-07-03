@@ -138,6 +138,50 @@ describe('parseCompletionReport', () => {
     if (result.kind !== 'parsed') return
     expect(result.lines[0].evidence).toBe('src/workflows/primitives/shared.ts:80-90')
   })
+
+  it('parses a keywordless line (no "evidence:" prefix) with the correct evidence field', () => {
+    // Coders sometimes write '- [done] <criterion> — <evidence>' without the
+    // 'evidence:' keyword.  Both forms must be accepted.
+    const text = [
+      '```completion-report',
+      '- [done] Fix the parser — src/shared.ts:42',
+      '```',
+    ].join('\n')
+    const result = parseCompletionReport(text)
+    expect(result.kind).toBe('parsed')
+    if (result.kind !== 'parsed') return
+    expect(result.lines[0].status).toBe('done')
+    expect(result.lines[0].criterion).toBe('Fix the parser')
+    expect(result.lines[0].evidence).toBe('src/shared.ts:42')
+  })
+
+  it('splits a criterion containing em dashes on the LAST separator', () => {
+    // A criterion like "Multi — em — dash criterion" has multiple ' — '
+    // occurrences; the greedy regex must choose the rightmost split point.
+    const text = [
+      '```completion-report',
+      '- [done] Multi — em — dash criterion — evidence: src/shared.ts:42',
+      '```',
+    ].join('\n')
+    const result = parseCompletionReport(text)
+    expect(result.kind).toBe('parsed')
+    if (result.kind !== 'parsed') return
+    expect(result.lines[0].criterion).toBe('Multi — em — dash criterion')
+    expect(result.lines[0].evidence).toBe('src/shared.ts:42')
+  })
+
+  it('splits a keywordless multi-em-dash line on the LAST separator', () => {
+    const text = [
+      '```completion-report',
+      '- [partial] Multi — dash criterion — some evidence text',
+      '```',
+    ].join('\n')
+    const result = parseCompletionReport(text)
+    expect(result.kind).toBe('parsed')
+    if (result.kind !== 'parsed') return
+    expect(result.lines[0].criterion).toBe('Multi — dash criterion')
+    expect(result.lines[0].evidence).toBe('some evidence text')
+  })
 })
 
 // ---------------------------------------------------------------------------

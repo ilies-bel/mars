@@ -819,6 +819,7 @@ export const checkCompletenessGate = async (
       output:
         `missing-completion-report: a completion-report block was found but could not be parsed (malformed lines).\n` +
         `Every line must match: - [done|partial|blocked] <criterion> — evidence: <evidence>\n` +
+        `(the 'evidence:' keyword is optional; '- [done] <criterion> — <evidence>' is also accepted)\n` +
         `Raw block:\n${report.raw}`,
     }
   }

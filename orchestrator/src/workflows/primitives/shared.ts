@@ -443,9 +443,13 @@ export const parseCompletionReport = (text: string): CompletionReport => {
       if (trimmed.length === 0) continue
       // Format: - [<status>] <criterion> — evidence: <evidence>   (em dash
       // U+2014). The bracketed status is what COMPLETION_REPORT_CONTRACT
-      // mandates and what live coders emit.
+      // mandates and what live coders emit.  The 'evidence:' keyword is
+      // OPTIONAL — some coders write '- [done] <criterion> — <evidence>'
+      // without the keyword, and both forms are accepted.  Greedy (.+) splits
+      // on the LAST ' — ' separator so criteria that themselves contain em
+      // dashes are captured correctly.
       const match = trimmed.match(
-        /^-\s+\[(done|partial|blocked)\]\s+(.+?)\s+—\s+evidence:\s+(.+)$/,
+        /^-\s+\[(done|partial|blocked)\]\s+(.+)\s+—\s+(?:evidence:\s*)?(.+)$/,
       )
       if (!match) return { kind: 'unparseable', raw }
       lines.push({
