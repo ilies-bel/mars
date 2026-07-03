@@ -72,14 +72,22 @@ describe('parseCompletionReport', () => {
     expect(result.lines[0].evidence).toBe('commit def5678')
   })
 
-  it('returns unparseable when a line is missing the em-dash separator', () => {
+  it('parses a line missing the em-dash separator with empty evidence instead of rejecting the block', () => {
+    // A line like '- [done] Something -- evidence: file.ts:1' uses '--' (not
+    // the em dash U+2014) so it doesn't match the full grammar, but it does
+    // match the fallback '- [<status>] <rest>' pattern.  The whole '--
+    // evidence: file.ts:1' string becomes the criterion; evidence is ''.
     const text = [
       '```completion-report',
       '- [done] Something -- evidence: file.ts:1',
       '```',
     ].join('\n')
     const result = parseCompletionReport(text)
-    expect(result.kind).toBe('unparseable')
+    expect(result.kind).toBe('parsed')
+    if (result.kind !== 'parsed') return
+    expect(result.lines).toHaveLength(1)
+    expect(result.lines[0].status).toBe('done')
+    expect(result.lines[0].evidence).toBe('')
   })
 
   it('returns unparseable when status is not done/partial/blocked', () => {
@@ -181,6 +189,72 @@ describe('parseCompletionReport', () => {
     if (result.kind !== 'parsed') return
     expect(result.lines[0].criterion).toBe('Multi — dash criterion')
     expect(result.lines[0].evidence).toBe('some evidence text')
+  })
+
+  // ── Live regression: mars-819c6152 ──────────────────────────────────────
+  //
+  // The 6-line report emitted by the mars-819c6152 coder session (recorded
+  // 2026-07-03T10:35:52Z) had 5 properly-formatted lines and one line that
+  // lacked the ' — ' em-dash separator, causing the entire block to be
+  // rejected as 'unparseable'.  The fix: tolerate malformed lines per-line
+  // rather than failing the whole block.
+
+  it('parses the live mars-819c6152 6-line report: 5 good lines + 1 separator-less line', () => {
+    const text = [
+      '```completion-report',
+      '- [done] Implement the streaming activity-touch path — evidence: src/core/lib/claude-stream.ts:142',
+      '- [done] Wire activityTouchFn into the coder worker — evidence: src/core/workers/coder.ts:88',
+      '- [done] Add unit test for the streaming touch — evidence: src/core/lib/__tests__/claude-stream.test.ts:55',
+      '- [done] Update verify to check pidfile on activity — evidence: src/core/lib/git/verify.ts:210',
+      '- [done] Confirm typecheck passes — evidence: npm run typecheck exit 0',
+      '- [done] Regression analysis: `recordPid` was never called … confirmed by absence of any activity-touch in the streaming path prior to this fix',
+      '```',
+    ].join('\n')
+
+    const result = parseCompletionReport(text)
+    expect(result.kind).toBe('parsed')
+    if (result.kind !== 'parsed') return
+    expect(result.lines).toHaveLength(6)
+
+    // The first 5 lines parse normally with their evidence fields.
+    expect(result.lines[0].evidence).toBe('src/core/lib/claude-stream.ts:142')
+    expect(result.lines[4].evidence).toBe('npm run typecheck exit 0')
+
+    // The 6th line (no em-dash separator) should parse with empty evidence
+    // rather than poisoning the whole block.
+    expect(result.lines[5].status).toBe('done')
+    expect(result.lines[5].criterion).toContain('Regression analysis')
+    expect(result.lines[5].criterion).toContain('recordPid')
+    expect(result.lines[5].evidence).toBe('')
+  })
+
+  it('remains unparseable when no line has a valid status bracket', () => {
+    // An all-garbage block — no line matches even the fallback grammar.
+    const text = [
+      '```completion-report',
+      'totally free-form text with no status bracket',
+      'another garbage line',
+      '* not a list item with bracket',
+      '```',
+    ].join('\n')
+    const result = parseCompletionReport(text)
+    expect(result.kind).toBe('unparseable')
+  })
+
+  it('parses mixed block: one valid line + one garbage line → parsed (not poisoned)', () => {
+    // A block with one parseable line and one unrecognised line should succeed —
+    // the garbage line is silently skipped rather than aborting the parse.
+    const text = [
+      '```completion-report',
+      '- [done] Real criterion — evidence: src/shared.ts:1',
+      'totally unrecognised line that matches nothing',
+      '```',
+    ].join('\n')
+    const result = parseCompletionReport(text)
+    expect(result.kind).toBe('parsed')
+    if (result.kind !== 'parsed') return
+    expect(result.lines).toHaveLength(1)
+    expect(result.lines[0].evidence).toBe('src/shared.ts:1')
   })
 })
 

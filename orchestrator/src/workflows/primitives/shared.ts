@@ -441,22 +441,38 @@ export const parseCompletionReport = (text: string): CompletionReport => {
     for (const rawLine of raw.split('\n')) {
       const trimmed = rawLine.trim()
       if (trimmed.length === 0) continue
-      // Format: - [<status>] <criterion> — evidence: <evidence>   (em dash
-      // U+2014). The bracketed status is what COMPLETION_REPORT_CONTRACT
-      // mandates and what live coders emit.  The 'evidence:' keyword is
-      // OPTIONAL — some coders write '- [done] <criterion> — <evidence>'
-      // without the keyword, and both forms are accepted.  Greedy (.+) splits
-      // on the LAST ' — ' separator so criteria that themselves contain em
-      // dashes are captured correctly.
-      const match = trimmed.match(
+      // Full grammar: - [<status>] <criterion> — [evidence: ]<evidence>
+      // (em dash U+2014).  The 'evidence:' keyword is OPTIONAL — some coders
+      // write '- [done] <criterion> — <evidence>' without it.  Greedy (.+)
+      // splits on the LAST ' — ' so criteria containing em dashes are
+      // captured correctly.
+      const fullMatch = trimmed.match(
         /^-\s+\[(done|partial|blocked)\]\s+(.+)\s+—\s+(?:evidence:\s*)?(.+)$/,
       )
-      if (!match) return { kind: 'unparseable', raw }
-      lines.push({
-        status: match[1] as 'done' | 'partial' | 'blocked',
-        criterion: match[2].trim(),
-        evidence: match[3].trim(),
-      })
+      if (fullMatch) {
+        lines.push({
+          status: fullMatch[1] as 'done' | 'partial' | 'blocked',
+          criterion: fullMatch[2].trim(),
+          evidence: fullMatch[3].trim(),
+        })
+        continue
+      }
+      // Fallback grammar: status bracket present but no ' — ' separator.
+      // Parse with empty evidence rather than rejecting the whole block
+      // (Postel's law).  checkEvidenceClaim('', …) falls through to the
+      // "non-verifiable evidence" branch and returns { ok: true }, so this
+      // cannot produce false unsubstantiated-completion failures.
+      const fallbackMatch = trimmed.match(
+        /^-\s+\[(done|partial|blocked)\]\s+(.+)$/,
+      )
+      if (fallbackMatch) {
+        lines.push({
+          status: fallbackMatch[1] as 'done' | 'partial' | 'blocked',
+          criterion: fallbackMatch[2].trim(),
+          evidence: '',
+        })
+      }
+      // Lines matching neither regex are silently skipped.
     }
 
     if (lines.length === 0) return { kind: 'unparseable', raw }

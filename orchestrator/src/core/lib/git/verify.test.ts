@@ -331,4 +331,27 @@ describe('checkCompletenessGate', () => {
 
     expect(step.passed).toBe(true)
   })
+
+  it('passes when a report line has empty evidence (separator-less fallback parse)', async () => {
+    // A coder that omits the ' — ' separator produces empty evidence after the
+    // per-line fallback parse in parseCompletionReport.  checkEvidenceClaim('')
+    // must NOT return ok:false — it falls through to the "non-verifiable
+    // evidence" branch and returns { ok: true }.  This test pins that
+    // behaviour so a future refactor cannot silently introduce
+    // unsubstantiated-completion failures for separator-less lines.
+    const coderText = [
+      '```completion-report',
+      '- [done] Regression analysis: `recordPid` was never called … confirmed by absence of any activity-touch in the streaming path prior to this fix',
+      '```',
+    ].join('\n')
+
+    const step = await checkCompletenessGate({
+      coderText,
+      changedFiles: [],
+      worktreePath: EMPTY_WORKTREE,
+      branch: 'task/test',
+    })
+
+    expect(step.passed).toBe(true)
+  })
 })
