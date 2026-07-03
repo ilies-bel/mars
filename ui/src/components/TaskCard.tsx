@@ -73,9 +73,9 @@ export const TaskCard = memo(({ task, index }: Props) => {
           {task.retryCount > 0 ? (
             <span
               className="rounded bg-basalt/10 px-1.5 py-0.5 font-mono text-micro font-semibold tracking-wide text-basalt"
-              title={`retried ${task.retryCount}x`}
+              title={`recovered ×${task.retryCount}`}
             >
-              ↻ {task.retryCount}x
+              ↻ recovered
             </span>
           ) : null}
           {showChip ? <StatusChip status={task.status} /> : null}
