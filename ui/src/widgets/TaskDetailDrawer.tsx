@@ -368,12 +368,16 @@ export const TaskDetailBody = ({
   /** Id the OriginTree bolds as "current"; defaults to the task's own id. */
   currentId?: string
 }) => {
-  const firstLine = task.prompt.split('\n')[0] ?? task.prompt
+  const promptLines = task.prompt.split('\n')
+  const firstLine = promptLines[0] ?? task.prompt
   // The header already shows the whole prompt when it's a single short line;
   // in that case the dedicated Prompt section would be redundant.
   const title = firstLine
   const promptFullyShownInHeader =
     task.prompt === firstLine && firstLine.length <= 80
+  // Collapse prompts longer than 20 lines behind a <details> disclosure.
+  const promptLineCount = promptLines.length
+  const promptIsLong = promptLineCount > 20
   const isBlocked = task.status === 'blocked'
   const showBanner =
     task.status === 'failed' || isBlocked || task.error != null
@@ -473,12 +477,25 @@ export const TaskDetailBody = ({
 
       {/* c. Prompt — only when not already fully shown in the header. */}
       {!promptFullyShownInHeader ? (
-        <div>
-          <SectionLabel>Prompt</SectionLabel>
-          <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-fg">
-            {task.prompt}
-          </pre>
-        </div>
+        promptIsLong ? (
+          <div>
+            <details>
+              <summary className="cursor-pointer select-none font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                Prompt · {promptLineCount} lines
+              </summary>
+              <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-fg">
+                {task.prompt}
+              </pre>
+            </details>
+          </div>
+        ) : (
+          <div>
+            <SectionLabel>Prompt</SectionLabel>
+            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-fg">
+              {task.prompt}
+            </pre>
+          </div>
+        )
       ) : null}
 
       {/* d. Plan. */}

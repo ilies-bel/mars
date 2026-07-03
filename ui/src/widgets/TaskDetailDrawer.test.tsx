@@ -691,6 +691,55 @@ describe('TaskDetailBody – minimal task omits empty sections', () => {
   })
 })
 
+// ── Long-prompt collapse ───────────────────────────────────────────────────────
+
+/**
+ * Prompts longer than 20 lines are collapsed behind a <details> disclosure
+ * with a summary reading "Prompt · N lines".  Short prompts (≤ 20 lines)
+ * render inline as before — no <details> wrapper.
+ *
+ * The full prompt text is always present in the static HTML; the collapse
+ * is purely interactive (the browser hides it until the user opens the
+ * <details> element).
+ */
+describe('TaskDetailBody – long prompt collapse', () => {
+  // 21-line prompt — one line over the threshold.
+  const LONG_PROMPT = Array.from({ length: 21 }, (_, i) => `Line ${i + 1}`).join('\n')
+  // 20-line prompt — exactly at (but not over) the threshold.
+  const BOUNDARY_PROMPT = Array.from({ length: 20 }, (_, i) => `Line ${i + 1}`).join('\n')
+
+  it('collapses a prompt with more than 20 lines behind a <details> element', () => {
+    const t = fullTask({ id: 'task-long', prompt: LONG_PROMPT })
+    const html = renderBody(t)
+    expect(html).toContain('<details')
+  })
+
+  it('summary reads "Prompt · N lines" for a long prompt', () => {
+    const t = fullTask({ id: 'task-long', prompt: LONG_PROMPT })
+    const html = renderBody(t)
+    expect(html).toContain('Prompt · 21 lines')
+  })
+
+  it('full prompt text is still present in the HTML (collapse is interactive-only)', () => {
+    const t = fullTask({ id: 'task-long', prompt: LONG_PROMPT })
+    const html = renderBody(t)
+    expect(html).toContain('Line 21')
+  })
+
+  it('a prompt with exactly 20 lines does not collapse (no "Prompt · N lines" summary)', () => {
+    const t = fullTask({ id: 'task-boundary', status: 'queued', prompt: BOUNDARY_PROMPT })
+    const html = renderBody(t)
+    // The collapse summary must NOT appear — 20 lines is at (not over) the threshold.
+    expect(html).not.toContain('Prompt ·')
+  })
+
+  it('a prompt at the boundary (20 lines) renders with the standard Prompt label', () => {
+    const t = fullTask({ id: 'task-boundary', status: 'queued', prompt: BOUNDARY_PROMPT })
+    const html = renderBody(t)
+    expect(html).toContain('>Prompt<')
+  })
+})
+
 // ── Drill-in: pure trail helpers ──────────────────────────────────────────────
 
 /**
