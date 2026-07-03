@@ -39,6 +39,26 @@ const reflect: Command = {
     deps.out(
       `reflecting over ${corpus.entries.length} task(s) — ${cs.totalWeightedTokens.toFixed(0)} weighted tokens (${cs.successCount} done / ${cs.failureCount} failed)…`,
     )
+    // Surface KPI baseline so the operator can see whether reflect has cost
+    // data to compare against, and flag staleness when the daemon has stopped
+    // taking snapshots (the feed should update hourly when the daemon is live).
+    const { readLatestKpiSnapshot } = await import('../../core/lib/kpi-snapshots.js')
+    const kpiSnap = await readLatestKpiSnapshot(deps.store)
+    if (kpiSnap === null) {
+      deps.out('KPI snapshots: none — start the daemon to begin capturing hourly baselines')
+    } else {
+      const staleThresholdMs = 48 * 60 * 60 * 1000
+      const snapAgeMs = Date.now() - new Date(kpiSnap.taken_at).getTime()
+      if (snapAgeMs > staleThresholdMs) {
+        deps.out(`KPI snapshots stale since ${kpiSnap.taken_at} — restart the daemon to resume capture`)
+      } else {
+        const fmt = (v: number | null, digits = 3): string =>
+          v === null ? 'n/a' : v.toFixed(digits)
+        deps.out(
+          `KPI snapshot ${kpiSnap.taken_at}: failure_rate=${fmt(kpiSnap.failure_rate)} autonomous_completion=${fmt(kpiSnap.autonomous_completion_rate)} recovery_success=${fmt(kpiSnap.recovery_success_rate)} cost_per_arc_p50=${fmt(kpiSnap.cost_per_arc_p50, 0)}`,
+        )
+      }
+    }
     const result = await runReflector(corpus)
     if (result.tokenAnalysis) {
       const ta = result.tokenAnalysis

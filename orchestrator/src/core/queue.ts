@@ -1455,6 +1455,52 @@ export const migrateQueueSchema = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_kpi_snapshots_taken_at ON kpi_snapshots(taken_at)`,
   )
+  // ── kpi_snapshots: migrate old shared sample_count schema to per-KPI columns ──
+  // The a3b35e53 commit (2026-06-10) changed kpi_snapshots from a single shared
+  // `sample_count` / `low_confidence` pair to eight per-KPI columns. Because the
+  // creation above uses CREATE TABLE IF NOT EXISTS, existing DBs silently kept
+  // the old schema. takeKpiSnapshot then failed at INSERT time (referencing columns
+  // that did not exist), the error was swallowed by the daemon's try/catch, and
+  // no snapshot rows were written after the daemon restarted — the root cause of
+  // the June-11 capture gap.
+  //
+  // Fix: detect the old schema (presence of `sample_count`) and DROP + recreate.
+  // kpi_snapshots rows carry no business data (they are aggregate stats over
+  // tasks, which are the source of truth); losing pre-migration rows is safe.
+  {
+    const kpiCols = await c.execute(`PRAGMA table_info(kpi_snapshots)`)
+    const kpiColNames = new Set(
+      (kpiCols.rows as unknown as Array<{ name: string }>).map((r) => r.name),
+    )
+    if (kpiColNames.has('sample_count')) {
+      await c.execute(`DROP TABLE kpi_snapshots`)
+      await c.execute(`DROP INDEX IF EXISTS idx_kpi_snapshots_taken_at`)
+      await c.execute(`
+        CREATE TABLE kpi_snapshots (
+          id TEXT PRIMARY KEY,
+          taken_at TEXT NOT NULL,
+          window_start TEXT NOT NULL,
+          window_end TEXT NOT NULL,
+          cost_per_arc_sample_count INTEGER NOT NULL,
+          cost_per_arc_low_confidence INTEGER NOT NULL,
+          failure_rate_sample_count INTEGER NOT NULL,
+          failure_rate_low_confidence INTEGER NOT NULL,
+          autonomous_completion_rate_sample_count INTEGER NOT NULL,
+          autonomous_completion_rate_low_confidence INTEGER NOT NULL,
+          recovery_success_rate_sample_count INTEGER NOT NULL,
+          recovery_success_rate_low_confidence INTEGER NOT NULL,
+          cost_per_arc_p50 REAL,
+          cost_per_arc_p90 REAL,
+          failure_rate REAL,
+          autonomous_completion_rate REAL,
+          recovery_success_rate REAL
+        )
+      `)
+      await c.execute(
+        `CREATE INDEX IF NOT EXISTS idx_kpi_snapshots_taken_at ON kpi_snapshots(taken_at)`,
+      )
+    }
+  }
   // ── Normalized junction tables for JSON-blob columns ───────────────────
   // These three tables replace the `claude_session_ids`, `files_json`, and
   // `done_criteria_json` JSON blob columns on `tasks`.  They are created here

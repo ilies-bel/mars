@@ -1134,3 +1134,108 @@ describe('ADR-0050: follow-up arc inheritance — migration of synthetic origin_
     db.close()
   })
 })
+
+describe('kpi_snapshots schema migration: old sample_count/low_confidence → per-KPI columns', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('migrates a DB with the old shared-column schema to the per-KPI schema', async () => {
+    // Seed a kpi_snapshots table with the OLD schema (sample_count, low_confidence).
+    // This is the state that existed before the a3b35e53 commit (2026-06-10).
+    const dbPath = `file:${repo}/.mars/mars.db`
+    const q = createClient({ url: dbPath })
+
+    // Seed a minimal tasks table to satisfy migration FK checks.
+    await q.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY, prompt TEXT NOT NULL, status TEXT NOT NULL,
+      origin_id TEXT, retry_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`)
+
+    // Create kpi_snapshots with the OLD schema.
+    await q.execute(`
+      CREATE TABLE kpi_snapshots (
+        id TEXT PRIMARY KEY,
+        taken_at TEXT NOT NULL,
+        window_start TEXT NOT NULL,
+        window_end TEXT NOT NULL,
+        sample_count INTEGER NOT NULL,
+        low_confidence INTEGER NOT NULL,
+        cost_per_arc_p50 REAL,
+        cost_per_arc_p90 REAL,
+        failure_rate REAL,
+        autonomous_completion_rate REAL,
+        recovery_success_rate REAL
+      )
+    `)
+    // Insert a row with the old schema so we can confirm it is purged.
+    const now = new Date().toISOString()
+    await q.execute({
+      sql: `INSERT INTO kpi_snapshots (id, taken_at, window_start, window_end, sample_count, low_confidence, failure_rate)
+            VALUES ('old-snap', ?, ?, ?, 3, 1, 0.5)`,
+      args: [now, now, now],
+    })
+    q.close()
+
+    // Run the migration.
+    const { migrateQueueSchema } = await import('../queue')
+    await migrateQueueSchema()
+
+    const db = createClient({ url: dbPath })
+
+    // Old schema is gone — new per-KPI columns must be present.
+    const cols = await db.execute(`PRAGMA table_info(kpi_snapshots)`)
+    const colNames = new Set(
+      (cols.rows as unknown as Array<{ name: string }>).map((r) => r.name),
+    )
+    expect(colNames.has('sample_count')).toBe(false)
+    expect(colNames.has('low_confidence')).toBe(false)
+    expect(colNames.has('cost_per_arc_sample_count')).toBe(true)
+    expect(colNames.has('failure_rate_sample_count')).toBe(true)
+    expect(colNames.has('autonomous_completion_rate_sample_count')).toBe(true)
+    expect(colNames.has('recovery_success_rate_sample_count')).toBe(true)
+
+    // Old row was purged (table was dropped and recreated).
+    const oldRow = await db.execute(`SELECT id FROM kpi_snapshots WHERE id = 'old-snap'`)
+    expect(oldRow.rows).toHaveLength(0)
+
+    // Index on taken_at must be recreated.
+    const idxRow = await db.execute(
+      `SELECT name FROM sqlite_master WHERE type='index' AND name='idx_kpi_snapshots_taken_at'`,
+    )
+    expect(idxRow.rows).toHaveLength(1)
+
+    db.close()
+  })
+
+  it('is a no-op on a DB that already has the per-KPI schema', async () => {
+    const { migrateQueueSchema } = await import('../queue')
+    // Run once to create the correct schema from scratch.
+    await migrateQueueSchema()
+
+    // Run again — must not throw and schema must still be correct.
+    vi.resetModules()
+    process.env.MARS_REPO = repo
+    const { migrateQueueSchema: migrate2 } = await import('../queue')
+    await expect(migrate2()).resolves.not.toThrow()
+
+    const db = createClient({ url: `file:${repo}/.mars/mars.db` })
+    const cols = await db.execute(`PRAGMA table_info(kpi_snapshots)`)
+    const colNames = new Set(
+      (cols.rows as unknown as Array<{ name: string }>).map((r) => r.name),
+    )
+    expect(colNames.has('cost_per_arc_sample_count')).toBe(true)
+    expect(colNames.has('sample_count')).toBe(false)
+    db.close()
+  })
+})

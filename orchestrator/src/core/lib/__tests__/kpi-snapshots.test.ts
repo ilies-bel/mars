@@ -181,8 +181,9 @@ describe('takeKpiSnapshot + readLatestKpiSnapshot — basic round-trip', () => {
     const written = await takeKpiSnapshot({ surface: store, now: NOW })
     const read = await readLatestKpiSnapshot(store)
 
+    expect(written).not.toBeNull()
     expect(read).not.toBeNull()
-    expect(read!.id).toBe(written.id)
+    expect(read!.id).toBe(written!.id)
     expect(read!.taken_at).toBe(NOW)
   })
 
@@ -194,6 +195,8 @@ describe('takeKpiSnapshot + readLatestKpiSnapshot — basic round-trip', () => {
 
   it('readLatestKpiSnapshot returns the most recently taken snapshot', async () => {
     const store = await makeStore()
+    // A task is required so sample_count > 0 and both takeKpiSnapshot calls write a row.
+    await insertTask(store, { id: 't-series', status: 'done' })
     const first = await takeKpiSnapshot({
       surface: store,
       now: '2026-01-06T00:00:00Z',
@@ -203,9 +206,11 @@ describe('takeKpiSnapshot + readLatestKpiSnapshot — basic round-trip', () => {
       now: '2026-01-07T00:00:00Z',
     })
 
+    expect(first).not.toBeNull()
+    expect(second).not.toBeNull()
     const latest = await readLatestKpiSnapshot(store)
-    expect(latest!.id).toBe(second.id)
-    expect(latest!.id).not.toBe(first.id)
+    expect(latest!.id).toBe(second!.id)
+    expect(latest!.id).not.toBe(first!.id)
   })
 })
 
@@ -223,19 +228,22 @@ describe('takeKpiSnapshot — failure_rate column', () => {
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
     // 1 failed / 3 total = 0.333...
-    expect(snapshot.failure_rate).not.toBeNull()
-    expect(snapshot.failure_rate!).toBeCloseTo(1 / 3, 5)
-    expect(snapshot.failure_rate_sample_count).toBe(3)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.failure_rate).not.toBeNull()
+    expect(snapshot!.failure_rate!).toBeCloseTo(1 / 3, 5)
+    expect(snapshot!.failure_rate_sample_count).toBe(3)
   })
 
-  it('sets failure_rate to null when no arcs are in the window', async () => {
+  it('returns null (skips write) when no arcs are in the window', async () => {
     const store = await makeStore()
-    // No tasks inserted
+    // No tasks → all four KPI sample counts are 0 → guard returns null without writing
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
-    expect(snapshot.failure_rate).toBeNull()
-    expect(snapshot.failure_rate_sample_count).toBe(0)
+    expect(snapshot).toBeNull()
+    // Confirm no row was written
+    const latest = await readLatestKpiSnapshot(store)
+    expect(latest).toBeNull()
   })
 })
 
@@ -254,8 +262,8 @@ describe('takeKpiSnapshot — low_confidence flag', () => {
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
-    expect(snapshot.failure_rate_low_confidence).toBe(1)
-    expect(snapshot.failure_rate_sample_count).toBe(4)
+    expect(snapshot!.failure_rate_low_confidence).toBe(1)
+    expect(snapshot!.failure_rate_sample_count).toBe(4)
   })
 
   it('sets failure_rate_low_confidence=0 when failure_rate_sample_count equals sampleFloor', async () => {
@@ -269,8 +277,8 @@ describe('takeKpiSnapshot — low_confidence flag', () => {
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
-    expect(snapshot.failure_rate_low_confidence).toBe(0)
-    expect(snapshot.failure_rate_sample_count).toBe(5)
+    expect(snapshot!.failure_rate_low_confidence).toBe(0)
+    expect(snapshot!.failure_rate_sample_count).toBe(5)
   })
 
   it('sets failure_rate_low_confidence=0 when failure_rate_sample_count > sampleFloor', async () => {
@@ -285,8 +293,8 @@ describe('takeKpiSnapshot — low_confidence flag', () => {
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
-    expect(snapshot.failure_rate_low_confidence).toBe(0)
-    expect(snapshot.failure_rate_sample_count).toBe(6)
+    expect(snapshot!.failure_rate_low_confidence).toBe(0)
+    expect(snapshot!.failure_rate_sample_count).toBe(6)
   })
 
   it('honours a custom sampleFloor applied uniformly to all four KPIs', async () => {
@@ -301,7 +309,8 @@ describe('takeKpiSnapshot — low_confidence flag', () => {
       sampleFloor: 3,
     })
 
-    expect(snapshot.failure_rate_low_confidence).toBe(1)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.failure_rate_low_confidence).toBe(1)
   })
 })
 
@@ -310,40 +319,52 @@ describe('takeKpiSnapshot — low_confidence flag', () => {
 // ---------------------------------------------------------------------------
 
 describe('takeKpiSnapshot — NULL preservation for unimplemented KPIs', () => {
-  it('leaves cost_per_arc_p50 as null', async () => {
+  it('leaves cost_per_arc_p50 as null when done arc has no trace signals', async () => {
     const store = await makeStore()
+    // A done task with no trace signal → frSampleCount=1 (writes row), costSampleCount=0 (null)
+    await insertTask(store, { id: 'done-no-signal', status: 'done' })
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
-    expect(snapshot.cost_per_arc_p50).toBeNull()
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.cost_per_arc_p50).toBeNull()
   })
 
-  it('leaves cost_per_arc_p90 as null', async () => {
+  it('leaves cost_per_arc_p90 as null when done arc has no trace signals', async () => {
     const store = await makeStore()
+    await insertTask(store, { id: 'done-no-signal', status: 'done' })
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
-    expect(snapshot.cost_per_arc_p90).toBeNull()
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.cost_per_arc_p90).toBeNull()
   })
 
   it('sets autonomous_completion_rate to null when no done arcs are in the window', async () => {
     const store = await makeStore()
+    // A failed arc only → frSampleCount=1 (writes row), acrSampleCount=0 (no done arcs → null)
+    await insertTask(store, { id: 'fail-only', status: 'failed' })
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
-    expect(snapshot.autonomous_completion_rate).toBeNull()
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.autonomous_completion_rate).toBeNull()
   })
 
-  it('leaves recovery_success_rate as null', async () => {
+  it('leaves recovery_success_rate as null when no recovery tasks have fired', async () => {
     const store = await makeStore()
+    // A plain done task (no fix_for_task_id) → frSampleCount=1, rsrSampleCount=0
+    await insertTask(store, { id: 'plain-done', status: 'done' })
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
-    expect(snapshot.recovery_success_rate).toBeNull()
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.recovery_success_rate).toBeNull()
   })
 
-  it('readLatestKpiSnapshot returns unimplemented columns as null', async () => {
+  it('readLatestKpiSnapshot returns null KPI columns when no signals exist', async () => {
     const store = await makeStore()
+    // A done task with no signals → cost_per_arc columns null; no recovery → rsr null
+    await insertTask(store, { id: 'done-plain', status: 'done' })
     await takeKpiSnapshot({ surface: store, now: NOW })
 
     const snap = await readLatestKpiSnapshot(store)
     expect(snap).not.toBeNull()
     expect(snap!.cost_per_arc_p50).toBeNull()
     expect(snap!.cost_per_arc_p90).toBeNull()
-    // autonomous_completion_rate is null here because no done arcs are in the window
-    expect(snap!.autonomous_completion_rate).toBeNull()
+    // autonomous_completion_rate is non-null (1.0) because the done arc is autonomous
     expect(snap!.recovery_success_rate).toBeNull()
   })
 })
@@ -355,18 +376,22 @@ describe('takeKpiSnapshot — NULL preservation for unimplemented KPIs', () => {
 describe('takeKpiSnapshot — window metadata', () => {
   it('stores window_start as 7 days before now by default', async () => {
     const store = await makeStore()
+    // Need at least one task so the guard doesn't suppress the write.
+    await insertTask(store, { id: 'wm-task', status: 'done' })
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
     const expectedStart = new Date(
       new Date(NOW).getTime() - 7 * 24 * 60 * 60 * 1000,
     ).toISOString()
 
-    expect(snapshot.window_start).toBe(expectedStart)
-    expect(snapshot.window_end).toBe(NOW)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.window_start).toBe(expectedStart)
+    expect(snapshot!.window_end).toBe(NOW)
   })
 
   it('honours a custom windowDays', async () => {
     const store = await makeStore()
+    await insertTask(store, { id: 'wm-task2', status: 'done' })
     const snapshot = await takeKpiSnapshot({
       surface: store,
       now: NOW,
@@ -377,7 +402,8 @@ describe('takeKpiSnapshot — window metadata', () => {
       new Date(NOW).getTime() - 14 * 24 * 60 * 60 * 1000,
     ).toISOString()
 
-    expect(snapshot.window_start).toBe(expectedStart)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.window_start).toBe(expectedStart)
   })
 })
 
@@ -395,25 +421,27 @@ describe('takeKpiSnapshot — cost_per_arc columns', () => {
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
-    expect(snapshot.cost_per_arc_p50).not.toBeNull()
-    expect(snapshot.cost_per_arc_p90).not.toBeNull()
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.cost_per_arc_p50).not.toBeNull()
+    expect(snapshot!.cost_per_arc_p90).not.toBeNull()
     // Sorted costs: [1000, 3000], n=2
     // p50 index = 0.5, lo=0, hi=1 → 1000 + 0.5*2000 = 2000
     // p90 index = 0.9, lo=0, hi=1 → 1000 + 0.9*2000 = 2800
-    expect(snapshot.cost_per_arc_p50).toBeCloseTo(2000, 5)
-    expect(snapshot.cost_per_arc_p90).toBeCloseTo(2800, 5)
+    expect(snapshot!.cost_per_arc_p50).toBeCloseTo(2000, 5)
+    expect(snapshot!.cost_per_arc_p90).toBeCloseTo(2800, 5)
   })
 
   it('sets both to null when no done Arcs are in the window', async () => {
     const store = await makeStore()
-    // A failed arc — must not contribute to cost distribution
+    // A failed arc — must not contribute to cost distribution; but frSampleCount=1 so row is written
     await insertTask(store, { id: 'fail-arc', status: 'failed' })
     await insertSignal(store, { taskId: 'fail-arc', inputTokens: 5000 })
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
-    expect(snapshot.cost_per_arc_p50).toBeNull()
-    expect(snapshot.cost_per_arc_p90).toBeNull()
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.cost_per_arc_p50).toBeNull()
+    expect(snapshot!.cost_per_arc_p90).toBeNull()
   })
 
   it('readLatestKpiSnapshot returns persisted cost_per_arc values', async () => {
@@ -424,8 +452,9 @@ describe('takeKpiSnapshot — cost_per_arc columns', () => {
     const written = await takeKpiSnapshot({ surface: store, now: NOW })
     const read = await readLatestKpiSnapshot(store)
 
-    expect(read!.cost_per_arc_p50).toBeCloseTo(written.cost_per_arc_p50!, 5)
-    expect(read!.cost_per_arc_p90).toBeCloseTo(written.cost_per_arc_p90!, 5)
+    expect(written).not.toBeNull()
+    expect(read!.cost_per_arc_p50).toBeCloseTo(written!.cost_per_arc_p50!, 5)
+    expect(read!.cost_per_arc_p90).toBeCloseTo(written!.cost_per_arc_p90!, 5)
   })
 })
 
@@ -620,8 +649,9 @@ describe('takeKpiSnapshot — autonomous_completion_rate column', () => {
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
-    expect(snapshot.autonomous_completion_rate).not.toBeNull()
-    expect(snapshot.autonomous_completion_rate).toBe(1)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.autonomous_completion_rate).not.toBeNull()
+    expect(snapshot!.autonomous_completion_rate).toBe(1)
   })
 
   it('Arc with a fix_for_task_id task in its tree is NOT counted as autonomous', async () => {
@@ -637,8 +667,9 @@ describe('takeKpiSnapshot — autonomous_completion_rate column', () => {
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
     // 1 done arc (origin), 0 autonomous → value = 0
-    expect(snapshot.autonomous_completion_rate).not.toBeNull()
-    expect(snapshot.autonomous_completion_rate).toBe(0)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.autonomous_completion_rate).not.toBeNull()
+    expect(snapshot!.autonomous_completion_rate).toBe(0)
   })
 
   it('Arc with a task-blocked action-queue item is NOT counted as autonomous', async () => {
@@ -653,8 +684,9 @@ describe('takeKpiSnapshot — autonomous_completion_rate column', () => {
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
     // 1 done arc with task-blocked item → 0 autonomous → value = 0
-    expect(snapshot.autonomous_completion_rate).not.toBeNull()
-    expect(snapshot.autonomous_completion_rate).toBe(0)
+    expect(snapshot).not.toBeNull()
+    expect(snapshot!.autonomous_completion_rate).not.toBeNull()
+    expect(snapshot!.autonomous_completion_rate).toBe(0)
   })
 
   it('persists autonomous_completion_rate so readLatestKpiSnapshot returns it', async () => {
@@ -768,13 +800,14 @@ describe('takeKpiSnapshot — per-KPI confidence flags are independent', () => {
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
 
+    expect(snapshot).not.toBeNull()
     // failure_rate population: 8 done+failed arcs → high confidence
-    expect(snapshot.failure_rate_sample_count).toBe(8)
-    expect(snapshot.failure_rate_low_confidence).toBe(0)
+    expect(snapshot!.failure_rate_sample_count).toBe(8)
+    expect(snapshot!.failure_rate_low_confidence).toBe(0)
 
     // cost_per_arc population: 2 done arcs with signals → low confidence
-    expect(snapshot.cost_per_arc_sample_count).toBe(2)
-    expect(snapshot.cost_per_arc_low_confidence).toBe(1)
+    expect(snapshot!.cost_per_arc_sample_count).toBe(2)
+    expect(snapshot!.cost_per_arc_low_confidence).toBe(1)
   })
 })
 
@@ -834,5 +867,62 @@ describe('readKpiWindowComparison — per-KPI delta suppression', () => {
     // cost_per_arc: prior has cost_per_arc_low_confidence=1 → deltas suppressed
     expect(result.deltas.cost_per_arc_p50).toEqual({ value: null, lowConfidenceSuppressed: true })
     expect(result.deltas.cost_per_arc_p90).toEqual({ value: null, lowConfidenceSuppressed: true })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 12. Daemon periodic job: takeKpiSnapshot writes a row for a synthetic window
+// ---------------------------------------------------------------------------
+// These tests verify the behaviour invoked by the daemon's runKpiSnapshot()
+// callback (setInterval sweep registered in server.ts). The daemon calls
+// takeKpiSnapshot({ surface, now }) and logs success; these tests confirm the
+// write actually lands so the /kpis route has fresh data.
+// ---------------------------------------------------------------------------
+
+describe('takeKpiSnapshot — daemon periodic-job contract', () => {
+  it('writes exactly one kpi_snapshots row when the window contains tasks', async () => {
+    const store = await makeStore()
+    // Seed enough tasks to pass the sample-count guard
+    await insertTask(store, { id: 'daemon-t1', status: 'done' })
+    await insertTask(store, { id: 'daemon-t2', status: 'done' })
+    await insertTask(store, { id: 'daemon-t3', status: 'failed' })
+
+    // Simulate what the daemon's runKpiSnapshot() callback does
+    const snap = await takeKpiSnapshot({ surface: store, now: NOW })
+
+    expect(snap).not.toBeNull()
+
+    const latest = await readLatestKpiSnapshot(store)
+    expect(latest).not.toBeNull()
+    expect(latest!.id).toBe(snap!.id)
+    expect(latest!.taken_at).toBe(NOW)
+    // failure_rate should be computed (1 failed / 3 total ≈ 0.333)
+    expect(latest!.failure_rate).not.toBeNull()
+    expect(latest!.failure_rate!).toBeCloseTo(1 / 3, 5)
+  })
+
+  it('does NOT write a row when the window contains no terminal tasks (all-zero guard)', async () => {
+    const store = await makeStore()
+    // No tasks at all → guard returns null
+    const snap = await takeKpiSnapshot({ surface: store, now: NOW })
+    expect(snap).toBeNull()
+
+    const latest = await readLatestKpiSnapshot(store)
+    expect(latest).toBeNull()
+  })
+
+  it('successive calls write successive rows; readLatestKpiSnapshot returns the newest', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'suc-t1', status: 'done' })
+
+    const first = await takeKpiSnapshot({ surface: store, now: '2026-01-06T00:00:00Z' })
+    const second = await takeKpiSnapshot({ surface: store, now: '2026-01-07T00:00:00Z' })
+
+    expect(first).not.toBeNull()
+    expect(second).not.toBeNull()
+
+    const latest = await readLatestKpiSnapshot(store)
+    expect(latest!.id).toBe(second!.id)
+    expect(latest!.taken_at).toBe('2026-01-07T00:00:00Z')
   })
 })

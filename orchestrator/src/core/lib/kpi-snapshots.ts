@@ -80,12 +80,14 @@ interface TakeKpiSnapshotOpts {
  * Compute a KPI window snapshot, persist exactly one row to kpi_snapshots,
  * and return the persisted row.
  *
- * Populates failure_rate and autonomous_completion_rate; cost_per_arc_* and
- * recovery_success_rate are NULL and will be filled by later slices.
+ * Returns `null` without writing when every KPI has a sample count of zero —
+ * an empty window produces a row that would only pollute the time-series with
+ * meaningless low-confidence zeros that the UI cannot distinguish from real
+ * measurement gaps.
  */
 export async function takeKpiSnapshot(
   opts: TakeKpiSnapshotOpts,
-): Promise<KpiSnapshot> {
+): Promise<KpiSnapshot | null> {
   const { surface, now, windowDays = 7, sampleFloor = 5 } = opts
 
   const windowEnd = now
@@ -104,6 +106,17 @@ export async function takeKpiSnapshot(
     await computeAutonomousCompletionRate(surface, window)
   const { value: recoverySuccessRate, sampleCount: rsrSampleCount } =
     await computeRecoverySuccessRate(surface, window)
+
+  // Guard: skip the write when every KPI window is empty — an all-zero row
+  // would pollute the time-series without providing any baseline for reflect.
+  if (
+    frSampleCount === 0 &&
+    costSampleCount === 0 &&
+    acrSampleCount === 0 &&
+    rsrSampleCount === 0
+  ) {
+    return null
+  }
 
   const snapshot: KpiSnapshot = {
     id: randomUUID(),
