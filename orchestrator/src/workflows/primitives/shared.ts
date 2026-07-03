@@ -441,9 +441,11 @@ export const parseCompletionReport = (text: string): CompletionReport => {
     for (const rawLine of raw.split('\n')) {
       const trimmed = rawLine.trim()
       if (trimmed.length === 0) continue
-      // Format: - <status> <criterion> — evidence: <evidence>   (em dash U+2014)
+      // Format: - [<status>] <criterion> — evidence: <evidence>   (em dash
+      // U+2014). The bracketed status is what COMPLETION_REPORT_CONTRACT
+      // mandates and what live coders emit.
       const match = trimmed.match(
-        /^-\s+(done|partial|blocked)\s+(.+?)\s+—\s+evidence:\s+(.+)$/,
+        /^-\s+\[(done|partial|blocked)\]\s+(.+?)\s+—\s+evidence:\s+(.+)$/,
       )
       if (!match) return { kind: 'unparseable', raw }
       lines.push({

@@ -21,7 +21,7 @@ describe('parseCompletionReport', () => {
       'Some output text.',
       '',
       '```completion-report',
-      '- done Implement the parser — evidence: src/shared.ts:42',
+      '- [done] Implement the parser — evidence: src/shared.ts:42',
       '```',
     ].join('\n')
     const result = parseCompletionReport(text)
@@ -40,9 +40,9 @@ describe('parseCompletionReport', () => {
   it('parses partial and blocked lines', () => {
     const text = [
       '```completion-report',
-      '- done Export the fence constant — evidence: src/shared.ts:70',
-      '- partial Add unit tests — evidence: missing coverage for edge cases',
-      '- blocked Wire into verify phase — evidence: sibling task mars-abc123 not yet done',
+      '- [done] Export the fence constant — evidence: src/shared.ts:70',
+      '- [partial] Add unit tests — evidence: missing coverage for edge cases',
+      '- [blocked] Wire into verify phase — evidence: sibling task mars-abc123 not yet done',
       '```',
     ].join('\n')
     const result = parseCompletionReport(text)
@@ -57,13 +57,13 @@ describe('parseCompletionReport', () => {
   it('uses the LAST completion-report block when multiple appear', () => {
     const text = [
       '```completion-report',
-      '- done First goal — evidence: commit abc1234',
+      '- [done] First goal — evidence: commit abc1234',
       '```',
       '',
       'Some more output.',
       '',
       '```completion-report',
-      '- done Final goal — evidence: commit def5678',
+      '- [done] Final goal — evidence: commit def5678',
       '```',
     ].join('\n')
     const result = parseCompletionReport(text)
@@ -75,7 +75,7 @@ describe('parseCompletionReport', () => {
   it('returns unparseable when a line is missing the em-dash separator', () => {
     const text = [
       '```completion-report',
-      '- done Something -- evidence: file.ts:1',
+      '- [done] Something -- evidence: file.ts:1',
       '```',
     ].join('\n')
     const result = parseCompletionReport(text)
@@ -85,7 +85,7 @@ describe('parseCompletionReport', () => {
   it('returns unparseable when status is not done/partial/blocked', () => {
     const text = [
       '```completion-report',
-      '- wip Some criterion — evidence: file.ts:1',
+      '- [wip] Some criterion — evidence: file.ts:1',
       '```',
     ].join('\n')
     const result = parseCompletionReport(text)
@@ -117,7 +117,7 @@ describe('parseCompletionReport', () => {
     const text = [
       '```completion-report',
       '',
-      '- done Write parser — evidence: src/shared.ts:100',
+      '- [done] Write parser — evidence: src/shared.ts:100',
       '',
       '```',
     ].join('\n')
@@ -130,7 +130,7 @@ describe('parseCompletionReport', () => {
   it('captures evidence text verbatim including colons and slashes', () => {
     const text = [
       '```completion-report',
-      '- done Export types — evidence: src/workflows/primitives/shared.ts:80-90',
+      '- [done] Export types — evidence: src/workflows/primitives/shared.ts:80-90',
       '```',
     ].join('\n')
     const result = parseCompletionReport(text)

@@ -24,7 +24,7 @@ const makeReport = (
   lines: Array<{ status: 'done' | 'partial' | 'blocked'; criterion: string; evidence: string }>,
 ): string => {
   const body = lines
-    .map((l) => `- ${l.status} ${l.criterion} — evidence: ${l.evidence}`)
+    .map((l) => `- [${l.status}] ${l.criterion} — evidence: ${l.evidence}`)
     .join('\n')
   return `\`\`\`completion-report\n${body}\n\`\`\``
 }
