@@ -88,6 +88,26 @@ describe('TopologyView – graph rebuild gate (structural signature)', () => {
   })
 })
 
+describe('TopologyView – layout affordance', () => {
+  // isLayoutReady starts false (graph.render() hasn't resolved yet in the static
+  // renderer — no effects run).  The "laying out…" overlay should therefore be
+  // present in the initial SSR markup and act as a pointer-events:none shield so
+  // the canvas canvas below doesn't accidentally capture clicks before layout
+  // positions are committed.
+  it('renders the laying-out affordance before the graph has settled', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[stubTask('t-1')]} proposals={noProposals} />,
+    )
+    expect(html).toContain('laying out')
+  })
+
+  it('does not show the laying-out affordance in the empty state', () => {
+    // Empty state short-circuits before the canvas is rendered; no overlay.
+    const html = renderToStaticMarkup(<TopologyView tasks={noTasks} proposals={noProposals} />)
+    expect(html).not.toContain('laying out')
+  })
+})
+
 describe('TopologyView – accessible canvas container', () => {
   it('exposes the canvas container as an image landmark for assistive technology', () => {
     const html = renderToStaticMarkup(
