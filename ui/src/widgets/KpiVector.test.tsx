@@ -115,4 +115,23 @@ describe('KpiVector', () => {
     expect(html).toContain('Autonomous Completion')
     expect(html).toContain('Recovery Success')
   })
+
+  it('renders an explanatory empty-state message when the KPI array is empty', async () => {
+    vi.mocked(useKpis).mockReturnValue({ data: [], isLoading: false, error: null })
+    const { KpiVector } = await import('./KpiVector')
+    const html = renderToStaticMarkup(<KpiVector />)
+    expect(html).toContain('No KPI data yet')
+    expect(html).toContain('arcs complete')
+  })
+
+  it('renders a fallback alert instead of nothing when useKpis returns an error', async () => {
+    vi.mocked(useKpis).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('Network error'),
+    })
+    const { KpiVector } = await import('./KpiVector')
+    const html = renderToStaticMarkup(<KpiVector />)
+    expect(html).toContain('role="alert"')
+  })
 })
