@@ -303,9 +303,12 @@ export const initActionQueue = async (): Promise<void> => {
     `SELECT name FROM sqlite_master WHERE type='table' AND name='action_queue_items'`,
   )
   if (aqCheck.rows.length > 0) {
-    await c.execute(`DROP TABLE IF EXISTS inbox_items`)
+    // Drop children before the parent so PRAGMA foreign_keys=ON never sees a
+    // parent-first teardown.  inbox_history.item_id → inbox_items(id); dropping
+    // inbox_items first with rows present throws SQLITE_CONSTRAINT (FK violated).
     await c.execute(`DROP TABLE IF EXISTS inbox_history`)
     await c.execute(`DROP TABLE IF EXISTS inbox_dismissals`)
+    await c.execute(`DROP TABLE IF EXISTS inbox_items`)
   }
   initialised = true
 }

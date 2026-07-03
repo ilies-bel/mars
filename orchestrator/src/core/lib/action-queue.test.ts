@@ -979,6 +979,49 @@ describe('initActionQueue drops legacy inbox_* tables', () => {
 
     expect(found.rows).toHaveLength(0)
   })
+
+  it('drops legacy tables child-first when inbox_history has a real FK and contains rows — no SQLITE_CONSTRAINT', async () => {
+    // Regression for the DROP order bug (2026-07-03): inbox_history carries
+    // FOREIGN KEY (item_id) REFERENCES inbox_items(id).  With PRAGMA
+    // foreign_keys=ON, dropping inbox_items (the parent) FIRST while
+    // inbox_history still has rows throws SQLITE_CONSTRAINT.  The fix drops
+    // children (inbox_history, inbox_dismissals) before the parent (inbox_items).
+    const dbPath = resolve(repo, '.mars', 'mars.db')
+
+    const { createClient } = await import('@libsql/client')
+    const pre = createClient({ url: `file:${dbPath}` })
+    // Create legacy tables with the real FK schema.  FK enforcement is off on
+    // this seeding client (SQLite default), so the INSERT succeeds regardless.
+    await pre.execute('CREATE TABLE inbox_items (id TEXT PRIMARY KEY, body TEXT)')
+    await pre.execute(`
+      CREATE TABLE inbox_history (
+        id      TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL,
+        FOREIGN KEY (item_id) REFERENCES inbox_items(id)
+      )
+    `)
+    await pre.execute('CREATE TABLE inbox_dismissals (id TEXT PRIMARY KEY)')
+    // Insert a parent row and a child row referencing it — 3825 rows were present
+    // in the live incident; one pair is sufficient to trigger the FK violation.
+    await pre.execute(`INSERT INTO inbox_items VALUES ('item-1', 'an alert body')`)
+    await pre.execute(`INSERT INTO inbox_history VALUES ('hist-1', 'item-1')`)
+    pre.close()
+
+    // initActionQueue runs with PRAGMA foreign_keys=ON (via openLibsql).
+    // It must NOT throw; the child-first drop order prevents SQLITE_CONSTRAINT.
+    const actionQueue = await loadModule(repo)
+    await expect(actionQueue.listActionQueueItems('all')).resolves.toBeDefined()
+
+    // All three legacy tables must be gone.
+    const post = createClient({ url: `file:${dbPath}` })
+    const found = await post.execute(
+      `SELECT name FROM sqlite_master
+         WHERE type='table' AND name IN ('inbox_items','inbox_history','inbox_dismissals')`,
+    )
+    post.close()
+
+    expect(found.rows).toHaveLength(0)
+  })
 })
 
 describe('ACTION_QUEUE_KINDS membership — writer kind constants', () => {
