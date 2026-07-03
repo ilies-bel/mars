@@ -54,6 +54,7 @@ const addHandler = handler('add', async (req, deps) => {
     req.tags,
     req.spec,
     req.intent,
+    req.originSessionId,
   )
   return { ok: true, data: task }
 })

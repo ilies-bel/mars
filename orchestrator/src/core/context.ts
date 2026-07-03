@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, isAbsolute, resolve, sep } from 'node:path'
 
 export interface OrchestratorContext {
@@ -134,3 +134,22 @@ export const getStateDir = (): string => resolveContext().stateDir
  */
 export const resolveRepo = (override?: string): string =>
   resolveContext(override).repoRoot
+
+/**
+ * Return the path to `.mars/mars.db` if the state directory ALREADY EXISTS,
+ * without creating it.  Used for best-effort trace emissions that must never
+ * side-effect into creating `.mars/`.
+ *
+ * Returns `null` when the repo root cannot be determined, when `.mars/`
+ * doesn't exist, or when `mars.db` is absent.
+ */
+export const findExistingMarsDb = (override?: string): string | null => {
+  try {
+    const explicit = override ?? process.env.MARS_REPO
+    const repoRoot = explicit ? resolve(explicit) : detectRepoRoot(process.cwd())
+    const dbPath = resolve(repoRoot, '.mars', 'mars.db')
+    return existsSync(dbPath) ? dbPath : null
+  } catch {
+    return null
+  }
+}

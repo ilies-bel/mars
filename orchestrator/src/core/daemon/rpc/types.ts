@@ -110,6 +110,7 @@ export interface DaemonDeps {
     tags?: TaskTag[],
     spec?: TaskSpec,
     intent?: string,
+    originSessionId?: string | null,
   ): Promise<Task>
   setTaskPriority(id: string, priority: number): Promise<Task>
   handleUpdate(id: string, patch: DaemonUpdatePatch): Promise<void>

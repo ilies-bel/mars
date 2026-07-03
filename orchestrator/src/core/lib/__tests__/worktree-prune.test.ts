@@ -34,6 +34,7 @@ const baseTask = (overrides: Partial<Task>): Task => ({
   leaseOwner: null,
   leasedAt: null,
   leaseNote: null,
+  originSessionId: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
   ...overrides,

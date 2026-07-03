@@ -259,6 +259,12 @@ export const initProposals = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_proposals_fingerprint ON proposals(fingerprint) WHERE fingerprint IS NOT NULL`,
   )
+  // origin_session_id: UUID of the Claude Code operator session that created
+  // the proposal, captured from CLAUDE_CODE_SESSION_ID at the CLI boundary.
+  // NULL on every row created outside a Claude Code session and on legacy rows.
+  if (!colNames.has('origin_session_id')) {
+    await c.execute(`ALTER TABLE proposals ADD COLUMN origin_session_id TEXT`)
+  }
   // Run after the queue migration has had a chance to migrate
   // `tasks.blocker_id` out into `task_blockers` rows, since that migration
   // reads `task_suggestions` and we are about to drop it.
@@ -469,6 +475,12 @@ export interface CreateProposalOptions {
   kpiTag?: string
   /** Stable fingerprint for root-cause dedup across reflection runs. */
   fingerprint?: string
+  /**
+   * UUID of the originating Claude Code operator session, captured from
+   * `CLAUDE_CODE_SESSION_ID` at the CLI boundary.  NULL when the proposal
+   * is created outside a Claude Code session.
+   */
+  originSessionId?: string | null
 }
 
 export const createProposal = async (
@@ -493,6 +505,7 @@ export const createProposal = async (
   const notes = opts?.notes ?? ''
   const kpiTag = opts?.kpiTag ?? null
   const fingerprint = opts?.fingerprint ?? null
+  const originSessionId = opts?.originSessionId ?? null
   // Detect whether the legacy goal/story/technical columns still exist as
   // NOT NULL — pre-existing repos do, fresh repos don't. Write to both
   // sets when present so the legacy NOT NULL constraint is satisfied.
@@ -506,8 +519,8 @@ export const createProposal = async (
               (id, goal, story, technical,
                title, problem, solution, out_of_scope, notes,
                status, source, author_kind, author_name,
-               kpi_tag, fingerprint, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`,
+               kpi_tag, fingerprint, origin_session_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         title,
@@ -523,6 +536,7 @@ export const createProposal = async (
         authorName,
         kpiTag,
         fingerprint,
+        originSessionId,
         now,
         now,
       ],
@@ -532,8 +546,8 @@ export const createProposal = async (
       sql: `INSERT INTO proposals
               (id, title, problem, solution, out_of_scope, notes,
                status, source, author_kind, author_name,
-               kpi_tag, fingerprint, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`,
+               kpi_tag, fingerprint, origin_session_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         title,
@@ -546,6 +560,7 @@ export const createProposal = async (
         authorName,
         kpiTag,
         fingerprint,
+        originSessionId,
         now,
         now,
       ],

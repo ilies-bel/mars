@@ -2,6 +2,25 @@ import { execSync } from 'node:child_process'
 
 export type AuthorKind = 'human' | 'agent'
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Return the originating Claude Code session UUID from the environment, or
+ * null when the var is absent or malformed.
+ *
+ * Claude Code exports CLAUDE_CODE_SESSION_ID=<uuid> into every Bash
+ * subprocess (verified on Claude Code 2.1.175). The guard rejects
+ * non-UUID values so test overrides can't accidentally poison the column.
+ */
+export const detectOriginSession = (
+  env: NodeJS.ProcessEnv = process.env,
+): string | null => {
+  const val = env.CLAUDE_CODE_SESSION_ID
+  if (typeof val === 'string' && UUID_RE.test(val)) return val
+  return null
+}
+
 export interface Author {
   kind: AuthorKind
   name: string

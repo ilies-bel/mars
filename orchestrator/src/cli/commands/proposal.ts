@@ -6,7 +6,7 @@
  * the two daemon-routed verbs (`promote`, `slice`) go through `deps.daemon`.
  */
 
-import { resolveAuthor, formatAuthor } from '../../core/author'
+import { resolveAuthor, formatAuthor, detectOriginSession } from '../../core/author'
 import {
   createProposal,
   getProposal,
@@ -117,8 +117,9 @@ const proposalAdd: Command = {
       return { code: 1 }
     }
     const author = resolveAuthor(args.flags['--author'])
+    const originSessionId = detectOriginSession()
     try {
-      const idea = await createProposal(goal, { author })
+      const idea = await createProposal(goal, { author, originSessionId })
       deps.out(`${idea.id} (author: ${formatAuthor(author)})`)
     } catch (error: unknown) {
       deps.err(errorMessage(error))

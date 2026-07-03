@@ -385,6 +385,13 @@ export interface Task {
    * NULL when none was provided.
    */
   leaseNote: string | null
+  /**
+   * UUID of the originating Claude Code operator session that enqueued this
+   * task, captured from `CLAUDE_CODE_SESSION_ID` at the CLI boundary.
+   * `null` when the task was created outside of a Claude Code session or
+   * before this column existed.
+   */
+  originSessionId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -773,6 +780,12 @@ export const migrateQueueSchema = async (): Promise<void> => {
   }
   if (!names.has('lease_note')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN lease_note TEXT`)
+  }
+  // origin_session_id: UUID of the Claude Code operator session that enqueued
+  // the task, captured from CLAUDE_CODE_SESSION_ID at the CLI boundary. NULL
+  // on every row created outside a Claude Code session and on legacy rows.
+  if (!names.has('origin_session_id')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN origin_session_id TEXT`)
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
@@ -1990,6 +2003,7 @@ SELECT
   t.sub_deliverable_json, t.integration_head_sha,
   t.dev_server_url, t.dev_server_pid, t.preview_validated, t.intent,
   t.lease_owner, t.leased_at, t.lease_note,
+  t.origin_session_id,
   t.created_at, t.updated_at
 FROM tasks t`
 
@@ -2058,6 +2072,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     leaseOwner: (row.lease_owner as string | null) ?? null,
     leasedAt: (row.leased_at as string | null) ?? null,
     leaseNote: (row.lease_note as string | null) ?? null,
+    originSessionId: (row.origin_session_id as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -2158,6 +2173,12 @@ export interface EnqueueTaskOptions {
    * capped at 200 chars).
    */
   intent?: string
+  /**
+   * UUID of the originating Claude Code operator session, captured from
+   * `CLAUDE_CODE_SESSION_ID` at the CLI boundary. Stored verbatim;
+   * null when the enqueue does not originate from a Claude Code session.
+   */
+  originSessionId?: string | null
 }
 
 /**

@@ -1123,8 +1123,54 @@ const normalizeDaemonAliases = (positional: string[]): string[] => {
  * short-circuits here (these print and return 0 without touching the seam).
  * The single `process.exit` mapping site lives in the trailer below.
  */
+/**
+ * Best-effort cli-invocation trace: emits one row into trace_events after a
+ * command returns.  Never throws, never creates `.mars/`, gated by
+ * MARS_REFLECT_DISABLED=1.
+ *
+ * The constraint "only when repo context is already resolvable" is enforced by
+ * `findExistingMarsDb`: it checks whether `.mars/mars.db` already exists
+ * without calling `mkdirSync`, so commands that never touched `deps.ctx` (and
+ * thus never created `.mars/`) silently skip the trace.
+ */
+const emitCliInvocationTrace = async (
+  repo: string | undefined,
+  command: string,
+  flags: Record<string, string>,
+  exitCode: number,
+  startMs: number,
+): Promise<void> => {
+  const { isReflectDisabled } = await import('./core/lib/reflect-signals')
+  if (isReflectDisabled()) return
+  const { findExistingMarsDb } = await import('./core/context')
+  const dbPath = findExistingMarsDb(repo)
+  if (!dbPath) return
+  const { openTraceEventStore } = await import('./core/lib/trace-events-store')
+  const { detectOriginSession } = await import('./core/author')
+  const truncatedFlags: Record<string, string> = {}
+  for (const [k, v] of Object.entries(flags)) {
+    truncatedFlags[k] = String(v ?? '').slice(0, 200)
+  }
+  const store = await openTraceEventStore(dbPath)
+  try {
+    await store.record({
+      kind: 'cli-invocation',
+      payload: {
+        originSessionId: detectOriginSession(),
+        command,
+        flags: truncatedFlags,
+        exitCode,
+        durationMs: Date.now() - startMs,
+      },
+    })
+  } finally {
+    await store.close()
+  }
+}
+
 const main = async (): Promise<number> => {
   const rawArgv = process.argv.slice(2)
+  const startMs = Date.now()
 
   // --version / -v short-circuits BEFORE any subcommand parsing, context
   // resolution, or other side effects. The constant is injected at build time.
@@ -1160,12 +1206,20 @@ const main = async (): Promise<number> => {
   const deps = await makeProductionDeps(parsed.repo)
   const result = await dispatch(registry, { ...parsed, positional }, deps)
 
+  const exitCode = isUnknown(result) ? 1 : result.code
+  await emitCliInvocationTrace(
+    parsed.repo,
+    positional.join(' '),
+    parsed.flags,
+    exitCode,
+    startMs,
+  ).catch(() => {})
+
   if (isUnknown(result)) {
     console.error(`unknown command: ${result.cmd}`)
     console.log(usage)
-    return 1
   }
-  return result.code
+  return exitCode
 }
 
 // ── The single exit-mapping site (ADR-0023 §2) ───────────────────────────────

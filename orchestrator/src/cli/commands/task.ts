@@ -7,7 +7,7 @@
  * `task add`.
  */
 
-import { resolveAuthor, formatAuthor, type Author } from '../../core/author'
+import { resolveAuthor, formatAuthor, detectOriginSession, type Author } from '../../core/author'
 import { detectNoCommitMarker } from '../../core/lib/no-commit-marker'
 import { causeForSignature } from '../../core/lib/failure-signature'
 import { getProposal } from '../../core/proposals'
@@ -73,6 +73,7 @@ const enqueueViaDaemon = async (
       ? { functional: functional ?? '', technical: technical ?? '' }
       : undefined
   const author: Author = resolveAuthor(flags['--author'])
+  const originSessionId = detectOriginSession()
   const task = (await deps.daemon.sendRequest(
     {
       op: 'add',
@@ -87,6 +88,7 @@ const enqueueViaDaemon = async (
       ...(params.tags !== undefined ? { tags: params.tags } : {}),
       ...(params.spec !== undefined ? { spec: params.spec } : {}),
       ...(params.intent !== undefined ? { intent: params.intent } : {}),
+      ...(originSessionId !== null ? { originSessionId } : {}),
     },
     { onSpawnNotice: spawnNoticeOut(deps.out) },
   )) as { id: string; status: string }
@@ -221,6 +223,9 @@ export const renderTaskDetail = async (
   const blockerTaskIds = await deps.store.listBlockers(task.id)
   if (blockerTaskIds.length > 0) {
     deps.out(`blockedBy:  ${blockerTaskIds.join(', ')}`)
+  }
+  if (task.originSessionId) {
+    deps.out(`origin session: ${task.originSessionId}`)
   }
   if (task.originId && task.originId !== task.id) {
     const originIdea = await getProposal(task.originId).catch(() => null)
