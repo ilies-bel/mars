@@ -106,12 +106,15 @@ describe('FrameworkUpdateBannerInner – Update now button', () => {
     expect(html).not.toContain('disabled')
   })
 
-  it('is disabled with a dev-install hint when selfUpdatable is false', () => {
+  it('shows visible inline text and no disabled button when selfUpdatable is false (dev install)', () => {
     const html = renderToStaticMarkup(
       <FrameworkUpdateBannerInner {...defaultProps} selfUpdatable={false} />,
     )
-    expect(html).toContain('disabled')
+    // The explanation must be visible text, not a title-attribute tooltip on a disabled control
     expect(html).toContain('git pull')
+    // No disabled button — the button is replaced entirely by inline text
+    expect(html).not.toContain('Update now')
+    expect(html).not.toContain('disabled')
   })
 
   it('shows Updating… label and is disabled while isUpdating is true', () => {

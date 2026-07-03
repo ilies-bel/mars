@@ -69,25 +69,23 @@ export const FrameworkUpdateBannerInner = ({
           )}
         </span>
       ) : null}
-      <button
-        type="button"
-        onClick={onUpdate}
-        disabled={!selfUpdatable || isUpdating}
-        title={
-          !selfUpdatable
-            ? 'dev install — git pull & rebuild'
-            : isUpdating
-              ? 'Update in progress…'
-              : undefined
-        }
-        className={
-          !selfUpdatable || isUpdating
-            ? 'cursor-not-allowed rounded px-2 py-0.5 opacity-40 ring-1 ring-iron/40'
-            : 'rounded px-2 py-0.5 ring-1 ring-iron/40 hover:bg-iron/10'
-        }
-      >
-        {isUpdating ? 'Updating…' : 'Update now'}
-      </button>
+      {selfUpdatable ? (
+        <button
+          type="button"
+          onClick={onUpdate}
+          disabled={isUpdating}
+          title={isUpdating ? 'Update in progress…' : undefined}
+          className={
+            isUpdating
+              ? 'cursor-not-allowed rounded px-2 py-0.5 opacity-40 ring-1 ring-iron/40'
+              : 'rounded px-2 py-0.5 ring-1 ring-iron/40 hover:bg-iron/10'
+          }
+        >
+          {isUpdating ? 'Updating…' : 'Update now'}
+        </button>
+      ) : (
+        <span className="text-xs opacity-60">dev install — update via git pull</span>
+      )}
       <button
         type="button"
         onClick={onDismiss}
