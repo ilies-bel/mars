@@ -1140,6 +1140,10 @@ const emitCliInvocationTrace = async (
   exitCode: number,
   startMs: number,
 ): Promise<void> => {
+  // `cut verify` asserts table emptiness for the CLI acceptance harness; the
+  // hook's own trace row would make a second run see a non-empty trace_events
+  // (self-pollution). The cut family is internal harness tooling — skip it.
+  if (command === 'cut' || command.startsWith('cut ')) return
   const { isReflectDisabled } = await import('./core/lib/reflect-signals')
   if (isReflectDisabled()) return
   const { findExistingMarsDb } = await import('./core/context')
