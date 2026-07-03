@@ -82,7 +82,12 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     expect(reloaded?.retryCount).toBe(1) // unchanged from before the restart
   })
 
-  it('clears all in-flight fields on requeue so the new run starts from setup', async () => {
+  it('clears all in-flight fields (including pointers) when the worktree path does not exist on disk', async () => {
+    // When the recorded worktree_path does NOT exist on disk the task must
+    // restart from setup — so branch/worktreePath are cleared in addition to
+    // the transient fields. This is the "worktree gone" branch of Fix 1
+    // (mars-c11be862): path `/mars/worktrees/<id>` is a synthetic path that
+    // will never be present on the test host.
     const { q, rr } = await loadModules(repo)
     const t = await q.enqueueTask('some work', undefined, { skipTriage: true })
 
@@ -110,10 +115,15 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     expect(reloaded?.failedPhase).toBeNull()
   })
 
-  it('removes the worktree directory from disk when the path exists', async () => {
-    // This test exercises the removeWorktree code path in reconcile-running.ts
-    // by creating a real registered git worktree, then verifying reconcile
-    // removes both the directory and the git registration.
+  it('preserves the worktree directory and pointers when the worktree is still on disk', async () => {
+    // Fix 1 (mars-c11be862): when a running task's worktree still exists on
+    // disk after a daemon restart, the reconciler must NOT evict it. The
+    // workflow engine's checkpoint-resume logic will skip the completed
+    // setup step and re-enter the code step using the preserved worktree.
+    // Evicting here nulls branch/worktreePath while the setup checkpoint
+    // still says "completed", causing the next dispatch to throw "no worktree
+    // available" every time — the root cause of the 1,014-iteration overnight
+    // loop observed 2026-07-02.
 
     // git worktree add requires at least one commit in the repo.
     const gitEnv = {
@@ -131,25 +141,66 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     const branch = `task/${t.id}`
     const worktreePath = resolve(tmpdir(), `mars-wt-${t.id}`)
 
-    // Register a real git worktree so existsSync returns true and removeWorktree
-    // has an actual registration to tear down.
+    // Register a real git worktree so existsSync returns true.
     execFileSync('git', ['worktree', 'add', '-b', branch, worktreePath, 'HEAD'], { cwd: repo })
 
     await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'running', branch = ?, worktree_path = ? WHERE id = ?`,
+      sql: `UPDATE tasks SET status = 'running', branch = ?, worktree_path = ?,
+                              claude_session_id = 'sess-xyz', error = 'old error',
+                              failed_phase = 'code'
+            WHERE id = ?`,
       args: [branch, worktreePath, t.id],
+    })
+
+    try {
+      await rr.requeueRunningTasksFromPriorDaemon(repo)
+
+      // The worktree directory must still be on disk — we do NOT evict it.
+      expect(existsSync(worktreePath)).toBe(true)
+
+      // Task is requeued and the git pointers are preserved.
+      const reloaded = await q.getTask(t.id)
+      expect(reloaded?.status).toBe('queued')
+      expect(reloaded?.worktreePath).toBe(worktreePath)
+      expect(reloaded?.branch).toBe(branch)
+
+      // Only the transient fields are cleared.
+      expect(reloaded?.claudeSessionId).toBeNull()
+      expect(reloaded?.error).toBeNull()
+      expect(reloaded?.failedPhase).toBeNull()
+    } finally {
+      // Clean up the external worktree directory (preserved by the fix, so
+      // afterEach's rmSync of `repo` does not reach it).
+      rmSync(worktreePath, { recursive: true, force: true })
+    }
+  })
+
+  it('removes the worktree directory and clears all pointers when the worktree path is gone', async () => {
+    // When the worktree path does NOT exist on disk (e.g. it was on a
+    // different host or was already deleted), the reconciler should clear
+    // both branch and worktreePath so the next dispatch re-runs setup fresh
+    // rather than resuming against a missing path.
+    const { q, rr } = await loadModules(repo)
+    const t = await q.enqueueTask('work with missing worktree', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', branch = ?, worktree_path = ?,
+                              claude_session_id = 'sess-abc', error = 'prior error',
+                              failed_phase = 'verify'
+            WHERE id = ?`,
+      args: [`task/${t.id}`, `/tmp/nonexistent-path-${t.id}`, t.id],
     })
 
     await rr.requeueRunningTasksFromPriorDaemon(repo)
 
-    // Observable behaviour: the worktree directory must be gone from disk.
-    expect(existsSync(worktreePath)).toBe(false)
-
-    // Task is requeued with cleared in-flight fields.
+    // All in-flight fields cleared — task restarts from setup.
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
     expect(reloaded?.worktreePath).toBeNull()
     expect(reloaded?.branch).toBeNull()
+    expect(reloaded?.claudeSessionId).toBeNull()
+    expect(reloaded?.error).toBeNull()
+    expect(reloaded?.failedPhase).toBeNull()
   })
 
   it('restores a running task to blocked (not queued) when it still has incomplete blockers', async () => {

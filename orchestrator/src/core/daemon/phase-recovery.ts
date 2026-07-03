@@ -143,6 +143,19 @@ const CLEARED_INFLIGHT = {
 } as const
 
 /**
+ * The transient-only patch — applied when the worktree is still on disk and
+ * we want to preserve `branch`/`worktreePath` for a clean engine resume.
+ * Clearing only the session / error metadata is enough; the checkpoint-resume
+ * logic will skip the already-completed setup step and continue from the
+ * correct next step without touching the live worktree.
+ */
+const CLEARED_TRANSIENT = {
+  claudeSessionId: null,
+  error: null,
+  failedPhase: null,
+} as const
+
+/**
  * Run the full scan → probe → requeue/block/finalize/fail loop for one phase.
  *
  * The shared body:
@@ -232,24 +245,47 @@ export const recoverPhase = async (
       continue
     }
 
-    // recover: clear the stale worktree + branch and re-run from setup, unless
-    // incomplete blockers survived (then restore to blocked).
+    // recover: if the worktree still exists on disk, preserve it and its git
+    // pointers so the checkpoint-resume engine can re-enter at the correct step
+    // without re-running setup. If the worktree is gone, delete the branch and
+    // the step checkpoints so the next dispatch re-runs setup from scratch —
+    // a stale "setup: completed" checkpoint against a missing worktree is the
+    // root cause of the 2026-07-02 re-queue loop (see mars-c11be862 post-mortem).
     const branch = t.branch ?? `task/${t.id}`
-    if (t.worktreePath && exists(t.worktreePath)) {
-      await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
+    const worktreeOnDisk = t.worktreePath != null && exists(t.worktreePath)
+
+    if (worktreeOnDisk) {
+      // Worktree survived the daemon restart — keep it and its branch intact.
+      // Only clear transient fields (session id, error, failedPhase) so the
+      // next run picks up from the right step with a fresh Claude session.
+    } else {
+      // Worktree is gone — the completed setup checkpoint now points at a
+      // missing path. Delete the branch artifact and the step checkpoints so
+      // the next dispatch re-runs setup and creates a fresh worktree.
+      if (t.worktreePath) {
+        await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
+      }
+      await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
+      const { createQueueWorkflowStore } = await import(
+        '../../workflows/queue-workflow-store'
+      )
+      await createQueueWorkflowStore().deleteRun(t.id).catch(() => {})
     }
-    await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
+
+    // Preserve branch/worktreePath when the worktree is live; clear everything
+    // (including pointers) when the worktree is gone so the task row is clean.
+    const patch = worktreeOnDisk ? CLEARED_TRANSIENT : CLEARED_INFLIGHT
 
     const hasBlockers = await hasIncompleteBlockers(t.id).catch(() => false)
     if (hasBlockers) {
       if (!silent) log(policy.blockedLog(t))
-      await updateTask(t.id, { status: 'blocked', ...CLEARED_INFLIGHT }).catch(() => {})
+      await updateTask(t.id, { status: 'blocked', ...patch }).catch(() => {})
       result.blocked++
       continue
     }
 
     if (!silent) log(policy.requeueLog(t))
-    await updateTask(t.id, { status: 'queued', ...CLEARED_INFLIGHT }).catch(() => {})
+    await updateTask(t.id, { status: 'queued', ...patch }).catch(() => {})
     if (policy.emitOnRequeue) bus.emit('task.queued', { taskId: t.id })
     result.requeued.push(t.id)
   }

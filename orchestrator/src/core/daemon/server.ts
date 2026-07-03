@@ -3135,6 +3135,13 @@ export const startDaemon = async (
   // and has nothing in flight (i.e. genuinely wedged, not just busy) does it
   // re-seed the pending sets from the DB and kick drain(). During healthy
   // operation it is a no-op. .unref() so it never keeps the process alive.
+  //
+  // Re-queue loop defence (mars-c11be862 post-mortem, 2026-07-02): before
+  // re-seeding any queued task, we check its step attempt counts. A task
+  // whose step has been attempted REQUEUE_STEP_CEILING times without the run
+  // completing is stuck in an infinite re-queue loop. It is escalated to
+  // 'failed' + an operator action-queue item rather than re-seeded.
+  // See orchestrator/src/core/daemon/requeue-ceiling.ts for the ceiling logic.
   const POLL_FALLBACK_MS = Number(process.env.MARS_DRAIN_POLL_MS ?? 30_000)
   const pollFallback = setInterval(() => {
     if (!acceptingWork || isPaused || drainRunning || tracker.inFlightCount() > 0) return
@@ -3149,8 +3156,15 @@ export const startDaemon = async (
         for (const t of drafts) {
           if (!tracker.isInFlight(t.id)) tracker.enqueuePending(t.id, 'triage')
         }
+        const { createQueueWorkflowStore: makeWFStore } = await import(
+          '../../workflows/queue-workflow-store'
+        )
+        const { checkAndEscalateRequeueCeiling } = await import('./requeue-ceiling')
+        const wfStore = makeWFStore()
         for (const t of queued) {
-          if (!tracker.isInFlight(t.id)) tracker.enqueuePending(t.id, 'implement')
+          if (tracker.isInFlight(t.id)) continue
+          const escalated = await checkAndEscalateRequeueCeiling(t, wfStore, log)
+          if (!escalated) tracker.enqueuePending(t.id, 'implement')
         }
         log(
           `[dispatch] poll-fallback re-seeding ${seedable} task(s) (idle with non-empty queue)`,
