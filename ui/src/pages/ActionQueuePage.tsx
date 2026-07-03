@@ -513,7 +513,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
             type="button"
             disabled={more.isPending}
             onClick={() => more.mutate(nextCursor)}
-            className="mt-2 font-mono text-[10px] uppercase text-fg underline disabled:opacity-50"
+            className="mt-1 inline-flex min-h-[24px] items-center px-2 py-1 font-mono text-[10px] uppercase text-fg underline disabled:opacity-50"
           >
             {more.isPending ? 'Loading…' : 'Load more'}
           </button>

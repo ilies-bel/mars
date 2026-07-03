@@ -286,7 +286,7 @@ const EventRow = memo(({ event, now }: EventRowProps) => {
           <button
             type="button"
             onClick={toggleFields}
-            className="shrink-0 font-mono text-[9px] text-muted underline hover:text-iron"
+            className="-my-1 inline-flex min-h-[24px] shrink-0 items-center px-2 py-1 font-mono text-[9px] text-muted underline hover:text-iron"
             data-testid={`event-row-fields-toggle-${event.id}`}
           >
             {fieldsExpanded ? 'hide fields' : 'fields'}
