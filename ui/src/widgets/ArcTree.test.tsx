@@ -1,16 +1,26 @@
+// @vitest-environment happy-dom
 /**
  * ArcTree tests.
  *
  * Strategy:
  *  - The pure `buildArcTree` function is tested directly — no DOM needed.
- *  - The `ArcTree` component is exercised via renderToStaticMarkup.
+ *  - The `ArcTree` component is exercised via renderToStaticMarkup for
+ *    structure assertions and via act+createRoot for interaction tests.
  *    Task IDs appear directly in the rendered HTML (not just in an sr-only
  *    list) because ArcTree renders real DOM text nodes.
  *
  * Schema round-trip: verifies that `dagContextSchema.parse()` accepts `edges`
  * with both `blocks` and `recovers` kinds.
  */
+
+// Required so React's `act()` co-operates with the happy-dom environment.
+// Without this flag React logs a warning and the act() flush is a no-op.
+// @ts-expect-error — global set for test environment only
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+import { act, createElement } from 'react'
 import { describe, expect, it } from 'bun:test'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { dagContextSchema } from '@/shared/schemas'
 import { ArcTree, buildArcTree } from './ArcTree'
@@ -357,5 +367,71 @@ describe('ArcTree – kind labels in rendered HTML', () => {
       <ArcTree dag={dagWithBlocker} entityId="mars-center" entityStatus="failed" />,
     )
     expect(html).toContain('TASK')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ArcTree – onOpenTask callback (requires DOM interaction via happy-dom)
+// ---------------------------------------------------------------------------
+
+describe('ArcTree – onOpenTask callback', () => {
+  it('calls onOpenTask with the row id when a peripheral row is clicked', async () => {
+    const called: string[] = []
+    const onOpenTask = (id: string) => { called.push(id) }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    await act(async () => {
+      createRoot(container).render(
+        createElement(ArcTree, {
+          dag: dagWithBlocker,
+          entityId: 'mars-center',
+          entityStatus: 'failed',
+          onOpenTask,
+        }),
+      )
+    })
+
+    // The first button is the blocker row (mars-aaa); click it.
+    const firstButton = container.querySelector('button')
+    expect(firstButton).not.toBeNull()
+
+    await act(async () => {
+      firstButton!.click()
+    })
+
+    expect(called).toContain('mars-aaa')
+
+    document.body.removeChild(container)
+  })
+
+  it('does not mutate window.location.hash when onOpenTask is provided', async () => {
+    const originalHash = window.location.hash
+    const onOpenTask = (_id: string) => { /* intentional no-op */ }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    await act(async () => {
+      createRoot(container).render(
+        createElement(ArcTree, {
+          dag: dagWithBlocker,
+          entityId: 'mars-center',
+          entityStatus: 'failed',
+          onOpenTask,
+        }),
+      )
+    })
+
+    const firstButton = container.querySelector('button')
+    await act(async () => {
+      firstButton!.click()
+    })
+
+    // Hash must not have changed to the bare task URL
+    expect(window.location.hash).toBe(originalHash)
+
+    document.body.removeChild(container)
   })
 })

@@ -802,6 +802,7 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 dag={item.dag}
                 entityId={item.entityId}
                 entityStatus={isRealFailedTask ? 'failed' : 'running'}
+                onOpenTask={openTask}
               />
             </>
           )}

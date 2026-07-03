@@ -127,6 +127,14 @@ export interface ArcTreeProps {
   entityId: string
   /** Task status string (e.g. 'failed', 'running') used to colour the central row. */
   entityStatus: string
+  /**
+   * Called with the task id when a row is clicked, instead of mutating
+   * `window.location.hash` directly. Pass this from a host that needs to
+   * thread origin context into the navigation hash (e.g. 'action-queue'),
+   * so pressing Esc from the task drawer returns to the correct page.
+   * When omitted, falls back to the bare `#/task/<id>` hash.
+   */
+  onOpenTask?: (id: string) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +150,7 @@ export interface ArcTreeProps {
  * Each row is a focusable button that navigates to the task drawer via
  * `window.location.hash`. Text is fully selectable and ⌘-F-able.
  */
-export const ArcTree = ({ dag, entityId, entityStatus }: ArcTreeProps) => {
+export const ArcTree = ({ dag, entityId, entityStatus, onOpenTask }: ArcTreeProps) => {
   const hasNodes =
     dag.blockers.length > 0 ||
     dag.blocking.length > 0 ||
@@ -167,7 +175,11 @@ export const ArcTree = ({ dag, entityId, entityStatus }: ArcTreeProps) => {
             <button
               type="button"
               onClick={() => {
-                window.location.hash = `#/task/${encodeURIComponent(row.id)}`
+                if (onOpenTask) {
+                  onOpenTask(row.id)
+                } else {
+                  window.location.hash = `#/task/${encodeURIComponent(row.id)}`
+                }
               }}
               className={[
                 'flex w-full items-baseline gap-2 rounded px-1 text-left hover:bg-iron/10',
