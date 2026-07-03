@@ -296,6 +296,26 @@ export const actionQueueCount = (payload: StaleWorktreesPayload): number =>
   payload.staleWorktrees.length
 
 /**
+ * Returns the document.title string for the given page route.
+ *
+ * When the route is 'action-queue' and `aqCount` is positive, the live item
+ * count is appended in parentheses so multiple mars tabs are distinguishable
+ * in the browser tab bar and history (e.g. "mars — action queue (3)").
+ */
+export const pageTitle = (route: RouteName, aqCount = 0): string => {
+  switch (route) {
+    case 'action-queue':
+      return aqCount > 0 ? `mars — action queue (${aqCount})` : 'mars — action queue'
+    case 'progress':
+      return 'mars — progress'
+    case 'events':
+      return 'mars — events'
+    case 'kpi':
+      return 'mars — kpis'
+  }
+}
+
+/**
  * Resolves the page route that should render beneath a potential overlay.
  *
  * A task overlay hash (`#/task/<id>`) keeps a page mounted beneath the drawer:

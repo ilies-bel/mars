@@ -10,6 +10,7 @@ import { useHashRoute } from '@/shared/useHashRoute'
 import { useGlobalKeyboardShortcuts } from '@/shared/useGlobalKeyboardShortcuts'
 import {
   isKnownRoute,
+  pageTitle,
   parseKpiRoute,
   parseProposalOrigin,
   parseProposalRoute,
@@ -23,6 +24,7 @@ import {
   resolvePageRoute,
 } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
+import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useProgress } from '@/hooks/useProgress'
 import { FocusedProjectProvider, useFocusedProjectId } from '@/shared/useFocusedProject'
@@ -79,6 +81,10 @@ const AppInner = () => {
     }
   }, [rawHash])
 
+  // Live action queue count for the tab title badge. React Query deduplicates
+  // this against the identical call inside ActionQueuePage — no extra request.
+  const { items: aqItems } = useActionQueue()
+
   // For rendering, treat unknown hashes as #/progress so the nav highlight and
   // page selection are correct even on the first render before the effect runs.
   const hash = isKnownRoute(rawHash) ? rawHash : '#/progress'
@@ -108,6 +114,14 @@ const AppInner = () => {
     ? (drafts.find((d) => d.id === proposalId) ?? null)
     : null
   const route = resolvePageRoute(hash)
+
+  // Update the browser tab title whenever the route or AQ item count changes
+  // so multiple mars tabs are distinguishable in the tab bar and history.
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    document.title = pageTitle(route, aqItems.length)
+  }, [route, aqItems.length])
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
       <AlertNotifier />

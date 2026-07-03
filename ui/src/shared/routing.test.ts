@@ -3,6 +3,7 @@ import {
   detectRoute,
   isKnownRoute,
   actionQueueCount,
+  pageTitle,
   parseTaskRoute,
   parseTaskOrigin,
   parseTaskStep,
@@ -418,6 +419,37 @@ describe('parseReleaseNotesRoute', () => {
     expect(parseReleaseNotesRoute('')).toBe(false)
     expect(parseReleaseNotesRoute('#/task/abc')).toBe(false)
     expect(parseReleaseNotesRoute('#/release-notes/extra')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// pageTitle — document.title text per route
+// ---------------------------------------------------------------------------
+
+describe('pageTitle', () => {
+  it('returns "mars — action queue" for the action-queue route with no items', () => {
+    expect(pageTitle('action-queue', 0)).toBe('mars — action queue')
+  })
+
+  it('returns "mars — action queue (N)" when there are N action queue items', () => {
+    expect(pageTitle('action-queue', 3)).toBe('mars — action queue (3)')
+    expect(pageTitle('action-queue', 12)).toBe('mars — action queue (12)')
+  })
+
+  it('defaults aqCount to 0 when omitted', () => {
+    expect(pageTitle('action-queue')).toBe('mars — action queue')
+  })
+
+  it('returns "mars — progress" for the progress route', () => {
+    expect(pageTitle('progress')).toBe('mars — progress')
+  })
+
+  it('returns "mars — events" for the events route', () => {
+    expect(pageTitle('events')).toBe('mars — events')
+  })
+
+  it('returns "mars — kpis" for the kpi route', () => {
+    expect(pageTitle('kpi')).toBe('mars — kpis')
   })
 })
 
