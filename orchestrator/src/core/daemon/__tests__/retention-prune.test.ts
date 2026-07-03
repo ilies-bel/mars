@@ -14,6 +14,7 @@ import {
   pruneRetention,
   RETENTION_DAYS_DEFAULT,
   RETENTION_MAX_ROWS_DEFAULT,
+  LOG_LINE_RETENTION_DAYS,
 } from '../../lib/retention-prune'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -59,10 +60,11 @@ async function seedTraceEvent(
   client: LibsqlClient,
   id: string,
   timestamp: string,
+  kind = 'test',
 ): Promise<void> {
   await client.execute({
-    sql: 'INSERT INTO trace_events (id, timestamp) VALUES (?, ?)',
-    args: [id, timestamp],
+    sql: 'INSERT INTO trace_events (id, timestamp, kind) VALUES (?, ?, ?)',
+    args: [id, timestamp, kind],
   })
 }
 
@@ -281,6 +283,78 @@ describe('pruneRetention', () => {
     } finally {
       rmSync(isolatedDir, { recursive: true, force: true })
     }
+  })
+
+  // ── row-cap: looping until convergence ──────────────────────────────────
+
+  it('row-cap prune loops until row count is at or below maxRows (5k → 1k)', async () => {
+    const client = openLibsql({ url: `file:${dbPath}` })
+    const base = Date.now()
+    for (let i = 0; i < 5000; i++) {
+      const ts = new Date(base - (5000 - i) * 1000).toISOString()
+      await client.execute({
+        sql: 'INSERT INTO trace_events (id, timestamp) VALUES (?, ?)',
+        args: [`bulk-${i}`, ts],
+      })
+    }
+    client.close()
+
+    await pruneRetention(dbPath, { maxRows: 1000, maxAgeDays: 0, maxLogLineAgeDays: 0 })
+
+    const client2 = openLibsql({ url: `file:${dbPath}` })
+    const count = await traceEventCount(client2)
+    client2.close()
+
+    expect(count).toBeLessThanOrEqual(1000)
+  })
+
+  it('traceEventsRemaining reflects the actual post-prune row count', async () => {
+    const client = openLibsql({ url: `file:${dbPath}` })
+    await seedTraceEvent(client, 'r1', makeTs(1))
+    await seedTraceEvent(client, 'r2', makeTs(1))
+    await seedTraceEvent(client, 'r3', makeTs(1))
+    client.close()
+
+    const result = await pruneRetention(dbPath, { maxAgeDays: 0, maxRows: 9999 })
+
+    expect(result.traceEventsRemaining).toBe(3)
+  })
+
+  // ── log_line tight age cap ────────────────────────────────────────────────
+
+  it('deletes log_line rows older than maxLogLineAgeDays and keeps recent ones', async () => {
+    const client = openLibsql({ url: `file:${dbPath}` })
+    // Two stale log_line rows (beyond 2-day cap) and one recent one.
+    await seedTraceEvent(client, 'logline-old-1', makeTs(LOG_LINE_RETENTION_DAYS + 1), 'log_line')
+    await seedTraceEvent(client, 'logline-old-2', makeTs(LOG_LINE_RETENTION_DAYS + 3), 'log_line')
+    await seedTraceEvent(client, 'logline-fresh', makeTs(0), 'log_line')
+    // A regular event also older than log_line cap — must NOT be deleted by log_line pass.
+    await seedTraceEvent(client, 'step-old', makeTs(LOG_LINE_RETENTION_DAYS + 1), 'step_ended')
+    client.close()
+
+    const result = await pruneRetention(dbPath, { maxAgeDays: 0, maxRows: 9999 })
+
+    expect(result.traceEventsByLogLineAge).toBe(2)
+
+    const client2 = openLibsql({ url: `file:${dbPath}` })
+    const ids = await traceEventIds(client2)
+    client2.close()
+
+    // Fresh log_line and the non-log_line event survive.
+    expect(ids).toContain('logline-fresh')
+    expect(ids).toContain('step-old')
+    expect(ids).not.toContain('logline-old-1')
+    expect(ids).not.toContain('logline-old-2')
+  })
+
+  it('returns zero traceEventsByLogLineAge when maxLogLineAgeDays is 0', async () => {
+    const client = openLibsql({ url: `file:${dbPath}` })
+    await seedTraceEvent(client, 'logline-stale', makeTs(LOG_LINE_RETENTION_DAYS + 5), 'log_line')
+    client.close()
+
+    const result = await pruneRetention(dbPath, { maxAgeDays: 0, maxLogLineAgeDays: 0, maxRows: 9999 })
+
+    expect(result.traceEventsByLogLineAge).toBe(0)
   })
 
   // ── combined pass ─────────────────────────────────────────────────────────

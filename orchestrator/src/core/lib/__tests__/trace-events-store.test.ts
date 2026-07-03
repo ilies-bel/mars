@@ -546,3 +546,86 @@ describe('openTraceEventStore — pruneTranscripts', () => {
     }
   })
 })
+
+// ── log_line volume filtering ─────────────────────────────────────────────────
+//
+// info-level log_line rows are dropped at write time to prevent trace_events
+// bloat. warn/error log_lines carry signal and are retained.
+
+describe('openTraceEventStore — log_line write-time filtering', () => {
+  it('info-level log_line is not persisted to trace_events', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      await store.record({
+        kind: 'log_line',
+        payload: { level: 'info', msg: 'daemon started', source: 'daemon' },
+      })
+      const events = await store.query({})
+      expect(events).toHaveLength(0)
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('log_line without an explicit level (defaults to info) is not persisted', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      await store.record({
+        kind: 'log_line',
+        payload: { msg: 'heartbeat', source: 'bus' },
+      })
+      const events = await store.query({})
+      expect(events).toHaveLength(0)
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('warn-level log_line is persisted and queryable', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      await store.record({
+        kind: 'log_line',
+        payload: { level: 'warn', msg: 'disk near full', source: 'sweeper' },
+      })
+      const events = await store.query({ kind: ['log_line'] })
+      expect(events).toHaveLength(1)
+      expect(events[0].severity).toBe('warn')
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('error-level log_line is persisted and queryable', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      await store.record({
+        kind: 'log_line',
+        payload: { level: 'error', msg: 'daemon crashed', source: 'daemon' },
+      })
+      const events = await store.query({ kind: ['log_line'] })
+      expect(events).toHaveLength(1)
+      expect(events[0].severity).toBe('error')
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('info log_lines do not pollute the event count alongside other kinds', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      // One real event and several info log_lines that should be silently dropped.
+      await store.record({ kind: 'task_failed', taskId: 'x' })
+      await store.record({ kind: 'log_line', payload: { level: 'info', msg: 'tick', source: 'daemon' } })
+      await store.record({ kind: 'log_line', payload: { level: 'info', msg: 'tock', source: 'bus' } })
+      await store.record({ kind: 'log_line', payload: { level: 'warn', msg: 'alert', source: 'sweeper' } })
+
+      const all = await store.query({})
+      // Only task_failed and the warn log_line should be present.
+      expect(all).toHaveLength(2)
+      expect(all.map((e) => e.kind).sort()).toEqual(['log_line', 'task_failed'])
+    } finally {
+      await store.close()
+    }
+  })
+})

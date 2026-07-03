@@ -24,28 +24,36 @@ export const sweepObservability = (dbPath: string): Promise<number> =>
  * Run the retention sweep: prune high-volume append-only tables so mars.db
  * stays bounded across long-lived daemon sessions.
  *
- * Covers three tables in a single sweep (all deletes are batched to keep
- * write-lock duration short):
+ * Covers three categories in a single sweep (all DELETEs are batch-bounded to
+ * keep write-lock duration short):
  *
- *   - trace_events          — capped at RETENTION_MAX_ROWS_DEFAULT rows and
- *                             RETENTION_DAYS_DEFAULT days (30 days / 50 000
- *                             rows). This is the secondary guard; the primary
- *                             3-day time-based sweep runs via sweepObservability.
+ *   - trace_events by age        — rows older than RETENTION_DAYS_DEFAULT (30 d).
+ *   - log_line rows by tight age — warn/error log_line rows older than
+ *                                   LOG_LINE_RETENTION_DAYS (2 d). Info-level
+ *                                   log_lines are never written to trace_events
+ *                                   (filtered in trace-events-store.ts record()).
+ *   - trace_events by count      — loops RETENTION_BATCH_SIZE-sized DELETEs
+ *                                   until the table is under
+ *                                   RETENTION_MAX_ROWS_DEFAULT (50 000) or
+ *                                   RETENTION_SWEEP_BUDGET_MS (500 ms) elapses.
  *   - subscriber_processed_events — orphaned dedup-ledger rows deleted when
- *                             their event_id is no longer in the events outbox.
+ *                                   their event_id is no longer in the events
+ *                                   outbox.
  *
  * After a meaningful prune (any rows deleted) a WAL checkpoint is issued so
  * freed pages are transferred from the WAL to the main DB file promptly. The
  * daemon's 60-second WAL-checkpoint sweep also handles this, so a checkpoint
  * failure here is non-fatal.
  *
- * Returns the full per-category breakdown from pruneRetention.
+ * Returns the full per-category breakdown from pruneRetention, including
+ * traceEventsRemaining for gauge logging by the caller.
  */
 export async function sweepRetention(dbPath: string): Promise<RetentionResult> {
   const result = await pruneRetention(dbPath)
 
   const totalDeleted =
     result.traceEventsByAge +
+    result.traceEventsByLogLineAge +
     result.traceEventsByCount +
     result.subscriberProcessedEvents
 

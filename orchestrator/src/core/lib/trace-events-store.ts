@@ -345,6 +345,10 @@ export const openTraceEventStore = async (
     record: async (event: TraceEventInput): Promise<void> => {
       const payload = event.payload ?? {}
       const severity = deriveSeverity(event.kind, payload)
+      // Info-level log_line rows are not persisted: they duplicate watch.log
+      // and dominated trace_events volume (≈163 k rows / 14 h in production).
+      // warn/error log_lines are kept (with a tighter 2-day age cap in prune).
+      if (event.kind === 'log_line' && severity === 'info') return
       await client.execute({
         sql: `INSERT INTO trace_events
               (id, timestamp, kind, severity, task_id, origin_id, phase, payload)

@@ -79,6 +79,7 @@ import {
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { computeFailureSignature } from '../lib/failure-signature'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
+import { RETENTION_MAX_ROWS_DEFAULT } from '../lib/retention-prune'
 import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
 import { loadDaemonConfig } from './config'
@@ -3218,17 +3219,22 @@ export const startDaemon = async (
         // rows / 30 days) and orphan prune of subscriber_processed_events.
         // Runs in the same interval so no extra timer is needed.
         const retention = await sweepRetention(dbPath)
-        const retentionTotal =
+        const retentionDeleted =
           retention.traceEventsByAge +
+          retention.traceEventsByLogLineAge +
           retention.traceEventsByCount +
           retention.subscriberProcessedEvents
-        if (retentionTotal > 0) {
-          log(
-            `[retention-sweep] pruned ${retention.traceEventsByAge} trace_events by age,` +
-              ` ${retention.traceEventsByCount} by count,` +
-              ` ${retention.subscriberProcessedEvents} subscriber_processed_events orphans`,
-          )
-        }
+        // Always log the gauge so drift (e.g. 180k rows vs 50k cap) is visible
+        // in watch.log rather than silent until a deletion threshold is crossed.
+        log(
+          `[retention-sweep] trace_events: ${retention.traceEventsRemaining} rows` +
+            ` (cap ${RETENTION_MAX_ROWS_DEFAULT}),` +
+            ` deleted ${retentionDeleted}` +
+            ` (${retention.traceEventsByAge} by age,` +
+            ` ${retention.traceEventsByLogLineAge} log_line age,` +
+            ` ${retention.traceEventsByCount} by count);` +
+            ` ${retention.subscriberProcessedEvents} subscriber_processed_events orphans`,
+        )
       } catch (err) {
         log(`[observability-sweep] errored: ${(err as Error).message}`)
       }
