@@ -8,7 +8,6 @@ export interface ReflectCorpusEntry {
   promptPrefix: string
   errorTail: string | null
   createdAt: string
-  scores: Record<string, { score: number; reason: string | null }>
   signals: ReadonlyArray<Omit<TaskSignalRow, 'taskId' | 'recordedAt'>>
   totals: {
     inputTokens: number
@@ -84,31 +83,6 @@ export const median = (values: readonly number[]): number => {
   const sorted = [...values].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
-}
-
-export interface TaskScoreEntry {
-  score: number
-  reason: string | null
-}
-
-/**
- * Per-task scorer scores keyed by scorerId.
- *
- * The implement pipeline used to emit two Mastra scorers (`verify-passed`,
- * `merge-clean`) into a `mastra_scorers` table that this function read back.
- * Both scorers were removed with the @mars/workflow port (they were unused),
- * so the table is never written again and the read path is dead. This now
- * returns an empty map unconditionally — every corpus entry's `scores` is
- * `{}`. The function (and {@link TaskScoreEntry}) survive as a stable seam so
- * `loadRecentTaskCorpus` and deep-reflect-query keep compiling and working;
- * the rest of the reflect corpus (signals, token totals, cost summary) is
- * unaffected. Reintroduce a real read path here if a future durable scorer
- * lands.
- */
-export const loadScoresForTasks = async (
-  _taskIds: readonly string[],
-): Promise<Map<string, Record<string, TaskScoreEntry>>> => {
-  return new Map<string, Record<string, TaskScoreEntry>>()
 }
 
 const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSummary => {
@@ -268,8 +242,6 @@ export const loadRecentTaskCorpus = async (
     signalsByTask.set(taskId, list)
   }
 
-  const scoresByTask = await loadScoresForTasks(taskIds)
-
   const entries: ReflectCorpusEntry[] = taskRows.rows.map((row) => {
     const r = row as unknown as Record<string, unknown>
     const taskId = r.id as string
@@ -299,7 +271,6 @@ export const loadRecentTaskCorpus = async (
       promptPrefix: truncate(r.prompt as string, PROMPT_PREFIX_BYTES) ?? '',
       errorTail: tail((r.error as string | null) ?? null, ERROR_TAIL_BYTES),
       createdAt: r.created_at as string,
-      scores: scoresByTask.get(taskId) ?? {},
       signals,
       totals,
     }

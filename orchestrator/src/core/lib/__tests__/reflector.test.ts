@@ -25,7 +25,6 @@ const fixtureCorpus: ReflectCorpus = {
       promptPrefix: 'do the thing',
       errorTail: null,
       createdAt: '2026-05-01T00:00:00Z',
-      scores: {},
       signals: [],
       totals: {
         inputTokens: 1000,

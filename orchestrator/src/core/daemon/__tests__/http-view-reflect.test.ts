@@ -106,7 +106,6 @@ describe('GET /view/reflect', () => {
           promptPrefix: 'Fix the bug',
           errorTail: null,
           createdAt: '2026-06-01T00:00:00Z',
-          scores: {},
           signals: [],
           totals: {
             inputTokens: 100,

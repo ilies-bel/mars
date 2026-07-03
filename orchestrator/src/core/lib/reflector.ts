@@ -65,8 +65,7 @@ export interface ReflectionResult {
 
 const SYNTHESIS_INSTRUCTIONS = `You are a workflow and token optimizer for the Mars task orchestrator. You
 will be given a precomputed token summary and a recent task corpus
-(prompts, final status, scorer scores, per-step token totals,
-error tails).
+(prompts, final status, per-step token totals, error tails).
 
 IMPORTANT: Never emit monetary amounts, dollar figures, or currency symbols.
 Cite weighted tokens and multiples-of-median only.
@@ -82,8 +81,8 @@ provided tokenSummary. Specifically:
   tokens per task. Cite the task id, the multiple, and what made it
   token-heavy (which step, which signal).
 - Identify the top 1–2 most token-heavy *steps* (not tasks). For each,
-  state whether the spend is justified by outcome (success rate,
-  scorer score) or wasted (failed verify / merge aborts).
+  state whether the spend is justified by outcome (success rate) or
+  wasted (failed verify / merge aborts).
 - Comment on cache health: if cacheHitRatio < 0.5, that is a red flag
   (we are paying to re-warm caches). Cite the ratio.
 - Compare weighted tokens on successful tasks vs failed tasks. If failed

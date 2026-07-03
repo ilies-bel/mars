@@ -3,9 +3,10 @@ import { z } from 'zod'
 import { openLibsql } from './libsql'
 
 /**
- * The single Mars trace-event surface. Collapses the former DuckDB
- * `mars_trace_events` table and SQLite `step_spans` table into one
- * append-only event log living alongside the rest of `.mars/mars.db`.
+ * The single Mars trace-event surface. All step telemetry lives in the
+ * `trace_events` table as an append-only event log alongside the rest of
+ * `.mars/mars.db`. The former `step_spans` table was superseded by
+ * `trace_events` step_ended payloads and is dropped on first open.
  *
  * Every row is one event, tagged by `kind` from a closed vocabulary. The
  * kind-specific shape lives in `payload` as JSON. Callers never pick
@@ -330,6 +331,9 @@ export const openTraceEventStore = async (
   dbPath: string,
 ): Promise<TraceEventStore> => {
   const client = openLibsql({ url: `file:${dbPath}` })
+  // Migration: drop the legacy step_spans table (superseded by trace_events
+  // step_ended payloads; last write 2026-05-29; no code reads it any more).
+  await client.execute('DROP TABLE IF EXISTS step_spans')
   await client.execute(TRACE_EVENTS_DDL)
   await client.execute(INDEX_TASK_TIME)
   await client.execute(INDEX_TIME_DESC)

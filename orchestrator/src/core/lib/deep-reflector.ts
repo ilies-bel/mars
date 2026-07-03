@@ -53,8 +53,7 @@ const SYNTHESIS_INSTRUCTIONS_ARC = `You are an expert post-mortem analyst for th
 will be given the FULL claude -p conversations for EVERY task in a single
 Mars arc — the original task plus any retries, recovery (\`fix\`) tasks, and
 follow-ups that share the same \`originId\`. Tasks are listed in
-chronological order. You also receive per-step token+cost signals, scorer
-scores, and the verify-step output recorded for each task.
+chronological order. You also receive per-step token+cost signals and the verify-step output recorded for each task.
 
 Your job is to walk every task's transcript event-by-event AND to reason
 across tasks. Cross-task signals matter most here: a recovery task that
@@ -182,7 +181,6 @@ const buildArcPrompt = (arc: DeepReflectArc): string => {
         updatedAt: t.updatedAt,
         totals: t.totals,
         signals: t.signals,
-        scores: t.scores,
         toolCallCounts: t.toolCallCounts,
       }
       const metaJson = JSON.stringify(meta, null, 2)

@@ -1,7 +1,6 @@
 import { getDefaultTaskStore } from '../store/task-store'
 import type { ClaudeEvent } from './claude-stream'
 import { listTaskSignals, type TaskSignalRow } from './reflect-signals'
-import { loadScoresForTasks, type TaskScoreEntry } from './reflect-query'
 import {
   readAllTranscriptsForTask,
   resolveTranscriptLocationsForTask,
@@ -137,7 +136,6 @@ export interface ArcTaskEntry {
     cacheReadTokens: number
     cacheHitRatio: number
   }
-  scores: Record<string, TaskScoreEntry>
   conversation: ClaudeEvent[]
   verifyOutput: string | null
   /** True when at least one JSONL transcript file resolved to disk. */
@@ -425,9 +423,6 @@ export const loadDeepReflectArc = async (
   const rows = await fetchArcTaskRows(store, originId)
   if (rows.length === 0) return null
 
-  const taskIds = rows.map((r) => r.id)
-  const scoresMap = await loadScoresForTasks(taskIds)
-
   const tasks: ArcTaskEntry[] = []
   for (const row of rows) {
     const [signalRows, transcript] = await Promise.all([
@@ -447,7 +442,6 @@ export const loadDeepReflectArc = async (
       fixForTaskId: row.fix_for_task_id,
       signals,
       totals,
-      scores: scoresMap.get(row.id) ?? {},
       conversation: transcript.conversation,
       verifyOutput: transcript.verifyOutput,
       hasTranscript: transcript.hasTranscript,
