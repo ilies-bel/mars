@@ -30,6 +30,7 @@ import type {
 import { relativeTime } from '@/shared/time'
 import { taskHash, proposalHash } from '@/shared/routing'
 import { resolveFallback } from '@/shared/uiFallback'
+import { historyLabel } from './ActionQueuePageFilters'
 
 // ---- Helpers ----
 
@@ -1146,7 +1147,7 @@ export const ActionQueuePage = () => {
               onClick={() => setHistoryOpen((v) => !v)}
               className="flex w-full items-center justify-between border-b border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide text-muted hover:bg-iron/5"
             >
-              <span>History ({historyItems.length} loaded)</span>
+              <span>{historyLabel(historyItems.length, historyNextCursor !== null)}</span>
               <span aria-hidden="true">{historyOpen ? '▾' : '▸'}</span>
             </button>
             {historyOpen && (

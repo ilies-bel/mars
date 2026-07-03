@@ -11,6 +11,7 @@ import {
   deriveSelectedKey,
   filterAlertItems,
   filterProposalItems,
+  historyLabel,
   itemKey,
   type AlertItem,
   type ProposalItem,
@@ -333,5 +334,27 @@ describe('origin navigation fallback hash contract', () => {
   it('the fallback hash encodes action-queue as origin so Esc returns to AQ', () => {
     const hash = taskHash('mars-done-abc', 'action-queue')
     expect(parseTaskOrigin(hash)).toBe('action-queue')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// historyLabel
+// ---------------------------------------------------------------------------
+
+describe('historyLabel', () => {
+  it('returns "History" when no items are loaded', () => {
+    expect(historyLabel(0, false)).toBe('History')
+  })
+
+  it('returns "History" even when hasMore is true but count is zero', () => {
+    expect(historyLabel(0, true)).toBe('History')
+  })
+
+  it('returns exact count when all items are loaded (no more pages)', () => {
+    expect(historyLabel(30, false)).toBe('History · 30')
+  })
+
+  it('appends + when more pages are available', () => {
+    expect(historyLabel(50, true)).toBe('History · 50+')
   })
 })

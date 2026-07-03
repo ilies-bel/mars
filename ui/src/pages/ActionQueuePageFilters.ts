@@ -72,6 +72,20 @@ export function filterProposalItems(items: ProposalItem[], query: string): Propo
   })
 }
 
+// ---- History label --------------------------------------------------------
+
+/**
+ * Returns the history accordion label in operator vocabulary.
+ *
+ * - 0 items → "History"
+ * - N items, all loaded → "History · N"
+ * - N items, more pages available → "History · N+"
+ */
+export function historyLabel(count: number, hasMore: boolean): string {
+  if (count === 0) return 'History'
+  return `History · ${count}${hasMore ? '+' : ''}`
+}
+
 // ---- Selection helper -----------------------------------------------------
 
 /**
