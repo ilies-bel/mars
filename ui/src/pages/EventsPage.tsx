@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState, useCallback } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
@@ -6,7 +6,7 @@ import { FallbackSurface } from '@/components/FallbackSurface'
 import { severityColor, severityRowClass, summarizeTraceEvent, marsToolTextClass } from '@/shared/actionQueueDetail'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
-import { relativeTime } from '@/shared/time'
+import { relativeTime, formatRelativeAge } from '@/shared/time'
 import { taskHash } from '@/shared/routing'
 import { KpiVector } from '@/widgets/KpiVector'
 
@@ -219,9 +219,11 @@ const truncateId = (id: string): string =>
 
 interface EventRowProps {
   event: TraceEvent
+  /** Current epoch-ms used for relative timestamp computation — updated every 30s. */
+  now: number
 }
 
-const EventRow = memo(({ event }: EventRowProps) => {
+const EventRow = memo(({ event, now }: EventRowProps) => {
   const [fieldsExpanded, setFieldsExpanded] = useState(false)
   const toggleFields = useCallback(() => setFieldsExpanded((v) => !v), [])
 
@@ -252,7 +254,7 @@ const EventRow = memo(({ event }: EventRowProps) => {
       {/* Single-line metadata + summary — flex so the summary can truncate
           instead of stretching the row and causing page-level horizontal scroll. */}
       <div className="flex min-w-0 items-baseline gap-x-1 overflow-hidden">
-        <span className="shrink-0 text-muted">{relativeTime(event.timestamp)}</span>
+        <span className="shrink-0 text-muted">{relativeTime(event.timestamp, now)}</span>
         <span
           className={`shrink-0 font-mono text-[10px] uppercase ${event.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(event.severity)}`}
         >
@@ -359,6 +361,8 @@ export const EventsPage = () => {
     queryKey,
     queryFn: () => fetchEvents(toWireFilter(state, null, PAGE_LIMIT), projectId ?? undefined),
     enabled: projectId !== null,
+    // Auto-refetch every 30s so the stream doesn't silently go stale.
+    refetchInterval: 30_000,
   })
 
   // Reset the paginated tail whenever the underlying filter set changes.
@@ -408,6 +412,22 @@ export const EventsPage = () => {
     initialRect: { width: 0, height: 4000 },
   })
 
+  // Clock tick — forces a re-render every 30s so relative timestamps in event
+  // rows and the "fetched … ago" chip in the header don't silently go stale
+  // between auto-refetches.
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [])
+
+  // "fetched just now" / "fetched 2m" / … chip text. Only shown once the
+  // first successful fetch has completed (dataUpdatedAt is 0 beforehand).
+  const fetchedAt =
+    initial.dataUpdatedAt > 0
+      ? `fetched ${formatRelativeAge(now - initial.dataUpdatedAt)}`
+      : null
+
   // --- filter mutators ---
   const toggleIn = <T extends string>(
     key: 'severities' | 'kinds' | 'phases',
@@ -452,6 +472,14 @@ export const EventsPage = () => {
         >
           {initial.isFetching ? 'Refreshing…' : 'Refresh'}
         </button>
+        {fetchedAt !== null ? (
+          <span
+            data-testid="events-fetched-at"
+            className="font-mono text-[10px] text-muted"
+          >
+            {fetchedAt}
+          </span>
+        ) : null}
       </header>
 
       {/* KPI strip — four metric tiles at the top of the Events tab */}
@@ -602,7 +630,7 @@ export const EventsPage = () => {
                   paddingBottom: '4px',
                 }}
               >
-                <EventRow event={events[vItem.index]} />
+                <EventRow event={events[vItem.index]} now={now} />
               </div>
             ))}
           </div>

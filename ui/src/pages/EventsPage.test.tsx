@@ -344,6 +344,44 @@ describe('EventsPage render', () => {
     const html = renderPage(qc)
     expect(html).not.toContain('data-testid="events-load-more"')
   })
+
+  // ---------------------------------------------------------------------------
+  // Staleness-visibility: fetched-at chip
+  //
+  // The Events page must never look silently fresh when it is actually stale.
+  // A "fetched … ago" chip in the header is the minimum signal we require.
+  // Tests use renderToStaticMarkup so useEffect (the interval) does not run;
+  // we verify the chip appears on the initial render driven by dataUpdatedAt.
+  // ---------------------------------------------------------------------------
+
+  it('shows a fetched-at chip in the header when data is in cache', () => {
+    // makeClient calls setQueryData which stamps dataUpdatedAt = Date.now().
+    // The chip must appear so the operator can see when the stream was last fetched.
+    const qc = makeClient(EMPTY_RESPONSE)
+    const html = renderPage(qc)
+    expect(html).toContain('data-testid="events-fetched-at"')
+    expect(html).toContain('fetched')
+  })
+
+  it('fetched-at chip reads "fetched just now" for data loaded within the last minute', () => {
+    // setQueryData timestamps dataUpdatedAt ≈ Date.now(); the component's `now`
+    // state is also initialised to Date.now() at render time. Age < 60s →
+    // formatRelativeAge returns "just now".
+    const qc = makeClient(EMPTY_RESPONSE)
+    const html = renderPage(qc)
+    expect(html).toContain('fetched just now')
+  })
+
+  it('event row shows elapsed relative time computed at render (not a stale constant)', () => {
+    // Create an event whose timestamp is exactly 5 minutes in the past.
+    // relativeTime(timestamp, now) must produce "5m ago" — confirming that
+    // the current `now` (≈ Date.now()) is passed into the timestamp computation
+    // rather than some earlier frozen value.
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    const qc = makeClient(makeResponse([makeEvent({ id: 'ev-tick', timestamp: fiveMinutesAgo })]))
+    const html = renderPage(qc)
+    expect(html).toContain('5m ago')
+  })
 })
 
 // ---------------------------------------------------------------------------
