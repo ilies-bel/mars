@@ -467,6 +467,39 @@ describe('EventRow log_line rendering', () => {
     expect(html).toContain('fields')
   })
 
+  it('does not show the expanded fields panel on initial render (page-level expansion state starts empty)', () => {
+    // The fix lifts expansion state from row-local useState to a page-level
+    // Set<string> keyed by event id. Because the Set starts empty, the panel
+    // is collapsed on first render — consistent with the old behaviour — but
+    // now a virtualizer row that unmounts and re-mounts receives the same Set
+    // entry and re-renders expanded rather than resetting to false.
+    const qc = makeClient(
+      makeResponse([
+        makeEvent({
+          id: 'ev-persist-check',
+          kind: 'log_line',
+          severity: 'info',
+          taskId: null,
+          phase: null,
+          payload: {
+            level: 'info',
+            msg: 'task queued',
+            source: 'bus',
+            fields: { taskId: 'mars-abc', retries: 2 },
+          },
+        }),
+      ]),
+    )
+    const html = renderPage(qc)
+    // Toggle button is present (fields are available to expand)
+    expect(html).toContain('data-testid="event-row-fields-toggle-ev-persist-check"')
+    // Panel is NOT rendered on initial mount — Set starts empty
+    expect(html).not.toContain('data-testid="event-row-fields-ev-persist-check"')
+    // Button label is "fields" (collapsed state), not "hide fields" (expanded state)
+    expect(html).toContain('>fields<')
+    expect(html).not.toContain('hide fields')
+  })
+
   it('omits the fields toggle when payload.fields is absent', () => {
     const qc = makeClient(
       makeResponse([

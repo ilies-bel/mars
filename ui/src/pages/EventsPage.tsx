@@ -221,11 +221,14 @@ interface EventRowProps {
   event: TraceEvent
   /** Current epoch-ms used for relative timestamp computation — updated every 30s. */
   now: number
+  /** Whether this row's extended fields panel is open. Owned by the page-level Set. */
+  fieldsExpanded: boolean
+  /** Toggle this row's expanded state. Stable reference from the page. */
+  onToggleFields: (eventId: string) => void
 }
 
-const EventRow = memo(({ event, now }: EventRowProps) => {
-  const [fieldsExpanded, setFieldsExpanded] = useState(false)
-  const toggleFields = useCallback(() => setFieldsExpanded((v) => !v), [])
+const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowProps) => {
+  const toggleFields = useCallback(() => onToggleFields(event.id), [onToggleFields, event.id])
 
   const stepName =
     (event.kind === 'step_started' || event.kind === 'step_ended') &&
@@ -339,6 +342,20 @@ export const EventsPage = () => {
     string | null | undefined
   >(undefined)
   const projectId = useFocusedProjectId()
+
+  // Page-level expansion Set — keyed by event id so virtualizer row recycling
+  // (unmount → re-mount) re-receives the stored entry and stays expanded.
+  const [fieldsExpandedSet, setFieldsExpandedSet] = useState<Set<string>>(
+    () => new Set(),
+  )
+  const toggleFieldsExpanded = useCallback((eventId: string) => {
+    setFieldsExpandedSet((prev) => {
+      const next = new Set(prev)
+      if (next.has(eventId)) next.delete(eventId)
+      else next.add(eventId)
+      return next
+    })
+  }, [])
 
   // Debounced text filter values — the query key uses these so that rapid
   // typing (taskId / originId / q) fires at most one request per 300 ms
@@ -655,7 +672,12 @@ export const EventsPage = () => {
                   paddingBottom: '4px',
                 }}
               >
-                <EventRow event={events[vItem.index]} now={now} />
+                <EventRow
+                  event={events[vItem.index]}
+                  now={now}
+                  fieldsExpanded={fieldsExpandedSet.has(events[vItem.index].id)}
+                  onToggleFields={toggleFieldsExpanded}
+                />
               </div>
             ))}
           </div>
