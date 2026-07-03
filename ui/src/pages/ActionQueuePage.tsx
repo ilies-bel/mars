@@ -241,11 +241,15 @@ const ActionBar = ({ item }: ActionBarProps) => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [copiedActionId, setCopiedActionId] = useState<string | null>(null)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Two-step confirm: tracks which needsConfirm action is awaiting a second click.
+  const [pendingConfirmId, setPendingConfirmId] = useState<string | null>(null)
+  const pendingConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Clear the transient 'Copied' timer on unmount to avoid a setState-after-unmount.
+  // Clear both transient timers on unmount to avoid setState-after-unmount.
   useEffect(() => {
     return () => {
       if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+      if (pendingConfirmTimerRef.current !== null) clearTimeout(pendingConfirmTimerRef.current)
     }
   }, [])
 
@@ -302,12 +306,30 @@ const ActionBar = ({ item }: ActionBarProps) => {
   const isDiagnosing =
     mutation.isPending && mutation.variables?.action.op === DIAGNOSE_OP
 
+  const clearPendingConfirm = () => {
+    if (pendingConfirmTimerRef.current !== null) {
+      clearTimeout(pendingConfirmTimerRef.current)
+      pendingConfirmTimerRef.current = null
+    }
+    setPendingConfirmId(null)
+  }
+
   const run = (action: ActionDescriptor) => {
     if (mutation.isPending) return
-    if (
-      action.needsConfirm &&
-      !window.confirm(`${action.label}: ${item.entityId}. Proceed?`)
-    ) {
+    if (action.needsConfirm) {
+      if (pendingConfirmId === action.id) {
+        // Second click — confirmed; fire the mutation.
+        clearPendingConfirm()
+        mutation.mutate({ action })
+      } else {
+        // First click — arm the confirm; revert after 3 s if not confirmed.
+        if (pendingConfirmTimerRef.current !== null) clearTimeout(pendingConfirmTimerRef.current)
+        setPendingConfirmId(action.id)
+        pendingConfirmTimerRef.current = setTimeout(() => {
+          setPendingConfirmId(null)
+          pendingConfirmTimerRef.current = null
+        }, 3000)
+      }
       return
     }
     mutation.mutate({ action })
@@ -335,7 +357,14 @@ const ActionBar = ({ item }: ActionBarProps) => {
   }
 
   return (
-    <div>
+    <div
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && pendingConfirmId !== null) {
+          e.stopPropagation()
+          clearPendingConfirm()
+        }
+      }}
+    >
       <dt className="mb-2 text-[10px] uppercase tracking-wider text-iron">
         Move forward
       </dt>
@@ -356,18 +385,24 @@ const ActionBar = ({ item }: ActionBarProps) => {
               type="button"
               disabled={mutation.isPending}
               onClick={() => run(action)}
+              data-testid={action.needsConfirm ? `confirm-step-${action.id}` : undefined}
+              data-confirm-pending={pendingConfirmId === action.id ? 'true' : undefined}
               className={[
                 'border px-3 py-1.5 font-mono text-[11px] uppercase transition active:scale-[0.97] disabled:opacity-50',
-                action.needsConfirm
-                  ? 'border-error/50 text-error hover:bg-error/10'
-                  : 'border-iron/40 text-fg hover:bg-iron/20',
+                pendingConfirmId === action.id
+                  ? 'border-error bg-error/10 text-error'
+                  : action.needsConfirm
+                    ? 'border-error/50 text-error hover:bg-error/10'
+                    : 'border-iron/40 text-fg hover:bg-iron/20',
               ].join(' ')}
             >
-              {action.op === INVESTIGATE_OP && isInvestigating
-                ? 'Investigating…'
-                : action.op === DIAGNOSE_OP && isDiagnosing
-                  ? 'Diagnosing…'
-                  : action.label}
+              {pendingConfirmId === action.id
+                ? `Confirm ${action.label}?`
+                : action.op === INVESTIGATE_OP && isInvestigating
+                  ? 'Investigating…'
+                  : action.op === DIAGNOSE_OP && isDiagnosing
+                    ? 'Diagnosing…'
+                    : action.label}
             </button>
           ),
         )}
@@ -842,29 +877,31 @@ export const ActionQueuePage = () => {
 
   const qc = useQueryClient()
   const projectId = useFocusedProjectId()
+
+  // Undo-toast state: when a restart is queued but not yet fired, the user has
+  // 5 s to cancel. The snapshot is held in a ref so the rollback doesn't need
+  // it in component state.
+  const [restartToast, setRestartToast] = useState<{ entityId: string } | null>(null)
+  const restartToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const restartSnapshotRef = useRef<ActionQueueItem[] | null>(null)
+
+  // Clear the undo-toast timer on unmount to avoid setState-after-unmount.
+  useEffect(() => {
+    return () => {
+      if (restartToastTimerRef.current !== null) clearTimeout(restartToastTimerRef.current)
+    }
+  }, [])
+
   const restartMutation = useMutation({
     mutationFn: (entityId: string) => invokeAction('restart', entityId),
-    onMutate: async (entityId) => {
-      // Prevent an in-flight refetch from overwriting our optimistic removal.
-      await qc.cancelQueries({ queryKey: ['action-queue'] })
-      // Snapshot for rollback.
-      const snapshot = qc.getQueryData<ActionQueueItem[]>(['action-queue', projectId])
-      // Optimistically remove the row that triggered the restart.
-      if (snapshot) {
-        qc.setQueryData(
-          ['action-queue', projectId],
-          snapshot.filter((i) => i.entityId !== entityId),
-        )
-      }
-      return { snapshot }
-    },
-    onError: (_err, _entityId, context) => {
-      // Roll back the optimistic removal.
-      if (context?.snapshot !== undefined) {
-        qc.setQueryData(['action-queue', projectId], context.snapshot)
+    onError: () => {
+      // Roll back the optimistic removal using the snapshot held by the toast flow.
+      if (restartSnapshotRef.current !== null) {
+        qc.setQueryData(['action-queue', projectId], restartSnapshotRef.current)
       }
     },
     onSettled: () => {
+      restartSnapshotRef.current = null
       void qc.invalidateQueries({ queryKey: ['action-queue'] })
       void qc.invalidateQueries({ queryKey: ['progress'] })
     },
@@ -931,9 +968,38 @@ export const ActionQueuePage = () => {
     setSelectedId(id)
   }, [])
 
-  const handleRestart = useCallback((entityId: string) => {
-    restartMutation.mutate(entityId)
-  }, [restartMutation])
+  const handleRestart = useCallback(async (entityId: string) => {
+    // Cancel in-flight refetches to prevent cache overwrites during the toast window.
+    await qc.cancelQueries({ queryKey: ['action-queue'] })
+    // Snapshot before optimistic removal so the undo can restore it.
+    const snapshot = qc.getQueryData<ActionQueueItem[]>(['action-queue', projectId]) ?? null
+    restartSnapshotRef.current = snapshot
+    // Optimistically remove the row immediately so the UI feels instant.
+    qc.setQueryData(
+      ['action-queue', projectId],
+      (snapshot ?? []).filter((i) => i.entityId !== entityId),
+    )
+    // Show the undo toast; fire the actual mutation after 5 s unless undone.
+    setRestartToast({ entityId })
+    if (restartToastTimerRef.current !== null) clearTimeout(restartToastTimerRef.current)
+    restartToastTimerRef.current = setTimeout(() => {
+      restartToastTimerRef.current = null
+      setRestartToast(null)
+      restartMutation.mutate(entityId)
+    }, 5000)
+  }, [qc, projectId, restartMutation])
+
+  const handleRestartUndo = useCallback(() => {
+    if (restartToastTimerRef.current !== null) {
+      clearTimeout(restartToastTimerRef.current)
+      restartToastTimerRef.current = null
+    }
+    if (restartSnapshotRef.current !== null) {
+      qc.setQueryData(['action-queue', projectId], restartSnapshotRef.current)
+      restartSnapshotRef.current = null
+    }
+    setRestartToast(null)
+  }, [qc, projectId])
 
   // Per-section open/collapsed state; all sections start expanded.
   const [openSections, setOpenSections] = useState<Record<ActionQueueItem['kind'], boolean>>({
@@ -1043,8 +1109,9 @@ export const ActionQueuePage = () => {
                                 : null
                             }
                             restartPending={
-                              restartMutation.isPending &&
-                              restartMutation.variables === item.entityId
+                              (restartToast !== null && restartToast.entityId === item.entityId) ||
+                              (restartMutation.isPending &&
+                                restartMutation.variables === item.entityId)
                             }
                             restartError={
                               restartMutation.isError &&
@@ -1234,6 +1301,25 @@ export const ActionQueuePage = () => {
           </div>
         )}
       </section>
+
+      {/* Undo toast — shown for 5 s after a Restart click; lets operators cancel misclicks. */}
+      {restartToast !== null && (
+        <div
+          data-testid="restart-undo-toast"
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-5 right-5 z-50 flex items-center gap-3 border border-iron/40 bg-bg px-4 py-2 font-mono text-[11px] text-fg shadow-lg"
+        >
+          <span>Restarting {restartToast.entityId}…</span>
+          <button
+            type="button"
+            onClick={handleRestartUndo}
+            className="border border-iron/40 px-2 py-0.5 font-mono text-[10px] uppercase text-iron transition hover:bg-iron/10 active:scale-[0.97]"
+          >
+            Undo
+          </button>
+        </div>
+      )}
     </div>
   )
 }

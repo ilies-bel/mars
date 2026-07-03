@@ -1200,6 +1200,93 @@ describe('ActionQueueDetail – draft-proposal rich content', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Two-step confirm — needsConfirm actions use an in-UI confirm; no window.confirm.
+//
+// In the initial (no-click) state the button shows the action's normal label.
+// Only after the first click does it morph to "Confirm <label>?".  These tests
+// verify the default (pre-click) render, which is the only state visible to
+// renderToStaticMarkup.  The interactive morph is exercised manually (see task
+// criterion) because it requires real event dispatch.
+// ---------------------------------------------------------------------------
+
+describe('ActionBar – two-step in-UI confirm (no window.confirm)', () => {
+  it('needsConfirm button shows the action label in initial render (not "Confirm?")', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(
+      makeItem({
+        actions: [{ id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true }],
+      }),
+      qc,
+    )
+    // Button starts in un-confirmed state — normal label, no "Confirm" prefix.
+    expect(html).toContain('>Drop permanently<')
+    expect(html).not.toContain('Confirm Drop permanently')
+  })
+
+  it('needsConfirm button carries data-testid="confirm-step-<id>" for targeting', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(
+      makeItem({
+        actions: [{ id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true }],
+      }),
+      qc,
+    )
+    expect(html).toContain('data-testid="confirm-step-purge"')
+  })
+
+  it('needsConfirm button does NOT carry data-confirm-pending in initial render', () => {
+    const qc = makeClient({ taskId: 't-1' })
+    const html = renderDetail(
+      makeItem({
+        actions: [{ id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true }],
+      }),
+      qc,
+    )
+    // data-confirm-pending is only set when the button is in the armed state.
+    expect(html).not.toContain('data-confirm-pending')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Restart undo toast — absent in initial render; only shown after a click.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueuePage – restart undo toast', () => {
+  const renderPage = (items: ActionQueueItem[]): string => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['action-queue', null], items)
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <_Page />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('undo toast is NOT present in the initial render (no restart triggered yet)', () => {
+    const item = makeItem({
+      id: 'f1',
+      kind: 'failed-task',
+      actions: [{ id: 'restart', label: 'Restart', op: 'restart' }],
+    })
+    const html = renderPage([item])
+    expect(html).not.toContain('data-testid="restart-undo-toast"')
+  })
+
+  it('Restart button renders on rows that carry a restart action', () => {
+    const item = makeItem({
+      id: 'f1',
+      kind: 'failed-task',
+      actions: [{ id: 'restart', label: 'Restart', op: 'restart' }],
+    })
+    const html = renderPage([item])
+    // The sidebar row shows the inline Restart button.
+    expect(html).toContain('Restart')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Heading overflow prevention.
 // The outer detail-panel container must carry min-w-0 so the h2 heading can
 // shrink to the flex-allocated width and break-all wraps the text rather than
