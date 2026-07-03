@@ -107,19 +107,29 @@ describe('queue prompt type guards', () => {
     expect((again.rows[0] as unknown as { t: string }).t).toBe('text')
   })
 
-  it('migrateQueueSchema does not create task_transcripts (migrated to trace_events in PRD 436f14c7)', async () => {
-    // task_transcripts is no longer created on fresh databases; data from
-    // pre-migration databases is lifted into trace_events and the table is dropped.
+  it('migrateQueueSchema creates task_transcripts with new streaming-chunk schema', async () => {
+    // The old task_transcripts (with verify_output) was migrated to trace_events in
+    // PRD 436f14c7 slice 5.  migrateQueueSchema now re-creates the table under the
+    // new incremental-streaming schema (task_id, session_id, seq, chunk, ts) so
+    // coder transcripts can be persisted durably during a run.
     const q = await loadQueue(repo)
     await q.migrateQueueSchema()
     const dbPath = resolve(repo, '.mars/mars.db')
     const direct = createClient({ url: `file:${dbPath}` })
+
+    // Table must exist with the new schema.
     const tables = await direct.execute(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_transcripts'`,
     )
-    expect(tables.rows.length).toBe(0)
+    expect(tables.rows.length).toBe(1)
 
-    // trace_events must exist (migration ensures it).
+    // New schema has session_id column; old schema had verify_output.
+    const cols = await direct.execute(`PRAGMA table_info('task_transcripts')`)
+    const colNames = cols.rows.map((r) => (r as unknown as { name: string }).name)
+    expect(colNames).toContain('session_id')
+    expect(colNames).not.toContain('verify_output')
+
+    // trace_events must also exist (migration ensures it).
     const traceTable = await direct.execute(
       `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'trace_events'`,
     )

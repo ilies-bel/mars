@@ -1314,33 +1314,45 @@ export const verify = async (
             }
           }
         }
-        // Primary source: the durable `step_ended` trace events for this
-        // task's run-claude-code steps. Headless `claude -p` sessions do not
-        // persist transcript bodies under ~/.claude/projects (only an
-        // ai-title stub), so the on-disk reader below is a legacy fallback,
-        // not the main path. `query` returns newest-first; reverse to
-        // chronological order so parseCompletionReport's last-block-wins
-        // semantic matches session order.
-        const traceRows = await trace.traceStore
-          .query({ taskId, kind: ['step_ended'], limit: 100 })
-          .catch(() => [])
-        for (const row of [...traceRows].reverse()) {
-          const p = row.payload
-          if (p.stepName !== 'run-claude-code') continue
-          if (typeof p.transcript !== 'string' || p.transcript.length === 0) {
-            continue
-          }
-          try {
-            const events = JSON.parse(p.transcript) as unknown
-            if (Array.isArray(events)) {
-              for (const evt of events) pushEventText(evt)
+        // Primary source: streaming chunks from task_transcripts, written
+        // incrementally during the coder run. This path is durable even when
+        // the coder was watchdog-killed before step_ended was written.
+        const streamedEvents = await trace.traceStore
+          .readTranscriptChunks?.(taskId)
+          .catch(() => undefined)
+        if (streamedEvents !== undefined && streamedEvents.length > 0) {
+          for (const evt of streamedEvents) pushEventText(evt)
+        }
+
+        if (coderTextParts.length === 0) {
+          // Fallback 1: the durable `step_ended` trace events for this task's
+          // run-claude-code steps (written at step end by runWorkerWithSpan).
+          // `query` returns newest-first; reverse to chronological order so
+          // parseCompletionReport's last-block-wins semantic matches session order.
+          const traceRows = await trace.traceStore
+            .query({ taskId, kind: ['step_ended'], limit: 100 })
+            .catch(() => [])
+          for (const row of [...traceRows].reverse()) {
+            const p = row.payload
+            if (p.stepName !== 'run-claude-code') continue
+            if (typeof p.transcript !== 'string' || p.transcript.length === 0) {
+              continue
             }
-          } catch {
-            // Malformed transcript payload — skip; the disk fallback below
-            // may still cover this session.
+            try {
+              const events = JSON.parse(p.transcript) as unknown
+              if (Array.isArray(events)) {
+                for (const evt of events) pushEventText(evt)
+              }
+            } catch {
+              // Malformed transcript payload — skip; the disk fallback below
+              // may still cover this session.
+            }
           }
         }
+
         if (coderTextParts.length === 0) {
+          // Fallback 2: on-disk JSONL files under ~/.claude/projects/ (legacy
+          // path for arcs that pre-date the streaming transcript store).
           for await (const evt of readAllTranscriptsForTask(taskId)) {
             pushEventText(evt.raw)
           }

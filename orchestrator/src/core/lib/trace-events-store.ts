@@ -89,6 +89,49 @@ export interface TraceEventStore {
   record: (event: TraceEventInput) => Promise<void>
   query: (filter: TraceEventFilter) => Promise<TraceEvent[]>
   close: () => Promise<void>
+
+  /**
+   * Append a batch of streaming transcript events for durable incremental
+   * storage. Called from `runWorkerWithSpan` as events stream — every
+   * TRANSCRIPT_CHUNK_BATCH events flush a row so a watchdog-killed or crashed
+   * session's partial transcript is readable before `step_ended` is written.
+   *
+   * `seq` is a monotonically increasing counter per `(taskId, sessionId)` pair;
+   * callers increment it after each flush. Rows are keyed by `(taskId,
+   * sessionId, seq)` so multiple sessions for the same task (e.g. origin + one
+   * recovery) are stored without collision.
+   *
+   * Optional — implementations that do not support transcript streaming
+   * (e.g. `nullTraceStore`) simply omit this method; callers use optional
+   * chaining (`store.appendTranscriptChunk?.(...)`).
+   */
+  appendTranscriptChunk?: (
+    taskId: string,
+    sessionId: string,
+    seq: number,
+    events: readonly unknown[],
+  ) => Promise<void>
+
+  /**
+   * Read all streaming transcript events for `taskId` in chronological order
+   * (by `session_id ASC, seq ASC`). Returns the flat list of raw event objects
+   * across all chunk rows; callers apply their own type coercion.
+   *
+   * When `sessionId` is supplied, only rows for that session are returned.
+   *
+   * Optional — omitted on stores that do not support transcript streaming;
+   * callers fall back to the `step_ended` payload path.
+   */
+  readTranscriptChunks?: (taskId: string, sessionId?: string) => Promise<unknown[]>
+
+  /**
+   * Delete transcript chunk rows whose write timestamp is older than
+   * `beforeIso` (ISO-8601). Returns the count of deleted rows.
+   *
+   * Intended for the same periodic-prune job that trims `trace_events`.
+   * Retention constant: {@link TRANSCRIPT_RETENTION_DAYS}.
+   */
+  pruneTranscripts?: (beforeIso: string) => Promise<number>
 }
 
 /**
@@ -131,6 +174,36 @@ export const deriveSeverity = (
   }
   return 'info'
 }
+
+/**
+ * Number of days to retain `task_transcripts` rows before they are eligible
+ * for pruning. Pass this to `pruneTranscripts` at periodic cleanup time.
+ */
+export const TRANSCRIPT_RETENTION_DAYS = 30
+
+/**
+ * How many streaming events to batch before flushing a `task_transcripts` row.
+ * Smaller values increase durability for killed sessions at the cost of more
+ * DB writes; larger values reduce write frequency but risk losing more on kill.
+ * 20 events ≈ 1-5 KB per row — well within SQLite comfortable range.
+ */
+export const TRANSCRIPT_CHUNK_BATCH = 20
+
+const TASK_TRANSCRIPTS_DDL = `
+CREATE TABLE IF NOT EXISTS task_transcripts (
+  task_id    TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  seq        INTEGER NOT NULL,
+  chunk      TEXT NOT NULL,
+  ts         TEXT NOT NULL,
+  PRIMARY KEY (task_id, session_id, seq)
+)
+`
+
+const INDEX_TASK_TRANSCRIPTS = `
+CREATE INDEX IF NOT EXISTS idx_task_transcripts_task
+  ON task_transcripts (task_id, ts)
+`
 
 const TRACE_EVENTS_DDL = `
 CREATE TABLE IF NOT EXISTS trace_events (
@@ -261,6 +334,8 @@ export const openTraceEventStore = async (
   await client.execute(INDEX_TASK_TIME)
   await client.execute(INDEX_TIME_DESC)
   await client.execute(INDEX_ORIGIN_TIME)
+  await client.execute(TASK_TRANSCRIPTS_DDL)
+  await client.execute(INDEX_TASK_TRANSCRIPTS)
 
   return {
     record: async (event: TraceEventInput): Promise<void> => {
@@ -352,6 +427,64 @@ export const openTraceEventStore = async (
 
     close: async (): Promise<void> => {
       client.close()
+    },
+
+    appendTranscriptChunk: async (
+      taskId: string,
+      sessionId: string,
+      seq: number,
+      events: readonly unknown[],
+    ): Promise<void> => {
+      if (events.length === 0) return
+      await client.execute({
+        sql: `INSERT OR IGNORE INTO task_transcripts
+              (task_id, session_id, seq, chunk, ts)
+              VALUES (?, ?, ?, ?, ?)`,
+        args: [
+          taskId,
+          sessionId,
+          seq,
+          JSON.stringify(events),
+          new Date().toISOString(),
+        ],
+      })
+    },
+
+    readTranscriptChunks: async (
+      taskId: string,
+      sessionId?: string,
+    ): Promise<unknown[]> => {
+      const whereExtra = sessionId !== undefined ? ' AND session_id = ?' : ''
+      const args: (string | number)[] = sessionId !== undefined
+        ? [taskId, sessionId]
+        : [taskId]
+      const result = await client.execute({
+        sql: `SELECT chunk FROM task_transcripts
+              WHERE task_id = ?${whereExtra}
+              ORDER BY session_id ASC, seq ASC`,
+        args,
+      })
+      const events: unknown[] = []
+      for (const row of result.rows) {
+        const r = row as unknown as { chunk: string }
+        try {
+          const parsed = JSON.parse(r.chunk) as unknown
+          if (Array.isArray(parsed)) {
+            for (const evt of parsed) events.push(evt)
+          }
+        } catch {
+          // skip malformed chunk rows
+        }
+      }
+      return events
+    },
+
+    pruneTranscripts: async (beforeIso: string): Promise<number> => {
+      const result = await client.execute({
+        sql: `DELETE FROM task_transcripts WHERE ts < ?`,
+        args: [beforeIso],
+      })
+      return result.rowsAffected ?? 0
     },
   }
 }

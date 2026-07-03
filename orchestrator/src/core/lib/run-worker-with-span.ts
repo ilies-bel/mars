@@ -18,6 +18,7 @@ import { summarizeUsage, getLatestContextSize } from './claude-usage'
 import { resolveUsage } from './usage-sources'
 import { isReflectDisabled } from './reflect-signals'
 import { evaluateStep } from './step-evaluators'
+import { TRANSCRIPT_CHUNK_BATCH } from './trace-events-store'
 import type { TraceEventStore, TraceEventPhase } from './trace-events-store'
 import type { Worker, RunOptions } from '../workers'
 import type { RunClaudeResult } from './git/claude'
@@ -117,10 +118,38 @@ export const runWorkerWithSpan = async (
   // emit nothing to this path — so accumulatedEvents will be empty and the
   // failure payload carries zeros, which is the same as the prior behaviour.
   const accumulatedEvents: ClaudeEvent[] = []
+
+  // Incremental transcript streaming: flush every TRANSCRIPT_CHUNK_BATCH events
+  // to task_transcripts so a watchdog-killed session's partial transcript is
+  // readable before step_ended is written. Best-effort — a DB hiccup must never
+  // fail the task.
+  const pendingChunkEvents: ClaudeEvent[] = []
+  let chunkSeq = 0
+  const sessionIdForChunks = runOptions.sessionId ?? null
+  const chunkTaskId = taskId
+
+  const safeFlushChunk = async (): Promise<void> => {
+    if (
+      pendingChunkEvents.length === 0 ||
+      !sessionIdForChunks ||
+      !chunkTaskId ||
+      !traceStore?.appendTranscriptChunk
+    ) {
+      pendingChunkEvents.length = 0
+      return
+    }
+    const batch = pendingChunkEvents.splice(0)
+    await traceStore.appendTranscriptChunk(chunkTaskId, sessionIdForChunks, chunkSeq++, batch).catch(() => {})
+  }
+
   const runOptionsWithAccum: RunOptions = {
     ...runOptions,
-    onEvent: (event) => {
+    onEvent: async (event) => {
       accumulatedEvents.push(event)
+      pendingChunkEvents.push(event)
+      if (pendingChunkEvents.length >= TRANSCRIPT_CHUNK_BATCH) {
+        await safeFlushChunk()
+      }
       return runOptions.onEvent?.(event)
     },
   }
@@ -129,6 +158,9 @@ export const runWorkerWithSpan = async (
   try {
     result = await worker.run(prompt, runOptionsWithAccum)
   } catch (err) {
+    // Flush any remaining buffered events so a killed/crashed session's
+    // partial transcript is durable even without a step_ended row.
+    await safeFlushChunk()
     const msg = err instanceof Error ? err.message : String(err)
     const partialUsage = summarizeUsage(accumulatedEvents)
     const partialContextTokens = getLatestContextSize(accumulatedEvents)
@@ -161,6 +193,9 @@ export const runWorkerWithSpan = async (
     })
     throw err
   }
+
+  // Flush any remaining buffered events from the successful run.
+  await safeFlushChunk()
 
   const usage = await resolveUsage({
     conversation: result.conversation,

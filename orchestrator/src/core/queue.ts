@@ -1009,8 +1009,6 @@ export const migrateQueueSchema = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_task_acceptance_task ON task_acceptance(task_id)`,
   )
-  // task_transcripts table intentionally omitted: migrated to trace_events in
-  // PRD 436f14c7 slice 5 (see migrateSignalsAndTranscriptsToTraceEvents below).
   // self_heal_attempts: append-only ledger of fix-tasks the sweeper enqueues
   // in response to a parent task's verify failure. Keyed by (parent_task_id,
   // failure_signature) so the sweeper can dedupe — if a row already exists
@@ -1638,6 +1636,25 @@ export const migrateQueueSchema = async (): Promise<void> => {
     }
   }
   await migrateSignalsAndTranscriptsToTraceEvents(c)
+  // task_transcripts: incremental streaming transcript storage added AFTER the
+  // migration above so the migration can safely check for the OLD table schema
+  // (which had verify_output) and drop it before we create the NEW table.
+  // The OLD task_transcripts was migrated to trace_events in PRD 436f14c7
+  // slice 5; this NEW table is keyed by (task_id, session_id, seq) and stores
+  // streaming chunk batches written during coder runs for durability.
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_transcripts (
+      task_id    TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      seq        INTEGER NOT NULL,
+      chunk      TEXT NOT NULL,
+      ts         TEXT NOT NULL,
+      PRIMARY KEY (task_id, session_id, seq)
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_task_transcripts_task ON task_transcripts (task_id, ts)`,
+  )
 }
 
 /**
@@ -1743,10 +1760,22 @@ const migrateSignalsAndTranscriptsToTraceEvents = async (c: Client): Promise<voi
   }
 
   // ── task_transcripts → trace_events ─────────────────────────────────────
+  // Guard: only migrate the OLD task_transcripts schema (which had verify_output).
+  // The new task_transcripts table (keyed by task_id, session_id, seq) is created
+  // AFTER this migration runs (see below). If the table exists but lacks
+  // verify_output, it is already the new schema and has nothing to migrate.
   const txTableCheck = await c.execute(
     `SELECT name FROM sqlite_master WHERE type='table' AND name='task_transcripts'`,
   )
   if (txTableCheck.rows.length > 0) {
+    const txColCheck = await c.execute(
+      `SELECT COUNT(*) as n FROM pragma_table_info('task_transcripts') WHERE name='verify_output'`,
+    )
+    const hasOldSchema =
+      ((txColCheck.rows[0] as unknown as { n: number }).n ?? 0) > 0
+    if (!hasOldSchema) {
+      // New-schema table — nothing to migrate.
+    } else {
     const txRows = await c.execute(
       `SELECT task_id, verify_output, recorded_at FROM task_transcripts`,
     )
@@ -1789,7 +1818,8 @@ const migrateSignalsAndTranscriptsToTraceEvents = async (c: Client): Promise<voi
     }
     await c.execute(`DROP TABLE task_transcripts`)
     await c.execute(`DROP INDEX IF EXISTS idx_task_transcripts_recorded_at`)
-  }
+    } // closes else (old-schema migration)
+  } // closes if (txTableCheck.rows.length > 0)
 }
 
 const MAX_CONVERSATION_BYTES = 2 * 1024 * 1024

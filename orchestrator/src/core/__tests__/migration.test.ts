@@ -349,7 +349,7 @@ describe('migration: task_signals + task_transcripts → trace_events (PRD 436f1
     db.close()
   })
 
-  it('copies task_transcripts rows into trace_events and drops the table', async () => {
+  it('copies task_transcripts rows into trace_events and replaces the old table with the new streaming schema', async () => {
     const dbPath = `file:${repo}/.mars/mars.db`
     const q = createClient({ url: dbPath })
     const now = '2025-06-01T00:00:00.000Z'
@@ -382,11 +382,21 @@ describe('migration: task_signals + task_transcripts → trace_events (PRD 436f1
 
     const db = createClient({ url: dbPath })
 
-    // task_transcripts must be gone.
+    // task_transcripts is now the NEW streaming-chunk table (different schema).
+    // The old table was dropped and a new one was created by migrateQueueSchema.
     const txTable = await db.execute(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='task_transcripts'`,
     )
-    expect(txTable.rows).toHaveLength(0)
+    expect(txTable.rows).toHaveLength(1) // new schema table exists
+    // The new schema has session_id column, not verify_output
+    const txColsOld = await db.execute(
+      `SELECT COUNT(*) as n FROM pragma_table_info('task_transcripts') WHERE name='verify_output'`,
+    )
+    expect(((txColsOld.rows[0] as unknown as { n: number }).n ?? 0)).toBe(0)
+    const txColsNew = await db.execute(
+      `SELECT COUNT(*) as n FROM pragma_table_info('task_transcripts') WHERE name='session_id'`,
+    )
+    expect(((txColsNew.rows[0] as unknown as { n: number }).n ?? 0)).toBe(1)
 
     // trace_events must contain the migrated row with verifyOutput.
     const events = await db.execute(
@@ -451,12 +461,13 @@ describe('migration: task_signals + task_transcripts → trace_events (PRD 436f1
     const { migrateQueueSchema } = await import('../queue')
     await migrateQueueSchema()
 
-    // task_transcripts dropped.
+    // task_transcripts is replaced with the new streaming-chunk schema.
+    // The old table was dropped and a new one (different schema) was created.
     const db = createClient({ url: dbPath })
     const txCheck = await db.execute(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='task_transcripts'`,
+      `SELECT COUNT(*) as n FROM pragma_table_info('task_transcripts') WHERE name='verify_output'`,
     )
-    expect(txCheck.rows).toHaveLength(0)
+    expect(((txCheck.rows[0] as unknown as { n: number }).n ?? 0)).toBe(0)
 
     // The arc task is still present in trace_events (migrated-tx row).
     const evts = await db.execute(

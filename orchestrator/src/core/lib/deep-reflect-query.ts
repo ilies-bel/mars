@@ -244,8 +244,21 @@ const loadTaskTranscript = async (
     }
   }
 
-  // Durable transcript read path (PRD: deep-reflect transcript durability).
-  // Prefer the trace_events payload.transcript persisted by the
+  // Primary transcript read path: streaming chunks from task_transcripts,
+  // written incrementally during the coder run. Available even for sessions
+  // that were watchdog-killed before step_ended was written.
+  const chunks = await loadTranscriptChunks(store, taskId)
+  if (chunks !== null) {
+    return {
+      conversation: chunks.conversation,
+      verifyOutput,
+      hasTranscript: chunks.conversation.length > 0,
+      toolCallCounts: chunks.toolCallCounts,
+      transcriptNotes: [],
+    }
+  }
+
+  // Fallback 1: the trace_events payload.transcript persisted by the
   // transcript-append subscriber (or upsertTranscript / runWorkerWithSpan).
   // This frees deep-reflect from depending on the ephemeral
   // ~/.claude/projects/ tree; the on-disk stream stays as the fallback so
@@ -274,6 +287,51 @@ const loadTaskTranscript = async (
 interface DurableTranscript {
   conversation: ClaudeEvent[]
   toolCallCounts: Record<string, number>
+}
+
+/**
+ * Read the streaming transcript chunks for a task from `task_transcripts`.
+ *
+ * Rows are inserted incrementally as events stream from the coder run, so
+ * this path is available even for sessions that were watchdog-killed before
+ * `step_ended` was written. Returns `null` when no chunk rows exist —
+ * the caller falls back to the `step_ended` payload path.
+ */
+const loadTranscriptChunks = async (
+  store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
+  taskId: string,
+): Promise<DurableTranscript | null> => {
+  let r: Awaited<ReturnType<typeof store.query>>
+  try {
+    r = await store.query({
+      sql: `SELECT chunk FROM task_transcripts
+             WHERE task_id = ?
+             ORDER BY session_id ASC, seq ASC`,
+      args: [taskId],
+    })
+  } catch {
+    // task_transcripts may not exist on very old DBs — treat as no data.
+    return null
+  }
+  if (r.rows.length === 0) return null
+  const conversation: ClaudeEvent[] = []
+  const toolCallCounts: Record<string, number> = {}
+  for (const row of r.rows) {
+    const rawRow = row as unknown as { chunk: string }
+    try {
+      const parsed = JSON.parse(rawRow.chunk) as unknown
+      if (!Array.isArray(parsed)) continue
+      for (const raw of parsed) {
+        const event = coerceClaudeEvent(raw)
+        if (!event) continue
+        conversation.push(event)
+        countToolCalls(event, toolCallCounts)
+      }
+    } catch {
+      /* skip malformed chunk rows */
+    }
+  }
+  return conversation.length > 0 ? { conversation, toolCallCounts } : null
 }
 
 /**

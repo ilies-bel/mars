@@ -8,6 +8,7 @@ import {
   deriveSeverity,
   openTraceEventStore,
   TRACE_EVENT_KINDS,
+  TRANSCRIPT_RETENTION_DAYS,
   type TraceEventKind,
 } from '../trace-events-store'
 
@@ -421,6 +422,125 @@ describe('openTraceEventStore — cursor pagination', () => {
       await store.record({ kind: 'step_started', taskId: 'c' })
       const events = await store.query({ taskId: 'c', cursor: 'not-a-cursor' })
       expect(events).toHaveLength(1)
+    } finally {
+      await store.close()
+    }
+  })
+})
+
+// ── task_transcripts: streaming chunk store ───────────────────────────────
+
+describe('openTraceEventStore — appendTranscriptChunk + readTranscriptChunks', () => {
+  it('stores chunks and reads them back in (session_id, seq) order', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      const events1 = [{ type: 'assistant', message: { content: 'hello' } }]
+      const events2 = [{ type: 'result', result: '```completion-report\n- [done] foo\n```' }]
+      await store.appendTranscriptChunk!('task-1', 'sess-abc', 0, events1)
+      await store.appendTranscriptChunk!('task-1', 'sess-abc', 1, events2)
+
+      const all = await store.readTranscriptChunks!('task-1')
+      expect(all).toHaveLength(2)
+      expect((all[0] as { type: string }).type).toBe('assistant')
+      expect((all[1] as { type: string }).type).toBe('result')
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('readTranscriptChunks returns events across multiple sessions in session_id order', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      // Two sessions for the same task (origin + recovery)
+      await store.appendTranscriptChunk!('task-2', 'sess-origin', 0, [{ type: 'assistant', ord: 1 }])
+      await store.appendTranscriptChunk!('task-2', 'sess-recovery', 0, [{ type: 'assistant', ord: 2 }])
+
+      const all = await store.readTranscriptChunks!('task-2')
+      expect(all).toHaveLength(2)
+      // sess-origin < sess-recovery alphabetically
+      expect((all[0] as { ord: number }).ord).toBe(1)
+      expect((all[1] as { ord: number }).ord).toBe(2)
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('readTranscriptChunks with sessionId filter returns only that session', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      await store.appendTranscriptChunk!('task-3', 'sess-a', 0, [{ type: 'assistant', ord: 1 }])
+      await store.appendTranscriptChunk!('task-3', 'sess-b', 0, [{ type: 'assistant', ord: 2 }])
+
+      const fromA = await store.readTranscriptChunks!('task-3', 'sess-a')
+      expect(fromA).toHaveLength(1)
+      expect((fromA[0] as { ord: number }).ord).toBe(1)
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('readTranscriptChunks returns empty array when no chunks exist for the task', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      const result = await store.readTranscriptChunks!('task-nonexistent')
+      expect(result).toEqual([])
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('does not mix chunks from different tasks', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      await store.appendTranscriptChunk!('task-A', 'sess-x', 0, [{ type: 'assistant', src: 'A' }])
+      await store.appendTranscriptChunk!('task-B', 'sess-x', 0, [{ type: 'assistant', src: 'B' }])
+
+      const forA = await store.readTranscriptChunks!('task-A')
+      expect(forA).toHaveLength(1)
+      expect((forA[0] as { src: string }).src).toBe('A')
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('TRANSCRIPT_RETENTION_DAYS is exported and reasonable', () => {
+    expect(typeof TRANSCRIPT_RETENTION_DAYS).toBe('number')
+    expect(TRANSCRIPT_RETENTION_DAYS).toBeGreaterThan(0)
+  })
+})
+
+describe('openTraceEventStore — pruneTranscripts', () => {
+  it('deletes chunk rows whose ts is before the cutoff', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      // Insert a chunk — ts will be ~now
+      await store.appendTranscriptChunk!('task-p', 'sess-p', 0, [{ type: 'assistant' }])
+
+      // A cutoff in the future covers all currently-written rows
+      const futureCutoff = new Date(Date.now() + 60_000).toISOString()
+      const deleted = await store.pruneTranscripts!(futureCutoff)
+      expect(deleted).toBe(1)
+
+      // Row is gone
+      const remaining = await store.readTranscriptChunks!('task-p')
+      expect(remaining).toHaveLength(0)
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('returns 0 when no rows are older than the cutoff', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      await store.appendTranscriptChunk!('task-q', 'sess-q', 0, [{ type: 'assistant' }])
+      // A cutoff in the past does not match any row written now
+      const pastCutoff = new Date(Date.now() - 60_000).toISOString()
+      const deleted = await store.pruneTranscripts!(pastCutoff)
+      expect(deleted).toBe(0)
+
+      // Row is still there
+      const remaining = await store.readTranscriptChunks!('task-q')
+      expect(remaining).toHaveLength(1)
     } finally {
       await store.close()
     }

@@ -1298,3 +1298,141 @@ describe('implement-arc span attribution — all 4 steps attribute to the slice 
     expect(byOrigin).toHaveLength(0)
   })
 })
+
+// ── Incremental transcript streaming ──────────────────────────────────────
+
+describe('runWorkerWithSpan — incremental transcript chunk streaming', () => {
+  it('persists streamed events to task_transcripts so a killed session is readable', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    // Worker streams two events then throws (simulating a watchdog kill)
+    const worker: Worker = {
+      config: makeWorkerConfig('Coder'),
+      runtime: 'headless',
+      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+        await options.onEvent?.({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: '# Progress' }] },
+        } as ClaudeEvent)
+        await options.onEvent?.({
+          type: 'result',
+          result: 'task done',
+        } as unknown as ClaudeEvent)
+        throw new Error('watchdog kill')
+      },
+    }
+
+    await expect(
+      runWorkerWithSpan({
+        worker,
+        prompt: 'do work',
+        runOptions: { cwd: '/tmp', sessionId: 'sess-killed-123' },
+        traceStore,
+        stepName: 'run-claude-code',
+        workflowInstanceId: 'wf-chunk-kill',
+        originId: 'task-chunk-kill',
+        taskId: 'task-chunk-kill',
+        phase: 'code',
+      }),
+    ).rejects.toThrow('watchdog kill')
+
+    // The partial transcript must be readable from task_transcripts even
+    // though no step_ended was written (the throw happened before that).
+    const chunks = await traceStore.readTranscriptChunks!('task-chunk-kill')
+    expect(chunks.length).toBeGreaterThan(0)
+    const types = (chunks as Array<{ type: string }>).map((e) => e.type)
+    expect(types).toContain('assistant')
+    expect(types).toContain('result')
+  })
+
+  it('streams chunks during a successful run and reads them back', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const worker: Worker = {
+      config: makeWorkerConfig('Coder'),
+      runtime: 'headless',
+      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+        await options.onEvent?.({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'starting...' }] },
+        } as ClaudeEvent)
+        return { exitCode: 0, stdout: '', stderr: '', sessionId: 'sess-ok-456', conversation: [] }
+      },
+    }
+
+    await runWorkerWithSpan({
+      worker,
+      prompt: 'do work',
+      runOptions: { cwd: '/tmp', sessionId: 'sess-ok-456' },
+      traceStore,
+      stepName: 'run-claude-code',
+      workflowInstanceId: 'wf-chunk-ok',
+      originId: 'task-chunk-ok',
+      taskId: 'task-chunk-ok',
+      phase: 'code',
+    })
+
+    const chunks = await traceStore.readTranscriptChunks!('task-chunk-ok')
+    expect(chunks.length).toBeGreaterThan(0)
+    expect((chunks[0] as { type: string }).type).toBe('assistant')
+  })
+
+  it('does not write chunks when taskId is null (slicer runs)', async () => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    const worker: Worker = {
+      config: makeWorkerConfig('Slicer'),
+      runtime: 'headless',
+      run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
+        await options.onEvent?.({ type: 'assistant', message: { content: [] } } as ClaudeEvent)
+        return { exitCode: 0, stdout: '', stderr: '', sessionId: null, conversation: [] }
+      },
+    }
+
+    await runWorkerWithSpan({
+      worker,
+      prompt: 'slice',
+      runOptions: { cwd: '/tmp', sessionId: 'sess-slicer' },
+      traceStore,
+      stepName: 'generate-slices',
+      workflowInstanceId: 'wf-chunk-slicer',
+      originId: 'origin-slicer',
+      taskId: null, // null taskId → no chunks written
+    })
+
+    // null taskId means no chunk rows
+    const chunks = await traceStore.readTranscriptChunks!('origin-slicer')
+    expect(chunks).toHaveLength(0)
+  })
+
+  it('reads chunks written by streaming store in preference to step_ended payload', async () => {
+    // This test verifies the fallback priority: task_transcripts > step_ended > disk.
+    // Set up a store with chunks for task-X but no step_ended with a transcript.
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    try {
+      // Manually insert streaming chunks
+      await traceStore.appendTranscriptChunk!(
+        'task-priority',
+        'sess-stream',
+        0,
+        [{ type: 'result', result: 'from streaming store' }],
+      )
+      // Also write a step_ended with a different transcript
+      await traceStore.record({
+        kind: 'step_ended',
+        taskId: 'task-priority',
+        phase: 'code',
+        payload: {
+          stepName: 'run-claude-code',
+          workflowInstanceId: 'wf-priority',
+          outcome: 'completed',
+          transcript: JSON.stringify([{ type: 'result', result: 'from step_ended' }]),
+        },
+      })
+
+      // readTranscriptChunks reads streaming store
+      const chunks = await traceStore.readTranscriptChunks!('task-priority')
+      expect(chunks).toHaveLength(1)
+      expect((chunks[0] as { result: string }).result).toBe('from streaming store')
+    } finally {
+      await traceStore.close()
+    }
+  })
+})
