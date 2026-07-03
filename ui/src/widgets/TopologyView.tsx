@@ -14,7 +14,8 @@
  *    a visible task node (combo expanded) → `chainForTask` lineage. Everything
  *    not lit dims. ~100ms hover-intent debounce; reduced-motion → instant.
  *  - Single-open drill-in: at most ONE combo open. Double-click toggles;
- *    Escape / canvas-dblclick / the Collapse button closes. Anchored expand +
+ *    Escape or canvas-dblclick closes (there is no dedicated Collapse button
+ *    in the render — closing is keyboard/canvas-only). Anchored expand +
  *    push-outward + restore, ported faithfully (the load-bearing part).
  *  - Dim sources combine: search (`searchMatchIds`) + hover-trace. A node stays
  *    bright only if it passes the search filter AND (no hover active OR it's
@@ -839,14 +840,16 @@ export const TopologyView = ({
         </div>
       )}
       {/* Navigation hint — quiet, top-right inside the canvas.
-          Changes to a specific action hint when hovering a collapsed combo. */}
-      <div className="pointer-events-none absolute right-3 top-3 z-10 text-right font-mono text-[10.5px] leading-relaxed text-muted-dark opacity-70">
+          Changes to a specific action hint when hovering a collapsed combo.
+          Sized >=11px and coloured `text-muted` (#705F50, 4.9:1 on
+          --color-bg) so the overlay clears WCAG AA on the light bg. */}
+      <div className="pointer-events-none absolute right-3 top-3 z-10 text-right font-mono text-[11px] leading-relaxed text-muted">
         scroll = zoom · drag = pan
         <br />
         {hintText ? (
-          <span className="font-semibold opacity-100">{hintText}</span>
+          <span className="font-semibold">{hintText}</span>
         ) : (
-          'hover → trace · double-click → expand / collapse'
+          'double-click = expand/collapse · click task = details · esc = collapse'
         )}
       </div>
       {/* Status legend — bottom, over the canvas */}

@@ -192,3 +192,40 @@ describe('TopologyView – zero-state search overlay', () => {
     expect(html).not.toContain('0 tasks match')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Navigation hint overlay — completeness + legibility
+// ---------------------------------------------------------------------------
+
+describe('TopologyView – navigation hint overlay', () => {
+  it('names every interaction in the click model, not just double-click', () => {
+    // The hint must document the three interactions the view actually supports:
+    // double-click on a combo, single-click on a task, and Esc to collapse.
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[stubTask('t-1')]} proposals={noProposals} />,
+    )
+    expect(html).toContain('double-click')
+    expect(html).toContain('click task')
+    expect(html.toLowerCase()).toContain('esc')
+  })
+
+  it('uses a text size >= 11px and a token that clears AA contrast on the light bg', () => {
+    // The prior overlay was 10.5px in text-muted-dark (#A89684 → ~2.5:1 on
+    // --color-bg). It must now be >=11px and coloured with text-muted
+    // (#705F50 → 4.9:1 on --color-bg) so it meets WCAG AA. No opacity dampener
+    // either — that silently drops effective contrast back under the threshold.
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[stubTask('t-1')]} proposals={noProposals} />,
+    )
+    // The hint is the div containing the always-on 'scroll = zoom · drag = pan'.
+    // Extract just its class attribute so unrelated overlays don't confound.
+    const match = html.match(/class="([^"]*)"[^>]*>[^<]*scroll = zoom/)
+    expect(match).not.toBeNull()
+    const cls = match?.[1] ?? ''
+    expect(cls).toContain('text-[11px]')
+    expect(cls).not.toContain('text-[10.5px]')
+    expect(cls).toContain('text-muted')
+    expect(cls).not.toContain('text-muted-dark')
+    expect(cls).not.toContain('opacity-70')
+  })
+})
