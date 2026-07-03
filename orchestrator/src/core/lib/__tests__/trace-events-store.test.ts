@@ -815,4 +815,52 @@ describe('backfillInlineTranscripts — move step_ended inline transcripts to ta
       await store.close()
     }
   })
+
+  it('a 3 MB synthetic transcript no longer appears in trace_events payloads after backfill', async () => {
+    // Regression guard: the measured symptom was 3.53 MB step_ended payloads.
+    // This test simulates that exact scenario and verifies backfill eliminates
+    // the inline blob entirely from trace_events.
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      // Construct a synthetic transcript whose JSON serialisation is ≥ 3 MB.
+      const bigEvent = { type: 'assistant', content: 'x'.repeat(10_000) }
+      const events = Array.from({ length: 300 }, () => bigEvent)
+      const transcriptJson = JSON.stringify(events)
+      expect(transcriptJson.length).toBeGreaterThan(3_000_000)
+
+      // Write it inline inside a step_ended payload (the pre-migration pattern).
+      await store.record({
+        kind: 'step_ended',
+        taskId: 'task-3mb-backfill',
+        phase: 'code',
+        payload: {
+          stepName: 'run-claude-code',
+          workflowInstanceId: 'wf-3mb',
+          outcome: 'completed',
+          sessionId: 'sess-3mb',
+          transcript: transcriptJson,
+        },
+      })
+
+      const migrated = await store.backfillInlineTranscripts!()
+      expect(migrated).toBe(1)
+
+      // The 3 MB blob must no longer appear in trace_events.
+      const stepEnded = await store.query({ taskId: 'task-3mb-backfill', kind: ['step_ended'] })
+      expect(stepEnded).toHaveLength(1)
+      expect(stepEnded[0]!.payload.transcript).toBeUndefined()
+
+      // A lightweight transcriptRef marker replaces it (byte length only).
+      const ref = stepEnded[0]!.payload.transcriptRef as Record<string, unknown>
+      expect(typeof ref.byteLen).toBe('number')
+      expect(ref.byteLen as number).toBeGreaterThan(3_000_000)
+
+      // The 3 MB transcript must be accessible from task_durable_transcripts.
+      const result = await store.readDurableTranscript!('task-3mb-backfill')
+      expect(result).not.toBeNull()
+      expect((JSON.parse(result!) as unknown[]).length).toBe(events.length)
+    } finally {
+      await store.close()
+    }
+  })
 })
