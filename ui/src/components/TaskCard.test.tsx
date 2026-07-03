@@ -19,39 +19,60 @@ const minTask = (id: string, overrides: Partial<UITask> = {}): UITask => ({
 })
 
 describe('TaskCard – live-activity pulse', () => {
-  it('applies animate-mars-pulse to a running task card', () => {
+  it('shows a pulsing status dot for a running task', () => {
     const html = renderToStaticMarkup(
       <TaskCard task={minTask('t1', { status: 'running' })} index={0} />,
     )
     expect(html).toContain('animate-mars-pulse')
   })
 
-  it('applies animate-mars-pulse to a merging task card', () => {
+  it('shows a pulsing status dot for a merging task', () => {
     const html = renderToStaticMarkup(
       <TaskCard task={minTask('t1', { status: 'merging' })} index={0} />,
     )
     expect(html).toContain('animate-mars-pulse')
   })
 
-  it('applies animate-mars-pulse to a verifying task card', () => {
+  it('shows a pulsing status dot for a verifying task', () => {
     const html = renderToStaticMarkup(
       <TaskCard task={minTask('t1', { status: 'verifying' })} index={0} />,
     )
     expect(html).toContain('animate-mars-pulse')
   })
 
-  it('does NOT apply animate-mars-pulse to a queued task card', () => {
+  it('does NOT show a pulsing dot for a queued task', () => {
     const html = renderToStaticMarkup(
       <TaskCard task={minTask('t1', { status: 'queued' })} index={0} />,
     )
     expect(html).not.toContain('animate-mars-pulse')
   })
 
-  it('does NOT apply animate-mars-pulse to a failed task card', () => {
+  it('does NOT show a pulsing dot for a failed task', () => {
     const html = renderToStaticMarkup(
       <TaskCard task={minTask('t1', { status: 'failed' })} index={0} />,
     )
     expect(html).not.toContain('animate-mars-pulse')
+  })
+
+  it('pulses a status dot — not the whole card — so text stays legible when running', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard task={minTask('t1', { status: 'running' })} index={0} />,
+    )
+    // The root <article> element must NOT carry the pulse class (text legibility)
+    const rootClassMatch = html.match(/^<article[^>]*class="([^"]*)"/)
+    expect(rootClassMatch?.[1] ?? '').not.toContain('animate-mars-pulse')
+    // The pulse lives on a child indicator element, guarded by motion-safe:
+    expect(html).toContain('motion-safe:animate-mars-pulse')
+  })
+
+  it('uses motion-safe: prefix so the dot is still when prefers-reduced-motion is set', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard task={minTask('t1', { status: 'running' })} index={0} />,
+    )
+    // motion-safe: ensures animation is suppressed at the Tailwind variant level
+    expect(html).toContain('motion-safe:animate-mars-pulse')
+    // No bare (unguarded) animate-mars-pulse class anywhere
+    expect(html).not.toMatch(/(?<![:\w])animate-mars-pulse/)
   })
 })
 

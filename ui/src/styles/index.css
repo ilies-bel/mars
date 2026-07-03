@@ -134,6 +134,10 @@ html, body, #root {
 }
 .animate-mars-pulse { animation: mars-pulse 1.6s ease-in-out infinite; }
 
+@media (prefers-reduced-motion: reduce) {
+  .animate-mars-pulse { animation: none; }
+}
+
 /* ── Drawer entrance / exit animations ──────────────────────────────────────
  * Enter: slides in from the right over 260 ms (iOS drawer curve).
  * Exit:  slides back to the right over 180 ms (snappier than enter).

@@ -19,14 +19,13 @@ export const TaskCard = memo(({ task, index }: Props) => {
       : task.status === 'dropped'
         ? 'opacity-70'
         : ''
-  // Live-activity pulse: visually signals that the task is actively running.
-  const pulseClass =
+  // Live-activity indicator: visually signals the task is actively running.
+  // Pulse is scoped to a small status dot so text stays legible throughout.
+  const isLive =
     task.status === 'running' ||
     task.status === 'merging' ||
     task.status === 'verifying' ||
     task.status === 'vega-reconciling'
-      ? 'animate-mars-pulse'
-      : ''
   const showChip =
     task.status === 'blocked' ||
     task.status === 'dropped' ||
@@ -44,7 +43,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
       data-task-status={task.status}
       tabIndex={0}
       role="button"
-      className={`flex flex-col gap-2 rounded-md border border-border bg-surface p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-panel active:scale-[0.99] motion-reduce:transform-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-flame ${accent} ${pulseClass}`.trimEnd()}
+      className={`flex flex-col gap-2 rounded-md border border-border bg-surface p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-panel active:scale-[0.99] motion-reduce:transform-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-flame ${accent}`.trimEnd()}
       onClick={(e) => {
         // Let inner anchors (e.g. the blocker link) handle their own navigation
         if ((e.target as HTMLElement).closest('a') !== null) return
@@ -65,6 +64,12 @@ export const TaskCard = memo(({ task, index }: Props) => {
           {task.id}
         </a>
         <div className="flex shrink-0 items-center gap-1.5">
+          {isLive ? (
+            <span
+              aria-hidden="true"
+              className="inline-block h-1.5 w-1.5 rounded-full bg-flame motion-safe:animate-mars-pulse"
+            />
+          ) : null}
           {task.retryCount > 0 ? (
             <span
               className="rounded bg-basalt/10 px-1.5 py-0.5 font-mono text-micro font-semibold tracking-wide text-basalt"
