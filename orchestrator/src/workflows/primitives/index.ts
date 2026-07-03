@@ -72,7 +72,7 @@ import {
   repairInstallInPlace,
   WorktreeInstallError,
 } from '../../core/lib/worktree-install'
-import type { ClaudeEvent } from '../../core/lib/claude-stream'
+import { extractLastStreamText, type ClaudeEvent } from '../../core/lib/claude-stream'
 import { getTask, hasIncompleteBlockers, updateTask } from '../../core/queue'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
 import { computeFailureSignature } from '../../core/lib/failure-signature'
@@ -852,11 +852,25 @@ export const runAgent = async (
   // spawn exactly one recovery fix-task, and throw to stop before verify/merge.
   if (r.exitCode !== 0) {
     const stderrTail = r.stderr.trim().slice(-1000)
+    // When the claude CLI dies from an API-level rejection (e.g. monthly spend
+    // limit, auth error) it exits non-zero but writes nothing to stderr — the
+    // actual cause arrives in the event stream as a `result` event or a final
+    // assistant message. Fall back to that text so the task `error` field is
+    // diagnosable without reading the raw transcript.
+    const diagText =
+      stderrTail.length > 0
+        ? `stderr tail:\n${stderrTail}`
+        : (() => {
+            const streamText = extractLastStreamText(r.conversation)
+            return streamText
+              ? `stderr empty; last stream text:\n${streamText.slice(-500)}`
+              : `stderr empty; no stream text captured`
+          })()
     await updateTask(
       taskId,
       {
         status: 'failed',
-        error: `coder exited ${r.exitCode} before completing; stderr tail:\n${stderrTail}`,
+        error: `coder exited ${r.exitCode} before completing; ${diagText}`,
         failedPhase: 'code',
         failureReason: 'coder-exit-nonzero',
         failureReasonCode: 'coder-exit-nonzero',
@@ -866,12 +880,12 @@ export const runAgent = async (
     await handleTaskFailureWithFixTask({
       taskId,
       failingStep: 'code:coder-exit-nonzero',
-      errorOutput: `coder process exited ${r.exitCode} without producing work. stderr tail:\n${stderrTail}`,
+      errorOutput: `coder process exited ${r.exitCode} without producing work. ${diagText}`,
       branch,
       store,
       recipeContext: {
         targetPath: worktreePath,
-        statusOutput: `The coder exited ${r.exitCode} before doing any work (the worktree may be empty). Investigate the exit cause from the stderr tail before retrying.`,
+        statusOutput: `The coder exited ${r.exitCode} before doing any work (the worktree may be empty). Investigate the exit cause from the diagnostic text before retrying.`,
         targetBranch: branch,
         originalPrompt: '',
       },

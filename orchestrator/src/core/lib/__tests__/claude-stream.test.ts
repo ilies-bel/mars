@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseClaudeStreamLine } from '../claude-stream'
+import { parseClaudeStreamLine, extractLastStreamText } from '../claude-stream'
 
 describe('parseClaudeStreamLine', () => {
   it('returns null for blank lines', () => {
@@ -111,5 +111,119 @@ describe('parseClaudeStreamLine', () => {
       subtype: 'success',
       session_id: 's1',
     })
+  })
+})
+
+describe('extractLastStreamText', () => {
+  it('returns null for an empty conversation', () => {
+    expect(extractLastStreamText([])).toBeNull()
+  })
+
+  it('returns null when no result or assistant events are present', () => {
+    const conversation = [
+      { type: 'system', subtype: 'init', session_id: 'abc' },
+    ]
+    expect(extractLastStreamText(conversation)).toBeNull()
+  })
+
+  it('returns the result event text for an API-level error (monthly spend limit pattern)', () => {
+    const conversation = [
+      { type: 'system', subtype: 'init', session_id: 'abc' },
+      {
+        type: 'result',
+        subtype: 'error_api_error',
+        is_error: true,
+        result: "You've hit your monthly spend limit. Please wait or upgrade your plan.",
+        session_id: 'abc',
+      },
+    ]
+    expect(extractLastStreamText(conversation)).toBe(
+      "You've hit your monthly spend limit. Please wait or upgrade your plan.",
+    )
+  })
+
+  it('returns the last assistant message text when no result event is present', () => {
+    const conversation = [
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Here is the implementation.' }],
+        },
+      },
+    ]
+    expect(extractLastStreamText(conversation)).toBe('Here is the implementation.')
+  })
+
+  it('prefers the result event over the assistant message when both are present', () => {
+    const conversation = [
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Working on it...' }],
+        },
+      },
+      {
+        type: 'result',
+        subtype: 'success',
+        result: 'All done.',
+        session_id: 'abc',
+      },
+    ]
+    expect(extractLastStreamText(conversation)).toBe('All done.')
+  })
+
+  it('returns null when result event has an empty result string', () => {
+    const conversation = [
+      { type: 'result', subtype: 'success', result: '', session_id: 'abc' },
+    ]
+    // No non-empty result string and no assistant events → null
+    expect(extractLastStreamText(conversation)).toBeNull()
+  })
+
+  it('falls back to assistant text when result event has an empty result string', () => {
+    const conversation = [
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Hello there.' }],
+        },
+      },
+      { type: 'result', subtype: 'success', result: '', session_id: 'abc' },
+    ]
+    expect(extractLastStreamText(conversation)).toBe('Hello there.')
+  })
+
+  it('returns null when result field is not a string', () => {
+    const conversation = [
+      { type: 'result', subtype: 'success', result: 42, session_id: 'abc' },
+    ]
+    expect(extractLastStreamText(conversation)).toBeNull()
+  })
+
+  it('picks the LAST result event when multiple are present', () => {
+    const conversation = [
+      { type: 'result', result: 'first result', session_id: 'abc' },
+      { type: 'result', result: 'second result', session_id: 'abc' },
+    ]
+    expect(extractLastStreamText(conversation)).toBe('second result')
+  })
+
+  it('ignores non-text content blocks in assistant messages', () => {
+    const conversation = [
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 't1', name: 'Read', input: {} },
+            { type: 'text', text: 'The answer is 42.' },
+          ],
+        },
+      },
+    ]
+    expect(extractLastStreamText(conversation)).toBe('The answer is 42.')
   })
 })

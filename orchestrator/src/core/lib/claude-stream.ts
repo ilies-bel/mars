@@ -82,3 +82,44 @@ export const parseClaudeStreamLine = (line: string): ClaudeEvent | null => {
   if (!isObject(parsed) || typeof parsed.type !== 'string') return null
   return trimEvent(parsed as ClaudeEvent)
 }
+
+/**
+ * Extract the last human-readable text from a Claude event stream.
+ *
+ * Priority:
+ * 1. The final `result` event whose `result` field is a non-empty string.
+ *    This carries the human-readable error message on API-level rejections
+ *    (e.g. "You've hit your monthly spend limit.") and the summary on
+ *    successful runs.
+ * 2. The text content of the last `assistant` message event.
+ *
+ * Returns `null` when the conversation is empty or neither source has text.
+ * Used as a fallback error label on nonzero exits with empty stderr.
+ */
+export const extractLastStreamText = (conversation: readonly ClaudeEvent[]): string | null => {
+  // Prefer the final result event's result string.
+  for (let i = conversation.length - 1; i >= 0; i--) {
+    const event = conversation[i]
+    if (event.type === 'result') {
+      const text = typeof event.result === 'string' ? event.result.trim() : ''
+      if (text.length > 0) return text
+    }
+  }
+  // Fall back to the last assistant message's text content.
+  for (let i = conversation.length - 1; i >= 0; i--) {
+    const event = conversation[i]
+    if (event.type === 'assistant') {
+      const message = event.message
+      if (isObject(message) && Array.isArray(message.content)) {
+        for (let j = (message.content as unknown[]).length - 1; j >= 0; j--) {
+          const block = (message.content as unknown[])[j]
+          if (isObject(block) && block.type === 'text' && typeof block.text === 'string') {
+            const text = block.text.trim()
+            if (text.length > 0) return text
+          }
+        }
+      }
+    }
+  }
+  return null
+}
