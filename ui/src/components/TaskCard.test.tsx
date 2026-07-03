@@ -96,14 +96,18 @@ describe('TaskCard – task drawer navigation', () => {
 })
 
 describe('TaskCard – keyboard operability', () => {
-  it('is keyboard-focusable via tabIndex=0', () => {
+  it('is keyboard-focusable via a native button element', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('t-1')} index={0} />)
-    expect(html).toContain('tabindex="0"')
+    // A native <button> is keyboard-focusable without needing an explicit tabindex
+    expect(html).toContain('<button')
   })
 
-  it('has role=button so assistive technology treats it as pressable', () => {
+  it('card article does not have role=button — no nested-interactive ARIA violation', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('t-2')} index={0} />)
-    expect(html).toContain('role="button"')
+    // role=button on a container that nests <a> and <details> violates the ARIA spec
+    expect(html).not.toMatch(/<article[^>]*role="button"/)
+    // Instead, a native <button> element makes the card pressable by assistive technology
+    expect(html).toContain('<button')
   })
 })
 
@@ -132,15 +136,16 @@ describe('TaskCard – press and hover feedback', () => {
 })
 
 describe('TaskCard – focus-visible ring', () => {
-  it('suppresses the default outline in favour of a custom ring', () => {
+  it('suppresses the default browser outline on the drawer button', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('t-7')} index={0} />)
     expect(html).toContain('focus-visible:outline-none')
   })
 
-  it('applies a flame-coloured focus ring for keyboard navigation', () => {
+  it('applies a flame-coloured focus ring on the card boundary when the drawer button is focused', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('t-8')} index={0} />)
-    expect(html).toContain('focus-visible:ring-2')
-    expect(html).toContain('focus-visible:ring-flame')
+    // CSS :has() scopes the ring to the card article, not just the button text area
+    expect(html).toContain('has-[button:focus-visible]:ring-2')
+    expect(html).toContain('has-[button:focus-visible]:ring-flame')
   })
 })
 

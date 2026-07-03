@@ -38,25 +38,19 @@ export const TaskCard = memo(({ task, index }: Props) => {
   }
 
   return (
+    // `relative` contains the stretched-link ::before pseudo-element.
+    // `has-[button:focus-visible]` scopes the focus ring to the card boundary
+    // so the ring appears around the whole card, not just the button text.
+    // No role=button here — nesting interactive descendants inside role=button
+    // violates the ARIA spec (axe: nested-interactive).
     <article
       data-task-index={index}
       data-task-status={task.status}
-      tabIndex={0}
-      role="button"
-      className={`flex flex-col gap-2 rounded-md border border-border bg-surface p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-panel active:scale-[0.99] motion-reduce:transform-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-flame ${accent}`.trimEnd()}
-      onClick={(e) => {
-        // Let inner anchors (e.g. the blocker link) handle their own navigation
-        if ((e.target as HTMLElement).closest('a') !== null) return
-        openDrawer()
-      }}
-      onKeyDown={(e) => {
-        if (e.key !== 'Enter' && e.key !== ' ') return
-        if ((e.target as HTMLElement).closest('a') !== null) return
-        e.preventDefault()
-        openDrawer()
-      }}
+      className={`relative flex flex-col gap-2 rounded-md border border-border bg-surface p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-panel active:scale-[0.99] motion-reduce:transform-none has-[button:focus-visible]:outline-none has-[button:focus-visible]:ring-2 has-[button:focus-visible]:ring-flame ${accent}`.trimEnd()}
     >
-      <div className="flex min-w-0 items-start justify-between gap-2">
+      {/* Row 1: id link + status badges — raised above the stretched button via z-10
+          so the anchor receives its own pointer events independently. */}
+      <div className="relative z-10 flex min-w-0 items-start justify-between gap-2">
         <a
           href={`#/task/${encodeURIComponent(task.id)}`}
           className="block min-w-0 truncate font-mono text-meta text-muted hover:text-fg hover:underline"
@@ -81,20 +75,31 @@ export const TaskCard = memo(({ task, index }: Props) => {
           {showChip ? <StatusChip status={task.status} /> : null}
         </div>
       </div>
-      <div
-        className={`line-clamp-3 text-body font-medium leading-snug text-fg ${
-          task.status === 'dropped' ? 'line-through' : ''
-        }`}
+
+      {/* Stretched-link button: carries the card's accessible name (task title) and
+          opens the drawer on click/Enter/Space.  The `::before` pseudo-element
+          (before:absolute before:inset-0) covers the full card so clicking any
+          non-interactive area triggers openDrawer().  Elements with relative z-10
+          sit above the pseudo-element and handle their own pointer events. */}
+      <button
+        type="button"
+        aria-label={task.title}
+        onClick={openDrawer}
+        className={`w-full text-left line-clamp-3 text-body font-medium leading-snug text-fg focus-visible:outline-none before:absolute before:inset-0 before:content-['']${task.status === 'dropped' ? ' line-through' : ''}`}
       >
         {task.title}
-      </div>
+      </button>
+
       {task.status === 'dropped' && task.dropReason ? (
         <div className="font-mono text-meta text-muted">
           {truncate(task.dropReason, 120)}
         </div>
       ) : null}
+
+      {/* Blocked section: raised above the stretched button so the anchor link
+          receives its own pointer events. */}
       {task.status === 'blocked' ? (
-        <div className="font-mono text-meta text-ochre">
+        <div className="relative z-10 font-mono text-meta text-ochre">
           {task.blockerTaskId ? (
             <a
               href={`#/task/${task.blockerTaskId}`}
@@ -107,10 +112,13 @@ export const TaskCard = memo(({ task, index }: Props) => {
           )}
         </div>
       ) : null}
+
+      {/* Spec toggle: raised above the stretched button so the <details> widget
+          receives its own pointer events.  No stopPropagation needed — the article
+          no longer has an onClick handler. */}
       {spec !== null ? (
         <details
-          className="border-t border-border/50 pt-2"
-          onClick={(e) => e.stopPropagation()}
+          className="relative z-10 border-t border-border/50 pt-2"
         >
           <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 py-0.5 font-mono text-micro font-semibold text-muted/80 hover:text-fg">
             <span className="text-fg/60">spec</span>
@@ -158,6 +166,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
           </div>
         </details>
       ) : null}
+
       <div className="flex items-center justify-between gap-2">
         <RoleTag role={task.role} />
         <span className="font-mono text-meta text-muted">
