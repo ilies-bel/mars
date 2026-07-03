@@ -320,3 +320,41 @@ describe('BoardView – proposal filter on Proposals column', () => {
     expect(html).toContain('Feature Beta')
   })
 })
+
+describe('BoardView – column lane styling (no card-in-card nesting)', () => {
+  it('board columns are styled as borderless lanes, not bordered cards', () => {
+    const t1 = task({ id: 'task-q', cluster: 'Queued' })
+    const byCluster = { ...emptyByCluster(), Queued: [t1] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    // Column lane wrappers must not add a card-level border around already-bordered TaskCards.
+    // The combination "border border-border bg-panel" is the column card anti-pattern.
+    expect(html).not.toContain('border border-border bg-panel')
+  })
+
+  it('Proposals column is also styled as a borderless lane', () => {
+    const d1 = draft('p1', 'Feature Alpha')
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={emptyByCluster()} drafts={[d1]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).not.toContain('border border-border bg-panel')
+  })
+
+  it('column header carries an underline to preserve visual separation without full card chrome', () => {
+    const t1 = task({ id: 'task-q', cluster: 'Queued' })
+    const byCluster = { ...emptyByCluster(), Queued: [t1] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    // The column <header> element (not the tab strip) must carry a border-b underline
+    // so the lane heading is visually separated from cards without a full card border.
+    expect(html).toMatch(/<header[^>]*class="[^"]*\bborder-b\b/)
+  })
+})
