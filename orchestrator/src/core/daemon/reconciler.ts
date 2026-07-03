@@ -23,13 +23,16 @@
  * ordering contract documented on `runStartupReconcile`.
  *
  * NOTE on scope: `reconcileTerminalTasks` (lifecycle-reconcile.ts) is
- * deliberately NOT a member of this registry. It runs in a different boot
- * phase — inside the alert-dismisser IIFE, after `ensureAlertDismisser`,
- * gated on a libsql `Client` rather than `ReconcileDeps`, and concerns
- * action-queue resolution rather than task-status recovery. Folding it into
- * the startup sequence would change *when* it runs relative to the
- * alert-dismisser drain, so it stays a standalone call. See the comment at
- * its server.ts call site.
+ * invoked from TWO places:
+ *   1. The `stale-action-queue-sweep` registry step (step 11) — runs as part
+ *      of the normal startup reconcile pass. This is the primary safety net and
+ *      also covers the standalone `mars sync` path.
+ *   2. The alert-dismisser boot IIFE in server.ts — runs after
+ *      `ensureAlertDismisser` and before `drainAlertDismissals`. This path is
+ *      retained for timing-sensitive daemon-only cleanup (closing rows before
+ *      the outbox drain so the drain never sees a stale open row that should
+ *      already be resolved). Both paths are idempotent; whichever runs first
+ *      closes the rows and the second is a no-op.
  */
 
 import type { EventEmitter } from 'node:events'
@@ -84,6 +87,14 @@ export interface ReconcileSummary {
    * replayed during startup reconcile.
    */
   recoveryDependentsRequeued: number
+  /**
+   * Open action-queue items resolved because the task they referenced has
+   * since reached a terminal-success state (`done` or `dropped`). Covers
+   * the gap where the alert-dismisser outbox subscriber did not drain
+   * fast enough before the next daemon restart, or where the task transitioned
+   * to done via a code path that did not emit the expected dismissal event.
+   */
+  staleActionQueueItemsResolved: number
 }
 
 /**
@@ -119,4 +130,5 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   stalledProposalsSliced: 0,
   recoveryPropagated: 0,
   recoveryDependentsRequeued: 0,
+  staleActionQueueItemsResolved: 0,
 })

@@ -274,6 +274,45 @@ const stalledProposalSlice: Reconciler = {
 }
 
 /**
+ * 11. Stale action-queue sweep — resolve any open action-queue items whose
+ *     origin task has already reached a terminal-success state (`done` or
+ *     `dropped`) but whose alert row was not closed by the normal event-driven
+ *     path (e.g. the alert-dismisser outbox subscriber did not drain before the
+ *     daemon was restarted, or the task transitioned to done via a code path
+ *     that skipped the usual dismissal event).
+ *
+ *     Runs AFTER the task-status recovery steps (1–10) so that tasks flipped to
+ *     `done` by step 4 (recovery-done-propagation) are also covered.
+ *
+ *     This step is belt-and-suspenders alongside the `reconcileTerminalTasks`
+ *     call in the alert-dismisser boot IIFE (server.ts).  Both paths are
+ *     idempotent; whichever runs first closes the rows and the second is a
+ *     no-op.  The daemon's IIFE call (tied to `ensureAlertDismisser` / before
+ *     `drainAlertDismissals`) is still present for the timing-sensitive path;
+ *     this step covers the standalone `mars sync` path and provides an extra
+ *     safety net at startup.
+ */
+const staleActionQueueSweep: Reconciler = {
+  name: 'stale-action-queue-sweep',
+  async run({ log }) {
+    try {
+      const { resolveQueueClient } = await import('../queue')
+      const { reconcileTerminalTasks } = await import('./lifecycle-reconcile')
+      const { rowsResolved } = await reconcileTerminalTasks(resolveQueueClient())
+      if (rowsResolved > 0) {
+        log(
+          `[reconcile] stale-action-queue-sweep: resolved ${rowsResolved} stale action-queue item(s) for done/dropped tasks`,
+        )
+      }
+      return { staleActionQueueItemsResolved: rowsResolved }
+    } catch (err) {
+      log(`[reconcile] stale-action-queue-sweep failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * The ordered startup-reconcile registry. Order is load-bearing and matches
  * the historical hand-called sequence 1→10. To add a step, insert a
  * `Reconciler` at the correct position; the boot path iterates this array.
@@ -289,4 +328,5 @@ export const RECONCILERS: readonly Reconciler[] = [
   verifyingRecovery,
   mergingRecovery,
   stalledProposalSlice,
+  staleActionQueueSweep,
 ]
