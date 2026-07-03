@@ -37,6 +37,40 @@ the user to triage.
 This skill does **not** invent findings itself. It runs the CLI, then
 points the user at the report and the resulting draft proposals.
 
+## How the CLI pre-digests arcs before sending to the analyst
+
+Before calling the LLM, `mars arc reflect` runs a **mechanical, LLM-free
+digest** on each task's conversation. The digest computes, per task:
+
+- **repeated reads** — files Read more than once (path + count),
+- **edit-revert pairs** — files edited ≥ 2 times (a proxy for undo thrashing),
+- **repeated Bash invocations** — identical command strings run multiple times,
+- **tool error count** — `tool_result` blocks with `is_error: true`,
+- **first-tool-call failure** — whether the very first tool call in the session returned an error (a prompt/environment defect signal),
+- **environmentalFailure** — set when the conversation contains `rate_limit_event` events, synthetic assistant messages (`model: "<synthetic>"`), or `result` events with an `api_error_status` field.
+
+The digest JSON is embedded compactly alongside each task's conversation in
+the analyst prompt. The analyst is instructed to cite digest numbers rather
+than re-counting from the raw transcript.
+
+### Context-window budget
+
+To prevent large arcs from overflowing the model's context window:
+
+1. **Tool-result body truncation** — each `tool_result` body is trimmed to
+   head 400 chars + tail 200 chars before sending (long command outputs,
+   full test runs). An inline `…[N chars elided]…` marker records what
+   was dropped.
+2. **Per-task conversation cap (150 KB)** — after truncation, each task's
+   `ClaudeEvent[]` is capped at 150 KB via binary-search head+tail
+   retention. A cap note in the prompt states how many events were elided.
+3. **Total prompt cap (400 KB)** — the assembled prompt is hard-capped at
+   400 KB. When the cap triggers, a `[PROMPT TRUNCATED]` note is appended
+   so the analyst never assumes it saw everything.
+
+The analyst's findings therefore reference digest numbers (which are always
+complete) rather than re-deriving counts from the potentially elided transcript.
+
 ## When to invoke
 
 - User asks to "deep reflect", "post-mortem a task arc", "analyse a

@@ -8,6 +8,8 @@ import {
   type VerdictedSuggestion,
 } from './reflector'
 import type { DeepReflectArc } from './deep-reflect-query'
+import type { ClaudeEvent } from './claude-stream'
+import { digestArc } from './arc-digest'
 
 export interface DissonantCall {
   taskId: string | null
@@ -49,6 +51,19 @@ export interface DeepReflectionResult {
   exitCode: number
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Prompt size budgets
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Max chars to keep at the head of each tool_result body. */
+const TOOL_RESULT_HEAD_CHARS = 400
+/** Max chars to keep at the tail of each tool_result body. */
+const TOOL_RESULT_TAIL_CHARS = 200
+/** Max bytes for each task's serialized conversation after tool_result truncation. */
+const TASK_CONVERSATION_CAP_BYTES = 150 * 1024
+/** Max bytes for the total assembled prompt sent to the analyst. */
+const TOTAL_PROMPT_CAP_BYTES = 400 * 1024
+
 const SYNTHESIS_INSTRUCTIONS_ARC = `You are an expert post-mortem analyst for the Mars task orchestrator. You
 will be given the FULL claude -p conversations for EVERY task in a single
 Mars arc — the original task plus any retries, recovery (\`fix\`) tasks, and
@@ -59,6 +74,13 @@ Your job is to walk every task's transcript event-by-event AND to reason
 across tasks. Cross-task signals matter most here: a recovery task that
 failed because the parent left main dirty, a retry that re-did work the
 parent already completed, a fix that papered over the wrong symptom.
+
+Two KPIs drive every finding and suggestion:
+- **Task completeness**: did the agent actually fulfil the task's acceptance criteria?
+- **Token cost**: how much did this arc cost in tokens, and was the spend justified?
+Every suggestion in \`suggestions[]\` MUST explicitly state its expected effect on
+both KPIs (e.g. "saves ~30k tokens/arc by eliminating repeated reads; no impact on
+completeness").
 
 Procedure:
 
@@ -92,6 +114,41 @@ Procedure:
    (not just a per-task symptom). Suggestions follow the same verdict
    scheme as single-task mode: save | absorb | drop. Each suggestion's
    prompt MUST be self-contained and end with "Save your work."
+
+Environmental failure classification:
+- When a task's per-task digest (see below) sets \`environmentalFailure: true\`,
+  classify that arc failure as **infrastructure** (quota, install, daemon),
+  NOT as agent reasoning failure. Do NOT attribute rate-limit cascades, failed
+  pnpm installs, or daemon kills to agent confusion.
+- Name the orchestrator component responsible for the fix (e.g.
+  "setup-phase retry budget", "code-phase rate-limit backoff", "pnpm install
+  timeout in worktree-install.ts"). Use the \`environmentalFailureReason\`
+  from the digest to identify the specific trigger.
+- Similarly, tool_invoked error events in the step timeline (prefixed [T])
+  represent orchestrator-level shell failures — flag them as infrastructure
+  problems, not agent problems.
+
+First-tool-call defect rule:
+- If a task's digest sets \`firstToolCallFailed: true\`, flag that session
+  as a **prompt/environment defect** rather than an agent reasoning failure.
+  Cite the tool name from \`firstToolCallName\` and the argv when available.
+  A coder whose very first tool call errors out almost certainly received a
+  bad environment (broken worktree, missing file, wrong CWD) or a malformed
+  prompt.
+
+Digest citation rule:
+- Findings MUST cite the per-task digest numbers (counts, event indices)
+  rather than re-counting from the raw conversation. When the digest shows
+  \`repeatedReads: [{path: "foo.ts", count: 5}]\`, write "5 Reads of foo.ts
+  (per digest)" — do not scan the conversation yourself.
+- Trust the digest's \`toolErrorCount\`, \`editRevertPairCount\`, and
+  \`repeatedBashInvocations\` as authoritative mechanical counts.
+
+Truncation awareness:
+- Conversations supplied to you may have been truncated to fit context limits.
+  Each task block states what was elided (if anything). Do NOT assume you saw
+  the full conversation. When you cannot find an event cited in the metadata,
+  note that it may have been elided rather than asserting it did not happen.
 
 Output a SINGLE JSON document on stdout. No prose, no markdown, no fences.
 
@@ -145,7 +202,138 @@ Rules:
   omit the entry.
 - Quote text verbatim in evidence; do not paraphrase.`
 
-const buildArcPrompt = (arc: DeepReflectArc): string => {
+// ─────────────────────────────────────────────────────────────────────────────
+// Conversation truncation helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Truncate a tool_result body to head+tail so very long command outputs
+ * (e.g. full test runs) don't dominate the context window.
+ *
+ * Handles two body shapes:
+ * - string: truncate the string directly.
+ * - array of content blocks: truncate the `text` field of each text block.
+ */
+const truncateBody = (body: unknown): unknown => {
+  if (typeof body === 'string') {
+    const total = body.length
+    if (total <= TOOL_RESULT_HEAD_CHARS + TOOL_RESULT_TAIL_CHARS) return body
+    const skipped = total - TOOL_RESULT_HEAD_CHARS - TOOL_RESULT_TAIL_CHARS
+    return (
+      body.slice(0, TOOL_RESULT_HEAD_CHARS) +
+      `\n…[${skipped} chars elided]…\n` +
+      body.slice(-TOOL_RESULT_TAIL_CHARS)
+    )
+  }
+  if (Array.isArray(body)) {
+    return body.map((block) => {
+      if (!block || typeof block !== 'object' || Array.isArray(block)) return block
+      const b = block as Record<string, unknown>
+      if (b.type === 'text' && typeof b.text === 'string') {
+        return { ...b, text: truncateBody(b.text) }
+      }
+      return block
+    })
+  }
+  return body
+}
+
+/**
+ * Return a new conversation where every tool_result body in user messages
+ * has been truncated to head TOOL_RESULT_HEAD_CHARS + tail TOOL_RESULT_TAIL_CHARS.
+ * Events that carry no tool_results are returned unchanged (same reference).
+ */
+const truncateConversationToolResults = (conversation: ClaudeEvent[]): ClaudeEvent[] =>
+  conversation.map((event) => {
+    if (event.type !== 'user') return event
+    const msg = event.message
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return event
+    const msgObj = msg as Record<string, unknown>
+    const content = msgObj.content
+    if (!Array.isArray(content)) return event
+
+    let anyModified = false
+    const newContent = content.map((block) => {
+      if (!block || typeof block !== 'object' || Array.isArray(block)) return block
+      const b = block as Record<string, unknown>
+      if (b.type !== 'tool_result') return block
+      const newBodyContent = truncateBody(b.content)
+      if (newBodyContent === b.content) return block
+      anyModified = true
+      return { ...b, content: newBodyContent }
+    })
+
+    if (!anyModified) return event
+    return { ...event, message: { ...msgObj, content: newContent } }
+  })
+
+/**
+ * Reduce a conversation array to fit within `maxBytes` of serialized JSON.
+ *
+ * Strategy: keep equal portions from the head and tail of the conversation.
+ * A binary search finds the largest `k` such that first-k + last-k fits.
+ * The middle `total - 2k` events are replaced with an elision note embedded
+ * in the return value so the analyst knows what was dropped.
+ *
+ * Exported for unit testing.
+ */
+export const capConversation = (
+  events: ClaudeEvent[],
+  maxBytes: number,
+): { events: ClaudeEvent[]; elisionNote: string | null } => {
+  if (Buffer.byteLength(JSON.stringify(events), 'utf8') <= maxBytes) {
+    return { events, elisionNote: null }
+  }
+
+  const total = events.length
+  // Binary search: lo ≤ hi ≤ floor(total/2) ensures head and tail never overlap.
+  let lo = 0
+  let hi = Math.floor(total / 2)
+
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2)
+    const candidate = [...events.slice(0, mid), ...events.slice(total - mid)]
+    if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= maxBytes) {
+      lo = mid
+    } else {
+      hi = mid - 1
+    }
+  }
+
+  const keep = lo
+  const retained = keep > 0 ? [...events.slice(0, keep), ...events.slice(total - keep)] : []
+  const skipped = total - retained.length
+
+  return {
+    events: retained,
+    elisionNote: `[${skipped} of ${total} middle events elided to fit ${Math.round(maxBytes / 1024)}KB cap; first ${keep} and last ${keep} events retained]`,
+  }
+}
+
+/**
+ * Truncate the final assembled prompt to at most `maxBytes` UTF-8 bytes.
+ * When the cap triggers, a clear elision note is appended so the analyst
+ * never assumes it received everything.
+ *
+ * The truncation point is estimated via character count (UTF-8 chars ≈ bytes
+ * for ASCII-dominant prompts). A 5% safety margin avoids off-by-one on
+ * multi-byte characters.
+ */
+const capPrompt = (prompt: string, maxBytes: number): string => {
+  if (Buffer.byteLength(prompt, 'utf8') <= maxBytes) return prompt
+  const note = `\n\n[PROMPT TRUNCATED: total size exceeded ${Math.round(maxBytes / 1024)}KB limit; remaining task conversations were elided. The mechanical digest per task above is complete and authoritative.]`
+  const targetChars = Math.floor((maxBytes - Buffer.byteLength(note, 'utf8')) * 0.95)
+  return prompt.slice(0, targetChars) + note
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prompt builder
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const buildArcPrompt = (arc: DeepReflectArc): string => {
+  // 1. Compute mechanical digest for all tasks (no LLM).
+  const arcDigest = digestArc(arc.tasks)
+
   const head = {
     originId: arc.originId,
     taskCount: arc.taskCount,
@@ -170,6 +358,8 @@ const buildArcPrompt = (arc: DeepReflectArc): string => {
 
   const taskBlocks = arc.tasks
     .map((t, idx) => {
+      const taskDigest = arcDigest.tasks[idx]
+
       const meta = {
         taskId: t.taskId,
         status: t.status,
@@ -184,44 +374,92 @@ const buildArcPrompt = (arc: DeepReflectArc): string => {
         toolCallCounts: t.toolCallCounts,
       }
       const metaJson = JSON.stringify(meta, null, 2)
-      // Pass the full conversation array verbatim.
-      const conversationJson = JSON.stringify(t.conversation)
+
+      // 2a. Truncate tool_result bodies to head+tail to reduce raw size.
+      const truncatedConvo = truncateConversationToolResults(t.conversation)
+
+      // 2b. Cap per-task conversation at TASK_CONVERSATION_CAP_BYTES.
+      const { events: cappedConvo, elisionNote } = capConversation(
+        truncatedConvo,
+        TASK_CONVERSATION_CAP_BYTES,
+      )
+      const conversationJson = JSON.stringify(cappedConvo)
+
+      const capNote = elisionNote
+        ? `\n\nConversation cap note for ${t.taskId}: ${elisionNote}`
+        : ''
+
       const verifyBlock = t.verifyOutput
         ? `\n\nVerify output (raw) for ${t.taskId}:\n\`\`\`\n${t.verifyOutput}\n\`\`\``
         : `\n\n(verify output for ${t.taskId}: none recorded)`
-      const transcriptNotes = t.transcriptNotes.length > 0
-        ? `\n\nTranscript notes for ${t.taskId}:\n${t.transcriptNotes.map((n) => `- ${n}`).join('\n')}`
-        : ''
+      const transcriptNotes =
+        t.transcriptNotes.length > 0
+          ? `\n\nTranscript notes for ${t.taskId}:\n${t.transcriptNotes.map((n) => `- ${n}`).join('\n')}`
+          : ''
       const transcriptNote = t.hasTranscript
         ? ''
         : `\n\n(no on-disk JSONL transcript resolved for ${t.taskId}; conversation array is empty)`
+
       return `── Task ${idx + 1} of ${arc.taskCount}: ${t.taskId} ──
 
 Task metadata:
 ${metaJson}
 
+Mechanical digest (LLM-free) for ${t.taskId}:
+${JSON.stringify(taskDigest)}
+
 Conversation for ${t.taskId} (ClaudeEvent[] JSON; index into this array for eventIndex):
-${conversationJson}${verifyBlock}${transcriptNotes}${transcriptNote}`
+${conversationJson}${capNote}${verifyBlock}${transcriptNotes}${transcriptNote}`
     })
     .join('\n\n')
 
-  // Build the step timeline section: every closed Step span in started_at order.
-  // This surfaces Planner/Slicer spans at the top for Proposal arcs, followed by
-  // per-task setup → code → verify(s) → merge/recovery sequences.
-  const timelineLines = arc.stepTimeline.map((s, i) => {
+  // 3. Build the step timeline section interleaved with tool_invoked errors.
+  //    Spans use [S<n>] labels; tool errors use [T<n>] labels. Both are sorted
+  //    by timestamp so the timeline reflects the actual chronological order.
+  type TimelineItem =
+    | { kind: 'span'; ts: string; line: string }
+    | { kind: 'error'; ts: string; line: string }
+
+  const items: TimelineItem[] = []
+
+  let spanIdx = 0
+  for (const s of arc.stepTimeline) {
+    spanIdx++
     const worker = s.workerName ? ` worker=${s.workerName}` : ''
     const phase = s.phase ? ` phase=${s.phase}` : ''
     const session = s.sessionId ? ` session=${s.sessionId}` : ''
     const verify = s.verifyOutput ? ` verifyOutput=<${s.verifyOutput.length}b>` : ''
     const tx = s.transcript ? ` transcript=<${s.transcript.length}b>` : ''
-    return `  [${i + 1}] ${s.startedAt} ${s.stepName}${worker}${phase} outcome=${s.outcome} durationMs=${s.durationMs}${session}${verify}${tx}`
-  })
-  const timelineSection =
-    arc.stepTimeline.length > 0
-      ? `Step timeline (${arc.stepTimeline.length} span(s), started_at order):\n${timelineLines.join('\n')}`
-      : 'Step timeline: (no step spans recorded for this arc)'
+    items.push({
+      kind: 'span',
+      ts: s.startedAt,
+      line: `  [S${spanIdx}] ${s.startedAt} ${s.stepName}${worker}${phase} outcome=${s.outcome} durationMs=${s.durationMs}${session}${verify}${tx}`,
+    })
+  }
 
-  return `${SYNTHESIS_INSTRUCTIONS_ARC}
+  let errorIdx = 0
+  for (const e of arc.toolInvokedErrors) {
+    errorIdx++
+    const phase = e.phase ? ` phase=${e.phase}` : ''
+    const argvStr = JSON.stringify(e.argv)
+    const stderrNote = e.stderr.length > 0 ? ` stderr=<${e.stderr.length}b>` : ''
+    items.push({
+      kind: 'error',
+      ts: e.timestamp,
+      line: `  [T${errorIdx}] ${e.timestamp} TOOL_ERROR tool=${e.tool} argv=${argvStr} exitCode=${e.exitCode}${phase}${stderrNote}`,
+    })
+  }
+
+  items.sort((a, b) => a.ts.localeCompare(b.ts))
+
+  const timelineLines = items.map((item) => item.line)
+  const timelineSection =
+    items.length > 0
+      ? `Step timeline (${arc.stepTimeline.length} span(s), ${arc.toolInvokedErrors.length} tool error(s), started_at order):\n${timelineLines.join('\n')}`
+      : 'Step timeline: (no step spans or tool errors recorded for this arc)'
+
+  // 4. Assemble the full prompt and apply the total size cap.
+  const fullPrompt = `${SYNTHESIS_INSTRUCTIONS_ARC}
 
 Arc metadata:
 ${headJson}
@@ -229,6 +467,8 @@ ${headJson}
 ${timelineSection}
 
 ${taskBlocks}`
+
+  return capPrompt(fullPrompt, TOTAL_PROMPT_CAP_BYTES)
 }
 
 const parseDissonantCalls = (raw: unknown): DissonantCall[] => {

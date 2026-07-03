@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { parseDeepReflectionReport, runDeepReflectorArc } from '../deep-reflector'
+import { parseDeepReflectionReport, runDeepReflectorArc, buildArcPrompt, capConversation } from '../deep-reflector'
+import type { DeepReflectArc } from '../deep-reflect-query'
+import type { ClaudeEvent } from '../claude-stream'
 
 describe('parseDeepReflectionReport', () => {
   it('parses a well-formed reflector output', () => {
@@ -245,6 +247,234 @@ describe('runDeepReflectorArc', () => {
   it('is exported and callable', () => {
     // Structural check: the function is exported from deep-reflector
     expect(typeof runDeepReflectorArc).toBe('function')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// capConversation — binary search cap helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('capConversation', () => {
+  it('passes through a conversation that fits within the cap', () => {
+    const events: ClaudeEvent[] = [
+      { type: 'assistant', message: { content: 'hello' } } as unknown as ClaudeEvent,
+    ]
+    const { events: out, elisionNote } = capConversation(events, 1024 * 1024)
+    expect(out).toBe(events) // same reference — no copy needed
+    expect(elisionNote).toBeNull()
+  })
+
+  it('reduces a large conversation to fit within the cap and reports elision', () => {
+    // Create 100 events each ~2 KB (200 KB total)
+    const big = 'x'.repeat(2000)
+    const events: ClaudeEvent[] = Array.from({ length: 100 }, (_, i) => ({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: `r${i}`, content: big }],
+      },
+    } as unknown as ClaudeEvent))
+
+    const maxBytes = 10 * 1024 // 10 KB cap — well below the 200 KB input
+    const { events: out, elisionNote } = capConversation(events, maxBytes)
+
+    expect(Buffer.byteLength(JSON.stringify(out), 'utf8')).toBeLessThanOrEqual(maxBytes)
+    expect(elisionNote).not.toBeNull()
+    expect(elisionNote).toMatch(/middle events elided/)
+    expect(out.length).toBeLessThan(events.length)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildArcPrompt — prompt size budgets and digest embedding
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Minimal valid ArcTaskEntry fixture. */
+const makeTaskEntry = (
+  taskId: string,
+  conversation: ClaudeEvent[],
+): DeepReflectArc['tasks'][number] => ({
+  taskId,
+  status: 'done',
+  prompt: 'test task prompt',
+  error: null,
+  createdAt: '2025-01-01T00:00:00.000Z',
+  updatedAt: '2025-01-01T01:00:00.000Z',
+  kind: 'task',
+  fixForTaskId: null,
+  signals: [],
+  totals: {
+    inputTokens: 1000,
+    outputTokens: 500,
+    cacheCreateTokens: 0,
+    cacheReadTokens: 0,
+    cacheHitRatio: 0,
+  },
+  conversation,
+  verifyOutput: null,
+  hasTranscript: true,
+  toolCallCounts: {},
+  transcriptNotes: [],
+})
+
+/** Minimal valid DeepReflectArc fixture. */
+const makeArc = (tasks: DeepReflectArc['tasks']): DeepReflectArc => ({
+  originId: 'mars-test-arc',
+  tasks,
+  statusMix: { done: tasks.length },
+  taskCount: tasks.length,
+  totals: {
+    inputTokens: 1000,
+    outputTokens: 500,
+    cacheCreateTokens: 0,
+    cacheReadTokens: 0,
+    totalWeightedTokens: 1050,
+    cacheHitRatio: 0,
+    eventCount: tasks.reduce((s, t) => s + t.conversation.length, 0),
+  },
+  lastActivity: '2025-01-01T01:00:00.000Z',
+  stepTimeline: [],
+  toolInvokedErrors: [],
+})
+
+/** Build a single user event containing a large tool_result body. */
+const largeResultEvent = (id: string, bodyLength: number): ClaudeEvent => ({
+  type: 'user',
+  message: {
+    role: 'user',
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: id,
+        content: 'A'.repeat(bodyLength),
+        is_error: false,
+      },
+    ],
+  },
+} as unknown as ClaudeEvent)
+
+/** Build an assistant event with a single Read tool_use. */
+const readCallEvent = (id: string, path = 'src/foo.ts'): ClaudeEvent => ({
+  type: 'assistant',
+  message: {
+    role: 'assistant',
+    content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: path } }],
+  },
+} as unknown as ClaudeEvent)
+
+describe('buildArcPrompt — tool_result body truncation', () => {
+  it('truncates large tool_result bodies to head+tail', () => {
+    // 5000 chars > 400+200 = 600 chars → should be truncated
+    const conversation: ClaudeEvent[] = [
+      readCallEvent('r1'),
+      largeResultEvent('r1', 5000),
+    ]
+    const arc = makeArc([makeTaskEntry('task-1', conversation)])
+    const prompt = buildArcPrompt(arc)
+
+    // The original 5000-char content should not appear verbatim
+    expect(prompt).not.toContain('A'.repeat(5000))
+    // The truncation marker should appear
+    expect(prompt).toContain('chars elided')
+  })
+
+  it('does not modify small tool_result bodies', () => {
+    const small = 'hello world'
+    const conversation: ClaudeEvent[] = [
+      readCallEvent('r1'),
+      {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'r1', content: small }],
+        },
+      } as unknown as ClaudeEvent,
+    ]
+    const arc = makeArc([makeTaskEntry('task-1', conversation)])
+    const prompt = buildArcPrompt(arc)
+    expect(prompt).toContain(small)
+  })
+})
+
+describe('buildArcPrompt — prompt size cap and elision markers', () => {
+  it('keeps total prompt under 400 KB for a single task with a 4 MB conversation', () => {
+    // 800 read+result pairs; each result body is 5000 chars → ~4 MB total
+    const conversation: ClaudeEvent[] = []
+    for (let i = 0; i < 800; i++) {
+      conversation.push(readCallEvent(`r${i}`, `file-${i % 10}.ts`))
+      conversation.push(largeResultEvent(`r${i}`, 5000))
+    }
+
+    const arc = makeArc([makeTaskEntry('mars-large-task', conversation)])
+    const prompt = buildArcPrompt(arc)
+
+    const promptBytes = Buffer.byteLength(prompt, 'utf8')
+    expect(promptBytes).toBeLessThanOrEqual(400 * 1024)
+  })
+
+  it('emits an elision note when the per-task conversation cap triggers', () => {
+    // 500 pairs at 1000 chars each → ~500 KB before truncation, > 150 KB cap
+    const conversation: ClaudeEvent[] = []
+    for (let i = 0; i < 500; i++) {
+      conversation.push(readCallEvent(`r${i}`))
+      conversation.push(largeResultEvent(`r${i}`, 1000))
+    }
+
+    const arc = makeArc([makeTaskEntry('task-1', conversation)])
+    const prompt = buildArcPrompt(arc)
+
+    expect(prompt).toContain('middle events elided')
+  })
+
+  it('sets environmentalFailure in digest when conversation contains rate_limit_event', () => {
+    const conversation: ClaudeEvent[] = [
+      { type: 'rate_limit_event', retry_after: 30 } as unknown as ClaudeEvent,
+      readCallEvent('r1'),
+      largeResultEvent('r1', 500),
+    ]
+    const arc = makeArc([makeTaskEntry('task-1', conversation)])
+    const prompt = buildArcPrompt(arc)
+
+    // The compact digest JSON is embedded in the prompt
+    expect(prompt).toContain('"environmentalFailure":true')
+    expect(prompt).toContain('rate_limit_event')
+  })
+})
+
+describe('buildArcPrompt — step timeline with tool errors', () => {
+  it('includes tool_invoked error events in the timeline section', () => {
+    const arc: DeepReflectArc = {
+      ...makeArc([makeTaskEntry('task-1', [])]),
+      toolInvokedErrors: [
+        {
+          timestamp: '2025-01-01T00:05:00.000Z',
+          taskId: 'task-1',
+          phase: 'setup',
+          tool: 'pnpm',
+          argv: ['install', '--frozen-lockfile'],
+          exitCode: 254,
+          stderr: 'ERR_PNPM_FROZEN_LOCKFILE Lockfile is not up to date',
+        },
+      ],
+    }
+    const prompt = buildArcPrompt(arc)
+    expect(prompt).toContain('TOOL_ERROR')
+    expect(prompt).toContain('pnpm')
+    expect(prompt).toContain('exitCode=254')
+  })
+
+  it('renders KPI framing in the synthesis instructions', () => {
+    const arc = makeArc([makeTaskEntry('task-1', [])])
+    const prompt = buildArcPrompt(arc)
+    expect(prompt).toContain('Task completeness')
+    expect(prompt).toContain('Token cost')
+  })
+
+  it('renders environmental failure classification in synthesis instructions', () => {
+    const arc = makeArc([makeTaskEntry('task-1', [])])
+    const prompt = buildArcPrompt(arc)
+    expect(prompt).toContain('environmentalFailure')
+    expect(prompt).toContain('infrastructure')
   })
 })
 

@@ -98,6 +98,30 @@ const loadTranscriptStream = async (
  * LLM-backed steps (Coder, Fixer, Planner, Slicer) populate all four.
  * Verify steps additionally surface verifyOutput.
  */
+/**
+ * One tool_invoked error event recorded by runTool during the arc.
+ *
+ * Only events where `exitCode !== 0` AND `expectsFailure !== true` are
+ * included (i.e. severity === 'error' rows). Events with `expectsFailure:
+ * true` are omitted — they represent expected probe failures, not incidents.
+ */
+export interface ArcToolError {
+  /** ISO-8601 timestamp of the event. */
+  timestamp: string
+  /** Task that was running when this tool was invoked (may be null for daemon-global). */
+  taskId: string | null
+  /** Orchestrator phase (setup | code | verify | merge | null). */
+  phase: string | null
+  /** Logical tool name (e.g. 'pnpm', 'git', 'npm'). */
+  tool: string
+  /** Argv array passed to the tool. */
+  argv: unknown[]
+  /** Exit code (always non-zero). */
+  exitCode: number
+  /** Truncated stderr from the run (at most 8 KB as stored by runTool). */
+  stderr: string
+}
+
 export interface ArcSpanEntry {
   /** Approximated start time: ended_at − durationMs (ISO-8601). */
   startedAt: string
@@ -168,6 +192,13 @@ export interface DeepReflectArc {
    * Multiple verify entries appear when verify retried (one entry per attempt).
    */
   stepTimeline: ArcSpanEntry[]
+  /**
+   * tool_invoked error events (non-zero exit, expectsFailure=false) for this arc,
+   * sorted by timestamp ascending. Represents orchestrator-level failures such as
+   * pnpm install exit-254 bursts, git failures, or other setup/verify shell-outs.
+   * NOT the Claude agent's own tool calls — those live in the conversation transcript.
+   */
+  toolInvokedErrors: ArcToolError[]
 }
 
 interface ArcTaskRow {
@@ -539,6 +570,43 @@ export const loadDeepReflectArc = async (
     }
   })
 
+  // ── Tool-invoked error events ─────────────────────────────────────────────
+  // Fetch all tool_invoked events for the arc where the tool exited non-zero
+  // and expectsFailure is false (severity='error'). These represent orchestrator
+  // failures such as pnpm install bursts that block setup — they are distinct
+  // from the agent's own tool calls which live in the conversation transcript.
+  const toolErrorRows = await store.query({
+    sql: `SELECT timestamp, task_id, phase, payload
+            FROM trace_events
+           WHERE origin_id = ? AND kind = 'tool_invoked' AND severity = 'error'
+           ORDER BY timestamp ASC`,
+    args: [originId],
+  })
+
+  const toolInvokedErrors: ArcToolError[] = toolErrorRows.rows.map((row) => {
+    const r0 = row as unknown as {
+      timestamp: string
+      task_id: string | null
+      phase: string | null
+      payload: string
+    }
+    let payload: Record<string, unknown> = {}
+    try {
+      payload = JSON.parse(r0.payload) as Record<string, unknown>
+    } catch {
+      /* ignore malformed payload */
+    }
+    return {
+      timestamp: r0.timestamp,
+      taskId: r0.task_id ?? null,
+      phase: r0.phase ?? null,
+      tool: typeof payload.tool === 'string' ? payload.tool : 'unknown',
+      argv: Array.isArray(payload.argv) ? payload.argv : [],
+      exitCode: typeof payload.exitCode === 'number' ? payload.exitCode : -1,
+      stderr: typeof payload.stderr === 'string' ? payload.stderr : '',
+    }
+  })
+
   return {
     originId,
     tasks,
@@ -547,6 +615,7 @@ export const loadDeepReflectArc = async (
     totals,
     lastActivity,
     stepTimeline,
+    toolInvokedErrors,
   }
 }
 
