@@ -179,7 +179,13 @@ recovery-spawn path itself.
   process via `MARS_WORKER_MODEL=<model>` (e.g. `MARS_WORKER_MODEL=claude-opus-4-7`
   for a high-complexity session). Planner, Slicer, Writer, and Fixer models are
   always pinned; only Coder is overridable.
-- Inspect runs at `http://localhost:4111` (`cd orchestrator && npm run dev`).
+- To inspect live runs, open `mars ui` (read-only Kanban + trace dashboard)
+  or query the daemon HTTP API: read `PORT=$(cat .mars/http.port)` first —
+  the daemon binds an OS-assigned ephemeral port (see Conventions).
+- **Incident kill-switch:** `mars daemon set-flag recovery on|off` suppresses
+  fix-task / Investigator spawns in-memory (not persisted across daemon
+  restarts). Toggle off during failure storms (e.g. quota cascades) to stop
+  the self-heal cycle while you diagnose.
 
 ## Conventions
 

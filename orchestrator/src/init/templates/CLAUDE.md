@@ -62,6 +62,10 @@ re-confirmed, even within the same session.
   `INTEGRATION_BRANCH=<branch>`.
 - Per-repo state lives under `.mars/` (gitignored): `mars.db`,
   `worktrees/<task-id>/`, `.merge.lock`.
+- **Incident kill-switch:** `mars daemon set-flag recovery on|off` suppresses
+  fix-task / Investigator spawns in-memory (not persisted across daemon
+  restarts). Toggle off during failure storms to stop the self-heal cascade
+  while you diagnose.
 
 ## The action queue
 

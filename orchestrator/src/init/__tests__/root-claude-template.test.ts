@@ -98,6 +98,9 @@ describe('mars init: root CLAUDE.md template', () => {
 
     // ADR commands
     expect(written).toMatch(/mars adr\s+(add|list|show)/)
+
+    // Incident kill-switch (ADR-era: mars daemon set-flag recovery on|off)
+    expect(written).toContain('mars daemon set-flag recovery')
   })
 
   it('contains no references to framework-internal paths that only exist inside the mars-framework repo', () => {
@@ -116,7 +119,6 @@ describe('mars init: root CLAUDE.md template', () => {
       'install.sh',
       'mars-framework',
       'Mastra Studio',
-      'localhost:4111',
       'MARS_WORKER_MODEL',
     ]
     for (const needle of forbidden) {
