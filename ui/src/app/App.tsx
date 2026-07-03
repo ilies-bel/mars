@@ -5,13 +5,16 @@ import { TaskDetailDrawer } from '@/widgets/TaskDetailDrawer'
 import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
 import { ProposalNodeDrawer } from '@/widgets/ProposalNodeDrawer'
 import { ReleaseNotesModal } from '@/widgets/ReleaseNotesModal'
+import { ShortcutsOverlay } from '@/widgets/ShortcutsOverlay'
 import { useHashRoute } from '@/shared/useHashRoute'
+import { useGlobalKeyboardShortcuts } from '@/shared/useGlobalKeyboardShortcuts'
 import {
   isKnownRoute,
   parseKpiRoute,
   parseProposalRoute,
   parseProposalNodeRoute,
   parseReleaseNotesRoute,
+  parseShortcutsRoute,
   parseTaskOrigin,
   parseTaskRoute,
   parseTaskStep,
@@ -53,6 +56,7 @@ const clearTaskHash = (closeHash: string): void => {
 const AppInner = () => {
   const qc = useQueryClient()
   const rawHash = useHashRoute()
+  useGlobalKeyboardShortcuts()
 
   // Redirect unknown hashes to #/progress so the URL always matches what is
   // rendered. replaceState is used (not assign) to avoid adding a history
@@ -72,6 +76,7 @@ const AppInner = () => {
   const proposalId = parseProposalRoute(hash)
   const proposalNodeId = parseProposalNodeRoute(hash)
   const showReleaseNotes = parseReleaseNotesRoute(hash)
+  const showShortcuts = parseShortcutsRoute(hash)
   const kpiKey = parseKpiRoute(hash)
   const activeStepName = parseTaskStep(hash) ?? undefined
 
@@ -153,6 +158,15 @@ const AppInner = () => {
       {showReleaseNotes ? (
         <FallbackBoundary of="release notes" variant="inline">
           <ReleaseNotesModal
+            onClose={() => {
+              if (typeof window !== 'undefined') window.location.hash = '#/progress'
+            }}
+          />
+        </FallbackBoundary>
+      ) : null}
+      {showShortcuts ? (
+        <FallbackBoundary of="shortcuts" variant="inline">
+          <ShortcutsOverlay
             onClose={() => {
               if (typeof window !== 'undefined') window.location.hash = '#/progress'
             }}

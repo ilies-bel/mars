@@ -34,11 +34,12 @@ export const isKnownRoute = (hash: string): boolean => {
   if (hash.startsWith('#/progress')) return true
   if (hash.startsWith('#/events')) return true
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return true
-  // Overlay routes (task drawer, proposal drawers, release notes)
+  // Overlay routes (task drawer, proposal drawers, release notes, shortcuts)
   if (hash.startsWith('#/task/')) return true
   if (hash.startsWith('#/proposal/')) return true
   if (hash.startsWith('#/proposal-node/')) return true
   if (hash === '#/release-notes') return true
+  if (hash === '#/shortcuts') return true
   return false
 }
 
@@ -208,6 +209,15 @@ export const parseReleaseNotesRoute = (hash: string): boolean =>
   hash === '#/release-notes'
 
 /**
+ * Returns true when the hash matches the `#/shortcuts` overlay route.
+ *
+ * The shortcuts overlay is a centered dialog layered on top of the Progress
+ * page, opened by pressing `?` via the global keyboard shortcuts handler.
+ * Closing it returns to `#/progress`.
+ */
+export const parseShortcutsRoute = (hash: string): boolean => hash === '#/shortcuts'
+
+/**
  * Badge count for the Action queue nav entry — stale worktrees only.
  * Drafts are surfaced inline in the Action queue and must not appear here.
  */
@@ -245,6 +255,9 @@ export const resolvePageRoute = (hash: string): RouteName => {
     return 'progress'
   }
   if (parseReleaseNotesRoute(hash)) {
+    return 'progress'
+  }
+  if (parseShortcutsRoute(hash)) {
     return 'progress'
   }
   const kpiKey = parseKpiRoute(hash)
