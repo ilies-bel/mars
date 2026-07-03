@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import type { ProgressProposalNode, ProgressTask, Task } from '@/shared/schemas'
+import type { ProgressProposalNode, ProgressTask, Task, TraceEvent } from '@/shared/schemas'
 import { taskSchema } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
@@ -76,6 +76,31 @@ export interface RunTimelineEntry {
 export interface RunTimeline {
   taskId: string
   runs: RunTimelineEntry[]
+}
+
+/**
+ * Normalised card data for a single step — derived from either StepSpan or
+ * RunTimelineStep. Drives StepCard and StepCardList; avoids duplicating per-
+ * outcome rendering logic across the two source shapes.
+ */
+export interface StepCardEntry {
+  key: string
+  stepName: string
+  phase: string | null
+  /** Unified outcome/status field — 'running' | 'completed' | 'failed' | 'killed'. */
+  outcome: 'running' | 'completed' | 'failed' | 'killed'
+  startedAt: string
+  endedAt: string | null
+  durationMs: number | null
+  workerName: string | null
+  /** Failure reason text (RunTimelineStep only). */
+  failureReason?: string | null
+  evalResults?: Array<{ label: string; value: number | string | null; warn: boolean }>
+  /** Token counts (LLM-backed steps only; from RunTimelineStep). */
+  inputTokens?: number | null
+  outputTokens?: number | null
+  cacheReadTokens?: number | null
+  claudeSessionId?: string | null
 }
 
 // ── Drill-in trail helpers ────────────────────────────────────────────────────
@@ -156,6 +181,12 @@ interface TaskDetailDrawerProps {
    * leave this undefined — the timeline renders normally with no active row.
    */
   activeStepName?: string
+  /**
+   * Pre-loaded tool invocations (tool_invoked trace events). When provided the
+   * step cards render tool rows immediately without fetching /api/trace-events.
+   * Omit in production; pass in tests or static rendering.
+   */
+  toolInvocations?: TraceEvent[]
   /**
    * Overrides the query-derived load state. Test-only seam: production callers
    * omit it and the state is derived from the `['task', currentId]` React Query
@@ -315,6 +346,77 @@ const outcomeLabel = (outcome: StepSpan['outcome']): string => {
       return 'killed'
   }
 }
+
+/** Returns the humanized command line for a tool_invoked event payload. */
+const humanizeCmd = (payload: Record<string, unknown>): string => {
+  const tool = typeof payload.tool === 'string' ? payload.tool : '?'
+  const argv = Array.isArray(payload.argv) ? (payload.argv as unknown[]).map(String) : []
+  const basename = tool.split('/').at(-1) ?? tool
+  return [basename, ...argv].join(' ')
+}
+
+/**
+ * Derives a one-line summary for a collapsed step card from its tool invocations.
+ * Prefers the explicit failureReason for failed steps, then derives from tool counts.
+ */
+const deriveStepSummary = (
+  tools: TraceEvent[],
+  failureReason?: string | null,
+  outcome?: string,
+): string => {
+  if (failureReason) {
+    return failureReason.length > 80 ? `${failureReason.slice(0, 80)}…` : failureReason
+  }
+  const total = tools.length
+  if (total === 0) {
+    if (!outcome || outcome === 'completed') return ''
+    if (outcome === 'running') return 'running…'
+    return outcome
+  }
+  const failed = tools.filter((e) => {
+    const p = e.payload
+    return typeof p.exitCode === 'number' && p.exitCode !== 0 && !p.expectsFailure
+  }).length
+  return failed > 0
+    ? `${total} tool call${total !== 1 ? 's' : ''}, ${failed} failed`
+    : `${total} tool call${total !== 1 ? 's' : ''}`
+}
+
+/** Normalises a StepSpan into the unified StepCardEntry format. */
+const spanToCard = (s: StepSpan, i: number): StepCardEntry => ({
+  key: `${s.workflowInstanceId}-${s.stepName}-${i}`,
+  stepName: s.stepName,
+  phase: s.phase,
+  outcome: s.outcome,
+  startedAt: s.startedAt,
+  endedAt: s.endedAt,
+  durationMs: s.durationMs,
+  workerName: s.workerName,
+  evalResults: s.evalResults,
+})
+
+/** Normalises a RunTimelineStep into the unified StepCardEntry format. */
+const runStepToCard = (
+  step: RunTimelineStep,
+  runId: string,
+  stepIdx: number,
+  evalResults?: Array<{ label: string; value: number | string | null; warn: boolean }>,
+): StepCardEntry => ({
+  key: `${runId}-${step.stepName}-${stepIdx}`,
+  stepName: step.stepName,
+  phase: step.phase,
+  outcome: step.status,
+  startedAt: step.startedAt,
+  endedAt: step.endedAt,
+  durationMs: step.durationMs,
+  workerName: step.workerName,
+  failureReason: step.failureReason,
+  evalResults,
+  inputTokens: step.inputTokens,
+  outputTokens: step.outputTokens,
+  cacheReadTokens: step.cacheReadTokens,
+  claudeSessionId: step.claudeSessionId,
+})
 
 // ── Detail body ───────────────────────────────────────────────────────────────
 // Pure, fetch-free presentation of a fully-loaded Task. Split out from the
@@ -664,97 +766,341 @@ const EvalChip = ({ label, value, warn }: { label: string; value: number | strin
   )
 }
 
+// ── Step card components ──────────────────────────────────────────────────────
+
 /**
- * The step timeline — every Step span for the focused task's run, shown as a
- * compact ordered list with a vertical connector line and per-row status dots.
- * Rendered as its own drawer section (independent of the detail fetch) so it
- * surfaces as soon as span data is available, whether from the `stepSpans` prop
- * (tests / static rendering) or the `/api/step-spans` fetch. Returns null until
- * span data resolves.
+ * Status icon for a step card — a small ring with a symbol inside.
+ * Green check ring = completed, amber pulse = running, red × = failed,
+ * ochre dot = killed. Uses CSS design tokens so it matches the rest of the
+ * drawer's colour palette.
  */
-const StepTimeline = ({
-  spans,
+const StepStatusIcon = ({ outcome }: { outcome: StepCardEntry['outcome'] }) => {
+  if (outcome === 'running') {
+    return (
+      <span
+        data-testid="step-status-icon"
+        aria-label="running"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-warn bg-warn/10 motion-safe:animate-pulse"
+      >
+        <span className="h-2 w-2 rounded-full bg-warn" />
+      </span>
+    )
+  }
+  if (outcome === 'completed') {
+    return (
+      <span
+        data-testid="step-status-icon"
+        aria-label="completed"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-done/60 bg-done/10 text-done"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+          <path d="M2 5L4 7L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
+    )
+  }
+  if (outcome === 'failed') {
+    return (
+      <span
+        data-testid="step-status-icon"
+        aria-label="failed"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-error/60 bg-error/10 text-error"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true">
+          <path d="M3 3L7 7M7 3L3 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </span>
+    )
+  }
+  // killed
+  return (
+    <span
+      data-testid="step-status-icon"
+      aria-label="killed"
+      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-ochre/60 bg-ochre/10"
+    >
+      <span className="h-2 w-2 rounded-full bg-ochre" />
+    </span>
+  )
+}
+
+/**
+ * One tool invocation row inside an expanded step card.
+ * Renders the humanized command line (basename + argv), an exit-code badge
+ * (green ✓ for 0; red for unexpected non-zero; amber for expectsFailure), the
+ * duration, and expandable stdout/stderr blocks.
+ */
+const ToolInvocationRow = ({ event }: { event: TraceEvent }) => {
+  const p = event.payload
+  const cmd = humanizeCmd(p)
+  const exitCode = typeof p.exitCode === 'number' ? p.exitCode : null
+  const durationMs = typeof p.durationMs === 'number' ? p.durationMs : null
+  const stdout = typeof p.stdout === 'string' ? p.stdout : ''
+  const stderr = typeof p.stderr === 'string' ? p.stderr : ''
+  const expectsFailure = Boolean(p.expectsFailure)
+  const isSuccess = exitCode === null || exitCode === 0
+  const isExpectedFail = !isSuccess && expectsFailure
+  const isActualFail = !isSuccess && !expectsFailure
+
+  return (
+    <div
+      data-testid="step-tool-row"
+      className="border-t border-iron/10 py-1.5"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Exit-code badge */}
+        <span
+          data-testid="exit-code-badge"
+          aria-label={exitCode !== null ? `exit ${exitCode}` : undefined}
+          className={`shrink-0 rounded border px-1 py-0.5 font-mono text-[10px] ${
+            isActualFail
+              ? 'border-error/40 bg-error/10 text-error'
+              : isExpectedFail
+                ? 'border-warn/40 bg-warn/5 text-warn'
+                : 'border-done/30 bg-done/5 text-done'
+          }`}
+        >
+          {exitCode === 0 ? '✓' : exitCode !== null ? `✗ ${exitCode}` : '?'}
+        </span>
+
+        {/* Humanized command */}
+        <code
+          data-testid="tool-cmd"
+          className="flex-1 break-all font-mono text-[11px] text-fg"
+        >
+          {cmd}
+        </code>
+
+        {/* Duration */}
+        {durationMs !== null && (
+          <span className="ml-auto shrink-0 font-mono text-[10px] text-muted">
+            {formatDuration(durationMs)}
+          </span>
+        )}
+      </div>
+
+      {/* stdout / stderr — expandable via native <details> */}
+      {(stdout || stderr) && (
+        <details className="mt-1">
+          <summary className="cursor-pointer font-mono text-[10px] text-muted">
+            output
+          </summary>
+          <div className="mt-1 space-y-1">
+            {stdout ? (
+              <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded bg-panel/60 p-1.5 font-mono text-[10px] text-iron">
+                {stdout}
+              </pre>
+            ) : null}
+            {stderr ? (
+              <pre
+                className={`max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded p-1.5 font-mono text-[10px] ${
+                  isActualFail ? 'bg-error/5 text-error/80' : 'bg-panel/60 text-iron'
+                }`}
+              >
+                {stderr}
+              </pre>
+            ) : null}
+          </div>
+        </details>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A single step card in the Mastra-Studio-style step graph.
+ *
+ * Collapsed view (always visible):
+ *   - Status icon ring (left)
+ *   - Step name as card title + optional worker name
+ *   - One-line summary (tool count or failure reason)
+ *   - Duration badge (right-aligned)
+ *   - Eval chips
+ *
+ * Expanded view (on click / Enter / Space):
+ *   - Token counts for LLM steps (in/out/cache)
+ *   - Claude session id
+ *   - All tool_invoked events grouped inside: humanized command, exit badge,
+ *     duration, expandable stdout/stderr
+ *
+ * Uses a native <details>/<summary> for expand/collapse so the content is
+ * always present in the DOM (enabling static-markup tests) and keyboard-
+ * accessible (Enter toggles natively; Space handled via onKeyDown).
+ */
+const StepCard = ({
+  entry,
+  toolEvents,
+  isActive,
+}: {
+  entry: StepCardEntry
+  toolEvents: TraceEvent[]
+  isActive: boolean
+}) => {
+  const summary = deriveStepSummary(toolEvents, entry.failureReason, entry.outcome)
+
+  const borderClass =
+    entry.outcome === 'running'
+      ? 'border-warn/40'
+      : entry.outcome === 'failed'
+        ? 'border-error/40'
+        : entry.outcome === 'killed'
+          ? 'border-ochre/40'
+          : 'border-iron/20'
+
+  const bgClass =
+    entry.outcome === 'running'
+      ? 'bg-warn/5'
+      : entry.outcome === 'failed'
+        ? 'bg-error/5'
+        : entry.outcome === 'killed'
+          ? 'bg-ochre/5'
+          : 'bg-panel/30'
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === ' ') {
+      e.preventDefault()
+      const parent = e.currentTarget.closest('details') as HTMLDetailsElement | null
+      if (parent) parent.open = !parent.open
+    }
+  }
+
+  return (
+    <details
+      data-testid="step-card"
+      data-outcome={entry.outcome}
+      data-active={isActive}
+      className={`overflow-hidden rounded-lg border ${borderClass} ${bgClass}${isActive ? ' ring-1 ring-warn' : ''}`}
+    >
+      <summary
+        tabIndex={0}
+        className="flex cursor-pointer list-none items-start gap-3 p-3 [&::-webkit-details-marker]:hidden"
+        onKeyDown={handleKeyDown}
+      >
+        {/* Status icon (left) */}
+        <StepStatusIcon outcome={entry.outcome} />
+
+        {/* Step info */}
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-sm text-fg">{entry.stepName}</span>
+            {entry.workerName != null ? (
+              <span className="font-mono text-[10px] text-muted">{entry.workerName}</span>
+            ) : null}
+          </div>
+          {summary ? (
+            <p className="font-mono text-[11px] text-muted">{summary}</p>
+          ) : null}
+          {entry.evalResults && entry.evalResults.length > 0 ? (
+            <div className="mt-0.5 flex flex-wrap gap-1">
+              {entry.evalResults.map((r) => (
+                <EvalChip key={r.label} label={r.label} value={r.value} warn={r.warn} />
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Duration badge (right) */}
+        {entry.durationMs != null ? (
+          <span className="shrink-0 font-mono text-xs text-muted">
+            {formatDuration(entry.durationMs)}
+          </span>
+        ) : null}
+      </summary>
+
+      {/* Expanded content — always in DOM, hidden by <details> when closed */}
+      <div data-testid="step-card-expanded" className="border-t border-iron/15 px-3 pb-3">
+        {/* Token counts (LLM-backed steps) */}
+        {(entry.inputTokens != null || entry.outputTokens != null) ? (
+          <p className="pt-2 font-mono text-[10px] text-muted">
+            {entry.inputTokens != null ? `in:${entry.inputTokens}` : null}
+            {entry.outputTokens != null ? ` out:${entry.outputTokens}` : null}
+            {entry.cacheReadTokens != null && entry.cacheReadTokens > 0
+              ? ` cache:${entry.cacheReadTokens}`
+              : null}
+          </p>
+        ) : null}
+        {entry.claudeSessionId != null ? (
+          <p
+            className="pt-1 font-mono text-[10px] text-muted"
+            title={entry.claudeSessionId}
+          >
+            session:{entry.claudeSessionId.slice(0, 8)}
+          </p>
+        ) : null}
+
+        {/* Tool invocations */}
+        {toolEvents.length > 0 ? (
+          <div className="mt-2">
+            {toolEvents.map((t) => (
+              <ToolInvocationRow key={t.id} event={t} />
+            ))}
+          </div>
+        ) : (
+          <p className="pt-2 font-mono text-[11px] text-muted/60">
+            No tool invocations recorded
+          </p>
+        )}
+      </div>
+    </details>
+  )
+}
+
+/**
+ * The primary step-trace surface — a vertical sequence of step cards connected
+ * by dashed arrow connectors. Each card represents one workflow step; cards are
+ * data-driven from the supplied entries (derived from StepSpan[] or RunTimeline)
+ * so custom workflows with non-standard step names render correctly.
+ *
+ * Tool invocations are grouped into the matching card by timestamp: events
+ * whose timestamp falls between a step's startedAt and endedAt (inclusive)
+ * belong to that step. For running steps (no endedAt) all events after
+ * startedAt are included.
+ *
+ * Replaces the old flat StepTimeline and RunTimelineSection components.
+ */
+const StepCardList = ({
+  cards,
+  toolEvents,
   activeStepName,
 }: {
-  spans: StepSpan[]
+  cards: StepCardEntry[]
+  toolEvents: TraceEvent[]
   activeStepName?: string
 }) => (
   <section
-    data-testid="task-step-timeline"
+    data-testid="step-card-list"
     className="border-b border-iron/20 px-4 py-3"
   >
-    <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+    <h3 className="mb-3 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
       Steps
     </h3>
-    {spans.length === 0 ? (
+    {cards.length === 0 ? (
       <p className="font-mono text-xs text-iron">No steps recorded yet</p>
     ) : (
-      <ol className="flex flex-col">
-        {spans.map((s, i) => {
-          const isActive = activeStepName != null && s.stepName === activeStepName
-          const isLast = i === spans.length - 1
-
-          const rowTextClass =
-            s.outcome === 'running'
-              ? 'text-warn'
-              : s.outcome === 'failed'
-                ? 'text-error'
-                : s.outcome === 'killed'
-                  ? 'text-ochre'
-                  : 'text-fg'
-
-          const dotClass =
-            s.outcome === 'running'
-              ? 'bg-warn border-warn/60 motion-safe:animate-pulse'
-              : s.outcome === 'failed'
-                ? 'bg-error/80 border-error/60'
-                : s.outcome === 'killed'
-                  ? 'bg-ochre/80 border-ochre/60'
-                  : 'bg-muted/40 border-muted/30'
-
+      <div className="flex flex-col">
+        {cards.map((card, i) => {
+          const cardTools = toolEvents.filter(
+            (e) =>
+              e.timestamp >= card.startedAt &&
+              (card.endedAt == null || e.timestamp <= card.endedAt),
+          )
           return (
-            <li
-              key={`${s.workflowInstanceId}-${s.stepName}-${i}`}
-              data-testid="step-timeline-row"
-              data-outcome={s.outcome}
-              data-active={isActive}
-              className={`relative flex items-start gap-2 rounded pl-5 pr-2 py-1 font-mono text-xs ${rowTextClass}${isActive ? ' ring-1 ring-warn bg-warn/5' : ''}`}
-            >
-              {/* Vertical timeline gutter: status dot + connector line */}
-              <span className="absolute left-0 top-0 flex h-full flex-col items-center" aria-hidden="true">
-                <span
-                  data-testid="step-status-dot"
-                  className={`mt-1.5 h-2 w-2 shrink-0 rounded-full border ${dotClass}`}
+            <div key={card.key}>
+              <StepCard
+                entry={card}
+                toolEvents={cardTools}
+                isActive={activeStepName != null && card.stepName === activeStepName}
+              />
+              {i < cards.length - 1 ? (
+                <div
+                  className="mx-4 h-4 border-l-2 border-dashed border-iron/25"
+                  aria-hidden="true"
                 />
-                {!isLast && (
-                  <span className="mt-0.5 w-px flex-1 bg-border/60" />
-                )}
-              </span>
-
-              {/* Step info */}
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
-                <span className="min-w-[6rem] font-semibold">{s.stepName}</span>
-                {s.workerName != null ? (
-                  <span className="shrink-0 text-muted">{s.workerName}</span>
-                ) : null}
-                <span className="shrink-0 text-muted">{outcomeLabel(s.outcome)}</span>
-                {s.durationMs != null ? (
-                  <span className="ml-auto shrink-0 text-muted">
-                    {formatDuration(s.durationMs)}
-                  </span>
-                ) : null}
-                {s.evalResults && s.evalResults.length > 0 ? (
-                  <span className="flex flex-wrap items-center gap-1">
-                    {s.evalResults.map((r) => (
-                      <EvalChip key={r.label} label={r.label} value={r.value} warn={r.warn} />
-                    ))}
-                  </span>
-                ) : null}
-              </div>
-            </li>
+              ) : null}
+            </div>
           )
         })}
-      </ol>
+      </div>
     )}
   </section>
 )
@@ -900,183 +1246,6 @@ const ProposalStepTimeline = ({
   )
 }
 
-/**
- * Run timeline panel — shows all workflow runs for a task, each with its
- * ordered step list, status, duration, token counts, and failure reason.
- * When a run has more than 8 steps the step list collapses by default so
- * the panel stays scannable at a glance.
- *
- * Returns null when the task has no recorded runs (quiet empty state).
- */
-const RunTimelineSection = ({
-  timeline,
-  evalsByKey,
-}: {
-  timeline: RunTimeline
-  evalsByKey?: Map<string, Array<{ label: string; value: number | string | null; warn: boolean }>>
-}) => {
-  if (timeline.runs.length === 0) return null
-
-  return (
-    <section
-      data-testid="run-timeline"
-      className="border-b border-iron/20 px-4 py-3"
-    >
-      <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
-        Run timeline
-      </h3>
-      <div className="flex flex-col gap-2">
-        {timeline.runs.map((run, runIdx) => {
-          const runDurationMs =
-            run.endedAt != null
-              ? new Date(run.endedAt).getTime() - new Date(run.startedAt).getTime()
-              : null
-          const isInFlight = run.endedAt === null
-          const collapsed = run.steps.length > 8
-
-          const stepList = (
-            <ol className="mt-1 flex flex-col">
-              {run.steps.map((step, stepIdx) => {
-                const isLast = stepIdx === run.steps.length - 1
-                const stepEvalResults = evalsByKey?.get(`${run.runId}:${step.stepName}`)
-                const rowTextClass =
-                  step.status === 'running'
-                    ? 'text-warn'
-                    : step.status === 'failed'
-                      ? 'text-error'
-                      : step.status === 'killed'
-                        ? 'text-ochre'
-                        : 'text-fg'
-                const dotClass =
-                  step.status === 'running'
-                    ? 'bg-warn border-warn/60 motion-safe:animate-pulse'
-                    : step.status === 'failed'
-                      ? 'bg-error/80 border-error/60'
-                      : step.status === 'killed'
-                        ? 'bg-ochre/80 border-ochre/60'
-                        : 'bg-muted/40 border-muted/30'
-
-                return (
-                  <li
-                    key={`${run.runId}-${step.stepName}-${stepIdx}`}
-                    data-testid="run-step-row"
-                    data-status={step.status}
-                    className={`relative flex items-start gap-2 rounded pl-5 pr-2 py-1 font-mono text-xs ${rowTextClass}`}
-                  >
-                    <span
-                      className="absolute left-0 top-0 flex h-full flex-col items-center"
-                      aria-hidden="true"
-                    >
-                      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full border ${dotClass}`} />
-                      {!isLast && <span className="mt-0.5 w-px flex-1 bg-border/60" />}
-                    </span>
-                    <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-2 gap-y-0.5">
-                      <span className="min-w-[6rem] font-semibold">{step.stepName}</span>
-                      {step.workerName != null ? (
-                        <span className="shrink-0 text-muted">{step.workerName}</span>
-                      ) : null}
-                      <span className="shrink-0 text-muted">
-                        {step.status === 'running'
-                          ? 'running…'
-                          : step.status === 'completed'
-                            ? 'done'
-                            : step.status}
-                      </span>
-                      {step.durationMs != null ? (
-                        <span className="ml-auto shrink-0 text-muted">
-                          {formatDuration(step.durationMs)}
-                        </span>
-                      ) : null}
-                      {step.inputTokens != null || step.outputTokens != null ? (
-                        <span className="w-full font-mono text-[10px] text-muted">
-                          {step.inputTokens != null ? `in:${step.inputTokens}` : null}
-                          {step.outputTokens != null ? ` out:${step.outputTokens}` : null}
-                          {step.cacheReadTokens != null && step.cacheReadTokens > 0
-                            ? ` cache:${step.cacheReadTokens}`
-                            : null}
-                        </span>
-                      ) : null}
-                      {step.claudeSessionId != null ? (
-                        <span
-                          className="w-full font-mono text-[10px] text-muted"
-                          title={step.claudeSessionId}
-                        >
-                          session:{step.claudeSessionId.slice(0, 8)}
-                        </span>
-                      ) : null}
-                      {stepEvalResults != null && stepEvalResults.length > 0 ? (
-                        <span className="flex flex-wrap items-center gap-1">
-                          {stepEvalResults.map((r) => (
-                            <EvalChip key={r.label} label={r.label} value={r.value} warn={r.warn} />
-                          ))}
-                        </span>
-                      ) : null}
-                      {(step.status === 'failed' || step.status === 'killed') &&
-                      step.failureReason != null ? (
-                        <p className="w-full break-words text-[10px] text-error/80">
-                          {step.failureReason}
-                        </p>
-                      ) : null}
-                    </div>
-                  </li>
-                )
-              })}
-            </ol>
-          )
-
-          return (
-            <div
-              key={run.runId}
-              data-testid="run-entry"
-              className="overflow-hidden rounded border border-iron/15 bg-panel"
-            >
-              {collapsed ? (
-                <details>
-                  <summary className="flex cursor-pointer items-center justify-between px-3 py-2 font-mono text-[11px] text-iron">
-                    <span className="flex items-center gap-1.5">
-                      Run {runIdx + 1}
-                      {isInFlight ? (
-                        <span
-                          aria-label="in flight"
-                          className="inline-block h-1.5 w-1.5 rounded-full bg-warn motion-safe:animate-pulse"
-                        />
-                      ) : null}
-                    </span>
-                    <span className="text-muted">
-                      {run.steps.length} steps
-                      {runDurationMs != null ? ` · ${formatDuration(runDurationMs)}` : ''}
-                    </span>
-                  </summary>
-                  <div className="border-t border-iron/10 px-1 pb-1">{stepList}</div>
-                </details>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between px-3 py-2 font-mono text-[11px] text-iron">
-                    <span className="flex items-center gap-1.5">
-                      Run {runIdx + 1}
-                      {isInFlight ? (
-                        <span
-                          aria-label="in flight"
-                          className="inline-block h-1.5 w-1.5 rounded-full bg-warn motion-safe:animate-pulse"
-                        />
-                      ) : null}
-                    </span>
-                    <span className="text-muted">
-                      {run.steps.length} step{run.steps.length !== 1 ? 's' : ''}
-                      {runDurationMs != null ? ` · ${formatDuration(runDurationMs)}` : ''}
-                    </span>
-                  </div>
-                  <div className="border-t border-iron/10 px-1 pb-1">{stepList}</div>
-                </>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </section>
-  )
-}
-
 export const TaskDetailDrawer = ({
   taskId,
   onClose,
@@ -1089,6 +1258,7 @@ export const TaskDetailDrawer = ({
   initialTrail,
   activeStepName,
   initialState,
+  toolInvocations,
 }: TaskDetailDrawerProps) => {
   const drawerRef = useRef<HTMLElement>(null)
   const [closing, setClosing] = useState(false)
@@ -1327,15 +1497,36 @@ export const TaskDetailDrawer = ({
     ? subgraph.positioned.reduce((acc, n) => Math.max(acc, n.y + MINI_NODE_H), 0) + MINI_PAD_Y
     : 0
 
+  // Tool invocations — fetched from /api/trace-events?kind=tool_invoked&taskId=<id>.
+  // Grouped into step cards by timestamp (events between step.startedAt and
+  // step.endedAt belong to that step). The prop path skips the fetch for tests.
+  const toolEventsQuery = useQuery<TraceEvent[]>({
+    queryKey: ['task', currentId, 'tool-events'],
+    queryFn: async () => {
+      const f = fetchImpl ?? fetch
+      const res = await f(
+        `/api/trace-events?taskId=${encodeURIComponent(currentId)}&kind=tool_invoked&limit=500`,
+      )
+      if (!res.ok) return []
+      const data = (await res.json()) as { events: TraceEvent[] }
+      // Events come newest-first; reverse to chronological order for per-step grouping.
+      return (data.events ?? []).slice().reverse()
+    },
+    enabled: toolInvocations === undefined,
+    retry: false,
+  })
+
   // The resolved spans to render: prefer the prop (for testing / static
   // rendering), otherwise use the spans fetched from the API.
   const resolvedSpans = stepSpans !== undefined ? stepSpans : (spansQuery.data ?? null)
   // Same resolution for the run timeline data.
   const resolvedRunTimeline = runTimeline !== undefined ? runTimeline : (runsQuery.data ?? null)
+  // Resolved tool invocations.
+  const resolvedToolEvents: TraceEvent[] =
+    toolInvocations !== undefined ? toolInvocations : (toolEventsQuery.data ?? [])
 
-  // Build a lookup of eval results keyed by `${runId}:${stepName}` so that
-  // RunTimelineSection can fold eval chips from StepSpan data into its rows.
-  // Uses workflowInstanceId (which equals runId) as the run key.
+  // Build a lookup of eval results keyed by `${workflowInstanceId}:${stepName}`
+  // so StepCardList can fold eval chips from StepSpan data into run timeline cards.
   const spanEvalMap = useMemo(() => {
     if (resolvedSpans == null) return undefined
     const m = new Map<string, Array<{ label: string; value: number | string | null; warn: boolean }>>()
@@ -1498,18 +1689,38 @@ export const TaskDetailDrawer = ({
         </section>
       ) : null}
 
-      {/* Timeline — exactly one of RunTimelineSection or StepTimeline renders.
-          RunTimelineSection takes precedence when run data is available: it
-          shows the richer per-run view (token counts, session ids) and folds
-          in eval chips from StepSpan data so no information is lost.
-          The flat StepTimeline (and proposal variant) are the fallback when no
-          run data has been recorded yet (e.g. task is still queued). */}
+      {/* Step cards — the primary trace surface.
+          When run timeline data is available it takes precedence: steps are
+          derived from each run's step list (richer: tokens, session ids, failure
+          reasons) and eval chips are folded in from span data.
+          When only span data is available the spans become the cards directly.
+          For proposals the legacy ProposalStepTimeline handles grouping by taskId.
+          Exactly one step-card-list renders; no duplicate step lists. */}
       {resolvedRunTimeline !== null && resolvedRunTimeline.runs.length > 0 ? (
-        <RunTimelineSection timeline={resolvedRunTimeline} evalsByKey={spanEvalMap} />
+        <StepCardList
+          cards={resolvedRunTimeline.runs.flatMap((run) =>
+            run.steps.map((step, i) =>
+              runStepToCard(
+                step,
+                run.runId,
+                i,
+                spanEvalMap?.get(`${run.runId}:${step.stepName}`),
+              ),
+            ),
+          )}
+          toolEvents={resolvedToolEvents}
+          activeStepName={activeStepName}
+        />
       ) : resolvedSpans !== null ? (
-        isProposal
-          ? <ProposalStepTimeline spans={resolvedSpans} activeStepName={activeStepName} />
-          : <StepTimeline spans={resolvedSpans} activeStepName={activeStepName} />
+        isProposal ? (
+          <ProposalStepTimeline spans={resolvedSpans} activeStepName={activeStepName} />
+        ) : (
+          <StepCardList
+            cards={resolvedSpans.map(spanToCard)}
+            toolEvents={resolvedToolEvents}
+            activeStepName={activeStepName}
+          />
+        )
       ) : null}
 
       {state.kind === 'loading' ? (

@@ -16,9 +16,21 @@
 
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import type { StepSpan } from '../widgets/TaskDetailDrawer'
 import { TaskDetailDrawer } from '../widgets/TaskDetailDrawer'
+
+// ── Test helper ──────────────────────────────────────────────────────────────
+
+const render = (element: React.ReactElement): string => {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  })
+  return renderToStaticMarkup(
+    <QueryClientProvider client={qc}>{element}</QueryClientProvider>,
+  )
+}
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -89,7 +101,7 @@ describe('TaskDetailDrawer – proposal grouping (slice-4)', () => {
   ]
 
   it('renders a step-group-proposal section for spans with null taskId', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -105,7 +117,7 @@ describe('TaskDetailDrawer – proposal grouping (slice-4)', () => {
   })
 
   it('renders one step-group section per distinct non-null taskId', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -122,7 +134,7 @@ describe('TaskDetailDrawer – proposal grouping (slice-4)', () => {
   })
 
   it('step-group-proposal appears before child-task groups in document order', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -141,7 +153,7 @@ describe('TaskDetailDrawer – proposal grouping (slice-4)', () => {
   })
 
   it('child-task group header text includes the task id', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -159,7 +171,7 @@ describe('TaskDetailDrawer – proposal grouping (slice-4)', () => {
   })
 
   it('child-task group header includes the step count for that task', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -179,7 +191,7 @@ describe('TaskDetailDrawer – proposal grouping (slice-4)', () => {
   it('proposal-mode: spans routed to correct groups by taskId', () => {
     // generate-slices (taskId=null) → proposal group
     // setup-worktree (taskId=taskAId) → taskA group
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -209,7 +221,7 @@ describe('TaskDetailDrawer – auto-linker-direction collapsing in proposal grou
       makeSpan({ stepName: 'auto-linker-direction', taskId: null, durationMs: 300, workflowInstanceId: 'wf-al-1' }),
       makeSpan({ stepName: 'auto-linker-direction', taskId: null, durationMs: 400, workflowInstanceId: 'wf-al-2' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -230,7 +242,7 @@ describe('TaskDetailDrawer – auto-linker-direction collapsing in proposal grou
       makeSpan({ stepName: 'auto-linker-direction', taskId: null, durationMs: 400, workflowInstanceId: 'wf-al-2' }),
       makeSpan({ stepName: 'auto-linker-direction', taskId: null, durationMs: 200, workflowInstanceId: 'wf-al-3' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -250,7 +262,7 @@ describe('TaskDetailDrawer – auto-linker-direction collapsing in proposal grou
       makeSpan({ stepName: 'auto-linker-direction', taskId: null, durationMs: 300, workflowInstanceId: 'wf-al-1' }),
       makeSpan({ stepName: 'auto-linker-direction', taskId: null, durationMs: 700, workflowInstanceId: 'wf-al-2' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -270,7 +282,7 @@ describe('TaskDetailDrawer – auto-linker-direction collapsing in proposal grou
       makeSpan({ stepName: 'auto-linker-direction', taskId: null, durationMs: 300, workflowInstanceId: 'wf-al-1' }),
       makeSpan({ stepName: 'auto-linker-direction', taskId: null, durationMs: 400, workflowInstanceId: 'wf-al-2' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -288,7 +300,7 @@ describe('TaskDetailDrawer – auto-linker-direction collapsing in proposal grou
       makeSpan({ stepName: 'generate-slices', taskId: null, durationMs: 500 }),
       makeSpan({ stepName: 'action-quality-reprompt', taskId: null, durationMs: 200 }),
     ]
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -309,7 +321,7 @@ describe('TaskDetailDrawer – auto-linker-direction collapsing in proposal grou
       makeSpan({ stepName: 'generate-slices', taskId: null, durationMs: 500 }),
       makeSpan({ stepName: 'auto-linker-direction', taskId: null, durationMs: 300, workflowInstanceId: 'wf-al-1' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -337,7 +349,7 @@ describe('TaskDetailDrawer – child task group expanded by default', () => {
       makeSpan({ stepName: 'verify', taskId: taskAId, workflowInstanceId: 'wf-a' }),
       makeSpan({ stepName: 'merge', taskId: taskAId, workflowInstanceId: 'wf-a' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -358,7 +370,7 @@ describe('TaskDetailDrawer – child task group expanded by default', () => {
       makeSpan({ stepName: 'setup-worktree', taskId: taskAId, workflowInstanceId: 'wf-a' }),
       makeSpan({ stepName: 'run-claude-code', taskId: taskAId, workflowInstanceId: 'wf-a', outcome: 'running', endedAt: null, durationMs: null }),
     ]
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -390,7 +402,7 @@ describe('TaskDetailDrawer – proposal fetch uses originId (structural check)',
       makeSpan({ stepName: 'setup-worktree', taskId: taskBId, originId: proposalId }),
       makeSpan({ stepName: 'run-claude-code', taskId: taskBId, originId: proposalId }),
     ]
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId={proposalId}
         onClose={() => {}}
@@ -420,7 +432,7 @@ describe('TaskDetailDrawer – task-mode unaffected by proposal grouping (slice-
       { stepName: 'setup-worktree', phase: null, workflowInstanceId: 'wf-1', workerName: null, outcome: 'completed', startedAt: '2026-01-01T10:00:00.000Z', endedAt: '2026-01-01T10:00:01.000Z', durationMs: 1000, taskId: 'task-1', originId: 'task-1' },
       { stepName: 'run-claude-code', phase: null, workflowInstanceId: 'wf-1', workerName: null, outcome: 'completed', startedAt: '2026-01-01T10:00:01.000Z', endedAt: '2026-01-01T10:00:10.000Z', durationMs: 9000, taskId: 'task-1', originId: 'task-1' },
     ]
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId="task-1"
         onClose={() => {}}
@@ -429,11 +441,11 @@ describe('TaskDetailDrawer – task-mode unaffected by proposal grouping (slice-
         stepSpans={spans}
       />,
     )
-    // Task mode must use the flat timeline, not the grouped proposal layout
-    expect(html).toContain('data-testid="task-step-timeline"')
+    // Task mode must use step-card-list (StepCardList), not the grouped proposal layout
+    expect(html).toContain('data-testid="step-card-list"')
     expect(html).not.toContain('data-testid="step-group-proposal"')
     expect(html).not.toContain('step-group-task-1')
-    const rowCount = (html.match(/data-testid="step-timeline-row"/g) ?? []).length
+    const rowCount = (html.match(/data-testid="step-card"/g) ?? []).length
     expect(rowCount).toBe(2)
   })
 
@@ -442,7 +454,7 @@ describe('TaskDetailDrawer – task-mode unaffected by proposal grouping (slice-
       { stepName: 'setup-worktree', phase: null, workflowInstanceId: 'wf-1', workerName: null, outcome: 'completed', startedAt: '2026-01-01T10:00:00.000Z', endedAt: '2026-01-01T10:00:01.000Z', durationMs: 1000, taskId: 'task-1', originId: 'task-1' },
       { stepName: 'run-claude-code', phase: null, workflowInstanceId: 'wf-1', workerName: null, outcome: 'running', startedAt: '2026-01-01T10:00:01.000Z', endedAt: null, durationMs: null, taskId: 'task-1', originId: 'task-1' },
     ]
-    const html = renderToStaticMarkup(
+    const html = render(
       <TaskDetailDrawer
         taskId="task-1"
         onClose={() => {}}

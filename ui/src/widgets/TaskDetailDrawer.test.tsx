@@ -7,6 +7,7 @@ import type {
   ProgressProposalNode,
   ProgressTask,
   Task,
+  TraceEvent,
 } from '@/shared/schemas'
 import type { RunTimeline, RunTimelineEntry, RunTimelineStep, StepSpan } from './TaskDetailDrawer'
 import {
@@ -951,21 +952,21 @@ const span = (overrides: Partial<StepSpan> & { stepName: string }): StepSpan => 
 })
 
 describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
-  it('renders a step timeline section when stepSpans prop is provided', () => {
+  it('renders a step card list section when stepSpans prop is provided', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[]} />,
     )
-    expect(html).toContain('data-testid="task-step-timeline"')
+    expect(html).toContain('data-testid="step-card-list"')
   })
 
-  it('does not render the step timeline section when stepSpans prop is omitted', () => {
+  it('does not render the step card list section when stepSpans prop is omitted', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} />,
     )
-    expect(html).not.toContain('data-testid="task-step-timeline"')
+    expect(html).not.toContain('data-testid="step-card-list"')
   })
 
-  it('renders one row per step span', () => {
+  it('renders one card per step span', () => {
     const spans = [
       span({ stepName: 'setup', workflowInstanceId: 'wf-1' }),
       span({ stepName: 'code', workflowInstanceId: 'wf-1', workerName: 'Coder' }),
@@ -975,7 +976,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
-    const rowCount = (html.match(/data-testid="step-timeline-row"/g) ?? []).length
+    const rowCount = (html.match(/data-testid="step-card"/g) ?? []).length
     expect(rowCount).toBe(4)
   })
 
@@ -1025,7 +1026,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     expect(html).toContain('data-outcome="failed"')
   })
 
-  it('renders each recover step as its own distinct row (not collapsed with code)', () => {
+  it('renders each recover step as its own distinct card (not collapsed with code)', () => {
     const spans = [
       span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'failed', workerName: 'Coder' }),
       span({ stepName: 'recover', workflowInstanceId: 'wf-2', outcome: 'completed', workerName: 'Fixer' }),
@@ -1033,7 +1034,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
-    const rowCount = (html.match(/data-testid="step-timeline-row"/g) ?? []).length
+    const rowCount = (html.match(/data-testid="step-card"/g) ?? []).length
     expect(rowCount).toBe(2)
     // Both step names appear in the output
     expect(html).toContain('code')
@@ -1044,9 +1045,9 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[]} />,
     )
-    // Empty state is present and no rows are rendered
-    expect(html).toContain('data-testid="task-step-timeline"')
-    const rowCount = (html.match(/data-testid="step-timeline-row"/g) ?? []).length
+    // Empty state is present and no cards are rendered
+    expect(html).toContain('data-testid="step-card-list"')
+    const rowCount = (html.match(/data-testid="step-card"/g) ?? []).length
     expect(rowCount).toBe(0)
   })
 
@@ -1131,7 +1132,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     expect(html).toContain('text-warn')
   })
 
-  it('renders a status dot (data-testid="step-status-dot") for every step row', () => {
+  it('renders a status icon (data-testid="step-status-icon") for every step card', () => {
     const spans = [
       span({ stepName: 'setup', workflowInstanceId: 'wf-1' }),
       span({ stepName: 'code', workflowInstanceId: 'wf-1', workerName: 'Coder' }),
@@ -1140,20 +1141,145 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
-    const dotCount = (html.match(/data-testid="step-status-dot"/g) ?? []).length
-    expect(dotCount).toBe(3)
+    const iconCount = (html.match(/data-testid="step-status-icon"/g) ?? []).length
+    expect(iconCount).toBe(3)
   })
 
-  it('a running step gets a warn-colored status dot', () => {
+  it('a running step gets a warn-colored status icon', () => {
     const spans = [
       span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'running', endedAt: null, durationMs: null }),
     ]
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
-    expect(html).toContain('data-testid="step-status-dot"')
-    // The dot element for a running step must carry the warn background class.
+    expect(html).toContain('data-testid="step-status-icon"')
+    // The icon element for a running step uses the warn color tokens.
+    expect(html).toContain('border-warn')
     expect(html).toContain('bg-warn')
+  })
+})
+
+// ── Tool invocations in step cards ───────────────────────────────────────────
+
+/**
+ * When toolInvocations prop is provided, each step card's expanded section
+ * groups the matching tool events and renders the full humanized command line
+ * (basename + argv). The expanded content is always in the static HTML because
+ * the card uses a <details> element — keyboard-accessible and always parseable
+ * by renderToStaticMarkup.
+ */
+describe('TaskDetailDrawer – tool invocations in step cards', () => {
+  const makeToolEvent = (overrides: Partial<TraceEvent> & { id: string }): TraceEvent => ({
+    id: overrides.id,
+    timestamp: overrides.timestamp ?? '2026-01-01T10:00:00.500Z',
+    kind: 'tool_invoked',
+    severity: 'info',
+    taskId: overrides.taskId ?? 'task-t1',
+    originId: overrides.originId ?? 'task-t1',
+    phase: overrides.phase ?? null,
+    payload: overrides.payload ?? {
+      tool: 'git',
+      argv: [],
+      exitCode: 0,
+      durationMs: 10,
+      stdout: '',
+      stderr: '',
+      expectsFailure: false,
+    },
+  })
+
+  it('tool invocations with full argv appear inside step card expanded content', () => {
+    const spans = [
+      span({
+        stepName: 'code',
+        workflowInstanceId: 'wf-1',
+        outcome: 'completed',
+        startedAt: '2026-01-01T10:00:00.000Z',
+        endedAt: '2026-01-01T10:00:01.000Z',
+      }),
+    ]
+    const toolInvocations: TraceEvent[] = [
+      makeToolEvent({
+        id: 'ev-1',
+        timestamp: '2026-01-01T10:00:00.500Z',
+        payload: {
+          tool: '/usr/local/bin/git',
+          argv: ['commit', '-m', 'add feature'],
+          exitCode: 0,
+          durationMs: 123,
+          stdout: '',
+          stderr: '',
+          expectsFailure: false,
+        },
+      }),
+    ]
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        stepSpans={spans}
+        toolInvocations={toolInvocations}
+      />,
+    )
+    // tool-cmd is inside step-card-expanded which is always in static DOM
+    expect(html).toContain('data-testid="tool-cmd"')
+    // Humanized command: basename of path + argv joined
+    expect(html).toContain('git commit -m add feature')
+  })
+
+  it('spans render as cards with status icon (not flat rows)', () => {
+    const spans = [
+      span({ stepName: 'setup', workflowInstanceId: 'wf-1', outcome: 'completed' }),
+      span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'running', endedAt: null, durationMs: null }),
+    ]
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
+    )
+    // Cards rendered, not flat rows
+    const cardCount = (html.match(/data-testid="step-card"/g) ?? []).length
+    expect(cardCount).toBe(2)
+    // Each card has a status icon
+    const iconCount = (html.match(/data-testid="step-status-icon"/g) ?? []).length
+    expect(iconCount).toBe(2)
+    // Expanded content always in DOM
+    expect(html).toContain('data-testid="step-card-expanded"')
+  })
+
+  it('exit-code badge shows ✓ for exit code 0', () => {
+    const spans = [
+      span({
+        stepName: 'verify',
+        workflowInstanceId: 'wf-1',
+        outcome: 'completed',
+        startedAt: '2026-01-01T10:00:00.000Z',
+        endedAt: '2026-01-01T10:00:01.000Z',
+      }),
+    ]
+    const toolInvocations: TraceEvent[] = [
+      makeToolEvent({
+        id: 'ev-2',
+        timestamp: '2026-01-01T10:00:00.500Z',
+        payload: {
+          tool: 'npm',
+          argv: ['test'],
+          exitCode: 0,
+          durationMs: 500,
+          stdout: '',
+          stderr: '',
+          expectsFailure: false,
+        },
+      }),
+    ]
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        stepSpans={spans}
+        toolInvocations={toolInvocations}
+      />,
+    )
+    expect(html).toContain('data-testid="exit-code-badge"')
+    expect(html).toContain('✓')
   })
 })
 
@@ -1319,21 +1445,21 @@ const makeRunTimeline = (overrides?: Partial<RunTimeline>): RunTimeline => ({
 })
 
 describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
-  it('renders the run-timeline section when runTimeline has at least one run', () => {
+  it('renders the step-card-list section when runTimeline has at least one run', () => {
     const timeline = makeRunTimeline({
       runs: [makeRTRun({ steps: [makeRTStep({ stepName: 'setup' })] })],
     })
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
-    expect(html).toContain('data-testid="run-timeline"')
+    expect(html).toContain('data-testid="step-card-list"')
   })
 
-  it('does not render the run-timeline section when runTimeline prop is omitted', () => {
+  it('does not render the step-card-list section when runTimeline prop is omitted', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} />,
     )
-    expect(html).not.toContain('data-testid="run-timeline"')
+    expect(html).not.toContain('data-testid="step-card-list"')
   })
 
   it('quiet empty state: renders nothing when runs array is empty', () => {
@@ -1341,10 +1467,10 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
-    expect(html).not.toContain('data-testid="run-timeline"')
+    expect(html).not.toContain('data-testid="step-card-list"')
   })
 
-  it('renders one run-entry per run', () => {
+  it('renders all steps from all runs as cards (flat list, no run grouping)', () => {
     const timeline = makeRunTimeline({
       runs: [
         makeRTRun({ runId: 'wf-1', steps: [makeRTStep({ stepName: 'setup' })] }),
@@ -1354,11 +1480,13 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
-    const runCount = (html.match(/data-testid="run-entry"/g) ?? []).length
-    expect(runCount).toBe(2)
+    // Both steps appear as cards; no run-entry grouping
+    const cardCount = (html.match(/data-testid="step-card"/g) ?? []).length
+    expect(cardCount).toBe(2)
+    expect(html).not.toContain('data-testid="run-entry"')
   })
 
-  it('renders one run-step-row per step', () => {
+  it('renders one step card per step', () => {
     const timeline = makeRunTimeline({
       runs: [
         makeRTRun({
@@ -1373,7 +1501,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
-    const rowCount = (html.match(/data-testid="run-step-row"/g) ?? []).length
+    const rowCount = (html.match(/data-testid="step-card"/g) ?? []).length
     expect(rowCount).toBe(3)
   })
 
@@ -1447,10 +1575,10 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     expect(html).toContain('context window exceeded')
-    expect(html).toContain('data-status="failed"')
+    expect(html).toContain('data-outcome="failed"')
   })
 
-  it('marks a running step with data-status="running"', () => {
+  it('marks a running step with data-outcome="running"', () => {
     const timeline = makeRunTimeline({
       runs: [
         makeRTRun({
@@ -1469,7 +1597,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
-    expect(html).toContain('data-status="running"')
+    expect(html).toContain('data-outcome="running"')
   })
 
   it('uses semantic color tokens, not raw palette colors', () => {
@@ -1488,34 +1616,35 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
     )
     expect(html).not.toContain('text-red-400')
     expect(html).not.toContain('text-amber-400')
-    expect(html).toContain('text-error')
-    expect(html).toContain('text-warn')
+    expect(html).toContain('text-error') // failed step status icon uses text-error
+    expect(html).toContain('border-warn') // running step card/icon uses border-warn
   })
 
-  it('collapses step list inside <details> when run has more than 8 steps', () => {
-    const steps = Array.from({ length: 9 }, (_, i) =>
+  it('each step card is a <details> element for keyboard-accessible expand/collapse', () => {
+    const steps = Array.from({ length: 3 }, (_, i) =>
       makeRTStep({ stepName: `step-${i}` }),
     )
     const timeline = makeRunTimeline({ runs: [makeRTRun({ steps })] })
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
-    // A <details> element must be present for long runs.
-    expect(html).toContain('<details')
-    // All steps are still in the static HTML (the collapse is interactive-only).
-    const rowCount = (html.match(/data-testid="run-step-row"/g) ?? []).length
-    expect(rowCount).toBe(9)
+    // Each step card is a <details> element.
+    const cardCount = (html.match(/data-testid="step-card"/g) ?? []).length
+    expect(cardCount).toBe(3)
+    // Expanded content (step-card-expanded) is always in DOM for static tests.
+    const expandedCount = (html.match(/data-testid="step-card-expanded"/g) ?? []).length
+    expect(expandedCount).toBe(3)
   })
 
-  it('does not wrap step list in <details> when run has 8 or fewer steps', () => {
-    const steps = Array.from({ length: 4 }, (_, i) =>
-      makeRTStep({ stepName: `step-${i}` }),
-    )
-    const timeline = makeRunTimeline({ runs: [makeRTRun({ steps })] })
+  it('expanded card content is always in DOM (accessible before interaction)', () => {
+    const timeline = makeRunTimeline({
+      runs: [makeRTRun({ steps: [makeRTStep({ stepName: 'setup' })] })],
+    })
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
-    expect(html).not.toContain('<details')
+    // step-card-expanded is always present even when the card starts collapsed
+    expect(html).toContain('data-testid="step-card-expanded"')
   })
 })
 
@@ -1530,7 +1659,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
  * the run step rows that share the same workflowInstanceId / stepName.
  */
 describe('TaskDetailDrawer – merged timeline (no duplicate step lists)', () => {
-  it('renders only the run timeline when run data is available (no duplicate step list)', () => {
+  it('renders only one step-card-list when run data is available (no duplicate step list)', () => {
     const spans = [
       span({ stepName: 'setup', workflowInstanceId: 'wf-run-001' }),
       span({ stepName: 'code', workflowInstanceId: 'wf-run-001', workerName: 'Coder' }),
@@ -1554,13 +1683,13 @@ describe('TaskDetailDrawer – merged timeline (no duplicate step lists)', () =>
         runTimeline={timeline}
       />,
     )
-    // Run timeline must be present
-    expect(html).toContain('data-testid="run-timeline"')
-    // Step timeline must NOT render alongside run timeline (no duplication)
-    expect(html).not.toContain('data-testid="task-step-timeline"')
+    // Exactly one step-card-list — run data wins, no duplicated span list
+    expect(html).toContain('data-testid="step-card-list"')
+    const listCount = (html.match(/data-testid="step-card-list"/g) ?? []).length
+    expect(listCount).toBe(1)
   })
 
-  it('still renders the step timeline when no run data is available', () => {
+  it('still renders step-card-list when no run data is available (spans fallback)', () => {
     const spans = [
       span({ stepName: 'setup', workflowInstanceId: 'wf-1' }),
     ]
@@ -1571,12 +1700,11 @@ describe('TaskDetailDrawer – merged timeline (no duplicate step lists)', () =>
         stepSpans={spans}
       />,
     )
-    // No run data → step timeline is the fallback
-    expect(html).toContain('data-testid="task-step-timeline"')
-    expect(html).not.toContain('data-testid="run-timeline"')
+    // No run data → span-based step cards are the fallback
+    expect(html).toContain('data-testid="step-card-list"')
   })
 
-  it('folds eval chips into run step rows when spans carry evalResults', () => {
+  it('folds eval chips from spans into step cards when spans carry evalResults', () => {
     const spans = [
       span({
         stepName: 'code',
@@ -1600,10 +1728,9 @@ describe('TaskDetailDrawer – merged timeline (no duplicate step lists)', () =>
         runTimeline={timeline}
       />,
     )
-    // Eval chip must appear (inside the run timeline, the only surviving section)
+    // Eval chip must appear in the single step-card-list
     expect(html).toContain('ctx% 95%')
-    expect(html).toContain('data-testid="run-timeline"')
-    expect(html).not.toContain('data-testid="task-step-timeline"')
+    expect(html).toContain('data-testid="step-card-list"')
   })
 })
 
