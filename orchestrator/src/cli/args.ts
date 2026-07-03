@@ -67,6 +67,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // (init/__tests__/wizard-parity.test.ts) fails if a prompt lacks its flag.
   '--supervisors',
   '--scaffold-mode',
+  '--feedback',
 ])
 
 /**
