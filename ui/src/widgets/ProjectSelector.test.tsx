@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Tests for the ProjectSelector widget.
  *
@@ -7,16 +8,27 @@
  *   - the focused project carries aria-current="true" in the open dropdown
  *   - Start button appears only for 'down' projects in the open dropdown
  *   - renders nothing when the project list is empty
+ *   - keyboard navigation: ArrowDown/Up/Home/End move the active option,
+ *     Enter selects and closes, Escape closes and returns focus to the trigger
  *
  * Strategy: ProjectSelectorInner accepts all state as props so it can be
  * rendered in open=false (trigger tests) or open=true (dropdown list tests)
  * without a DOM, using renderToStaticMarkup. ProjectSelector itself is tested
- * for the empty-state case via the mocked useFocusedProject hook.
+ * for the empty-state case via the mocked useFocusedProject hook, and for
+ * keyboard interaction via createRoot + act in a happy-dom environment.
  */
 
-import { describe, expect, it, mock } from 'bun:test'
+import { describe, expect, it, mock, beforeEach, afterEach } from 'bun:test'
+import { act } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { createRoot } from 'react-dom/client'
+import type { Root } from 'react-dom/client'
 import type { Project } from '@/shared/schemas'
+
+// React 19 requires this flag in test environments so `act` warnings are
+// surfaced rather than silenced.
+// @ts-expect-error — global augmentation for React test env
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -98,6 +110,7 @@ const renderOpen = (
   focusedProjectId = 'proj-live',
   starting: string | null = null,
   restarting: string | null = null,
+  activeIndex: number | null = null,
 ) =>
   renderToStaticMarkup(
     <ProjectSelectorInner
@@ -106,6 +119,7 @@ const renderOpen = (
       open={true}
       starting={starting}
       restarting={restarting}
+      activeIndex={activeIndex}
       onToggle={noop}
       onSelect={noop}
       onStart={noop}
@@ -375,5 +389,176 @@ describe('ProjectSelector – empty state', () => {
     })
     const html = renderToStaticMarkup(<ProjectSelector />)
     expect(html).toBe('')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Keyboard navigation ARIA structure (via renderToStaticMarkup)
+// ---------------------------------------------------------------------------
+
+describe('ProjectSelector – keyboard ARIA structure', () => {
+  it('listbox has tabindex="0" so it can receive keyboard focus', () => {
+    const html = renderOpen()
+    expect(html).toContain('tabindex="0"')
+  })
+
+  it('each option has an id attribute for aria-activedescendant to reference', () => {
+    const html = renderOpen()
+    expect(html).toContain('id="ps-opt-proj-live"')
+    expect(html).toContain('id="ps-opt-proj-degraded"')
+    expect(html).toContain('id="ps-opt-proj-down"')
+  })
+
+  it('listbox has no aria-activedescendant when activeIndex is null', () => {
+    const html = renderOpen('proj-live', null, null, null)
+    expect(html).not.toContain('aria-activedescendant')
+  })
+
+  it('listbox aria-activedescendant points at the active option', () => {
+    const html = renderOpen('proj-live', null, null, 1)
+    // activeIndex=1 → proj-degraded
+    expect(html).toContain('aria-activedescendant="ps-opt-proj-degraded"')
+  })
+
+  it('aria-activedescendant tracks the first option when activeIndex=0', () => {
+    const html = renderOpen('proj-live', null, null, 0)
+    expect(html).toContain('aria-activedescendant="ps-opt-proj-live"')
+  })
+
+  it('aria-activedescendant tracks the last option when activeIndex=last', () => {
+    const html = renderOpen('proj-live', null, null, 2)
+    expect(html).toContain('aria-activedescendant="ps-opt-proj-down"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Keyboard interaction (DOM-based, requires happy-dom environment)
+// ---------------------------------------------------------------------------
+
+describe('ProjectSelector – keyboard interaction', () => {
+  let container: HTMLElement
+  let root: Root
+
+  beforeEach(async () => {
+    setFocusedProjectId.mockClear()
+    mockUseFocusedProject.mockReturnValue({
+      projects: allProjects,
+      focusedProjectId: 'proj-live',
+      setFocusedProjectId,
+    })
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => {
+      root.render(<ProjectSelector />)
+    })
+  })
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  const openDropdown = async (c: HTMLElement) => {
+    const trigger = c.querySelector<HTMLButtonElement>(
+      '[data-testid="project-selector-trigger"]',
+    )
+    await act(async () => {
+      trigger?.click()
+    })
+  }
+
+  const keyOnListbox = async (c: HTMLElement, key: string) => {
+    const listbox = c.querySelector<HTMLUListElement>('[role="listbox"]')
+    await act(async () => {
+      listbox?.dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }),
+      )
+    })
+  }
+
+  it('dropdown opens on trigger click and listbox is present', async () => {
+    await openDropdown(container)
+    expect(container.querySelector('[data-testid="project-dropdown"]')).not.toBeNull()
+  })
+
+  it('listbox receives focus when dropdown opens', async () => {
+    await openDropdown(container)
+    const listbox = container.querySelector('[role="listbox"]')
+    expect(document.activeElement).toBe(listbox)
+  })
+
+  it('ArrowDown moves aria-activedescendant to the next option', async () => {
+    await openDropdown(container)
+    // Initial activeIndex = 0 (proj-live). ArrowDown → index 1 (proj-degraded).
+    await keyOnListbox(container, 'ArrowDown')
+    const listbox = container.querySelector('[role="listbox"]')
+    expect(listbox?.getAttribute('aria-activedescendant')).toBe('ps-opt-proj-degraded')
+  })
+
+  it('ArrowDown does not go past the last option', async () => {
+    await openDropdown(container)
+    // 3 projects, ArrowDown from index 0 three times should stop at index 2.
+    await keyOnListbox(container, 'ArrowDown')
+    await keyOnListbox(container, 'ArrowDown')
+    await keyOnListbox(container, 'ArrowDown')
+    const listbox = container.querySelector('[role="listbox"]')
+    expect(listbox?.getAttribute('aria-activedescendant')).toBe('ps-opt-proj-down')
+  })
+
+  it('ArrowUp moves aria-activedescendant to the previous option', async () => {
+    await openDropdown(container)
+    // Start at index 0. End → index 2. ArrowUp → index 1.
+    await keyOnListbox(container, 'End')
+    await keyOnListbox(container, 'ArrowUp')
+    const listbox = container.querySelector('[role="listbox"]')
+    expect(listbox?.getAttribute('aria-activedescendant')).toBe('ps-opt-proj-degraded')
+  })
+
+  it('Home jumps to the first option', async () => {
+    await openDropdown(container)
+    await keyOnListbox(container, 'End')
+    await keyOnListbox(container, 'Home')
+    const listbox = container.querySelector('[role="listbox"]')
+    expect(listbox?.getAttribute('aria-activedescendant')).toBe('ps-opt-proj-live')
+  })
+
+  it('End jumps to the last option', async () => {
+    await openDropdown(container)
+    await keyOnListbox(container, 'End')
+    const listbox = container.querySelector('[role="listbox"]')
+    expect(listbox?.getAttribute('aria-activedescendant')).toBe('ps-opt-proj-down')
+  })
+
+  it('Enter selects the active option and closes the dropdown', async () => {
+    await openDropdown(container)
+    // Move to proj-degraded (index 1).
+    await keyOnListbox(container, 'ArrowDown')
+    await keyOnListbox(container, 'Enter')
+    expect(setFocusedProjectId).toHaveBeenCalledWith('proj-degraded')
+    expect(container.querySelector('[data-testid="project-dropdown"]')).toBeNull()
+  })
+
+  it('Enter returns focus to the trigger after closing', async () => {
+    await openDropdown(container)
+    await keyOnListbox(container, 'ArrowDown')
+    await keyOnListbox(container, 'Enter')
+    const trigger = container.querySelector('[data-testid="project-selector-trigger"]')
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('Escape closes the dropdown', async () => {
+    await openDropdown(container)
+    await keyOnListbox(container, 'Escape')
+    expect(container.querySelector('[data-testid="project-dropdown"]')).toBeNull()
+  })
+
+  it('Escape returns focus to the trigger', async () => {
+    await openDropdown(container)
+    await keyOnListbox(container, 'Escape')
+    const trigger = container.querySelector('[data-testid="project-selector-trigger"]')
+    expect(document.activeElement).toBe(trigger)
   })
 })

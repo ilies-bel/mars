@@ -11,9 +11,15 @@
  * Selecting a row calls setFocusedProjectId and closes the dropdown.
  * Escape or an outside click also closes.
  *
+ * Keyboard navigation (ARIA listbox pattern):
+ *   - ArrowDown / ArrowUp  — move aria-activedescendant across options
+ *   - Home / End           — jump to first / last option
+ *   - Enter                — select the active option and close
+ *   - Escape               — close and return focus to the trigger
+ *
  * ProjectSelectorInner is exported for testing — it is the pure rendering
- * layer; state (open / starting) and effects (outside-click, Escape) live
- * in the wrapping ProjectSelector component.
+ * layer; state (open / starting / activeIndex) and effects (outside-click,
+ * Escape) live in the wrapping ProjectSelector component.
  */
 
 import { useEffect, useRef, useState } from 'react'
@@ -47,6 +53,14 @@ interface ProjectSelectorInnerProps {
   onSelect: (projectId: string) => void
   onStart: (projectId: string, e: React.MouseEvent) => void
   onRestart: (projectId: string, e: React.MouseEvent) => void
+  /** Index of the keyboard-active option (drives aria-activedescendant). */
+  activeIndex?: number | null
+  /** Ref forwarded to the trigger button for focus-return on close. */
+  triggerRef?: React.Ref<HTMLButtonElement>
+  /** Ref forwarded to the listbox ul so the parent can focus it on open. */
+  listboxRef?: React.Ref<HTMLUListElement>
+  /** Keydown handler attached to the listbox ul. */
+  onListboxKeyDown?: (e: React.KeyboardEvent<HTMLUListElement>) => void
 }
 
 /**
@@ -63,14 +77,24 @@ export const ProjectSelectorInner = ({
   onSelect,
   onStart,
   onRestart,
+  activeIndex = null,
+  triggerRef,
+  listboxRef,
+  onListboxKeyDown,
 }: ProjectSelectorInnerProps) => {
   const focusedProject =
     projects.find((p) => p.projectId === focusedProjectId) ?? projects[0]
   const { name: focusedName, icon: focusedIcon } = projectIdentity(focusedProject)
 
+  const activatedId =
+    activeIndex != null && projects[activeIndex] != null
+      ? `ps-opt-${projects[activeIndex].projectId}`
+      : undefined
+
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -94,18 +118,24 @@ export const ProjectSelectorInner = ({
       </button>
       {open && (
         <ul
+          ref={listboxRef}
           role="listbox"
           aria-label="Projects"
+          tabIndex={0}
+          aria-activedescendant={activatedId}
+          onKeyDown={onListboxKeyDown}
           data-testid="project-dropdown"
-          className="absolute left-0 top-full z-50 mt-1 min-w-[14rem] rounded border border-iron/30 bg-bg shadow-lg"
+          className="absolute left-0 top-full z-50 mt-1 min-w-[14rem] rounded border border-iron/30 bg-bg shadow-lg outline-none"
         >
-          {projects.map((p) => {
+          {projects.map((p, idx) => {
             const { name, icon } = projectIdentity(p)
             const isFocused = p.projectId === focusedProjectId
+            const isActive = activeIndex === idx
             const isStarting = starting === p.projectId
             const isRestarting = restarting === p.projectId
             return (
               <li
+                id={`ps-opt-${p.projectId}`}
                 key={p.projectId}
                 role="option"
                 aria-selected={isFocused}
@@ -116,7 +146,9 @@ export const ProjectSelectorInner = ({
                   'flex cursor-pointer items-center gap-1.5 px-2 py-1.5 font-mono text-[11px] transition-colors',
                   isFocused
                     ? 'bg-iron/30 text-fg'
-                    : 'text-iron hover:bg-iron/10 hover:text-fg',
+                    : isActive
+                      ? 'bg-iron/10 text-fg'
+                      : 'text-iron hover:bg-iron/10 hover:text-fg',
                 ].join(' ')}
               >
                 <span
@@ -165,8 +197,9 @@ export const ProjectSelectorInner = ({
 }
 
 /**
- * Stateful wrapper — manages open/starting state and attaches outside-click
- * and Escape-key listeners. Renders nothing when no projects are registered.
+ * Stateful wrapper — manages open/starting/activeIndex state and attaches
+ * outside-click and Escape-key listeners. Renders nothing when no projects
+ * are registered.
  */
 export const ProjectSelector = () => {
   const { projects, focusedProjectId, setFocusedProjectId } = useFocusedProject()
@@ -174,7 +207,20 @@ export const ProjectSelector = () => {
   const [starting, setStarting] = useState<string | null>(null)
   const [restarting, setRestarting] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const listboxRef = useRef<HTMLUListElement>(null)
+
+  // When the dropdown opens, focus the listbox so keyboard events land on it.
+  // When it closes, reset the keyboard-active index.
+  useEffect(() => {
+    if (open) {
+      listboxRef.current?.focus()
+    } else {
+      setActiveIndex(null)
+    }
+  }, [open])
 
   // Close on outside click
   useEffect(() => {
@@ -191,17 +237,67 @@ export const ProjectSelector = () => {
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
-  // Close on Escape
+  // Escape closes and returns focus to the trigger (document-level fallback;
+  // also handled inline via onListboxKeyDown for the listbox-focused case).
   useEffect(() => {
     if (!open) return
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') {
+        setOpen(false)
+        triggerRef.current?.focus()
+      }
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [open])
 
   if (projects.length === 0) return null
+
+  // Opening sets activeIndex to the currently focused project; closing resets
+  // it (handled in the useEffect above).
+  const handleToggle = () => {
+    if (!open) {
+      const idx = projects.findIndex((p) => p.projectId === focusedProjectId)
+      setActiveIndex(idx >= 0 ? idx : 0)
+    }
+    setOpen((o) => !o)
+  }
+
+  const handleListboxKeyDown = (e: React.KeyboardEvent<HTMLUListElement>) => {
+    const last = projects.length - 1
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        setActiveIndex((i) => (i === null ? 0 : Math.min(i + 1, last)))
+        break
+      case 'ArrowUp':
+        e.preventDefault()
+        setActiveIndex((i) => (i === null ? last : Math.max(i - 1, 0)))
+        break
+      case 'Home':
+        e.preventDefault()
+        setActiveIndex(0)
+        break
+      case 'End':
+        e.preventDefault()
+        setActiveIndex(last)
+        break
+      case 'Enter': {
+        e.preventDefault()
+        if (activeIndex !== null) {
+          setFocusedProjectId(projects[activeIndex].projectId)
+          setOpen(false)
+          triggerRef.current?.focus()
+        }
+        break
+      }
+      case 'Escape':
+        e.preventDefault()
+        setOpen(false)
+        triggerRef.current?.focus()
+        break
+    }
+  }
 
   const handleStart = async (
     projectId: string,
@@ -243,13 +339,17 @@ export const ProjectSelector = () => {
         open={open}
         starting={starting}
         restarting={restarting}
-        onToggle={() => setOpen((o) => !o)}
+        activeIndex={activeIndex}
+        triggerRef={triggerRef}
+        listboxRef={listboxRef}
+        onToggle={handleToggle}
         onSelect={(id) => {
           setFocusedProjectId(id)
           setOpen(false)
         }}
         onStart={handleStart}
         onRestart={handleRestart}
+        onListboxKeyDown={handleListboxKeyDown}
       />
     </div>
   )
