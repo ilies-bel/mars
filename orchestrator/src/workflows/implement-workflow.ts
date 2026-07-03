@@ -52,6 +52,7 @@ export {
   extractAwaitHumanStepName,
   // Prompt briefs + system-prompt assembly
   COMMIT_FOOTER,
+  COMPLETION_REPORT_CONTRACT,
   DEVIATION_RULES,
   CODING_DISCIPLINE,
   CODER_SYSTEM_PROMPT,

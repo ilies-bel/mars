@@ -7,6 +7,7 @@ import {
   COMMIT_FOOTER,
   CODING_DISCIPLINE,
   BLOCKERS_ABORT_MESSAGE,
+  COMPLETION_REPORT_CONTRACT,
   DEVIATION_RULES,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
   CODER_EXIT_NONZERO_ABORT_MESSAGE,
@@ -28,8 +29,13 @@ import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 describe('composePrompt — coder default', () => {
   it('appends the commit footer to a bare prompt', () => {
     const out = composePrompt('do the thing', null)
-    expect(out.endsWith(COMMIT_FOOTER)).toBe(true)
     expect(out.startsWith('do the thing')).toBe(true)
+    // COMMIT_FOOTER is present and appears before COMPLETION_REPORT_CONTRACT
+    // (which is appended last so the coder knows what their final message must end with).
+    const commitIdx = out.indexOf(COMMIT_FOOTER)
+    const reportIdx = out.indexOf(COMPLETION_REPORT_CONTRACT)
+    expect(commitIdx).toBeGreaterThan(-1)
+    expect(reportIdx).toBeGreaterThan(commitIdx)
   })
 
   it('appends the commit footer after the plan sections', () => {
@@ -37,13 +43,15 @@ describe('composePrompt — coder default', () => {
       functional: 'F',
       technical: 'T',
     })
-    expect(out.endsWith(COMMIT_FOOTER)).toBe(true)
     const fIdx = out.indexOf('## Functional plan')
     const tIdx = out.indexOf('## Technical plan')
     const cIdx = out.indexOf(COMMIT_FOOTER)
     expect(fIdx).toBeGreaterThan(-1)
     expect(tIdx).toBeGreaterThan(fIdx)
     expect(cIdx).toBeGreaterThan(tIdx)
+    // COMPLETION_REPORT_CONTRACT follows COMMIT_FOOTER (new ordering after
+    // completion-contract change: commit first, then state what final message must contain).
+    expect(out.indexOf(COMPLETION_REPORT_CONTRACT)).toBeGreaterThan(cIdx)
   })
 
   it('mentions git add and git commit explicitly', () => {
@@ -85,11 +93,20 @@ describe('composePrompt — coder default', () => {
 // uses the uniform Coder path (COMMIT_FOOTER, CODING_DISCIPLINE, diff gate).
 
 describe('composePrompt — uniform commit-footer gate (ADR 0019)', () => {
-  it('always ends with COMMIT_FOOTER regardless of input', () => {
+  it('always contains COMMIT_FOOTER before the completion-report contract regardless of input', () => {
     // The writer-footer escape hatch is removed; every task gets the commit
     // footer so the diff gate fires uniformly on every dispatched run.
-    expect(composePrompt('do the thing', null).endsWith(COMMIT_FOOTER)).toBe(true)
-    expect(composePrompt('do the thing', null, 'coder').endsWith(COMMIT_FOOTER)).toBe(true)
+    // COMPLETION_REPORT_CONTRACT is appended after COMMIT_FOOTER so the coder
+    // knows what their final message must end with (the completion report).
+    for (const out of [
+      composePrompt('do the thing', null),
+      composePrompt('do the thing', null, 'coder'),
+    ]) {
+      const commitIdx = out.indexOf(COMMIT_FOOTER)
+      const reportIdx = out.indexOf(COMPLETION_REPORT_CONTRACT)
+      expect(commitIdx).toBeGreaterThan(-1)
+      expect(reportIdx).toBeGreaterThan(commitIdx)
+    }
   })
 
   it('always includes CODING_DISCIPLINE regardless of input', () => {
