@@ -69,6 +69,11 @@ export interface BoardViewProps {
    * null = no active text search (show all tasks).
    */
   searchMatchIds?: Set<string> | null
+  /**
+   * The raw search query string — displayed in the zero-state message when
+   * searchMatchIds is non-null and no tasks match. Optional for back-compat.
+   */
+  searchQuery?: string
 }
 
 export const BoardView = ({
@@ -77,6 +82,7 @@ export const BoardView = ({
   error,
   selectedProposalId,
   searchMatchIds,
+  searchQuery,
 }: BoardViewProps) => {
   // Filter drafts for the Proposals column
   const visibleDrafts =
@@ -99,6 +105,14 @@ export const BoardView = ({
       return [cluster, searched.map(toUI)]
     }),
   ) as Record<Cluster, UITask[]>
+
+  // Total tasks visible across all clusters after proposal + search filtering.
+  // Used to detect the search zero-state (active query that matches nothing).
+  const totalMatchedTasks =
+    filteredByCluster.Queued.length +
+    filteredByCluster['In progress'].length +
+    filteredByCluster.Blocked.length +
+    filteredByCluster.Failed.length
 
   // Task count per tab (for the mobile strip badges)
   const tabCounts: Record<ActiveTab, number> = {
@@ -161,7 +175,19 @@ export const BoardView = ({
       {/*   tablet  (768–1024px): CSS grid, 2–3 fluid columns, vertical scroll */}
       {/*   desktop (>1024px):  flex-row, original 5 equal columns            */}
       {/* ------------------------------------------------------------------ */}
-      <main className="flex flex-col min-h-0 flex-1 gap-3 overflow-hidden bg-bg p-4 md:grid md:grid-cols-[repeat(auto-fit,minmax(280px,1fr))] md:auto-rows-[400px] md:overflow-y-auto lg:flex lg:flex-row lg:overflow-hidden">
+      <main className="relative flex flex-col min-h-0 flex-1 gap-3 overflow-hidden bg-bg p-4 md:grid md:grid-cols-[repeat(auto-fit,minmax(280px,1fr))] md:auto-rows-[400px] md:overflow-y-auto lg:flex lg:flex-row lg:overflow-hidden">
+        {/* Zero-state search pill — shown when a non-empty search matches no tasks.
+            pointer-events:none so it never blocks column scroll interaction. */}
+        {searchMatchIds != null && totalMatchedTasks === 0 && (
+          <div
+            data-testid="search-zero-state"
+            className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+          >
+            <span className="rounded border border-border bg-surface px-3 py-1.5 font-mono text-[11px] text-muted">
+              {`0 tasks match '${(searchQuery ?? '').trim()}'`}
+            </span>
+          </div>
+        )}
         {CLUSTERS.map((cluster) => {
           const tasksForCluster = filteredByCluster[cluster]
           const startIndex = cursor

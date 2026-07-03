@@ -218,3 +218,20 @@ describe('ProgressPage – header stats', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Search zero-state: the page must not surface a "0 tasks match" pill when
+// the search query is empty (initial state). The pill appears only when the
+// user types a non-matching query — tested at the widget level where the
+// searchMatchIds / searchQuery props can be set directly.
+// ---------------------------------------------------------------------------
+
+describe('ProgressPage – search zero-state not shown on initial load', () => {
+  it('does not show the search zero-state message when the query is empty', () => {
+    // On initial render the searchQuery is '' (from readProgressStateFromUrl defaults),
+    // so searchMatchIds is null and neither view should display the zero-state pill.
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).not.toContain('0 tasks match')
+    expect(html).not.toContain('data-testid="search-zero-state"')
+  })
+})

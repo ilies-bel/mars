@@ -151,6 +151,7 @@ export const ProgressPage = () => {
             proposals={proposals}
             selectedProposalId={selectedProposalId}
             searchMatchIds={searchMatchIds}
+            searchQuery={searchQuery}
             onSelectProposal={setSelectedProposalId}
           />
         ) : (
@@ -160,6 +161,7 @@ export const ProgressPage = () => {
             error={error}
             selectedProposalId={selectedProposalId}
             searchMatchIds={searchMatchIds}
+            searchQuery={searchQuery}
           />
         )}
         <Footer />

@@ -86,6 +86,12 @@ export interface TopologyViewProps {
   /** Toolbar search; null = no search. Only these ids stay full-opacity. */
   searchMatchIds?: Set<string> | null
   /**
+   * The raw search query string — displayed in the zero-state pill when
+   * searchMatchIds is non-null and empty. Optional so callers that only
+   * use the dim effect don't need to thread the query through.
+   */
+  searchQuery?: string
+  /**
    * Reports drill-in changes back up: the proposal id when a combo opens, null
    * when it collapses. Optional so tests / other callers don't break.
    */
@@ -120,6 +126,7 @@ export const TopologyView = ({
   proposals,
   selectedProposalId,
   searchMatchIds,
+  searchQuery,
   onSelectProposal,
 }: TopologyViewProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -806,6 +813,20 @@ export const TopologyView = ({
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
           <span className="rounded bg-[#1a0f0a]/80 px-3 py-1.5 font-mono text-[11px] text-muted-dark ring-1 ring-[#3a2820]/60">
             laying out…
+          </span>
+        </div>
+      )}
+      {/* Zero-state search pill — shown when the active search matches nothing.
+          Overlaid on the dimmed canvas so the operator can tell "no matches"
+          from "graph is just dim". pointer-events:none — never blocks canvas
+          interaction. z-30 puts it above the layout affordance. */}
+      {searchMatchIds != null && searchMatchIds.size === 0 && (
+        <div
+          data-testid="search-zero-state"
+          className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center"
+        >
+          <span className="rounded bg-[#1a0f0a]/90 px-3 py-1.5 font-mono text-[11px] text-muted-dark ring-1 ring-[#3a2820]/60">
+            {`0 tasks match '${(searchQuery ?? '').trim()}'`}
           </span>
         </div>
       )}

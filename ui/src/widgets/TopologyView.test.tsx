@@ -138,3 +138,57 @@ describe('TopologyView – accessible canvas container', () => {
     expect(html).toContain('Board tab')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Zero-state search overlay
+// ---------------------------------------------------------------------------
+
+describe('TopologyView – zero-state search overlay', () => {
+  it('shows a "0 tasks match" pill when the search set is empty', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[stubTask('t-1')]}
+        proposals={noProposals}
+        searchMatchIds={new Set()}
+        searchQuery="zzzznonexistent"
+      />,
+    )
+    expect(html).toContain('0 tasks match')
+    expect(html).toContain('zzzznonexistent')
+  })
+
+  it('includes a testid on the zero-state pill for reliable selection', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[stubTask('t-1')]}
+        proposals={noProposals}
+        searchMatchIds={new Set()}
+        searchQuery="nope"
+      />,
+    )
+    expect(html).toContain('data-testid="search-zero-state"')
+  })
+
+  it('does not show the zero-state pill when the search set has matches', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[stubTask('t-1')]}
+        proposals={noProposals}
+        searchMatchIds={new Set(['t-1'])}
+        searchQuery="task"
+      />,
+    )
+    expect(html).not.toContain('0 tasks match')
+  })
+
+  it('does not show the zero-state pill when there is no active search (searchMatchIds is null)', () => {
+    const html = renderToStaticMarkup(
+      <TopologyView
+        tasks={[stubTask('t-1')]}
+        proposals={noProposals}
+        searchMatchIds={null}
+      />,
+    )
+    expect(html).not.toContain('0 tasks match')
+  })
+})
