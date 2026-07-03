@@ -687,6 +687,53 @@ describe('fetchEvents URL shape via toWireFilter', () => {
 void mock
 
 // ---------------------------------------------------------------------------
+// 3b. Debounce / keepPreviousData — filter-change UX
+//
+// These tests verify that:
+//   - Events stay visible during a background refetch (keepPreviousData: the
+//     list must NOT be replaced by "Loading events…" when data is being refreshed
+//     in the background — status='success' + fetchStatus='fetching' is the exact
+//     state that placeholderData:keepPreviousData produces after a filter change).
+//   - The component does NOT render "Loading events…" when query status is
+//     'success' regardless of fetchStatus — the gate uses isPending (status===
+//     'pending'), not isFetching.
+// ---------------------------------------------------------------------------
+
+describe('EventsPage debounce / keepPreviousData', () => {
+  it('does not show "Loading events…" when query is success but still fetching in background', () => {
+    // Construct the QueryClient state that placeholderData: keepPreviousData
+    // produces after a filter change: status='success', data=previous events,
+    // fetchStatus='fetching' (new request in-flight).
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    const query = qc.getQueryCache().build(qc, { queryKey: QUERY_KEY_FOR() })
+    query.setState({
+      status: 'success',
+      data: makeResponse([makeEvent({ id: 'ev-keep' })]),
+      fetchStatus: 'fetching',
+    })
+    const html = renderPage(qc)
+    // Must show events — NOT the loading placeholder
+    expect(html).not.toContain('Loading events…')
+    expect(html).toContain('data-testid="event-row-ev-keep"')
+  })
+
+  it('shows "Loading events…" only when there is genuinely no data yet (status=pending)', () => {
+    // Construct the QueryClient state that represents a brand-new query that
+    // has never resolved. keepPreviousData cannot help here — there is no
+    // prior data to hold onto.
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    const query = qc.getQueryCache().build(qc, { queryKey: QUERY_KEY_FOR() })
+    query.setState({ status: 'pending', fetchStatus: 'fetching', data: undefined })
+    const html = renderPage(qc)
+    expect(html).toContain('Loading events…')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 4. Error-state fallback copy — prod vs dev mode
 //
 // These tests verify that the EventsPage error branch:

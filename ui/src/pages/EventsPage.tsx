@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { severityColor, severityRowClass, summarizeTraceEvent, marsToolTextClass } from '@/shared/actionQueueDetail'
@@ -340,8 +340,29 @@ export const EventsPage = () => {
   >(undefined)
   const projectId = useFocusedProjectId()
 
+  // Debounced text filter values — the query key uses these so that rapid
+  // typing (taskId / originId / q) fires at most one request per 300 ms
+  // burst rather than one request per keystroke.
+  const [debouncedText, setDebouncedText] = useState({
+    taskId: state.taskId,
+    originId: state.originId,
+    q: state.q,
+  })
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setDebouncedText({
+        taskId: state.taskId,
+        originId: state.originId,
+        q: state.q,
+      })
+    }, 300)
+    return () => clearTimeout(id)
+  }, [state.taskId, state.originId, state.q])
+
   // The query key folds in every filter so a filter change forces a
   // refetch (and resets pagination via the `useMemo` reset below).
+  // Text filters (taskId / originId / q) use the debounced snapshot to
+  // avoid a fetch on every keystroke.
   const queryKey = useMemo(
     () => [
       'events-page',
@@ -350,11 +371,11 @@ export const EventsPage = () => {
       [...state.severities].sort(),
       [...state.kinds].sort(),
       [...state.phases].sort(),
-      state.taskId.trim(),
-      state.originId.trim(),
-      state.q.trim(),
+      debouncedText.taskId.trim(),
+      debouncedText.originId.trim(),
+      debouncedText.q.trim(),
     ],
-    [state, projectId],
+    [state.range, state.severities, state.kinds, state.phases, debouncedText, projectId],
   )
 
   const initial = useQuery({
@@ -363,6 +384,10 @@ export const EventsPage = () => {
     enabled: projectId !== null,
     // Auto-refetch every 30s so the stream doesn't silently go stale.
     refetchInterval: 30_000,
+    // Keep the previous page's data visible while the new query loads after a
+    // filter change. This prevents the "Loading events…" flash on each filter
+    // change keystroke — the list stays rendered until fresh data arrives.
+    placeholderData: keepPreviousData,
   })
 
   // Reset the paginated tail whenever the underlying filter set changes.
