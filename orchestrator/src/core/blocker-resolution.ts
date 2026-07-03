@@ -3,7 +3,7 @@ import { access } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
 import { promisify } from 'node:util'
 import {
-  raiseRetryBudgetExhaustedActionQueue,
+  raiseRecoveryExhaustedActionQueue,
 } from './queue-retry'
 import { getTask } from './queue'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
@@ -228,7 +228,7 @@ export interface BlockedDependentRow {
   retry_count: number | null
 }
 
-export const RETRY_BUDGET_FAILURE_REASON = 'retry_budget_exhausted_at_unblock'
+export const RECOVERY_EXHAUSTED_FAILURE_REASON = 'recovery_exhausted_at_unblock'
 
 export const ORPHANED_ORIGIN_FAILURE_REASON = 'orphaned_origin_at_unblock'
 export const ORPHANED_ORIGIN_ACTION_QUEUE_KIND: ActionQueueKind = 'orphaned-origin'
@@ -296,7 +296,7 @@ export const raiseActionQueueForBlockedTask = async (taskId: string): Promise<vo
     colonSpace > 0 ? error.slice(0, colonSpace).trim() : 'blocked-dependent'
   const lastErrorSummary =
     colonSpace > 0 ? error.slice(colonSpace + 2).trim() : error
-  await raiseRetryBudgetExhaustedActionQueue({
+  await raiseRecoveryExhaustedActionQueue({
     taskId,
     lastStep,
     retryCount: task.retryCount,

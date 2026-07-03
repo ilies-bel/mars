@@ -70,7 +70,7 @@ import {
   CANCELLED_CASCADE_FAILURE_REASON,
   ORPHANED_ORIGIN_FAILURE_REASON,
   PREREQUISITE_FAILED_ACTION_QUEUE_KIND,
-  RETRY_BUDGET_FAILURE_REASON,
+  RECOVERY_EXHAUSTED_FAILURE_REASON,
   WORKTREE_AHEAD_FAILURE_REASON,
   WorktreeAheadOfIntegrationError,
   integrationBranchName,
@@ -2071,12 +2071,12 @@ export class Arc {
         }
         // Genuinely no recovery coming — fail as before.
         await raiseActionQueueForBlockedTask(row.id)
-        await markTaskFailed(row.id, RETRY_BUDGET_FAILURE_REASON)
+        await markTaskFailed(row.id, RECOVERY_EXHAUSTED_FAILURE_REASON)
         outcomes.push({
           taskId: row.id,
           outcome: 'failed',
           retryCount,
-          failureReason: RETRY_BUDGET_FAILURE_REASON,
+          failureReason: RECOVERY_EXHAUSTED_FAILURE_REASON,
         })
         continue
       }
@@ -2420,8 +2420,8 @@ export class Arc {
       }
       // Genuinely no recovery coming — fail as before.
       await raiseActionQueueForBlockedTask(taskId)
-      await markTaskFailed(taskId, RETRY_BUDGET_FAILURE_REASON)
-      return { taskId, outcome: 'failed', retryCount, failureReason: RETRY_BUDGET_FAILURE_REASON }
+      await markTaskFailed(taskId, RECOVERY_EXHAUSTED_FAILURE_REASON)
+      return { taskId, outcome: 'failed', retryCount, failureReason: RECOVERY_EXHAUSTED_FAILURE_REASON }
     }
 
     const now = new Date().toISOString()

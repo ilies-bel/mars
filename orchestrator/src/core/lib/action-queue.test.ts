@@ -678,7 +678,7 @@ describe('action-queue', () => {
       )
     })
 
-    it('supersedes rows whose payload references the retry_budget_exhausted wrapper', async () => {
+    it('supersedes rows whose payload references the recovery_exhausted wrapper', async () => {
       const actionQueue = await loadModule(repo)
       const id = await actionQueue.raiseActionQueueItem(
         baseItem({
@@ -686,7 +686,7 @@ describe('action-queue', () => {
           signature: 'rb-1',
           payload: {
             lastErrorSignature:
-              'retry_budget_exhausted:setup:preflight/dirty-main',
+              'recovery_exhausted:setup:preflight/dirty-main',
           },
         }),
       )

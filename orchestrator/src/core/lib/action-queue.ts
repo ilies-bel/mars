@@ -277,6 +277,18 @@ export const initActionQueue = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_action_queue_history_item ON action_queue_history(item_id, at)`,
   )
+  // One-time rename: retry_budget_exhausted → recovery_exhausted in action_queue_items
+  // payload and body. Idempotent: WHERE guards against rows already migrated.
+  await c.execute(
+    `UPDATE action_queue_items
+        SET payload = replace(payload, 'retry_budget_exhausted', 'recovery_exhausted')
+      WHERE payload LIKE '%retry_budget_exhausted%'`,
+  )
+  await c.execute(
+    `UPDATE action_queue_items
+        SET body = replace(body, 'retry_budget_exhausted', 'recovery_exhausted')
+      WHERE body LIKE '%retry_budget_exhausted%'`,
+  )
   initialised = true
 }
 
@@ -935,7 +947,7 @@ export const supersedeObsoletePreflightDirtyMainRows = async (
   const c = stateClient()
   // The legacy strings can appear in any of three places:
   //  - `payload` (JSON blob) → matches the failure-signature or wrapped
-  //    `retry_budget_exhausted:setup:preflight/...` form;
+  //    `recovery_exhausted:setup:preflight/...` form;
   //  - `body` (rendered markdown) → matches the actionQueue row's own description
   //    of the failure mode.
   // SQL LIKE substring match is enough here because the legacy strings are
@@ -945,6 +957,7 @@ export const supersedeObsoletePreflightDirtyMainRows = async (
            WHERE state = 'open'
              AND (
                payload LIKE '%setup:preflight/dirty-main%'
+               OR payload LIKE '%recovery_exhausted:setup:preflight%'
                OR payload LIKE '%retry_budget_exhausted:setup:preflight%'
                OR body LIKE '%setup:preflight/dirty-main%'
              )`,

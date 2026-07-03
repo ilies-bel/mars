@@ -11,7 +11,7 @@ import { getTask, updateTask, type Task } from './queue'
 import {
   getRetryBudget,
   markTaskFailed,
-  raiseRetryBudgetExhaustedActionQueue,
+  raiseRecoveryExhaustedActionQueue,
 } from './queue-retry'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
 import {
@@ -388,9 +388,9 @@ export const handleTaskFailureWithFixTask = async (
   if (task.retryCount > budget) {
     await markTaskFailed(
       input.taskId,
-      `retry_budget_exhausted:${failureSignature}`,
+      `recovery_exhausted:${failureSignature}`,
     )
-    await raiseRetryBudgetExhaustedActionQueue({
+    await raiseRecoveryExhaustedActionQueue({
       taskId: input.taskId,
       lastStep: input.failingStep,
       retryCount: task.retryCount,

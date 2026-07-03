@@ -482,7 +482,7 @@ describe('queue-fix-tasks', () => {
     // Reproduces the observed incident (mars-63196f8e): DEFAULT_RETRY_BUDGET=0,
     // one failure → retryCount=1, retryBudgetExhausted(1,0)=true. The recovery
     // fix task is done, so the origin must be reconciled to done (NOT failed with
-    // retry_budget_exhausted_at_unblock), and downstream tasks blocked on the
+    // recovery_exhausted_at_unblock), and downstream tasks blocked on the
     // origin must be released to queued via the propagateRecoveryDone cascade.
     const { q, ft, br, rc } = await loadModules(repo)
     const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
@@ -580,7 +580,7 @@ describe('queue-fix-tasks', () => {
     reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('failed')
     expect(reloaded?.failureReason).toBe(
-      'retry_budget_exhausted:merge:preflight/uncommitted-changes',
+      'recovery_exhausted:merge:preflight/uncommitted-changes',
     )
     expect(reloaded?.dropReason).toBeNull()
 
@@ -648,7 +648,7 @@ describe('queue-fix-tasks', () => {
     expect(taskBlocked[0].kind).toBe('failed')
     expect(taskBlocked[0].signature).toBe(t.id)
     expect(taskBlocked[0].priority).toBe('high')
-    expect(taskBlocked[0].raisedBy).toBe('orchestrator:retry-budget')
+    expect(taskBlocked[0].raisedBy).toBe('orchestrator:recovery-exhausted')
     expect(taskBlocked[0].seenCount).toBe(1)
     expect(taskBlocked[0].payload.taskId).toBe(t.id)
     expect(taskBlocked[0].payload.lastStep).toBe('merge:preflight')
@@ -661,9 +661,9 @@ describe('queue-fix-tasks', () => {
     // markTaskFailed already removed the task_blockers; re-call the
     // helper directly to simulate the same exhaustion firing again.
     const retry = (await import('../../queue-retry')) as unknown as {
-      raiseRetryBudgetExhaustedActionQueue: typeof import('../../queue-retry').raiseRetryBudgetExhaustedActionQueue
+      raiseRecoveryExhaustedActionQueue: typeof import('../../queue-retry').raiseRecoveryExhaustedActionQueue
     }
-    await retry.raiseRetryBudgetExhaustedActionQueue({
+    await retry.raiseRecoveryExhaustedActionQueue({
       taskId: t.id,
       lastStep: 'merge:preflight',
       retryCount: 1,

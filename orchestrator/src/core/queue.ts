@@ -1825,6 +1825,11 @@ const migrateSignalsAndTranscriptsToTraceEvents = async (c: Client): Promise<voi
     await c.execute(`DROP INDEX IF EXISTS idx_task_transcripts_recorded_at`)
     } // closes else (old-schema migration)
   } // closes if (txTableCheck.rows.length > 0)
+  // One-time rename: retry_budget_exhausted → recovery_exhausted in failure_reason.
+  // The term "retry_budget_exhausted" implied a configurable retry budget that does
+  // not exist; "recovery_exhausted" accurately reflects the one-recovery invariant
+  // (ADR-0040). Idempotent: WHERE guard is a no-op once all rows are migrated.
+  await c.execute(`UPDATE tasks SET failure_reason = replace(failure_reason, 'retry_budget_exhausted', 'recovery_exhausted') WHERE failure_reason LIKE '%retry_budget_exhausted%'`) // arch-guard:migration-write
 }
 
 const MAX_CONVERSATION_BYTES = 2 * 1024 * 1024

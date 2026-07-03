@@ -170,7 +170,7 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(r.outcomes[0].outcome).toBe('failed')
     const reloaded = await q.getTask(dep.id)
     expect(reloaded?.status).toBe('failed')
-    expect(reloaded?.failureReason).toBe('retry_budget_exhausted_at_unblock')
+    expect(reloaded?.failureReason).toBe('recovery_exhausted_at_unblock')
 
     const actionQueue = (await import('../action-queue')) as unknown as {
       listActionQueueItems: typeof import('../action-queue').listActionQueueItems
@@ -1071,7 +1071,7 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(result.outcome).toBe('noop')
       const reloaded = await q.getTask(origin.id)
       expect(reloaded?.status).toBe('done')
-      expect(reloaded?.failureReason).not.toBe('retry_budget_exhausted_at_unblock')
+      expect(reloaded?.failureReason).not.toBe('recovery_exhausted_at_unblock')
     })
 
     it('(b) recoverBlocked: budget exhausted + IN-FLIGHT own-recovery → noop, NOT failed', async () => {
@@ -1107,7 +1107,7 @@ describe('blocker-resolution (task_blockers)', () => {
       const result = await br.recoverBlockedTask(origin.id)
 
       expect(result.outcome).toBe('failed')
-      expect(result.failureReason).toBe('retry_budget_exhausted_at_unblock')
+      expect(result.failureReason).toBe('recovery_exhausted_at_unblock')
       const reloaded = await q.getTask(origin.id)
       expect(reloaded?.status).toBe('failed')
     })
@@ -1156,7 +1156,7 @@ describe('blocker-resolution (task_blockers)', () => {
       const originReloaded = await q.getTask(origin.id)
       const depReloaded = await q.getTask(dep.id)
       expect(originReloaded?.status).toBe('done')
-      expect(originReloaded?.failureReason).not.toBe('retry_budget_exhausted_at_unblock')
+      expect(originReloaded?.failureReason).not.toBe('recovery_exhausted_at_unblock')
       expect(depReloaded?.status).toBe('queued')
       // recoverBlocked returns 'noop' for the origin itself (propagateRecoveryDone
       // handled it); dep is unblocked as a side-effect via propagateRecoveryDone.
@@ -1190,7 +1190,7 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(outcome?.outcome).toBe('noop')
       const reloaded = await q.getTask(origin.id)
       expect(reloaded?.status).toBe('done')
-      expect(reloaded?.failureReason).not.toBe('retry_budget_exhausted_at_unblock')
+      expect(reloaded?.failureReason).not.toBe('recovery_exhausted_at_unblock')
     })
 
     it('unblockByCompletion: budget exhausted + IN-FLIGHT own-recovery → noop, NOT failed', async () => {
