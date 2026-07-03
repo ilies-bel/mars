@@ -11,11 +11,12 @@ import { Column } from '@/widgets/Column'
 
 type ActiveTab = Cluster | 'Proposals'
 
-// Display order in the tab strip (mirrors column order)
-const ALL_TABS: readonly ActiveTab[] = ['Queued', 'In progress', 'Blocked', 'Failed', 'Proposals']
+// Display order in the tab strip (mirrors column order — attention-first)
+const ALL_TABS: readonly ActiveTab[] = ['Failed', 'Blocked', 'In progress', 'Queued', 'Proposals']
 
-// Priority for the default tab: leftmost non-empty of Failed, In progress, Queued
-const DEFAULT_TAB_PRIORITY: readonly ActiveTab[] = ['Failed', 'In progress', 'Queued']
+// Priority for the default tab: leftmost non-empty of Failed, Blocked, In progress, Queued.
+// Same story as ALL_TABS and CLUSTERS — the "what needs me right now" column wins.
+const DEFAULT_TAB_PRIORITY: readonly ActiveTab[] = ['Failed', 'Blocked', 'In progress', 'Queued']
 
 const roleFromStatus = (status: ProgressTask['status']): Role => {
   switch (status) {
@@ -53,7 +54,10 @@ const toUI = (t: ProgressTask): UITask => ({
   updatedAt: t.updatedAt,
 })
 
-const CLUSTERS: readonly Cluster[] = ['Queued', 'In progress', 'Blocked', 'Failed']
+// Column order — attention-first (Failed / Blocked leftmost) so the "what needs me
+// right now" columns land in the first scan positions. Matches DEFAULT_TAB_PRIORITY
+// and ALL_TABS so desktop and mobile tell the same story.
+const CLUSTERS: readonly Cluster[] = ['Failed', 'Blocked', 'In progress', 'Queued']
 
 // ---------------------------------------------------------------------------
 // BoardView component
@@ -123,7 +127,7 @@ export const BoardView = ({
     Proposals: visibleDrafts.length,
   }
 
-  // Default to the leftmost non-empty of Failed → In progress → Queued; else Queued
+  // Default to the leftmost non-empty of Failed → Blocked → In progress → Queued; else Queued
   const defaultTab = DEFAULT_TAB_PRIORITY.find((t) => tabCounts[t] > 0) ?? 'Queued'
 
   // Active tab controls which single column is visible on mobile
