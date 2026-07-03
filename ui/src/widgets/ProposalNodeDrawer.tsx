@@ -210,7 +210,7 @@ export const ProposalNodeDrawer = ({
           data-testid="proposal-node-placeholder"
           className="border-b border-iron/20 px-4 py-4"
         >
-          <p className="font-mono text-[12px] text-iron/60">
+          <p className="font-mono text-[12px] text-muted">
             Proposal detail coming soon — full proposal information will appear here.
           </p>
         </section>

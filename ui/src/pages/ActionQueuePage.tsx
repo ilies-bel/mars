@@ -41,7 +41,7 @@ const formatTime = (iso: string): string => {
 const priorityBadgeClass = (priority: string): string => {
   if (priority === 'high') return 'text-error'
   if (priority === 'normal') return 'text-warn'
-  return 'text-iron/60'
+  return 'text-muted'
 }
 
 export type KindFilter = 'all' | 'alerts' | 'drafts'
@@ -111,7 +111,7 @@ export const ActionQueueRow = memo(({
     >
       <div className="flex items-baseline gap-2">
         {item.kind !== 'failed-task' && (
-          <span className="shrink-0 font-mono text-[9px] uppercase text-iron/80">
+          <span className="shrink-0 font-mono text-[9px] uppercase text-muted">
             {kindBadgeLabel(item.kind)}
           </span>
         )}
@@ -128,7 +128,7 @@ export const ActionQueueRow = memo(({
         {item.title || '(no title)'}
       </div>
       <div className="mt-1 flex items-center justify-between gap-2">
-        <span className="font-mono text-[10px] text-iron/70" title={formatTime(item.at)}>
+        <span className="font-mono text-[10px] text-muted" title={formatTime(item.at)}>
           {relativeTime(item.at)}
         </span>
         {onRestart !== null && (
@@ -170,7 +170,7 @@ const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
       <span className="font-mono text-[11px] text-fg">
         {resolution.resolution ?? '(closed)'}
       </span>
-      <span className="font-mono text-[10px] text-iron/70" title={formatTime(resolution.resolvedAt)}>
+      <span className="font-mono text-[10px] text-muted" title={formatTime(resolution.resolvedAt)}>
         {relativeTime(resolution.resolvedAt)}
         {resolution.resolvedBy ? ` · ${resolution.resolvedBy}` : null}
       </span>
@@ -181,7 +181,7 @@ const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
       ) : null}
       {resolution.rootCause ? (
         <div className="mt-1">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-iron/70">
+          <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
             Root cause:{' '}
           </span>
           <span className="font-mono text-[11px] text-iron">
@@ -415,7 +415,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Traces
         </dt>
-        <dd className="text-iron/60">Loading…</dd>
+        <dd className="text-muted">Loading…</dd>
       </div>
     )
   }
@@ -440,7 +440,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Traces
         </dt>
-        <dd className="text-iron/60">No trace events for this task yet.</dd>
+        <dd className="text-muted">No trace events for this task yet.</dd>
       </div>
     )
   }
@@ -455,13 +455,13 @@ const TracesSection = ({ taskId }: TracesProps) => {
           <ul className="flex flex-col gap-1">
             {events.map((e) => (
               <li key={e.id} className={`rounded border ${severityRowClass(e.severity)} px-2 py-1 text-fg`}>
-                <span className="text-iron/60">{relativeTime(e.timestamp)}</span>{' '}
+                <span className="text-muted">{relativeTime(e.timestamp)}</span>{' '}
                 <span className={`font-mono text-[10px] uppercase ${e.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(e.severity)}`}>
                   [{e.severity}]
                 </span>{' '}
                 <span className="font-mono text-[10px] text-iron">{e.kind}</span>
                 {e.phase ? (
-                  <span className="font-mono text-[10px] text-iron/60">
+                  <span className="font-mono text-[10px] text-muted">
                     {' '}
                     ·{' '}
                     {e.phase}
@@ -505,7 +505,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Proposal
         </dt>
-        <dd className="text-iron/60">Loading…</dd>
+        <dd className="text-muted">Loading…</dd>
       </div>
     )
   }
@@ -516,7 +516,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Proposal
         </dt>
-        <dd className="text-iron/60">(could not load proposal)</dd>
+        <dd className="text-muted">(could not load proposal)</dd>
       </div>
     )
   }
@@ -572,7 +572,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
         </div>
       ) : null}
       <div>
-        <dd className="text-[10px] text-iron/60">
+        <dd className="text-[10px] text-muted">
           Status: {p.status} · from {p.source} · {new Date(p.createdAt).toLocaleDateString()}
         </dd>
       </div>
@@ -612,7 +612,7 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
           <span className="break-all font-mono text-[11px] uppercase text-iron">
             {item.entityId}
           </span>
-          <span className="shrink-0 font-mono text-[10px] uppercase text-iron/80">
+          <span className="shrink-0 font-mono text-[10px] uppercase text-muted">
             {kindBadgeLabel(item.kind)}
           </span>
           <span
@@ -674,7 +674,7 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 </dt>
                 <dd className="whitespace-pre-wrap text-fg">
                   {item.staleWorktreeDetail.prompt ?? (
-                    <span className="text-iron/70">absent (no matching task)</span>
+                    <span className="text-muted">absent (no matching task)</span>
                   )}
                 </dd>
               </div>
@@ -697,7 +697,7 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 <dd>
                   {item.staleWorktreeDetail.investigation ? (
                     <>
-                      <p className="mb-1 text-[10px] text-iron/60" title={formatTime(item.staleWorktreeDetail.updatedAt)}>
+                      <p className="mb-1 text-[10px] text-muted" title={formatTime(item.staleWorktreeDetail.updatedAt)}>
                         {relativeTime(item.staleWorktreeDetail.updatedAt)}
                       </p>
                       <p className="whitespace-pre-wrap text-fg">
@@ -705,7 +705,7 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                       </p>
                     </>
                   ) : item.staleWorktreeDetail.empty ? null : (
-                    <span className="text-iron/70">
+                    <span className="text-muted">
                       None yet — use Investigate to analyse this worktree.
                     </span>
                   )}
@@ -730,7 +730,7 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 >
                   {item.devServerUrl}
                 </a>
-                <p className="mt-1 text-[10px] text-iron/70">
+                <p className="mt-1 text-[10px] text-muted">
                   Opens in a new tab. Validate to merge, or Reject to stop the
                   merge and fail the task (its worktree is kept).
                 </p>
@@ -744,7 +744,7 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 Diagnosis
               </dt>
               <dd>
-                <p className="mb-1 text-[10px] text-iron/60" title={formatTime(item.diagnosis.diagnosedAt)}>
+                <p className="mb-1 text-[10px] text-muted" title={formatTime(item.diagnosis.diagnosedAt)}>
                   {relativeTime(item.diagnosis.diagnosedAt)}
                 </p>
                 <p className="whitespace-pre-wrap text-fg">
@@ -780,7 +780,7 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
               </dt>
               <dd className="whitespace-pre-wrap text-fg">
                 {item.body.trim() || (
-                  <span className="text-iron/70">(no details recorded)</span>
+                  <span className="text-muted">(no details recorded)</span>
                 )}
               </dd>
             </div>
@@ -810,7 +810,7 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
           ) : null}
         </dl>
       </main>
-      <footer className="border-t border-iron/30 px-6 py-3 font-mono text-[10px] text-iron/60">
+      <footer className="border-t border-iron/30 px-6 py-3 font-mono text-[10px] text-muted">
         {isRealFailedTask ? 'Failed' : 'Last activity'}: {relativeTime(item.at)}
       </footer>
     </div>
@@ -958,13 +958,13 @@ export const ActionQueuePage = () => {
             placeholder="Search…"
             aria-label="Search action queue"
             data-testid="action-queue-search"
-            className="mt-2 w-full border border-iron/30 bg-bg px-2 py-1 font-mono text-[12px] text-fg placeholder:text-iron/40 focus:outline-none focus:ring-1 focus:ring-iron/50"
+            className="mt-2 w-full border border-iron/30 bg-bg px-2 py-1 font-mono text-[12px] text-fg placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-iron/50"
           />
         </header>
 
         <div className="flex-1 overflow-auto">
           {filtered.length === 0 && (query.trim() || (!projectsEmpty && !projectsError)) ? (
-            <p className="px-3 py-2 font-mono text-[11px] text-iron/50">
+            <p className="px-3 py-2 font-mono text-[11px] text-muted">
               {query.trim() ? 'No matches.' : 'No items.'}
             </p>
           ) : filtered.length > 0 ? (
@@ -1032,7 +1032,7 @@ export const ActionQueuePage = () => {
               aria-expanded={historyOpen}
               aria-controls="section-body-history"
               onClick={() => setHistoryOpen((v) => !v)}
-              className="flex w-full items-center justify-between border-b border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide text-iron/60 hover:bg-iron/5"
+              className="flex w-full items-center justify-between border-b border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide text-muted hover:bg-iron/5"
             >
               <span>History ({historyItems.length} loaded)</span>
               <span aria-hidden="true">{historyOpen ? '▾' : '▸'}</span>
@@ -1040,7 +1040,7 @@ export const ActionQueuePage = () => {
             {historyOpen && (
               <div id="section-body-history">
                 {historyItems.length === 0 ? (
-                  <p className="px-3 py-2 font-mono text-[11px] text-iron/40">
+                  <p className="px-3 py-2 font-mono text-[11px] text-muted">
                     No resolved items.
                   </p>
                 ) : (
@@ -1074,18 +1074,18 @@ export const ActionQueuePage = () => {
                     >
                       <div className="flex items-baseline gap-2">
                         {item.kind !== 'failed-task' && (
-                          <span className="shrink-0 font-mono text-[9px] uppercase text-iron/60">
+                          <span className="shrink-0 font-mono text-[9px] uppercase text-muted">
                             {kindBadgeLabel(item.kind)}
                           </span>
                         )}
-                        <span className="break-all font-mono text-[10px] text-iron/70">
+                        <span className="break-all font-mono text-[10px] text-muted">
                           {item.entityId}
                         </span>
                       </div>
-                      <div className="mt-0.5 break-words font-mono text-[11px] text-iron/70">
+                      <div className="mt-0.5 break-words font-mono text-[11px] text-muted">
                         {(item.resolution?.resolution ?? item.title) || '(no title)'}
                       </div>
-                      <div className="mt-0.5 font-mono text-[10px] text-iron/40">
+                      <div className="mt-0.5 font-mono text-[10px] text-muted">
                         {item.resolution
                           ? relativeTime(item.resolution.resolvedAt)
                           : relativeTime(item.at)}
@@ -1099,7 +1099,7 @@ export const ActionQueuePage = () => {
                     data-testid="history-load-more"
                     disabled={historyLoadingMore}
                     onClick={loadMoreHistory}
-                    className="w-full border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase text-iron/60 hover:bg-iron/5 disabled:opacity-50"
+                    className="w-full border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase text-muted hover:bg-iron/5 disabled:opacity-50"
                   >
                     {historyLoadingMore ? 'Loading…' : 'Load more'}
                   </button>
@@ -1131,7 +1131,7 @@ export const ActionQueuePage = () => {
                 <code className="rounded bg-iron/20 px-1">mars init</code>{' '}
                 inside your repo — it registers the project automatically.
               </p>
-              <p className="mt-1 text-iron/60">
+              <p className="mt-1 text-muted">
                 Or register an existing repo:{' '}
                 <code className="rounded bg-iron/20 px-1">mars project add &lt;repo&gt;</code>
               </p>

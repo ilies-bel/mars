@@ -164,7 +164,7 @@ export const ProposalDetailDrawer = ({
             </span>
             <span
               data-testid="proposal-detail-source"
-              className="font-mono text-[9px] uppercase tracking-wide text-iron/80"
+              className="font-mono text-[9px] uppercase tracking-wide text-muted"
             >
               {proposal.source}
             </span>
@@ -188,7 +188,7 @@ export const ProposalDetailDrawer = ({
             data-testid="proposal-detail-problem"
             className="border-b border-iron/40 px-4 py-3"
           >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-iron/60">
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted">
               Problem
             </p>
             <p className="whitespace-pre-wrap font-mono text-xs text-fg">{proposal.problem}</p>
@@ -200,7 +200,7 @@ export const ProposalDetailDrawer = ({
             data-testid="proposal-detail-solution"
             className="border-b border-iron/40 px-4 py-3"
           >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-iron/60">
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted">
               Solution
             </p>
             <p className="whitespace-pre-wrap font-mono text-xs text-fg">{proposal.solution}</p>
@@ -212,13 +212,13 @@ export const ProposalDetailDrawer = ({
             data-testid="proposal-detail-stories"
             className="border-b border-iron/40 px-4 py-3"
           >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-iron/60">
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted">
               User stories
             </p>
             <ol className="flex flex-col gap-1.5">
               {proposal.userStories.map((story, idx) => (
                 <li key={idx} className="flex gap-2 font-mono text-xs text-fg">
-                  <span className="shrink-0 text-iron/60">{idx + 1}.</span>
+                  <span className="shrink-0 text-muted">{idx + 1}.</span>
                   <span>{story}</span>
                 </li>
               ))}
@@ -231,7 +231,7 @@ export const ProposalDetailDrawer = ({
             data-testid="sliced-tasks"
             className="flex flex-col gap-2 border-b border-iron/40 px-4 py-3"
           >
-            <h3 className="font-mono text-[10px] uppercase tracking-wide text-iron/80">
+            <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted">
               Sliced tasks
             </h3>
             <ul className="flex flex-col gap-1.5">
@@ -260,7 +260,7 @@ export const ProposalDetailDrawer = ({
 
       {/* CLI commands — read-only, status-appropriate, copy-to-clipboard */}
       <section className="border-t border-iron/40 px-4 py-3">
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-iron/60">
+        <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted">
           CLI
         </p>
         {(STATUS_CLI_VERBS[proposal.status] ?? ['show']).map((verb) => {

@@ -185,7 +185,7 @@ export const ArcTree = ({ dag, entityId, entityStatus }: ArcTreeProps) => {
                 {row.kind}
               </span>
               {/* Task ID — selectable, copyable, break-all per OriginTree */}
-              <span className="break-all font-mono text-[10px] text-iron/80">
+              <span className="break-all font-mono text-[10px] text-muted">
                 {row.id}
               </span>
               {/* Summary — body text colour for ≥4.5:1 contrast, truncated */}
@@ -195,7 +195,7 @@ export const ArcTree = ({ dag, entityId, entityStatus }: ArcTreeProps) => {
                 </span>
               )}
               {/* Status — right-aligned, muted secondary metadata */}
-              <span className="ml-auto font-mono text-[10px] uppercase text-iron/60">
+              <span className="ml-auto font-mono text-[10px] uppercase text-muted">
                 {row.status}
               </span>
             </button>

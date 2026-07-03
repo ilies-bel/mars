@@ -43,7 +43,7 @@ const NotificationsToggle = () => {
   if (!notificationsSupported()) {
     return (
       <span
-        className="font-mono text-[11px] uppercase tracking-wide text-iron/50"
+        className="font-mono text-[11px] uppercase tracking-wide text-muted"
         title="This browser does not support desktop notifications"
       >
         Alerts ✕

@@ -96,7 +96,7 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
               <StringList items={spec.doneCriteria} />
             </div>
           ) : null}
-          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-iron/60">
+          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
             {spec.taskType}
           </p>
         </div>

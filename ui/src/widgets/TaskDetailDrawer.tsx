@@ -510,7 +510,7 @@ export const TaskDetailBody = ({
               <StringList items={spec.doneCriteria} />
             </div>
           ) : null}
-          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-iron/60">
+          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
             {spec.taskType}
           </p>
         </div>
@@ -1312,7 +1312,7 @@ export const TaskDetailDrawer = ({
             const isCurrent = i === trail.length - 1
             return (
               <span key={id} className="flex items-center gap-1">
-                {i > 0 ? <span className="text-iron/50">▸</span> : null}
+                {i > 0 ? <span className="text-muted">▸</span> : null}
                 {isCurrent ? (
                   <span data-crumb-id={id} className="font-medium text-fg">
                     {crumbLabel(id)}

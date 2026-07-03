@@ -21,13 +21,13 @@ const OriginNodeContent = ({ node }: { node: OriginNode }) => (
     <span className="font-mono text-[9px] uppercase text-iron">
       {originKindLabel(node.kind)}
     </span>
-    <span className="break-all font-mono text-[10px] text-iron/80">
+    <span className="break-all font-mono text-[10px] text-muted">
       {node.id}
     </span>
     <span className="break-words">
       {node.title.length > 70 ? `${node.title.slice(0, 69)}…` : node.title}
     </span>
-    <span className="ml-auto font-mono text-[10px] uppercase text-iron/60">
+    <span className="ml-auto font-mono text-[10px] uppercase text-muted">
       {node.status}
     </span>
   </>
@@ -103,7 +103,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Origins
         </dt>
-        <dd className="text-iron/60">Loading…</dd>
+        <dd className="text-muted">Loading…</dd>
       </div>
     )
   }
@@ -126,7 +126,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
         <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
           Origins
         </dt>
-        <dd className="text-iron/60">No origin recorded for this task.</dd>
+        <dd className="text-muted">No origin recorded for this task.</dd>
       </div>
     )
   }

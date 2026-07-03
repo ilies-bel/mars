@@ -34,17 +34,17 @@ function TaskTracePanel({ taskId }: { taskId: string }) {
   })
 
   if (isPending) {
-    return <p className="font-mono text-[11px] text-iron/60">Loading traces…</p>
+    return <p className="font-mono text-[11px] text-muted">Loading traces…</p>
   }
   if (!data || data.events.length === 0) {
-    return <p className="font-mono text-[11px] text-iron/60">No trace events for this task.</p>
+    return <p className="font-mono text-[11px] text-muted">No trace events for this task.</p>
   }
 
   return (
     <ul className="flex flex-col gap-0.5">
       {data.events.map((e) => (
         <li key={e.id} className={`font-mono text-[10px] ${traceEventRowClass(e.severity)}`}>
-          <span className="text-iron/60">{relativeTime(e.timestamp)}</span>{' '}
+          <span className="text-muted">{relativeTime(e.timestamp)}</span>{' '}
           <span className={`uppercase ${severityColor(e.severity)}`}>
             [{e.severity}]
           </span>{' '}
@@ -112,7 +112,7 @@ export default function ArcChainRail({
               </span>
               <span className="break-words">{node.label}</span>
               {node.status ? (
-                <span className="ml-auto shrink-0 text-[9px] uppercase text-iron/60">
+                <span className="ml-auto shrink-0 text-[9px] uppercase text-muted">
                   {node.status}
                 </span>
               ) : null}

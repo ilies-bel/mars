@@ -42,7 +42,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
         >
           ← Events
         </a>
-        <span className="text-iron/30">|</span>
+        <span className="text-muted">|</span>
         <span className="font-mono text-sm font-semibold text-fg">{label}</span>
       </div>
 

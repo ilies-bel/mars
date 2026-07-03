@@ -252,7 +252,7 @@ const EventRow = memo(({ event }: EventRowProps) => {
       {/* Single-line metadata + summary — flex so the summary can truncate
           instead of stretching the row and causing page-level horizontal scroll. */}
       <div className="flex min-w-0 items-baseline gap-x-1 overflow-hidden">
-        <span className="shrink-0 text-iron/60">{relativeTime(event.timestamp)}</span>
+        <span className="shrink-0 text-muted">{relativeTime(event.timestamp)}</span>
         <span
           className={`shrink-0 font-mono text-[10px] uppercase ${event.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(event.severity)}`}
         >
@@ -261,19 +261,19 @@ const EventRow = memo(({ event }: EventRowProps) => {
         <span className="shrink-0 font-mono text-[10px] text-iron">{event.kind}</span>
         {logLineSource ? (
           <span
-            className="shrink-0 rounded bg-iron/20 px-1 font-mono text-[9px] text-iron/80"
+            className="shrink-0 rounded bg-iron/20 px-1 font-mono text-[9px] text-muted"
             data-testid={`event-row-source-${event.id}`}
           >
             {logLineSource}
           </span>
         ) : null}
         {event.phase ? (
-          <span className="shrink-0 font-mono text-[10px] text-iron/60">
+          <span className="shrink-0 font-mono text-[10px] text-muted">
             · {event.phase}
           </span>
         ) : null}
         {event.taskId ? (
-          <span className="shrink-0 font-mono text-[10px] text-iron/70">
+          <span className="shrink-0 font-mono text-[10px] text-muted">
             {truncateId(event.taskId)}
           </span>
         ) : null}
@@ -284,7 +284,7 @@ const EventRow = memo(({ event }: EventRowProps) => {
           <button
             type="button"
             onClick={toggleFields}
-            className="shrink-0 font-mono text-[9px] text-iron/60 underline hover:text-iron"
+            className="shrink-0 font-mono text-[9px] text-muted underline hover:text-iron"
             data-testid={`event-row-fields-toggle-${event.id}`}
           >
             {fieldsExpanded ? 'hide fields' : 'fields'}
@@ -293,7 +293,7 @@ const EventRow = memo(({ event }: EventRowProps) => {
       </div>
       {fieldsExpanded && logLineFields ? (
         <pre
-          className="mt-1 max-w-full overflow-x-auto font-mono text-[10px] text-iron/70"
+          className="mt-1 max-w-full overflow-x-auto font-mono text-[10px] text-muted"
           data-testid={`event-row-fields-${event.id}`}
         >
           {JSON.stringify(logLineFields, null, 2)}
