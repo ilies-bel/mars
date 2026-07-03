@@ -14,6 +14,12 @@ export interface DaemonCaps {
 export interface SelfEvolveConfig {
   autoTrigger: boolean
   driftThresholdPct: number
+  /**
+   * Minimum confidence (0..1) for a 'mechanical' suggestion to be
+   * auto-enqueued as a Task when autoTrigger is true. Default 0.8.
+   * 'architectural' suggestions are never auto-enqueued regardless of this value.
+   */
+  taskConfidenceThreshold: number
 }
 
 export interface DaemonConfig {
@@ -32,6 +38,7 @@ const DEFAULTS: DaemonCaps = {
 const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
   autoTrigger: false,
   driftThresholdPct: 10,
+  taskConfidenceThreshold: 0.8,
 }
 
 const envInt = (name: string, fallback: number): number => {
@@ -82,10 +89,17 @@ export const loadDaemonConfig = (): DaemonConfig => {
     Number.isFinite(envDriftNum) && envDriftNum > 0
       ? envDriftNum
       : DEFAULT_SELF_EVOLVE.driftThresholdPct
+  const rawConf = process.env['MARS_SELF_EVOLVE_TASK_CONFIDENCE_THRESHOLD']
+  const envConfNum = rawConf !== undefined && rawConf !== '' ? Number(rawConf) : NaN
+  const envConfThreshold =
+    Number.isFinite(envConfNum) && envConfNum >= 0 && envConfNum <= 1
+      ? envConfNum
+      : DEFAULT_SELF_EVOLVE.taskConfidenceThreshold
 
   let fileCaps: Partial<DaemonCaps> = {}
   let fileAutoTrigger: boolean | undefined
   let fileDriftPct: number | undefined
+  let fileConfThreshold: number | undefined
 
   try {
     const raw = readFileSync(daemonConfigPath(), 'utf8')
@@ -115,6 +129,15 @@ export const loadDaemonConfig = (): DaemonConfig => {
     if (typeof seThreshold === 'number' && Number.isFinite(seThreshold) && seThreshold > 0) {
       fileDriftPct = seThreshold
     }
+    const seConfThreshold = se.taskConfidenceThreshold
+    if (
+      typeof seConfThreshold === 'number' &&
+      Number.isFinite(seConfThreshold) &&
+      seConfThreshold >= 0 &&
+      seConfThreshold <= 1
+    ) {
+      fileConfThreshold = seConfThreshold
+    }
   } catch {
     // No file, unreadable, or invalid JSON — fall back to env+defaults.
   }
@@ -130,6 +153,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
     selfEvolve: {
       autoTrigger: fileAutoTrigger ?? envAutoTrigger,
       driftThresholdPct: fileDriftPct ?? envDriftPct,
+      taskConfidenceThreshold: fileConfThreshold ?? envConfThreshold,
     },
   }
 }

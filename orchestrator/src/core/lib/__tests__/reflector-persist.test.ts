@@ -65,6 +65,8 @@ describe('reflector persist dedup', () => {
           rootCauseKey: 'typecheck_failure',
           affectedTaskIds: ['task-a', 'task-b'],
           frequency: 2,
+          confidence: 0,
+          kind: 'mechanical' as const,
         },
       ],
       'source-task-1',
@@ -83,6 +85,8 @@ describe('reflector persist dedup', () => {
       rootCauseKey: 'typecheck_failure',
       affectedTaskIds: ['task-a', 'task-b'],
       frequency: 2,
+      confidence: 0,
+      kind: 'mechanical' as const,
     }
 
     await persistSuggestions([suggestion], 'source-task-1')
@@ -128,6 +132,8 @@ describe('reflector persist dedup', () => {
           rootCauseKey: 'typecheck_failure',
           affectedTaskIds: ['task-a'],
           frequency: 1,
+          confidence: 0,
+          kind: 'mechanical' as const,
         },
         {
           title: 'Improve cache hit ratio',
@@ -136,6 +142,8 @@ describe('reflector persist dedup', () => {
           rootCauseKey: 'cache_miss_code_step',
           affectedTaskIds: ['task-b'],
           frequency: 1,
+          confidence: 0,
+          kind: 'mechanical' as const,
         },
       ],
       'source-task-1',
@@ -154,6 +162,8 @@ describe('reflector persist dedup', () => {
       rootCauseKey: '',
       affectedTaskIds: [],
       frequency: 1,
+      confidence: 0,
+      kind: 'mechanical' as const,
     }
 
     await persistSuggestions([bare], 'source-task-1')
@@ -173,6 +183,8 @@ describe('reflector persist dedup', () => {
       rootCauseKey: 'merge_abort_pattern',
       affectedTaskIds: ['task-x', 'task-y'],
       frequency: 2,
+      confidence: 0,
+      kind: 'mechanical' as const,
       verdict: 'save' as const,
       targetId: null,
       dupOf: null,

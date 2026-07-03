@@ -382,6 +382,17 @@ const parseSuggestions = (raw: unknown): VerdictedSuggestion[] => {
         : typeof o.dupOf === 'string'
           ? o.dupOf
           : null
+    const rawConfidence = o.confidence
+    const confidence =
+      typeof rawConfidence === 'number' &&
+      Number.isFinite(rawConfidence) &&
+      rawConfidence >= 0 &&
+      rawConfidence <= 1
+        ? rawConfidence
+        : 0
+    const rawKind = o.kind
+    const kind: 'mechanical' | 'architectural' =
+      rawKind === 'mechanical' || rawKind === 'architectural' ? rawKind : 'mechanical'
     if (!title || !prompt) continue
     out.push({
       title,
@@ -390,6 +401,8 @@ const parseSuggestions = (raw: unknown): VerdictedSuggestion[] => {
       rootCauseKey,
       affectedTaskIds,
       frequency,
+      confidence,
+      kind,
       verdict,
       targetId,
       dupOf,

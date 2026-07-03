@@ -6,7 +6,9 @@ import {
   findOpenReflectionDraftByFingerprint,
   appendProposalNotes,
 } from '../proposals'
+import { enqueueTask } from '../queue'
 import type { ReflectCorpus } from './reflect-query'
+import type { SelfEvolveConfig } from '../daemon/config'
 
 export interface ReflectionSuggestion {
   title: string
@@ -18,6 +20,21 @@ export interface ReflectionSuggestion {
   affectedTaskIds: string[]
   /** Number of tasks affected by this root cause. */
   frequency: number
+  /**
+   * Model-assessed confidence (0..1) grounded in frequency, token deltas, and
+   * reproducibility. Used to gate auto-enqueuing: only suggestions with
+   * confidence >= selfEvolve.taskConfidenceThreshold and kind='mechanical' are
+   * auto-enqueued when autoTrigger is enabled.
+   */
+  confidence: number
+  /**
+   * Routing kind:
+   * - 'mechanical': a config/prompt/threshold change with a clear verification
+   *   step that a fresh agent can execute and confirm.
+   * - 'architectural': changes seams, data shapes, or policy — requires human
+   *   review and is never auto-enqueued regardless of confidence.
+   */
+  kind: 'mechanical' | 'architectural'
 }
 
 export interface TokenAnalysis {
@@ -98,6 +115,29 @@ Categories, in priority order:
 (d) **workflow drift**: repeated vcs-supervisor invocations, prompt
     patterns that consistently fail.
 
+For each suggestion you MUST also assess:
+
+**confidence** (0..1): Your evidence-grounded certainty that acting on
+this suggestion will reduce token waste or failure rate. Ground it in:
+- frequency: how many tasks were affected (more = higher confidence)
+- token delta: how large the waste is relative to the median
+- reproducibility: whether the pattern is consistent or a one-off
+Do NOT inflate confidence. A single data point with no clear cause
+should be ≤ 0.5. A pattern across 3+ tasks with a clear mechanical fix
+can reach 0.8–0.95.
+
+**kind**: Classify the suggestion as exactly one of:
+- 'mechanical': the fix is a config/prompt/threshold change with a
+  clear, agent-executable verification step (e.g. add --strict to
+  tsconfig, lower a token cap, tighten a prompt heuristic). The scope
+  is narrow and reversible.
+- 'architectural': the fix changes seams, data shapes, service
+  boundaries, or policy (e.g. split a module, introduce a new DB table,
+  change auth flow, alter task-graph semantics). These require human
+  review and are NEVER auto-applied by the orchestrator regardless of
+  confidence. When in doubt between mechanical and architectural, choose
+  architectural.
+
 If total token spend across the window is non-trivial, you MUST produce
 at least one token-grounded suggestion. If a single task is > 3× the
 median token spend, you MUST either suggest investigating it or
@@ -127,7 +167,9 @@ no markdown — just the JSON. Shape:
       "rationale": "1–2 sentences citing the evidence: task ids, weighted token counts, error patterns",
       "rootCauseKey": "snake_case_slug stable across runs (e.g. typecheck_failure, cache_miss_code_step)",
       "affectedTaskIds": ["task-id-1", "task-id-2"],
-      "frequency": 2
+      "frequency": 2,
+      "confidence": 0.85,
+      "kind": "mechanical"
     }
   ]
 }
@@ -141,6 +183,11 @@ Rules:
   observe the same root cause pattern across different runs.
 - Do NOT emit dollar amounts, monetary values, or currency symbols — cite
   weighted tokens and multiples-of-median only.
+- \`confidence\` must be grounded in frequency, token deltas, and
+  reproducibility — do not inflate it. A single-task observation with no
+  clear cause should be ≤ 0.5.
+- \`kind\` must be 'mechanical' or 'architectural' exactly (lowercase). When
+  in doubt, choose 'architectural'.
 - If there are no high-quality suggestions, return {"suggestions": []}
   but still fill tokenAnalysis.`
 
@@ -330,6 +377,17 @@ export const runReflector = async (
       typeof obj.frequency === 'number'
         ? obj.frequency
         : affectedTaskIds.length || 1
+    const rawConfidence = obj.confidence
+    const confidence =
+      typeof rawConfidence === 'number' &&
+      Number.isFinite(rawConfidence) &&
+      rawConfidence >= 0 &&
+      rawConfidence <= 1
+        ? rawConfidence
+        : 0
+    const rawKind = obj.kind
+    const kind: 'mechanical' | 'architectural' =
+      rawKind === 'mechanical' || rawKind === 'architectural' ? rawKind : 'mechanical'
     if (!title || !prompt) continue
     suggestions.push({
       title,
@@ -338,6 +396,8 @@ export const runReflector = async (
       rootCauseKey,
       affectedTaskIds,
       frequency,
+      confidence,
+      kind,
     })
   }
 
@@ -398,9 +458,27 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<void> => {
 export const persistSuggestions = async (
   suggestions: readonly ReflectionSuggestion[],
   _sourceTaskId: string,
+  selfEvolve?: Pick<SelfEvolveConfig, 'autoTrigger' | 'taskConfidenceThreshold'>,
 ): Promise<void> => {
   for (const s of suggestions) {
-    await persistOneSuggestion(s)
+    if (
+      selfEvolve?.autoTrigger === true &&
+      s.kind === 'mechanical' &&
+      s.confidence >= (selfEvolve.taskConfidenceThreshold ?? 0.8)
+    ) {
+      await enqueueTask(s.prompt, undefined, {
+        author: { kind: 'agent', name: 'reflector' },
+        spec: {
+          files: [],
+          verifyCmd: null,
+          previewCmd: null,
+          doneCriteria: [s.title],
+          taskType: 'auto',
+        },
+      })
+    } else {
+      await persistOneSuggestion(s)
+    }
   }
 }
 
@@ -413,6 +491,8 @@ export interface VerdictedSuggestion {
   rootCauseKey: string
   affectedTaskIds: string[]
   frequency: number
+  confidence: number
+  kind: 'mechanical' | 'architectural'
   verdict: SuggestionVerdict
   targetId?: string | null
   dupOf?: string | null
