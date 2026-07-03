@@ -1288,9 +1288,8 @@ export const verify = async (
         // Collect all text from the coder's transcript (assistant turns + result
         // events). parseCompletionReport finds the LAST completion-report block.
         const coderTextParts: string[] = []
-        for await (const evt of readAllTranscriptsForTask(taskId)) {
-          const raw = evt.raw
-          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+        const pushEventText = (raw: unknown): void => {
+          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
           const o = raw as Record<string, unknown>
           if (o.type === 'result' && typeof o.result === 'string') {
             coderTextParts.push(o.result)
@@ -1313,6 +1312,37 @@ export const verify = async (
                 }
               }
             }
+          }
+        }
+        // Primary source: the durable `step_ended` trace events for this
+        // task's run-claude-code steps. Headless `claude -p` sessions do not
+        // persist transcript bodies under ~/.claude/projects (only an
+        // ai-title stub), so the on-disk reader below is a legacy fallback,
+        // not the main path. `query` returns newest-first; reverse to
+        // chronological order so parseCompletionReport's last-block-wins
+        // semantic matches session order.
+        const traceRows = await trace.traceStore
+          .query({ taskId, kind: ['step_ended'], limit: 100 })
+          .catch(() => [])
+        for (const row of [...traceRows].reverse()) {
+          const p = row.payload
+          if (p.stepName !== 'run-claude-code') continue
+          if (typeof p.transcript !== 'string' || p.transcript.length === 0) {
+            continue
+          }
+          try {
+            const events = JSON.parse(p.transcript) as unknown
+            if (Array.isArray(events)) {
+              for (const evt of events) pushEventText(evt)
+            }
+          } catch {
+            // Malformed transcript payload — skip; the disk fallback below
+            // may still cover this session.
+          }
+        }
+        if (coderTextParts.length === 0) {
+          for await (const evt of readAllTranscriptsForTask(taskId)) {
+            pushEventText(evt.raw)
           }
         }
         const completenessStep = await checkCompletenessGate({
