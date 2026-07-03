@@ -49,6 +49,10 @@ interface ProjectSelectorInnerProps {
   starting: string | null
   /** Which project id is currently being restarted, or null if none. */
   restarting: string | null
+  /** Inline error for the last failed Start, or null if none. */
+  startError: { projectId: string; message: string } | null
+  /** Inline error for the last failed Restart, or null if none. */
+  restartError: { projectId: string; message: string } | null
   onToggle: () => void
   onSelect: (projectId: string) => void
   onStart: (projectId: string, e: React.MouseEvent) => void
@@ -73,6 +77,8 @@ export const ProjectSelectorInner = ({
   open,
   starting,
   restarting,
+  startError,
+  restartError,
   onToggle,
   onSelect,
   onStart,
@@ -143,7 +149,7 @@ export const ProjectSelectorInner = ({
                 data-testid={`project-item-${p.projectId}`}
                 onClick={() => onSelect(p.projectId)}
                 className={[
-                  'flex cursor-pointer items-center gap-1.5 px-2 py-1.5 font-mono text-[11px] transition-colors',
+                  'flex flex-col cursor-pointer px-2 py-1.5 font-mono text-[11px] transition-colors',
                   isFocused
                     ? 'bg-iron/30 text-fg'
                     : isActive
@@ -151,42 +157,60 @@ export const ProjectSelectorInner = ({
                       : 'text-iron hover:bg-iron/10 hover:text-fg',
                 ].join(' ')}
               >
-                <span
-                  role="img"
-                  aria-label={`${name} — ${p.health}`}
-                  title={`${name} — ${p.health}`}
-                  className={healthColorClass(p.health)}
-                >
-                  {HEALTH_GLYPH[p.health]}
-                </span>
-                <span aria-hidden="true">{icon}</span>
-                {name}
-                {(p.health === 'down' || isFocused) ? (
-                  <span className="ml-auto flex items-center gap-1">
-                    {p.health === 'down' ? (
-                      <button
-                        type="button"
-                        disabled={isStarting}
-                        onClick={(e) => onStart(p.projectId, e)}
-                        data-testid={`start-btn-${p.projectId}`}
-                        className="rounded border border-iron/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-fg hover:bg-iron/20 disabled:opacity-50"
-                      >
-                        {isStarting ? '…' : 'Start'}
-                      </button>
-                    ) : null}
-                    {isFocused ? (
-                      <button
-                        type="button"
-                        disabled={isRestarting}
-                        onClick={(e) => onRestart(p.projectId, e)}
-                        data-testid={`restart-btn-${p.projectId}`}
-                        className="rounded border border-iron/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-fg hover:bg-iron/20 disabled:opacity-50"
-                      >
-                        {isRestarting ? '…' : 'Restart'}
-                      </button>
-                    ) : null}
+                <div className="flex items-center gap-1.5">
+                  <span
+                    role="img"
+                    aria-label={`${name} — ${p.health}`}
+                    title={`${name} — ${p.health}`}
+                    className={healthColorClass(p.health)}
+                  >
+                    {HEALTH_GLYPH[p.health]}
                   </span>
-                ) : null}
+                  <span aria-hidden="true">{icon}</span>
+                  {name}
+                  {(p.health === 'down' || isFocused) ? (
+                    <span className="ml-auto flex items-center gap-1">
+                      {p.health === 'down' ? (
+                        <button
+                          type="button"
+                          disabled={isStarting}
+                          onClick={(e) => onStart(p.projectId, e)}
+                          data-testid={`start-btn-${p.projectId}`}
+                          className="rounded border border-iron/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-fg hover:bg-iron/20 disabled:opacity-50"
+                        >
+                          {isStarting ? '…' : 'Start'}
+                        </button>
+                      ) : null}
+                      {isFocused ? (
+                        <button
+                          type="button"
+                          disabled={isRestarting}
+                          onClick={(e) => onRestart(p.projectId, e)}
+                          data-testid={`restart-btn-${p.projectId}`}
+                          className="rounded border border-iron/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-fg hover:bg-iron/20 disabled:opacity-50"
+                        >
+                          {isRestarting ? '…' : 'Restart'}
+                        </button>
+                      ) : null}
+                    </span>
+                  ) : null}
+                </div>
+                {startError?.projectId === p.projectId && (
+                  <p
+                    data-testid={`start-error-${p.projectId}`}
+                    className="mt-1 font-mono text-[10px] text-error"
+                  >
+                    {startError.message}
+                  </p>
+                )}
+                {restartError?.projectId === p.projectId && (
+                  <p
+                    data-testid={`restart-error-${p.projectId}`}
+                    className="mt-1 font-mono text-[10px] text-error"
+                  >
+                    {restartError.message}
+                  </p>
+                )}
               </li>
             )
           })}
@@ -206,6 +230,8 @@ export const ProjectSelector = () => {
   const refreshProjects = useRefreshProjects()
   const [starting, setStarting] = useState<string | null>(null)
   const [restarting, setRestarting] = useState<string | null>(null)
+  const [startError, setStartError] = useState<{ projectId: string; message: string } | null>(null)
+  const [restartError, setRestartError] = useState<{ projectId: string; message: string } | null>(null)
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -305,9 +331,15 @@ export const ProjectSelector = () => {
   ): Promise<void> => {
     e.stopPropagation()
     setStarting(projectId)
+    setStartError(null)
     try {
       await startProject(projectId)
       await refreshProjects()
+    } catch (err) {
+      setStartError({
+        projectId,
+        message: err instanceof Error ? err.message : 'Failed to start',
+      })
     } finally {
       setStarting(null)
     }
@@ -319,9 +351,15 @@ export const ProjectSelector = () => {
   ): Promise<void> => {
     e.stopPropagation()
     setRestarting(projectId)
+    setRestartError(null)
     try {
       await restartProject(projectId)
       await refreshProjects()
+    } catch (err) {
+      setRestartError({
+        projectId,
+        message: err instanceof Error ? err.message : 'Failed to restart',
+      })
     } finally {
       setRestarting(null)
     }
@@ -342,6 +380,8 @@ export const ProjectSelector = () => {
         activeIndex={activeIndex}
         triggerRef={triggerRef}
         listboxRef={listboxRef}
+        startError={startError}
+        restartError={restartError}
         onToggle={handleToggle}
         onSelect={(id) => {
           setFocusedProjectId(id)

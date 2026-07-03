@@ -96,6 +96,8 @@ const renderClosed = (focusedProjectId = 'proj-live') =>
       open={false}
       starting={null}
       restarting={null}
+      startError={null}
+      restartError={null}
       onToggle={noop}
       onSelect={noop}
       onStart={noop}
@@ -120,6 +122,8 @@ const renderOpen = (
       starting={starting}
       restarting={restarting}
       activeIndex={activeIndex}
+      startError={null}
+      restartError={null}
       onToggle={noop}
       onSelect={noop}
       onStart={noop}
@@ -560,5 +564,83 @@ describe('ProjectSelector – keyboard interaction', () => {
     await keyOnListbox(container, 'Escape')
     const trigger = container.querySelector('[data-testid="project-selector-trigger"]')
     expect(document.activeElement).toBe(trigger)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Start / Restart error display
+// ---------------------------------------------------------------------------
+
+describe('ProjectSelector – Start error display', () => {
+  it('renders an inline error under the row when startError matches the project', () => {
+    const html = renderToStaticMarkup(
+      <ProjectSelectorInner
+        projects={allProjects}
+        focusedProjectId="proj-live"
+        open={true}
+        starting={null}
+        restarting={null}
+        startError={{ projectId: 'proj-down', message: 'Failed to start daemon' }}
+        restartError={null}
+        onToggle={noop}
+        onSelect={noop}
+        onStart={noop}
+        onRestart={noop}
+      />,
+    )
+    expect(html).toContain('data-testid="start-error-proj-down"')
+    expect(html).toContain('Failed to start daemon')
+  })
+
+  it('does not render a start error element when startError is null', () => {
+    const html = renderOpen()
+    expect(html).not.toContain('start-error-')
+  })
+
+  it('renders the start error with text-error styling', () => {
+    const html = renderToStaticMarkup(
+      <ProjectSelectorInner
+        projects={allProjects}
+        focusedProjectId="proj-live"
+        open={true}
+        starting={null}
+        restarting={null}
+        startError={{ projectId: 'proj-down', message: 'Start failed' }}
+        restartError={null}
+        onToggle={noop}
+        onSelect={noop}
+        onStart={noop}
+        onRestart={noop}
+      />,
+    )
+    // The error paragraph should carry the error colour class
+    expect(html).toMatch(/class="[^"]*text-error[^"]*"[^>]*>Start failed</)
+  })
+})
+
+describe('ProjectSelector – Restart error display', () => {
+  it('renders an inline error under the row when restartError matches the project', () => {
+    const html = renderToStaticMarkup(
+      <ProjectSelectorInner
+        projects={allProjects}
+        focusedProjectId="proj-live"
+        open={true}
+        starting={null}
+        restarting={null}
+        startError={null}
+        restartError={{ projectId: 'proj-live', message: 'Restart timed out' }}
+        onToggle={noop}
+        onSelect={noop}
+        onStart={noop}
+        onRestart={noop}
+      />,
+    )
+    expect(html).toContain('data-testid="restart-error-proj-live"')
+    expect(html).toContain('Restart timed out')
+  })
+
+  it('does not render a restart error element when restartError is null', () => {
+    const html = renderOpen()
+    expect(html).not.toContain('restart-error-')
   })
 })
