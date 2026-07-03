@@ -8,6 +8,23 @@ export interface ReflectCorpusEntry {
   promptPrefix: string
   errorTail: string | null
   createdAt: string
+  /** Classifier fields — populated from the tasks table; null when not yet set. */
+  failureSignature: string | null
+  failureReasonCode: string | null
+  failedPhase: string | null
+  kind: string | null
+  fixForTaskId: string | null
+  originId: string | null
+  /**
+   * Count of tool_invoked severity=error trace events for this task,
+   * excluding probes where payload.expectsFailure is true.
+   */
+  toolErrorCount: number
+  /**
+   * The most frequently failing tool for this task, formatted as
+   * "toolName argv[0]" (argv[0] omitted when absent). Null when no errors.
+   */
+  topErrorTool: string | null
   signals: ReadonlyArray<Omit<TaskSignalRow, 'taskId' | 'recordedAt'>>
   totals: {
     inputTokens: number
@@ -23,7 +40,14 @@ export interface ReflectCostSummary {
   taskCount: number
   successCount: number
   failureCount: number
+  blockedCount: number
+  droppedCount: number
   cacheHitRatio: number
+  /**
+   * Window-level count of rate_limit_event rejections observed in trace_events
+   * over the same time window as the task corpus. Zero when none are found.
+   */
+  rateLimitRejections: number
   topTokenHeavyTasks: ReadonlyArray<{
     taskId: string
     status: string
@@ -85,7 +109,10 @@ export const median = (values: readonly number[]): number => {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
 }
 
-const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSummary => {
+const buildCostSummary = (
+  entries: readonly ReflectCorpusEntry[],
+  rateLimitRejections: number,
+): ReflectCostSummary => {
   const taskCount = entries.length
   if (taskCount === 0) {
     return {
@@ -93,7 +120,10 @@ const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSu
       taskCount: 0,
       successCount: 0,
       failureCount: 0,
+      blockedCount: 0,
+      droppedCount: 0,
       cacheHitRatio: 0,
+      rateLimitRejections,
       topTokenHeavyTasks: [],
       topExpensiveSteps: [],
       tokensByStep: [],
@@ -103,8 +133,10 @@ const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSu
   const entryWeights = entries.map((e) => cacheWeightedTokens(e.totals))
   const totalWeightedTokens = entryWeights.reduce((a, b) => a + b, 0)
   const med = median(entryWeights)
-  const successes = entries.filter((e) => e.status === 'done')
-  const failures = entries.filter((e) => e.status === 'failed')
+  const successCount = entries.filter((e) => e.status === 'done').length
+  const failureCount = entries.filter((e) => e.status === 'failed').length
+  const blockedCount = entries.filter((e) => e.status === 'blocked').length
+  const droppedCount = entries.filter((e) => e.status === 'dropped').length
   const totalCacheCreate = entries.reduce((a, e) => a + e.totals.cacheCreateTokens, 0)
   const totalCacheRead = entries.reduce((a, e) => a + e.totals.cacheReadTokens, 0)
   const cacheDenom = totalCacheCreate + totalCacheRead
@@ -165,13 +197,41 @@ const buildCostSummary = (entries: readonly ReflectCorpusEntry[]): ReflectCostSu
   return {
     totalWeightedTokens,
     taskCount,
-    successCount: successes.length,
-    failureCount: failures.length,
+    successCount,
+    failureCount,
+    blockedCount,
+    droppedCount,
     cacheHitRatio,
+    rateLimitRejections,
     topTokenHeavyTasks,
     topExpensiveSteps,
     tokensByStep,
   }
+}
+
+/**
+ * Re-order entries so that tasks sharing the same arc (origin_id) are adjacent
+ * in the output. Arc groups are ordered by the most recent task in each group
+ * (preserving the original newest-first sense). Within each arc group, tasks
+ * are sorted chronologically (origin task first, recovery tasks after) so the
+ * model reads the arc in causal order.
+ */
+const groupByArc = (entries: ReflectCorpusEntry[]): ReflectCorpusEntry[] => {
+  // Map from arc key → entries[], preserving insertion order of first encounter.
+  const arcs = new Map<string, ReflectCorpusEntry[]>()
+  for (const entry of entries) {
+    const key = entry.originId ?? entry.taskId
+    const group = arcs.get(key) ?? []
+    group.push(entry)
+    arcs.set(key, group)
+  }
+  // Within each arc sort chronologically (origin before recovery).
+  for (const group of arcs.values()) {
+    group.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))
+  }
+  // Flatten; arc groups are already in newest-first order because `entries`
+  // came from `ORDER BY created_at DESC` and Map preserves insertion order.
+  return Array.from(arcs.values()).flat()
 }
 
 export const loadRecentTaskCorpus = async (
@@ -182,27 +242,33 @@ export const loadRecentTaskCorpus = async (
 
   const queue = options.store ?? (await getDefaultTaskStore())
 
+  // Include blocked and dropped in addition to done/failed so the reflector
+  // can see stalled-task patterns (verify:completeness loops, dropped scope).
   const taskRows = sinceIso
     ? await queue.query({
-        sql: `SELECT id, status, prompt, error, created_at
+        sql: `SELECT id, status, prompt, error, created_at,
+                     failure_signature, failure_reason_code, failed_phase,
+                     kind, fix_for_task_id, origin_id
                 FROM tasks
                WHERE created_at >= ?
-                 AND status IN ('done', 'failed')
+                 AND status IN ('done', 'failed', 'blocked', 'dropped')
                ORDER BY created_at DESC
                LIMIT ?`,
         args: [sinceIso, limit],
       })
     : await queue.query({
-        sql: `SELECT id, status, prompt, error, created_at
+        sql: `SELECT id, status, prompt, error, created_at,
+                     failure_signature, failure_reason_code, failed_phase,
+                     kind, fix_for_task_id, origin_id
                 FROM tasks
-               WHERE status IN ('done', 'failed')
+               WHERE status IN ('done', 'failed', 'blocked', 'dropped')
                ORDER BY created_at DESC
                LIMIT ?`,
         args: [limit],
       })
 
   if (taskRows.rows.length === 0) {
-    return { entries: [], costSummary: buildCostSummary([]) }
+    return { entries: [], costSummary: buildCostSummary([], 0) }
   }
 
   const taskIds = taskRows.rows.map((r) => (r as unknown as { id: string }).id)
@@ -225,6 +291,64 @@ export const loadRecentTaskCorpus = async (
              AND task_id IN (${placeholders})`,
     args: taskIds,
   })
+
+  // Tool error counts per task, excluding expectsFailure=true probes.
+  // Grouped by (task_id, tool, argv[0]) ordered by count desc so the first
+  // row per task_id is the top offender.
+  const toolErrorRows = await queue.query({
+    sql: `SELECT task_id,
+                 json_extract(payload, '$.tool') AS tool,
+                 COALESCE(json_extract(payload, '$.argv[0]'), '') AS argv0,
+                 COUNT(*) AS cnt
+            FROM trace_events
+           WHERE kind = 'tool_invoked'
+             AND severity = 'error'
+             AND (json_extract(payload, '$.expectsFailure') IS NULL
+                  OR json_extract(payload, '$.expectsFailure') = 0)
+             AND task_id IN (${placeholders})
+           GROUP BY task_id, tool, argv0
+           ORDER BY task_id, cnt DESC`,
+    args: taskIds,
+  })
+
+  // Build per-task tool error summary: total count + top offending tool.
+  const toolErrorByTask = new Map<string, { count: number; topTool: string | null }>()
+  for (const row of toolErrorRows.rows) {
+    const r = row as unknown as Record<string, unknown>
+    const taskId = r.task_id as string
+    const cnt = Number(r.cnt ?? 0)
+    const tool = (r.tool as string | null) ?? ''
+    const argv0 = (r.argv0 as string | null) ?? ''
+    if (!toolErrorByTask.has(taskId)) {
+      // First row for this task = highest count = top offender.
+      const label = argv0 ? `${tool} ${argv0}` : tool
+      toolErrorByTask.set(taskId, { count: cnt, topTool: label || null })
+    } else {
+      // Subsequent rows: accumulate count only.
+      const existing = toolErrorByTask.get(taskId)!
+      existing.count += cnt
+    }
+  }
+
+  // Window-level rate-limit rejection count. These log_line events carry the
+  // structured payload as fields.payload; they have no task_id so we query
+  // by time window instead.
+  const windowStart = sinceIso
+    ? sinceIso
+    : (taskRows.rows[taskRows.rows.length - 1] as unknown as Record<string, unknown>)
+        .created_at as string
+  const rateLimitRow = await queue.query({
+    sql: `SELECT COUNT(*) AS count
+            FROM trace_events
+           WHERE kind = 'log_line'
+             AND json_extract(payload, '$.fields.payload.type') = 'rate_limit_event'
+             AND json_extract(payload, '$.fields.payload.rate_limit_info.status') = 'rejected'
+             AND timestamp >= ?`,
+    args: [windowStart],
+  })
+  const rateLimitRejections = Number(
+    ((rateLimitRow.rows[0] as unknown as Record<string, unknown>)?.count as number | null) ?? 0,
+  )
 
   const signalsByTask = new Map<string, ReflectCorpusEntry['signals'][number][]>()
   for (const row of signalRows.rows) {
@@ -265,15 +389,30 @@ export const loadRecentTaskCorpus = async (
       ...sums,
       cacheHitRatio: cacheDenom === 0 ? 0 : sums.cacheReadTokens / cacheDenom,
     }
+    const toolErr = toolErrorByTask.get(taskId) ?? { count: 0, topTool: null }
+    const originId = (r.origin_id as string | null) ?? null
     return {
       taskId,
       status: r.status as string,
       promptPrefix: truncate(r.prompt as string, PROMPT_PREFIX_BYTES) ?? '',
       errorTail: tail((r.error as string | null) ?? null, ERROR_TAIL_BYTES),
       createdAt: r.created_at as string,
+      failureSignature: (r.failure_signature as string | null) ?? null,
+      failureReasonCode: (r.failure_reason_code as string | null) ?? null,
+      failedPhase: (r.failed_phase as string | null) ?? null,
+      kind: (r.kind as string | null) ?? null,
+      fixForTaskId: (r.fix_for_task_id as string | null) ?? null,
+      originId,
+      toolErrorCount: toolErr.count,
+      topErrorTool: toolErr.topTool,
       signals,
       totals,
     }
   })
-  return { entries, costSummary: buildCostSummary(entries) }
+
+  // Group arc siblings (origin + recovery tasks) adjacent in the output so the
+  // model sees arcs, not isolated rows.
+  const grouped = groupByArc(entries)
+
+  return { entries: grouped, costSummary: buildCostSummary(grouped, rateLimitRejections) }
 }

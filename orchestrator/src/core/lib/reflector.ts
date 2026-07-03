@@ -188,7 +188,31 @@ Rules:
 - \`kind\` must be 'mechanical' or 'architectural' exactly (lowercase). When
   in doubt, choose 'architectural'.
 - If there are no high-quality suggestions, return {"suggestions": []}
-  but still fill tokenAnalysis.`
+  but still fill tokenAnalysis.
+
+ENVIRONMENTAL vs BEHAVIORAL: When failures are attributable to the
+environment — provider quota/429 rejections (see rateLimitRejections in
+the cost summary), dependency install errors (pnpm/npm exit codes), daemon
+restarts, or watchdog kills — classify the finding as an infrastructure
+finding and route it to orchestrator code/config fixes. NEVER count these
+failures against a task pattern's confidence, and NEVER classify them as
+coder-prompt problems. A task that failed because the provider returned a
+rate-limit rejection is not evidence that the coder prompt needs work.
+
+FIRST TOOL CALL: When a corpus entry has toolErrorCount > 0 and the very
+first tool_invoked trace event for that task is an error (indicated by
+topErrorTool being set with a high error count relative to total tool
+calls), this is a strong signal of a prompt/environment defect — missing
+orientation, wrong working directory, absent expected file. Call this out
+explicitly in tokenAnalysis.notes, naming the topErrorTool and the task ID.
+
+KPI FRAMING: Every suggestion in the \`prompt\` field MUST state its
+expected effect on the two orchestrator KPIs — task completeness (the
+fraction of tasks reaching 'done') and token cost (total weighted tokens
+per window). Example: "Expected effect: raises completeness by eliminating
+setup-phase failures; saves ~N weighted tokens per affected task by
+avoiding retry cycles." Do not emit a suggestion prompt that omits both
+KPI impacts.`
 
 export const buildPrompt = (corpus: ReflectCorpus): string => {
   const summaryJson = JSON.stringify(corpus.costSummary, null, 2)
