@@ -1790,6 +1790,43 @@ export class Arc {
         sql: `DELETE FROM questions WHERE task_id = ?`,
         args: [id],
       })
+      // Null out fix_for_task_id pointers in both directions:
+      //   (a) rows pointing AT the victim — prevents the self-referential FK on
+      //       tasks.fix_for_task_id from blocking the origin DELETE when a fix
+      //       task still exists in the table (e.g. if its own DELETE failed).
+      //   (b) the victim's own pointer — belt-and-suspenders for fix tasks
+      //       dropped directly; no-op for origin tasks (already NULL).
+      // These UPDATEs are idempotent and safe regardless of which direction
+      // the caller is purging (fix→origin or origin→fix cascade).
+      await scope.execute({
+        sql: `UPDATE tasks SET fix_for_task_id = NULL WHERE fix_for_task_id = ?`,
+        args: [id],
+      })
+      await scope.execute({
+        sql: `UPDATE tasks SET fix_for_task_id = NULL WHERE id = ?`,
+        args: [id],
+      })
+      // Explicit deletes for every junction table whose FK to tasks(id) lacks
+      // ON DELETE CASCADE on older DB snapshots (CREATE TABLE IF NOT EXISTS
+      // never rebuilds an existing table, so the CASCADE may be absent).
+      // Belt-and-suspenders even on up-to-date schemas where CASCADE fires
+      // automatically — an explicit DELETE is idempotent.
+      await scope.execute({
+        sql: `DELETE FROM task_acceptance WHERE task_id = ?`,
+        args: [id],
+      })
+      await scope.execute({
+        sql: `DELETE FROM task_claude_sessions WHERE task_id = ?`,
+        args: [id],
+      })
+      await scope.execute({
+        sql: `DELETE FROM task_spec_files WHERE task_id = ?`,
+        args: [id],
+      })
+      await scope.execute({
+        sql: `DELETE FROM task_done_criteria WHERE task_id = ?`,
+        args: [id],
+      })
 
       // Cascade-delete each fix/recovery task that pointed at the origin.
       // For each: release any tasks that were blocked on the fix task (e.g.
@@ -1844,6 +1881,30 @@ export class Arc {
         })
         await scope.execute({
           sql: `DELETE FROM questions WHERE task_id = ?`,
+          args: [fixId],
+        })
+        // Explicit child-table cleanup for each fix task — mirrors the origin
+        // cleanup above so the DELETE FROM tasks below never hits a stale FK.
+        await scope.execute({
+          sql: `DELETE FROM task_acceptance WHERE task_id = ?`,
+          args: [fixId],
+        })
+        await scope.execute({
+          sql: `DELETE FROM task_claude_sessions WHERE task_id = ?`,
+          args: [fixId],
+        })
+        await scope.execute({
+          sql: `DELETE FROM task_spec_files WHERE task_id = ?`,
+          args: [fixId],
+        })
+        await scope.execute({
+          sql: `DELETE FROM task_done_criteria WHERE task_id = ?`,
+          args: [fixId],
+        })
+        // self_heal_attempts.fix_task_id has ON DELETE CASCADE (post-migration)
+        // but an explicit delete guards against pre-migration schemas.
+        await scope.execute({
+          sql: `DELETE FROM self_heal_attempts WHERE fix_task_id = ?`,
           args: [fixId],
         })
         await scope.execute({
