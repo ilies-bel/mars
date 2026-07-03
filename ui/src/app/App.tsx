@@ -113,6 +113,9 @@ const AppInner = () => {
   const proposal = proposalId
     ? (drafts.find((d) => d.id === proposalId) ?? null)
     : null
+  const proposalNodeDraft = proposalNodeId
+    ? (drafts.find((d) => d.id === proposalNodeId) ?? undefined)
+    : undefined
   const route = resolvePageRoute(hash)
 
   // Update the browser tab title whenever the route or AQ item count changes
@@ -179,6 +182,7 @@ const AppInner = () => {
             proposalId={proposalNodeId}
             proposals={proposals}
             tasks={tasks ?? []}
+            proposal={proposalNodeDraft}
             onClose={() => {
               if (typeof window === 'undefined') return
               window.location.hash = '#/progress'

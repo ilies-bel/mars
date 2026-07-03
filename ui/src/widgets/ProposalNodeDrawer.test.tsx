@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
+import type { DraftFeature, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import { ProposalNodeDrawer } from './ProposalNodeDrawer'
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
@@ -32,6 +32,20 @@ const proposal = (id: string, title = `Goal ${id}`): ProgressProposalNode => ({
   title,
   source: 'human',
   status: 'prd-ready',
+})
+
+const draftFeature = (overrides: Partial<DraftFeature> = {}): DraftFeature => ({
+  id: 'p1',
+  title: 'Fill in the Proposal drawer content',
+  problem: '',
+  solution: '',
+  status: 'draft',
+  source: 'reflection',
+  createdAt: 0,
+  updatedAt: 0,
+  acceptanceCount: 0,
+  userStories: [],
+  ...overrides,
 })
 
 // ── AC1: Drawer surface (same shell as TaskDetailDrawer) ──────────────────────
@@ -99,33 +113,146 @@ describe('ProposalNodeDrawer – surface identity', () => {
   })
 })
 
-// ── AC2: Placeholder for Proposal detail ──────────────────────────────────────
+// ── AC2: Rich proposal detail (replaced the tracer-bullet placeholder) ────────
 
-describe('ProposalNodeDrawer – placeholder', () => {
-  it('shows a clearly-labeled placeholder section for Proposal detail', () => {
+describe('ProposalNodeDrawer – rich proposal detail', () => {
+  it('renders the proposal title when DraftFeature is provided', () => {
     const html = renderToStaticMarkup(
       <ProposalNodeDrawer
         proposalId="p1"
         proposals={[proposal('p1')]}
         tasks={[]}
+        proposal={draftFeature({ title: 'My rich feature' })}
         onClose={() => {}}
       />,
     )
-    expect(html).toContain('data-testid="proposal-node-placeholder"')
+    expect(html).toContain('data-testid="proposal-node-title"')
+    expect(html).toContain('My rich feature')
   })
 
-  it('placeholder text references proposal detail (not task detail)', () => {
+  it('renders the status badge and source when DraftFeature is provided', () => {
     const html = renderToStaticMarkup(
       <ProposalNodeDrawer
         proposalId="p1"
         proposals={[proposal('p1')]}
         tasks={[]}
+        proposal={draftFeature({ status: 'prd-ready', source: 'planner' })}
         onClose={() => {}}
       />,
     )
-    // The placeholder should make it clear it's for proposals, not tasks
-    expect(html.toLowerCase()).toMatch(/proposal/i)
-    expect(html).toContain('data-testid="proposal-node-placeholder"')
+    expect(html).toContain('data-testid="proposal-node-status"')
+    expect(html).toContain('prd-ready')
+    expect(html).toContain('data-testid="proposal-node-source"')
+    expect(html).toContain('planner')
+  })
+
+  it('renders the problem section when proposal has a non-empty problem', () => {
+    const html = renderToStaticMarkup(
+      <ProposalNodeDrawer
+        proposalId="p1"
+        proposals={[proposal('p1')]}
+        tasks={[]}
+        proposal={draftFeature({ problem: 'Users see an empty panel.' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-node-problem"')
+    expect(html).toContain('Users see an empty panel.')
+  })
+
+  it('renders the solution section when proposal has a non-empty solution', () => {
+    const html = renderToStaticMarkup(
+      <ProposalNodeDrawer
+        proposalId="p1"
+        proposals={[proposal('p1')]}
+        tasks={[]}
+        proposal={draftFeature({ solution: 'Render the PRD body here.' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-node-solution"')
+    expect(html).toContain('Render the PRD body here.')
+  })
+
+  it('renders user stories when proposal has stories', () => {
+    const html = renderToStaticMarkup(
+      <ProposalNodeDrawer
+        proposalId="p1"
+        proposals={[proposal('p1')]}
+        tasks={[]}
+        proposal={draftFeature({ userStories: ['Story alpha', 'Story beta'] })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-node-stories"')
+    expect(html).toContain('Story alpha')
+    expect(html).toContain('Story beta')
+  })
+
+  it('omits problem section when problem is empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalNodeDrawer
+        proposalId="p1"
+        proposals={[proposal('p1')]}
+        tasks={[]}
+        proposal={draftFeature({ problem: '' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="proposal-node-problem"')
+  })
+
+  it('omits solution section when solution is empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalNodeDrawer
+        proposalId="p1"
+        proposals={[proposal('p1')]}
+        tasks={[]}
+        proposal={draftFeature({ solution: '' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="proposal-node-solution"')
+  })
+
+  it('omits stories section when no stories exist', () => {
+    const html = renderToStaticMarkup(
+      <ProposalNodeDrawer
+        proposalId="p1"
+        proposals={[proposal('p1')]}
+        tasks={[]}
+        proposal={draftFeature({ userStories: [] })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="proposal-node-stories"')
+  })
+
+  it('renders CLI commands for the proposal status', () => {
+    const html = renderToStaticMarkup(
+      <ProposalNodeDrawer
+        proposalId="p1"
+        proposals={[proposal('p1')]}
+        tasks={[]}
+        proposal={draftFeature({ id: 'prop-abc', status: 'draft' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('mars proposal promote prop-abc')
+    expect(html).toContain('mars proposal show prop-abc')
+  })
+
+  it('does not render a placeholder when DraftFeature is provided', () => {
+    const html = renderToStaticMarkup(
+      <ProposalNodeDrawer
+        proposalId="p1"
+        proposals={[proposal('p1')]}
+        tasks={[]}
+        proposal={draftFeature()}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('proposal-node-placeholder')
   })
 })
 
