@@ -11,6 +11,7 @@ import { useGlobalKeyboardShortcuts } from '@/shared/useGlobalKeyboardShortcuts'
 import {
   isKnownRoute,
   parseKpiRoute,
+  parseProposalOrigin,
   parseProposalRoute,
   parseProposalNodeRoute,
   parseReleaseNotesRoute,
@@ -150,7 +151,9 @@ const AppInner = () => {
           <ProposalDetailDrawer
             proposal={proposal}
             onClose={() => {
-              if (typeof window !== 'undefined') window.location.hash = '#/progress'
+              if (typeof window === 'undefined') return
+              const origin = parseProposalOrigin(hash)
+              window.location.hash = origin ? ROUTE_BASE[origin] : '#/progress'
             }}
             tasks={tasks ?? []}
           />
@@ -163,7 +166,8 @@ const AppInner = () => {
             proposals={proposals}
             tasks={tasks ?? []}
             onClose={() => {
-              if (typeof window !== 'undefined') window.location.hash = '#/progress'
+              if (typeof window === 'undefined') return
+              window.location.hash = '#/progress'
             }}
           />
         </FallbackBoundary>

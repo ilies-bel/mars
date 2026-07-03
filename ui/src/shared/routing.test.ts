@@ -8,10 +8,12 @@ import {
   parseTaskStep,
   parseProposalRoute,
   parseProposalNodeRoute,
+  parseProposalOrigin,
   parseReleaseNotesRoute,
   releaseNotesHash,
   resolvePageRoute,
   taskHash,
+  proposalHash,
 } from './routing'
 import type { StaleWorktreesPayload } from './schemas'
 
@@ -279,6 +281,53 @@ describe('parseProposalRoute', () => {
 })
 
 // ---------------------------------------------------------------------------
+// proposalHash — builds the overlay hash, optionally tagging the origin
+// ---------------------------------------------------------------------------
+
+describe('proposalHash', () => {
+  it('builds a plain proposal hash with no origin', () => {
+    expect(proposalHash('x')).toBe('#/proposal/x')
+  })
+
+  it('appends ?from=<route> when an origin is given', () => {
+    expect(proposalHash('x', 'action-queue')).toBe('#/proposal/x?from=action-queue')
+  })
+
+  it('percent-encodes the id', () => {
+    expect(proposalHash('mars-123')).toBe('#/proposal/mars-123')
+  })
+
+  it('appends ?from=progress when progress is given', () => {
+    expect(proposalHash('abc', 'progress')).toBe('#/proposal/abc?from=progress')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseProposalOrigin — reads the `from` query param off a proposal hash
+// ---------------------------------------------------------------------------
+
+describe('parseProposalOrigin', () => {
+  it('returns the route from ?from=<route>', () => {
+    expect(parseProposalOrigin('#/proposal/x?from=action-queue')).toBe('action-queue')
+    expect(parseProposalOrigin('#/proposal/x?from=progress')).toBe('progress')
+    expect(parseProposalOrigin('#/proposal/x?from=events')).toBe('events')
+  })
+
+  it('returns null when the proposal hash carries no from', () => {
+    expect(parseProposalOrigin('#/proposal/x')).toBeNull()
+  })
+
+  it('returns null for an unrecognised from value', () => {
+    expect(parseProposalOrigin('#/proposal/x?from=bogus')).toBeNull()
+  })
+
+  it('returns null for a non-proposal hash', () => {
+    expect(parseProposalOrigin('#/progress')).toBeNull()
+    expect(parseProposalOrigin('#/task/x?from=action-queue')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // resolvePageRoute – overlay keeps Progress page mounted (criterion 4)
 // ---------------------------------------------------------------------------
 
@@ -319,8 +368,18 @@ describe('resolvePageRoute', () => {
     expect(resolvePageRoute('#/task/')).toBe('action-queue')
   })
 
-  it('returns progress when a proposal overlay hash is present', () => {
+  it('returns progress when a proposal overlay hash is present (no from)', () => {
     expect(resolvePageRoute('#/proposal/prop-abc')).toBe('progress')
+  })
+
+  it('returns the from-route when a proposal overlay carries ?from=action-queue', () => {
+    // Opening the proposal drawer from the Action Queue should keep AQ mounted
+    // behind it and closing returns there — matching task drawer behaviour.
+    expect(resolvePageRoute('#/proposal/x?from=action-queue')).toBe('action-queue')
+  })
+
+  it('falls back to progress for a proposal with an unrecognised from value', () => {
+    expect(resolvePageRoute('#/proposal/x?from=bogus')).toBe('progress')
   })
 
   it('returns progress when a proposal-node overlay hash is present', () => {

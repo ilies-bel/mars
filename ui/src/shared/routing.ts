@@ -200,11 +200,42 @@ export const parseTaskStep = (hash: string): string | null => {
 }
 
 /**
- * Builds a proposal overlay hash. `proposalHash('x')` → `#/proposal/x`.
+ * Builds a proposal overlay hash, optionally tagging the origin page so the
+ * drawer knows where to return on close. `proposalHash('x')` → `#/proposal/x`
+ * (origin defaults to Progress); `proposalHash('x', 'action-queue')` →
+ * `#/proposal/x?from=action-queue`.
+ *
  * Mirrors `taskHash` for the proposal routing shape.
  */
-export const proposalHash = (id: string): string =>
-  `#/proposal/${encodeURIComponent(id)}`
+export const proposalHash = (id: string, from?: RouteName): string => {
+  const base = `#/proposal/${encodeURIComponent(id)}`
+  return from ? `${base}?from=${from}` : base
+}
+
+/**
+ * Reads the origin page encoded in a `#/proposal/<id>?from=<route>` hash.
+ *
+ * Mirrors `parseTaskOrigin` exactly but for proposal overlay hashes: the `from`
+ * query param records which page the proposal drawer was opened from so that
+ * closing returns there rather than always snapping to Progress.
+ *
+ * Returns the matching `RouteName`, or `null` when the hash carries no `from`,
+ * an empty value, or an unrecognised route.
+ */
+export const parseProposalOrigin = (hash: string): RouteName | null => {
+  if (parseProposalRoute(hash) === null) return null
+  const queryIndex = hash.indexOf('?')
+  if (queryIndex === -1) return null
+  const query = hash.slice(queryIndex + 1)
+  for (const pair of query.split('&')) {
+    const eq = pair.indexOf('=')
+    if (eq === -1) continue
+    if (pair.slice(0, eq) !== 'from') continue
+    const value = decodeURIComponent(pair.slice(eq + 1))
+    return isRouteName(value) ? value : null
+  }
+  return null
+}
 
 /**
  * Parses an optional `#/proposal/<id>` overlay route. Proposal rows route here
@@ -276,8 +307,10 @@ export const actionQueueCount = (payload: StaleWorktreesPayload): number =>
  *   preserving the operator's Progress view state (active tab, cluster
  *   toggles, recency slider) across the drawer's open/close cycle.
  *
- * Proposal overlay hashes (`#/proposal/<id>`) always force 'progress'
- * (proposals are out of scope for the `from` mechanism).
+ * Proposal overlay hashes (`#/proposal/<id>?from=<route>`) respect the same
+ * `from` mechanism as task overlays — the `from` param records the origin page
+ * so closing the drawer returns there. A bare `#/proposal/<id>` (no `from`)
+ * falls back to 'progress'.
  *
  * Use this instead of `detectRoute` as the single source of truth in the App.
  */
@@ -288,7 +321,7 @@ export const resolvePageRoute = (hash: string): RouteName => {
   }
   const proposalId = parseProposalRoute(hash)
   if (proposalId !== null && hash.startsWith('#/proposal/')) {
-    return 'progress'
+    return parseProposalOrigin(hash) ?? 'progress'
   }
   const proposalNodeId = parseProposalNodeRoute(hash)
   if (proposalNodeId !== null) {

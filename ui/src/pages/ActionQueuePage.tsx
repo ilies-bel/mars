@@ -825,7 +825,7 @@ export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
             <ArcChainRail
               chain={item.chain}
               onSelectTask={openTask}
-              onOpenProposal={(id) => { window.location.hash = proposalHash(id) }}
+              onOpenProposal={(id) => { window.location.hash = proposalHash(id, 'action-queue') }}
             />
           ) : null}
           {/* Origin / recovery chain — navigable links between origin and fix tasks. */}
