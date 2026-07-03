@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DraftFeature, ProgressTask } from '@/shared/schemas'
+import { CopyButton } from '@/components/CopyButton'
 
 interface ProposalDetailDrawerProps {
   /** Proposal sourced from the `/api/proposals` fetch. */
@@ -270,17 +271,11 @@ export const ProposalDetailDrawer = ({
               <code className="flex-1 truncate rounded bg-iron/10 px-2 py-1 font-mono text-xs text-fg">
                 {cmd}
               </code>
-              <button
-                type="button"
+              <CopyButton
+                text={cmd}
                 data-testid="copy-cli-cmd"
                 aria-label={`Copy: ${cmd}`}
-                onClick={() => {
-                  navigator.clipboard?.writeText(cmd)
-                }}
-                className="shrink-0 rounded border border-iron/40 px-2 py-0.5 font-mono text-xs text-iron hover:bg-iron/10"
-              >
-                Copy
-              </button>
+              />
             </div>
           )
         })}

@@ -852,7 +852,9 @@ describe('TaskDetailBody – OriginTree drill-in wiring', () => {
       </QueryClientProvider>,
     )
     expect(html).toContain('data-origin-node-id="prop-x"')
-    expect(html).toMatch(/<button[^>]*>[\s\S]*?prop-x/)
+    // The origin-row <li> for prop-x must have a <button> as its immediate child
+    // (the full row is clickable when onNavigate is wired up).
+    expect(html).toMatch(/data-origin-node-id="prop-x"[^>]*><button/)
   })
 
   it('renders origin rows as plain cells (no buttons) when onNavigate is omitted', () => {
@@ -868,8 +870,9 @@ describe('TaskDetailBody – OriginTree drill-in wiring', () => {
       </QueryClientProvider>,
     )
     expect(html).toContain('data-origin-node-id="prop-x"')
-    // No origin-row button wraps the node id when display-only.
-    expect(html).not.toMatch(/<button[^>]*>[\s\S]*?prop-x/)
+    // No origin-row button is the immediate child of the <li> when display-only.
+    // (The precise pattern avoids false positives from other buttons in the drawer.)
+    expect(html).not.toMatch(/data-origin-node-id="prop-x"[^>]*><button/)
   })
 })
 

@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FallbackSurface } from '@/components/FallbackSurface'
+import { CopyButton } from '@/components/CopyButton'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
 import { OriginTree } from '@/widgets/OriginTree'
@@ -270,16 +271,15 @@ const ActionBar = ({ item }: ActionBarProps) => {
   const qc = useQueryClient()
   const projectId = useFocusedProjectId()
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [copiedActionId, setCopiedActionId] = useState<string | null>(null)
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Two-step confirm: tracks which needsConfirm action is awaiting a second click.
+  // (The copy affordance now lives in the shared <CopyButton>, which owns its own
+  // 'Copied ✓' transient state — no local copy timer here.)
   const [pendingConfirmId, setPendingConfirmId] = useState<string | null>(null)
   const pendingConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Clear both transient timers on unmount to avoid setState-after-unmount.
+  // Clear the confirm timer on unmount to avoid setState-after-unmount.
   useEffect(() => {
     return () => {
-      if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
       if (pendingConfirmTimerRef.current !== null) clearTimeout(pendingConfirmTimerRef.current)
     }
   }, [])
@@ -366,27 +366,6 @@ const ActionBar = ({ item }: ActionBarProps) => {
     mutation.mutate({ action })
   }
 
-  const handleCopy = (action: ActionDescriptor) => {
-    const text = action.hint ?? action.label
-    if (typeof navigator === 'undefined' || !navigator.clipboard) {
-      setErrorMsg('Clipboard unavailable')
-      return
-    }
-    navigator.clipboard.writeText(text).then(
-      () => {
-        if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
-        setCopiedActionId(action.id)
-        copyTimerRef.current = setTimeout(() => {
-          setCopiedActionId(null)
-          copyTimerRef.current = null
-        }, 1500)
-      },
-      (err: unknown) => {
-        setErrorMsg((err instanceof Error ? err.message : null) ?? 'Copy failed')
-      },
-    )
-  }
-
   return (
     <div
       onKeyDown={(e) => {
@@ -402,14 +381,12 @@ const ActionBar = ({ item }: ActionBarProps) => {
       <dd className="flex flex-wrap gap-2">
         {visibleActions.map((action) =>
           action.op === 'copy' ? (
-            <button
+            <CopyButton
               key={action.id}
-              type="button"
-              onClick={() => handleCopy(action)}
+              text={action.hint ?? action.label}
+              label={action.label}
               className="border border-iron/30 px-3 py-1.5 font-mono text-[11px] text-iron transition hover:bg-iron/10 active:scale-[0.97]"
-            >
-              {copiedActionId === action.id ? 'Copied ✓' : action.label}
-            </button>
+            />
           ) : (
             <button
               key={action.id}

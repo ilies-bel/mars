@@ -27,6 +27,7 @@ import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared
 import { relativeTime } from '@/shared/time'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { FallbackSurface } from '@/components/FallbackSurface'
+import { CopyButton } from '@/components/CopyButton'
 import { OriginTree } from './OriginTree'
 
 /** A single step execution span — one step_started event paired with its step_ended (if any). */
@@ -390,7 +391,13 @@ export const TaskDetailBody = ({
           >
             {task.status}
           </span>
-          <span className="break-all font-mono text-[10px] text-muted">{task.id}</span>
+          <CopyButton
+            text={task.id}
+            label={task.id}
+            data-testid="copy-task-id"
+            aria-label={`Copy task id: ${task.id}`}
+            className="break-all cursor-pointer font-mono text-[10px] text-muted hover:text-fg transition-colors"
+          />
         </div>
       </div>
 
@@ -411,12 +418,20 @@ export const TaskDetailBody = ({
           ) : null}
           {/* Lead with humanized cause — same source as the Action Queue banner. */}
           {task.failureSignature != null ? (
-            <p
-              data-testid="task-detail-failure-cause"
-              className="mt-1 text-[11px] text-error"
-            >
-              {humanizeFailureCode(task.failureSignature)}
-            </p>
+            <div className="mt-1 flex items-center gap-2">
+              <p
+                data-testid="task-detail-failure-cause"
+                className="flex-1 text-[11px] text-error"
+              >
+                {humanizeFailureCode(task.failureSignature)}
+              </p>
+              <CopyButton
+                text={task.failureSignature}
+                data-testid="copy-failure-signature"
+                aria-label={`Copy failure signature: ${task.failureSignature}`}
+                className="shrink-0 rounded border border-error/30 px-1.5 py-0.5 font-mono text-[10px] text-error/60 hover:bg-error/10"
+              />
+            </div>
           ) : null}
           {/* Raw error and signature demoted to a secondary technical detail. */}
           {(task.error != null || task.failureSignature != null) ? (
@@ -435,6 +450,23 @@ export const TaskDetailBody = ({
                 </p>
               ) : null}
             </details>
+          ) : null}
+          {/* Ready-made restart command — one click to copy, then paste into CLI. */}
+          {task.status === 'failed' ? (
+            <div className="mt-2 flex items-center gap-2">
+              <code
+                data-testid="task-restart-cmd"
+                className="flex-1 truncate rounded bg-error/10 px-2 py-1 font-mono text-[11px] text-error/80"
+              >
+                {`mars restart ${task.id}`}
+              </code>
+              <CopyButton
+                text={`mars restart ${task.id}`}
+                data-testid="copy-restart-cmd"
+                aria-label={`Copy: mars restart ${task.id}`}
+                className="shrink-0 rounded border border-error/30 px-2 py-0.5 font-mono text-xs text-error/60 hover:bg-error/10"
+              />
+            </div>
           ) : null}
         </div>
       ) : null}
