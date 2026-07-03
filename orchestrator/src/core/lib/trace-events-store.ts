@@ -27,6 +27,7 @@ export const TRACE_EVENT_KINDS = [
   'task_failed',
   'tool_invoked',
   'log_line',
+  'worker-model-mismatch',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]
@@ -146,6 +147,8 @@ export interface TraceEventStore {
  * - `tool_invoked` with non-zero exit AND `payload.expectsFailure === true` → `warn`
  * - `tool_invoked` with non-zero exit AND falsy `expectsFailure` → `error`
  * - `log_line` → reads `payload.level` ('info'|'warn'|'error'); falls back to 'info'
+ * - `worker-model-mismatch` → `warn` (the subprocess is running a different model
+ *   than the Worker pin; budget drift risk, needs investigation)
  * - everything else → `info`
  *
  * `log_line` payload shape:
@@ -173,6 +176,7 @@ export const deriveSeverity = (
     if (level === 'warn' || level === 'error') return level
     return 'info'
   }
+  if (kind === 'worker-model-mismatch') return 'warn'
   return 'info'
 }
 

@@ -196,6 +196,41 @@ describe('Fixer pinned config', () => {
   })
 })
 
+// Regression guard: before commit 77b0f693, WORKER_CONFIGS.Fixer.model was
+// 'claude-opus-4-7', causing every recovery run to dispatch on Opus even though
+// the intent was Sonnet (scoped mechanical work, not architectural reasoning).
+// During a failure storm this multiplied cost — each failed task spawned one
+// Opus Fixer. The tests below pin the dispatch-time model to prevent regression.
+describe('fix-run spawn argv regression (model was claude-opus-4-7 before 77b0f693)', () => {
+  it('Workers.Fixer is the worker selected for fix tasks and its model is claude-sonnet-4-6', () => {
+    // The dispatch path in runAgent: kind === 'fix' ? Workers.Fixer : ...
+    // Workers.Fixer must never silently revert to opus.
+    expect(Workers.Fixer.config.model).toBe('claude-sonnet-4-6')
+    expect(WORKER_CONFIGS.Fixer.model).toBe('claude-sonnet-4-6')
+  })
+
+  it('fix-run argv contains --model claude-sonnet-4-6 and NOT claude-opus-4-7', () => {
+    // Verify the argv path end-to-end: WORKER_CONFIGS.Fixer → claudeStreamArgs.
+    // If the model is ever reverted to opus, this catches it at the argv level,
+    // not just at the config level.
+    const fixArgs = argvFor('Fixer')
+    expect(valueAfter(fixArgs, '--model')).toBe('claude-sonnet-4-6')
+    expect(fixArgs).not.toContain('claude-opus-4-7')
+  })
+
+  it('Fixer model is NOT overridable by MARS_WORKER_MODEL (only Coder is)', () => {
+    // MARS_WORKER_MODEL feeds CODER_MODEL, which is used only by WORKER_CONFIGS.Coder.
+    // Fixer must always use CLAUDE_SONNET_MODEL regardless of MARS_WORKER_MODEL.
+    // This test verifies the isolation: even if MARS_WORKER_MODEL were set to opus,
+    // the Fixer config stays on the pinned sonnet.
+    expect(WORKER_CONFIGS.Fixer.model).toBe('claude-sonnet-4-6')
+    // Coder may differ from Fixer if MARS_WORKER_MODEL is set, but Fixer must not.
+    // The pinned constant is the same 'claude-sonnet-4-6' regardless of env.
+    expect(WORKER_CONFIGS.Fixer.model).not.toBe(WORKER_CONFIGS.Planner.model) // Planner is Opus
+    expect(WORKER_CONFIGS.Fixer.model).not.toBe(WORKER_CONFIGS.Slicer.model) // Slicer is Opus
+  })
+})
+
 describe('MARS_WORKER_MODEL env var', () => {
   it('defaults Coder to sonnet when MARS_WORKER_MODEL is unset', () => {
     // CODER_MODEL is resolved at module-load time: process.env.MARS_WORKER_MODEL

@@ -150,6 +150,32 @@ export const runWorkerWithSpan = async (
       if (pendingChunkEvents.length >= TRANSCRIPT_CHUNK_BATCH) {
         await safeFlushChunk()
       }
+      // Spawn-time model guard: the claude CLI emits a system/init event at
+      // the start of every run containing the model it actually selected.
+      // Compare against the Worker's pinned model; a mismatch means the
+      // subprocess is using a different (possibly more expensive) model than
+      // intended — emit a warn trace event so the drift is visible in reflect.
+      // This converts silent budget drift (e.g. opus running where sonnet was
+      // pinned) into a queryable signal without blocking the run.
+      if (
+        event.type === 'system' &&
+        (event.subtype as string | undefined) === 'init' &&
+        typeof event.model === 'string' &&
+        event.model !== worker.config.model
+      ) {
+        await safeRecord(traceStore, {
+          kind: 'worker-model-mismatch',
+          taskId,
+          originId,
+          phase: phase ?? null,
+          payload: {
+            expected: worker.config.model,
+            actual: event.model as string,
+            worker: worker.config.name,
+            taskId,
+          },
+        })
+      }
       return runOptions.onEvent?.(event)
     },
   }

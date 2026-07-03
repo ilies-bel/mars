@@ -121,6 +121,18 @@ describe('deriveSeverity', () => {
     expect(deriveSeverity('log_line', { msg: 'no level', source: 'sweeper' })).toBe('info')
     expect(deriveSeverity('log_line', {})).toBe('info')
   })
+
+  it('returns warn for worker-model-mismatch', () => {
+    // A subprocess running a different model than the Worker pin is a budget
+    // risk but not a hard failure — warn so it surfaces in reflect.
+    expect(
+      deriveSeverity('worker-model-mismatch', {
+        expected: 'claude-sonnet-4-6',
+        actual: 'claude-opus-4-7',
+        worker: 'Fixer',
+      }),
+    ).toBe('warn')
+  })
 })
 
 describe('openTraceEventStore — record + query roundtrip', () => {
