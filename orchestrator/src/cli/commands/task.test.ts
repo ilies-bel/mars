@@ -277,3 +277,31 @@ describe('task add prompt input channels', () => {
     expect((fake.calls[0] as { prompt?: string }).prompt).toBe('inline literal prompt here')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Output verb matches landing status
+// ---------------------------------------------------------------------------
+
+describe('task add output verb matches landing status', () => {
+  it('prints "queued" when daemon returns status=queued', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-q', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'some prompt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(r.out[0]).toMatch(/^queued mars-task-q/)
+  })
+
+  it('prints "blocked" when daemon returns status=blocked (--blocked-by with unfinished blocker)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-blk', status: 'blocked' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--blocked-by', 'mars-4da0cfba', 'some prompt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(r.out[0]).toMatch(/^blocked mars-task-blk/)
+  })
+})

@@ -90,7 +90,7 @@ const enqueueViaDaemon = async (
     },
     { onSpawnNotice: spawnNoticeOut(deps.out) },
   )) as { id: string; status: string }
-  const verb = task.status === 'queued' ? 'queued' : 'drafted'
+  const verb = task.status
   const suffix =
     params.blockerIds && params.blockerIds.length > 0
       ? ` (blocked by: ${params.blockerIds.join(', ')}; author: ${formatAuthor(author)})`

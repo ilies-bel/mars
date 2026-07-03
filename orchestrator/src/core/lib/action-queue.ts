@@ -289,6 +289,17 @@ export const initActionQueue = async (): Promise<void> => {
         SET body = replace(body, 'retry_budget_exhausted', 'recovery_exhausted')
       WHERE body LIKE '%retry_budget_exhausted%'`,
   )
+  // Drop legacy inbox_* tables left behind by the inbox→action_queue rename.
+  // Sanity-assert action_queue_items exists first so we never drop before the
+  // rename has run. DROP TABLE IF EXISTS is idempotent on subsequent inits.
+  const aqCheck = await c.execute(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='action_queue_items'`,
+  )
+  if (aqCheck.rows.length > 0) {
+    await c.execute(`DROP TABLE IF EXISTS inbox_items`)
+    await c.execute(`DROP TABLE IF EXISTS inbox_history`)
+    await c.execute(`DROP TABLE IF EXISTS inbox_dismissals`)
+  }
   initialised = true
 }
 

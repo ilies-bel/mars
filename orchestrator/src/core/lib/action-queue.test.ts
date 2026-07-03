@@ -942,6 +942,45 @@ describe('supersedeOrphanedHitlActionQueueRows — orphan sweep', () => {
   })
 })
 
+describe('initActionQueue drops legacy inbox_* tables', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('drops inbox_items, inbox_history, inbox_dismissals when action_queue_items exists', async () => {
+    const dbPath = resolve(repo, '.mars', 'mars.db')
+
+    // Seed the DB with legacy inbox tables — simulates a pre-rename .mars/mars.db
+    const { createClient } = await import('@libsql/client')
+    const pre = createClient({ url: `file:${dbPath}` })
+    await pre.execute('CREATE TABLE inbox_items (id TEXT PRIMARY KEY)')
+    await pre.execute('CREATE TABLE inbox_history (id TEXT PRIMARY KEY, item_id TEXT NOT NULL)')
+    await pre.execute('CREATE TABLE inbox_dismissals (id TEXT PRIMARY KEY)')
+    pre.close()
+
+    // Load the module fresh — the first call to any exported function triggers initActionQueue
+    const actionQueue = await loadModule(repo)
+    await actionQueue.listActionQueueItems('all')
+
+    // Verify all three inbox tables were removed
+    const post = createClient({ url: `file:${dbPath}` })
+    const found = await post.execute(
+      `SELECT name FROM sqlite_master
+         WHERE type='table' AND name IN ('inbox_items','inbox_history','inbox_dismissals')`,
+    )
+    post.close()
+
+    expect(found.rows).toHaveLength(0)
+  })
+})
+
 describe('ACTION_QUEUE_KINDS membership — writer kind constants', () => {
   it('every raiseActionQueueItem writer kind constant is a member of ACTION_QUEUE_KINDS', async () => {
     // Import ACTION_QUEUE_KINDS fresh so any module-cache state is irrelevant.
