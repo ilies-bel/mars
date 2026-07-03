@@ -87,7 +87,28 @@ export const ActionQueueRow = memo(({
   ].join(' ')
 
   return (
-    <div className={baseClass} onClick={() => onSelect(item.id)}>
+    <div
+      className={baseClass}
+      role="button"
+      tabIndex={0}
+      aria-current={active ? 'true' : undefined}
+      data-aq-row=""
+      onClick={() => onSelect(item.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect(item.id)
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault()
+          const allRows = Array.from(
+            document.querySelectorAll<HTMLElement>('[data-aq-row]'),
+          )
+          const idx = allRows.indexOf(e.currentTarget)
+          const next = e.key === 'ArrowDown' ? allRows[idx + 1] : allRows[idx - 1]
+          next?.focus()
+        }
+      }}
+    >
       <div className="flex items-baseline gap-2">
         {item.kind !== 'failed-task' && (
           <span className="shrink-0 font-mono text-[9px] uppercase text-iron/80">
@@ -113,6 +134,7 @@ export const ActionQueueRow = memo(({
         {onRestart !== null && (
           <button
             type="button"
+            aria-label={`Restart ${item.entityId}`}
             disabled={restartPending}
             onClick={(e) => {
               e.stopPropagation()
@@ -1026,11 +1048,29 @@ export const ActionQueuePage = () => {
                     <div
                       key={item.id}
                       data-testid="history-row"
+                      data-aq-row=""
+                      role="button"
+                      tabIndex={0}
+                      aria-current={item.id === (selected?.id ?? null) ? 'true' : undefined}
                       className={[
                         'cursor-pointer px-3 py-2 transition-colors',
                         item.id === (selected?.id ?? null) ? 'bg-iron/20' : 'hover:bg-iron/10',
                       ].join(' ')}
                       onClick={() => handleSelect(item.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          handleSelect(item.id)
+                        } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                          e.preventDefault()
+                          const allRows = Array.from(
+                            document.querySelectorAll<HTMLElement>('[data-aq-row]'),
+                          )
+                          const idx = allRows.indexOf(e.currentTarget)
+                          const next = e.key === 'ArrowDown' ? allRows[idx + 1] : allRows[idx - 1]
+                          next?.focus()
+                        }
+                      }}
                     >
                       <div className="flex items-baseline gap-2">
                         {item.kind !== 'failed-task' && (

@@ -46,6 +46,7 @@ const makeItem = (overrides: Record<string, unknown>): ActionQueueItem =>
 const renderRow = (
   item: ActionQueueItem,
   opts: {
+    active?: boolean
     onRestart?: (() => void) | null
     restartPending?: boolean
     restartError?: string | null
@@ -54,7 +55,7 @@ const renderRow = (
   renderToStaticMarkup(
     <ActionQueueRow
       item={item}
-      active={false}
+      active={opts.active ?? false}
       onSelect={() => {}}
       onRestart={opts.onRestart ?? null}
       restartPending={opts.restartPending ?? false}
@@ -448,6 +449,55 @@ describe('ActionQueueDetail – diagnosis rendering (post-diagnose-failure refet
 // behavioral contract ("these ops carry no entity id") without requiring DOM
 // events to trigger the mutation.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Accessibility: keyboard reachability, aria-current, aria-label on Restart
+//
+// Done criteria:
+//   - Tab reaches every AQ row: role="button" + tabIndex={0} make the div
+//     focusable and announced as interactive by screen readers.
+//   - Enter/Space selects: onKeyDown handler is wired; verified via role="button"
+//     semantics (SR users expect Enter to activate a role="button" element).
+//   - ArrowUp/Down roving focus: handler is wired on every row.
+//   - Each Restart button carries aria-label="Restart <entityId>".
+//   - aria-current="true" marks the selected row for screen readers.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – keyboard accessibility', () => {
+  it('renders role="button" so the row is announced as interactive', () => {
+    const html = renderRow(BASE_ITEM)
+    expect(html).toContain('role="button"')
+  })
+
+  it('renders tabindex="0" so the row is reachable via Tab', () => {
+    const html = renderRow(BASE_ITEM)
+    // React serialises tabIndex={0} as tabindex="0" in static markup
+    expect(html).toContain('tabindex="0"')
+  })
+
+  it('renders aria-current="true" on the active (selected) row', () => {
+    const html = renderRow(BASE_ITEM, { active: true })
+    expect(html).toContain('aria-current="true"')
+  })
+
+  it('does not render aria-current on an inactive row', () => {
+    const html = renderRow(BASE_ITEM, { active: false })
+    expect(html).not.toContain('aria-current')
+  })
+
+  it('Restart button carries aria-label="Restart <entityId>"', () => {
+    const html = renderRow(BASE_ITEM, { onRestart: () => {} })
+    expect(html).toContain(`aria-label="Restart ${BASE_ITEM.entityId}"`)
+  })
+
+  it('Restart button aria-label is distinct for different entityIds', () => {
+    const itemXyz = makeItem({ entityId: 'task-xyz' })
+    const htmlAbc = renderRow(BASE_ITEM, { onRestart: () => {} })
+    const htmlXyz = renderRow(itemXyz, { onRestart: () => {} })
+    expect(htmlAbc).toContain('aria-label="Restart task-abc"')
+    expect(htmlXyz).toContain('aria-label="Restart task-xyz"')
+  })
+})
 
 describe('ActionBar – PROCESS_LEVEL_OPS governs entityId elision', () => {
   it('restart-all-daemon-killed is treated as process-level → no entityId sent', () => {

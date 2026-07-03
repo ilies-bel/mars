@@ -42,6 +42,7 @@ import {
 } from '../../orchestrator/src/core/daemon/view/action-queue.ts'
 import {
   buildProgressView,
+  createAggregateReader,
   createProposalReader,
   type ProgressTaskRow,
   type ProgressTaskStore,
@@ -382,11 +383,12 @@ const viewProgress = async (
 ): Promise<ReturnType<typeof buildProgressView> extends Promise<infer T> ? T : never> => {
   const client = createClient({ url: `file:${dbPath}` })
   const cols = await tableColumns(client, 'tasks')
-  if (cols.size === 0) return { tasks: [], proposals: [] }
+  if (cols.size === 0) return { tasks: [], proposals: [], aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 } }
   const blockerMap = await loadBlockerMap(client)
   return buildProgressView(
     makeProgressTaskStore(client, cols, blockerMap),
     createProposalReader(client),
+    createAggregateReader(client),
   )
 }
 
