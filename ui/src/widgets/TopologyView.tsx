@@ -632,7 +632,7 @@ export const TopologyView = ({
           if (inProgressIds.length > 0) {
             const t0 = performance.now()
             const pulseFn = (): void => {
-              if (pulseGen !== pulseGenRef.current) return
+              if (pulseGen !== pulseGenRef.current || graph!.destroyed) return
               const opacity = pulseOpacity(performance.now() - t0)
               const updates = inProgressIds
                 .filter((id) => !graph!.getElementState(id).includes('dim'))
@@ -746,7 +746,7 @@ export const TopologyView = ({
   // the fresh graph already carries the latest cluster values.
   useEffect(() => {
     const graph = graphRef.current
-    if (!graph) return
+    if (!graph || graph.destroyed) return
     const { nodeUpdates, comboUpdates } = computeVisualUpdates(
       tasks,
       graph.getNodeData(),
@@ -762,7 +762,7 @@ export const TopologyView = ({
   // Uses the same pure resolver as the hover handlers so the two can't drift.
   useEffect(() => {
     const graph = graphRef.current
-    if (!graph) return
+    if (!graph || graph.destroyed) return
     const map = computeStateMap(
       { nodes: graph.getNodeData(), edges: graph.getEdgeData(), combos: graph.getComboData() },
       { searchMatchIds, lit: litRef.current },
