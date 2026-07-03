@@ -1467,6 +1467,94 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
   })
 })
 
+// ── Merged timeline: no duplicate step lists ──────────────────────────────────
+
+/**
+ * When run data is available (the overwhelming case for completed tasks), the
+ * drawer must render ONLY the run timeline — not both the step timeline and the
+ * run timeline — to avoid showing the same step list twice in the same viewport.
+ *
+ * Eval chips (from StepSpan.evalResults) must be preserved by folding them into
+ * the run step rows that share the same workflowInstanceId / stepName.
+ */
+describe('TaskDetailDrawer – merged timeline (no duplicate step lists)', () => {
+  it('renders only the run timeline when run data is available (no duplicate step list)', () => {
+    const spans = [
+      span({ stepName: 'setup', workflowInstanceId: 'wf-run-001' }),
+      span({ stepName: 'code', workflowInstanceId: 'wf-run-001', workerName: 'Coder' }),
+    ]
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          runId: 'wf-run-001',
+          steps: [
+            makeRTStep({ stepName: 'setup' }),
+            makeRTStep({ stepName: 'code' }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        stepSpans={spans}
+        runTimeline={timeline}
+      />,
+    )
+    // Run timeline must be present
+    expect(html).toContain('data-testid="run-timeline"')
+    // Step timeline must NOT render alongside run timeline (no duplication)
+    expect(html).not.toContain('data-testid="task-step-timeline"')
+  })
+
+  it('still renders the step timeline when no run data is available', () => {
+    const spans = [
+      span({ stepName: 'setup', workflowInstanceId: 'wf-1' }),
+    ]
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        stepSpans={spans}
+      />,
+    )
+    // No run data → step timeline is the fallback
+    expect(html).toContain('data-testid="task-step-timeline"')
+    expect(html).not.toContain('data-testid="run-timeline"')
+  })
+
+  it('folds eval chips into run step rows when spans carry evalResults', () => {
+    const spans = [
+      span({
+        stepName: 'code',
+        workflowInstanceId: 'wf-run-001',
+        evalResults: [{ label: 'ctx%', value: '95%', warn: true }],
+      }),
+    ]
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          runId: 'wf-run-001',
+          steps: [makeRTStep({ stepName: 'code' })],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        stepSpans={spans}
+        runTimeline={timeline}
+      />,
+    )
+    // Eval chip must appear (inside the run timeline, the only surviving section)
+    expect(html).toContain('ctx% 95%')
+    expect(html).toContain('data-testid="run-timeline"')
+    expect(html).not.toContain('data-testid="task-step-timeline"')
+  })
+})
+
 // ── LoadState: loading and error branches ─────────────────────────────────────
 
 describe('TaskDetailDrawer – load state branches', () => {

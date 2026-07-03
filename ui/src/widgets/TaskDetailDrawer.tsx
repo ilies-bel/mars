@@ -856,7 +856,13 @@ const ProposalStepTimeline = ({
  *
  * Returns null when the task has no recorded runs (quiet empty state).
  */
-const RunTimelineSection = ({ timeline }: { timeline: RunTimeline }) => {
+const RunTimelineSection = ({
+  timeline,
+  evalsByKey,
+}: {
+  timeline: RunTimeline
+  evalsByKey?: Map<string, Array<{ label: string; value: number | string | null; warn: boolean }>>
+}) => {
   if (timeline.runs.length === 0) return null
 
   return (
@@ -880,6 +886,7 @@ const RunTimelineSection = ({ timeline }: { timeline: RunTimeline }) => {
             <ol className="mt-1 flex flex-col">
               {run.steps.map((step, stepIdx) => {
                 const isLast = stepIdx === run.steps.length - 1
+                const stepEvalResults = evalsByKey?.get(`${run.runId}:${step.stepName}`)
                 const rowTextClass =
                   step.status === 'running'
                     ? 'text-warn'
@@ -943,6 +950,13 @@ const RunTimelineSection = ({ timeline }: { timeline: RunTimeline }) => {
                           title={step.claudeSessionId}
                         >
                           session:{step.claudeSessionId.slice(0, 8)}
+                        </span>
+                      ) : null}
+                      {stepEvalResults != null && stepEvalResults.length > 0 ? (
+                        <span className="flex flex-wrap items-center gap-1">
+                          {stepEvalResults.map((r) => (
+                            <EvalChip key={r.label} label={r.label} value={r.value} warn={r.warn} />
+                          ))}
                         </span>
                       ) : null}
                       {(step.status === 'failed' || step.status === 'killed') &&
@@ -1267,6 +1281,20 @@ export const TaskDetailDrawer = ({
   // Same resolution for the run timeline data.
   const resolvedRunTimeline = runTimeline !== undefined ? runTimeline : (runsQuery.data ?? null)
 
+  // Build a lookup of eval results keyed by `${runId}:${stepName}` so that
+  // RunTimelineSection can fold eval chips from StepSpan data into its rows.
+  // Uses workflowInstanceId (which equals runId) as the run key.
+  const spanEvalMap = useMemo(() => {
+    if (resolvedSpans == null) return undefined
+    const m = new Map<string, Array<{ label: string; value: number | string | null; warn: boolean }>>()
+    for (const s of resolvedSpans) {
+      if (s.evalResults != null && s.evalResults.length > 0) {
+        m.set(`${s.workflowInstanceId}:${s.stepName}`, s.evalResults)
+      }
+    }
+    return m.size > 0 ? m : undefined
+  }, [resolvedSpans])
+
   return (
     <>
       {/* Scrim — sits at z-40 (below the drawer's z-50) so clicks outside dismiss the panel */}
@@ -1418,23 +1446,18 @@ export const TaskDetailDrawer = ({
         </section>
       ) : null}
 
-      {/* Step timeline — renders when spans data is available (prop or fetched).
-          Sits between the relationship Context and the per-task detail body as
-          a diagnostic-ish view of the task's run.
-          Proposal subjects use the grouped ProposalStepTimeline; plain task
-          subjects use the flat StepTimeline (task-mode path unchanged). */}
-      {resolvedSpans !== null ? (
+      {/* Timeline — exactly one of RunTimelineSection or StepTimeline renders.
+          RunTimelineSection takes precedence when run data is available: it
+          shows the richer per-run view (token counts, session ids) and folds
+          in eval chips from StepSpan data so no information is lost.
+          The flat StepTimeline (and proposal variant) are the fallback when no
+          run data has been recorded yet (e.g. task is still queued). */}
+      {resolvedRunTimeline !== null && resolvedRunTimeline.runs.length > 0 ? (
+        <RunTimelineSection timeline={resolvedRunTimeline} evalsByKey={spanEvalMap} />
+      ) : resolvedSpans !== null ? (
         isProposal
           ? <ProposalStepTimeline spans={resolvedSpans} activeStepName={activeStepName} />
           : <StepTimeline spans={resolvedSpans} activeStepName={activeStepName} />
-      ) : null}
-
-      {/* Run timeline — renders when run data is available (prop or fetched).
-          Shows all workflow runs with per-step status, durations, token counts,
-          and failure reasons. Returns nothing when no runs are recorded yet
-          (quiet empty state). */}
-      {resolvedRunTimeline !== null && resolvedRunTimeline.runs.length > 0 ? (
-        <RunTimelineSection timeline={resolvedRunTimeline} />
       ) : null}
 
       {state.kind === 'loading' ? (
