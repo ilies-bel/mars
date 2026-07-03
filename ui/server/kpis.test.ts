@@ -27,6 +27,8 @@ beforeAll(async () => {
 })
 
 const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Promise<KpiSeries>): HttpServerDeps => ({
+  runReflect: async () => ({ proposalsRaised: 0 }),
+  enableAutoReflect: async () => {},
   restartTask: async () => {},
   unblockTask: async () => {},
   purgeTask: async () => {},
@@ -77,6 +79,9 @@ const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Prom
         taskCount: 0,
         successCount: 0,
         failureCount: 0,
+        blockedCount: 0,
+        droppedCount: 0,
+        rateLimitRejections: 0,
         cacheHitRatio: 0,
         topTokenHeavyTasks: [],
         topExpensiveSteps: [],

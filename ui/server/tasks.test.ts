@@ -33,6 +33,8 @@ beforeAll(async () => {
 const makeDaemonDeps = (
   viewTasks: HttpServerDeps['appServices']['viewTasks'],
 ): HttpServerDeps => ({
+  runReflect: async () => ({ proposalsRaised: 0 }),
+  enableAutoReflect: async () => {},
   restartTask: async () => {},
   unblockTask: async () => {},
   purgeTask: async () => {},

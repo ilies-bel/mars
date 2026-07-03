@@ -4,6 +4,7 @@ import { blockerKey, type ChainResult } from '@/shared/chainTrace'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
   arcKeyFromComboId,
+  buildClusterStyleFromVars,
   buildG6Data,
   CARD_HALF_H,
   CARD_HALF_W,
@@ -119,13 +120,49 @@ describe('CLUSTER_STYLE', () => {
     expect(Object.keys(CLUSTER_STYLE).sort()).toEqual(['Blocked', 'Failed', 'In progress', 'Queued'])
     expect((CLUSTER_STYLE as Record<string, unknown>).Done).toBeUndefined()
   })
+})
+
+describe('buildClusterStyleFromVars', () => {
+  // These values mirror the --color-dag-* tokens defined in index.css.
+  // The test exercises the CSS-var-name coupling contract: if a name drifts,
+  // the resolver returns '' and the assertions fail.
+  const CSS: Record<string, string> = {
+    '--color-dag-in-progress-fill':   '#431407',
+    '--color-dag-in-progress-stroke': '#ea580c',
+    '--color-dag-in-progress-text':   '#fdba74',
+    '--color-dag-blocked-fill':       '#3f2a14',
+    '--color-dag-blocked-stroke':     '#d9a441',
+    '--color-dag-blocked-text':       '#fde9c8',
+    '--color-dag-failed-fill':        '#450a0a',
+    '--color-dag-failed-stroke':      '#dc2626',
+    '--color-dag-failed-text':        '#fca5a5',
+    '--color-dag-queued-fill':        '#2a2a30',
+    '--color-dag-queued-stroke':      '#9ca3af',
+    '--color-dag-queued-text':        '#e5e7eb',
+  }
+  const getVar = (name: string) => CSS[name] ?? ''
+
+  it('resolves to a non-empty color for every cluster key', () => {
+    const style = buildClusterStyleFromVars(getVar)
+    for (const cluster of ['In progress', 'Blocked', 'Queued', 'Failed'] as const) {
+      expect(style[cluster].fill).not.toBe('')
+      expect(style[cluster].stroke).not.toBe('')
+      expect(style[cluster].text).not.toBe('')
+      expect(style[cluster].dot).not.toBe('')
+    }
+  })
+
+  it('derives dot from stroke', () => {
+    const style = buildClusterStyleFromVars(getVar)
+    for (const cluster of ['In progress', 'Blocked', 'Queued', 'Failed'] as const) {
+      expect(style[cluster].dot).toBe(style[cluster].stroke)
+    }
+  })
 
   it('keeps Blocked (warm ochre) and Queued (cool grey) visually distinct', () => {
-    expect(CLUSTER_STYLE.Blocked.fill).toBe('#3f2a14')
-    expect(CLUSTER_STYLE.Blocked.stroke).toBe('#d9a441')
-    expect(CLUSTER_STYLE.Queued.fill).toBe('#2a2a30')
-    expect(CLUSTER_STYLE.Queued.stroke).toBe('#9ca3af')
-    expect(CLUSTER_STYLE.Blocked.fill).not.toBe(CLUSTER_STYLE.Queued.fill)
+    const style = buildClusterStyleFromVars(getVar)
+    expect(style.Blocked.fill).not.toBe(style.Queued.fill)
+    expect(style.Blocked.stroke).not.toBe(style.Queued.stroke)
   })
 })
 

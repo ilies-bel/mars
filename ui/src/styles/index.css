@@ -62,7 +62,10 @@
      both the light info-row bg (#F5EDE4) and the dark Arc rail. */
   --color-trace-mars: #1D4ED8;  /* blue-700 — 6.2:1 on bg, reads blue on dark too */
 
-  /* DAG cluster chip colours — consumed via CSS var() in SVG style props */
+  /* DAG cluster chip colours — consumed via CSS var() in SVG style props and
+     read at runtime by buildClusterStyleFromVars (topologyGraphModel.ts) to
+     populate the G6 canvas palette. CSS is the single source of truth; no
+     manual sync with TypeScript is required. */
   --color-dag-proposal-fill:       #2e1065;
   --color-dag-proposal-stroke:     #7c3aed;
   --color-dag-proposal-text:       #c4b5fd;
@@ -71,7 +74,7 @@
   --color-dag-in-progress-text:    #fdba74;
   /* Blocked: warm amber/ochre — separated from Queued's cool grey so the two
      statuses are clearly distinct on the dark canvas (was #18181b vs Queued's
-     #1c1917, near-identical). Mirror these in CLUSTER_STYLE (topologyGraphModel.ts). */
+     #1c1917, near-identical). */
   --color-dag-blocked-fill:        #3f2a14;
   --color-dag-blocked-stroke:      #d9a441;
   --color-dag-blocked-text:        #fde9c8;

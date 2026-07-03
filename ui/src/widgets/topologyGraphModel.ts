@@ -1,9 +1,12 @@
 /**
  * Pure data → G6 transforms for the Topology Cloud view.
  *
- * Everything here is side-effect-free and DOM-free so it can be unit-tested
- * without instantiating G6 or a canvas. `TopologyView.tsx` owns all the
- * imperative G6 / DOM wiring and consumes the structures this module emits.
+ * Everything here is side-effect-free and can be unit-tested without
+ * instantiating G6 or a canvas. At module-load time the `CLUSTER_STYLE`
+ * constant reads CSS custom properties from the document root (if a DOM is
+ * present) so that `index.css` remains the single source of truth for colours.
+ * `TopologyView.tsx` owns all the imperative G6 / DOM wiring and consumes the
+ * structures this module emits.
  *
  * Ported from the prototype's rollup / `dominant()` / g6-data logic
  * (/tmp/mars-graph-proto/app.js), with the prototype's invented `Done` cluster
@@ -17,13 +20,12 @@ import { titleFromPrompt } from '@/shared/promptTitle'
 import type { Cluster, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 
 /**
- * Per-status hex palette for the G6 Canvas renderer (which cannot read CSS
- * custom properties). These MUST mirror the `--color-dag-*` tokens in
- * `index.css` so the canvas and the SVG TaskDetailDrawer don't drift.
+ * Per-cluster colour fields consumed by the G6 Canvas renderer.
  *
  *  - `fill` / `stroke` / `text`: the task-node rect.
- *  - `dot`: the legend swatch + stroke accent.
- *  - `combo`: the dark, status-tinted fill of a collapsed proposal card.
+ *  - `dot`: the legend swatch + stroke accent (derived from `stroke`).
+ *  - `combo`: the dark, status-tinted fill of a collapsed proposal card
+ *    (G6-specific; no CSS custom property counterpart).
  */
 export interface ClusterStyle {
   fill: string
@@ -33,14 +35,91 @@ export interface ClusterStyle {
   combo: string
 }
 
-export const CLUSTER_STYLE: Record<Cluster, ClusterStyle> = {
-  'In progress': { fill: '#431407', stroke: '#ea580c', text: '#fdba74', dot: '#ea580c', combo: '#2c1d14' },
-  // Blocked: warm amber/ochre — separated from Queued's cool grey.
-  Blocked: { fill: '#3f2a14', stroke: '#d9a441', text: '#fde9c8', dot: '#d9a441', combo: '#2a2114' },
-  // Queued: cool grey — clearly cooler than Blocked.
-  Queued: { fill: '#2a2a30', stroke: '#9ca3af', text: '#e5e7eb', dot: '#9ca3af', combo: '#23232b' },
-  Failed: { fill: '#450a0a', stroke: '#dc2626', text: '#fca5a5', dot: '#dc2626', combo: '#2c1414' },
+/**
+ * CSS custom-property names that carry the cluster palette in `index.css`.
+ * These strings are the only coupling point between CSS and TypeScript; the
+ * resolver (`buildClusterStyleFromVars`) reads the resolved values at runtime
+ * so that CSS is the single source of truth for colours.
+ */
+const CSS_VAR_NAMES = {
+  'In progress': {
+    fill:   '--color-dag-in-progress-fill',
+    stroke: '--color-dag-in-progress-stroke',
+    text:   '--color-dag-in-progress-text',
+  },
+  Blocked: {
+    fill:   '--color-dag-blocked-fill',
+    stroke: '--color-dag-blocked-stroke',
+    text:   '--color-dag-blocked-text',
+  },
+  Queued: {
+    fill:   '--color-dag-queued-fill',
+    stroke: '--color-dag-queued-stroke',
+    text:   '--color-dag-queued-text',
+  },
+  Failed: {
+    fill:   '--color-dag-failed-fill',
+    stroke: '--color-dag-failed-stroke',
+    text:   '--color-dag-failed-text',
+  },
+} as const satisfies Record<Cluster, { fill: string; stroke: string; text: string }>
+
+/**
+ * G6-canvas-specific combo fill — a darker status tint for collapsed proposal
+ * cards. No corresponding CSS custom property exists; G6 canvas elements
+ * cannot consume CSS vars, so these stay in TypeScript.
+ */
+const COMBO_FILL: Record<Cluster, string> = {
+  'In progress': '#2c1d14',
+  Blocked:       '#2a2114',
+  Queued:        '#23232b',
+  Failed:        '#2c1414',
 }
+
+/**
+ * Build the per-cluster style map from a CSS custom-property resolver.
+ *
+ * In a browser, pass the `getComputedStyle(document.documentElement).getPropertyValue`
+ * function so that the CSS token values flow directly into the G6 canvas with
+ * no manual TS duplication. In tests (no real DOM), pass a stub that returns
+ * known values so the function is testable without JSDOM.
+ *
+ * @param getVar - returns the value of a CSS custom property by name
+ */
+export function buildClusterStyleFromVars(
+  getVar: (name: string) => string,
+): Record<Cluster, ClusterStyle> {
+  const result = {} as Record<Cluster, ClusterStyle>
+  for (const cluster of ['In progress', 'Blocked', 'Queued', 'Failed'] as const) {
+    const vars = CSS_VAR_NAMES[cluster]
+    const stroke = getVar(vars.stroke).trim()
+    result[cluster] = {
+      fill:  getVar(vars.fill).trim(),
+      stroke,
+      text:  getVar(vars.text).trim(),
+      dot:   stroke,          // legend swatch reuses the stroke accent
+      combo: COMBO_FILL[cluster],
+    }
+  }
+  return result
+}
+
+/**
+ * Per-status hex palette for the G6 Canvas renderer (which cannot read CSS
+ * custom properties). Built at module-load time from the document root's CSS
+ * custom properties so that `index.css` is the single source of truth for
+ * colours — the G6 canvas and the SVG legend never drift.
+ *
+ * In Node / test environments there is no real DOM, so CLUSTER_STYLE contains
+ * empty strings. Call `buildClusterStyleFromVars` directly in tests and pass a
+ * stub resolver so the logic is exercised without JSDOM.
+ */
+export const CLUSTER_STYLE: Record<Cluster, ClusterStyle> =
+  typeof document !== 'undefined'
+    ? buildClusterStyleFromVars(name =>
+        getComputedStyle(document.documentElement).getPropertyValue(name),
+      )
+    : buildClusterStyleFromVars(() => '')
 
 /** Proposal-identity palette (purple) + edge colour for the Canvas. */
 export const PROPOSAL_STROKE = '#7c3aed'
