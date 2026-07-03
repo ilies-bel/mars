@@ -22,6 +22,7 @@ import { reflectCommands } from './reflect'
 import { installCommands } from './install'
 import { doctorCommands } from './doctor'
 import { runCommands } from './run'
+import { workflowCommands } from './workflow'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -39,6 +40,7 @@ export const allCommands: readonly Command[] = [
   ...installCommands,
   ...doctorCommands,
   ...runCommands,
+  ...workflowCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)
