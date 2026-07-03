@@ -262,13 +262,37 @@ const fetchArcTaskRows = async (
   store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
   originId: string,
 ): Promise<ArcTaskRow[]> => {
-  const r = await store.query({
-    sql: `SELECT id, status, prompt, error, created_at, updated_at, kind, fix_for_task_id, origin_session_id
-            FROM tasks
-           WHERE COALESCE(origin_id, id) = ?
-           ORDER BY created_at ASC`,
-    args: [originId],
-  })
+  // Try the full query including origin_session_id (added in a later migration).
+  // If that column is absent (pre-migration DB), fall back to the column-free
+  // form so a missing column never surfaces as a raw SQLITE_ERROR — which would
+  // bypass the arc-existence check and expose an unformatted error to the user.
+  let hasSessionIdColumn = true
+  let r: Awaited<ReturnType<typeof store.query>>
+  try {
+    r = await store.query({
+      sql: `SELECT id, status, prompt, error, created_at, updated_at, kind, fix_for_task_id, origin_session_id
+              FROM tasks
+             WHERE COALESCE(origin_id, id) = ?
+             ORDER BY created_at ASC`,
+      args: [originId],
+    })
+  } catch {
+    // Column missing on pre-migration DB — retry without origin_session_id.
+    hasSessionIdColumn = false
+    try {
+      r = await store.query({
+        sql: `SELECT id, status, prompt, error, created_at, updated_at, kind, fix_for_task_id
+                FROM tasks
+               WHERE COALESCE(origin_id, id) = ?
+               ORDER BY created_at ASC`,
+        args: [originId],
+      })
+    } catch {
+      // tasks table doesn't exist yet (brand-new DB) — treat as no rows so
+      // the caller can return the friendly not-found error.
+      return []
+    }
+  }
   return r.rows.map((row) => {
     const r0 = row as unknown as Record<string, unknown>
     return {
@@ -280,7 +304,7 @@ const fetchArcTaskRows = async (
       updated_at: r0.updated_at as string,
       kind: (r0.kind as string | null) ?? null,
       fix_for_task_id: (r0.fix_for_task_id as string | null) ?? null,
-      origin_session_id: (r0.origin_session_id as string | null) ?? null,
+      origin_session_id: hasSessionIdColumn ? ((r0.origin_session_id as string | null) ?? null) : null,
     }
   })
 }
