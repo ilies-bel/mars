@@ -1,5 +1,5 @@
 /**
- * Behaviour tests for KpiDetailPage band indicator.
+ * Behaviour tests for KpiDetailPage band indicator and navigation.
  *
  * The band cue in the summary card must:
  *   - show a glyph + text label readable without colour (accessibility)
@@ -8,11 +8,16 @@
  *
  * Arc-level pass/fail cues (✓ PASS / ✗ FAIL) are colour-safe because they
  * already carry shape: tested here to ensure they use semantic tokens.
+ *
+ * Navigation invariants:
+ *   - back-link returns to #/kpi (KPI index), not #/events
+ *   - arc task links encode from=kpi&kpiKey=<key> so closing the drawer
+ *     returns to the exact KPI detail page, not Events
  */
 
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { Kpi } from '@/shared/schemas'
+import type { Kpi, KpiArc } from '@/shared/schemas'
 import { KpiDetailPage } from './KpiDetailPage'
 
 vi.mock('@/entities/kpi/useKpis')
@@ -47,6 +52,20 @@ function renderPage(key: Kpi['key'], currentValue: number) {
     error: null,
   } as ReturnType<typeof useKpis>)
   mockUseKpiArcs.mockReturnValue(noArcs as ReturnType<typeof useKpiArcs>)
+  return renderToStaticMarkup(<KpiDetailPage kpiKey={key} />)
+}
+
+function renderPageWithArcs(key: Kpi['key'], arcs: KpiArc[]) {
+  mockUseKpis.mockReturnValue({
+    data: [makeKpi({ key, currentValue: 0.05 })],
+    isLoading: false,
+    error: null,
+  } as ReturnType<typeof useKpis>)
+  mockUseKpiArcs.mockReturnValue({
+    arcs,
+    isLoading: false,
+    error: null,
+  } as ReturnType<typeof useKpiArcs>)
   return renderToStaticMarkup(<KpiDetailPage kpiKey={key} />)
 }
 
@@ -113,5 +132,52 @@ describe('KpiDetailPage — band indicator', () => {
     const html = renderPage('failure_rate', 0.10)
     expect(html).toContain('text-error')
     expect(html).not.toMatch(/red-\d/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Navigation — back-link and arc task links
+// ---------------------------------------------------------------------------
+
+describe('KpiDetailPage — navigation', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+  })
+
+  it('back-link points to #/kpi (KPI index), not #/events', () => {
+    const html = renderPage('failure_rate', 0.05)
+    expect(html).toContain('href="#/kpi"')
+    expect(html).not.toContain('href="#/events"')
+  })
+
+  it('back-link label mentions KPIs, not Events', () => {
+    const html = renderPage('failure_rate', 0.05)
+    expect(html).toContain('KPIs')
+    expect(html).not.toContain('← Events')
+  })
+
+  it('arc task links encode from=kpi so drawer close returns to KPI route', () => {
+    const arc: KpiArc = {
+      arcId: 'arc-001',
+      originTaskId: 'task-abc',
+      status: 'done',
+      passed: true,
+      title: 'Test arc',
+    }
+    const html = renderPageWithArcs('failure_rate', [arc])
+    expect(html).toContain('from=kpi')
+    expect(html).not.toContain('from=events')
+  })
+
+  it('arc task links encode kpiKey so drawer close returns to the exact detail page', () => {
+    const arc: KpiArc = {
+      arcId: 'arc-002',
+      originTaskId: 'task-xyz',
+      status: 'done',
+      passed: false,
+      title: 'Another arc',
+    }
+    const html = renderPageWithArcs('autonomous_completion_rate', [arc])
+    expect(html).toContain('kpiKey=autonomous_completion_rate')
   })
 })

@@ -15,6 +15,7 @@ import {
   parseProposalNodeRoute,
   parseReleaseNotesRoute,
   parseShortcutsRoute,
+  parseTaskKpiKey,
   parseTaskOrigin,
   parseTaskRoute,
   parseTaskStep,
@@ -46,10 +47,19 @@ const ROUTE_BASE: Record<RouteName, string> = {
  * Closes a drawer opened from `closeHash` by returning to its origin page.
  * A `#/task/<id>?from=<route>` hash returns to `<route>`; a plain task hash
  * (or any hash with no recorded origin) returns to Progress — today's default.
+ *
+ * When the origin is `kpi` and a `kpiKey` param is encoded in the hash, the
+ * drawer returns to the exact KPI detail page (`#/kpi/<key>`) rather than the
+ * KPI index (`#/kpi`).
  */
 const clearTaskHash = (closeHash: string): void => {
   if (typeof window === 'undefined') return
   const origin = parseTaskOrigin(closeHash)
+  if (origin === 'kpi') {
+    const kpiKey = parseTaskKpiKey(closeHash)
+    window.location.hash = kpiKey ? `#/kpi/${encodeURIComponent(kpiKey)}` : '#/kpi'
+    return
+  }
   window.location.hash = origin ? ROUTE_BASE[origin] : '#/progress'
 }
 
@@ -77,7 +87,10 @@ const AppInner = () => {
   const proposalNodeId = parseProposalNodeRoute(hash)
   const showReleaseNotes = parseReleaseNotesRoute(hash)
   const showShortcuts = parseShortcutsRoute(hash)
-  const kpiKey = parseKpiRoute(hash)
+  // When a task overlay is open from a KPI detail page, parseKpiRoute returns
+  // null (the hash is #/task/…, not #/kpi/…), so we fall back to the kpiKey
+  // encoded in the task hash query params to keep the detail page mounted behind.
+  const kpiKey = parseKpiRoute(hash) ?? parseTaskKpiKey(hash)
   const activeStepName = parseTaskStep(hash) ?? undefined
 
   // Auto-open the Release Notes drawer when arcs have landed since the user

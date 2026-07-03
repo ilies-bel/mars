@@ -128,13 +128,53 @@ export const parseTaskOrigin = (hash: string): RouteName | null => {
  * Pass an optional `step` (a step name such as `'code'`) to encode the active
  * step into the hash so the drawer can highlight the matching step row on open:
  * `taskHash('x', 'events', 'code')` → `#/task/x?from=events&step=code`.
+ *
+ * When opening from a KPI detail page, pass `from='kpi'` and the KPI key so
+ * the drawer can return to the exact detail page on close:
+ * `taskHash('x', 'kpi', undefined, 'failure_rate')` →
+ * `#/task/x?from=kpi&kpiKey=failure_rate`.
  */
-export const taskHash = (id: string, from?: RouteName, step?: string): string => {
+export const taskHash = (id: string, from?: RouteName, step?: string, kpiKey?: KpiKey): string => {
   const base = `#/task/${encodeURIComponent(id)}`
   const params: string[] = []
   if (from) params.push(`from=${from}`)
   if (step) params.push(`step=${encodeURIComponent(step)}`)
+  if (kpiKey) params.push(`kpiKey=${encodeURIComponent(kpiKey)}`)
   return params.length > 0 ? `${base}?${params.join('&')}` : base
+}
+
+/**
+ * Reads the KPI key encoded in a `#/task/<id>?…&kpiKey=<key>` hash.
+ *
+ * When a task drawer is opened from a KPI detail page, `taskHash` encodes
+ * both `from=kpi` and `kpiKey=<key>` in the URL so the drawer can return to
+ * the exact KPI detail page on close rather than the KPI index (`#/kpi`).
+ *
+ * Returns the validated `KpiKey`, or `null` when the hash carries no
+ * `kpiKey` param, an empty value, or an unrecognised key.
+ *
+ * Parsing mirrors `parseTaskStep` — plain string-splitting, no `URLSearchParams`.
+ */
+export const parseTaskKpiKey = (hash: string): KpiKey | null => {
+  if (parseTaskRoute(hash) === null) return null
+  const queryIndex = hash.indexOf('?')
+  if (queryIndex === -1) return null
+  const query = hash.slice(queryIndex + 1)
+  for (const pair of query.split('&')) {
+    const eq = pair.indexOf('=')
+    if (eq === -1) continue
+    if (pair.slice(0, eq) !== 'kpiKey') continue
+    const value = decodeURIComponent(pair.slice(eq + 1))
+    if (value.length === 0) return null
+    const valid: KpiKey[] = [
+      'cost_per_arc',
+      'failure_rate',
+      'autonomous_completion_rate',
+      'recovery_success_rate',
+    ]
+    return valid.includes(value as KpiKey) ? (value as KpiKey) : null
+  }
+  return null
 }
 
 /**

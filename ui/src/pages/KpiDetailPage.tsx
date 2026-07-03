@@ -36,11 +36,11 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
       {/* Header bar */}
       <div className="flex shrink-0 items-center gap-3 border-b border-iron/20 px-4 py-3">
         <a
-          href="#/events"
+          href="#/kpi"
           className="text-sm text-muted hover:text-fg focus:outline-none focus:ring-2 focus:ring-iron/40"
-          aria-label="Back to Events"
+          aria-label="Back to KPIs"
         >
-          ← Events
+          ← KPIs
         </a>
         <span className="text-muted">|</span>
         <span className="font-mono text-sm font-semibold text-fg">{label}</span>
@@ -133,7 +133,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                     )}
                     <td className="py-1.5">
                       <a
-                        href={taskHash(arc.originTaskId, 'events')}
+                        href={taskHash(arc.originTaskId, 'kpi', undefined, kpiKey)}
                         className="text-muted hover:text-fg focus:outline-none focus:underline"
                         title={arc.arcId}
                       >
