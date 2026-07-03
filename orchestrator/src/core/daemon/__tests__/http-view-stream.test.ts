@@ -42,6 +42,9 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   isAcceptingWork: () => true,
   inFlightCount: () => 0,
   selfUpdate: async () => {},
+
+  runReflect: async () => ({ proposalsRaised: 0 }),
+  enableAutoReflect: async () => {},
   recipeCatalog: cachedRecipeCatalog as Awaited<
     ReturnType<typeof loadRecipeCatalog>
   >,

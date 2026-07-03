@@ -23,6 +23,7 @@ export type DerivedActionQueueKind =
   | 'draft-proposal'
   | 'awaiting-validation'
   | 'awaiting-human'
+  | 'reflect-recommended'
 export type DerivedActionQueueFilter = 'open' | 'all'
 
 /** Resolution metadata carried by resolved rows in history responses. */
@@ -240,6 +241,7 @@ export const buildActionQueueView = async ({
     if (k === 'draft-proposal') return 'draft-proposal'
     if (k === 'awaiting-validation') return 'awaiting-validation'
     if (k === 'awaiting-human') return 'awaiting-human'
+    if (k === 'reflect-recommended') return 'reflect-recommended'
     return 'failed-task'
   }
 
@@ -255,6 +257,10 @@ export const buildActionQueueView = async ({
     // rather than falling back to the opaque row id.
     if (row.kind === 'slices-dropped') {
       if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+    }
+    // reflect-recommended is not task-keyed — use its dedup signature.
+    if (row.kind === 'reflect-recommended') {
+      return row.signature ?? row.id
     }
     if (typeof row.payload.taskId === 'string') return row.payload.taskId
     if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
@@ -688,6 +694,7 @@ export const buildActionQueueHistoryView = async ({
     if (k === 'draft-proposal') return 'draft-proposal'
     if (k === 'awaiting-validation') return 'awaiting-validation'
     if (k === 'awaiting-human') return 'awaiting-human'
+    if (k === 'reflect-recommended') return 'reflect-recommended'
     return 'failed-task'
   }
 
@@ -700,6 +707,9 @@ export const buildActionQueueHistoryView = async ({
     }
     if (row.kind === 'slices-dropped') {
       if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+    }
+    if (row.kind === 'reflect-recommended') {
+      return row.signature ?? row.id
     }
     if (typeof row.payload.taskId === 'string') return row.payload.taskId
     if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId

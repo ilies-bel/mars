@@ -82,6 +82,8 @@ export type ActionOp =
   | 'dismiss'
   | 'validate'
   | 'reject'
+  | 'run-reflect'
+  | 'enable-auto-reflect'
 
 /**
  * A declarative recovery action. No executable code — the daemon owns the

@@ -196,6 +196,18 @@ export interface HttpServerDeps {
   /** Returns the number of tasks currently dispatched and in flight. Used by the self-update drain gate. */
   inFlightCount: () => number
   /**
+   * Run the reflect flow (load recent corpus, run reflector, persist
+   * suggestions) and close the open reflect-recommended action-queue row.
+   * Returns the number of proposals raised.
+   */
+  runReflect: () => Promise<{ proposalsRaised: number }>
+  /**
+   * Set selfEvolve.autoTrigger=true in the daemon config (persisted to
+   * daemon.json), then close the open reflect-recommended action-queue row
+   * so the level-trigger is immediately cleared.
+   */
+  enableAutoReflect: () => Promise<void>
+  /**
    * Execute a daemon self-update: download the latest release binary, verify
    * sha256, atomically swap it for the current binary, and re-exec the daemon.
    * Throws {@link SelfUpdateError} on every non-happy path.
@@ -411,7 +423,9 @@ const handleEventsRequest = async (
  *   POST /actions/dismiss/:id    → reject a draft proposal (draft → dismissed)
  *   POST /actions/validate/:id   → approve a preview-gated task (→ merge)
  *   POST /actions/reject/:id     → reject a preview-gated task (→ failed)
- *   POST /actions/restart-daemon → re-exec the daemon
+ *   POST /actions/restart-daemon       → re-exec the daemon
+ *   POST /actions/run-reflect          → run reflect flow + clear reflect-recommended row
+ *   POST /actions/enable-auto-reflect  → set autoTrigger=true + clear reflect-recommended row
  *
  * The server uses an OS-assigned port (port 0). Callers discover the port via
  * the returned {@link HttpServerHandle}, which the daemon also writes to
@@ -920,6 +934,32 @@ export const startHttpServer = async (
       deps
         .restartAllDaemonKilled()
         .then((restarted) => sendJson(res, 200, { ok: true, restarted }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /actions/run-reflect — run the reflect flow over the recent task
+    // corpus, persist suggestions as draft proposals, and clear the open
+    // reflect-recommended action-queue row (level-trigger off). Global op: no
+    // entity id. Responds with { ok: true, proposalsRaised: N } after the
+    // reflect run completes (may take O(seconds) while the LLM runs).
+    if (req.url === '/actions/run-reflect') {
+      deps
+        .runReflect()
+        .then(({ proposalsRaised }) =>
+          sendJson(res, 200, { ok: true, proposalsRaised }),
+        )
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /actions/enable-auto-reflect — persist selfEvolve.autoTrigger=true
+    // to daemon.json and clear the open reflect-recommended row so the
+    // level-trigger is immediately cleared. Global op: no entity id.
+    if (req.url === '/actions/enable-auto-reflect') {
+      deps
+        .enableAutoReflect()
+        .then(() => sendJson(res, 200, { ok: true }))
         .catch((err: unknown) => sendError(res, err))
       return
     }

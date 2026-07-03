@@ -74,6 +74,13 @@ export const ACTION_QUEUE_KINDS = [
   // MARS_OUTBOX_LAG_WARN_THRESHOLD; a subscriber is wedged and blocking
   // retention pruning.
   'outbox-lag',
+  // The reflect-worthiness detector has identified signals that make reflection
+  // valuable right now (KPI drift, failure signature cluster, or token spike),
+  // but selfEvolve.autoTrigger is off so the operator must act manually.
+  // Level-triggered (ADR-0048): exists while the condition holds and no
+  // reflection run covers the window. Cleared when a reflect run lands,
+  // the operator enables auto-trigger, or the signal window ages out.
+  'reflect-recommended',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

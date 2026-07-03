@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { resolveContext } from '../context'
 
@@ -66,6 +66,39 @@ const positiveInt = (value: unknown, fallback: number): number => {
 
 export const daemonConfigPath = (): string =>
   resolve(resolveContext().stateDir, 'daemon.json')
+
+/**
+ * Persist a selfEvolve patch to the daemon config file (daemon.json).
+ * Merges the patch into the existing file content, creating or overwriting
+ * the file. Any fields not mentioned in `patch` are preserved.
+ *
+ * Used by the `enable-auto-reflect` action to set `autoTrigger=true` without
+ * losing other configured values. Safe to call from the daemon process.
+ */
+export const persistSelfEvolveAutoTrigger = (autoTrigger: boolean): void => {
+  const path = daemonConfigPath()
+  let existing: Record<string, unknown> = {}
+  try {
+    const raw = readFileSync(path, 'utf8')
+    const parsed = JSON.parse(raw) as unknown
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      existing = parsed as Record<string, unknown>
+    }
+  } catch {
+    // File absent or invalid — start fresh.
+  }
+  const existingSe =
+    existing.selfEvolve !== null &&
+    typeof existing.selfEvolve === 'object' &&
+    !Array.isArray(existing.selfEvolve)
+      ? (existing.selfEvolve as Record<string, unknown>)
+      : {}
+  writeFileSync(
+    path,
+    JSON.stringify({ ...existing, selfEvolve: { ...existingSe, autoTrigger } }, null, 2),
+    'utf8',
+  )
+}
 
 // Resolution order per field: config file > env var > built-in default.
 // The file is optional; a missing/invalid file silently falls back to env+defaults

@@ -312,6 +312,9 @@ describe('GET /view/action-queue/history via HTTP server', () => {
       isAcceptingWork: () => true,
       inFlightCount: () => 0,
       selfUpdate: async () => {},
+
+      runReflect: async () => ({ proposalsRaised: 0 }),
+  enableAutoReflect: async () => {},
       recipeCatalog,
       traceStore: nullTraceStore,
       appServices: stubAppServices({
@@ -374,6 +377,9 @@ describe('GET /view/action-queue/history via HTTP server', () => {
       isAcceptingWork: () => true,
       inFlightCount: () => 0,
       selfUpdate: async () => {},
+
+      runReflect: async () => ({ proposalsRaised: 0 }),
+  enableAutoReflect: async () => {},
       recipeCatalog,
       traceStore: nullTraceStore,
       appServices: stubAppServices(),

@@ -26,6 +26,7 @@ export type DerivedRowKind =
   | 'draft-proposal'
   | 'awaiting-validation'
   | 'awaiting-human'
+  | 'reflect-recommended'
 
 /**
  * Resolve the recovery menu for a non-failure derived row kind. Returns an
@@ -86,6 +87,12 @@ export const derivedRowActions = (rowKind: string, entityId?: string): ActionDes
         hint: entityId ? `mars release --abort ${entityId}` : 'mars release --abort <id>',
         needsConfirm: true,
       },
+    ]
+  }
+  if (rowKind === 'reflect-recommended') {
+    return [
+      { id: 'run-reflect', label: 'Run reflect', op: 'run-reflect' },
+      { id: 'enable-auto', label: 'Enable auto', op: 'enable-auto-reflect' },
     ]
   }
   return []

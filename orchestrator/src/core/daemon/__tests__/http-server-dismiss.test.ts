@@ -56,6 +56,9 @@ const makeDeps = (
   isAcceptingWork: () => true,
   inFlightCount: () => 0,
   selfUpdate: async () => {},
+
+  runReflect: async () => ({ proposalsRaised: 0 }),
+  enableAutoReflect: async () => {},
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,
   appServices: stubAppServices(),

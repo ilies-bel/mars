@@ -508,6 +508,9 @@ describe('GET /view/action-queue via HTTP server', () => {
       isAcceptingWork: () => true,
   inFlightCount: () => 0,
   selfUpdate: async () => {},
+
+  runReflect: async () => ({ proposalsRaised: 0 }),
+  enableAutoReflect: async () => {},
       recipeCatalog,
       traceStore: nullTraceStore,
       appServices: stubAppServices({

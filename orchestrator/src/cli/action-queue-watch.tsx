@@ -80,7 +80,12 @@ export const resolveDaemonBaseUrl = (stateDir: string): string | null => {
  * Global/batch action ops that use dedicated routes with no :id segment.
  * All other ops use the per-entity route: POST /actions/:op/:id.
  */
-const GLOBAL_ACTION_OPS = new Set(['restart-daemon', 'restart-all-daemon-killed'])
+const GLOBAL_ACTION_OPS = new Set([
+  'restart-daemon',
+  'restart-all-daemon-killed',
+  'run-reflect',
+  'enable-auto-reflect',
+])
 
 /**
  * Compute the POST URL for a given action op and entity.

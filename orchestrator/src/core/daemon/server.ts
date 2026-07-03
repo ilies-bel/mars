@@ -2730,6 +2730,39 @@ export const startDaemon = async (
       log(`restart-all-daemon-killed: restarted ${restarted.length}/${killed.length} task(s)`)
       return restarted
     },
+    runReflect: async () => {
+      // Run the same reflect pipeline as `mars reflect` and close the level-triggered
+      // reflect-recommended action-queue row when done.
+      const { loadRecentTaskCorpus } = await import('../lib/reflect-query')
+      const { runReflector, persistSuggestions } = await import('../lib/reflector')
+      const { closeReflectRecommendedRow } = await import('../lib/self-evolve-trigger')
+      const { insertReflectionTask } = await import('../queue')
+      const corpus = await loadRecentTaskCorpus({ limit: 10 })
+      let proposalsRaised = 0
+      if (corpus.entries.length > 0) {
+        const result = await runReflector(corpus)
+        if (result.suggestions.length > 0) {
+          const sourceTaskId = await insertReflectionTask(corpus.entries.length)
+          await persistSuggestions(result.suggestions, sourceTaskId)
+          proposalsRaised = result.suggestions.length
+          log(`[run-reflect] raised ${proposalsRaised} proposal(s)`)
+          viewStreamHub.broadcast('proposals')
+          viewStreamHub.broadcast('action-queue')
+        }
+      }
+      // Close the reflect-recommended row regardless of whether proposals were raised.
+      await closeReflectRecommendedRow()
+      viewStreamHub.broadcast('action-queue')
+      return { proposalsRaised }
+    },
+    enableAutoReflect: async () => {
+      const { persistSelfEvolveAutoTrigger } = await import('./config')
+      const { closeReflectRecommendedRow } = await import('../lib/self-evolve-trigger')
+      persistSelfEvolveAutoTrigger(true)
+      log('[enable-auto-reflect] selfEvolve.autoTrigger set to true in daemon.json')
+      await closeReflectRecommendedRow()
+      viewStreamHub.broadcast('action-queue')
+    },
     isAcceptingWork: () => acceptingWork,
     inFlightCount: () => tracker.inFlightCount(),
     selfUpdate: async () => {
@@ -2951,6 +2984,32 @@ export const startDaemon = async (
     })()
   }, STALE_SWEEP_MS)
   staleSweep.unref()
+
+  // ── Reflect-recommended detector sweep ───────────────────────────────────
+  // Periodically evaluates reflect-worthiness (KPI drift, failure clusters,
+  // token spikes) and raises / clears the level-triggered reflect-recommended
+  // action-queue row. Mirrors the stale-worktree sweep cadence. .unref() so
+  // the interval never prevents a clean shutdown.
+  const REFLECT_DETECTOR_MS = Number(
+    process.env.MARS_REFLECT_DETECTOR_MS ?? 5 * 60_000,
+  )
+  const { runReflectRecommendedDetector } = await import('../lib/self-evolve-trigger')
+  const reflectDetectorSweep = setInterval(() => {
+    void (async () => {
+      try {
+        const result = await runReflectRecommendedDetector()
+        if (result.raised) {
+          log(
+            `[reflect-detector] raised reflect-recommended row (row=${result.rowId})`,
+          )
+          viewStreamHub.broadcast('action-queue')
+        }
+      } catch (err) {
+        log(`[reflect-detector] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, REFLECT_DETECTOR_MS)
+  reflectDetectorSweep.unref()
 
   // ── Observability store size watchdog ─────────────────────────────────────
   // Periodically checks the trace_events footprint inside mars.db. When the
