@@ -47,6 +47,7 @@ const successResult = (sessionId: string | null = null): RunClaudeResult => ({
   stderr: '',
   sessionId,
   conversation: [],
+  quotaRejected: null,
 })
 
 // A RunClaudeResult that simulates a non-zero exit.
@@ -56,6 +57,7 @@ const failedResult = (): RunClaudeResult => ({
   stderr: 'something went wrong',
   sessionId: null,
   conversation: [],
+  quotaRejected: null,
 })
 
 // A RunClaudeResult that simulates a watchdog kill (exit code 138).
@@ -65,6 +67,7 @@ const killedResult = (sessionId: string | null = null): RunClaudeResult => ({
   stderr: 'claude -p aborted by caller (read/grep span watcher)',
   sessionId,
   conversation: [],
+  quotaRejected: null,
 })
 
 describe('runWorkerWithSpan — Coder run', () => {
@@ -164,6 +167,7 @@ describe('runWorkerWithSpan — Coder run', () => {
       stderr: '',
       sessionId: 'sess-transcript-test',
       conversation,
+      quotaRejected: null,
     })
 
     await runWorkerWithSpan({
@@ -1169,7 +1173,7 @@ describe('runWorkerWithSpan — failure-path partial usage capture', () => {
           type: 'assistant',
           message: { usage: { input_tokens: 10, output_tokens: 5 }, content: [] },
         } as ClaudeEvent)
-        return { exitCode: 0, stdout: '', stderr: '', sessionId: null, conversation: [] }
+        return { exitCode: 0, stdout: '', stderr: '', sessionId: null, conversation: [], quotaRejected: null }
       },
     }
 
@@ -1359,7 +1363,7 @@ describe('runWorkerWithSpan — incremental transcript chunk streaming', () => {
           type: 'assistant',
           message: { content: [{ type: 'text', text: 'starting...' }] },
         } as ClaudeEvent)
-        return { exitCode: 0, stdout: '', stderr: '', sessionId: 'sess-ok-456', conversation: [] }
+        return { exitCode: 0, stdout: '', stderr: '', sessionId: 'sess-ok-456', conversation: [], quotaRejected: null }
       },
     }
 
@@ -1387,7 +1391,7 @@ describe('runWorkerWithSpan — incremental transcript chunk streaming', () => {
       runtime: 'headless',
       run: async (_prompt: string, options: RunOptions): Promise<RunClaudeResult> => {
         await options.onEvent?.({ type: 'assistant', message: { content: [] } } as ClaudeEvent)
-        return { exitCode: 0, stdout: '', stderr: '', sessionId: null, conversation: [] }
+        return { exitCode: 0, stdout: '', stderr: '', sessionId: null, conversation: [], quotaRejected: null }
       },
     }
 

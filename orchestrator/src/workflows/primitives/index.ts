@@ -105,6 +105,7 @@ import {
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
   PREVIEW_GATE_MESSAGE,
   AWAIT_HUMAN_MESSAGE,
+  QUOTA_REJECTED_ABORT_MESSAGE,
 } from './shared'
 import { startDevServer } from '../../core/lib/dev-server'
 import { resolveTaskCwd } from '../../core/lib/resolve-task-cwd'
@@ -841,6 +842,27 @@ export const runAgent = async (
       `[ctx] task ${taskId}: context-exhausted; recovery fix-task spawned to resume the existing worktree`,
     )
     throw new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE(taskId))
+  }
+
+  // Provider rate/spend-limit rejection (GLOBAL ENVIRONMENTAL CONDITION).
+  //
+  // When the provider rejects the run before the coder can do any work (e.g.
+  // monthly spend limit, five-hour rate limit), the Claude CLI emits a
+  // `rate_limit_event` followed by a `result` event with is_error:true and
+  // api_error_status:429, then exits non-zero. This is NOT a code failure —
+  // the coder never ran, the worktree is untouched, and spawning a recovery
+  // fix-task would instantly hit the same rejection and burn the single
+  // recovery slot with nothing to show for it.
+  //
+  // Correct response: re-queue with the worktree intact, throw a quota-
+  // rejection sentinel that the daemon catches to pause dispatch until
+  // resetsAt and raise exactly one level-triggered action-queue row.
+  if (r.exitCode !== 0 && r.quotaRejected !== null) {
+    await updateTask(taskId, { status: 'queued' }, store)
+    console.log(
+      `[code] task ${taskId}: env-rejected by provider quota (resetsAt=${r.quotaRejected.resetsAt}); re-queued`,
+    )
+    throw new Error(QUOTA_REJECTED_ABORT_MESSAGE(taskId, r.quotaRejected.resetsAt))
   }
 
   // Catch-all for any OTHER non-zero coder exit (138/context-exhausted is the

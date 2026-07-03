@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, join } from 'node:path'
 import { constants as fsConstants } from 'node:fs'
-import { parseClaudeStreamLine, type ClaudeEvent } from '../claude-stream'
+import { parseClaudeStreamLine, extractQuotaRejected, type ClaudeEvent } from '../claude-stream'
 import { getLatestContextSize } from '../claude-usage'
 import { FALLBACK_CLAUDE_PATH_DIRS, isExecutableFile } from './internal'
 
@@ -181,6 +181,13 @@ export type ClaudePermissionMode =
 export interface RunClaudeResult extends RunSubprocessResult {
   sessionId: string | null
   conversation: ClaudeEvent[]
+  /**
+   * Non-null when the provider rejected this run due to rate/spend limits.
+   * `resetsAt` is the Unix-second timestamp when limits are expected to lift
+   * (0 when unknown). Callers must NOT treat a quota-rejected run as a code
+   * failure — it consumes no recovery slot and the task re-queues for later.
+   */
+  quotaRejected: { resetsAt: number } | null
 }
 
 export const extractSessionIdFromConversation = (
@@ -628,6 +635,8 @@ export const runClaudeCode = async ({
     extractSessionId(result.stdout) ??
     sessionId ??
     null
+  // Compute once; all return paths include it.
+  const quotaRejected = extractQuotaRejected(conversation)
   if (timedOut) {
     return {
       exitCode: 124,
@@ -635,6 +644,7 @@ export const runClaudeCode = async ({
       stderr: `claude -p timed out after ${timeoutMs}ms`,
       sessionId: detectedSessionId,
       conversation,
+      quotaRejected,
     }
   }
   if (ctxExhausted) {
@@ -644,6 +654,7 @@ export const runClaudeCode = async ({
       stderr: `claude -p aborted: context budget exhausted (${getLatestContextSize(conversation)}/${budget} tokens)`,
       sessionId: detectedSessionId,
       conversation,
+      quotaRejected,
     }
   }
   if (externalAborted) {
@@ -653,7 +664,8 @@ export const runClaudeCode = async ({
       stderr: `claude -p aborted by caller (read/grep span watcher)`,
       sessionId: detectedSessionId,
       conversation,
+      quotaRejected,
     }
   }
-  return { ...result, sessionId: detectedSessionId, conversation }
+  return { ...result, sessionId: detectedSessionId, conversation, quotaRejected }
 }

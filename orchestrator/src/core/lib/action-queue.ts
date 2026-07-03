@@ -102,6 +102,12 @@ export const ACTION_QUEUE_KINDS = [
   // daemon runs current code). One row per daemon lifetime — idempotent raises
   // bump seen_count rather than inserting siblings.
   'daemon-code-drift',
+  // The provider (Claude API) rejected dispatched runs due to rate or spend
+  // limits. Level-triggered (ADR-0048): exactly one row per rate-limit episode;
+  // idempotent raises bump seen_count. Cleared when the operator acknowledges
+  // or when dispatch auto-resumes after resetsAt. The payload carries the
+  // resetsAt Unix-second timestamp and the ISO string of the earliest reset.
+  'provider-rate-limited',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

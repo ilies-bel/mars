@@ -144,6 +144,32 @@ export const isCoderUncommittedAbortError = (err: unknown): boolean =>
     errorHaystack(err),
   )
 
+// Thrown by the code step when the provider rejects the run due to a rate or
+// spend limit (NOT a code failure). The task is re-queued with its worktree
+// intact; no recovery fix-task is spawned. The daemon catches this sentinel to
+// pause dispatch until the resetsAt epoch + jitter and raise exactly one
+// level-triggered 'provider-rate-limited' action-queue row.
+//
+// The resetsAt value is embedded in the message so the daemon can recover it
+// without a separate data channel.
+export const QUOTA_REJECTED_ABORT_MESSAGE = (
+  taskId: string,
+  resetsAt: number,
+): string =>
+  `task ${taskId} env-rejected: provider rate limit reached (resetsAt=${resetsAt})`
+
+export const isQuotaRejectedAbortError = (err: unknown): boolean =>
+  errorHaystack(err).includes('env-rejected: provider rate limit reached')
+
+/**
+ * Extract the resetsAt timestamp embedded in the QUOTA_REJECTED_ABORT_MESSAGE
+ * sentinel. Returns 0 when the haystack does not contain a parseable value.
+ */
+export const extractQuotaResetsAt = (err: unknown): number => {
+  const m = errorHaystack(err).match(/resetsAt=(\d+)/)
+  return m ? parseInt(m[1], 10) : 0
+}
+
 // Thrown by the merge step's preview gate when a task carries a previewCmd and
 // has not yet been validated. The step starts a live dev server, parks the task
 // in 'awaiting-validation', raises the action-queue row, then throws this so the

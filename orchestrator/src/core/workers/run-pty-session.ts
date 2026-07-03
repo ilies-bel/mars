@@ -273,6 +273,7 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
       stderr: '',
       sessionId: sessionId ?? null,
       conversation: [],
+      quotaRejected: null,
     }
   } finally {
     // Flush both trace streams before returning — callers can read the files

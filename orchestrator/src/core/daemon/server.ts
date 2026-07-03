@@ -818,6 +818,8 @@ export const startDaemon = async (
         isPreviewGateError,
         isAwaitHumanError,
         extractAwaitHumanStepName,
+        isQuotaRejectedAbortError,
+        extractQuotaResetsAt,
       } = await import('../../workflows/implement-workflow')
       // Read the failure off RunResult.error (the engine puts the thrown Error
       // there verbatim on the `failed` path). The detectors flatten the cause
@@ -826,6 +828,18 @@ export const startDaemon = async (
       const resultError = result.status === 'failed' ? result.error : null
       if (result.status === 'failed' && isBlockersAbortError(resultError)) {
         log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
+        return
+      }
+      // Provider rate/spend-limit rejection: the code step re-queued the task
+      // with its worktree intact and threw the quota-rejected sentinel. Pause
+      // dispatch until resetsAt + jitter and raise exactly one level-triggered
+      // action-queue row. Task status is already 'queued' — suppress the
+      // task.completed emit so the task stays in the pending queue rather than
+      // transitioning to any failure state.
+      if (result.status === 'failed' && isQuotaRejectedAbortError(resultError)) {
+        const resetsAt = extractQuotaResetsAt(resultError)
+        void handleQuotaRejection(resetsAt)
+        log(`[implement] ${task.id} env-rejected: quota; task re-queued, dispatch paused until ${new Date(resetsAt * 1000).toISOString()}`)
         return
       }
       // Slice F.2: verify-time dirty-main detection. The verify step parked
@@ -935,6 +949,8 @@ export const startDaemon = async (
       // context-exhausted / origin-worktree-missing self-handled aborts.
       let isCoderSelfHandledAbort = false
       let isAwaitHumanAbort = false
+      let isQuotaAbort = false
+      let quotaAbortResetsAt = 0
       try {
         const {
           isBlockersAbortError,
@@ -943,6 +959,8 @@ export const startDaemon = async (
           isCoderExitNonzeroAbortError,
           isCoderUncommittedAbortError,
           isAwaitHumanError: isAwaitHumanErrorFn,
+          isQuotaRejectedAbortError: isQuotaRejectedAbortErrorFn,
+          extractQuotaResetsAt: extractQuotaResetsAtFn,
         } = await import('../../workflows/implement-workflow')
         isBlockersAbort = isBlockersAbortError(err)
         isContextExhaustedAbort = isContextExhaustedAbortError(err)
@@ -950,6 +968,8 @@ export const startDaemon = async (
         isCoderSelfHandledAbort =
           isCoderExitNonzeroAbortError(err) || isCoderUncommittedAbortError(err)
         isAwaitHumanAbort = isAwaitHumanErrorFn(err)
+        isQuotaAbort = isQuotaRejectedAbortErrorFn(err)
+        if (isQuotaAbort) quotaAbortResetsAt = extractQuotaResetsAtFn(err)
       } catch (importErr) {
         log(
           `[implement] ${task.id} could not load blockers-abort detector (${
@@ -979,6 +999,12 @@ export const startDaemon = async (
         // and raised the action-queue row before throwing. Suppress the re-update
         // so the task stays parked rather than flipping to 'failed'.
         log(`[implement] ${task.id} await-human abort (exception path); task already parked awaiting-human`)
+      } else if (isQuotaAbort) {
+        // The code step already re-queued the task and threw the quota-rejected
+        // sentinel. Pause dispatch and raise the action-queue row. Suppress the
+        // re-update so the task stays 'queued' rather than flipping to 'failed'.
+        void handleQuotaRejection(quotaAbortResetsAt)
+        log(`[implement] ${task.id} env-rejected abort (exception path); task re-queued, dispatch paused`)
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
         try {
@@ -1280,6 +1306,70 @@ export const startDaemon = async (
       } while (drainAgain)
     } finally {
       drainRunning = false
+    }
+  }
+
+  // Provider rate/spend-limit rejection handler.
+  //
+  // Called from dispatchImplement (result path AND catch path) whenever the
+  // code step surfaces a quotaRejected sentinel. Two call sites justify the
+  // extraction.
+  //
+  // Contract:
+  // - Sets isPaused=true so drain() is a no-op until resume fires.
+  // - Raises exactly ONE level-triggered 'provider-rate-limited' action-queue
+  //   row (idempotent raises bump seen_count, so a burst of rejections produces
+  //   one row, not one per task).
+  // - Schedules auto-resume at resetsAt + 60-second jitter. If resetsAt is 0
+  //   (unknown), falls back to a 30-minute wait so the loop stays self-healing
+  //   even when the API does not supply a reset timestamp.
+  // - Best-effort only — a DB hiccup must not crash the daemon.
+  const handleQuotaRejection = async (resetsAt: number): Promise<void> => {
+    if (isPaused) {
+      // Already paused (burst of concurrent rejections). The timer already
+      // running will resume. Do not raise a second action-queue row.
+      return
+    }
+    isPaused = true
+    const FALLBACK_PAUSE_MS = 30 * 60_000 // 30 min when resetsAt is unknown
+    const JITTER_MS = 60_000 // 60-second cushion past resetsAt
+    const nowMs = Date.now()
+    const resumeMs =
+      resetsAt > 0
+        ? Math.max(resetsAt * 1000 + JITTER_MS, nowMs + 5_000)
+        : nowMs + FALLBACK_PAUSE_MS
+    const resumeIso = new Date(resumeMs).toISOString()
+    log(`[quota] dispatch paused; will auto-resume at ${resumeIso}`)
+    const resumeTimer = setTimeout(() => {
+      isPaused = false
+      log(`[quota] dispatch resumed after rate-limit window`)
+      viewStreamHub.broadcast('tasks')
+      void drain()
+    }, resumeMs - nowMs)
+    resumeTimer.unref()
+    // Raise one level-triggered action-queue row. Idempotent: a second call
+    // within the same episode increments seen_count rather than inserting a
+    // sibling row (raiseActionQueueItem dedupes by fingerprint).
+    try {
+      const { raiseActionQueueItem } = await import('../lib/action-queue')
+      await raiseActionQueueItem({
+        kind: 'provider-rate-limited',
+        category: 'daemon',
+        priority: 'urgent',
+        title: 'Provider rate/spend limit reached — dispatch paused',
+        body: `The Claude API rejected dispatched runs due to a rate or spend limit. Dispatch is paused until ${resumeIso}. Raise your spend limit at claude.ai/settings/usage if needed.`,
+        payload: { resetsAt, resumeAt: resumeIso },
+        context: {},
+        raisedBy: 'daemon:quota-rejection',
+        signature: 'provider-rate-limited:auto',
+      })
+      viewStreamHub.broadcast('action-queue')
+    } catch (aqErr) {
+      log(
+        `[quota] action-queue raise failed (non-fatal): ${
+          aqErr instanceof Error ? aqErr.message : String(aqErr)
+        }`,
+      )
     }
   }
 

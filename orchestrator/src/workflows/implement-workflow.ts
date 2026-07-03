@@ -50,6 +50,9 @@ export {
   AWAIT_HUMAN_MESSAGE,
   isAwaitHumanError,
   extractAwaitHumanStepName,
+  QUOTA_REJECTED_ABORT_MESSAGE,
+  isQuotaRejectedAbortError,
+  extractQuotaResetsAt,
   // Prompt briefs + system-prompt assembly
   COMMIT_FOOTER,
   COMPLETION_REPORT_CONTRACT,

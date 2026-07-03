@@ -84,6 +84,57 @@ export const parseClaudeStreamLine = (line: string): ClaudeEvent | null => {
 }
 
 /**
+ * Detect whether the event stream represents a provider rate/spend-limit
+ * rejection — the global environmental condition that must NOT consume a
+ * task's single recovery slot.
+ *
+ * Detection: the Claude CLI emits a `rate_limit_event` with
+ * `rate_limit_info.status === 'rejected'` before the final `result` event.
+ * The `resetsAt` timestamp (Unix seconds) is read from that event; when it
+ * is absent or zero we fall back to 0.
+ *
+ * Secondary signal: a `result` event with `is_error: true` and
+ * `api_error_status: 429` alone (without a preceding `rate_limit_event`) is
+ * also treated as a quota rejection with `resetsAt: 0`.
+ *
+ * Returns `null` when neither signal is present.
+ */
+export const extractQuotaRejected = (
+  conversation: readonly ClaudeEvent[],
+): { resetsAt: number } | null => {
+  // Primary: scan for rate_limit_event with rejected status. Use the last
+  // occurrence in case multiple appear (e.g. five_hour + monthly in one run).
+  let latestResetsAt: number | null = null
+  for (const event of conversation) {
+    if (event.type === 'rate_limit_event') {
+      const info = (event as { rate_limit_info?: unknown }).rate_limit_info
+      if (isObject(info) && info.status === 'rejected') {
+        const resetsAt =
+          typeof info.resetsAt === 'number' && info.resetsAt > 0
+            ? info.resetsAt
+            : 0
+        latestResetsAt = resetsAt
+      }
+    }
+  }
+  if (latestResetsAt !== null) return { resetsAt: latestResetsAt }
+
+  // Secondary: result event with 429 status (no rate_limit_event seen).
+  for (let i = conversation.length - 1; i >= 0; i--) {
+    const event = conversation[i]
+    if (
+      event.type === 'result' &&
+      (event as { is_error?: unknown }).is_error === true &&
+      (event as { api_error_status?: unknown }).api_error_status === 429
+    ) {
+      return { resetsAt: 0 }
+    }
+  }
+
+  return null
+}
+
+/**
  * Extract the last human-readable text from a Claude event stream.
  *
  * Priority:
