@@ -654,3 +654,165 @@ describe('openTraceEventStore — log_line write-time filtering', () => {
     }
   })
 })
+
+// ── Durable compressed transcripts ────────────────────────────────────────────
+
+describe('appendDurableTranscript / readDurableTranscript — compressed round-trip', () => {
+  it('writes a transcript compressed and reads it back as the original JSON string', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      const events = [
+        { type: 'assistant', message: { content: [{ type: 'text', text: 'hello world' }] } },
+        { type: 'result', result: 'done' },
+      ]
+      const json = JSON.stringify(events)
+
+      await store.appendDurableTranscript!('task-rt-01', 'sess-rt-01', 'run-claude-code', json)
+      const result = await store.readDurableTranscript!('task-rt-01')
+
+      expect(result).not.toBeNull()
+      expect(JSON.parse(result!)).toEqual(events)
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('returns null when no transcript row exists for the task', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      const result = await store.readDurableTranscript!('task-missing')
+      expect(result).toBeNull()
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('a large synthetic transcript round-trips correctly', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      const bigEvent = { type: 'assistant', message: { content: [{ type: 'text', text: 'x'.repeat(4096) }] } }
+      const events = Array.from({ length: 200 }, () => bigEvent)
+      const json = JSON.stringify(events)
+      expect(json.length).toBeGreaterThan(800_000)
+
+      await store.appendDurableTranscript!('task-large-01', 'sess-large-01', 'run-claude-code', json)
+      const result = await store.readDurableTranscript!('task-large-01')
+
+      expect(result).not.toBeNull()
+      expect(JSON.parse(result!) as unknown[]).toHaveLength(events.length)
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('INSERT OR REPLACE: a second call updates the row for the same taskId', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      const first = JSON.stringify([{ type: 'assistant', message: 'first' }])
+      const second = JSON.stringify([{ type: 'assistant', message: 'second' }, { type: 'result' }])
+
+      await store.appendDurableTranscript!('task-upsert', 'sess-upsert', 'run-claude-code', first)
+      await store.appendDurableTranscript!('task-upsert', 'sess-upsert', 'run-claude-code', second)
+      const result = await store.readDurableTranscript!('task-upsert')
+
+      expect(result).not.toBeNull()
+      const parsed = JSON.parse(result!) as unknown[]
+      expect(parsed).toHaveLength(2) // second write wins
+    } finally {
+      await store.close()
+    }
+  })
+})
+
+describe('backfillInlineTranscripts — move step_ended inline transcripts to task_durable_transcripts', () => {
+  it('migrates an inline transcript from step_ended payload to task_durable_transcripts', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      const events = [{ type: 'assistant', content: 'from inline payload' }]
+      const transcriptJson = JSON.stringify(events)
+      await store.record({
+        kind: 'step_ended',
+        taskId: 'task-backfill-01',
+        phase: 'code',
+        payload: {
+          stepName: 'run-claude-code',
+          workflowInstanceId: 'wf-backfill-01',
+          outcome: 'completed',
+          sessionId: 'sess-backfill-01',
+          transcript: transcriptJson,
+        },
+      })
+
+      const count = await store.backfillInlineTranscripts!()
+      expect(count).toBe(1)
+
+      // Transcript must now be readable from task_durable_transcripts
+      const durableJson = await store.readDurableTranscript!('task-backfill-01')
+      expect(durableJson).not.toBeNull()
+      expect(JSON.parse(durableJson!)).toEqual(events)
+
+      // The inline transcript must no longer appear in the step_ended payload
+      const stepEnded = await store.query({ taskId: 'task-backfill-01', kind: ['step_ended'] })
+      expect(stepEnded).toHaveLength(1)
+      expect(stepEnded[0]!.payload.transcript).toBeUndefined()
+      // A lightweight transcriptRef marker replaces it
+      expect(stepEnded[0]!.payload.transcriptRef).toBeDefined()
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('is idempotent: calling backfill a second time returns 0', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      await store.record({
+        kind: 'step_ended',
+        taskId: 'task-backfill-idem',
+        phase: 'code',
+        payload: {
+          stepName: 'run-claude-code',
+          workflowInstanceId: 'wf-backfill-idem',
+          outcome: 'completed',
+          transcript: JSON.stringify([{ type: 'result' }]),
+        },
+      })
+
+      const first = await store.backfillInlineTranscripts!()
+      const second = await store.backfillInlineTranscripts!()
+
+      expect(first).toBe(1)
+      expect(second).toBe(0)
+    } finally {
+      await store.close()
+    }
+  })
+
+  it('does not overwrite an existing task_durable_transcripts row (INSERT OR IGNORE)', async () => {
+    const store = await openTraceEventStore(tmpDbPath())
+    try {
+      const existingJson = JSON.stringify([{ type: 'assistant', message: 'existing durable' }])
+      await store.appendDurableTranscript!('task-backfill-noover', 'sess-A', 'run-claude-code', existingJson)
+
+      const inlineJson = JSON.stringify([{ type: 'assistant', message: 'inline older' }])
+      await store.record({
+        kind: 'step_ended',
+        taskId: 'task-backfill-noover',
+        phase: 'code',
+        payload: {
+          stepName: 'run-claude-code',
+          workflowInstanceId: 'wf-backfill-noover',
+          outcome: 'completed',
+          transcript: inlineJson,
+        },
+      })
+
+      await store.backfillInlineTranscripts!()
+
+      // Existing durable transcript must not be overwritten
+      const result = await store.readDurableTranscript!('task-backfill-noover')
+      expect(JSON.parse(result!)).toEqual(JSON.parse(existingJson))
+    } finally {
+      await store.close()
+    }
+  })
+})

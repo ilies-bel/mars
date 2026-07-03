@@ -445,11 +445,19 @@ describe('arc step timeline — LLM-backed entries surface transcript and sessio
     expect(codeEntry!.workerName).toBe('Coder')
   })
 
-  it('surfaces transcript on LLM-backed span entries when present', async () => {
+  it('stepTimeline.transcript is always null after the durable-transcript migration (hard cut)', async () => {
+    // After the durable-transcript migration, transcripts are stored as
+    // gzip-compressed BLOBs in task_durable_transcripts — never inline in
+    // step_ended payloads. The ArcSpanEntry.transcript field is therefore
+    // always null regardless of what is in the step_ended payload.
+    // The per-task conversation is read from task_durable_transcripts and
+    // surfaced in ArcTaskEntry.conversation.
     const { q, dq } = await loadModules(repo)
     const task = await q.enqueueTask('transcript check', undefined, { skipTriage: true })
     const originId = task.id
 
+    // Insert a step_ended event that still contains an inline transcript
+    // (simulating a pre-migration or legacy row). stepTimeline must ignore it.
     const transcriptJson = JSON.stringify([{ type: 'assistant', message: { content: 'done' } }])
     await insertSpanEnded(q, {
       originId,
@@ -464,7 +472,8 @@ describe('arc step timeline — LLM-backed entries surface transcript and sessio
     const arc = await dq.loadDeepReflectArc(originId)
     const codeEntry = arc!.stepTimeline.find((s) => s.stepName === 'run-claude-code')
     expect(codeEntry).toBeDefined()
-    expect(codeEntry!.transcript).toBe(transcriptJson)
+    // Hard cut: inline transcript in step_ended payload is ignored.
+    expect(codeEntry!.transcript).toBeNull()
   })
 
   it('surfaces verifyOutput on verify span entries', async () => {

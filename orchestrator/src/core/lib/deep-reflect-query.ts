@@ -1,3 +1,5 @@
+import { gunzip } from 'node:zlib'
+import { promisify } from 'node:util'
 import { getDefaultTaskStore } from '../store/task-store'
 import { getRepoRoot } from '../context'
 import type { ClaudeEvent } from './claude-stream'
@@ -9,6 +11,8 @@ import {
   resolveTranscriptLocationsForTask,
   type TranscriptLocation,
 } from './claude-transcript'
+
+const gunzipAsync = promisify(gunzip)
 
 // ── Foreground-session slice constants ────────────────────────────────────────
 /** How far before the cli-invocation anchor to include operator messages. */
@@ -435,41 +439,42 @@ const loadTranscriptChunks = async (
 }
 
 /**
- * Read the durable Claude transcript for a task from `trace_events`.
+ * Read the durable Claude transcript for a task from `task_durable_transcripts`.
  *
- * Returns the most recent `step_ended` event whose payload carries a
- * non-empty `transcript` string, parsed back into `ClaudeEvent[]`.
- * Returns `null` when no such row exists — the caller falls back to the
- * on-disk JSONL stream.
+ * Rows are stored as gzip-compressed JSON blobs (written by runWorkerWithSpan
+ * or upsertTranscript). Returns null when no row exists — the caller falls
+ * back to the on-disk JSONL stream.
+ *
+ * Hard cut: this path no longer reads inline transcripts from step_ended
+ * payloads (those were removed in the durable-transcript migration).
  */
 const loadDurableTranscript = async (
   store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
   taskId: string,
 ): Promise<DurableTranscript | null> => {
-  const r = await store.query({
-    sql: `SELECT payload
-            FROM trace_events
-           WHERE kind = 'step_ended' AND task_id = ?
-             AND json_extract(payload, '$.transcript') IS NOT NULL
-           ORDER BY timestamp DESC
-           LIMIT 1`,
-    args: [taskId],
-  })
-  if (r.rows.length === 0) return null
-  const row = r.rows[0] as unknown as { payload: string }
-  let payload: Record<string, unknown>
+  let r: Awaited<ReturnType<typeof store.query>>
   try {
-    payload = JSON.parse(row.payload) as Record<string, unknown>
+    r = await store.query({
+      sql: `SELECT transcript FROM task_durable_transcripts WHERE task_id = ?`,
+      args: [taskId],
+    })
   } catch {
+    // task_durable_transcripts may not exist on very old DBs — treat as no data.
     return null
   }
-  const transcriptRaw = payload.transcript
-  if (typeof transcriptRaw !== 'string' || transcriptRaw.length === 0) {
+  if (r.rows.length === 0) return null
+  const row = r.rows[0] as unknown as { transcript: Uint8Array | null }
+  if (!row.transcript) return null
+  let transcriptJson: string
+  try {
+    const decompressed = await gunzipAsync(Buffer.from(row.transcript))
+    transcriptJson = decompressed.toString('utf8')
+  } catch {
     return null
   }
   let parsed: unknown
   try {
-    parsed = JSON.parse(transcriptRaw)
+    parsed = JSON.parse(transcriptJson)
   } catch {
     return null
   }
@@ -739,7 +744,11 @@ export const loadDeepReflectArc = async (
       : 'failed'
     const durationMs = typeof payload.durationMs === 'number' ? payload.durationMs : 0
     const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : null
-    const transcript = typeof payload.transcript === 'string' ? payload.transcript : null
+    // transcripts are no longer embedded in step_ended payloads — they live
+    // in task_durable_transcripts as compressed BLOBs (per-task, not per-step).
+    // ArcTaskEntry.conversation holds the per-task transcript loaded via
+    // loadTaskTranscript; this per-span field is always null after migration.
+    const transcript = null
     const verifyOutput = typeof payload.verifyOutput === 'string' ? payload.verifyOutput : null
 
     // Derive start time: span ended at `timestamp`, ran for `durationMs` ms.
@@ -858,11 +867,11 @@ interface ArcAggregateRow {
 const fetchArcAggregateRows = async (
   store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
 ): Promise<ArcAggregateRow[]> => {
-  // After PRD 436f14c7 slice 5, usage signals and transcript markers live in
-  // trace_events. json_extract reads the usageSignals sub-object from step_ended
-  // payloads; SUM over NULLs resolves to NULL which COALESCE converts to 0.
-  // has_transcript is 1 when any step_ended event for the task carries a
-  // 'transcript' key in its payload (written by runWorkerWithSpan or upsertTranscript).
+  // Usage signals live in trace_events step_ended payloads (small after the
+  // transcript migration). json_extract is now fast because payloads no longer
+  // embed multi-megabyte transcript strings.
+  // has_transcript uses EXISTS against the dedicated transcript tables — never
+  // scans step_ended payloads — so the join over multi-MB blobs is eliminated.
   const r = await store.query(`
     SELECT t.id AS task_id,
            COALESCE(t.origin_id, t.id) AS origin_id,
@@ -871,7 +880,9 @@ const fetchArcAggregateRows = async (
            t.updated_at AS updated_at,
            COALESCE(CAST(SUM(json_extract(te.payload, '$.usageSignals.inputTokens')) AS INTEGER), 0) AS total_input,
            COALESCE(CAST(SUM(json_extract(te.payload, '$.usageSignals.outputTokens')) AS INTEGER), 0) AS total_output,
-           MAX(CASE WHEN json_extract(te.payload, '$.transcript') IS NOT NULL THEN 1 ELSE 0 END) AS has_transcript
+           CASE WHEN EXISTS(SELECT 1 FROM task_durable_transcripts dt WHERE dt.task_id = t.id)
+                  OR EXISTS(SELECT 1 FROM task_transcripts tt WHERE tt.task_id = t.id LIMIT 1)
+                THEN 1 ELSE 0 END AS has_transcript
       FROM tasks t
       LEFT JOIN trace_events te ON te.task_id = t.id AND te.kind = 'step_ended'
      GROUP BY t.id

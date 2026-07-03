@@ -243,9 +243,21 @@ export const runWorkerWithSpan = async (
     result.exitCode === 0 || result.exitCode === 138
       ? undefined
       : `exit-${result.exitCode}`
-  const transcript = isReflectDisabled()
-    ? undefined
-    : JSON.stringify(result.conversation)
+
+  // Persist the full conversation as a gzip-compressed BLOB in
+  // task_durable_transcripts — not inline in the step_ended payload.
+  // step_ended payloads are scanned by hot aggregate queries and must remain
+  // small; the dedicated table avoids multi-megabyte blobs in trace_events.
+  if (!isReflectDisabled() && taskId && traceStore?.appendDurableTranscript) {
+    await traceStore
+      .appendDurableTranscript(
+        taskId,
+        result.sessionId ?? '',
+        stepName,
+        JSON.stringify(result.conversation),
+      )
+      .catch(() => {})
+  }
 
   const successPayload = {
     stepName,
@@ -263,7 +275,6 @@ export const runWorkerWithSpan = async (
       messageCount: usage.messageCount,
       contextTokens,
     },
-    ...(transcript !== undefined ? { transcript } : {}),
     ...(getExtraPayload !== undefined ? getExtraPayload() : {}),
   }
   const evalResults = evaluateStep(stepName, successPayload)

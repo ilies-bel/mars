@@ -155,14 +155,14 @@ describe('runWorkerWithSpan — Coder run', () => {
     })
   })
 
-  it('captures the serialised conversation as transcript when reflection is enabled', async () => {
+  it('stores the conversation in task_durable_transcripts (not inline in step_ended payload) when reflection is enabled', async () => {
     const traceStore = await openTraceEventStore(tmpDbPath())
     const conversation = [{ type: 'assistant', message: { content: 'hello' } }] as never[]
     const worker = makeWorker('Coder', {
       exitCode: 0,
       stdout: '',
       stderr: '',
-      sessionId: null,
+      sessionId: 'sess-transcript-test',
       conversation,
     })
 
@@ -177,9 +177,14 @@ describe('runWorkerWithSpan — Coder run', () => {
       taskId: 'task-coder-mno',
     })
 
+    // Transcript must NOT appear inline in the step_ended payload (no more multi-MB blobs)
     const ended = (await traceStore.query({ taskId: 'task-coder-mno', kind: ['step_ended'] }))[0]
-    expect(typeof ended.payload.transcript).toBe('string')
-    expect(JSON.parse(ended.payload.transcript as string)).toEqual(conversation)
+    expect(ended.payload.transcript).toBeUndefined()
+
+    // Transcript must be accessible from the dedicated compressed table
+    const durableJson = await traceStore.readDurableTranscript!('task-coder-mno')
+    expect(durableJson).not.toBeNull()
+    expect(JSON.parse(durableJson!)).toEqual(conversation)
   })
 })
 

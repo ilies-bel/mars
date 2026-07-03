@@ -4,12 +4,18 @@
  * These tests drive the subscriber handler directly (without a running
  * dispatcher) so every assertion is synchronous and deterministic. The
  * file-backed SQLite client mirrors the real daemon setup: a single
- * `mars.db` that holds both the `trace_events` table and the
+ * `mars.db` that holds both the `task_durable_transcripts` table and the
  * `subscriber_processed_events` dedup table, so the processedOnce row and
  * the transcript insert are co-located and covered by the same write
  * transaction.
+ *
+ * Since the durable-transcript migration, transcripts are stored as
+ * gzip-compressed BLOBs in `task_durable_transcripts` — not as JSON strings
+ * inside `trace_events` payloads. All assertions now check that table.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { gunzip } from 'node:zlib';
+import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,6 +26,8 @@ import {
   ensureTranscriptAppendSchema,
 } from './transcript-append.js';
 import type { BusEvent } from '../../bus/events.js';
+
+const gunzipAsync = promisify(gunzip);
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -35,13 +43,26 @@ function completedEvent(eventId: number, taskId: string): BusEvent {
   };
 }
 
-/** Count trace_events rows for the given taskId. */
-async function traceEventCount(client: Client, taskId: string): Promise<number> {
+/** Count task_durable_transcripts rows for the given taskId. */
+async function durableTranscriptCount(client: Client, taskId: string): Promise<number> {
   const r = await client.execute({
-    sql: `SELECT COUNT(*) AS n FROM trace_events WHERE task_id = ?`,
+    sql: `SELECT COUNT(*) AS n FROM task_durable_transcripts WHERE task_id = ?`,
     args: [taskId],
   });
   return Number((r.rows[0] as unknown as { n: number | bigint }).n);
+}
+
+/** Read and decompress the stored transcript for a task. Returns null if not present. */
+async function readDurableTranscript(client: Client, taskId: string): Promise<string | null> {
+  const r = await client.execute({
+    sql: `SELECT transcript FROM task_durable_transcripts WHERE task_id = ?`,
+    args: [taskId],
+  });
+  if (r.rows.length === 0) return null;
+  const row = r.rows[0] as unknown as { transcript: Uint8Array | null };
+  if (!row.transcript) return null;
+  const decompressed = await gunzipAsync(Buffer.from(row.transcript));
+  return decompressed.toString('utf8');
 }
 
 // ---------------------------------------------------------------------------
@@ -64,34 +85,28 @@ describe('transcript-append:task.completed subscriber', () => {
   });
 
   // ── Acceptance criterion 1 ─────────────────────────────────────────────
-  // Each run-completion event results in exactly one transcript append.
+  // Each run-completion event results in exactly one compressed transcript row
+  // in task_durable_transcripts.
 
-  it('inserts exactly one trace_events row for a task.completed event', async () => {
+  it('inserts exactly one task_durable_transcripts row for a task.completed event', async () => {
     const readTranscript = async () =>
       JSON.stringify([{ role: 'assistant', content: 'Hello' }]);
     const subscriber = buildTranscriptAppendSubscriber(client, readTranscript);
 
     await subscriber.handler(completedEvent(1, 'task-alpha'));
 
-    expect(await traceEventCount(client, 'task-alpha')).toBe(1);
+    expect(await durableTranscriptCount(client, 'task-alpha')).toBe(1);
   });
 
-  it('stores the conversation JSON in the trace_events payload with expected metadata', async () => {
+  it('stores the conversation JSON as a gzip-compressed BLOB in task_durable_transcripts', async () => {
     const conv = JSON.stringify([{ role: 'assistant', content: 'some response' }]);
     const subscriber = buildTranscriptAppendSubscriber(client, async () => conv);
 
     await subscriber.handler(completedEvent(2, 'task-bravo'));
 
-    const r = await client.execute({
-      sql: `SELECT payload FROM trace_events WHERE task_id = ?`,
-      args: ['task-bravo'],
-    });
-    expect(r.rows).toHaveLength(1);
-    const row = r.rows[0] as unknown as { payload: string };
-    const payload = JSON.parse(row.payload) as Record<string, unknown>;
-    expect(payload.transcript).toBe(conv);
-    expect(payload.stepName).toBe('code');
-    expect(payload.outcome).toBe('success');
+    expect(await durableTranscriptCount(client, 'task-bravo')).toBe(1);
+    const stored = await readDurableTranscript(client, 'task-bravo');
+    expect(stored).toBe(conv);
   });
 
   // ── Acceptance criterion 2 ─────────────────────────────────────────────
@@ -101,41 +116,42 @@ describe('transcript-append:task.completed subscriber', () => {
   it('after a restart with no prior processing, the first delivery creates exactly one row', async () => {
     // Simulates: event written to outbox, daemon crashes before subscriber
     // processes it (processedOnce dedup table is empty). On restart a fresh
-    // subscriber instance processes the event and the trace_events row appears.
+    // subscriber instance processes the event and the row in
+    // task_durable_transcripts appears.
     const readTranscript = async () =>
       JSON.stringify([{ role: 'assistant', content: 'text' }]);
     const subscriber = buildTranscriptAppendSubscriber(client, readTranscript);
 
     await subscriber.handler(completedEvent(10, 'task-charlie'));
 
-    expect(await traceEventCount(client, 'task-charlie')).toBe(1);
+    expect(await durableTranscriptCount(client, 'task-charlie')).toBe(1);
   });
 
   it('processedOnce dedup persists across subscriber instances, preventing a double-append on restart', async () => {
     // Simulates: first subscriber instance processes the event successfully
-    // (processedOnce commits dedup row + trace_events row) but cursor advance
-    // fails before the daemon dies. On restart a second subscriber instance
-    // sees the same event (cursor still behind). The persisted dedup row must
-    // prevent a second trace_events row.
+    // (processedOnce commits dedup row + task_durable_transcripts row) but
+    // cursor advance fails before the daemon dies. On restart a second subscriber
+    // instance sees the same event (cursor still behind). The persisted dedup row
+    // must prevent a second INSERT into task_durable_transcripts.
     const readTranscript = async () =>
       JSON.stringify([{ role: 'assistant', content: 'x' }]);
 
     const sub1 = buildTranscriptAppendSubscriber(client, readTranscript);
     await sub1.handler(completedEvent(7, 'task-delta'));
-    expect(await traceEventCount(client, 'task-delta')).toBe(1);
+    expect(await durableTranscriptCount(client, 'task-delta')).toBe(1);
 
     // Restart: new subscriber instance, same file-backed DB (dedup row persists).
     const sub2 = buildTranscriptAppendSubscriber(client, readTranscript);
     await sub2.handler(completedEvent(7, 'task-delta'));
 
     // Persisted dedup row prevented the second insert.
-    expect(await traceEventCount(client, 'task-delta')).toBe(1);
+    expect(await durableTranscriptCount(client, 'task-delta')).toBe(1);
   });
 
   // ── Acceptance criterion 3 ─────────────────────────────────────────────
   // Replaying a run-completion event produces zero additional appends.
 
-  it('replaying the same event id produces zero additional trace_events rows', async () => {
+  it('replaying the same event id produces zero additional task_durable_transcripts rows', async () => {
     const event = completedEvent(42, 'task-echo');
     const readTranscript = async () =>
       JSON.stringify([{ role: 'assistant', content: 'y' }]);
@@ -143,13 +159,13 @@ describe('transcript-append:task.completed subscriber', () => {
 
     // First delivery.
     await subscriber.handler(event);
-    expect(await traceEventCount(client, 'task-echo')).toBe(1);
+    expect(await durableTranscriptCount(client, 'task-echo')).toBe(1);
 
     // Replay — same event id, same subscriber.
     await subscriber.handler(event);
 
     // processedOnce dedup row prevents re-entry.
-    expect(await traceEventCount(client, 'task-echo')).toBe(1);
+    expect(await durableTranscriptCount(client, 'task-echo')).toBe(1);
   });
 
   // ── Edge cases ─────────────────────────────────────────────────────────
@@ -173,7 +189,7 @@ describe('transcript-append:task.completed subscriber', () => {
     };
     await subscriber.handler(otherEvent);
 
-    expect(await traceEventCount(client, 'task-foxtrot')).toBe(0);
+    expect(await durableTranscriptCount(client, 'task-foxtrot')).toBe(0);
   });
 
   it('skips the append without error when readTranscript returns null', async () => {
@@ -181,10 +197,10 @@ describe('transcript-append:task.completed subscriber', () => {
 
     await subscriber.handler(completedEvent(5, 'task-golf'));
 
-    expect(await traceEventCount(client, 'task-golf')).toBe(0);
+    expect(await durableTranscriptCount(client, 'task-golf')).toBe(0);
   });
 
-  it('different tasks each get their own trace_events row', async () => {
+  it('different tasks each get their own task_durable_transcripts row', async () => {
     const readTranscript = async () =>
       JSON.stringify([{ role: 'assistant', content: 'z' }]);
     const subscriber = buildTranscriptAppendSubscriber(client, readTranscript);
@@ -192,16 +208,16 @@ describe('transcript-append:task.completed subscriber', () => {
     await subscriber.handler(completedEvent(20, 'task-hotel'));
     await subscriber.handler(completedEvent(21, 'task-india'));
 
-    expect(await traceEventCount(client, 'task-hotel')).toBe(1);
-    expect(await traceEventCount(client, 'task-india')).toBe(1);
+    expect(await durableTranscriptCount(client, 'task-hotel')).toBe(1);
+    expect(await durableTranscriptCount(client, 'task-india')).toBe(1);
   });
 
   // ── EventEmitter wiring ───────────────────────────────────────────────────
   // Confirms the daemon bus.on('task.completed', ...) pattern works correctly:
   // emitting task.completed on an EventEmitter triggers the subscriber and
-  // writes exactly one trace_events row.
+  // writes exactly one task_durable_transcripts row.
 
-  it('bus.on wiring: emitting task.completed via EventEmitter writes exactly one trace_events row (test (a))', async () => {
+  it('bus.on wiring: emitting task.completed via EventEmitter writes exactly one task_durable_transcripts row (test (a))', async () => {
     const emitter = new EventEmitter()
     const readTranscript = async () =>
       JSON.stringify([{ type: 'assistant', content: 'wired' }])
@@ -225,6 +241,6 @@ describe('transcript-append:task.completed subscriber', () => {
     emitter.emit('task.completed', { taskId: 'task-emitter-wired', status: 'done' })
     await Promise.all(pending)
 
-    expect(await traceEventCount(client, 'task-emitter-wired')).toBe(1)
+    expect(await durableTranscriptCount(client, 'task-emitter-wired')).toBe(1)
   })
 });

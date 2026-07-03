@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
+import { gzip, gunzip } from 'node:zlib'
+import { promisify } from 'node:util'
 import { z } from 'zod'
 import { openLibsql } from './libsql'
+
+const gzipAsync = promisify(gzip)
+const gunzipAsync = promisify(gunzip)
 
 /**
  * The single Mars trace-event surface. All step telemetry lives in the
@@ -135,6 +140,50 @@ export interface TraceEventStore {
    * Retention constant: {@link TRANSCRIPT_RETENTION_DAYS}.
    */
   pruneTranscripts?: (beforeIso: string) => Promise<number>
+
+  /**
+   * Store the full conversation transcript for a task as a gzip-compressed
+   * BLOB in `task_durable_transcripts`. Uses INSERT OR REPLACE so calling
+   * again for the same taskId updates the row with the latest conversation.
+   *
+   * Prefer this over embedding the transcript string in `step_ended` payloads —
+   * payloads are scanned by hot aggregate queries and must remain small.
+   *
+   * Optional — implementations that do not support durable transcripts
+   * (e.g. `nullTraceStore`) simply omit this method; callers use optional
+   * chaining (`store.appendDurableTranscript?.(...)`).
+   */
+  appendDurableTranscript?: (
+    taskId: string,
+    sessionId: string,
+    stepName: string,
+    transcriptJson: string,
+  ) => Promise<void>
+
+  /**
+   * Read and decompress the durable transcript for a task from
+   * `task_durable_transcripts`. Returns the raw JSON string on success,
+   * `null` when no row exists or decompression fails.
+   *
+   * Optional — omitted on stores that do not support durable transcripts;
+   * callers fall back to the streaming chunks path or on-disk JSONL.
+   */
+  readDurableTranscript?: (taskId: string) => Promise<string | null>
+
+  /**
+   * One-time migration: find all `step_ended` rows whose payload embeds an
+   * inline `transcript` string, write them compressed to
+   * `task_durable_transcripts` (INSERT OR IGNORE — does not overwrite an
+   * existing row), and rewrite the payload with a `transcriptRef` marker
+   * (byte length only) in place of the raw string.
+   *
+   * Idempotent — safe to call on every startup; after migration all matching
+   * rows have been rewritten so subsequent calls are fast no-ops.
+   * Returns the count of rows migrated.
+   *
+   * Optional — omitted on stores that do not support durable transcripts.
+   */
+  backfillInlineTranscripts?: () => Promise<number>
 }
 
 /**
@@ -211,6 +260,26 @@ CREATE TABLE IF NOT EXISTS task_transcripts (
 const INDEX_TASK_TRANSCRIPTS = `
 CREATE INDEX IF NOT EXISTS idx_task_transcripts_task
   ON task_transcripts (task_id, ts)
+`
+
+/**
+ * Durable compressed transcript table. One row per task: the full
+ * conversation JSON serialised and gzip-compressed. Callers write here
+ * instead of embedding the transcript string in `step_ended` payloads so
+ * hot aggregate queries over trace_events are not slowed by multi-MB blobs.
+ *
+ * byte_len stores the uncompressed length so callers can surface the size
+ * without decompressing.
+ */
+const DURABLE_TRANSCRIPTS_DDL = `
+CREATE TABLE IF NOT EXISTS task_durable_transcripts (
+  task_id    TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL DEFAULT '',
+  step_name  TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  transcript BLOB NOT NULL,
+  byte_len   INTEGER NOT NULL
+)
 `
 
 const TRACE_EVENTS_DDL = `
@@ -347,6 +416,7 @@ export const openTraceEventStore = async (
   await client.execute(INDEX_ORIGIN_TIME)
   await client.execute(TASK_TRANSCRIPTS_DDL)
   await client.execute(INDEX_TASK_TRANSCRIPTS)
+  await client.execute(DURABLE_TRANSCRIPTS_DDL)
 
   return {
     record: async (event: TraceEventInput): Promise<void> => {
@@ -500,6 +570,91 @@ export const openTraceEventStore = async (
         args: [beforeIso],
       })
       return result.rowsAffected ?? 0
+    },
+
+    appendDurableTranscript: async (
+      taskId: string,
+      sessionId: string,
+      stepName: string,
+      transcriptJson: string,
+    ): Promise<void> => {
+      const compressed = await gzipAsync(Buffer.from(transcriptJson, 'utf8'))
+      await client.execute({
+        sql: `INSERT OR REPLACE INTO task_durable_transcripts
+              (task_id, session_id, step_name, created_at, transcript, byte_len)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+        args: [
+          taskId,
+          sessionId,
+          stepName,
+          new Date().toISOString(),
+          compressed,
+          transcriptJson.length,
+        ],
+      })
+    },
+
+    readDurableTranscript: async (taskId: string): Promise<string | null> => {
+      const result = await client.execute({
+        sql: `SELECT transcript FROM task_durable_transcripts WHERE task_id = ?`,
+        args: [taskId],
+      })
+      if (result.rows.length === 0) return null
+      const row = result.rows[0] as unknown as { transcript: Uint8Array | null }
+      if (!row.transcript) return null
+      try {
+        const decompressed = await gunzipAsync(Buffer.from(row.transcript))
+        return decompressed.toString('utf8')
+      } catch {
+        return null
+      }
+    },
+
+    backfillInlineTranscripts: async (): Promise<number> => {
+      // Find all step_ended rows whose payload embeds an inline transcript string.
+      const rows = await client.execute(
+        `SELECT id, task_id, payload FROM trace_events
+          WHERE kind = 'step_ended'
+            AND json_extract(payload, '$.transcript') IS NOT NULL`,
+      )
+      let migrated = 0
+      for (const row of rows.rows) {
+        const r = row as unknown as { id: string; task_id: string | null; payload: string }
+        if (!r.task_id) continue
+        let payload: Record<string, unknown>
+        try {
+          payload = JSON.parse(r.payload) as Record<string, unknown>
+        } catch {
+          continue
+        }
+        const transcriptRaw = payload.transcript
+        if (typeof transcriptRaw !== 'string' || transcriptRaw.length === 0) continue
+        const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
+        const stepName = typeof payload.stepName === 'string' ? payload.stepName : 'code'
+        const byteLen = transcriptRaw.length
+        // Write compressed transcript — INSERT OR IGNORE so a newer durable row
+        // written by runWorkerWithSpan is left intact.
+        const compressed = await gzipAsync(Buffer.from(transcriptRaw, 'utf8'))
+        await client.execute({
+          sql: `INSERT OR IGNORE INTO task_durable_transcripts
+                (task_id, session_id, step_name, created_at, transcript, byte_len)
+                VALUES (?, ?, ?, ?, ?, ?)`,
+          args: [r.task_id, sessionId, stepName, new Date().toISOString(), compressed, byteLen],
+        })
+        // Rewrite the payload without the inline transcript; add a lightweight
+        // transcriptRef marker so the row is self-describing.
+        const { transcript: _removed, ...rest } = payload
+        const updatedPayload: Record<string, unknown> = {
+          ...rest,
+          transcriptRef: { byteLen },
+        }
+        await client.execute({
+          sql: `UPDATE trace_events SET payload = ? WHERE id = ?`,
+          args: [JSON.stringify(updatedPayload), r.id],
+        })
+        migrated++
+      }
+      return migrated
     },
   }
 }

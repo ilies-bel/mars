@@ -163,9 +163,9 @@ describe('loadDeepReflectArc — durable transcript read path', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('returns durable transcript events from trace_events when no JSONL file exists on disk (test (b))', async () => {
-    // This test verifies Half 2: loadDeepReflectArc prefers the trace_events
-    // transcript over the filesystem fallback when the durable row is present.
+  it('returns durable transcript events from task_durable_transcripts when no JSONL file exists on disk', async () => {
+    // loadDeepReflectArc reads from task_durable_transcripts (compressed BLOB)
+    // when no streaming chunks and no on-disk JSONL are available.
     const { q, dq } = await loadModules(repo)
 
     // Create a task. By default it has no claude_session_ids, so the
@@ -174,27 +174,12 @@ describe('loadDeepReflectArc — durable transcript read path', () => {
       skipTriage: true,
     })
 
-    // Insert a trace_events row the way the transcript-append subscriber would,
-    // carrying the conversation transcript in the payload.
+    // Write a compressed durable transcript via upsertTranscript, which now
+    // stores to task_durable_transcripts instead of step_ended payloads.
     const events = [
-      { type: 'assistant', content: 'durable reply from trace_events' },
+      { type: 'assistant', content: 'durable reply from task_durable_transcripts' },
     ]
-    await q.resolveQueueClient().execute({
-      sql: `INSERT INTO trace_events (id, timestamp, kind, severity, task_id, phase, payload)
-            VALUES (?, ?, 'step_ended', 'info', ?, 'code', ?)`,
-      args: [
-        `transcript-append-${task.id}-0`,
-        new Date().toISOString(),
-        task.id,
-        JSON.stringify({
-          stepName: 'code',
-          workflowInstanceId: `transcript-append-${task.id}`,
-          outcome: 'success',
-          durationMs: 0,
-          transcript: JSON.stringify(events),
-        }),
-      ],
-    })
+    await q.upsertTranscript({ taskId: task.id, conversationJson: JSON.stringify(events) })
 
     const arc = await dq.loadDeepReflectArc(task.id)
     expect(arc).not.toBeNull()

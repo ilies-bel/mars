@@ -1,6 +1,7 @@
 import { type Client, type InStatement } from '@libsql/client'
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { gzip } from 'node:zlib'
 import { promisify } from 'node:util'
 import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
@@ -12,6 +13,7 @@ import type { DomainTaskStore as TaskStore } from './store/task-store'
 import { raiseActionQueueItem } from './lib/action-queue'
 
 const execFileP = promisify(execFile)
+const gzipAsyncQ = promisify(gzip)
 
 export type TaskStatus =
   | 'draft'
@@ -1843,6 +1845,19 @@ const migrateSignalsAndTranscriptsToTraceEvents = async (c: Client): Promise<voi
   // not exist; "recovery_exhausted" accurately reflects the one-recovery invariant
   // (ADR-0040). Idempotent: WHERE guard is a no-op once all rows are migrated.
   await c.execute(`UPDATE tasks SET failure_reason = replace(failure_reason, 'retry_budget_exhausted', 'recovery_exhausted') WHERE failure_reason LIKE '%retry_budget_exhausted%'`) // arch-guard:migration-write
+  // Durable compressed transcript table. One row per task, gzip-compressed JSON.
+  // Writers use this instead of embedding transcript strings in step_ended payloads
+  // so hot aggregate queries over trace_events are not slowed by multi-MB blobs.
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_durable_transcripts (
+      task_id    TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL DEFAULT '',
+      step_name  TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      transcript BLOB NOT NULL,
+      byte_len   INTEGER NOT NULL
+    )
+  `)
 }
 
 const MAX_CONVERSATION_BYTES = 2 * 1024 * 1024
@@ -1867,39 +1882,50 @@ export const upsertTranscript = async (
   input: UpsertTranscriptInput,
   store?: TaskStore,
 ): Promise<void> => {
-  // After PRD 436f14c7 slice 5, transcripts and verify output are stored as
-  // step_ended trace events rather than task_transcripts rows (which have been
-  // migrated and dropped). Each call appends a new event; readers use ORDER BY
-  // timestamp DESC LIMIT 1 to get the latest.
   const now = new Date().toISOString()
-  const payloadObj: Record<string, unknown> = {
-    stepName: 'code',
-    workflowInstanceId: `upsert-${input.taskId}`,
-    outcome: 'success',
-    durationMs: 0,
+  const execute = async (stmt: { sql: string; args: unknown[] }) => {
+    if (store) {
+      await store.execute(stmt as InStatement)
+    } else {
+      await migrateQueueSchema()
+      await resolveQueueClient().execute(stmt as InStatement)
+    }
   }
+
+  // Write transcript as a gzip-compressed BLOB to the dedicated table.
+  // This keeps step_ended payloads small so hot aggregate queries are fast.
   if (input.conversationJson !== undefined) {
-    payloadObj.transcript = capConversationJson(input.conversationJson)
+    const capped = capConversationJson(input.conversationJson)
+    const compressed = await gzipAsyncQ(Buffer.from(capped, 'utf8'))
+    await execute({
+      sql: `INSERT OR REPLACE INTO task_durable_transcripts
+              (task_id, session_id, step_name, created_at, transcript, byte_len)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [input.taskId, '', 'code', now, compressed, capped.length],
+    })
   }
+
+  // Write verifyOutput to a step_ended event (it is small — at most 64 KB).
+  // The transcript field is never written to step_ended any more.
   if (input.verifyOutput !== undefined && input.verifyOutput !== null) {
     const cappedVerify =
       input.verifyOutput.length > 64 * 1024
         ? input.verifyOutput.slice(0, 64 * 1024)
         : input.verifyOutput
-    payloadObj.verifyOutput = cappedVerify
-  }
-  const id = `upsert-${input.taskId}-${randomUUID()}`
-  const stmt = {
-    sql: `INSERT INTO trace_events
-            (id, timestamp, kind, severity, task_id, phase, payload)
-          VALUES (?, ?, 'step_ended', 'info', ?, 'code', ?)`,
-    args: [id, now, input.taskId, JSON.stringify(payloadObj)],
-  }
-  if (store) {
-    await store.execute(stmt)
-  } else {
-    await migrateQueueSchema()
-    await resolveQueueClient().execute(stmt)
+    const payloadObj = {
+      stepName: 'code',
+      workflowInstanceId: `upsert-${input.taskId}`,
+      outcome: 'success',
+      durationMs: 0,
+      verifyOutput: cappedVerify,
+    }
+    const id = `upsert-${input.taskId}-${randomUUID()}`
+    await execute({
+      sql: `INSERT INTO trace_events
+              (id, timestamp, kind, severity, task_id, phase, payload)
+            VALUES (?, ?, 'step_ended', 'info', ?, 'code', ?)`,
+      args: [id, now, input.taskId, JSON.stringify(payloadObj)],
+    })
   }
 }
 
