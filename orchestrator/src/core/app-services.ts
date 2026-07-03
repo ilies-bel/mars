@@ -92,6 +92,12 @@ export interface AppServicesDeps {
    * exactly as the former inline closure did.
    */
   buildAlertSources: () => Promise<AlertSources>
+  /**
+   * Optional: fetch the result_json for each step in a workflow run, keyed by
+   * step_name. When not provided, resultJson is null on all RunTimelineStep
+   * entries. The daemon wires this to the workflow store backed by mars.db.
+   */
+  getStepResultsForRun?: (runId: string) => Promise<Map<string, string | null>>
 }
 
 /**
@@ -139,7 +145,7 @@ export interface AppServices {
  * (or `http-server.ts` `default*` fallback) of the same name.
  */
 export const createAppServices = (deps: AppServicesDeps): AppServices => {
-  const { traceStore, buildAlertSources } = deps
+  const { traceStore, buildAlertSources, getStepResultsForRun } = deps
 
   const viewTasks: AppServices['viewTasks'] = () =>
     getDefaultDomainTaskStore()
@@ -299,9 +305,40 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           endEvent && typeof endEvent.payload.failureReason === 'string'
             ? endEvent.payload.failureReason
             : null,
+        resultJson: null,
       }
 
       runMap.get(wfId)!.push(step)
+    }
+
+    // Fetch per-step result_json from the workflow store, keyed by
+    // (runId, stepName). Done in a single pass after collecting all run ids so
+    // we issue one query per run rather than one per step. Silently falls back
+    // to null when the dep is absent (tests) or the table is missing.
+    const runIds = Array.from(runMap.keys())
+    const stepResultsByRun = new Map<string, Map<string, string | null>>()
+    if (getStepResultsForRun && runIds.length > 0) {
+      await Promise.all(
+        runIds.map(async (runId) => {
+          try {
+            const m = await getStepResultsForRun(runId)
+            stepResultsByRun.set(runId, m)
+          } catch {
+            // Ignore: resultJson stays null for this run.
+          }
+        }),
+      )
+    }
+
+    // Merge result_json into each step.
+    for (const [runId, steps] of runMap) {
+      const resultMap = stepResultsByRun.get(runId)
+      if (resultMap) {
+        for (const step of steps) {
+          const r = resultMap.get(step.stepName)
+          if (r !== undefined) step.resultJson = r
+        }
+      }
     }
 
     // Sort steps within each run by startedAt ascending (workflow order), then

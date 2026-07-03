@@ -1427,6 +1427,7 @@ const makeRTStep = (
   cacheReadTokens: null,
   claudeSessionId: null,
   failureReason: null,
+  resultJson: null,
   ...overrides,
 })
 
@@ -1731,6 +1732,141 @@ describe('TaskDetailDrawer – merged timeline (no duplicate step lists)', () =>
     // Eval chip must appear in the single step-card-list
     expect(html).toContain('ctx% 95%')
     expect(html).toContain('data-testid="step-card-list"')
+  })
+})
+
+// ── Step card Input/Output panels (result_json) ────────────────────────────────
+
+/**
+ * The expanded card shows an "Output" section when the step's result_json is
+ * present. The content is always in the static DOM (collapsed by default via
+ * <details>/<summary>) so renderToStaticMarkup can assert on it without
+ * needing a live DOM.
+ *
+ * The `resultJson` field is passed through the RunTimeline → StepCardEntry
+ * normalisation chain and rendered as pretty-printed JSON.
+ */
+describe('TaskDetailDrawer – step card Output panel (result_json)', () => {
+  it('shows the Output section when a run step has resultJson', () => {
+    const resultData = { outcome: 'completed', exitCode: 0 }
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'code',
+              resultJson: JSON.stringify(resultData),
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('data-testid="step-result-output"')
+  })
+
+  it('pretty-prints the resultJson so keys are visible', () => {
+    const resultData = { outcome: 'completed', exitCode: 0 }
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'code',
+              resultJson: JSON.stringify(resultData),
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    // Pretty-printed JSON — in renderToStaticMarkup, double-quotes in text
+    // content are HTML-encoded as &quot; (React's static renderer escapes them).
+    expect(html).toContain('&quot;outcome&quot;')
+    expect(html).toContain('&quot;completed&quot;')
+    expect(html).toContain('&quot;exitCode&quot;')
+  })
+
+  it('Output section is always in the DOM (collapsed <details> — accessible before interaction)', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'verify',
+              resultJson: JSON.stringify({ pass: true }),
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    // step-result-output is always present in static HTML — the browser hides
+    // it until the operator opens the <details> element.
+    expect(html).toContain('data-testid="step-result-output"')
+    // The parent <details> is collapsed by default (no `open` attribute).
+    expect(html).not.toContain('open=""')
+  })
+
+  it('does not render the Output section when resultJson is null', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [makeRTStep({ stepName: 'setup' })],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).not.toContain('data-testid="step-result-output"')
+  })
+
+  it('Output section is keyboard-accessible via <details>/<summary>', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'merge',
+              resultJson: JSON.stringify({ merged: true }),
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    // The summary element is present and the output block is its sibling
+    expect(html).toContain('>Output<')
+    expect(html).toContain('data-testid="step-result-output"')
+  })
+
+  it('falls back to showing resultJson as-is when it is not valid JSON', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'setup',
+              resultJson: 'not-valid-json',
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('data-testid="step-result-output"')
+    expect(html).toContain('not-valid-json')
   })
 })
 

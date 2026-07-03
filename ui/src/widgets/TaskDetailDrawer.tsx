@@ -62,6 +62,8 @@ export interface RunTimelineStep {
   claudeSessionId: string | null
   /** Failure reason when status is 'failed' or 'killed'. */
   failureReason: string | null
+  /** JSON-serialised return value of the step function, or null when absent. */
+  resultJson?: string | null
 }
 
 /** One workflow run with its ordered step list. */
@@ -101,6 +103,8 @@ export interface StepCardEntry {
   outputTokens?: number | null
   cacheReadTokens?: number | null
   claudeSessionId?: string | null
+  /** JSON-serialised step result, rendered as an expandable Output panel. */
+  resultJson?: string | null
 }
 
 // ── Drill-in trail helpers ────────────────────────────────────────────────────
@@ -416,6 +420,7 @@ const runStepToCard = (
   outputTokens: step.outputTokens,
   cacheReadTokens: step.cacheReadTokens,
   claudeSessionId: step.claudeSessionId,
+  resultJson: step.resultJson,
 })
 
 // ── Detail body ───────────────────────────────────────────────────────────────
@@ -1040,6 +1045,37 @@ const StepCard = ({
             No tool invocations recorded
           </p>
         )}
+
+        {/* Output — collapsed by default; keyboard-accessible via <details>/<summary> */}
+        {entry.resultJson != null ? (
+          <details className="mt-2 border-t border-iron/10 pt-1.5">
+            <summary
+              tabIndex={0}
+              className="cursor-pointer font-mono text-[10px] text-muted [&::-webkit-details-marker]:hidden"
+              onKeyDown={(e) => {
+                if (e.key === ' ') {
+                  e.preventDefault()
+                  const parent = e.currentTarget.closest('details') as HTMLDetailsElement | null
+                  if (parent) parent.open = !parent.open
+                }
+              }}
+            >
+              Output
+            </summary>
+            <pre
+              data-testid="step-result-output"
+              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-panel/60 p-1.5 font-mono text-[10px] text-iron"
+            >
+              {(() => {
+                try {
+                  return JSON.stringify(JSON.parse(entry.resultJson), null, 2)
+                } catch {
+                  return entry.resultJson
+                }
+              })()}
+            </pre>
+          </details>
+        ) : null}
       </div>
     </details>
   )

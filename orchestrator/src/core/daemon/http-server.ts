@@ -59,6 +59,8 @@ export interface RunTimelineStep {
   claudeSessionId: string | null
   /** Failure reason when status is 'failed' or 'killed'. */
   failureReason: string | null
+  /** JSON-serialised return value from the step function, or null when absent. */
+  resultJson: string | null
 }
 
 /**

@@ -2689,6 +2689,16 @@ export const startDaemon = async (
   const appServices = createAppServices({
     traceStore,
     buildAlertSources,
+    getStepResultsForRun: async (runId: string) => {
+      const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
+      const wfStore = createQueueWorkflowStore()
+      const steps = await wfStore.listSteps(runId)
+      const m = new Map<string, string | null>()
+      for (const s of steps) {
+        m.set(s.name, s.resultJson)
+      }
+      return m
+    },
   })
 
   const httpHandle = await startHttpServer({
