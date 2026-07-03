@@ -11,6 +11,7 @@ import {
   type CollisionBox,
   type CollisionCard,
   computeStateMap,
+  computeVisualUpdates,
   dataSignature,
   dominant,
   type ElementSnapshot,
@@ -24,6 +25,8 @@ import {
   resolveCardCollisions,
   rollupByProposal,
   type Rollup,
+  structuralSignature,
+  type VisualDiff,
 } from './topologyGraphModel'
 
 const task = (
@@ -386,6 +389,136 @@ describe('dataSignature', () => {
     const before = dataSignature([task({ id: 't1', cluster: 'Queued' })], [])
     const after = dataSignature([task({ id: 't1', cluster: 'Queued', fixForTaskId: 'x' })], [])
     expect(before).not.toBe(after)
+  })
+})
+
+describe('structuralSignature', () => {
+  it('is stable for identical inputs', () => {
+    const a = [task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })]
+    const p = [proposal('p1')]
+    expect(structuralSignature(a, p)).toBe(structuralSignature(a, p))
+  })
+
+  it('does NOT change when a task cluster changes — cluster is a visual-only property', () => {
+    const before = structuralSignature([task({ id: 't1', cluster: 'Queued' })], [])
+    const after = structuralSignature([task({ id: 't1', cluster: 'Blocked' })], [])
+    expect(before).toBe(after)
+  })
+
+  it('changes when a blocker edge is added', () => {
+    const before = structuralSignature([task({ id: 't1', cluster: 'Queued' })], [])
+    const after = structuralSignature([task({ id: 't1', cluster: 'Queued', blockedBy: ['x'] })], [])
+    expect(before).not.toBe(after)
+  })
+
+  it('changes when a proposal title changes', () => {
+    const before = structuralSignature([], [proposal('p1', 'Old')])
+    const after = structuralSignature([], [proposal('p1', 'New')])
+    expect(before).not.toBe(after)
+  })
+
+  it('changes when originId is set', () => {
+    const before = structuralSignature([task({ id: 't1', cluster: 'Queued' })], [])
+    const after = structuralSignature([task({ id: 't1', cluster: 'Queued', originId: 'origin' })], [])
+    expect(before).not.toBe(after)
+  })
+
+  it('changes when fixForTaskId is set (recovery relationship appears)', () => {
+    const before = structuralSignature([task({ id: 't1', cluster: 'Queued' })], [])
+    const after = structuralSignature([task({ id: 't1', cluster: 'Queued', fixForTaskId: 'x' })], [])
+    expect(before).not.toBe(after)
+  })
+
+  it('changes when a task is added', () => {
+    const before = structuralSignature([task({ id: 't1', cluster: 'Queued' })], [])
+    const after = structuralSignature(
+      [task({ id: 't1', cluster: 'Queued' }), task({ id: 't2', cluster: 'In progress' })],
+      [],
+    )
+    expect(before).not.toBe(after)
+  })
+})
+
+describe('computeVisualUpdates', () => {
+  // Helper: make a minimal G6 NodeData-like object
+  const liveNode = (
+    id: string,
+    cluster: ProgressTask['cluster'],
+    comboId?: string,
+  ): ElementSnapshot['nodes'][0] => ({
+    id,
+    combo: comboId,
+    data: { cluster, label: id, proposalId: null },
+  })
+
+  // Helper: make a minimal G6 ComboData-like object
+  const liveCombo = (
+    id: string,
+    dom: ProgressTask['cluster'],
+  ): ElementSnapshot['combos'][0] => ({
+    id,
+    data: { dom, label: id, arcKey: id.replace(/^combo:/, ''), proposalId: null, count: 1 },
+    style: { collapsed: true },
+  })
+
+  it('returns empty diffs when cluster values are unchanged', () => {
+    const tasks = [task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })]
+    const nodes = [liveNode('t1', 'Queued', 'combo:p1')]
+    const combos = [liveCombo('combo:p1', 'Queued')]
+    const diff: VisualDiff = computeVisualUpdates(tasks, nodes, combos)
+    expect(diff.nodeUpdates).toHaveLength(0)
+    expect(diff.comboUpdates).toHaveLength(0)
+  })
+
+  it('returns a node update when a task cluster changes', () => {
+    const tasks = [task({ id: 't1', cluster: 'In progress', parentProposalId: 'p1' })]
+    const nodes = [liveNode('t1', 'Queued', 'combo:p1')] // stale: was Queued
+    const combos = [liveCombo('combo:p1', 'Queued')]
+    const diff = computeVisualUpdates(tasks, nodes, combos)
+    expect(diff.nodeUpdates).toHaveLength(1)
+    expect(diff.nodeUpdates[0]).toEqual({ id: 't1', data: { cluster: 'In progress' } })
+  })
+
+  it('returns a combo update when the dominant cluster changes', () => {
+    // Two tasks in same combo; both flip from Queued to In progress
+    const tasks = [
+      task({ id: 't1', cluster: 'In progress', parentProposalId: 'p1' }),
+      task({ id: 't2', cluster: 'In progress', parentProposalId: 'p1' }),
+    ]
+    const nodes = [liveNode('t1', 'Queued', 'combo:p1'), liveNode('t2', 'Queued', 'combo:p1')]
+    const combos = [liveCombo('combo:p1', 'Queued')] // stale dom
+    const diff = computeVisualUpdates(tasks, nodes, combos)
+    expect(diff.comboUpdates).toHaveLength(1)
+    expect(diff.comboUpdates[0]).toEqual({ id: 'combo:p1', data: { dom: 'In progress' } })
+  })
+
+  it('does not emit a combo update when dominant cluster is still correct', () => {
+    // Only one task changes, but plurality stays the same (2 Queued, 1 flips to In progress)
+    const tasks = [
+      task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' }),
+      task({ id: 't2', cluster: 'Queued', parentProposalId: 'p1' }),
+      task({ id: 't3', cluster: 'In progress', parentProposalId: 'p1' }), // minority
+    ]
+    // Live nodes still show all Queued (t3 just flipped)
+    const nodes = [
+      liveNode('t1', 'Queued', 'combo:p1'),
+      liveNode('t2', 'Queued', 'combo:p1'),
+      liveNode('t3', 'Queued', 'combo:p1'),
+    ]
+    const combos = [liveCombo('combo:p1', 'Queued')] // plurality is still Queued
+    const diff = computeVisualUpdates(tasks, nodes, combos)
+    // Node update for t3, but no combo update (dom stays Queued)
+    expect(diff.nodeUpdates).toHaveLength(1)
+    expect(diff.nodeUpdates[0]!.id).toBe('t3')
+    expect(diff.comboUpdates).toHaveLength(0)
+  })
+
+  it('ignores nodes not present in the task list (out-of-scope)', () => {
+    const tasks: ProgressTask[] = [] // no tasks
+    const nodes = [liveNode('ghost', 'Queued', 'combo:p1')]
+    const combos = [liveCombo('combo:p1', 'Queued')]
+    const diff = computeVisualUpdates(tasks, nodes, combos)
+    expect(diff.nodeUpdates).toHaveLength(0)
   })
 })
 

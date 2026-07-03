@@ -51,7 +51,8 @@ import {
   CLUSTER_STYLE,
   type CollisionBox,
   computeStateMap,
-  dataSignature,
+  computeVisualUpdates,
+  structuralSignature,
   EDGE_BLOCK,
   layeredPositions,
   PROPOSAL_STROKE,
@@ -159,9 +160,10 @@ export const TopologyView = ({
 
   const empty = tasks.length === 0
 
-  // Stable data signature computed in useMemo so the rebuild effect can list
-  // it as a proper dependency — no eslint-disable needed.
-  const sig = useMemo(() => dataSignature(tasks, proposals), [tasks, proposals])
+  // Structural signature: changes only when the topology changes (nodes/edges/
+  // combos added, removed, or re-parented).  Deliberately excludes `cluster`
+  // so that status/colour-only flips do not trigger a full graph rebuild.
+  const sig = useMemo(() => structuralSignature(tasks, proposals), [tasks, proposals])
 
   useEffect(() => {
     if (empty || !containerRef.current) return
@@ -671,6 +673,27 @@ export const TopologyView = ({
     // `sig` is computed via useMemo([tasks, proposals]) so it is a stable string
     // that changes exactly when buildG6Data output would change.
   }, [empty, sig])
+
+  // Incremental visual update — runs when task clusters change without a
+  // structural change (mount effect above is NOT re-run in that case).
+  // Updates node cluster data and recomputes each combo's dominant colour
+  // in-place, then redraws.  Camera, open combo, and node positions are
+  // untouched.  When the mount effect DID re-run (structural change), this
+  // effect still fires but computeVisualUpdates returns empty diffs because
+  // the fresh graph already carries the latest cluster values.
+  useEffect(() => {
+    const graph = graphRef.current
+    if (!graph) return
+    const { nodeUpdates, comboUpdates } = computeVisualUpdates(
+      tasks,
+      graph.getNodeData(),
+      graph.getComboData(),
+    )
+    if (nodeUpdates.length === 0 && comboUpdates.length === 0) return
+    if (nodeUpdates.length > 0) graph.updateNodeData(nodeUpdates)
+    if (comboUpdates.length > 0) graph.updateComboData(comboUpdates)
+    void graph.draw().catch(() => {})
+  }, [tasks])
 
   // Re-apply the dim/highlight map when filter props change (no graph rebuild).
   // Uses the same pure resolver as the hover handlers so the two can't drift.

@@ -66,6 +66,28 @@ describe('TopologyView – empty state', () => {
   })
 })
 
+describe('TopologyView – graph rebuild gate (structural signature)', () => {
+  // The component uses structuralSignature as the mount-effect dependency so
+  // that cluster/status flips do NOT destroy and recreate the G6 graph.
+  // G6 cannot be instantiated in this environment, but we can verify the
+  // structural signature behaves correctly via the model — and that the
+  // component renders without error when a task cluster changes mid-life.
+
+  it('renders the canvas container with the same aria-label regardless of task cluster', () => {
+    const htmlQueued = renderToStaticMarkup(
+      <TopologyView tasks={[{ ...stubTask('t-1'), cluster: 'Queued' }]} proposals={noProposals} />,
+    )
+    const htmlBlocked = renderToStaticMarkup(
+      <TopologyView tasks={[{ ...stubTask('t-1'), cluster: 'Blocked' }]} proposals={noProposals} />,
+    )
+    // Same task count → same aria-label; cluster change is visual-only
+    expect(htmlQueued).toContain('role="img"')
+    expect(htmlBlocked).toContain('role="img"')
+    expect(htmlQueued).toContain('1 task')
+    expect(htmlBlocked).toContain('1 task')
+  })
+})
+
 describe('TopologyView – accessible canvas container', () => {
   it('exposes the canvas container as an image landmark for assistive technology', () => {
     const html = renderToStaticMarkup(

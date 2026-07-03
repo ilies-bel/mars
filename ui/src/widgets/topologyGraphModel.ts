@@ -308,6 +308,11 @@ export const computeStateMap = (snapshot: ElementSnapshot, inputs: HighlightInpu
  * Counts + a hash of (id, cluster, blockedBy, parentProposalId) per task and
  * (id, title) per proposal catches every meaningful structural change without
  * a deep diff.
+ *
+ * NOTE: includes `cluster` so that callers that need to detect ANY data change
+ * (e.g. tests) can use this.  The graph mount effect uses `structuralSignature`
+ * instead, which intentionally excludes cluster so that status/colour-only
+ * flips do not trigger a full graph rebuild.
  */
 export const dataSignature = (
   tasks: ReadonlyArray<ProgressTask>,
@@ -321,6 +326,85 @@ export const dataSignature = (
     .join(';')
   const propSig = proposals.map((p) => `${p.id}|${p.title}`).join(';')
   return `${tasks.length}/${proposals.length}#${taskSig}#${propSig}`
+}
+
+/**
+ * Structural-only signature: captures topology changes (task/proposal adds,
+ * removes, re-parenting, blocker edges, arc grouping) but intentionally
+ * EXCLUDES `cluster` (which is a visual / status-derived property).
+ *
+ * Use this as the rebuild gate in the mount effect.  Cluster changes are
+ * handled by the incremental `computeVisualUpdates` path so the camera,
+ * open combo, and node positions survive a status flip.
+ */
+export const structuralSignature = (
+  tasks: ReadonlyArray<ProgressTask>,
+  proposals: ReadonlyArray<ProgressProposalNode>,
+): string => {
+  const taskSig = tasks
+    .map(
+      (t) =>
+        `${t.id}|${t.parentProposalId ?? ''}|${t.originId ?? ''}|${t.fixForTaskId ?? ''}|${t.kind ?? ''}|${(t.blockedBy ?? []).join(',')}`,
+    )
+    .join(';')
+  const propSig = proposals.map((p) => `${p.id}|${p.title}`).join(';')
+  return `${tasks.length}/${proposals.length}#${taskSig}#${propSig}`
+}
+
+/** Node and combo data updates needed when cluster values change in-place. */
+export interface VisualDiff {
+  /** Nodes whose cluster data changed. Pass to graph.updateNodeData(). */
+  nodeUpdates: Array<{ id: string; data: { cluster: Cluster } }>
+  /** Combos whose dominant cluster changed. Pass to graph.updateComboData(). */
+  comboUpdates: Array<{ id: string; data: { dom: Cluster } }>
+}
+
+/**
+ * Compute the minimal node/combo data updates required when task clusters
+ * change without any structural change (same nodes, same edges, same combos).
+ *
+ * Pure and side-effect-free.  Caller applies the diff:
+ *   graph.updateNodeData(diff.nodeUpdates)
+ *   graph.updateComboData(diff.comboUpdates)
+ *   graph.draw()
+ */
+export const computeVisualUpdates = (
+  newTasks: ReadonlyArray<ProgressTask>,
+  liveNodes: ReadonlyArray<NodeData>,
+  liveCombos: ReadonlyArray<ComboData>,
+): VisualDiff => {
+  const taskMap = new Map(newTasks.map((t) => [t.id, t]))
+
+  const nodeUpdates: Array<{ id: string; data: { cluster: Cluster } }> = []
+  for (const node of liveNodes) {
+    const id = String(node.id)
+    const task = taskMap.get(id)
+    if (!task) continue
+    if ((node.data?.cluster as Cluster | undefined) !== task.cluster) {
+      nodeUpdates.push({ id, data: { cluster: task.cluster } })
+    }
+  }
+
+  const comboUpdates: Array<{ id: string; data: { dom: Cluster } }> = []
+  for (const combo of liveCombos) {
+    const cId = String(combo.id)
+    const counts = emptyCounts()
+    let total = 0
+    for (const node of liveNodes) {
+      if (node.combo !== cId) continue
+      const task = taskMap.get(String(node.id))
+      // Prefer the task's latest cluster; fall back to what G6 stores.
+      const cluster: Cluster = task?.cluster ?? ((node.data?.cluster as Cluster | undefined) ?? 'Queued')
+      counts[cluster]++
+      total++
+    }
+    const newDom = dominant({ total, counts })
+    if (newDom !== (combo.data?.dom as Cluster | undefined)) {
+      comboUpdates.push({ id: cId, data: { dom: newDom } })
+    }
+  }
+
+  return { nodeUpdates, comboUpdates }
 }
 
 // ---------------------------------------------------------------------------
