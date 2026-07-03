@@ -88,6 +88,13 @@ export const ACTION_QUEUE_KINDS = [
   // approval is pending; clears on approve or reslice. Only raised when
   // autoApprovePlans is false (the default).
   'plan-approval',
+  // A done transition was intercepted because the task's branch still had
+  // commits ahead of the integration branch — the merge step never completed.
+  // The task is failed with failure_reason_code='done-with-unmerged-commits'
+  // and this action-queue row is raised at the same choke point so the operator
+  // can investigate and re-merge or restart. This catches the false-done class
+  // (ADR-0052 done-implies-merged invariant).
+  'done-with-unmerged-commits',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

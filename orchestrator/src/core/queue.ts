@@ -1,5 +1,7 @@
 import { type Client, type InStatement } from '@libsql/client'
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { promisify } from 'node:util'
 import { resolveContext } from './context'
 import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
@@ -7,6 +9,9 @@ import { openLibsql } from './lib/libsql'
 import { buildEventInsert } from './lib/outbox'
 import { Arc } from './arc'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
+import { raiseActionQueueItem } from './lib/action-queue'
+
+const execFileP = promisify(execFile)
 
 export type TaskStatus =
   | 'draft'
@@ -2215,17 +2220,20 @@ export const updateTask = async (
   const fields: string[] = []
   const args: unknown[] = []
 
-  // Read the current status before the UPDATE so we can detect real
-  // transitions (patch.status === existing status ⇒ no-op, skip dismissals).
+  // Read the current status (and branch) before the UPDATE so we can detect real
+  // transitions (patch.status === existing status ⇒ no-op, skip dismissals), and
+  // so the done-implies-merged guard (below) has access to the branch name.
   let previousStatus: string | null = null
+  let taskBranch: string | null = null
   if (patch.status !== undefined) {
     const before = store
-      ? await store.query({ sql: `SELECT status FROM tasks WHERE id = ?`, args: [id] })
-      : await resolveQueueClient().execute({ sql: `SELECT status FROM tasks WHERE id = ?`, args: [id] })
-    previousStatus =
-      before.rows.length > 0
-        ? ((before.rows[0] as unknown as { status: string }).status ?? null)
-        : null
+      ? await store.query({ sql: `SELECT status, branch FROM tasks WHERE id = ?`, args: [id] })
+      : await resolveQueueClient().execute({ sql: `SELECT status, branch FROM tasks WHERE id = ?`, args: [id] })
+    if (before.rows.length > 0) {
+      const row = before.rows[0] as unknown as { status: string; branch: string | null }
+      previousStatus = row.status ?? null
+      taskBranch = row.branch ?? null
+    }
   }
 
   // Guard: terminal statuses are immutable.  A task that reached 'done' or
@@ -2238,6 +2246,60 @@ export const updateTask = async (
     (previousStatus === 'done' || previousStatus === 'dropped')
   ) {
     throw new IllegalTransitionError(id, previousStatus, patch.status)
+  }
+
+  // Done-implies-merged invariant (ADR-0052 / done-with-unmerged-commits).
+  //
+  // When a task is transitioning to 'done' AND its branch column is set, assert
+  // that the branch has 0 commits ahead of the integration branch. A non-zero
+  // count means the merge step never completed — the "committer false-done" bug
+  // class (3d7cb3c2 / mars-984de140). Intercept by redirecting the patch to
+  // 'failed' with a distinct failure_reason_code BEFORE the field-building so
+  // every downstream step (eventStmts, blocker promotion) sees the corrected
+  // status automatically.
+  //
+  // Ordering note: `git rev-list --count <integration>..<branch>` runs from the
+  // repo root against a named branch ref. Two skip conditions apply:
+  //   – branch is NULL → task never had a worktree; nothing to check.
+  //   – git exits non-zero → the branch was deleted (normal post-merge cleanup
+  //     where the merge step deletes the branch before or alongside the status
+  //     write). Treat as 0 commits ahead and allow done.
+  //
+  // The guard applies only to direct done transitions via updateTask. The
+  // propagateRecoveryDone path in Arc sets the ORIGIN to done after a FIX task
+  // completes; in that scenario the fix task's branch (not the origin's) was
+  // merged. Guarding the origin's branch there would produce false positives
+  // (the origin's branch was intentionally never merged — the fix task did the
+  // work). That path calls Arc.setTaskStatus directly and bypasses updateTask.
+  let doneWithUnmergedCommits = false
+  if (
+    patch.status === 'done' &&
+    previousStatus !== null &&
+    previousStatus !== 'done' &&
+    taskBranch !== null
+  ) {
+    const integration = process.env.INTEGRATION_BRANCH ?? 'main'
+    const repoRoot = resolveContext().repoRoot
+    let aheadCount = 0
+    try {
+      const { stdout } = await execFileP(
+        'git',
+        ['rev-list', '--count', `${integration}..${taskBranch}`],
+        { cwd: repoRoot },
+      )
+      aheadCount = parseInt(stdout.trim(), 10) || 0
+    } catch {
+      // Branch deleted or git error — treat as already merged (0 ahead).
+      aheadCount = 0
+    }
+    if (aheadCount > 0) {
+      doneWithUnmergedCommits = true
+      patch = {
+        ...patch,
+        status: 'failed',
+        failureReasonCode: 'done-with-unmerged-commits',
+      }
+    }
   }
 
   if (patch.status !== undefined) {
@@ -2410,6 +2472,33 @@ export const updateTask = async (
   // dismissals — see ADR-0027/0030. Clearing inline would (a) duplicate the
   // subscriber and (b) be lost for any writer that bypasses updateTask, the
   // exact staleness class this design eliminates.
+
+  // Done-implies-merged guard: raise the action-queue item after the write so
+  // it is colocated with the failure event rather than emitted speculatively.
+  // Awaited but wrapped in try-catch: best-effort semantics with no race on
+  // the action_queue_items migration path (concurrent unawaited calls would
+  // create a SQLITE duplicate-column race in initActionQueue).
+  if (doneWithUnmergedCommits) {
+    const integration = process.env.INTEGRATION_BRANCH ?? 'main'
+    try {
+      await raiseActionQueueItem({
+        kind: 'done-with-unmerged-commits',
+        category: 'daemon',
+        priority: 'urgent',
+        title: `Task ${id} failed: done-with-unmerged-commits`,
+        body:
+          `A done transition was blocked because branch ${taskBranch} still has commits ahead ` +
+          `of ${integration}. The merge step did not complete. Investigate and re-merge or restart the task.`,
+        payload: { taskId: id, branch: taskBranch, integration },
+        context: { taskId: id },
+        raisedBy: 'queue:done-implies-merged-guard',
+        signature: id,
+        originTaskId: id,
+      })
+    } catch {
+      // Best-effort: raise failure must not mask the task failure itself.
+    }
+  }
 
   if (patch.status === 'done') {
     const dependents = store
