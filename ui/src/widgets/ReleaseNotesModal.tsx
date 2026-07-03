@@ -11,9 +11,14 @@
  *
  * On open, the modal:
  *   1. Captures `lastViewedAt` from the cursor query to determine unseen entries.
- *   2. POSTs the cursor to mark all current entries as viewed.
- *   3. Renders a "new since you were away" divider just above the oldest unseen
+ *   2. Renders a "new since you were away" divider just above the oldest unseen
  *      entry (in the newest-first list) and scrolls it into view.
+ *   3. POSTs the cursor to mark all current entries as viewed — on CLOSE, not
+ *      on open, so an accidental open+close does not permanently clear the
+ *      divider before the operator has read anything.
+ *
+ * Performance: the list is paginated (PAGE_SIZE rows at a time) so opening a
+ * repo with 1,000+ landed arcs stays smooth.
  */
 
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
@@ -107,6 +112,9 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
 
 // ── Main modal ─────────────────────────────────────────────────────────────
 
+/** Number of entries rendered per page; kept as a named constant for tests. */
+export const PAGE_SIZE = 100
+
 export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
   const dialogRef = useRef<HTMLElement>(null)
   const [closing, setClosing] = useState(false)
@@ -114,6 +122,8 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
   const closingRef = useRef(false)
   // Id of the currently-expanded entry row, or null when all are collapsed.
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  // Number of entries currently rendered — grows by PAGE_SIZE via "Load more".
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   const projectId = useFocusedProjectId()
   const qc = useQueryClient()
@@ -139,21 +149,6 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
   }
   const firstUnseenIndex = capturedRef.current?.value ?? null
 
-  // Mark viewed (once) and scroll to oldest-unseen (once) when data+cursor land.
-  const hasMarkedViewed = useRef(false)
-
-  useEffect(() => {
-    if (hasMarkedViewed.current) return
-    if (data === undefined || cursorData === undefined) return
-
-    hasMarkedViewed.current = true
-
-    // Mark the release notes as viewed (both auto-open and manual open).
-    void postReleaseNotesViewed(projectId ?? undefined).then(() => {
-      void qc.invalidateQueries({ queryKey: ['release-notes-cursor', projectId] })
-    })
-  }, [data, cursorData, projectId, qc])
-
   // Ref for the oldest-unseen list item — scrolled into view once captured.
   const oldestUnseenRef = useRef<HTMLLIElement>(null)
 
@@ -166,13 +161,25 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
   /**
    * Initiates the exit animation (180 ms) then calls the onClose prop.
    * All close triggers (button, scrim, Escape) funnel through here.
+   *
+   * The viewed-marker POST fires here — on close, not on open — so that an
+   * accidental open+close does not clear the unseen divider before the
+   * operator has actually read anything.
    */
   const handleClose = useCallback(() => {
     if (closingRef.current) return
     closingRef.current = true
     setClosing(true)
+
+    // Mark viewed on close (fire-and-forget).  Skip if data never loaded.
+    if (data !== undefined) {
+      void postReleaseNotesViewed(projectId ?? undefined).then(() => {
+        void qc.invalidateQueries({ queryKey: ['release-notes-cursor', projectId] })
+      })
+    }
+
     setTimeout(() => onClose(), 180)
-  }, [onClose])
+  }, [data, onClose, projectId, qc])
 
   // On open: save the previously focused element and move focus into the modal.
   // On close (cleanup): restore focus to where it was.
@@ -290,7 +297,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
               </p>
             ) : (
               <ul data-testid="release-notes-list">
-                {data.map((entry, i) => {
+                {data.slice(0, visibleCount).map((entry, i) => {
                   const isExpanded = expandedId === entry.originId
                   const isOldestUnseen = firstUnseenIndex !== null && i === firstUnseenIndex
                   // Show the "new since you were away" divider just above the
@@ -356,6 +363,18 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                     </Fragment>
                   )
                 })}
+                {visibleCount < data.length ? (
+                  <li className="flex justify-center border-t border-iron/20 px-4 py-3">
+                    <button
+                      type="button"
+                      data-testid="release-notes-load-more"
+                      onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
+                      className="font-mono text-xs text-iron hover:text-fg"
+                    >
+                      Load {Math.min(PAGE_SIZE, data.length - visibleCount)} more
+                    </button>
+                  </li>
+                ) : null}
               </ul>
             )}
           </div>

@@ -52,6 +52,8 @@ const makeDaemonDeps = (
   recipeCatalog:
     cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,
+  runReflect: async () => ({ proposalsRaised: 0 }),
+  enableAutoReflect: async () => {},
   appServices: stubAppServices({ viewTasks }),
 })
 

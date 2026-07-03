@@ -13,7 +13,7 @@
  *   - click-outside (scrim) dismissal triggers the 180 ms exit animation
  *     and calls onClose
  */
-import { mock, describe, expect, it, vi } from 'bun:test'
+import { mock, describe, expect, it, beforeEach, vi } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -80,10 +80,13 @@ let nextCursorResult: { isPending: boolean; isError: boolean; data: ReleaseNotes
   data: { lastViewedAt: null },
 }
 
+// Spy on postReleaseNotesViewed so tests can assert when it is (and isn't) called.
+const mockPostViewed = vi.fn()
+
 mock.module('@/shared/api', () => ({
   fetchReleaseNotes: async (): Promise<ReleaseNoteEntry[]> => [],
   getReleaseNotesCursor: async (): Promise<ReleaseNotesCursor> => ({ lastViewedAt: null }),
-  postReleaseNotesViewed: async (): Promise<ReleaseNotesCursor> => ({ lastViewedAt: new Date().toISOString() }),
+  postReleaseNotesViewed: mockPostViewed,
 }))
 
 mock.module('@/shared/useFocusedProject', () => ({
@@ -99,7 +102,13 @@ mock.module('@tanstack/react-query', () => ({
 
 // computeUnseen is a pure function imported directly — no need to mock it.
 
-const { ReleaseNotesModal } = await import('./ReleaseNotesModal')
+const { ReleaseNotesModal, PAGE_SIZE } = await import('./ReleaseNotesModal')
+
+// Reset the postReleaseNotesViewed spy before each test so call counts are isolated.
+beforeEach(() => {
+  mockPostViewed.mockClear()
+  mockPostViewed.mockResolvedValue({ lastViewedAt: '2026-07-03T00:00:00.000Z' })
+})
 
 // ---------------------------------------------------------------------------
 // Render helper
@@ -353,6 +362,140 @@ describe('ReleaseNotesModal – click-outside dismissal', () => {
       await act(async () => {
         root?.unmount()
       })
+      document.body.removeChild(container)
+      vi.useRealTimers()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Pagination — large history stays snappy
+// ---------------------------------------------------------------------------
+
+const makeEntries = (count: number): ReleaseNoteEntry[] =>
+  Array.from({ length: count }, (_, i) => ({
+    originId: `mars-page-${i}`,
+    title: `Entry ${i}`,
+    landedAt: new Date(2026, 0, count - i).toISOString(),
+    detail: { prompt: 'p', spec: null, recoveryCount: 0 },
+  }))
+
+describe('ReleaseNotesModal – pagination', () => {
+  it('renders only the first PAGE_SIZE rows when there are more entries than PAGE_SIZE', () => {
+    const entries = makeEntries(PAGE_SIZE + 50)
+    const html = render(loaded(entries))
+    const rowCount = (html.match(/data-testid="release-note-row"/g) ?? []).length
+    expect(rowCount).toBe(PAGE_SIZE)
+  })
+
+  it('shows a Load-more button when entries exceed PAGE_SIZE', () => {
+    const entries = makeEntries(PAGE_SIZE + 1)
+    const html = render(loaded(entries))
+    expect(html).toContain('data-testid="release-notes-load-more"')
+  })
+
+  it('shows how many entries will be loaded on the Load-more button', () => {
+    const extra = 37
+    const entries = makeEntries(PAGE_SIZE + extra)
+    const html = render(loaded(entries))
+    expect(html).toContain(`Load ${extra} more`)
+  })
+
+  it('does NOT show a Load-more button when entries fit within PAGE_SIZE', () => {
+    const entries = makeEntries(PAGE_SIZE)
+    const html = render(loaded(entries))
+    expect(html).not.toContain('data-testid="release-notes-load-more"')
+  })
+
+  it('does NOT show a Load-more button when there are fewer entries than PAGE_SIZE', () => {
+    const entries = makeEntries(5)
+    const html = render(loaded(entries))
+    expect(html).not.toContain('data-testid="release-notes-load-more"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Viewed-marker fires on close, not on open
+// ---------------------------------------------------------------------------
+
+describe('ReleaseNotesModal – viewed marker fires on close not on open', () => {
+  it('does NOT call postReleaseNotesViewed when the modal mounts with data loaded', async () => {
+    vi.useFakeTimers()
+    nextResult = loaded([ENTRY_NO_RECOVERY])
+    nextCursorResult = { isPending: false, isError: false, data: { lastViewedAt: null } }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    let root: Root | null = null
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ReleaseNotesModal onClose={() => {}} />)
+      })
+      expect(mockPostViewed).not.toHaveBeenCalled()
+    } finally {
+      await act(async () => { root?.unmount() })
+      document.body.removeChild(container)
+      vi.useRealTimers()
+    }
+  })
+
+  it('calls postReleaseNotesViewed exactly once when the Close button is clicked', async () => {
+    vi.useFakeTimers()
+    const onClose = vi.fn()
+    nextResult = loaded([ENTRY_NO_RECOVERY])
+    nextCursorResult = { isPending: false, isError: false, data: { lastViewedAt: null } }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    let root: Root | null = null
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ReleaseNotesModal onClose={onClose} />)
+      })
+
+      expect(mockPostViewed).not.toHaveBeenCalled()
+
+      const closeBtn = container.querySelector('[data-testid="release-notes-close"]') as HTMLElement
+      await act(async () => {
+        closeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+
+      expect(mockPostViewed).toHaveBeenCalledTimes(1)
+
+      await act(async () => { vi.advanceTimersByTime(200) })
+      expect(onClose).toHaveBeenCalledTimes(1)
+    } finally {
+      await act(async () => { root?.unmount() })
+      document.body.removeChild(container)
+      vi.useRealTimers()
+    }
+  })
+
+  it('does NOT call postReleaseNotesViewed when closed before data loads', async () => {
+    vi.useFakeTimers()
+    // Data is still pending — no data yet
+    nextResult = LOADING
+    nextCursorResult = { isPending: true, isError: false, data: undefined }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    let root: Root | null = null
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ReleaseNotesModal onClose={() => {}} />)
+      })
+
+      const closeBtn = container.querySelector('[data-testid="release-notes-close"]') as HTMLElement
+      await act(async () => {
+        closeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+
+      expect(mockPostViewed).not.toHaveBeenCalled()
+    } finally {
+      await act(async () => { root?.unmount() })
       document.body.removeChild(container)
       vi.useRealTimers()
     }
