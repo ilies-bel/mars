@@ -1555,6 +1555,50 @@ describe('TaskDetailDrawer – merged timeline (no duplicate step lists)', () =>
   })
 })
 
+// ── Negative durationMs (killed steps) ───────────────────────────────────────
+
+/**
+ * A step that is killed mid-run can carry a negative durationMs (e.g. -1).
+ * formatDuration must treat any negative value as "unknown duration" and render
+ * an em-dash placeholder "—" rather than the raw negative number "-1ms".
+ */
+describe('TaskDetailDrawer – negative durationMs renders em-dash, not negative duration', () => {
+  it('renders "—" for a killed run step with durationMs of -1', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({ stepName: 'run-claude-code', durationMs: -1 }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    // Negative duration is unknown — render an em-dash placeholder.
+    expect(html).toContain('—')
+    expect(html).not.toContain('-1ms')
+  })
+
+  it('does not render a negative duration for any negative durationMs value', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({ stepName: 'run-claude-code', durationMs: -999 }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).not.toContain('-999ms')
+    expect(html).toContain('—')
+  })
+})
+
 // ── LoadState: loading and error branches ─────────────────────────────────────
 
 describe('TaskDetailDrawer – load state branches', () => {

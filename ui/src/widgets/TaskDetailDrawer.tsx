@@ -294,9 +294,12 @@ const buildSubgraphLayout = (
   return { positioned, edges: subgraph.edges }
 }
 
-/** Format a durationMs value for display (e.g. "500ms" or "12.3s"). */
-const formatDuration = (ms: number): string =>
-  ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+/** Format a durationMs value for display (e.g. "500ms" or "12.3s").
+ * Negative values (e.g. from killed steps) render as "—" (unknown duration). */
+const formatDuration = (ms: number): string => {
+  if (ms < 0) return '—'
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+}
 
 /** Outcome → short human label for the timeline row. */
 const outcomeLabel = (outcome: StepSpan['outcome']): string => {
