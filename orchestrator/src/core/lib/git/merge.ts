@@ -214,6 +214,14 @@ export interface MergeResult {
    * is true. Used by the merge primitive to seed the recovery Chore.
    */
   integrationGateOutput?: string
+  /**
+   * Machine-readable reason for a `merged: false` outcome that is not an abort
+   * or integration-gate failure. Currently only `'merge-left-dirty-tree'`:
+   * the ref advanced correctly but the post-merge working-tree assertion found
+   * the integration checkout dirty. The working tree has been restored to HEAD
+   * before this result is returned.
+   */
+  reason?: string
 }
 
 let cachedSupervisorSpec: string | null = null
@@ -748,6 +756,75 @@ export const mergeBranch = async ({
           retriesAttempted,
         }
       }
+    }
+
+    // Belt-and-braces: assert the integration checkout is clean after the merge.
+    // `git update-ref` is working-tree-free by design, but Step 3's
+    // `git reset --hard` or the gate-revert path can leave the tree dirty when
+    // they fail silently or are interrupted. Reporting success over a dirty tree
+    // causes every subsequent dispatch to park behind a main-committer Chore
+    // (the dirty-main guard fires at dispatch time) and requires operator
+    // intervention to unblock the queue.
+    //
+    // We only assert when the primary checkout is on the integration branch —
+    // that is the only checkout we touch in Step 3. Pre-existing dirt on any
+    // other branch is the operator's concern, not a merge-step defect.
+    //
+    // If the tree IS dirty after a successful merge:
+    //   1. Attempt `git reset --hard HEAD` to restore it (the branch work is
+    //      already in commits — HEAD has advanced to finalTaskSha, so the reset
+    //      just materialises what the ref already points at).
+    //   2. Fail the step with reason `'merge-left-dirty-tree'` so the normal
+    //      failure path handles it. Never report step success over a dirty tree.
+    try {
+      const headBranchPost = (
+        await exec(
+          resolveGitBin(),
+          ['rev-parse', '--abbrev-ref', 'HEAD'],
+          { cwd: repoRoot() },
+          mergeCtx,
+        )
+      ).stdout.trim()
+      if (headBranchPost === integrationBranch) {
+        const postStatus = await execProbe(
+          resolveGitBin(),
+          ['status', '--porcelain', '--untracked-files=no'],
+          { cwd: repoRoot() },
+          mergeCtx,
+        )
+        if (postStatus.stdout.trim() !== '') {
+          output += `\n[mergeBranch] post-merge dirty-tree detected on integration checkout (status:\n${postStatus.stdout.slice(0, 500)}\n)`
+          // Attempt to restore the integration checkout to the current HEAD
+          // (which is finalTaskSha — the merge already landed via update-ref).
+          try {
+            const restored = await exec(
+              resolveGitBin(),
+              ['reset', '--hard', 'HEAD'],
+              { cwd: repoRoot() },
+              mergeCtx,
+            )
+            output += `\n[mergeBranch] restored integration checkout to HEAD: ${restored.stdout.trim().slice(0, 200)}`
+          } catch (restoreErr: unknown) {
+            const m = restoreErr instanceof Error ? restoreErr.message : String(restoreErr)
+            output += `\n[mergeBranch] restore-to-HEAD failed: ${m.slice(0, 300)}`
+          }
+          return {
+            merged: false,
+            conflictResolved,
+            aborted: false,
+            reason: 'merge-left-dirty-tree',
+            output,
+            supervisorConversation,
+            vegaSessionId,
+            retriesAttempted,
+          }
+        }
+      }
+    } catch (assertErr: unknown) {
+      // Non-fatal: the merge already landed. Log and continue so we report
+      // merged:true rather than swallowing a spurious assertion error.
+      const m = assertErr instanceof Error ? assertErr.message : String(assertErr)
+      output += `\n[mergeBranch] post-merge tree assertion failed to run: ${m.slice(0, 300)}`
     }
 
     return {
