@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import type { ProgressProposalNode, ProgressTask, Task } from '@/shared/schemas'
 import { taskSchema } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
@@ -155,10 +156,12 @@ interface TaskDetailDrawerProps {
    */
   activeStepName?: string
   /**
-   * Seeds the drawer body load state. Test-only seam: production callers omit
-   * it and the state initialises to `{ kind: 'loading' }`. Use in
-   * `renderToStaticMarkup` tests to exercise the 'loading' and 'error' render
-   * branches without running effects.
+   * Overrides the query-derived load state. Test-only seam: production callers
+   * omit it and the state is derived from the `['task', currentId]` React Query
+   * (loading while pending, error on failure, ready/not-found from the data).
+   * Use in `renderToStaticMarkup` tests to exercise the 'loading' and 'error'
+   * render branches synchronously, since the query never resolves without
+   * running effects.
    */
   initialState?: LoadState
 }
@@ -1022,7 +1025,6 @@ export const TaskDetailDrawer = ({
   initialState,
 }: TaskDetailDrawerProps) => {
   const drawerRef = useRef<HTMLElement>(null)
-  const [state, setState] = useState<LoadState>(initialState ?? { kind: 'loading' })
   const [closing, setClosing] = useState(false)
   // Synchronous guard — prevents double-scheduling the close timer.
   const closingRef = useRef(false)
@@ -1046,20 +1048,6 @@ export const TaskDetailDrawer = ({
   // it always starts as (and, for a single task, stays) `[taskId]`.
   const [trail, setTrail] = useState<string[]>(() => initialTrail ?? [taskId])
   const currentId = trail[trail.length - 1] ?? taskId
-
-  /**
-   * Step spans fetched from the API for the currently-shown task. Null until
-   * the task detail fetch succeeds and the spans request completes. Ignored
-   * when the `stepSpans` prop is set.
-   */
-  const [fetchedSpans, setFetchedSpans] = useState<StepSpan[] | null>(null)
-
-  /**
-   * Run timeline fetched from the API for the currently-shown task. Null until
-   * the task detail fetch succeeds and the runs request completes. Ignored
-   * when the `runTimeline` prop is set.
-   */
-  const [fetchedRuns, setFetchedRuns] = useState<RunTimeline | null>(null)
 
   // Distinguish an external open from our own drill-in. Both arrive as a
   // changed `taskId` prop (a self-nav writes the hash, which re-derives the
@@ -1144,98 +1132,107 @@ export const TaskDetailDrawer = ({
     }
   }, [handleClose])
 
-  // Loads the CURRENT task (last trail element), so drilling in fetches the
-  // newly-focused task's data rather than the original prop. On success it also
-  // fetches that task's step spans (keyed off the task's originId), unless the
-  // caller supplied them via the `stepSpans` prop.
+  // Determine whether the current node is a proposal (used both for the spans
+  // query URL and for selecting which timeline component to render).
+  const isProposal = proposals?.some((p) => p.id === currentId) ?? false
+
+  // Loads the CURRENT task (last trail element) via React Query so that
+  // SseInvalidator's `invalidateQueries({ queryKey: ['task', openId] })`
+  // triggers a re-fetch while the drawer is open, updating the status chip
+  // and detail body in place without reopening.
+  const taskQuery = useQuery<
+    { kind: 'found'; task: Task } | { kind: 'not-found' }
+  >({
+    queryKey: ['task', currentId],
+    queryFn: async () => {
+      const f = fetchImpl ?? fetch
+      const res = await f(`/api/tasks/${encodeURIComponent(currentId)}`)
+      if (res.status === 404) {
+        // Signal not-found as data rather than an error so we can distinguish
+        // purged vs. server-error downstream.
+        return { kind: 'not-found' as const }
+      }
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`)
+      }
+      const raw = (await res.json()) as { task: unknown }
+      const parsed = taskSchema.safeParse(raw.task)
+      if (!parsed.success) {
+        throw new Error('response failed schema validation')
+      }
+      return { kind: 'found' as const, task: parsed.data }
+    },
+    retry: false,
+  })
+
+  // Handle purge: a 404 only means "purged" when the id is also absent from
+  // the graph the drawer already holds. The detail endpoint (local SQLite) and
+  // the graph (daemon /view/*) are distinct sources — a node can exist in the
+  // graph yet 404 on detail (proposal/arc node, cross-project id, transient
+  // divergence). Self-closing on those flashes open-then-shut. Fire onPurged
+  // only when the graph no longer knows the id; otherwise show not-found panel.
   useEffect(() => {
-    let cancelled = false
-    setState({ kind: 'loading' })
-    // Reset spans and run timeline on every (re)load so a drill-in never shows
-    // the prior task's data while the new one is in flight.
-    setFetchedSpans(null)
-    setFetchedRuns(null)
-    const f = fetchImpl ?? fetch
-    f(`/api/tasks/${encodeURIComponent(currentId)}`)
-      .then(async (res) => {
-        if (cancelled) return
-        if (res.status === 404) {
-          // A 404 only means "purged" when the id is also absent from the graph
-          // the drawer already holds. The detail endpoint (local SQLite via
-          // findTaskById) and the graph (daemon /view/*) are distinct sources,
-          // so a node can exist in the graph yet 404 on detail — a proposal/arc
-          // node, a cross-project id, or a transient divergence. Self-closing on
-          // those flashes the drawer open-then-shut. Only hand the id to onPurged
-          // when the graph no longer knows it; otherwise show the not-found panel.
-          const stillInGraph =
-            (tasksRef.current?.some((t) => t.id === currentId) ?? false) ||
-            (proposalsRef.current?.some((p) => p.id === currentId) ?? false)
-          if (onPurgedRef.current && !stillInGraph) {
-            onPurgedRef.current(currentId)
-            return
-          }
-          setState({ kind: 'not-found' })
-          return
-        }
-        if (!res.ok) {
-          setState({ kind: 'error', message: `HTTP ${res.status}` })
-          return
-        }
-        const raw = (await res.json()) as { task: unknown }
-        const parsed = taskSchema.safeParse(raw.task)
-        if (!parsed.success) {
-          setState({ kind: 'error', message: 'response failed schema validation' })
-          return
-        }
-        setState({ kind: 'ready', task: parsed.data })
-
-        // Skip secondary fetches only when the caller has pre-loaded all
-        // optional panel data (spans + run timeline both present as props).
-        if (stepSpans !== undefined && runTimeline !== undefined) return
-
-        const rawTask = raw.task as { originId?: string | null } | null
-        const isProposal = proposals?.some((p) => p.id === currentId) ?? false
-
-        // Fetch step spans when caller hasn't pre-loaded them.
-        if (stepSpans === undefined) {
-          const spansUrl = isProposal
-            ? `/api/step-spans?originId=${encodeURIComponent(rawTask?.originId ?? currentId)}`
-            : `/api/step-spans?taskId=${encodeURIComponent(currentId)}`
-          f(spansUrl)
-            .then(async (spansRes) => {
-              if (cancelled || !spansRes.ok) return
-              const spansData = (await spansRes.json()) as { spans: StepSpan[] }
-              if (!cancelled) setFetchedSpans(spansData.spans)
-            })
-            .catch(() => {
-              // Step spans are optional display data — a failed fetch silently
-              // leaves the timeline section absent rather than erroring the drawer.
-            })
-        }
-
-        // Fetch run timeline when caller hasn't pre-loaded it.
-        if (runTimeline === undefined) {
-          f(`/api/runs/${encodeURIComponent(currentId)}`)
-            .then(async (runsRes) => {
-              if (cancelled || !runsRes.ok) return
-              const runsData = (await runsRes.json()) as RunTimeline
-              if (!cancelled) setFetchedRuns(runsData)
-            })
-            .catch(() => {
-              // Run timeline is optional display data — a failed fetch silently
-              // leaves the section absent rather than erroring the drawer.
-            })
-        }
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        const message = err instanceof Error ? err.message : 'request failed'
-        setState({ kind: 'error', message })
-      })
-    return () => {
-      cancelled = true
+    if (taskQuery.data?.kind !== 'not-found') return
+    const stillInGraph =
+      (tasksRef.current?.some((t) => t.id === currentId) ?? false) ||
+      (proposalsRef.current?.some((p) => p.id === currentId) ?? false)
+    if (onPurgedRef.current && !stillInGraph) {
+      onPurgedRef.current(currentId)
     }
-  }, [currentId, fetchImpl, stepSpans, runTimeline])
+  }, [taskQuery.data, currentId])
+
+  // Derive the LoadState the rest of the component already uses from the query.
+  // An explicit `initialState` prop overrides the query-derived state — a
+  // test-only seam so `renderToStaticMarkup` can exercise the 'loading' and
+  // 'error' branches synchronously (the query never resolves under static
+  // rendering, so the error branch is otherwise unreachable in a test).
+  const state: LoadState = (() => {
+    if (initialState !== undefined) return initialState
+    if (taskQuery.isPending) return { kind: 'loading' }
+    if (taskQuery.isError) {
+      const message =
+        taskQuery.error instanceof Error ? taskQuery.error.message : 'request failed'
+      return { kind: 'error', message }
+    }
+    if (!taskQuery.data || taskQuery.data.kind === 'not-found') return { kind: 'not-found' }
+    return { kind: 'ready', task: taskQuery.data.task }
+  })()
+
+  // Step spans — fetched once the task is known (proposals need the originId
+  // from the task; plain tasks can be keyed by currentId directly).
+  // The `['task', currentId, 'spans']` key is a sub-key of `['task', currentId]`,
+  // so the same SseInvalidator invalidation also retargets this query.
+  const readyTask = taskQuery.data?.kind === 'found' ? taskQuery.data.task : null
+  const spansQuery = useQuery<StepSpan[]>({
+    queryKey: ['task', currentId, 'spans'],
+    queryFn: async () => {
+      const f = fetchImpl ?? fetch
+      const spansUrl = isProposal
+        ? `/api/step-spans?originId=${encodeURIComponent(readyTask?.originId ?? currentId)}`
+        : `/api/step-spans?taskId=${encodeURIComponent(currentId)}`
+      const res = await f(spansUrl)
+      if (!res.ok) return []
+      const data = (await res.json()) as { spans: StepSpan[] }
+      return data.spans
+    },
+    // For proposals, wait until the task is loaded so we have the originId.
+    enabled: stepSpans === undefined && (!isProposal || readyTask !== null),
+    retry: false,
+  })
+
+  // Run timeline — optional display data; a failed fetch leaves the section
+  // absent rather than erroring the drawer.
+  const runsQuery = useQuery<RunTimeline>({
+    queryKey: ['task', currentId, 'runs'],
+    queryFn: async () => {
+      const f = fetchImpl ?? fetch
+      const res = await f(`/api/runs/${encodeURIComponent(currentId)}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return (await res.json()) as RunTimeline
+    },
+    enabled: runTimeline === undefined,
+    retry: false,
+  })
 
   // Compute the focus subgraph from props. This is independent of the detail
   // fetch so it renders immediately — the operator sees relationship context
@@ -1266,13 +1263,9 @@ export const TaskDetailDrawer = ({
 
   // The resolved spans to render: prefer the prop (for testing / static
   // rendering), otherwise use the spans fetched from the API.
-  const resolvedSpans = stepSpans !== undefined ? stepSpans : fetchedSpans
+  const resolvedSpans = stepSpans !== undefined ? stepSpans : (spansQuery.data ?? null)
   // Same resolution for the run timeline data.
-  const resolvedRunTimeline = runTimeline !== undefined ? runTimeline : fetchedRuns
-
-  // True when the drawer is focused on a proposal node rather than a leaf task.
-  // Determines whether to use ProposalStepTimeline (grouped) or StepTimeline (flat).
-  const isProposal = proposals?.some((p) => p.id === currentId) ?? false
+  const resolvedRunTimeline = runTimeline !== undefined ? runTimeline : (runsQuery.data ?? null)
 
   return (
     <>

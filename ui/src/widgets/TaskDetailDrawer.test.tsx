@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
+import type { ReactElement } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type {
   OriginsResponse,
@@ -16,6 +17,20 @@ import {
 } from './TaskDetailDrawer'
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Wraps a JSX element in a fresh QueryClientProvider before static rendering.
+ * TaskDetailDrawer uses useQuery internally (so SSE invalidations update the
+ * drawer in place); every drawer render therefore needs a QueryClient in context.
+ */
+const renderDrawer = (element: ReactElement): string => {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  })
+  return renderToStaticMarkup(
+    <QueryClientProvider client={qc}>{element}</QueryClientProvider>,
+  )
+}
 
 const task = (
   overrides: Partial<ProgressTask> & { id: string; cluster: ProgressTask['cluster'] },
@@ -57,7 +72,7 @@ const proposal = (id: string, title = `Goal ${id}`): ProgressProposalNode => ({
  */
 describe('TaskDetailDrawer – identity (same surface from both views)', () => {
   it('renders a dialog with the task-detail-drawer testid', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).toContain('data-testid="task-detail-drawer"')
@@ -65,24 +80,24 @@ describe('TaskDetailDrawer – identity (same surface from both views)', () => {
   })
 
   it('displays the task id in the drawer heading', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).toContain('mars-abc123')
   })
 
   it('exposes a close control via data-testid', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).toContain('data-testid="task-detail-close"')
   })
 
   it('renders the same drawer structure regardless of which task id is passed', () => {
-    const html1 = renderToStaticMarkup(
+    const html1 = renderDrawer(
       <TaskDetailDrawer taskId="task-from-dag" onClose={() => {}} />,
     )
-    const html2 = renderToStaticMarkup(
+    const html2 = renderDrawer(
       <TaskDetailDrawer taskId="task-from-board" onClose={() => {}} />,
     )
     // Both render the same structural shell (dialog role, same testids).
@@ -99,7 +114,7 @@ describe('TaskDetailDrawer – identity (same surface from both views)', () => {
 
 describe('TaskDetailDrawer – subgraph (isolated task)', () => {
   it('renders the subgraph section and the focused task node when the task has no neighbours', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="task-solo"
         onClose={() => {}}
@@ -112,7 +127,7 @@ describe('TaskDetailDrawer – subgraph (isolated task)', () => {
   })
 
   it('renders exactly one node when the task has no blockers, dependents, or proposal', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="task-solo"
         onClose={() => {}}
@@ -125,7 +140,7 @@ describe('TaskDetailDrawer – subgraph (isolated task)', () => {
   })
 
   it('does not render the subgraph section when tasks prop is not provided', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="task-solo" onClose={() => {}} />,
     )
     expect(html).not.toContain('data-testid="task-detail-subgraph"')
@@ -136,7 +151,7 @@ describe('TaskDetailDrawer – subgraph (isolated task)', () => {
 
 describe('TaskDetailDrawer – subgraph (upstream blockers)', () => {
   it('includes a direct upstream blocker in the subgraph', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="focus"
         onClose={() => {}}
@@ -153,7 +168,7 @@ describe('TaskDetailDrawer – subgraph (upstream blockers)', () => {
 
   it('includes the full upstream chain back to the root', () => {
     // root → mid → focus
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="focus"
         onClose={() => {}}
@@ -171,7 +186,7 @@ describe('TaskDetailDrawer – subgraph (upstream blockers)', () => {
   })
 
   it('renders a blocker edge between the upstream blocker and the focused task', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="focus"
         onClose={() => {}}
@@ -186,7 +201,7 @@ describe('TaskDetailDrawer – subgraph (upstream blockers)', () => {
   })
 
   it('excludes tasks unrelated to the focused task', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="focus"
         onClose={() => {}}
@@ -206,7 +221,7 @@ describe('TaskDetailDrawer – subgraph (upstream blockers)', () => {
 describe('TaskDetailDrawer – subgraph (downstream dependents)', () => {
   it('includes the immediate (one-hop) downstream dependent', () => {
     // focus → child → grandchild; only child should appear
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="focus"
         onClose={() => {}}
@@ -227,7 +242,7 @@ describe('TaskDetailDrawer – subgraph (downstream dependents)', () => {
 
 describe('TaskDetailDrawer – subgraph (originating proposal)', () => {
   it('includes the originating proposal node when one exists', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="focus"
         onClose={() => {}}
@@ -240,7 +255,7 @@ describe('TaskDetailDrawer – subgraph (originating proposal)', () => {
   })
 
   it('renders a provenance edge from the proposal to the focused task', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="focus"
         onClose={() => {}}
@@ -254,7 +269,7 @@ describe('TaskDetailDrawer – subgraph (originating proposal)', () => {
   it('does not include other tasks sliced from the same proposal', () => {
     // prop-1 also sliced "sibling"; the drawer should not pull sibling in
     // via the proposal — it is not upstream, downstream, or provenance of focus.
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="focus"
         onClose={() => {}}
@@ -280,21 +295,21 @@ describe('TaskDetailDrawer – subgraph (originating proposal)', () => {
  */
 describe('TaskDetailDrawer – a11y overlay and focusability', () => {
   it('renders a scrim overlay element alongside the drawer panel', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).toContain('data-testid="task-detail-overlay"')
   })
 
   it('scrim is aria-hidden so it does not pollute the screen reader tree', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).toContain('aria-hidden="true"')
   })
 
   it('scrim uses z-40 (lower than the drawer z-50) so the drawer stays on top', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).toContain('z-40')
@@ -302,7 +317,7 @@ describe('TaskDetailDrawer – a11y overlay and focusability', () => {
   })
 
   it('drawer panel has tabindex="-1" so it can receive programmatic focus on open', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).toContain('tabindex="-1"')
@@ -319,21 +334,21 @@ describe('TaskDetailDrawer – a11y overlay and focusability', () => {
  */
 describe('TaskDetailDrawer – entrance / exit animation structure', () => {
   it('aside panel carries the drawer-panel CSS class (entrance animation anchor)', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).toContain('drawer-panel')
   })
 
   it('scrim carries the drawer-scrim CSS class (scrim fade anchor)', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).toContain('drawer-scrim')
   })
 
   it('data-closing is absent on initial render — exit animation not yet active', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).not.toContain('data-closing="true"')
@@ -358,7 +373,7 @@ describe('TaskDetailDrawer – responsive shell (sheet < xl, drawer ≥ xl)', ()
   }
 
   it('panel is full-bleed below xl and a right drawer at xl', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     const cls = classOf(html, 'task-detail-drawer')
@@ -373,7 +388,7 @@ describe('TaskDetailDrawer – responsive shell (sheet < xl, drawer ≥ xl)', ()
   })
 
   it('scrim is hidden below xl and shown at xl', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     const cls = classOf(html, 'task-detail-overlay')
@@ -386,7 +401,7 @@ describe('TaskDetailDrawer – responsive shell (sheet < xl, drawer ≥ xl)', ()
 
 describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', () => {
   it('colours a Queued task node with the Queued palette (same as TopologyView)', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
@@ -400,7 +415,7 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
   })
 
   it('colours a Failed task node with the Failed palette (same as TopologyView)', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
@@ -414,7 +429,7 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
   })
 
   it('colours a Blocked task node with the Blocked palette (same as TopologyView)', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
@@ -427,7 +442,7 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
   })
 
   it('colours an In progress task node with the In progress palette (same as TopologyView)', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
@@ -440,7 +455,7 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
   })
 
   it('colours a proposal node with the purple proposal palette (same as TopologyView)', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
@@ -453,7 +468,7 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
   })
 
   it('attaches data-cluster to task nodes for cluster identification', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
@@ -475,7 +490,7 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
  */
 describe('TaskDetailDrawer – subgraph node click affordance', () => {
   it('task subgraph nodes are wrapped in anchor links for click/keyboard drill-in', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="focus"
         onClose={() => {}}
@@ -492,7 +507,7 @@ describe('TaskDetailDrawer – subgraph node click affordance', () => {
   })
 
   it('proposal nodes in the subgraph also carry a click affordance', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
@@ -505,7 +520,7 @@ describe('TaskDetailDrawer – subgraph node click affordance', () => {
   })
 
   it('subgraph anchor nodes carry cursor-pointer styling (same as TopologyView)', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
@@ -517,7 +532,7 @@ describe('TaskDetailDrawer – subgraph node click affordance', () => {
   })
 
   it('data-node-id attribute is still present on the inner <g> after adding the anchor wrapper', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
@@ -731,14 +746,14 @@ describe('crumbLabel – compact id form', () => {
  */
 describe('TaskDetailDrawer – drill-in breadcrumb', () => {
   it('renders NO breadcrumb for a freshly-opened single task (trail length 1)', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).not.toContain('data-testid="task-detail-breadcrumb"')
   })
 
   it('renders NO breadcrumb when initialTrail is a single element', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="solo"
         onClose={() => {}}
@@ -749,7 +764,7 @@ describe('TaskDetailDrawer – drill-in breadcrumb', () => {
   })
 
   it('renders the breadcrumb container with one crumb per trail id', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="c"
         onClose={() => {}}
@@ -764,7 +779,7 @@ describe('TaskDetailDrawer – drill-in breadcrumb', () => {
   })
 
   it('separates crumbs with the ▸ glyph', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="c"
         onClose={() => {}}
@@ -776,7 +791,7 @@ describe('TaskDetailDrawer – drill-in breadcrumb', () => {
   })
 
   it('renders earlier crumbs as buttons and the current crumb as non-button', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="c"
         onClose={() => {}}
@@ -792,7 +807,7 @@ describe('TaskDetailDrawer – drill-in breadcrumb', () => {
   })
 
   it('shows the current (last) trail id in the header, not the original prop', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="c"
         onClose={() => {}}
@@ -831,7 +846,7 @@ describe('TaskDetailBody – OriginTree drill-in wiring', () => {
     })
     // null is the projectId slot — defaults to null outside FocusedProjectProvider
     qc.setQueryData(['origins', null, 'focus'], TREE_ORIGINS('focus'))
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <QueryClientProvider client={qc}>
         <TaskDetailBody task={t} onNavigate={() => {}} currentId="focus" />
       </QueryClientProvider>,
@@ -847,7 +862,7 @@ describe('TaskDetailBody – OriginTree drill-in wiring', () => {
     })
     // null is the projectId slot — defaults to null outside FocusedProjectProvider
     qc.setQueryData(['origins', null, 'focus'], TREE_ORIGINS('focus'))
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <QueryClientProvider client={qc}>
         <TaskDetailBody task={t} />
       </QueryClientProvider>,
@@ -885,14 +900,14 @@ const span = (overrides: Partial<StepSpan> & { stepName: string }): StepSpan => 
 
 describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
   it('renders a step timeline section when stepSpans prop is provided', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[]} />,
     )
     expect(html).toContain('data-testid="task-step-timeline"')
   })
 
   it('does not render the step timeline section when stepSpans prop is omitted', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} />,
     )
     expect(html).not.toContain('data-testid="task-step-timeline"')
@@ -905,7 +920,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
       span({ stepName: 'verify', workflowInstanceId: 'wf-1' }),
       span({ stepName: 'merge', workflowInstanceId: 'wf-1' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     const rowCount = (html.match(/data-testid="step-timeline-row"/g) ?? []).length
@@ -919,7 +934,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
       span({ stepName: 'verify', workflowInstanceId: 'wf-1' }),
       span({ stepName: 'merge', workflowInstanceId: 'wf-1' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     expect(html).toContain('setup')
@@ -932,7 +947,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const spans = [
       span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'running', endedAt: null, durationMs: null }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     expect(html).toContain('data-outcome="running"')
@@ -942,7 +957,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const spans = [
       span({ stepName: 'setup', workflowInstanceId: 'wf-1', outcome: 'completed' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     expect(html).toContain('data-outcome="completed"')
@@ -952,7 +967,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const spans = [
       span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'failed' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     expect(html).toContain('data-outcome="failed"')
@@ -963,7 +978,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
       span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'failed', workerName: 'Coder' }),
       span({ stepName: 'recover', workflowInstanceId: 'wf-2', outcome: 'completed', workerName: 'Fixer' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     const rowCount = (html.match(/data-testid="step-timeline-row"/g) ?? []).length
@@ -974,7 +989,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
   })
 
   it('shows an empty-state message when stepSpans is an empty array', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[]} />,
     )
     // Empty state is present and no rows are rendered
@@ -989,7 +1004,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
       span({ stepName: 'code', workflowInstanceId: 'wf-1' }),
       span({ stepName: 'verify', workflowInstanceId: 'wf-1' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
@@ -1011,7 +1026,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
       span({ stepName: 'setup', workflowInstanceId: 'wf-1' }),
       span({ stepName: 'code', workflowInstanceId: 'wf-1' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
@@ -1027,7 +1042,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const spans = [
       span({ stepName: 'code', workflowInstanceId: 'wf-1' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     // No highlight when no active step is provided
@@ -1040,7 +1055,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const spans = [
       span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'failed' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     expect(html).not.toContain('text-red-400')
@@ -1057,7 +1072,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
         evalResults: [{ label: 'ctx%', value: '95%', warn: true }],
       }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     expect(html).not.toContain('text-amber-400')
@@ -1070,7 +1085,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
       span({ stepName: 'code', workflowInstanceId: 'wf-1', workerName: 'Coder' }),
       span({ stepName: 'merge', workflowInstanceId: 'wf-1' }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     const dotCount = (html.match(/data-testid="step-status-dot"/g) ?? []).length
@@ -1081,7 +1096,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const spans = [
       span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'running', endedAt: null, durationMs: null }),
     ]
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     expect(html).toContain('data-testid="step-status-dot"')
@@ -1165,7 +1180,7 @@ describe('TaskDetailDrawer – EvalChip accessibility', () => {
   })
 
   it('ctx% chip carries a title explaining the context-window metric', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[spanWithCtx]} />,
     )
     expect(html).toContain('Context window used')
@@ -1173,21 +1188,21 @@ describe('TaskDetailDrawer – EvalChip accessibility', () => {
   })
 
   it('ctx% chip carries an aria-label including its value and description', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[spanWithCtx]} />,
     )
     expect(html).toContain('aria-label="ctx% 206.4%:')
   })
 
   it('out/in chip carries a title explaining the token-ratio metric', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[spanWithCtx]} />,
     )
     expect(html).toContain('Output-to-input token ratio')
   })
 
   it('msgs chip carries a title explaining the message-count metric', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[spanWithCtx]} />,
     )
     expect(html).toContain('Number of messages in the conversation')
@@ -1199,7 +1214,7 @@ describe('TaskDetailDrawer – EvalChip accessibility', () => {
       workflowInstanceId: 'wf-1',
       evalResults: [{ label: 'unknown-metric', value: '42', warn: false }],
     })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={[s]} />,
     )
     expect(html).toContain('unknown-metric')
@@ -1256,14 +1271,14 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
     const timeline = makeRunTimeline({
       runs: [makeRTRun({ steps: [makeRTStep({ stepName: 'setup' })] })],
     })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     expect(html).toContain('data-testid="run-timeline"')
   })
 
   it('does not render the run-timeline section when runTimeline prop is omitted', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} />,
     )
     expect(html).not.toContain('data-testid="run-timeline"')
@@ -1271,7 +1286,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
 
   it('quiet empty state: renders nothing when runs array is empty', () => {
     const timeline = makeRunTimeline({ runs: [] })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     expect(html).not.toContain('data-testid="run-timeline"')
@@ -1284,7 +1299,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
         makeRTRun({ runId: 'wf-2', steps: [makeRTStep({ stepName: 'code' })] }),
       ],
     })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     const runCount = (html.match(/data-testid="run-entry"/g) ?? []).length
@@ -1303,7 +1318,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
         }),
       ],
     })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     const rowCount = (html.match(/data-testid="run-step-row"/g) ?? []).length
@@ -1321,7 +1336,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
         }),
       ],
     })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     expect(html).toContain('setup')
@@ -1343,7 +1358,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
         }),
       ],
     })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     expect(html).toContain('in:1234')
@@ -1355,7 +1370,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
     const timeline = makeRunTimeline({
       runs: [makeRTRun({ steps: [makeRTStep({ stepName: 'setup' })] })],
     })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     expect(html).not.toContain('in:')
@@ -1376,7 +1391,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
         }),
       ],
     })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     expect(html).toContain('context window exceeded')
@@ -1399,7 +1414,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
         }),
       ],
     })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     expect(html).toContain('data-status="running"')
@@ -1416,7 +1431,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
         }),
       ],
     })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     expect(html).not.toContain('text-red-400')
@@ -1430,7 +1445,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
       makeRTStep({ stepName: `step-${i}` }),
     )
     const timeline = makeRunTimeline({ runs: [makeRTRun({ steps })] })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     // A <details> element must be present for long runs.
@@ -1445,7 +1460,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
       makeRTStep({ stepName: `step-${i}` }),
     )
     const timeline = makeRunTimeline({ runs: [makeRTRun({ steps })] })
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     expect(html).not.toContain('<details')
@@ -1456,8 +1471,10 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
 
 describe('TaskDetailDrawer – load state branches', () => {
   it('renders skeleton rows while loading (initial state)', () => {
-    // The component initialises to { kind: 'loading' } — no prop injection needed.
-    const html = renderToStaticMarkup(
+    // With no task data seeded in the cache the useQuery stays pending under
+    // static rendering, so the drawer shows its loading skeleton. renderDrawer
+    // supplies the QueryClientProvider the drawer's useQuery now requires.
+    const html = renderDrawer(
       <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
     )
     expect(html).toContain('data-testid="task-detail-loading"')
@@ -1468,8 +1485,9 @@ describe('TaskDetailDrawer – load state branches', () => {
 
   it('renders a FallbackSurface error panel on fetch error', () => {
     // Uses the test-only initialState seam to exercise the error branch
-    // synchronously (renderToStaticMarkup does not run useEffect).
-    const html = renderToStaticMarkup(
+    // synchronously (renderToStaticMarkup does not run effects, so the query
+    // never resolves to an error on its own).
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="mars-abc123"
         onClose={() => {}}
@@ -1485,7 +1503,7 @@ describe('TaskDetailDrawer – load state branches', () => {
   })
 
   it('error panel carries a role=alert for screen readers', () => {
-    const html = renderToStaticMarkup(
+    const html = renderDrawer(
       <TaskDetailDrawer
         taskId="mars-abc123"
         onClose={() => {}}
@@ -1493,5 +1511,57 @@ describe('TaskDetailDrawer – load state branches', () => {
       />,
     )
     expect(html).toContain('role="alert"')
+  })
+})
+
+// ── SSE live-update integration ───────────────────────────────────────────────
+
+/**
+ * SseInvalidator calls `qc.invalidateQueries({ queryKey: ['task', openId] })`.
+ * For that to reach the drawer the drawer must fetch via React Query with the
+ * same key.  These tests verify the contract: pre-seeding the cache with
+ * `['task', id]` makes the ready body visible without any fetch, which means
+ * any subsequent invalidation of that same key triggers a refetch and updates
+ * the UI in place.
+ */
+describe('TaskDetailDrawer – SSE live-update via React Query', () => {
+  it('resolves task data from the React Query cache keyed [task, id] so SSE invalidations update the drawer', () => {
+    const taskData = fullTask({ id: 'sse-task', status: 'running' })
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    // Pre-seed the ['task', id] query as if a prior fetch already ran.
+    qc.setQueryData(['task', 'sse-task'], { kind: 'found', task: taskData })
+    // OriginTree inside TaskDetailBody also needs its query seeded.
+    qc.setQueryData(['origins', null, 'sse-task'], SINGLE_NODE_ORIGINS('sse-task'))
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailDrawer taskId="sse-task" onClose={() => {}} />
+      </QueryClientProvider>,
+    )
+    // The ready body is visible: the drawer read the task from the shared cache
+    // rather than showing the loading skeleton.  An SSE event that calls
+    // qc.invalidateQueries({ queryKey: ['task', 'sse-task'] }) will cause the
+    // same useQuery to refetch, updating status/sections in place.
+    expect(html).toContain('data-testid="task-detail-body"')
+    expect(html).not.toContain('data-state="loading"')
+  })
+
+  it('shows the not-found panel when the cache contains a not-found result', () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['task', 'gone-task'], { kind: 'not-found' })
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailDrawer
+          taskId="gone-task"
+          onClose={() => {}}
+          tasks={[task({ id: 'gone-task', cluster: 'Failed' })]}
+          proposals={[]}
+        />
+      </QueryClientProvider>,
+    )
+    expect(html).toContain('data-testid="task-detail-not-found"')
   })
 })
