@@ -803,6 +803,149 @@ describe('worktree-install', () => {
     })
   })
 
+  describe('buildWorkspaceDepsForSite (non-pnpm managers)', () => {
+    const makeNonPnpmSetup = (
+      manager: 'npm' | 'yarn' | 'bun',
+      lockfile: string,
+    ) => {
+      const siteDir = resolve(workDir, 'consumer')
+      const depDir = resolve(workDir, 'packages', 'shared')
+      mkdirSync(siteDir)
+      writeFileSync(resolve(siteDir, lockfile), '')
+      writeFileSync(
+        resolve(siteDir, 'package.json'),
+        JSON.stringify({
+          name: 'consumer',
+          dependencies: { '@acme/shared': 'file:../packages/shared' },
+        }),
+      )
+      mkdirSync(depDir, { recursive: true })
+      writeFileSync(resolve(depDir, lockfile), '')
+      writeFileSync(
+        resolve(depDir, 'package.json'),
+        JSON.stringify({ name: '@acme/shared', scripts: { build: 'tsc' } }),
+      )
+      const site: InstallSite = { dir: siteDir, manager, lockfile }
+      return { siteDir, depDir, site }
+    }
+
+    it.each([
+      { manager: 'npm' as const, lockfile: 'package-lock.json' },
+      { manager: 'yarn' as const, lockfile: 'yarn.lock' },
+      { manager: 'bun' as const, lockfile: 'bun.lockb' },
+    ])(
+      '$manager site with file: dep pre-builds the dep using $manager (not pnpm)',
+      async ({ manager, lockfile }) => {
+        const { depDir, site } = makeNonPnpmSetup(manager, lockfile)
+
+        const calls: RecordedCall[] = []
+        const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+          calls.push({ cmd, args, cwd })
+          return ok()
+        }
+        await buildWorkspaceDepsForSite(
+          site,
+          workDir,
+          runner,
+          undefined,
+          DEFAULT_INSTALL_TIMEOUT_MS,
+        )
+
+        // The dep install must use the site's package manager, not pnpm
+        const depInstallCall = calls.find((c) => c.cwd === depDir && c.cmd === manager)
+        expect(depInstallCall).toBeDefined()
+        expect(calls.some((c) => c.cmd === 'pnpm')).toBe(false)
+
+        // The dep build must also use the site's package manager
+        const depBuildCall = calls.find(
+          (c) => c.cwd === depDir && c.cmd === manager && c.args[0] === 'run' && c.args[1] === 'build',
+        )
+        expect(depBuildCall).toBeDefined()
+      },
+    )
+
+    it('npm site with file: dep uses npm ci (frozen) when dep has a package-lock.json', async () => {
+      const { depDir, site } = makeNonPnpmSetup('npm', 'package-lock.json')
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+      await buildWorkspaceDepsForSite(site, workDir, runner, undefined, DEFAULT_INSTALL_TIMEOUT_MS)
+
+      const depInstallCall = calls.find(
+        (c) => c.cwd === depDir && c.cmd === 'npm' && c.args[0] !== 'run',
+      )
+      expect(depInstallCall).toBeDefined()
+      // npm's frozen install is `npm ci`, not `npm install --frozen-lockfile`
+      expect(depInstallCall!.args[0]).toBe('ci')
+    })
+
+    it('npm install failure error message does not contain pnpm-debug.log', async () => {
+      const { site } = makeNonPnpmSetup('npm', 'package-lock.json')
+
+      const runner = async (): Promise<RunSubprocessResult> =>
+        fail('npm ERR! something went wrong\n')
+      let thrown: Error | undefined
+      try {
+        await buildWorkspaceDepsForSite(site, workDir, runner, undefined, DEFAULT_INSTALL_TIMEOUT_MS)
+      } catch (e) {
+        thrown = e as Error
+      }
+      expect(thrown).toBeDefined()
+      expect(thrown!.message).toContain('workspace dep install failed')
+      expect(thrown!.message).not.toContain('pnpm-debug.log')
+    })
+  })
+
+  describe('installWorktreeDeps (non-pnpm file: deps)', () => {
+    it('pre-builds a file: workspace dep for an npm site before the consumer install', async () => {
+      mkdirSync(resolve(workDir, 'consumer'))
+      writeFileSync(resolve(workDir, 'consumer', 'package-lock.json'), '{}')
+      writeFileSync(
+        resolve(workDir, 'consumer', 'package.json'),
+        JSON.stringify({
+          name: 'consumer',
+          dependencies: { '@acme/shared': 'file:../packages/shared' },
+        }),
+      )
+      mkdirSync(resolve(workDir, 'packages', 'shared'), { recursive: true })
+      writeFileSync(resolve(workDir, 'packages', 'shared', 'package-lock.json'), '{}')
+      writeFileSync(
+        resolve(workDir, 'packages', 'shared', 'package.json'),
+        JSON.stringify({ name: '@acme/shared', scripts: { build: 'tsc' } }),
+      )
+
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+      await installWorktreeDeps({ worktreeRoot: workDir, runner })
+
+      const sharedDir = resolve(workDir, 'packages', 'shared')
+      const consumerDir = resolve(workDir, 'consumer')
+
+      // The dep build must run using npm, before the consumer install
+      const depBuildIdx = calls.findIndex(
+        (c) =>
+          c.cwd === sharedDir &&
+          c.cmd === 'npm' &&
+          c.args[0] === 'run' &&
+          c.args[1] === 'build',
+      )
+      const consumerInstallIdx = calls.findIndex(
+        (c) => c.cwd === consumerDir && c.cmd === 'npm' && c.args[0] === 'ci',
+      )
+      expect(depBuildIdx).toBeGreaterThanOrEqual(0)
+      expect(consumerInstallIdx).toBeGreaterThanOrEqual(0)
+      expect(depBuildIdx).toBeLessThan(consumerInstallIdx)
+      // Must not use pnpm anywhere
+      expect(calls.some((c) => c.cmd === 'pnpm')).toBe(false)
+    })
+  })
+
   describe('regenInstallCommand', () => {
     it('maps each manager to its NON-frozen (lockfile-rewriting) command', () => {
       expect(regenInstallCommand('pnpm')).toEqual([

@@ -281,7 +281,9 @@ export const buildWorkspaceDepsForSite = async (
   timeoutMs: number,
   declarationTimeoutMs = DECLARATION_WAIT_TIMEOUT_MS,
 ): Promise<void> => {
-  if (site.manager !== 'pnpm') return // only pnpm `file:`/`workspace:` links here
+  // All JS package managers (pnpm/npm/yarn/bun) that use file: workspace deps
+  // need the pre-build step. Non-JS repos have no lockfile, so detectInstallSites
+  // returns empty and this function is never called for them.
   let manifest: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
   try {
     manifest = JSON.parse(await readFile(resolve(site.dir, 'package.json'), 'utf8'))
@@ -326,21 +328,28 @@ export const buildWorkspaceDepsForSite = async (
     const rel = relative(worktreeRoot, depDir) || '.'
 
     // Install the dep's own deps first so its build toolchain (tsup, tsc, …)
-    // is available. The package carries its own lockfile, so a frozen install
+    // is available. The package may carry its own lockfile, so a frozen install
     // is reproducible; fall back to a plain install if no lockfile is present.
-    // CI=true mirrors the consuming-site install so pnpm won't abort on a
-    // TTY-less modules-dir purge.
-    const depHasLockfile = await fileExists(resolve(depDir, 'pnpm-lock.yaml'))
-    const depInstallArgs = depHasLockfile
-      ? ['install', '--frozen-lockfile']
-      : ['install']
+    // CI=true mirrors the consuming-site install so the package manager won't
+    // abort on a TTY-less modules-dir purge.
+    const lockfileByManager: Record<PackageManager, string> = {
+      pnpm: 'pnpm-lock.yaml',
+      npm: 'package-lock.json',
+      yarn: 'yarn.lock',
+      bun: 'bun.lockb',
+    }
+    const depHasLockfile = await fileExists(resolve(depDir, lockfileByManager[site.manager]))
+    // installCommand gives the frozen args (e.g. ['ci'] for npm, ['install', '--frozen-lockfile']
+    // for pnpm/yarn/bun). Without a lockfile, fall back to a plain 'install' for all managers.
+    const [, frozenInstallArgs] = installCommand(site.manager)
+    const depInstallArgs: readonly string[] = depHasLockfile ? frozenInstallArgs : ['install']
     log?.(`[setup:install] installing workspace dep (${rel}) deps before build`)
 
     // (a) Initial install with retry on transient exit 254 + empty stderr.
     // pnpm emits exit 254 with no stderr output during brief CI races (store
     // lock contention, flock timeout). Retrying without any cleanup is safe
     // because the store is left intact on a 254 abort.
-    let installRes = await runner('pnpm', depInstallArgs, depDir, {
+    let installRes = await runner(site.manager, depInstallArgs, depDir, {
       timeoutMs,
       env: { CI: 'true' },
     })
@@ -354,20 +363,25 @@ export const buildWorkspaceDepsForSite = async (
       log?.(
         `[setup:install] workspace dep (${rel}) transient exit 254 — retrying (attempt ${attempt}/${WORKSPACE_DEP_INSTALL_MAX_RETRIES})`,
       )
-      installRes = await runner('pnpm', depInstallArgs, depDir, {
+      installRes = await runner(site.manager, depInstallArgs, depDir, {
         timeoutMs,
         env: { CI: 'true' },
       })
     }
 
     if (installRes.exitCode !== 0) {
-      const debugLogPath = resolve(depDir, 'pnpm-debug.log')
-      log?.(
-        `[setup:install] workspace dep install failed; pnpm-debug.log may have signal at: ${debugLogPath}`,
-      )
+      const debugHint =
+        site.manager === 'pnpm'
+          ? `pnpm-debug.log: ${resolve(depDir, 'pnpm-debug.log')}\n`
+          : ''
+      if (site.manager === 'pnpm') {
+        log?.(
+          `[setup:install] workspace dep install failed; pnpm-debug.log may have signal at: ${resolve(depDir, 'pnpm-debug.log')}`,
+        )
+      }
       throw new Error(
-        `[setup:install] workspace dep install failed (${rel}): pnpm ${depInstallArgs.join(' ')} exited ${installRes.exitCode}\n` +
-          `pnpm-debug.log: ${debugLogPath}\n` +
+        `[setup:install] workspace dep install failed (${rel}): ${site.manager} ${depInstallArgs.join(' ')} exited ${installRes.exitCode}\n` +
+          debugHint +
           `stderr (truncated):\n${installRes.stderr.slice(0, 1000)}\n` +
           `stdout (truncated):\n${installRes.stdout.slice(0, 1000)}`,
       )
@@ -386,18 +400,23 @@ export const buildWorkspaceDepsForSite = async (
         log?.(
           `[setup:install] workspace dep (${rel}) node_modules/.bin/${buildTool} missing after install — re-installing once`,
         )
-        const reInstallRes = await runner('pnpm', depInstallArgs, depDir, {
+        const reInstallRes = await runner(site.manager, depInstallArgs, depDir, {
           timeoutMs,
           env: { CI: 'true' },
         })
         if (reInstallRes.exitCode !== 0) {
-          const debugLogPath = resolve(depDir, 'pnpm-debug.log')
-          log?.(
-            `[setup:install] workspace dep re-install failed; check pnpm-debug.log at: ${debugLogPath}`,
-          )
+          const reDebugHint =
+            site.manager === 'pnpm'
+              ? `pnpm-debug.log: ${resolve(depDir, 'pnpm-debug.log')}\n`
+              : ''
+          if (site.manager === 'pnpm') {
+            log?.(
+              `[setup:install] workspace dep re-install failed; check pnpm-debug.log at: ${resolve(depDir, 'pnpm-debug.log')}`,
+            )
+          }
           throw new Error(
-            `[setup:install] workspace dep re-install failed (${rel}): pnpm ${depInstallArgs.join(' ')} exited ${reInstallRes.exitCode}\n` +
-              `pnpm-debug.log: ${debugLogPath}\n` +
+            `[setup:install] workspace dep re-install failed (${rel}): ${site.manager} ${depInstallArgs.join(' ')} exited ${reInstallRes.exitCode}\n` +
+              reDebugHint +
               `stderr (truncated):\n${reInstallRes.stderr.slice(0, 1000)}\n` +
               `stdout (truncated):\n${reInstallRes.stdout.slice(0, 1000)}`,
           )
@@ -406,7 +425,7 @@ export const buildWorkspaceDepsForSite = async (
     }
 
     log?.(`[setup:install] building workspace dep (${rel}) before install so its dist is packed`)
-    let r = await runner('pnpm', ['run', 'build'], depDir, {
+    let r = await runner(site.manager, ['run', 'build'], depDir, {
       timeoutMs,
       env: { CI: 'true' },
     })
@@ -425,7 +444,7 @@ export const buildWorkspaceDepsForSite = async (
       log?.(
         `[setup:install] workspace dep (${rel}) transient build exit ${r.exitCode} (no output) — retrying (attempt ${attempt}/${WORKSPACE_DEP_BUILD_MAX_RETRIES})`,
       )
-      r = await runner('pnpm', ['run', 'build'], depDir, {
+      r = await runner(site.manager, ['run', 'build'], depDir, {
         timeoutMs,
         env: { CI: 'true' },
       })
@@ -438,7 +457,7 @@ export const buildWorkspaceDepsForSite = async (
       // exited 2` with empty stderr — the actual TS error went to stdout and
       // was discarded, leaving operators with no diagnostic.
       throw new Error(
-        `[setup:install] workspace dep build failed (${rel}): pnpm run build exited ${r.exitCode}\n` +
+        `[setup:install] workspace dep build failed (${rel}): ${site.manager} run build exited ${r.exitCode}\n` +
           `stderr (truncated):\n${r.stderr.slice(0, 1000)}\n` +
           `stdout (truncated):\n${r.stdout.slice(0, 1000)}`,
       )
