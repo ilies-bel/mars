@@ -29,6 +29,7 @@ const baseState = (proposals: ProgressProposalNode[]) => ({
   tasks: [],
   proposals,
   byCluster: emptyByCluster(),
+  aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 },
   error: null,
   connected: true,
 })
@@ -171,6 +172,7 @@ describe('ProgressPage – header stats', () => {
       ...baseState([]),
       tasks: [...doneTasks, ...failedTasks],
       byCluster: { ...emptyByCluster(), Failed: failedTasks },
+      aggregates: { doneToday: 2, doneTotal: 2, failedOpen: 1 },
     }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
@@ -189,6 +191,7 @@ describe('ProgressPage – header stats', () => {
       ...baseState([]),
       tasks: failedTasks,
       byCluster: { ...emptyByCluster(), Failed: failedTasks },
+      aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 2 },
     }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
