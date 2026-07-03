@@ -162,6 +162,27 @@ export interface MergeArgs {
    * Never set this in production code.
    */
   onBeforeFastForward?: () => void | Promise<void>
+  /**
+   * Called inside the merge lock after the fast-forward AND the working-tree
+   * resync (Step 3), but BEFORE the lock is released. Receives the pre-merge
+   * (`finalIntegrationSha`) and post-merge (`finalTaskSha`) integration SHAs
+   * so the caller can identify the set of changed files.
+   *
+   * If this callback throws, `mergeBranch` reverts the fast-forward (rolls
+   * `refs/heads/<integrationBranch>` back to `finalIntegrationSha` via a
+   * CAS update-ref, and resets the working tree if Step 3 applied a
+   * `git reset --hard`) and returns
+   * `{ merged: false, aborted: false, integrationGateFailed: true, integrationGateOutput: <error.message> }`.
+   *
+   * Used by the merge primitive to run tier:'integration' verify gates under
+   * the merge lock, guaranteeing that at most one full suite runs at a time.
+   * Repos whose recipe defines no integration-tier gates pass a callback that
+   * returns immediately — zero added latency.
+   */
+  onAfterFastForward?: (info: {
+    finalTaskSha: string
+    finalIntegrationSha: string
+  }) => Promise<void>
 }
 
 export interface MergeResult {
@@ -181,6 +202,18 @@ export interface MergeResult {
    * concurrent integration advance; 0 on first-try success or non-retryable abort.
    */
   retriesAttempted: number
+  /**
+   * True when the caller-supplied {@link MergeArgs.onAfterFastForward} hook
+   * threw (integration-tier gates failed). The fast-forward has been reverted
+   * and the integration branch is clean at the pre-merge SHA.
+   * `integrationGateOutput` carries the failure details.
+   */
+  integrationGateFailed?: boolean
+  /**
+   * Failure output from the integration-tier gates when `integrationGateFailed`
+   * is true. Used by the merge primitive to seed the recovery Chore.
+   */
+  integrationGateOutput?: string
 }
 
 let cachedSupervisorSpec: string | null = null
@@ -339,6 +372,7 @@ export const mergeBranch = async ({
   onSupervisorEvent,
   onVegaStart,
   onBeforeFastForward,
+  onAfterFastForward,
   traceCtx,
 }: MergeArgs): Promise<MergeResult> => {
   const mergeCtx: TraceCtx | undefined = traceCtx
@@ -629,6 +663,7 @@ export const mergeBranch = async ({
     // clobber them — rare for the daemon's own checkout, and a dirty tree is
     // recoverable where lost edits are not. Failure here is non-fatal: the
     // merge already landed via the ref update; log and continue.
+    let didResyncWorkingTree = false
     try {
       const headBranch = (
         await exec(
@@ -656,6 +691,7 @@ export const mergeBranch = async ({
             mergeCtx,
           )
           output += reset.stdout + reset.stderr
+          didResyncWorkingTree = true
         } else {
           output += `\n[mergeBranch] merge target checkout has local changes vs ${finalIntegrationSha.slice(0, 9)}; left as-is to avoid clobbering (HEAD ref advanced).`
         }
@@ -663,6 +699,55 @@ export const mergeBranch = async ({
     } catch (resyncError: unknown) {
       const e = resyncError as { stdout?: string; stderr?: string; message?: string }
       output += `\n[mergeBranch] post-merge checkout re-sync failed (merge already landed): ${(e.stderr ?? e.message ?? '').slice(0, 300)}`
+    }
+
+    // Integration-gate hook — runs inside the merge lock so that at most one
+    // full test suite executes at a time. On failure the fast-forward is
+    // reverted so the integration branch is left clean at the pre-merge SHA.
+    if (onAfterFastForward) {
+      try {
+        await onAfterFastForward({ finalTaskSha, finalIntegrationSha })
+      } catch (gateErr: unknown) {
+        const gateOutput = gateErr instanceof Error ? gateErr.message : String(gateErr)
+        // Revert the fast-forward: roll integration branch back to pre-merge SHA.
+        try {
+          await exec(
+            resolveGitBin(),
+            ['update-ref', `refs/heads/${integrationBranch}`, finalIntegrationSha, finalTaskSha],
+            { cwd: repoRoot() },
+            mergeCtx,
+          )
+        } catch (revertRefErr: unknown) {
+          const m = revertRefErr instanceof Error ? revertRefErr.message : String(revertRefErr)
+          output += `\n[merge:integration-gate] ref revert failed: ${m.slice(0, 300)}`
+        }
+        // If Step 3 performed a `git reset --hard`, undo it so the working
+        // tree matches the reverted integration branch.
+        if (didResyncWorkingTree) {
+          try {
+            await exec(
+              resolveGitBin(),
+              ['reset', '--hard', finalIntegrationSha],
+              { cwd: repoRoot() },
+              mergeCtx,
+            )
+          } catch (resetBackErr: unknown) {
+            const m = resetBackErr instanceof Error ? resetBackErr.message : String(resetBackErr)
+            output += `\n[merge:integration-gate] working-tree reset-back failed: ${m.slice(0, 300)}`
+          }
+        }
+        return {
+          merged: false,
+          conflictResolved,
+          aborted: false,
+          integrationGateFailed: true,
+          integrationGateOutput: gateOutput,
+          output: output + `\n[merge:integration-gate] integration gates failed; fast-forward reverted to ${finalIntegrationSha.slice(0, 9)}`,
+          supervisorConversation,
+          vegaSessionId,
+          retriesAttempted,
+        }
+      }
     }
 
     return {

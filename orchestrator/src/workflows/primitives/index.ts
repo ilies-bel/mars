@@ -1616,6 +1616,84 @@ export const merge = async (
   }
 
   let vegaSpanInfo: { workerName: string; sessionId: string | null } | null = null
+  // Captured inside fn() so getCommandOutput can forward it to the trace even
+  // when fn() throws (integration gate failure case).
+  let capturedIntegrationGateOutput: string | undefined
+
+  // Integration-gate runner: called inside the merge lock (inside mergeBranch)
+  // after the fast-forward and working-tree resync, BEFORE the lock releases.
+  // Serialisation is therefore inherited — at most one full suite at a time.
+  // Repos whose recipe defines no integration-tier steps are a true no-op.
+  const integrationGateRunner = async (info: {
+    finalTaskSha: string
+    finalIntegrationSha: string
+  }): Promise<void> => {
+    const gateCtx = resolveContext()
+    const gateScopes = await loadVerifyScopes(gateCtx.supervisorsManifest)
+
+    // Collect ALL integration-tier steps from ALL scopes: integration tests
+    // verify the full merged tree, not just the files this task touched.
+    const integrationSteps = gateScopes.flatMap((sc) =>
+      sc.steps
+        .filter((s) => s.tier === 'integration')
+        .map((s) => ({ ...s, dir: sc.scope })),
+    )
+
+    if (integrationSteps.length === 0) {
+      // No integration gates defined — zero added latency.
+      return
+    }
+
+    console.log(
+      `[merge:integration-gate] task ${taskId}: running ${integrationSteps.length} integration-tier gate(s) under merge lock (pre-merge: ${info.finalIntegrationSha.slice(0, 9)}, post-merge: ${info.finalTaskSha.slice(0, 9)})`,
+    )
+
+    // Run gates via verifyChanges, remapping tier to 'task' so the function
+    // actually executes them (verifyChanges defers integration-tier steps to
+    // this boundary).
+    const gateResult = await verifyChanges({
+      cwd: worktreePath,
+      steps: integrationSteps.map((s) => ({ ...s, tier: 'task' as const })),
+      // No branch/integrationBranch — skip the has-diff gate for this run.
+      traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
+    })
+
+    // Build the formatted output and structured gate-outcomes block, recorded
+    // with tier:'integration' so the run-timeline view can distinguish them
+    // from task-tier gate outcomes.
+    const gateOutcomes = gateResult.steps.map((s) => ({
+      name: s.name,
+      tier: 'integration' as const,
+      passed: s.passed,
+      ...(s.duration !== undefined ? { duration: s.duration } : {}),
+    }))
+    const gateStepsText = gateResult.steps
+      .map((s) => {
+        const durationBadge = s.duration !== undefined ? ` ${s.duration}ms` : ''
+        return `=== ${s.name} (${s.passed ? 'pass' : 'fail'}) [integration]${durationBadge} ===\n${s.output}`
+      })
+      .join('\n\n')
+    const gateOutputFormatted =
+      gateStepsText +
+      '\n\n=== integration gate outcomes ===\n' +
+      JSON.stringify(gateOutcomes, null, 2)
+
+    // Capture for the trace regardless of outcome.
+    capturedIntegrationGateOutput = gateOutputFormatted
+
+    if (!gateResult.passed) {
+      const failed = gateResult.steps.filter((s) => !s.passed)
+      const summary = failed.map((s) => `${s.name}:\n${failureExcerpt(s.output)}`).join('\n\n')
+      throw new Error(
+        `merge:integration-gate task ${taskId} failed (${failed.length} gate(s)):\n${summary}\n\n${gateOutputFormatted}`,
+      )
+    }
+
+    console.log(
+      `[merge:integration-gate] task ${taskId}: all ${integrationSteps.length} integration-tier gate(s) passed`,
+    )
+  }
+
   return await runNonLlmStepWithSpan({
     stepName: 'merge',
     workflowInstanceId: trace.workflowInstanceId,
@@ -1624,6 +1702,7 @@ export const merge = async (
     phase: 'merge',
     traceStore: spanStore(trace),
     getVegaInfo: () => vegaSpanInfo,
+    getCommandOutput: () => capturedIntegrationGateOutput,
     fn: async (): Promise<MergeOutput> => {
       try {
         await updateTask(
@@ -1791,6 +1870,7 @@ export const merge = async (
             supervisorConversation.push(event)
             emit?.(event)
           },
+          onAfterFastForward: integrationGateRunner,
         })
 
         if (supervisorConversation.length > 0) {
@@ -1836,6 +1916,42 @@ export const merge = async (
           )
         }
 
+        // Integration-tier gate failure: the fast-forward has already been
+        // reverted by mergeBranch (branch is clean). Route through the standard
+        // recovery path so the agent gets a fix-task seeded with the gate output.
+        if (m.integrationGateFailed) {
+          const gateOutput = m.integrationGateOutput ?? 'integration gates failed'
+          const errorMsg = gateOutput.slice(0, 2000)
+          const gateSignature = computeFailureSignature('merge:integration-gate', errorMsg)
+          await updateTask(
+            taskId,
+            {
+              status: 'failed',
+              error: errorMsg,
+              failedPhase: 'merge',
+              failureReason: 'merge:integration-gate',
+              failureSignature: gateSignature,
+              failureReasonCode: gateSignature,
+            },
+            store,
+          )
+          await handleTaskFailureWithFixTask({
+            taskId,
+            failingStep: 'merge:integration-gate',
+            errorOutput: gateOutput,
+            branch,
+            store,
+          }).catch((err) => {
+            console.error(
+              `[failure-handler] task ${taskId} integration-gate failure handling errored:`,
+              err,
+            )
+          })
+          throw new Error(
+            `task ${taskId} merge:integration-gate failed; fast-forward reverted`,
+          )
+        }
+
         await removeWorktree(
           { path: worktreePath, branch },
           true,
@@ -1857,7 +1973,8 @@ export const merge = async (
           (error.message.includes('merge:preflight') ||
             error.message.includes('merge pre-flight failed') ||
             error.message.includes('merge aborted; vcs-supervisor could not reconcile') ||
-            error.message.includes('merge:main-dirty'))
+            error.message.includes('merge:main-dirty') ||
+            error.message.includes('merge:integration-gate'))
         ) {
           throw error
         }
