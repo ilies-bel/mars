@@ -1150,6 +1150,221 @@ const testLibsqlNotAnErrorRecipe: FixRecipe = {
   },
 }
 
+const completenessRecipeMissingReport: FixRecipe = {
+  signature: 'verify:completeness/missing-report',
+  title: (ctx) =>
+    `Re-emit completion report for committed work on ${ctx.targetBranch}`,
+  buildPrompt: (ctx) => {
+    const gateOutput =
+      ctx.statusOutput.length > 0
+        ? ctx.statusOutput
+        : '(no gate output captured)'
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `The previous coder on branch ${ctx.targetBranch} committed real work and then exited WITHOUT a valid completion-report block in its final message (or the block was malformed). The completeness gate failed ONLY because of the missing/malformed report — the actual implementation in the worktree is presumed correct.`,
+      '',
+      `**Your ONLY job is to write a correctly-formatted completion-report line for each criterion in the original task prompt.** Do NOT re-implement, re-verify from scratch, or broadly re-explore the tree. Read the committed diff, map it to the task criteria, and emit the report.`,
+      '',
+      `## Completeness gate verdict`,
+      '',
+      '```',
+      gateOutput,
+      '```',
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `## How to fix`,
+      '',
+      `STEP 1 — Read the committed work (read-only against the failing worktree):`,
+      '',
+      '```',
+      `git -C ${ctx.targetPath} log --oneline`,
+      `git -C ${ctx.targetPath} show --stat HEAD`,
+      `git -C ${ctx.targetPath} diff HEAD~1..HEAD`,
+      '```',
+      '',
+      `STEP 2 — Read the original task criteria (inlined below). For each criterion, determine its status based solely on what is already committed:`,
+      ` - [done] if the criterion is fully met by the committed diff`,
+      ` - [partial] if work was started but not completed`,
+      ` - [blocked] if it is genuinely blocked (name the exact blocker)`,
+      '',
+      `STEP 3 — Commit a completion report. Your final commit message MUST end with a fenced completion-report block. The commit itself may be empty (--allow-empty) — what matters is the formatted report in your FINAL message:`,
+      '',
+      '```completion-report',
+      `- [done|partial|blocked] <criterion> — evidence: <file:line | commit sha | test name>`,
+      '```',
+      '',
+      `**Evidence rules:**`,
+      ` - For a source-code change: reference the file and approximate line (e.g. \`orchestrator/src/core/lib/foo.ts:42\`).`,
+      ` - For a test: reference the test name (e.g. \`verify:completeness/missing-report resolves to recipe\`).`,
+      ` - For a commit: use the short sha from \`git -C ${ctx.targetPath} log --oneline\`.`,
+      ` - Do NOT fabricate evidence. If you cannot find real evidence for a criterion you believe is done, mark it [partial] and name what is missing.`,
+      '',
+      `**Constraints:**`,
+      ` - Do NOT re-implement any criterion — if the diff shows it is done, report it as done.`,
+      ` - Do NOT re-run the full verify suite — the only thing that failed was the report format.`,
+      ` - If a criterion is genuinely unmet (absent from the diff entirely), mark it [partial] or [blocked] honestly.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only — \`git -C ${ctx.targetPath} ...\` for inspection only): ${ctx.targetPath}`,
+      '',
+      `Save your work. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
+const completenessRecipeIncomplete: FixRecipe = {
+  signature: 'verify:completeness/incomplete',
+  title: (ctx) =>
+    `Finish the listed unmet criteria and update the completion report on ${ctx.targetBranch}`,
+  buildPrompt: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    const gateOutput =
+      ctx.statusOutput.length > 0
+        ? ctx.statusOutput
+        : '(no gate output captured)'
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `The previous coder on branch ${ctx.targetBranch} submitted a completion report with one or more criteria marked [partial] or [blocked]. The completeness gate rejected the report because not all criteria are [done].`,
+      '',
+      `**Your job is to finish ONLY the criteria the gate listed as unmet (reproduced below). Everything else is already done — do NOT re-implement it, re-verify it, or re-run tests for it. After finishing the listed criteria, update the completion report so every criterion is [done] with real evidence.**`,
+      '',
+      `## Completeness gate verdict (contains the exact unmet criteria)`,
+      '',
+      '```',
+      gateOutput,
+      '```',
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `## How to fix`,
+      '',
+      `STEP 1 — Lift the prior coder's committed work into YOUR recovery worktree:`,
+      '',
+      '```',
+      `BASE=$(git -C ${ctx.targetPath} merge-base ${integration} HEAD)`,
+      `git -C ${ctx.targetPath} diff $BASE..HEAD > /tmp/recover-completeness.patch`,
+      `git apply --3way /tmp/recover-completeness.patch`,
+      `git add -A && git commit -m "recover: lift committed work from ${ctx.targetBranch}"`,
+      '```',
+      '',
+      `STEP 2 — Implement ONLY the criteria listed as [partial] or [blocked] in the gate verdict above. Read the original task prompt below to understand what each criterion requires. Do not expand scope.`,
+      '',
+      `STEP 3 — Commit your fixes: \`git add -A && git commit -m "fix: complete partial criteria"\``,
+      '',
+      `STEP 4 — Your FINAL message must end with a corrected completion-report block where every criterion is [done] with real evidence:`,
+      '',
+      '```completion-report',
+      `- [done] <criterion> — evidence: <file:line | commit sha | test name>`,
+      '```',
+      '',
+      `**Constraints:**`,
+      ` - Do NOT re-implement criteria already marked [done] — they are complete.`,
+      ` - Do NOT re-run the full test suite for already-done criteria — only verify the specific criteria you are finishing.`,
+      ` - If a criterion is genuinely blocked (requires architectural work outside scope), mark it [blocked] and name the exact blocker.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only — \`git -C ${ctx.targetPath} ...\` for inspection only): ${ctx.targetPath}`,
+      `Integration branch: ${integration}`,
+      '',
+      `Save your work. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
+const completenessRecipeUnsubstantiated: FixRecipe = {
+  signature: 'verify:completeness/unsubstantiated',
+  title: (ctx) =>
+    `Provide verifiable evidence for completion claims on ${ctx.targetBranch}`,
+  buildPrompt: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    const gateOutput =
+      ctx.statusOutput.length > 0
+        ? ctx.statusOutput
+        : '(no gate output captured)'
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `The previous coder on branch ${ctx.targetBranch} marked all criteria [done], but the completeness gate could not verify the evidence claims — referenced files did not exist in the worktree, commit shas were absent from git history, or test names were not found. The implementation is presumed done; only the evidence references need to be corrected.`,
+      '',
+      `**Your job is to provide or repair verifiable evidence ONLY for the exact claims listed by the gate. Do NOT re-implement the task, do NOT re-run the full verify suite, do NOT touch evidence that was already verified.**`,
+      '',
+      `## Completeness gate verdict (contains the exact unverifiable claims)`,
+      '',
+      '```',
+      gateOutput,
+      '```',
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `## How to fix`,
+      '',
+      `STEP 1 — For each unsubstantiated claim listed in the gate verdict, find the real evidence. Run these read-only checks against the failing worktree:`,
+      '',
+      '```',
+      `git -C ${ctx.targetPath} log --oneline`,
+      `git -C ${ctx.targetPath} show --stat HEAD`,
+      `git -C ${ctx.targetPath} diff HEAD~1..HEAD --stat`,
+      '```',
+      '',
+      `STEP 2 — Determine the correct evidence reference for each failing claim:`,
+      ` - If the referenced file path was wrong (typo, wrong directory): find the actual path and use it.`,
+      ` - If the referenced commit sha was wrong: get the correct sha from \`git -C ${ctx.targetPath} log --oneline\`.`,
+      ` - If the referenced test name was wrong: find the actual test name in the test file.`,
+      ` - If the work is genuinely not done (the evidence does not exist because the implementation was skipped): mark the criterion [partial] and name what is missing — do not fabricate evidence.`,
+      '',
+      `STEP 3 — Lift the prior coder's committed work into YOUR recovery worktree and commit with a corrected completion-report:`,
+      '',
+      '```',
+      `BASE=$(git -C ${ctx.targetPath} merge-base ${integration} HEAD)`,
+      `git -C ${ctx.targetPath} diff $BASE..HEAD > /tmp/recover-completeness.patch`,
+      `git apply --3way /tmp/recover-completeness.patch`,
+      `git add -A && git commit -m "recover: lift committed work from ${ctx.targetBranch}"`,
+      '```',
+      '',
+      `STEP 4 — Your FINAL message must end with a corrected completion-report block where every evidence reference is real and verifiable:`,
+      '',
+      '```completion-report',
+      `- [done] <criterion> — evidence: <file:line | commit sha | test name>`,
+      '```',
+      '',
+      `**Constraints:**`,
+      ` - Do NOT re-implement work that is already done — only fix the evidence references.`,
+      ` - Do NOT fabricate evidence — every claim must point to a real file, commit, or test in the worktree.`,
+      ` - Do NOT touch evidence that the gate already verified — only fix the failing claims listed above.`,
+      '',
+      ...sourcePromptSection,
+      `Failing task branch (context only — do not check it out): ${ctx.targetBranch}`,
+      `Failing task worktree (read-only — \`git -C ${ctx.targetPath} ...\` for inspection only): ${ctx.targetPath}`,
+      `Integration branch: ${integration}`,
+      '',
+      `Save your work. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 // NOTE — intentionally absent entries (documented so future investigators don't
 // re-open these):
 //
@@ -1378,6 +1593,9 @@ const recipeList: readonly FixRecipe[] = [
   testLibsqlNoSuchTableRecipe,
   testNoSuiteFoundRecipe,
   testLibsqlNotAnErrorRecipe,
+  completenessRecipeMissingReport,
+  completenessRecipeIncomplete,
+  completenessRecipeUnsubstantiated,
 ]
 
 /**

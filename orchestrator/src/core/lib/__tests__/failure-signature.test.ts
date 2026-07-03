@@ -461,6 +461,72 @@ describe('causeForSignature', () => {
   })
 })
 
+describe('verify:completeness sub-classification', () => {
+  // Regression guard: 20 tasks in 14 days carried verify:completeness/unclassified
+  // because checkCompletenessGate's three failure prefixes had no matching rules.
+  // These tests lock in the three sub-signatures so first-principles recoveries
+  // no longer fire for a report-formatting problem.
+
+  it('classifies missing-completion-report (absent) as missing-report', () => {
+    const output =
+      "missing-completion-report: no completion-report fenced block found in the coder's final message.\n" +
+      'Ensure the FINAL message ends with a ```completion-report block as required by the task contract.'
+    expect(computeFailureSignature('verify:completeness', output)).toBe(
+      'verify:completeness/missing-report',
+    )
+  })
+
+  it('classifies missing-completion-report (unparseable) as missing-report', () => {
+    const output =
+      'missing-completion-report: a completion-report block was found but could not be parsed (malformed lines).\n' +
+      '```completion-report\nmalformed line without brackets\n```'
+    expect(computeFailureSignature('verify:completeness', output)).toBe(
+      'verify:completeness/missing-report',
+    )
+  })
+
+  it('classifies incomplete (partial/blocked criteria) as incomplete', () => {
+    const output =
+      'incomplete: 2 criterion/criteria not marked done.\n' +
+      'Unmet criteria (the recovery Chore must address these):\n' +
+      '  - [partial] add unit tests — evidence: none yet\n' +
+      '  - [blocked] deploy to staging — evidence: blocked on infra access'
+    expect(computeFailureSignature('verify:completeness', output)).toBe(
+      'verify:completeness/incomplete',
+    )
+  })
+
+  it('classifies unsubstantiated-completion as unsubstantiated', () => {
+    const output =
+      'unsubstantiated-completion: 1 evidence claim(s) could not be verified.\n' +
+      'Unsubstantiated claims (the recovery Chore must provide real evidence):\n' +
+      '  - add unit tests: evidence "src/core/lib/__tests__/foo.test.ts:42" — file does not exist in the worktree'
+    expect(computeFailureSignature('verify:completeness', output)).toBe(
+      'verify:completeness/unsubstantiated',
+    )
+  })
+
+  it('does NOT produce unclassified for any of the three gate failure prefixes', () => {
+    const outputs = [
+      "missing-completion-report: no completion-report fenced block found in the coder's final message.",
+      'incomplete: 1 criterion/criteria not marked done.',
+      'unsubstantiated-completion: 1 evidence claim(s) could not be verified.',
+    ]
+    for (const output of outputs) {
+      const sig = computeFailureSignature('verify:completeness', output)
+      expect(sig).not.toContain(UNCLASSIFIED_ERROR_CLASS)
+    }
+  })
+
+  it('still produces unclassified for an unknown verify:completeness output', () => {
+    const sig = computeFailureSignature(
+      'verify:completeness',
+      'some unexpected completeness gate output nobody has seen before',
+    )
+    expect(sig).toBe('verify:completeness/unclassified')
+  })
+})
+
 describe('firstNonBlankLine', () => {
   it('returns the first non-blank trimmed line', () => {
     expect(firstNonBlankLine('\n   \n  hello\nworld')).toBe('hello')
