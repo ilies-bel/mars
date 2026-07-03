@@ -13,8 +13,8 @@ import { runTool, nullTraceStore, type TraceCtx } from '../run-tool'
  *
  * Callers that legitimately read a non-zero exit (e.g. `git diff --quiet`,
  * `git merge-base --is-ancestor`) pass `expectsFailure: true` and inspect the
- * returned exitCode/error. The trace severity follows the same rule
- * (info / warn / error) so the trace surface matches caller intent.
+ * returned exitCode/error. The trace severity for probes is `info` (not warn)
+ * so expected-failure probes don't pollute the warn/error channels.
  */
 interface ExecOpts {
   cwd: string

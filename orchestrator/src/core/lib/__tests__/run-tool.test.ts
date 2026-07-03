@@ -53,44 +53,44 @@ describe('runTool — capture, severity, truncation, timeout', () => {
     }
   })
 
-  it('non-zero exit is severity=error by default and severity=warn with expectsFailure', async () => {
+  it('non-zero exit is severity=warn by default and severity=info with expectsFailure', async () => {
     const store = await openTraceEventStore(tmpDbPath())
     try {
-      // Default: error.
+      // Default (no expectsFailure): unexpected failure → warn.
       const a = await runTool(
         {
           tool: 'node',
           argv: ['-e', 'process.exit(7)'],
           cwd: process.cwd(),
-          taskId: 't-error',
+          taskId: 't-warn',
         },
         store,
       )
       expect(a.exitCode).toBe(7)
 
-      // expectsFailure: warn.
+      // expectsFailure=true: probe designed to exit nonzero → info, not warn.
       const b = await runTool(
         {
           tool: 'node',
           argv: ['-e', 'process.exit(3)'],
           cwd: process.cwd(),
-          taskId: 't-warn',
+          taskId: 't-info',
           expectsFailure: true,
         },
         store,
       )
       expect(b.exitCode).toBe(3)
 
-      const errors = await store.query({ taskId: 't-error' })
-      expect(errors).toHaveLength(1)
-      expect(errors[0].severity).toBe('error')
-      expect(errors[0].payload.exitCode).toBe(7)
-
       const warns = await store.query({ taskId: 't-warn' })
       expect(warns).toHaveLength(1)
       expect(warns[0].severity).toBe('warn')
-      expect(warns[0].payload.exitCode).toBe(3)
-      expect(warns[0].payload.expectsFailure).toBe(true)
+      expect(warns[0].payload.exitCode).toBe(7)
+
+      const infos = await store.query({ taskId: 't-info' })
+      expect(infos).toHaveLength(1)
+      expect(infos[0].severity).toBe('info')
+      expect(infos[0].payload.exitCode).toBe(3)
+      expect(infos[0].payload.expectsFailure).toBe(true)
     } finally {
       await store.close()
     }
@@ -163,7 +163,7 @@ describe('runTool — capture, severity, truncation, timeout', () => {
       const events = await store.query({ taskId: 'timeout' })
       expect(events).toHaveLength(1)
       const e = events[0]
-      expect(e.severity).toBe('error') // expectsFailure not set
+      expect(e.severity).toBe('warn') // expectsFailure not set → unexpected nonzero → warn
       const tracedStderr = e.payload.stderr as string
       expect(tracedStderr).toContain('[runTool: killed after 200ms]')
     } finally {

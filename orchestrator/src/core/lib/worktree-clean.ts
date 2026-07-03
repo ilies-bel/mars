@@ -159,7 +159,7 @@ export const removeWorktreeAt = async (
   }
   // The remove probe is allowed to fail (already-removed worktrees, locked
   // entries) — the rm/branch-cleanup below is the safety net. Mark it as
-  // expectsFailure so the trace severity stays warn rather than error.
+  // expectsFailure so the trace severity is info rather than warn.
   const removeResult = await runTool(
     {
       tool: 'git',

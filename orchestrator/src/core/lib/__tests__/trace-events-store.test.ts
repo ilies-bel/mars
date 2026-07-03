@@ -71,19 +71,32 @@ describe('deriveSeverity', () => {
     ).toBe('info')
   })
 
-  it('returns warn for tool_invoked with non-zero exit when expectsFailure=true', () => {
+  it('returns info for tool_invoked with non-zero exit when expectsFailure=true', () => {
+    // Expected-failure probes (e.g. git show-ref branch-existence checks) exit
+    // nonzero BY DESIGN — log at info so they don't pollute warn/error channels.
     expect(
       deriveSeverity('tool_invoked', {
         tool: 'git',
-        argv: ['diff', '--quiet'],
+        argv: ['show-ref', '--verify', '--quiet', 'refs/heads/task/abc'],
         exitCode: 1,
         durationMs: 7,
         expectsFailure: true,
       }),
-    ).toBe('warn')
+    ).toBe('info')
+    expect(
+      deriveSeverity('tool_invoked', {
+        tool: 'git',
+        argv: ['merge-base', '--is-ancestor', 'HEAD', 'main'],
+        exitCode: 1,
+        durationMs: 4,
+        expectsFailure: true,
+      }),
+    ).toBe('info')
   })
 
-  it('returns error for tool_invoked with non-zero exit when expectsFailure is not set', () => {
+  it('returns warn for tool_invoked with non-zero exit when expectsFailure is not set', () => {
+    // Unexpected nonzero exits (e.g. pnpm install failures) stay at warn so
+    // they remain visible without elevating to error-channel noise.
     expect(
       deriveSeverity('tool_invoked', {
         tool: 'git',
@@ -91,7 +104,7 @@ describe('deriveSeverity', () => {
         exitCode: 128,
         durationMs: 12,
       }),
-    ).toBe('error')
+    ).toBe('warn')
     expect(
       deriveSeverity('tool_invoked', {
         tool: 'npm',
@@ -100,7 +113,7 @@ describe('deriveSeverity', () => {
         durationMs: 999,
         expectsFailure: false,
       }),
-    ).toBe('error')
+    ).toBe('warn')
   })
 
   it('covers every kind in the closed enum without throwing', () => {

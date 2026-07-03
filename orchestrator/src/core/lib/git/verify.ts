@@ -145,8 +145,8 @@ export interface VerifyArgs {
   /** Optional trace context. When supplied, each verify step's shell-out
    *  emits a `tool_invoked` event under `phase: 'verify'`. Steps are probes
    *  whose non-zero exit IS the failure signal — passed through with
-   *  `expectsFailure: true` so the trace severity stays warn instead of
-   *  flagging every failing verify run as a hard error. */
+   *  `expectsFailure: true` so the trace severity is info instead of
+   *  flagging every failing verify run as warn. */
   traceCtx?: TraceCtx
 }
 

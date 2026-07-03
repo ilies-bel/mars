@@ -144,8 +144,10 @@ export interface TraceEventStore {
  * - `step_ended` with `payload.outcome === 'killed'` → `warn`
  *   (watchdog-killed runs are problems but not hard failures)
  * - `tool_invoked` with `payload.exitCode === 0` → `info`
- * - `tool_invoked` with non-zero exit AND `payload.expectsFailure === true` → `warn`
- * - `tool_invoked` with non-zero exit AND falsy `expectsFailure` → `error`
+ * - `tool_invoked` with non-zero exit AND `payload.expectsFailure === true` → `info`
+ *   (probe designed to exit nonzero — e.g. branch-existence check — not a failure)
+ * - `tool_invoked` with non-zero exit AND falsy `expectsFailure` → `warn`
+ *   (unexpected nonzero exit; `error` is reserved for task-level failures)
  * - `log_line` → reads `payload.level` ('info'|'warn'|'error'); falls back to 'info'
  * - `worker-model-mismatch` → `warn` (the subprocess is running a different model
  *   than the Worker pin; budget drift risk, needs investigation)
@@ -168,8 +170,8 @@ export const deriveSeverity = (
   if (kind === 'tool_invoked') {
     const exitCode = payload.exitCode
     if (typeof exitCode === 'number' && exitCode === 0) return 'info'
-    if (payload.expectsFailure === true) return 'warn'
-    return 'error'
+    if (payload.expectsFailure === true) return 'info'
+    return 'warn'
   }
   if (kind === 'log_line') {
     const level = payload.level

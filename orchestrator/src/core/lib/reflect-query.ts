@@ -295,6 +295,10 @@ export const loadRecentTaskCorpus = async (
   // Tool error counts per task, excluding expectsFailure=true probes.
   // Grouped by (task_id, tool, argv[0]) ordered by count desc so the first
   // row per task_id is the top offender.
+  //
+  // Severity note: unexpected tool failures were logged as 'error' before the
+  // info/warn/error reclassification (mars-56c3d389) and as 'warn' after it.
+  // Querying both lets this work on historical rows without a migration.
   const toolErrorRows = await queue.query({
     sql: `SELECT task_id,
                  json_extract(payload, '$.tool') AS tool,
@@ -302,7 +306,7 @@ export const loadRecentTaskCorpus = async (
                  COUNT(*) AS cnt
             FROM trace_events
            WHERE kind = 'tool_invoked'
-             AND severity = 'error'
+             AND severity IN ('warn', 'error')
              AND (json_extract(payload, '$.expectsFailure') IS NULL
                   OR json_extract(payload, '$.expectsFailure') = 0)
              AND task_id IN (${placeholders})

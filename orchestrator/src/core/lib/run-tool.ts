@@ -23,7 +23,7 @@ import type {
  *
  * Severity for the trace event is derived by `deriveSeverity` in
  * `trace-events-store.ts`: zero exit → info; non-zero with `expectsFailure:
- * true` → warn; non-zero otherwise → error.
+ * true` → info (probe, not a failure); non-zero otherwise → warn.
  *
  * NOT for the worker subprocess's own internal tool calls — those are
  * captured in Anthropic's transcript via the worker's sessionId. `runTool`
