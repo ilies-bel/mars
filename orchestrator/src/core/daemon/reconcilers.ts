@@ -313,6 +313,37 @@ const staleActionQueueSweep: Reconciler = {
 }
 
 /**
+ * 12. Code-drift clear sweep — resolve any open `daemon-code-drift` action-queue
+ *    rows left over from a previous daemon process. A code-drift row reflects
+ *    "this daemon is running stale code"; once the daemon restarts it is running
+ *    current code, so any residual open row is stale and should be cleared.
+ *    Runs before the staleness interval is armed so the freshly started daemon
+ *    never inherits a false-positive drift alert. Errors are swallowed so a DB
+ *    hiccup does not abort the rest of the pass.
+ */
+const codeDriftClearSweep: Reconciler = {
+  name: 'code-drift-clear-sweep',
+  async run({ log }) {
+    try {
+      const { supersedeActionQueueItemsBySignature } = await import('../lib/action-queue')
+      const closed = await supersedeActionQueueItemsBySignature(
+        'daemon-code-drift',
+        'daemon-code-drift',
+        'daemon-restarted',
+        'daemon:restart',
+      )
+      if (closed.length > 0) {
+        log(`[reconcile] cleared ${closed.length} stale daemon-code-drift alert(s) on restart`)
+      }
+      return { codeDriftAlertsCleared: closed.length }
+    } catch (err) {
+      log(`[reconcile] code-drift-clear-sweep failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * The ordered startup-reconcile registry. Order is load-bearing and matches
  * the historical hand-called sequence 1→10. To add a step, insert a
  * `Reconciler` at the correct position; the boot path iterates this array.
@@ -329,4 +360,5 @@ export const RECONCILERS: readonly Reconciler[] = [
   mergingRecovery,
   stalledProposalSlice,
   staleActionQueueSweep,
+  codeDriftClearSweep,
 ]

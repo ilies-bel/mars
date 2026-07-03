@@ -95,6 +95,13 @@ export const ACTION_QUEUE_KINDS = [
   // can investigate and re-merge or restart. This catches the false-done class
   // (ADR-0052 done-implies-merged invariant).
   'done-with-unmerged-commits',
+  // The daemon is running source code from an older commit while the git HEAD
+  // has since advanced (dev-install only). Raised by the periodic dev-staleness
+  // check whenever drift is detected. Level-triggered (ADR-0048): exists while
+  // the daemon is stale; cleared automatically when the daemon restarts (the new
+  // daemon runs current code). One row per daemon lifetime — idempotent raises
+  // bump seen_count rather than inserting siblings.
+  'daemon-code-drift',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
@@ -827,6 +834,8 @@ export type SupersedeReason =
   | 'subscriber-unstalled'
   /** hitl-slice-needs-operator item has no matching HITL slice task in any state. */
   | 'hitl-orphan-no-slice-task'
+  /** daemon-code-drift row cleared because the daemon restarted and is now running current code. */
+  | 'daemon-restarted'
 
 /**
  * Auto-close every open actionQueue item keyed to the given origin task. Called

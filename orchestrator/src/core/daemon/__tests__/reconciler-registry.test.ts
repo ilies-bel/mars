@@ -35,6 +35,7 @@ describe('RECONCILERS registry', () => {
       'merging-recovery',
       'stalled-proposal-slice',
       'stale-action-queue-sweep',
+      'code-drift-clear-sweep',
     ])
   })
 

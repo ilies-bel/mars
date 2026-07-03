@@ -2960,10 +2960,14 @@ export const startDaemon = async (
   // ── Dev-install staleness check ──────────────────────────────────────────
   // Periodically compares the git HEAD at startup against the current HEAD.
   // When they differ, marks the daemon stale so `mars daemon status` renders
-  // a restart warning. Active only for dev installs (prod is handled by
-  // self-update.ts). On any git error the check is a no-op — we never flip
-  // isStale to false once it is true. .unref() so the interval never
-  // prevents a clean shutdown. Override interval via MARS_DEV_STALENESS_CHECK_MS.
+  // a restart warning, and raises a level-triggered action-queue row so the
+  // operator is notified without having to poll status. Active only for dev
+  // installs (prod is handled by self-update.ts). On any git error the check
+  // is a no-op — we never flip isStale to false once it is true. .unref() so
+  // the interval never prevents a clean shutdown. Override interval via
+  // MARS_DEV_STALENESS_CHECK_MS. The startup reconciler (code-drift-clear-sweep)
+  // resolves any open drift row left by a prior daemon so the row correctly
+  // reflects only the CURRENT daemon's state.
   const DEV_STALENESS_CHECK_MS = Number(process.env.MARS_DEV_STALENESS_CHECK_MS ?? 60_000)
   const devStalenessCheck = setInterval(() => {
     void (async () => {
@@ -2973,6 +2977,34 @@ export const startDaemon = async (
         if (isStaleDev(sourceSha, head, classifyInstallRoute())) {
           currentSha = head
           isStale = true
+          // Raise a level-triggered action-queue row so operators see the drift
+          // without having to poll `mars daemon status`. Idempotent: if a row
+          // with signature 'daemon-code-drift' is already open, raiseActionQueueItem
+          // bumps its seen_count instead of inserting a duplicate.
+          try {
+            const { raiseActionQueueItem } = await import('../lib/action-queue')
+            const shortSrc = sourceSha?.slice(0, 7) ?? '?'
+            const shortHead = head?.slice(0, 7) ?? '?'
+            await raiseActionQueueItem({
+              kind: 'daemon-code-drift',
+              category: 'daemon',
+              priority: 'high',
+              title: `Daemon running stale code — ${shortSrc} → ${shortHead}`,
+              body:
+                `daemon running ${shortSrc}, main is at ${shortHead} — ` +
+                `run \`mars daemon restart\` to load current verify/dispatch code`,
+              payload: { sourceSha, currentSha: head },
+              context: {},
+              raisedBy: 'daemon:dev-staleness-check',
+              // Singleton signature: one open row per daemon lifetime.
+              signature: 'daemon-code-drift',
+              occurrence: { detectedAt: new Date().toISOString() },
+            })
+          } catch (aqErr) {
+            log(
+              `[dev-staleness] failed to raise action-queue item: ${(aqErr as Error).message}`,
+            )
+          }
         }
       } catch {
         // git unavailable — leave isStale unchanged

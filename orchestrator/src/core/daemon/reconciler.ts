@@ -95,6 +95,12 @@ export interface ReconcileSummary {
    * to done via a code path that did not emit the expected dismissal event.
    */
   staleActionQueueItemsResolved: number
+  /**
+   * Open `daemon-code-drift` action-queue rows cleared at daemon startup.
+   * A drift row from a prior daemon run is stale once the daemon restarts
+   * (the new daemon is running current code). This count is normally 0 or 1.
+   */
+  codeDriftAlertsCleared: number
 }
 
 /**
@@ -131,4 +137,5 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   recoveryPropagated: 0,
   recoveryDependentsRequeued: 0,
   staleActionQueueItemsResolved: 0,
+  codeDriftAlertsCleared: 0,
 })
