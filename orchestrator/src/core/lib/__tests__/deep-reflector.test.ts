@@ -335,6 +335,7 @@ const makeArc = (tasks: DeepReflectArc['tasks']): DeepReflectArc => ({
   lastActivity: '2025-01-01T01:00:00.000Z',
   stepTimeline: [],
   toolInvokedErrors: [],
+  operatorContext: null,
 })
 
 /** Build a single user event containing a large tool_result body. */

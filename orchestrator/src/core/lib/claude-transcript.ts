@@ -265,3 +265,35 @@ export const readAllTranscriptsForTask = async function* (
     }
   }
 }
+
+/**
+ * Resolve a single transcript path from a raw `(sessionId, cwd)` pair.
+ *
+ * This is the counterpart to {@link resolveTranscriptLocationsForTask}
+ * for foreground (operator) sessions, which are not keyed on a task
+ * worktree. The `cwd` argument must be the directory Claude Code was
+ * launched from — for foreground sessions this is the **repo root**, not
+ * a task worktree.
+ *
+ *   resolveTranscriptForSession('abc-uuid', '/Users/me/my-project', { homeDir })
+ *   // → { sessionId: 'abc-uuid',
+ *   //     path: '/tmp/fake-home/.claude/projects/-Users-me-my-project/abc-uuid.jsonl',
+ *   //     exists: true | false }
+ *
+ * `homeDir` is injectable for tests; production callers omit it.
+ */
+export const resolveTranscriptForSession = async (
+  sessionId: string,
+  cwd: string,
+  opts: { homeDir?: string } = {},
+): Promise<TranscriptLocation> => {
+  const home = opts.homeDir ?? homedir()
+  const encoded = encodeClaudeCwd(cwd)
+  const sessionDir = resolvePath(projectsDir(home), encoded)
+  const path = resolvePath(sessionDir, `${sessionId}.jsonl`)
+  return {
+    sessionId,
+    path,
+    exists: await fileExists(path),
+  }
+}

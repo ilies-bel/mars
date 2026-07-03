@@ -1,11 +1,49 @@
 import { getDefaultTaskStore } from '../store/task-store'
+import { getRepoRoot } from '../context'
 import type { ClaudeEvent } from './claude-stream'
-import { listTaskSignals, type TaskSignalRow } from './reflect-signals'
+import { isReflectDisabled, listTaskSignals, type TaskSignalRow } from './reflect-signals'
 import {
   readAllTranscriptsForTask,
+  readTranscript,
+  resolveTranscriptForSession,
   resolveTranscriptLocationsForTask,
   type TranscriptLocation,
 } from './claude-transcript'
+
+// ── Foreground-session slice constants ────────────────────────────────────────
+/** How far before the cli-invocation anchor to include operator messages. */
+const FOREGROUND_WINDOW_BEFORE_MS = 30 * 60 * 1000 // 30 min
+/** How far after the cli-invocation anchor to include operator messages. */
+const FOREGROUND_WINDOW_AFTER_MS = 5 * 60 * 1000 // 5 min
+/** Hard cap on the number of messages in a foreground slice. */
+const FOREGROUND_MAX_MESSAGES = 100
+/** How many tail messages to return when events have no timestamp fields. */
+const FOREGROUND_FALLBACK_MESSAGES = 50
+
+/**
+ * A bounded slice of the operator's foreground Claude Code session,
+ * extracted around the time the task was enqueued.
+ */
+export interface OperatorContext {
+  /** The foreground Claude Code session UUID (`CLAUDE_CODE_SESSION_ID`). */
+  sessionId: string
+  /**
+   * Conversation events from the operator session, trimmed to the time
+   * window or message-count cap. Empty when the transcript file is absent.
+   */
+  messages: ClaudeEvent[]
+  /**
+   * How the time anchor was derived:
+   * - `'cli-invocation'` — anchored on the matching `cli-invocation`
+   *   trace event (preferred; captures the exact moment of enqueue).
+   * - `'created-at-fallback'` — no `cli-invocation` event found; anchored
+   *   on `tasks.created_at` instead, or events had no timestamp fields.
+   * - `'none'` — transcript file not present on disk.
+   */
+  windowKind: 'cli-invocation' | 'created-at-fallback' | 'none'
+  /** Human-readable note about coverage gaps or fallback conditions. */
+  note: string | null
+}
 
 /**
  * Coerce a raw JSONL payload into a {@link ClaudeEvent} if it satisfies
@@ -199,6 +237,13 @@ export interface DeepReflectArc {
    * NOT the Claude agent's own tool calls — those live in the conversation transcript.
    */
   toolInvokedErrors: ArcToolError[]
+  /**
+   * Bounded slice of the operator's foreground Claude Code session captured
+   * around the time this arc's origin task was enqueued. Null when the task
+   * has no `origin_session_id` (created outside a Claude Code session) or
+   * when reflection is disabled (`MARS_REFLECT_DISABLED=1`).
+   */
+  operatorContext: OperatorContext | null
 }
 
 interface ArcTaskRow {
@@ -210,6 +255,7 @@ interface ArcTaskRow {
   updated_at: string
   kind: string | null
   fix_for_task_id: string | null
+  origin_session_id: string | null
 }
 
 const fetchArcTaskRows = async (
@@ -217,7 +263,7 @@ const fetchArcTaskRows = async (
   originId: string,
 ): Promise<ArcTaskRow[]> => {
   const r = await store.query({
-    sql: `SELECT id, status, prompt, error, created_at, updated_at, kind, fix_for_task_id
+    sql: `SELECT id, status, prompt, error, created_at, updated_at, kind, fix_for_task_id, origin_session_id
             FROM tasks
            WHERE COALESCE(origin_id, id) = ?
            ORDER BY created_at ASC`,
@@ -234,6 +280,7 @@ const fetchArcTaskRows = async (
       updated_at: r0.updated_at as string,
       kind: (r0.kind as string | null) ?? null,
       fix_for_task_id: (r0.fix_for_task_id as string | null) ?? null,
+      origin_session_id: (r0.origin_session_id as string | null) ?? null,
     }
   })
 }
@@ -414,6 +461,127 @@ const loadDurableTranscript = async (
   return { conversation, toolCallCounts }
 }
 
+/**
+ * Extract a bounded slice of an operator's foreground Claude Code session
+ * transcript, anchored on the `cli-invocation` trace event that fired when
+ * the origin task was enqueued.
+ *
+ * **Primary path** — anchor on the `cli-invocation` trace event whose
+ * `payload.originSessionId` matches the task's `origin_session_id`. The
+ * window is [anchor − 30 min, anchor + 5 min], capped at
+ * {@link FOREGROUND_MAX_MESSAGES} events.
+ *
+ * **Fallback** — when no `cli-invocation` event exists, or events have no
+ * `timestamp` field, fall back to the last {@link FOREGROUND_FALLBACK_MESSAGES}
+ * events in the file (a simple tail, not time-gated).
+ *
+ * Gated: only called when `isReflectDisabled()` is false and
+ * `origin_session_id` is non-null — the caller enforces both.
+ */
+const loadForegroundSlice = async (
+  store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
+  originSessionId: string,
+  taskCreatedAt: string,
+  opts: { homeDir?: string; repoRoot?: string },
+): Promise<OperatorContext> => {
+  // Resolve the repo root for the foreground session's transcript path.
+  let repoRoot: string
+  try {
+    repoRoot = opts.repoRoot ?? getRepoRoot()
+  } catch {
+    return {
+      sessionId: originSessionId,
+      messages: [],
+      windowKind: 'none',
+      note: 'repo root unavailable — cannot locate foreground transcript',
+    }
+  }
+
+  // Resolve the on-disk path for this foreground session.
+  const loc = await resolveTranscriptForSession(originSessionId, repoRoot, {
+    homeDir: opts.homeDir,
+  })
+  if (!loc.exists) {
+    return {
+      sessionId: originSessionId,
+      messages: [],
+      windowKind: 'none',
+      note: `foreground transcript not found on disk: ${loc.path}`,
+    }
+  }
+
+  // Find the cli-invocation trace event closest to the task's created_at —
+  // this is the most precise anchor for when the enqueue happened.
+  let anchorMs: number = new Date(taskCreatedAt).getTime()
+  let windowKind: 'cli-invocation' | 'created-at-fallback' = 'created-at-fallback'
+  try {
+    const r = await store.query({
+      sql: `SELECT timestamp
+              FROM trace_events
+             WHERE kind = 'cli-invocation'
+               AND json_extract(payload, '$.originSessionId') = ?
+             ORDER BY timestamp DESC
+             LIMIT 10`,
+      args: [originSessionId],
+    })
+    if (r.rows.length > 0) {
+      const taskCreatedMs = new Date(taskCreatedAt).getTime()
+      let bestDelta = Infinity
+      for (const row of r.rows) {
+        const r0 = row as unknown as { timestamp: string }
+        const ts = new Date(r0.timestamp).getTime()
+        const delta = Math.abs(ts - taskCreatedMs)
+        if (delta < bestDelta) {
+          bestDelta = delta
+          anchorMs = ts
+          windowKind = 'cli-invocation'
+        }
+      }
+    }
+  } catch {
+    // trace_events query failed — use the created_at anchor
+  }
+
+  // Stream transcript and collect the bounded window.
+  const windowStart = anchorMs - FOREGROUND_WINDOW_BEFORE_MS
+  const windowEnd = anchorMs + FOREGROUND_WINDOW_AFTER_MS
+
+  const windowedMessages: ClaudeEvent[] = []
+  const allMessages: ClaudeEvent[] = []
+  let hasTimestamps = false
+
+  for await (const evt of readTranscript(loc.path)) {
+    const event = coerceClaudeEvent(evt.raw)
+    if (!event) continue
+    allMessages.push(event)
+    if (typeof event.timestamp === 'string') {
+      hasTimestamps = true
+      const evMs = new Date(event.timestamp as string).getTime()
+      if (evMs >= windowStart && evMs <= windowEnd) {
+        windowedMessages.push(event)
+      }
+    }
+  }
+
+  if (hasTimestamps) {
+    return {
+      sessionId: originSessionId,
+      messages: windowedMessages.slice(0, FOREGROUND_MAX_MESSAGES),
+      windowKind,
+      note: windowedMessages.length === 0 ? 'no events found in time window' : null,
+    }
+  }
+
+  // Events have no timestamp fields — take the tail of the file as a proxy
+  // for "the most recent operator context before the task was created".
+  return {
+    sessionId: originSessionId,
+    messages: allMessages.slice(-FOREGROUND_FALLBACK_MESSAGES),
+    windowKind: 'created-at-fallback',
+    note: 'transcript events have no timestamps; using last-N fallback',
+  }
+}
+
 const summariseSignals = (rows: ReadonlyArray<TaskSignalRow>) => {
   const signals = rows.map((s) => ({
     stepId: s.stepId,
@@ -449,6 +617,7 @@ const summariseSignals = (rows: ReadonlyArray<TaskSignalRow>) => {
 
 export const loadDeepReflectArc = async (
   originId: string,
+  opts: { homeDir?: string; repoRoot?: string } = {},
 ): Promise<DeepReflectArc | null> => {
   const store = await getDefaultTaskStore()
   const rows = await fetchArcTaskRows(store, originId)
@@ -607,6 +776,26 @@ export const loadDeepReflectArc = async (
     }
   })
 
+  // ── Foreground operator context ───────────────────────────────────────────
+  // When the origin task carries an origin_session_id (set by the CLI when the
+  // operator's Claude Code session enqueued it), load a bounded slice of their
+  // foreground conversation transcript. This enriches the reflection corpus
+  // with the operator's intent and the discussion that preceded the enqueue.
+  // Gated by isReflectDisabled() so MARS_REFLECT_DISABLED=1 suppresses it.
+  let operatorContext: OperatorContext | null = null
+  if (!isReflectDisabled()) {
+    const originRow = rows.find((r) => r.id === originId) ?? rows[0]
+    const originSessionId = originRow?.origin_session_id ?? null
+    if (originSessionId) {
+      operatorContext = await loadForegroundSlice(
+        store,
+        originSessionId,
+        originRow!.created_at,
+        opts,
+      )
+    }
+  }
+
   return {
     originId,
     tasks,
@@ -616,6 +805,7 @@ export const loadDeepReflectArc = async (
     lastActivity,
     stepTimeline,
     toolInvokedErrors,
+    operatorContext,
   }
 }
 

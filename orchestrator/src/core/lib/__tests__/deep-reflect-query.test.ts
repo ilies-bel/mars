@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -18,6 +18,14 @@ interface DeepQueryModule {
   listDeepReflectArcCandidates: typeof import('../deep-reflect-query').listDeepReflectArcCandidates
 }
 
+/**
+ * Local mirror of encodeClaudeCwd (claude-transcript.ts). Kept inline to
+ * avoid importing the transcript module in loadModules — importing it from
+ * inside loadModules (after vi.resetModules) causes module-singleton
+ * interference that races the DB initialisation of tests in the same file.
+ */
+const encodeCwd = (cwd: string): string => cwd.replace(/[/.]/g, '-')
+
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-deep-reflect-test-'))
   execFileSync('git', ['init', '-q'], { cwd: repo })
@@ -34,6 +42,18 @@ const loadModules = async (
   await q.migrateQueueSchema()
   const dq = (await import('../deep-reflect-query')) as unknown as DeepQueryModule
   return { q, dq }
+}
+
+/** Write a fake transcript JSONL file under homeDir/<encodedCwd>/<sessionId>.jsonl */
+const writeTranscriptFile = (
+  homeDir: string,
+  encodedCwd: string,
+  sessionId: string,
+  lines: string[],
+): void => {
+  const dir = resolve(homeDir, '.claude', 'projects', encodedCwd)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(resolve(dir, `${sessionId}.jsonl`), lines.join('\n') + '\n')
 }
 
 describe('listDeepReflectArcCandidates', () => {
@@ -212,5 +232,203 @@ describe('capConversationJson', () => {
       delete process.env.MARS_REPO
       rmSync(repo, { recursive: true, force: true })
     }
+  })
+})
+
+// ── Foreground session slice ──────────────────────────────────────────────────
+
+describe('loadDeepReflectArc — foreground session slice', () => {
+  let repo: string
+  let homeDir: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    homeDir = mkdtempSync(resolve(tmpdir(), 'mars-fake-home-drq-'))
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_REFLECT_DISABLED
+    rmSync(repo, { recursive: true, force: true })
+    rmSync(homeDir, { recursive: true, force: true })
+  })
+
+  it('includes messages inside the time window and excludes messages far outside it', async () => {
+    const { q, dq } = await loadModules(repo)
+
+    // A fake repo root that's distinct from the test repo so we can
+    // write transcript files to a known location.
+    const fakeRepoRoot = '/fake/foreground-repo'
+    const sessionId = 'foreground-session-abc123'
+
+    // Enqueue a task that carries the foreground session id.
+    const task = await q.enqueueTask('implement feature X', undefined, {
+      skipTriage: true,
+      originSessionId: sessionId,
+    })
+
+    // Record a cli-invocation trace event that matches the session id,
+    // timestamped at task.createdAt (the closest possible anchor).
+    const anchorIso = task.createdAt
+    const anchorMs = new Date(anchorIso).getTime()
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO trace_events (id, timestamp, kind, severity, payload)
+            VALUES (?, ?, 'cli-invocation', 'info', ?)`,
+      args: [
+        'cli-inv-foreground-abc123',
+        anchorIso,
+        JSON.stringify({
+          originSessionId: sessionId,
+          command: 'task add',
+          flags: { '--priority': '2' },
+          exitCode: 0,
+          durationMs: 215,
+        }),
+      ],
+    })
+
+    // Write a fixture JSONL file with events at three different timestamps:
+    //   oldMsg    — 60 min before anchor (OUTSIDE the 30-min window, excluded)
+    //   recentMsg — 5 min before anchor  (INSIDE the window, included)
+    //   afterMsg  — 2 min after anchor   (INSIDE the window, included)
+    const encodedRoot = encodeCwd(fakeRepoRoot)
+    writeTranscriptFile(homeDir, encodedRoot, sessionId, [
+      JSON.stringify({
+        type: 'user',
+        timestamp: new Date(anchorMs - 60 * 60 * 1000).toISOString(),
+        message: 'old unrelated message',
+      }),
+      JSON.stringify({
+        type: 'user',
+        timestamp: new Date(anchorMs - 5 * 60 * 1000).toISOString(),
+        message: 'should we implement feature X?',
+      }),
+      JSON.stringify({
+        type: 'assistant',
+        timestamp: new Date(anchorMs + 2 * 60 * 1000).toISOString(),
+        message: 'yes, enqueuing it now',
+      }),
+    ])
+
+    const arc = await dq.loadDeepReflectArc(task.id, {
+      homeDir,
+      repoRoot: fakeRepoRoot,
+    })
+
+    expect(arc).not.toBeNull()
+    expect(arc!.operatorContext).not.toBeNull()
+    const ctx = arc!.operatorContext!
+
+    // Only the two events inside the [anchor-30min, anchor+5min] window.
+    expect(ctx.messages).toHaveLength(2)
+    expect(ctx.messages[0].type).toBe('user')
+    expect(ctx.messages[1].type).toBe('assistant')
+    // The old message must NOT be present.
+    expect(
+      ctx.messages.every(
+        (m) =>
+          (m as { message?: string }).message !== 'old unrelated message',
+      ),
+    ).toBe(true)
+    // Anchor was derived from cli-invocation.
+    expect(ctx.windowKind).toBe('cli-invocation')
+    expect(ctx.note).toBeNull()
+    expect(ctx.sessionId).toBe(sessionId)
+  })
+
+  it('falls back to last-N messages when transcript events have no timestamps', async () => {
+    const { q, dq } = await loadModules(repo)
+
+    const fakeRepoRoot = '/fake/no-timestamps-repo'
+    const sessionId = 'no-ts-session-xyz'
+
+    const task = await q.enqueueTask('refactor module Y', undefined, {
+      skipTriage: true,
+      originSessionId: sessionId,
+    })
+
+    // Write 60 events without timestamp fields — only the last 50 should be kept.
+    const encodedRoot = encodeCwd(fakeRepoRoot)
+    const lines = Array.from({ length: 60 }, (_, i) =>
+      JSON.stringify({ type: 'user', n: i }),
+    )
+    writeTranscriptFile(homeDir, encodedRoot, sessionId, lines)
+
+    const arc = await dq.loadDeepReflectArc(task.id, {
+      homeDir,
+      repoRoot: fakeRepoRoot,
+    })
+
+    expect(arc).not.toBeNull()
+    const ctx = arc!.operatorContext!
+    expect(ctx.messages).toHaveLength(50)
+    // The last 50: n=10..59
+    expect((ctx.messages[0] as { n?: number }).n).toBe(10)
+    expect((ctx.messages[49] as { n?: number }).n).toBe(59)
+    expect(ctx.windowKind).toBe('created-at-fallback')
+  })
+
+  it('returns null operatorContext when task has no origin_session_id', async () => {
+    const { q, dq } = await loadModules(repo)
+
+    // Enqueue WITHOUT an originSessionId.
+    const task = await q.enqueueTask('standalone task', undefined, {
+      skipTriage: true,
+    })
+
+    const arc = await dq.loadDeepReflectArc(task.id, { homeDir })
+    expect(arc).not.toBeNull()
+    expect(arc!.operatorContext).toBeNull()
+  })
+
+  it('returns operatorContext with windowKind=none when the transcript file is absent', async () => {
+    const { q, dq } = await loadModules(repo)
+
+    const sessionId = 'missing-file-session'
+    const task = await q.enqueueTask('task with missing transcript', undefined, {
+      skipTriage: true,
+      originSessionId: sessionId,
+    })
+
+    // Do NOT write any transcript file — the file is absent.
+    const arc = await dq.loadDeepReflectArc(task.id, {
+      homeDir,
+      repoRoot: '/fake/no-file-repo',
+    })
+
+    expect(arc).not.toBeNull()
+    const ctx = arc!.operatorContext!
+    expect(ctx.messages).toHaveLength(0)
+    expect(ctx.windowKind).toBe('none')
+    expect(ctx.note).toMatch(/not found/)
+    expect(ctx.sessionId).toBe(sessionId)
+  })
+
+  it('suppresses operatorContext when MARS_REFLECT_DISABLED=1', async () => {
+    const { q, dq } = await loadModules(repo)
+    process.env.MARS_REFLECT_DISABLED = '1'
+
+    const fakeRepoRoot = '/fake/disabled-repo'
+    const sessionId = 'disabled-session-999'
+
+    const task = await q.enqueueTask('disabled reflect task', undefined, {
+      skipTriage: true,
+      originSessionId: sessionId,
+    })
+
+    // Write a valid transcript — should NOT be read because reflect is disabled.
+    const encodedRoot = encodeCwd(fakeRepoRoot)
+    writeTranscriptFile(homeDir, encodedRoot, sessionId, [
+      JSON.stringify({ type: 'user', timestamp: task.createdAt, message: 'hi' }),
+    ])
+
+    const arc = await dq.loadDeepReflectArc(task.id, {
+      homeDir,
+      repoRoot: fakeRepoRoot,
+    })
+
+    expect(arc).not.toBeNull()
+    // operatorContext must be null when reflection is disabled.
+    expect(arc!.operatorContext).toBeNull()
   })
 })
