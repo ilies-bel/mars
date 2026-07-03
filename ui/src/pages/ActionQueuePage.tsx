@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
@@ -830,10 +831,11 @@ export const ActionQueuePage = () => {
     loadMore: loadMoreHistory,
   } = useActionQueueHistory()
 
-  const [query, setQuery] = useState<string>('')
-  const [kindFilter, setKindFilter] = useState<KindFilter>('all')
+  // Initialise filter state from the URL hash so F5 restores selection + filters.
+  const [query, setQuery] = useState<string>(() => readAqStateFromUrl().q)
+  const [kindFilter, setKindFilter] = useState<KindFilter>(() => readAqStateFromUrl().kind)
   // Selected id — may be a live item or a history item.
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(() => readAqStateFromUrl().item)
   // History accordion: collapsed by default.
   const [historyOpen, setHistoryOpen] = useState(false)
 
@@ -882,12 +884,46 @@ export const ActionQueuePage = () => {
 
   // Resolve selected item from live rows first, then from history rows.
   const selectedLive = filtered.find((i) => i.id === selectedId) ?? null
-  const selectedHistory = !selectedLive
-    ? historyItems.find((i) => i.id === selectedId) ?? null
-    : null
-  const selected = selectedLive ?? selectedHistory ?? filtered[0] ?? null
+  const selectedHistory = historyItems.find((i) => i.id === selectedId) ?? null
+  const selectedItem = selectedLive ?? selectedHistory
+
+  // "Resolved" when selectedId is explicitly pinned but the item has vanished from
+  // all live data (not just filtered out by the current search).  Guard with
+  // items.length > 0 so we don't flash "resolved" during the initial empty-load frame.
+  const isResolved =
+    selectedId !== null &&
+    selectedItem === null &&
+    items.length > 0 &&
+    items.find((i) => i.id === selectedId) == null
+
+  // Show the found item when selectedId is set; fall back to the first filtered
+  // item only when there is no explicit selection (selectedId === null).
+  const selected = selectedItem ?? (selectedId === null ? (filtered[0] ?? null) : null)
   const empty = items.length === 0
   const noMatches = !empty && filtered.length === 0
+
+  // On first data arrival, pin selection explicitly so SSE reorders don't silently
+  // swap the detail pane mid-read.  Also re-pins after the user dismisses a
+  // "resolved" pane (which sets selectedId back to null).
+  useEffect(() => {
+    if (selectedId === null && filtered.length > 0) {
+      setSelectedId(filtered[0].id)
+    }
+  }, [filtered, selectedId])
+
+  // Debounced URL write-back — mirrors selectedId, kindFilter, and search so F5
+  // restores the exact view.  Uses replaceState (no hashchange event) to avoid
+  // disturbing the app-level hash router.
+  const urlWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
+    urlWriteTimerRef.current = setTimeout(() => {
+      writeAqStateToUrl({ item: selectedId, kind: kindFilter, q: query })
+    }, 300)
+    return () => {
+      if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
+    }
+  }, [selectedId, kindFilter, query])
 
   // Stable callbacks — prevent per-item lambda allocation on every render.
   const handleSelect = useCallback((id: string) => {
@@ -998,7 +1034,7 @@ export const ActionQueuePage = () => {
                           <ActionQueueRow
                             key={item.id}
                             item={item}
-                            active={item.id === (selected?.id ?? null)}
+                            active={item.id === selectedId}
                             onSelect={handleSelect}
                             onRestart={
                               item.actions.some((a) => a.op === 'restart')
@@ -1051,10 +1087,10 @@ export const ActionQueuePage = () => {
                       data-aq-row=""
                       role="button"
                       tabIndex={0}
-                      aria-current={item.id === (selected?.id ?? null) ? 'true' : undefined}
+                      aria-current={item.id === selectedId ? 'true' : undefined}
                       className={[
                         'cursor-pointer px-3 py-2 transition-colors',
-                        item.id === (selected?.id ?? null) ? 'bg-iron/20' : 'hover:bg-iron/10',
+                        item.id === selectedId ? 'bg-iron/20' : 'hover:bg-iron/10',
                       ].join(' ')}
                       onClick={() => handleSelect(item.id)}
                       onKeyDown={(e) => {
@@ -1146,6 +1182,37 @@ export const ActionQueuePage = () => {
         ) : noMatches && !selected ? (
           <div className="flex h-full items-center justify-center font-mono text-[12px] text-iron">
             No matches.
+          </div>
+        ) : isResolved ? (
+          <div
+            data-testid="resolved-pane"
+            className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
+          >
+            <p className="font-mono text-[13px] text-fg">This item has been resolved.</p>
+            <p className="font-mono text-[11px] text-iron">
+              It was removed from the action queue.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-iron hover:bg-iron/10"
+                onClick={() => {
+                  window.location.hash = taskHash(
+                    selectedId!.includes(':') ? selectedId!.split(':').slice(1).join(':') : selectedId!,
+                    'action-queue',
+                  )
+                }}
+              >
+                View task →
+              </button>
+              <button
+                type="button"
+                className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-iron hover:bg-iron/10"
+                onClick={() => setSelectedId(filtered.length > 0 ? filtered[0].id : null)}
+              >
+                ← Back to queue
+              </button>
+            </div>
           </div>
         ) : selected ? (
           <ActionQueueDetail

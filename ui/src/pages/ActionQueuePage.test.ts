@@ -1,10 +1,10 @@
 /**
- * Unit tests for the ActionQueuePage actionQueue sidebar search / filter behaviour.
+ * Unit tests for the ActionQueuePage actionQueue sidebar search / filter behaviour,
+ * and URL state encoding/decoding for persistent selection + filters.
  *
- * All tests operate through the public, pure API of ActionQueuePageFilters — no React
- * rendering needed.  This file is excluded from the main tsc project (see
- * tsconfig.json `exclude`) so it uses `bun:test` directly, like the other
- * test files in src/shared/.
+ * All tests operate through public, pure APIs — no React rendering needed.
+ * This file is excluded from the main tsc project (see tsconfig.json `exclude`)
+ * so it uses `bun:test` directly, like the other test files in src/shared/.
  */
 import { describe, expect, it } from 'bun:test'
 import {
@@ -15,6 +15,11 @@ import {
   type AlertItem,
   type ProposalItem,
 } from './ActionQueuePageFilters'
+import {
+  decodeAqState,
+  defaultAqUrlState,
+  encodeAqState,
+} from '../shared/actionQueueUrlState'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -228,5 +233,76 @@ describe('deriveSelectedKey', () => {
   it('handles mixed alert+proposal filtered list', () => {
     // Only d1 remains after filter; d1 should be selected
     expect(deriveSelectedKey([d1], itemKey(a2))).toBe(itemKey(d1))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// actionQueueUrlState — encode / decode round-trips
+// ---------------------------------------------------------------------------
+
+describe('encodeAqState / decodeAqState round-trip', () => {
+  it('all-default state encodes to empty string', () => {
+    const encoded = encodeAqState(defaultAqUrlState())
+    expect(encoded).toBe('')
+  })
+
+  it('item is preserved through encode + decode', () => {
+    const encoded = encodeAqState({ item: 'failed-task:t-1', kind: 'all', q: '' })
+    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    expect(decoded.item).toBe('failed-task:t-1')
+    expect(decoded.kind).toBe('all')
+    expect(decoded.q).toBe('')
+  })
+
+  it('kind=alerts is preserved', () => {
+    const encoded = encodeAqState({ item: null, kind: 'alerts', q: '' })
+    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    expect(decoded.kind).toBe('alerts')
+    expect(decoded.item).toBeNull()
+  })
+
+  it('kind=drafts is preserved', () => {
+    const encoded = encodeAqState({ item: null, kind: 'drafts', q: '' })
+    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    expect(decoded.kind).toBe('drafts')
+  })
+
+  it('search query is preserved', () => {
+    const encoded = encodeAqState({ item: null, kind: 'all', q: 'deploy fix' })
+    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    expect(decoded.q).toBe('deploy fix')
+  })
+
+  it('all three params together round-trip correctly', () => {
+    const state = { item: 'failed-task:mars-abc', kind: 'alerts' as const, q: 'merge' }
+    const encoded = encodeAqState(state)
+    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    expect(decoded.item).toBe('failed-task:mars-abc')
+    expect(decoded.kind).toBe('alerts')
+    expect(decoded.q).toBe('merge')
+  })
+
+  it('default kind is omitted from URL to keep it clean', () => {
+    const encoded = encodeAqState({ item: null, kind: 'all', q: '' })
+    expect(encoded).not.toContain('kind')
+  })
+
+  it('default kind decodes correctly from a bare hash', () => {
+    const decoded = decodeAqState('#/action-queue')
+    expect(decoded.kind).toBe('all')
+    expect(decoded.item).toBeNull()
+    expect(decoded.q).toBe('')
+  })
+
+  it('unrecognised kind param falls back to all', () => {
+    const decoded = decodeAqState('#/action-queue?kind=unknown')
+    expect(decoded.kind).toBe('all')
+  })
+
+  it('item with colon in entityId survives encode/decode', () => {
+    const state = { item: 'failed-task:some:complex:id', kind: 'all' as const, q: '' }
+    const encoded = encodeAqState(state)
+    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    expect(decoded.item).toBe('failed-task:some:complex:id')
   })
 })

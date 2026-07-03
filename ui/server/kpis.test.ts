@@ -83,7 +83,6 @@ const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Prom
         tokensByStep: [],
       },
     }),
-    viewRunTimeline: async () => ({ taskId: '', runs: [] }),
     viewArcs: async () => [],
     viewFrameworkUpdate: async () => ({
       installed: '0.1.0',
