@@ -290,6 +290,24 @@ describe('ReleaseNotesModal – unseen divider', () => {
     // NEWER is the oldest unseen (index 1); it should have data-oldest-unseen
     expect(html).toContain('data-oldest-unseen="true"')
   })
+
+  it('divider rule-lines use bg-flame/40 and label uses text-flame so the color is visible', () => {
+    // The accent color token does not exist in @theme; the divider must use
+    // the defined `flame` token so rule-lines and label render with color.
+    const html = render(
+      loaded([ENTRY_NEWEST, ENTRY_NEWER, ENTRY_OLDER]),
+      { lastViewedAt: LAST_VIEWED_BETWEEN },
+    )
+    expect(html).toContain('data-testid="unseen-divider"')
+    // Both rule-line spans must carry bg-flame/40
+    const ruleMatches = html.match(/bg-flame\/40/g) ?? []
+    expect(ruleMatches.length).toBeGreaterThanOrEqual(2)
+    // The label span must carry text-flame
+    expect(html).toContain('text-flame')
+    // Broken classes must not appear
+    expect(html).not.toContain('bg-accent')
+    expect(html).not.toContain('text-accent')
+  })
 })
 
 // ---------------------------------------------------------------------------

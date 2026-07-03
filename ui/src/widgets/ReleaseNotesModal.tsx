@@ -308,11 +308,11 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                           data-testid="unseen-divider"
                           className="flex items-center gap-2 px-4 py-1.5"
                         >
-                          <span className="h-px flex-1 bg-accent/40" aria-hidden="true" />
-                          <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-accent">
+                          <span className="h-px flex-1 bg-flame/40" aria-hidden="true" />
+                          <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-flame">
                             new since you were away
                           </span>
-                          <span className="h-px flex-1 bg-accent/40" aria-hidden="true" />
+                          <span className="h-px flex-1 bg-flame/40" aria-hidden="true" />
                         </li>
                       ) : null}
                       <li
