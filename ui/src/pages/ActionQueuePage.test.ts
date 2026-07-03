@@ -20,6 +20,7 @@ import {
   defaultAqUrlState,
   encodeAqState,
 } from '../shared/actionQueueUrlState'
+import { taskHash, parseTaskRoute, parseTaskOrigin } from '../shared/routing'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -304,5 +305,33 @@ describe('encodeAqState / decodeAqState round-trip', () => {
     const encoded = encodeAqState(state)
     const decoded = decodeAqState(`#/action-queue${encoded}`)
     expect(decoded.item).toBe('failed-task:some:complex:id')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// onNavigateToTask fallback — origin-tree navigation for non-live AQ tasks
+// ---------------------------------------------------------------------------
+//
+// When an origin-tree node is clicked and the task is NOT a live action-queue
+// row (e.g. a "done" sibling task), ActionQueuePage falls back to opening the
+// task drawer via `window.location.hash = taskHash(taskId, 'action-queue')`.
+// The `from=action-queue` param tells the drawer to restore the AQ view on Esc.
+//
+// These tests verify the hash contract that the fallback relies on.
+
+describe('origin navigation fallback hash contract', () => {
+  it('produces a task-drawer hash with action-queue origin for a done sibling', () => {
+    const hash = taskHash('mars-done-abc', 'action-queue')
+    expect(hash).toBe('#/task/mars-done-abc?from=action-queue')
+  })
+
+  it('the fallback hash resolves to the task drawer overlay (parseTaskRoute)', () => {
+    const hash = taskHash('mars-done-abc', 'action-queue')
+    expect(parseTaskRoute(hash)).toBe('mars-done-abc')
+  })
+
+  it('the fallback hash encodes action-queue as origin so Esc returns to AQ', () => {
+    const hash = taskHash('mars-done-abc', 'action-queue')
+    expect(parseTaskOrigin(hash)).toBe('action-queue')
   })
 })

@@ -183,6 +183,25 @@ describe('OriginTree – navigable mode', () => {
     const buttonCount = (html.match(/<button/g) ?? []).length
     expect(buttonCount).toBe(ids.length)
   })
+
+  it('renders done-status nodes as buttons — OriginTree never silences non-live nodes', () => {
+    // 'task-sibling' has status 'done'. OriginTree must still render it as an
+    // interactive button so the parent (ActionQueuePage) can decide whether to
+    // select the AQ row or open the task drawer — the tree widget must not
+    // make that decision itself.
+    const html = render(loaded(PRD_TREE('t-1')), {
+      taskId: 't-1',
+      onNavigate: () => {},
+    })
+    // The done sibling appears as a clickable button.
+    expect(html).toContain('data-origin-node-id="task-sibling"')
+    // All 3 nodes (prd root, done sibling, current task) are buttons.
+    const buttonCount = (html.match(/<button/g) ?? []).length
+    expect(buttonCount).toBe(3)
+    // The 'done' status text is present but does NOT disable interactivity.
+    expect(html).toContain('done')
+    expect(html).not.toContain('disabled')
+  })
 })
 
 // ---------------------------------------------------------------------------

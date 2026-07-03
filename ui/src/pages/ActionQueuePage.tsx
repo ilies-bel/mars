@@ -1220,7 +1220,11 @@ export const ActionQueuePage = () => {
             item={selected}
             onNavigateToTask={(taskId: string) => {
               const found = filtered.find((i) => i.entityId === taskId)
-              if (found) setSelectedId(found.id)
+              if (found) {
+                setSelectedId(found.id)
+              } else {
+                window.location.hash = taskHash(taskId, 'action-queue')
+              }
             }}
           />
         ) : (
