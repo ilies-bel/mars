@@ -201,6 +201,23 @@ describe('task show / list (store-backed reads)', () => {
     expect(text).toContain('alpha task')
     expect(text).toContain('beta task')
   })
+
+  it('always renders a priority column (P0 for default, Pn for explicit)', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    await store.enqueueTask('default prio task', undefined, { skipTriage: true })
+    await store.enqueueTask('high prio task', undefined, { skipTriage: true, priority: 3 })
+    const r = await runCommandInProcess(['list'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const lines = r.out
+    const defaultLine = lines.find((l) => l.includes('default prio task'))
+    const highLine = lines.find((l) => l.includes('high prio task'))
+    expect(defaultLine).toContain('P0')
+    expect(highLine).toContain('P3')
+  })
 })
 
 describe('task priority (daemon-routed mutation)', () => {

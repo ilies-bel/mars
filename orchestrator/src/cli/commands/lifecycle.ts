@@ -440,8 +440,7 @@ const list: Command = {
   run: async (args, deps) => {
     const tasks = await deps.store.listTasks(args.positional[0] as TaskStatus)
     for (const t of tasks) {
-      const prio = t.priority > 0 ? `\tP${t.priority}` : ''
-      deps.out(`${t.id}\t${t.status}${prio}\t${t.prompt.slice(0, 60)}`)
+      deps.out(`${t.id}\t${t.status}\tP${t.priority ?? 0}\t${t.prompt.slice(0, 60)}`)
     }
     return { code: 0 }
   },
