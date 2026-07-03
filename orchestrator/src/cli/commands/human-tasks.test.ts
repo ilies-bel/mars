@@ -8,7 +8,7 @@
  * against a real git worktree to satisfy the cross-boundary check requirement.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -41,7 +41,6 @@ const loadStoreAndCtx = async (): Promise<{
   store: DomainTaskStore
   ctx: OrchestratorContext
 }> => {
-  process.env.MARS_REPO = repo
   const queueModule = await import('../../core/queue')
   await queueModule.migrateQueueSchema()
   const storeModule = await import('../../core/store/task-store')
@@ -84,6 +83,8 @@ const createAwaitingHumanTask = async (
 
 beforeEach(() => {
   repo = setupRepo()
+  vi.resetModules()
+  process.env.MARS_REPO = repo
 })
 
 afterEach(() => {
