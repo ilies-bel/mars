@@ -1405,12 +1405,17 @@ describe('runSlice → queue: schema-drop blocker injection round-trip', () => {
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    // Tests in this block exercise the old auto-enqueue path (Phase 3) and
+    // assert task statuses immediately after slicing. Opt into auto-approve
+    // so tasks land in 'queued'/'blocked' rather than staying in 'draft'.
+    process.env.MARS_AUTO_APPROVE_PLANS = '1'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
+    delete process.env.MARS_AUTO_APPROVE_PLANS
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -1903,12 +1908,17 @@ describe('runSlice → queue: explicit blockedBy edges for sequential PRDs', () 
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    // Tests in this block assert task statuses immediately after slicing.
+    // Opt into auto-approve so tasks land in 'queued'/'blocked' rather
+    // than staying in 'draft'.
+    process.env.MARS_AUTO_APPROVE_PLANS = '1'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
+    delete process.env.MARS_AUTO_APPROVE_PLANS
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -2962,12 +2972,17 @@ describe('runSlice: hitl slice routing → actionQueue item + Coder sub-task + b
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    // Tests in this block assert task statuses immediately after slicing.
+    // Opt into auto-approve so tasks land in 'queued'/'blocked' rather
+    // than staying in 'draft'.
+    process.env.MARS_AUTO_APPROVE_PLANS = '1'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
+    delete process.env.MARS_AUTO_APPROVE_PLANS
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -3266,12 +3281,17 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    // Tests in this block assert task statuses immediately after slicing
+    // and rely on HITL tasks landing in 'blocked' rather than 'draft'.
+    // Opt into auto-approve to restore that behaviour.
+    process.env.MARS_AUTO_APPROVE_PLANS = '1'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../../core/lib/git/claude')
     delete process.env.MARS_REPO
+    delete process.env.MARS_AUTO_APPROVE_PLANS
     rmSync(repo, { recursive: true, force: true })
   })
 

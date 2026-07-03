@@ -14,9 +14,13 @@ import { getRepoRoot, resolveContext } from '../core/context'
 import { listActionQueueItems, raiseActionQueueItem } from '../core/lib/action-queue'
 import { openTraceEventStore } from '../core/lib/trace-events-store'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
+import { loadDaemonConfig } from '../core/daemon/config'
 
 const sliceInputSchema = z.object({
   proposalId: z.string(),
+  /** Optional operator feedback from a prior reslice invocation. When set,
+   *  appended to the Slicer prompt so the model can revise its output. */
+  resliceFeedback: z.string().optional(),
 })
 
 const sliceOutputSchema = z.object({
@@ -133,15 +137,18 @@ const renderUserStories = (stories: readonly string[]): string => {
   return stories.map((s, i) => `${i + 1}. ${s}`).join('\n')
 }
 
-export const buildSlicerPrompt = (proposal: {
-  id: string
-  title: string
-  problem: string
-  solution: string
-  outOfScope: string
-  notes: string
-  userStories: string[]
-}): string => `Break this PRD into independently-grabbable issues using vertical
+export const buildSlicerPrompt = (
+  proposal: {
+    id: string
+    title: string
+    problem: string
+    solution: string
+    outOfScope: string
+    notes: string
+    userStories: string[]
+  },
+  resliceFeedback?: string,
+): string => `Break this PRD into independently-grabbable issues using vertical
 slices (tracer bullets). Each slice is a thin vertical tracer cutting
 end-to-end through every layer. Prefer many thin slices over few thick ones.
 
@@ -284,7 +291,14 @@ ${proposal.outOfScope || '(not specified)'}
 Notes
 -----
 ${proposal.notes || '(not specified)'}
-`
+${resliceFeedback ? `
+Operator re-slice feedback
+--------------------------
+A prior slice plan was reviewed and rejected. Revise your output to address
+the following feedback from the operator:
+
+${resliceFeedback}
+` : ''}`
 
 const parseSlicerOutput = (
   claudeStdout: string,
@@ -994,6 +1008,60 @@ Save your work: stage and commit when verify passes.
 type SliceInput = z.infer<typeof sliceInputSchema>
 type SliceOutput = z.infer<typeof sliceOutputSchema>
 
+/**
+ * Build a human-readable slice graph summary for the plan-approval action-queue
+ * body. Renders slice titles, kinds, declared files, done-criteria counts, and
+ * the inter-slice edges with provenance tags so the operator can make an
+ * informed approve / reslice decision without running extra queries.
+ */
+function buildPlanApprovalBody(
+  proposal: { id: string; title: string },
+  slices: Array<{
+    title: string
+    kind: string
+    type: string
+    acceptanceCriteria: readonly string[]
+    modifies: readonly string[]
+    creates: readonly string[]
+    blockedBy: readonly number[]
+  }>,
+  edgeProvenanceMap: Map<string, string>,
+): string {
+  const lines: string[] = [
+    `Plan ready for review — ${slices.length} slice${slices.length === 1 ? '' : 's'} (PRD ${proposal.id}: ${proposal.title})`,
+    '',
+    'Slices:',
+  ]
+  slices.forEach((s, i) => {
+    const files = [...s.modifies, ...s.creates]
+    const fileStr = files.length > 0 ? `${files.length} file${files.length === 1 ? '' : 's'}` : 'no files'
+    const critStr = `${s.acceptanceCriteria.length} criteri${s.acceptanceCriteria.length === 1 ? 'on' : 'a'}`
+    lines.push(`  [${i + 1}] ${s.title} (${s.kind}, ${s.type}, ${fileStr}, ${critStr})`)
+  })
+
+  // Collect inter-slice edges
+  const edges: Array<{ blocker: number; depender: number; provenance: string }> = []
+  for (let i = 0; i < slices.length; i += 1) {
+    for (const dep of slices[i].blockedBy) {
+      const provenance = edgeProvenanceMap.get(`${i}:${dep}`) ?? 'inferred'
+      edges.push({ blocker: dep, depender: i + 1, provenance })
+    }
+  }
+  if (edges.length > 0) {
+    lines.push('', 'Edges (slice graph):')
+    for (const e of edges) {
+      lines.push(`  Slice ${e.blocker} → Slice ${e.depender} [${e.provenance}]`)
+    }
+  }
+
+  lines.push(
+    '',
+    `To proceed: mars proposal approve ${proposal.id}`,
+    `To revise:  mars proposal reslice ${proposal.id} --feedback "<text>"`,
+  )
+  return lines.join('\n')
+}
+
 // The slice workflow talks to proposals/queue via the composition-root store
 // seams (getDefaultStateStore/getDefaultTaskStore), so no services need wiring.
 // One imperative step ('generate-slices', load-bearing as the trace-view
@@ -1028,10 +1096,12 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     // window specifically.
     try {
       const traceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
+    const daemonConfig = loadDaemonConfig()
+    const autoApprovePlans = daemonConfig.autoApprovePlans
     let slicedTaskCount = 0
     const r = await runWorkerWithSpan({
       worker: Workers.Slicer,
-      prompt: buildSlicerPrompt(proposal),
+      prompt: buildSlicerPrompt(proposal, inputData.resliceFeedback),
       runOptions: { cwd: getRepoRoot() },
       traceStore,
       stepName: 'generate-slices',
@@ -1338,25 +1408,31 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
           [subTaskIds[j]],
         )
       }
-      // Phase 3: transition each slice to 'queued' (no blockers and kind='coder') or
-      // 'blocked' (has blockers or kind='hitl'). hitl slices are ALWAYS blocked —
-      // they are never dispatched to a Coder; the operator completes them manually.
-      // The daemon picks up 'queued' tasks.
-      for (let i = 0; i < total; i += 1) {
-        const isHitl = parsed.slices[i].kind === 'hitl'
-        const status =
-          isHitl || parsed.slices[i].blockedBy.length > 0 ? 'blocked' : 'queued'
-        // Route through updateTask so the lifecycle gate (IllegalTransitionError)
-        // catches any illegal transition before the status write lands (ADR-0030).
-        await updateTask(taskIds[i], { status })
-      }
-      // Phase 3b: Coder sub-tasks enqueued for hitl slices have no blockers
-      // and must be dispatched immediately — transition them to 'queued'.
-      // Routes through updateTask (not raw SQL) so the lifecycle gate
-      // (IllegalTransitionError) catches any attempted re-transition from a
-      // terminal status before the write lands (ADR-0030).
-      for (const subTaskId of subTaskIds) {
-        await updateTask(subTaskId, { status: 'queued' })
+      // Phase 3 (conditional): transition each slice to 'queued' or 'blocked'.
+      // Skipped when autoApprovePlans=false — tasks stay 'draft' until the
+      // operator approves the plan via `mars proposal approve`. When
+      // autoApprovePlans=true (escape hatch), runs immediately as before.
+      if (autoApprovePlans) {
+        // Phase 3: transition each slice to 'queued' (no blockers and kind='coder') or
+        // 'blocked' (has blockers or kind='hitl'). hitl slices are ALWAYS blocked —
+        // they are never dispatched to a Coder; the operator completes them manually.
+        // The daemon picks up 'queued' tasks.
+        for (let i = 0; i < total; i += 1) {
+          const isHitl = parsed.slices[i].kind === 'hitl'
+          const status =
+            isHitl || parsed.slices[i].blockedBy.length > 0 ? 'blocked' : 'queued'
+          // Route through updateTask so the lifecycle gate (IllegalTransitionError)
+          // catches any illegal transition before the status write lands (ADR-0030).
+          await updateTask(taskIds[i], { status })
+        }
+        // Phase 3b: Coder sub-tasks enqueued for hitl slices have no blockers
+        // and must be dispatched immediately — transition them to 'queued'.
+        // Routes through updateTask (not raw SQL) so the lifecycle gate
+        // (IllegalTransitionError) catches any attempted re-transition from a
+        // terminal status before the write lands (ADR-0030).
+        for (const subTaskId of subTaskIds) {
+          await updateTask(subTaskId, { status: 'queued' })
+        }
       }
       // Defensive: never mark a proposal 'sliced' with zero tasks. The
       // slicerOutputSchema already enforces `slices.min(1)` and Phase 1
@@ -1397,6 +1473,40 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       if (taskIds.length > 0) {
         const { transferProposalBlockerToTask } = await import('../core/queue')
         await transferProposalBlockerToTask(proposal.id, taskIds[0])
+      }
+      // Phase 6 (plan-approval gate): when autoApprovePlans=false, raise a
+      // level-triggered plan-approval action-queue row showing the full slice
+      // graph. The operator must call `mars proposal approve <id>` to enqueue
+      // the slices, or `mars proposal reslice <id> --feedback "..."` to discard
+      // and re-cut. When autoApprovePlans=true the row is not raised (the tasks
+      // were already enqueued in Phase 3/3b above). Best-effort — a row-raise
+      // failure must not prevent the proposal from reaching 'sliced'.
+      if (!autoApprovePlans) {
+        const approvalBody = buildPlanApprovalBody(proposal, parsed.slices, edgeProvenanceMap)
+        await raiseActionQueueItem({
+          kind: 'plan-approval',
+          category: 'orchestrator',
+          priority: 'high',
+          title: `Plan review: ${parsed.slices.length} slice${parsed.slices.length === 1 ? '' : 's'} for PRD ${proposal.id}`,
+          body: approvalBody,
+          payload: {
+            proposalId: proposal.id,
+            sliceCount: parsed.slices.length,
+            taskIds,
+            sliceSummary: parsed.slices.map((s, i) => ({
+              index: i + 1,
+              title: s.title,
+              kind: s.kind,
+              type: s.type,
+              criteriaCount: s.acceptanceCriteria.length,
+              fileCount: s.modifies.length + s.creates.length,
+              blockedBy: s.blockedBy,
+            })),
+          },
+          context: {},
+          raisedBy: 'slicer',
+          signature: proposal.id,
+        }).catch(() => {})
       }
     } catch (error: unknown) {
       // Clean up slice tasks AND any Coder sub-tasks created for hitl slices.
@@ -1585,8 +1695,11 @@ export const describeSliceFailure = (result: unknown): string => {
     : message
 }
 
-export const runSlice = async (proposalId: string): Promise<RunSliceResult> => {
-  const result = await runWorkflow(sliceWorkflow, { proposalId }, {
+export const runSlice = async (
+  proposalId: string,
+  resliceFeedback?: string,
+): Promise<RunSliceResult> => {
+  const result = await runWorkflow(sliceWorkflow, { proposalId, resliceFeedback }, {
     store: createQueueWorkflowStore(),
   })
   if (result.status !== 'completed' || !result.output) {

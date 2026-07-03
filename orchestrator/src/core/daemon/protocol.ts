@@ -40,6 +40,8 @@ export type DaemonRequest =
   | { op: 'recover'; id?: string }
   | { op: 'proposal.promote'; proposalId: string }
   | { op: 'proposal.slice'; proposalId: string }
+  | { op: 'proposal.approve'; proposalId: string }
+  | { op: 'proposal.reslice'; proposalId: string; feedback: string }
   | { op: 'refine'; id: string; refresh?: boolean }
   | {
       op: 'glossary-write'

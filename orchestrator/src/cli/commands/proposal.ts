@@ -677,14 +677,68 @@ const proposalShipSummary: Command = {
   },
 }
 
+const proposalApprove: Command = {
+  path: 'proposal approve',
+  summary: 'approve a sliced plan and enqueue all slice tasks',
+  usage: 'usage: mars proposal approve <id>',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    if (!id) {
+      deps.err('usage: mars proposal approve <id>')
+      return { code: 1 }
+    }
+    try {
+      const r = (await deps.daemon.sendRequest(
+        { op: 'proposal.approve', proposalId: id },
+        { onSpawnNotice: spawnNoticeOut(deps.out) },
+      )) as { proposalId: string; queuedCount: number; blockedCount: number }
+      deps.out(
+        `proposal ${r.proposalId} approved: ${r.queuedCount} task(s) queued, ${r.blockedCount} blocked`,
+      )
+    } catch (error: unknown) {
+      deps.err(errorMessage(error))
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
+const proposalReslice: Command = {
+  path: 'proposal reslice',
+  summary: 'discard current slices and re-run the Slicer with operator feedback',
+  usage: 'usage: mars proposal reslice <id> --feedback "<text>"',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    const feedback = args.flags['--feedback']
+    if (!id || !feedback) {
+      deps.err('usage: mars proposal reslice <id> --feedback "<text>"')
+      return { code: 1 }
+    }
+    try {
+      const r = (await deps.daemon.sendRequest(
+        { op: 'proposal.reslice', proposalId: id, feedback },
+        { onSpawnNotice: spawnNoticeOut(deps.out) },
+      )) as { proposalId: string; status: string; taskIds: string[] }
+      deps.out(
+        `proposal ${r.proposalId} resliced to ${r.status} into ${r.taskIds.length} task(s):`,
+      )
+      for (const t of r.taskIds) deps.out(`  ${t}`)
+    } catch (error: unknown) {
+      deps.err(errorMessage(error))
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
 const proposalGroup: Command = {
   path: 'proposal',
   summary: 'proposal subcommands',
   usage:
-    'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
+    'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|approve|reslice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
   run: (_args, deps) => {
     deps.err(
-      'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
+      'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|approve|reslice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
     )
     return { code: 1 }
   },
@@ -698,6 +752,8 @@ export const proposalCommands: readonly Command[] = [
   proposalRemoveUserStory,
   proposalPromote,
   proposalSlice,
+  proposalApprove,
+  proposalReslice,
   proposalReject,
   proposalDelete,
   proposalList,

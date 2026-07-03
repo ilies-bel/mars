@@ -117,6 +117,10 @@ export const EventMap = {
     proposalId: z.string(),
     taskCount: z.number().int().nonnegative(),
   }),
+  'proposal.approved': z.object({
+    proposalId: z.string(),
+    queuedCount: z.number().int().nonnegative(),
+  }),
   'proposal.deleted': z.object({
     proposalId: z.string(),
   }),

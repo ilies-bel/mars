@@ -1312,6 +1312,7 @@ export const startDaemon = async (
   bus.on('proposal.dismissed', () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.promoted',  () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.sliced',    () => { viewStreamHub.broadcast('progress') })
+  bus.on('proposal.approved',  () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.deleted',   () => { viewStreamHub.broadcast('progress') })
 
   // Durable transcript append (deep-reflect durability). On every
@@ -1953,13 +1954,16 @@ export const startDaemon = async (
 
   const handleProposalSlice = async (
     proposalId: string,
+    resliceFeedback?: string,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }> => {
     assertProposalsSourceFresh(proposalsStamp)
     const { runSlice } = await import('../../workflows/slice-workflow')
-    const result = await runSlice(proposalId)
-    // Newly-queued slice tasks need to enter the implement pool. Emit one
-    // 'task.queued' per id; the bus subscriber pushes them into pendingImplement
-    // and drain() picks them up under the implement semaphore.
+    const result = await runSlice(proposalId, resliceFeedback)
+    // When autoApprovePlans=true, slice tasks are transitioned to 'queued'
+    // immediately; emit 'task.queued' for each so the daemon's dispatch
+    // loop picks them up under the implement semaphore. When
+    // autoApprovePlans=false, tasks remain 'draft' until the operator calls
+    // `mars proposal approve`, so no events are emitted here.
     for (const taskId of result.taskIds) {
       const t = await getTask(taskId)
       if (t?.status === 'queued') {
@@ -1967,6 +1971,57 @@ export const startDaemon = async (
       }
     }
     return result
+  }
+
+  const handleProposalApprove = async (
+    proposalId: string,
+  ): Promise<{ proposalId: string; queuedCount: number; blockedCount: number }> => {
+    const { approveProposalPlan } = await import('../proposals')
+    const { queuedTaskIds, blockedTaskIds } = await approveProposalPlan(proposalId)
+    // Notify the dispatch loop that new tasks are ready to run.
+    for (const taskId of queuedTaskIds) {
+      bus.emit('task.queued', { taskId })
+    }
+    return {
+      proposalId,
+      queuedCount: queuedTaskIds.length,
+      blockedCount: blockedTaskIds.length,
+    }
+  }
+
+  const handleProposalReslice = async (
+    proposalId: string,
+    feedback: string,
+  ): Promise<{ proposalId: string; status: string; taskIds: string[] }> => {
+    const { getProposal, revertSlicedProposalToReady } = await import('../proposals')
+
+    // Validate status.
+    const proposal = await getProposal(proposalId)
+    if (!proposal) throw new Error(`proposal ${proposalId} not found`)
+    if (proposal.status !== 'sliced') {
+      throw new Error(
+        `proposal ${proposalId} is '${proposal.status}'; only 'sliced' proposals can be resliced`,
+      )
+    }
+
+    // Clear the pending plan-approval row before dropping the old slices.
+    const { supersedeActionQueueItemsBySignature } = await import('../lib/action-queue')
+    await supersedeActionQueueItemsBySignature(
+      'plan-approval',
+      proposalId,
+      'origin-done',
+      'proposal.reslice',
+    ).catch(() => {})
+
+    // Drop old slice tasks and sub-tasks so the slicer starts with a clean slate.
+    const taskStore = await getDefaultTaskStore()
+    await Arc.dropProposalSlices(taskStore, proposalId, 'reslice').catch(() => {})
+
+    // Revert the proposal to 'prd-ready' so the slice workflow can claim it.
+    await revertSlicedProposalToReady(proposalId)
+
+    // Re-slice with the operator's feedback appended to the Slicer prompt.
+    return handleProposalSlice(proposalId, feedback)
   }
 
   const handleInit = async (
@@ -2406,6 +2461,8 @@ export const startDaemon = async (
     runSync,
     handleProposalPromote,
     handleProposalSlice,
+    handleProposalApprove,
+    handleProposalReslice,
     handleRefine,
     dispatchGlossaryWrite,
     dispatchAdrAdd,

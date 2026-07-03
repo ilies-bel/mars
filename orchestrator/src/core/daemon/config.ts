@@ -25,6 +25,12 @@ export interface SelfEvolveConfig {
 export interface DaemonConfig {
   caps: DaemonCaps
   selfEvolve: SelfEvolveConfig
+  /**
+   * When true, sliced plans are enqueued immediately without operator review
+   * (restores the pre-plan-approval-gate behaviour). Default false.
+   * Override via MARS_AUTO_APPROVE_PLANS=1 or daemon.json `autoApprovePlans: true`.
+   */
+  autoApprovePlans: boolean
 }
 
 const DEFAULTS: DaemonCaps = {
@@ -40,6 +46,8 @@ const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
   driftThresholdPct: 10,
   taskConfidenceThreshold: 0.8,
 }
+
+const DEFAULT_AUTO_APPROVE_PLANS = false
 
 const envInt = (name: string, fallback: number): number => {
   const raw = process.env[name]
@@ -129,10 +137,13 @@ export const loadDaemonConfig = (): DaemonConfig => {
       ? envConfNum
       : DEFAULT_SELF_EVOLVE.taskConfidenceThreshold
 
+  const envAutoApprovePlans = envBool('MARS_AUTO_APPROVE_PLANS', DEFAULT_AUTO_APPROVE_PLANS)
+
   let fileCaps: Partial<DaemonCaps> = {}
   let fileAutoTrigger: boolean | undefined
   let fileDriftPct: number | undefined
   let fileConfThreshold: number | undefined
+  let fileAutoApprovePlans: boolean | undefined
 
   try {
     const raw = readFileSync(daemonConfigPath(), 'utf8')
@@ -171,6 +182,9 @@ export const loadDaemonConfig = (): DaemonConfig => {
     ) {
       fileConfThreshold = seConfThreshold
     }
+    if (typeof (parsed as Record<string, unknown>).autoApprovePlans === 'boolean') {
+      fileAutoApprovePlans = (parsed as Record<string, unknown>).autoApprovePlans as boolean
+    }
   } catch {
     // No file, unreadable, or invalid JSON — fall back to env+defaults.
   }
@@ -188,5 +202,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
       driftThresholdPct: fileDriftPct ?? envDriftPct,
       taskConfidenceThreshold: fileConfThreshold ?? envConfThreshold,
     },
+    autoApprovePlans: fileAutoApprovePlans ?? envAutoApprovePlans,
   }
 }

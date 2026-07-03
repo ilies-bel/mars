@@ -81,6 +81,13 @@ export const ACTION_QUEUE_KINDS = [
   // reflection run covers the window. Cleared when a reflect run lands,
   // the operator enables auto-trigger, or the signal window ages out.
   'reflect-recommended',
+  // A proposal has been sliced but its tasks have NOT been enqueued yet —
+  // the operator must review the slice graph and either approve (enqueue all
+  // slices) or reslice (discard and re-run the Slicer with feedback).
+  // Level-triggered (ADR-0048): present while the proposal is 'sliced' and
+  // approval is pending; clears on approve or reslice. Only raised when
+  // autoApprovePlans is false (the default).
+  'plan-approval',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
