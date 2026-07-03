@@ -463,6 +463,108 @@ describe('ActionQueueDetail – diagnosis rendering (post-diagnose-failure refet
 //   - aria-current="true" marks the selected row for screen readers.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Draft-proposal rows: PRD-body clamp fix
+//
+// AC (live UX audit, P3): for draft-proposal rows, `item.title` carries the
+// full multi-paragraph PRD body — the 4-line clamp truncates mid-sentence and
+// dominates the sidebar visually. The row should show only the first
+// sentence / first line of the body (full text stays in the detail pane), and
+// the id span in draft rows must render at ≥11px so it stays legible.
+//
+// Failed-task rows keep their existing short titles unchanged.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – draft-proposal row keeps only the first sentence/line', () => {
+  const draftItem = (title: string): ActionQueueItem =>
+    makeItem({
+      id: 'draft-row',
+      kind: 'draft-proposal',
+      entityId: 'prop-1',
+      errorKind: 'draft-proposal',
+      title,
+      actions: [
+        { id: 'move-forward', label: 'Move forward', op: 'copy', hint: '/mars:grill prop-1' },
+        { id: 'dismiss', label: 'Dismiss', op: 'dismiss', needsConfirm: true },
+      ],
+    })
+
+  /**
+   * The row renders the visible headline inside a div whose class list starts
+   * with `mt-1 line-clamp-`. Extract that div's text content (which excludes
+   * the `title=` tooltip attribute the row also carries).
+   */
+  const visibleBody = (html: string): string => {
+    const match = html.match(/<div class="mt-1 line-clamp-\d[^"]*"[^>]*>([\s\S]*?)<\/div>/)
+    return match ? match[1] : ''
+  }
+
+  it('renders only the first sentence when title is multi-sentence prose', () => {
+    const item = draftItem(
+      'Ship a keyboard-first navigator for the origin tree. It should let power users move between nodes without a mouse. Details in the PRD.',
+    )
+    const body = visibleBody(renderRow(item, { onRestart: null }))
+    expect(body).toBe('Ship a keyboard-first navigator for the origin tree.')
+  })
+
+  it('renders only the first line when title contains a newline before any period', () => {
+    const item = draftItem('Add restart-undo toast\n\nRestart is a heavy op and misclicks are costly.')
+    const body = visibleBody(renderRow(item, { onRestart: null }))
+    expect(body).toBe('Add restart-undo toast')
+  })
+
+  it('renders the full title when it is a single short sentence with no separators', () => {
+    const item = draftItem('Ship keyboard-first navigator')
+    const body = visibleBody(renderRow(item, { onRestart: null }))
+    expect(body).toBe('Ship keyboard-first navigator')
+  })
+
+  it('exposes the full body via the row title tooltip so nothing is lost', () => {
+    const full = 'Ship keyboard-first navigator. It should let power users move.'
+    const item = draftItem(full)
+    const html = renderRow(item, { onRestart: null })
+    // The title attribute on the body div carries the full untruncated text.
+    expect(html).toMatch(new RegExp(`title="${full.replace(/[.*+?^${}()|[\\\\\\]\\\\]/g, '\\\\$&')}"`))
+  })
+
+  it('does NOT truncate failed-task titles (only draft-proposal rows get first-sentence)', () => {
+    const failedItem = makeItem({
+      title: 'Some failed task. With follow-up detail that should still render.',
+    })
+    const body = visibleBody(renderRow(failedItem, { onRestart: () => {} }))
+    expect(body).toBe('Some failed task. With follow-up detail that should still render.')
+  })
+})
+
+describe('ActionQueueRow – id span font-size (a11y)', () => {
+  it('renders the entityId at ≥11px on a draft-proposal row', () => {
+    const draft = makeItem({
+      kind: 'draft-proposal',
+      entityId: 'prop-1',
+      errorKind: 'draft-proposal',
+      title: 'draft body text',
+      actions: [
+        { id: 'move-forward', label: 'Move forward', op: 'copy', hint: '/mars:grill prop-1' },
+      ],
+    })
+    const html = renderRow(draft, { onRestart: null })
+    // The class token that carries the entityId's font-size must be 11px (not 10px).
+    // The row's id span is a `break-all font-mono text-[Npx]` element carrying entityId.
+    const idSpanMatch = html.match(/<span class="break-all font-mono text-\[(\d+)px\][^"]*"[^>]*>prop-1<\/span>/)
+    expect(idSpanMatch).not.toBeNull()
+    const px = idSpanMatch ? Number(idSpanMatch[1]) : 0
+    expect(px).toBeGreaterThanOrEqual(11)
+  })
+
+  it('renders the entityId at ≥11px on a failed-task row', () => {
+    const html = renderRow(BASE_ITEM, { onRestart: () => {} })
+    const idSpanMatch = html.match(/<span class="break-all font-mono text-\[(\d+)px\][^"]*"[^>]*>task-abc<\/span>/)
+    expect(idSpanMatch).not.toBeNull()
+    const px = idSpanMatch ? Number(idSpanMatch[1]) : 0
+    expect(px).toBeGreaterThanOrEqual(11)
+  })
+})
+
 describe('ActionQueueRow – keyboard accessibility', () => {
   it('renders role="button" so the row is announced as interactive', () => {
     const html = renderRow(BASE_ITEM)

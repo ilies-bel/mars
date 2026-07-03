@@ -47,6 +47,28 @@ const priorityBadgeClass = (priority: string): string => {
 
 export type KindFilter = 'all' | 'alerts' | 'drafts'
 
+/**
+ * Draft-proposal rows carry the full multi-paragraph PRD body in `item.title`.
+ * The sidebar row must show only a scannable headline: the first sentence
+ * (up to `. ` / `.\n`) or the first line, whichever comes first. The complete
+ * body still renders in the detail pane, so nothing is lost.
+ *
+ * Non-draft rows return their title untouched — their titles are already short.
+ * Exported for unit-testing.
+ */
+export function draftRowHeadline(title: string): string {
+  const trimmed = title.trim()
+  if (trimmed === '') return ''
+  // First hard newline wins if it comes before the first sentence-ending period.
+  const newlineIdx = trimmed.search(/\r?\n/)
+  const sentenceMatch = trimmed.match(/[.!?]["')\]]?(?=\s|$)/)
+  const sentenceIdx = sentenceMatch ? (sentenceMatch.index ?? -1) + sentenceMatch[0].length : -1
+  const candidates = [newlineIdx, sentenceIdx].filter((i) => i > 0)
+  if (candidates.length === 0) return trimmed
+  const cut = Math.min(...candidates)
+  return trimmed.slice(0, cut).trim()
+}
+
 /** Pure helper: returns true when `item` should be shown for the given `filter`. */
 export function matchesKindFilter(item: ActionQueueItem, filter: KindFilter): boolean {
   if (filter === 'all') return true
@@ -116,7 +138,7 @@ export const ActionQueueRow = memo(({
             {kindBadgeLabel(item.kind)}
           </span>
         )}
-        <span className="break-all font-mono text-[10px] text-iron">
+        <span className="break-all font-mono text-[11px] text-iron">
           {item.entityId}
         </span>
         <span
@@ -125,8 +147,17 @@ export const ActionQueueRow = memo(({
           {item.priority}
         </span>
       </div>
-      <div className="mt-1 line-clamp-4 break-words font-mono text-[12px] text-fg">
-        {item.title || '(no title)'}
+      <div
+        className={
+          item.kind === 'draft-proposal'
+            ? 'mt-1 line-clamp-2 break-words font-mono text-[12px] text-fg'
+            : 'mt-1 line-clamp-4 break-words font-mono text-[12px] text-fg'
+        }
+        title={item.kind === 'draft-proposal' ? item.title : undefined}
+      >
+        {item.kind === 'draft-proposal'
+          ? draftRowHeadline(item.title) || '(no title)'
+          : item.title || '(no title)'}
       </div>
       <div className="mt-1 flex items-center justify-between gap-2">
         <span className="font-mono text-[10px] text-muted" title={formatTime(item.at)}>
