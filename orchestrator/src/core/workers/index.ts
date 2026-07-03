@@ -172,18 +172,20 @@ export const CODEGRAPH_NUDGE =
 // need Opus reasoning (e.g. a complex architectural migration) without editing
 // code. The env var is read at process start and affects every Coder run for
 // the lifetime of that daemon process; there is no per-task override.
-// Planner/Slicer/Fixer are NOT affected — they always use their pinned model
-// for cost/safety reasons.
+// Planner/Slicer are NOT affected — they always use their pinned Opus model
+// for cost/safety reasons. Fixer uses Sonnet (same as Coder) because recovery
+// briefs are scoped mechanical work, not architectural reasoning.
 export const CODER_MODEL: string =
   process.env.MARS_WORKER_MODEL ?? CLAUDE_SONNET_MODEL
 
 // Day-one defaults agreed in the grill for PRD 948691d0. The Coder runs on
 // sonnet / high effort / bypassPermissions with the full tool surface (no
 // per-Worker disallows beyond the wrapper-layer agent-to-user ban). Fixer
-// mirrors Coder's effort and permission posture but intentionally stays on
-// Opus — recovery tasks deal with broken or partially-applied code where
-// Sonnet may miss corner cases. Fixer also layers backlog-mutation denials so
-// a no-commit Session cannot refile its task as a loose end.
+// mirrors Coder's effort, permission posture, and model (Sonnet) — recovery
+// briefs are scoped mechanical work (finish-the-job or repair-one-defect) that
+// Sonnet handles well; Opus pinning was a cost amplifier under failure storms.
+// Fixer also layers backlog-mutation denials so a no-commit Session cannot
+// refile its task as a loose end.
 // Planner, Slicer, and Triager are read-only synthesis stages: default
 // permissions, Edit/Write/NotebookEdit denied. Triager runs on sonnet /
 // medium effort. Bare mode is disabled because
@@ -259,7 +261,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   },
   Fixer: {
     name: 'Fixer',
-    model: CLAUDE_OPUS_MODEL,
+    model: CLAUDE_SONNET_MODEL,
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,

@@ -173,7 +173,7 @@ recovery-spawn path itself.
 - Coder runs get a deviation-rules brief: no bailing without an auto-fix
   commit, a `--blocked-by $TASK_ID` follow-up, or a `mars proposal add`.
 - **Worker models (defaults):** Coder → `claude-sonnet-4-6`, Fixer →
-  `claude-opus-4-7` (recovery resilience), Writer → `claude-haiku-4-5-20251001`,
+  `claude-sonnet-4-6` (scoped mechanical recovery), Writer → `claude-haiku-4-5-20251001`,
   Planner/Slicer → `claude-opus-4-7` (architectural reasoning), Triager →
   `claude-sonnet-4-6`. Override the Coder model for the lifetime of a daemon
   process via `MARS_WORKER_MODEL=<model>` (e.g. `MARS_WORKER_MODEL=claude-opus-4-7`

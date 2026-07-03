@@ -167,11 +167,11 @@ describe('Planner / Slicer / Triager pinned config', () => {
 describe('Fixer pinned config', () => {
   const args = argvFor('Fixer')
 
-  it('runs Opus on high effort with bypassPermissions (intentionally Opus — recovery resilience over cost)', () => {
-    // Fixer intentionally stays on Opus even though Coder uses Sonnet.
-    // Recovery tasks deal with broken/partially-applied code where extra
-    // reasoning headroom pays off.
-    expect(valueAfter(args, '--model')).toBe('claude-opus-4-7')
+  it('runs Sonnet on high effort with bypassPermissions (Sonnet — scoped mechanical recovery, not architectural reasoning)', () => {
+    // Fixer uses Sonnet (same as Coder) because recovery briefs are scoped
+    // mechanical work (finish-the-job or repair-one-defect). Opus pinning was
+    // a cost amplifier under failure storms.
+    expect(valueAfter(args, '--model')).toBe('claude-sonnet-4-6')
     expect(valueAfter(args, '--effort')).toBe('high')
     expect(args).toContain('--dangerously-skip-permissions')
   })

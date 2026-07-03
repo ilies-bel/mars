@@ -14,7 +14,7 @@
 // primitives automatically do the recovery-specific thing: `setupWorktree`
 // ATTACHES to the origin's worktree+branch (via `ctx.input.fixForTaskId`) and
 // stacks the fix commit there rather than carving a fresh worktree, and
-// `runAgent` routes to the Fixer (Opus, recovery resilience). Every primitive
+// `runAgent` routes to the Fixer (Sonnet, scoped mechanical recovery). Every primitive
 // pulls all plumbing off `ctx`; every task-state write funnels through the Arc
 // aggregate (ADR-0052).
 
@@ -35,7 +35,7 @@ export default defineWorkflow({
     // setup → attach to the origin worktree (ctx.input.fixForTaskId), install deps.
     await ctx.step('setup', () => setupWorktree(ctx))
 
-    // fix-code → the Fixer (Opus) attempts the repair on the origin's branch.
+    // fix-code → the Fixer (Sonnet) attempts the repair on the origin's branch.
     await ctx.step('fix-code', () => runAgent(ctx))
 
     await ctx.step('verify', () => verify(ctx))
