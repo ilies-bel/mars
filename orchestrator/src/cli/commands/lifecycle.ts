@@ -7,7 +7,9 @@
  */
 
 import { spawnSync } from 'node:child_process'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { userInfo, hostname } from 'node:os'
+import { resolve as resolvePath } from 'node:path'
 import { resolveProposalId, getProposal } from '../../core/proposals'
 import { readMaybeFile } from '../args'
 import type { TaskStatus } from '../../core/queue'
@@ -560,6 +562,22 @@ const attach: Command = {
       branch: string
       title: string
       doneCriteria: readonly string[]
+      completionReport:
+        | { kind: 'parsed'; lines: ReadonlyArray<{ status: string; criterion: string; evidence: string }> }
+        | { kind: 'unparseable'; raw: string }
+        | { kind: 'absent' }
+        | null
+      commitsAhead: readonly string[]
+      checklistState: ReadonlyArray<{ criterion: string; checked: boolean }>
+      progressTail: ReadonlyArray<{
+        id: string
+        taskId: string
+        createdAt: string
+        author: string
+        kind: 'note' | 'check' | 'uncheck'
+        body: string
+        criterionIndex: number | null
+      }>
     }
     try {
       data = (await deps.daemon.sendRequest({ op: 'attach', id, leaseOwner })) as typeof data
@@ -568,18 +586,88 @@ const attach: Command = {
       return { code: 1 }
     }
 
-    deps.out(`task:      ${data.title.replace(/\s+/g, ' ').slice(0, 80)}`)
-    deps.out(`worktree:  ${data.worktreePath}`)
-    deps.out(`branch:    ${data.branch}`)
-    if (data.doneCriteria.length > 0) {
-      deps.out('')
-      deps.out('done criteria:')
-      for (const criterion of data.doneCriteria) {
-        deps.out(`  - [ ] ${criterion}`)
+    // Build the handoff output lines, tracking long-form sections separately so
+    // we can write a file when there is enough to warrant one.
+    const lines: string[] = []
+    const addLine = (s: string): void => {
+      deps.out(s)
+      lines.push(s)
+    }
+
+    addLine(`task:      ${data.title.replace(/\s+/g, ' ').slice(0, 80)}`)
+    addLine(`worktree:  ${data.worktreePath}`)
+    addLine(`branch:    ${data.branch}`)
+
+    // Done-criteria checklist — uses progress-derived state (checklistState) when
+    // available; falls back to doneCriteria with all unchecked.
+    const checklist =
+      data.checklistState.length > 0
+        ? data.checklistState
+        : data.doneCriteria.map((criterion) => ({ criterion, checked: false }))
+    if (checklist.length > 0) {
+      addLine('')
+      addLine('done criteria:')
+      for (const { criterion, checked } of checklist) {
+        addLine(`  - [${checked ? 'x' : ' '}] ${criterion}`)
       }
     }
-    deps.out('')
-    deps.out(`hint: cd ${data.worktreePath} && claude`)
+
+    // Commits ahead of the integration branch.
+    if (data.commitsAhead.length > 0) {
+      addLine('')
+      addLine(`commits ahead of integration branch:`)
+      for (const commit of data.commitsAhead) {
+        addLine(`  ${commit}`)
+      }
+    }
+
+    // Worker's Completion report.
+    if (data.completionReport !== null && data.completionReport.kind === 'parsed') {
+      addLine('')
+      addLine('completion report:')
+      for (const line of data.completionReport.lines) {
+        const evidencePart = line.evidence ? ` — evidence: ${line.evidence}` : ''
+        addLine(`  - [${line.status}] ${line.criterion}${evidencePart}`)
+      }
+    }
+
+    // Progress journal tail.
+    if (data.progressTail.length > 0) {
+      addLine('')
+      addLine(`--- journal (last ${data.progressTail.length}) ---`)
+      for (const entry of data.progressTail) {
+        const kindLabel =
+          entry.kind === 'note'
+            ? 'note'
+            : entry.kind === 'check'
+              ? `check #${entry.criterionIndex}`
+              : `uncheck #${entry.criterionIndex}`
+        const bodyPart = entry.body.length > 0 ? `: ${entry.body}` : ''
+        addLine(`${entry.createdAt} [${kindLabel}] ${entry.author}${bodyPart}`)
+      }
+    }
+
+    addLine('')
+    addLine(`hint: cd ${data.worktreePath} && claude`)
+
+    // If there is substantive handoff content, also write it to
+    // .mars/handoffs/<id>.md (outside the worktree — never inside it).
+    const hasHandoffContent =
+      data.commitsAhead.length > 0 ||
+      (data.completionReport !== null && data.completionReport.kind === 'parsed') ||
+      data.progressTail.length > 0
+    if (hasHandoffContent) {
+      try {
+        const handoffsDir = resolvePath(deps.ctx.stateDir, 'handoffs')
+        mkdirSync(handoffsDir, { recursive: true })
+        const handoffPath = resolvePath(handoffsDir, `${id}.md`)
+        writeFileSync(handoffPath, lines.join('\n') + '\n', 'utf8')
+        deps.out(`handoff:   ${handoffPath}`)
+      } catch {
+        // Non-fatal: if we can't write the file, the stdout output is sufficient.
+      }
+    }
+
     return { code: 0 }
   },
 }

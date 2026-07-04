@@ -104,6 +104,13 @@ describe('mars attach', () => {
       branch: `task/${taskId}`,
       title: 'test task for human work',
       doneCriteria: ['do the thing', 'verify it'],
+      completionReport: null,
+      commitsAhead: [],
+      checklistState: [
+        { criterion: 'do the thing', checked: false },
+        { criterion: 'verify it', checked: false },
+      ],
+      progressTail: [],
     }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(['attach', taskId], {
@@ -124,7 +131,7 @@ describe('mars attach', () => {
     const outJoined = r.out.join('\n')
     expect(outJoined).toContain('/some/worktree/path')
     expect(outJoined).toContain('hint: cd /some/worktree/path && claude')
-    // Done criteria are rendered
+    // Done criteria are rendered using checklistState (unchecked)
     expect(outJoined).toContain('- [ ] do the thing')
     expect(outJoined).toContain('- [ ] verify it')
   })
@@ -136,6 +143,10 @@ describe('mars attach', () => {
       branch: `task/${taskId}`,
       title: 'Implement the feature',
       doneCriteria: [],
+      completionReport: null,
+      commitsAhead: [],
+      checklistState: [],
+      progressTail: [],
     }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(['attach', taskId], { store, ctx, daemon: fake })
@@ -167,6 +178,124 @@ describe('mars attach', () => {
 
     expect(r.code).toBe(1)
     expect(r.err.join('\n')).toContain('usage: mars attach')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Handoff-section tests
+  // ---------------------------------------------------------------------------
+
+  it('prints completion report when worker coded the task', async () => {
+    const taskId = await createAwaitingHumanTask(null, '/wt')
+    const fake = makeFakeDaemon(() => ({
+      worktreePath: '/wt',
+      branch: `task/${taskId}`,
+      title: 'test task',
+      doneCriteria: ['do the thing'],
+      completionReport: {
+        kind: 'parsed' as const,
+        lines: [{ status: 'done' as const, criterion: 'do the thing', evidence: 'test.ts:45' }],
+      },
+      commitsAhead: ['abc1234 Add feature X', 'def5678 Fix bug Y'],
+      checklistState: [{ criterion: 'do the thing', checked: true }],
+      progressTail: [],
+    }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['attach', taskId], { store, ctx, daemon: fake })
+
+    expect(r.code).toBe(0)
+    const outJoined = r.out.join('\n')
+    // Completion report section is present
+    expect(outJoined).toContain('completion report')
+    expect(outJoined).toContain('[done] do the thing')
+    expect(outJoined).toContain('test.ts:45')
+    // Commits ahead section is present
+    expect(outJoined).toContain('commits ahead')
+    expect(outJoined).toContain('abc1234 Add feature X')
+    expect(outJoined).toContain('def5678 Fix bug Y')
+    // Checked criterion
+    expect(outJoined).toContain('- [x] do the thing')
+  })
+
+  it('omits handoff sections when no code step ran (empty handoff)', async () => {
+    const taskId = await createAwaitingHumanTask(null, '/wt')
+    const fake = makeFakeDaemon(() => ({
+      worktreePath: '/wt',
+      branch: `task/${taskId}`,
+      title: 'test task',
+      doneCriteria: [],
+      completionReport: null,
+      commitsAhead: [],
+      checklistState: [],
+      progressTail: [],
+    }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['attach', taskId], { store, ctx, daemon: fake })
+
+    expect(r.code).toBe(0)
+    const outJoined = r.out.join('\n')
+    // Basic fields still printed
+    expect(outJoined).toContain('/wt')
+    expect(outJoined).toContain('hint:')
+    // Handoff sections absent — no placeholder noise
+    expect(outJoined).not.toContain('completion report')
+    expect(outJoined).not.toContain('commits ahead')
+    expect(outJoined).not.toContain('journal')
+  })
+
+  it('renders checklist using checklistState (progress-derived state)', async () => {
+    const taskId = await createAwaitingHumanTask(null, '/wt')
+    const fake = makeFakeDaemon(() => ({
+      worktreePath: '/wt',
+      branch: `task/${taskId}`,
+      title: 'test',
+      doneCriteria: ['criterion 1', 'criterion 2'],
+      completionReport: null,
+      commitsAhead: [],
+      checklistState: [
+        { criterion: 'criterion 1', checked: true },
+        { criterion: 'criterion 2', checked: false },
+      ],
+      progressTail: [],
+    }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['attach', taskId], { store, ctx, daemon: fake })
+
+    expect(r.code).toBe(0)
+    const outJoined = r.out.join('\n')
+    expect(outJoined).toContain('- [x] criterion 1')
+    expect(outJoined).toContain('- [ ] criterion 2')
+  })
+
+  it('prints progress journal tail when entries are present', async () => {
+    const taskId = await createAwaitingHumanTask(null, '/wt')
+    const fake = makeFakeDaemon(() => ({
+      worktreePath: '/wt',
+      branch: `task/${taskId}`,
+      title: 'test',
+      doneCriteria: [],
+      completionReport: null,
+      commitsAhead: [],
+      checklistState: [],
+      progressTail: [
+        {
+          id: 'prog-abc123',
+          taskId,
+          createdAt: '2026-07-04T10:00:00Z',
+          author: 'worker',
+          kind: 'note' as const,
+          body: 'Started implementation',
+          criterionIndex: null,
+        },
+      ],
+    }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['attach', taskId], { store, ctx, daemon: fake })
+
+    expect(r.code).toBe(0)
+    const outJoined = r.out.join('\n')
+    expect(outJoined).toContain('journal')
+    expect(outJoined).toContain('worker')
+    expect(outJoined).toContain('Started implementation')
   })
 })
 

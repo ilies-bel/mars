@@ -66,7 +66,11 @@ import {
   CANCELLED_FAILURE_REASON,
   type RecoverAllBlockedTasksResult,
 } from '../blocker-resolution'
-import { Arc } from '../arc'
+import { Arc, type ProgressEntry } from '../arc'
+import {
+  parseCompletionReport,
+  type CompletionReport,
+} from '../../workflows/primitives/shared'
 import {
   supersedeObsoletePreflightDirtyMainRows,
   supersedeOrphanedHitlActionQueueRows,
@@ -2452,6 +2456,8 @@ export const startDaemon = async (
   // `mars attach <id>`: take the worktree lease on an 'awaiting-human' task.
   // Validates that the task is parked and has no existing owner, then stamps
   // leaseOwner + leasedAt and returns the info the CLI prints to the operator.
+  // The response includes a derived Handoff: the Worker's Completion report,
+  // commits ahead of the integration branch, and the Progress-journal state.
   const handleAttach = async (
     id: string,
     leaseOwner: string,
@@ -2460,6 +2466,10 @@ export const startDaemon = async (
     branch: string
     title: string
     doneCriteria: readonly string[]
+    completionReport: CompletionReport | null
+    commitsAhead: readonly string[]
+    checklistState: ReadonlyArray<{ criterion: string; checked: boolean }>
+    progressTail: readonly ProgressEntry[]
   }> => {
     const task = await getTask(id)
     if (!task) throw new Error(`task ${id} not found`)
@@ -2477,11 +2487,75 @@ export const startDaemon = async (
     await updateTask(id, { leaseOwner, leasedAt: now })
     const worktreePath =
       task.worktreePath ?? resolvePath(resolveContext().stateDir, 'worktrees', id)
+    const doneCriteria = task.spec?.doneCriteria ?? []
+
+    // Derive Completion report from the task's transcripts. Collects text from
+    // 'result' and 'assistant' events and parses the last completion-report block.
+    let completionReport: CompletionReport | null = null
+    try {
+      const coderTextParts: string[] = []
+      for await (const evt of readAllTranscriptsForTask(id)) {
+        if (!evt.raw || typeof evt.raw !== 'object' || Array.isArray(evt.raw)) continue
+        const o = evt.raw as Record<string, unknown>
+        if (o.type === 'result' && typeof o.result === 'string') {
+          coderTextParts.push(o.result)
+        } else if (o.type === 'assistant') {
+          const msg = o.message
+          if (msg && typeof msg === 'object' && !Array.isArray(msg)) {
+            const content = (msg as Record<string, unknown>).content
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block && typeof block === 'object' && !Array.isArray(block)) {
+                  const b = block as Record<string, unknown>
+                  if (b.type === 'text' && typeof b.text === 'string') {
+                    coderTextParts.push(b.text)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      if (coderTextParts.length > 0) {
+        const parsed = parseCompletionReport(coderTextParts.join('\n'))
+        completionReport = parsed.kind !== 'absent' ? parsed : null
+      }
+    } catch {
+      // Transcript read errors are non-fatal; omit the report.
+    }
+
+    // Commits ahead of the integration branch — bounded to 20.
+    let commitsAhead: string[] = []
+    try {
+      const gitResult = await exec(
+        resolveGitBin(),
+        ['log', '--oneline', `${integrationBranch}..HEAD`],
+        { cwd: worktreePath },
+      )
+      commitsAhead = gitResult.stdout.trim().split('\n').filter(Boolean).slice(0, 20)
+    } catch {
+      // Non-fatal: worktree may not yet exist or branch may not have diverged.
+    }
+
+    // Progress journal: derive checklist state and tail entries.
+    let progressEntries: ProgressEntry[] = []
+    try {
+      progressEntries = await Arc.listProgress(id)
+    } catch {
+      // Non-fatal: table may not exist in older DBs.
+    }
+    const checklistState = Arc.deriveChecklist(progressEntries, doneCriteria)
+    const progressTail = progressEntries.slice(-10)
+
     return {
       worktreePath,
       branch: task.branch ?? `task/${id}`,
       title: task.prompt,
-      doneCriteria: task.spec?.doneCriteria ?? [],
+      doneCriteria,
+      completionReport,
+      commitsAhead,
+      checklistState,
+      progressTail,
     }
   }
 
