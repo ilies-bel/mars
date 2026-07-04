@@ -1904,6 +1904,24 @@ const migrateSignalsAndTranscriptsToTraceEvents = async (c: Client): Promise<voi
       byte_len   INTEGER NOT NULL
     )
   `)
+  // Append-only progress journal for Foreground sessions (ADR extending ADR-0065).
+  // Stores notes and check/uncheck events; checklist state is derived as a fold
+  // over the journal (latest check/uncheck per criterion_index wins).
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS task_progress (
+      id              TEXT NOT NULL PRIMARY KEY,
+      task_id         TEXT NOT NULL REFERENCES tasks(id),
+      created_at      TEXT NOT NULL,
+      author          TEXT NOT NULL,
+      kind            TEXT NOT NULL CHECK(kind IN ('note','check','uncheck')),
+      body            TEXT NOT NULL,
+      criterion_index INTEGER
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_task_progress_task_time
+       ON task_progress(task_id, created_at)`,
+  )
 }
 
 const MAX_CONVERSATION_BYTES = 2 * 1024 * 1024

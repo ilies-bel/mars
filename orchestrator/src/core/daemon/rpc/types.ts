@@ -29,6 +29,7 @@
 import type { Task } from '../../queue'
 import type { Author } from '../../author'
 import type { TaskPlan, TaskTag, TaskSpec } from '../../queue'
+import type { AppendProgressParams, ProgressEntry } from '../../arc'
 import type { EventEmitter } from 'node:events'
 import type { RunInitOptions, RunInitResult } from '../../../workflows/init-workflow'
 import type { DaemonRequest, DaemonResponse, DaemonStatusPayload } from '../protocol'
@@ -175,6 +176,7 @@ export interface DaemonDeps {
     doneCriteria: readonly string[]
   }>
   handleReleaseLease(id: string, abort: boolean): Promise<void>
+  appendProgress(params: AppendProgressParams): Promise<ProgressEntry>
 }
 
 /** The `patch` shape carried by the `update` op (matches protocol). */

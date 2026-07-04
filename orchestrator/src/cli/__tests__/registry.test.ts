@@ -46,6 +46,8 @@ describe('grouping is computed routing, not a unit', () => {
     expect(groups.get('task')?.map((c) => c.path).sort()).toEqual([
       'task',
       'task add',
+      'task check',
+      'task note',
       'task priority',
       'task show',
     ])

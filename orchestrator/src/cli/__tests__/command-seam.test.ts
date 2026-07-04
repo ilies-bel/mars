@@ -92,7 +92,7 @@ describe('routing', () => {
   it('falls back to the group fallback for a bare ladder command', async () => {
     const r = await runCommandInProcess(['task'], await baseOpts())
     expect(r.code).toBe(1)
-    expect(r.err.join('\n')).toContain('usage: mars task <add|show|priority>')
+    expect(r.err.join('\n')).toContain('usage: mars task <add|show|priority|note|check>')
   })
 
   it('returns unknown for a command not in the registry', async () => {

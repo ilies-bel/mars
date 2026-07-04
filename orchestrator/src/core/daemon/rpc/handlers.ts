@@ -414,6 +414,27 @@ const killHandler = handler('kill', async (_req, deps) => {
   }
 })
 
+const taskNoteHandler = handler('task.note', async (req, deps) => {
+  const entry = await deps.appendProgress({
+    taskId: req.id,
+    author: req.author ?? 'cli',
+    kind: 'note',
+    body: req.body,
+  })
+  return { ok: true, data: entry }
+})
+
+const taskCheckHandler = handler('task.check', async (req, deps) => {
+  const entry = await deps.appendProgress({
+    taskId: req.id,
+    author: req.author ?? 'cli',
+    kind: req.uncheck ? 'uncheck' : 'check',
+    body: '',
+    criterionIndex: req.criterionIndex,
+  })
+  return { ok: true, data: entry }
+})
+
 const pauseHandler = handler('pause', async (_req, deps) => {
   deps.setIsPaused(true)
   deps.log(
@@ -470,4 +491,6 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   resumeHandler,
   shutdownHandler,
   killHandler,
+  taskNoteHandler,
+  taskCheckHandler,
 ]

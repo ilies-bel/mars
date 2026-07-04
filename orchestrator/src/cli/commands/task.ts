@@ -193,8 +193,13 @@ export const renderTaskDetail = async (
       deps.out(`previewCmd: ${task.spec.previewCmd}`)
     }
     if (task.spec.doneCriteria.length > 0) {
+      const { Arc } = await import('../../core/arc')
+      const journalEntries = await Arc.listProgress(task.id, undefined, deps.store)
+      const checklist = Arc.deriveChecklist(journalEntries, task.spec.doneCriteria)
       deps.out(`doneCriteria:`)
-      for (const c of task.spec.doneCriteria) deps.out(`  - [ ] ${c}`)
+      for (const { criterion, checked } of checklist) {
+        deps.out(`  - [${checked ? 'x' : ' '}] ${criterion}`)
+      }
     }
   }
   if (task.error) {
@@ -259,6 +264,22 @@ export const taskShow: Command = {
       return { code: 1 }
     }
     await renderTaskDetail(deps, task, 'task')
+    const { Arc } = await import('../../core/arc')
+    const journal = await Arc.listProgress(id, undefined, deps.store)
+    if (journal.length > 0) {
+      const tail = journal.slice(-10)
+      deps.out(`--- journal (last ${tail.length}) ---`)
+      for (const entry of tail) {
+        const ts = entry.createdAt
+        const kindLabel = entry.kind === 'note'
+          ? 'note'
+          : entry.kind === 'check'
+          ? `check #${entry.criterionIndex}`
+          : `uncheck #${entry.criterionIndex}`
+        const bodyPart = entry.body.length > 0 ? `: ${entry.body}` : ''
+        deps.out(`${ts} [${kindLabel}] ${entry.author}${bodyPart}`)
+      }
+    }
     return { code: 0 }
   },
 }
@@ -294,13 +315,78 @@ export const taskPriority: Command = {
   },
 }
 
+export const taskNote: Command = {
+  path: 'task note',
+  summary: 'append a progress note to a task',
+  usage: 'usage: mars task note <id> "<text>"',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    const body = args.positional[1]
+    if (!id || !body) {
+      deps.err('usage: mars task note <id> "<text>"')
+      return { code: 1 }
+    }
+    const author = detectOriginSession() ?? 'cli'
+    try {
+      const entry = (await deps.daemon.sendRequest({
+        op: 'task.note',
+        id,
+        body,
+        author,
+      })) as { id: string }
+      deps.out(`noted ${entry.id}`)
+    } catch (error: unknown) {
+      deps.err(errorMessage(error))
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
+export const taskCheck: Command = {
+  path: 'task check',
+  summary: 'toggle a done-criterion check state (1-based index)',
+  usage: 'usage: mars task check <id> <n> [--uncheck]',
+  run: async (args, deps) => {
+    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
+    const positionals = args.positional.filter((a) => !a.startsWith('--'))
+    const id = positionals[0]
+    const indexRaw = positionals[1]
+    if (!id || indexRaw === undefined) {
+      deps.err('usage: mars task check <id> <n> [--uncheck]')
+      return { code: 1 }
+    }
+    const criterionIndex = parseInt(indexRaw, 10)
+    if (!Number.isInteger(criterionIndex) || criterionIndex < 1) {
+      deps.err(`criterion index must be a positive integer; got ${indexRaw}`)
+      return { code: 1 }
+    }
+    const uncheck = flagSet.has('--uncheck')
+    const author = detectOriginSession() ?? 'cli'
+    try {
+      await deps.daemon.sendRequest({
+        op: 'task.check',
+        id,
+        criterionIndex,
+        uncheck,
+        author,
+      })
+      deps.out(`${uncheck ? 'unchecked' : 'checked'} criterion ${criterionIndex} on ${id}`)
+    } catch (error: unknown) {
+      deps.err(errorMessage(error))
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
 /** `task` with no/unknown subcommand. */
 export const taskGroup: Command = {
   path: 'task',
   summary: 'task subcommands',
-  usage: 'usage: mars task <add|show|priority> ...',
+  usage: 'usage: mars task <add|show|priority|note|check> ...',
   run: (_args, deps) => {
-    deps.err('usage: mars task <add|show|priority> ...')
+    deps.err('usage: mars task <add|show|priority|note|check> ...')
     return { code: 1 }
   },
 }
@@ -309,5 +395,7 @@ export const taskCommands: readonly Command[] = [
   taskAdd,
   taskShow,
   taskPriority,
+  taskNote,
+  taskCheck,
   taskGroup,
 ]

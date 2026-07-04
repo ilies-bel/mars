@@ -67,6 +67,8 @@ export type DaemonRequest =
   | { op: 'release-lease'; id: string; abort?: boolean }
   | { op: 'pause' }
   | { op: 'resume' }
+  | { op: 'task.note'; id: string; body: string; author?: string }
+  | { op: 'task.check'; id: string; criterionIndex: number; uncheck?: boolean; author?: string }
 
 export type DaemonResponse =
   | { ok: true; data?: unknown }

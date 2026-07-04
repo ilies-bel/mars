@@ -2518,6 +2518,11 @@ export const startDaemon = async (
     }
   }
 
+  // `mars task note <id> "<text>"` / `mars task check <id> <n> [--uncheck]`:
+  // append a journal entry to the progress journal (Foreground-session discipline).
+  const appendProgress = (params: Parameters<typeof Arc.appendProgress>[0]) =>
+    Arc.appendProgress(params)
+
   // ── RPC command seam (ADR daemon-command-seam; mirrors ADR-0023) ──────────
   // The 27-case `switch (req.op)` is now a flat op-keyed registry of leaf
   // handlers in `./rpc/`. `handleRequest` keeps its socket-facing signature and
@@ -2576,6 +2581,7 @@ export const startDaemon = async (
     diagnoseFailure,
     handleAttach,
     handleReleaseLease,
+    appendProgress,
   })
 
   const handleRequest = async (req: DaemonRequest): Promise<DaemonResponse> => {

@@ -196,6 +196,34 @@ export interface CreateOriginSpec {
   opts?: EnqueueTaskOptions
 }
 
+/**
+ * A single progress journal entry (Foreground-session discipline).
+ * Written by {@link Arc.appendProgress}; read by {@link Arc.listProgress}.
+ */
+export interface ProgressEntry {
+  id: string
+  taskId: string
+  createdAt: string
+  author: string
+  kind: 'note' | 'check' | 'uncheck'
+  body: string
+  criterionIndex: number | null
+}
+
+/**
+ * Parameters for {@link Arc.appendProgress}.
+ *
+ * `criterionIndex` is 1-based and required for 'check'/'uncheck' kinds.
+ * For 'note' entries it must be omitted or null.
+ */
+export interface AppendProgressParams {
+  taskId: string
+  author: string
+  kind: 'note' | 'check' | 'uncheck'
+  body: string
+  criterionIndex?: number | null
+}
+
 export class Arc {
   /**
    * Private — construct an Arc only via {@link Arc.load} or
@@ -2896,5 +2924,136 @@ export class Arc {
     // Return null so the caller uses the normal re-queue or budget-fail path.
     if (parseMainCommiterPayload(row.recovery_payload)?.recipe === MAIN_COMMITER_RECIPE) return null
     return { id: row.id, status: row.status }
+  }
+
+  /**
+   * Append a journal entry to the progress journal for the given task.
+   *
+   * The Arc aggregate is the sole writer to task_progress (ADR-0052 extension).
+   * Validates that the task exists; for 'check'/'uncheck' kinds, validates that
+   * `criterionIndex` is a positive integer in range for the task's doneCriteria.
+   *
+   * @param params.criterionIndex 1-based index into the task's doneCriteria array.
+   *   Required for 'check'/'uncheck'; must be omitted or null for 'note'.
+   */
+  static async appendProgress(
+    params: AppendProgressParams,
+    store?: DomainTaskStore,
+  ): Promise<ProgressEntry> {
+    await migrateQueueSchema()
+    const resolvedStore = store ?? getDefaultDomainTaskStore()
+    const task = await getTask(params.taskId, resolvedStore)
+    if (!task) {
+      throw new Error(`task ${params.taskId} not found`)
+    }
+    if (params.kind === 'check' || params.kind === 'uncheck') {
+      const idx = params.criterionIndex
+      if (idx === undefined || idx === null || !Number.isInteger(idx) || idx < 1) {
+        throw new Error(
+          `criterionIndex must be a positive integer for '${params.kind}'; got ${idx}`,
+        )
+      }
+      const criteria = task.spec?.doneCriteria ?? []
+      if (idx > criteria.length) {
+        throw new Error(
+          `criterionIndex ${idx} is out of range; task has ${criteria.length} done criteria`,
+        )
+      }
+    }
+    const id = `prog-${randomUUID().slice(0, 8)}`
+    const now = new Date().toISOString()
+    const body = params.body ?? ''
+    const criterionIndex =
+      params.kind === 'note' ? null : (params.criterionIndex ?? null)
+    await resolvedStore.execute({
+      sql: `INSERT INTO task_progress (id, task_id, created_at, author, kind, body, criterion_index)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [id, params.taskId, now, params.author, params.kind, body, criterionIndex],
+    })
+    return {
+      id,
+      taskId: params.taskId,
+      createdAt: now,
+      author: params.author,
+      kind: params.kind,
+      body,
+      criterionIndex,
+    }
+  }
+
+  /**
+   * List journal entries for a task, ordered oldest→newest.
+   *
+   * @param opts.limit Maximum number of entries to return (default: unbounded).
+   */
+  static async listProgress(
+    taskId: string,
+    opts?: { limit?: number },
+    store?: DomainTaskStore,
+  ): Promise<ProgressEntry[]> {
+    await migrateQueueSchema()
+    const resolvedStore = store ?? getDefaultDomainTaskStore()
+    const limitClause =
+      opts?.limit !== undefined ? ` LIMIT ${Math.floor(opts.limit)}` : ''
+    const r = await resolvedStore.query({
+      sql: `SELECT id, task_id, created_at, author, kind, body, criterion_index
+              FROM task_progress
+             WHERE task_id = ?
+             ORDER BY created_at ASC${limitClause}`,
+      args: [taskId],
+    })
+    return r.rows.map((row) => {
+      const rec = row as unknown as {
+        id: string
+        task_id: string
+        created_at: string
+        author: string
+        kind: string
+        body: string
+        criterion_index: number | null
+      }
+      return {
+        id: rec.id,
+        taskId: rec.task_id,
+        createdAt: rec.created_at,
+        author: rec.author,
+        kind: rec.kind as ProgressEntry['kind'],
+        body: rec.body,
+        criterionIndex: rec.criterion_index,
+      }
+    })
+  }
+
+  /**
+   * Derive the current checklist state from a list of journal entries.
+   *
+   * State is computed as a fold: for each criterion_index the latest
+   * 'check' or 'uncheck' entry wins. 'note' entries are ignored.
+   *
+   * @param entries Journal entries (any ordering; the fold picks the latest per index).
+   * @param doneCriteria The ordered list of criteria from the task spec.
+   * @returns One entry per criterion with its current checked state.
+   */
+  static deriveChecklist(
+    entries: ProgressEntry[],
+    doneCriteria: readonly string[],
+  ): Array<{ criterion: string; checked: boolean }> {
+    // Map from 1-based index → most recent entry timestamp
+    const stateMap = new Map<number, { checked: boolean; createdAt: string }>()
+    for (const entry of entries) {
+      if (entry.kind !== 'check' && entry.kind !== 'uncheck') continue
+      if (entry.criterionIndex === null) continue
+      const existing = stateMap.get(entry.criterionIndex)
+      if (existing === undefined || entry.createdAt >= existing.createdAt) {
+        stateMap.set(entry.criterionIndex, {
+          checked: entry.kind === 'check',
+          createdAt: entry.createdAt,
+        })
+      }
+    }
+    return doneCriteria.map((criterion, i) => {
+      const state = stateMap.get(i + 1)
+      return { criterion, checked: state?.checked ?? false }
+    })
   }
 }
