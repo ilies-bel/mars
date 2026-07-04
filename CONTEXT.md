@@ -415,3 +415,7 @@ An interactive Claude Code session driven by the operator, as opposed to a Sessi
 **Progress journal**:
 Append-only per-task record of mid-flight progress notes and done-criteria check-offs, written by Foreground sessions via mars task note / mars task check through the Arc write funnel (ADR-0052); read via mars task show, the UI, and the attach-time Handoff.
 _Avoid_: progress log, task log, work log, notes field
+
+**Live task**:
+A task enqueued with mars task add --live: the pipeline runs setup then parks awaiting-human before the code step, handing the worktree to a Foreground session from minute one; verify and merge still gate the exit.
+_Avoid_: foreground task, manual task, interactive task
