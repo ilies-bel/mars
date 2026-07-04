@@ -419,3 +419,7 @@ _Avoid_: progress log, task log, work log, notes field
 **Live task**:
 A task enqueued with mars task add --live: the pipeline runs setup then parks awaiting-human before the code step, handing the worktree to a Foreground session from minute one; verify and merge still gate the exit.
 _Avoid_: foreground task, manual task, interactive task
+
+**Handoff**:
+The context bundle mars attach surfaces when a Foreground session takes a parked task: the Worker's Completion report, commits ahead of the integration branch, done-criteria state, and the Progress-journal tail. Derived at attach time; never a file inside the worktree (release refuses dirty worktrees).
+_Avoid_: handover, context dump, briefing
