@@ -417,7 +417,7 @@ Append-only per-task record of mid-flight progress notes and done-criteria check
 _Avoid_: progress log, task log, work log, notes field
 
 **Live task**:
-A task enqueued with mars task add --live: the pipeline runs setup then parks awaiting-human before the code step, handing the worktree to a Foreground session from minute one; verify and merge still gate the exit.
+A task routed to a workflow whose code step has Execution mode manual: setup runs auto, the task parks awaiting-human at the manual step, and a Foreground session does the work before verify and merge gate the exit.
 _Avoid_: foreground task, manual task, interactive task
 
 **Handoff**:
