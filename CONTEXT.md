@@ -411,3 +411,7 @@ _Avoid_: verify level, check tier
 
 **Foreground session**:
 An interactive Claude Code session driven by the operator, as opposed to a Session (a Worker's headless execution instance). Identified by the CLAUDE_CODE_SESSION_ID env var that Claude Code exports to its subprocesses; captured at the mars CLI boundary as origin_session_id on the tasks and proposals it enqueues, letting deep reflect join the operator conversation with the downstream slice (enqueue, worker runs, merge).
+
+**Progress journal**:
+Append-only per-task record of mid-flight progress notes and done-criteria check-offs, written by Foreground sessions via mars task note / mars task check through the Arc write funnel (ADR-0052); read via mars task show, the UI, and the attach-time Handoff.
+_Avoid_: progress log, task log, work log, notes field
