@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { execSync } from 'node:child_process'
 
 interface UpdateCache {
@@ -41,6 +41,24 @@ export function buildContextSegment(
   else color = '\x1b[31m' // red
 
   return ` ${color}${bar} ${remainingToCompact}% left\x1b[0m`
+}
+
+/**
+ * Pure function: builds a lease prefix for the status line when the current
+ * session is running inside a Mars-leased worktree (.mars/worktrees/<id>/).
+ * Returns '' when taskId is null. Never throws.
+ */
+export function buildLeaseSegment(taskId: string | null, title: string | null): string {
+  if (!taskId) return ''
+  // Show at most the first 12 chars of the task ID (mars- prefix + 7 hex chars)
+  const shortId = taskId.length > 12 ? taskId.slice(0, 12) : taskId
+  const truncTitle = title
+    ? title.length > 30
+      ? title.slice(0, 29) + '…'
+      : title
+    : ''
+  const label = truncTitle ? `${shortId} ${truncTitle}` : shortId
+  return `⛏ ${label} · `
 }
 
 /**
@@ -131,7 +149,42 @@ export async function statuslineCommand(repo?: string): Promise<void> {
       // Can't resolve repo or can't read cache — no nudge.
     }
 
-    const line = buildStatusLine(branch, cache) + buildContextSegment(contextRemainingPct)
+    // Detect if cwd sits inside a Mars-leased worktree and, if so, query the
+    // task row for the lease segment prefix. Uses the sqlite3 CLI for a fast
+    // synchronous read without loading the heavy @libsql native addon.
+    let leaseTaskId: string | null = null
+    let leaseTitle: string | null = null
+    try {
+      const marsWorktreeSeg = `${sep}.mars${sep}worktrees${sep}`
+      const idx = cwd.indexOf(marsWorktreeSeg)
+      if (idx !== -1) {
+        const afterSeg = cwd.slice(idx + marsWorktreeSeg.length)
+        // Task ID is the first path segment after .mars/worktrees/
+        const taskId = afterSeg.split(sep)[0]
+        if (taskId) {
+          const repoRoot = cwd.slice(0, idx)
+          const marsDbPath = join(repoRoot, '.mars', 'mars.db')
+          if (existsSync(marsDbPath)) {
+            // Sanitise taskId: mars IDs are alphanumeric + hyphens only.
+            const safeId = taskId.replace(/[^a-zA-Z0-9-]/g, '')
+            const row = execSync(
+              `sqlite3 "${marsDbPath}" "SELECT id,intent,leased_at FROM tasks WHERE id='${safeId}' AND leased_at IS NOT NULL LIMIT 1"`,
+              { encoding: 'utf8', timeout: 400, stdio: ['pipe', 'pipe', 'pipe'] },
+            ).trim()
+            if (row) {
+              const parts = row.split('|')
+              leaseTaskId = parts[0] ?? null
+              leaseTitle = parts[1] ?? null
+            }
+          }
+        }
+      }
+    } catch {
+      // Lease detection failed (sqlite3 absent, DB not found, etc.) — proceed without lease segment.
+    }
+
+    const leasePfx = buildLeaseSegment(leaseTaskId, leaseTitle)
+    const line = leasePfx + buildStatusLine(branch, cache) + buildContextSegment(contextRemainingPct)
     process.stdout.write(`${line}\n`)
   } catch {
     // Last-resort safety net: print something minimal and exit 0.

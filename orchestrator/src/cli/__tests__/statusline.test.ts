@@ -4,7 +4,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
-import { buildStatusLine, buildContextSegment } from '../statusline.js'
+import { buildStatusLine, buildContextSegment, buildLeaseSegment } from '../statusline.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 // src/cli/__tests__ -> src/cli -> src -> orchestrator
@@ -112,6 +112,59 @@ describe('buildContextSegment', () => {
     expect(seg).toContain('\x1b[32m')
     // All 10 segments empty
     expect(seg).toContain('░░░░░░░░░░')
+  })
+})
+
+// ── Unit tests for the pure buildLeaseSegment function ───────────────────────
+
+describe('buildLeaseSegment', () => {
+  it('returns empty string when taskId is null', () => {
+    expect(buildLeaseSegment(null, null)).toBe('')
+  })
+
+  it('returns empty string when taskId is null even if title is provided', () => {
+    expect(buildLeaseSegment(null, 'some title')).toBe('')
+  })
+
+  it('contains the pickaxe emoji when taskId is provided', () => {
+    const seg = buildLeaseSegment('mars-abc12345', null)
+    expect(seg).toContain('⛏')
+  })
+
+  it('contains a short form of the task ID', () => {
+    const seg = buildLeaseSegment('mars-abc12345', null)
+    expect(seg).toContain('mars-abc12')
+  })
+
+  it('contains the title when provided', () => {
+    const seg = buildLeaseSegment('mars-abc12345', 'Fix the statusline bug')
+    expect(seg).toContain('Fix the statusline bug')
+  })
+
+  it('truncates titles longer than 30 chars and adds ellipsis', () => {
+    const longTitle = 'This is a very long title that should definitely be truncated here'
+    const seg = buildLeaseSegment('mars-abc12345', longTitle)
+    expect(seg).not.toContain(longTitle)
+    expect(seg).toContain('…')
+  })
+
+  it('does not truncate titles of exactly 30 chars', () => {
+    const exactTitle = '123456789012345678901234567890' // 30 chars
+    const seg = buildLeaseSegment('mars-abc12345', exactTitle)
+    expect(seg).toContain(exactTitle)
+    expect(seg).not.toContain('…')
+  })
+
+  it('ends with a separator so the rest of the status line follows cleanly', () => {
+    const seg = buildLeaseSegment('mars-abc12345', 'Fix bug')
+    expect(seg).toMatch(/·\s*$/)
+  })
+
+  it('works without a title (just shows the short ID)', () => {
+    const seg = buildLeaseSegment('mars-abc12345', null)
+    expect(seg).toContain('mars-abc12')
+    // Should still have the separator
+    expect(seg).toMatch(/·\s*$/)
   })
 })
 
@@ -262,6 +315,75 @@ describe('mars statusline CLI', () => {
       // No bar characters in output
       const line = result.stdout.trimEnd()
       expect(line.includes('█') || line.includes('░')).toBe(false)
+    } finally {
+      rmSync(tmpRepo, { recursive: true, force: true })
+    }
+  })
+
+  it('does NOT prepend lease segment when CWD is not inside a Mars worktree', () => {
+    const tmpRepo = makeRepo()
+    try {
+      const result = runCli(['statusline'], {
+        input: JSON.stringify({ workspace: { current_dir: tmpRepo } }),
+        env: { MARS_REPO: tmpRepo },
+      })
+      expect(result.status).toBe(0)
+      expect(result.stdout).not.toContain('⛏')
+    } finally {
+      rmSync(tmpRepo, { recursive: true, force: true })
+    }
+  })
+
+  it('prepends lease segment when CWD is inside a leased Mars worktree', () => {
+    // sqlite3 must be on PATH for this test — skip gracefully if it isn't.
+    const sqlite3Available = spawnSync('sqlite3', ['--version']).status === 0
+    if (!sqlite3Available) return
+
+    const tmpRepo = makeRepo()
+    const taskId = 'mars-testlease1'
+    const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
+    mkdirSync(worktreeDir, { recursive: true })
+
+    const marsDbPath = resolve(tmpRepo, '.mars', 'mars.db')
+    // Create a minimal tasks table with one leased row
+    spawnSync('sqlite3', [
+      marsDbPath,
+      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT);` +
+      `INSERT INTO tasks VALUES ('${taskId}', 'Fix the statusline lease', '2024-01-01T10:00:00Z');`,
+    ])
+
+    try {
+      const result = runCli(['statusline'], {
+        input: JSON.stringify({ workspace: { current_dir: worktreeDir } }),
+        env: { MARS_REPO: tmpRepo },
+      })
+      expect(result.status).toBe(0)
+      const line = result.stdout.trimEnd()
+      // Lease segment must be prepended
+      expect(line).toContain('⛏')
+      expect(line).toContain('mars-testl') // short ID (first 12 chars)
+      // Base "mars" label must still appear
+      expect(line).toContain('mars')
+    } finally {
+      rmSync(tmpRepo, { recursive: true, force: true })
+    }
+  })
+
+  it('exits 0 and emits "mars" when worktree path has no mars.db', () => {
+    const tmpRepo = makeRepo()
+    const taskId = 'mars-nodb1234'
+    const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
+    mkdirSync(worktreeDir, { recursive: true })
+    // No mars.db created — lease detection should fail gracefully
+
+    try {
+      const result = runCli(['statusline'], {
+        input: JSON.stringify({ workspace: { current_dir: worktreeDir } }),
+        env: { MARS_REPO: tmpRepo },
+      })
+      expect(result.status).toBe(0)
+      expect(result.stdout.trim()).toContain('mars')
+      expect(result.stdout).not.toContain('⛏')
     } finally {
       rmSync(tmpRepo, { recursive: true, force: true })
     }
