@@ -2497,7 +2497,16 @@ export const startDaemon = async (
         `task ${id} is in status '${task.status}'; attach is only valid on 'awaiting-human' tasks`,
       )
     }
-    if (task.leaseOwner !== null) {
+    // 'workflow:await-human' is the park sentinel the awaitHuman primitive
+    // writes — the workflow holding the slot FOR a human. Attach takes it
+    // over. Re-attach by the SAME owner is a no-op refresh (a session that
+    // lost track can re-print the handoff). Only a lease held by a DIFFERENT
+    // human refuses.
+    if (
+      task.leaseOwner !== null &&
+      task.leaseOwner !== 'workflow:await-human' &&
+      task.leaseOwner !== leaseOwner
+    ) {
       throw new Error(
         `task ${id} already has an active lease (owner: ${task.leaseOwner}); release it first`,
       )
