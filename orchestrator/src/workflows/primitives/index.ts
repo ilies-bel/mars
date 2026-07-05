@@ -260,6 +260,37 @@ const resolveWorktree = async (
 /** Read the run's dispatch input (never throws; `{}` when absent). */
 const input = (ctx: MarsCtx): MarsWorkflowInput => ctx.input ?? {}
 
+// ---------------------------------------------------------------------------
+// Validation recorder seam (`mars workflow validate`)
+// ---------------------------------------------------------------------------
+
+/** One primitive declaration captured during a validation dry-run. */
+export interface ValidateRecorderEntry {
+  /** The ctx.step name the primitive ran under (null outside a step). */
+  step: string | null
+  primitive: 'setupWorktree' | 'runAgent' | 'verify' | 'merge' | 'awaitHuman'
+  /** Execution mode the workflow declares for this step. */
+  mode: 'auto' | 'manual'
+  /** Step guide for manual steps; null otherwise. */
+  guide: string | null
+}
+
+/**
+ * When present on `ctx.services`, every primitive records its declaration
+ * (step name, primitive, Execution mode, Step guide) and returns an inert
+ * result instead of doing real work — a dry-run that enumerates a user-owned
+ * workflow's declared runbook with zero side effects. Threaded via services
+ * (per-run state), never an env var, so the daemon can validate one workflow
+ * while real dispatches run concurrently.
+ */
+export interface ValidateRecorder {
+  record(entry: ValidateRecorderEntry): void
+}
+
+const validationRecorder = (ctx: MarsCtx): ValidateRecorder | null =>
+  (ctx.services as { validateRecorder?: ValidateRecorder }).validateRecorder ??
+  null
+
 /**
  * The task id a primitive operates on. Precedence: explicit `opts` override →
  * `ctx.input.taskId` (dispatch fact) → `ctx.runId` (the daemon dispatches with
@@ -335,6 +366,18 @@ export const setupWorktree = async (
   ctx: MarsCtx,
   opts: SetupWorktreeOpts = {},
 ): Promise<SetupWorktreeResult> => {
+  const recorder = validationRecorder(ctx)
+  if (recorder) {
+    recorder.record({
+      step: ctx.currentStep?.name ?? null,
+      primitive: 'setupWorktree',
+      mode: 'auto',
+      guide: null,
+    })
+    const inert = { path: '(validation dry-run)', branch: 'validate' }
+    worktreeCache.set(ctx, inert)
+    return inert
+  }
   // Resolve dispatch facts: explicit opts → ctx.input → hard default. Plumbing
   // (store / trace / handle) is pulled off ctx; the author never passes it.
   const taskId = resolveTaskId(ctx, opts.taskId)
@@ -705,6 +748,16 @@ export const runAgent = async (
   ctx: MarsCtx,
   opts: RunAgentOpts = {},
 ): Promise<RunAgentResult> => {
+  const recorder = validationRecorder(ctx)
+  if (recorder) {
+    recorder.record({
+      step: ctx.currentStep?.name ?? null,
+      primitive: 'runAgent',
+      mode: opts.mode ?? 'auto',
+      guide: opts.guide ?? null,
+    })
+    return { sessionId: null }
+  }
   // Resolve dispatch facts: explicit opts → ctx.input → hard default. Plumbing
   // (store / trace / emit / handle / worktree) is pulled off ctx.
   const taskId = resolveTaskId(ctx, opts.taskId)
@@ -1081,6 +1134,16 @@ export const verify = async (
   ctx: MarsCtx,
   opts: VerifyOpts = {},
 ): Promise<VerifyResult> => {
+  const recorder = validationRecorder(ctx)
+  if (recorder) {
+    recorder.record({
+      step: ctx.currentStep?.name ?? null,
+      primitive: 'verify',
+      mode: opts.mode ?? 'auto',
+      guide: opts.guide ?? null,
+    })
+    return { verified: true }
+  }
   // Resolve dispatch facts: explicit opts → ctx.input → hard default.
   const taskId = resolveTaskId(ctx, opts.taskId)
   const kind = opts.kind ?? input(ctx).kind ?? 'task'
@@ -1601,6 +1664,20 @@ export const merge = async (
   ctx: MarsCtx,
   opts: MergeOpts = {},
 ): Promise<MergeOutput> => {
+  const recorder = validationRecorder(ctx)
+  if (recorder) {
+    recorder.record({
+      step: ctx.currentStep?.name ?? null,
+      primitive: 'merge',
+      mode: 'auto',
+      guide: null,
+    })
+    return {
+      taskId: resolveTaskId(ctx, opts.taskId),
+      success: true,
+      message: 'validation dry-run',
+    }
+  }
   // Resolve dispatch facts: explicit opts → ctx.input → hard default.
   const taskId = resolveTaskId(ctx, opts.taskId)
   const kind = opts.kind ?? input(ctx).kind ?? 'task'
@@ -2155,6 +2232,18 @@ export const awaitHuman = async (
   ctx: MarsCtx,
   opts: AwaitHumanOpts = {},
 ): Promise<void> => {
+  const recorder = validationRecorder(ctx)
+  if (recorder) {
+    // A bare awaitHuman gate IS a manual step; record and return without
+    // parking or throwing so the dry-run walks the rest of the pipeline.
+    recorder.record({
+      step: ctx.currentStep?.name ?? null,
+      primitive: 'awaitHuman',
+      mode: 'manual',
+      guide: opts.note ?? null,
+    })
+    return
+  }
   // Resolve dispatch facts: explicit opts → ctx.input → hard default.
   const taskId = resolveTaskId(ctx, opts.taskId)
   const note = opts.note ?? null

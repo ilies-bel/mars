@@ -243,6 +243,31 @@ const workflowShow: Command = {
     deps.out(`file:    ${entry.filePath ?? '(bundled fallback)'}`)
     deps.out('')
 
+    // ── Declared runbook (validation dry-run; best-effort) ────────────────
+    if (entry.filePath !== null) {
+      try {
+        const { validateWorkflow } = await import(
+          '../../workflows/validate-workflow'
+        )
+        const v = await validateWorkflow(kind)
+        deps.out('declared pipeline:')
+        if (v.ok) {
+          for (const [i, s] of v.steps.entries()) {
+            const modeLabel = s.mode === 'manual' ? 'MANUAL' : 'auto'
+            const guide = s.guide ? ` — guide: ${s.guide}` : ''
+            deps.out(
+              `  ${i + 1}. ${s.step ?? '(outside a step)'}  ${s.primitive}  [${modeLabel}]${guide}`,
+            )
+          }
+        } else {
+          for (const e of v.errors) deps.out(`  INVALID: ${e}`)
+        }
+        deps.out('')
+      } catch {
+        // Best-effort: show still renders the rest.
+      }
+    }
+
     // ── Last run steps ─────────────────────────────────────────────────────
     const runInfo = await queryLastRunSteps(deps.store, kind)
     if (runInfo === null) {
@@ -272,12 +297,69 @@ const workflowShow: Command = {
   },
 }
 
+/**
+ * Render one validation result through the deps sinks. Returns true when the
+ * workflow validated clean.
+ */
+const renderValidation = (
+  deps: Parameters<Command['run']>[1],
+  v: import('../../workflows/validate-workflow').WorkflowValidation,
+): boolean => {
+  if (!v.ok) {
+    deps.err(`✗ ${v.name} — INVALID`)
+    for (const e of v.errors) deps.err(`    ${e}`)
+    return false
+  }
+  deps.out(`✓ ${v.name} (id: ${v.workflowId ?? '?'}) — ${v.steps.length} step(s)`)
+  for (const [i, s] of v.steps.entries()) {
+    const modeLabel = s.mode === 'manual' ? 'MANUAL' : 'auto'
+    const guide = s.guide ? ` — guide: ${s.guide}` : ''
+    deps.out(
+      `    ${i + 1}. ${s.step ?? '(outside a step)'}  ${s.primitive}  [${modeLabel}]${guide}`,
+    )
+  }
+  return true
+}
+
+const workflowValidate: Command = {
+  path: 'workflow validate',
+  summary:
+    'dry-run a workflow file and render its declared runbook (steps, modes, guides); no side effects',
+  usage:
+    'usage: mars workflow validate [<name>]   (no name = all on-disk workflows)',
+  run: async (args, deps) => {
+    // Heavy import (primitives graph) — load lazily so plain CLI startup
+    // stays lean.
+    const { validateWorkflow } = await import(
+      '../../workflows/validate-workflow'
+    )
+    const requested = args.positional[0]
+    const names = requested
+      ? [requested]
+      : resolveWorkflowEntries(deps.ctx.stateDir)
+          .filter((e) => e.filePath !== null)
+          .map((e) => e.kind)
+    if (names.length === 0) {
+      deps.err(
+        'no workflow files under .mars/workflows — run `mars init` to scaffold defaults',
+      )
+      return { code: 1 }
+    }
+    let allOk = true
+    for (const name of names) {
+      const v = await validateWorkflow(name)
+      if (!renderValidation(deps, v)) allOk = false
+    }
+    return { code: allOk ? 0 : 1 }
+  },
+}
+
 const workflowGroup: Command = {
   path: 'workflow',
   summary: 'workflow subcommands',
-  usage: 'usage: mars workflow <list|show> ...',
+  usage: 'usage: mars workflow <list|show|validate> ...',
   run: (_args, deps) => {
-    deps.err('usage: mars workflow <list|show> ...')
+    deps.err('usage: mars workflow <list|show|validate> ...')
     return { code: 1 }
   },
 }
@@ -285,5 +367,6 @@ const workflowGroup: Command = {
 export const workflowCommands: readonly Command[] = [
   workflowList,
   workflowShow,
+  workflowValidate,
   workflowGroup,
 ]
