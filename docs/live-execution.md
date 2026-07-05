@@ -22,15 +22,15 @@ mars attach <id>          # takes the lease; surfaces the Handoff
 
 The **Handoff** is the context bundle Mars assembles at attach time: the prior Worker's Completion report (if any), commits ahead of the integration branch, done-criteria state, and the Progress-journal tail.
 
-### 2. Taking over an `awaitHuman`-parked task
+### 2. Taking over a parked manual step
 
-Any task whose workflow parks at a manual step lands in `awaiting-human` and appears in the action queue. If the action-queue row shows "Take the lease with `mars attach <id>`", do exactly that:
+Any workflow can declare a step `mode: 'manual'`. When the pipeline reaches it, the task parks in `awaiting-human` and its Step guide lands in the action queue. Attach the same way:
 
 ```
 mars attach <id>          # takes the lease and prints the Handoff
 ```
 
-You now own the worktree. The pipeline is suspended until you release.
+You now own the worktree; the pipeline waits for you. To preview where a pipeline will park before enqueueing, render its runbook with `mars workflow validate <name>`.
 
 ---
 
@@ -43,8 +43,8 @@ Work in the worktree normally — edit, run, test. Use these commands to keep th
 | `mars task note <id> "<text>"` | Append a progress note (surfaced in Handoff and UI). |
 | `mars task check <id> <n>` | Tick a done criterion (1-based). `--uncheck` to reverse. |
 | `git commit` | Commit as you go — **required** before any exit gate. |
-| `mars step done <id>` | Complete the current manual step; pipeline resumes. Lease follows you to the next manual step automatically. |
-| `mars release --abort <id>` | Bail out. Task routes to the failure path; worktree is retained for inspection. |
+| `mars step done <id>` | Complete the current manual step; the pipeline resumes. If a later step is also manual, the lease follows you there. |
+| `mars release --abort <id>` | Bail out without merging. The worktree is kept for inspection. |
 
 Commit frequently. The verify step's `has-diff` and `commits-ahead` checks treat uncommitted work as invisible — the same rule that binds agents binds you.
 
