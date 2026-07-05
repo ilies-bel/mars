@@ -1135,6 +1135,11 @@ Other flags:
   --blocked-by <id>        blocker task id; repeatable. Task will not dispatch
                            until every listed blocker reaches 'done'
   --author kind:name       override detected author (human|agent)
+  --workflow <name>        select the dispatch pipeline
+                           (.mars/workflows/<name>-workflow.js); mutually
+                           exclusive with --live unless --workflow live
+  --live                   sugar for --workflow live; enqueue on the live
+                           pipeline whose code step parks awaiting human input
 
 Plan flags:
   --functional <text|@file>   functional plan text
