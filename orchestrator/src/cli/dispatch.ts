@@ -13,6 +13,7 @@
  * (`test-adapter.ts`) supplies a `:memory:` store and a fake daemon instead.
  */
 
+import { resolve } from 'node:path'
 import { route, type CommandRegistry } from './registry'
 import type { CommandDeps, CommandResult } from './command'
 import type { DomainTaskStore } from '../core/store/task-store'
@@ -74,6 +75,13 @@ export const isUnknown = (
 export const makeProductionDeps = async (
   repo: string | undefined,
 ): Promise<CommandDeps> => {
+  // Propagate --repo into MARS_REPO so the store-layer cross-boundary guard
+  // recognises this as a deliberate explicit binding and does not refuse to
+  // open the database when the process CWD happens to sit inside a worktree
+  // of that same repo (the documented live-session workflow: attach → worktree
+  // CWD → mars --repo <root> show / task note / task check / step done).
+  if (repo) process.env.MARS_REPO = resolve(repo)
+
   const { resolveContext } = await import('../core/context')
   const { getDefaultDomainTaskStore } = await import('../core/store/task-store')
   const { sendRequest } = await import('../core/daemon/client')

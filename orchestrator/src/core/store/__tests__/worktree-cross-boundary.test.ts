@@ -13,7 +13,10 @@
  *   1. buildWorkerEnv() strips MARS_REPO (claude.ts) so Workers no longer
  *      inherit the repo-root binding.
  *   2. Store-layer worktree guard (task-store.ts): if process.cwd() is inside
- *      <stateDir>/worktrees/<id>/, throw before any write reaches the DB.
+ *      <stateDir>/worktrees/<id>/ AND MARS_REPO is not explicitly set, throw
+ *      before any write reaches the DB. When MARS_REPO is explicit (or --repo
+ *      has been propagated into it by makeProductionDeps), the caller
+ *      deliberately chose the target; the guard is bypassed.
  *   3. Vitest hermetic guard (task-store.ts): when VITEST is set, the resolved
  *      stateDir must be inside os.tmpdir(); an out-of-temp path throws.
  *
@@ -60,10 +63,9 @@ describe('store-layer worktree cross-boundary guard', () => {
     rmSync(parentDir, { recursive: true, force: true })
   })
 
-  it('getDefaultTaskStore() refuses when CWD is inside .mars/worktrees/<id>/ and zero rows land in the decoy parent DB', async () => {
-    // Simulate the MARS_REPO env var that the daemon used to leak into Workers
-    // before buildWorkerEnv() was fixed to strip it.
-    process.env.MARS_REPO = parentDir
+  it('getDefaultTaskStore() refuses when CWD is inside .mars/worktrees/<id>/ with NO explicit MARS_REPO (implicit CWD-derived path)', async () => {
+    // No MARS_REPO set — the stateDir is inferred from CWD, which is the
+    // implicit foot-gun the guard exists to prevent.
     cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(worktreeCwd)
 
     vi.resetModules()
@@ -80,8 +82,28 @@ describe('store-layer worktree cross-boundary guard', () => {
     expect(existsSync(decoyDb)).toBe(false)
   })
 
-  it('getDefaultDomainTaskStore() refuses when CWD is inside .mars/worktrees/<id>/', async () => {
+  it('getDefaultTaskStore() succeeds when CWD is inside .mars/worktrees/<id>/ BUT MARS_REPO is explicitly set (--repo / live-session use case)', async () => {
+    // Explicit MARS_REPO = the caller deliberately chose the target repo.
+    // This is the live-session pattern: attach → worktree CWD →
+    // mars --repo <root> show / task note / task check / step done.
+    // makeProductionDeps() writes --repo into MARS_REPO before accessing
+    // the store; here we do the same directly.
     process.env.MARS_REPO = parentDir
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(worktreeCwd)
+
+    vi.resetModules()
+    const { getDefaultTaskStore, __resetDefaultTaskStoreForTests } = await import(
+      '../task-store'
+    )
+    __resetDefaultTaskStoreForTests()
+
+    // Should not throw — explicit binding is honoured.
+    const store = await getDefaultTaskStore()
+    expect(store).toBeDefined()
+  })
+
+  it('getDefaultDomainTaskStore() refuses when CWD is inside .mars/worktrees/<id>/ with NO explicit MARS_REPO', async () => {
+    // No MARS_REPO — implicit CWD-derived path → guard fires.
     cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(worktreeCwd)
 
     vi.resetModules()
@@ -92,6 +114,19 @@ describe('store-layer worktree cross-boundary guard', () => {
     )
 
     expect(existsSync(decoyDb)).toBe(false)
+  })
+
+  it('getDefaultDomainTaskStore() succeeds when CWD is inside .mars/worktrees/<id>/ BUT MARS_REPO is explicitly set', async () => {
+    // Explicit MARS_REPO — caller chose the target deliberately; guard is bypassed.
+    process.env.MARS_REPO = parentDir
+    cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(worktreeCwd)
+
+    vi.resetModules()
+    const { getDefaultDomainTaskStore } = await import('../task-store')
+
+    // Should not throw.
+    const store = getDefaultDomainTaskStore()
+    expect(store).toBeDefined()
   })
 
   it('createTaskStore() is unguarded and works from a worktree CWD (escape hatch for hermetic test stores)', async () => {

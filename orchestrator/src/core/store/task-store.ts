@@ -508,10 +508,12 @@ export const getDefaultTaskStore = async (): Promise<DomainTaskStore> => {
 
   if (stateDir !== null) {
     // ── Guard 1: worktree cross-boundary write prevention ──────────────────
-    // Only fires when CWD is inside THIS stateDir's worktrees/ — not when
-    // MARS_REPO is set to a completely different (e.g. temp) directory whose
-    // worktrees/ subtree has no overlap with the actual CWD.
-    if (cwd.startsWith(stateDir + sep + 'worktrees' + sep)) {
+    // Only fires when stateDir was INFERRED from CWD (i.e. MARS_REPO is not
+    // explicitly set). When MARS_REPO is set — or when --repo was propagated
+    // into MARS_REPO by makeProductionDeps() — the caller deliberately chose
+    // the target repo and the guard must not block them. The guard is a
+    // foot-gun protector for implicit CWD resolution, not an absolute veto.
+    if (!process.env.MARS_REPO && cwd.startsWith(stateDir + sep + 'worktrees' + sep)) {
       throw new Error(
         `[mars] getDefaultTaskStore() refused: process CWD is inside a worktree ` +
           `(${cwd}). This would write to the PARENT production database at ` +
@@ -548,17 +550,25 @@ export const getDefaultTaskStore = async (): Promise<DomainTaskStore> => {
  *
  * Applies the same worktree cross-boundary guard as {@link getDefaultTaskStore}
  * to prevent dispatched Workers from writing to the parent production database.
+ * The guard is skipped when `MARS_REPO` is explicitly set (or has been set by
+ * `makeProductionDeps()` from a `--repo` flag) — explicit bindings are
+ * intentional and must not be blocked.
  */
 export const getDefaultDomainTaskStore = (): DomainTaskStore => {
   const cwd = process.cwd()
-  const stateDir = computeStateDirForGuard()
-  if (stateDir !== null && cwd.startsWith(stateDir + sep + 'worktrees' + sep)) {
-    throw new Error(
-      `[mars] getDefaultDomainTaskStore() refused: process CWD is inside a worktree ` +
-        `(${cwd}). This would write to the PARENT production database at ` +
-        `${stateDir}/mars.db. ` +
-        `Use createTaskStore() with an isolated client, or inject the store via DI.`,
-    )
+  // Guard only fires for the implicit/CWD-inferred path. An explicit MARS_REPO
+  // (set directly or propagated from --repo by makeProductionDeps) signals that
+  // the caller deliberately chose the target repo; honor that and skip the guard.
+  if (!process.env.MARS_REPO) {
+    const stateDir = computeStateDirForGuard()
+    if (stateDir !== null && cwd.startsWith(stateDir + sep + 'worktrees' + sep)) {
+      throw new Error(
+        `[mars] getDefaultDomainTaskStore() refused: process CWD is inside a worktree ` +
+          `(${cwd}). This would write to the PARENT production database at ` +
+          `${stateDir}/mars.db. ` +
+          `Use createTaskStore() with an isolated client, or inject the store via DI.`,
+      )
+    }
   }
   return createTaskStore(resolveQueueClient())
 }
