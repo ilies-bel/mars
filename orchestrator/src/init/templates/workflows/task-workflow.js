@@ -1,4 +1,4 @@
-// @mars-workflow-template:v3
+// @mars-workflow-template:v4
 //
 // task-workflow.js — the default end-to-end task pipeline.
 //
@@ -48,17 +48,24 @@ export default defineWorkflow({
     // verify → scope-aware typecheck → tests → lint. Throws on any failure.
     await ctx.step('verify', () => verify(ctx))
 
-    // ── Human-in-the-loop gate (optional) ────────────────────────────────
-    // Uncomment awaitHuman in the import above and add a step here to pause
-    // the pipeline for QA or iterative work before the branch merges.
-    // The task parks in 'awaiting-human', raises an action-queue row, and
-    // suspends until you run `mars release <task-id>`. After release the
-    // pipeline re-enters at the NEXT step (merge) — no re-park, no
-    // double-notify, even after a daemon restart.
+    // ── Manual steps (optional) ──────────────────────────────────────────
+    // Every step declares WHO executes it: auto (an agent — the default) or
+    // manual (you, in your own session). A manual step parks the task
+    // 'awaiting-human' with its Step guide; `mars attach <id>` takes the
+    // lease, `mars step done <id>` completes the step and the pipeline
+    // continues (re-parking at the next manual step re-leases you
+    // automatically). Two ways to compose one:
     //
-    //   await ctx.step('await-human', () => awaitHuman(ctx, {
-    //     note: 'QA your changes in the worktree, then run `mars release <id>`',
-    //   }))
+    //   - flip a primitive:  verify(ctx, { mode: 'manual', guide: 'QA it' })
+    //   - or add a gate:     await ctx.step('qa', () => awaitHuman(ctx, {
+    //                          note: 'QA your changes, then mars step done',
+    //                        }))
+    //
+    // For fully human-driven coding, route tasks to the live workflow
+    // instead: `mars task add --live "<prompt>"` (see live-workflow.js).
+    // After editing this file, check it: `mars workflow validate task` —
+    // edits go live on the next dispatch, and a broken file fails the task
+    // rather than silently running a different pipeline.
 
     // merge → serialized fast-forward into the integration branch (Vega on conflict).
     return await ctx.step('merge', () => merge(ctx))

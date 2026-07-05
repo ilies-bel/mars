@@ -60,12 +60,15 @@ const userWorkflowFiles = (stateDir: string): string[] => {
   return readdirSync(dir).filter((n) => n.endsWith('.js'))
 }
 
-type WorkflowSource = 'bundled' | 'scaffolded' | 'user-modified' | 'custom'
+// 'missing' = a bundled template exists but no on-disk file does. There is NO
+// dispatch fallback (ADR-0067): a task routed to a missing workflow fails, so
+// the honest remedy is scaffolding the file (`mars update`).
+type WorkflowSource = 'missing' | 'scaffolded' | 'user-modified' | 'custom'
 
 interface WorkflowEntry {
   kind: string
   source: WorkflowSource
-  /** Absolute path to the active file, or null when the bundled fallback is used. */
+  /** Absolute path to the active file, or null when no file is on disk. */
   filePath: string | null
 }
 
@@ -101,10 +104,11 @@ const resolveWorkflowEntries = (stateDir: string): WorkflowEntry[] => {
     entries.push({ kind, source, filePath: diskPath })
   }
 
-  // Bundled kinds with no on-disk file → "bundled" (fallback active).
+  // Bundled kinds with no on-disk file → 'missing': dispatch for this name
+  // hard-fails until the file is scaffolded.
   for (const [kind, _templatePath] of bundled) {
     if (!seen.has(kind)) {
-      entries.push({ kind, source: 'bundled', filePath: null })
+      entries.push({ kind, source: 'missing', filePath: null })
     }
   }
 
@@ -206,7 +210,7 @@ const workflowList: Command = {
     deps.out('-'.repeat(header.length + 10))
 
     for (const entry of entries) {
-      const fileDisplay = entry.filePath ?? '(bundled)'
+      const fileDisplay = entry.filePath ?? '(none — run `mars update` to scaffold)'
       const lastRun = lastRuns.get(entry.kind) ?? '—'
       deps.out(
         `${entry.kind.padEnd(kindW)}  ${entry.source.padEnd(srcW)}  ${fileDisplay.padEnd(30)}  ${lastRun}`,
@@ -240,7 +244,9 @@ const workflowShow: Command = {
     // ── Active file ────────────────────────────────────────────────────────
     deps.out(`kind:    ${entry.kind}`)
     deps.out(`source:  ${entry.source}`)
-    deps.out(`file:    ${entry.filePath ?? '(bundled fallback)'}`)
+    deps.out(
+      `file:    ${entry.filePath ?? '(none — dispatch for this name fails until scaffolded; run `mars update`)'}`,
+    )
     deps.out('')
 
     // ── Declared runbook (validation dry-run; best-effort) ────────────────

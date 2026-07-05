@@ -84,26 +84,28 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('mars workflow list — no user files', () => {
-  it('lists all bundled kinds with source=bundled when no .mars/workflows/ exists', async () => {
+  it('lists all bundled kinds with source=missing when no .mars/workflows/ exists', async () => {
     const opts = makeOpts(repoRoot)
     const r = await runCommandInProcess(['workflow', 'list'], opts)
     expect(r.code).toBe(0)
 
-    // Should include the bundled kinds (task, fix, diagnose, write at minimum).
+    // Should include the bundled kinds (task, fix, diagnose, write at minimum)
+    // labelled 'missing' — there is NO dispatch fallback (ADR-0067), so a kind
+    // with no on-disk file would hard-fail at dispatch.
     const output = r.out.join('\n')
-    expect(output).toContain('bundled')
+    expect(output).toContain('missing')
     // All bundled kinds should appear.
     expect(output).toContain('task')
     expect(output).toContain('fix')
     expect(output).toContain('diagnose')
   })
 
-  it('shows (bundled) in the file column for bundled-only entries', async () => {
+  it('points at the scaffold remedy in the file column for missing entries', async () => {
     const opts = makeOpts(repoRoot)
     const r = await runCommandInProcess(['workflow', 'list'], opts)
     expect(r.code).toBe(0)
     const output = r.out.join('\n')
-    expect(output).toContain('(bundled)')
+    expect(output).toContain('run `mars update` to scaffold')
   })
 })
 
@@ -225,13 +227,13 @@ describe('mars workflow show — parameter surface', () => {
     }
   })
 
-  it('labels the active source and file path for a bundled kind', async () => {
+  it('labels a missing kind honestly (no fallback; dispatch would fail)', async () => {
     const opts = makeOpts(repoRoot)
     const r = await runCommandInProcess(['workflow', 'show', 'task'], opts)
     expect(r.code).toBe(0)
     const output = r.out.join('\n')
-    expect(output).toContain('bundled')
-    expect(output).toContain('(bundled fallback)')
+    expect(output).toContain('missing')
+    expect(output).toContain('dispatch for this name fails until scaffolded')
   })
 
   it('shows the on-disk file path when a user file is present', async () => {
