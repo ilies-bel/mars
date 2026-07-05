@@ -5,6 +5,7 @@ import { ensureProcessedOnceSchema } from '../../bus/processed-once.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks.js'
 import { getTask } from '../../core/queue.js'
+import { ensureGateMetaMonitorSchema } from '../../core/lib/gate-meta-monitor.js'
 
 /**
  * Durable outbox subscriber that enforces exactly-one recovery per task
@@ -21,6 +22,15 @@ import { getTask } from '../../core/queue.js'
  *    actionQueue item; no second recovery is spawned (ADR-0040 leaf rule).
  *  - Replay of the same event id (cursor not yet advanced) hits
  *    `alreadyProcessed` inside `drainWithStall` and skips the handler.
+ *
+ * Gate meta-monitor suppression (draft proposal acd01d23): the verdict-tracking
+ * and suppression short-circuit live one layer down, inside
+ * {@link handleTaskFailureWithFixTask} — the shared chokepoint that both this
+ * durable subscriber AND the inline verify-primitive dispatch funnel through.
+ * Placing the gate there (not here) makes suppression authoritative regardless
+ * of which path fires first: a suppressed verify-gate verdict marks its origin
+ * `failed` (restartable) and spawns NO recovery, so the one recovery slot is
+ * never consumed. This subscriber only ensures the monitor's schema exists.
  */
 export const RECOVERY_SPAWN_SUBSCRIBER = 'recovery-spawner'
 
@@ -31,6 +41,7 @@ export const RECOVERY_SPAWN_SUBSCRIBER = 'recovery-spawner'
  */
 export async function ensureRecoverySpawner(client: Client): Promise<void> {
   await ensureProcessedOnceSchema(client)
+  await ensureGateMetaMonitorSchema(client)
   await registerSubscriber(client, RECOVERY_SPAWN_SUBSCRIBER, { replay: false })
 }
 
@@ -66,6 +77,9 @@ export async function drainRecoverySpawner(
       const task = await getTask(taskId)
       if (!task) return false
 
+      // Gate meta-monitor suppression lives INSIDE handleTaskFailureWithFixTask
+      // (the shared chokepoint) so it applies to the inline verify dispatch too,
+      // which fires before this subscriber does — see the module docblock.
       await handleTaskFailureWithFixTask({
         taskId,
         // Use the coarse-grained failed phase recorded on the task row as the

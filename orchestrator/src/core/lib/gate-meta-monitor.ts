@@ -1,5 +1,16 @@
-import type { Client } from '@libsql/client'
+import type { InStatement, ResultSet } from '@libsql/client'
 import { raiseActionQueueItem } from './action-queue'
+
+/**
+ * Minimal write/read seam the monitor needs. Satisfied structurally by both a
+ * raw libsql {@link import('@libsql/client').Client} (the subscriber passes one
+ * to {@link ensureGateMetaMonitorSchema}) and a `DomainTaskStore` (the failure
+ * chokepoint threads one in), so the monitor stays decoupled from which seam
+ * calls it. Only `.execute()` is used — the one method both expose identically.
+ */
+export interface MonitorDb {
+  execute(stmt: InStatement): Promise<ResultSet>
+}
 
 /**
  * Verify-gate meta-monitor (incident 2026-07-03T08:15Z, draft proposal
@@ -71,7 +82,7 @@ let schemaEnsured = false
  * on every subscriber drain.
  */
 export const ensureGateMetaMonitorSchema = async (
-  client: Client,
+  client: MonitorDb,
 ): Promise<void> => {
   if (schemaEnsured) return
   await client.execute(MONITOR_STATE_DDL)
@@ -93,7 +104,7 @@ interface MonitorRow {
   last_task_id: string | null
 }
 
-const readMonitorRow = async (client: Client): Promise<MonitorRow> => {
+const readMonitorRow = async (client: MonitorDb): Promise<MonitorRow> => {
   const r = await client.execute({
     sql: `SELECT current_verdict, streak_count, last_task_id
             FROM gate_verdict_monitor WHERE id = 1`,
@@ -106,7 +117,7 @@ const readMonitorRow = async (client: Client): Promise<MonitorRow> => {
 }
 
 const writeMonitorRow = async (
-  client: Client,
+  client: MonitorDb,
   row: MonitorRow,
 ): Promise<void> => {
   await client.execute({
@@ -156,7 +167,7 @@ export interface RecordGateVerdictResult {
  *          the verdict is (now) suppressed.
  */
 export const recordGateVerdict = async (
-  client: Client,
+  client: MonitorDb,
   taskId: string,
   verdict: string,
 ): Promise<RecordGateVerdictResult> => {
@@ -205,7 +216,7 @@ export const recordGateVerdict = async (
  * seam consults before deciding whether to spawn a recovery.
  */
 export const isVerdictSuppressed = async (
-  client: Client,
+  client: MonitorDb,
   verdict: string,
 ): Promise<boolean> => {
   await ensureGateMetaMonitorSchema(client)
@@ -217,7 +228,7 @@ export const isVerdictSuppressed = async (
 }
 
 const markVerdictSuppressed = async (
-  client: Client,
+  client: MonitorDb,
   verdict: string,
 ): Promise<void> => {
   await client.execute({
@@ -234,7 +245,7 @@ const markVerdictSuppressed = async (
  * removed.
  */
 export const clearVerdictSuppression = async (
-  client: Client,
+  client: MonitorDb,
   verdict: string,
 ): Promise<boolean> => {
   await ensureGateMetaMonitorSchema(client)

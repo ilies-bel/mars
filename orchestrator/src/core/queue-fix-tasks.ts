@@ -15,6 +15,10 @@ import {
 } from './queue-retry'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
 import {
+  isVerdictSuppressed,
+  recordGateVerdict,
+} from './lib/gate-meta-monitor'
+import {
   Arc,
   type UpsertFixTaskInput,
   type UpsertFixTaskResult,
@@ -32,6 +36,16 @@ export type {
 export const RECOVERY_FAILED_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 export const UNKNOWN_FAILURE_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 export const FIX_FAIL_LOOP_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
+
+/**
+ * A verify-gate failing step is one whose name begins with `verify:` — the
+ * shape the verify primitive stamps on the failing step (`verify:<gateName>`).
+ * Only these feed the gate meta-monitor: setup/code/merge failures and infra
+ * kills are per-task, never gate-wide, so a fleet-wide identical verdict there
+ * is not the "starved gate" signature the monitor guards against.
+ */
+const isVerifyGateFailingStep = (failingStep: string): boolean =>
+  failingStep.startsWith('verify:')
 
 const DEFAULT_MAX_FIX_ATTEMPTS = 2
 
@@ -220,6 +234,7 @@ export interface HandleTaskFailureViaTaskResult {
     | 'failed'
     | 'escalated'
     | 'fix-fail-loop'
+    | 'gate-suppressed'
     | 'noop'
   fixTaskId?: string
   failureSignature?: string
@@ -380,6 +395,51 @@ export const handleTaskFailureWithFixTask = async (
       failureSignature,
       retryCount: task.retryCount,
       actionQueueItemId,
+    }
+  }
+
+  // Verify-gate meta-monitor (draft proposal acd01d23). Reached only for a
+  // NON-recovery origin task (the recovery branch above returned). A verify-gate
+  // failure is one whose failing step begins with `verify:` — the shape the
+  // verify primitive stamps. Feed its verdict (the computed failureSignature) to
+  // the monitor, then suppress recovery when the same verdict has failed K
+  // consecutive DIFFERENT tasks.
+  //
+  // Suppression short-circuits BEFORE any fix-task insertion, so a suppressed
+  // failure consumes ZERO of the origin's one recovery slot: the origin is
+  // marked `failed` (restartable — an operator `mars restart`s it once the gate
+  // is fixed) rather than `blocked` behind a spawned-and-doomed recovery. The
+  // one-recovery-per-origin invariant (ADR-0040/0061) is untouched: this is
+  // failure classification, not a retry knob. Recording is best-effort — a
+  // monitor DB hiccup must never break the real recovery path.
+  if (isVerifyGateFailingStep(input.failingStep)) {
+    try {
+      await recordGateVerdict(s, input.taskId, failureSignature)
+      if (await isVerdictSuppressed(s, failureSignature)) {
+        await updateTask(
+          input.taskId,
+          {
+            status: 'failed',
+            error: truncatedError,
+            failedPhase: 'verify',
+            failureReason: `gate-suppressed:${failureSignature}`,
+            failureSignature,
+            failureReasonCode: failureSignature,
+          },
+          s,
+        )
+        return {
+          outcome: 'gate-suppressed',
+          failureSignature,
+          retryCount: task.retryCount,
+        }
+      }
+    } catch (monitorErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[gate-meta-monitor] task ${input.taskId} verdict tracking errored (non-fatal):`,
+        monitorErr,
+      )
     }
   }
 
