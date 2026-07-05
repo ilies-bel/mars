@@ -968,3 +968,158 @@ export const resolveOriginIdForTaskOrSelf = async (
   const row = r.rows[0] as unknown as { origin_id: string | null }
   return row.origin_id ?? taskId
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session-scoped arc loading
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One workflow_step_runs record for a task in the session.
+ * Provides per-step retry counts, durations, and error summaries for
+ * harness step-fitness analysis.
+ */
+export interface SessionStepRun {
+  taskId: string
+  stepName: string
+  status: string
+  /** Number of attempts (>1 indicates retried steps). */
+  attempt: number
+  startedAtMs: number
+  finishedAtMs: number | null
+  /** Wall-clock duration in ms; null when step is still running. */
+  durationMs: number | null
+  /** Orchestrator-level error message when the step failed. */
+  errorSummary: string | null
+  /** Human-readable outcome summary. */
+  summary: string | null
+}
+
+/**
+ * All arcs that originated from a single Foreground operator session,
+ * together with workflow step records for harness step-fitness analysis.
+ */
+export interface SessionArcsResult {
+  sessionId: string
+  originIds: string[]
+  arcs: DeepReflectArc[]
+  /** workflow_step_runs rows for every task in the session. May be empty on
+   * pre-migration DBs where the table does not yet exist. */
+  stepRuns: SessionStepRun[]
+}
+
+/** UUID v4 pattern — session IDs are RFC-4122 UUIDs. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Resolve a Foreground session UUID from an input that may be:
+ * - A UUID  → returned as-is.
+ * - A task or origin ID → look up `origin_session_id` from the tasks table.
+ *
+ * Returns null when no session ID can be resolved (unknown task, missing
+ * column, or task enqueued outside a Claude Code session).
+ */
+export const resolveSessionId = async (input: string): Promise<string | null> => {
+  if (UUID_RE.test(input)) return input
+  const store = await getDefaultTaskStore()
+  try {
+    const r = await store.query({
+      sql: `SELECT origin_session_id
+              FROM tasks
+             WHERE COALESCE(origin_id, id) = ? OR id = ?
+             ORDER BY created_at ASC
+             LIMIT 1`,
+      args: [input, input],
+    })
+    if (r.rows.length === 0) return null
+    const row = r.rows[0] as unknown as { origin_session_id: string | null }
+    return row.origin_session_id ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Load all arcs that originated from a Foreground session, together with
+ * workflow_step_runs data for harness step-fitness analysis.
+ *
+ * Returns null when no tasks are found for the session.
+ */
+export const loadSessionArcs = async (
+  sessionId: string,
+  opts: { homeDir?: string; repoRoot?: string } = {},
+): Promise<SessionArcsResult | null> => {
+  const store = await getDefaultTaskStore()
+
+  // Find all distinct arc origin IDs for this session.
+  let originIds: string[]
+  try {
+    const r = await store.query({
+      sql: `SELECT DISTINCT COALESCE(origin_id, id) AS origin_id
+              FROM tasks
+             WHERE origin_session_id = ?
+             ORDER BY created_at ASC`,
+      args: [sessionId],
+    })
+    originIds = r.rows.map((row) => (row as unknown as { origin_id: string }).origin_id)
+  } catch {
+    return null
+  }
+
+  if (originIds.length === 0) return null
+
+  // Load each arc (reuses the full arc loader including step timeline, transcripts, etc.)
+  const arcs: DeepReflectArc[] = []
+  for (const originId of originIds) {
+    const arc = await loadDeepReflectArc(originId, opts)
+    if (arc) arcs.push(arc)
+  }
+
+  if (arcs.length === 0) return null
+
+  // Collect all task IDs across arcs for the workflow_step_runs query.
+  const allTaskIds = arcs.flatMap((arc) => arc.tasks.map((t) => t.taskId))
+
+  // Fetch workflow_step_runs for step-fitness analysis.
+  const stepRuns: SessionStepRun[] = []
+  if (allTaskIds.length > 0) {
+    try {
+      const placeholders = allTaskIds.map(() => '?').join(', ')
+      const r = await store.query({
+        sql: `SELECT run_id, step_name, status, attempt, started_at, finished_at, error_summary, summary
+                FROM workflow_step_runs
+               WHERE run_id IN (${placeholders})
+               ORDER BY started_at ASC`,
+        args: allTaskIds,
+      })
+      for (const row of r.rows) {
+        const r0 = row as unknown as {
+          run_id: string
+          step_name: string
+          status: string
+          attempt: number
+          started_at: number
+          finished_at: number | null
+          error_summary: string | null
+          summary: string | null
+        }
+        const startedAtMs = Number(r0.started_at)
+        const finishedAtMs = r0.finished_at !== null ? Number(r0.finished_at) : null
+        stepRuns.push({
+          taskId: r0.run_id,
+          stepName: r0.step_name,
+          status: r0.status,
+          attempt: Number(r0.attempt ?? 1),
+          startedAtMs,
+          finishedAtMs,
+          durationMs: finishedAtMs !== null ? finishedAtMs - startedAtMs : null,
+          errorSummary: r0.error_summary ?? null,
+          summary: r0.summary ?? null,
+        })
+      }
+    } catch {
+      // workflow_step_runs table may not exist on pre-migration DBs — proceed without it.
+    }
+  }
+
+  return { sessionId, originIds, arcs, stepRuns }
+}

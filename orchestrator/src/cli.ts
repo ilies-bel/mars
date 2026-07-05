@@ -263,6 +263,13 @@ Commands:
                                 inserted as drafts — never auto-run. Disable
                                 signal capture entirely with the env var
                                 MARS_REFLECT_DISABLED=1.
+  reflect session [<sessionId>|<originId>]
+                                session-scoped harness fitness reflection: reads
+                                workflow step records and usage signals for all
+                                arcs from a Foreground operator session, then
+                                lands step-fitness and resource-spend verdicts as
+                                draft proposals. Opt-in, operator-run (ADR-0067).
+                                Disabled by MARS_REFLECT_DISABLED=1.
   arc list [--limit N] [--json] [--with-transcript-only]
                                 list task arcs grouped by COALESCE(origin_id, id).
                                 Each arc covers an origin task plus any recovery
@@ -884,6 +891,43 @@ Subcommands:
 
       Disabled by MARS_REFLECT_DISABLED=1. Model defaults to opus; override
       with MARS_DEEP_REFLECT_MODEL.`,
+  'reflect session': `mars reflect session [<sessionId>|<originId>]
+
+Session-scoped harness fitness reflection (ADR-0067 closing ritual).
+
+Joins the operator's Foreground session to its downstream task arcs via
+origin_session_id, then evaluates two dimensions and lands every finding
+as a draft proposal (source='reflection') — nothing is auto-applied.
+
+1. STEP FITNESS: reads workflow step records (workflow_step_runs) to
+   judge whether each step type (setup / code / verify / merge) was
+   appropriately sized. Findings are phrased as concrete edits to the
+   workflow file (e.g. orchestrator/src/workflows/implement-workflow.ts).
+   Each verdict ends with "Run mars workflow validate <name> to check."
+
+2. RESOURCE SPEND: reads per-arc usage signals. Where token burn is
+   linked to a known pattern, names the remedy:
+     - repeated file reads   → add the codegraph MCP tool
+     - wide context gathering → wire the progressive-discovery skill
+     - low cache-hit ratio    → restructure prompt / context ordering
+     - CPU-heavy verify steps → parallelise or scope tests in the workflow
+
+Positional argument:
+  <sessionId>   RFC-4122 UUID of a Foreground Claude Code session
+                (CLAUDE_CODE_SESSION_ID). All arcs whose origin task
+                carries this session ID are included.
+  <originId>    A task or arc origin ID; the session is resolved
+                from the task's origin_session_id and all sibling
+                arcs from that session are included.
+
+When no argument is given, CLAUDE_CODE_SESSION_ID is used as the session.
+
+Output:
+  Draft proposals viewable with 'mars proposal list --source reflection'.
+  Full report: .mars/deep-reflections/session-<id8>-<iso>.json
+
+Disabled by MARS_REFLECT_DISABLED=1.
+Model defaults to opus; override with MARS_DEEP_REFLECT_MODEL.`,
   reflect: `mars reflect [--since <iso>] [--limit <n>]
 
 Synthesize draft task suggestions from recent completed tasks. Reads

@@ -359,8 +359,139 @@ const arcGroup: Command = {
   },
 }
 
+const sessionReflect: Command = {
+  path: 'reflect session',
+  summary: 'session-scoped reflection: step fitness and resource spend',
+  usage: 'usage: mars reflect session [<sessionId>|<originId>]',
+  run: async (args, deps) => {
+    if (process.env.MARS_REFLECT_DISABLED === '1') {
+      deps.out(REFLECT_DISABLED_MSG)
+      return { code: 0 }
+    }
+
+    // Resolve the session to reflect on.
+    // Priority: explicit arg → CLAUDE_CODE_SESSION_ID env var.
+    const inputArg = args.positional.find((a) => !a.startsWith('--')) ?? null
+    const envSessionId = process.env.CLAUDE_CODE_SESSION_ID?.trim() ?? ''
+
+    let rawInput: string
+    if (inputArg) {
+      rawInput = inputArg
+    } else if (envSessionId) {
+      rawInput = envSessionId
+    } else {
+      deps.err(
+        'no session to reflect on — pass a <sessionId> or <originId>, or run inside a Claude Code session (CLAUDE_CODE_SESSION_ID must be set)',
+      )
+      return { code: 1 }
+    }
+
+    const { resolveSessionId, loadSessionArcs } = await import(
+      '../../core/lib/deep-reflect-query'
+    )
+    const { runSessionReflector } = await import('../../core/lib/deep-reflector')
+    const { applyVerdicts } = await import('../../core/lib/reflector')
+
+    const sessionId = await resolveSessionId(rawInput)
+    if (!sessionId) {
+      deps.err(
+        `no session found for '${rawInput}' — the task may not have been enqueued from a Claude Code session, or the ID is unknown`,
+      )
+      return { code: 1 }
+    }
+
+    const sessionResult = await loadSessionArcs(sessionId)
+    if (!sessionResult) {
+      deps.err(
+        `no tasks found for session ${sessionId} — nothing to reflect on`,
+      )
+      return { code: 1 }
+    }
+
+    const { arcs } = sessionResult
+    const totalWeightedTokens = arcs.reduce(
+      (s, a) => s + a.totals.totalWeightedTokens,
+      0,
+    )
+    deps.out(
+      `reflecting on session ${sessionId}: ${arcs.length} arc(s), ${totalWeightedTokens.toFixed(0)} weighted tokens total`,
+    )
+    for (const arc of arcs) {
+      const statusMixStr = Object.entries(arc.statusMix)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(', ')
+      deps.out(
+        `  arc ${arc.originId}: ${arc.taskCount} task(s) [${statusMixStr}], ${arc.totals.totalWeightedTokens.toFixed(0)} weighted tokens`,
+      )
+    }
+    if (sessionResult.stepRuns.length > 0) {
+      const retriedSteps = sessionResult.stepRuns.filter((s) => s.attempt > 1)
+      if (retriedSteps.length > 0) {
+        deps.out(
+          `  ${retriedSteps.length} retried step(s): ${retriedSteps.map((s) => `${s.stepName}(attempt=${s.attempt})`).join(', ')}`,
+        )
+      }
+    }
+
+    const result = await runSessionReflector(sessionResult)
+    const report = result.report
+
+    const sourceTaskId = await deps.store.insertReflectionTask(arcs.length)
+    const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
+
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    const { resolve: resolvePath } = await import('node:path')
+    const { getStateDir } = await import('../../core/context')
+    const outDir = resolvePath(getStateDir(), 'deep-reflections')
+    await mkdir(outDir, { recursive: true })
+    const isoStamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const outPath = resolvePath(
+      outDir,
+      `session-${sessionId.slice(0, 8)}-${isoStamp}.json`,
+    )
+    const fullDoc = {
+      sessionId,
+      recordedAt: new Date().toISOString(),
+      arcCount: arcs.length,
+      report,
+      sourceTaskId,
+      verdictResult: {
+        saved: verdictResult.saved,
+        absorbed: verdictResult.absorbed,
+        dropped: verdictResult.dropped,
+      },
+      rawOutput: result.rawOutput,
+    }
+    await writeFile(outPath, JSON.stringify(fullDoc, null, 2), 'utf8')
+
+    deps.out('')
+    if (report.summary) deps.out(`Summary: ${report.summary}`)
+    if (report.rootCause) deps.out(`Root cause: ${report.rootCause}`)
+    if (report.thrashingPatterns.length > 0) {
+      deps.out('Harness patterns:')
+      for (const p of report.thrashingPatterns) {
+        deps.out(`  [${p.occurrences}×] ${p.pattern}`)
+      }
+    }
+    deps.out(
+      `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped`,
+    )
+    deps.out(`Full report: ${outPath}`)
+    if (verdictResult.saved > 0) {
+      deps.out(
+        `Draft proposals created. Review with 'mars proposal list --source reflection' and promote with 'mars proposal promote <id>'.`,
+      )
+    }
+    if (result.exitCode !== 0) {
+      deps.err(`session reflector exit code ${result.exitCode}`)
+    }
+    return { code: 0 }
+  },
+}
+
 export const reflectCommands: readonly Command[] = [
   reflect,
+  sessionReflect,
   arcList,
   arcPurge,
   arcReflect,

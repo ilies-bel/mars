@@ -7,7 +7,7 @@ import {
   type SuggestionVerdict,
   type VerdictedSuggestion,
 } from './reflector'
-import type { DeepReflectArc } from './deep-reflect-query'
+import type { DeepReflectArc, SessionArcsResult } from './deep-reflect-query'
 import type { ClaudeEvent } from './claude-stream'
 import { digestArc } from './arc-digest'
 
@@ -694,6 +694,203 @@ export const runDeepReflectorArc = async (
   const r = await runClaudeCode({
     cwd: getRepoRoot(),
     prompt: buildArcPrompt(arc),
+    timeoutMs,
+    model,
+  })
+  const text = collectAssistantText(r.conversation) || r.stdout
+  const report = parseDeepReflectionReport(text)
+  return {
+    report: report ?? emptyReport(),
+    rawOutput: text,
+    exitCode: r.exitCode,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Session-scoped reflection
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SYNTHESIS_INSTRUCTIONS_SESSION = `You are a harness-fitness analyst for the Mars task orchestrator.
+You are given a summary of ALL arcs that ran during a single operator session,
+together with their workflow step records (setup/code/verify/merge durations,
+retry counts, error summaries) and per-arc token spend.
+
+Your job is to assess TWO things and produce actionable verdicts:
+
+1. STEP FITNESS — for each workflow step type (setup, code, verify, merge):
+   - Was the step appropriately sized? (too slow → restructure; missing retry
+     → add retry; unnecessary overhead → remove or slim down)
+   - Are any steps being retried repeatedly? (attempt > 1 is a red flag)
+   - Are verify steps failing often? (thrashing CPU on tests → prescribe
+     parallelisation or scope reduction in the workflow file)
+   - Each step-fitness verdict MUST name the concrete workflow file to edit
+     (e.g. "edit orchestrator/src/workflows/implement-workflow.ts, step 'verify',
+     to add a --passWithNoTests flag") and end with "Run mars workflow validate
+     <workflow-name> to check the edit."
+
+2. RESOURCE SPEND — for token and CPU patterns:
+   - Identify which arcs spent the most tokens and why.
+   - If high input-token spend is due to repeated file reads, name the remedy:
+     "Add the codegraph MCP tool so the coder can call codegraph query instead
+     of reading multiple files."
+   - If token spend is high due to wide context gathering, name the remedy:
+     "Wire the progressive-discovery skill (context-gathering-brief.ts) so the
+     coder starts with targeted lookups before loading full files."
+   - If cache-hit ratio is low, suggest prompt restructuring.
+   - For CPU-bound verify steps (long durationMs), suggest parallelisation or
+     targeted test runs in the workflow.
+   - Each resource verdict MUST state the expected token/CPU saving.
+
+Cross-arc patterns:
+- Same failure repeating across arcs → structural harness fix, not a one-off.
+- One arc dominates token spend → investigate why (bad prompt? excessive reads?).
+
+Output a SINGLE JSON document on stdout. No prose, no markdown, no fences.
+
+Schema (same as arc-reflect):
+{
+  "summary": "1-2 sentences on the session outcome (arc count, status mix, total tokens)",
+  "toolCallStats": { "total": 0, "byName": {} },
+  "dissonantCalls": [],
+  "verifyMismatches": [],
+  "thrashingPatterns": [
+    { "pattern": "...", "occurrences": N, "evidence": "arc-id step-name attempt-count" }
+  ],
+  "rootCause": "1-3 sentences naming the session-level harness fitness issue",
+  "suggestions": [
+    {
+      "title": "short imperative title",
+      "prompt": "self-contained task prompt ending with 'Run mars workflow validate <name> to check.' or 'Save your work.'",
+      "rationale": "cite arc ids + step names + token counts",
+      "verdict": "save|absorb|drop",
+      "target_id": null,
+      "dup_of": null
+    }
+  ]
+}
+
+Rules:
+- dissonantCalls and verifyMismatches MUST always be empty arrays — session
+  mode does not re-analyse individual tool call transcripts.
+- Every suggestion's prompt must be self-contained and name a specific file.
+- Do not invent arc IDs or step names. Use only what is provided.
+- rootCauseKey in the suggestion is derived from the title: convert to
+  snake_case (the consumer does this automatically; omit the field here).`
+
+/** Max bytes for the total assembled session prompt. */
+const SESSION_PROMPT_CAP_BYTES = 300 * 1024
+
+/**
+ * Build the session-scoped reflection prompt.
+ *
+ * Unlike the arc prompt, this does NOT include full conversation transcripts —
+ * the session view is a higher-level harness fitness analysis. It includes:
+ * - Per-arc metadata (status, tokens, step timeline summary)
+ * - workflow_step_runs records (retry counts, durations, error summaries)
+ * - Token spend breakdown
+ */
+export const buildSessionPrompt = (result: SessionArcsResult): string => {
+  const arcsSummary = result.arcs.map((arc) => {
+    const statusMixStr = Object.entries(arc.statusMix)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(', ')
+
+    const stepTimelineLines = arc.stepTimeline.map(
+      (s) =>
+        `  ${s.stepName} phase=${s.phase ?? 'n/a'} outcome=${s.outcome} durationMs=${s.durationMs}` +
+        (s.workerName ? ` worker=${s.workerName}` : ''),
+    )
+
+    return {
+      originId: arc.originId,
+      taskCount: arc.taskCount,
+      statusMix: arc.statusMix,
+      statusMixStr,
+      totals: arc.totals,
+      lastActivity: arc.lastActivity,
+      taskSummaries: arc.tasks.map((t) => ({
+        taskId: t.taskId,
+        status: t.status,
+        kind: t.kind,
+        promptPrefix: t.prompt.slice(0, 200),
+        error: t.error,
+        weightedTokens: Math.round(
+          t.totals.inputTokens +
+            t.totals.outputTokens +
+            t.totals.cacheCreateTokens +
+            t.totals.cacheReadTokens * 0.1,
+        ),
+      })),
+      stepTimelineLines,
+    }
+  })
+
+  // Group step runs by arc origin ID for readability.
+  const taskToOrigin = new Map<string, string>()
+  for (const arc of result.arcs) {
+    for (const t of arc.tasks) taskToOrigin.set(t.taskId, arc.originId)
+  }
+
+  const stepRunsByArc: Record<string, typeof result.stepRuns> = {}
+  for (const sr of result.stepRuns) {
+    const origin = taskToOrigin.get(sr.taskId) ?? sr.taskId
+    stepRunsByArc[origin] = stepRunsByArc[origin] ?? []
+    stepRunsByArc[origin].push(sr)
+  }
+
+  const sessionMeta = {
+    sessionId: result.sessionId,
+    arcCount: result.arcs.length,
+    totalWeightedTokens: result.arcs.reduce((s, a) => s + a.totals.totalWeightedTokens, 0),
+    statusMix: result.arcs.reduce(
+      (acc, arc) => {
+        for (const [k, v] of Object.entries(arc.statusMix)) acc[k] = (acc[k] ?? 0) + v
+        return acc
+      },
+      {} as Record<string, number>,
+    ),
+  }
+
+  const arcsJson = JSON.stringify(arcsSummary, null, 2)
+  const stepRunsJson = JSON.stringify(stepRunsByArc, null, 2)
+  const sessionMetaJson = JSON.stringify(sessionMeta, null, 2)
+
+  const fullPrompt = `${SYNTHESIS_INSTRUCTIONS_SESSION}
+
+Session metadata:
+${sessionMetaJson}
+
+Arc summaries (${result.arcs.length} arc(s)):
+${arcsJson}
+
+Workflow step records by arc (workflow_step_runs — retry counts, durations, errors):
+${stepRunsJson}`
+
+  // Apply total size cap.
+  if (Buffer.byteLength(fullPrompt, 'utf8') <= SESSION_PROMPT_CAP_BYTES) {
+    return fullPrompt
+  }
+  const capBytes = SESSION_PROMPT_CAP_BYTES
+  const encoded = Buffer.from(fullPrompt, 'utf8')
+  const truncated = encoded.subarray(0, capBytes).toString('utf8')
+  return truncated + `\n…[prompt truncated at ${capBytes} bytes]`
+}
+
+/**
+ * Run the session-scoped reflector against a Foreground session.
+ *
+ * Reuses the same JSON output schema as {@link runDeepReflectorArc} so that
+ * {@link applyVerdicts} (and the fingerprint-dedup + proposal-landing path)
+ * work unchanged.
+ */
+export const runSessionReflector = async (
+  result: SessionArcsResult,
+  timeoutMs: number = 10 * 60 * 1000,
+): Promise<DeepReflectionResult> => {
+  const model = process.env.MARS_DEEP_REFLECT_MODEL ?? 'opus'
+  const r = await runClaudeCode({
+    cwd: getRepoRoot(),
+    prompt: buildSessionPrompt(result),
     timeoutMs,
     model,
   })
