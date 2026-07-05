@@ -2,10 +2,11 @@
 # Stop hook: warn (but never block) when a session ends inside a Mars-leased
 # worktree with either uncommitted changes or no progress journal entries.
 #
-# Uncommitted changes are invisible to `mars release` — the pipeline re-queues
-# the task and a fresh worker would start from the committed state, losing
-# any un-committed work.  No journal entries is a signal that the session
-# produced no recorded progress, which may confuse the operator.
+# Uncommitted changes are invisible to `mars step done` / `mars release` —
+# the pipeline re-queues the task and a fresh worker would start from the
+# committed state, losing any un-committed work.  No journal entries is a
+# signal that the session produced no recorded progress, which may confuse
+# the operator.
 #
 # Both warnings are advisory only.  This hook ALWAYS exits 0; it never
 # prevents a session from ending.
@@ -44,12 +45,12 @@ if [ -n "$dirty" ]; then
 [mars] WARNING: session ending with uncommitted changes in leased worktree.
        Task: $task_id
 
-       Uncommitted work is invisible to 'mars release' and will be lost once
-       the pipeline re-queues the task and a fresh worker starts.
+       Uncommitted work is invisible to 'mars step done' / 'mars release' and
+       will be lost once the pipeline re-queues the task and a fresh worker starts.
 
-       Commit before releasing:
+       Commit before completing the step:
          git add -A && git commit -m "wip: ..."
-         mars --repo "$repo_root" release $task_id
+         mars --repo "$repo_root" step done $task_id
 WARN
   warned=1
 fi
@@ -64,7 +65,7 @@ case "$task_output" in
 [mars] WARNING: no progress journal entries recorded for task $task_id.
        The operator and the pipeline have no record of what was done.
 
-       Log progress before releasing:
+       Log progress before completing the step:
          mars --repo "$repo_root" task note $task_id "<what you did>"
 WARN
     warned=1
@@ -75,7 +76,7 @@ esac
 if [ "$warned" -eq 1 ]; then
   cat >&2 <<HINT
 [mars] When ready:
-         mars --repo "$repo_root" release $task_id           # continue pipeline
+         mars --repo "$repo_root" step done $task_id         # advance pipeline (workflow tasks)
          mars --repo "$repo_root" release $task_id --abort   # bail out
 HINT
 fi

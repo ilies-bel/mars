@@ -166,6 +166,22 @@ describe('buildLeaseSegment', () => {
     // Should still have the separator
     expect(seg).toMatch(/·\s*$/)
   })
+
+  it('shows the Step guide instead of the title when stepGuide is provided', () => {
+    const seg = buildLeaseSegment('mars-abc12345', 'Overall task intent', 'QA the hero section')
+    expect(seg).toContain('QA the hero section')
+    expect(seg).not.toContain('Overall task intent')
+  })
+
+  it('falls back to title when stepGuide is null', () => {
+    const seg = buildLeaseSegment('mars-abc12345', 'Overall task intent', null)
+    expect(seg).toContain('Overall task intent')
+  })
+
+  it('falls back to title when stepGuide is empty string', () => {
+    const seg = buildLeaseSegment('mars-abc12345', 'Overall task intent', '')
+    expect(seg).toContain('Overall task intent')
+  })
 })
 
 // ── CLI integration tests ──────────────────────────────────────────────────────
@@ -345,11 +361,12 @@ describe('mars statusline CLI', () => {
     mkdirSync(worktreeDir, { recursive: true })
 
     const marsDbPath = resolve(tmpRepo, '.mars', 'mars.db')
-    // Create a minimal tasks table with one leased row
+    // Create a minimal tasks table with one leased row (include lease_note to
+    // match the real schema; the statusline query now selects that column).
     spawnSync('sqlite3', [
       marsDbPath,
-      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT);` +
-      `INSERT INTO tasks VALUES ('${taskId}', 'Fix the statusline lease', '2024-01-01T10:00:00Z');`,
+      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT, lease_note TEXT);` +
+      `INSERT INTO tasks VALUES ('${taskId}', 'Fix the statusline lease', '2024-01-01T10:00:00Z', NULL);`,
     ])
 
     try {
@@ -364,6 +381,40 @@ describe('mars statusline CLI', () => {
       expect(line).toContain('mars-testl') // short ID (first 12 chars)
       // Base "mars" label must still appear
       expect(line).toContain('mars')
+    } finally {
+      rmSync(tmpRepo, { recursive: true, force: true })
+    }
+  })
+
+  it('shows Step guide (leaseNote) instead of intent when leaseNote is set', () => {
+    // sqlite3 must be on PATH for this test — skip gracefully if it isn't.
+    const sqlite3Available = spawnSync('sqlite3', ['--version']).status === 0
+    if (!sqlite3Available) return
+
+    const tmpRepo = makeRepo()
+    const taskId = 'mars-steple1234'
+    const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
+    mkdirSync(worktreeDir, { recursive: true })
+
+    const marsDbPath = resolve(tmpRepo, '.mars', 'mars.db')
+    spawnSync('sqlite3', [
+      marsDbPath,
+      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT, lease_note TEXT);` +
+      `INSERT INTO tasks VALUES ('${taskId}', 'Overall task intent', '2024-01-01T10:00:00Z', 'QA the hero section');`,
+    ])
+
+    try {
+      const result = runCli(['statusline'], {
+        input: JSON.stringify({ workspace: { current_dir: worktreeDir } }),
+        env: { MARS_REPO: tmpRepo },
+      })
+      expect(result.status).toBe(0)
+      const line = result.stdout.trimEnd()
+      // Step guide takes precedence over intent in the lease segment
+      expect(line).toContain('⛏')
+      expect(line).toContain('QA the hero')
+      // Intent should NOT appear — leaseNote replaces it
+      expect(line).not.toContain('Overall task intent')
     } finally {
       rmSync(tmpRepo, { recursive: true, force: true })
     }

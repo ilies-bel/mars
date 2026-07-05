@@ -1,6 +1,6 @@
 ---
 name: chat
-description: "Triage entry point for Mars work. Classifies input (id / free text / empty) and dispatches to mars:action-queue, mars:task, mars:grill, or mars:unblock. Use when the user says 'mars chat', 'mars', or invokes `/mars:chat`."
+description: "Triage entry point for Mars work. Classifies input (id / free text / empty) and dispatches to mars:action-queue, mars:task, mars:grill, mars:unblock, or mars:live. Use when the user says 'mars chat', 'mars', or invokes `/mars:chat`."
 ---
 
 # Mars: chat router
@@ -84,7 +84,19 @@ If any of these hold:
 
 ---
 
-## Rule 3 (continued) — Argument is free text (general heuristic)
+## Rule 4 — Argument signals live / take-over intent
+
+The argument is free text that matches any of these patterns (case-insensitive):
+
+- Starts with "live", "take over", "pick up", "work on", "start working on", "attach to".
+- Contains "awaiting human", "awaiting-human", "manual step".
+- Is exactly "live".
+
+If any pattern matches → invoke `Skill({ skill: "mars:live", args: "<original argument>" })`. Stop.
+
+---
+
+## Rule 5 — Argument is free text (general heuristic)
 
 Apply the complexity heuristic:
 
@@ -130,6 +142,7 @@ the other.
 - Do not print the action queue or queue yourself.
 - Do not try to resolve a free-text argument as an id — only apply Rule 1 when
   the argument *looks like* an 8-hex prefix or full slug.
+- Do not dispatch live/take-over intents to `mars:action-queue` or `mars:task` — use `mars:live`.
 
 ---
 

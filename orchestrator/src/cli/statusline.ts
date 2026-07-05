@@ -46,18 +46,27 @@ export function buildContextSegment(
 /**
  * Pure function: builds a lease prefix for the status line when the current
  * session is running inside a Mars-leased worktree (.mars/worktrees/<id>/).
+ * Shows the Step guide (leaseNote) when present; otherwise falls back to
+ * the task intent (title).
  * Returns '' when taskId is null. Never throws.
  */
-export function buildLeaseSegment(taskId: string | null, title: string | null): string {
+export function buildLeaseSegment(
+  taskId: string | null,
+  title: string | null,
+  stepGuide?: string | null,
+): string {
   if (!taskId) return ''
   // Show at most the first 12 chars of the task ID (mars- prefix + 7 hex chars)
   const shortId = taskId.length > 12 ? taskId.slice(0, 12) : taskId
-  const truncTitle = title
-    ? title.length > 30
-      ? title.slice(0, 29) + '…'
-      : title
+  // Prefer the Step guide (leaseNote) when present — it's the current-step
+  // context, which is more actionable than the overall task intent.
+  const rawLabel = stepGuide || title
+  const truncLabel = rawLabel
+    ? rawLabel.length > 30
+      ? rawLabel.slice(0, 29) + '…'
+      : rawLabel
     : ''
-  const label = truncTitle ? `${shortId} ${truncTitle}` : shortId
+  const label = truncLabel ? `${shortId} ${truncLabel}` : shortId
   return `⛏ ${label} · `
 }
 
@@ -152,8 +161,11 @@ export async function statuslineCommand(repo?: string): Promise<void> {
     // Detect if cwd sits inside a Mars-leased worktree and, if so, query the
     // task row for the lease segment prefix. Uses the sqlite3 CLI for a fast
     // synchronous read without loading the heavy @libsql native addon.
+    // Also reads lease_note (Step guide) to surface the current step context
+    // instead of (or alongside) the overall task intent.
     let leaseTaskId: string | null = null
     let leaseTitle: string | null = null
+    let leaseStepGuide: string | null = null
     try {
       const marsWorktreeSeg = `${sep}.mars${sep}worktrees${sep}`
       const idx = cwd.indexOf(marsWorktreeSeg)
@@ -168,13 +180,15 @@ export async function statuslineCommand(repo?: string): Promise<void> {
             // Sanitise taskId: mars IDs are alphanumeric + hyphens only.
             const safeId = taskId.replace(/[^a-zA-Z0-9-]/g, '')
             const row = execSync(
-              `sqlite3 "${marsDbPath}" "SELECT id,intent,leased_at FROM tasks WHERE id='${safeId}' AND leased_at IS NOT NULL LIMIT 1"`,
+              `sqlite3 "${marsDbPath}" "SELECT id,intent,leased_at,lease_note FROM tasks WHERE id='${safeId}' AND leased_at IS NOT NULL LIMIT 1"`,
               { encoding: 'utf8', timeout: 400, stdio: ['pipe', 'pipe', 'pipe'] },
             ).trim()
             if (row) {
               const parts = row.split('|')
               leaseTaskId = parts[0] ?? null
               leaseTitle = parts[1] ?? null
+              // parts[2] is leased_at (unused for display)
+              leaseStepGuide = parts[3] && parts[3].length > 0 ? parts[3] : null
             }
           }
         }
@@ -183,7 +197,7 @@ export async function statuslineCommand(repo?: string): Promise<void> {
       // Lease detection failed (sqlite3 absent, DB not found, etc.) — proceed without lease segment.
     }
 
-    const leasePfx = buildLeaseSegment(leaseTaskId, leaseTitle)
+    const leasePfx = buildLeaseSegment(leaseTaskId, leaseTitle, leaseStepGuide)
     const line = leasePfx + buildStatusLine(branch, cache) + buildContextSegment(contextRemainingPct)
     process.stdout.write(`${line}\n`)
   } catch {
