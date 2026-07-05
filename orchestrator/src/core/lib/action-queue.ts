@@ -108,6 +108,15 @@ export const ACTION_QUEUE_KINDS = [
   // or when dispatch auto-resumes after resetsAt. The payload carries the
   // resetsAt Unix-second timestamp and the ISO string of the earliest reset.
   'provider-rate-limited',
+  // A verify gate has produced the same failure verdict on K consecutive
+  // DIFFERENT tasks — the signature of a gate whose input pipeline has
+  // silently starved (incident 2026-07-03T08:15Z) rather than a real per-task
+  // regression. Level-triggered (ADR-0048): exactly one row per episode, keyed
+  // on the verdict; idempotent raises bump seen_count. Recovery-task spawns for
+  // that verdict are suppressed while the row is open; the affected origins are
+  // failed but restartable (no recovery slot consumed). Cleared when the
+  // operator fixes/disables the gate and clears the suppression.
+  'gate-broken',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
