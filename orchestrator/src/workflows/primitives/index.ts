@@ -74,6 +74,7 @@ import {
 } from '../../core/lib/worktree-install'
 import { extractLastStreamText, type ClaudeEvent } from '../../core/lib/claude-stream'
 import { getTask, hasIncompleteBlockers, updateTask } from '../../core/queue'
+import { Arc } from '../../core/arc'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
 import { computeFailureSignature } from '../../core/lib/failure-signature'
 import { resolveOriginIdForTask } from '../../core/lib/origin'
@@ -1501,12 +1502,25 @@ export const verify = async (
             pushEventText(evt.raw)
           }
         }
+        // Rule 1: resolve structured done-criteria + checked state so the gate
+        // can treat the structured list as authoritative when all are checked.
+        const taskForCriteria = await getTask(taskId, store).catch(() => null)
+        const doneCriteria = taskForCriteria?.spec?.doneCriteria ?? []
+        let allStructuredCriteriaChecked = false
+        if (doneCriteria.length > 0) {
+          const progressEntries = await Arc.listProgress(taskId, undefined, store).catch(() => [])
+          const checklist = Arc.deriveChecklist(progressEntries, doneCriteria)
+          allStructuredCriteriaChecked = checklist.every((c) => c.checked)
+        }
+
         const completenessStep = await checkCompletenessGate({
           coderText: coderTextParts.join('\n'),
           changedFiles,
           worktreePath,
           branch,
           traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
+          structuredDoneCriteria: doneCriteria,
+          allStructuredCriteriaChecked,
         })
         r = {
           passed: completenessStep.passed,

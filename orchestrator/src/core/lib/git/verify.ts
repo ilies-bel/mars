@@ -672,6 +672,20 @@ export interface CompletenessGateArgs {
   branch: string
   /** Optional trace context. */
   traceCtx?: TraceCtx
+  /**
+   * Rule 1 — structured done-criteria list from the task spec (`--done` items).
+   * When non-empty and `allStructuredCriteriaChecked` is true, this list is
+   * authoritative for completeness: any `partial`/`blocked` completion-report
+   * lines that are NOT covered by the structured list are demoted to notes and
+   * do NOT block the gate.
+   */
+  structuredDoneCriteria?: readonly string[]
+  /**
+   * Rule 1 — true when every entry in `structuredDoneCriteria` has been
+   * checked via `mars task check`. Ignored when `structuredDoneCriteria` is
+   * absent or empty.
+   */
+  allStructuredCriteriaChecked?: boolean
 }
 
 /**
@@ -692,6 +706,16 @@ const normalizeFilePath = (p: string): string =>
 
 // Matches the full evidence string as a commit SHA (7–40 hex chars).
 const COMMIT_SHA_RE = /^[0-9a-f]{7,40}$/i
+
+/**
+ * Rule 2 — criterion text that explicitly marks an item as conditional or
+ * optional. Matches "stretch", "only if", "if time permits", "optional"
+ * (case-insensitive, whole-word where possible).
+ *
+ * Items whose criterion text matches this pattern are never blocking: they
+ * are included as notes in the gate output but do NOT cause the gate to fail.
+ */
+const CONDITIONAL_CRITERION_RE = /\b(stretch|only if|if time permits|optional)\b/i
 
 // Matches `path/to/file.ext` or `path/to/file.ext:42` — a path ending in a
 // dotted extension, optionally followed by a colon and line number.
@@ -796,7 +820,15 @@ const checkEvidenceClaim = async (
 export const checkCompletenessGate = async (
   args: CompletenessGateArgs,
 ): Promise<VerifyStep> => {
-  const { coderText, changedFiles, worktreePath, branch, traceCtx } = args
+  const {
+    coderText,
+    changedFiles,
+    worktreePath,
+    branch,
+    traceCtx,
+    structuredDoneCriteria,
+    allStructuredCriteriaChecked,
+  } = args
 
   const report = parseCompletionReport(coderText)
 
@@ -824,10 +856,41 @@ export const checkCompletenessGate = async (
     }
   }
 
+  // ── Rule 1: structured done-criteria list authoritative when all checked ─
+  // When the task has a non-empty structured done-criteria list AND all
+  // entries have been checked (via `mars task check`), that list is the sole
+  // source of truth for completeness. Any `partial`/`blocked` lines in the
+  // completion report that are NOT part of the structured list are prose extras
+  // (bonus work, stretch goals, etc.) and must NOT block the gate — at most
+  // they become notes appended to the pass verdict.
+  const structuredListAuthoritative =
+    allStructuredCriteriaChecked === true &&
+    structuredDoneCriteria !== undefined &&
+    structuredDoneCriteria.length > 0
+
+  // ── Rule 2: conditional/optional criterion lines are never blocking ──────
+  // Items whose criterion text contains "stretch", "only if", "if time
+  // permits", or "optional" are explicitly conditional. Regardless of whether
+  // the structured list is authoritative, a `partial` or `blocked` status on
+  // such a line is NOT a blocking failure.
+  const isConditionalCriterion = (criterion: string): boolean =>
+    CONDITIONAL_CRITERION_RE.test(criterion)
+
   // ── Verdict 2: partial or blocked criteria ───────────────────────────────
-  const unmetLines = report.lines.filter((l) => l.status !== 'done')
-  if (unmetLines.length > 0) {
-    const detail = unmetLines
+  // A completion-report line is blocking only if ALL of the following hold:
+  //  (a) Its status is not 'done'.
+  //  (b) Its criterion text does NOT match the conditional keywords (Rule 2).
+  //  (c) The structured done-criteria list is NOT authoritative (Rule 1).
+  const allUnmetLines = report.lines.filter((l) => l.status !== 'done')
+  const blockingUnmetLines = allUnmetLines.filter(
+    (l) => !isConditionalCriterion(l.criterion) && !structuredListAuthoritative,
+  )
+  const noteLines = allUnmetLines.filter(
+    (l) => isConditionalCriterion(l.criterion) || structuredListAuthoritative,
+  )
+
+  if (blockingUnmetLines.length > 0) {
+    const detail = blockingUnmetLines
       .map((l) => `  - [${l.status}] ${l.criterion} — evidence: ${l.evidence}`)
       .join('\n')
     return {
@@ -835,14 +898,17 @@ export const checkCompletenessGate = async (
       passed: false,
       tier: 'task',
       output:
-        `incomplete: ${unmetLines.length} criterion/criteria not marked done.\n` +
+        `incomplete: ${blockingUnmetLines.length} criterion/criteria not marked done.\n` +
         `Unmet criteria (the recovery Chore must address these):\n${detail}`,
     }
   }
 
   // ── Verdict 3: evidence spot-check ──────────────────────────────────────
+  // Only check evidence for lines that actually reached 'done'; conditional and
+  // structured-list-overridden notes are not verified (no artefact to check).
+  const doneLines = report.lines.filter((l) => l.status === 'done')
   const unsubstantiated: string[] = []
-  for (const line of report.lines) {
+  for (const line of doneLines) {
     const check = await checkEvidenceClaim(
       line.evidence,
       changedFiles,
@@ -868,11 +934,18 @@ export const checkCompletenessGate = async (
   }
 
   // ── Verdict 4: pass ─────────────────────────────────────────────────────
+  const notesSuffix =
+    noteLines.length > 0
+      ? '\nNotes (non-blocking — conditional/optional items or structured-list overrides):\n' +
+        noteLines
+          .map((l) => `  - [${l.status}] ${l.criterion} — evidence: ${l.evidence}`)
+          .join('\n')
+      : ''
   return {
     name: 'completeness',
     passed: true,
     tier: 'task',
-    output: `all ${report.lines.length} criterion/criteria done and evidence verified`,
+    output: `all ${doneLines.length} criterion/criteria done and evidence verified${notesSuffix}`,
   }
 }
 

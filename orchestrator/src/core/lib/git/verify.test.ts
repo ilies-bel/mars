@@ -355,3 +355,190 @@ describe('checkCompletenessGate', () => {
     expect(step.passed).toBe(true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Rule 2: conditional/stretch criterion lines are never blocking
+// ---------------------------------------------------------------------------
+
+describe('checkCompletenessGate — Rule 2: conditional/optional criteria are non-blocking', () => {
+  it('passes when the only unmet criterion contains "stretch"', async () => {
+    // Exact reproduction of the mars-50e3b511 failure: core deliverable done,
+    // stretch goal partial. Gate must pass.
+    const coderText = makeReport([
+      { status: 'done', criterion: 'core deliverable implemented', evidence: 'verifiable test name' },
+      { status: 'partial', criterion: 'Shadow-mode burn-in stretch goal', evidence: 'not implemented; stretch-only' },
+    ])
+
+    const step = await checkCompletenessGate({
+      coderText,
+      changedFiles: [],
+      worktreePath: EMPTY_WORKTREE,
+      branch: 'task/test',
+    })
+
+    expect(step.passed).toBe(true)
+    // The stretch goal must still appear in the output — as a note, not as a blocker.
+    expect(step.output).toContain('Shadow-mode burn-in stretch goal')
+  })
+
+  it('passes when an unmet criterion contains "only if"', async () => {
+    const coderText = makeReport([
+      { status: 'done', criterion: 'primary goal done', evidence: 'passing test confirms it' },
+      { status: 'partial', criterion: 'extended coverage (only if primary lands clean)', evidence: 'skipped' },
+    ])
+
+    const step = await checkCompletenessGate({
+      coderText,
+      changedFiles: [],
+      worktreePath: EMPTY_WORKTREE,
+      branch: 'task/test',
+    })
+
+    expect(step.passed).toBe(true)
+  })
+
+  it('passes when an unmet criterion contains "if time permits"', async () => {
+    const coderText = makeReport([
+      { status: 'done', criterion: 'main fix shipped', evidence: 'descriptive test name verifies it' },
+      { status: 'blocked', criterion: 'bonus refactor (if time permits)', evidence: 'deferred' },
+    ])
+
+    const step = await checkCompletenessGate({
+      coderText,
+      changedFiles: [],
+      worktreePath: EMPTY_WORKTREE,
+      branch: 'task/test',
+    })
+
+    expect(step.passed).toBe(true)
+  })
+
+  it('passes when an unmet criterion contains "optional"', async () => {
+    const coderText = makeReport([
+      { status: 'done', criterion: 'required feature added', evidence: 'tests pass' },
+      { status: 'partial', criterion: 'optional: add docs', evidence: 'not done' },
+    ])
+
+    const step = await checkCompletenessGate({
+      coderText,
+      changedFiles: [],
+      worktreePath: EMPTY_WORKTREE,
+      branch: 'task/test',
+    })
+
+    expect(step.passed).toBe(true)
+  })
+
+  it('still fails when a non-conditional criterion is partial even if another is a stretch', async () => {
+    // The mandatory criterion is partial — gate must still fail.
+    const coderText = makeReport([
+      { status: 'partial', criterion: 'mandatory core feature', evidence: 'half done' },
+      { status: 'partial', criterion: 'stretch goal: advanced caching', evidence: 'skipped' },
+    ])
+
+    const step = await checkCompletenessGate({
+      coderText,
+      changedFiles: [],
+      worktreePath: EMPTY_WORKTREE,
+      branch: 'task/test',
+    })
+
+    expect(step.passed).toBe(false)
+    expect(step.output).toMatch(/^incomplete:/)
+    // Only the mandatory one is blocking — the stretch is filtered out
+    expect(step.output).toContain('mandatory core feature')
+    expect(step.output).not.toContain('advanced caching')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Rule 1: ticked structured done-criteria list is authoritative
+// ---------------------------------------------------------------------------
+
+describe('checkCompletenessGate — Rule 1: all-checked structured criteria are authoritative', () => {
+  it('passes when all structured criteria are checked even if report has a partial line', async () => {
+    // 4 structured done-criteria, all checked. Completion report has those 4
+    // as [done] plus one extra [partial] line that is not in the structured list.
+    const coderText = makeReport([
+      { status: 'done', criterion: 'criterion A done', evidence: 'test name' },
+      { status: 'done', criterion: 'criterion B done', evidence: 'test name' },
+      { status: 'done', criterion: 'criterion C done', evidence: 'test name' },
+      { status: 'done', criterion: 'criterion D done', evidence: 'test name' },
+      { status: 'partial', criterion: 'bonus thing not in structured list', evidence: 'not done' },
+    ])
+
+    const step = await checkCompletenessGate({
+      coderText,
+      changedFiles: [],
+      worktreePath: EMPTY_WORKTREE,
+      branch: 'task/test',
+      structuredDoneCriteria: ['criterion A done', 'criterion B done', 'criterion C done', 'criterion D done'],
+      allStructuredCriteriaChecked: true,
+    })
+
+    expect(step.passed).toBe(true)
+    // The partial line must still appear in the output as a note
+    expect(step.output).toContain('bonus thing not in structured list')
+  })
+
+  it('fails when structured criteria are not all checked even if report says done', async () => {
+    // allStructuredCriteriaChecked: false → gate still uses the report
+    const coderText = makeReport([
+      { status: 'done', criterion: 'goal A', evidence: 'test name passes' },
+      { status: 'partial', criterion: 'goal B incomplete', evidence: 'half done' },
+    ])
+
+    const step = await checkCompletenessGate({
+      coderText,
+      changedFiles: [],
+      worktreePath: EMPTY_WORKTREE,
+      branch: 'task/test',
+      structuredDoneCriteria: ['goal A', 'goal B incomplete'],
+      allStructuredCriteriaChecked: false,
+    })
+
+    expect(step.passed).toBe(false)
+    expect(step.output).toMatch(/^incomplete:/)
+    expect(step.output).toContain('goal B incomplete')
+  })
+
+  it('falls back to report-based check when structuredDoneCriteria is empty', async () => {
+    // No structured criteria → existing behaviour; partial lines block.
+    const coderText = makeReport([
+      { status: 'done', criterion: 'goal A', evidence: 'test name' },
+      { status: 'partial', criterion: 'goal B', evidence: 'not done' },
+    ])
+
+    const step = await checkCompletenessGate({
+      coderText,
+      changedFiles: [],
+      worktreePath: EMPTY_WORKTREE,
+      branch: 'task/test',
+      structuredDoneCriteria: [],
+      allStructuredCriteriaChecked: true,
+    })
+
+    // Empty structured list → not authoritative (can't confirm everything is done)
+    expect(step.passed).toBe(false)
+    expect(step.output).toMatch(/^incomplete:/)
+  })
+
+  it('passes with no notes output when structured list covers all report lines', async () => {
+    // All structured criteria checked, all report lines are done → clean pass
+    const coderText = makeReport([
+      { status: 'done', criterion: 'structured criterion 1', evidence: 'test passes' },
+      { status: 'done', criterion: 'structured criterion 2', evidence: 'test passes' },
+    ])
+
+    const step = await checkCompletenessGate({
+      coderText,
+      changedFiles: [],
+      worktreePath: EMPTY_WORKTREE,
+      branch: 'task/test',
+      structuredDoneCriteria: ['structured criterion 1', 'structured criterion 2'],
+      allStructuredCriteriaChecked: true,
+    })
+
+    expect(step.passed).toBe(true)
+  })
+})
