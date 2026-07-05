@@ -62,21 +62,29 @@ before dispatching — just invoke it.
 
 ---
 
-## Rule 3 — Argument is free text
+## Rule 3 — Argument is free text — workflow-authoring shortcut
 
-**Workflow-authoring shortcut** — before the general heuristic, check for
-workflow-authoring intent. If the text matches any of:
+Before applying the general heuristic, check for **workflow-authoring** intent.
+If the text contains any of these signals, invoke `/mars:workflow` immediately:
 
-- "new workflow", "create.*workflow", "author.*workflow", "author.*pipeline",
-  "new pipeline"
-- "make.*manual" alongside "verify", "code", or "step"
-- "add.*QA gate", "add.*sign-off", "add.*human.*gate"
-- "I want to.*drive" or "I'll drive" (hand-drive the code step)
-- clearly about editing a `.mars/workflows/*.js` file
+- Contains "new workflow" or "create.*workflow" or "author.*workflow" or
+  "author.*pipeline" or "new pipeline"
+- Contains "make.*manual" alongside "verify", "code", or "step"
+- Contains "add.*QA gate" or "add.*sign-off" or "add.*human.*gate"
+- Contains "I want to.*drive" or "I'll drive" (suggesting manual execution)
+- The intent is clearly about editing a `.mars/workflows/*.js` file
 
-→ invoke `Skill({ skill: "mars:workflow", args: "<text>" })`. Stop.
+If any of these hold:
+1. Run `mars proposal add "<text>"` and capture the printed id from stdout.
+   *(Records the intent; the workflow skill will work from the free-text intent
+   in `$ARGUMENTS` rather than the proposal id.)*
+   Skip step 1 if the text is a short imperative slug (under ~10 words) — pass
+   the intent text directly as `$ARGUMENTS` instead.
+2. Invoke `Skill({ skill: "mars:workflow", args: "<intent text>" })`. Stop.
 
-**General heuristic** — for all other free text:
+---
+
+## Rule 3 (continued) — Argument is free text (general heuristic)
 
 Apply the complexity heuristic:
 
