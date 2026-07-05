@@ -64,6 +64,20 @@ before dispatching — just invoke it.
 
 ## Rule 3 — Argument is free text
 
+**Workflow-authoring shortcut** — before the general heuristic, check for
+workflow-authoring intent. If the text matches any of:
+
+- "new workflow", "create.*workflow", "author.*workflow", "author.*pipeline",
+  "new pipeline"
+- "make.*manual" alongside "verify", "code", or "step"
+- "add.*QA gate", "add.*sign-off", "add.*human.*gate"
+- "I want to.*drive" or "I'll drive" (hand-drive the code step)
+- clearly about editing a `.mars/workflows/*.js` file
+
+→ invoke `Skill({ skill: "mars:workflow", args: "<text>" })`. Stop.
+
+**General heuristic** — for all other free text:
+
 Apply the complexity heuristic:
 
 **Enqueue directly** if the text reads as a *single concrete change* — all of:
