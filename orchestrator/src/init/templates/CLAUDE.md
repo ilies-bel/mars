@@ -10,24 +10,30 @@ work through Mars instead of editing the integration branch directly.
 
 ## Routing
 
-Route silently between two actions: enqueue (`mars task add "..."`) or
-grill conversationally. Never name the routes, narrate the decision, or
-ask the user to pick. Reads and searches are always direct.
+Route silently between three pipelines — never name the route, narrate
+the decision, or ask the user to pick. Reads and searches are always
+direct.
 
-Enqueue by default. Grill instead when any of these hold:
+**General rule:** run `mars workflow list` to see every available
+pipeline. Each is a runbook with declared execution modes and Step
+guides, renderable via `mars workflow validate <name>`. Pick the
+pipeline whose shape fits the work and select it at enqueue with
+`--workflow <name>`.
 
-- shape is exploratory or tentative ("should we…", "thinking about…");
-- introduces or redefines a term, or affects `CONTEXT.md` / ADRs;
-- cross-cutting or architectural trade-off (new seam, dependency, data
-  shape, hard-to-reverse choice);
-- acceptance criteria or scope are unclear;
-- conflicts with an existing ADR, invariant, or queued work.
+The three lines:
 
-If both signals fire, grill — by asking a sharpening question, not by
-asking the user to choose.
+1. **Hard / cross-repo / term-defining work → grill first.** While
+   grilling, file `mars proposal add` for out-of-scope observations
+   and enqueue high-confidence loose ends directly (`mars task add`).
+2. **Small tweaks / backend work → background task.** `mars task add
+   "..."` — the orchestrator dispatches, codes, verifies, and merges
+   headlessly.
+3. **Visual or user-present work → live task.** `mars task add --live`,
+   then `mars attach <id>` to lease the worktree and work the Step
+   guide interactively. The verify + merge gate is the exit condition.
 
 **Direct editing on the integration branch is a last resort, not a
-third route.** It is never silent and never implied. The bar is all of:
+fourth route.** It is never silent and never implied. The bar is all of:
 
 - the user explicitly opts in *for this specific change* (a prior
   session-level "you can edit directly" does **not** carry over);
@@ -77,6 +83,37 @@ orchestrator stopped on after exhausting retries (kind
 `mars action-queue list` or `/mars:action-queue`; the action queue dispatches to the right
 resolver (`/mars:unblock`, `/mars:grill`, or
 terminal restart/purge — the queue is a pure projection, no operator gesture closes a row).
+
+## Live execution
+
+When you attach to a live task (`mars attach <id>`), the worktree is
+leased and the workflow renders its Step guide (the runbook for that
+pipeline).
+
+**Handoff:** on attach, read the Step guide in full before touching
+anything. It states what the current step expects, which criteria gate
+`step done`, and what the next auto step will do once you signal
+completion.
+
+**Step-guide discipline:**
+
+- `mars task note <id> "<observation>"` — journal progress or blockers
+  at any point during a step.
+- `mars task check <id> <criterion>` — mark a done-criterion as
+  complete.
+- Commit early and often inside the worktree; the lease does not
+  auto-commit.
+- `mars step done <id>` — signal step completion; the workflow advances
+  to the next step (auto steps run immediately; the next manual step
+  parks awaiting your input).
+
+**Exit gates:**
+
+- The verify step runs automatically after `step done` on the final
+  implementation step and gates the merge.
+- If verify fails, fix inside the worktree and run `step done` again.
+- `mars release --abort <id>` exits without merging; the worktree is
+  preserved for inspection.
 
 ## Glossary and ADRs
 
@@ -146,6 +183,10 @@ Each task prompt must stand alone. Include:
 - verification command(s),
 - a closing **"Save your work"** line — the orchestrator does not
   commit on the agent's behalf.
+
+**Closing ritual:** at natural stopping points, suggest the operator
+run `mars arc reflect <originId>` in a separate terminal to surface
+patterns from the session and land draft proposals.
 
 ## Conventions
 
