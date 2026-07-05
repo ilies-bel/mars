@@ -173,6 +173,9 @@ export const renderTaskDetail = async (
   deps.out(`id:         ${task.id}`)
   deps.out(`Status:     ${task.status}`)
   deps.out(`tags:       ${(task.tags ?? ['coder']).join(', ')}`)
+  if (task.workflow !== null) {
+    deps.out(`workflow:   ${task.workflow}`)
+  }
   deps.out(`author:     ${formatAuthor(task.author)}`)
   deps.out(`branch:     ${task.branch ?? '-'}`)
   deps.out(`worktree:   ${task.worktreePath ?? '-'}`)

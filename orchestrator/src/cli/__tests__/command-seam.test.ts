@@ -202,6 +202,37 @@ describe('task show / list (store-backed reads)', () => {
     expect(text).toContain('beta task')
   })
 
+  it('shows workflow: line when task has a workflow set', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const task = await store.enqueueTask('live task', undefined, {
+      skipTriage: true,
+      workflow: 'live',
+    })
+    const r = await runCommandInProcess(['task', 'show', task.id], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const text = r.out.join('\n')
+    expect(text).toContain('workflow:   live')
+  })
+
+  it('omits workflow: line when task has no workflow', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const task = await store.enqueueTask('no-workflow task', undefined, {
+      skipTriage: true,
+    })
+    const r = await runCommandInProcess(['task', 'show', task.id], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const text = r.out.join('\n')
+    expect(text).not.toContain('workflow:')
+  })
+
   it('always renders a priority column (P0 for default, Pn for explicit)', async () => {
     const { store, ctx } = await loadStoreAndCtx()
     await store.enqueueTask('default prio task', undefined, { skipTriage: true })
