@@ -79,8 +79,8 @@ vi.mock('../../../core/lib/action-queue', () => ({
   raiseActionQueueItem: mockRaiseActionQueueItem,
 }))
 
-// Import awaitHuman AFTER the mocks are registered.
-const { awaitHuman } = await import('../index')
+// Import the primitives AFTER the mocks are registered.
+const { awaitHuman, runAgent, verify } = await import('../index')
 
 /** Minimal TaskStore stub — only `query` (used by updateTask's before-read). */
 const makeStubStore = () => ({
@@ -173,6 +173,74 @@ describe('awaitHuman primitive', () => {
       thrown = err
     }
     expect(extractAwaitHumanStepName(thrown)).toBe('await-human')
+  })
+
+  it('re-grants the lease to the prior human owner (auto re-lease across manual steps)', async () => {
+    const ctx = makeCtx('code')
+    // A full-enough task row for rowToTask: `mars step done` kept the human
+    // lease owner on the row; the next manual park must re-grant to them.
+    const row = {
+      id: 'test-task-id',
+      prompt: 'p',
+      status: 'running',
+      lease_owner: 'ilies@laptop',
+      created_at: 't',
+      updated_at: 't',
+    }
+    ;(ctx.services.store.query as ReturnType<typeof vi.fn>).mockResolvedValue({
+      rows: [row],
+    })
+    await expect(awaitHuman(ctx as never)).rejects.toSatisfy(isAwaitHumanError)
+    expect(mockUpdateTask).toHaveBeenCalledWith(
+      'test-task-id',
+      expect.objectContaining({
+        status: 'awaiting-human',
+        leaseOwner: 'ilies@laptop',
+      }),
+      expect.anything(),
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2b. Manual Execution mode on runAgent / verify (workflow-declared)
+// ---------------------------------------------------------------------------
+
+describe('manual Execution mode on primitives', () => {
+  beforeEach(() => {
+    mockUpdateTask.mockClear()
+    mockRaiseActionQueueItem.mockClear()
+  })
+
+  it('runAgent mode:manual parks with the Step guide and never reaches the agent spawn', async () => {
+    const ctx = makeCtx('code')
+    ;(ctx as { input: unknown }).input = { taskId: 'test-task-id', prompt: 'p' }
+    await expect(
+      runAgent(ctx as never, { mode: 'manual', guide: 'iterate on the hero' }),
+    ).rejects.toSatisfy(isAwaitHumanError)
+    expect(mockUpdateTask).toHaveBeenCalledWith(
+      'test-task-id',
+      expect.objectContaining({
+        status: 'awaiting-human',
+        leaseNote: 'iterate on the hero',
+      }),
+      expect.anything(),
+    )
+  })
+
+  it('verify mode:manual parks with the Step guide instead of running the gates', async () => {
+    const ctx = makeCtx('verify')
+    await expect(
+      verify(ctx as never, { mode: 'manual', guide: 'QA in the browser' }),
+    ).rejects.toSatisfy(isAwaitHumanError)
+    expect(mockUpdateTask).toHaveBeenCalledWith(
+      'test-task-id',
+      expect.objectContaining({
+        status: 'awaiting-human',
+        leaseNote: 'QA in the browser',
+      }),
+      expect.anything(),
+    )
   })
 })
 

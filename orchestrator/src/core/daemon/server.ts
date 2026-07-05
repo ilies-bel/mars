@@ -2611,6 +2611,26 @@ export const startDaemon = async (
     }
   }
 
+  // `mars step done <id>`: complete the current manual step. Re-queues the
+  // task for pipeline continuation like a normal release, but KEEPS the lease
+  // identity — when the pipeline parks at the task's next manual step,
+  // awaitHuman re-grants the lease to the same owner so the Foreground
+  // session walks the runbook without re-attaching.
+  const handleStepDone = async (id: string): Promise<void> => {
+    const task = await getTask(id)
+    if (!task) throw new Error(`task ${id} not found`)
+    if (task.status !== 'awaiting-human') {
+      throw new Error(
+        `task ${id} is in status '${task.status}'; 'mars step done' only applies to an 'awaiting-human' task`,
+      )
+    }
+    if (task.leaseOwner === null) {
+      throw new Error(`task ${id} has no active lease; use 'mars attach ${id}' first`)
+    }
+    await Arc.load(id).releaseLease(id, { keepLease: true })
+    bus.emit('task.queued', { taskId: id })
+  }
+
   // `mars task note <id> "<text>"` / `mars task check <id> <n> [--uncheck]`:
   // append a journal entry to the progress journal (Foreground-session discipline).
   const appendProgress = (params: Parameters<typeof Arc.appendProgress>[0]) =>
@@ -2674,6 +2694,7 @@ export const startDaemon = async (
     diagnoseFailure,
     handleAttach,
     handleReleaseLease,
+    handleStepDone,
     appendProgress,
   })
 

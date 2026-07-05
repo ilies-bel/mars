@@ -67,6 +67,9 @@ export type DaemonRequest =
   | { op: 'diagnose-failure'; id: string }
   | { op: 'attach'; id: string; leaseOwner: string }
   | { op: 'release-lease'; id: string; abort?: boolean }
+  // Complete the current manual step: re-queue for pipeline continuation but
+  // KEEP the lease identity so the next manual park re-leases the same owner.
+  | { op: 'step-done'; id: string }
   | { op: 'pause' }
   | { op: 'resume' }
   | { op: 'task.note'; id: string; body: string; author?: string }

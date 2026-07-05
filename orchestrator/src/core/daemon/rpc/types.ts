@@ -186,6 +186,8 @@ export interface DaemonDeps {
     progressTail: readonly ProgressEntry[]
   }>
   handleReleaseLease(id: string, abort: boolean): Promise<void>
+  /** Complete the current manual step: re-queue but keep the lease identity. */
+  handleStepDone(id: string): Promise<void>
   appendProgress(params: AppendProgressParams): Promise<ProgressEntry>
 }
 

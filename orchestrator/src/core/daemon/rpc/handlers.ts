@@ -294,6 +294,11 @@ const releaseLeaseHandler = handler('release-lease', async (req, deps) => {
   return { ok: true }
 })
 
+const stepDoneHandler = handler('step-done', async (req, deps) => {
+  await deps.handleStepDone(req.id)
+  return { ok: true }
+})
+
 const shutdownHandler = handler('shutdown', async (req, deps) => {
   // Three modes:
   //   drain=true  → stop picking new work, wait for in-flight to
@@ -488,6 +493,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   diagnoseFailureHandler,
   attachHandler,
   releaseLeaseHandler,
+  stepDoneHandler,
   pauseHandler,
   resumeHandler,
   shutdownHandler,

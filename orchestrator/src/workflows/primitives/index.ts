@@ -660,6 +660,22 @@ export interface RunAgentOpts {
    * so a step can run on a heavier model without editing Worker configs.
    */
   model?: string
+  /**
+   * Execution mode — WHO executes this step (workflow-declared). `'auto'`
+   * (default) spawns the agent. `'manual'` never spawns anything: the task
+   * parks `'awaiting-human'` at this step and a Foreground session does the
+   * work in the leased worktree, guided by {@link guide}; `mars step done`
+   * resumes the pipeline at the next step. The park goes through the
+   * awaitHuman sentinel machinery, so it is idempotent across daemon
+   * restarts and constitutionally cannot be handed to an agent.
+   */
+  mode?: 'auto' | 'manual'
+  /**
+   * Step guide for a `'manual'` step — what the Foreground session should
+   * accomplish here. Surfaced in the action-queue row at park, in
+   * `mars attach`, and by the session hooks. Ignored when mode is `'auto'`.
+   */
+  guide?: string
 }
 
 export interface RunAgentResult {
@@ -707,6 +723,16 @@ export const runAgent = async (
   const resumeFromCodePhase =
     opts.resumeFromCodePhase ?? input(ctx).resumeFromCodePhase ?? false
   const model = opts.model
+  // Manual Execution mode: park for the Foreground session instead of
+  // spawning the agent. awaitHuman throws the park sentinel, so control never
+  // reaches the agent spawn below — the workflow file's declaration is the
+  // guarantee, not a runtime convention.
+  if ((opts.mode ?? 'auto') === 'manual') {
+    await awaitHuman(ctx, {
+      taskId,
+      note: opts.guide ?? `manual code step — implement the task by hand`,
+    })
+  }
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
@@ -1013,6 +1039,16 @@ export interface VerifyOpts {
   taskId?: string
   /** Override the worktree (defaults to the one stashed by setupWorktree). */
   worktree?: WorktreeRef
+  /**
+   * Execution mode — WHO executes this step (workflow-declared). `'manual'`
+   * parks the task `'awaiting-human'` so a Foreground session performs the
+   * verification (e.g. visual QA) guided by {@link guide}; `mars step done`
+   * resumes the pipeline. `'auto'` (default) runs scope-aware
+   * typecheck/tests/lint as always.
+   */
+  mode?: 'auto' | 'manual'
+  /** Step guide for a `'manual'` step. Ignored when mode is `'auto'`. */
+  guide?: string
 }
 
 export interface VerifyResult {
@@ -1052,6 +1088,15 @@ export const verify = async (
     opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
   const recoveryPayload =
     opts.recoveryPayload ?? input(ctx).recoveryPayload ?? null
+  // Manual Execution mode: park for the Foreground session instead of running
+  // the automated gates. awaitHuman throws the park sentinel; on `mars step
+  // done` the engine re-enters past this step.
+  if ((opts.mode ?? 'auto') === 'manual') {
+    await awaitHuman(ctx, {
+      taskId,
+      note: opts.guide ?? 'manual verify step — QA the work by hand',
+    })
+  }
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
@@ -2119,6 +2164,24 @@ export const awaitHuman = async (
   const store: TaskStore = ctx.services.store
   const now = new Date().toISOString()
 
+  // Auto re-lease: `mars step done` keeps the lease identity across the
+  // continuation, so when the pipeline parks at the task's next manual step
+  // the SAME owner gets the lease back without re-attaching — a Foreground
+  // session walks a manual-heavy runbook as one continuous session. The read
+  // is best-effort: if it fails, park under the workflow's own identity and
+  // the operator attaches as before.
+  let priorOwner: string | null = null
+  try {
+    priorOwner = (await getTask(taskId, store))?.leaseOwner ?? null
+  } catch {
+    // fall through — no re-lease
+  }
+  const released =
+    priorOwner !== null && priorOwner !== 'workflow:await-human'
+      ? priorOwner
+      : null
+  const leaseOwner = released ?? 'workflow:await-human'
+
   // Transition to 'awaiting-human' through the Arc write funnel (ADR-0052).
   // Uses the same field set as Arc.parkForHuman so the task row is consistent
   // with the server's attach/release paths.
@@ -2126,7 +2189,7 @@ export const awaitHuman = async (
     taskId,
     {
       status: 'awaiting-human',
-      leaseOwner: 'workflow:await-human',
+      leaseOwner,
       leasedAt: now,
       leaseNote: note,
     },
@@ -2140,23 +2203,26 @@ export const awaitHuman = async (
     kind: 'awaiting-human',
     category: 'daemon',
     priority: 'normal',
-    title: `Task ${taskId} parked — awaiting human`,
+    title: `Task ${taskId} parked at step '${stepName}' — awaiting human`,
     body:
-      `Task ${taskId} is parked in its worktree awaiting human work. ` +
-      `Release the lease to resume the pipeline.` +
-      (note ? ` Note: ${note}` : ''),
+      `Task ${taskId} is parked in its worktree at manual step '${stepName}'.` +
+      (note ? ` Step guide: ${note}.` : '') +
+      (released
+        ? ` Lease re-granted to ${released} — continue in the worktree, then \`mars step done ${taskId}\`.`
+        : ` Take the lease with \`mars attach ${taskId}\`, work in the worktree, then \`mars step done ${taskId}\` (or \`mars release ${taskId} --abort\` to bail).`),
     payload: {
       taskId,
-      leaseOwner: 'workflow:await-human',
+      leaseOwner,
       leasedAt: now,
       leaseNote: note,
+      stepName,
     },
     context: { taskId },
     raisedBy: 'primitive:await-human',
     signature: taskId,
     originTaskId: taskId,
     occurrence: {
-      leaseOwner: 'workflow:await-human',
+      leaseOwner,
       leasedAt: now,
       parkedAt: now,
     },

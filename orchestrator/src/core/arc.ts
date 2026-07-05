@@ -847,12 +847,20 @@ export class Arc {
 
   /**
    * Release the worktree lease on an `'awaiting-human'` task and re-queue it
-   * for pipeline continuation (ADR-0052 sole-writer). Clears all lease fields
-   * and transitions the task to `'queued'`.
+   * for pipeline continuation (ADR-0052 sole-writer).
+   *
+   * Default (`mars release`): clears all lease fields — the human is done
+   * with this task. With `keepLease` (`mars step done`): the lease identity
+   * survives the continuation, so when the pipeline parks at the task's NEXT
+   * manual step, `awaitHuman` re-grants the lease to the same owner and the
+   * Foreground session walks the runbook without re-attaching.
    *
    * Throws if the task is not currently in `'awaiting-human'`.
    */
-  async releaseLease(taskId: string): Promise<void> {
+  async releaseLease(
+    taskId: string,
+    opts?: { keepLease?: boolean },
+  ): Promise<void> {
     const task = await getTask(taskId)
     if (!task) throw new Error(`task ${taskId} not found`)
     if (task.status !== 'awaiting-human') {
@@ -862,9 +870,9 @@ export class Arc {
     }
     await updateTask(taskId, {
       status: 'queued',
-      leaseOwner: null,
-      leasedAt: null,
-      leaseNote: null,
+      ...(opts?.keepLease
+        ? {}
+        : { leaseOwner: null, leasedAt: null, leaseNote: null }),
     })
   }
 
