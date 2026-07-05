@@ -2111,7 +2111,7 @@ SELECT
   t.sub_deliverable_json, t.integration_head_sha,
   t.dev_server_url, t.dev_server_pid, t.preview_validated, t.intent,
   t.lease_owner, t.leased_at, t.lease_note,
-  t.origin_session_id,
+  t.origin_session_id, t.workflow,
   t.created_at, t.updated_at
 FROM tasks t`
 
