@@ -77,18 +77,23 @@ export async function drainRecoverySpawner(
       const task = await getTask(taskId)
       if (!task) return false
 
+      // Prefer the FINE-grained failing step the verify primitive stamped on
+      // `failure_reason` (`verify:<gate>`) over the coarse `failed_phase`
+      // (`verify`). This matters for the gate meta-monitor: its verify-gate
+      // gate keys on a `verify:`-prefixed step, and using the fine step also
+      // makes the signature this path computes match the one the verify
+      // primitive already stamped, so `upsertFixTask`'s (taskId, signature)
+      // dedup agrees across the inline and durable dispatch paths. Recovery
+      // task failures (fixForTaskId != null) escalate before the signature is
+      // used for a recipe lookup, so the exact value is safe for that path too.
+      const failingStep = task.failureReason ?? task.failedPhase ?? ''
+
       // Gate meta-monitor suppression lives INSIDE handleTaskFailureWithFixTask
       // (the shared chokepoint) so it applies to the inline verify dispatch too,
       // which fires before this subscriber does — see the module docblock.
       await handleTaskFailureWithFixTask({
         taskId,
-        // Use the coarse-grained failed phase recorded on the task row as the
-        // failingStep. Recovery task failures (fixForTaskId != null) escalate
-        // before the signature is used for a recipe lookup, so any value here
-        // is safe for that path. For non-recovery tasks the phase is used to
-        // compute the signature; callers that need an exact step-level
-        // signature should update failedPhase accordingly before failing.
-        failingStep: task.failedPhase ?? '',
+        failingStep,
         errorOutput: error,
       })
 

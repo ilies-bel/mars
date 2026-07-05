@@ -51,6 +51,12 @@ interface RecoverySpawnModule {
   drainRecoverySpawner: typeof import('./recovery-spawn').drainRecoverySpawner
 }
 
+interface GateMonitorModule {
+  GATE_VERDICT_TRIP_THRESHOLD: typeof import('../../core/lib/gate-meta-monitor').GATE_VERDICT_TRIP_THRESHOLD
+  isVerdictSuppressed: typeof import('../../core/lib/gate-meta-monitor').isVerdictSuppressed
+  resetGateMetaMonitorSchemaLatchForTests: typeof import('../../core/lib/gate-meta-monitor').resetGateMetaMonitorSchemaLatchForTests
+}
+
 interface PublisherModule {
   publishWithRetry: typeof import('../../bus/publisher').publishWithRetry
 }
@@ -61,6 +67,7 @@ interface Loaded {
   ft: FixTasksModule
   rc: RecipesModule
   rs: RecoverySpawnModule
+  gm: GateMonitorModule
   pub: PublisherModule
   client: Client
 }
@@ -97,10 +104,17 @@ const loadModules = async (repo: string): Promise<Loaded> => {
     '../../core/lib/fix-recipes'
   )) as unknown as RecipesModule
   const rs = (await import('./recovery-spawn')) as unknown as RecoverySpawnModule
+  const gm = (await import(
+    '../../core/lib/gate-meta-monitor'
+  )) as unknown as GateMonitorModule
+  // The monitor caches "schema ensured" in a module-level latch; a fresh
+  // module registry resets the module but be explicit so a shared-registry
+  // run can never carry the latch across per-test DB clients.
+  gm.resetGateMetaMonitorSchemaLatchForTests()
   const pub = (await import(
     '../../bus/publisher'
   )) as unknown as PublisherModule
-  return { q, aq, ft, rc, rs, pub, client: q.resolveQueueClient() }
+  return { q, aq, ft, rc, rs, gm, pub, client: q.resolveQueueClient() }
 }
 
 /**
@@ -304,5 +318,196 @@ describe('recovery-spawn outbox subscriber', () => {
         (item.payload as Record<string, unknown>).recoveryTaskId === fixTaskId,
     )
     expect(originItems.length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Gate meta-monitor: K identical verify-gate verdicts across DIFFERENT tasks
+// raise ONE level-triggered row and suppress recovery for that verdict without
+// consuming the origin's one recovery slot (draft proposal acd01d23).
+// ---------------------------------------------------------------------------
+
+describe('verify-gate meta-monitor suppression', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_FIX_RETRY_BUDGET
+    delete process.env.MARS_MAX_FIX_ATTEMPTS
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  // The verify primitive stamps the fine-grained failing step on
+  // `failure_reason` (`verify:<gate>`) and the verdict on `failure_signature`
+  // (`verify:<gate>/<class>`), and the `status='failed'` transition itself emits
+  // the durable `task.failed` event the recovery-spawn subscriber drains. So a
+  // test simulating a verify-gate failure just sets those fields via the same
+  // `updateTask` transition, then drains — exactly the production choreography.
+  const VERIFY_STEP = 'verify:completeness'
+  const GATE_ERROR = 'no commits ahead of integration branch' // → class 'no-commits-ahead'
+  const VERDICT = 'verify:completeness/no-commits-ahead'
+
+  /**
+   * Fail a fresh origin task through a verify gate carrying the shared verdict,
+   * then run the subscriber drain. The caller MUST have already registered the
+   * subscriber (via `rs.ensureRecoverySpawner`) so the cursor tails from before
+   * the first failure — otherwise a subscriber registered mid-stream skips the
+   * `task.failed` event emitted by this task's `failed` transition. Returns the
+   * origin task id.
+   */
+  const failOneVerifyGateTask = async (
+    loaded: Loaded,
+    index: number,
+  ): Promise<string> => {
+    const { q, rs, client } = loaded
+    const t = await q.enqueueTask(`gate task ${index}`, undefined, {
+      skipTriage: true,
+    })
+    // The `queued → failed` transition emits the durable task.failed event.
+    await q.updateTask(t.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      failureReason: VERIFY_STEP,
+      failureSignature: VERDICT,
+      error: GATE_ERROR,
+    })
+    await rs.drainRecoverySpawner(client)
+    return t.id
+  }
+
+  const countFixTasksFor = async (
+    client: Client,
+    originId: string,
+  ): Promise<number> => {
+    const r = await client.execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [originId],
+    })
+    return Number((r.rows[0] as unknown as { n: number }).n)
+  }
+
+  const countGateBrokenRows = async (aq: ActionQueueModule): Promise<number> => {
+    const items = await aq.listActionQueueItems('open')
+    return items.filter((i) => (i as { kind?: string }).kind === 'gate-broken')
+      .length
+  }
+
+  it('trips at K identical verdicts across different tasks and raises exactly ONE gate-broken row', async () => {
+    const loaded = await loadModules(repo)
+    const { rs, gm, aq, client } = loaded
+    const K = gm.GATE_VERDICT_TRIP_THRESHOLD
+    // Register the subscriber's cursor before any task fails so every
+    // task.failed transition below is drained.
+    await rs.ensureRecoverySpawner(client)
+
+    // Below the threshold: no trip, no row, verdict not yet suppressed.
+    for (let i = 0; i < K - 1; i++) {
+      await failOneVerifyGateTask(loaded, i)
+    }
+    expect(await countGateBrokenRows(aq)).toBe(0)
+    expect(await gm.isVerdictSuppressed(client, VERDICT)).toBe(false)
+
+    // The K-th identical verdict (a DIFFERENT task) trips the monitor.
+    await failOneVerifyGateTask(loaded, K - 1)
+    expect(await gm.isVerdictSuppressed(client, VERDICT)).toBe(true)
+    expect(await countGateBrokenRows(aq)).toBe(1)
+
+    // Further identical failures do NOT raise a second row (idempotent episode).
+    await failOneVerifyGateTask(loaded, K)
+    await failOneVerifyGateTask(loaded, K + 1)
+    expect(await countGateBrokenRows(aq)).toBe(1)
+  })
+
+  it('does not advance the streak when the SAME task fails the same gate repeatedly', async () => {
+    const loaded = await loadModules(repo)
+    const { q, rs, pub, gm, aq, client } = loaded
+    const K = gm.GATE_VERDICT_TRIP_THRESHOLD
+
+    const t = await q.enqueueTask('single repeat-failing task', undefined, {
+      skipTriage: true,
+    })
+    await q.updateTask(t.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      failureReason: VERIFY_STEP,
+      failureSignature: VERDICT,
+      error: GATE_ERROR,
+    })
+    await rs.ensureRecoverySpawner(client)
+
+    // Publish the SAME task's failure K+2 times. Because the monitor advances
+    // only on a DIFFERENT task id, the streak never passes 1 and never trips.
+    for (let i = 0; i < K + 2; i++) {
+      await publish(pub, client, 'task.failed', { taskId: t.id, error: GATE_ERROR })
+      await rs.drainRecoverySpawner(client)
+    }
+
+    expect(await gm.isVerdictSuppressed(client, VERDICT)).toBe(false)
+    expect(await countGateBrokenRows(aq)).toBe(0)
+  })
+
+  it('suppresses recovery for the tripped verdict, leaving the origin failed-and-restartable with its recovery slot unconsumed', async () => {
+    const loaded = await loadModules(repo)
+    const { q, rs, gm, client } = loaded
+    const K = gm.GATE_VERDICT_TRIP_THRESHOLD
+    await rs.ensureRecoverySpawner(client)
+
+    // Trip the monitor with K-1 genuine failures (each may spawn a recovery).
+    for (let i = 0; i < K - 1; i++) {
+      await failOneVerifyGateTask(loaded, i)
+    }
+    // The K-th trips + is itself suppressed.
+    const trippedId = await failOneVerifyGateTask(loaded, K - 1)
+    expect(await gm.isVerdictSuppressed(client, VERDICT)).toBe(true)
+
+    // The tripping task consumed NO recovery slot: zero fix tasks point at it,
+    // and it is left `failed` (restartable via `mars restart`), not `blocked`
+    // behind a spawned-and-doomed recovery.
+    expect(await countFixTasksFor(client, trippedId)).toBe(0)
+    const tripped = await q.getTask(trippedId)
+    expect(tripped?.status).toBe('failed')
+    expect(tripped?.failureReason).toBe(`gate-suppressed:${VERDICT}`)
+
+    // A brand-new task carrying the now-suppressed verdict is ALSO suppressed:
+    // failed, no fix task, no task_blockers edge.
+    const laterId = await failOneVerifyGateTask(loaded, K)
+    expect(await countFixTasksFor(client, laterId)).toBe(0)
+    const later = await q.getTask(laterId)
+    expect(later?.status).toBe('failed')
+    const edges = await client.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ?`,
+      args: [laterId],
+    })
+    expect(Number((edges.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  it('does not feed the monitor for non-verify failures (a code-phase failure never trips it)', async () => {
+    const loaded = await loadModules(repo)
+    const { q, rs, gm, aq, client } = loaded
+    const K = gm.GATE_VERDICT_TRIP_THRESHOLD
+
+    await rs.ensureRecoverySpawner(client)
+    // K+1 distinct tasks failing in the CODE phase (failure_reason has no
+    // `verify:` prefix) must not trip the gate monitor.
+    for (let i = 0; i < K + 1; i++) {
+      const t = await q.enqueueTask(`code-fail task ${i}`, undefined, {
+        skipTriage: true,
+      })
+      await q.updateTask(t.id, {
+        status: 'failed',
+        failedPhase: 'code',
+        failureReason: 'code',
+        error: 'agent bailed without committing',
+      })
+      await rs.drainRecoverySpawner(client)
+    }
+
+    expect(await countGateBrokenRows(aq)).toBe(0)
+    // The verify verdict is untouched.
+    expect(await gm.isVerdictSuppressed(client, VERDICT)).toBe(false)
   })
 })
