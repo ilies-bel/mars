@@ -90,6 +90,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     handleProposalSlice: notImpl('handleProposalSlice') as DaemonDeps['handleProposalSlice'],
     handleProposalApprove: notImpl('handleProposalApprove') as DaemonDeps['handleProposalApprove'],
     handleProposalReslice: notImpl('handleProposalReslice') as DaemonDeps['handleProposalReslice'],
+    handleProposalTake: notImpl('handleProposalTake') as DaemonDeps['handleProposalTake'],
     handleRefine: notImpl('handleRefine') as DaemonDeps['handleRefine'],
     dispatchGlossaryWrite: notImpl('dispatchGlossaryWrite') as DaemonDeps['dispatchGlossaryWrite'],
     dispatchAdrAdd: notImpl('dispatchAdrAdd') as DaemonDeps['dispatchAdrAdd'],
@@ -110,9 +111,9 @@ describe('RPC registry', () => {
   it('registers exactly one leaf per protocol op, no duplicates', () => {
     // Every handler op is unique (buildRpcRegistry throws on dup).
     expect(() => buildRpcRegistry(allRpcHandlers)).not.toThrow()
-    // Spot-check the count matches the 36-op protocol surface
-    // (33 + task.note + task.check + step-done).
-    expect(rpcRegistry.size).toBe(36)
+    // Spot-check the count matches the 37-op protocol surface
+    // (33 + task.note + task.check + step-done + proposal.take).
+    expect(rpcRegistry.size).toBe(37)
   })
 
   it('rejects duplicate ops', () => {
@@ -162,6 +163,24 @@ describe('dispatchRpc routing', () => {
     )
     expect(setTaskPriority).toHaveBeenCalledWith('t1', 3)
     expect(res).toEqual({ ok: true, data: task })
+  })
+
+  it('proposal.take delegates to handleProposalTake and passes proposalId', async () => {
+    const handleProposalTake = vi
+      .fn()
+      .mockResolvedValue({ proposalId: 'p1', taskId: 't99' }) as DaemonDeps['handleProposalTake']
+    const { deps } = makeDeps({ handleProposalTake })
+    const res = await dispatchRpc(rpcRegistry, { op: 'proposal.take', proposalId: 'p1' }, deps)
+    expect(handleProposalTake).toHaveBeenCalledWith('p1')
+    expect(res).toEqual({ ok: true, data: { proposalId: 'p1', taskId: 't99' } })
+  })
+
+  it('proposal.take is gated by the drain gate (work-spawning op)', async () => {
+    const { deps } = makeDeps()
+    deps.setAcceptingWork(false)
+    const res = await dispatchRpc(rpcRegistry, { op: 'proposal.take', proposalId: 'p1' }, deps)
+    expect(res.ok).toBe(false)
+    expect((res as { errorCode?: string }).errorCode).toBe('DRAINING')
   })
 })
 

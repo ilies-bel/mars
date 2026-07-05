@@ -140,6 +140,11 @@ const proposalResliceHandler = handler('proposal.reslice', async (req, deps) => 
   return { ok: true, data: r }
 })
 
+const proposalTakeHandler = handler('proposal.take', async (req, deps) => {
+  const r = await deps.handleProposalTake(req.proposalId)
+  return { ok: true, data: r }
+})
+
 const refineHandler = handler('refine', async (req, deps) => {
   await deps.handleRefine(req.id, req.refresh ?? false)
   return { ok: true }
@@ -481,6 +486,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   proposalSliceHandler,
   proposalApproveHandler,
   proposalResliceHandler,
+  proposalTakeHandler,
   refineHandler,
   glossaryWriteHandler,
   adrAddHandler,

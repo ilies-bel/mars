@@ -156,6 +156,9 @@ export interface DaemonDeps {
     proposalId: string,
     feedback: string,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }>
+  handleProposalTake(
+    proposalId: string,
+  ): Promise<{ proposalId: string; taskId: string }>
   handleRefine(id: string, refresh: boolean): Promise<void>
   dispatchGlossaryWrite(req: {
     kind: 'set' | 'remove'

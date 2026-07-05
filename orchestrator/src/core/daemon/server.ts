@@ -2146,6 +2146,97 @@ export const startDaemon = async (
     return handleProposalSlice(proposalId, feedback)
   }
 
+  const handleProposalTake = async (
+    proposalId: string,
+  ): Promise<{ proposalId: string; taskId: string }> => {
+    assertProposalsSourceFresh(proposalsStamp)
+    const { claimProposalForSlicing, markProposalSliced, resolveProposalId, getProposal } =
+      await import('../proposals')
+
+    const resolved = await resolveProposalId(proposalId)
+    if (resolved.kind === 'ambiguous') {
+      throw new Error(
+        `ambiguous prefix '${proposalId}' matches ${resolved.count} proposals`,
+      )
+    }
+    if (resolved.kind === 'none') {
+      throw new Error(`proposal ${proposalId} not found`)
+    }
+
+    const proposal = await getProposal(resolved.id)
+    if (!proposal) throw new Error(`proposal ${resolved.id} not found`)
+    if (proposal.status !== 'prd-ready') {
+      throw new Error(
+        `proposal ${proposal.id} is '${proposal.status}'; only 'prd-ready' proposals can be taken`,
+      )
+    }
+
+    // Atomically claim: prd-ready → slicing (CAS guard against concurrent take/slice).
+    const claimed = await claimProposalForSlicing(resolved.id)
+    if (!claimed) {
+      throw new Error(
+        `proposal ${resolved.id} is no longer 'prd-ready'; another take or slice may be in progress`,
+      )
+    }
+
+    // Compose the PRD body as the task prompt.
+    const parts: string[] = [`# ${proposal.title}`]
+    if (proposal.problem.trim().length > 0) {
+      parts.push(`\n## Problem\n\n${proposal.problem.trim()}`)
+    }
+    if (proposal.solution.trim().length > 0) {
+      parts.push(`\n## Solution\n\n${proposal.solution.trim()}`)
+    }
+    if (proposal.userStories.length > 0) {
+      const storiesBody = proposal.userStories.map((s) => `- [ ] ${s}`).join('\n')
+      parts.push(`\n## Acceptance criteria\n\n${storiesBody}`)
+    }
+    if (proposal.outOfScope.trim().length > 0) {
+      parts.push(`\n## Out of scope\n\n${proposal.outOfScope.trim()}`)
+    }
+    if (proposal.notes.trim().length > 0) {
+      parts.push(`\n## Notes\n\n${proposal.notes.trim()}`)
+    }
+    parts.push(
+      `\n---\n\nThis task carries the full PRD (proposal ${resolved.id}).` +
+        ` No slicer decomposition — one Foreground session drives the entire scope under journal discipline.`,
+    )
+    const prompt = parts.join('\n')
+
+    // Derive done criteria from user stories when present.
+    const doneCriteria = proposal.userStories
+
+    let task: import('../queue').Task
+    try {
+      task = await enqueueTask(prompt, undefined, {
+        author: proposal.author ?? undefined,
+        originId: resolved.id,
+        parentProposalId: resolved.id,
+        workflow: 'live',
+        spec: {
+          files: [],
+          verifyCmd: null,
+          previewCmd: null,
+          doneCriteria,
+          taskType: 'auto',
+        },
+      })
+    } catch (err) {
+      // Compensate: revert slicing claim so the proposal stays actionable.
+      const { revertSlicingProposalToReady } = await import('../proposals')
+      await revertSlicingProposalToReady(resolved.id).catch(() => {})
+      throw err
+    }
+
+    // Transition: slicing → sliced (taskCount=1).
+    await markProposalSliced(resolved.id, 1)
+
+    // Notify the dispatch loop that the task is ready to run.
+    bus.emit('task.queued', { taskId: task.id })
+
+    return { proposalId: resolved.id, taskId: task.id }
+  }
+
   const handleInit = async (
     opts: import('../../workflows/init-workflow').RunInitOptions,
   ): Promise<import('../../workflows/init-workflow').RunInitResult> => {
@@ -2694,6 +2785,7 @@ export const startDaemon = async (
     handleProposalSlice,
     handleProposalApprove,
     handleProposalReslice,
+    handleProposalTake,
     handleRefine,
     dispatchGlossaryWrite,
     dispatchAdrAdd,

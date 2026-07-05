@@ -704,6 +704,31 @@ const proposalApprove: Command = {
   },
 }
 
+const proposalTake: Command = {
+  path: 'proposal take',
+  summary:
+    'take a prd-ready proposal live as ONE task routed to the live workflow (human-driven, no slicer); no parallelism — one arc, use `proposal slice` for slicer decomposition',
+  usage: 'usage: mars proposal take <id>',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    if (!id) {
+      deps.err('usage: mars proposal take <id>')
+      return { code: 1 }
+    }
+    try {
+      const r = (await deps.daemon.sendRequest(
+        { op: 'proposal.take', proposalId: id },
+        { onSpawnNotice: spawnNoticeOut(deps.out) },
+      )) as { proposalId: string; taskId: string }
+      deps.out(`proposal ${r.proposalId} taken as task ${r.taskId} (workflow: live)`)
+    } catch (error: unknown) {
+      deps.err(errorMessage(error))
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
 const proposalReslice: Command = {
   path: 'proposal reslice',
   summary: 'discard current slices and re-run the Slicer with operator feedback',
@@ -736,10 +761,10 @@ const proposalGroup: Command = {
   path: 'proposal',
   summary: 'proposal subcommands',
   usage:
-    'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|approve|reslice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
+    'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|take|approve|reslice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
   run: (_args, deps) => {
     deps.err(
-      'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|approve|reslice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
+      'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|take|approve|reslice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
     )
     return { code: 1 }
   },
@@ -753,6 +778,7 @@ export const proposalCommands: readonly Command[] = [
   proposalRemoveUserStory,
   proposalPromote,
   proposalSlice,
+  proposalTake,
   proposalApprove,
   proposalReslice,
   proposalReject,

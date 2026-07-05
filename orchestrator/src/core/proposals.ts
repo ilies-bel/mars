@@ -1390,3 +1390,17 @@ export const markProposalSliced = async (
   }
   await emitProposalBusEvent('proposal.sliced', { proposalId: id, taskCount })
 }
+
+/**
+ * Revert a 'slicing' proposal back to 'prd-ready'. Used as a compensating
+ * action when task creation fails after `claimProposalForSlicing` was called
+ * (e.g. in `handleProposalTake`). Best-effort: throws on unexpected status.
+ */
+export const revertSlicingProposalToReady = async (id: string): Promise<void> => {
+  await initProposals()
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ? WHERE id = ? AND status = 'slicing'`,
+    args: [Date.now(), id],
+  })
+}
