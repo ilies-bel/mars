@@ -2226,30 +2226,38 @@ export class Arc {
       // Reset the dependent's worktree to integration HEAD BEFORE flipping it
       // to 'queued' — if the reset is refused (commits ahead) the dependent must
       // never enter the dispatch queue.
-      try {
-        await resetDependentWorktreeToIntegration(
-          row.id,
-          dep?.worktreePath ?? null,
-          integrationBranch,
-        )
-      } catch (err: unknown) {
-        if (err instanceof WorktreeAheadOfIntegrationError) {
-          await raiseWorktreeAheadActionQueue(
-            err.taskId,
-            err.worktreePath,
-            err.aheadCount,
-            err.integrationBranch,
+      //
+      // EXCEPT for a human-owned continuation: `mars step done` keeps the
+      // lease identity on the row precisely to mark that a Foreground session
+      // owns this worktree's commits — they ARE the work product, headed for
+      // verify. Resetting would destroy human work; refusing would fail the
+      // task for being in exactly the state the live loop puts it in.
+      if (dep?.leaseOwner == null) {
+        try {
+          await resetDependentWorktreeToIntegration(
+            row.id,
+            dep?.worktreePath ?? null,
+            integrationBranch,
           )
-          await markTaskFailed(row.id, WORKTREE_AHEAD_FAILURE_REASON)
-          outcomes.push({
-            taskId: row.id,
-            outcome: 'failed',
-            retryCount,
-            failureReason: WORKTREE_AHEAD_FAILURE_REASON,
-          })
-          continue
+        } catch (err: unknown) {
+          if (err instanceof WorktreeAheadOfIntegrationError) {
+            await raiseWorktreeAheadActionQueue(
+              err.taskId,
+              err.worktreePath,
+              err.aheadCount,
+              err.integrationBranch,
+            )
+            await markTaskFailed(row.id, WORKTREE_AHEAD_FAILURE_REASON)
+            outcomes.push({
+              taskId: row.id,
+              outcome: 'failed',
+              retryCount,
+              failureReason: WORKTREE_AHEAD_FAILURE_REASON,
+            })
+            continue
+          }
+          throw err
         }
-        throw err
       }
       const flipped = await store.atomic(async (scope) => {
         const upd = await scope.execute({
@@ -2542,25 +2550,30 @@ export class Arc {
     }
 
     // Reset the dependent's worktree to integration HEAD before re-dispatching.
+    // Skipped for a human-owned continuation (`mars step done` keeps the lease
+    // identity): its commits ahead ARE the work product, headed for verify —
+    // see the identical guard in the sweep above.
     const integrationBranch = integrationBranchName()
-    try {
-      await resetDependentWorktreeToIntegration(
-        taskId,
-        task.worktreePath ?? null,
-        integrationBranch,
-      )
-    } catch (err: unknown) {
-      if (err instanceof WorktreeAheadOfIntegrationError) {
-        await raiseWorktreeAheadActionQueue(
-          err.taskId,
-          err.worktreePath,
-          err.aheadCount,
-          err.integrationBranch,
+    if (task.leaseOwner == null) {
+      try {
+        await resetDependentWorktreeToIntegration(
+          taskId,
+          task.worktreePath ?? null,
+          integrationBranch,
         )
-        await markTaskFailed(taskId, WORKTREE_AHEAD_FAILURE_REASON)
-        return { taskId, outcome: 'failed', retryCount, failureReason: WORKTREE_AHEAD_FAILURE_REASON }
+      } catch (err: unknown) {
+        if (err instanceof WorktreeAheadOfIntegrationError) {
+          await raiseWorktreeAheadActionQueue(
+            err.taskId,
+            err.worktreePath,
+            err.aheadCount,
+            err.integrationBranch,
+          )
+          await markTaskFailed(taskId, WORKTREE_AHEAD_FAILURE_REASON)
+          return { taskId, outcome: 'failed', retryCount, failureReason: WORKTREE_AHEAD_FAILURE_REASON }
+        }
+        throw err
       }
-      throw err
     }
 
     const flipped = await store.atomic(async (scope) => {
