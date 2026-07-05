@@ -270,17 +270,22 @@ export const renderTaskDetail = async (
 export const taskShow: Command = {
   path: 'task show',
   summary: 'show a single task',
-  usage: 'usage: mars task show <id>',
+  usage: 'usage: mars task show <id> [--json]',
   run: async (args, deps) => {
-    const id = args.positional[0]
+    const emitJson = args.positional.includes('--json')
+    const id = args.positional.filter((a) => a !== '--json')[0]
     if (!id) {
-      deps.err('usage: mars task show <id>')
+      deps.err('usage: mars task show <id> [--json]')
       return { code: 1 }
     }
     const task = await deps.store.getTask(id)
     if (!task) {
       deps.err(`no task matching ${id}`)
       return { code: 1 }
+    }
+    if (emitJson) {
+      deps.out(JSON.stringify(task, null, 2))
+      return { code: 0 }
     }
     await renderTaskDetail(deps, task, 'task')
     const { Arc } = await import('../../core/arc')

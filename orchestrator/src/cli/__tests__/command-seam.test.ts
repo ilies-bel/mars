@@ -233,6 +233,39 @@ describe('task show / list (store-backed reads)', () => {
     expect(text).not.toContain('workflow:')
   })
 
+  it('outputs valid JSON with workflow field when --json flag is passed', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const task = await store.enqueueTask('json task', undefined, {
+      skipTriage: true,
+      workflow: 'live',
+    })
+    const r = await runCommandInProcess(['task', 'show', task.id, '--json'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const parsed = JSON.parse(r.out.join('\n')) as Record<string, unknown>
+    expect(parsed['id']).toBe(task.id)
+    expect(parsed['workflow']).toBe('live')
+  })
+
+  it('JSON output omits null workflow when task has no workflow set', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const task = await store.enqueueTask('no-workflow json task', undefined, {
+      skipTriage: true,
+    })
+    const r = await runCommandInProcess(['task', 'show', task.id, '--json'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const parsed = JSON.parse(r.out.join('\n')) as Record<string, unknown>
+    expect(parsed['id']).toBe(task.id)
+    expect(parsed['workflow']).toBeNull()
+  })
+
   it('always renders a priority column (P0 for default, Pn for explicit)', async () => {
     const { store, ctx } = await loadStoreAndCtx()
     await store.enqueueTask('default prio task', undefined, { skipTriage: true })
