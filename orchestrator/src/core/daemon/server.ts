@@ -712,8 +712,7 @@ export const startDaemon = async (
         }
       }
       const { runWorkflow } = await import('@mars/workflow')
-      const { implementWorkflow } = await import('../../workflows/implement-workflow')
-      const { createQueueWorkflowStore, loadWorkflowForKind } = await import(
+      const { createQueueWorkflowStore, loadWorkflowByName } = await import(
         '../../workflows/queue-workflow-store'
       )
       // The implement pipeline now runs on the in-house @mars/workflow engine
@@ -729,17 +728,35 @@ export const startDaemon = async (
       // entirely engine-driven — there is no `resumeFrom` hint in the input.
       const taskStore = await getDefaultTaskStore()
       const workflowStore = createQueueWorkflowStore()
-      // ADR-0056: resolve the workflow to run by kind. A user-owned
-      // `.mars/workflows/<kind>-workflow.js` (scaffolded by `mars init`) wins
-      // over the bundled `implementWorkflow`; absent/malformed → fall back to
-      // the bundled one. This changes WHICH workflow runs — not the engine and
-      // not the write funnel: `services.store` is still the Arc-routed
+      // Resolve the workflow to run by NAME: the task's `workflow` field wins,
+      // else default-by-kind. NO fallback (supersedes ADR-0056's clause): a
+      // missing/malformed file fails the task right here with an actionable
+      // message rather than silently running a different pipeline — with
+      // per-step Execution modes, silent substitution would hand a manual
+      // step to an agent. This changes WHICH workflow runs — not the engine
+      // and not the write funnel: `services.store` is still the Arc-routed
       // TaskStore (S4), so task-state writes keep going through the aggregate.
-      const dispatchKind = task.kind ?? 'task'
-      const workflowToRun = await loadWorkflowForKind(
-        dispatchKind,
-        implementWorkflow,
-      )
+      const workflowName = task.workflow ?? task.kind ?? 'task'
+      let workflowToRun
+      try {
+        workflowToRun = await loadWorkflowByName(workflowName)
+      } catch (loadErr) {
+        const loadMsg =
+          loadErr instanceof Error ? loadErr.message : String(loadErr)
+        log(`[implement] ${task.id} workflow load failed: ${loadMsg}`)
+        await updateTask(task.id, {
+          status: 'failed',
+          error: loadMsg,
+          failureReason: loadMsg,
+          failureReasonCode: 'dispatch:workflow-load',
+          failureSignature: computeFailureSignature(
+            'dispatch:workflow-load',
+            workflowName,
+          ),
+        })
+        bus.emit('task.failed', { taskId: task.id, error: loadMsg })
+        return
+      }
       // Pino-shaped logger adapter over the daemon's `log`. The engine emits
       // structured run/step lifecycle lines (`step.started`, `step.completed`,
       // `run.failed`, …); fold them into one greppable daemon log line each.
@@ -788,7 +805,7 @@ export const startDaemon = async (
           prompt: task.prompt,
           plan: task.plan,
           tags: task.tags ?? ['coder'],
-          kind: dispatchKind,
+          kind: task.kind ?? 'task',
           integrationBranch,
           spec: task.spec
             ? {
@@ -1501,6 +1518,7 @@ export const startDaemon = async (
     spec?: Task['spec'],
     intent?: string,
     originSessionId?: string | null,
+    workflow?: string | null,
   ): Promise<Task> => {
     const opts: Parameters<typeof enqueueTask>[2] = {}
     if (skipTriage) opts.skipTriage = true
@@ -1510,6 +1528,7 @@ export const startDaemon = async (
     if (spec) opts.spec = spec
     if (intent !== undefined) opts.intent = intent
     if (originSessionId !== undefined) opts.originSessionId = originSessionId
+    if (workflow != null) opts.workflow = workflow
     // Arc inheritance (ADR-0050): when a task has exactly one blocker it is
     // almost always a continuation of that blocker's work (the canonical coder
     // follow-up pattern: `mars task add "..." --blocked-by $TASK_ID`). Inherit

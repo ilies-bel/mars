@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { resolve as resolvePath } from 'node:path'
 import type { Client } from '@libsql/client'
@@ -278,22 +278,22 @@ export const createQueueWorkflowStore = (
 const WORKFLOWS_DIR_REL = '.mars/workflows'
 
 /**
- * The on-disk filename for a workflow of the given `kind`. The scaffold lands
- * each template at `.mars/workflows/<kind>-workflow.js`, so a task of
- * `kind: 'task' | 'fix' | 'diagnose'` resolves to `task-workflow.js` etc.
+ * The on-disk filename for a workflow of the given name. The scaffold lands
+ * each template at `.mars/workflows/<name>-workflow.js`. Names default to the
+ * task's kind (`task` | `fix` | `diagnose`) but any name is legal — the
+ * `workflow` task field selects non-default pipelines (e.g. `live`).
  */
-export const workflowFileNameForKind = (kind: string): string =>
-  `${kind}-workflow.js`
+export const workflowFileName = (name: string): string =>
+  `${name}-workflow.js`
 
 /**
- * Absolute path the user-owned workflow for `kind` would live at, under
+ * Absolute path the user-owned workflow of the given name lives at, under
  * `repoRoot` (defaults to the composition-root repo root).
  */
-export const userWorkflowPathForKind = (
-  kind: string,
+export const userWorkflowPath = (
+  name: string,
   repoRoot: string = getRepoRoot(),
-): string =>
-  resolvePath(repoRoot, WORKFLOWS_DIR_REL, workflowFileNameForKind(kind))
+): string => resolvePath(repoRoot, WORKFLOWS_DIR_REL, workflowFileName(name))
 
 /**
  * The minimal shape a user-owned workflow module must default-export. It is a
@@ -309,37 +309,83 @@ const isWorkflowShape = (value: unknown): value is Workflow<unknown, unknown, un
 }
 
 /**
- * Resolve the workflow to run for a task of the given `kind`.
+ * Thrown by {@link loadWorkflowByName} when the named workflow file is
+ * missing, fails to import, or default-exports the wrong shape. Carries the
+ * workflow name and resolved path so the dispatcher can fail the task with an
+ * actionable message. Detected structurally via {@link isWorkflowLoadError}
+ * (name-based, survives dynamic-import module duplication).
+ */
+export class WorkflowLoadError extends Error {
+  readonly workflowName: string
+  readonly path: string
+
+  constructor(workflowName: string, path: string, message: string) {
+    super(message)
+    this.name = 'WorkflowLoadError'
+    this.workflowName = workflowName
+    this.path = path
+  }
+}
+
+export const isWorkflowLoadError = (err: unknown): err is WorkflowLoadError =>
+  err instanceof Error && err.name === 'WorkflowLoadError'
+
+/**
+ * Resolve the workflow to run by NAME — `task.workflow ?? task.kind`.
  *
- * When the consumer has a user-owned `.mars/workflows/<kind>-workflow.js` on
- * disk (scaffolded by `mars init`, ADR-0056), it is dynamically imported and
- * its default export — a plain-JS `@mars/workflow` workflow object — is run in
- * place of the bundled in-repo workflow. When the file is absent (or its
- * default export is malformed), the daemon falls back to `bundledFallback` (the
- * in-repo `implementWorkflow`).
+ * There is NO fallback: a missing or malformed file throws a
+ * {@link WorkflowLoadError} naming the file and the remedy. The dispatcher
+ * must never silently substitute a different pipeline — with per-step
+ * Execution modes, a typo'd live workflow silently degrading to the
+ * fully-auto implement pipeline would hand a manual step to an agent
+ * (supersedes the ADR-0056 bundled-fallback clause).
+ *
+ * The import URL carries the file's mtime, so an edited workflow goes live on
+ * the NEXT dispatch without a daemon restart (Node's ESM cache is keyed by
+ * the full URL; a bare import would pin the first-loaded version for the
+ * daemon's lifetime).
  *
  * This loader changes WHICH workflow runs, not how it runs: the caller still
  * dispatches it through `runWorkflow` with the same `store` /
  * `services: { store }` wiring, so task-state writes keep funnelling through
- * the Arc aggregate (ADR-0052 / S4). No new engine, no Mastra.
- *
- * The bundled fallback is injected rather than imported here so this module
- * stays free of the heavy `implement-workflow` dependency graph and the daemon
- * can keep loading it lazily.
+ * the Arc aggregate (ADR-0052 / S4).
  */
-export const loadWorkflowForKind = async <I, O, S>(
-  kind: string,
-  bundledFallback: Workflow<I, O, S>,
+export const loadWorkflowByName = async <I, O, S>(
+  name: string,
   repoRoot: string = getRepoRoot(),
 ): Promise<Workflow<I, O, S>> => {
-  const path = userWorkflowPathForKind(kind, repoRoot)
-  if (!existsSync(path)) return bundledFallback
-
+  const path = userWorkflowPath(name, repoRoot)
+  if (!existsSync(path)) {
+    throw new WorkflowLoadError(
+      name,
+      path,
+      `no workflow file for '${name}': expected ${path}. No fallback pipeline is ever substituted — create the file (see 'mars workflow list') or run 'mars update' to re-scaffold the defaults.`,
+    )
+  }
   // Plain-JS user module outside the TS source tree: the specifier is
   // computed at runtime, so TS cannot (and should not) statically resolve it.
   // Import by file URL so absolute paths work cross-platform.
-  const mod = (await import(pathToFileURL(path).href)) as { default?: unknown }
+  const mtimeMs = statSync(path).mtimeMs
+  let mod: { default?: unknown }
+  try {
+    mod = (await import(
+      `${pathToFileURL(path).href}?v=${mtimeMs}`
+    )) as { default?: unknown }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new WorkflowLoadError(
+      name,
+      path,
+      `workflow file ${path} failed to load: ${msg}. No fallback pipeline is substituted — fix the file and re-dispatch (check it with 'mars workflow validate ${name}').`,
+    )
+  }
   const candidate = mod.default
-  if (!isWorkflowShape(candidate)) return bundledFallback
+  if (!isWorkflowShape(candidate)) {
+    throw new WorkflowLoadError(
+      name,
+      path,
+      `workflow file ${path} must default-export a workflow object with { id: string, fn: function } (use defineWorkflow from 'mars/workflow'). No fallback pipeline is substituted — fix the export (check it with 'mars workflow validate ${name}').`,
+    )
+  }
   return candidate as Workflow<I, O, S>
 }

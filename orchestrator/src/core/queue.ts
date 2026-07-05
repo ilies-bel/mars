@@ -394,6 +394,13 @@ export interface Task {
    * before this column existed.
    */
   originSessionId: string | null
+  /**
+   * Which user-owned pipeline runs this task: the dispatcher loads
+   * `.mars/workflows/<workflow>-workflow.js`. `null` means default-by-kind
+   * (the dispatcher resolves it to {@link kind}). Selected at enqueue via
+   * `mars task add --workflow <name>`; orthogonal to `kind` by design.
+   */
+  workflow: string | null
   createdAt: string
   updatedAt: string
 }
@@ -788,6 +795,13 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // on every row created outside a Claude Code session and on legacy rows.
   if (!names.has('origin_session_id')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN origin_session_id TEXT`)
+  }
+  // workflow: which user-owned pipeline file runs this task
+  // (.mars/workflows/<workflow>-workflow.js). NULL means "default by kind" —
+  // the dispatcher resolves NULL to the task's kind. A first-class axis,
+  // deliberately NOT folded into `kind` (kind stays semantic: task|fix|diagnose).
+  if (!names.has('workflow')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN workflow TEXT`)
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
@@ -1250,6 +1264,8 @@ export const migrateQueueSchema = async (): Promise<void> => {
             lease_owner          TEXT,
             leased_at            TEXT,
             lease_note           TEXT,
+            origin_session_id    TEXT,
+            workflow             TEXT,
             created_at           TEXT    NOT NULL,
             updated_at           TEXT    NOT NULL
           )
@@ -1266,6 +1282,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             prescriptive_action, slice_kind, sub_deliverable_json,
             integration_head_sha, followup_dedup_key, intent,
             lease_owner, leased_at, lease_note,
+            origin_session_id, workflow,
             created_at, updated_at
           )
           SELECT
@@ -1281,6 +1298,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
             prescriptive_action, slice_kind, sub_deliverable_json,
             integration_head_sha, followup_dedup_key, COALESCE(intent, ''),
             lease_owner, leased_at, lease_note,
+            origin_session_id, workflow,
             created_at, updated_at
           FROM tasks
         `)
@@ -2163,6 +2181,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     leasedAt: (row.leased_at as string | null) ?? null,
     leaseNote: (row.lease_note as string | null) ?? null,
     originSessionId: (row.origin_session_id as string | null) ?? null,
+    workflow: (row.workflow as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -2269,6 +2288,12 @@ export interface EnqueueTaskOptions {
    * null when the enqueue does not originate from a Claude Code session.
    */
   originSessionId?: string | null
+  /**
+   * Pipeline selection: the dispatcher loads
+   * `.mars/workflows/<workflow>-workflow.js` for this task instead of the
+   * kind-default file. Omitted/null → default-by-kind.
+   */
+  workflow?: string | null
 }
 
 /**

@@ -62,6 +62,9 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--config',
   '--intent',
   '--prompt-file',
+  // Pipeline selection axis: which user-owned workflow file runs the task
+  // (.mars/workflows/<name>-workflow.js). `--live` is its boolean sugar.
+  '--workflow',
   // mars init wizard non-interactive parity (ADR-0058). One value flag per
   // string/enum WizardPrompt in src/init/wizard.ts; the parity build-guard
   // (init/__tests__/wizard-parity.test.ts) fails if a prompt lacks its flag.
@@ -98,6 +101,8 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--wizard',
   '--wizard-off',
   '--register-project',
+  // `mars task add --live`: sugar for `--workflow live` (park-at-code live entry).
+  '--live',
   '--help',
   '-h',
   '--version',

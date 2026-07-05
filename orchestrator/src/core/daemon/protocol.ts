@@ -17,6 +17,8 @@ export type DaemonRequest =
       intent?: string
       /** Originating Claude Code session UUID (from CLAUDE_CODE_SESSION_ID). */
       originSessionId?: string | null
+      /** Pipeline selection: `.mars/workflows/<workflow>-workflow.js`. */
+      workflow?: string | null
     }
   | { op: 'task.priority'; id: string; priority: number }
   | {

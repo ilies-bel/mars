@@ -335,8 +335,9 @@ export class Arc {
       intent = promptText.slice(0, Math.min(end, 200))
     }
     const originSessionId = opts?.originSessionId ?? null
+    const workflow = opts?.workflow ?? null
     await resolvedStore.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, preview_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, preview_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         promptText,
@@ -360,6 +361,7 @@ export class Arc {
         subDeliverableJson,
         intent,
         originSessionId,
+        workflow,
         now,
         now,
       ],

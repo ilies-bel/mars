@@ -24,7 +24,7 @@ import type { Command, CommandDeps, CommandResult } from '../command'
 import { errorMessage, spawnNoticeOut } from './shared'
 
 const TASK_ADD_USAGE =
-  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--preview "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [plan flags]'
+  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--preview "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [--workflow <name>] [--live] [plan flags]'
 
 interface EnqueueParams {
   prompt: string
@@ -34,6 +34,8 @@ interface EnqueueParams {
   priority?: number
   tags?: string[]
   spec?: TaskSpec
+  /** Pipeline selection: `.mars/workflows/<workflow>-workflow.js`. */
+  workflow?: string
 }
 
 /**
@@ -89,6 +91,7 @@ const enqueueViaDaemon = async (
       ...(params.spec !== undefined ? { spec: params.spec } : {}),
       ...(params.intent !== undefined ? { intent: params.intent } : {}),
       ...(originSessionId !== null ? { originSessionId } : {}),
+      ...(params.workflow !== undefined ? { workflow: params.workflow } : {}),
     },
     { onSpawnNotice: spawnNoticeOut(deps.out) },
   )) as { id: string; status: string }
@@ -106,7 +109,19 @@ export const taskAdd: Command = {
   summary: 'enqueue a runnable task directly (skips triage)',
   usage: TASK_ADD_USAGE,
   run: async (args, deps) => {
-    const promptResult = resolvePromptSource(args.positional, args.flags)
+    // `--live` is valueless, so the parser leaves it in positional; strip it
+    // before prompt resolution or it would be joined into a literal prompt.
+    const live = args.positional.includes('--live')
+    const positional = args.positional.filter((a) => a !== '--live')
+    const workflowFlag = args.flags['--workflow']?.trim()
+    if (live && workflowFlag !== undefined && workflowFlag !== 'live') {
+      deps.err(
+        `--live is sugar for --workflow live; it conflicts with --workflow ${workflowFlag}`,
+      )
+      return { code: 1 }
+    }
+    const workflow = workflowFlag ?? (live ? 'live' : undefined)
+    const promptResult = resolvePromptSource(positional, args.flags)
     if (!promptResult.ok) {
       deps.err(promptResult.message)
       return { code: 1 }
@@ -143,6 +158,7 @@ export const taskAdd: Command = {
       priority,
       tags: parseTags(args),
       spec: specResult.value,
+      ...(workflow !== undefined ? { workflow } : {}),
     })
   },
 }
