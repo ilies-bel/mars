@@ -427,3 +427,7 @@ _Avoid_: handover, context dump, briefing
 **Execution mode**:
 Per-step property declared in a workflow definition naming who executes the step: auto (an agent or machinery run by the daemon) or manual (a human in a Foreground session working the leased worktree).
 _Avoid_: step mode, live flag, manual flag
+
+**Step guide**:
+Per-step brief declared on a manual step in a workflow definition — what the Foreground session should accomplish there; surfaced at park in the action-queue row, at attach, and by the session hooks, so a manual-heavy workflow reads as a runbook for live work.
+_Avoid_: step prompt, manual note, instructions field
