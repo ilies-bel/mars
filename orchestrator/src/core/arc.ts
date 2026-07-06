@@ -667,9 +667,10 @@ export class Arc {
    *     that needs the column persisted must do so in a follow-up write.
    *   - **no terminal-immutability guard**: this method does NOT reject a
    *     write onto an already-terminal row. The sole guard is the caller-side
-   *     pre-check ({@link Arc.propagateRecoveryDone} returns early when the
-   *     origin is already `done`/`failed`/`dropped`). Keep that defense at the
-   *     call site.
+   *     pre-check ({@link Arc.propagateRecoveryDone} returns early only when
+   *     the origin is already `done` — the true idempotent case; `failed` and
+   *     `dropped` origins are intentionally reconciled to `done`). Keep that
+   *     defense at the call site.
    *
    * Store routing (ADR-0021 / ADR-0030): when `store` is provided the row
    * UPDATE + event INSERT run via `store.batch([updateStmt, ...eventStmts],
@@ -2743,8 +2744,12 @@ export class Arc {
    *
    * INSTANCE method keyed on `this.arcId` (the origin / fixForTaskId target).
    *
-   * Idempotent: a no-op if the origin is already in a terminal state, or
-   * if the recovery's fixForTaskId points at a missing/non-blocked row.
+   * Idempotent only for `done`: returns early when origin is already `done`.
+   * For `failed` and `dropped` origins this function proceeds to reconcile
+   * status to `done` — a successful recovery is authoritative regardless of
+   * what the retry-budget guard previously stamped (fix: mars-f109e203 /
+   * commit 834fdaa1 — late recovery success must resurrect its origin to done).
+   * If the fixForTaskId points at a missing row the method is a no-op.
    *
    * CLAUDE.md contract: "a successful recovery counts as its origin
    * reaching done, so a recovered blocker unblocks the whole chain."
@@ -2752,9 +2757,9 @@ export class Arc {
    * PARITY: the two-tx structure is preserved bit-for-bit — first
    * {@link Arc.setTaskStatus} routes the status change + paired `task.completed`
    * event through the single-writer chokepoint, then a second `store.atomic`
-   * clears `error = NULL` and emits `task.terminal`. The terminal-immutability
-   * guard is the caller-side pre-check below (the early-return when the origin
-   * is already terminal); Arc.setTaskStatus does NOT enforce it (ADR-0052).
+   * clears `error = NULL` and emits `task.terminal`. The sole immutability
+   * guard is the caller-side pre-check for `done` (the only true idempotent
+   * case); Arc.setTaskStatus does NOT enforce terminal immutability (ADR-0052).
    */
   async propagateRecoveryDone(): Promise<PropagateRecoveryDoneResult> {
     const originTaskId = this.arcId

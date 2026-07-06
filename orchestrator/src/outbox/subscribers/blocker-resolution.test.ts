@@ -366,3 +366,97 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
     },
   )
 })
+
+// Regression: mars-f109e203 — late recovery success must resurrect its origin to done.
+//
+// Incident (2026-07-06, origin mars-50e3b511 / recovery fix-a2b92b18):
+//   1. Recovery initially failed → unblock sweep stamped origin 'failed'.
+//   2. Operator ran `mars restart fix-a2b92b18`; recovery succeeded.
+//   3. Origin stayed 'failed' forever because propagateRecoveryDone()
+//      previously returned early for any non-done terminal status.
+//
+// Fix (834fdaa1): only 'done' is a genuine idempotent no-op; 'failed' and
+// 'dropped' origins are reconciled to 'done' — a successful recovery is
+// authoritative regardless of what the retry-budget guard previously stamped.
+// The fix emits task.terminal so the blocker-cascade subscriber can replay on
+// daemon restart and unblock any stranded dependents.
+// ---------------------------------------------------------------------------
+describe('blocker-resolution: late recovery success must resurrect failed origin (mars-f109e203)', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-late-recovery-test-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_FIX_RETRY_BUDGET
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it(
+    'origin in failed + recovery transitions to done => origin becomes done and sole blocked dependent flips to queued',
+    async () => {
+      // Arrange: origin is 'failed' (stamped by unblock sweep when first recovery
+      // attempt exhausted the budget). A dependent is still stranded in 'blocked'.
+      process.env.MARS_FIX_RETRY_BUDGET = '3'
+      const { q, sub } = await loadModules(repo)
+      const qc = q.resolveQueueClient()
+      // Import Arc after vi.resetModules() (called inside loadModules) so it
+      // shares the same module instance and DB binding as sub/q.
+      const { Arc } = (await import('../../core/arc')) as {
+        Arc: typeof import('../../core/arc').Arc
+      }
+
+      const origin = await q.enqueueTask('implement-feature', undefined, { skipTriage: true })
+      // Origin failed when the first recovery attempt exhausted its retry budget.
+      await qc.execute({
+        sql: `UPDATE tasks SET status = 'failed', retry_count = 5 WHERE id = ?`,
+        args: [origin.id],
+      })
+
+      // Dependent is stranded in 'blocked' on the origin.
+      const dep = await q.enqueueTask('dep-on-origin', undefined, { skipTriage: true })
+      await qc.execute({
+        sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
+              VALUES (?, ?, 'confirmed', datetime('now'))`,
+        args: [dep.id, origin.id],
+      })
+      await qc.execute({
+        sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+        args: [dep.id],
+      })
+
+      // Recovery task (kind='fix', fix_for_task_id=origin.id) has now succeeded
+      // — the operator restarted it and it completed successfully.
+      const fixId = `fix-${origin.id.slice(0, 8)}`
+      await qc.execute({
+        sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, created_at, updated_at)
+              VALUES (?, 'fix the code', 'done', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, datetime('now'), datetime('now'))`,
+        args: [fixId, origin.id, origin.id],
+      })
+
+      await sub.ensureBlockerResolutionSubscriber(qc)
+
+      // Act: simulate what the daemon does when a fix task reaches 'done'.
+      // propagateRecoveryDone() must NOT early-return just because origin is
+      // 'failed' — the successful recovery is the authoritative signal.
+      const propagation = await Arc.load(origin.id).propagateRecoveryDone()
+
+      // Assert — origin must be flipped to done.
+      expect(propagation.originFlipped).toBe(true)
+      expect((await q.getTask(origin.id))?.status).toBe('done')
+
+      // propagateRecoveryDone emits task.terminal{origin, done} into the
+      // durable outbox so the subscriber can replay on daemon restart.
+      // Drain it now: the subscriber calls unblockByCompletion(origin.id) which
+      // finds the stranded dependent and re-queues it.
+      await sub.drainBlockerResolution(qc)
+      expect((await q.getTask(dep.id))?.status).toBe('queued')
+    },
+  )
+})
