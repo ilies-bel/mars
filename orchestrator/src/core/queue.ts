@@ -2443,6 +2443,14 @@ export const updateTask = async (
     }
   }
 
+  // Transitioning to 'done': clear stale failure fields from any prior failed
+  // attempt so a done row never carries a misleading failure_reason.  Only
+  // applies when a real status change is happening (previousStatus is set and
+  // differs from 'done', the only terminal-immutable guard that blocks this).
+  if (patch.status === 'done' && previousStatus !== null && previousStatus !== 'done') {
+    patch = { ...patch, failureReason: null, failureSignature: null, failureReasonCode: null }
+  }
+
   if (patch.status !== undefined) {
     fields.push('status = ?')
     args.push(patch.status)

@@ -686,8 +686,13 @@ export class Arc {
     const now = new Date().toISOString()
     const eventType = mapStatusToEvent(newStatus)
     if (store) {
+      // Transitioning to 'done': clear stale failure fields from any prior
+      // failed attempt so done rows never carry a misleading failure_reason.
       const updateStmt: InStatement = {
-        sql: 'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
+        sql:
+          newStatus === 'done'
+            ? 'UPDATE tasks SET status = ?, updated_at = ?, failure_reason = NULL, failure_signature = NULL, failure_reason_code = NULL WHERE id = ?'
+            : 'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
         args: [newStatus, now, taskId],
       }
       // No event mapping (e.g. 'blocked', 'running') → row write only, no emit.
@@ -722,8 +727,13 @@ export class Arc {
       return
     }
     await withWriteTx(resolveQueueClient(), async (tx) => {
+      // Transitioning to 'done': clear stale failure fields from any prior
+      // failed attempt so done rows never carry a misleading failure_reason.
       await tx.execute({
-        sql: 'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
+        sql:
+          newStatus === 'done'
+            ? 'UPDATE tasks SET status = ?, updated_at = ?, failure_reason = NULL, failure_signature = NULL, failure_reason_code = NULL WHERE id = ?'
+            : 'UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?',
         args: [newStatus, now, taskId],
       })
       if (eventType === null) return

@@ -9,6 +9,12 @@
  *     exactly one 'task.completed' event to the events table
  *   - the event and the status write land in the same commit (no orphan state
  *     without event, no orphan event without state)
+ *
+ * Also covers: failure field cleanup on done transition (2026-07-06).
+ *   A task that carried failure_reason / failure_signature from a prior failed
+ *   attempt must have those fields NULL-ed out when it reaches 'done', whether
+ *   the done transition goes through Arc.setTaskStatus (the propagateRecoveryDone
+ *   path) or directly through updateTask.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
@@ -20,6 +26,7 @@ interface QueueMod {
   migrateQueueSchema: typeof import('../queue').migrateQueueSchema
   resolveQueueClient: typeof import('../queue').resolveQueueClient
   enqueueTask: typeof import('../queue').enqueueTask
+  updateTask: typeof import('../queue').updateTask
   getTask: typeof import('../queue').getTask
 }
 
@@ -41,6 +48,19 @@ const loadMods = async (repo: string): Promise<QueueMod & ArcMod> => {
   await queue.migrateQueueSchema()
   const arc = await import('../arc')
   return { ...(queue as unknown as QueueMod), Arc: arc.Arc }
+}
+
+/** Write failure columns directly — simulates what a failed task carry. */
+const stampFailure = async (
+  q: QueueMod,
+  id: string,
+  reason: string,
+  signature: string,
+): Promise<void> => {
+  await q.resolveQueueClient().execute({
+    sql: `UPDATE tasks SET status = 'failed', failure_reason = ?, failure_signature = ?, failure_reason_code = 'test:failure' WHERE id = ?`,
+    args: [reason, signature, id],
+  })
 }
 
 describe('Arc.setTaskStatus', () => {
@@ -151,5 +171,98 @@ describe('Arc.setTaskStatus', () => {
       (result.rows[0] as unknown as { type: string; payload: string }).payload,
     )
     expect(payload).toMatchObject({ taskId: task.id, result: { via: 'recovery' } })
+  })
+})
+
+describe('failure field cleanup on done transition', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('Arc.setTaskStatus clears failure_reason / failure_signature when completing a previously failed task', async () => {
+    // Scenario: a task failed (e.g. setup:origin-worktree-missing), the origin is
+    // later recovered, and propagateRecoveryDone calls Arc.setTaskStatus(id, 'done').
+    // The done row must NOT retain the stale failure fields.
+    const q = await loadMods(repo)
+    const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
+
+    // Stamp failure columns directly — mirrors what a failed run leaves behind.
+    await stampFailure(q, task.id, 'setup:origin-worktree-missing', 'sig-abc')
+
+    // Simulate propagateRecoveryDone completing the origin.
+    await q.Arc.setTaskStatus(task.id, 'done')
+
+    const row = await q.resolveQueueClient().execute({
+      sql: `SELECT status, failure_reason, failure_signature, failure_reason_code FROM tasks WHERE id = ?`,
+      args: [task.id],
+    })
+    const r = row.rows[0] as unknown as {
+      status: string
+      failure_reason: string | null
+      failure_signature: string | null
+      failure_reason_code: string | null
+    }
+    expect(r.status).toBe('done')
+    expect(r.failure_reason).toBeNull()
+    expect(r.failure_signature).toBeNull()
+    expect(r.failure_reason_code).toBeNull()
+  })
+
+  it('Arc.setTaskStatus with store clears failure fields on done transition', async () => {
+    const q = await loadMods(repo)
+    const { getDefaultTaskStore } = await import('../store/task-store')
+    const store = await getDefaultTaskStore()
+    const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
+
+    await stampFailure(q, task.id, 'verify:typecheck', 'sig-xyz')
+
+    await q.Arc.setTaskStatus(task.id, 'done', { result: { via: 'recovery' } }, store)
+
+    const row = await q.resolveQueueClient().execute({
+      sql: `SELECT status, failure_reason, failure_signature, failure_reason_code FROM tasks WHERE id = ?`,
+      args: [task.id],
+    })
+    const r = row.rows[0] as unknown as {
+      status: string
+      failure_reason: string | null
+      failure_signature: string | null
+      failure_reason_code: string | null
+    }
+    expect(r.status).toBe('done')
+    expect(r.failure_reason).toBeNull()
+    expect(r.failure_signature).toBeNull()
+    expect(r.failure_reason_code).toBeNull()
+  })
+
+  it('updateTask clears failure fields when transitioning a failed task to done', async () => {
+    const q = await loadMods(repo)
+    const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
+
+    await stampFailure(q, task.id, 'code:exit-1', 'sig-code')
+
+    // Direct updateTask path — used when the implement pipeline marks done.
+    await q.updateTask(task.id, { status: 'done' })
+
+    const row = await q.resolveQueueClient().execute({
+      sql: `SELECT status, failure_reason, failure_signature, failure_reason_code FROM tasks WHERE id = ?`,
+      args: [task.id],
+    })
+    const r = row.rows[0] as unknown as {
+      status: string
+      failure_reason: string | null
+      failure_signature: string | null
+      failure_reason_code: string | null
+    }
+    expect(r.status).toBe('done')
+    expect(r.failure_reason).toBeNull()
+    expect(r.failure_signature).toBeNull()
+    expect(r.failure_reason_code).toBeNull()
   })
 })
