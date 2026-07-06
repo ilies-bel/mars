@@ -8,6 +8,8 @@ import {
   type TraceCtx,
 } from './internal'
 import { parseCompletionReport } from '../../../workflows/primitives/shared'
+import type { MonitorDb } from '../gate-meta-monitor'
+import { getGateBurnInStatus, recordGateParse } from '../gate-burn-in'
 
 /**
  * The output marker emitted by the npm decoy `tsc` placeholder when
@@ -686,6 +688,21 @@ export interface CompletenessGateArgs {
    * absent or empty.
    */
   allStructuredCriteriaChecked?: boolean
+  /**
+   * Optional DB client for shadow-mode burn-in tracking.
+   *
+   * When provided the gate operates in shadow mode until it has recorded
+   * {@link SHADOW_BURN_IN_COUNT} clean parses (runs where the gate produced
+   * a definite verdict — i.e. it found a completion-report block to evaluate,
+   * regardless of whether that verdict was a pass or a failure). In shadow
+   * mode a failing verdict is logged to `trace_events` and visible in the run
+   * timeline, but the gate step always returns `passed: true` so it never
+   * fails verify.
+   *
+   * When absent (the default) the gate enforces immediately — backwards-
+   * compatible with all existing callers and tests that do not pass a client.
+   */
+  burnInDb?: MonitorDb
 }
 
 /**
@@ -801,7 +818,8 @@ const checkEvidenceClaim = async (
 }
 
 /**
- * Always-on completeness gate (tier: 'task').
+ * Core completeness gate logic — computes the raw verdict without any
+ * burn-in / shadow-mode side effects.
  *
  * Parses the coder's completion report from the persisted transcript text
  * and returns a {@link VerifyStep} with one of four verdicts:
@@ -817,7 +835,7 @@ const checkEvidenceClaim = async (
  *
  * No LLM call is made anywhere in this gate.
  */
-export const checkCompletenessGate = async (
+const computeCompletenessStep = async (
   args: CompletenessGateArgs,
 ): Promise<VerifyStep> => {
   const {
@@ -947,6 +965,84 @@ export const checkCompletenessGate = async (
     tier: 'task',
     output: `all ${doneLines.length} criterion/criteria done and evidence verified${notesSuffix}`,
   }
+}
+
+/**
+ * Always-on completeness gate (tier: 'task') with optional shadow-mode
+ * burn-in (see {@link CompletenessGateArgs.burnInDb}).
+ *
+ * When `burnInDb` is absent the gate enforces immediately — the existing
+ * four-verdict behaviour is unchanged for all callers that do not supply a
+ * burn-in client.
+ *
+ * When `burnInDb` is present:
+ *  1. The gate's burn-in status is read before running the verdict logic.
+ *  2. The verdict is computed normally via {@link computeCompletenessStep}.
+ *  3. If the gate found a completion-report block to evaluate (i.e. the
+ *     parse produced any result other than `absent`), one clean parse is
+ *     recorded — advancing the gate toward promotion.
+ *  4. While the gate is still in shadow mode (`inShadow: true`):
+ *     - A failing verdict is logged as a `log_line` trace event so it is
+ *       visible in the run timeline.
+ *     - The returned step always has `passed: true` — it never fails verify.
+ *  5. After {@link SHADOW_BURN_IN_COUNT} clean parses the gate auto-promotes
+ *     to enforcing mode and subsequent runs enforce as normal.
+ *
+ * A gate whose input pipeline starves (coderText is always empty — the
+ * `absent` case) never records a clean parse and therefore never promotes.
+ */
+export const checkCompletenessGate = async (
+  args: CompletenessGateArgs,
+): Promise<VerifyStep> => {
+  const { burnInDb, traceCtx } = args
+
+  // ── 1. Shadow mode check ─────────────────────────────────────────────────
+  let inShadow = false
+  if (burnInDb) {
+    const status = await getGateBurnInStatus(burnInDb, 'completeness').catch(
+      () => ({ inShadow: false, parseCount: 0 }),
+    )
+    inShadow = status.inShadow
+  }
+
+  // ── 2. Determine clean-parse eligibility before running the gate ─────────
+  // A "clean parse" requires the gate to find a completion-report block to
+  // evaluate. `absent` means no block was found (starvation signature) —
+  // those runs do NOT advance the burn-in counter.
+  // This parse is cheap (pure string scan); computeCompletenessStep parses
+  // again internally.
+  const preReport = parseCompletionReport(args.coderText)
+  const isCleanParse = preReport.kind !== 'absent'
+
+  // ── 3. Run the core gate logic ───────────────────────────────────────────
+  const step = await computeCompletenessStep(args)
+
+  // ── 4. Record clean parse (best-effort — never breaks the main path) ─────
+  if (burnInDb && isCleanParse) {
+    await recordGateParse(burnInDb, 'completeness').catch(() => {})
+  }
+
+  // ── 5. Shadow mode: suppress failures, log verdict to trace_events ───────
+  if (inShadow && !step.passed) {
+    if (traceCtx) {
+      await traceCtx.store
+        .record({
+          kind: 'log_line',
+          taskId: traceCtx.taskId,
+          originId: traceCtx.originId,
+          phase: 'verify',
+          payload: {
+            message: `[shadow-mode:completeness] verdict suppressed during burn-in: ${step.output.slice(0, 400)}`,
+            gateName: 'completeness',
+            shadowMode: true,
+          },
+        })
+        .catch(() => {})
+    }
+    return { ...step, passed: true, output: `[shadow-mode] ${step.output}` }
+  }
+
+  return step
 }
 
 /**

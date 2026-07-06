@@ -1521,6 +1521,11 @@ export const verify = async (
           traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
           structuredDoneCriteria: doneCriteria,
           allStructuredCriteriaChecked,
+          // Shadow-mode burn-in: the gate runs in log-only mode until it has
+          // recorded SHADOW_BURN_IN_COUNT clean parses. `store` satisfies
+          // MonitorDb structurally (it exposes .execute() from the libsql
+          // client it wraps).
+          burnInDb: store,
         })
         r = {
           passed: completenessStep.passed,
