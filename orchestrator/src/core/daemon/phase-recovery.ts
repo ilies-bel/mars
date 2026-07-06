@@ -260,12 +260,53 @@ export const recoverPhase = async (
       // next run picks up from the right step with a fresh Claude session.
     } else {
       // Worktree is gone — the completed setup checkpoint now points at a
-      // missing path. Delete the branch artifact and the step checkpoints so
-      // the next dispatch re-runs setup and creates a fresh worktree.
+      // missing path. Delete the branch artifact (if safe) and the step
+      // checkpoints so the next dispatch re-runs setup and creates a fresh
+      // worktree.
       if (t.worktreePath) {
         await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
       }
-      await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
+      // Guard: only delete the branch if it has no unmerged commits. A branch
+      // whose tip is ahead of the integration branch holds work product —
+      // preserve the ref and raise an action-queue row instead of deleting.
+      const { listUniqueCommitsAhead } = await import('../lib/sweep')
+      // Inline the integration-branch resolution to avoid pulling blocker-resolution
+      // into the import chain here (its transitive deps can race with the queue
+      // singleton during startup reconciliation).
+      const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
+      const commitsAhead = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot)
+      if (commitsAhead.length > 0) {
+        log(
+          `[reconcile] PRESERVING branch ${branch} for task ${t.id}: ` +
+            `${commitsAhead.length} unmerged commit(s) ahead of ${integrationBranch} — ` +
+            `branch NOT deleted during phase-recovery. ` +
+            `Use 'mars purge --force ${t.id}' to remove explicitly.`,
+        )
+        // Raise an action-queue item so the operator knows about the preserved branch.
+        // Best-effort: a failure here must not block the phase-recovery loop.
+        const { raiseActionQueueItem } = await import('../lib/action-queue')
+        await raiseActionQueueItem({
+          kind: 'worktree-ahead',
+          category: 'orchestrator',
+          priority: 'high',
+          title: `Branch ${branch} has ${commitsAhead.length} unmerged commit(s) — preserved by phase-recovery`,
+          body:
+            `Task ${t.id} was recovered after a daemon restart, but its branch ${branch} ` +
+            `has ${commitsAhead.length} commit(s) ahead of ${integrationBranch}. ` +
+            `The branch has been preserved to avoid losing committed work.\n\n` +
+            `Resolve manually: inspect the commits and either cherry-pick them onto ` +
+            `${integrationBranch} or remove with 'mars purge --force ${t.id}'.\n\n` +
+            `Commits:\n` +
+            commitsAhead.map((c) => `  ${c.shortSha} ${c.subject}`).join('\n'),
+          payload: { taskId: t.id, branch, integrationBranch, commitsAhead },
+          context: { repoRoot },
+          raisedBy: 'phase-recovery',
+          signature: `phase-recovery-ahead:${t.id}`,
+          originTaskId: t.id,
+        }).catch(() => {}) // best-effort
+      } else {
+        await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
+      }
       const { createQueueWorkflowStore } = await import(
         '../../workflows/queue-workflow-store'
       )

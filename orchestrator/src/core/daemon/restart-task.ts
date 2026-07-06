@@ -86,12 +86,53 @@ export const coreRestartTask = async (
   const exec = promisify(execFile)
   const { removeWorktree } = await import('../lib/git/worktree')
   const { getRepoRoot } = await import('../context')
+  const { listUniqueCommitsAhead } = await import('../lib/sweep')
+  const { integrationBranchName } = await import('../blocker-resolution')
+  const { raiseActionQueueItem } = await import('../lib/action-queue')
 
   const branch = task.branch ?? `task/${task.id}`
+  const repoRoot = getRepoRoot()
+
+  // Worktree directory may be removed — it can be recreated. But the branch
+  // ref must survive if it carries unmerged committed work.
   if (task.worktreePath && exists(task.worktreePath)) {
     await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})
   }
-  await exec('git', ['branch', '-D', branch], { cwd: getRepoRoot() }).catch(() => {})
+
+  // Guard: refuse to delete a branch whose tip is not an ancestor of the
+  // integration branch. Commits ahead = work product. Delete the worktree if
+  // needed (done above), but preserve the ref; log loudly and raise an
+  // action-queue row so the operator can decide what to do.
+  const integrationBranch = integrationBranchName()
+  const commitsAhead = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot)
+  if (commitsAhead.length > 0) {
+    console.warn(
+      `[restart-cleanup] PRESERVING branch ${branch} for task ${id}: ` +
+        `${commitsAhead.length} unmerged commit(s) ahead of ${integrationBranch} — ` +
+        `branch NOT deleted. Use 'mars purge --force ${id}' to remove explicitly.`,
+    )
+    await raiseActionQueueItem({
+      kind: 'worktree-ahead',
+      category: 'orchestrator',
+      priority: 'high',
+      title: `Branch ${branch} has ${commitsAhead.length} unmerged commit(s) — preserved by restart cleanup`,
+      body:
+        `Task ${id} was restarted and its branch ${branch} would have been deleted, ` +
+        `but it has ${commitsAhead.length} commit(s) ahead of ${integrationBranch}. ` +
+        `The branch has been preserved to avoid losing committed work.\n\n` +
+        `Resolve manually: inspect the commits and either cherry-pick them onto ` +
+        `${integrationBranch} or remove with 'mars purge --force ${id}'.\n\n` +
+        `Commits:\n` +
+        commitsAhead.map((c) => `  ${c.shortSha} ${c.subject}`).join('\n'),
+      payload: { taskId: id, branch, integrationBranch, commitsAhead },
+      context: { repoRoot },
+      raisedBy: 'restart-cleanup',
+      signature: `restart-ahead:${id}`,
+      originTaskId: id,
+    }).catch(() => {}) // best-effort: action-queue failure must not block the restart
+  } else {
+    await exec('git', ['branch', '-D', branch], { cwd: repoRoot }).catch(() => {})
+  }
 
   // Discard the prior workflow run journal so the next dispatch starts from
   // step 0 instead of resuming stale 'completed' step records. Without this,
