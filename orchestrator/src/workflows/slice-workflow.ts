@@ -15,6 +15,7 @@ import { listActionQueueItems, raiseActionQueueItem } from '../core/lib/action-q
 import { openTraceEventStore } from '../core/lib/trace-events-store'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 import { loadDaemonConfig } from '../core/daemon/config'
+import { validateSliceReferences } from './slice-reference-validator'
 
 const sliceInputSchema = z.object({
   proposalId: z.string(),
@@ -797,6 +798,70 @@ export const injectAutoLinkerBlockers = async (
 }
 
 /**
+ * For each slice, validate that every backtick-cited symbol and every
+ * `readFirst` path exists in the repo. When unresolved references are found,
+ * append a fenced "Spec-vs-reality caveat" block to `prescriptiveAction` and
+ * strip the missing paths from `readFirst` (retaining the last missing path
+ * as a fallback when removal would violate the `.min(1)` constraint).
+ *
+ * The `onAnnotated` callback is invoked once per annotated slice so callers
+ * can emit telemetry or trace records without coupling this helper to any
+ * particular store.
+ *
+ * Exported for unit testing.
+ */
+export function annotateUnresolvedReferences(
+  slices: SliceSpec[],
+  repoRoot: string,
+  onAnnotated: (evt: {
+    sliceTitle: string
+    missingSymbols: string[]
+    missingReadFirstPaths: string[]
+  }) => void,
+): void {
+  for (const slice of slices) {
+    const { missingSymbols, missingReadFirstPaths } = validateSliceReferences(slice, repoRoot)
+    if (missingSymbols.length === 0 && missingReadFirstPaths.length === 0) continue
+
+    // Filter missing paths from readFirst, retaining one fallback if needed.
+    let filteredReadFirst = slice.readFirst.filter((p) => !missingReadFirstPaths.includes(p))
+    let retainedFallback: string | null = null
+    if (filteredReadFirst.length === 0 && missingReadFirstPaths.length > 0) {
+      retainedFallback = missingReadFirstPaths[missingReadFirstPaths.length - 1]
+      filteredReadFirst = [retainedFallback]
+    }
+    slice.readFirst = filteredReadFirst
+
+    // Build caveat text.
+    const caveats: string[] = [
+      '',
+      'Spec-vs-reality caveat: the following references could not be resolved in the current tree at slicing time — verify or replace before implementing.',
+    ]
+    if (missingSymbols.length > 0) {
+      caveats.push(`Unresolved symbols: ${missingSymbols.join(', ')}`)
+    }
+    if (missingReadFirstPaths.length > 0) {
+      if (retainedFallback !== null) {
+        const displayPaths = missingReadFirstPaths
+          .map((p) => (p === retainedFallback ? `${p} (retained as fallback)` : p))
+          .join(', ')
+        caveats.push(`Missing read-first paths: ${displayPaths}`)
+      } else {
+        caveats.push(`Missing read-first paths: ${missingReadFirstPaths.join(', ')}`)
+      }
+    }
+
+    slice.prescriptiveAction += caveats.join('\n')
+
+    onAnnotated({
+      sliceTitle: slice.title,
+      missingSymbols,
+      missingReadFirstPaths,
+    })
+  }
+}
+
+/**
  * Drop slices whose every `creates` file already exists on disk and already
  * exports every backtick-declared symbol found in `prescriptiveAction`.
  * Blocker edges pointing at dropped slices are removed from surviving slices;
@@ -1203,6 +1268,26 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       } catch {
         return null
       }
+    })
+
+    // Reference validation: annotate slices whose symbols/paths don't resolve.
+    annotateUnresolvedReferences(parsed.slices, getRepoRoot(), (evt) => {
+      void traceStore
+        ?.record({
+          kind: 'log_line',
+          taskId: null,
+          originId: inputData.proposalId,
+          phase: null,
+          payload: {
+            level: 'warn',
+            source: 'reference-validator',
+            msg: 'Slice cites unresolved references',
+            sliceTitle: evt.sliceTitle,
+            missingSymbols: evt.missingSymbols,
+            missingReadFirstPaths: evt.missingReadFirstPaths,
+          },
+        })
+        .catch(() => {})
     })
 
     // Validate dependency indices before any DB writes.

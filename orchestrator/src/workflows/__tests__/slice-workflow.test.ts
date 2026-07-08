@@ -11,11 +11,13 @@ import {
   injectAutoLinkerBlockers,
   type DirectionVerdict,
   dropAlreadySatisfiedSlices,
+  annotateUnresolvedReferences,
   composeTaskPrompt,
   subDeliverableSchema,
   detectActionAntiPattern,
   applyActionQualityGuard,
 } from '../slice-workflow'
+import * as sliceRefValidator from '../slice-reference-validator'
 import {
   composePrompt,
   resolveWorkerSystemPrompt,
@@ -3851,5 +3853,124 @@ describe('applyActionQualityGuard: re-prompt on vague actions', () => {
     expect(reprompt).toHaveBeenCalledTimes(1)
     expect(slices[0].prescriptiveAction).toBe(concreteAction)
     expect(slices[1].prescriptiveAction).toBe(concreteRewrite)
+  })
+})
+
+describe('annotateUnresolvedReferences', () => {
+  // Minimal SliceSpec fixture reused across tests.
+  const makeSlice = (
+    overrides: Partial<{
+      title: string
+      prescriptiveAction: string
+      readFirst: string[]
+      creates: string[]
+      modifies: string[]
+      blockedBy: number[]
+    }> = {},
+  ) => ({
+    title: 'Test slice',
+    type: 'AFK' as const,
+    kind: 'coder' as const,
+    whatToBuild: 'test',
+    acceptanceCriteria: ['works'],
+    blockedBy: [] as number[],
+    readFirst: ['src/real-path.ts'] as string[],
+    prescriptiveAction: 'Add `loadWorkflowForKind` to the module.',
+    modifies: [] as string[],
+    creates: [] as string[],
+    verifyCmd: null,
+    previewCmd: null,
+    taskType: 'auto' as const,
+    ...overrides,
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('annotates slices whose references do not resolve', () => {
+    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockReturnValue({
+      missingSymbols: ['loadWorkflowForKind'],
+      missingReadFirstPaths: ['src/fake-path.ts'],
+    })
+
+    const slice = makeSlice({
+      prescriptiveAction: 'Add `loadWorkflowForKind` call.',
+      readFirst: ['src/real-path.ts', 'src/fake-path.ts'],
+    })
+    const onAnnotated = vi.fn()
+
+    annotateUnresolvedReferences([slice], '/some/root', onAnnotated)
+
+    expect(slice.prescriptiveAction).toContain(
+      'Spec-vs-reality caveat: the following references could not be resolved in the current tree at slicing time — verify or replace before implementing.',
+    )
+    expect(slice.prescriptiveAction).toContain('Unresolved symbols: loadWorkflowForKind')
+    expect(slice.prescriptiveAction).toContain('Missing read-first paths: src/fake-path.ts')
+    // Fake path stripped; real path kept
+    expect(slice.readFirst).toEqual(['src/real-path.ts'])
+    expect(onAnnotated).toHaveBeenCalledTimes(1)
+    expect(onAnnotated).toHaveBeenCalledWith({
+      sliceTitle: 'Test slice',
+      missingSymbols: ['loadWorkflowForKind'],
+      missingReadFirstPaths: ['src/fake-path.ts'],
+    })
+  })
+
+  it('retains last missing path when removal would leave readFirst empty', () => {
+    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockReturnValue({
+      missingSymbols: [],
+      missingReadFirstPaths: ['src/only-path.ts'],
+    })
+
+    const slice = makeSlice({
+      readFirst: ['src/only-path.ts'],
+    })
+    const onAnnotated = vi.fn()
+
+    annotateUnresolvedReferences([slice], '/some/root', onAnnotated)
+
+    // The path is retained (fallback) — readFirst must not be empty.
+    expect(slice.readFirst).toEqual(['src/only-path.ts'])
+    // Caveat records the retention
+    expect(slice.prescriptiveAction).toContain('retained as fallback')
+    expect(onAnnotated).toHaveBeenCalledTimes(1)
+  })
+
+  it('fires onAnnotated exactly once per annotated slice', () => {
+    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockReturnValue({
+      missingSymbols: ['sym'],
+      missingReadFirstPaths: [],
+    })
+
+    const slices = [makeSlice({ title: 'A' }), makeSlice({ title: 'B' })]
+    const onAnnotated = vi.fn()
+
+    annotateUnresolvedReferences(slices, '/some/root', onAnnotated)
+
+    expect(onAnnotated).toHaveBeenCalledTimes(2)
+    expect(onAnnotated.mock.calls[0][0].sliceTitle).toBe('A')
+    expect(onAnnotated.mock.calls[1][0].sliceTitle).toBe('B')
+  })
+
+  it('leaves slices with no missing references untouched and does not fire callback', () => {
+    vi.spyOn(sliceRefValidator, 'validateSliceReferences').mockReturnValue({
+      missingSymbols: [],
+      missingReadFirstPaths: [],
+    })
+
+    const originalAction = 'Add `myFunc` to the module.'
+    const originalReadFirst = ['src/real-path.ts']
+    const slice = makeSlice({
+      prescriptiveAction: originalAction,
+      readFirst: [...originalReadFirst],
+    })
+    const onAnnotated = vi.fn()
+
+    annotateUnresolvedReferences([slice], '/some/root', onAnnotated)
+
+    expect(slice.prescriptiveAction).toBe(originalAction)
+    expect(slice.readFirst).toEqual(originalReadFirst)
+    expect(onAnnotated).not.toHaveBeenCalled()
   })
 })
