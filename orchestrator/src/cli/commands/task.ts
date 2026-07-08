@@ -176,6 +176,14 @@ export const renderTaskDetail = async (
   if (task.workflow !== null) {
     deps.out(`workflow:   ${task.workflow}`)
   }
+  if (task.currentStepName !== null) {
+    deps.out(`step:`)
+    deps.out(`  name:  ${task.currentStepName}`)
+    deps.out(`  mode:  manual`)
+    if (task.currentStepGuide !== null) {
+      deps.out(`  guide: ${task.currentStepGuide}`)
+    }
+  }
   deps.out(`author:     ${formatAuthor(task.author)}`)
   deps.out(`branch:     ${task.branch ?? '-'}`)
   deps.out(`worktree:   ${task.worktreePath ?? '-'}`)
@@ -284,7 +292,18 @@ export const taskShow: Command = {
       return { code: 1 }
     }
     if (emitJson) {
-      deps.out(JSON.stringify(task, null, 2))
+      deps.out(
+        JSON.stringify(
+          {
+            ...task,
+            current_step_name: task.currentStepName,
+            current_step_mode: task.currentStepName !== null ? 'manual' : null,
+            current_step_guide: task.currentStepGuide,
+          },
+          null,
+          2,
+        ),
+      )
       return { code: 0 }
     }
     await renderTaskDetail(deps, task, 'task')

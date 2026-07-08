@@ -837,6 +837,7 @@ export class Arc {
       priority: 'normal',
       title: `Task ${taskId} parked — awaiting human`,
       body:
+        options.stepGuide ??
         `Task ${taskId} is parked in its worktree. ` +
         `Lease holder: ${options.leaseOwner}. ` +
         `Work in the worktree interactively, then release the lease to resume the pipeline.` +
