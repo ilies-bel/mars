@@ -5,6 +5,7 @@ import { constants as fsConstants } from 'node:fs'
 import { parseClaudeStreamLine, extractQuotaRejected, type ClaudeEvent } from '../claude-stream'
 import { getLatestContextSize } from '../claude-usage'
 import { FALLBACK_CLAUDE_PATH_DIRS, isExecutableFile } from './internal'
+import { apiCircuitBreaker } from '../api-circuit-breaker'
 
 export interface RunSubprocessResult {
   exitCode: number
@@ -542,6 +543,7 @@ export const runClaudeCode = async ({
   let ctxWarned = false
   let ctxExhausted = false
   let externalAborted = false
+  let apiRetryCount = 0
   const abort = new AbortController()
   // Bridge a caller-supplied AbortSignal onto the internal controller so a
   // single SIGKILL path covers timeout, cap, and external (read/grep span)
@@ -610,6 +612,47 @@ export const runClaudeCode = async ({
       if (ctxExhausted) return
       conversation.push(event)
       if (onEvent) await onEvent(event)
+      // API outage detection — trip the circuit breaker when a ConnectionRefused
+      // cascade is observed within a single run. Two signals:
+      //   1. >= 3 api_retry events within the run.
+      //   2. A synthetic assistant message (model === '<synthetic>') whose text
+      //      contains 'ConnectionRefused', OR a result event whose api_error_status
+      //      or result string references 'ConnectionRefused'.
+      if (event.type === 'api_retry') {
+        apiRetryCount += 1
+        if (apiRetryCount >= 3) {
+          apiCircuitBreaker.open(`ConnectionRefused: ${apiRetryCount} api_retry events in run`)
+        }
+      } else if (event.type === 'assistant') {
+        const msg = event.message
+        if (typeof msg === 'object' && msg !== null && !Array.isArray(msg)) {
+          const msgRecord = msg as Record<string, unknown>
+          if (msgRecord.model === '<synthetic>') {
+            const content = msgRecord.content
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (typeof block === 'object' && block !== null && !Array.isArray(block)) {
+                  const b = block as Record<string, unknown>
+                  if (b.type === 'text' && typeof b.text === 'string' && b.text.includes('ConnectionRefused')) {
+                    apiCircuitBreaker.open('ConnectionRefused: synthetic assistant terminal message')
+                  }
+                }
+              }
+            }
+          }
+        }
+      } else if (event.type === 'result') {
+        const errStatus = event.api_error_status
+        const resultStr = typeof event.result === 'string' ? event.result : ''
+        if (
+          (typeof errStatus === 'string' && errStatus.includes('ConnectionRefused')) ||
+          resultStr.includes('ConnectionRefused')
+        ) {
+          apiCircuitBreaker.open(
+            `ConnectionRefused: result event api_error_status=${typeof errStatus === 'string' ? errStatus : String(errStatus ?? 'unknown')}`,
+          )
+        }
+      }
       if (budgetEnabled) {
         const contextSize = getLatestContextSize(conversation)
         if (!ctxWarned && contextSize >= ctxWarnAt) {
