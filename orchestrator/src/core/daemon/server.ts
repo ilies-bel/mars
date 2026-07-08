@@ -114,6 +114,7 @@ import {
 import { rpcRegistry, dispatchRpc } from './rpc/registry'
 import type { DaemonDeps } from './rpc/types'
 import { createAppServices } from '../app-services'
+import { startApiEndpointProbe } from '../lib/api-endpoint-probe'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -3333,6 +3334,18 @@ export const startDaemon = async (
   // is fully wired) — fire-and-forget; errors logged inside.
   void reconcile().catch((err) => log(`[reconcile] failed: ${(err as Error).message}`))
 
+  // ── API endpoint probe ────────────────────────────────────────────────────
+  // While the circuit breaker is open, probe the Anthropic API every 30 s
+  // (default; override via MARS_API_PROBE_INTERVAL_MS). On a successful probe
+  // the breaker is closed and dispatch resumes on the next dispatcher tick.
+  // .unref() inside startApiEndpointProbe ensures the interval never prevents
+  // a clean shutdown. The stop handle is called in shutdown() below.
+  const ENDPOINT_PROBE_INTERVAL_MS = Number(
+    process.env.MARS_API_PROBE_INTERVAL_MS ?? 30_000,
+  )
+  const stopEndpointProbe = startApiEndpointProbe({ intervalMs: ENDPOINT_PROBE_INTERVAL_MS })
+  log(`[api-probe] started (intervalMs=${ENDPOINT_PROBE_INTERVAL_MS})`)
+
   // Boot drain for the alert-dismisser outbox subscriber: register it (no
   // replay — chokepoint already reconciles history) and clear alerts for any
   // status changes published while the daemon was down.
@@ -3913,6 +3926,7 @@ export const startDaemon = async (
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
     clearInterval(recoverySpawnerDrain)
+    stopEndpointProbe()
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.
