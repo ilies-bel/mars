@@ -31,6 +31,8 @@ import type { RunTimeline, RunTimelineEntry, StepCardEntry } from '@/widgets/Tas
 import { formatDuration, runStepToCard, StepStatusIcon } from '@/widgets/TaskDetailDrawer'
 import { useStepPrompt } from '@/entities/studio/useStudio'
 import type { StepPrompt } from '@/entities/studio/types'
+import { primitiveForStep } from '@/entities/primitive/types'
+import { primitiveHash } from '@/shared/routing'
 import { CopyButton } from '@/components/CopyButton'
 
 // ── Pure model ────────────────────────────────────────────────────────────────
@@ -174,6 +176,34 @@ const PromptBody = ({
 
 // ── Node ──────────────────────────────────────────────────────────────────────
 
+/**
+ * The primitive facet chip on a node face. When the step's (phase, stepName)
+ * maps to a known primitive, the phase chip becomes a link into the
+ * route-addressable primitive drawer (`#/primitive/<name>`) — the Studio
+ * entry point for the per-primitive tool surface and run history. Unmapped
+ * phases keep the plain chip.
+ */
+const PhaseChip = ({ phase, stepName }: { phase: string; stepName: string }) => {
+  const primitive = primitiveForStep(phase, stepName)
+  if (primitive === null) {
+    return (
+      <span className="rounded border border-iron/30 px-1 font-mono text-[10px] text-muted">
+        {phase}
+      </span>
+    )
+  }
+  return (
+    <a
+      href={primitiveHash(primitive)}
+      data-testid="studio-node-primitive-link"
+      title={`Open the ${primitive} primitive — tool surface and run history`}
+      className="rounded border border-iron/30 px-1 font-mono text-[10px] text-muted hover:bg-iron/10 hover:text-fg"
+    >
+      {phase}
+    </a>
+  )
+}
+
 const StudioNode = ({
   taskId,
   runId,
@@ -254,9 +284,7 @@ const StudioNode = ({
               <span className="font-mono text-[10px] text-muted">{entry.workerName}</span>
             ) : null}
             {entry.phase != null ? (
-              <span className="rounded border border-iron/30 px-1 font-mono text-[10px] text-muted">
-                {entry.phase}
-              </span>
+              <PhaseChip phase={entry.phase} stepName={entry.stepName} />
             ) : null}
           </div>
           {entry.outcome === 'failed' || entry.outcome === 'killed' ? (

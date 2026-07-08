@@ -1,5 +1,6 @@
 import type { KpiKey } from './schemas'
 import type { StaleWorktreesPayload } from './schemas'
+import { PRIMITIVE_NAMES, type PrimitiveName } from '@/entities/primitive/types'
 
 export type RouteName = 'action-queue' | 'progress' | 'events' | 'kpi' | 'studio'
 
@@ -38,10 +39,13 @@ export const isKnownRoute = (hash: string): boolean => {
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return true
   // Studio requires a non-empty task id — a bare `#/studio/` redirects.
   if (parseStudioRoute(hash) !== null) return true
-  // Overlay routes (task drawer, proposal drawers, release notes, shortcuts)
+  // Overlay routes (task drawer, proposal drawers, primitive drawer,
+  // release notes, shortcuts)
   if (hash.startsWith('#/task/')) return true
   if (hash.startsWith('#/proposal/')) return true
   if (hash.startsWith('#/proposal-node/')) return true
+  // Primitive requires one of the six known names — `#/primitive/typo` redirects.
+  if (parsePrimitiveRoute(hash) !== null) return true
   if (hash === '#/release-notes') return true
   if (hash === '#/shortcuts') return true
   return false
@@ -292,6 +296,32 @@ export const parseProposalNodeRoute = (hash: string): string | null => {
 }
 
 /**
+ * Parses an optional `#/primitive/<name>` overlay route — the per-primitive
+ * facet drawer (PrimitiveDetailDrawer), layered over the underlying page like
+ * the proposal overlays. Studio step nodes link here; the route stays
+ * deep-linkable on its own.
+ *
+ * Mirrors `parseKpiRoute`: the name must be one of the six known primitives;
+ * unrecognised names normalise to `null` so a stray `#/primitive/typo` never
+ * opens an empty drawer.
+ */
+export const parsePrimitiveRoute = (hash: string): PrimitiveName | null => {
+  const m = /^#\/primitive\/([^/?#]+)/.exec(hash)
+  if (!m) return null
+  const name = decodeURIComponent(m[1])
+  return (PRIMITIVE_NAMES as readonly string[]).includes(name)
+    ? (name as PrimitiveName)
+    : null
+}
+
+/**
+ * Builds a `#/primitive/<name>` hash for opening the primitive facet drawer.
+ * Mirrors `kpiHash`/`proposalHash` for the overlay routing shape.
+ */
+export const primitiveHash = (name: PrimitiveName): string =>
+  `#/primitive/${encodeURIComponent(name)}`
+
+/**
  * Returns the constant `#/release-notes` hash for the Release Notes overlay.
  */
 export const releaseNotesHash = (): string => '#/release-notes'
@@ -360,6 +390,9 @@ export const pageTitle = (route: RouteName, aqCount = 0): string => {
  * so closing the drawer returns there. A bare `#/proposal/<id>` (no `from`)
  * falls back to 'progress'.
  *
+ * Primitive overlay hashes (`#/primitive/<name>`) always keep Progress
+ * mounted beneath the drawer, mirroring the proposal-node overlay.
+ *
  * Use this instead of `detectRoute` as the single source of truth in the App.
  */
 export const resolvePageRoute = (hash: string): RouteName => {
@@ -373,6 +406,10 @@ export const resolvePageRoute = (hash: string): RouteName => {
   }
   const proposalNodeId = parseProposalNodeRoute(hash)
   if (proposalNodeId !== null) {
+    return 'progress'
+  }
+  const primitiveName = parsePrimitiveRoute(hash)
+  if (primitiveName !== null) {
     return 'progress'
   }
   if (parseReleaseNotesRoute(hash)) {

@@ -79,7 +79,21 @@ import type {
   FrameworkUpdateState,
   DraftFeature,
   StaleWorktreeAlert,
+  PrimitiveSummary,
+  PrimitiveDetail,
+  PrimitiveObservedTool,
+  PrimitiveRun,
+  PrimitivePark,
 } from './daemon/http-server'
+import {
+  PRIMITIVE_CATALOG,
+  PRIMITIVE_NAMES,
+  isPrimitiveName,
+  primitiveForSpan,
+  buildWorkerProfiles,
+  type PrimitiveCatalogEntry,
+} from './lib/primitive-catalog'
+import { loadWorkerRegistry, type WorkerDeclaration } from './workers/persisted-registry'
 import {
   extractFirstUserMessageText,
   recoverPromptFromDiskTranscript,
@@ -111,6 +125,19 @@ export interface AppServicesDeps {
    * entries. The daemon wires this to the workflow store backed by mars.db.
    */
   getStepResultsForRun?: (runId: string) => Promise<Map<string, string | null>>
+  /**
+   * Optional: supply the operator-declared Worker declarations for the
+   * primitive tool-surface projection. Defaults to reading
+   * `.mars/worker-registry.json` via the resolved repo context; tests inject
+   * a fixed list so assertions never depend on the host repo's registry.
+   */
+  loadWorkerDeclarations?: () => WorkerDeclaration[]
+  /**
+   * Optional: list awaiting-human parks for awaitHuman's run-history facet.
+   * Defaults to reading the action queue (kind 'awaiting-human'); tests
+   * inject a fixed list so assertions never depend on the host repo's DB.
+   */
+  listAwaitingHumanParks?: () => Promise<PrimitivePark[]>
 }
 
 /**
@@ -144,6 +171,9 @@ export interface AppServices {
   viewStepSpans: (params: { originId?: string; taskId?: string }) => Promise<{ spans: StepSpan[] }>
   viewRunTimeline: (taskId: string) => Promise<RunTimeline>
   viewStepPrompt: (params: { workflowInstanceId: string; stepName: string }) => Promise<StepPromptView>
+  // ── primitives (facet of the Studio surface) ───────────────────────────────
+  viewPrimitives: () => Promise<{ primitives: PrimitiveSummary[] }>
+  viewPrimitive: (params: { name: string; limit?: number }) => Promise<PrimitiveDetail | null>
   viewSessions: (agentName: string) => Promise<{ sessions: Session[] }>
   viewTerminalEvents: () => Promise<{ events: TerminalEvent[] }>
   viewReleaseNotes: () => Promise<{ entries: ReleaseNoteEntry[] }>
@@ -167,6 +197,41 @@ export interface AppServices {
  */
 export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const { traceStore, buildAlertSources, getStepResultsForRun } = deps
+
+  // Default reads for the primitive facet — swallow "not in a repo / table
+  // absent" so the facet degrades to built-ins-only / no-parks instead of a 500.
+  const loadWorkerDeclarations =
+    deps.loadWorkerDeclarations ??
+    ((): WorkerDeclaration[] => {
+      try {
+        return loadWorkerRegistry(resolveContext().stateDir)
+      } catch {
+        return []
+      }
+    })
+  const listAwaitingHumanParks =
+    deps.listAwaitingHumanParks ??
+    (async (): Promise<PrimitivePark[]> => {
+      try {
+        const { listActionQueueItems } = await import('./lib/action-queue')
+        const items = await listActionQueueItems('all')
+        return items
+          .filter((item) => item.kind === 'awaiting-human')
+          .map((item) => ({
+            taskId:
+              typeof item.payload.taskId === 'string' ? item.payload.taskId : null,
+            stepName:
+              typeof item.payload.stepName === 'string' ? item.payload.stepName : null,
+            parkedAt: item.raisedAt,
+            leaseOwner:
+              typeof item.payload.leaseOwner === 'string'
+                ? item.payload.leaseOwner
+                : null,
+          }))
+      } catch {
+        return []
+      }
+    })
 
   const viewTasks: AppServices['viewTasks'] = () =>
     getDefaultDomainTaskStore()
@@ -504,6 +569,154 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     }
 
     return miss
+  }
+
+  // ── primitives — the per-primitive facet of the Studio surface ─────────────
+
+  const DEFAULT_PRIMITIVE_RUN_WINDOW = 50
+  const MAX_PRIMITIVE_RUN_WINDOW = 200
+
+  const toPrimitiveSummary = (entry: PrimitiveCatalogEntry): PrimitiveSummary => ({
+    name: entry.name,
+    description: entry.description,
+    phase: entry.phase,
+    executor: entry.executor,
+  })
+
+  const viewPrimitives: AppServices['viewPrimitives'] = async () => ({
+    primitives: PRIMITIVE_NAMES.map((name) =>
+      toPrimitiveSummary(PRIMITIVE_CATALOG[name]),
+    ),
+  })
+
+  /**
+   * The per-primitive facet: identity, tool surface, and recent-N run history.
+   *
+   * Tool surface follows the two-section rule and never conflates them:
+   *  (a) agent primitives project the DECLARED Worker Authorization profiles
+   *      (code-pinned WORKER_CONFIGS + operator registry);
+   *  (b) shell primitives list the OBSERVED tools from recent `tool_invoked`
+   *      trace events on their phase;
+   *  (c) awaitHuman has no tool surface — and its history is parks
+   *      (awaiting-human action-queue rows), never fabricated spans.
+   *
+   * Run history pairs step_started/step_ended exactly like viewStepSpans but
+   * filters by the primitive's phase (with the behaviour-verify step-name
+   * discriminator on the shared 'verify' phase) and returns newest-first.
+   * Aggregates over this window are the caller's job and must be labelled
+   * "last N runs" — all-time rollups are deliberately not computed (the
+   * phase column is unindexed; see the PRD).
+   */
+  const viewPrimitive: AppServices['viewPrimitive'] = async ({ name, limit }) => {
+    if (!isPrimitiveName(name)) return null
+    const entry = PRIMITIVE_CATALOG[name]
+    const window = Math.min(
+      Math.max(limit ?? DEFAULT_PRIMITIVE_RUN_WINDOW, 1),
+      MAX_PRIMITIVE_RUN_WINDOW,
+    )
+
+    // (a) Declared agent tool surface.
+    const workers = buildWorkerProfiles(
+      name,
+      entry.executor === 'agent' ? loadWorkerDeclarations() : [],
+    )
+
+    // (b) Observed shell tools on the primitive's phase.
+    let observedTools: PrimitiveObservedTool[] = []
+    if (entry.executor === 'shell' && entry.phase !== null) {
+      const events = await traceStore.query({
+        kind: ['tool_invoked'],
+        phase: [entry.phase],
+        limit: 500,
+      })
+      // Newest-first from the store: the first sighting of a tool is its most
+      // recent invocation.
+      const byTool = new Map<string, { count: number; lastInvokedAt: string }>()
+      for (const e of events) {
+        const tool = typeof e.payload.tool === 'string' ? e.payload.tool : null
+        if (tool === null) continue
+        const current = byTool.get(tool)
+        if (current) current.count += 1
+        else byTool.set(tool, { count: 1, lastInvokedAt: e.timestamp })
+      }
+      observedTools = [...byTool.entries()]
+        .map(([tool, v]) => ({ tool, count: v.count, lastInvokedAt: v.lastInvokedAt }))
+        .sort((a, b) => b.count - a.count || a.tool.localeCompare(b.tool))
+    }
+
+    // (c) Run history — recent Step spans on the primitive's phase.
+    let runs: PrimitiveRun[] = []
+    if (entry.phase !== null) {
+      const fetchLimit = Math.min(window * 4, 1000)
+      const [started, ended] = await Promise.all([
+        traceStore.query({ kind: ['step_started'], phase: [entry.phase], limit: fetchLimit }),
+        traceStore.query({ kind: ['step_ended'], phase: [entry.phase], limit: fetchLimit }),
+      ])
+
+      const endedMap = new Map<string, (typeof ended)[0]>()
+      for (const e of ended) {
+        const wfId = e.payload.workflowInstanceId
+        const stepName = e.payload.stepName
+        if (typeof wfId === 'string' && typeof stepName === 'string') {
+          endedMap.set(`${wfId}\0${stepName}`, e)
+        }
+      }
+
+      runs = started
+        .filter((s) => {
+          const stepName = s.payload.stepName
+          return (
+            typeof stepName === 'string' && primitiveForSpan(s.phase, stepName) === name
+          )
+        })
+        .slice(0, window)
+        .map((s) => {
+          const stepName = s.payload.stepName as string
+          const wfId =
+            typeof s.payload.workflowInstanceId === 'string'
+              ? s.payload.workflowInstanceId
+              : ''
+          const endEvent = wfId ? endedMap.get(`${wfId}\0${stepName}`) : undefined
+          return {
+            stepName,
+            workflowInstanceId: wfId,
+            outcome: endEvent
+              ? typeof endEvent.payload.outcome === 'string'
+                ? endEvent.payload.outcome
+                : 'completed'
+              : 'running',
+            startedAt: s.timestamp,
+            endedAt: endEvent ? endEvent.timestamp : null,
+            durationMs:
+              endEvent && typeof endEvent.payload.durationMs === 'number'
+                ? endEvent.payload.durationMs
+                : null,
+            taskId: s.taskId,
+            originId: s.originId,
+            workerName:
+              typeof s.payload.workerName === 'string' ? s.payload.workerName : null,
+            claudeSessionId:
+              endEvent && typeof endEvent.payload.sessionId === 'string'
+                ? endEvent.payload.sessionId
+                : null,
+          }
+        })
+      // Store order is newest-first — kept as-is: recent history reads top-down.
+    }
+
+    // (d) awaitHuman history = parks, never spans.
+    const parks =
+      name === 'awaitHuman' ? (await listAwaitingHumanParks()).slice(0, window) : []
+
+    return {
+      primitive: toPrimitiveSummary(entry),
+      workers,
+      observedTools,
+      caveats: [...entry.caveats],
+      runs,
+      parks,
+      window,
+    }
   }
 
   const viewSessions: AppServices['viewSessions'] = (agentName) =>
@@ -884,6 +1097,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewStepSpans,
     viewRunTimeline,
     viewStepPrompt,
+    viewPrimitives,
+    viewPrimitive,
     viewSessions,
     viewTerminalEvents,
     viewReleaseNotes,

@@ -106,6 +106,94 @@ export interface StepPromptView {
   source: 'persisted' | 'recovered' | null
 }
 
+/**
+ * Wire shape for one primitive row, returned by GET /view/primitives and as
+ * the identity section of GET /view/primitives/:name. `executor` states WHO
+ * runs the primitive: an agent Worker, deterministic shell-outs, or a human.
+ */
+export interface PrimitiveSummary {
+  name: string
+  description: string
+  /** Trace phase its Step spans carry, or null (awaitHuman emits no spans). */
+  phase: string | null
+  executor: 'agent' | 'shell' | 'human'
+}
+
+/**
+ * One Worker's Authorization profile (glossary term) as projected by
+ * GET /view/primitives/:name — model, effort, permission mode, and the
+ * forfeited tools (an empty list means the full tool surface).
+ * `source` is 'built-in' for code-pinned WORKER_CONFIGS entries and
+ * 'registry' for operator-declared Workers from .mars/worker-registry.json.
+ */
+export interface PrimitiveWorkerProfile {
+  workerName: string
+  model: string
+  effort: string
+  permissionMode: string
+  forfeitedTools: string[]
+  source: 'built-in' | 'registry'
+}
+
+/**
+ * One shell tool observed for a deterministic primitive's phase, derived from
+ * recent `tool_invoked` trace events (runTool writes one per invocation).
+ * Empirical, never declared — absence means "not observed", not "forbidden".
+ */
+export interface PrimitiveObservedTool {
+  tool: string
+  count: number
+  /** ISO-8601 timestamp of the most recent invocation in the window. */
+  lastInvokedAt: string
+}
+
+/**
+ * One Step span in a primitive's run history, returned newest-first by
+ * GET /view/primitives/:name. A span that is a Session (runAgent /
+ * behaviourVerify) carries workerName + claudeSessionId; non-LLM spans have
+ * neither.
+ */
+export interface PrimitiveRun {
+  stepName: string
+  workflowInstanceId: string
+  outcome: string
+  startedAt: string
+  endedAt: string | null
+  durationMs: number | null
+  taskId: string | null
+  originId: string | null
+  workerName: string | null
+  claudeSessionId: string | null
+}
+
+/**
+ * One awaiting-human park — awaitHuman's history rows. It parks before any
+ * span opens, so its history is action-queue rows, never fabricated spans.
+ */
+export interface PrimitivePark {
+  taskId: string | null
+  stepName: string | null
+  parkedAt: string
+  leaseOwner: string | null
+}
+
+/**
+ * Wire shape returned by GET /view/primitives/:name — the per-primitive
+ * facet: identity, tool surface (declared Worker profiles OR observed shell
+ * tools, never conflated), honest caveats, and the recent-N run history.
+ * Aggregates are window-scoped by design: `window` names the N the runs
+ * cover ("last N runs", not all-time).
+ */
+export interface PrimitiveDetail {
+  primitive: PrimitiveSummary
+  workers: PrimitiveWorkerProfile[]
+  observedTools: PrimitiveObservedTool[]
+  caveats: string[]
+  runs: PrimitiveRun[]
+  parks: PrimitivePark[]
+  window: number
+}
+
 /** Wire shape returned by GET /view/framework-update. */
 export interface FrameworkUpdateState {
   installed: string
@@ -740,6 +828,52 @@ export const startHttpServer = async (
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return
+    }
+
+    // GET /view/primitives — the fixed catalog of workflow primitives
+    // (setupWorktree, runAgent, verify, behaviourVerify, merge, awaitHuman):
+    // name, one-line description, trace phase, and executor. Pure read; no
+    // draining gate.
+    if (req.method === 'GET' && req.url === '/view/primitives') {
+      deps.appServices
+        .viewPrimitives()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/primitives/:name?limit=N — the per-primitive facet: identity,
+    // tool surface (declared Worker Authorization profiles for agent
+    // primitives, observed tool_invoked shell tools for deterministic ones,
+    // an explicit "human step" shape for awaitHuman), and the recent-N run
+    // history of Step spans (default 50, newest first). 404 on an unknown
+    // primitive name. Pure read; no draining gate.
+    {
+      const primitiveMatch =
+        req.method === 'GET' && req.url
+          ? req.url.match(/^\/view\/primitives\/([^/?]+)(?:\?.*)?$/)
+          : null
+      if (primitiveMatch && primitiveMatch[1]) {
+        const name = decodeURIComponent(primitiveMatch[1])
+        const parsed = new URL(req.url!, 'http://localhost')
+        const limitRaw = parsed.searchParams.get('limit')
+        const limit = limitRaw !== null ? Number.parseInt(limitRaw, 10) : undefined
+        if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+          sendJson(res, 400, { error: 'limit must be a positive integer' })
+          return
+        }
+        deps.appServices
+          .viewPrimitive({ name, limit })
+          .then((detail) => {
+            if (detail === null) {
+              sendJson(res, 404, { ok: false, error: `Unknown primitive '${name}'` })
+            } else {
+              sendJson(res, 200, detail)
+            }
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
     }
 
     // GET /view/sessions?agentName=<name> — session feed for a given worker,

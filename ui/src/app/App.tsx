@@ -4,6 +4,7 @@ import { NavBar } from '@/widgets/NavBar'
 import { TaskDetailDrawer } from '@/widgets/TaskDetailDrawer'
 import { ProposalDetailDrawer } from '@/widgets/ProposalDetailDrawer'
 import { ProposalNodeDrawer } from '@/widgets/ProposalNodeDrawer'
+import { PrimitiveDetailDrawer } from '@/widgets/PrimitiveDetailDrawer'
 import { ReleaseNotesModal } from '@/widgets/ReleaseNotesModal'
 import { ShortcutsOverlay } from '@/widgets/ShortcutsOverlay'
 import { useHashRoute } from '@/shared/useHashRoute'
@@ -12,6 +13,7 @@ import {
   isKnownRoute,
   pageTitle,
   parseKpiRoute,
+  parsePrimitiveRoute,
   parseProposalOrigin,
   parseProposalRoute,
   parseProposalNodeRoute,
@@ -98,6 +100,7 @@ const AppInner = () => {
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
   const proposalNodeId = parseProposalNodeRoute(hash)
+  const primitiveName = parsePrimitiveRoute(hash)
   const showReleaseNotes = parseReleaseNotesRoute(hash)
   const showShortcuts = parseShortcutsRoute(hash)
   // When a task overlay is open from a KPI detail page, parseKpiRoute returns
@@ -196,6 +199,17 @@ const AppInner = () => {
             proposals={proposals}
             tasks={tasks ?? []}
             proposal={proposalNodeDraft}
+            onClose={() => {
+              if (typeof window === 'undefined') return
+              window.location.hash = '#/progress'
+            }}
+          />
+        </FallbackBoundary>
+      ) : null}
+      {primitiveName ? (
+        <FallbackBoundary of="primitive detail" variant="inline">
+          <PrimitiveDetailDrawer
+            name={primitiveName}
             onClose={() => {
               if (typeof window === 'undefined') return
               window.location.hash = '#/progress'

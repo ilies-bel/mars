@@ -10,14 +10,17 @@ import {
   parseProposalRoute,
   parseProposalNodeRoute,
   parseProposalOrigin,
+  parsePrimitiveRoute,
   parseReleaseNotesRoute,
   parseStudioRoute,
+  primitiveHash,
   releaseNotesHash,
   resolvePageRoute,
   studioHash,
   taskHash,
   proposalHash,
 } from './routing'
+import { PRIMITIVE_NAMES } from '@/entities/primitive/types'
 import type { StaleWorktreesPayload } from './schemas'
 
 const emptyStaleWorktrees = (): StaleWorktreesPayload => ({ staleWorktrees: [] })
@@ -541,5 +544,59 @@ describe('studio route integration', () => {
 
   it('pageTitle returns "mars — studio" for the studio route', () => {
     expect(pageTitle('studio')).toBe('mars — studio')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parsePrimitiveRoute / primitiveHash
+// ---------------------------------------------------------------------------
+
+describe('parsePrimitiveRoute', () => {
+  it('returns null when the hash has no primitive fragment', () => {
+    expect(parsePrimitiveRoute('')).toBeNull()
+    expect(parsePrimitiveRoute('#/progress')).toBeNull()
+    expect(parsePrimitiveRoute('#/task/abc-123')).toBeNull()
+    expect(parsePrimitiveRoute('#/primitive')).toBeNull()
+    expect(parsePrimitiveRoute('#/primitive/')).toBeNull()
+  })
+
+  it('returns each of the six known primitive names', () => {
+    for (const name of PRIMITIVE_NAMES) {
+      expect(parsePrimitiveRoute(`#/primitive/${name}`)).toBe(name)
+    }
+  })
+
+  it('normalises unknown names to null', () => {
+    expect(parsePrimitiveRoute('#/primitive/typo')).toBeNull()
+    expect(parsePrimitiveRoute('#/primitive/setupworktree')).toBeNull()
+  })
+})
+
+describe('primitiveHash', () => {
+  it('builds the #/primitive/<name> hash', () => {
+    expect(primitiveHash('runAgent')).toBe('#/primitive/runAgent')
+  })
+
+  it('round-trips through parsePrimitiveRoute', () => {
+    expect(parsePrimitiveRoute(primitiveHash('awaitHuman'))).toBe('awaitHuman')
+  })
+})
+
+describe('primitive route integration', () => {
+  it('isKnownRoute accepts known names and rejects unknown ones', () => {
+    expect(isKnownRoute('#/primitive/verify')).toBe(true)
+    expect(isKnownRoute('#/primitive/typo')).toBe(false)
+    expect(isKnownRoute('#/primitive/')).toBe(false)
+  })
+
+  it('resolvePageRoute keeps Progress mounted beneath the primitive overlay', () => {
+    expect(resolvePageRoute('#/primitive/merge')).toBe('progress')
+  })
+
+  it('detectRoute leaves the underlying page resolution to resolvePageRoute', () => {
+    // A primitive hash is an overlay, not a page route — detectRoute's
+    // default applies and resolvePageRoute overrides it to progress.
+    expect(detectRoute('#/primitive/verify')).toBe('action-queue')
+    expect(resolvePageRoute('#/primitive/verify')).toBe('progress')
   })
 })

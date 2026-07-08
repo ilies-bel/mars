@@ -52,6 +52,8 @@ export const stubAppServices = (
     prompt: null,
     source: null,
   }),
+  viewPrimitives: async () => ({ primitives: [] }),
+  viewPrimitive: async () => null,
   viewSessions: async () => ({ sessions: [] }),
   viewTerminalEvents: async () => ({ events: [] }),
   viewReleaseNotes: async () => ({ entries: [] }),

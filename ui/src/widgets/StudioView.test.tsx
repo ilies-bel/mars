@@ -326,4 +326,35 @@ describe('StudioView', () => {
     expect(html).toContain('Run 2 of 2')
     expect(html.indexOf('wf-1')).toBeLessThan(html.indexOf('wf-2'))
   })
+
+  it('links a primitive-backed node phase chip to the primitive facet drawer', () => {
+    const html = render(
+      <StudioView
+        taskId="task-1"
+        timeline={timeline([
+          step({ stepName: 'run-claude-code', phase: 'code', workerName: 'Coder' }),
+          step({ stepName: 'verify', phase: 'verify', startedAt: '2025-01-01T10:00:01.000Z' }),
+          step({ stepName: 'behaviour-verify', phase: 'verify', workerName: 'BehaviourVerifier', startedAt: '2025-01-01T10:00:02.000Z' }),
+        ])}
+      />,
+    )
+
+    expect(html).toContain('data-testid="studio-node-primitive-link"')
+    expect(html).toContain('href="#/primitive/runAgent"')
+    expect(html).toContain('href="#/primitive/verify"')
+    // The shared 'verify' phase splits on the behaviour-verify step name.
+    expect(html).toContain('href="#/primitive/behaviourVerify"')
+  })
+
+  it('keeps a plain phase chip when the phase maps to no primitive', () => {
+    const html = render(
+      <StudioView
+        taskId="task-1"
+        timeline={timeline([step({ stepName: 'custom-step', phase: 'exotic' })])}
+      />,
+    )
+
+    expect(html).toContain('exotic')
+    expect(html).not.toContain('data-testid="studio-node-primitive-link"')
+  })
 })

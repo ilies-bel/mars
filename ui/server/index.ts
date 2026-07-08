@@ -454,6 +454,31 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/primitives — the fixed catalog of workflow primitives.
+        // Proxied to the daemon's GET /view/primitives so the daemon remains
+        // the single projection source for primitive identity.
+        if (path === '/api/primitives' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/primitives')
+          return jsonResponse(r.status, r.body)
+        }
+
+        // GET /api/primitives/:name?limit=N — the per-primitive facet
+        // (identity, tool surface, recent-N run history). Proxied to the
+        // daemon's GET /view/primitives/:name, mirroring /api/step-prompt.
+        if (path.startsWith('/api/primitives/') && req.method === 'GET') {
+          const name = decodeURIComponent(path.slice('/api/primitives/'.length))
+          if (!name) {
+            return jsonResponse(400, { error: 'primitive name is required' })
+          }
+          const limit = url.searchParams.get('limit')
+          const qs = limit !== null ? `?limit=${encodeURIComponent(limit)}` : ''
+          const r = await proxyGet(
+            ctx.stateDir,
+            `/view/primitives/${encodeURIComponent(name)}${qs}`,
+          )
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/step-spans?taskId=<id> | ?originId=<id> — step timeline.
         // Proxied to the daemon's GET /view/step-spans so the daemon remains
         // the sole reader of the trace store. The drawer scopes by `taskId`
