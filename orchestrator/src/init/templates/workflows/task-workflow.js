@@ -29,7 +29,6 @@ import {
   runAgent,
   verify,
   merge,
-  // awaitHuman,  // uncomment to enable the human-in-the-loop gate (see below)
 } from 'mars/workflow'
 
 export default defineWorkflow({
@@ -38,15 +37,16 @@ export default defineWorkflow({
   async fn(ctx) {
     // setup → provision/attach the worktree on `task/<id>` and install deps.
     // The resolved worktree is remembered on `ctx` for verify/merge below.
+    // setupWorktree is always auto (no mode override needed).
     await ctx.step('setup', () => setupWorktree(ctx))
 
     // code → the coder implements the task prompt inside the worktree.
-    // Override the model per step like the Agent SDK's { prompt, model }:
+    // Execution mode: auto. Override the model per step like the Agent SDK:
     //   runAgent(ctx, { model: 'claude-opus-4-7' })
-    await ctx.step('code', () => runAgent(ctx))
+    await ctx.step('code', () => runAgent(ctx, { mode: 'auto' }))
 
-    // verify → scope-aware typecheck → tests → lint. Throws on any failure.
-    await ctx.step('verify', () => verify(ctx))
+    // verify → scope-aware typecheck → tests → lint. Execution mode: auto.
+    await ctx.step('verify', () => verify(ctx, { mode: 'auto' }))
 
     // ── Manual steps (optional) ──────────────────────────────────────────
     // Every step declares WHO executes it: auto (an agent — the default) or
@@ -54,12 +54,18 @@ export default defineWorkflow({
     // 'awaiting-human' with its Step guide; `mars attach <id>` takes the
     // lease, `mars step done <id>` completes the step and the pipeline
     // continues (re-parking at the next manual step re-leases you
-    // automatically). Two ways to compose one:
+    // automatically).
     //
-    //   - flip a primitive:  verify(ctx, { mode: 'manual', guide: 'QA it' })
-    //   - or add a gate:     await ctx.step('qa', () => awaitHuman(ctx, {
-    //                          note: 'QA your changes, then mars step done',
-    //                        }))
+    // Example manual QA gate — uncomment and insert before merge:
+    //
+    //   await ctx.step('qa', () =>
+    //     runAgent(ctx, {
+    //       mode: 'manual',
+    //       guide:
+    //         'Open the diff in your editor and confirm the change is correct. ' +
+    //         'Tick criteria with `mars task check`, then run `mars step done`.',
+    //     }),
+    //   )
     //
     // For fully human-driven coding, route tasks to the live workflow
     // instead: `mars task add --live "<prompt>"` (see live-workflow.js).

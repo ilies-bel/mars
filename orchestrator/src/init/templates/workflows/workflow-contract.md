@@ -13,24 +13,28 @@ shows you a unified diff and lets you merge by hand (or skip).
 The bundle ships exactly these workflow templates. `mars init` copies each one
 into `.mars/workflows/<name>` (the directory is created if absent):
 
-| Template                | Destination                      | Role                                            |
-| ----------------------- | -------------------------------- | ----------------------------------------------- |
-| `task-workflow.js`      | `.mars/workflows/task-workflow.js`     | Default end-to-end task pipeline (setup → code → verify → merge). |
-| `fix-workflow.js`       | `.mars/workflows/fix-workflow.js`      | Recovery pipeline for a failed task (ADR-0040: one attempt, leaf). |
-| `diagnose-workflow.js`  | `.mars/workflows/diagnose-workflow.js` | Read-only diagnosis of a stuck/failed task arc. |
-| `write-workflow.js`     | `.mars/workflows/write-workflow.js`    | Structured-write pipeline (glossary / ADR / docs). |
+| Template                | Destination                          | Role                                                          |
+| ----------------------- | ------------------------------------ | ------------------------------------------------------------- |
+| `task-workflow.js`      | `.mars/workflows/task-workflow.js`   | Default end-to-end task pipeline (setup → code → verify → merge, all auto). |
+| `fix-workflow.js`       | `.mars/workflows/fix-workflow.js`    | Recovery pipeline for a failed task (ADR-0040: one attempt, leaf). |
+| `diagnose-workflow.js`  | `.mars/workflows/diagnose-workflow.js` | Read-only diagnosis of a stuck/failed task arc.              |
+| `write-workflow.js`     | `.mars/workflows/write-workflow.js`  | Structured-write pipeline (glossary / ADR / docs).           |
+| `live-workflow.js`      | `.mars/workflows/live-workflow.js`   | Human-driven coding: setup (auto) → code (MANUAL) → verify → merge. |
+| `runbook-workflow.js`   | `.mars/workflows/runbook-workflow.js` | Manual-heavy release pipeline: setup → code → qa (MANUAL) → verify → merge. Default for `mars proposal take`. |
 
-This list is the single source of truth for `planWorkflowCopies` /
-`scaffoldWorkflows` in `src/init/scaffold-workflows.ts`. Adding a template here
-means adding the file to `templates/workflows/` and re-running the maintainer
-bundle refresh (`npm run mars:bundle:refresh`).
+The template list is discovered dynamically: `scaffoldWorkflows` reads every
+`*.js` file from `templates/workflows/` via `bundledWorkflowFiles()` in
+`src/init/scaffold-workflows.ts`. Adding a template here means adding the
+`.js` file to `templates/workflows/` — no code change required. Update this
+table and re-run the maintainer bundle refresh (`npm run mars:bundle:refresh`)
+to keep CI in sync.
 
 ## Module shape
 
 Each template is a plain ES module that default-exports a workflow defined with
-`defineWorkflow`. Everything — the `defineWorkflow` helper and the four git
-step-primitives (`setupWorktree`, `runAgent`, `verify`, `merge`) — is imported
-from the single `mars/workflow` surface:
+`defineWorkflow`. Everything — the `defineWorkflow` helper and the step-primitives
+(`setupWorktree`, `runAgent`, `verify`, `merge`) — is imported from the single
+`mars/workflow` surface:
 
 ```js
 import {
@@ -42,8 +46,8 @@ export default defineWorkflow({
   id: 'task',
   async fn(ctx) {
     await ctx.step('setup',  () => setupWorktree(ctx))
-    await ctx.step('code',   () => runAgent(ctx))
-    await ctx.step('verify', () => verify(ctx))
+    await ctx.step('code',   () => runAgent(ctx, { mode: 'auto' }))
+    await ctx.step('verify', () => verify(ctx,    { mode: 'auto' }))
     return  ctx.step('merge',  () => merge(ctx))
   },
 })
@@ -67,6 +71,20 @@ export default defineWorkflow({
   `runAgent(ctx, { model: 'claude-opus-4-7' })` pins the model for that step.
   Omit it to use the resolved Worker's default. Precedence: `opts.model ??
   MARS_WORKER_MODEL` (Coder only) `?? the Worker's pinned model`.
+- **Per-step Execution mode** — `runAgent` and `verify` accept `mode: 'auto' |
+  'manual'` and an optional `guide: string`. `'auto'` (default) runs the
+  primitive headlessly. `'manual'` parks the task `awaiting-human` with the
+  Step guide visible in the action queue and on `mars attach`; `mars step done
+  <id>` signals completion and the pipeline continues. Example manual gate:
+  ```js
+  await ctx.step('qa', () =>
+    runAgent(ctx, {
+      mode: 'manual',
+      guide: 'Review the diff, run smoke tests, tick criteria, then mars step done.',
+    }),
+  )
+  ```
+  `setupWorktree` and `merge` are always auto (no `mode` option).
 - Failures **THROW** — the engine records the step failed. Do not swallow.
 
 ## Ownership & update semantics
@@ -81,5 +99,16 @@ export default defineWorkflow({
 
 ## Marker
 
-Every scaffolded template carries the `// @mars-workflow-template:v3` marker on
-its first line so tooling can recognise an unedited template.
+Every scaffolded template carries a `// @mars-workflow-template:vN` marker on
+its first line so tooling can recognise an unedited template. The version
+increments whenever the bundled content changes materially (a diff that
+`mars update` would offer to merge). Current versions:
+
+| Template              | Marker version |
+| --------------------- | -------------- |
+| `task-workflow.js`    | `v4`           |
+| `fix-workflow.js`     | `v3`           |
+| `diagnose-workflow.js`| `v3`           |
+| `write-workflow.js`   | `v3`           |
+| `live-workflow.js`    | `v1`           |
+| `runbook-workflow.js` | `v1`           |
