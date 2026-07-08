@@ -379,12 +379,58 @@ const workflowValidate: Command = {
   },
 }
 
+const workflowRender: Command = {
+  path: 'workflow render',
+  summary: 'print the workflow runbook — steps in order with mode and guide (local read)',
+  usage: 'usage: mars workflow render <kind>  [--json]',
+  run: async (args, deps) => {
+    const jsonFlag = args.positional.includes('--json')
+    const kind = args.positional.filter((a) => a !== '--json')[0]
+
+    if (!kind) {
+      deps.err('usage: mars workflow render <kind>  [--json]')
+      return { code: 1 }
+    }
+
+    const { validateWorkflow } = await import('../../workflows/validate-workflow')
+    const v = await validateWorkflow(kind, deps.ctx.repoRoot)
+
+    if (!v.ok) {
+      for (const e of v.errors) deps.err(e)
+      return { code: 1 }
+    }
+
+    if (jsonFlag) {
+      const steps = v.steps.map((s) => {
+        const entry: { name: string; mode: string; guide?: string } = {
+          name: s.step ?? '(outside a step)',
+          mode: s.mode,
+        }
+        if (s.guide !== null) entry.guide = s.guide
+        return entry
+      })
+      deps.out(JSON.stringify({ kind, steps }))
+      return { code: 0 }
+    }
+
+    // Text output: numbered steps with mode label; guide on the next line for
+    // manual steps.
+    for (const [i, s] of v.steps.entries()) {
+      deps.out(`${i + 1}. ${s.step ?? '(outside a step)'}  [${s.mode}]`)
+      if (s.guide !== null) {
+        deps.out(`   guide: ${s.guide}`)
+      }
+    }
+    return { code: 0 }
+  },
+}
+
 const workflowGroup: Command = {
   path: 'workflow',
   summary: 'workflow subcommands',
-  usage: 'usage: mars workflow <list|show|validate> ...',
+  usage: 'usage: mars workflow <list|show|validate|render> ...',
   run: (_args, deps) => {
-    deps.err('usage: mars workflow <list|show|validate> ...')
+    deps.err('usage: mars workflow <list|show|validate|render> ...')
     return { code: 1 }
   },
 }
@@ -393,5 +439,6 @@ export const workflowCommands: readonly Command[] = [
   workflowList,
   workflowShow,
   workflowValidate,
+  workflowRender,
   workflowGroup,
 ]
