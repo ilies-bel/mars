@@ -1,7 +1,7 @@
 import type { KpiKey } from './schemas'
 import type { StaleWorktreesPayload } from './schemas'
 
-export type RouteName = 'action-queue' | 'progress' | 'events' | 'kpi'
+export type RouteName = 'action-queue' | 'progress' | 'events' | 'kpi' | 'studio'
 
 /**
  * Derives the current route from the URL hash.
@@ -9,12 +9,14 @@ export type RouteName = 'action-queue' | 'progress' | 'events' | 'kpi'
  * #/progress[/…]        → progress
  * #/events[/…]          → events
  * #/kpi or #/kpi/<key>  → kpi
+ * #/studio/<taskId>     → studio
  * everything else       → action-queue  (default; also covers #/todo legacy)
  */
 export const detectRoute = (hash: string): RouteName => {
   if (hash.startsWith('#/progress')) return 'progress'
   if (hash.startsWith('#/events')) return 'events'
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return 'kpi'
+  if (parseStudioRoute(hash) !== null) return 'studio'
   return 'action-queue'
 }
 
@@ -34,6 +36,8 @@ export const isKnownRoute = (hash: string): boolean => {
   if (hash.startsWith('#/progress')) return true
   if (hash.startsWith('#/events')) return true
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return true
+  // Studio requires a non-empty task id — a bare `#/studio/` redirects.
+  if (parseStudioRoute(hash) !== null) return true
   // Overlay routes (task drawer, proposal drawers, release notes, shortcuts)
   if (hash.startsWith('#/task/')) return true
   if (hash.startsWith('#/proposal/')) return true
@@ -68,6 +72,27 @@ export const parseKpiRoute = (hash: string): KpiKey | null => {
 export const kpiHash = (key: KpiKey): string => `#/kpi/${encodeURIComponent(key)}`
 
 /**
+ * Parses the `#/studio/<taskId>` full-page route — Studio, the live
+ * per-instance step execution tree for one task's workflow runs.
+ *
+ * Returns the decoded task id, or `null` when the hash is not a Studio route.
+ * Mirrors `parseTaskRoute`: trailing slashes and empty ids normalise to
+ * `null` so a stray `#/studio/` never opens an empty page.
+ */
+export const parseStudioRoute = (hash: string): string | null => {
+  const m = /^#\/studio\/([^/?#]+)/.exec(hash)
+  if (!m) return null
+  const id = decodeURIComponent(m[1])
+  return id.length > 0 ? id : null
+}
+
+/**
+ * Builds a `#/studio/<taskId>` hash for navigating to the Studio page.
+ */
+export const studioHash = (taskId: string): string =>
+  `#/studio/${encodeURIComponent(taskId)}`
+
+/**
  * Parses an optional `#/task/<id>` overlay route. The task drawer is layered
  * on top of whatever the underlying `detectRoute(...)` route resolves to —
  * Progress or otherwise — so this function returns the id alone (or `null`
@@ -88,6 +113,7 @@ const ROUTE_NAMES: readonly RouteName[] = [
   'progress',
   'events',
   'kpi',
+  'studio',
 ]
 
 const isRouteName = (value: string): value is RouteName =>
@@ -312,6 +338,8 @@ export const pageTitle = (route: RouteName, aqCount = 0): string => {
       return 'mars — events'
     case 'kpi':
       return 'mars — kpis'
+    case 'studio':
+      return 'mars — studio'
   }
 }
 

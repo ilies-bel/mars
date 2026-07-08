@@ -68,10 +68,15 @@ import type {
   StepSpan,
   RunTimeline,
   RunTimelineStep,
+  StepPromptView,
   FrameworkUpdateState,
   DraftFeature,
   StaleWorktreeAlert,
 } from './daemon/http-server'
+import {
+  extractFirstUserMessageText,
+  recoverPromptFromDiskTranscript,
+} from './lib/step-prompt-recovery'
 
 /**
  * The daemon-runtime collaborators AppServices needs injected. These are the
@@ -131,6 +136,7 @@ export interface AppServices {
   // ── trace-derived views ─────────────────────────────────────────────────────
   viewStepSpans: (params: { originId?: string; taskId?: string }) => Promise<{ spans: StepSpan[] }>
   viewRunTimeline: (taskId: string) => Promise<RunTimeline>
+  viewStepPrompt: (params: { workflowInstanceId: string; stepName: string }) => Promise<StepPromptView>
   viewSessions: (agentName: string) => Promise<{ sessions: Session[] }>
   viewTerminalEvents: () => Promise<{ events: TerminalEvent[] }>
   viewReleaseNotes: () => Promise<{ entries: ReleaseNoteEntry[] }>
@@ -375,6 +381,117 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     runs.sort((a, b) => a.startedAt.localeCompare(b.startedAt))
 
     return { taskId, runs }
+  }
+
+  /**
+   * The composed prompt sent to one step's worker, keyed by
+   * (workflowInstanceId, stepName).
+   *
+   * Resolution order — first hit wins:
+   *   1. `promptText` on the step_started payload (persisted at emit time by
+   *      run-worker-with-span.ts) → source 'persisted'.
+   *   2. Best-effort transcript recovery for pre-persistence runs, all keyed
+   *      by the step's claudeSessionId where possible → source 'recovered':
+   *      a. streaming `task_transcripts` chunks (session-precise),
+   *      b. the on-disk `~/.claude/projects/{proj}/<sessionId>.jsonl` transcript
+   *         (session-precise),
+   *      c. the durable `task_durable_transcripts` blob (task-level — one row
+   *         per task, so only trusted when its recorded session/step cannot
+   *         be checked; still labelled 'recovered', never 'persisted').
+   *   3. Nothing found → { prompt: null, source: null }; the UI renders an
+   *      explicit empty state, never invented data.
+   *
+   * The step_started/step_ended lookups use the store's payload substring
+   * filter (`q: workflowInstanceId`) so this stays a narrow query even though
+   * workflowInstanceId is not an indexed column.
+   */
+  const viewStepPrompt: AppServices['viewStepPrompt'] = async ({
+    workflowInstanceId,
+    stepName,
+  }) => {
+    const miss: StepPromptView = { workflowInstanceId, stepName, prompt: null, source: null }
+
+    const started = await traceStore.query({
+      kind: ['step_started'],
+      q: workflowInstanceId,
+      limit: 1000,
+    })
+    // Newest-first ordering from the store: the first match is the latest
+    // emission for this (workflowInstanceId, stepName) pair.
+    const startEvent = started.find(
+      (e) =>
+        e.payload.workflowInstanceId === workflowInstanceId &&
+        e.payload.stepName === stepName,
+    )
+    if (!startEvent) return miss
+
+    if (typeof startEvent.payload.promptText === 'string') {
+      return {
+        workflowInstanceId,
+        stepName,
+        prompt: startEvent.payload.promptText,
+        source: 'persisted',
+      }
+    }
+
+    // Pre-persistence run — recover best-effort from stored transcripts.
+    const recovered = (prompt: string): StepPromptView => ({
+      workflowInstanceId,
+      stepName,
+      prompt,
+      source: 'recovered',
+    })
+
+    const taskId = startEvent.taskId
+    const ended = await traceStore.query({
+      kind: ['step_ended'],
+      q: workflowInstanceId,
+      limit: 1000,
+    })
+    const endEvent = ended.find(
+      (e) =>
+        e.payload.workflowInstanceId === workflowInstanceId &&
+        e.payload.stepName === stepName,
+    )
+    const sessionId =
+      endEvent && typeof endEvent.payload.sessionId === 'string'
+        ? endEvent.payload.sessionId
+        : null
+
+    // (a) Streaming chunks — keyed by (taskId, sessionId), session-precise.
+    if (taskId !== null && sessionId !== null && traceStore.readTranscriptChunks) {
+      try {
+        const events = await traceStore.readTranscriptChunks(taskId, sessionId)
+        const text = extractFirstUserMessageText(events)
+        if (text !== null) return recovered(text)
+      } catch {
+        // best-effort — fall through to the next recovery tier
+      }
+    }
+
+    // (b) On-disk claude transcript — keyed by sessionId, session-precise.
+    if (sessionId !== null) {
+      const text = await recoverPromptFromDiskTranscript(sessionId)
+      if (text !== null) return recovered(text)
+    }
+
+    // (c) Durable blob — task-level last resort (one row per task).
+    if (taskId !== null && traceStore.readDurableTranscript) {
+      try {
+        const json = await traceStore.readDurableTranscript(taskId)
+        if (json !== null) {
+          const parsed: unknown = JSON.parse(json)
+          if (Array.isArray(parsed)) {
+            const text = extractFirstUserMessageText(parsed)
+            if (text !== null) return recovered(text)
+          }
+        }
+      } catch {
+        // best-effort — nothing recoverable
+      }
+    }
+
+    return miss
   }
 
   const viewSessions: AppServices['viewSessions'] = (agentName) =>
@@ -735,6 +852,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewProposal,
     viewStepSpans,
     viewRunTimeline,
+    viewStepPrompt,
     viewSessions,
     viewTerminalEvents,
     viewReleaseNotes,

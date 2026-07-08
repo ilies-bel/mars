@@ -110,6 +110,14 @@ export const runWorkerWithSpan = async (
       stepName,
       workflowInstanceId,
       workerName: worker.config.name,
+      // The EXACT composed prompt sent to this step's worker (resume banner,
+      // plan sections, orientation, structured spec, discipline briefs — all
+      // of it). Persisted at emit time so "what did we actually ask it?" is
+      // answerable from the trace store (Studio's Show-trace panel) without
+      // transcript spelunking. Deliberately on step_started, not step_ended:
+      // a killed/crashed run still has its prompt on record. Read lazily via
+      // GET /view/step-prompt — never inlined into span/timeline lists.
+      promptText: prompt,
     },
   })
 

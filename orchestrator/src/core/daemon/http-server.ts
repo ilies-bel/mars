@@ -88,6 +88,24 @@ export interface RunTimeline {
   runs: RunTimelineEntry[]
 }
 
+/**
+ * Wire shape returned by GET /view/step-prompt — the composed prompt sent to
+ * one step's worker, identified by (workflowInstanceId, stepName).
+ *
+ * `source` records provenance: 'persisted' when the prompt was written to the
+ * step_started payload at emit time (all runs after prompt persistence
+ * landed); 'recovered' when it was best-effort extracted from a stored or
+ * on-disk transcript for a pre-persistence run; null (with prompt null) when
+ * neither path produced anything — the UI must label recovered prompts and
+ * render an explicit empty state for null, never invent data.
+ */
+export interface StepPromptView {
+  workflowInstanceId: string
+  stepName: string
+  prompt: string | null
+  source: 'persisted' | 'recovered' | null
+}
+
 /** Wire shape returned by GET /view/framework-update. */
 export interface FrameworkUpdateState {
   installed: string
@@ -694,6 +712,31 @@ export const startHttpServer = async (
       }
       deps.appServices
         .viewStepSpans({ originId, taskId })
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/step-prompt?workflowInstanceId=<id>&stepName=<name> — the
+    // composed prompt sent to one step's worker. Persisted prompts come from
+    // the step_started payload; pre-persistence runs fall back to best-effort
+    // transcript recovery (source='recovered'). Fetched lazily by the Studio
+    // Show-trace panel — never inlined into span/timeline lists. Pure read;
+    // no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/step-prompt')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const workflowInstanceId = parsed.searchParams.get('workflowInstanceId')
+      const stepName = parsed.searchParams.get('stepName')
+      if (!workflowInstanceId) {
+        sendJson(res, 400, { error: 'workflowInstanceId query parameter is required' })
+        return
+      }
+      if (!stepName) {
+        sendJson(res, 400, { error: 'stepName query parameter is required' })
+        return
+      }
+      deps.appServices
+        .viewStepPrompt({ workflowInstanceId, stepName })
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return

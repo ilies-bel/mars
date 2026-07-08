@@ -17,6 +17,7 @@ import {
   parseProposalNodeRoute,
   parseReleaseNotesRoute,
   parseShortcutsRoute,
+  parseStudioRoute,
   parseTaskKpiKey,
   parseTaskOrigin,
   parseTaskRoute,
@@ -34,6 +35,7 @@ import { ActionQueuePage } from '@/pages/ActionQueuePage'
 import { EventsPage } from '@/pages/EventsPage'
 import { KpiDetailPage } from '@/pages/KpiDetailPage'
 import { KpiIndexPage } from '@/pages/KpiIndexPage'
+import { StudioPage } from '@/pages/StudioPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
 import { AlertNotifier } from '@/shared/notifications/alertNotifier'
@@ -44,6 +46,10 @@ const ROUTE_BASE: Record<RouteName, string> = {
   progress: '#/progress',
   events: '#/events',
   kpi: '#/kpi',
+  // Studio hashes carry a task id that a bare route base cannot encode, so a
+  // drawer opened with `from=studio` closes to Progress rather than to a
+  // half-formed `#/studio/` hash.
+  studio: '#/progress',
 }
 
 /**
@@ -98,6 +104,7 @@ const AppInner = () => {
   // null (the hash is #/task/…, not #/kpi/…), so we fall back to the kpiKey
   // encoded in the task hash query params to keep the detail page mounted behind.
   const kpiKey = parseKpiRoute(hash) ?? parseTaskKpiKey(hash)
+  const studioTaskId = parseStudioRoute(hash)
   const activeStepName = parseTaskStep(hash) ?? undefined
 
   // Auto-open the Release Notes drawer when arcs have landed since the user
@@ -132,7 +139,13 @@ const AppInner = () => {
       <NavBar hash={hash} />
       <div className="min-h-0 flex-1">
         <FallbackBoundary of="this view" variant="pane">
-          {route === 'kpi' && kpiKey !== null ? (
+          {route === 'studio' && studioTaskId !== null ? (
+            <StudioPage taskId={studioTaskId} />
+          ) : route === 'studio' ? (
+            // `from=studio` overlay hashes carry no studio task id; keep
+            // Progress mounted beneath the drawer rather than a blank pane.
+            <ProgressPage />
+          ) : route === 'kpi' && kpiKey !== null ? (
             <KpiDetailPage kpiKey={kpiKey} />
           ) : route === 'kpi' ? (
             <KpiIndexPage />

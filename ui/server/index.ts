@@ -437,6 +437,23 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
+        // GET /api/step-prompt?workflowInstanceId=<id>&stepName=<name> — the
+        // composed prompt sent to one step's worker. Proxied to the daemon's
+        // GET /view/step-prompt; fetched lazily by Studio's Input/Show-trace
+        // panels, never as part of a span/timeline list fetch.
+        if (path === '/api/step-prompt' && req.method === 'GET') {
+          const workflowInstanceId = url.searchParams.get('workflowInstanceId')
+          const stepName = url.searchParams.get('stepName')
+          if (!workflowInstanceId || !stepName) {
+            return jsonResponse(400, {
+              error: 'workflowInstanceId and stepName query parameters are required',
+            })
+          }
+          const qs = `workflowInstanceId=${encodeURIComponent(workflowInstanceId)}&stepName=${encodeURIComponent(stepName)}`
+          const r = await proxyGet(ctx.stateDir, `/view/step-prompt?${qs}`)
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/step-spans?taskId=<id> | ?originId=<id> — step timeline.
         // Proxied to the daemon's GET /view/step-spans so the daemon remains
         // the sole reader of the trace store. The drawer scopes by `taskId`

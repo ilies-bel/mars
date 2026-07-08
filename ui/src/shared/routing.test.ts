@@ -11,8 +11,10 @@ import {
   parseProposalNodeRoute,
   parseProposalOrigin,
   parseReleaseNotesRoute,
+  parseStudioRoute,
   releaseNotesHash,
   resolvePageRoute,
+  studioHash,
   taskHash,
   proposalHash,
 } from './routing'
@@ -475,5 +477,69 @@ describe('parseProposalNodeRoute', () => {
 
   it('decodes percent-encoded ids', () => {
     expect(parseProposalNodeRoute('#/proposal-node/mars%2D123')).toBe('mars-123')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Studio route — parseStudioRoute / studioHash
+// ---------------------------------------------------------------------------
+
+describe('parseStudioRoute', () => {
+  it('returns null when the hash has no studio fragment', () => {
+    expect(parseStudioRoute('')).toBeNull()
+    expect(parseStudioRoute('#/progress')).toBeNull()
+    expect(parseStudioRoute('#/task/abc-123')).toBeNull()
+    expect(parseStudioRoute('#/studio')).toBeNull()
+  })
+
+  it('returns the task id from #/studio/<taskId>', () => {
+    expect(parseStudioRoute('#/studio/mars-abc123')).toBe('mars-abc123')
+  })
+
+  it('strips trailing slash and treats empty id as null', () => {
+    expect(parseStudioRoute('#/studio/')).toBeNull()
+    expect(parseStudioRoute('#/studio/abc/extra')).toBe('abc')
+  })
+
+  it('decodes percent-encoded ids', () => {
+    expect(parseStudioRoute('#/studio/mars%2D123')).toBe('mars-123')
+  })
+})
+
+describe('studioHash', () => {
+  it('builds the #/studio/<taskId> hash', () => {
+    expect(studioHash('mars-abc123')).toBe('#/studio/mars-abc123')
+  })
+
+  it('encodes ids that need escaping', () => {
+    expect(studioHash('a b')).toBe('#/studio/a%20b')
+  })
+
+  it('round-trips through parseStudioRoute', () => {
+    expect(parseStudioRoute(studioHash('mars-xyz'))).toBe('mars-xyz')
+  })
+})
+
+describe('studio route integration', () => {
+  it('detectRoute resolves #/studio/<id> to studio', () => {
+    expect(detectRoute('#/studio/mars-abc')).toBe('studio')
+  })
+
+  it('detectRoute falls back to action-queue for a bare #/studio/', () => {
+    expect(detectRoute('#/studio/')).toBe('action-queue')
+  })
+
+  it('isKnownRoute accepts #/studio/<id> but rejects a bare #/studio/', () => {
+    expect(isKnownRoute('#/studio/mars-abc')).toBe(true)
+    expect(isKnownRoute('#/studio/')).toBe(false)
+    expect(isKnownRoute('#/studio')).toBe(false)
+  })
+
+  it('resolvePageRoute resolves #/studio/<id> to studio', () => {
+    expect(resolvePageRoute('#/studio/mars-abc')).toBe('studio')
+  })
+
+  it('pageTitle returns "mars — studio" for the studio route', () => {
+    expect(pageTitle('studio')).toBe('mars — studio')
   })
 })

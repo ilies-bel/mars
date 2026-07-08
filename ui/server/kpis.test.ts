@@ -78,6 +78,12 @@ const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Prom
     viewProposal: async () => null,
     viewStepSpans: async () => ({ spans: [] }),
     viewRunTimeline: async (taskId: string) => ({ taskId, runs: [] }),
+    viewStepPrompt: async ({ workflowInstanceId, stepName }: { workflowInstanceId: string; stepName: string }) => ({
+      workflowInstanceId,
+      stepName,
+      prompt: null,
+      source: null,
+    }),
     viewSessions: async () => ({ sessions: [] }),
     viewTerminalEvents: async () => ({ events: [] }),
     viewReleaseNotes: async () => ({ entries: [] }),

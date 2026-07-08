@@ -25,6 +25,7 @@ import { taskSchema } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
 import { relativeTime } from '@/shared/time'
+import { studioHash } from '@/shared/routing'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { CopyButton } from '@/components/CopyButton'
@@ -331,8 +332,9 @@ const buildSubgraphLayout = (
 }
 
 /** Format a durationMs value for display (e.g. "500ms" or "12.3s").
- * Negative values (e.g. from killed steps) render as "—" (unknown duration). */
-const formatDuration = (ms: number): string => {
+ * Negative values (e.g. from killed steps) render as "—" (unknown duration).
+ * Exported for reuse by StudioView so durations read identically everywhere. */
+export const formatDuration = (ms: number): string => {
   if (ms < 0) return '—'
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }
@@ -399,8 +401,10 @@ const spanToCard = (s: StepSpan, i: number): StepCardEntry => ({
   evalResults: s.evalResults,
 })
 
-/** Normalises a RunTimelineStep into the unified StepCardEntry format. */
-const runStepToCard = (
+/** Normalises a RunTimelineStep into the unified StepCardEntry format.
+ * Exported for reuse by StudioView — Studio nodes are StepCardEntry bodies,
+ * the same normalisation the drawer's step cards use (no parallel shape). */
+export const runStepToCard = (
   step: RunTimelineStep,
   runId: string,
   stepIdx: number,
@@ -777,9 +781,10 @@ const EvalChip = ({ label, value, warn }: { label: string; value: number | strin
  * Status icon for a step card — a small ring with a symbol inside.
  * Green check ring = completed, amber pulse = running, red × = failed,
  * ochre dot = killed. Uses CSS design tokens so it matches the rest of the
- * drawer's colour palette.
+ * drawer's colour palette. Exported for reuse by StudioView so step status
+ * carries identical visual semantics on both surfaces.
  */
-const StepStatusIcon = ({ outcome }: { outcome: StepCardEntry['outcome'] }) => {
+export const StepStatusIcon = ({ outcome }: { outcome: StepCardEntry['outcome'] }) => {
   if (outcome === 'running') {
     return (
       <span
@@ -1098,18 +1103,37 @@ const StepCardList = ({
   cards,
   toolEvents,
   activeStepName,
+  studioHref,
 }: {
   cards: StepCardEntry[]
   toolEvents: TraceEvent[]
   activeStepName?: string
+  /**
+   * When set, an "Open in Studio →" link renders beside the section header,
+   * navigating to the full-page execution tree (`#/studio/<taskId>`) for the
+   * task these steps belong to. Omitted for proposal subjects, which have no
+   * single-instance Studio view.
+   */
+  studioHref?: string
 }) => (
   <section
     data-testid="step-card-list"
     className="border-b border-iron/20 px-4 py-3"
   >
-    <h3 className="mb-3 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
-      Steps
-    </h3>
+    <div className="mb-3 flex items-baseline justify-between">
+      <h3 className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+        Steps
+      </h3>
+      {studioHref !== undefined ? (
+        <a
+          href={studioHref}
+          data-testid="open-in-studio"
+          className="font-mono text-[11px] text-iron hover:text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-iron/40"
+        >
+          Open in Studio →
+        </a>
+      ) : null}
+    </div>
     {cards.length === 0 ? (
       <p className="font-mono text-xs text-iron">No steps recorded yet</p>
     ) : (
@@ -1746,6 +1770,7 @@ export const TaskDetailDrawer = ({
           )}
           toolEvents={resolvedToolEvents}
           activeStepName={activeStepName}
+          studioHref={isProposal ? undefined : studioHash(currentId)}
         />
       ) : resolvedSpans !== null ? (
         isProposal ? (
@@ -1755,6 +1780,7 @@ export const TaskDetailDrawer = ({
             cards={resolvedSpans.map(spanToCard)}
             toolEvents={resolvedToolEvents}
             activeStepName={activeStepName}
+            studioHref={studioHash(currentId)}
           />
         )
       ) : null}
