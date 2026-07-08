@@ -1,4 +1,5 @@
 import type { Client, InStatement, Transaction } from '@libsql/client';
+import { withTransaction } from '../core/lib/libsql.js';
 import { EventMap, type EventName, type EventPayload } from './events.js';
 
 /**
@@ -89,15 +90,7 @@ export async function withWriteTx<T>(
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      const tx = await client.transaction('write');
-      try {
-        const result = await fn(tx);
-        await tx.commit();
-        return result;
-      } catch (err) {
-        tx.close();
-        throw err;
-      }
+      return await withTransaction(client, fn);
     } catch (err) {
       if (!isSqliteBusy(err)) {
         throw err;

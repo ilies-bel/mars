@@ -1,4 +1,4 @@
-import { createClient, type Client } from '@libsql/client'
+import { createClient, type Client, type Transaction } from '@libsql/client'
 
 // @libsql/client 0.17.3: Sqlite3Client holds one persistent connection for file: URLs.
 // All execute() calls on a file: URL client are serialised through that single
@@ -47,4 +47,40 @@ export function openLibsql(config: { url: string }): Client {
   })
 
   return client
+}
+
+/**
+ * Run `fn` inside a libsql write transaction, committing on success and
+ * rolling back on any error so an exception can never strand an open write
+ * transaction (the root cause of the SQLITE_BUSY wedge incidents on
+ * 2026-07-03 and 2026-07-05).
+ *
+ * Pattern:
+ * - `BEGIN IMMEDIATE` is implicit in `client.transaction('write')`.
+ * - `COMMIT` runs when `fn` returns normally.
+ * - `ROLLBACK` runs in the catch path when `fn` throws, then the original
+ *   error is rethrown.  Rollback errors are swallowed so the caller always
+ *   sees the original failure.
+ * - `tx.close()` in the finally block tears down the transaction object
+ *   regardless of outcome (no-op when already committed or rolled back).
+ */
+export async function withTransaction<T>(
+  client: Client,
+  fn: (tx: Transaction) => Promise<T>,
+): Promise<T> {
+  const tx = await client.transaction('write')
+  try {
+    const result = await fn(tx)
+    await tx.commit()
+    return result
+  } catch (err) {
+    try {
+      await tx.rollback()
+    } catch {
+      // Swallow rollback errors; the original error takes priority.
+    }
+    throw err
+  } finally {
+    tx.close()
+  }
 }

@@ -28,6 +28,7 @@
  */
 
 import type { Client, InStatement, InValue, ResultSet } from '@libsql/client'
+import { withTransaction } from '../lib/libsql.js'
 import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve, sep } from 'node:path'
@@ -412,41 +413,30 @@ export const createTaskStore = (client: Client | null): DomainTaskStore => {
         )
       }
       inTransaction = true
-      const tx = await c.transaction('write')
       let revoked = false
-
-      const scope: Scope = {
-        query: async (stmt, params) => {
-          if (revoked)
-            throw new Error(
-              'TaskStore: Scope has been revoked — cannot use scope after atomic() has settled',
-            )
-          return tx.execute(toStatement(stmt, params))
-        },
-        execute: async (stmt, params) => {
-          if (revoked)
-            throw new Error(
-              'TaskStore: Scope has been revoked — cannot use scope after atomic() has settled',
-            )
-          return tx.execute(toStatement(stmt, params))
-        },
-      }
-
       try {
-        const result = await fn(scope)
-        await tx.commit()
-        return result
-      } catch (err) {
-        try {
-          await tx.rollback()
-        } catch {
-          // Swallow rollback errors; the original error is what matters.
-        }
-        throw err
+        return await withTransaction(c, async (tx) => {
+          const scope: Scope = {
+            query: async (stmt, params) => {
+              if (revoked)
+                throw new Error(
+                  'TaskStore: Scope has been revoked — cannot use scope after atomic() has settled',
+                )
+              return tx.execute(toStatement(stmt, params))
+            },
+            execute: async (stmt, params) => {
+              if (revoked)
+                throw new Error(
+                  'TaskStore: Scope has been revoked — cannot use scope after atomic() has settled',
+                )
+              return tx.execute(toStatement(stmt, params))
+            },
+          }
+          return fn(scope)
+        })
       } finally {
         revoked = true
         inTransaction = false
-        tx.close()
       }
     },
   }

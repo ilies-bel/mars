@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import type { Author, AuthorKind } from './author'
 import { resolveStateClient } from './store/state-client'
 import { buildEventInsert } from './lib/outbox'
+import { withTransaction } from './lib/libsql.js'
 import type { EventName, EventPayload } from '../bus/events.js'
 
 export type ProposalSource = 'reflection' | 'human' | 'planner'
@@ -304,8 +305,7 @@ const migrateTaskSuggestions = async (c: Client): Promise<void> => {
               NULL AS kind FROM task_suggestions`
   const rows = await c.execute(sql)
 
-  const tx = await c.transaction('write')
-  try {
+  await withTransaction(c, async (tx) => {
     for (const row of rows.rows) {
       const r = row as unknown as {
         id: string
@@ -378,11 +378,7 @@ const migrateTaskSuggestions = async (c: Client): Promise<void> => {
         })
       }
     }
-    await tx.commit()
-  } catch (error: unknown) {
-    tx.close()
-    throw error
-  }
+  })
   // After copying reflection rows out, drop the legacy table. Any remaining
   // rows (kind='fix') are vestigial — fix tasks are now first-class entries
   // in `tasks` linked via `task_blockers`. Uses the shared client `c`; never
@@ -910,14 +906,12 @@ export const removeProposalUserStory = async (
   if (!Number.isInteger(index) || index < 0) {
     throw new Error(`user-story index must be a non-negative integer`)
   }
-  const tx = await c.transaction('write')
-  try {
+  await withTransaction(c, async (tx) => {
     const target = await tx.execute({
       sql: `SELECT position FROM proposal_user_stories WHERE proposal_id = ? AND position = ?`,
       args: [id, index],
     })
     if (target.rows.length === 0) {
-      tx.close()
       throw new Error(`proposal ${id} has no user story at index ${index}`)
     }
     await tx.execute({
@@ -935,11 +929,7 @@ export const removeProposalUserStory = async (
       sql: `UPDATE proposals SET updated_at = ? WHERE id = ?`,
       args: [now, id],
     })
-    await tx.commit()
-  } catch (error: unknown) {
-    tx.close()
-    throw error
-  }
+  })
   const updated = await getProposal(id)
   if (!updated) {
     throw new Error(`proposal ${id} disappeared after update`)

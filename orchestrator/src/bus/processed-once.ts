@@ -1,4 +1,5 @@
 import type { Client, Transaction } from '@libsql/client';
+import { withTransaction } from '../core/lib/libsql.js';
 
 /**
  * Schema for the per-subscriber dedup table.
@@ -42,6 +43,13 @@ export interface ProcessedOnceResult {
   ran: boolean;
 }
 
+/** Sentinel thrown inside `withTransaction` to signal "already processed". */
+class AlreadyProcessedSignal extends Error {
+  constructor() {
+    super('already-processed')
+  }
+}
+
 /**
  * Run a Subscriber's side effect at most once per (subscriberId, eventId)
  * pair, durably.
@@ -60,32 +68,29 @@ export async function processedOnce(
   args: ProcessedOnceArgs,
 ): Promise<ProcessedOnceResult> {
   const { client, subscriberId, eventId, sideEffect } = args;
-  const tx = await client.transaction('write');
   try {
-    try {
-      await tx.execute({
-        sql:
-          'INSERT INTO subscriber_processed_events (subscriber_id, event_id) VALUES (?, ?)',
-        args: [subscriberId, eventId],
-      });
-    } catch (err) {
-      // UNIQUE constraint violation → this (subscriber, event) pair has
-      // already been processed. Roll back and report a skip.
-      if (isUniqueConstraint(err)) {
-        tx.close();
-        return { ran: false };
+    await withTransaction(client, async (tx) => {
+      try {
+        await tx.execute({
+          sql:
+            'INSERT INTO subscriber_processed_events (subscriber_id, event_id) VALUES (?, ?)',
+          args: [subscriberId, eventId],
+        });
+      } catch (err) {
+        // UNIQUE constraint violation → this (subscriber, event) pair has
+        // already been processed. Throw the sentinel so withTransaction
+        // rolls back cleanly, then signal a skip to the caller.
+        if (isUniqueConstraint(err)) {
+          throw new AlreadyProcessedSignal();
+        }
+        throw err;
       }
-      throw err;
-    }
-
-    await sideEffect(tx);
-    await tx.commit();
+      await sideEffect(tx);
+    });
     return { ran: true };
   } catch (err) {
-    try {
-      tx.close();
-    } catch {
-      // already closed
+    if (err instanceof AlreadyProcessedSignal) {
+      return { ran: false };
     }
     throw err;
   }
