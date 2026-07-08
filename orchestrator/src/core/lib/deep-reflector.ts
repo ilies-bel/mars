@@ -688,7 +688,7 @@ const emptyReport = (): DeepReflectionReport => ({
 
 export const runDeepReflectorArc = async (
   arc: DeepReflectArc,
-  timeoutMs: number = 10 * 60 * 1000,
+  timeoutMs: number = Number(process.env.MARS_DEEP_REFLECT_TIMEOUT_MS) || 10 * 60 * 1000,
 ): Promise<DeepReflectionResult> => {
   const model = process.env.MARS_DEEP_REFLECT_MODEL ?? 'opus'
   const r = await runClaudeCode({
@@ -885,7 +885,7 @@ ${stepRunsJson}`
  */
 export const runSessionReflector = async (
   result: SessionArcsResult,
-  timeoutMs: number = 10 * 60 * 1000,
+  timeoutMs: number = Number(process.env.MARS_DEEP_REFLECT_TIMEOUT_MS) || 10 * 60 * 1000,
 ): Promise<DeepReflectionResult> => {
   const model = process.env.MARS_DEEP_REFLECT_MODEL ?? 'opus'
   const r = await runClaudeCode({

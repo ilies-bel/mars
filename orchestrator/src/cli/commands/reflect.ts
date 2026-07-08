@@ -252,9 +252,6 @@ const arcReflect: Command = {
     const result = await runDeepReflectorArc(arc)
     const report = result.report
 
-    const sourceTaskId = await deps.store.insertReflectionTask(1)
-    const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
-
     const { mkdir, writeFile } = await import('node:fs/promises')
     const { resolve: resolvePath } = await import('node:path')
     const { getStateDir } = await import('../../core/context')
@@ -262,19 +259,55 @@ const arcReflect: Command = {
     await mkdir(outDir, { recursive: true })
     const isoStamp = new Date().toISOString().replace(/[:.]/g, '-')
     const outPath = resolvePath(outDir, `arc-${originId}-${isoStamp}.json`)
-    const fullDoc = {
-      originId,
-      recordedAt: new Date().toISOString(),
-      report,
-      sourceTaskId,
-      verdictResult: {
-        saved: verdictResult.saved,
-        absorbed: verdictResult.absorbed,
-        dropped: verdictResult.dropped,
-      },
-      rawOutput: result.rawOutput,
+
+    if (result.exitCode !== 0) {
+      await writeFile(
+        outPath,
+        JSON.stringify(
+          {
+            originId,
+            recordedAt: new Date().toISOString(),
+            status: 'partial',
+            reflectorExitCode: result.exitCode,
+            report,
+            rawOutput: result.rawOutput,
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      )
+      deps.err(
+        `deep-reflector failed (exit ${result.exitCode}) — analysis is partial/unusable; stats suppressed`,
+      )
+      deps.out(`Partial report: ${outPath}`)
+      return { code: 1 }
     }
-    await writeFile(outPath, JSON.stringify(fullDoc, null, 2), 'utf8')
+
+    const sourceTaskId = await deps.store.insertReflectionTask(1)
+    const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
+
+    await writeFile(
+      outPath,
+      JSON.stringify(
+        {
+          originId,
+          recordedAt: new Date().toISOString(),
+          status: 'complete',
+          report,
+          sourceTaskId,
+          verdictResult: {
+            saved: verdictResult.saved,
+            absorbed: verdictResult.absorbed,
+            dropped: verdictResult.dropped,
+          },
+          rawOutput: result.rawOutput,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
 
     deps.out('')
     if (report.summary) deps.out(`Summary: ${report.summary}`)
@@ -310,9 +343,6 @@ const arcReflect: Command = {
       `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped`,
     )
     deps.out(`Full report: ${outPath}`)
-    if (result.exitCode !== 0) {
-      deps.err(`deep-reflector exit code ${result.exitCode}`)
-    }
     return { code: 0 }
   },
 }
@@ -436,9 +466,6 @@ const sessionReflect: Command = {
     const result = await runSessionReflector(sessionResult)
     const report = result.report
 
-    const sourceTaskId = await deps.store.insertReflectionTask(arcs.length)
-    const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
-
     const { mkdir, writeFile } = await import('node:fs/promises')
     const { resolve: resolvePath } = await import('node:path')
     const { getStateDir } = await import('../../core/context')
@@ -449,20 +476,57 @@ const sessionReflect: Command = {
       outDir,
       `session-${sessionId.slice(0, 8)}-${isoStamp}.json`,
     )
-    const fullDoc = {
-      sessionId,
-      recordedAt: new Date().toISOString(),
-      arcCount: arcs.length,
-      report,
-      sourceTaskId,
-      verdictResult: {
-        saved: verdictResult.saved,
-        absorbed: verdictResult.absorbed,
-        dropped: verdictResult.dropped,
-      },
-      rawOutput: result.rawOutput,
+
+    if (result.exitCode !== 0) {
+      await writeFile(
+        outPath,
+        JSON.stringify(
+          {
+            sessionId,
+            recordedAt: new Date().toISOString(),
+            status: 'partial',
+            reflectorExitCode: result.exitCode,
+            arcCount: arcs.length,
+            report,
+            rawOutput: result.rawOutput,
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      )
+      deps.err(
+        `session reflector failed (exit ${result.exitCode}) — analysis is partial/unusable; stats suppressed`,
+      )
+      deps.out(`Partial report: ${outPath}`)
+      return { code: 1 }
     }
-    await writeFile(outPath, JSON.stringify(fullDoc, null, 2), 'utf8')
+
+    const sourceTaskId = await deps.store.insertReflectionTask(arcs.length)
+    const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
+
+    await writeFile(
+      outPath,
+      JSON.stringify(
+        {
+          sessionId,
+          recordedAt: new Date().toISOString(),
+          status: 'complete',
+          arcCount: arcs.length,
+          report,
+          sourceTaskId,
+          verdictResult: {
+            saved: verdictResult.saved,
+            absorbed: verdictResult.absorbed,
+            dropped: verdictResult.dropped,
+          },
+          rawOutput: result.rawOutput,
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
 
     deps.out('')
     if (report.summary) deps.out(`Summary: ${report.summary}`)
@@ -481,9 +545,6 @@ const sessionReflect: Command = {
       deps.out(
         `Draft proposals created. Review with 'mars proposal list --source reflection' and promote with 'mars proposal promote <id>'.`,
       )
-    }
-    if (result.exitCode !== 0) {
-      deps.err(`session reflector exit code ${result.exitCode}`)
     }
     return { code: 0 }
   },
