@@ -216,6 +216,16 @@ export interface HttpServerDeps {
    */
   selfUpdate: () => Promise<void>
   /**
+   * Complete the current manual step of a live workflow. Transitions the task
+   * from `awaiting-human` → `queued` (keeping the lease so the pipeline can
+   * re-grant it when it parks at the next manual step). Idempotent: if the task
+   * is already past `awaiting-human` (queued, running, etc.), returns
+   * `{next: null}` without mutating anything. Throws with `code='NOT_FOUND'`
+   * when the task does not exist, or `code='WRONG_STATUS'` when it is in a
+   * terminal or incompatible state.
+   */
+  stepDone: (id: string) => Promise<{ next: string | null }>
+  /**
    * Resolved recovery-recipe catalog (built-in seed + `.mars/recipes/`
    * overrides), loaded once at daemon start. Served verbatim by
    * `GET /recipes` so the actionQueue UI can name which recipe a recovery task
@@ -920,6 +930,21 @@ export const startHttpServer = async (
         errorCode: 'DRAINING',
       })
       return
+    }
+
+    // POST /step/done/:id — complete the current manual step of a live task.
+    // Idempotent: if the task has already advanced past awaiting-human, returns
+    // {ok:true,next:null} without mutating anything.
+    {
+      const stepDoneMatch = req.url?.match(/^\/step\/done\/([^/?]+)(?:\?.*)?$/)
+      if (stepDoneMatch && stepDoneMatch[1]) {
+        const id = decodeURIComponent(stepDoneMatch[1])
+        deps
+          .stepDone(id)
+          .then(({ next }) => sendJson(res, 200, { ok: true, next }))
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
     }
 
     // POST /actions/restart-daemon — process-level, no :id.

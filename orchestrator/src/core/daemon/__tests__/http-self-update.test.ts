@@ -38,6 +38,7 @@ const makeDeps = (
 
   runReflect: async () => ({ proposalsRaised: 0 }),
   enableAutoReflect: async () => {},
+  stepDone: async () => ({ next: null as string | null }),
   recipeCatalog: nullRecipeCatalog,
   traceStore: nullTraceStore,
   appServices: stubAppServices({

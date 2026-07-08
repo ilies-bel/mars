@@ -23,11 +23,13 @@ import { installCommands } from './install'
 import { doctorCommands } from './doctor'
 import { runCommands } from './run'
 import { workflowCommands } from './workflow'
+import { stepCommands } from './step'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
   ...proposalCommands,
   ...lifecycleCommands,
+  ...stepCommands,
   ...workerCommands,
   ...glossaryCommands,
   ...adrCommands,

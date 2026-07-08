@@ -3199,6 +3199,41 @@ export const startDaemon = async (
         }),
       )
     },
+    stepDone: async (id: string): Promise<{ next: string | null }> => {
+      const task = await getTask(id)
+      if (!task) {
+        throw Object.assign(new Error(`task ${id} not found`), {
+          code: 'NOT_FOUND' as const,
+        })
+      }
+      // Idempotency: task already advanced past awaiting-human (queued / running /
+      // verifying / merging / done) — return success without mutating anything.
+      if (
+        task.status === 'queued' ||
+        task.status === 'running' ||
+        task.status === 'verifying' ||
+        task.status === 'merging' ||
+        task.status === 'done'
+      ) {
+        return { next: null }
+      }
+      if (task.status !== 'awaiting-human') {
+        throw Object.assign(
+          new Error(
+            `task ${id} is ${task.status}; step-done only applies to awaiting-human tasks`,
+          ),
+          { code: 'WRONG_STATUS' as const },
+        )
+      }
+      if (task.leaseOwner === null) {
+        throw Object.assign(
+          new Error(`task ${id} has no active lease; use 'mars attach ${id}' first`),
+          { code: 'WRONG_STATUS' as const },
+        )
+      }
+      await handleStepDone(id)
+      return { next: null }
+    },
     recipeCatalog,
     traceStore,
     viewStreamHub,

@@ -737,75 +737,6 @@ const release: Command = {
   },
 }
 
-const stepDone: Command = {
-  path: 'step done',
-  summary:
-    'complete the current manual step; pipeline continues, lease follows you to the next manual step',
-  usage: 'usage: mars step done <task-id>',
-  run: async (args, deps) => {
-    const id = args.positional[0]
-    if (!id) {
-      deps.err('usage: mars step done <task-id>')
-      return { code: 1 }
-    }
-
-    const task = await deps.store.getTask(id)
-    if (!task) {
-      deps.err(`task ${id} not found`)
-      return { code: 1 }
-    }
-    if (task.status !== 'awaiting-human') {
-      deps.err(
-        `task ${id} is ${task.status}; 'mars step done' only applies to an 'awaiting-human' task`,
-      )
-      return { code: 1 }
-    }
-    if (task.leaseOwner === null) {
-      deps.err(`task ${id} has no active lease; use 'mars attach ${id}' first`)
-      return { code: 1 }
-    }
-
-    // Same rule that binds `mars release`: uncommitted work is invisible to
-    // the pipeline's has-diff/commits-ahead checks — refuse rather than
-    // silently lose it.
-    const worktreePath = task.worktreePath
-    if (worktreePath) {
-      const gitResult = spawnSync(
-        'git',
-        ['-C', worktreePath, 'status', '--porcelain'],
-        { encoding: 'utf8', timeout: 5000 },
-      )
-      if (gitResult.status === 0 && (gitResult.stdout ?? '').trim() !== '') {
-        deps.err(`worktree ${worktreePath} has uncommitted changes`)
-        deps.err('commit or stash your changes before completing the step')
-        return { code: 1 }
-      }
-    }
-
-    try {
-      await deps.daemon.sendRequest({ op: 'step-done', id })
-    } catch (err) {
-      deps.err(`${id}: ${errorMessage(err)}`)
-      return { code: 1 }
-    }
-
-    deps.out(
-      `${id}: manual step complete — pipeline continues; if it parks at another manual step the lease comes back to you`,
-    )
-    return { code: 0 }
-  },
-}
-
-const stepGroup: Command = {
-  path: 'step',
-  summary: 'manual-step subcommands',
-  usage: 'usage: mars step <done> <task-id>',
-  run: (_args, deps) => {
-    deps.err('usage: mars step <done> <task-id>')
-    return { code: 1 }
-  },
-}
-
 export const lifecycleCommands: readonly Command[] = [
   show,
   makeSetPlan('functional'),
@@ -822,6 +753,4 @@ export const lifecycleCommands: readonly Command[] = [
   update,
   attach,
   release,
-  stepDone,
-  stepGroup,
 ]

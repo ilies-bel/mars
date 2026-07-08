@@ -511,6 +511,7 @@ describe('GET /view/action-queue via HTTP server', () => {
 
   runReflect: async () => ({ proposalsRaised: 0 }),
   enableAutoReflect: async () => {},
+  stepDone: async () => ({ next: null as string | null }),
       recipeCatalog,
       traceStore: nullTraceStore,
       appServices: stubAppServices({
