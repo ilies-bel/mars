@@ -443,3 +443,7 @@ _Avoid_: playground, run view, execution graph, step graph, DAG view
 **Self-authored workflow**:
 A Workflow whose plain-JS pipeline body was written by an agent rather than scaffolded or hand-authored by the operator.
 _Avoid_: generated workflow, agent workflow, dynamic pipeline, llm workflow
+
+**Behaviour verification**:
+A pipeline step that exercises a task's Definition-of-Done criteria against a live running surface via Playwright MCP (clicking the interface, taking screenshots, asserting observable behaviour) rather than static typecheck/test/lint.
+_Avoid_: e2e gate, ui test, acceptance test, behavioural gate, playwright step
