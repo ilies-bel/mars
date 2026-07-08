@@ -236,6 +236,7 @@ export interface HandleTaskFailureViaTaskResult {
     | 'fix-fail-loop'
     | 'gate-suppressed'
     | 'noop'
+    | 'requeued'
   fixTaskId?: string
   failureSignature?: string
   retryCount?: number
@@ -488,6 +489,39 @@ export const handleTaskFailureWithFixTask = async (
   // instead of dead-ending with an "unknown signature" action-queue row that
   // stranded the worktree. Recovery (fix) failures are still escalated, not
   // re-recovered (see the `task.fixForTaskId !== null` branch above).
+
+  // ── Phantom-kill-with-no-worktree routing (ADR-0061) ─────────────────────
+  // A task killed by the phantom watchdog before setup ran has no branch or
+  // worktree for a worktree-scoped fix task to operate on — that fix is dead
+  // on arrival and burns the origin's one recovery slot for a failure that a
+  // plain re-queue solves. Detect by the watchdog's `failureReason` prefix AND
+  // the absence of both branch and worktree (both are null before setup runs).
+  //
+  // Routing: re-queue the origin from setup on a fresh worker instead of
+  // spawning a fix task. This IS the recovery — retryCount++ consumes the
+  // slot. A second phantom kill reaches this point with retryCount already
+  // incremented, so the budget-exhaustion guard above fires first and
+  // escalates to the action queue without falling through here.
+  if (
+    task.failureReason?.startsWith('phantom-task watchdog:') &&
+    !task.worktreePath &&
+    !task.branch
+  ) {
+    const nextRetryCount = task.retryCount + 1
+    await updateTask(
+      input.taskId,
+      {
+        status: 'queued',
+        error: null,
+        failedPhase: null,
+        failureSignature: null,
+        failureReasonCode: null,
+        retryCount: nextRetryCount,
+      },
+      s,
+    )
+    return { outcome: 'requeued', retryCount: nextRetryCount, failureSignature }
+  }
 
   // Fix-fail-loop cap. Count every historical fix-task row for this
   // (sourceTaskId, failureSignature) pair regardless of status. When

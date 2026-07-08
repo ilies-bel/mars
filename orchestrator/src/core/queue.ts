@@ -2366,6 +2366,7 @@ export const updateTask = async (
       | 'leaseNote'
       | 'currentStepName'
       | 'currentStepGuide'
+      | 'retryCount'
     > & {
       /**
        * Typed catalog code for the failure (e.g. `verify:main-dirty`).
@@ -2497,6 +2498,10 @@ export const updateTask = async (
   if (patch.claudeSessionId !== undefined) {
     fields.push('claude_session_id = ?')
     args.push(patch.claudeSessionId)
+  }
+  if (patch.retryCount !== undefined) {
+    fields.push('retry_count = ?')
+    args.push(patch.retryCount)
   }
   if (patch.error !== undefined) {
     fields.push('error = ?')

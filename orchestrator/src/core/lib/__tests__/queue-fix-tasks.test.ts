@@ -1128,3 +1128,156 @@ describe('queue-fix-tasks', () => {
   })
 
 })
+
+// ── Phantom-kill routing ─────────────────────────────────────────────────────
+//
+// A phantom-killed task that never ran setup has no branch/worktree for a
+// worktree-scoped fix to operate on. The failure handler must re-queue the
+// origin instead of spawning a fix task (restart-style recovery). The requeue
+// counts as the origin's one recovery slot; a second phantom kill escalates.
+
+describe('phantom-kill routing', () => {
+  let repo: string
+
+  beforeAll(async () => {
+    // Re-use the outer templateRepo if it exists; if not, build one.
+    // The outer beforeAll runs first because describe blocks are parsed in
+    // order, so templateRepo is always initialised before we get here.
+  })
+
+  beforeEach(() => {
+    repo = setupRepo()
+    cloneTemplateDbs(repo)
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_FIX_RETRY_BUDGET
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('re-queues the origin and increments retryCount when phantom-killed with no worktree (first kill)', async () => {
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    // Simulate the phantom watchdog: stamp failure reason, no branch/worktree.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed',
+              failure_reason = ?, failure_reason_code = ?,
+              failed_phase = 'code',
+              error = 'Task auto-failed by phantom-task watchdog (reason: ceiling, age: 31 min)',
+              branch = NULL, worktree_path = NULL
+            WHERE id = ?`,
+      args: ['phantom-task watchdog: ceiling', 'phantom-task:ceiling', t.id],
+    })
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      // The recovery spawner passes task.failureReason as the failingStep.
+      failingStep: 'phantom-task watchdog: ceiling',
+      errorOutput: 'Task auto-failed by phantom-task watchdog (reason: ceiling, age: 31 min)',
+    })
+
+    expect(r.outcome).toBe('requeued')
+    expect(r.retryCount).toBe(1)
+    expect(r.fixTaskId).toBeUndefined()
+
+    // Origin is back to queued with incremented retryCount.
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('queued')
+    expect(reloaded?.retryCount).toBe(1)
+    // Failure markers cleared.
+    expect(reloaded?.failureSignature).toBeNull()
+    expect(reloaded?.failedPhase).toBeNull()
+
+    // No fix-task rows were inserted.
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  it('escalates to the action queue on a second phantom kill (recovery slot already consumed)', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '0'
+    const { q, ft } = await loadModules(repo)
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
+    }
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    // Simulate state after first phantom-kill requeue: retryCount=1, now failed again.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed',
+              failure_reason = ?, failure_reason_code = ?,
+              failed_phase = 'code',
+              error = 'Task auto-failed by phantom-task watchdog (reason: ceiling, age: 31 min)',
+              branch = NULL, worktree_path = NULL,
+              retry_count = 1
+            WHERE id = ?`,
+      args: ['phantom-task watchdog: ceiling', 'phantom-task:ceiling', t.id],
+    })
+
+    // Second phantom kill: retryCount=1 > budget=0 → budget-exhaustion path fires.
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'phantom-task watchdog: ceiling',
+      errorOutput: 'Task auto-failed by phantom-task watchdog (reason: ceiling, age: 31 min)',
+    })
+
+    expect(r.outcome).toBe('failed')
+    expect(r.fixTaskId).toBeUndefined()
+
+    // Task stays failed (not re-queued again).
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('failed')
+
+    // An action-queue item was raised for operator attention.
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items.filter((i) => i.kind === 'failed')).toHaveLength(1)
+
+    // Still no fix-task rows.
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  it('takes the normal fix-task path when phantom-killed AFTER setup ran (branch/worktree exist)', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft } = await loadModules(repo)
+
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    // Phantom kill AFTER setup: branch and worktree_path are populated.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed',
+              failure_reason = ?, failure_reason_code = ?,
+              failed_phase = 'code',
+              error = 'Task auto-failed by phantom-task watchdog (reason: dead-pid, age: 5 min)',
+              branch = 'task/some-branch', worktree_path = '/tmp/some-worktree'
+            WHERE id = ?`,
+      args: ['phantom-task watchdog: dead-pid', 'phantom-task:dead-pid', t.id],
+    })
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'phantom-task watchdog: dead-pid',
+      errorOutput: 'Task auto-failed by phantom-task watchdog (reason: dead-pid, age: 5 min)',
+    })
+
+    // Must NOT requeue — a worktree exists so the normal fix-task path applies.
+    expect(r.outcome).toBe('blocked')
+    expect(r.fixTaskId).toBeTruthy()
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('blocked')
+
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(1)
+  })
+})
