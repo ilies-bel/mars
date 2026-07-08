@@ -270,6 +270,15 @@ Commands:
                                 lands step-fitness and resource-spend verdicts as
                                 draft proposals. Opt-in, operator-run (ADR-0067).
                                 Disabled by MARS_REFLECT_DISABLED=1.
+  reflect workflow-fit [<sessionId>|<originId>] [--dry-run]
+                                evaluate workflow step fitness and token spend
+                                for a Foreground session. Detects manual steps
+                                that timed out (proposes runbook split) and
+                                token-heavy steps (proposes progressive-
+                                discovery skill). Inserts draft proposals
+                                (source='reflection'). --dry-run prints the
+                                would-be proposals without inserting them.
+                                Disabled by MARS_REFLECT_DISABLED=1.
   arc list [--limit N] [--json] [--with-transcript-only]
                                 list task arcs grouped by COALESCE(origin_id, id).
                                 Each arc covers an origin task plus any recovery
@@ -928,6 +937,35 @@ Output:
 
 Disabled by MARS_REFLECT_DISABLED=1.
 Model defaults to opus; override with MARS_DEEP_REFLECT_MODEL.`,
+  'reflect workflow-fit': `mars reflect workflow-fit [<sessionId>|<originId>] [--dry-run]
+
+Evaluate workflow step fitness and token spend for a Foreground session.
+
+Reads the session's arc via origin_session_id join and checks two outlier
+categories, landing each finding as a draft proposal (source='reflection'):
+
+1. MANUAL STEP TIMEOUT — a step whose name signals operator involvement
+   (manual-*, human-*, user-*, await-*, validate, review) has failed or
+   ran for >4 hours. Proposal: replace it with a runbook-guided split.
+
+2. TOKEN OUTLIER — a task whose weighted-token spend exceeds 3× the
+   mean of all other tasks in the session (or >50k tokens when there is
+   only one task). Proposal: apply the progressive-discovery skill.
+
+Positional argument:
+  <sessionId>   RFC-4122 UUID of a Foreground Claude Code session.
+  <originId>    A task or arc origin ID; the session is resolved
+                from the task's origin_session_id.
+
+When no argument is given, CLAUDE_CODE_SESSION_ID is used.
+
+Flags:
+  --dry-run     Print the would-be proposals without inserting them.
+
+Output:
+  Draft proposals viewable with 'mars proposal list --source reflection'.
+
+Disabled by MARS_REFLECT_DISABLED=1.`,
   reflect: `mars reflect [--since <iso>] [--limit <n>]
 
 Synthesize draft task suggestions from recent completed tasks. Reads

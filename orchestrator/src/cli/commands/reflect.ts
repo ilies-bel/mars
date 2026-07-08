@@ -550,9 +550,104 @@ const sessionReflect: Command = {
   },
 }
 
+const reflectWorkflowFit: Command = {
+  path: 'reflect workflow-fit',
+  summary: 'evaluate workflow step fitness and token spend for a session arc',
+  usage: 'usage: mars reflect workflow-fit [<sessionId>|<originId>] [--dry-run]',
+  run: async (args, deps) => {
+    if (process.env.MARS_REFLECT_DISABLED === '1') {
+      deps.out(REFLECT_DISABLED_MSG)
+      return { code: 0 }
+    }
+
+    const dryRun = args.positional.includes('--dry-run')
+    const inputArg = args.positional.find((a) => !a.startsWith('--')) ?? null
+    const envSessionId = process.env.CLAUDE_CODE_SESSION_ID?.trim() ?? ''
+
+    let rawInput: string
+    if (inputArg) {
+      rawInput = inputArg
+    } else if (envSessionId) {
+      rawInput = envSessionId
+    } else {
+      deps.err(
+        'no session to reflect on — pass a <sessionId> or <originId>, or run inside a Claude Code session (CLAUDE_CODE_SESSION_ID must be set)',
+      )
+      return { code: 1 }
+    }
+
+    const { resolveSessionId, loadSessionArcs } = await import(
+      '../../core/lib/deep-reflect-query'
+    )
+    const { evaluateWorkflowFit } = await import(
+      '../../core/reflect-workflow-fit'
+    )
+
+    const sessionId = await resolveSessionId(rawInput)
+    if (!sessionId) {
+      deps.err(
+        `no session found for '${rawInput}' — the task may not have been enqueued from a Claude Code session, or the ID is unknown`,
+      )
+      return { code: 1 }
+    }
+
+    const sessionResult = await loadSessionArcs(sessionId)
+    if (!sessionResult) {
+      deps.err(`no tasks found for session ${sessionId} — nothing to reflect on`)
+      return { code: 1 }
+    }
+
+    const { arcs, stepRuns } = sessionResult
+    const totalWeightedTokens = arcs.reduce(
+      (s, a) => s + a.totals.totalWeightedTokens,
+      0,
+    )
+    deps.out(
+      `evaluating workflow fit for session ${sessionId}: ${arcs.length} arc(s), ${totalWeightedTokens.toFixed(0)} weighted tokens, ${stepRuns.length} step run(s)`,
+    )
+
+    const specs = evaluateWorkflowFit({ sessionId, arcs, stepRuns })
+
+    if (specs.length === 0) {
+      deps.out('no workflow-fit outliers detected')
+      return { code: 0 }
+    }
+
+    if (dryRun) {
+      deps.out(`\n[dry-run] ${specs.length} proposal(s) would be created:`)
+      for (const s of specs) {
+        deps.out(`  - ${s.title} (kpi=${s.kpiTag})`)
+        deps.out(`    ${s.solution}`)
+      }
+      return { code: 0 }
+    }
+
+    const { createProposal } = await import('../../core/proposals')
+    for (const spec of specs) {
+      await createProposal(spec.title, {
+        source: 'reflection',
+        solution: spec.solution,
+        notes: spec.notes,
+        kpiTag: spec.kpiTag,
+      })
+    }
+
+    deps.out('\nWorkflow-fit proposals')
+    for (const s of specs) {
+      deps.out(`- ${s.title}`)
+      deps.out(`  ${s.solution}`)
+    }
+    deps.out(
+      `\n${specs.length} proposal(s) saved as draft proposals (source='reflection'). Review with 'mars proposal list --source reflection'.`,
+    )
+    return { code: 0 }
+  },
+}
+
 export const reflectCommands: readonly Command[] = [
   reflect,
   sessionReflect,
+  reflectWorkflowFit,
   arcList,
   arcPurge,
   arcReflect,
