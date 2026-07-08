@@ -46,7 +46,7 @@ export function buildSignalRecordingSubscribers(client: Client): Subscriber[] {
   return [taskTerminalSignalRecorder(client)];
 }
 
-const TASK_TERMINAL_SUBSCRIBER = 'signal-recording:task.terminal';
+export const TASK_TERMINAL_SUBSCRIBER = 'signal-recording:task.terminal';
 
 /**
  * Subscriber that converts `task.terminal` outbox events into durable signal

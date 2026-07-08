@@ -369,3 +369,94 @@ describe('runStartupReconcile — blocker-drift repair precedes orphan scan', ()
     expect(summary.orphanedBlockedRequeued).toBe(1)
   })
 })
+
+describe('runStartupReconcile — ghost-subscriber-sweep', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('removes a ghost subscriber row and its processed-events while legitimate subscribers survive', async () => {
+    const { q, reconcile } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    // Create the subscribers and dedup tables (normally created lazily at first
+    // registerSubscriber / processedOnce call; we seed them manually here).
+    const { ensureSubscribersSchema } = await import('../../../bus/subscribers')
+    const { ensureProcessedOnceSchema } = await import('../../../bus/processed-once')
+    await ensureSubscribersSchema(client)
+    await ensureProcessedOnceSchema(client)
+
+    // Seed a ghost subscriber: 'inbox-repopulator' was the old name for
+    // 'action-queue-repopulator' and is no longer code-declared.
+    await client.execute({
+      sql: 'INSERT INTO subscribers (name, cursor) VALUES (?, ?)',
+      args: ['inbox-repopulator', 7470],
+    })
+
+    // Seed a legitimate subscriber that must NOT be removed.
+    await client.execute({
+      sql: 'INSERT INTO subscribers (name, cursor) VALUES (?, ?)',
+      args: ['action-queue-repopulator', 7784],
+    })
+
+    // Seed processed-event rows for both subscribers.
+    await client.execute({
+      sql: 'INSERT INTO subscriber_processed_events (subscriber_id, event_id) VALUES (?, ?)',
+      args: ['inbox-repopulator', 100],
+    })
+    await client.execute({
+      sql: 'INSERT INTO subscriber_processed_events (subscriber_id, event_id) VALUES (?, ?)',
+      args: ['action-queue-repopulator', 100],
+    })
+
+    const summary = await reconcile.runStartupReconcile(makeDeps())
+
+    // Ghost subscriber row must be gone.
+    const ghostRow = await client.execute({
+      sql: 'SELECT name FROM subscribers WHERE name = ?',
+      args: ['inbox-repopulator'],
+    })
+    expect(ghostRow.rows).toHaveLength(0)
+
+    // Ghost processed-events rows must be gone.
+    const ghostSPE = await client.execute({
+      sql: 'SELECT * FROM subscriber_processed_events WHERE subscriber_id = ?',
+      args: ['inbox-repopulator'],
+    })
+    expect(ghostSPE.rows).toHaveLength(0)
+
+    // Legitimate subscriber row must survive.
+    const legitRow = await client.execute({
+      sql: 'SELECT name FROM subscribers WHERE name = ?',
+      args: ['action-queue-repopulator'],
+    })
+    expect(legitRow.rows).toHaveLength(1)
+
+    // Legitimate processed-events rows must survive.
+    const legitSPE = await client.execute({
+      sql: 'SELECT * FROM subscriber_processed_events WHERE subscriber_id = ?',
+      args: ['action-queue-repopulator'],
+    })
+    expect(legitSPE.rows).toHaveLength(1)
+
+    // Summary counter must reflect the one ghost that was removed.
+    expect(summary.ghostSubscribersSwept).toBe(1)
+  })
+
+  it('is a no-op when the subscribers table does not exist yet', async () => {
+    const { reconcile } = await loadModules(repo)
+
+    // Do NOT create the subscribers table — it may not exist on a fresh DB.
+    const summary = await reconcile.runStartupReconcile(makeDeps())
+
+    // Step must complete without error and report zero sweeps.
+    expect(summary.ghostSubscribersSwept).toBe(0)
+  })
+})

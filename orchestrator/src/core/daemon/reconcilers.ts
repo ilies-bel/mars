@@ -344,6 +344,95 @@ const codeDriftClearSweep: Reconciler = {
 }
 
 /**
+ * 13. Ghost-subscriber sweep — delete rows from the `subscribers` table whose
+ *    name is not among the currently code-declared subscribers, together with
+ *    any matching rows in `subscriber_processed_events`. A ghost row is a
+ *    subscriber that was renamed or removed from the codebase; its stale cursor
+ *    lags the outbox head forever and produces spurious `subscriber-stalled`
+ *    action-queue noise (ADR-0032). Subscribers are code-declared (ADR-0031),
+ *    so the set of legitimate names is known at boot. Errors are swallowed so
+ *    a DB hiccup does not abort the rest of the pass.
+ */
+const ghostSubscriberSweep: Reconciler = {
+  name: 'ghost-subscriber-sweep',
+  async run({ log }) {
+    try {
+      const { resolveQueueClient } = await import('../queue')
+      const { ACTION_QUEUE_REPOPULATOR_SUBSCRIBER } = await import('./action-queue-repopulator')
+      const { INVALIDATOR_SUBSCRIBER } = await import('../../outbox/subscribers/invalidator')
+      const { BLOCKER_RESOLUTION_SUBSCRIBER } = await import(
+        '../../outbox/subscribers/blocker-resolution'
+      )
+      const { RECOVERY_SPAWN_SUBSCRIBER } = await import(
+        '../../outbox/subscribers/recovery-spawn'
+      )
+      const { IDEA_LIFECYCLE_SUBSCRIBER } = await import(
+        '../../outbox/subscribers/idea-lifecycle'
+      )
+      const { TASK_TERMINAL_SUBSCRIBER } = await import(
+        '../../outbox/subscribers/signal-recording'
+      )
+      const { TRANSCRIPT_APPEND_SUBSCRIBER_ID } = await import(
+        '../../outbox/subscribers/transcript-append'
+      )
+
+      const knownNames = new Set([
+        ACTION_QUEUE_REPOPULATOR_SUBSCRIBER,
+        INVALIDATOR_SUBSCRIBER,
+        BLOCKER_RESOLUTION_SUBSCRIBER,
+        RECOVERY_SPAWN_SUBSCRIBER,
+        IDEA_LIFECYCLE_SUBSCRIBER,
+        TASK_TERMINAL_SUBSCRIBER,
+        TRANSCRIPT_APPEND_SUBSCRIBER_ID,
+      ])
+
+      const client = resolveQueueClient()
+
+      // If the subscribers table doesn't exist yet, there are no ghosts to sweep.
+      const tableCheck = await client.execute(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='subscribers'`,
+      )
+      if (tableCheck.rows.length === 0) return {}
+
+      const allRows = await client.execute('SELECT name FROM subscribers')
+      const ghosts = allRows.rows
+        .map((r) => r.name as string)
+        .filter((name) => !knownNames.has(name))
+
+      if (ghosts.length === 0) return { ghostSubscribersSwept: 0 }
+
+      // Check if subscriber_processed_events table exists before attempting to
+      // delete from it (it is created lazily on first processedOnce call).
+      const speCheck = await client.execute(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='subscriber_processed_events'`,
+      )
+      const hasSPE = speCheck.rows.length > 0
+
+      for (const name of ghosts) {
+        if (hasSPE) {
+          await client.execute({
+            sql: 'DELETE FROM subscriber_processed_events WHERE subscriber_id = ?',
+            args: [name],
+          })
+        }
+        await client.execute({
+          sql: 'DELETE FROM subscribers WHERE name = ?',
+          args: [name],
+        })
+        log(
+          `[reconcile] ghost-subscriber-sweep: removed stale subscriber '${name}' (no longer code-declared)`,
+        )
+      }
+
+      return { ghostSubscribersSwept: ghosts.length }
+    } catch (err) {
+      log(`[reconcile] ghost-subscriber-sweep failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * The ordered startup-reconcile registry. Order is load-bearing and matches
  * the historical hand-called sequence 1→10. To add a step, insert a
  * `Reconciler` at the correct position; the boot path iterates this array.
@@ -361,4 +450,5 @@ export const RECONCILERS: readonly Reconciler[] = [
   stalledProposalSlice,
   staleActionQueueSweep,
   codeDriftClearSweep,
+  ghostSubscriberSweep,
 ]

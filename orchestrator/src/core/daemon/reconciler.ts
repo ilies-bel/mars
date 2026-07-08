@@ -101,6 +101,13 @@ export interface ReconcileSummary {
    * (the new daemon is running current code). This count is normally 0 or 1.
    */
   codeDriftAlertsCleared: number
+  /**
+   * Subscriber rows deleted from the `subscribers` table (and their
+   * `subscriber_processed_events` rows) because their name no longer
+   * matches any code-declared subscriber. A non-zero count indicates a
+   * ghost row left over from a renamed or removed subscriber.
+   */
+  ghostSubscribersSwept: number
 }
 
 /**
@@ -138,4 +145,5 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   recoveryDependentsRequeued: 0,
   staleActionQueueItemsResolved: 0,
   codeDriftAlertsCleared: 0,
+  ghostSubscribersSwept: 0,
 })
