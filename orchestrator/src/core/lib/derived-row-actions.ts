@@ -27,6 +27,7 @@ export type DerivedRowKind =
   | 'awaiting-validation'
   | 'awaiting-human'
   | 'reflect-recommended'
+  | 'workflow-draft-pending'
 
 /**
  * Resolve the recovery menu for a non-failure derived row kind. Returns an
@@ -93,6 +94,26 @@ export const derivedRowActions = (rowKind: string, entityId?: string): ActionDes
     return [
       { id: 'run-reflect', label: 'Run reflect', op: 'run-reflect' },
       { id: 'enable-auto', label: 'Enable auto', op: 'enable-auto-reflect' },
+    ]
+  }
+  if (rowKind === 'workflow-draft-pending') {
+    // Approval is a deliberate operator gesture at the CLI (ADR-0068): the
+    // menu copies the review + approve commands rather than mutating anything
+    // from the browser.
+    return [
+      {
+        id: 'review',
+        label: 'Review runbook',
+        op: 'copy',
+        hint: entityId ? `mars workflow show ${entityId}` : 'mars workflow show <name>',
+      },
+      {
+        id: 'approve',
+        label: 'Approve',
+        op: 'copy',
+        hint: entityId ? `mars workflow approve ${entityId}` : 'mars workflow approve <name>',
+        needsConfirm: true,
+      },
     ]
   }
   return []

@@ -24,6 +24,7 @@ export type DerivedActionQueueKind =
   | 'awaiting-validation'
   | 'awaiting-human'
   | 'reflect-recommended'
+  | 'workflow-draft-pending'
 export type DerivedActionQueueFilter = 'open' | 'all'
 
 /** Resolution metadata carried by resolved rows in history responses. */
@@ -242,6 +243,7 @@ export const buildActionQueueView = async ({
     if (k === 'awaiting-validation') return 'awaiting-validation'
     if (k === 'awaiting-human') return 'awaiting-human'
     if (k === 'reflect-recommended') return 'reflect-recommended'
+    if (k === 'workflow-draft-pending') return 'workflow-draft-pending'
     return 'failed-task'
   }
 
@@ -260,6 +262,11 @@ export const buildActionQueueView = async ({
     }
     // reflect-recommended is not task-keyed — use its dedup signature.
     if (row.kind === 'reflect-recommended') {
+      return row.signature ?? row.id
+    }
+    // workflow-draft-pending is keyed to the workflow name, not a task.
+    if (row.kind === 'workflow-draft-pending') {
+      if (typeof row.payload.workflowName === 'string') return row.payload.workflowName
       return row.signature ?? row.id
     }
     if (typeof row.payload.taskId === 'string') return row.payload.taskId
@@ -695,6 +702,7 @@ export const buildActionQueueHistoryView = async ({
     if (k === 'awaiting-validation') return 'awaiting-validation'
     if (k === 'awaiting-human') return 'awaiting-human'
     if (k === 'reflect-recommended') return 'reflect-recommended'
+    if (k === 'workflow-draft-pending') return 'workflow-draft-pending'
     return 'failed-task'
   }
 

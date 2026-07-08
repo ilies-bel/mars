@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { resolve as resolvePath } from 'node:path'
 import type { Client } from '@libsql/client'
@@ -12,6 +12,7 @@ import type {
 } from '@mars/workflow'
 import { getCompositionRootClient } from '../core/store/task-store'
 import { getRepoRoot } from '../core/context'
+import { readWorkflowProvenance } from './agent-draft'
 
 /**
  * `WorkflowStore` adapter over the orchestrator's consolidated `.mars/mars.db`.
@@ -362,6 +363,31 @@ export const loadWorkflowByName = async <I, O, S>(
       `no workflow file for '${name}': expected ${path}. No fallback pipeline is ever substituted — create the file (see 'mars workflow list') or run 'mars update' to re-scaffold the defaults.`,
     )
   }
+  // Agent-draft gate (ADR-0068): a self-authored workflow that has not been
+  // operator-approved is NOT dispatch-eligible. Hard-fail with the remedy —
+  // never fall back to a different pipeline (ADR-0067).
+  const provenance = readWorkflowProvenance(readFileSync(path, 'utf8'))
+  if (provenance.pendingApproval) {
+    throw new WorkflowLoadError(
+      name,
+      path,
+      `workflow '${name}' is an agent draft pending approval (authored by ${provenance.author ?? 'unknown'}). It is not dispatch-eligible until an operator reviews and approves it: mars workflow approve ${name}. No fallback pipeline is substituted.`,
+    )
+  }
+  return importWorkflowFile(name, path)
+}
+
+/**
+ * Import a workflow module from an explicit file path and shape-check its
+ * default export. This is the raw load step behind {@link loadWorkflowByName}
+ * — WITHOUT the agent-draft approval gate — used by `mars workflow author`
+ * to dry-run a draft body before (and after) it lands on disk. Dispatch must
+ * always go through {@link loadWorkflowByName} so the gate applies.
+ */
+export const importWorkflowFile = async <I, O, S>(
+  name: string,
+  path: string,
+): Promise<Workflow<I, O, S>> => {
   // Plain-JS user module outside the TS source tree: the specifier is
   // computed at runtime, so TS cannot (and should not) statically resolve it.
   // Import by file URL so absolute paths work cross-platform.

@@ -124,6 +124,14 @@ export const ACTION_QUEUE_KINDS = [
   // failed but restartable (no recovery slot consumed). Cleared when the
   // operator fixes/disables the gate and clears the suppression.
   'gate-broken',
+  // A self-authored workflow (ADR-0068) landed via `mars workflow author` and
+  // sits on disk as an agent draft: lint-clean and dry-run-validated, but NOT
+  // dispatch-eligible until the operator approves it. Level-triggered
+  // (ADR-0048): one row per workflow name (signature-keyed; idempotent
+  // re-raises bump seen_count); superseded when `mars workflow approve <name>`
+  // privileges the file. The row body carries the rendered runbook plus the
+  // raw JS so the review happens entirely from the queue.
+  'workflow-draft-pending',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
@@ -861,6 +869,8 @@ export type SupersedeReason =
   | 'hitl-orphan-no-slice-task'
   /** daemon-code-drift row cleared because the daemon restarted and is now running current code. */
   | 'daemon-restarted'
+  /** workflow-draft-pending row cleared because the operator approved the draft. */
+  | 'workflow-approved'
 
 /**
  * Auto-close every open actionQueue item keyed to the given origin task. Called
