@@ -243,6 +243,17 @@ export const COMMIT_FOOTER = [
   'A separate failure mode, `verify:dirty-main`, means the merge target was already dirty before your branch landed. That is an operator-owned condition, not your responsibility.',
   '',
   'The orchestrator does not commit on your behalf.',
+  '',
+  '## Verify-command discipline — never mask test exit codes',
+  '',
+  'When judging whether tests pass, run the test command WITHOUT a pipe to `tail`, `head`, or `grep`. A pipeline such as `npx vitest run 2>&1 | tail -25` reports `tail`\'s exit code (always 0), not vitest\'s — a red suite reads as green. Instead:',
+  '',
+  '- Run the test command directly and let it print its own summary: `npx vitest run`',
+  '- Or capture output to a temp file: `npx vitest run > /tmp/test-out.txt 2>&1; cat /tmp/test-out.txt`',
+  '- Or use `set -o pipefail` before any pipeline so the leftmost non-zero exit propagates',
+  '- Or parse the runner\'s own `N failed` summary line from captured output',
+  '',
+  'Never assert "tests pass" solely from the exit code of a pipeline whose last stage is `tail`, `head`, or `grep`.',
 ].join('\n')
 
 // Deviation-rules brief delivered to every Coder session.

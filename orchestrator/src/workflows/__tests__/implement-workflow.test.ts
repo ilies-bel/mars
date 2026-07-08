@@ -76,6 +76,25 @@ describe('composePrompt — coder default', () => {
     expect(COMMIT_FOOTER).toMatch(/not your responsibility/i)
   })
 
+  it('warns against piping test commands through tail/head/grep (exit-code masking)', () => {
+    // A pipeline like `npx vitest run 2>&1 | tail -25` exits with tail's status
+    // (always 0), so a red suite reads as green. The footer must name this trap.
+    expect(COMMIT_FOOTER).toContain('tail')
+    expect(COMMIT_FOOTER).toContain('head')
+    expect(COMMIT_FOOTER).toContain('grep')
+    expect(COMMIT_FOOTER).toMatch(/exit code|exit status|exit propagat/i)
+  })
+
+  it('provides safe alternatives to exit-code-masking pipelines', () => {
+    // The footer must offer at least one concrete alternative (direct run, temp
+    // file capture, or set -o pipefail) so the agent has actionable guidance.
+    expect(COMMIT_FOOTER).toMatch(/set -o pipefail|temp file|directly/i)
+  })
+
+  it('forbids asserting tests pass from a pipeline exit code ending in tail/head/grep', () => {
+    expect(COMMIT_FOOTER).toMatch(/never assert|Never assert/i)
+  })
+
   it('defaults to the coder footer when no tag is supplied', () => {
     const out = composePrompt('do the thing', null)
     expect(out).toContain('git add')
