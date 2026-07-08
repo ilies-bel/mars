@@ -137,6 +137,32 @@ export const EventMap = {
     kind: z.string(),
   }),
   /**
+   * Emitted when per-arc reflection lands a suggested Scorer (a per-Workflow
+   * quality rubric awaiting operator triage). The action-queue-repopulator
+   * converts this into a 'scorer-suggested' action-queue row keyed on the
+   * scorer id, mirroring the proposal.added → draft-proposal projection.
+   */
+  'scorer.suggested': z.object({
+    scorerId: z.string(),
+    workflow: z.string(),
+    title: z.string(),
+  }),
+  /**
+   * Emitted when the operator accepts a suggested Scorer (`mars scorer
+   * accept`). The repopulator evicts the 'scorer-suggested' row — the entity
+   * left status='suggested', so the pure projection closes (ADR-0048).
+   */
+  'scorer.accepted': z.object({
+    scorerId: z.string(),
+  }),
+  /**
+   * Emitted when the operator dismisses a suggested Scorer (`mars scorer
+   * dismiss`). Same eviction path as scorer.accepted.
+   */
+  'scorer.dismissed': z.object({
+    scorerId: z.string(),
+  }),
+  /**
    * Emitted once when a durable Subscriber's handler has failed
    * STALL_THRESHOLD consecutive times on the same event id and its cursor
    * is blocked (ADR-0032). Written to the Outbox alongside the stall row.

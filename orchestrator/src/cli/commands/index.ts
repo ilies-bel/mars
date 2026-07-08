@@ -20,6 +20,7 @@ import { alertCommands } from './alert'
 import { diagnoseCommands } from './diagnose'
 import { miscCommands } from './misc'
 import { reflectCommands } from './reflect'
+import { scorerCommands } from './scorer'
 import { installCommands } from './install'
 import { doctorCommands } from './doctor'
 import { runCommands } from './run'
@@ -42,6 +43,7 @@ export const allCommands: readonly Command[] = [
   ...diagnoseCommands,
   ...miscCommands,
   ...reflectCommands,
+  ...scorerCommands,
   ...installCommands,
   ...doctorCommands,
   ...runCommands,

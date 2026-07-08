@@ -25,6 +25,9 @@ import { getTask } from '../queue'
  * - proposal.added → insert a draft-proposal actionQueue row keyed on proposal id.
  * - proposal.promoted / proposal.dismissed / proposal.deleted → evict the
  *   proposal's draft-proposal row.
+ * - scorer.suggested → insert a scorer-suggested actionQueue row keyed on
+ *   scorer id (pure projection of scorers.status='suggested', ADR-0048).
+ * - scorer.accepted / scorer.dismissed → evict the scorer's row.
  * - task.blocked → NO action (blocked tasks do not create actionQueue rows).
  * - Stale-worktree rows are produced by the existing daemon sweep and
  *   evicted by dismissAlertsOnStatusChange in queue.ts; this consumer
@@ -67,6 +70,16 @@ const PROPOSAL_EVICT_REASONS: Partial<Record<EventName, SupersedeReason>> = {
   'proposal.promoted': 'origin-done',
   'proposal.dismissed': 'origin-dropped',
   'proposal.deleted': 'origin-purged',
+}
+
+/**
+ * Scorer triage events that evict the scorer's 'scorer-suggested' row.
+ * Pure projection (ADR-0048): the row exists iff the scorers row is in
+ * status='suggested'; accept/dismiss are the only exits.
+ */
+const SCORER_EVICT_REASONS: Partial<Record<EventName, SupersedeReason>> = {
+  'scorer.accepted': 'origin-done',
+  'scorer.dismissed': 'origin-dropped',
 }
 
 /**
@@ -208,6 +221,44 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
       signature: payload.proposalId,
       originTaskId: payload.proposalId,
     })
+  } else if (event.type === 'scorer.suggested') {
+    // Per-arc reflection landed a suggested Scorer — project it into a
+    // 'scorer-suggested' row keyed on the scorer id. raiseActionQueueItem's
+    // origin-keyed dedup keeps re-drains idempotent; the entity-side
+    // fingerprint dedup in scorers.ts prevents a second `scorer.suggested`
+    // event for the same (workflow, dimension) while one sits suggested.
+    const payload = event.payload as {
+      scorerId: string
+      workflow: string
+      title: string
+    }
+    await raiseActionQueueItem({
+      kind: 'scorer-suggested',
+      category: 'reflector',
+      priority: 'normal',
+      title: `Suggested Scorer: ${payload.title} (workflow: ${payload.workflow})`,
+      body:
+        `Per-arc reflection found a measurement gap on the '${payload.workflow}' workflow and suggested a Scorer grading '${payload.title}'.\n` +
+        `Review with \`mars scorer show ${payload.scorerId}\`, then \`mars scorer accept ${payload.scorerId}\` or \`mars scorer dismiss ${payload.scorerId}\`.`,
+      payload: {
+        scorerId: payload.scorerId,
+        workflow: payload.workflow,
+      },
+      context: {},
+      raisedBy: 'action-queue-repopulator:scorer.suggested',
+      signature: payload.scorerId,
+      originTaskId: payload.scorerId,
+    })
+  } else if (event.type in SCORER_EVICT_REASONS) {
+    // scorer.accepted / scorer.dismissed — the entity left 'suggested', so
+    // the pure projection closes (ADR-0048).
+    const reason = SCORER_EVICT_REASONS[event.type]!
+    const { scorerId } = event.payload as { scorerId: string }
+    await supersedeActionQueueItemsForOrigin(
+      scorerId,
+      reason,
+      `action-queue-repopulator:${event.type}`,
+    )
   } else {
     // PROPOSAL_EVICT_REASONS: proposal.promoted / proposal.dismissed / proposal.deleted
     const reason = PROPOSAL_EVICT_REASONS[event.type]!
@@ -257,7 +308,9 @@ export async function drainActionQueueRepopulations(
         TASK_RAISE_EVENTS.has(event.type) ||
         event.type in TASK_EVICT_REASONS ||
         event.type === 'proposal.added' ||
-        event.type in PROPOSAL_EVICT_REASONS
+        event.type in PROPOSAL_EVICT_REASONS ||
+        event.type === 'scorer.suggested' ||
+        event.type in SCORER_EVICT_REASONS
       if (!isMapped) return false
       await applyActionQueueMutation(event)
       return true

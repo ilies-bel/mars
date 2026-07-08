@@ -25,6 +25,7 @@ export type DerivedActionQueueKind =
   | 'awaiting-human'
   | 'reflect-recommended'
   | 'workflow-draft-pending'
+  | 'scorer-suggested'
 export type DerivedActionQueueFilter = 'open' | 'all'
 
 /** Resolution metadata carried by resolved rows in history responses. */
@@ -244,16 +245,21 @@ export const buildActionQueueView = async ({
     if (k === 'awaiting-human') return 'awaiting-human'
     if (k === 'reflect-recommended') return 'reflect-recommended'
     if (k === 'workflow-draft-pending') return 'workflow-draft-pending'
+    if (k === 'scorer-suggested') return 'scorer-suggested'
     return 'failed-task'
   }
 
-  // Extract the entity id (task id, worktree id, or proposal id) from a row.
+  // Extract the entity id (task id, worktree id, proposal id, or scorer id)
+  // from a row.
   const extractEntityId = (row: PersistedActionQueueRow): string => {
     if (row.kind === 'stale-worktree') {
       if (typeof row.context.taskId === 'string') return row.context.taskId
     }
     if (row.kind === 'draft-proposal') {
       if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+    }
+    if (row.kind === 'scorer-suggested') {
+      if (typeof row.payload.scorerId === 'string') return row.payload.scorerId
     }
     // slices-dropped is keyed to a proposal, not a task — surface the proposal id
     // rather than falling back to the opaque row id.
@@ -703,6 +709,7 @@ export const buildActionQueueHistoryView = async ({
     if (k === 'awaiting-human') return 'awaiting-human'
     if (k === 'reflect-recommended') return 'reflect-recommended'
     if (k === 'workflow-draft-pending') return 'workflow-draft-pending'
+    if (k === 'scorer-suggested') return 'scorer-suggested'
     return 'failed-task'
   }
 
@@ -712,6 +719,9 @@ export const buildActionQueueHistoryView = async ({
     }
     if (row.kind === 'draft-proposal') {
       if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+    }
+    if (row.kind === 'scorer-suggested') {
+      if (typeof row.payload.scorerId === 'string') return row.payload.scorerId
     }
     if (row.kind === 'slices-dropped') {
       if (typeof row.payload.proposalId === 'string') return row.payload.proposalId

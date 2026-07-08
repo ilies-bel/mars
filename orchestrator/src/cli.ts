@@ -327,6 +327,22 @@ Commands:
                                 Refuses if any arc branch has unique commits
                                 ahead of the integration branch unless --force
                                 is passed.
+  scorer list [--status suggested|accepted|dismissed] [--workflow <kind>]
+                                list Scorers (per-Workflow quality rubrics
+                                suggested by 'mars arc reflect' when a
+                                measurement gap is found). Stored in the
+                                scorers table (.mars/mars.db).
+  scorer show <id>              print a Scorer in full: target workflow kind,
+                                quality dimension, rubric prompt, the
+                                0..1-plus-rationale output contract, and the
+                                arc evidence + confidence that motivated it.
+  scorer accept <id>            accept a suggested Scorer. Flips status to
+                                'accepted' and runs NOTHING — the accepted row
+                                is the durable handoff for the Scorer
+                                integration draft. Clears the
+                                'scorer-suggested' action-queue row.
+  scorer dismiss <id>           dismiss a suggested Scorer (status
+                                'dismissed'; clears the action-queue row).
   action-queue                         alias for 'action-queue list open'
   action-queue list [state] [--kind <kind>] [--lean]
                                 list action queue items. state one of:

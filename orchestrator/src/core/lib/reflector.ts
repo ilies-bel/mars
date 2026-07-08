@@ -561,3 +561,88 @@ export const applyVerdicts = async (
   }
   return { saved, absorbed, dropped, savedSuggestions }
 }
+
+/**
+ * A scorer suggestion emitted by the deep-reflector analyst: a per-Workflow
+ * quality rubric for a measurement gap the pipeline's verify gate cannot see
+ * (PRD 6988ed3b). Passes through the same save/absorb/drop verdicting as
+ * {@link VerdictedSuggestion} so the analyst contract stays uniform.
+ */
+export interface VerdictedScorerSuggestion {
+  /** Target Workflow kind (matches the arc tasks' workflow kind, e.g. 'task', 'fix'). */
+  workflow: string
+  /** Short human label for the quality dimension graded. */
+  title: string
+  /** Self-contained scoring prompt — no arc-specific references. */
+  rubric: string
+  /** Analyst confidence in 0..1. */
+  confidence: number
+  /** Concrete evidence (dissonant calls / verify mismatches) motivating the gap. */
+  evidence: string[]
+  verdict: SuggestionVerdict
+}
+
+export interface ApplyScorerVerdictsResult {
+  /** Fresh `scorers` rows landed with status='suggested'. */
+  suggested: number
+  /** Findings folded into an existing suggested scorer (fingerprint match) — no new row. */
+  absorbed: number
+  /** Discarded findings (verdict 'drop', or the dimension was already triaged). */
+  dropped: number
+  /** Ids of the freshly suggested scorer rows. */
+  suggestedScorerIds: string[]
+}
+
+/**
+ * Apply save/absorb/drop verdicts to scorer suggestions — the parallel of
+ * {@link applyVerdicts} for the second reflection output type.
+ *
+ * - 'save'   → `suggestScorer`. The entity-side fingerprint dedup decides the
+ *              real outcome: a fresh row counts as suggested, a fold into an
+ *              existing suggested row counts as absorbed, and an
+ *              already-triaged (accepted/dismissed) dimension counts as
+ *              dropped — a duplicate suggestion never reappears in the queue.
+ * - 'absorb' → append evidence to the existing suggested scorer matched by
+ *              fingerprint (no duplicate rows). Counted as absorbed whether or
+ *              not a match existed, mirroring applyVerdicts semantics.
+ * - 'drop'   → discarded.
+ */
+export const applyScorerVerdicts = async (
+  suggestions: readonly VerdictedScorerSuggestion[],
+  provenance: { originArcId: string; reportPath: string | null },
+): Promise<ApplyScorerVerdictsResult> => {
+  const { suggestScorer, absorbScorerEvidence } = await import('../scorers')
+  let suggested = 0
+  let absorbed = 0
+  let dropped = 0
+  const suggestedScorerIds: string[] = []
+  for (const s of suggestions) {
+    if (s.verdict === 'drop') {
+      dropped += 1
+      continue
+    }
+    if (s.verdict === 'absorb') {
+      await absorbScorerEvidence(s.workflow, s.title, s.evidence, s.confidence)
+      absorbed += 1
+      continue
+    }
+    const result = await suggestScorer({
+      workflow: s.workflow,
+      title: s.title,
+      rubric: s.rubric,
+      originArcId: provenance.originArcId,
+      reportPath: provenance.reportPath,
+      evidence: s.evidence,
+      confidence: s.confidence,
+    })
+    if (result.outcome === 'created') {
+      suggested += 1
+      suggestedScorerIds.push(result.scorer.id)
+    } else if (result.outcome === 'absorbed') {
+      absorbed += 1
+    } else {
+      dropped += 1
+    }
+  }
+  return { suggested, absorbed, dropped, suggestedScorerIds }
+}

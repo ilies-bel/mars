@@ -221,7 +221,9 @@ const arcReflect: Command = {
       '../../core/lib/deep-reflect-query'
     )
     const { runDeepReflectorArc } = await import('../../core/lib/deep-reflector')
-    const { applyVerdicts } = await import('../../core/lib/reflector')
+    const { applyVerdicts, applyScorerVerdicts } = await import(
+      '../../core/lib/reflector'
+    )
 
     const originId = await resolveOriginIdForTaskOrSelf(chosenOriginInput)
     const arc = await loadDeepReflectArc(originId)
@@ -252,6 +254,8 @@ const arcReflect: Command = {
     const result = await runDeepReflectorArc(arc)
     const report = result.report
 
+    // Compute the report path BEFORE applying scorer verdicts: the persisted
+    // scorers row carries it as provenance (origin_arc_id + report_path).
     const { mkdir, writeFile } = await import('node:fs/promises')
     const { resolve: resolvePath } = await import('node:path')
     const { getStateDir } = await import('../../core/context')
@@ -286,6 +290,10 @@ const arcReflect: Command = {
 
     const sourceTaskId = await deps.store.insertReflectionTask(1)
     const verdictResult = await applyVerdicts(report.suggestions, sourceTaskId)
+    const scorerVerdictResult = await applyScorerVerdicts(
+      report.scorerSuggestions,
+      { originArcId: originId, reportPath: outPath },
+    )
 
     await writeFile(
       outPath,
@@ -300,6 +308,12 @@ const arcReflect: Command = {
             saved: verdictResult.saved,
             absorbed: verdictResult.absorbed,
             dropped: verdictResult.dropped,
+          },
+          scorerVerdictResult: {
+            suggested: scorerVerdictResult.suggested,
+            absorbed: scorerVerdictResult.absorbed,
+            dropped: scorerVerdictResult.dropped,
+            suggestedScorerIds: scorerVerdictResult.suggestedScorerIds,
           },
           rawOutput: result.rawOutput,
         },
@@ -342,6 +356,14 @@ const arcReflect: Command = {
     deps.out(
       `Suggestions: ${verdictResult.saved} saved, ${verdictResult.absorbed} absorbed, ${verdictResult.dropped} dropped`,
     )
+    deps.out(
+      `Scorer suggestions: ${scorerVerdictResult.suggested} suggested, ${scorerVerdictResult.absorbed} absorbed, ${scorerVerdictResult.dropped} dropped`,
+    )
+    for (const scorerId of scorerVerdictResult.suggestedScorerIds) {
+      deps.out(
+        `  suggested Scorer ${scorerId} — review with 'mars scorer show ${scorerId}'`,
+      )
+    }
     deps.out(`Full report: ${outPath}`)
     return { code: 0 }
   },

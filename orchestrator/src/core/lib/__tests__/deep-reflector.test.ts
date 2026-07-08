@@ -241,6 +241,67 @@ describe('parseDeepReflectionReport', () => {
     expect(report?.verifyMismatches).toHaveLength(1)
     expect(report?.verifyMismatches?.[0].severity).toBe('low')
   })
+
+  it('parses scorerSuggestions, clamps confidence, and defaults to [] when absent', () => {
+    const withScorers = JSON.stringify({
+      summary: 'verify passed vacuously while tests were skipped',
+      toolCallStats: { total: 9, byName: { Bash: 9 } },
+      dissonantCalls: [],
+      verifyMismatches: [
+        {
+          task_id: 'mars-aaaa1111',
+          claimed: 'tests pass',
+          actual: '0 tests run',
+          severity: 'high',
+        },
+      ],
+      thrashingPatterns: [],
+      rootCause: 'no gate grades test-coverage honesty on this pipeline',
+      suggestions: [],
+      scorerSuggestions: [
+        {
+          workflow: 'task',
+          title: 'Test coverage honesty',
+          rubric: 'Grade whether the verify claim is backed by actually-executed tests, 0..1.',
+          confidence: 1.7,
+          evidence: ['task mars-aaaa1111: "pass" with 0 tests run'],
+          verdict: 'save',
+        },
+        // missing rubric → skipped
+        { workflow: 'task', title: 'No rubric', confidence: 0.9 },
+        // missing workflow → skipped
+        { title: 'No workflow', rubric: 'grade something' },
+        // unknown verdict coerces to save; missing confidence defaults to 0.5
+        {
+          workflow: 'fix',
+          title: 'Recovery scope discipline',
+          rubric: 'Grade whether the recovery stayed within the origin failure scope.',
+          verdict: 'maybe',
+        },
+      ],
+    })
+    const report = parseDeepReflectionReport(withScorers)
+    expect(report).not.toBeNull()
+    expect(report?.scorerSuggestions).toHaveLength(2)
+    expect(report?.scorerSuggestions[0].workflow).toBe('task')
+    expect(report?.scorerSuggestions[0].confidence).toBe(1) // clamped to 0..1
+    expect(report?.scorerSuggestions[0].evidence).toHaveLength(1)
+    expect(report?.scorerSuggestions[0].verdict).toBe('save')
+    expect(report?.scorerSuggestions[1].confidence).toBe(0.5)
+    expect(report?.scorerSuggestions[1].verdict).toBe('save')
+
+    // Absent block → empty array (most arcs have no measurement gap).
+    const withoutScorers = JSON.stringify({
+      summary: 'nothing to report',
+      toolCallStats: { total: 0, byName: {} },
+      dissonantCalls: [],
+      verifyMismatch: null,
+      thrashingPatterns: [],
+      rootCause: '',
+      suggestions: [],
+    })
+    expect(parseDeepReflectionReport(withoutScorers)?.scorerSuggestions).toEqual([])
+  })
 })
 
 describe('runDeepReflectorArc', () => {

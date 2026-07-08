@@ -6,6 +6,7 @@ import {
   parseVerdict,
   type SuggestionVerdict,
   type VerdictedSuggestion,
+  type VerdictedScorerSuggestion,
 } from './reflector'
 import type { DeepReflectArc, SessionArcsResult } from './deep-reflect-query'
 import type { ClaudeEvent } from './claude-stream'
@@ -43,6 +44,13 @@ export interface DeepReflectionReport {
   thrashingPatterns: ThrashingPattern[]
   rootCause: string
   suggestions: VerdictedSuggestion[]
+  /**
+   * The second reflection output type (PRD 6988ed3b): suggested Scorers for
+   * MEASUREMENT GAPS — the verify gate passed (or vacuously passed) while
+   * transcript analysis found a quality dimension no gate grades. Empty when
+   * the arc shows no such gap.
+   */
+  scorerSuggestions: VerdictedScorerSuggestion[]
 }
 
 export interface DeepReflectionResult {
@@ -150,6 +158,37 @@ Truncation awareness:
   the full conversation. When you cannot find an event cited in the metadata,
   note that it may have been elided rather than asserting it did not happen.
 
+6. Check for a **measurement gap** and, when one exists, emit a
+   **scorerSuggestion**. A Scorer is a durable per-Workflow quality rubric —
+   NOT work to do. Emit one ONLY when BOTH hold:
+   - the verify step succeeded (or vacuously passed — e.g. "pass" with 0
+     tests run, or a verifyMismatches entry shows the claim diverged from
+     the gate's actual output), AND
+   - transcript analysis found a quality dissonance the pipeline's gate
+     cannot see: verifyMismatches, high-severity dissonantCalls, or a
+     root cause recurring across tasks of the same workflow kind.
+   Decision rule: if the finding is fixable by a code or workflow change,
+   it belongs in \`suggestions\` (a draft-proposal), NOT here. Only
+   "no gate grades dimension X on this pipeline" becomes a scorer
+   suggestion. Each scorer suggestion carries:
+   - \`workflow\`: the target Workflow kind — the \`kind\` value from the
+     task metadata of the tasks that exhibit the gap (e.g. "task", "fix").
+   - \`title\`: a short human label for the quality dimension graded.
+   - \`rubric\`: a SELF-CONTAINED scoring prompt an evaluator LLM applies to
+     a completed Workflow instance's artifacts (diff, verify output,
+     transcript digest). It must generalize to FUTURE instances of that
+     Workflow — no task ids, no arc-specific file names, no references to
+     this arc. The evaluator's output contract is fixed by the system (a
+     continuous 0..1 score plus a one-line rationale); the rubric describes
+     WHAT to grade and how to anchor the extremes (what a 0 looks like,
+     what a 1 looks like).
+   - \`confidence\`: 0..1 — how confident you are that this dimension is a
+     real, recurring measurement gap (not a one-off).
+   - \`evidence\`: quoted excerpts (with task ids / event indices) of the
+     concrete dissonant calls or verify mismatches that motivated it.
+   - \`verdict\`: save | absorb | drop — same scheme as suggestions.
+   If there is no measurement gap, return scorerSuggestions: [].
+
 Output a SINGLE JSON document on stdout. No prose, no markdown, no fences.
 
 Schema:
@@ -189,6 +228,16 @@ Schema:
       "target_id": "<id>|null",
       "dup_of": "<id>|null"
     }
+  ],
+  "scorerSuggestions": [
+    {
+      "workflow": "task",
+      "title": "short quality-dimension label",
+      "rubric": "self-contained scoring prompt applied to a Workflow instance's diff, verify output, and transcript digest; anchors 0 and 1; no arc-specific references",
+      "confidence": 0.8,
+      "evidence": ["quoted excerpt citing task mars-xxxxx event 12"],
+      "verdict": "save|absorb|drop"
+    }
   ]
 }
 
@@ -196,6 +245,9 @@ Rules:
 - If there are no dissonant calls anywhere in the arc, return
   dissonantCalls: [].
 - If no task has a verify mismatch, return verifyMismatches: [].
+- If the arc shows no measurement gap, return scorerSuggestions: [].
+  Most arcs have none — a scorer suggestion is rare and must be grounded
+  in a verify gate that passed while quality dissonance was visible.
 - Always include \`task_id\` on dissonantCalls and verifyMismatches —
   without it, the entry cannot be cited and will be dropped.
 - Do not invent event indices or task ids. If you cannot pinpoint one,
@@ -649,6 +701,33 @@ const parseSuggestions = (raw: unknown): VerdictedSuggestion[] => {
   return out
 }
 
+const clamp01 = (n: number): number => Math.min(1, Math.max(0, n))
+
+const parseScorerSuggestions = (raw: unknown): VerdictedScorerSuggestion[] => {
+  if (!Array.isArray(raw)) return []
+  const out: VerdictedScorerSuggestion[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const o = item as Record<string, unknown>
+    const workflow = typeof o.workflow === 'string' ? o.workflow.trim() : ''
+    const title = typeof o.title === 'string' ? o.title.trim() : ''
+    const rubric = typeof o.rubric === 'string' ? o.rubric.trim() : ''
+    // workflow, title, and rubric are load-bearing (fingerprint + evaluator
+    // prompt); an entry missing any of them cannot become a Scorer record.
+    if (!workflow || !title || !rubric) continue
+    const confidence =
+      typeof o.confidence === 'number' && Number.isFinite(o.confidence)
+        ? clamp01(o.confidence)
+        : 0.5
+    const evidence = Array.isArray(o.evidence)
+      ? o.evidence.filter((e): e is string => typeof e === 'string')
+      : []
+    const verdict: SuggestionVerdict = parseVerdict(o.verdict)
+    out.push({ workflow, title, rubric, confidence, evidence, verdict })
+  }
+  return out
+}
+
 export const parseDeepReflectionReport = (
   text: string,
 ): DeepReflectionReport | null => {
@@ -672,6 +751,7 @@ export const parseDeepReflectionReport = (
     thrashingPatterns: parseThrashing(o.thrashingPatterns),
     rootCause: typeof o.rootCause === 'string' ? o.rootCause : '',
     suggestions: parseSuggestions(o.suggestions),
+    scorerSuggestions: parseScorerSuggestions(o.scorerSuggestions),
   }
 }
 
@@ -684,6 +764,7 @@ const emptyReport = (): DeepReflectionReport => ({
   thrashingPatterns: [],
   rootCause: '',
   suggestions: [],
+  scorerSuggestions: [],
 })
 
 export const runDeepReflectorArc = async (

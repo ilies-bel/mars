@@ -164,6 +164,11 @@ export const ACTION_QUEUE_KINDS = [
   // when the arc reaches terminal status (lifetime spend never decreases,
   // so live-ness is the falsifiable half of the level condition).
   'budget-arc',
+  // Per-arc reflection suggested a Scorer (a per-Workflow quality rubric)
+  // and the scorers row sits in status='suggested'. Pure projection
+  // (ADR-0048): the row exists iff the entity is suggested and leaves only
+  // via the entity verbs `mars scorer accept` / `mars scorer dismiss`.
+  'scorer-suggested',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

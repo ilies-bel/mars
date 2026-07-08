@@ -28,6 +28,7 @@ export type DerivedRowKind =
   | 'awaiting-human'
   | 'reflect-recommended'
   | 'workflow-draft-pending'
+  | 'scorer-suggested'
 
 /**
  * Resolve the recovery menu for a non-failure derived row kind. Returns an
@@ -112,6 +113,25 @@ export const derivedRowActions = (rowKind: string, entityId?: string): ActionDes
         label: 'Approve',
         op: 'copy',
         hint: entityId ? `mars workflow approve ${entityId}` : 'mars workflow approve <name>',
+      },
+    ]
+  }
+  if (rowKind === 'scorer-suggested') {
+    // Entity verbs only (ADR-0048 pure projection): the row leaves when the
+    // scorer leaves status='suggested'. Copy-actions hand the operator the
+    // runnable CLI verbs rather than adding a queue-side close op.
+    return [
+      {
+        id: 'accept',
+        label: 'Accept',
+        op: 'copy',
+        hint: entityId ? `mars scorer accept ${entityId}` : 'mars scorer accept',
+      },
+      {
+        id: 'dismiss',
+        label: 'Dismiss',
+        op: 'copy',
+        hint: entityId ? `mars scorer dismiss ${entityId}` : 'mars scorer dismiss',
         needsConfirm: true,
       },
     ]

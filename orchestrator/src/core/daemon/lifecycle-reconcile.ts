@@ -14,6 +14,12 @@ import type { SupersedeReason } from '../lib/action-queue'
 const PROPOSAL_ORIGIN_KINDS = ['draft-proposal'] as const
 
 /**
+ * Kinds whose `origin_task_id` points to a row in `scorers`, not `tasks`.
+ * Same routing role as PROPOSAL_ORIGIN_KINDS for the scorer projection.
+ */
+const SCORER_ORIGIN_KINDS = ['scorer-suggested'] as const
+
+/**
  * Boot-time reconciliation: closes Action-queue rows left open while the
  * daemon was down.
  *
@@ -58,6 +64,7 @@ export async function reconcileTerminalTasks(
   }
 
   const proposalKindList = PROPOSAL_ORIGIN_KINDS.map(k => `'${k}'`).join(', ')
+  const scorerKindList = SCORER_ORIGIN_KINDS.map(k => `'${k}'`).join(', ')
 
   // (b-task) Open rows for task-origin kinds whose origin_task_id is absent
   //          from tasks entirely — purged tasks without a lifecycle event.
@@ -65,7 +72,7 @@ export async function reconcileTerminalTasks(
     SELECT DISTINCT origin_task_id
     FROM action_queue_items
     WHERE state = 'open'
-      AND kind NOT IN (${proposalKindList})
+      AND kind NOT IN (${proposalKindList}, ${scorerKindList})
       AND origin_task_id IS NOT NULL
       AND origin_task_id NOT IN (SELECT id FROM tasks)
   `)
@@ -89,6 +96,29 @@ export async function reconcileTerminalTasks(
   `)
 
   for (const row of proposalOriginOrphans.rows) {
+    const originId = (row as unknown as { origin_task_id: string }).origin_task_id
+    await resolveAllRowsForTask(originId)
+    rowsResolved++
+  }
+
+  // (b-scorer) Open rows for scorer-origin kinds whose scorers row no longer
+  //            sits in status='suggested' (or is gone entirely). The durable
+  //            outbox normally evicts these via scorer.accepted/dismissed;
+  //            this sweep is the belt-and-suspenders for rows stranded by
+  //            manual DB surgery or a lost event. initScorers() guarantees
+  //            the table exists before the subquery runs.
+  const { initScorers } = await import('../scorers')
+  await initScorers()
+  const scorerOriginOrphans = await client.execute(`
+    SELECT DISTINCT origin_task_id
+    FROM action_queue_items
+    WHERE state = 'open'
+      AND kind IN (${scorerKindList})
+      AND origin_task_id IS NOT NULL
+      AND origin_task_id NOT IN (SELECT id FROM scorers WHERE status = 'suggested')
+  `)
+
+  for (const row of scorerOriginOrphans.rows) {
     const originId = (row as unknown as { origin_task_id: string }).origin_task_id
     await resolveAllRowsForTask(originId)
     rowsResolved++
