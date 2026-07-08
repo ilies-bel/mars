@@ -11,9 +11,9 @@
  *   - "custom"        — file exists on disk, no bundled counterpart for that kind.
  */
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname as _dirname } from 'node:path'
 import type { Command } from '../command'
 import { PRIMITIVE_DESCRIPTORS } from '../../workflows/primitives/opts-descriptors'
@@ -303,60 +303,79 @@ const workflowShow: Command = {
   },
 }
 
-/**
- * Render one validation result through the deps sinks. Returns true when the
- * workflow validated clean.
- */
-const renderValidation = (
-  deps: Parameters<Command['run']>[1],
-  v: import('../../workflows/validate-workflow').WorkflowValidation,
-): boolean => {
-  if (!v.ok) {
-    deps.err(`✗ ${v.name} — INVALID`)
-    for (const e of v.errors) deps.err(`    ${e}`)
-    return false
-  }
-  deps.out(`✓ ${v.name} (id: ${v.workflowId ?? '?'}) — ${v.steps.length} step(s)`)
-  for (const [i, s] of v.steps.entries()) {
-    const modeLabel = s.mode === 'manual' ? 'MANUAL' : 'auto'
-    const guide = s.guide ? ` — guide: ${s.guide}` : ''
-    deps.out(
-      `    ${i + 1}. ${s.step ?? '(outside a step)'}  ${s.primitive}  [${modeLabel}]${guide}`,
-    )
-  }
-  return true
+/** Minimal shape guard shared with `loadWorkflowByName`. */
+const isWorkflowShape = (v: unknown): boolean => {
+  if (typeof v !== 'object' || v === null) return false
+  const c = v as { id?: unknown; fn?: unknown }
+  return typeof c.id === 'string' && typeof c.fn === 'function'
 }
 
 const workflowValidate: Command = {
   path: 'workflow validate',
   summary:
-    'dry-run a workflow file and render its declared runbook (steps, modes, guides); no side effects',
-  usage:
-    'usage: mars workflow validate [<name>]   (no name = all on-disk workflows)',
+    'sanity-check a workflow file — print ok: <path> or the exact loader error that dispatch would raise',
+  usage: 'usage: mars workflow validate <kind>  [--file <path>]',
   run: async (args, deps) => {
-    // Heavy import (primitives graph) — load lazily so plain CLI startup
-    // stays lean.
-    const { validateWorkflow } = await import(
-      '../../workflows/validate-workflow'
-    )
-    const requested = args.positional[0]
-    const names = requested
-      ? [requested]
-      : resolveWorkflowEntries(deps.ctx.stateDir)
-          .filter((e) => e.filePath !== null)
-          .map((e) => e.kind)
-    if (names.length === 0) {
-      deps.err(
-        'no workflow files under .mars/workflows — run `mars init` to scaffold defaults',
-      )
+    const {
+      loadWorkflowByName,
+      isWorkflowLoadError,
+      userWorkflowPath,
+    } = await import('../../workflows/queue-workflow-store')
+
+    const explicitFile = args.flags['--file']
+    const kind = args.positional[0]
+
+    if (!explicitFile && !kind) {
+      deps.err('usage: mars workflow validate <kind>  [--file <path>]')
       return { code: 1 }
     }
-    let allOk = true
-    for (const name of names) {
-      const v = await validateWorkflow(name)
-      if (!renderValidation(deps, v)) allOk = false
+
+    if (explicitFile) {
+      // --file: validate an arbitrary path, skipping kind-based path derivation.
+      if (!existsSync(explicitFile)) {
+        deps.err(
+          `no workflow file at '${explicitFile}': path does not exist. No fallback pipeline is ever substituted.`,
+        )
+        return { code: 1 }
+      }
+
+      const mtimeMs = statSync(explicitFile).mtimeMs
+      let candidate: unknown
+      try {
+        const mod = (await import(
+          `${pathToFileURL(explicitFile).href}?v=${mtimeMs}`
+        )) as { default?: unknown }
+        candidate = mod.default
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        deps.err(`workflow file ${explicitFile} failed to load: ${msg}`)
+        return { code: 1 }
+      }
+
+      if (!isWorkflowShape(candidate)) {
+        deps.err(
+          `workflow file ${explicitFile} must default-export a workflow object with { id: string, fn: function } (use defineWorkflow from 'mars/workflow'). No fallback pipeline is substituted — fix the export.`,
+        )
+        return { code: 1 }
+      }
+
+      deps.out(`ok: ${explicitFile}`)
+      return { code: 0 }
     }
-    return { code: allOk ? 0 : 1 }
+
+    // kind-based path — delegate to the same loader dispatch uses.
+    const resolvedPath = userWorkflowPath(kind!, deps.ctx.repoRoot)
+    try {
+      await loadWorkflowByName(kind!, deps.ctx.repoRoot)
+      deps.out(`ok: ${resolvedPath}`)
+      return { code: 0 }
+    } catch (err) {
+      if (isWorkflowLoadError(err)) {
+        deps.err(err.message)
+        return { code: 1 }
+      }
+      throw err
+    }
   },
 }
 
