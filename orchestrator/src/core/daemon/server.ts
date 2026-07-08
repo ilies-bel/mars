@@ -43,6 +43,10 @@ import {
   ensureBlockerResolutionSubscriber,
 } from '../../outbox/subscribers/blocker-resolution'
 import {
+  drainRecoverySpawner,
+  ensureRecoverySpawner,
+} from '../../outbox/subscribers/recovery-spawn'
+import {
   buildTranscriptAppendSubscriber,
   ensureTranscriptAppendSchema,
 } from '../../outbox/subscribers/transcript-append'
@@ -3269,6 +3273,22 @@ export const startDaemon = async (
     }
   })()
 
+  // Boot drain for the recovery-spawner outbox subscriber: register it and
+  // spawn fix tasks for any task.failed events published while the daemon was
+  // down. This is the durable backstop that guarantees ADR-0061's
+  // "every regular-task failure spawns a fix" — wired here so the subscriber
+  // cursor is always registered on daemon start.
+  void (async () => {
+    try {
+      await ensureRecoverySpawner(getCompositionRootClient())
+      const { processed } = await drainRecoverySpawner(getCompositionRootClient(), log)
+      if (processed > 0)
+        log(`[recovery-spawner] spawned fix tasks for ${processed} failure(s) on boot`)
+    } catch (err) {
+      log(`[recovery-spawner] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // ── GitHub release update poller ─────────────────────────────────────────
   // Fetches https://api.github.com/repos/ilies-bel/mars/releases/latest once
   // on startup and then every UPDATE_POLL_INTERVAL_MS (6 h). Writes the result
@@ -3733,6 +3753,26 @@ export const startDaemon = async (
   }, BLOCKER_RESOLUTION_DRAIN_MS)
   blockerResolutionDrain.unref()
 
+  // ── Recovery-spawner drain ────────────────────────────────────────────────
+  // Polls the outbox for task.failed events and spawns fix tasks for any
+  // regular-task failures not yet handled. This is the durable backstop that
+  // guarantees ADR-0061's "every regular-task failure spawns a fix" even when
+  // the inline dispatch path in the verify primitive is skipped or crashes.
+  // .unref() so it never holds the process open.
+  const RECOVERY_SPAWNER_DRAIN_MS = Number(
+    process.env.MARS_RECOVERY_SPAWNER_DRAIN_MS ?? 30_000,
+  )
+  const recoverySpawnerDrain = setInterval(() => {
+    void (async () => {
+      try {
+        await drainRecoverySpawner(getCompositionRootClient(), log)
+      } catch (err) {
+        log(`[recovery-spawner] drain errored: ${(err as Error).message}`)
+      }
+    })()
+  }, RECOVERY_SPAWNER_DRAIN_MS)
+  recoverySpawnerDrain.unref()
+
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
@@ -3750,6 +3790,7 @@ export const startDaemon = async (
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
+    clearInterval(recoverySpawnerDrain)
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.
