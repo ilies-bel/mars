@@ -115,7 +115,7 @@ export const slicerOutputSchema = z.object({
     .max(20),
 })
 
-type SliceSpec = z.infer<typeof slicerOutputSchema>['slices'][number]
+export type SliceSpec = z.infer<typeof slicerOutputSchema>['slices'][number]
 
 /**
  * Concatenate a slice's `modifies` + `creates` into the single flat
