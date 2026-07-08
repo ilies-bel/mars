@@ -4,8 +4,9 @@ import { registerSubscriber } from '../../bus/subscribers.js'
 import { ensureProcessedOnceSchema } from '../../bus/processed-once.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks.js'
-import { getTask } from '../../core/queue.js'
+import { getTask, updateTask } from '../../core/queue.js'
 import { ensureGateMetaMonitorSchema } from '../../core/lib/gate-meta-monitor.js'
+import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
 
 /**
  * Durable outbox subscriber that enforces exactly-one recovery per task
@@ -76,6 +77,22 @@ export async function drainRecoverySpawner(
       const { taskId, error } = event.payload as { taskId: string; error: string }
       const task = await getTask(taskId)
       if (!task) return false
+
+      // If the API circuit breaker is open — or was opened within a 60 s grace
+      // window — this failure is environmental, not a code or verify bug. Skip
+      // the fix-task insert and re-queue the origin so it retries once the
+      // outage clears, preserving its single recovery slot for a real failure.
+      const breaker = apiCircuitBreaker.state()
+      const GRACE_MS = 60_000
+      const isEnvironmental =
+        breaker.open ||
+        (breaker.openedAt !== null && Date.now() - breaker.openedAt < GRACE_MS)
+
+      if (isEnvironmental) {
+        await updateTask(taskId, { status: 'queued' })
+        log?.('requeued (environmental outage), recovery slot spared')
+        return true
+      }
 
       // Prefer the FINE-grained failing step the verify primitive stamped on
       // `failure_reason` (`verify:<gate>`) over the coarse `failed_phase`

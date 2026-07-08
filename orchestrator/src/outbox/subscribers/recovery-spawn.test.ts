@@ -61,6 +61,10 @@ interface PublisherModule {
   publishWithRetry: typeof import('../../bus/publisher').publishWithRetry
 }
 
+interface CircuitBreakerModule {
+  apiCircuitBreaker: typeof import('../../core/lib/api-circuit-breaker').apiCircuitBreaker
+}
+
 interface Loaded {
   q: QueueModule
   aq: ActionQueueModule
@@ -69,6 +73,7 @@ interface Loaded {
   rs: RecoverySpawnModule
   gm: GateMonitorModule
   pub: PublisherModule
+  cb: CircuitBreakerModule
   client: Client
 }
 
@@ -114,7 +119,10 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   const pub = (await import(
     '../../bus/publisher'
   )) as unknown as PublisherModule
-  return { q, aq, ft, rc, rs, gm, pub, client: q.resolveQueueClient() }
+  const cb = (await import(
+    '../../core/lib/api-circuit-breaker'
+  )) as unknown as CircuitBreakerModule
+  return { q, aq, ft, rc, rs, gm, pub, cb, client: q.resolveQueueClient() }
 }
 
 /**
@@ -318,6 +326,76 @@ describe('recovery-spawn outbox subscriber', () => {
         (item.payload as Record<string, unknown>).recoveryTaskId === fixTaskId,
     )
     expect(originItems.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('requeues the origin task and spares the recovery slot when the circuit breaker is open', async () => {
+    const { q, cb, rs, pub, client } = await loadModules(repo)
+
+    const t1 = await q.enqueueTask('implement feature amid outage', undefined, {
+      skipTriage: true,
+    })
+    // Move the task to failed so the requeue is observable (status 'queued' → 'failed' → 'queued').
+    await q.updateTask(t1.id, { status: 'failed', failedPhase: 'code', error: 'api connection refused' })
+
+    // Trip the circuit breaker to signal an environmental API outage.
+    cb.apiCircuitBreaker.open('ConnectionRefused')
+
+    // Register subscriber after setup events so the cursor only sees the
+    // manually published task.failed event below.
+    await rs.ensureRecoverySpawner(client)
+    await publish(pub, client, 'task.failed', {
+      taskId: t1.id,
+      error: 'api connection refused',
+    })
+
+    const { processed } = await rs.drainRecoverySpawner(client)
+    expect(processed).toBe(1)
+
+    // No fix task should have been inserted — the recovery slot is spared.
+    const fixRows = await client.execute({
+      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t1.id],
+    })
+    expect(fixRows.rows).toHaveLength(0)
+
+    // The origin task must be back to 'queued' so it can retry once the outage resolves.
+    const reloaded = await q.getTask(t1.id)
+    expect(reloaded?.status).toBe('queued')
+  })
+
+  it('spawns a recovery task normally when the circuit breaker is closed', async () => {
+    const { q, rc, rs, pub, client } = await loadModules(repo)
+
+    const t1 = await q.enqueueTask('implement feature (no outage)', undefined, {
+      skipTriage: true,
+    })
+    await q.updateTask(t1.id, { failedPhase: 'verify' })
+
+    const signature = 'verify/no-commits-ahead'
+    const cleanup = registerTestRecipe(rc, signature)
+
+    // Circuit breaker is closed by default in a fresh module registry.
+    await rs.ensureRecoverySpawner(client)
+    await publish(pub, client, 'task.failed', {
+      taskId: t1.id,
+      error: 'no commits ahead of integration branch',
+    })
+
+    const { processed } = await rs.drainRecoverySpawner(client)
+    expect(processed).toBe(1)
+
+    // Exactly one recovery task should have been spawned.
+    const fixRows = await client.execute({
+      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t1.id],
+    })
+    expect(fixRows.rows).toHaveLength(1)
+
+    // Origin should be blocked behind the recovery task.
+    const reloaded = await q.getTask(t1.id)
+    expect(reloaded?.status).toBe('blocked')
+
+    cleanup()
   })
 })
 
