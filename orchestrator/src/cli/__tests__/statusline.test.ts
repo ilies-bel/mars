@@ -361,12 +361,13 @@ describe('mars statusline CLI', () => {
     mkdirSync(worktreeDir, { recursive: true })
 
     const marsDbPath = resolve(tmpRepo, '.mars', 'mars.db')
-    // Create a minimal tasks table with one leased row (include lease_note to
-    // match the real schema; the statusline query now selects that column).
+    // Create a minimal tasks table with one leased row (include lease_note and
+    // current_step_name to match the real schema; the statusline query selects
+    // both columns).
     spawnSync('sqlite3', [
       marsDbPath,
-      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT, lease_note TEXT);` +
-      `INSERT INTO tasks VALUES ('${taskId}', 'Fix the statusline lease', '2024-01-01T10:00:00Z', NULL);`,
+      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT, lease_note TEXT, current_step_name TEXT);` +
+      `INSERT INTO tasks VALUES ('${taskId}', 'Fix the statusline lease', '2024-01-01T10:00:00Z', NULL, NULL);`,
     ])
 
     try {
@@ -399,8 +400,8 @@ describe('mars statusline CLI', () => {
     const marsDbPath = resolve(tmpRepo, '.mars', 'mars.db')
     spawnSync('sqlite3', [
       marsDbPath,
-      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT, lease_note TEXT);` +
-      `INSERT INTO tasks VALUES ('${taskId}', 'Overall task intent', '2024-01-01T10:00:00Z', 'QA the hero section');`,
+      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT, lease_note TEXT, current_step_name TEXT);` +
+      `INSERT INTO tasks VALUES ('${taskId}', 'Overall task intent', '2024-01-01T10:00:00Z', 'QA the hero section', NULL);`,
     ])
 
     try {

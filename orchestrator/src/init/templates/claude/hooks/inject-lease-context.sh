@@ -5,12 +5,13 @@
 # If the worktree belongs to an active lease (status 'awaiting-human'), this
 # script emits structured context to stdout so Claude receives it as part of
 # its session context — task id, intent, done-criteria with check state, the
-# last 10 progress journal entries, the current Step guide (stepName +
-# leaseNote from the action-queue row), and the Foreground-session discipline
-# rules using the step-done vocabulary.
+# last 10 progress journal entries, the current Step guide (current_step_name
+# and current_step_guide from the task JSON), and the Foreground-session
+# discipline rules using the step-done vocabulary.
 #
-# Uses the `mars` CLI for task-data queries; reads action_queue_items and
-# tasks from mars.db via sqlite3 for the Step guide (read-only, never writes).
+# Uses `mars task show --json` + jq to read task data including the step guide.
+# Fails open on any query error — the guide is advisory and the hook must
+# never block a session from starting.
 # Always exits 0 — must never block a session from starting.
 
 set -u
@@ -42,28 +43,19 @@ case "$task_output" in
   *) exit 0 ;;
 esac
 
-# ── Query the Step guide from the action queue ───────────────────────────────
-# The action_queue_items row for this task carries the pipeline's per-step
-# instructions: stepName (which step) and leaseNote (what to do in this step).
-# Falls back to tasks.lease_note if no action-queue row is present yet.
-# Fail open — the guide is advisory and the hook must never block.
+# ── Query current step name and guide via the mars CLI ───────────────────────
+# 'mars task show --json' returns the full task object; jq extracts the fields
+# that identify which step the task is currently parked at and what to do.
+# currentStepName: the step name (e.g. 'code', 'verify').
+# currentStepGuide: the per-step instructions written by the pipeline author.
+# Fails open on any error — the guide is advisory.
 step_name=""
 step_note=""
-mars_db="$state_dir/mars.db"
-if [ -f "$mars_db" ] && command -v sqlite3 >/dev/null 2>&1; then
-  safe_id="$(printf '%s' "$task_id" | tr -cd 'a-zA-Z0-9-')"
-  aq_row="$(sqlite3 "$mars_db" \
-    "SELECT COALESCE(json_extract(payload,'$.stepName'),''), COALESCE(json_extract(payload,'$.leaseNote'),'') FROM action_queue_items WHERE kind='awaiting-human' AND state='open' AND origin_task_id='$safe_id' ORDER BY raised_at DESC LIMIT 1" \
-    2>/dev/null)" || true
-  if [ -n "$aq_row" ]; then
-    step_name="${aq_row%%|*}"
-    step_note="${aq_row#*|}"
-  fi
-  # Fallback: read lease_note from the tasks table when no action-queue row exists yet.
-  if [ -z "$step_name" ] && [ -z "$step_note" ]; then
-    step_note="$(sqlite3 "$mars_db" \
-      "SELECT COALESCE(lease_note,'') FROM tasks WHERE id='$safe_id' LIMIT 1" \
-      2>/dev/null)" || step_note=""
+if command -v jq >/dev/null 2>&1; then
+  task_json="$(mars --repo "$repo_root" task show --json "$task_id" 2>/dev/null)" || true
+  if [ -n "$task_json" ]; then
+    step_name="$(printf '%s' "$task_json" | jq -r '.currentStepName // empty' 2>/dev/null)" || step_name=""
+    step_note="$(printf '%s' "$task_json" | jq -r '.currentStepGuide // empty' 2>/dev/null)" || step_note=""
   fi
 fi
 
