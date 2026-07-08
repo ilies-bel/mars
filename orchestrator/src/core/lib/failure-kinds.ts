@@ -86,6 +86,60 @@ export type ActionOp =
   | 'enable-auto-reflect'
 
 /**
+ * The auto-encodable check families of the gate-enrichment pipeline
+ * (PRD 745f33e0). A failure class is only auto-encodable when a deterministic,
+ * command-shaped predicate over the worktree/diff can catch it:
+ *
+ * - `command`         — command-reproducible failures: the failing
+ *                       typecheck/lint/test command narrowed to the scope that
+ *                       failed, re-run as a required verify step.
+ * - `pattern`         — diff/worktree pattern assertions: forbidden constructs
+ *                       detectable by a deterministic scan (exit-code-masking
+ *                       pipes, reintroduced `@mastra/*` imports, committed
+ *                       debris) — the data-driven successors to the hardcoded
+ *                       TSC_DECOY_MARKER / VERIFY_INFRA_FAILURE_PATTERNS
+ *                       constants in verify.ts.
+ * - `regression-test` — agent-authored regression tests committed to the repo
+ *                       and referenced by a scoped verify step.
+ */
+export type EncodableFamily = 'command' | 'pattern' | 'regression-test'
+
+/**
+ * Why a failure class canNOT become a static check. Every non-encodable class
+ * carries an explicit reason so the gate's monotonic-coverage boundary is
+ * enumerable, never silent:
+ *
+ * - `semantic`      — compiles, passes tests, does the wrong thing. That is
+ *                     behaviour verification (separate proposal 48e50df0), not
+ *                     a deterministic predicate.
+ * - `environmental` — rate limits, infra flakes, watchdog kills; already
+ *                     pattern-excluded from real failures.
+ * - `orchestration` — pipeline-step failures (merge:dirty-target,
+ *                     setup:install-failed, …): recovery-recipe territory
+ *                     (ADR-0002), not gate content.
+ * - `prompt-misread`— one-off agent misunderstandings of the task prompt.
+ * - `unclassified`  — signature not yet classified; recorded so the gap stays
+ *                     visible.
+ */
+export type NonEncodableReason =
+  | 'semantic'
+  | 'environmental'
+  | 'orchestration'
+  | 'prompt-misread'
+  | 'unclassified'
+
+/**
+ * The static-encodability facet on a {@link FailureKind} (PRD 745f33e0,
+ * extending ADR-0042's single signature-keyed record). Either the class is
+ * auto-encodable into one of the three check families, or it is explicitly
+ * marked non-encodable with a reason. There is no third state: gaps must be
+ * enumerable, never silent.
+ */
+export type StaticEncodability =
+  | { encodable: true; family: EncodableFamily }
+  | { encodable: false; reason: NonEncodableReason }
+
+/**
  * A declarative recovery action. No executable code — the daemon owns the
  * behaviour behind `op`; this is the intent the UI renders and proxies. Data,
  * not functions, so it serialises over the daemon HTTP layer to the browser.
@@ -133,6 +187,14 @@ export interface FailureKind {
   recipe: string | null
   /** Ordered recovery action menu rendered by the UI. */
   actions: ActionDescriptor[]
+  /**
+   * Whether this failure class can be encoded as a signature-keyed static
+   * verify check (the gate-enrichment pipeline, PRD 745f33e0). Required on
+   * every record so the coverage boundary of the self-enriching gate is
+   * enumerable at the type level — a new FailureKind cannot be added without
+   * declaring where it stands.
+   */
+  staticEncodable: StaticEncodability
 }
 
 /**
@@ -175,6 +237,18 @@ const DAEMON_KILLED_ACTIONS: ActionDescriptor[] = [
 const recipeRef = (signature: string): string | null =>
   hasRecipe(signature) ? signature : null
 
+/** Shorthand: the class is command-reproducible (family (a) of PRD 745f33e0). */
+const ENCODABLE_COMMAND: StaticEncodability = {
+  encodable: true,
+  family: 'command',
+}
+
+/** Shorthand: the class is explicitly NOT statically encodable. */
+const notEncodable = (reason: NonEncodableReason): StaticEncodability => ({
+  encodable: false,
+  reason,
+})
+
 /**
  * The registry. Every named failure cause the action queue can present as a
  * warm, human-readable failure card is listed here.
@@ -187,6 +261,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       // ── setup:install ────────────────────────────────────────────────────
       {
         signature: 'setup:install/install-frozen-lockfile',
+        staticEncodable: notEncodable('orchestration'),
         warmTitle: 'The coding environment could not be set up',
         verboseReason:
           'The setup step could not install dependencies because the lockfile no longer matches the manifest.',
@@ -194,6 +269,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'setup:install/install-timeout',
+        staticEncodable: notEncodable('environmental'),
         warmTitle: 'The coding environment could not be set up',
         verboseReason:
           'The setup step timed out (SIGKILL / exit 137) while installing dependencies.',
@@ -201,6 +277,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'setup:install/install-missing-peer',
+        staticEncodable: notEncodable('orchestration'),
         warmTitle: 'The coding environment could not be set up',
         verboseReason:
           'The setup step could not install dependencies because a required peer dependency is missing from the manifest.',
@@ -208,6 +285,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'setup:install/unclassified',
+        staticEncodable: notEncodable('orchestration'),
         warmTitle: 'The coding environment could not be set up',
         verboseReason:
           'The setup step could not install dependencies; the error did not match any known pattern. See the transcript for details.',
@@ -217,6 +295,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       // ── code:no-edits-made ───────────────────────────────────────────────
       {
         signature: 'code:no-edits-made/unclassified',
+        staticEncodable: notEncodable('prompt-misread'),
         warmTitle: 'The coder stopped before starting to write',
         verboseReason:
           'The code step completed without producing any file changes; the coder may have misunderstood the task or encountered an unrecognised error.',
@@ -226,6 +305,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       // ── verify:has-diff ──────────────────────────────────────────────────
       {
         signature: 'verify:has-diff/no-commits-ahead',
+        staticEncodable: notEncodable('prompt-misread'),
         warmTitle: 'The coder stopped mid-task',
         verboseReason:
           'The verify step found no commits ahead of the integration branch; the coder made changes but did not commit them.',
@@ -233,6 +313,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'verify:has-diff/worktree-missing',
+        staticEncodable: notEncodable('environmental'),
         warmTitle: 'Task worktree disappeared before verify could run',
         verboseReason:
           "The verify step could not inspect a diff because the task's worktree was gone (likely pruned by a daemon restart or recover sweep while the task was in flight). This is an infrastructure condition, not a coder error — the task can be restarted.",
@@ -240,6 +321,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'verify:has-diff/unclassified',
+        staticEncodable: notEncodable('orchestration'),
         warmTitle: 'The coder did not produce any changes',
         verboseReason:
           'The verify step could not confirm that file changes were produced. The coder may have encountered an error or misunderstood the task.',
@@ -251,6 +333,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       // terminated by the wall-clock watchdog.
       {
         signature: 'code:timeout/install-timeout',
+        staticEncodable: notEncodable('environmental'),
         warmTitle: 'The coder took too long',
         verboseReason:
           'The code step was killed (SIGKILL / exit 137) because it exceeded its wall-clock time budget.',
@@ -260,6 +343,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       // ── code:over-budget ─────────────────────────────────────────────────
       {
         signature: 'code:over-budget/unclassified',
+        staticEncodable: notEncodable('orchestration'),
         warmTitle: 'The task was too large for the coder to finish in one run',
         verboseReason:
           'The code step exhausted its token budget before completing the task; consider splitting the work into smaller slices.',
@@ -271,6 +355,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       // failure-signature.ts, plus a generic unclassified fallback.
       {
         signature: 'verify:typecheck/typecheck-property-not-exist',
+        staticEncodable: ENCODABLE_COMMAND,
         warmTitle: 'The changes did not pass type-checking',
         verboseReason:
           'The verify step failed because one or more properties accessed in the code do not exist on the declared type (TS2339 / TS2353).',
@@ -278,6 +363,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'verify:typecheck/typecheck-cannot-find-name',
+        staticEncodable: ENCODABLE_COMMAND,
         warmTitle: 'The changes did not pass type-checking',
         verboseReason:
           'The verify step failed because the code references a name that is not in scope (TS2304).',
@@ -285,6 +371,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'verify:typecheck/typecheck-cannot-find-module',
+        staticEncodable: ENCODABLE_COMMAND,
         warmTitle: 'The changes did not pass type-checking',
         verboseReason:
           'The verify step failed because an import could not be resolved to a known module (TS2307).',
@@ -292,6 +379,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'verify:typecheck/typecheck-type-mismatch',
+        staticEncodable: ENCODABLE_COMMAND,
         warmTitle: 'The changes did not pass type-checking',
         verboseReason:
           'The verify step failed because a value was assigned to an incompatible type (TS2322).',
@@ -299,6 +387,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'verify:typecheck/typecheck-arg-type-mismatch',
+        staticEncodable: ENCODABLE_COMMAND,
         warmTitle: 'The changes did not pass type-checking',
         verboseReason:
           'The verify step failed because a function argument has a type incompatible with the declared parameter (TS2345).',
@@ -306,6 +395,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'verify:typecheck/typecheck-excess-property',
+        staticEncodable: ENCODABLE_COMMAND,
         warmTitle: 'The changes did not pass type-checking',
         verboseReason:
           'The verify step failed because an object literal contains a property that does not exist in the target type (TS2353 excess-property check).',
@@ -313,6 +403,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'verify:typecheck/typecheck-missing-export',
+        staticEncodable: ENCODABLE_COMMAND,
         warmTitle: 'The changes did not pass type-checking',
         verboseReason:
           'The verify step failed because the code imports a named export that does not exist in the target module (TS2694).',
@@ -320,6 +411,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'verify:typecheck/unclassified',
+        staticEncodable: ENCODABLE_COMMAND,
         warmTitle: 'The changes did not pass type-checking',
         verboseReason:
           'The verify step failed during type-checking with an error pattern that has not yet been classified.',
@@ -329,6 +421,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       // ── merge:vcs-supervisor-aborted ─────────────────────────────────────
       {
         signature: 'merge:vcs-supervisor-aborted/merge-conflict-unresolved',
+        staticEncodable: notEncodable('orchestration'),
         warmTitle: 'The changes clashed with main and were too hard to merge',
         verboseReason:
           'The merge step was aborted by the VCS supervisor because a conflict between the task branch and the integration branch could not be automatically resolved.',
@@ -336,6 +429,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       },
       {
         signature: 'merge:vcs-supervisor-aborted/unclassified',
+        staticEncodable: notEncodable('orchestration'),
         warmTitle: 'The changes clashed with main and were too hard to merge',
         verboseReason:
           'The merge step was aborted by the VCS supervisor with an unrecognised error; inspect the transcript for details.',
@@ -351,6 +445,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
       // raises an alert and the operator requeues.
       {
         signature: DAEMON_KILLED_SIGNATURE,
+        staticEncodable: notEncodable('environmental'),
         warmTitle: 'Mars was shut down while this task was still running',
         verboseReason:
           'The task was in flight when the Mars daemon was killed; the work is not lost and the task can be re-queued from setup.',
@@ -430,6 +525,10 @@ export const unknownFailureKind = (
       { id: 'restart', label: 'Restart from scratch', op: 'restart' },
       { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
     ],
+    // Not in the registry — explicitly unclassified so the gate-enrichment
+    // coverage gap stays enumerable (the runtime classifier in
+    // gate-enrichment.ts applies its step-family fallback independently).
+    staticEncodable: notEncodable('unclassified'),
   }
 }
 

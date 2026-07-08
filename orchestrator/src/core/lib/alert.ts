@@ -225,6 +225,8 @@ const staleWorktreeFailureKind = (status: string, ageHours: number): FailureKind
   verboseReason: `A worktree from a terminal or absent task is still on disk (${status}, ~${Math.round(ageHours)}h old). Remove it once you have inspected anything you need.`,
   recipe: null,
   actions: [],
+  // Housekeeping condition, not a code-failure class — nothing to encode.
+  staticEncodable: { encodable: false, reason: 'environmental' },
 })
 
 /**

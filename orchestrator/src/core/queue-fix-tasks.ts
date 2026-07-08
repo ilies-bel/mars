@@ -444,6 +444,41 @@ export const handleTaskFailureWithFixTask = async (
     }
   }
 
+  // Gate-enrichment observation (PRD 745f33e0). Reached only for a NON-recovery
+  // origin failure that is not gate-suppressed (both branches return above), so
+  // a broken-gate storm never mints candidates. Signature-keyed idempotency:
+  // a claimed signature (any status) only bumps seen_count; a new ENCODABLE
+  // signature claims a candidate row, spawns ONE detached Writer-tagged draft
+  // task, and raises ONE approval action-queue row; a new NON-encodable
+  // signature is recorded as such (enumerable gap) and produces NO check.
+  //
+  // The enforced gate is never touched from here. Approval (human, via the
+  // action queue per ADR-0048) only reaches SHADOW mode, and burn-in gates
+  // enforcement — the completeness-gate incident (gate d9237119, 2026-07-03)
+  // failed 100% of tasks identically from its first live minute and, because
+  // verify gates run from daemon code, blocked its OWN fix from merging.
+  // Best-effort: an enrichment hiccup must never break the recovery path.
+  try {
+    const { observeFailureForEnrichment } = await import(
+      './lib/gate-enrichment'
+    )
+    await observeFailureForEnrichment({
+      db: s,
+      signature: failureSignature,
+      failingStep: input.failingStep,
+      originTaskId: input.taskId,
+      errorOutput: input.errorOutput,
+      ranVerifySteps: input.ranVerifySteps,
+      worktreePath: task.worktreePath,
+    })
+  } catch (enrichErr) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[gate-enrichment] task ${input.taskId} enrichment observation errored (non-fatal):`,
+      enrichErr,
+    )
+  }
+
   const budget = getRetryBudget()
 
   if (task.retryCount > budget) {

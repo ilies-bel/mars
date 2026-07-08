@@ -24,6 +24,7 @@ import { doctorCommands } from './doctor'
 import { runCommands } from './run'
 import { workflowCommands } from './workflow'
 import { stepCommands } from './step'
+import { enrichCommands } from './enrich'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -43,6 +44,7 @@ export const allCommands: readonly Command[] = [
   ...doctorCommands,
   ...runCommands,
   ...workflowCommands,
+  ...enrichCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)

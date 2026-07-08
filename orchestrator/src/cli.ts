@@ -255,6 +255,22 @@ Commands:
                                 title). Body may be @path to read from a file.
   adr list                      list ADRs in docs/adr/ (local read)
   adr show <NNNN|filename>      print one ADR (number prefix is zero-padded)
+  enrich list                   list the gate-enrichment registry: every claimed
+                                failure signature with status (candidate|shadow|
+                                enforcing|retired|non-encodable), seen count and
+                                shadow burn-in progress (PRD 745f33e0)
+  enrich show "<signature>"     print one enrichment record
+  enrich draft "<signature>" ('<json>' | -)
+                                land the candidate's check spec (Writer verb):
+                                {"cmd":"...","args":[...],"dir":"."}. '-' reads
+                                the JSON from stdin.
+  enrich approve "<signature>" [--by <name>]
+                                HUMAN gate: promote a candidate check into
+                                SHADOW mode (it runs but cannot fail verify);
+                                enforcement requires the shadow burn-in.
+  enrich retire "<signature>"   stop running a check; the signature stays
+                                claimed so no candidate is regenerated
+  enrich reopen "<signature>"   explicit operator verb: retired -> candidate
   reflect [--since <iso>] [--limit <n>]
                                 synthesize draft proposals (source='reflection') from
                                 recent completed tasks. Reads token + scorer

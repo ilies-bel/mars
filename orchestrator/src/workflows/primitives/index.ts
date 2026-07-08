@@ -56,6 +56,10 @@ import {
   isInfraFailureOutput,
   checkCompletenessGate,
 } from '../../core/lib/git/verify'
+import {
+  appendEnrichmentScopes,
+  recordEnrichmentShadowRuns,
+} from '../../core/lib/gate-enrichment'
 import { readAllTranscriptsForTask } from '../../core/lib/claude-transcript'
 import { mergeBranch, checkMergeTargetStatus } from '../../core/lib/git/merge'
 import { acquireLock } from '../../core/lib/git/lock'
@@ -1355,7 +1359,15 @@ export const verify = async (
       )
       const verifyCwd = resolveVerifyCwd(worktreePath)
       const verifyCtx = resolveContext()
-      const scopes = await loadVerifyScopes(verifyCtx.supervisorsManifest)
+      const recipeScopes = await loadVerifyScopes(verifyCtx.supervisorsManifest)
+      // Gate-enrichment merge (PRD 745f33e0): human-approved shadow/enforcing
+      // checks from the signature-keyed registry are appended BEHIND
+      // loadVerifyScopes and flow through unchanged ADR-0018 selection below
+      // (path containment + always-on root floor) — no recipe schema change,
+      // and the seam survives the manifest.json→verify.json migration.
+      // `appendEnrichmentScopes` never throws (registry failure → recipe
+      // scopes untouched).
+      const scopes = await appendEnrichmentScopes(store, recipeScopes)
       const changedFiles = await getChangedFiles(
         worktreePath,
         integrationBranch,
@@ -1416,6 +1428,13 @@ export const verify = async (
           }).finally(() => releaseRetryLock())
         }
       }
+
+      // Shadow burn-in accounting for enriched checks (PRD 745f33e0): each
+      // enrich:<signature> step that ran in shadow status records one clean
+      // parse against its per-check gate_burn_in row; the parse that crosses
+      // SHADOW_BURN_IN_COUNT auto-promotes the record shadow → enforcing.
+      // Best-effort — never breaks the verify path.
+      await recordEnrichmentShadowRuns(store, r.steps).catch(() => {})
 
       // Main-committer invariant: the integration checkout must be clean after
       // the committer ran. A committer task may only succeed if

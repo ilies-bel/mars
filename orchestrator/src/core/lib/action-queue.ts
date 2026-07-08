@@ -132,6 +132,16 @@ export const ACTION_QUEUE_KINDS = [
   // privileges the file. The row body carries the rendered runbook plus the
   // raw JS so the review happens entirely from the queue.
   'workflow-draft-pending',
+  // A new statically-encodable failure signature was observed and claimed as
+  // a gate-enrichment candidate (PRD 745f33e0): a detached Writer task is
+  // drafting ONE candidate check, and a human must approve it into SHADOW
+  // mode (`mars enrich approve`) or retire the signature (`mars enrich
+  // retire`) before it can ever run. Level-triggered (ADR-0048): exactly one
+  // row per signature, keyed `gate-enrichment:<signature>`; repeat failures
+  // bump seen_count on the registry row, never raise siblings. The row is
+  // superseded when the approve/retire verb mutates the enrichment record —
+  // no separate close gesture.
+  'gate-enrichment',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
@@ -871,6 +881,8 @@ export type SupersedeReason =
   | 'daemon-restarted'
   /** workflow-draft-pending row cleared because the operator approved the draft. */
   | 'workflow-approved'
+  /** gate-enrichment row cleared because the operator approved or retired the candidate (ADR-0048 entity mutation). */
+  | 'enrichment-decided'
 
 /**
  * Auto-close every open actionQueue item keyed to the given origin task. Called

@@ -54,6 +54,7 @@ describe('buildAlert', () => {
       verboseReason: '   ',
       recipe: null,
       actions: [],
+      staticEncodable: { encodable: false, reason: 'unclassified' },
     }
     const alert = buildAlert('mars-empty001', fk, '', {
       goal: 'g',
@@ -71,6 +72,7 @@ describe('buildAlert', () => {
       verboseReason: 'A worktree from a terminal task is still on disk.',
       recipe: null,
       actions: [],
+      staticEncodable: { encodable: false, reason: 'environmental' },
     }
     const alert = buildAlert('mars-stale999', fk, '', {
       goal: 'Add the alert read aggregate',

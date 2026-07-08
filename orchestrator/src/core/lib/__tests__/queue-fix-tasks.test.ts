@@ -813,10 +813,20 @@ describe('queue-fix-tasks', () => {
     expect(fix?.kind).toBe('fix')
     expect(fix?.fixForTaskId).toBe(t.id)
     const all = await q.resolveQueueClient().execute({
-      sql: `SELECT id FROM tasks`,
+      sql: `SELECT id, tags_json FROM tasks`,
       args: [],
     })
-    expect(all.rows.length).toBe(2)
+    // Origin + fix + exactly one detached gate-enrichment Writer draft task
+    // (PRD 745f33e0: 'verify:test/unclassified' is statically encodable and
+    // unclaimed, so the failure chokepoint claims the signature and spawns
+    // ONE writer-tagged candidate-drafting task — never a second one).
+    expect(all.rows.length).toBe(3)
+    const writerRows = all.rows.filter((row) =>
+      String(
+        (row as unknown as { tags_json: string | null }).tags_json ?? '',
+      ).includes('writer'),
+    )
+    expect(writerRows).toHaveLength(1)
   })
 
   it('fix-fail loop: caps fix-task inserts per (sourceTaskId, failureSignature) at MARS_MAX_FIX_ATTEMPTS (default 2) and escalates to a fix-fail-loop actionQueue item', async () => {
