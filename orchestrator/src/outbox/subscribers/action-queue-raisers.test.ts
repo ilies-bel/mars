@@ -408,3 +408,142 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     expect(row!.seenCount).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// API-outage coalescing
+// ---------------------------------------------------------------------------
+
+describe('api-outage coalescing — circuit-breaker-open failures', () => {
+  let tmpDir: string;
+  let client: Client;
+  let buildActionQueueRaiserSubscribers: typeof import('./action-queue-raisers.js').buildActionQueueRaiserSubscribers;
+  let ensureActionQueueRaiserSchema: typeof import('./action-queue-raisers.js').ensureActionQueueRaiserSchema;
+  let resolveOutageRowOnBreakerClose: typeof import('./action-queue-raisers.js').resolveOutageRowOnBreakerClose;
+  let apiCircuitBreaker: typeof import('../../core/lib/api-circuit-breaker.js').apiCircuitBreaker;
+
+  beforeEach(async () => {
+    tmpDir = setupRepo();
+    process.env.MARS_REPO = tmpDir;
+    vi.resetModules();
+    client = await makeClient(tmpDir);
+
+    // Import the raisers module first — this pulls in api-circuit-breaker as a
+    // dependency and registers it in the module cache. The subsequent import of
+    // api-circuit-breaker returns the SAME cached module instance that the
+    // raisers module is using, so our test manipulations affect the right singleton.
+    const mod = await import('./action-queue-raisers.js');
+    buildActionQueueRaiserSubscribers = mod.buildActionQueueRaiserSubscribers;
+    ensureActionQueueRaiserSchema = mod.ensureActionQueueRaiserSchema;
+    resolveOutageRowOnBreakerClose = mod.resolveOutageRowOnBreakerClose;
+
+    const breakerMod = await import('../../core/lib/api-circuit-breaker.js');
+    apiCircuitBreaker = breakerMod.apiCircuitBreaker;
+
+    await ensureActionQueueRaiserSchema(client);
+  });
+
+  afterEach(() => {
+    // Ensure the breaker is closed after each test so module state does not
+    // bleed (even though vi.resetModules() would reset it on the next cycle).
+    apiCircuitBreaker.close();
+    client.close();
+    delete process.env.MARS_REPO;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // ── Criterion 1 ────────────────────────────────────────────────────────
+  // Two environmental failures in the same window produce one outage row with
+  // count=2; no per-task 'failed' row is created.
+
+  it('two environmental failures in the same window produce one api-outage row with count=2', async () => {
+    // Deterministic timestamp so the signature is predictable.
+    const openedAt = 1_700_000_000_000;
+    apiCircuitBreaker.open('ECONNREFUSED', openedAt);
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(blockedEvent(300, 'task-outage-1'));
+    await subscriber.handler(blockedEvent(301, 'task-outage-2'));
+
+    // Exactly one open row total — the api-outage coalescing row.
+    expect(await openRowCount(client)).toBe(1);
+
+    const r = await client.execute(
+      `SELECT kind, seen_count FROM action_queue_items WHERE state = 'open' LIMIT 1`,
+    );
+    const row = r.rows[0] as unknown as { kind: string; seen_count: number | bigint };
+    expect(row.kind).toBe('api-outage');
+    expect(Number(row.seen_count)).toBe(2);
+  });
+
+  // ── Criterion 2 ────────────────────────────────────────────────────────
+  // A subsequent non-environmental failure (breaker closed) produces its own
+  // per-task 'failed' row and does not attach to the api-outage row.
+
+  it('non-environmental failure after breaker closes produces its own per-task row', async () => {
+    const openedAt = 1_700_000_001_000;
+    apiCircuitBreaker.open('ECONNREFUSED', openedAt);
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    // Environmental failures while breaker is open.
+    await subscriber.handler(blockedEvent(310, 'task-env-a'));
+    await subscriber.handler(blockedEvent(311, 'task-env-b'));
+
+    // Close the breaker — subsequent failures are non-environmental.
+    apiCircuitBreaker.close();
+
+    await subscriber.handler(blockedEvent(312, 'task-normal-c'));
+
+    // Two open rows: one api-outage (count=2) + one per-task 'failed'.
+    expect(await openRowCount(client)).toBe(2);
+
+    const outage = await client.execute(
+      `SELECT kind, seen_count FROM action_queue_items WHERE kind = 'api-outage' AND state = 'open'`,
+    );
+    expect(outage.rows).toHaveLength(1);
+    expect(Number((outage.rows[0] as unknown as { seen_count: number | bigint }).seen_count)).toBe(2);
+
+    const failed = await client.execute(
+      `SELECT kind FROM action_queue_items WHERE kind = 'failed' AND state = 'open'`,
+    );
+    expect(failed.rows).toHaveLength(1);
+  });
+
+  // ── Criterion 3 ────────────────────────────────────────────────────────
+  // Breaker close + task drain resolves the outage row.
+
+  it('resolves the outage row once the breaker is closed and all affected tasks are drained', async () => {
+    const openedAt = 1_700_000_002_000;
+    apiCircuitBreaker.open('ECONNREFUSED', openedAt);
+
+    // Insert the affected tasks as 'failed' so they simulate tasks that were
+    // mid-flight when the breaker tripped.
+    await client.execute({
+      sql: `INSERT INTO tasks (id, status) VALUES ('task-drain-x', 'failed'), ('task-drain-y', 'failed')`,
+    });
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(blockedEvent(320, 'task-drain-x'));
+    await subscriber.handler(blockedEvent(321, 'task-drain-y'));
+
+    // Outage row is open with count=2.
+    expect(await openRowCount(client)).toBe(1);
+
+    // Tasks are still 'failed' — resolution should be deferred.
+    await resolveOutageRowOnBreakerClose(openedAt);
+    expect(await openRowCount(client)).toBe(1); // not yet resolved
+
+    // Simulate tasks being requeued after the outage clears.
+    await client.execute({
+      sql: `UPDATE tasks SET status = 'queued' WHERE id IN ('task-drain-x', 'task-drain-y')`,
+    });
+
+    // Now all tasks are drained — outage row should be resolved.
+    await resolveOutageRowOnBreakerClose(openedAt);
+    expect(await openRowCount(client)).toBe(0);
+
+    const r = await client.execute(
+      `SELECT state FROM action_queue_items WHERE kind = 'api-outage' LIMIT 1`,
+    );
+    expect((r.rows[0] as unknown as { state: string }).state).toBe('resolved');
+  });
+});

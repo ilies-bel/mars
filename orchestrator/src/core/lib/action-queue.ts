@@ -95,6 +95,13 @@ export const ACTION_QUEUE_KINDS = [
   // can investigate and re-merge or restart. This catches the false-done class
   // (ADR-0052 done-implies-merged invariant).
   'done-with-unmerged-commits',
+  // The Anthropic API circuit breaker tripped — multiple parallel tasks failed
+  // with a ConnectionRefused cascade (environmental outage). Exactly one row per
+  // open→close cycle, keyed on `api-outage:<openedAt>`. Subsequent failures
+  // during the same cycle bump seen_count and append to payload.occurrences
+  // rather than creating per-task siblings. Cleared automatically once the
+  // breaker closes and all affected tasks are no longer in 'failed' state.
+  'api-outage',
   // The daemon is running source code from an older commit while the git HEAD
   // has since advanced (dev-install only). Raised by the periodic dev-staleness
   // check whenever drift is detected. Level-triggered (ADR-0048): exists while
