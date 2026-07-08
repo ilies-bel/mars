@@ -34,6 +34,7 @@ export const TRACE_EVENT_KINDS = [
   'log_line',
   'worker-model-mismatch',
   'cli-invocation',
+  'scorer_result',
 ] as const
 
 export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]

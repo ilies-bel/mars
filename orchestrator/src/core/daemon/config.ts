@@ -22,9 +22,32 @@ export interface SelfEvolveConfig {
   taskConfidenceThreshold: number
 }
 
+/**
+ * Scorer optimization fold-in (PRD 6cf85bc9). Only the low-trend trigger is
+ * configurable; scoring itself is controlled by the in-memory
+ * `set-flag scoring` kill-switch and MARS_REFLECT_DISABLED.
+ */
+export interface ScoringConfig {
+  /**
+   * When true, a sustained low score trend (rolling median below
+   * `lowTrendThreshold` across `lowTrendWindow` scored instances of one
+   * workflow) raises ONE draft proposal (source='reflection') proposing a
+   * revision of that pipeline. OFF by default — same explicit operator
+   * opt-in posture as ADR-0038's KPI-regression trigger. The resulting
+   * draft surfaces as an ordinary draft-proposal action-queue row (pure
+   * projection, ADR-0048); the framework never rewrites a pipeline itself.
+   */
+  autoTrigger: boolean
+  /** Rolling-median floor below which the trigger fires. Default 0.5. */
+  lowTrendThreshold: number
+  /** Number of consecutive scored instances the median is computed over. Default 5. */
+  lowTrendWindow: number
+}
+
 export interface DaemonConfig {
   caps: DaemonCaps
   selfEvolve: SelfEvolveConfig
+  scoring: ScoringConfig
   /**
    * When true, sliced plans are enqueued immediately without operator review
    * (restores the pre-plan-approval-gate behaviour). Default false.
@@ -45,6 +68,12 @@ const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
   autoTrigger: false,
   driftThresholdPct: 10,
   taskConfidenceThreshold: 0.8,
+}
+
+const DEFAULT_SCORING: ScoringConfig = {
+  autoTrigger: false,
+  lowTrendThreshold: 0.5,
+  lowTrendWindow: 5,
 }
 
 const DEFAULT_AUTO_APPROVE_PLANS = false
@@ -183,17 +212,41 @@ export const loadDaemonConfig = (): DaemonConfig => {
 
   const envAutoApprovePlans = envBool('MARS_AUTO_APPROVE_PLANS', DEFAULT_AUTO_APPROVE_PLANS)
 
+  const envScoringAutoTrigger = envBool(
+    'MARS_SCORING_AUTO_TRIGGER',
+    DEFAULT_SCORING.autoTrigger,
+  )
+  const rawScoringThreshold = process.env['MARS_SCORING_LOW_TREND_THRESHOLD']
+  const envScoringThresholdNum =
+    rawScoringThreshold !== undefined && rawScoringThreshold !== ''
+      ? Number(rawScoringThreshold)
+      : NaN
+  const envScoringThreshold =
+    Number.isFinite(envScoringThresholdNum) &&
+    envScoringThresholdNum >= 0 &&
+    envScoringThresholdNum <= 1
+      ? envScoringThresholdNum
+      : DEFAULT_SCORING.lowTrendThreshold
+  const envScoringWindow = envInt(
+    'MARS_SCORING_LOW_TREND_WINDOW',
+    DEFAULT_SCORING.lowTrendWindow,
+  )
+
   let fileCaps: Partial<DaemonCaps> = {}
   let fileAutoTrigger: boolean | undefined
   let fileDriftPct: number | undefined
   let fileConfThreshold: number | undefined
   let fileAutoApprovePlans: boolean | undefined
+  let fileScoringAutoTrigger: boolean | undefined
+  let fileScoringThreshold: number | undefined
+  let fileScoringWindow: number | undefined
 
   try {
     const raw = readFileSync(daemonConfigPath(), 'utf8')
     const parsed = JSON.parse(raw) as {
       caps?: Record<string, unknown>
       selfEvolve?: Record<string, unknown>
+      scoring?: Record<string, unknown>
     }
     const c = parsed.caps ?? {}
     fileCaps = {
@@ -229,6 +282,20 @@ export const loadDaemonConfig = (): DaemonConfig => {
     if (typeof (parsed as Record<string, unknown>).autoApprovePlans === 'boolean') {
       fileAutoApprovePlans = (parsed as Record<string, unknown>).autoApprovePlans as boolean
     }
+    const sc = parsed.scoring ?? {}
+    if (typeof sc.autoTrigger === 'boolean') {
+      fileScoringAutoTrigger = sc.autoTrigger
+    }
+    const scThreshold = sc.lowTrendThreshold
+    if (
+      typeof scThreshold === 'number' &&
+      Number.isFinite(scThreshold) &&
+      scThreshold >= 0 &&
+      scThreshold <= 1
+    ) {
+      fileScoringThreshold = scThreshold
+    }
+    fileScoringWindow = positiveInt(sc.lowTrendWindow, envScoringWindow)
   } catch {
     // No file, unreadable, or invalid JSON — fall back to env+defaults.
   }
@@ -245,6 +312,11 @@ export const loadDaemonConfig = (): DaemonConfig => {
       autoTrigger: fileAutoTrigger ?? envAutoTrigger,
       driftThresholdPct: fileDriftPct ?? envDriftPct,
       taskConfidenceThreshold: fileConfThreshold ?? envConfThreshold,
+    },
+    scoring: {
+      autoTrigger: fileScoringAutoTrigger ?? envScoringAutoTrigger,
+      lowTrendThreshold: fileScoringThreshold ?? envScoringThreshold,
+      lowTrendWindow: fileScoringWindow ?? envScoringWindow,
     },
     autoApprovePlans: fileAutoApprovePlans ?? envAutoApprovePlans,
   }

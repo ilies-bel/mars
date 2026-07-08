@@ -9,8 +9,9 @@
  * the 'scorer-suggested' action-queue row off the resulting bus event. There
  * is no queue-side close verb.
  *
- * Accepting produces a durable accepted record and runs nothing — execution
- * against future Workflow instances belongs to the dependent draft 6cf85bc9.
+ * Accepting makes the Scorer live: the daemon grades every subsequent
+ * completed instance of its target workflow post-merge (record-only, PRD
+ * 6cf85bc9); `trend` reads the per-workflow median + p90 over the results.
  */
 
 import {
@@ -21,6 +22,12 @@ import {
   type Scorer,
   type ScorerStatus,
 } from '../../core/scorers'
+import {
+  computeScorerTrend,
+  listScorerResults,
+  listScoredWorkflows,
+  type ScorerTrend,
+} from '../../core/scorer-results'
 import { isDaemonReachable } from '../../core/daemon/paths'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage } from './shared'
@@ -113,13 +120,86 @@ const scorerShow: Command = {
       return { code: 1 }
     }
     renderScorerDetail(deps, scorer)
+    // Runtime surface (PRD 6cf85bc9): recent recorded results, newest first.
+    const results = await listScorerResults({ scorerId: scorer.id, limit: 5 })
+    if (results.length > 0) {
+      deps.out(`recent results:`)
+      for (const r of results) {
+        const scoreText =
+          r.status === 'scored' && r.score !== null
+            ? r.score.toFixed(2)
+            : 'error'
+        deps.out(
+          `  ${new Date(r.createdAt).toISOString()}\ttask=${r.taskId}\tscore=${scoreText}\t${r.rationale}`,
+        )
+      }
+    }
+    return { code: 0 }
+  },
+}
+
+const renderTrendLine = (deps: CommandDeps, t: ScorerTrend): void => {
+  const fmt = (n: number | null): string => (n === null ? 'n/a' : n.toFixed(2))
+  deps.out(
+    `${t.workflow}\tn=${t.sampleCount}\tmedian=${fmt(t.median)}\tp90=${fmt(t.p90)}\tlatest=${fmt(t.latest)}${
+      t.errorCount > 0 ? `\terrors=${t.errorCount}` : ''
+    }`,
+  )
+}
+
+const scorerTrend: Command = {
+  path: 'scorer trend',
+  summary:
+    'per-workflow score trend: median + p90 over a trailing window (never a bare mean)',
+  usage: 'usage: mars scorer trend [--workflow <kind>] [--window <n>]',
+  run: async (args, deps) => {
+    const windowFlag = args.flags['--window']
+    let window = 20
+    if (windowFlag !== undefined) {
+      const n = Number.parseInt(windowFlag, 10)
+      if (!Number.isInteger(n) || n <= 0) {
+        deps.err(`--window must be a positive integer; got '${windowFlag}'`)
+        return { code: 1 }
+      }
+      window = n
+    }
+    const workflowFlag = args.flags['--workflow']
+    const workflows = workflowFlag
+      ? [workflowFlag]
+      : await listScoredWorkflows()
+    if (workflows.length === 0) {
+      deps.out('no scorer results recorded yet')
+      return { code: 0 }
+    }
+    for (const workflow of workflows) {
+      const trend = await computeScorerTrend(workflow, window)
+      renderTrendLine(deps, trend)
+    }
+    // Single-workflow view also lists the window's rows so the operator can
+    // read rationales without a second command.
+    if (workflowFlag) {
+      const results = await listScorerResults({
+        workflow: workflowFlag,
+        limit: window,
+      })
+      for (const r of results) {
+        const scoreText =
+          r.status === 'scored' && r.score !== null
+            ? r.score.toFixed(2)
+            : 'error'
+        deps.out(
+          `  ${new Date(r.createdAt).toISOString()}\ttask=${r.taskId}\tscorer=${r.scorerId.slice(0, 8)}\tscore=${scoreText}\t${r.rationale}`,
+        )
+      }
+    }
     return { code: 0 }
   },
 }
 
 const scorerAccept: Command = {
   path: 'scorer accept',
-  summary: 'accept a suggested scorer (durable record; nothing runs)',
+  summary:
+    'accept a suggested scorer (future instances of its workflow are graded post-merge, record-only)',
   usage: 'usage: mars scorer accept <id>',
   run: async (args, deps) => {
     const id = args.positional[0]
@@ -164,9 +244,9 @@ const scorerDismiss: Command = {
 const scorerGroup: Command = {
   path: 'scorer',
   summary: 'scorer subcommands',
-  usage: 'usage: mars scorer <list|show|accept|dismiss> ...',
+  usage: 'usage: mars scorer <list|show|accept|dismiss|trend> ...',
   run: (_args, deps) => {
-    deps.err('usage: mars scorer <list|show|accept|dismiss> ...')
+    deps.err('usage: mars scorer <list|show|accept|dismiss|trend> ...')
     return { code: 1 }
   },
 }
@@ -176,5 +256,6 @@ export const scorerCommands: readonly Command[] = [
   scorerShow,
   scorerAccept,
   scorerDismiss,
+  scorerTrend,
   scorerGroup,
 ]

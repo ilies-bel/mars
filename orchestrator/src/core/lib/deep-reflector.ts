@@ -423,6 +423,9 @@ export const buildArcPrompt = (arc: DeepReflectArc): string => {
         updatedAt: t.updatedAt,
         totals: t.totals,
         signals: t.signals,
+        // Post-merge Scorer results (record-only quality signal, PRD
+        // 6cf85bc9) — lets arc reflection cite a quality trend as evidence.
+        scorerResults: t.scorerResults,
         toolCallCounts: t.toolCallCounts,
       }
       const metaJson = JSON.stringify(meta, null, 2)

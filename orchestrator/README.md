@@ -173,6 +173,12 @@ env vars below without restarting); a kill + restart also picks them up.
   Git worktree creation is NOT gated; only the `pnpm install` portion is
   serialised. Lowering reduces peak memory; raising speeds up multi-worktree
   setup on machines with ample RAM.
+- `MARS_MAX_SCORING` (default `2`) — concurrent post-instance Scorer runs
+  (PRD 6cf85bc9). Its OWN semaphore, separate from the task dispatch pool:
+  a scoring run is not a Task and never competes for an implement slot.
+  Each run is one pinned Haiku-class judge call; suppress all scoring at
+  runtime with `mars daemon set-flag scoring off` (in-memory,
+  `MARS_SCORING_DISABLED=1`; `MARS_REFLECT_DISABLED=1` also disables it).
 
 Excess work queues into in-memory pending sets and drains as slots free
 — it is not dropped. Restarting the daemon re-reads `draft` / `queued`

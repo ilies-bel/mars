@@ -92,6 +92,7 @@ describe('built-in Worker tag sets', () => {
       Triager: 'triager',
       Fixer: 'fixer',
       BehaviourVerifier: 'behaviour-verifier',
+      Scorer: 'scorer',
     }
     for (const [name, expectedTag] of Object.entries(expectedTags) as [WorkerName, string][]) {
       expect(WORKER_CONFIGS[name].tags, `${name} must have a tags array`).toBeDefined()

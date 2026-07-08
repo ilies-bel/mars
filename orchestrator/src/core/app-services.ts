@@ -48,6 +48,13 @@ import { classifyInstallRoute } from './daemon/install-route'
 import { listAlerts, showAlert, type Alert, type AlertSources } from './lib/alert'
 import { loadRecentTaskCorpus, type ReflectCorpus, type LoadCorpusOptions } from './lib/reflect-query'
 import { listDeepReflectArcCandidates, type ArcCandidate } from './lib/deep-reflect-query'
+import {
+  computeScorerTrend,
+  listScorerResults,
+  listScoredWorkflows,
+  type ScorerResult,
+  type ScorerTrend,
+} from './scorer-results'
 import { readKpiSeries, type KpiSeries } from './lib/kpi-snapshots'
 import { computeBudgetStatus, type BudgetStatus } from './lib/spend-meter'
 import {
@@ -143,6 +150,11 @@ export interface AppServices {
   // ── reflect / arcs ──────────────────────────────────────────────────────────
   viewReflect: (opts?: LoadCorpusOptions) => Promise<ReflectCorpus>
   viewArcs: (opts?: { limit?: number; withTranscriptOnly?: boolean }) => Promise<ArcCandidate[]>
+  // ── scorer results (record-only quality signal, PRD 6cf85bc9) ──────────────
+  viewScorerTrend: (opts?: {
+    workflow?: string
+    window?: number
+  }) => Promise<{ trends: ScorerTrend[]; recent: ScorerResult[] }>
   // ── framework update (poller cache reader) ──────────────────────────────────
   viewFrameworkUpdate: () => Promise<FrameworkUpdateState>
 }
@@ -827,6 +839,25 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const viewArcs: AppServices['viewArcs'] = (opts) =>
     listDeepReflectArcCandidates(opts)
 
+  // Per-workflow score trend (median + p90, never a bare mean) plus the
+  // recent result rows. This is the queryable surface Studio/UI read; how
+  // it renders is out of scope here (PRD 6cf85bc9).
+  const viewScorerTrend: AppServices['viewScorerTrend'] = async (opts) => {
+    const window = opts?.window ?? 20
+    const workflows = opts?.workflow
+      ? [opts.workflow]
+      : await listScoredWorkflows()
+    const trends: ScorerTrend[] = []
+    for (const workflow of workflows) {
+      trends.push(await computeScorerTrend(workflow, window))
+    }
+    const recent = await listScorerResults({
+      ...(opts?.workflow ? { workflow: opts.workflow } : {}),
+      limit: window,
+    })
+    return { trends, recent }
+  }
+
   const listKpis: AppServices['listKpis'] = () => defaultListKpis()
 
   const listKpisSeries: AppServices['listKpisSeries'] = (limit) =>
@@ -858,6 +889,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewReleaseNotes,
     viewReflect,
     viewArcs,
+    viewScorerTrend,
     viewFrameworkUpdate,
   }
 }

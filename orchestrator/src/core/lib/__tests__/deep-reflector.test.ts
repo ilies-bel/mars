@@ -364,6 +364,7 @@ const makeTaskEntry = (
   kind: 'task',
   fixForTaskId: null,
   signals: [],
+  scorerResults: [],
   totals: {
     inputTokens: 1000,
     outputTokens: 500,

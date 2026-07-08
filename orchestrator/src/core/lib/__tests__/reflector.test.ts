@@ -37,6 +37,7 @@ const fixtureCorpus: ReflectCorpus = {
       toolErrorCount: 0,
       topErrorTool: null,
       signals: [],
+      scorerResults: [],
       totals: {
         inputTokens: 1000,
         outputTokens: 500,

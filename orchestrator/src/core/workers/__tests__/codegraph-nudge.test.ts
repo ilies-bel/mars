@@ -14,7 +14,7 @@ import type { WorkerName } from '..'
 
 describe('CODEGRAPH_NUDGE blast radius', () => {
   const nudgedWorkers: WorkerName[] = ['Coder', 'Planner', 'Slicer']
-  const unNudgedWorkers: WorkerName[] = ['Triager', 'Fixer', 'BehaviourVerifier']
+  const unNudgedWorkers: WorkerName[] = ['Triager', 'Fixer', 'BehaviourVerifier', 'Scorer']
 
   for (const name of nudgedWorkers) {
     it(`${name} carries appendSystemPrompt === CODEGRAPH_NUDGE`, () => {

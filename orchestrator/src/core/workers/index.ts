@@ -48,6 +48,7 @@ export type WorkerName =
   | 'Triager'
   | 'Fixer'
   | 'BehaviourVerifier'
+  | 'Scorer'
 
 // Execution runtime for a Worker. 'headless' runs via `claude -p` in a
 // non-interactive subprocess (current default for all built-in Workers).
@@ -167,6 +168,7 @@ export interface Worker {
 
 const CLAUDE_OPUS_MODEL = 'claude-opus-4-7'
 const CLAUDE_SONNET_MODEL = 'claude-sonnet-4-6'
+const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 
 // codegraph nudge appended to the system prompt of the workers that benefit
 // most from the pre-indexed code knowledge graph (Planner, Slicer, Coder).
@@ -308,6 +310,29 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     provider: 'claude',
     tags: ['behaviour-verifier'],
   },
+  // Scorer Worker (PRD 6cf85bc9): the record-only post-instance quality judge.
+  // Grades a completed Workflow instance's PERSISTED artifacts (composed
+  // prompt + merged diff + verify output, all embedded in the dispatch
+  // prompt) against an accepted Scorer's rubric and emits a continuous 0..1
+  // score plus a one-line rationale. Read-only tool surface — its sole job is
+  // to read the prompt and emit the verdict JSON; it must never "fix" the
+  // instance to raise a score. Pinned Haiku-class model with a tight context
+  // budget: every scored instance adds exactly one judge call, so the model
+  // is the cheapest tier and is deliberately NOT overridable via
+  // MARS_WORKER_MODEL (only Coder is).
+  Scorer: {
+    name: 'Scorer',
+    model: CLAUDE_HAIKU_MODEL,
+    effort: 'medium',
+    permissionMode: 'default',
+    bare: false,
+    disallowedTools: READ_ONLY_DENIED_TOOLS,
+    outputFormat: 'stream-json',
+    maxContextTokens: resolveWorkerMaxContextTokens(50_000),
+    runtime: 'headless',
+    provider: 'claude',
+    tags: ['scorer'],
+  },
 } as const
 
 // Construction-time guard. `claude -p` cannot accept both --system-prompt
@@ -379,6 +404,7 @@ export const Workers: Readonly<Record<WorkerName, Worker>> = {
   Triager: buildWorker(WORKER_CONFIGS.Triager),
   Fixer: buildWorker(WORKER_CONFIGS.Fixer),
   BehaviourVerifier: buildWorker(WORKER_CONFIGS.BehaviourVerifier),
+  Scorer: buildWorker(WORKER_CONFIGS.Scorer),
 } as const
 
 export const getWorker = (name: WorkerName): Worker => Workers[name]

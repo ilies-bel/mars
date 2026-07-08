@@ -252,10 +252,17 @@ const setFlagHandler = handler('set-flag', async (req, deps) => {
   // restart legitimately re-reads the spawn env. Allowlist is
   // narrow on purpose; extend deliberately rather than exposing
   // arbitrary env mutation over IPC.
-  if (req.flag !== 'recovery') {
+  //
+  //   recovery on|off — suppress fix-task / Investigator spawns.
+  //   scoring  on|off — suppress post-instance Scorer runs (PRD 6cf85bc9).
+  //     Every scored instance costs one Haiku-class judge call; this is the
+  //     instant spend brake. `on` re-enables, `off` disables (the env var
+  //     underneath is MARS_SCORING_DISABLED, mirroring recovery's polarity:
+  //     the flag names the FEATURE, the env var names the disable).
+  if (req.flag !== 'recovery' && req.flag !== 'scoring') {
     return {
       ok: false,
-      error: `set-flag: unknown flag '${req.flag}'; supported flags: recovery`,
+      error: `set-flag: unknown flag '${req.flag}'; supported flags: recovery, scoring`,
     }
   }
   if (req.value !== 'on' && req.value !== 'off') {
@@ -264,14 +271,26 @@ const setFlagHandler = handler('set-flag', async (req, deps) => {
       error: `set-flag: value must be 'on' or 'off'; got '${req.value}'`,
     }
   }
-  if (req.value === 'on') {
-    process.env.MARS_RECOVERY_DISABLED = '1'
+  if (req.flag === 'recovery') {
+    if (req.value === 'on') {
+      process.env.MARS_RECOVERY_DISABLED = '1'
+    } else {
+      delete process.env.MARS_RECOVERY_DISABLED
+    }
+    deps.log(
+      `set-flag: recovery=${req.value} (MARS_RECOVERY_DISABLED=${process.env.MARS_RECOVERY_DISABLED ?? '<unset>'})`,
+    )
   } else {
-    delete process.env.MARS_RECOVERY_DISABLED
+    // scoring: 'off' disables (sets MARS_SCORING_DISABLED=1), 'on' re-enables.
+    if (req.value === 'off') {
+      process.env.MARS_SCORING_DISABLED = '1'
+    } else {
+      delete process.env.MARS_SCORING_DISABLED
+    }
+    deps.log(
+      `set-flag: scoring=${req.value} (MARS_SCORING_DISABLED=${process.env.MARS_SCORING_DISABLED ?? '<unset>'})`,
+    )
   }
-  deps.log(
-    `set-flag: recovery=${req.value} (MARS_RECOVERY_DISABLED=${process.env.MARS_RECOVERY_DISABLED ?? '<unset>'})`,
-  )
   return { ok: true, data: { flag: req.flag, value: req.value } }
 })
 

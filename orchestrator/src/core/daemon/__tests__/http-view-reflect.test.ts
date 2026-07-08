@@ -119,6 +119,7 @@ describe('GET /view/reflect', () => {
           toolErrorCount: 0,
           topErrorTool: null,
           signals: [],
+          scorerResults: [],
           totals: {
             inputTokens: 100,
             outputTokens: 200,

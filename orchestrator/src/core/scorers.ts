@@ -8,9 +8,10 @@
  * gate grades. It is NOT a proposal (no promote→slice lifecycle) and NOT a
  * KPI (never fleet-wide). Lifecycle: suggested → accepted | dismissed.
  *
- * Accepting a Scorer produces a durable accepted record and nothing more —
- * running scorers against Workflow instances, per-instance score storage, and
- * the optimization fold-in belong to the dependent draft 6cf85bc9.
+ * Accepting a Scorer makes it live: the daemon's scoring pool (PRD 6cf85bc9)
+ * grades every subsequent completed instance of the target Workflow against
+ * the rubric, record-only, into `scorer_results` (see scorer-results.ts and
+ * lib/scorer-runtime.ts). A Scorer is a quality signal, never a merge gate.
  *
  * Storage: the `scorers` table in `.mars/mars.db` (same state client seam as
  * proposals, ADR-0034). Dedup: a fingerprint over (workflow, quality

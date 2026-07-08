@@ -1858,6 +1858,13 @@ export const merge = async (
   // Captured inside fn() so getCommandOutput can forward it to the trace even
   // when fn() throws (integration gate failure case).
   let capturedIntegrationGateOutput: string | undefined
+  // Fast-forward SHAs captured by onAfterFastForward and persisted into the
+  // merge step_ended payload. The Scorer runtime (PRD 6cf85bc9) reconstructs
+  // the merged diff from these after the worktree is removed:
+  // `git diff <mergePreSha> <mergePostSha>` — both SHAs are permanent objects,
+  // so the diff stays reproducible even after the integration branch advances.
+  let capturedMergeShas: { mergePreSha: string; mergePostSha: string } | null =
+    null
 
   // Integration-gate runner: called inside the merge lock (inside mergeBranch)
   // after the fast-forward and working-tree resync, BEFORE the lock releases.
@@ -1942,6 +1949,7 @@ export const merge = async (
     traceStore: spanStore(trace),
     getVegaInfo: () => vegaSpanInfo,
     getCommandOutput: () => capturedIntegrationGateOutput,
+    getExtraPayload: () => (capturedMergeShas !== null ? { ...capturedMergeShas } : {}),
     fn: async (): Promise<MergeOutput> => {
       try {
         await updateTask(
@@ -2109,7 +2117,13 @@ export const merge = async (
             supervisorConversation.push(event)
             emit?.(event)
           },
-          onAfterFastForward: integrationGateRunner,
+          onAfterFastForward: async (info) => {
+            capturedMergeShas = {
+              mergePreSha: info.finalIntegrationSha,
+              mergePostSha: info.finalTaskSha,
+            }
+            await integrationGateRunner(info)
+          },
         })
 
         if (supervisorConversation.length > 0) {

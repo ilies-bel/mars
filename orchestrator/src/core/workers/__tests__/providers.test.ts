@@ -185,8 +185,8 @@ describe('WORKER_CONFIGS provider field', () => {
     }
   })
 
-  it("all six Workers declare provider: 'claude'", () => {
-    expect(workerNames).toHaveLength(6)
+  it("all seven Workers declare provider: 'claude'", () => {
+    expect(workerNames).toHaveLength(7)
     for (const name of workerNames) {
       expect(WORKER_CONFIGS[name].provider).toBe('claude')
     }

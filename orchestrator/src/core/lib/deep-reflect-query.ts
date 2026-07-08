@@ -195,6 +195,18 @@ export interface ArcTaskEntry {
   kind: string
   fixForTaskId: string | null
   signals: ReadonlyArray<Omit<TaskSignalRow, 'taskId' | 'recordedAt'>>
+  /**
+   * Recorded Scorer results for this instance (PRD 6cf85bc9): post-merge
+   * per-Workflow quality scores from accepted Scorers. Empty for unscored
+   * tasks; feeds the arc-reflection prompt as a quality signal.
+   */
+  scorerResults: ReadonlyArray<{
+    scorerId: string
+    workflow: string
+    score: number | null
+    rationale: string
+    status: string
+  }>
   totals: {
     inputTokens: number
     outputTokens: number
@@ -611,6 +623,37 @@ const loadForegroundSlice = async (
   }
 }
 
+/**
+ * Load recorded scorer_results rows for one task (PRD 6cf85bc9). Resilient:
+ * a store predating the table yields an empty list.
+ */
+const loadTaskScorerResults = async (
+  store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
+  taskId: string,
+): Promise<ArcTaskEntry['scorerResults']> => {
+  try {
+    const r = await store.query({
+      sql: `SELECT scorer_id, workflow, score, rationale, status
+              FROM scorer_results
+             WHERE task_id = ?
+             ORDER BY created_at DESC`,
+      args: [taskId],
+    })
+    return r.rows.map((row) => {
+      const r0 = row as unknown as Record<string, unknown>
+      return {
+        scorerId: r0.scorer_id as string,
+        workflow: r0.workflow as string,
+        score: r0.score === null || r0.score === undefined ? null : Number(r0.score),
+        rationale: (r0.rationale as string | null) ?? '',
+        status: (r0.status as string | null) ?? 'scored',
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
 const summariseSignals = (rows: ReadonlyArray<TaskSignalRow>) => {
   const signals = rows.map((s) => ({
     stepId: s.stepId,
@@ -654,9 +697,10 @@ export const loadDeepReflectArc = async (
 
   const tasks: ArcTaskEntry[] = []
   for (const row of rows) {
-    const [signalRows, transcript] = await Promise.all([
+    const [signalRows, transcript, scorerResults] = await Promise.all([
       listTaskSignals(row.id),
       loadTaskTranscript(store, row.id),
+      loadTaskScorerResults(store, row.id),
     ])
     const { signals, totals } = summariseSignals(signalRows)
     const derivedKind = row.kind ?? (row.fix_for_task_id ? 'fix' : 'task')
@@ -670,6 +714,7 @@ export const loadDeepReflectArc = async (
       kind: derivedKind,
       fixForTaskId: row.fix_for_task_id,
       signals,
+      scorerResults,
       totals,
       conversation: transcript.conversation,
       verifyOutput: transcript.verifyOutput,

@@ -828,6 +828,28 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/scorer-trend?workflow=<kind>&window=N — per-workflow Scorer
+    // score trend (median + p90 over a trailing window, never a bare mean)
+    // plus recent scorer_results rows (PRD 6cf85bc9). This is the queryable
+    // surface Studio/the UI read for per-instance scores; rendering internals
+    // stay out of scope. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/scorer-trend')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const opts: { workflow?: string; window?: number } = {}
+      const workflow = parsed.searchParams.get('workflow')
+      if (workflow) opts.workflow = workflow
+      const windowRaw = parsed.searchParams.get('window')
+      if (windowRaw !== null) {
+        const n = Number.parseInt(windowRaw, 10)
+        if (Number.isFinite(n) && n > 0) opts.window = n
+      }
+      deps.appServices
+        .viewScorerTrend(opts)
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/arcs?limit=N&withTranscriptOnly=true|false — ranked arc
     // candidates for deep reflection. Wraps listDeepReflectArcCandidates from
     // deep-reflect-query.ts so the UI/daemon can surface what `mars arc reflect`

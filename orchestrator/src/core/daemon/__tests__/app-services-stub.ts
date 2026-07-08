@@ -72,6 +72,7 @@ export const stubAppServices = (
     },
   }),
   viewArcs: async () => [],
+  viewScorerTrend: async () => ({ trends: [], recent: [] }),
   viewFrameworkUpdate: async () => ({
     installed: '0.1.0',
     latest: '0.1.0',

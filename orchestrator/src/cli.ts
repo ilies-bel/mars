@@ -229,8 +229,10 @@ Commands:
                                 back to MARS_MAX_* env vars and built-in
                                 defaults) without restarting. 'set-flag
                                 recovery <on|off>' toggles the
-                                MARS_RECOVERY_DISABLED kill-switch in-memory
-                                (not persisted across restarts). 'pause'
+                                MARS_RECOVERY_DISABLED kill-switch in-memory;
+                                'set-flag scoring off' suppresses post-instance
+                                Scorer runs (MARS_SCORING_DISABLED, in-memory,
+                                not persisted across restarts). 'pause'
                                 suspends dispatch while keeping the daemon
                                 alive (in-flight tasks continue). 'resume'
                                 re-enables dispatch after a pause.
@@ -334,15 +336,24 @@ Commands:
                                 scorers table (.mars/mars.db).
   scorer show <id>              print a Scorer in full: target workflow kind,
                                 quality dimension, rubric prompt, the
-                                0..1-plus-rationale output contract, and the
-                                arc evidence + confidence that motivated it.
+                                0..1-plus-rationale output contract, the
+                                arc evidence + confidence that motivated it,
+                                and its most recent recorded results.
   scorer accept <id>            accept a suggested Scorer. Flips status to
-                                'accepted' and runs NOTHING — the accepted row
-                                is the durable handoff for the Scorer
-                                integration draft. Clears the
-                                'scorer-suggested' action-queue row.
+                                'accepted'; from then on every completed
+                                instance of its target workflow is graded
+                                post-merge (record-only — a low score never
+                                blocks a merge or spawns recovery). Clears
+                                the 'scorer-suggested' action-queue row.
   scorer dismiss <id>           dismiss a suggested Scorer (status
                                 'dismissed'; clears the action-queue row).
+  scorer trend [--workflow <kind>] [--window <n>]
+                                per-workflow score trend over the trailing
+                                window (default 20): median + p90 (never a
+                                bare mean), latest score, and error-row
+                                count. With --workflow, also lists the
+                                window's rows with rationales. Kill-switch:
+                                'mars daemon set-flag scoring off'.
   action-queue                         alias for 'action-queue list open'
   action-queue list [state] [--kind <kind>] [--lean]
                                 list action queue items. state one of:
@@ -818,10 +829,15 @@ Subcommands:
                      env vars and built-in defaults) without restarting
   set-flag <flag> <on|off>
                      toggle an in-memory kill-switch on the running daemon.
-                     Currently only 'recovery' is supported: 'on' sets
-                     MARS_RECOVERY_DISABLED=1 (fix-task/Investigator spawns
-                     are suppressed); 'off' unsets it. Not persisted —
-                     a daemon restart re-reads the spawn env.
+                     Supported flags:
+                       recovery: 'on' sets MARS_RECOVERY_DISABLED=1
+                     (fix-task/Investigator spawns are suppressed); 'off'
+                     unsets it.
+                       scoring: 'off' sets MARS_SCORING_DISABLED=1 (post-
+                     instance Scorer runs are suppressed — the instant brake
+                     on the one-judge-call-per-instance spend); 'on' unsets
+                     it. Not persisted — a daemon restart re-reads the
+                     spawn env.
   pause              suspend dispatch: stop acquiring new work while keeping
                      the daemon alive. In-flight tasks continue to completion.
                      Task add/unblock/purge/restart still work (state

@@ -56,6 +56,7 @@ import { createHash } from 'node:crypto'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
 import { resolveManualStep, awaitManualDone } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
+import { createScoringPool, resolveScoringLimit } from './scoring-pool'
 import { exec, resolveGitBin } from '../lib/git/internal'
 import { classifyInstallRoute } from './install-route'
 import { isStaleDev } from './dev-staleness'
@@ -1575,6 +1576,62 @@ export const startDaemon = async (
         )
       }
     })()
+  })
+
+  // ── Scorer runtime hook (PRD 6cf85bc9) ─────────────────────────────────────
+  // NON-GATING post-instance quality grading: when an instance of a workflow
+  // kind with ≥1 ACCEPTED Scorer reaches done via merge, the scoring pool
+  // grades its persisted artifacts on the pinned read-only Haiku-class Scorer
+  // Worker and records a 0..1 score + rationale in scorer_results. This hook
+  // fires AFTER the merge already landed and the task row is terminal:
+  // a low score (or a scorer failure) can never block the merge, fail the
+  // task, or spawn recovery — verify remains the sole correctness gate.
+  // The run is NOT a Task (no queue row, no recovery, no KPI distortion) and
+  // sits behind its OWN semaphore (MARS_MAX_SCORING, default 2), never
+  // competing for implement slots. Kill-switches: `mars daemon set-flag
+  // scoring off` (in-memory MARS_SCORING_DISABLED) and MARS_REFLECT_DISABLED=1.
+  const scoringPool = createScoringPool({
+    limit: resolveScoringLimit(),
+    log,
+    runScoring: async (taskId: string): Promise<void> => {
+      const { runScorersForTask, isScoringDisabled } = await import(
+        '../lib/scorer-runtime'
+      )
+      if (isScoringDisabled()) return
+      const outcome = await runScorersForTask(taskId, { traceStore })
+      if (outcome.outcome !== 'ran') return
+      log(
+        `[scorer] ${taskId} (workflow=${outcome.workflow ?? 'n/a'}): scored=${outcome.scored} errored=${outcome.errored} skipped=${outcome.skipped}`,
+      )
+      // "Fold into optimization" v1: after fresh results, evaluate the
+      // OFF-by-default low-trend trigger (scoring.autoTrigger). When the
+      // operator opted in, a sustained low rolling median raises one
+      // source='reflection' draft proposal — an ordinary draft-proposal
+      // action-queue row (pure projection, ADR-0048). Never queues tasks.
+      if (outcome.scored > 0) {
+        try {
+          const { runScorerLowTrendTrigger } = await import(
+            '../lib/scorer-trend-trigger'
+          )
+          const trigger = await runScorerLowTrendTrigger()
+          if (trigger.raised.length > 0) {
+            log(
+              `[scorer-trend] raised ${trigger.raised.length} low-trend proposal(s): ${trigger.raised.join(', ')}`,
+            )
+          }
+        } catch (err) {
+          log(
+            `[scorer-trend] trigger error: ${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+      }
+    },
+  })
+  bus.on('task.completed', (e: { taskId: string }) => {
+    // Enqueue only — no emit-then-dispatch from a bus handler. The pool's
+    // drain() dispatches behind its own cap; runScorersForTask re-fetches the
+    // task and exits fast unless status='done' with an accepted Scorer.
+    scoringPool.enqueue(e.taskId)
   })
 
   // ── Wrappers around queue ops that emit the right events ──────────────────

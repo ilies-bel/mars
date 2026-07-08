@@ -26,6 +26,19 @@ export interface ReflectCorpusEntry {
    */
   topErrorTool: string | null
   signals: ReadonlyArray<Omit<TaskSignalRow, 'taskId' | 'recordedAt'>>
+  /**
+   * Recorded Scorer results for this instance (PRD 6cf85bc9): the per-Workflow
+   * quality scores accepted Scorers assigned post-merge. Empty for unscored
+   * tasks. Feeds the reflection prompt so drafts can cite a quality trend as
+   * evidence alongside token/failure signals.
+   */
+  scorerResults: ReadonlyArray<{
+    scorerId: string
+    workflow: string
+    score: number | null
+    rationale: string
+    status: string
+  }>
   totals: {
     inputTokens: number
     outputTokens: number
@@ -354,6 +367,38 @@ export const loadRecentTaskCorpus = async (
     ((rateLimitRow.rows[0] as unknown as Record<string, unknown>)?.count as number | null) ?? 0,
   )
 
+  // Scorer results per task (PRD 6cf85bc9). The table lives in the same
+  // consolidated mars.db; a store that predates it (or an injected in-memory
+  // test store) simply yields no rows.
+  const scorerResultsByTask = new Map<
+    string,
+    ReflectCorpusEntry['scorerResults'][number][]
+  >()
+  try {
+    const scorerRows = await queue.query({
+      sql: `SELECT task_id, scorer_id, workflow, score, rationale, status
+              FROM scorer_results
+             WHERE task_id IN (${placeholders})
+             ORDER BY created_at DESC`,
+      args: taskIds,
+    })
+    for (const row of scorerRows.rows) {
+      const r = row as unknown as Record<string, unknown>
+      const taskId = r.task_id as string
+      const list = scorerResultsByTask.get(taskId) ?? []
+      list.push({
+        scorerId: r.scorer_id as string,
+        workflow: r.workflow as string,
+        score: r.score === null || r.score === undefined ? null : Number(r.score),
+        rationale: (r.rationale as string | null) ?? '',
+        status: (r.status as string | null) ?? 'scored',
+      })
+      scorerResultsByTask.set(taskId, list)
+    }
+  } catch {
+    // scorer_results absent — no scored instances in this store.
+  }
+
   const signalsByTask = new Map<string, ReflectCorpusEntry['signals'][number][]>()
   for (const row of signalRows.rows) {
     const r = row as unknown as Record<string, unknown>
@@ -410,6 +455,7 @@ export const loadRecentTaskCorpus = async (
       toolErrorCount: toolErr.count,
       topErrorTool: toolErr.topTool,
       signals,
+      scorerResults: scorerResultsByTask.get(taskId) ?? [],
       totals,
     }
   })
