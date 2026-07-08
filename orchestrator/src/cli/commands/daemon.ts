@@ -9,6 +9,8 @@
  */
 
 import { spawn } from 'node:child_process'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import {
   daemonPaths,
   isDaemonAlive,
@@ -258,10 +260,32 @@ const daemonStart: Command = {
   run: async (args, deps) => {
     const foreground = args.positional.includes('--foreground')
     if (foreground) {
-      const { startDaemon } = await import('../../core/daemon/server')
-      await startDaemon({ log: (line) => deps.out(line) })
-      // Block until SIGINT/SIGTERM (the daemon handles shutdown).
-      await new Promise(() => {})
+      const { logFile } = daemonPaths()
+      const writeBootLog = (msg: string): void => {
+        try {
+          mkdirSync(dirname(logFile), { recursive: true })
+          appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`)
+        } catch {
+          // ignore — still surface the error below
+        }
+      }
+      try {
+        const { startDaemon } = await import('../../core/daemon/server')
+        await startDaemon({ log: (line) => deps.out(line) })
+        // Block until SIGINT/SIGTERM (the daemon handles shutdown).
+        await new Promise(() => {})
+      } catch (err) {
+        const msg =
+          err instanceof Error ? (err.stack ?? err.message) : String(err)
+        // Write to watch.log before re-throwing so early-boot crashes are
+        // visible even when the process is running detached (daemon mode)
+        // and stderr is not captured.  The regular daemon logger attaches
+        // only after server.ts imports succeed, so any module-level error
+        // (e.g. stale @mars/workflow dist) would otherwise leave watch.log
+        // empty and be diagnosable only via --foreground.
+        writeBootLog(`[mars] daemon boot failed: ${msg}`)
+        throw err
+      }
       return { code: 0 }
     }
     const liveness = await isDaemonAlive()

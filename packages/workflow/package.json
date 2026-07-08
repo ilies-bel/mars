@@ -5,21 +5,19 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
     }
   },
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
   "files": [
-    "dist"
+    "src"
   ],
   "scripts": {
     "build": "tsup",
     "build:watch": "tsup --watch",
-    "prepare": "tsup",
     "prepack": "tsup",
     "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
