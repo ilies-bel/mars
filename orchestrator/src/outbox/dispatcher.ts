@@ -1,6 +1,7 @@
 import type { Client } from '@libsql/client';
 import type { BusEvent } from '../bus/events.js';
 import { fetchPending, advanceCursor } from '../bus/subscribers.js';
+import { apiCircuitBreaker } from '../core/lib/api-circuit-breaker.js';
 
 /**
  * A named consumer of the Outbox `events` table paired with a delivery
@@ -16,6 +17,16 @@ export interface Subscriber {
    * is re-delivered on the next poll or wake-hint cycle.
    */
   handler: (event: BusEvent) => Promise<void>;
+  /**
+   * When true, dispatch is paused while the API circuit breaker is open.
+   * Set this on subscribers that route code-phase (run-claude-code) work so
+   * tasks remain queued rather than burning their retry budget against an
+   * unreachable API.
+   *
+   * Non-code subscribers (transcript-append, blocker-resolution, etc.) must
+   * NOT set this flag — they are unaffected by API connectivity.
+   */
+  gatedByApiBreaker?: boolean;
 }
 
 /**
@@ -98,6 +109,19 @@ export function startDispatcher(
       }
 
       if (events.length === 0) {
+        await Promise.race([
+          currentWake,
+          new Promise<void>(r => setTimeout(r, pollMs)),
+        ]);
+        continue;
+      }
+
+      // API circuit-breaker gate: when the breaker is open, hold off
+      // dispatching code-phase events until connectivity is restored.
+      // The cursor stays unchanged so events are replayed on the next tick.
+      if (sub.gatedByApiBreaker && apiCircuitBreaker.isOpen()) {
+        const { reason } = apiCircuitBreaker.state();
+        console.error(`[dispatcher] code dispatch paused: ${reason ?? 'circuit open'}`);
         await Promise.race([
           currentWake,
           new Promise<void>(r => setTimeout(r, pollMs)),
