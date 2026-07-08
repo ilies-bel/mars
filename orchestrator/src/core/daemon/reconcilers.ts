@@ -358,6 +358,7 @@ const ghostSubscriberSweep: Reconciler = {
   async run({ log }) {
     try {
       const { resolveQueueClient } = await import('../queue')
+      const { ALERT_DISMISSER_SUBSCRIBER } = await import('./alert-dismisser')
       const { ACTION_QUEUE_REPOPULATOR_SUBSCRIBER } = await import('./action-queue-repopulator')
       const { INVALIDATOR_SUBSCRIBER } = await import('../../outbox/subscribers/invalidator')
       const { BLOCKER_RESOLUTION_SUBSCRIBER } = await import(
@@ -377,6 +378,7 @@ const ghostSubscriberSweep: Reconciler = {
       )
 
       const knownNames = new Set([
+        ALERT_DISMISSER_SUBSCRIBER,
         ACTION_QUEUE_REPOPULATOR_SUBSCRIBER,
         INVALIDATOR_SUBSCRIBER,
         BLOCKER_RESOLUTION_SUBSCRIBER,

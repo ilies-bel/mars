@@ -459,4 +459,46 @@ describe('runStartupReconcile — ghost-subscriber-sweep', () => {
     // Step must complete without error and report zero sweeps.
     expect(summary.ghostSubscribersSwept).toBe(0)
   })
+
+  it('treats alert-dismisser as a known subscriber and does not delete it', async () => {
+    // Regression for the registration-order race: the ghost-subscriber-sweep
+    // was deleting 'alert-dismisser' because ALERT_DISMISSER_SUBSCRIBER was
+    // missing from the knownNames set, even though it is code-declared.
+    const { q, reconcile } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    const { ensureSubscribersSchema } = await import('../../../bus/subscribers')
+    await ensureSubscribersSchema(client)
+
+    // Seed the alert-dismisser subscriber row (as ensureAlertDismisser would).
+    await client.execute({
+      sql: 'INSERT INTO subscribers (name, cursor) VALUES (?, ?)',
+      args: ['alert-dismisser', 0],
+    })
+
+    // Seed a true ghost that should be removed.
+    await client.execute({
+      sql: 'INSERT INTO subscribers (name, cursor) VALUES (?, ?)',
+      args: ['old-ghost-subscriber', 999],
+    })
+
+    const summary = await reconcile.runStartupReconcile(makeDeps())
+
+    // alert-dismisser must NOT be swept — it is code-declared.
+    const alertRow = await client.execute({
+      sql: 'SELECT name FROM subscribers WHERE name = ?',
+      args: ['alert-dismisser'],
+    })
+    expect(alertRow.rows).toHaveLength(1)
+
+    // The actual ghost must be swept.
+    const ghostRow = await client.execute({
+      sql: 'SELECT name FROM subscribers WHERE name = ?',
+      args: ['old-ghost-subscriber'],
+    })
+    expect(ghostRow.rows).toHaveLength(0)
+
+    // Only the one true ghost was swept.
+    expect(summary.ghostSubscribersSwept).toBe(1)
+  })
 })
