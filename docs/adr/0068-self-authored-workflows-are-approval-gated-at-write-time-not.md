@@ -1,0 +1,3 @@
+# Self-authored workflows are approval-gated at write time, not runtime-sandboxed
+
+Context: an agent can author a plain-JS pipeline into .mars/workflows/, but validateWorkflow executes the author's fn, so the runtime is not a safe trust boundary. Decision: agent-authored workflows land as 'agent-draft' provenance that loadWorkflowByName refuses to dispatch; a static import/structure lint runs before any dry-run; the file becomes operator-privileged only via 'mars workflow approve' after an action-queue review. Agents may add new pipelines but never overwrite or rewire task/fix/live. Trade-off: we accept an operator-approval step (loses full autonomy) to avoid executing unreviewed agent JS in the daemon's privilege.
