@@ -1394,3 +1394,27 @@ export const revertSlicingProposalToReady = async (id: string): Promise<void> =>
     args: [Date.now(), id],
   })
 }
+
+/**
+ * Flip a proposal's status from 'slicing' to 'taken'. Called by
+ * `handleProposalTake` after the live task has been successfully enqueued.
+ * Pairs with `claimProposalForSlicing` (the 'prd-ready' → 'slicing' gate):
+ * only the caller that holds the claim can finalise the transition.
+ *
+ * Distinct from `markProposalSliced` so that `take` and `slice` produce
+ * distinguishable proposal states ('taken' vs 'sliced').
+ */
+export const markProposalTaken = async (id: string): Promise<void> => {
+  await initProposals()
+  const c = stateClient()
+  const r = await c.execute({
+    sql: `UPDATE proposals SET status = 'taken', updated_at = ? WHERE id = ? AND status = 'slicing'`,
+    args: [Date.now(), id],
+  })
+  if (r.rowsAffected !== 1) {
+    const current = await getProposal(id)
+    throw new Error(
+      `cannot mark proposal ${id} taken: expected status='slicing', found '${current?.status ?? 'missing'}'`,
+    )
+  }
+}

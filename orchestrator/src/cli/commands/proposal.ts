@@ -20,6 +20,7 @@ import {
   addProposalDependencies,
   removeProposalDependency,
   listProposalDependencies,
+  validateProposalShaped,
 } from '../../core/proposals'
 import { isDaemonReachable } from '../../core/daemon/paths'
 import { getDefaultTaskStore } from '../../core/store/task-store'
@@ -707,20 +708,48 @@ const proposalApprove: Command = {
 const proposalTake: Command = {
   path: 'proposal take',
   summary:
-    'take a prd-ready proposal live as ONE task routed to the live workflow (human-driven, no slicer); no parallelism — one arc, use `proposal slice` for slicer decomposition',
-  usage: 'usage: mars proposal take <id>',
+    'take a shaped proposal live as ONE task on the chosen workflow (human-driven, no slicer); use `proposal slice` for multi-slice decomposition',
+  usage: 'usage: mars proposal take <id> [--workflow <kind>]',
   run: async (args, deps) => {
     const id = args.positional[0]
     if (!id) {
-      deps.err('usage: mars proposal take <id>')
+      deps.err('usage: mars proposal take <id> [--workflow <kind>]')
       return { code: 1 }
     }
+    const workflow = args.flags['--workflow']?.trim() ?? 'live'
+
+    // Resolve and validate the proposal locally so errors are actionable
+    // before the daemon is ever contacted.
+    const resolved = await resolveProposalId(id)
+    if (resolved.kind === 'ambiguous') {
+      deps.err(`ambiguous prefix '${id}' matches ${resolved.count} proposals`)
+      return { code: 1 }
+    }
+    if (resolved.kind === 'none') {
+      deps.err(`proposal ${id} not found`)
+      return { code: 1 }
+    }
+    const proposal = await getProposal(resolved.id)
+    if (!proposal) {
+      deps.err(`proposal ${id} not found`)
+      return { code: 1 }
+    }
+    const missing = validateProposalShaped(proposal)
+    if (missing.length > 0) {
+      deps.err(
+        `proposal ${proposal.id} is not fully shaped; missing: ${missing.join(', ')}. ` +
+          `Shape it with 'mars proposal set ${proposal.id} <field> <value>' and ` +
+          `'mars proposal add-user-story ${proposal.id} <story>'.`,
+      )
+      return { code: 1 }
+    }
+
     try {
       const r = (await deps.daemon.sendRequest(
-        { op: 'proposal.take', proposalId: id },
+        { op: 'proposal.take', proposalId: resolved.id, workflow },
         { onSpawnNotice: spawnNoticeOut(deps.out) },
       )) as { proposalId: string; taskId: string }
-      deps.out(`proposal ${r.proposalId} taken as task ${r.taskId} (workflow: live)`)
+      deps.out(`proposal ${r.proposalId} taken as task ${r.taskId} (workflow: ${workflow})`)
     } catch (error: unknown) {
       deps.err(errorMessage(error))
       return { code: 1 }

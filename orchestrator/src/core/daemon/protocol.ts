@@ -46,7 +46,7 @@ export type DaemonRequest =
   | { op: 'proposal.slice'; proposalId: string }
   | { op: 'proposal.approve'; proposalId: string }
   | { op: 'proposal.reslice'; proposalId: string; feedback: string }
-  | { op: 'proposal.take'; proposalId: string }
+  | { op: 'proposal.take'; proposalId: string; workflow?: string }
   | { op: 'refine'; id: string; refresh?: boolean }
   | {
       op: 'glossary-write'

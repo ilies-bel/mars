@@ -69,11 +69,34 @@ afterEach(() => {
 })
 
 // ---------------------------------------------------------------------------
+// Seed helper — creates a prd-ready proposal for CLI seam tests
+// ---------------------------------------------------------------------------
+
+const seedPrdReadyProposal = async (): Promise<string> => {
+  vi.resetModules()
+  process.env.MARS_REPO = repo
+  const { createProposal, addProposalUserStory, promoteProposal, initProposals } =
+    await import('../../core/proposals')
+  const { migrateQueueSchema } = await import('../../core/queue')
+  await initProposals()
+  await migrateQueueSchema()
+  const p = await createProposal('CLI seam test proposal', {
+    source: 'human',
+    problem: 'There is a problem',
+    solution: 'Here is the solution',
+  })
+  await addProposalUserStory(p.id, 'As a user I can do something')
+  await promoteProposal(p.id)
+  return p.id
+}
+
+// ---------------------------------------------------------------------------
 // Layer 1: CLI seam — command sends the right op, no slicer invoked
 // ---------------------------------------------------------------------------
 
 describe('mars proposal take — CLI seam', () => {
   it('sends op=proposal.take with the proposal id and prints the task id', async () => {
+    const proposalId = await seedPrdReadyProposal()
     const fake = makeFakeDaemon((req) => {
       if (req.op === 'proposal.take') {
         return { proposalId: req.proposalId, taskId: 'mars-live-task-001' }
@@ -81,7 +104,7 @@ describe('mars proposal take — CLI seam', () => {
       return {}
     })
     const { store, ctx } = await loadStoreAndCtx()
-    const r = await runCommandInProcess(['proposal', 'take', 'prop-abc123'], {
+    const r = await runCommandInProcess(['proposal', 'take', proposalId], {
       store,
       ctx,
       daemon: fake,
@@ -89,12 +112,13 @@ describe('mars proposal take — CLI seam', () => {
 
     expect(r.code).toBe(0)
     expect(fake.calls).toHaveLength(1)
-    expect(fake.calls[0]).toMatchObject({ op: 'proposal.take', proposalId: 'prop-abc123' })
+    expect(fake.calls[0]).toMatchObject({ op: 'proposal.take', proposalId })
     expect(r.out.join('\n')).toContain('mars-live-task-001')
     expect(r.out.join('\n')).toContain('live')
   })
 
   it('never sends op=proposal.slice (slicer not invoked)', async () => {
+    const proposalId = await seedPrdReadyProposal()
     const fake = makeFakeDaemon((req) => {
       if (req.op === 'proposal.take') {
         return { proposalId: req.proposalId, taskId: 'mars-live-task-001' }
@@ -102,7 +126,7 @@ describe('mars proposal take — CLI seam', () => {
       return {}
     })
     const { store, ctx } = await loadStoreAndCtx()
-    await runCommandInProcess(['proposal', 'take', 'prop-abc123'], {
+    await runCommandInProcess(['proposal', 'take', proposalId], {
       store,
       ctx,
       daemon: fake,

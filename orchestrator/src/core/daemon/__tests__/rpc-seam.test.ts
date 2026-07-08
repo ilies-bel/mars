@@ -171,7 +171,7 @@ describe('dispatchRpc routing', () => {
       .mockResolvedValue({ proposalId: 'p1', taskId: 't99' }) as DaemonDeps['handleProposalTake']
     const { deps } = makeDeps({ handleProposalTake })
     const res = await dispatchRpc(rpcRegistry, { op: 'proposal.take', proposalId: 'p1' }, deps)
-    expect(handleProposalTake).toHaveBeenCalledWith('p1')
+    expect(handleProposalTake).toHaveBeenCalledWith('p1', undefined)
     expect(res).toEqual({ ok: true, data: { proposalId: 'p1', taskId: 't99' } })
   })
 

@@ -141,7 +141,7 @@ const proposalResliceHandler = handler('proposal.reslice', async (req, deps) => 
 })
 
 const proposalTakeHandler = handler('proposal.take', async (req, deps) => {
-  const r = await deps.handleProposalTake(req.proposalId)
+  const r = await deps.handleProposalTake(req.proposalId, req.workflow)
   return { ok: true, data: r }
 })
 

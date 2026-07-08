@@ -2220,10 +2220,18 @@ export const startDaemon = async (
 
   const handleProposalTake = async (
     proposalId: string,
+    workflow?: string,
   ): Promise<{ proposalId: string; taskId: string }> => {
     assertProposalsSourceFresh(proposalsStamp)
-    const { claimProposalForSlicing, markProposalSliced, resolveProposalId, getProposal } =
-      await import('../proposals')
+    const {
+      claimProposalForSlicing,
+      markProposalTaken,
+      resolveProposalId,
+      getProposal,
+      validateProposalShaped,
+    } = await import('../proposals')
+
+    const resolvedWorkflow = workflow ?? 'live'
 
     const resolved = await resolveProposalId(proposalId)
     if (resolved.kind === 'ambiguous') {
@@ -2237,9 +2245,21 @@ export const startDaemon = async (
 
     const proposal = await getProposal(resolved.id)
     if (!proposal) throw new Error(`proposal ${resolved.id} not found`)
+
+    // Validate PRD body before attempting status transitions.
+    const missing = validateProposalShaped(proposal)
+    if (missing.length > 0) {
+      throw new Error(
+        `proposal ${proposal.id} is not fully shaped; missing: ${missing.join(', ')}. ` +
+          `Shape it with 'mars proposal set ${proposal.id} <field> <value>' and ` +
+          `'mars proposal add-user-story ${proposal.id} <story>'.`,
+      )
+    }
+
     if (proposal.status !== 'prd-ready') {
       throw new Error(
-        `proposal ${proposal.id} is '${proposal.status}'; only 'prd-ready' proposals can be taken`,
+        `proposal ${proposal.id} is '${proposal.status}'; only 'prd-ready' proposals can be taken. ` +
+          `Run 'mars proposal promote ${proposal.id}' to promote it first.`,
       )
     }
 
@@ -2284,7 +2304,7 @@ export const startDaemon = async (
         author: proposal.author ?? undefined,
         originId: resolved.id,
         parentProposalId: resolved.id,
-        workflow: 'live',
+        workflow: resolvedWorkflow,
         spec: {
           files: [],
           verifyCmd: null,
@@ -2300,8 +2320,8 @@ export const startDaemon = async (
       throw err
     }
 
-    // Transition: slicing → sliced (taskCount=1).
-    await markProposalSliced(resolved.id, 1)
+    // Transition: slicing → taken (distinct from slice's slicing→sliced).
+    await markProposalTaken(resolved.id)
 
     // Notify the dispatch loop that the task is ready to run.
     bus.emit('task.queued', { taskId: task.id })
