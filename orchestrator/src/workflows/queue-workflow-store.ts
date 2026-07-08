@@ -365,11 +365,11 @@ export const loadWorkflowByName = async <I, O, S>(
   // Plain-JS user module outside the TS source tree: the specifier is
   // computed at runtime, so TS cannot (and should not) statically resolve it.
   // Import by file URL so absolute paths work cross-platform.
-  const mtimeMs = statSync(path).mtimeMs
+  const { mtimeMs, size } = statSync(path)
   let mod: { default?: unknown }
   try {
     mod = (await import(
-      `${pathToFileURL(path).href}?v=${mtimeMs}`
+      `${pathToFileURL(path).href}?v=${mtimeMs}-${size}`
     )) as { default?: unknown }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
