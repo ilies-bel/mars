@@ -556,6 +556,19 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /budget — the spend-meter status (observe-and-warn token-budget
+    // alerting; explicitly NOT a fifth KPI). Configured thresholds, current
+    // rolling-window spend + band, top live arcs vs the per-arc ceiling, and
+    // any open budget-* rows. Unconfigured meters report configured:false —
+    // never fake zeros. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/budget') {
+      deps.appServices
+        .budgetStatus()
+        .then((status) => sendJson(res, 200, status))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /kpis — the four-KPI vector (ADR-0040, the harness-health KPI ADR
     // that was originally numbered 0038 on main while this branch held that
     // number for the recovery-tasks-are-leaf-nodes ADR — renumbered to 0040

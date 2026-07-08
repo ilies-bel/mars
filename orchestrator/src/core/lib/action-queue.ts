@@ -142,6 +142,19 @@ export const ACTION_QUEUE_KINDS = [
   // superseded when the approve/retire verb mutates the enrichment record —
   // no separate close gesture.
   'gate-enrichment',
+  // Spend meter (observe-and-warn, ADR-0048 level-triggered projection):
+  // the rolling wall-clock window's cache-weighted token spend crossed the
+  // configured window-tokens threshold. Singleton row (signature
+  // 'budget-window'); the daemon spend sweep is both raiser and resolver —
+  // it auto-resolves the row once spend drops below ~90% of the threshold
+  // (hysteresis). Never pauses dispatch or suppresses recoveries.
+  'budget-window',
+  // Spend meter: a single live (non-terminal) arc's lifetime cache-weighted
+  // spend crossed the configured per-arc ceiling. One row per offending arc
+  // (signature 'budget-arc:<arcId>'); the spend sweep auto-resolves the row
+  // when the arc reaches terminal status (lifetime spend never decreases,
+  // so live-ness is the falsifiable half of the level condition).
+  'budget-arc',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
@@ -660,6 +673,35 @@ export const patchOpenActionQueuePayload = async (
     args: [JSON.stringify(merged), row.id],
   })
   return row.id
+}
+
+/**
+ * Merge `patch` into the payload JSON of the actionQueue item with the given
+ * id, whatever its keying scheme. Unlike {@link patchOpenActionQueuePayload}
+ * (origin-fingerprint lookup) this addresses the row directly, so
+ * signature-keyed rows (e.g. the spend meter's 'budget-window' /
+ * 'budget-arc:<arcId>' rows) can keep their payload fresh on re-detection —
+ * `raiseActionQueueItem` only bumps seen_count on an existing row and leaves
+ * the stale payload in place. No-op (returns false) when the id is unknown.
+ */
+export const patchActionQueuePayloadById = async (
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<boolean> => {
+  await initActionQueue()
+  const c = stateClient()
+  const existing = await c.execute({
+    sql: `SELECT payload FROM action_queue_items WHERE id = ?`,
+    args: [id],
+  })
+  if (existing.rows.length === 0) return false
+  const row = existing.rows[0] as unknown as { payload: string | null }
+  const merged = { ...parseJsonObject(row.payload), ...patch }
+  await c.execute({
+    sql: `UPDATE action_queue_items SET payload = ? WHERE id = ?`,
+    args: [JSON.stringify(merged), id],
+  })
+  return true
 }
 
 /**

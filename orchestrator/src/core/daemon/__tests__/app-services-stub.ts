@@ -33,6 +33,13 @@ export const stubAppServices = (
     window: { windowStart: '', windowEnd: '' },
     arcs: [],
   }),
+  budgetStatus: async () => ({
+    configured: false,
+    config: null,
+    window: null,
+    arcs: null,
+    openRows: [],
+  }),
   viewTasks: async () => ({ tasks: [] }),
   viewProgress: async () => ({ tasks: [], proposals: [], aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 } }),
   viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),

@@ -234,6 +234,19 @@ Commands:
                                 suspends dispatch while keeping the daemon
                                 alive (in-flight tasks continue). 'resume'
                                 re-enables dispatch after a pause.
+  budget set [--window <dur>] [--window-tokens <N>] [--arc-tokens <N>]
+                                configure the Spend meter (observe-and-warn
+                                token-budget alerting). Any subset of flags;
+                                thresholds persist under the 'budget' key in
+                                .mars/daemon.json and the daemon spend sweep
+                                picks them up within ~30s (no restart). Absent
+                                config = meter disabled. Units are raw
+                                cache-weighted tokens (cache reads at 0.1x).
+  budget status [--json]        print configured thresholds, current rolling-
+                                window burn (% of threshold + band), top live
+                                arcs vs the per-arc ceiling, and any open
+                                budget-* action-queue rows. The meter never
+                                pauses dispatch — it only warns.
   sync                          run the daemon's startup reconcile on demand:
                                 re-queue orphaned-blocked tasks (blocked with
                                 no live blocker edges), finalize landed merges,
@@ -800,6 +813,37 @@ Subcommands:
                      NOT a daemon restart. Use 'resume' to re-enable.
   resume             re-enable dispatch after a pause. Kicks the drain loop
                      so any tasks queued during the pause are dispatched.`,
+  budget: `mars budget <set|status> [flags]
+
+The Spend meter: observe-and-warn token-budget alerting. Two independent
+meters, each with its own threshold and its own level-triggered action-queue
+row: a rolling wall-clock window over ALL arcs (including in-flight ones) and
+a per-live-arc lifetime ceiling. Units are raw cache-weighted tokens
+(input + output + cacheCreate + cacheRead*0.1 — the cost_per_arc weighting).
+The meter NEVER pauses dispatch and NEVER suppresses recoveries; the
+operator is the only actuator.
+
+Subcommands:
+  set [--window <dur>] [--window-tokens <N>] [--arc-tokens <N>]
+      Persist thresholds (any subset) under the 'budget' key in
+      .mars/daemon.json via merge-patch — other keys are preserved and
+      unnamed thresholds keep their prior values. Durations accept ms/s/m/h/d
+      suffixes (e.g. 4h). The daemon's spend sweep re-reads the file every
+      tick (default 30s, MARS_SPEND_SWEEP_MS), so changes take effect
+      without a restart. Absent config = meter disabled (no rows).
+
+  status [--json]
+      Print configured thresholds, current window spend with % of threshold
+      and a good/warn/bad band (<70% good, 70-100% warn, >=100% bad), the
+      top live arcs by lifetime spend vs the per-arc ceiling, and any open
+      'budget-window' / 'budget-arc' action-queue rows. --json emits the
+      same shape for scripting. An unconfigured meter says so instead of
+      printing zeros. Reads the DB directly — works with the daemon down.
+
+Rows are level-triggered (ADR-0048): the sweep is both raiser and resolver.
+The window row auto-resolves when spend drops below ~90% of the threshold
+(hysteresis); a per-arc row auto-resolves when its arc reaches terminal
+status.`,
   triage: `mars triage [<task-id>]
 
 Run triage once on one draft, or all drafts in parallel. Haiku assesses

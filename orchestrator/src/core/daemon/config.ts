@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { resolveContext } from '../context'
 
 export interface DaemonCaps {
@@ -106,6 +106,50 @@ export const persistSelfEvolveAutoTrigger = (autoTrigger: boolean): void => {
     JSON.stringify({ ...existing, selfEvolve: { ...existingSe, autoTrigger } }, null, 2),
     'utf8',
   )
+}
+
+/**
+ * Read the raw daemon.json object without applying any env/default
+ * resolution. Missing file, unreadable file, or non-object JSON all
+ * degrade to `{}` — callers merge-patch on top and write back.
+ */
+export const readDaemonConfigFile = (): Record<string, unknown> => {
+  try {
+    const raw = readFileSync(daemonConfigPath(), 'utf8')
+    const parsed = JSON.parse(raw) as unknown
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+    return {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Merge-patch write helper for `.mars/daemon.json`: shallow-merges `patch`
+ * into the existing top-level object and writes the result back, preserving
+ * every key the patch does not name (caps, selfEvolve, budget, …). A `null`
+ * value in `patch` removes that top-level key. Creates the state dir / file
+ * when absent. Consumers that poll the file (e.g. the spend sweep) pick the
+ * change up on their next read — no daemon restart required.
+ */
+export const patchDaemonConfigFile = (
+  patch: Record<string, unknown>,
+): Record<string, unknown> => {
+  const current = readDaemonConfigFile()
+  const next: Record<string, unknown> = { ...current }
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete next[key]
+    } else {
+      next[key] = value
+    }
+  }
+  const path = daemonConfigPath()
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  return next
 }
 
 // Resolution order per field: config file > env var > built-in default.

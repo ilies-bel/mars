@@ -310,6 +310,20 @@ CREATE INDEX IF NOT EXISTS idx_trace_events_origin_time
   ON trace_events (origin_id, timestamp)
 `
 
+/**
+ * Partial index backing the spend meter's rolling-window query
+ * (`SUM(cache-weighted usageSignals) WHERE kind='step_ended' AND
+ * timestamp >= now - window`, see lib/spend-meter.ts). Restricting the
+ * index to step_ended rows keeps each sweep an index range scan over just
+ * the rows inside the window instead of a full-table scan. Exported so the
+ * spend sweep can ensure it exists when running against a store opened
+ * before this index shipped.
+ */
+export const INDEX_STEP_ENDED_TIME = `
+CREATE INDEX IF NOT EXISTS idx_trace_events_step_ended_time
+  ON trace_events (timestamp) WHERE kind = 'step_ended'
+`
+
 // Zod schema for parsing the JSON-blob payload at read time. JSON.parse
 // alone can return anything — narrow it to a string-keyed object so the
 // public `TraceEvent['payload']` type holds.
@@ -417,6 +431,7 @@ export const openTraceEventStore = async (
   await client.execute(TASK_TRANSCRIPTS_DDL)
   await client.execute(INDEX_TASK_TRANSCRIPTS)
   await client.execute(DURABLE_TRANSCRIPTS_DDL)
+  await client.execute(INDEX_STEP_ENDED_TIME)
 
   return {
     record: async (event: TraceEventInput): Promise<void> => {

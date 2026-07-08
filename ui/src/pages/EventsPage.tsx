@@ -9,6 +9,7 @@ import type { TraceEvent } from '@/shared/schemas'
 import { relativeTime, formatRelativeAge } from '@/shared/time'
 import { taskHash } from '@/shared/routing'
 import { KpiVector } from '@/widgets/KpiVector'
+import { SpendMeterTile } from '@/widgets/SpendMeterTile'
 
 /**
  * Events tab — the unified trace stream.
@@ -524,8 +525,12 @@ export const EventsPage = () => {
         ) : null}
       </header>
 
-      {/* KPI strip — four metric tiles at the top of the Events tab */}
-      <KpiVector />
+      {/* KPI strip — four metric tiles at the top of the Events tab, with the
+          spend-meter tile rendered adjacent (a separate concept, not a fifth KPI) */}
+      <div className="flex flex-wrap items-start gap-3">
+        <KpiVector />
+        <SpendMeterTile />
+      </div>
 
       {/* Filter row — fixed above the scrollable list */}
       <div className="flex flex-wrap items-start gap-4">

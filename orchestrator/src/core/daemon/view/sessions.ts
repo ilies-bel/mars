@@ -10,6 +10,13 @@ export interface Session {
   outcome: string
   endedAt: string
   durationMs: number | null
+  /**
+   * The arc this session's step ran for: the trace event's origin_id when
+   * set (the arc root), else its task_id. Lets consumers join sessions
+   * against per-arc data such as the spend meter's over-ceiling arcs.
+   * Null for daemon-global spans with no task attribution.
+   */
+  arcId: string | null
 }
 
 /**
@@ -62,6 +69,7 @@ export async function buildSessionsView(
       outcome: 'running',
       endedAt: e.timestamp,
       durationMs: null,
+      arcId: e.originId ?? e.taskId,
     }))
 
   const finishedSessions: Session[] = endedEvents.map((e) => ({
@@ -74,6 +82,7 @@ export async function buildSessionsView(
     outcome: typeof e.payload.outcome === 'string' ? e.payload.outcome : 'failed',
     endedAt: e.timestamp,
     durationMs: typeof e.payload.durationMs === 'number' ? e.payload.durationMs : null,
+    arcId: e.originId ?? e.taskId,
   }))
 
   // Merge running + finished, sort newest-first, cap at 50.

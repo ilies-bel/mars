@@ -430,6 +430,12 @@ export const workerSessionSchema = z.object({
   endedAt: z.string(),
   /** Duration in milliseconds, or null when the payload did not include it. */
   durationMs: z.number().nullable(),
+  /**
+   * The arc this session's step ran for (trace event origin_id, else
+   * task_id). Joins sessions against per-arc data such as the spend meter's
+   * over-ceiling arcs. `.catch(null)` tolerates a daemon predating the field.
+   */
+  arcId: z.string().nullable().catch(null),
 })
 
 export const workerSessionsResponseSchema = z.object({
@@ -438,6 +444,66 @@ export const workerSessionsResponseSchema = z.object({
 
 export type SessionOutcome = z.infer<typeof sessionOutcomeSchema>
 export type WorkerSession = z.infer<typeof workerSessionSchema>
+
+// ----------------------------------------------------------------------------
+// Spend meter (daemon `/budget` → proxied as `/api/budget`).
+// Observe-and-warn token-budget alerting — explicitly NOT a fifth KPI; the
+// tile only reuses the KpiBand cue vocabulary for rendering. Units are raw
+// cache-weighted tokens (input + output + cacheCreate + cacheRead*0.1).
+// ----------------------------------------------------------------------------
+
+export const spendBandSchema = z.enum(['good', 'warn', 'bad'])
+
+export const budgetArcSpendSchema = z.object({
+  arcId: z.string(),
+  spendTokens: z.number(),
+})
+
+export const budgetStatusSchema = z.object({
+  configured: z.boolean(),
+  config: z
+    .object({
+      windowMs: z.number().nullable(),
+      windowTokens: z.number().nullable(),
+      arcTokens: z.number().nullable(),
+    })
+    .nullable(),
+  window: z
+    .object({
+      windowMs: z.number(),
+      thresholdTokens: z.number(),
+      spendTokens: z.number(),
+      ratio: z.number(),
+      band: spendBandSchema,
+      topArcs: z.array(budgetArcSpendSchema),
+    })
+    .nullable(),
+  arcs: z
+    .object({
+      ceilingTokens: z.number(),
+      liveArcs: z.array(
+        budgetArcSpendSchema.extend({
+          ratio: z.number(),
+          overCeiling: z.boolean(),
+        }),
+      ),
+    })
+    .nullable(),
+  openRows: z.array(
+    z.object({
+      id: z.string(),
+      kind: z.enum(['budget-window', 'budget-arc']),
+      signature: z.string().nullable(),
+      title: z.string(),
+      raisedAt: z.string(),
+      lastSeenAt: z.string(),
+      seenCount: z.number(),
+    }),
+  ),
+})
+
+export type SpendBand = z.infer<typeof spendBandSchema>
+export type BudgetStatus = z.infer<typeof budgetStatusSchema>
 
 // ----------------------------------------------------------------------------
 // Trace events (daemon `/events` → proxied as `/api/trace-events`).
