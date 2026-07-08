@@ -1,0 +1,3 @@
+# Scorers are record-only quality signal, not a merge gate
+
+Context: a Scorer is a per-pipeline quality evaluator that grades each workflow instance's output. It could gate merge like verify, or only record. Decision: for v1 a Scorer runs as a non-gating post-merge daemon hook (not a ctx.step, which under the steps-throw failure model would fail already-merged work), grading persisted artifacts via a pinned read-only Haiku-class Scorer Worker; a low score never blocks merge and never spawns recovery. verify remains the sole correctness gate. Trade-off: quality problems surface as trend + operator-driven revision rather than hard stops, keeping the one-recovery invariant and merge contract intact; the cost is that a bad instance can merge before its score is known.
