@@ -83,6 +83,17 @@ export interface ErrorClassRule {
  */
 export const errorClassRules: readonly ErrorClassRule[] = [
   {
+    // Behaviour verification (the behaviour-verify step) reached the live
+    // surface and found at least one Definition-of-Done criterion observably
+    // contradicted, with screenshot evidence. The step emits this exact
+    // first line in its error output; the resulting signature
+    // `behaviour-verify:dod-unmet/dod-unmet` binds to the registered
+    // recovery recipe in fix-recipes.ts (ADR-0002 — registered in the same
+    // change that added the step).
+    errorClass: 'dod-unmet',
+    match: /definition-of-done criteri(?:on|a) unmet on live surface/i,
+  },
+  {
     errorClass: 'no-commits-ahead',
     match: /no commits ahead of integration branch/i,
   },
@@ -399,6 +410,10 @@ const causeSentencesBySignature: Readonly<Record<string, CauseRenderer>> = {
   // Infrastructure-owned: the worktree was pruned before verify could inspect it.
   'verify:has-diff/worktree-missing': (taskId) =>
     `task worktree was pruned before verify could run (likely a daemon restart) — infrastructure condition; mars restart ${taskId}`,
+  // Agent-owned: the behaviour-verify step observed a Definition-of-Done
+  // criterion contradicted on the live surface; a recovery Chore was spawned.
+  'behaviour-verify:dod-unmet/dod-unmet': () =>
+    `behaviour verification contradicted a Definition-of-Done criterion on the live surface — the recovery Chore closes the gap on the origin worktree`,
 }
 
 /**

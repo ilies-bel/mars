@@ -418,6 +418,26 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
 
+      // ── behaviour-verify:dod-unmet ───────────────────────────────────────
+      // Behaviour verification (the pre-merge behaviour-verify step) reached
+      // the live surface and found a Definition-of-Done criterion observably
+      // contradicted, with screenshot evidence. Exactly one recovery Chore is
+      // spawned from the recipe registered under this same signature
+      // (ADR-0002); un-verifiability never lands here — it degrades to a
+      // draft proposal + behaviour-unverified action-queue row instead.
+      {
+        signature: 'behaviour-verify:dod-unmet/dod-unmet',
+        // Behavioural/Definition-of-Done contradiction is the canonical
+        // non-static-encodable class (a live-surface semantic failure the
+        // static gate cannot assert) — it is precisely what behaviour-verify
+        // exists to catch, so it can never become a self-enrichment check.
+        staticEncodable: notEncodable('semantic'),
+        warmTitle: 'The change ran, but did not do what the task asked for',
+        verboseReason:
+          "The behaviour-verify step drove the task's live preview through a browser and observed at least one Definition-of-Done criterion contradicted on the running surface (screenshots captured); the merge was stopped and a recovery task was spawned to close the gap.",
+        actions: DEFAULT_ACTIONS,
+      },
+
       // ── merge:vcs-supervisor-aborted ─────────────────────────────────────
       {
         signature: 'merge:vcs-supervisor-aborted/merge-conflict-unresolved',

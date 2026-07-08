@@ -211,7 +211,7 @@ describe('WorkerDeclaration runtime:pty round-trip', () => {
 })
 
 describe('listMergedWorkers', () => {
-  it('returns exactly the five default workers when no registry file exists', () => {
+  it('returns exactly the six default workers when no registry file exists', () => {
     const workers = listMergedWorkers(stateDir)
     const names = workers.map((w) => w.config.name)
     expect(names).toContain('Coder')
@@ -219,7 +219,8 @@ describe('listMergedWorkers', () => {
     expect(names).toContain('Slicer')
     expect(names).toContain('Triager')
     expect(names).toContain('Fixer')
-    expect(workers).toHaveLength(5)
+    expect(names).toContain('BehaviourVerifier')
+    expect(workers).toHaveLength(6)
   })
 
   it('includes a novel registry worker alongside the defaults', () => {

@@ -1577,8 +1577,69 @@ export const genericRecoveryRecipe: FixRecipe = {
   },
 }
 
+/**
+ * Behaviour verification found at least one Definition-of-Done criterion
+ * observably contradicted on the live surface (signature
+ * `behaviour-verify:dod-unmet/dod-unmet`, raised by the behaviour-verify
+ * step between static verify and merge). The recovery Chore attaches to the
+ * origin worktree — the branch, its commits, and the dev-server context are
+ * all still alive because the gate is pre-merge — closes the behavioural gap
+ * for exactly the failed criteria, and flows back through the same pipeline
+ * (including the behaviour-verify gate itself).
+ *
+ * `ctx.statusOutput` carries the step's evidence block: the failed criteria
+ * verbatim, one per-criterion verdict with its screenshot path, and the
+ * dev-server log tail. The prompt inlines it so the Chore never re-derives
+ * the diagnosis.
+ */
+const behaviourDodUnmetRecipe: FixRecipe = {
+  signature: 'behaviour-verify:dod-unmet/dod-unmet',
+  title: (ctx) =>
+    `Close the behavioural gap on ${ctx.targetBranch || 'the task branch'}: Definition-of-Done criteria unmet on the live surface`,
+  buildPrompt: (ctx) => {
+    const evidence = ctx.statusOutput.length > 0 ? ctx.statusOutput : '(no evidence block captured)'
+    const original =
+      ctx.originalPrompt && ctx.originalPrompt.trim().length > 0
+        ? ctx.originalPrompt
+        : '(no original prompt recorded)'
+    return [
+      `# Recovery run — behaviour verification failed`,
+      '',
+      `The original task's code compiled, its tests passed, and static verify was green — but the behaviour-verify step then booted the task's preview command as a live dev server, drove it through a browser, and found at least one Definition-of-Done criterion observably CONTRADICTED on the running surface (screenshot evidence captured). The work must not merge in this state; your job is to close exactly that behavioural gap.`,
+      '',
+      `You are attached to the origin task's worktree at ${ctx.targetPath} on branch \`${ctx.targetBranch}\`. The prior run's commits are here — continue from them, do NOT start over and do NOT redo criteria that already verified.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `## Failed criteria and evidence`,
+      '',
+      'Only the criteria below failed. Each carries the verifier\'s verdict, its screenshot path (open the screenshot if you need to see the observed state), and the dev-server log tail:',
+      '',
+      '```',
+      evidence,
+      '```',
+      '',
+      `## Original task`,
+      '',
+      '```',
+      original,
+      '```',
+      '',
+      `STEP 1 — Reproduce. Start the task's preview command yourself (it is named in the evidence block; run it from the worktree with a PORT of your choosing) and observe the contradicted behaviour first-hand before editing anything.`,
+      '',
+      `STEP 2 — Fix the behaviour, not the checker. Change the code so each failed criterion is observably satisfied on the running surface. Do NOT weaken or reword the criteria, and do NOT touch unrelated passing behaviour.`,
+      '',
+      `STEP 3 — Verify before you exit. Re-run the project's standard typecheck/tests, then re-check each previously-failed criterion against your locally running server. The orchestrator re-runs the full pipeline — including the behaviour-verify gate — after you exit, so an unfixed criterion bounces straight back.`,
+      '',
+      `If a criterion is genuinely impossible to satisfy as written (ambiguous, contradicts another requirement, needs a product decision), do NOT bail silently: emit a high-priority action-queue item via \`mars action-queue raise --from -\` describing the conflict, then exit.`,
+      '',
+      `Save your work — stage and commit every change (\`git add -A && git commit\`). The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 const recipeList: readonly FixRecipe[] = [
   dirtyMergeTargetRecipe,
+  behaviourDodUnmetRecipe,
   worktreeInstallFrozenLockfileRecipe,
   worktreeInstallTimeoutRecipe,
   noCommitsAheadRecipe,

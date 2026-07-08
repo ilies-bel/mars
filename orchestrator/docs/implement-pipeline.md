@@ -1,14 +1,15 @@
 # The `implement` pipeline (on `@mars/workflow`)
 
 This documents the **implement** pipeline as it runs on the in-house
-`@mars/workflow` engine — the real `ctx.step` sequence, how the four
+`@mars/workflow` engine — the real `ctx.step` sequence, how the five
 **step primitives** compose, how resume works, and how failures
 propagate. It describes what is in the code, not an idealized design.
 
 Source: `orchestrator/src/workflows/implement-workflow.ts` (the bundled
-fallback / canonical example), the four primitives in
-`orchestrator/src/workflows/primitives/index.ts`, dispatched from
-`orchestrator/src/core/daemon/server.ts`, persisted via
+fallback / canonical example), the primitives in
+`orchestrator/src/workflows/primitives/index.ts` and
+`orchestrator/src/workflows/primitives/behaviour-verify.ts`, dispatched
+from `orchestrator/src/core/daemon/server.ts`, persisted via
 `orchestrator/src/workflows/queue-workflow-store.ts`.
 
 ## Two seams
@@ -19,7 +20,7 @@ Authoring a workflow touches two things, both behind the single
 - the domain-agnostic **engine** — `defineWorkflow`, `ctx.step`,
   `ctx.input`, `ctx.emit`, `ctx.services` (`@mars/workflow`);
 - the Mars **domain primitives** — `setupWorktree`, `runAgent`, `verify`,
-  `merge`, each `(ctx, opts?)` (`./primitives`).
+  `behaviourVerify`, `merge`, each `(ctx, opts?)` (`./primitives`).
 
 A scaffolded `.mars/workflows/<kind>-workflow.js` (ADR-0056) imports both
 from `mars/workflow` and never sees the plumbing.
@@ -36,21 +37,22 @@ export const implementWorkflow = defineWorkflow<
 ```
 
 Native TypeScript control flow is the source of truth. Each durable unit
-is wrapped in `ctx.step(name, fn)`. The four bundled step names are stable
+is wrapped in `ctx.step(name, fn)`. The five bundled step names are stable
 and load-bearing — they key both checkpoint-resume and the trace-view node
 label:
 
 ```
-setup-worktree → run-claude-code → verify → merge
+setup-worktree → run-claude-code → verify → behaviour-verify → merge
 ```
 
-The whole bundled body is just four primitive calls:
+The whole bundled body is just five primitive calls:
 
 ```ts
 fn: async (ctx): Promise<ImplementOutput> => {
   await ctx.step('setup-worktree', () => setupWorktree(ctx))
   await ctx.step('run-claude-code', () => runAgent(ctx))
   await ctx.step('verify', () => verifyPrimitive(ctx))
+  await ctx.step('behaviour-verify', () => behaviourVerifyPrimitive(ctx))
   return await ctx.step('merge', () => mergePrimitive(ctx))
 }
 ```
@@ -109,7 +111,7 @@ const result = await runWorkflow(workflowToRun, input, {
   the daemon's `onEvent` drops them from the log, and per-step transcripts
   (keyed by `claudeSessionId`) carry the detail.
 
-## The four primitives
+## The five primitives
 
 Each primitive resolves its dispatch facts (`taskId`, `integrationBranch`,
 `kind`, …) via the precedence above, pulls plumbing
@@ -189,7 +191,43 @@ here — it runs dispatch-side (daemon) and verify-side (below).
 Because a failed verify throws, `merge` never runs on unverified work —
 there is no `{ verified:false }` flag passed forward.
 
-### 4. `merge` → returns `ImplementOutput` `{ taskId, success, message }`
+### 4. `behaviourVerify` → returns `{ outcome, … }` or **throws**
+
+Behaviour verification (`primitives/behaviour-verify.ts`): exercises the
+task's Definition of Done (`task_done_criteria`) against a **live surface**
+between static verify and merge. Tri-state contract:
+
+1. **Skips:** `kind === 'diagnose'` and main-commiter recoveries return
+   `{ outcome: 'skipped' }` immediately.
+2. Boots the spec's `previewCmd` via `startDevServer` in the worktree
+   (its OWN instance — logs under `.mars/behaviour-verify/<taskId>/`;
+   `killDevServer` group-kill in a `finally`), health-checks the URL,
+   then dispatches the role-pinned **BehaviourVerifier** Worker
+   (headless Sonnet, no Edit/Write) with Playwright MCP injected through
+   `WorkerConfig.mcpConfig` → `--mcp-config` (the only channel under
+   `--strict-mcp-config`). The Worker emits per-criterion verdict JSON
+   (Zod-validated).
+3. **PASS** (≥1 criterion positively verified, none contradicted):
+   returns; merge runs.
+4. **Behavioural FAIL** (a REACHED surface state contradicting a
+   criterion, with screenshot evidence): mirrors static verify —
+   `updateTask({ status:'failed', failedPhase:'verify' })` +
+   `handleTaskFailureWithFixTask` under `behaviour-verify:dod-unmet`
+   (registered recipe: `behaviour-verify:dod-unmet/dod-unmet`), then
+   **throws**. Exactly one recovery Chore attaches to the origin
+   worktree and flows back through this same gate.
+5. **CAN'T-VERIFY** (no previewCmd, empty DoD, dev-server boot/health
+   failure, MCP unavailable, unparseable verdict JSON, nothing
+   exercisable): files a fingerprint-deduped draft proposal
+   (`behaviour-verify:<originId>` on `kpi_tag`) + raises a
+   level-triggered `behaviour-unverified` action-queue row, then
+   **returns** — merge proceeds. Never silent, never a hard fail.
+
+Artifacts (screenshots under `.mars/behaviour-verify/<taskId>/`, the
+verdicts array, `devServerLogPath`, `behaviourVerifyOutcome`) attach to
+the `behaviour-verify` `step_ended` payload via `getExtraPayload`.
+
+### 5. `merge` → returns `ImplementOutput` `{ taskId, success, message }`
 
 1. **Diagnose short-circuit:** `removeWorktree` + `updateTask({
    status:'done' })`; the verdict-driven follow-up runs from the daemon's
@@ -304,7 +342,7 @@ The engine is **imperative**: a workflow is a plain async TypeScript (or
 plain-JS, in `.mars/workflows/`) function, and `ctx.step(name, fn)` wraps
 each durable unit. There is no declarative DAG, no `defineStep({ deps })`,
 no `{ id, kind, steps }` config object, and no linear `.then` composition
-surface. A custom workflow composes the four engine step primitives and
+surface. A custom workflow composes the five engine step primitives and
 writes task state **only** through the injected `ctx.services.store`, so
 the no-stranded-entity invariant (ADR-0052) holds for custom flows too.
 

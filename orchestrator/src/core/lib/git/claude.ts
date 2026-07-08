@@ -161,6 +161,15 @@ export interface RunClaudeArgs {
   // stderr) at 100%. 0 = disabled.
   maxContextTokens?: number
   /**
+   * Extra MCP server entries merged into the inline `--mcp-config` JSON on
+   * top of the always-injected codegraph server. Because every dispatched
+   * worker runs under `--strict-mcp-config`, this is the ONLY way an extra
+   * server (e.g. Playwright for the behaviour-verify Worker) loads for a
+   * dispatched run. Keyed by server name; values follow the `mcpServers`
+   * entry shape (`{ type: 'stdio', command, args }`).
+   */
+  mcpServers?: Readonly<Record<string, unknown>>
+  /**
    * Optional caller-supplied abort signal. When fired, runClaudeCode
    * SIGKILLs the child and returns a `exitCode: 137` result. Used by the
    * read/grep span watcher to terminate sessions that have stalled on
@@ -271,7 +280,10 @@ export const resolveCodegraphRoot = (cwd: string): string => {
 // CODEGRAPH_CLI_SYSTEM_PROMPT and the divergence note in templates/mcp.json.
 //
 // See also: templates/mcp.json `_comment` field for the interactive-session side.
-export const codegraphMcpConfigJson = (repoRoot: string): string =>
+export const codegraphMcpConfigJson = (
+  repoRoot: string,
+  extraServers?: Readonly<Record<string, unknown>>,
+): string =>
   JSON.stringify({
     mcpServers: {
       codegraph: {
@@ -279,6 +291,10 @@ export const codegraphMcpConfigJson = (repoRoot: string): string =>
         command: 'codegraph',
         args: ['serve', '--mcp', '--no-watch', '--path', repoRoot],
       },
+      // Worker-pinned extra servers (WorkerConfig.mcpConfig) — e.g. the
+      // Playwright MCP server for the behaviour-verify Worker. Merged AFTER
+      // codegraph so a Worker could in principle override it, though none do.
+      ...(extraServers ?? {}),
     },
   })
 
@@ -534,6 +550,7 @@ export const runClaudeCode = async ({
   agent,
   disallowedTools,
   maxContextTokens,
+  mcpServers,
   externalAbort,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
   const conversation: ClaudeEvent[] = []
@@ -597,10 +614,17 @@ export const runClaudeCode = async ({
       bare,
       agent,
       disallowedTools,
-      // No mcpConfig: workers use the codegraph CLI directly (see
-      // CODEGRAPH_CLI_SYSTEM_PROMPT) rather than the MCP server, eliminating
-      // the fixed token tax from schema + instruction injection on every task.
-      // Interactive sessions still get the MCP via .mcp.json (mars init).
+      // Default workers get NO mcpConfig: they use the codegraph CLI directly
+      // (see CODEGRAPH_CLI_SYSTEM_PROMPT) rather than the MCP server,
+      // eliminating the fixed token tax from schema + instruction injection on
+      // every task. Interactive sessions still get the MCP via .mcp.json (mars
+      // init). ONLY when a Worker pins extra MCP servers (WorkerConfig.mcpConfig
+      // — e.g. the Playwright server for the behaviour-verify Worker) do we emit
+      // an mcpConfig; codegraph is then pinned to the main checkout's index
+      // (the worker runs inside a worktree) and the extra servers merge on top.
+      ...(mcpServers
+        ? { mcpConfig: codegraphMcpConfigJson(resolveCodegraphRoot(cwd), mcpServers) }
+        : {}),
     }),
     cwd,
     async ({ stream, line }) => {

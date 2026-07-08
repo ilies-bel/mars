@@ -55,6 +55,15 @@ export const ACTION_QUEUE_KINDS = [
   // park and again (level-triggered, ADR-0048) if the lease expires without
   // activity.
   'awaiting-human',
+  // The behaviour-verify step could not exercise the task's Definition-of-Done
+  // criteria against a live surface (no preview command, dev server would not
+  // boot/health-check, Playwright MCP unavailable, DoD absent, or the Worker's
+  // verdict JSON was unparseable). The merge proceeded — un-verifiability is
+  // never a hard fail — but it must never be silent either: this level-
+  // triggered row (deduped per origin task; seen_count bumps on re-detection,
+  // ADR-0048) links the task to the fingerprinted draft proposal that
+  // describes the concrete unblock.
+  'behaviour-unverified',
   // A durable Subscriber's handler has thrown on the same event K times in
   // a row; its cursor is blocked (ADR-0032). The operator surface for an
   // otherwise-silent stall — there is no DLQ.

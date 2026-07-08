@@ -326,6 +326,16 @@ export interface RunNonLlmStepOptions<T> {
    * undefined (or omitting this callback) omits the field.
    */
   getCommandOutput?: () => string | undefined
+  /**
+   * Optional. Called after fn() completes (successfully or with a throw) to
+   * supply extra key/value pairs merged into the `step_ended` payload —
+   * mirroring {@link RunWorkerWithSpanOptions.getExtraPayload} for non-LLM
+   * steps. Spread before `evalResults` so evaluators can read the fields.
+   * Used by the behaviour-verify step to attach its outcome and artifact
+   * references when the step never dispatched a Worker (skip / no-surface
+   * branches). Returning an empty object is a no-op.
+   */
+  getExtraPayload?: () => Record<string, unknown>
 }
 
 /**
@@ -363,6 +373,7 @@ export const runNonLlmStepWithSpan = async <T>(
     fn,
     getVegaInfo,
     getCommandOutput,
+    getExtraPayload,
   } = options
 
   const startedAt = Date.now()
@@ -387,6 +398,7 @@ export const runNonLlmStepWithSpan = async <T>(
         ? { workerName: vegaInfo.workerName, sessionId: vegaInfo.sessionId }
         : {}),
       ...(commandOutput !== undefined ? { commandOutput } : {}),
+      ...(getExtraPayload !== undefined ? getExtraPayload() : {}),
     }
     const nonLlmSuccessEvalResults = evaluateStep(stepName, nonLlmSuccessPayload)
     await safeRecord(traceStore, {
@@ -410,6 +422,7 @@ export const runNonLlmStepWithSpan = async <T>(
       failureReason: msg.slice(0, 200),
       durationMs: Date.now() - startedAt,
       ...(commandOutput !== undefined ? { commandOutput } : {}),
+      ...(getExtraPayload !== undefined ? getExtraPayload() : {}),
     }
     const nonLlmFailureEvalResults = evaluateStep(stepName, nonLlmFailurePayload)
     await safeRecord(traceStore, {

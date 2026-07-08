@@ -41,7 +41,13 @@ export const FIXER_BACKLOG_DENIED_TOOLS: readonly string[] = [
   'Bash(mars draft*)',
 ] as const
 
-export type WorkerName = 'Coder' | 'Planner' | 'Slicer' | 'Triager' | 'Fixer'
+export type WorkerName =
+  | 'Coder'
+  | 'Planner'
+  | 'Slicer'
+  | 'Triager'
+  | 'Fixer'
+  | 'BehaviourVerifier'
 
 // Execution runtime for a Worker. 'headless' runs via `claude -p` in a
 // non-interactive subprocess (current default for all built-in Workers).
@@ -117,6 +123,14 @@ export interface WorkerConfig {
   // task's tag list intersects this set. Workers with no tags entry are never
   // selected by tag (they are dispatched by kind or as the fallback).
   readonly tags?: readonly string[]
+  // Extra MCP server entries pinned for this Worker, merged into the inline
+  // `--mcp-config` JSON on top of the always-injected codegraph server (see
+  // claudeStreamArgs' --mcp-config/--strict-mcp-config injection point in
+  // ../lib/git/claude.ts). Keyed by server name; values follow the
+  // `mcpServers` entry shape ({ type: 'stdio', command, args }). First
+  // consumer: the behaviour-verify Worker, which loads Playwright MCP for
+  // that step only. Headless runtime only — the pty path does not thread it.
+  readonly mcpConfig?: Readonly<Record<string, unknown>>
 }
 
 // Resolve a Worker's effective context token budget. The env var
@@ -272,6 +286,28 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     provider: 'claude',
     tags: ['fixer'],
   },
+  // Behaviour-verify Worker: drives Playwright MCP against the live dev
+  // server booted by the behaviour-verify step and emits per-criterion
+  // verdict JSON. Read-only tool surface — it can observe and report but
+  // never "fix" the surface to make a criterion pass. bypassPermissions is
+  // required so headless MCP browser tool calls do not stall on a permission
+  // prompt no human is listening to; the read-only denial list is the actual
+  // safety boundary. The Playwright MCP server itself is injected per run by
+  // the behaviour-verify primitive (it carries the per-task artifact
+  // output dir), via the WorkerConfig.mcpConfig field above.
+  BehaviourVerifier: {
+    name: 'BehaviourVerifier',
+    model: CLAUDE_SONNET_MODEL,
+    effort: 'medium',
+    permissionMode: 'bypassPermissions',
+    bare: false,
+    disallowedTools: READ_ONLY_DENIED_TOOLS,
+    outputFormat: 'stream-json',
+    maxContextTokens: resolveWorkerMaxContextTokens(100_000),
+    runtime: 'headless',
+    provider: 'claude',
+    tags: ['behaviour-verifier'],
+  },
 } as const
 
 // Construction-time guard. `claude -p` cannot accept both --system-prompt
@@ -330,6 +366,7 @@ const buildWorker = (config: WorkerConfig): Worker => {
             agent: config.agent,
             disallowedTools: config.disallowedTools,
             maxContextTokens: config.maxContextTokens,
+            mcpServers: config.mcpConfig,
             externalAbort: options.externalAbort,
           }),
   }
@@ -341,6 +378,7 @@ export const Workers: Readonly<Record<WorkerName, Worker>> = {
   Slicer: buildWorker(WORKER_CONFIGS.Slicer),
   Triager: buildWorker(WORKER_CONFIGS.Triager),
   Fixer: buildWorker(WORKER_CONFIGS.Fixer),
+  BehaviourVerifier: buildWorker(WORKER_CONFIGS.BehaviourVerifier),
 } as const
 
 export const getWorker = (name: WorkerName): Worker => Workers[name]

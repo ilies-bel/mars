@@ -39,7 +39,7 @@
 export { defineWorkflow } from '@mars/workflow'
 export type { WorkflowCtx } from '@mars/workflow'
 
-// ── Domain primitives: the four composable steps (`(ctx, opts)`) ──────────────
+// ── Domain primitives: the five composable steps (`(ctx, opts)`) ──────────────
 // Each defaults every field from `ctx.input`, so the terse form is just
 // `runAgent(ctx)`. The `*Opts` types are exported for authors who want to type
 // an explicit override bag; plumbing types (MarsServices) and per-call result
@@ -51,6 +51,7 @@ export {
   merge,
   awaitHuman,
 } from './primitives'
+export { behaviourVerify } from './primitives/behaviour-verify'
 export type {
   MarsWorkflowInput,
   SetupWorktreeOpts,
@@ -59,3 +60,4 @@ export type {
   MergeOpts,
   AwaitHumanOpts,
 } from './primitives'
+export type { BehaviourVerifyOpts } from './primitives/behaviour-verify'

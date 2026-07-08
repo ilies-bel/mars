@@ -199,9 +199,12 @@ export type MarsCtx = WorkflowCtx<MarsServices, MarsWorkflowInput>
 /**
  * Internal trace/identity context every primitive needs to wrap its work in a
  * span and attribute its shell-outs. Resolved from `ctx` by {@link resolveTrace}
- * — never passed by the caller.
+ * — never passed by the caller. Exported (with the resolver helpers below) so
+ * the sibling primitive module `./behaviour-verify.ts` shares the same
+ * per-ctx memoised caches instead of duplicating the plumbing; scaffolded
+ * workflows never touch these.
  */
-interface PrimitiveTraceArgs {
+export interface PrimitiveTraceArgs {
   /** Engine run id (`ctx.runId`); used as `workflowInstanceId` on spans. */
   workflowInstanceId: string
   /** Stable origin attribution for every trace event. */
@@ -224,7 +227,7 @@ const traceCache = new WeakMap<object, Promise<PrimitiveTraceArgs>>()
  * task id. A null/absent traceStore collapses to `nullTraceStore` so a custom
  * workflow never fails on observability.
  */
-const resolveTrace = (ctx: MarsCtx, taskId: string): Promise<PrimitiveTraceArgs> => {
+export const resolveTrace = (ctx: MarsCtx, taskId: string): Promise<PrimitiveTraceArgs> => {
   let p = traceCache.get(ctx)
   if (!p) {
     p = (async (): Promise<PrimitiveTraceArgs> => {
@@ -256,7 +259,7 @@ const worktreeCache = new WeakMap<object, WorktreeRef>()
  * this, `mars continue` after a merge-preflight failure loops forever on
  * "no worktree available".
  */
-const resolveWorktree = async (
+export const resolveWorktree = async (
   ctx: MarsCtx,
   taskId: string,
   store: TaskStore,
@@ -282,6 +285,7 @@ const resolveWorktree = async (
 
 /** Read the run's dispatch input (never throws; `{}` when absent). */
 const input = (ctx: MarsCtx): MarsWorkflowInput => ctx.input ?? {}
+export { input as readWorkflowInput }
 
 // ---------------------------------------------------------------------------
 // Validation recorder seam (`mars workflow validate`)
@@ -319,11 +323,11 @@ const validationRecorder = (ctx: MarsCtx): ValidateRecorder | null =>
  * `ctx.input.taskId` (dispatch fact) → `ctx.runId` (the daemon dispatches with
  * runId === task.id, so this is the common case).
  */
-const resolveTaskId = (ctx: MarsCtx, override?: string): string =>
+export const resolveTaskId = (ctx: MarsCtx, override?: string): string =>
   override ?? input(ctx).taskId ?? ctx.runId
 
 /** Build the per-phase {@link TraceCtx} a primitive threads into git shell-outs. */
-const buildPhaseCtx = (
+export const buildPhaseCtx = (
   trace: PrimitiveTraceArgs,
   taskId: string,
   phase: 'setup' | 'code' | 'verify' | 'merge',
@@ -335,7 +339,7 @@ const buildPhaseCtx = (
 })
 
 /** Resolve the span trace store (undefined when the workflow has no real store). */
-const spanStore = (trace: PrimitiveTraceArgs): TraceEventStore | undefined =>
+export const spanStore = (trace: PrimitiveTraceArgs): TraceEventStore | undefined =>
   trace.traceStore === nullTraceStore ? undefined : trace.traceStore
 
 // ---------------------------------------------------------------------------

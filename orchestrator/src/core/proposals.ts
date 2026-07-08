@@ -1119,6 +1119,31 @@ export const rejectProposal = async (
  * Used by the KPI-drift trigger to skip raising a duplicate draft when an
  * operator has not yet acted on a prior reflection for the same KPI.
  */
+/**
+ * Return the most recent open (status='draft') proposal carrying the given
+ * `kpi_tag`, regardless of source. The `kpi_tag` column doubles as a generic
+ * dedup fingerprint carrier: the behaviour-verify step stamps its fallback
+ * drafts with `behaviour-verify:<originId>` so re-runs of the same task arc
+ * find the existing draft instead of fanning out siblings.
+ */
+export const findOpenDraftByKpiTag = async (
+  kpiTag: string,
+): Promise<{ id: string; title: string } | null> => {
+  await initProposals()
+  const c = stateClient()
+  const r = await c.execute({
+    sql: `SELECT id, title FROM proposals
+           WHERE status = 'draft'
+             AND kpi_tag = ?
+           ORDER BY created_at DESC
+           LIMIT 1`,
+    args: [kpiTag],
+  })
+  if (r.rows.length === 0) return null
+  const row = r.rows[0] as unknown as { id: string; title: string }
+  return { id: row.id, title: row.title }
+}
+
 export const findOpenReflectionDraftForKpi = async (
   kpi: string,
 ): Promise<{ id: string; title: string } | null> => {

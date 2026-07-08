@@ -17,6 +17,7 @@ import {
   merge as mergePrimitive,
   type MarsServices,
 } from './primitives'
+import { behaviourVerify as behaviourVerifyPrimitive } from './primitives/behaviour-verify'
 
 // Pure helpers + failure sentinels were hoisted to `./primitives/shared` so the
 // primitive surface can reuse them without importing this module back. They are
@@ -138,6 +139,13 @@ export const implementWorkflow = defineWorkflow<
     await ctx.step('run-claude-code', () => runAgent(ctx))
     // verify throws on failure, so reaching merge always means verify passed.
     await ctx.step('verify', () => verifyPrimitive(ctx))
+    // Behaviour verification (fifth primitive): exercises the task's
+    // Definition of Done against a live surface via Playwright MCP. PASS and
+    // CAN'T-VERIFY return (CAN'T-VERIFY files a draft proposal + raises a
+    // behaviour-unverified action-queue row first); a behavioural FAIL throws
+    // — so reaching merge also means no DoD criterion was observed
+    // contradicted on a reached live surface.
+    await ctx.step('behaviour-verify', () => behaviourVerifyPrimitive(ctx))
     return await ctx.step('merge', () => mergePrimitive(ctx))
   },
 })
