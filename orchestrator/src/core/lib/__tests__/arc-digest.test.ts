@@ -196,9 +196,25 @@ describe('digestTask — first tool call failure', () => {
 })
 
 describe('digestTask — environmental failure markers', () => {
-  it('detects rate_limit_event', () => {
+  it('treats an allowed rate_limit_event as non-environmental (no false positive)', () => {
+    // An allowed event is informational — the task ran fine despite the limit event.
     const conversation: ClaudeEvent[] = [
-      { type: 'rate_limit_event', retry_after: 30 } as unknown as ClaudeEvent,
+      {
+        type: 'rate_limit_event',
+        rate_limit_info: { status: 'allowed', overageStatus: 'allowed' },
+      } as unknown as ClaudeEvent,
+    ]
+    const d = digestTask('task-1', conversation)
+    expect(d.environmentalFailure).toBe(false)
+    expect(d.environmentalFailureReason).toBeNull()
+  })
+
+  it('detects a rejected rate_limit_event as environmental failure', () => {
+    const conversation: ClaudeEvent[] = [
+      {
+        type: 'rate_limit_event',
+        rate_limit_info: { status: 'rejected', resetsAt: 1000 },
+      } as unknown as ClaudeEvent,
     ]
     const d = digestTask('task-1', conversation)
     expect(d.environmentalFailure).toBe(true)
@@ -217,9 +233,15 @@ describe('digestTask — environmental failure markers', () => {
     expect(d.environmentalFailureReason).toMatch(/synthetic/)
   })
 
-  it('detects result events with api_error_status', () => {
+  it('detects result events with is_error=true and api_error_status=429', () => {
+    // Secondary signal: no rate_limit_event, but a hard 429 result.
     const conversation: ClaudeEvent[] = [
-      { type: 'result', subtype: 'error_during_execution', api_error_status: 429 } as unknown as ClaudeEvent,
+      {
+        type: 'result',
+        subtype: 'error_during_execution',
+        is_error: true,
+        api_error_status: 429,
+      } as unknown as ClaudeEvent,
     ]
     const d = digestTask('task-1', conversation)
     expect(d.environmentalFailure).toBe(true)
@@ -227,14 +249,21 @@ describe('digestTask — environmental failure markers', () => {
   })
 
   it('combines multiple environmental markers in a single reason string', () => {
+    // Rejected rate_limit_event + synthetic assistant → two separate markers.
     const conversation: ClaudeEvent[] = [
-      { type: 'rate_limit_event' } as unknown as ClaudeEvent,
-      { type: 'result', api_error_status: 429 } as unknown as ClaudeEvent,
+      {
+        type: 'rate_limit_event',
+        rate_limit_info: { status: 'rejected', resetsAt: 0 },
+      } as unknown as ClaudeEvent,
+      {
+        type: 'assistant',
+        message: { role: 'assistant', model: '<synthetic>', content: [] },
+      } as unknown as ClaudeEvent,
     ]
     const d = digestTask('task-1', conversation)
     expect(d.environmentalFailure).toBe(true)
     expect(d.environmentalFailureReason).toContain('rate_limit_event')
-    expect(d.environmentalFailureReason).toContain('429')
+    expect(d.environmentalFailureReason).toContain('synthetic')
   })
 
   it('returns environmentalFailure=false for a normal conversation', () => {
@@ -293,7 +322,10 @@ describe('digestArc', () => {
       {
         taskId: 'task-2',
         conversation: [
-          { type: 'rate_limit_event' } as unknown as ClaudeEvent,
+          {
+            type: 'rate_limit_event',
+            rate_limit_info: { status: 'rejected', resetsAt: 0 },
+          } as unknown as ClaudeEvent,
         ],
       },
     ]

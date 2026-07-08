@@ -1,4 +1,4 @@
-import type { ClaudeEvent } from './claude-stream'
+import { type ClaudeEvent, extractQuotaRejected } from './claude-stream'
 
 /**
  * Mechanical, LLM-free digest of one task's ClaudeEvent[] conversation.
@@ -29,9 +29,11 @@ export interface TaskDigest {
    * or null when environmentalFailure is false.
    *
    * Markers detected:
-   * - rate_limit_event: a top-level { type: 'rate_limit_event' } event
+   * - rate_limit_event rejected or api_error_status=429: quota/rate-limit rejection
+   *   detected via extractQuotaRejected() — only a rate_limit_event with
+   *   rate_limit_info.status==='rejected' counts; an 'allowed' event is ignored.
+   *   Secondary signal: result with is_error=true and api_error_status===429.
    * - synthetic assistant: an assistant message with message.model === '<synthetic>'
-   * - api_error_status: a result event with a non-undefined api_error_status field
    */
   environmentalFailureReason: string | null
   /** Total assistant+user event count. */
@@ -140,14 +142,18 @@ export const digestTask = (taskId: string, conversation: ClaudeEvent[]): TaskDig
   let turnCount = 0
   const envReasons: string[] = []
 
+  // ── Environmental failure: quota/rate limit rejection ──────────────────
+  // Delegates to extractQuotaRejected (single source of truth for the
+  // rate_limit_info.status predicate). Only 'rejected' events count;
+  // 'allowed' events are informational and must not flag environmentalFailure.
+  if (extractQuotaRejected(conversation) !== null) {
+    envReasons.push('rate_limit_event rejected or api_error_status=429')
+  }
+
   for (const event of conversation) {
     if (event.type === 'assistant' || event.type === 'user') turnCount++
 
     // ── Environmental failure markers ──────────────────────────────────────
-    if (event.type === 'rate_limit_event') {
-      envReasons.push('rate_limit_event detected')
-    }
-
     if (event.type === 'assistant') {
       const msg = event.message
       if (msg && typeof msg === 'object' && !Array.isArray(msg)) {
@@ -156,10 +162,6 @@ export const digestTask = (taskId: string, conversation: ClaudeEvent[]): TaskDig
           envReasons.push('synthetic assistant message (model="<synthetic>")')
         }
       }
-    }
-
-    if (event.type === 'result' && event.api_error_status !== undefined) {
-      envReasons.push(`result event with api_error_status=${String(event.api_error_status)}`)
     }
 
     // ── Tool use extraction ────────────────────────────────────────────────
