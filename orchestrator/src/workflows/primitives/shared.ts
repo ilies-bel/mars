@@ -281,6 +281,12 @@ export const DEVIATION_RULES = [
   '',
   '**Explore-trust rule — treat sub-agent summaries as authoritative.** When an Explore or general-purpose sub-agent returns a structured summary citing file paths and line numbers, treat that summary as authoritative orientation. Proceed directly to an Edit or Write within at most TWO follow-up Reads, and only Read ranges the sub-agent did NOT cover. Re-reading a file the sub-agent already summarised counts as analysis paralysis.',
   '',
+  '**Rule 6 — Prove pre-existing test failures against the merge base.** If the test suite ends with failures you believe are pre-existing (inherited from the merge base and unrelated to your change), you MUST prove this claim before asserting `tests pass`:',
+  '',
+  '  1. Run `git stash --include-untracked && npx vitest run <failing-file>; git stash pop` (or the equivalent `git checkout $(git merge-base HEAD origin/main) -- <file>` pattern) to reproduce the failure against the merge base.',
+  '  2. Quote BOTH result summaries verbatim in the completion report: the branch-tip run result and the merge-base baseline run result.',
+  '  3. If the baseline check cannot be run (dirty stash conflict, missing merge base, harness restriction), the completion report MUST use the literal phrase `pre-existing UNVERIFIED` instead of `tests pass`.',
+  '',
   '`$TASK_ID` is the id of the task you are executing right now; the orchestrator passes it to you in the brief below.',
 ].join('\n')
 
@@ -543,6 +549,7 @@ export const COMPLETION_REPORT_CONTRACT = [
   '- For free-prose tasks, one line per top-level goal you inferred (state',
   '  each explicitly — do not collapse multiple goals into one line).',
   '- `partial` and `blocked` lines MUST name what remains and why.',
+  '- When asserting a test failure is pre-existing, quote BOTH the branch-tip and merge-base result summaries verbatim. If the baseline check could not be run, write `pre-existing UNVERIFIED` instead of `tests pass`.',
 ].join('\n')
 
 // ---------------------------------------------------------------------------
