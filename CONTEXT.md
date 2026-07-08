@@ -447,3 +447,7 @@ _Avoid_: generated workflow, agent workflow, dynamic pipeline, llm workflow
 **Behaviour verification**:
 A pipeline step that exercises a task's Definition-of-Done criteria against a live running surface via Playwright MCP (clicking the interface, taking screenshots, asserting observable behaviour) rather than static typecheck/test/lint.
 _Avoid_: e2e gate, ui test, acceptance test, behavioural gate, playwright step
+
+**Spend meter**:
+An observe-and-warn subsystem that sums cache-weighted token usage over a rolling wall-clock window and per-arc, raising a level-triggered action-queue row when a configured token threshold is crossed; it never pauses dispatch or suppresses recoveries.
+_Avoid_: spend governor, budget guard, cost cap, token governor, metric, gauge
