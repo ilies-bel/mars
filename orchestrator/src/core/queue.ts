@@ -401,6 +401,17 @@ export interface Task {
    * `mars task add --workflow <name>`; orthogonal to `kind` by design.
    */
   workflow: string | null
+  /**
+   * The step name the task is currently parked at when status is
+   * `'awaiting-human'` (written by the manual-step park path). `null` on
+   * non-parked rows and before this column was added.
+   */
+  currentStepName: string | null
+  /**
+   * The step guide shown to the operator while the task is parked at a manual
+   * step. `null` when no guide was provided or the task is not parked.
+   */
+  currentStepGuide: string | null
   createdAt: string
   updatedAt: string
 }
@@ -802,6 +813,15 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // deliberately NOT folded into `kind` (kind stays semantic: task|fix|diagnose).
   if (!names.has('workflow')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN workflow TEXT`)
+  }
+  // current_step_name / current_step_guide: set when a task is parked at a
+  // manual step ('awaiting-human') to record which step the operator is at
+  // and what the step guide instructs. Both are NULL on non-parked rows.
+  if (!names.has('current_step_name')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN current_step_name TEXT`)
+  }
+  if (!names.has('current_step_guide')) {
+    await c.execute(`ALTER TABLE tasks ADD COLUMN current_step_guide TEXT`)
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for ON tasks(fix_for_task_id, failure_signature)`,
@@ -2112,6 +2132,7 @@ SELECT
   t.dev_server_url, t.dev_server_pid, t.preview_validated, t.intent,
   t.lease_owner, t.leased_at, t.lease_note,
   t.origin_session_id, t.workflow,
+  t.current_step_name, t.current_step_guide,
   t.created_at, t.updated_at
 FROM tasks t`
 
@@ -2182,6 +2203,8 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     leaseNote: (row.lease_note as string | null) ?? null,
     originSessionId: (row.origin_session_id as string | null) ?? null,
     workflow: (row.workflow as string | null) ?? null,
+    currentStepName: (row.current_step_name as string | null) ?? null,
+    currentStepGuide: (row.current_step_guide as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -2341,6 +2364,8 @@ export const updateTask = async (
       | 'leaseOwner'
       | 'leasedAt'
       | 'leaseNote'
+      | 'currentStepName'
+      | 'currentStepGuide'
     > & {
       /**
        * Typed catalog code for the failure (e.g. `verify:main-dirty`).
@@ -2508,6 +2533,14 @@ export const updateTask = async (
   if (patch.leaseNote !== undefined) {
     fields.push('lease_note = ?')
     args.push(patch.leaseNote)
+  }
+  if (patch.currentStepName !== undefined) {
+    fields.push('current_step_name = ?')
+    args.push(patch.currentStepName)
+  }
+  if (patch.currentStepGuide !== undefined) {
+    fields.push('current_step_guide = ?')
+    args.push(patch.currentStepGuide)
   }
   if (patch.failureReason !== undefined) {
     fields.push('failure_reason = ?')

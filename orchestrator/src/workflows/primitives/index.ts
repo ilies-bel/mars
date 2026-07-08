@@ -148,6 +148,24 @@ export interface MarsServices {
   store: TaskStore
   /** Workflow-level trace store; `nullTraceStore` disables span/event capture. */
   traceStore: TraceEventStore
+  /**
+   * Optional hook registered by the daemon for the promise-based manual step
+   * park/resume mechanism. When present, a step with `mode === 'manual'` calls
+   * this hook instead of the legacy `awaitHuman` sentinel-throw path. The hook
+   * parks the task (writes `current_step_name` / `current_step_guide` via the
+   * Arc write funnel, raises an action-queue row) and returns a Promise that
+   * resolves when the operator fires `mars step done` for that step name.
+   *
+   * When absent, the primitives fall back to {@link awaitHuman} (sentinel
+   * throw). This keeps the primitives usable in scaffolded workflows and test
+   * contexts that do not wire up the full daemon.
+   */
+  onManualPark?: (args: {
+    runId: string
+    taskId: string
+    stepName: string
+    guide: string | null
+  }) => Promise<void>
 }
 
 /**
@@ -778,14 +796,18 @@ export const runAgent = async (
     opts.resumeFromCodePhase ?? input(ctx).resumeFromCodePhase ?? false
   const model = opts.model
   // Manual Execution mode: park for the Foreground session instead of
-  // spawning the agent. awaitHuman throws the park sentinel, so control never
-  // reaches the agent spawn below — the workflow file's declaration is the
-  // guarantee, not a runtime convention.
+  // spawning the agent. When the daemon has registered an onManualPark hook,
+  // use the promise-based park/resume mechanism so the workflow continues
+  // in-process after `mars step done` fires. Without the hook, fall back to
+  // the awaitHuman sentinel-throw so the step is durable across restarts.
   if ((opts.mode ?? 'auto') === 'manual') {
-    await awaitHuman(ctx, {
-      taskId,
-      note: opts.guide ?? `manual code step — implement the task by hand`,
-    })
+    const stepName = ctx.currentStep?.name ?? 'code'
+    const guide = opts.guide ?? `manual code step — implement the task by hand`
+    if (ctx.services.onManualPark) {
+      await ctx.services.onManualPark({ runId: ctx.runId, taskId, stepName, guide })
+      return { sessionId: null }
+    }
+    await awaitHuman(ctx, { taskId, note: guide })
   }
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
@@ -1153,13 +1175,18 @@ export const verify = async (
   const recoveryPayload =
     opts.recoveryPayload ?? input(ctx).recoveryPayload ?? null
   // Manual Execution mode: park for the Foreground session instead of running
-  // the automated gates. awaitHuman throws the park sentinel; on `mars step
-  // done` the engine re-enters past this step.
+  // the automated gates. When the daemon has registered an onManualPark hook,
+  // use the promise-based park/resume mechanism so the workflow continues
+  // in-process after `mars step done` fires. Without the hook, fall back to
+  // the awaitHuman sentinel-throw so the step is durable across restarts.
   if ((opts.mode ?? 'auto') === 'manual') {
-    await awaitHuman(ctx, {
-      taskId,
-      note: opts.guide ?? 'manual verify step — QA the work by hand',
-    })
+    const stepName = ctx.currentStep?.name ?? 'verify'
+    const guide = opts.guide ?? 'manual verify step — QA the work by hand'
+    if (ctx.services.onManualPark) {
+      await ctx.services.onManualPark({ runId: ctx.runId, taskId, stepName, guide })
+      return { verified: true }
+    }
+    await awaitHuman(ctx, { taskId, note: guide })
   }
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
@@ -2224,6 +2251,13 @@ export interface AwaitHumanOpts {
  * Park the task in 'awaiting-human' and durably suspend the pipeline until
  * the operator releases the lease via `mars release <id>`.
  *
+ * @deprecated **Prefer `mode: 'manual'` on {@link runAgent} or {@link verify}.**
+ * When a step carries `mode === 'manual'`, the primitive uses the
+ * promise-based park/resume mechanism (`onManualPark` / `resolveManualStep`)
+ * registered by the daemon, which lets the workflow continue in-process after
+ * `mars step done` without a re-dispatch. `awaitHuman` remains for backward
+ * compatibility and as the fallback when no `onManualPark` hook is registered.
+ *
  * **Behaviour:**
  *   1. Transitions the task to `'awaiting-human'` via `updateTask` (Arc
  *      funnel, ADR-0052) and raises an `'awaiting-human'` action-queue row so
@@ -2292,7 +2326,9 @@ export const awaitHuman = async (
 
   // Transition to 'awaiting-human' through the Arc write funnel (ADR-0052).
   // Uses the same field set as Arc.parkForHuman so the task row is consistent
-  // with the server's attach/release paths.
+  // with the server's attach/release paths. current_step_name and
+  // current_step_guide are written here so the daemon's handleStepDone can
+  // locate the pending promise on a promise-based park (resolveManualStep).
   await updateTask(
     taskId,
     {
@@ -2300,6 +2336,8 @@ export const awaitHuman = async (
       leaseOwner,
       leasedAt: now,
       leaseNote: note,
+      currentStepName: stepName,
+      currentStepGuide: note,
     },
     store,
   )

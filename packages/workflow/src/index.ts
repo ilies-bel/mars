@@ -39,8 +39,8 @@ export type {
 export { pinoLogger, silentLogger } from './logger.js';
 export type { Logger, LogFields } from './logger.js';
 
-// Agent runtimes
-export { HeadlessRuntime } from './runtime.js';
+// Agent runtimes + manual step park/resume hooks
+export { HeadlessRuntime, awaitManualDone, resolveManualStep } from './runtime.js';
 export type {
   AgentRuntime,
   AgentRunOptions,

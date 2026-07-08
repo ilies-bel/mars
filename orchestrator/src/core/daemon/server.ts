@@ -54,6 +54,7 @@ import { readAllTranscriptsForTask } from '../lib/claude-transcript'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { createHash } from 'node:crypto'
 import type { Logger, WorkflowEvent } from '@mars/workflow'
+import { resolveManualStep, awaitManualDone } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { exec, resolveGitBin } from '../lib/git/internal'
 import { classifyInstallRoute } from './install-route'
@@ -76,6 +77,7 @@ import {
   type CompletionReport,
 } from '../../workflows/primitives/shared'
 import {
+  raiseActionQueueItem,
   supersedeObsoletePreflightDirtyMainRows,
   supersedeOrphanedHitlActionQueueRows,
 } from '../lib/action-queue'
@@ -828,7 +830,72 @@ export const startDaemon = async (
         },
         {
           store: workflowStore,
-          services: { store: taskStore, traceStore },
+          services: {
+            store: taskStore,
+            traceStore,
+            // Promise-based manual step park/resume hook (ADR-0052 write funnel).
+            // Called by runAgent/verify when mode === 'manual'; parks the task and
+            // suspends the workflow until handleStepDone resolves the promise.
+            // Preserves lease_owner and origin_session_id across parks so the
+            // Foreground session walks the runbook without re-attaching.
+            onManualPark: async ({
+              runId,
+              taskId,
+              stepName,
+              guide,
+            }: {
+              runId: string
+              taskId: string
+              stepName: string
+              guide: string | null
+            }): Promise<void> => {
+              const now = new Date().toISOString()
+              // Preserve the prior lease owner across manual steps so the same
+              // Foreground operator re-receives the lease at the next park
+              // without re-attaching ('mars step done' keepLease:true kept it).
+              let leaseOwner = 'workflow:manual-step'
+              try {
+                const t = await getTask(taskId, taskStore)
+                if (t?.leaseOwner && t.leaseOwner !== 'workflow:await-human' && t.leaseOwner !== 'workflow:manual-step') {
+                  leaseOwner = t.leaseOwner
+                }
+              } catch { /* fall through — park under sentinel identity */ }
+              await updateTask(
+                taskId,
+                {
+                  status: 'awaiting-human',
+                  leaseOwner,
+                  leasedAt: now,
+                  leaseNote: guide,
+                  currentStepName: stepName,
+                  currentStepGuide: guide,
+                },
+                taskStore,
+              )
+              raiseActionQueueItem({
+                kind: 'awaiting-human',
+                category: 'daemon',
+                priority: 'normal',
+                title: `Task ${taskId} parked at step '${stepName}' — awaiting human`,
+                body:
+                  `Task ${taskId} is parked at manual step '${stepName}'.` +
+                  (guide ? ` Step guide: ${guide}.` : '') +
+                  ` Lease: ${leaseOwner}. Run \`mars step done ${taskId}\` to continue.`,
+                payload: { taskId, leaseOwner, leasedAt: now, leaseNote: guide, stepName },
+                context: { taskId },
+                raisedBy: 'primitive:manual-step',
+                signature: taskId,
+                originTaskId: taskId,
+                occurrence: { leaseOwner, leasedAt: now, parkedAt: now },
+              }).catch((err: unknown) => {
+                console.error(
+                  `[manual-park] task ${taskId} action-queue raise errored:`,
+                  err,
+                )
+              })
+              return awaitManualDone(runId, stepName)
+            },
+          },
           runId: task.id,
           logger: workflowLogger,
           onEvent,
@@ -2715,11 +2782,20 @@ export const startDaemon = async (
     }
   }
 
-  // `mars step done <id>`: complete the current manual step. Re-queues the
-  // task for pipeline continuation like a normal release, but KEEPS the lease
-  // identity — when the pipeline parks at the task's next manual step,
-  // awaitHuman re-grants the lease to the same owner so the Foreground
-  // session walks the runbook without re-attaching.
+  // `mars step done <id>`: complete the current manual step. Two paths:
+  //
+  // 1. Promise-based (new): if an in-process workflow is awaiting the manual
+  //    step via awaitManualDone(), resolveManualStep() unblocks it in place.
+  //    The workflow transitions the task itself; no re-queue is needed.
+  //    The task status is updated to 'running' here so the UI reflects the
+  //    correct state while the in-process workflow resumes to the next step.
+  //
+  // 2. Sentinel fallback (legacy / after daemon restart): no in-memory promise
+  //    exists; fall back to releaseLease(keepLease:true) + bus.emit so the
+  //    task is re-queued and the engine re-enters past the parked step.
+  //
+  // The lease identity is preserved in both paths — no re-attach is required
+  // when the workflow parks at the task's next manual step.
   const handleStepDone = async (id: string): Promise<void> => {
     const task = await getTask(id)
     if (!task) throw new Error(`task ${id} not found`)
@@ -2731,6 +2807,17 @@ export const startDaemon = async (
     if (task.leaseOwner === null) {
       throw new Error(`task ${id} has no active lease; use 'mars attach ${id}' first`)
     }
+    const stepName = task.currentStepName ?? 'unknown'
+    // Path 1: promise-based — resolve the in-flight workflow's pending park.
+    const resolved = resolveManualStep(id, stepName)
+    if (resolved) {
+      // Workflow continues in-process. Transition task to 'running' so the
+      // UI reflects the correct state; the workflow will update further as it
+      // executes subsequent steps.
+      await updateTask(id, { status: 'running' })
+      return
+    }
+    // Path 2: sentinel fallback — re-queue for engine re-entry.
     await Arc.load(id).releaseLease(id, { keepLease: true })
     bus.emit('task.queued', { taskId: id })
   }

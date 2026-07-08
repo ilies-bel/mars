@@ -815,7 +815,12 @@ export class Arc {
    */
   async parkForHuman(
     taskId: string,
-    options: { leaseOwner: string; leaseNote?: string | null },
+    options: {
+      leaseOwner: string
+      leaseNote?: string | null
+      stepName?: string | null
+      stepGuide?: string | null
+    },
   ): Promise<void> {
     const now = new Date().toISOString()
     await updateTask(taskId, {
@@ -823,6 +828,8 @@ export class Arc {
       leaseOwner: options.leaseOwner,
       leasedAt: now,
       leaseNote: options.leaseNote ?? null,
+      currentStepName: options.stepName ?? null,
+      currentStepGuide: options.stepGuide ?? null,
     })
     await raiseActionQueueItem({
       kind: 'awaiting-human',
