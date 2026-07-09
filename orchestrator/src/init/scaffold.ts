@@ -15,6 +15,7 @@ const TEMPLATES_DIR = resolve(
 )
 
 const TEMPLATE_CLAUDE_MD = resolve(TEMPLATES_DIR, 'CLAUDE.md')
+const TEMPLATE_GITIGNORE = resolve(TEMPLATES_DIR, '.gitignore')
 
 /**
  * Bundled template for the repo-root `.mcp.json` that registers the codegraph
@@ -188,5 +189,43 @@ export const mergeMcpJson = (repoRoot: string): void => {
     }
   } catch {
     // Swallow — never let the PATH probe break init
+  }
+}
+
+/**
+ * Merge the bundled JVM crash-dump .gitignore block into `existing` content.
+ *
+ * The block is appended only when NEITHER `hs_err_pid*.log` NOR
+ * `replay_pid*.log` is already present. This keeps the operation idempotent
+ * and safe for repos that already added the rules manually (such as
+ * projet-elissa, which got them in commit 12c3d38). Existing repos are never
+ * touched unless they opt in by calling this function.
+ *
+ * Returns the (possibly modified) string — callers decide whether to write it.
+ */
+export const mergeGitignore = (existing: string): string => {
+  if (
+    existing.includes('hs_err_pid*.log') ||
+    existing.includes('replay_pid*.log')
+  ) {
+    return existing
+  }
+  const block = readFileSync(TEMPLATE_GITIGNORE, 'utf8')
+  // Ensure a blank-line separator between existing content and the new block.
+  const trimmed = existing.trimEnd()
+  const separator = trimmed.length === 0 ? '' : '\n\n'
+  return trimmed + separator + block
+}
+
+/**
+ * Read `<repoRoot>/.gitignore` (creating it if absent), merge the JVM
+ * crash-dump block, and write the result back. Idempotent on subsequent calls.
+ */
+export const applyGitignoreScaffold = (repoRoot: string): void => {
+  const destPath = resolve(repoRoot, '.gitignore')
+  const existing = existsSync(destPath) ? readFileSync(destPath, 'utf8') : ''
+  const merged = mergeGitignore(existing)
+  if (merged !== existing) {
+    writeFileSync(destPath, merged)
   }
 }

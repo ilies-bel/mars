@@ -21,6 +21,7 @@ import {
   validateSupervisor,
 } from '../init/render'
 import {
+  applyGitignoreScaffold,
   mergeMcpJson,
   planClaudeConflicts,
   scaffoldClaudeConfig,
@@ -469,7 +470,12 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
       mergeMcpJson(appCtx.repoRoot)
       return [...w2, '.mcp.json']
     })
-    const w2c = await ctx.step('scaffold-workflows', () => runScaffoldWorkflows(w2b))
+    const w2d = await ctx.step('merge-gitignore', () => {
+      const appCtx = resolveContext()
+      applyGitignoreScaffold(appCtx.repoRoot)
+      return [...w2b, '.gitignore']
+    })
+    const w2c = await ctx.step('scaffold-workflows', () => runScaffoldWorkflows(w2d))
     const w3 = await ctx.step('init-databases', () => runInitDatabases(w2c))
     const written = await ctx.step('seed-recipes', () => runSeedRecipes(w3))
     await ctx.step('activate-plugin', runActivatePlugin)

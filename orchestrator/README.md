@@ -447,6 +447,11 @@ finds into a single supervisor set under `.mars/supervisors/`.
   and prints both offending paths. Restructure so each tech is a sibling.
 - Empty repo (no manifests anywhere): `mars init` still emits a baseline
   supervisor and a `manifest.json` with an empty stack.
+- **JVM crash-dump rules**: `mars init` appends `hs_err_pid*.log` and
+  `replay_pid*.log` (under a `# JVM crash dumps` comment) to the repo's
+  `.gitignore` if neither pattern is already present. This prevents Gradle /
+  desktop-JVM hard-crash artefacts from dirtying the integration branch. The
+  merge is idempotent — repos that already carry the rules are not modified.
 
 Flags:
 

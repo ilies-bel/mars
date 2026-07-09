@@ -1,0 +1,6 @@
+# JVM crash dumps — written to the working dir when the Gradle/desktop JVM
+# hard-crashes. Pure diagnostics, never source. Prevent these from dirtying
+# the integration branch (Mars main-committer runs in an isolated worktree
+# and cannot see or clear them).
+hs_err_pid*.log
+replay_pid*.log
