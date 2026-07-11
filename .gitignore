@@ -42,3 +42,13 @@ mars.lock
 # template tree can never dirty the working tree, same as the lock above.
 .claude/worktrees/
 **/templates/claude/worktrees/
+
+# Package manager lock files (pnpm-lock.yaml is tracked; bun/npm are not)
+ui/bun.lock
+ui/package-lock.json
+
+# Test runner artifacts
+test-results/
+
+# JVM crash dumps
+hs_err_pid*
