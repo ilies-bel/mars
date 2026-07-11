@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Read-only Progress viewer for the Mars orchestrator queue.",
+  "description": "Dashboard for the Mars orchestrator — tasks, action queue, KPIs, and trace events.",
   "bin": {
     "mars-ui": "./bin/mars-ui.mjs"
   },

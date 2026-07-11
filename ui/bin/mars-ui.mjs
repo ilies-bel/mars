@@ -10,6 +10,21 @@ const distDir = resolve(pkgRoot, 'dist')
 const serverEntry = resolve(pkgRoot, 'server/index.ts')
 
 const argv = [...process.argv.slice(2)]
+
+if (argv.includes('--help') || argv.includes('-h')) {
+  console.log(`Usage: mars-ui [options]
+
+Start the Mars dashboard server.
+
+Options:
+  --dev           Run in development mode (API + Vite dev server)
+  --repo <path>   Path to the Mars repo (default: auto-detected)
+  --port <n>      HTTP port (default: 7777)
+  --host <addr>   Bind address (default: 127.0.0.1)
+  --help          Show this help`)
+  process.exit(0)
+}
+
 const isDev = argv.includes('--dev')
 
 // Strip --dev before forwarding args to the server process

@@ -1,7 +1,7 @@
 import type { IPty } from 'node-pty';
 
 /**
- * A live handle to a spawned Claude session (or test subprocess).
+ * A live handle to a spawned interactive PTY session.
  * The `pty` field exposes the underlying pseudo-terminal process.
  */
 export interface SessionHandle {
@@ -11,6 +11,7 @@ export interface SessionHandle {
   pty: IPty;
   /**
    * Register a handler that receives every chunk the PTY emits.
+   * Each chunk is a UTF-8 string that may contain ANSI escape sequences.
    * Multiple subscribers each receive the same chunks.
    * Returns a function that removes this handler; calling it is idempotent.
    */
@@ -30,9 +31,10 @@ export interface SessionHandle {
    */
   sendMessage(text: string): void;
   /**
-   * Sends SIGTERM to the underlying process. Returns immediately without
-   * waiting for the process to exit. Callers can await `exited` or call
-   * `forceKill()` on their own schedule if the process does not respond.
+   * Requests graceful termination (SIGTERM on Unix, TerminateProcess on Windows).
+   * Returns immediately without waiting for the process to exit. Callers can
+   * await `exited` or call `forceKill()` on their own schedule if the process
+   * does not respond.
    */
   kill(): void;
   /**

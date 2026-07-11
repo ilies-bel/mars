@@ -46,7 +46,7 @@ const KIND_COPY: Record<
   unreachable: {
     headline: "Can't reach the dashboard server right now.",
     remedy:
-      'Start it with `npm run dev:server` in the `ui/` directory, or `npm run dev:all` to run the UI and API server together.',
+      'Run `mars ui` to start the dashboard, or `npm run dev:all` from the ui/ directory for development.',
     severity: 'error',
   },
   'stale-daemon': {

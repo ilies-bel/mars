@@ -5,11 +5,22 @@ const sessions = new Map<string, SessionHandle>();
 /**
  * Store a newly created session handle in the in-memory registry.
  * Throws if a live session with the same id is already registered.
+ *
+ * Module-private — callers outside this file should use the pre-checked
+ * path in `start()` which calls `addSession()` after its own guard.
  */
-export function registerSession(session: SessionHandle): void {
+function registerSession(session: SessionHandle): void {
   if (sessions.has(session.id)) {
-    throw new Error(`Session id "${session.id}" is already in use`);
+    throw new Error(`registerSession: duplicate id "${session.id}" (caller should check getSession first)`);
   }
+  sessions.set(session.id, session);
+}
+
+/**
+ * Insert a session handle into the registry without a duplicate check.
+ * The caller is responsible for ensuring no collision (see `start()`).
+ */
+export function addSession(session: SessionHandle): void {
   sessions.set(session.id, session);
 }
 

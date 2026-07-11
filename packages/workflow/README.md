@@ -249,7 +249,7 @@ output (handy in tests).
 ## Storage
 
 `WorkflowStore` is an interface — the seam the consumer (Mars) implements
-against its own `.mars/queue.db`. Two reference impls ship: `InMemoryStore`
+against its own `.mars/mars.db`. Two reference impls ship: `InMemoryStore`
 (tests, ephemeral runs) and the default `SqliteStore` (`node:sqlite`), which
 creates two tables:
 

@@ -122,7 +122,7 @@ const fetchJson = async <T>(path: string, schema: ZodType<T>, signal?: AbortSign
   const ct = r.headers.get('content-type') ?? ''
   if (!ct.includes('application/json')) {
     throw new ApiError(
-      `GET ${path} → expected JSON but got ${ct || 'unknown'} (is the mars-ui API server running on :7777?)`,
+      `GET ${path} → expected JSON but got ${ct || 'unknown'} (is the mars-ui API server running?)`,
       'unreachable',
     )
   }

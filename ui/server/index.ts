@@ -40,8 +40,23 @@ const parseArgs = (argv: string[]): CliArgs => {
     const a = argv[i]
     const next = () => argv[++i]
     if (a === '--repo') out.repo = next()
-    else if (a === '--port') out.port = Number(next())
-    else if (a === '--host') out.host = next() ?? out.host
+    else if (a === '--port') {
+      const raw = next()
+      const n = Number(raw)
+      if (isNaN(n) || n < 1 || n > 65535) {
+        console.error(`mars-ui: invalid port "${raw}" — must be a number between 1 and 65535`)
+        process.exit(1)
+      }
+      out.port = n
+    }
+    else if (a === '--host') {
+      const val = next()
+      if (val === undefined) {
+        console.error('mars-ui: --host requires a value (e.g. --host 0.0.0.0)')
+        process.exit(1)
+      }
+      out.host = val
+    }
     else if (a === '--dist') out.distDir = next()
   }
   return out
@@ -205,7 +220,7 @@ export const startServer = async (
               : kind === 'draft-proposal' ? 'proposal'
               : null
             if (entityKind === null) {
-              return jsonResponse(400, { error: `unknown actionQueue kind: ${kind}` })
+              return jsonResponse(400, { error: `unknown action-queue kind: ${kind}` })
             }
             const verb =
               path === '/api/action-queue/ack' ? 'ack'
@@ -362,20 +377,6 @@ export const startServer = async (
               return { ...kpi, series: sk !== undefined ? series[sk] : [] }
             })
             return jsonResponse(200, { kpis: kpisWithSeries })
-          } catch (err) {
-            return jsonResponse(500, { error: (err as Error).message })
-          }
-        }
-
-        if (path === '/api/action-queue/dismiss' && req.method === 'POST') {
-          try {
-            const body = await req.json() as { id?: unknown; kind?: unknown }
-            const { id } = body
-            if (typeof id !== 'string' || !id) {
-              return jsonResponse(400, { error: 'id is required' })
-            }
-            const result = await proxyAction(ctx.stateDir, 'dismiss', id)
-            return jsonResponse(result.status, result.body)
           } catch (err) {
             return jsonResponse(500, { error: (err as Error).message })
           }

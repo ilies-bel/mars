@@ -4,7 +4,7 @@
  * `WorkflowStore` is an interface, not a class. Two reference impls ship in
  * the box — an in-memory store (tests, ephemeral runs) and a SQLite store
  * (durable, single file) — but the consumer (Mars) implements it against
- * its own `.mars/queue.db` later. The engine only ever talks to the
+ * its own `.mars/mars.db` later. The engine only ever talks to the
  * interface.
  *
  * The per-step record is the heart of the design. It is a single lean row

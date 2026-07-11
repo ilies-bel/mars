@@ -1,6 +1,6 @@
 import * as pty from 'node-pty';
 import type { SessionHandle } from './session.js';
-import { getSession, registerSession, removeSession } from './registry.js';
+import { addSession, getSession, removeSession } from './registry.js';
 
 export interface StartOptions {
   /** Caller-supplied identifier for this session. */
@@ -13,7 +13,7 @@ export interface StartOptions {
    */
   args: string[];
   /** Environment variables passed to the child process. */
-  env: Record<string, string>;
+  env?: Record<string, string>;
   /**
    * When set, `start` waits until this string appears anywhere in the PTY
    * output before resolving — signalling that the child is ready to receive
@@ -23,20 +23,28 @@ export interface StartOptions {
    * When omitted, `start` resolves immediately after the PTY is created.
    */
   readinessMarker?: string;
+  /**
+   * Maximum time in milliseconds to wait for the {@link readinessMarker}
+   * before rejecting. Only meaningful when `readinessMarker` is set;
+   * ignored otherwise.
+   */
+  readinessTimeoutMs?: number;
 }
 
 /**
  * Launch a process inside a pseudo-terminal and return a session handle.
  *
- * When `opts.readinessMarker` is set, `start` blocks until that string
- * appears in the PTY output.  If the process exits before the marker is
- * observed, `start` rejects with a descriptive error.
+ * When `opts.readinessMarker` is set, the returned promise does not resolve
+ * until that string appears in the PTY output.  If the process exits before
+ * the marker is observed, `start` rejects with a descriptive error.
  *
  * The returned handle is also stored in the library's internal registry
  * so it can be retrieved later via `getSession(id)`.
+ *
+ * @returns A {@link SessionHandle} with PTY access, data subscription, message sending, and lifecycle control.
  */
 export async function start(opts: StartOptions): Promise<SessionHandle> {
-  const { id, cwd, args, env, readinessMarker } = opts;
+  const { id, cwd, args, readinessMarker, readinessTimeoutMs } = opts;
   const [file, ...rest] = args;
 
   if (!file) {
@@ -45,13 +53,13 @@ export async function start(opts: StartOptions): Promise<SessionHandle> {
 
   // Reject before spawning so no process is leaked on a duplicate id.
   if (getSession(id) !== undefined) {
-    throw new Error(`Session id "${id}" is already in use`);
+    throw new Error(`Session "${id}" is already running; call kill() or forceKill() first`);
   }
 
   const proc = pty.spawn(file, rest, {
     name: 'xterm-256color',
     cwd,
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...opts.env ?? {} },
     cols: 80,
     rows: 24,
   });
@@ -102,23 +110,40 @@ export async function start(opts: StartOptions): Promise<SessionHandle> {
       await exited;
     },
   };
-  registerSession(handle);
+  addSession(handle);
 
   if (readinessMarker !== undefined) {
     await new Promise<void>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+
+      const cleanup = () => {
+        unsub();
+        if (timer !== undefined) clearTimeout(timer);
+      };
+
       const unsub = handle.onData((chunk) => {
         if (chunk.includes(readinessMarker)) {
-          unsub();
+          cleanup();
           resolve();
         }
       });
+
       // If the process exits before the marker is seen, surface the exit code.
       handle.exited.then((code) => {
-        unsub();
+        cleanup();
         reject(new Error(
           `Session "${id}" exited with code ${code} before the readiness marker was observed`,
         ));
       });
+
+      if (readinessTimeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          unsub();
+          reject(new Error(
+            `Session "${id}" did not become ready within ${readinessTimeoutMs}ms`,
+          ));
+        }, readinessTimeoutMs);
+      }
     });
   }
 
