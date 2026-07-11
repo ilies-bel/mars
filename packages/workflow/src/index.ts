@@ -39,10 +39,5 @@ export type {
 export { createJsonLogger, silentLogger } from './logger.js';
 export type { Logger, LogFields } from './logger.js';
 
-// Agent runtimes + manual step park/resume hooks
-export { HeadlessRuntime, awaitManualDone, resolveManualStep } from './runtime.js';
-export type {
-  AgentRuntime,
-  AgentRunOptions,
-  HeadlessRuntimeOptions,
-} from './runtime.js';
+// Manual step park/resume hooks
+export { awaitManualDone, resolveManualStep } from './manual-step.js';
