@@ -1,7 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { dirname, isAbsolute, join } from 'node:path'
-import { constants as fsConstants } from 'node:fs'
 import { parseClaudeStreamLine, extractQuotaRejected, type ClaudeEvent } from '../claude-stream'
 import { getLatestContextSize } from '../claude-usage'
 import { FALLBACK_CLAUDE_PATH_DIRS, isExecutableFile } from './internal'

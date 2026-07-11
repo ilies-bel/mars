@@ -10,6 +10,17 @@ const KPI_LABELS: Record<KpiKey, string> = {
   recovery_success_rate: 'Recovery Success',
 }
 
+export const KPI_DESCRIPTIONS: Record<KpiKey, string> = {
+  failure_rate:
+    'Percentage of arcs that failed without ever completing. Lower is better. Target: < 2%.',
+  autonomous_completion_rate:
+    'Percentage of completed arcs that needed no human intervention (no recovery task, no manual unblock). Higher is better. Target: > 85%.',
+  recovery_success_rate:
+    'Percentage of recovery attempts where both the recovery and its origin task completed successfully. Higher is better. Target: > 90%.',
+  cost_per_arc:
+    'Median cache-weighted token cost across completed arcs (p50). Lower is better. Target: < 50k tokens.',
+}
+
 /**
  * Format a KPI's numeric value for human display.
  *
@@ -55,6 +66,7 @@ export const KpiTile = ({ kpi }: KpiTileProps) => {
   return (
     <a
       href={kpiHash(kpi.key)}
+      title={KPI_DESCRIPTIONS[kpi.key]}
       className="flex w-[180px] min-h-[120px] flex-col items-center justify-between rounded border border-iron/20 bg-surface px-4 py-2 font-mono no-underline hover:bg-iron/5 focus:outline-none focus:ring-2 focus:ring-iron/40"
       aria-label={`View ${label} details — ${cue.label}`}
     >

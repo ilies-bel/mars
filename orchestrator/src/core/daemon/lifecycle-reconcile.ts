@@ -2,6 +2,7 @@ import type { Client } from '@libsql/client'
 import {
   initActionQueue,
   resolveAllRowsForTask,
+  setActionQueueState,
   supersedeActionQueueItemsForOrigin,
 } from '../lib/action-queue'
 import type { SupersedeReason } from '../lib/action-queue'
@@ -121,6 +122,31 @@ export async function reconcileTerminalTasks(
   for (const row of scorerOriginOrphans.rows) {
     const originId = (row as unknown as { origin_task_id: string }).origin_task_id
     await resolveAllRowsForTask(originId)
+    rowsResolved++
+  }
+
+  // (b-null) Open rows for task-origin kinds whose origin_task_id is NULL but
+  //          whose payload.originTaskId references a task absent from `tasks`
+  //          entirely. Covers items raised before the origin_task_id column was
+  //          added, or items from code paths that didn't populate it. These
+  //          are orphans whose underlying task was purged.
+  const nullOriginOrphans = await client.execute(`
+    SELECT i.id
+    FROM action_queue_items i
+    WHERE i.state = 'open'
+      AND i.kind NOT IN (${proposalKindList}, ${scorerKindList})
+      AND i.origin_task_id IS NULL
+      AND json_extract(i.payload, '$.originTaskId') IS NOT NULL
+      AND json_extract(i.payload, '$.originTaskId') NOT IN (SELECT id FROM tasks)
+  `)
+
+  for (const row of nullOriginOrphans.rows) {
+    const itemId = (row as unknown as { id: string }).id
+    await setActionQueueState(itemId, 'resolved', {
+      resolution: 'superseded',
+      note: 'superseded: orphaned (origin_task_id NULL, payload.originTaskId absent from tasks)',
+      by: 'reconcile:null-origin-orphan',
+    })
     rowsResolved++
   }
 

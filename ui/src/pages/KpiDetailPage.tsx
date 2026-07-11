@@ -1,9 +1,11 @@
-import type { KpiKey } from '@/shared/schemas'
+import { useState, useCallback } from 'react'
+import type { KpiKey, KpiArc } from '@/shared/schemas'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { useKpis } from '@/entities/kpi/useKpis'
 import { useKpiArcs } from '@/entities/kpi/useKpiArcs'
 import { kpiBand, kpiBandCue } from '@/entities/kpi/bands'
-import { formatKpiValue } from '@/widgets/KpiTile'
+import { kpiDriftDirection } from '@/entities/kpi/types'
+import { formatKpiValue, KPI_DESCRIPTIONS } from '@/widgets/KpiTile'
 import { Sparkline } from '@/widgets/Sparkline'
 import { taskHash } from '@/shared/routing'
 
@@ -14,6 +16,171 @@ const KPI_LABELS: Record<KpiKey, string> = {
   recovery_success_rate: 'Recovery Success',
 }
 
+const KPI_GUIDANCE: Record<KpiKey, { drivers: string; actions: string[] }> = {
+  failure_rate: {
+    drivers:
+      'Arcs fail when the verify step catches regressions, when the coder bails without a fix, or when the daemon kills a run over budget.',
+    actions: [
+      'Tighten task prompts: include file paths, verify commands, and clear done-criteria.',
+      'Improve the verify step: add targeted test commands instead of broad tsc+test sweeps.',
+      'Break complex tasks into smaller, focused sub-tasks via blocker chains.',
+      'Check recent failed arcs below for recurring failure signatures.',
+    ],
+  },
+  autonomous_completion_rate: {
+    drivers:
+      'Arcs lose autonomy when they trigger a recovery task (fix attempt needed) or hit a manual unblock (task-blocked action queue item).',
+    actions: [
+      'Review blocked tasks: are blockers set correctly, or are tasks blocking on unrelated work?',
+      'Improve coder deviation rules: ensure the coder commits partial work and emits --blocked-by follow-ups instead of bailing.',
+      'Tune the recovery mechanism: recovery tasks that fail lower this KPI further.',
+      'Reduce ambiguity in task prompts to prevent the coder from getting stuck.',
+    ],
+  },
+  recovery_success_rate: {
+    drivers:
+      'Recovery fails when the fix task can\'t resolve the original failure, or when the failure signature is inherently non-recoverable (e.g. missing external dependency).',
+    actions: [
+      'Review the failure signatures of failed recoveries — are they the same as the origin failure?',
+      'Consider marking inherently non-recoverable failures (quota, auth, infra) so recovery isn\'t attempted.',
+      'Improve the fix prompt: include the original failure reason and diff context.',
+      'Check if the recovery model (Fixer) is appropriate for the failure type.',
+    ],
+  },
+  cost_per_arc: {
+    drivers:
+      'High cost comes from context bloat (large file reads), cache misses (cold starts), repeated tool invocations, or overly broad verify sweeps.',
+    actions: [
+      'Enable cache utilisation: ensure system prompts and file contents are cache-friendly (stable prefixes).',
+      'Reduce file reads: use --files in task prompts to scope the coder to relevant files.',
+      'Shorten verify commands: targeted test runs instead of full suite.',
+      'Break large arcs into smaller tasks — each runs in a tighter context.',
+    ],
+  },
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic analysis
+// ---------------------------------------------------------------------------
+
+interface DiagnosticFinding {
+  label: string
+  detail: string
+  severity: 'info' | 'warn' | 'action'
+}
+
+interface DiagnosticReport {
+  summary: string
+  findings: DiagnosticFinding[]
+  runAt: string
+}
+
+type DiagnosticState =
+  | { status: 'idle' }
+  | { status: 'running' }
+  | { status: 'done'; report: DiagnosticReport }
+  | { status: 'error'; message: string }
+
+function runDiagnostic(key: KpiKey, arcs: KpiArc[], currentValue: number): DiagnosticReport {
+  const findings: DiagnosticFinding[] = []
+  const total = arcs.length
+  const failed = arcs.filter((a) => !a.passed)
+  const passed = arcs.filter((a) => a.passed)
+
+  if (key === 'failure_rate') {
+    findings.push({
+      label: `${failed.length} of ${total} arcs failed`,
+      detail: `Failure rate: ${(currentValue * 100).toFixed(1)}%. ${passed.length} arcs completed successfully.`,
+      severity: failed.length === 0 ? 'info' : 'warn',
+    })
+    if (failed.length > 0) {
+      const titleWords = new Map<string, number>()
+      failed.forEach((a) => {
+        const words = (a.title || '').toLowerCase().split(/\s+/).filter((w) => w.length > 4)
+        words.forEach((w) => titleWords.set(w, (titleWords.get(w) ?? 0) + 1))
+      })
+      const common = [...titleWords.entries()]
+        .filter(([, c]) => c >= 2)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+      if (common.length > 0) {
+        findings.push({
+          label: 'Recurring patterns in failed arcs',
+          detail: common.map(([w, c]) => `"${w}" appears in ${c} failures`).join('. '),
+          severity: 'action',
+        })
+      }
+    }
+    if (failed.length > 0) {
+      findings.push({
+        label: 'Recommended action',
+        detail: 'Review the failed arcs below. Check if failures share a common verify command or task type. Tighten prompts with explicit file paths and done-criteria.',
+        severity: 'action',
+      })
+    }
+  } else if (key === 'autonomous_completion_rate') {
+    const nonAutonomous = failed.length
+    findings.push({
+      label: `${nonAutonomous} of ${total} arcs required intervention`,
+      detail: `Autonomous rate: ${(currentValue * 100).toFixed(1)}%. These arcs needed recovery tasks or manual unblocking.`,
+      severity: nonAutonomous > total * 0.3 ? 'warn' : 'info',
+    })
+    if (nonAutonomous > 0) {
+      findings.push({
+        label: 'Recommended action',
+        detail: 'Check if blocked tasks had correct blockers set. Ensure the coder emits --blocked-by follow-ups instead of bailing. Review recovery task prompts for clarity.',
+        severity: 'action',
+      })
+    }
+  } else if (key === 'recovery_success_rate') {
+    findings.push({
+      label: `${passed.length} of ${total} recoveries succeeded`,
+      detail: `Recovery success: ${(currentValue * 100).toFixed(1)}%. Failed recoveries indicate the fix task couldn't resolve the original failure.`,
+      severity: failed.length > total * 0.2 ? 'warn' : 'info',
+    })
+    if (failed.length > 0) {
+      findings.push({
+        label: 'Recommended action',
+        detail: 'Check if failed recoveries share the same failure signature as the origin. Consider marking non-recoverable failures (quota, auth) to skip recovery attempts.',
+        severity: 'action',
+      })
+    }
+  } else if (key === 'cost_per_arc') {
+    const costs = arcs.map((a) => a.costTokens ?? 0).filter((c) => c > 0).sort((a, b) => a - b)
+    if (costs.length > 0) {
+      const p50 = costs[Math.floor(costs.length * 0.5)]
+      const p90 = costs[Math.floor(costs.length * 0.9)]
+      const max = costs[costs.length - 1]
+      findings.push({
+        label: 'Cost distribution',
+        detail: `p50: ${formatKpiValue('cost_per_arc', p50)}, p90: ${formatKpiValue('cost_per_arc', p90)}, max: ${formatKpiValue('cost_per_arc', max)}`,
+        severity: p90 > 150_000 ? 'warn' : 'info',
+      })
+      const expensive = arcs.filter((a) => (a.costTokens ?? 0) > 150_000)
+      if (expensive.length > 0) {
+        findings.push({
+          label: `${expensive.length} arcs exceed 150k tokens`,
+          detail: 'These arcs are driving up the median. Check for context bloat, missing cache utilisation, or overly broad verify sweeps.',
+          severity: 'action',
+        })
+      }
+    }
+    findings.push({
+      label: 'Recommended action',
+      detail: 'Use --files in task prompts to scope reads. Enable prompt caching by keeping system prompt stable. Break large arcs into smaller tasks.',
+      severity: 'action',
+    })
+  }
+
+  return {
+    summary: `Analyzed ${total} arcs in the 7-day window.`,
+    findings,
+    runAt: new Date().toISOString(),
+  }
+}
+
+type ArcFilter = 'all' | 'pass' | 'fail'
+
 interface KpiDetailPageProps {
   kpiKey: KpiKey
 }
@@ -21,6 +188,8 @@ interface KpiDetailPageProps {
 export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
   const { data: kpis, isLoading: kpisLoading, error: kpisError } = useKpis()
   const { arcs, isLoading: arcsLoading, error: arcsError } = useKpiArcs(kpiKey)
+  const [arcFilter, setArcFilter] = useState<ArcFilter>('all')
+  const [diagnostic, setDiagnostic] = useState<DiagnosticState>({ status: 'idle' })
 
   const kpi = kpis?.find((k) => k.key === kpiKey)
   const label = KPI_LABELS[kpiKey]
@@ -30,27 +199,41 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
 
   const band = kpi && !kpi.lowConfidence ? kpiBand(kpiKey, kpi.currentValue) : null
   const cue = band ? kpiBandCue(band) : null
+  const drift = kpi && !kpi.lowConfidence ? kpiDriftDirection(kpi) : null
+
+  const onRunDiagnostic = useCallback(() => {
+    if (diagnostic.status === 'running') return
+    if (!kpi || kpi.lowConfidence) return
+    setDiagnostic({ status: 'running' })
+    setTimeout(() => {
+      try {
+        const report = runDiagnostic(kpiKey, arcs, kpi.currentValue)
+        setDiagnostic({ status: 'done', report })
+      } catch {
+        setDiagnostic({ status: 'error', message: 'Diagnostic failed unexpectedly.' })
+      }
+    }, 600)
+  }, [kpiKey, arcs, kpi, diagnostic.status])
+
+  const filteredArcs =
+    arcFilter === 'all' || kpiKey === 'cost_per_arc'
+      ? arcs
+      : arcs.filter((a) => (arcFilter === 'pass') === a.passed)
+
+  const arcRowClass = (passed: boolean): string => {
+    if (kpiKey === 'cost_per_arc') return 'border-b border-iron/10 hover:bg-iron/5'
+    return passed
+      ? 'border-b border-success/20 bg-success/[0.03] hover:bg-success/[0.06]'
+      : 'border-b border-error/20 bg-error/[0.03] hover:bg-error/[0.06]'
+  }
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg">
-      {/* Header bar */}
-      <div className="flex shrink-0 items-center gap-3 border-b border-iron/20 px-4 py-3">
-        <a
-          href="#/kpi"
-          className="text-sm text-muted hover:text-fg focus:outline-none focus:ring-2 focus:ring-iron/40"
-          aria-label="Back to KPIs"
-        >
-          ← KPIs
-        </a>
-        <span className="text-muted">|</span>
-        <span className="font-mono text-sm font-semibold text-fg">{label}</span>
-      </div>
-
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         {/* KPI summary card */}
         {kpi && !kpi.lowConfidence && cue ? (
-          <div className="mb-6 flex flex-col gap-2 rounded border border-iron/20 bg-surface p-4">
-            <div className="flex items-baseline gap-4">
+          <div className="mb-4 flex flex-col gap-2 rounded border border-iron/20 bg-surface p-4">
+            <div className="flex flex-wrap items-baseline gap-4">
               <span className="font-mono text-3xl font-bold text-fg">
                 {formatKpiValue(kpiKey, kpi.currentValue)}
               </span>
@@ -58,30 +241,125 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                 <span aria-hidden="true">{cue.glyph}</span>
                 <span>{cue.label}</span>
               </span>
-              <span className="text-sm text-muted">
-                {kpi.delta >= 0 ? '+' : ''}
-                {kpiKey === 'cost_per_arc'
-                  ? formatKpiValue(kpiKey, kpi.delta)
-                  : `${(kpi.delta * 100).toFixed(1)}pp`}{' '}
-                vs prior
-              </span>
+              {drift && drift !== 'flat' && (
+                <span
+                  className={`flex items-center gap-1 text-sm ${
+                    drift === 'improved' ? 'text-success' : 'text-error'
+                  }`}
+                >
+                  <span aria-hidden="true">{drift === 'improved' ? '↑' : '↓'}</span>
+                  <span>{drift === 'improved' ? 'Improved' : 'Regressed'}</span>
+                  <span className="text-muted">
+                    ({kpi.delta >= 0 ? '+' : ''}
+                    {kpiKey === 'cost_per_arc'
+                      ? formatKpiValue(kpiKey, kpi.delta)
+                      : `${(kpi.delta * 100).toFixed(1)}pp`}
+                    )
+                  </span>
+                </span>
+              )}
               <span className="ml-auto text-xs text-muted">
                 {kpi.sampleCount} sample{kpi.sampleCount !== 1 ? 's' : ''}
               </span>
             </div>
-            <Sparkline points={(kpi.series ?? []).map((p) => p.value)} />
+            <Sparkline points={(kpi.series ?? []).map((p) => p.value)} width={240} height={32} />
           </div>
         ) : kpi?.lowConfidence ? (
-          <div className="mb-6 rounded border border-iron/20 bg-surface p-4 text-sm text-muted">
+          <div className="mb-4 rounded border border-iron/20 bg-surface p-4 text-sm text-muted">
             {label}: insufficient samples
           </div>
         ) : null}
 
+        {/* Description */}
+        <p className="mb-4 font-mono text-[11px] text-muted">
+          {KPI_DESCRIPTIONS[kpiKey]}
+        </p>
+
+        {/* Diagnostic action */}
+        <div className="mb-6 rounded border border-iron/20 bg-surface">
+          <div className="flex items-center justify-between px-4 py-2.5">
+            <span className="font-mono text-[11px] uppercase tracking-wide text-iron">
+              Diagnostic
+            </span>
+            <button
+              type="button"
+              disabled={diagnostic.status === 'running' || arcsLoading || arcs.length === 0}
+              onClick={onRunDiagnostic}
+              className="rounded border border-iron/40 px-3 py-1 font-mono text-[10px] uppercase tracking-wide text-fg transition-colors hover:bg-iron/15 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {diagnostic.status === 'running'
+                ? 'Analyzing…'
+                : diagnostic.status === 'done'
+                  ? 'Re-run diagnostic'
+                  : 'Run diagnostic'}
+            </button>
+          </div>
+          {diagnostic.status === 'done' && (
+            <div className="border-t border-iron/20 px-4 py-3">
+              <p className="mb-3 font-mono text-[11px] text-muted">
+                {diagnostic.report.summary}
+              </p>
+              <div className="flex flex-col gap-2">
+                {diagnostic.report.findings.map((f, i) => (
+                  <div
+                    key={i}
+                    className={`rounded border px-3 py-2 ${
+                      f.severity === 'action'
+                        ? 'border-warn/30 bg-warn/[0.04]'
+                        : f.severity === 'warn'
+                          ? 'border-error/30 bg-error/[0.04]'
+                          : 'border-iron/20 bg-iron/[0.03]'
+                    }`}
+                  >
+                    <p className={`font-mono text-[11px] font-semibold ${
+                      f.severity === 'action' ? 'text-warn' : f.severity === 'warn' ? 'text-error' : 'text-fg'
+                    }`}>
+                      {f.severity === 'action' ? '→ ' : ''}{f.label}
+                    </p>
+                    <p className="mt-0.5 font-mono text-[10px] text-muted">
+                      {f.detail}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2 font-mono text-[9px] text-muted">
+                Run at {new Date(diagnostic.report.runAt).toLocaleTimeString()}
+              </p>
+            </div>
+          )}
+          {diagnostic.status === 'error' && (
+            <div className="border-t border-iron/20 px-4 py-2">
+              <p className="font-mono text-[10px] text-error">{diagnostic.message}</p>
+            </div>
+          )}
+        </div>
+
         {/* Arc list */}
         <div>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">
-            {kpiKey === 'cost_per_arc' ? 'Arcs (by cost)' : 'Arcs'}
-          </h2>
+          <div className="mb-3 flex items-center gap-3">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
+              {kpiKey === 'cost_per_arc' ? 'Arcs (by cost)' : 'Arcs'}
+            </h2>
+            {kpiKey !== 'cost_per_arc' && (
+              <div className="ml-auto flex gap-1">
+                {(['all', 'pass', 'fail'] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setArcFilter(f)}
+                    className={[
+                      'rounded px-2 py-0.5 font-mono text-[10px] uppercase transition-colors',
+                      arcFilter === f
+                        ? 'bg-iron/30 text-fg'
+                        : 'text-muted hover:text-fg',
+                    ].join(' ')}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {isLoading && (
             <p className="text-sm text-muted">Loading…</p>
@@ -91,59 +369,54 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
             <FallbackSurface error={error} of="arcs" variant="inline" />
           )}
 
-          {!isLoading && !error && arcs.length === 0 && (
-            <p className="text-sm text-muted">No arcs in this window.</p>
+          {!isLoading && !error && filteredArcs.length === 0 && (
+            <p className="text-sm text-muted">
+              {arcs.length === 0
+                ? 'No arcs in this window.'
+                : 'No arcs match this filter.'}
+            </p>
           )}
 
-          {!isLoading && arcs.length > 0 && (
-            <table className="w-full font-mono text-sm">
-              <thead>
-                <tr className="border-b border-iron/20 text-left text-[10px] uppercase tracking-wide text-muted">
-                  <th className="py-1 pr-3 font-normal">Status</th>
+          {!isLoading && filteredArcs.length > 0 && (
+            <div className="flex flex-col gap-0.5" role="list">
+              {/* Header */}
+              <div className="flex items-center border-b border-iron/20 pb-1 font-mono text-[10px] uppercase tracking-wide text-muted">
+                <span className="w-16 shrink-0">Status</span>
+                <span className="w-24 shrink-0">
+                  {kpiKey === 'cost_per_arc' ? 'Cost' : 'Result'}
+                </span>
+                <span className="min-w-0 flex-1">Arc</span>
+              </div>
+              {/* Rows — each fully clickable */}
+              {filteredArcs.map((arc) => (
+                <a
+                  key={arc.arcId}
+                  href={taskHash(arc.originTaskId, 'kpi', undefined, kpiKey)}
+                  role="listitem"
+                  title={arc.arcId}
+                  data-testid={`arc-row-${arc.arcId}`}
+                  className={`flex items-center rounded px-1 py-1.5 font-mono text-sm no-underline transition-colors cursor-pointer ${arcRowClass(arc.passed)}`}
+                >
+                  <span className="w-16 shrink-0 text-muted">{arc.status}</span>
                   {kpiKey === 'cost_per_arc' ? (
-                    <th className="py-1 pr-3 font-normal">Whole-arc cost</th>
+                    <span className="w-24 shrink-0 text-fg">
+                      {arc.costTokens !== undefined
+                        ? formatKpiValue('cost_per_arc', arc.costTokens)
+                        : '—'}
+                    </span>
                   ) : (
-                    <th className="py-1 pr-3 font-normal">Result</th>
+                    <span className="w-24 shrink-0">
+                      <span className={arc.passed ? 'text-success' : 'text-error'}>
+                        {arc.passed ? '✓ PASS' : '✗ FAIL'}
+                      </span>
+                    </span>
                   )}
-                  <th className="py-1 font-normal">Arc</th>
-                </tr>
-              </thead>
-              <tbody>
-                {arcs.map((arc) => (
-                  <tr
-                    key={arc.arcId}
-                    className="border-b border-iron/10 hover:bg-iron/5"
-                  >
-                    <td className="py-1.5 pr-3 text-muted">{arc.status}</td>
-                    {kpiKey === 'cost_per_arc' ? (
-                      <td className="py-1.5 pr-3 text-fg">
-                        {arc.costTokens !== undefined
-                          ? formatKpiValue('cost_per_arc', arc.costTokens)
-                          : '—'}
-                      </td>
-                    ) : (
-                      <td className="py-1.5 pr-3">
-                        <span
-                          className={arc.passed ? 'text-success' : 'text-error'}
-                          title={arc.passed ? 'PASS' : 'FAIL'}
-                        >
-                          {arc.passed ? '✓ PASS' : '✗ FAIL'}
-                        </span>
-                      </td>
-                    )}
-                    <td className="py-1.5">
-                      <a
-                        href={taskHash(arc.originTaskId, 'kpi', undefined, kpiKey)}
-                        className="text-muted hover:text-fg focus:outline-none focus:underline"
-                        title={arc.arcId}
-                      >
-                        {arc.title || arc.arcId}
-                      </a>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                  <span className="min-w-0 flex-1 truncate text-fg">
+                    {arc.title || arc.arcId}
+                  </span>
+                </a>
+              ))}
+            </div>
           )}
         </div>
       </div>

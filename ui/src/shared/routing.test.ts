@@ -4,6 +4,7 @@ import {
   isKnownRoute,
   actionQueueCount,
   pageTitle,
+  parseOverlayOrigin,
   parseTaskRoute,
   parseTaskOrigin,
   parseTaskStep,
@@ -14,6 +15,7 @@ import {
   parseReleaseNotesRoute,
   parseStudioRoute,
   primitiveHash,
+  proposalNodeHash,
   releaseNotesHash,
   resolvePageRoute,
   studioHash,
@@ -597,6 +599,70 @@ describe('primitive route integration', () => {
     // A primitive hash is an overlay, not a page route — detectRoute's
     // default applies and resolvePageRoute overrides it to progress.
     expect(detectRoute('#/primitive/verify')).toBe('action-queue')
+    expect(resolvePageRoute('#/primitive/verify')).toBe('progress')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseOverlayOrigin — generic ?from= for any overlay hash
+// ---------------------------------------------------------------------------
+
+describe('parseOverlayOrigin', () => {
+  it('reads from= from a proposal-node hash', () => {
+    expect(parseOverlayOrigin('#/proposal-node/x?from=action-queue')).toBe('action-queue')
+    expect(parseOverlayOrigin('#/proposal-node/x?from=events')).toBe('events')
+  })
+
+  it('reads from= from a primitive hash', () => {
+    expect(parseOverlayOrigin('#/primitive/verify?from=progress')).toBe('progress')
+  })
+
+  it('returns null when no from= is present', () => {
+    expect(parseOverlayOrigin('#/proposal-node/x')).toBeNull()
+    expect(parseOverlayOrigin('#/primitive/verify')).toBeNull()
+  })
+
+  it('returns null for unrecognised from values', () => {
+    expect(parseOverlayOrigin('#/proposal-node/x?from=bogus')).toBeNull()
+  })
+
+  it('returns null when hash has no query string', () => {
+    expect(parseOverlayOrigin('#/progress')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// proposalNodeHash — builds #/proposal-node/<id> with optional ?from=
+// ---------------------------------------------------------------------------
+
+describe('proposalNodeHash', () => {
+  it('builds a plain proposal-node hash with no origin', () => {
+    expect(proposalNodeHash('x')).toBe('#/proposal-node/x')
+  })
+
+  it('appends ?from=<route> when an origin is given', () => {
+    expect(proposalNodeHash('x', 'action-queue')).toBe('#/proposal-node/x?from=action-queue')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolvePageRoute — overlay ?from= support for proposal-node and primitive
+// ---------------------------------------------------------------------------
+
+describe('resolvePageRoute — overlay from support', () => {
+  it('proposal-node with ?from=events keeps events mounted', () => {
+    expect(resolvePageRoute('#/proposal-node/x?from=events')).toBe('events')
+  })
+
+  it('proposal-node with ?from=action-queue keeps AQ mounted', () => {
+    expect(resolvePageRoute('#/proposal-node/x?from=action-queue')).toBe('action-queue')
+  })
+
+  it('primitive with ?from=events keeps events mounted', () => {
+    expect(resolvePageRoute('#/primitive/verify?from=events')).toBe('events')
+  })
+
+  it('primitive with no ?from= defaults to progress', () => {
     expect(resolvePageRoute('#/primitive/verify')).toBe('progress')
   })
 })

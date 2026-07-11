@@ -1666,7 +1666,7 @@ export const TaskDetailDrawer = ({
         </nav>
       ) : null}
 
-      {subgraph != null ? (
+      {subgraph != null && state.kind !== 'not-found' ? (
         <section
           data-testid="task-detail-subgraph"
           className="border-b border-iron/20 px-4 py-3"
@@ -1756,7 +1756,7 @@ export const TaskDetailDrawer = ({
           When only span data is available the spans become the cards directly.
           For proposals the legacy ProposalStepTimeline handles grouping by taskId.
           Exactly one step-card-list renders; no duplicate step lists. */}
-      {resolvedRunTimeline !== null && resolvedRunTimeline.runs.length > 0 ? (
+      {state.kind === 'not-found' ? null : resolvedRunTimeline !== null && resolvedRunTimeline.runs.length > 0 ? (
         <StepCardList
           cards={resolvedRunTimeline.runs.flatMap((run) =>
             run.steps.map((step, i) =>

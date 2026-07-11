@@ -101,6 +101,8 @@ export const readAqStateFromUrl = (): AqUrlState => {
  */
 export const writeAqStateToUrl = (state: AqUrlState): void => {
   if (typeof window === 'undefined' || typeof history === 'undefined') return
+  const current = window.location.hash || ''
+  if (!current.startsWith('#/action-queue')) return
   const params = encodeAqState(state)
   history.replaceState(null, '', params ? `#/action-queue${params}` : '#/action-queue')
 }

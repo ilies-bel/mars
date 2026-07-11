@@ -46,8 +46,7 @@ const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Prom
   recipeCatalog:
     cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,
-  runReflect: async () => ({ proposalsRaised: 0 }),
-  enableAutoReflect: async () => {},
+  stepDone: async () => ({ next: null }),
   appServices: {
     viewActionQueue: async () => [],
     viewActionQueueHistory: async () => ({ rows: [], nextCursor: null }),
@@ -106,6 +105,7 @@ const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Prom
       },
     }),
     viewArcs: async () => [],
+    viewScorerTrend: async () => ({ trends: [], recent: [] }),
     viewFrameworkUpdate: async () => ({
       installed: '0.1.0',
       latest: '0.1.0',

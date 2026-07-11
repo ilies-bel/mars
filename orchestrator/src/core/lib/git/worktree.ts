@@ -149,6 +149,27 @@ export class OriginWorktreeMissingError extends Error {
   }
 }
 
+/**
+ * Thrown by {@link attachToOriginWorktree} when the origin worktree directory is
+ * missing AND the branch `task/<origin-id>` no longer exists — i.e. the origin
+ * task was fully cleaned up (worktree removed and branch deleted). The operator
+ * must restart the origin task, not merely recover it.
+ *
+ * Extends {@link OriginWorktreeMissingError} so it is caught by the same handler
+ * in the setup primitive, surfaces an operator action-queue item, and does not
+ * silently vanish.
+ */
+export class RecoveryNeedsOriginRestart extends OriginWorktreeMissingError {
+  constructor(originTaskId: string) {
+    super({
+      originTaskId,
+      expectedPath: '(directory and branch both absent)',
+      expectedBranch: `task/${originTaskId}`,
+    })
+    this.name = 'RecoveryNeedsOriginRestart'
+  }
+}
+
 export interface AttachToOriginWorktreeArgs {
   /** The origin (recovered) task's id — used only for diagnostics. */
   originTaskId: string
@@ -166,11 +187,16 @@ export interface AttachToOriginWorktreeArgs {
  * "continue where it stopped" behaviour, and what actually happens on disk for
  * an in-place resume.
  *
- * This is a validate-and-return, not a create: a recovery must NOT branch off a
- * fresh integration tip (that would discard the origin's in-progress work). So
- * if the origin worktree is absent — directory gone, or no live registration on
- * the expected branch — we throw {@link OriginWorktreeMissingError} for the
- * caller to escalate, rather than recreating it.
+ * Recovery: when the worktree directory has been pruned from disk but the branch
+ * still exists (e.g. a prior crash removed the directory without deleting the
+ * branch), the function rebuilds the worktree in-place via `git worktree add`
+ * and continues — the recovery can still stack its commit on the origin's branch.
+ *
+ * Hard failures (throw):
+ *   - Directory gone AND branch also gone → {@link RecoveryNeedsOriginRestart}
+ *     (operator must restart the origin task entirely)
+ *   - Directory present but registered on the wrong branch →
+ *     {@link OriginWorktreeMissingError} (stale git state the operator must resolve)
  */
 export const attachToOriginWorktree = async (
   args: AttachToOriginWorktreeArgs,
@@ -210,7 +236,27 @@ export const attachToOriginWorktree = async (
   }
   const onExpectedBranch = registration?.branch === branch
 
-  if (!dirPresent || registration === undefined || !onExpectedBranch) {
+  if (!dirPresent) {
+    // Directory is gone — check whether the branch still exists so we can
+    // rebuild the worktree in-place without discarding the origin's progress.
+    const branchStillExists = await branchExists(branch, setupCtx)
+    if (branchStillExists) {
+      // Branch intact: re-attach it at the canonical path. After this call the
+      // directory exists and git registers the worktree; the recovery can stack
+      // its commit on the origin branch as normal.
+      await exec(
+        resolveGitBin(),
+        ['worktree', 'add', path, branch],
+        { cwd: repoRoot() },
+        setupCtx,
+      )
+      // Fall through to return { path, branch }.
+    } else {
+      // Both the directory and the branch are gone: the origin was fully cleaned
+      // up and cannot be recovered in-place. The operator must restart it.
+      throw new RecoveryNeedsOriginRestart(originTaskId)
+    }
+  } else if (registration === undefined || !onExpectedBranch) {
     throw new OriginWorktreeMissingError({
       originTaskId,
       expectedPath: path,

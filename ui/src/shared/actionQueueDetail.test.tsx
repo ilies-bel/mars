@@ -34,36 +34,49 @@ describe('summarizeTraceEvent', () => {
   })
 
   // tool_invoked
-  it('tool_invoked: non-zero exit with phase reads as a failure sentence', () => {
+  it('tool_invoked: non-zero exit shows command and exit code', () => {
     expect(
       summarizeTraceEvent(make('tool_invoked', { tool: 'tsc', exitCode: 2 })),
-    ).toBe('tsc exited 2 during the code step')
+    ).toBe('tsc → exit 2')
   })
 
-  it('tool_invoked: non-zero exit without phase omits the step clause', () => {
+  it('tool_invoked: shows argv when present', () => {
     expect(
-      summarizeTraceEvent(make('tool_invoked', { tool: 'git', exitCode: 1 }, 'info', null)),
-    ).toBe('git exited 1')
+      summarizeTraceEvent(make('tool_invoked', { tool: 'git', argv: ['status', '--porcelain'], exitCode: 0 })),
+    ).toBe('git status --porcelain')
+  })
+
+  it('tool_invoked: non-zero exit with argv shows full command', () => {
+    expect(
+      summarizeTraceEvent(make('tool_invoked', { tool: 'git', argv: ['rebase', 'main'], exitCode: 1 }, 'info', null)),
+    ).toBe('git rebase main → exit 1')
   })
 
   it('tool_invoked: extracts basename from a full path', () => {
     expect(
       summarizeTraceEvent(
-        make('tool_invoked', { tool: '/usr/bin/git', exitCode: 1 }, 'info', 'merge'),
+        make('tool_invoked', { tool: '/usr/bin/git', argv: ['merge-base', 'main'], exitCode: 1 }, 'info', 'merge'),
       ),
-    ).toBe('git exited 1 during the merge step')
+    ).toBe('git merge-base main → exit 1')
   })
 
-  it('tool_invoked: exit 0 reads as a terse ran-line', () => {
+  it('tool_invoked: exit 0 shows the command without exit code', () => {
     expect(
       summarizeTraceEvent(make('tool_invoked', { tool: 'tsc', exitCode: 0 })),
-    ).toBe('ran tsc')
+    ).toBe('tsc')
   })
 
-  it('tool_invoked: no exit code is also terse', () => {
+  it('tool_invoked: no exit code shows just the tool name', () => {
     expect(
       summarizeTraceEvent(make('tool_invoked', { tool: 'git' })),
-    ).toBe('ran git')
+    ).toBe('git')
+  })
+
+  it('tool_invoked: truncates long commands to 80 chars', () => {
+    const longArgs = Array.from({ length: 20 }, (_, i) => `arg${i}`)
+    const result = summarizeTraceEvent(make('tool_invoked', { tool: 'git', argv: longArgs, exitCode: 0 }))
+    expect(result.length).toBeLessThanOrEqual(80)
+    expect(result).toContain('…')
   })
 
   // step_started / step_ended

@@ -567,23 +567,29 @@ export const startServer = async (
     const code = (err as NodeJS.ErrnoException).code
     if (code === 'EADDRINUSE') {
       const baseUrl = `http://${args.host}:${args.port}`
-      let isOurServer = false
+      let existingRepo: string | null = null
       try {
         const resp = await fetch(`${baseUrl}/healthz`, {
           signal: AbortSignal.timeout(500),
         })
         if (resp.ok) {
-          const body = (await resp.json()) as { ok?: boolean }
-          isOurServer = body.ok === true
+          const body = (await resp.json()) as { ok?: boolean; repo?: string }
+          if (body.ok === true) existingRepo = body.repo ?? null
         }
       } catch {
         // probe failed — not mars-ui or not responding
       }
-      if (isOurServer) {
-        console.log(
-          `mars-ui: already running at ${baseUrl} — use \`mars ui stop\` to replace it`,
+      if (existingRepo !== null) {
+        if (existingRepo === defaultCtx.repoRoot) {
+          console.log(
+            `mars-ui: already running at ${baseUrl} — use \`mars ui stop\` to replace it`,
+          )
+          process.exit(0)
+        }
+        console.error(
+          `mars-ui: port ${args.port} is in use by mars-ui for a different project (${existingRepo}) — pass --port <n> to use another port`,
         )
-        process.exit(0)
+        process.exit(1)
       }
       console.error(
         `mars-ui: port ${args.port} is in use by another process — pass --port <n> or stop it first`,

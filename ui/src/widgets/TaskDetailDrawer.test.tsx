@@ -2010,5 +2010,7 @@ describe('TaskDetailDrawer – SSE live-update via React Query', () => {
       </QueryClientProvider>,
     )
     expect(html).toContain('data-testid="task-detail-not-found"')
+    expect(html).not.toContain('data-testid="task-detail-subgraph"')
+    expect(html).not.toContain('data-testid="step-card-list"')
   })
 })

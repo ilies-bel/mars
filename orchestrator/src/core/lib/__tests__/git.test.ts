@@ -1264,6 +1264,73 @@ describe('attachToOriginWorktree (recovery attaches to origin worktree)', () => 
       }),
     ).rejects.toBeInstanceOf(OriginWorktreeMissingError)
   })
+
+  // Integration test B: manually delete the worktree directory but leave the
+  // branch intact, then assert the recovery pipeline reaches its code step
+  // without error and the worktree directory now exists on disk.
+  it('rebuilds the worktree when the directory is pruned from disk but the branch still exists (integration B)', async () => {
+    const { createWorktree, attachToOriginWorktree } = await import('../git/worktree')
+    const origin = await createWorktree({
+      taskId: 'mars-origin04',
+      integrationBranch: 'main',
+    })
+
+    // Simulate the directory being pruned (crash / disk cleanup) without the
+    // branch being deleted — the branch's commits are still reachable.
+    rmSync(origin.path, { recursive: true, force: true })
+    expect(existsSync(origin.path)).toBe(false)
+
+    // Recovery: attachToOriginWorktree should rebuild the worktree in-place.
+    const ref = await attachToOriginWorktree({
+      originTaskId: 'mars-origin04',
+      originBranch: origin.branch,
+      originWorktreePath: origin.path,
+    })
+
+    // The recovery proceeds without error and returns the same path + branch.
+    expect(ref.path).toBe(origin.path)
+    expect(ref.branch).toBe(origin.branch)
+    // The worktree directory now exists — the rebuild ran exactly once.
+    expect(existsSync(origin.path)).toBe(true)
+  })
+
+  // Unit test: when both the directory AND the branch are gone (fully cleaned
+  // up), the helper must throw RecoveryNeedsOriginRestart — which extends
+  // OriginWorktreeMissingError so the existing action-queue escalation path
+  // in the setup primitive still fires.
+  it('throws RecoveryNeedsOriginRestart when both the directory and the branch are gone', async () => {
+    const {
+      createWorktree,
+      removeWorktree,
+      attachToOriginWorktree,
+      RecoveryNeedsOriginRestart,
+      OriginWorktreeMissingError,
+    } = await import('../git/worktree')
+    const origin = await createWorktree({
+      taskId: 'mars-origin05',
+      integrationBranch: 'main',
+    })
+    // removeWorktree with keepBranch=false deletes both the directory and the branch.
+    await removeWorktree({ path: origin.path, branch: origin.branch }, true, false)
+
+    await expect(
+      attachToOriginWorktree({
+        originTaskId: 'mars-origin05',
+        originBranch: origin.branch,
+        originWorktreePath: origin.path,
+      }),
+    ).rejects.toBeInstanceOf(RecoveryNeedsOriginRestart)
+
+    // Also verify it is still an OriginWorktreeMissingError so the existing
+    // catch handler in the setup primitive escalates it to the action queue.
+    await expect(
+      attachToOriginWorktree({
+        originTaskId: 'mars-origin05',
+        originBranch: origin.branch,
+        originWorktreePath: origin.path,
+      }),
+    ).rejects.toBeInstanceOf(OriginWorktreeMissingError)
+  })
 })
 
 describe('mergeBranch — no-rebase-state guard: does not spawn Vega when git rebase exits non-zero without creating state', () => {

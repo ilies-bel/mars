@@ -69,7 +69,7 @@ const BASE_ITEM: ActionQueueItem = {
   title: 'Some failed task',
   body: 'verbatim body text',
   at: new Date().toISOString(),
-  dag: null,
+  dag: { blockers: [], blocking: [], descendants: [], proposalId: null, edges: [] },
   errorKind: 'failed-task',
   actions: [{ id: 'restart', label: 'Restart', op: 'restart' }],
   diagnosis: null,
@@ -883,18 +883,18 @@ describe('ActionQueuePage – History accordion', () => {
     expect(html).not.toContain('id="section-body-history"')
   })
 
-  it('shows correct count in header: "History (N loaded)"', () => {
+  it('shows correct count in header: "History · N"', () => {
     const twoItems = [
       historyRow,
       makeItem({ id: 'hist-2', resolution: { resolvedAt: '2024-01-01T00:00:00.000Z', resolution: null, resolutionNote: null, rootCause: null, resolvedBy: null }, actions: [] }),
     ]
     const html = renderPageWithHistory([], twoItems)
-    expect(html).toContain('History (2 loaded)')
+    expect(html).toContain('History · 2')
   })
 
-  it('shows "History (0 loaded)" when no history items exist', () => {
+  it('shows "History" with no count when no history items exist', () => {
     const html = renderPageWithHistory([], [])
-    expect(html).toContain('History (0 loaded)')
+    expect(html).toContain('History')
   })
 
   it('Load more button is not rendered when accordion is collapsed (default state)', () => {

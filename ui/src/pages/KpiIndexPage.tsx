@@ -11,3 +11,4 @@ export const KpiIndexPage = () => (
     <KpiVector />
   </div>
 )
+

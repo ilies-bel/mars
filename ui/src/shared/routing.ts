@@ -322,6 +322,33 @@ export const primitiveHash = (name: PrimitiveName): string =>
   `#/primitive/${encodeURIComponent(name)}`
 
 /**
+ * Generic origin parser for any overlay hash that carries `?from=<route>`.
+ * Reusable for proposal-node, primitive, release-notes, and shortcuts overlays
+ * that previously hardcoded their close target.
+ */
+export const parseOverlayOrigin = (hash: string): RouteName | null => {
+  const queryIndex = hash.indexOf('?')
+  if (queryIndex === -1) return null
+  const query = hash.slice(queryIndex + 1)
+  for (const pair of query.split('&')) {
+    const eq = pair.indexOf('=')
+    if (eq === -1) continue
+    if (pair.slice(0, eq) !== 'from') continue
+    const value = decodeURIComponent(pair.slice(eq + 1))
+    return isRouteName(value) ? value : null
+  }
+  return null
+}
+
+/**
+ * Builds a `#/proposal-node/<id>` hash, optionally tagging the origin page.
+ */
+export const proposalNodeHash = (id: string, from?: RouteName): string => {
+  const base = `#/proposal-node/${encodeURIComponent(id)}`
+  return from ? `${base}?from=${from}` : base
+}
+
+/**
  * Returns the constant `#/release-notes` hash for the Release Notes overlay.
  */
 export const releaseNotesHash = (): string => '#/release-notes'
@@ -406,11 +433,11 @@ export const resolvePageRoute = (hash: string): RouteName => {
   }
   const proposalNodeId = parseProposalNodeRoute(hash)
   if (proposalNodeId !== null) {
-    return 'progress'
+    return parseOverlayOrigin(hash) ?? 'progress'
   }
   const primitiveName = parsePrimitiveRoute(hash)
   if (primitiveName !== null) {
-    return 'progress'
+    return parseOverlayOrigin(hash) ?? 'progress'
   }
   if (parseReleaseNotesRoute(hash)) {
     return 'progress'

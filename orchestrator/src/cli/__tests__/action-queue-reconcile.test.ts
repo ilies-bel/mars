@@ -153,6 +153,69 @@ describe('action-queue reconcile', () => {
     expect(open[0].state).toBe('open')
   })
 
+  it('closes open items with null origin_task_id whose payload.originTaskId is absent from tasks', async () => {
+    const { store, ctx, queue, aq } = await loadModules()
+
+    // Simulate an item raised before origin_task_id was populated — NULL column,
+    // but originTaskId is in the payload JSON. The underlying task has since been
+    // purged from the DB entirely.
+    const purgedTaskId = 'mars-purged-orphan'
+    await aq.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: 'Orphaned item',
+      body: 'Body',
+      payload: { originTaskId: purgedTaskId },
+      context: {},
+      raisedBy: 'test',
+      signature: 'sig-orphan',
+      // No originTaskId — simulates the NULL column case.
+    })
+
+    // Verify the item exists with origin_task_id = NULL.
+    const openBefore = await aq.listActionQueueItems('open')
+    expect(openBefore).toHaveLength(1)
+
+    const opts: InProcessOptions = { store, ctx, daemon: makeFakeDaemon() }
+    const r = await runCommandInProcess(['action-queue', 'reconcile'], opts)
+
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toMatch(/closed 1 action queue item/)
+
+    const openAfter = await aq.listActionQueueItems('open')
+    expect(openAfter).toHaveLength(0)
+  })
+
+  it('leaves open items with null origin_task_id whose payload.originTaskId task still exists', async () => {
+    const { store, ctx, queue, aq } = await loadModules()
+
+    // Task is still in the DB (failed, not purged).
+    const task = await queue.enqueueTask('live task', undefined)
+    await queue.updateTask(task.id, { status: 'failed' })
+
+    await aq.raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: 'Item for live task',
+      body: 'Body',
+      payload: { originTaskId: task.id },
+      context: {},
+      raisedBy: 'test',
+      signature: 'sig-live',
+    })
+
+    const opts: InProcessOptions = { store, ctx, daemon: makeFakeDaemon() }
+    const r = await runCommandInProcess(['action-queue', 'reconcile'], opts)
+
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toContain('nothing to reconcile')
+
+    const open = await aq.listActionQueueItems('open')
+    expect(open).toHaveLength(1)
+  })
+
   it('does not fall through to the list usage text', async () => {
     const { store, ctx } = await loadModules()
     const opts: InProcessOptions = { store, ctx, daemon: makeFakeDaemon() }

@@ -13,6 +13,7 @@ import {
   isKnownRoute,
   pageTitle,
   parseKpiRoute,
+  parseOverlayOrigin,
   parsePrimitiveRoute,
   parseProposalOrigin,
   parseProposalRoute,
@@ -36,42 +37,54 @@ import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/ActionQueuePage'
 import { EventsPage } from '@/pages/EventsPage'
 import { KpiDetailPage } from '@/pages/KpiDetailPage'
-import { KpiIndexPage } from '@/pages/KpiIndexPage'
 import { StudioPage } from '@/pages/StudioPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
 import { AlertNotifier } from '@/shared/notifications/alertNotifier'
+import { Breadcrumbs } from '@/widgets/Breadcrumbs'
 
 /** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
 const ROUTE_BASE: Record<RouteName, string> = {
   'action-queue': '#/action-queue',
   progress: '#/progress',
   events: '#/events',
-  kpi: '#/kpi',
-  // Studio hashes carry a task id that a bare route base cannot encode, so a
-  // drawer opened with `from=studio` closes to Progress rather than to a
-  // half-formed `#/studio/` hash.
+  kpi: '#/events',
   studio: '#/progress',
 }
 
 /**
+ * Navigate to a hash via replaceState so overlay closes never push a phantom
+ * history entry.  The overlay *open* (via `<a href>` or `window.location.hash`)
+ * already pushed one entry; closing with replaceState pops that entry so Back
+ * returns to the page the user was on before opening the overlay.
+ */
+const navigateReplace = (hash: string): void => {
+  if (typeof window === 'undefined') return
+  history.replaceState(null, '', hash)
+  window.dispatchEvent(new HashChangeEvent('hashchange'))
+}
+
+/**
  * Closes a drawer opened from `closeHash` by returning to its origin page.
- * A `#/task/<id>?from=<route>` hash returns to `<route>`; a plain task hash
- * (or any hash with no recorded origin) returns to Progress — today's default.
- *
- * When the origin is `kpi` and a `kpiKey` param is encoded in the hash, the
- * drawer returns to the exact KPI detail page (`#/kpi/<key>`) rather than the
- * KPI index (`#/kpi`).
+ * Uses replaceState to avoid phantom back-button entries.
  */
 const clearTaskHash = (closeHash: string): void => {
-  if (typeof window === 'undefined') return
   const origin = parseTaskOrigin(closeHash)
   if (origin === 'kpi') {
     const kpiKey = parseTaskKpiKey(closeHash)
-    window.location.hash = kpiKey ? `#/kpi/${encodeURIComponent(kpiKey)}` : '#/kpi'
+    navigateReplace(kpiKey ? `#/kpi/${encodeURIComponent(kpiKey)}` : '#/kpi')
     return
   }
-  window.location.hash = origin ? ROUTE_BASE[origin] : '#/progress'
+  navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+}
+
+/**
+ * Closes a proposal/proposal-node/primitive/release-notes/shortcuts overlay,
+ * returning to the origin page encoded in `?from=` or falling back to Progress.
+ */
+const clearOverlayHash = (closeHash: string, parseFn: (h: string) => string | null): void => {
+  const origin = parseFn(closeHash)
+  navigateReplace(origin ? ROUTE_BASE[origin as RouteName] ?? '#/progress' : '#/progress')
 }
 
 const AppInner = () => {
@@ -79,12 +92,13 @@ const AppInner = () => {
   const rawHash = useHashRoute()
   useGlobalKeyboardShortcuts()
 
-  // Redirect unknown hashes to #/progress so the URL always matches what is
-  // rendered. replaceState is used (not assign) to avoid adding a history
-  // entry that the back button would return to.
+  // Redirect unknown hashes to #/progress and bare #/kpi to #/events.
+  // replaceState avoids adding a history entry the back button would return to.
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (!isKnownRoute(rawHash)) {
+    if (rawHash === '#/kpi') {
+      history.replaceState(null, '', '#/events')
+    } else if (!isKnownRoute(rawHash)) {
       history.replaceState(null, '', '#/progress')
     }
   }, [rawHash])
@@ -140,21 +154,18 @@ const AppInner = () => {
       <AlertNotifier />
       <FrameworkUpdateBanner />
       <NavBar hash={hash} />
+      <Breadcrumbs hash={hash} />
       <div className="min-h-0 flex-1">
         <FallbackBoundary of="this view" variant="pane">
           {route === 'studio' && studioTaskId !== null ? (
             <StudioPage taskId={studioTaskId} />
           ) : route === 'studio' ? (
-            // `from=studio` overlay hashes carry no studio task id; keep
-            // Progress mounted beneath the drawer rather than a blank pane.
             <ProgressPage />
           ) : route === 'kpi' && kpiKey !== null ? (
             <KpiDetailPage kpiKey={kpiKey} />
-          ) : route === 'kpi' ? (
-            <KpiIndexPage />
           ) : route === 'progress' ? (
             <ProgressPage />
-          ) : route === 'events' ? (
+          ) : route === 'events' || route === 'kpi' ? (
             <EventsPage />
           ) : (
             <ActionQueuePage />
@@ -184,9 +195,8 @@ const AppInner = () => {
           <ProposalDetailDrawer
             proposal={proposal}
             onClose={() => {
-              if (typeof window === 'undefined') return
               const origin = parseProposalOrigin(hash)
-              window.location.hash = origin ? ROUTE_BASE[origin] : '#/progress'
+              navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
             }}
             tasks={tasks ?? []}
           />
@@ -200,8 +210,8 @@ const AppInner = () => {
             tasks={tasks ?? []}
             proposal={proposalNodeDraft}
             onClose={() => {
-              if (typeof window === 'undefined') return
-              window.location.hash = '#/progress'
+              const origin = parseOverlayOrigin(hash)
+              navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
             }}
           />
         </FallbackBoundary>
@@ -211,8 +221,8 @@ const AppInner = () => {
           <PrimitiveDetailDrawer
             name={primitiveName}
             onClose={() => {
-              if (typeof window === 'undefined') return
-              window.location.hash = '#/progress'
+              const origin = parseOverlayOrigin(hash)
+              navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
             }}
           />
         </FallbackBoundary>
@@ -220,18 +230,14 @@ const AppInner = () => {
       {showReleaseNotes ? (
         <FallbackBoundary of="release notes" variant="inline">
           <ReleaseNotesModal
-            onClose={() => {
-              if (typeof window !== 'undefined') window.location.hash = '#/progress'
-            }}
+            onClose={() => navigateReplace('#/progress')}
           />
         </FallbackBoundary>
       ) : null}
       {showShortcuts ? (
         <FallbackBoundary of="shortcuts" variant="inline">
           <ShortcutsOverlay
-            onClose={() => {
-              if (typeof window !== 'undefined') window.location.hash = '#/progress'
-            }}
+            onClose={() => navigateReplace('#/progress')}
           />
         </FallbackBoundary>
       ) : null}

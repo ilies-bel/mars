@@ -116,13 +116,8 @@ export const NavBar = ({ hash }: NavBarProps) => {
         </a>
       </span>
       <span className="relative">
-        <a className={linkClass(route === 'events')} href="#/events">
+        <a className={linkClass(route === 'events' || route === 'kpi')} href="#/events">
           Events
-        </a>
-      </span>
-      <span className="relative">
-        <a className={linkClass(route === 'kpi')} href="#/kpi">
-          KPIs
         </a>
       </span>
       <span className="ml-auto">

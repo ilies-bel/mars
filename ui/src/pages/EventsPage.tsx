@@ -3,13 +3,14 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
 import { FallbackSurface } from '@/components/FallbackSurface'
-import { severityColor, severityRowClass, summarizeTraceEvent, marsToolTextClass } from '@/shared/actionQueueDetail'
+import { severityColor, severityRowClass, summarizeTraceEvent, marsToolTextClass, humanizeKind, humanizePhase } from '@/shared/actionQueueDetail'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
 import { relativeTime, formatRelativeAge } from '@/shared/time'
 import { taskHash } from '@/shared/routing'
 import { KpiVector } from '@/widgets/KpiVector'
 import { SpendMeterTile } from '@/widgets/SpendMeterTile'
+import { groupByArc, type ArcGroup, type TaskGroup, type StepGroup } from '@/shared/groupTraceEvents'
 
 /**
  * Events tab — the unified trace stream.
@@ -180,6 +181,7 @@ interface MultiSelectProps<T extends string> {
   selected: ReadonlySet<T>
   onToggle: (value: T) => void
   testId: string
+  displayLabel?: (value: T) => string
 }
 
 const MultiSelect = <T extends string>({
@@ -188,6 +190,7 @@ const MultiSelect = <T extends string>({
   selected,
   onToggle,
   testId,
+  displayLabel,
 }: MultiSelectProps<T>) => (
   <div className="flex flex-wrap items-center gap-1" data-testid={testId}>
     <span className="self-center font-mono text-[10px] uppercase tracking-wide text-iron">
@@ -204,7 +207,7 @@ const MultiSelect = <T extends string>({
           className={chipClass(active)}
           data-testid={`${testId}-${opt}`}
         >
-          {opt}
+          {displayLabel ? displayLabel(opt) : opt}
         </button>
       )
     })}
@@ -244,6 +247,16 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
     event.kind === 'log_line' && typeof event.payload.source === 'string'
       ? event.payload.source
       : null
+
+  const callerSource = (() => {
+    const p = event.payload
+    if (typeof p.workerName === 'string') return p.workerName
+    if (typeof p.source === 'string' && event.kind !== 'log_line') return p.source
+    if (typeof p.originSessionId === 'string') {
+      return `session ${(p.originSessionId as string).slice(0, 6)}`
+    }
+    return null
+  })()
   const logLineFields =
     event.kind === 'log_line' &&
     event.payload.fields !== null &&
@@ -255,47 +268,50 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
 
   const body = (
     <>
-      {/* Single-line metadata + summary — flex so the summary can truncate
-          instead of stretching the row and causing page-level horizontal scroll. */}
-      <div className="flex min-w-0 items-baseline gap-x-1 overflow-hidden">
-        <span className="shrink-0 text-muted">{relativeTime(event.timestamp, now)}</span>
+      <div className="grid items-baseline gap-x-2" style={{ gridTemplateColumns: '4.5rem 2.5rem 4rem 6rem auto' }}>
+        <span className="truncate text-muted">{relativeTime(event.timestamp, now)}</span>
         <span
-          className={`shrink-0 font-mono text-[10px] uppercase ${event.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(event.severity)}`}
+          className={`font-mono text-[10px] uppercase ${event.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(event.severity)}`}
         >
-          [{event.severity}]
+          {event.severity}
         </span>
-        <span className="shrink-0 font-mono text-[10px] text-iron">{event.kind}</span>
-        {logLineSource ? (
-          <span
-            className="shrink-0 rounded bg-iron/20 px-1 font-mono text-[9px] text-muted"
-            data-testid={`event-row-source-${event.id}`}
-          >
-            {logLineSource}
-          </span>
-        ) : null}
-        {event.phase ? (
-          <span className="shrink-0 font-mono text-[10px] text-muted">
-            · {event.phase}
-          </span>
-        ) : null}
-        {event.taskId ? (
-          <span className="shrink-0 font-mono text-[10px] text-muted">
-            {truncateId(event.taskId)}
-          </span>
-        ) : null}
-        <span className={`min-w-0 truncate ${marsToolTextClass(event)}`}>
-          {summarizeTraceEvent(event)}
+        <span className="truncate rounded bg-iron/10 px-1 text-center font-mono text-[10px] text-iron">{humanizeKind(event.kind)}</span>
+        <span className="truncate font-mono text-[9px] text-muted">
+          {callerSource ?? ''}
+          {event.phase ? ` · ${humanizePhase(event.phase)}` : ''}
         </span>
-        {hasFields ? (
-          <button
-            type="button"
-            onClick={toggleFields}
-            className="-my-1 inline-flex min-h-[24px] shrink-0 items-center px-2 py-1 font-mono text-[9px] text-muted underline hover:text-iron"
-            data-testid={`event-row-fields-toggle-${event.id}`}
-          >
-            {fieldsExpanded ? 'hide fields' : 'fields'}
-          </button>
-        ) : null}
+        <div className="flex min-w-0 items-baseline gap-x-1">
+          {event.taskId ? (
+            <a
+              href={taskHash(event.taskId, 'events')}
+              onClick={(e) => e.stopPropagation()}
+              className="shrink-0 font-mono text-[10px] text-muted hover:text-fg hover:underline"
+            >
+              {truncateId(event.taskId)}
+            </a>
+          ) : null}
+          {logLineSource && logLineSource !== callerSource ? (
+            <span
+              className="shrink-0 rounded bg-iron/20 px-1 font-mono text-[9px] text-muted"
+              data-testid={`event-row-source-${event.id}`}
+            >
+              {logLineSource}
+            </span>
+          ) : null}
+          <span className={`min-w-0 truncate ${marsToolTextClass(event)}`}>
+            {summarizeTraceEvent(event)}
+          </span>
+          {hasFields ? (
+            <button
+              type="button"
+              onClick={toggleFields}
+              className="-my-1 inline-flex min-h-[24px] shrink-0 items-center px-2 py-1 font-mono text-[9px] text-muted underline hover:text-iron"
+              data-testid={`event-row-fields-toggle-${event.id}`}
+            >
+              {fieldsExpanded ? 'hide fields' : 'fields'}
+            </button>
+          ) : null}
+        </div>
       </div>
       {fieldsExpanded && logLineFields ? (
         <pre
@@ -331,6 +347,261 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
 })
 
 // ---------------------------------------------------------------------------
+// Timeline view components
+// ---------------------------------------------------------------------------
+
+type EventsViewMode = 'flat' | 'timeline'
+
+const arcSeverityBorder = (severity: TraceEvent['severity']): string => {
+  if (severity === 'error') return 'border-l-error/60'
+  if (severity === 'warn') return 'border-l-warn/60'
+  return 'border-l-success/60'
+}
+
+const arcSeverityBg = (severity: TraceEvent['severity']): string => {
+  if (severity === 'error') return 'bg-error/[0.03]'
+  if (severity === 'warn') return 'bg-warn/[0.03]'
+  return 'bg-surface'
+}
+
+interface TimelineStepProps {
+  group: StepGroup
+  now: number
+}
+
+const TimelineStep = ({ group, now }: TimelineStepProps) => {
+  const [expanded, setExpanded] = useState(false)
+  const stepName =
+    typeof group.step.payload.stepName === 'string'
+      ? group.step.payload.stepName
+      : '(step)'
+  const outcome = group.endEvent
+    ? typeof group.endEvent.payload.outcome === 'string'
+      ? group.endEvent.payload.outcome
+      : 'ended'
+    : 'running'
+  const outcomeClass =
+    outcome === 'completed'
+      ? 'text-success'
+      : outcome === 'failed' || outcome === 'failure'
+        ? 'text-error'
+        : outcome === 'running'
+          ? 'text-warn'
+          : 'text-muted'
+
+  return (
+    <div className="ml-4">
+      <button
+        type="button"
+        onClick={() => setExpanded((e) => !e)}
+        className="flex w-full items-center gap-2 py-0.5 text-left font-mono text-[11px]"
+      >
+        <span className="shrink-0 text-[9px] text-muted">
+          {expanded ? '▾' : '▸'}
+        </span>
+        <span className="font-semibold text-fg">{stepName}</span>
+        <span className={`text-[10px] ${outcomeClass}`}>{outcome}</span>
+        <span className="text-[10px] text-muted">
+          {relativeTime(group.step.timestamp, now)}
+        </span>
+        {group.tools.length > 0 && (
+          <span className="text-[9px] text-muted">
+            ({group.tools.length} tool call{group.tools.length !== 1 ? 's' : ''})
+          </span>
+        )}
+      </button>
+      {expanded && group.tools.length > 0 && (
+        <div className="ml-5 border-l border-iron/20 pl-2">
+          {group.tools.map((tool) => (
+            <div
+              key={tool.id}
+              className="flex items-baseline gap-1 py-0.5 font-mono text-[10px]"
+            >
+              <span className="shrink-0 text-muted">
+                {relativeTime(tool.timestamp, now)}
+              </span>
+              <span
+                className={`${severityColor(tool.severity)} ${marsToolTextClass(tool)}`}
+              >
+                {summarizeTraceEvent(tool)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface TimelineTaskGroupProps {
+  group: TaskGroup
+  now: number
+}
+
+const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
+  const [expanded, setExpanded] = useState(true)
+  const nonStepEvents = group.events.filter(
+    (e) =>
+      e.kind !== 'step_started' &&
+      e.kind !== 'step_ended' &&
+      e.kind !== 'tool_invoked',
+  )
+
+  return (
+    <div className="border-l-2 border-iron/20 pl-3">
+      <button
+        type="button"
+        onClick={() => setExpanded((e) => !e)}
+        className="flex w-full items-center gap-2 py-1 text-left"
+      >
+        <span className="font-mono text-[9px] text-muted">
+          {expanded ? '▾' : '▸'}
+        </span>
+        <a
+          href={taskHash(group.taskId, 'events')}
+          onClick={(e) => e.stopPropagation()}
+          className="font-mono text-[11px] text-fg hover:underline"
+        >
+          {group.taskId.length > 16
+            ? `${group.taskId.slice(0, 8)}…${group.taskId.slice(-4)}`
+            : group.taskId}
+        </a>
+        <span
+          className={`rounded px-1 py-0.5 font-mono text-[9px] uppercase ${
+            group.severity === 'error'
+              ? 'bg-error/10 text-error'
+              : group.severity === 'warn'
+                ? 'bg-warn/10 text-warn'
+                : 'bg-iron/10 text-muted'
+          }`}
+        >
+          {group.severity}
+        </span>
+        <span className="font-mono text-[10px] text-muted">
+          {group.events.length} event{group.events.length !== 1 ? 's' : ''}
+          {group.steps.length > 0 &&
+            ` · ${group.steps.length} step${group.steps.length !== 1 ? 's' : ''}`}
+        </span>
+      </button>
+      {expanded && (
+        <div className="flex flex-col gap-0.5 pb-1">
+          {/* Non-step events (task_failed, task_blocked, recovery_spawned, etc.) */}
+          {nonStepEvents.map((e) => (
+            <div
+              key={e.id}
+              className={`ml-2 flex items-baseline gap-1 rounded border px-2 py-0.5 font-mono text-[10px] ${severityRowClass(e.severity)}`}
+            >
+              <span className="shrink-0 text-muted">
+                {relativeTime(e.timestamp, now)}
+              </span>
+              <span className={`shrink-0 text-[9px] uppercase ${severityColor(e.severity)}`}>
+                {humanizeKind(e.kind)}
+              </span>
+              <span className={marsToolTextClass(e)}>
+                {summarizeTraceEvent(e)}
+              </span>
+            </div>
+          ))}
+          {/* Step groups with nested tool calls */}
+          {group.steps.map((sg) => (
+            <TimelineStep key={sg.step.id} group={sg} now={now} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface TimelineArcGroupProps {
+  group: ArcGroup
+  now: number
+}
+
+const TimelineArcGroup = ({ group, now }: TimelineArcGroupProps) => {
+  const [expanded, setExpanded] = useState(true)
+
+  return (
+    <div
+      className={`rounded border-l-4 ${arcSeverityBorder(group.severity)} ${arcSeverityBg(group.severity)} p-2`}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((e) => !e)}
+        className="flex w-full items-center gap-2 text-left"
+      >
+        <span className="font-mono text-[9px] text-muted">
+          {expanded ? '▾' : '▸'}
+        </span>
+        <span className="font-mono text-[11px] font-semibold text-fg">
+          Arc{' '}
+          {group.arcId === '__unlinked__'
+            ? '(unlinked)'
+            : group.arcId.length > 16
+              ? `${group.arcId.slice(0, 8)}…${group.arcId.slice(-4)}`
+              : group.arcId}
+        </span>
+        <span
+          className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase ${
+            group.severity === 'error'
+              ? 'bg-error/10 text-error'
+              : group.severity === 'warn'
+                ? 'bg-warn/10 text-warn'
+                : 'bg-success/10 text-success'
+          }`}
+        >
+          {group.severity === 'error'
+            ? 'failed'
+            : group.severity === 'warn'
+              ? 'warning'
+              : 'ok'}
+        </span>
+        <span className="font-mono text-[10px] text-muted">
+          {group.taskGroups.length} task
+          {group.taskGroups.length !== 1 ? 's' : ''}
+        </span>
+        <span className="ml-auto font-mono text-[10px] text-muted">
+          {relativeTime(group.firstTimestamp, now)}
+          {group.firstTimestamp !== group.lastTimestamp &&
+            ` — ${relativeTime(group.lastTimestamp, now)}`}
+        </span>
+      </button>
+      {expanded && (
+        <div className="mt-1 flex flex-col gap-1">
+          {group.taskGroups.map((tg) => (
+            <TimelineTaskGroup key={tg.taskId} group={tg} now={now} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface TimelineViewProps {
+  events: TraceEvent[]
+  now: number
+}
+
+const TimelineView = ({ events, now }: TimelineViewProps) => {
+  const arcGroups = useMemo(() => groupByArc(events), [events])
+
+  if (arcGroups.length === 0) {
+    return (
+      <div data-testid="events-empty" className="font-mono text-[11px] text-iron">
+        No events match these filters.
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {arcGroups.map((ag) => (
+        <TimelineArcGroup key={ag.arcId} group={ag} now={now} />
+      ))}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -338,6 +609,7 @@ const PAGE_LIMIT = 100
 
 export const EventsPage = () => {
   const [state, setState] = useState<FilterState>(initialFilterState)
+  const [viewMode, setViewMode] = useState<EventsViewMode>('flat')
   const [extraPages, setExtraPages] = useState<TraceEvent[][]>([])
   const [overrideCursor, setOverrideCursor] = useState<
     string | null | undefined
@@ -506,12 +778,30 @@ export const EventsPage = () => {
         <h1 className="font-mono text-[11px] uppercase tracking-wide text-iron">
           Events — {events.length} event{events.length === 1 ? '' : 's'}
         </h1>
+        <div className="ml-auto flex items-center gap-1">
+          {(['flat', 'timeline'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setViewMode(mode)}
+              data-testid={`events-view-${mode}`}
+              className={[
+                'rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide transition-colors',
+                viewMode === mode
+                  ? 'bg-iron/30 text-fg'
+                  : 'text-iron hover:text-fg',
+              ].join(' ')}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
         <button
           type="button"
           onClick={onRefresh}
           disabled={initial.isFetching}
           data-testid="events-refresh"
-          className="ml-auto rounded border border-iron/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-fg hover:bg-iron/15 disabled:opacity-50"
+          className="rounded border border-iron/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-fg hover:bg-iron/15 disabled:opacity-50"
         >
           {initial.isFetching ? 'Refreshing…' : 'Refresh'}
         </button>
@@ -573,6 +863,7 @@ export const EventsPage = () => {
           selected={state.kinds}
           onToggle={(v) => toggleIn<Kind>('kinds', v)}
           testId="events-kind"
+          displayLabel={humanizeKind}
         />
 
         <MultiSelect
@@ -581,6 +872,7 @@ export const EventsPage = () => {
           selected={state.phases}
           onToggle={(v) => toggleIn<Phase>('phases', v)}
           testId="events-phase"
+          displayLabel={(p) => humanizePhase(p) ?? p}
         />
 
         {/* Task ID exact match */}
@@ -638,9 +930,7 @@ export const EventsPage = () => {
         </div>
       </div>
 
-      {/* Virtualized events list — dedicated scroll container keeps filters sticky.
-          overflow-x-hidden prevents page-level horizontal scroll; individual
-          expanded-fields <pre> elements scroll within themselves via overflow-x-auto. */}
+      {/* Events display — flat virtualized list or grouped timeline */}
       <div
         ref={scrollRef}
         className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
@@ -648,6 +938,8 @@ export const EventsPage = () => {
       >
         {initial.isPending ? (
           <div className="font-mono text-[11px] text-iron">Loading events…</div>
+        ) : viewMode === 'timeline' ? (
+          <TimelineView events={events} now={now} />
         ) : events.length === 0 ? (
           <div
             data-testid="events-empty"
@@ -673,7 +965,6 @@ export const EventsPage = () => {
                   left: 0,
                   width: '100%',
                   transform: `translateY(${vItem.start}px)`,
-                  // replicate original gap-1 (4px) between rows
                   paddingBottom: '4px',
                 }}
               >

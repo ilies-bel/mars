@@ -391,7 +391,7 @@ const renderOrientation = (worktreeRoot: string, taskCwd: string): string => {
 export const composePrompt = (
   prompt: string,
   plan: z.infer<typeof planSchema>,
-  tag: TaskTag = 'coder',
+  _tag: TaskTag = 'coder',
   spec: TaskSpec | null = null,
   taskId = '',
   worktreeRoot = '',

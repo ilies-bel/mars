@@ -144,15 +144,9 @@ describe('KpiDetailPage — navigation', () => {
     vi.resetAllMocks()
   })
 
-  it('back-link points to #/kpi (KPI index), not #/events', () => {
+  it('does not contain a link to #/events (navigation is via breadcrumbs in App shell)', () => {
     const html = renderPage('failure_rate', 0.05)
-    expect(html).toContain('href="#/kpi"')
     expect(html).not.toContain('href="#/events"')
-  })
-
-  it('back-link label mentions KPIs, not Events', () => {
-    const html = renderPage('failure_rate', 0.05)
-    expect(html).toContain('KPIs')
     expect(html).not.toContain('← Events')
   })
 
@@ -179,5 +173,126 @@ describe('KpiDetailPage — navigation', () => {
     }
     const html = renderPageWithArcs('autonomous_completion_rate', [arc])
     expect(html).toContain('kpiKey=autonomous_completion_rate')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Arc rows — fully clickable
+// ---------------------------------------------------------------------------
+
+describe('KpiDetailPage — arc row clickability', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+  })
+
+  it('each arc row is an <a> element (fully clickable, not just the title)', () => {
+    const arc: KpiArc = {
+      arcId: 'arc-click-001',
+      originTaskId: 'task-click',
+      status: 'done',
+      passed: true,
+      title: 'Clickable arc',
+    }
+    const html = renderPageWithArcs('failure_rate', [arc])
+    expect(html).toContain('data-testid="arc-row-arc-click-001"')
+    // The row itself must be an <a> tag, not a <tr>
+    expect(html).toMatch(/href="[^"]*task-click[^"]*"/)
+    expect(html).not.toContain('<tr')
+  })
+
+  it('arc rows include the arc title text', () => {
+    const arc: KpiArc = {
+      arcId: 'arc-title-001',
+      originTaskId: 'task-t',
+      status: 'done',
+      passed: false,
+      title: 'My important arc title',
+    }
+    const html = renderPageWithArcs('failure_rate', [arc])
+    expect(html).toContain('My important arc title')
+  })
+
+  it('cost_per_arc arcs show formatted token cost', () => {
+    const arc: KpiArc = {
+      arcId: 'arc-cost-001',
+      originTaskId: 'task-c',
+      status: 'done',
+      passed: true,
+      title: 'Cost arc',
+      costTokens: 75000,
+    }
+    const html = renderPageWithArcs('cost_per_arc', [arc])
+    expect(html).toContain('75.0k tok')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Diagnostic section
+// ---------------------------------------------------------------------------
+
+describe('KpiDetailPage — diagnostic section', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+  })
+
+  it('renders the diagnostic button for all four KPI types', () => {
+    for (const key of [
+      'failure_rate',
+      'autonomous_completion_rate',
+      'recovery_success_rate',
+      'cost_per_arc',
+    ] as const) {
+      const html = renderPage(key, 0.05)
+      expect(html).toContain('Run diagnostic')
+    }
+  })
+
+  it('renders the KPI description text', () => {
+    const html = renderPage('failure_rate', 0.05)
+    expect(html).toContain('Percentage of arcs that failed')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Drift direction indicator
+// ---------------------------------------------------------------------------
+
+describe('KpiDetailPage — drift indicator', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+  })
+
+  it('shows "Improved" when delta is in the good direction (failure_rate decreasing)', () => {
+    mockUseKpis.mockReturnValue({
+      data: [makeKpi({ key: 'failure_rate', currentValue: 0.03, delta: -0.01 })],
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useKpis>)
+    mockUseKpiArcs.mockReturnValue(noArcs as ReturnType<typeof useKpiArcs>)
+    const html = renderToStaticMarkup(<KpiDetailPage kpiKey="failure_rate" />)
+    expect(html).toContain('Improved')
+  })
+
+  it('shows "Regressed" when delta is in the bad direction (failure_rate increasing)', () => {
+    mockUseKpis.mockReturnValue({
+      data: [makeKpi({ key: 'failure_rate', currentValue: 0.08, delta: 0.02 })],
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useKpis>)
+    mockUseKpiArcs.mockReturnValue(noArcs as ReturnType<typeof useKpiArcs>)
+    const html = renderToStaticMarkup(<KpiDetailPage kpiKey="failure_rate" />)
+    expect(html).toContain('Regressed')
+  })
+
+  it('does not show drift when delta is zero (flat)', () => {
+    mockUseKpis.mockReturnValue({
+      data: [makeKpi({ key: 'failure_rate', currentValue: 0.05, delta: 0 })],
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useKpis>)
+    mockUseKpiArcs.mockReturnValue(noArcs as ReturnType<typeof useKpiArcs>)
+    const html = renderToStaticMarkup(<KpiDetailPage kpiKey="failure_rate" />)
+    expect(html).not.toContain('Improved')
+    expect(html).not.toContain('Regressed')
   })
 })

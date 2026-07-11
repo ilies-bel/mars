@@ -634,16 +634,18 @@ interface DetailProps {
 }
 
 export const ActionQueueDetail = ({ item, onNavigateToTask }: DetailProps) => {
-  // A real failed task (not the daemon-killed-batch sentinel, and carrying a
-  // non-empty entity id) can open the shared TaskDetailDrawer and render the
-  // OriginTree. An empty entityId would make OriginTree fetch
-  // `/api/origins/?project=…` and 400; treat such a row as non-openable. The
-  // `from=action-queue` tag keeps the Action queue list mounted behind the
-  // drawer and returns here on close.
+  // A real failed task (not the daemon-killed-batch sentinel, carrying a
+  // non-empty entity id, AND backed by a real task in the store — dag !== null)
+  // can open the shared TaskDetailDrawer and render the OriginTree. Rows whose
+  // entityId is a signature slug (e.g. "daemon-code-drift") rather than a task
+  // id would 404 on /api/tasks/:id, trigger the purge handler, and immediately
+  // close the drawer. The `from=action-queue` tag keeps the Action queue list
+  // mounted behind the drawer and returns here on close.
   const isRealFailedTask =
     item.kind === 'failed-task' &&
     item.entityId !== '__daemon-killed-batch__' &&
-    item.entityId !== ''
+    item.entityId !== '' &&
+    item.dag !== null
 
   const openTask = (id: string) => {
     window.location.hash = taskHash(id, 'action-queue')

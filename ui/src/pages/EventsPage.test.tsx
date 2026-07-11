@@ -242,8 +242,8 @@ describe('EventsPage render', () => {
   it('renders one row per event with the severity badge and a #/task/<id>?from=events link', () => {
     const qc = makeClient(makeResponse([makeEvent({ taskId: 't-abc' })]))
     const html = renderPage(qc)
-    expect(html).toContain('[error]')
-    expect(html).toContain('task_failed')
+    expect(html).toContain('error')
+    expect(html).toContain('Failed')
     // summarizeTraceEvent humanises the raw code: 'verify:typecheck' → 'typecheck (verify step)'
     expect(html).toContain('typecheck (verify step)')
     // Click affordance — row is wrapped in an anchor to the task drawer, tagged
@@ -829,5 +829,27 @@ describe('EventsPage error state', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     logFallbackError(new Error('Connection refused'))
     expect(spy).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Timeline view toggle
+// ---------------------------------------------------------------------------
+
+describe('EventsPage — timeline view toggle', () => {
+  it('renders the flat/timeline toggle buttons', () => {
+    const events = [makeEvent({ id: 'ev-toggle-1' })]
+    const qc = makeClient(makeResponse(events))
+    const html = renderPage(qc)
+    expect(html).toContain('data-testid="events-view-flat"')
+    expect(html).toContain('data-testid="events-view-timeline"')
+  })
+
+  it('defaults to flat view (virtualizer list is rendered)', () => {
+    const events = [makeEvent({ id: 'ev-flat-1' })]
+    const qc = makeClient(makeResponse(events))
+    const html = renderPage(qc)
+    // Flat view renders event rows inside the virtualizer
+    expect(html).toContain('data-testid="events-list"')
   })
 })

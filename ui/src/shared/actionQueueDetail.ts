@@ -171,16 +171,25 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
 
   if (event.kind === 'tool_invoked') {
     const rawTool = typeof p.tool === 'string' ? p.tool : '(tool)'
-    // Use the basename when the tool is a full path (e.g. /usr/bin/git → git).
     const tool = rawTool.includes('/') ? (rawTool.split('/').pop() || rawTool) : rawTool
+    const argv = Array.isArray(p.argv) ? (p.argv as string[]).join(' ') : ''
+    const cmd = argv ? `${tool} ${argv}` : tool
+    const truncated = cmd.length > 80 ? `${cmd.slice(0, 77)}…` : cmd
     const exitCode = typeof p.exitCode === 'number' ? p.exitCode : null
     if (exitCode !== null && exitCode !== 0) {
-      const phase = typeof event.phase === 'string' ? event.phase : null
-      return phase
-        ? `${tool} exited ${exitCode} during the ${phase} step`
-        : `${tool} exited ${exitCode}`
+      return `${truncated} → exit ${exitCode}`
     }
-    return `ran ${tool}`
+    return truncated
+  }
+
+  if (event.kind === 'cli-invocation') {
+    const command = typeof p.command === 'string' ? p.command : ''
+    const exitCode = typeof p.exitCode === 'number' ? p.exitCode : null
+    const dur = typeof p.durationMs === 'number' ? `${Math.round(p.durationMs)}ms` : ''
+    const parts = [`mars ${command}`]
+    if (exitCode !== null && exitCode !== 0) parts.push(`→ exit ${exitCode}`)
+    if (dur) parts.push(dur)
+    return parts.join(' ')
   }
 
   if (event.kind === 'task_failed') {
@@ -277,6 +286,42 @@ export const severityRowClass = (severity: TraceEvent['severity']): string => {
   if (severity === 'error') return 'border-error/40 bg-error/5'
   if (severity === 'warn') return 'border-warn/40 bg-warn/5'
   return 'border-iron/30 bg-iron/5'
+}
+
+/**
+ * Human-readable labels for trace event kinds. Replaces raw machine keys
+ * (step_started, tool_invoked) with scannable labels in the Events page.
+ */
+export const KIND_LABELS: Record<string, string> = {
+  origin_created: 'Origin',
+  step_started: 'Step start',
+  step_ended: 'Step end',
+  tool_invoked: 'Tool',
+  task_blocked: 'Blocked',
+  recovery_spawned: 'Recovery',
+  task_failed: 'Failed',
+  log_line: 'Log',
+  'cli-invocation': 'CLI',
+  scorer_result: 'Score',
+  'worker-model-mismatch': 'Model mismatch',
+}
+
+export const humanizeKind = (kind: string): string =>
+  KIND_LABELS[kind] ?? kind.replace(/[_-]/g, ' ')
+
+/**
+ * Human-readable labels for workflow phases.
+ */
+export const PHASE_LABELS: Record<string, string> = {
+  setup: 'Setup',
+  code: 'Code',
+  verify: 'Verify',
+  merge: 'Merge',
+}
+
+export const humanizePhase = (phase: string | null): string | null => {
+  if (phase === null) return null
+  return PHASE_LABELS[phase] ?? phase
 }
 
 /** Kinds the UI labels distinctly in the Origins tree badge. */
