@@ -30,7 +30,7 @@ import {
   getWorker,
   pickWorkerForTags,
 } from '..'
-import { pickWorkerForTask } from '../../../workflows/implement-workflow'
+import { pickWorkerForTask } from '../../../workflows/primitives/shared'
 import type { Task } from '../../queue'
 
 describe('PRD 948691d0 slice 3 — Coder Worker can be constructed once and invoked many times', () => {

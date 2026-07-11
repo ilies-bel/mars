@@ -23,7 +23,7 @@ import {
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
   recoveryAttachesToOrigin,
   resolveWorkerSystemPrompt,
-} from '../implement-workflow'
+} from '../primitives/shared'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 
 describe('composePrompt — coder default', () => {

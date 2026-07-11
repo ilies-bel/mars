@@ -22,7 +22,7 @@ import {
   composePrompt,
   resolveWorkerSystemPrompt,
   CODER_SYSTEM_PROMPT,
-} from '../implement-workflow'
+} from '../primitives/shared'
 import { TDD_WORKER_BRIEF } from '../tdd-brief'
 
 describe('slicerOutputSchema: readFirst + prescriptiveAction', () => {

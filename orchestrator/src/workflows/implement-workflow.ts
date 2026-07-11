@@ -19,57 +19,12 @@ import {
 } from './primitives'
 import { behaviourVerify as behaviourVerifyPrimitive } from './primitives/behaviour-verify'
 
-// Pure helpers + failure sentinels were hoisted to `./primitives/shared` so the
-// primitive surface can reuse them without importing this module back. They are
-// re-exported here UNCHANGED so existing call sites (daemon dispatch, tests,
-// slicer) keep importing them from `./implement-workflow`.
 import {
   planSchema,
   tagSchema,
   kindSchema,
   specSchema,
 } from './primitives/shared'
-
-export {
-  // Failure sentinels (message builders + detectors)
-  BLOCKERS_ABORT_MESSAGE,
-  isBlockersAbortError,
-  MAIN_DIRTY_VERIFY_MESSAGE,
-  isMainDirtyVerifyError,
-  MAIN_DIRTY_MERGE_MESSAGE,
-  isMainDirtyMergeError,
-  CONTEXT_EXHAUSTED_ABORT_MESSAGE,
-  isContextExhaustedAbortError,
-  ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
-  isOriginWorktreeMissingAbortError,
-  CODER_EXIT_NONZERO_ABORT_MESSAGE,
-  isCoderExitNonzeroAbortError,
-  CODER_UNCOMMITTED_ABORT_MESSAGE,
-  isCoderUncommittedAbortError,
-  PREVIEW_GATE_MESSAGE,
-  isPreviewGateError,
-  AWAIT_HUMAN_MESSAGE,
-  isAwaitHumanError,
-  extractAwaitHumanStepName,
-  QUOTA_REJECTED_ABORT_MESSAGE,
-  isQuotaRejectedAbortError,
-  extractQuotaResetsAt,
-  // Prompt briefs + system-prompt assembly
-  COMMIT_FOOTER,
-  COMPLETION_REPORT_CONTRACT,
-  DEVIATION_RULES,
-  CODING_DISCIPLINE,
-  CODER_SYSTEM_PROMPT,
-  buildCoderSystemPrompt,
-  resolveWorkerSystemPrompt,
-  pickWorkerForTask,
-  recoveryAttachesToOrigin,
-  // Prompt composition + classifiers
-  composePrompt,
-  failureExcerpt,
-  detectPostCoderState,
-} from './primitives/shared'
-export type { PostCoderStateArgs, PostCoderState } from './primitives/shared'
 
 // ---------------------------------------------------------------------------
 // @mars/workflow implement pipeline (was: four Mastra createStep bodies).

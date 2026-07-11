@@ -914,7 +914,7 @@ export const startDaemon = async (
         extractAwaitHumanStepName,
         isQuotaRejectedAbortError,
         extractQuotaResetsAt,
-      } = await import('../../workflows/implement-workflow')
+      } = await import('../../workflows/primitives/shared')
       // Read the failure off RunResult.error (the engine puts the thrown Error
       // there verbatim on the `failed` path). The detectors flatten the cause
       // chain and accept `unknown`, so passing the raw error through is correct
@@ -1055,7 +1055,7 @@ export const startDaemon = async (
           isAwaitHumanError: isAwaitHumanErrorFn,
           isQuotaRejectedAbortError: isQuotaRejectedAbortErrorFn,
           extractQuotaResetsAt: extractQuotaResetsAtFn,
-        } = await import('../../workflows/implement-workflow')
+        } = await import('../../workflows/primitives/shared')
         isBlockersAbort = isBlockersAbortError(err)
         isContextExhaustedAbort = isContextExhaustedAbortError(err)
         isOriginWorktreeMissingAbort = isOriginWorktreeMissingAbortError(err)

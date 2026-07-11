@@ -34,7 +34,7 @@ import {
   isQuotaRejectedAbortError,
   extractQuotaResetsAt,
   QUOTA_REJECTED_ABORT_MESSAGE,
-} from '../../../workflows/implement-workflow'
+} from '../../../workflows/primitives/shared'
 import { runClaudeCode } from '../git/claude'
 import type { ClaudeEvent } from '../claude-stream'
 
