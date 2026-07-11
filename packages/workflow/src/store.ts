@@ -56,11 +56,11 @@ export interface StepRecord {
   sha: string | null;
   startedAt: number;
   finishedAt: number | null;
-  /** How many times `fn` has been invoked for this step (1-based once run). */
+  /** Number of times fn has been invoked for this step. Starts at 1 on first execution; increments on each retry. */
   attempt: number;
   /**
    * A COMPACT result-or-error summary — a short string, never the full
-   * output. On a completed step this summarises the return value; on a
+   * output. On a completed step this summarizes the return value; on a
    * failed step `errorSummary` carries the failure and `summary` is null.
    */
   summary: string | null;
@@ -86,6 +86,8 @@ export interface StepOutcomeMeta {
  * async so a remote/db-backed impl can await freely.
  */
 export interface WorkflowStore {
+  /** Release resources held by the store (e.g. close a database connection). */
+  close?(): void | Promise<void>;
   /** Insert a run row in `'running'` status. Idempotent on `id`. */
   createRun(run: RunRecord): Promise<void>;
   /** Look up a run by id, or `undefined` if there is none. */

@@ -13,11 +13,11 @@
 | Implement workflow | `orchestrator/src/core/workflows/implement-workflow.ts` | 4 steps: setup → claude → verify → merge. |
 | Plan workflow | `orchestrator/src/core/workflows/plan-workflow.ts` | Auto-generates follow-up suggestions on draft tasks. |
 | Init workflow | `orchestrator/src/core/workflows/init-workflow.ts` | Stack detection + specialist fetch + supervisor render. |
-| Watcher daemon | `orchestrator/src/core/watcher.ts` | Polls `queue.db`, dispatches `queued` tasks to `implementWorkflow`. |
+| Watcher daemon | `orchestrator/src/core/watcher.ts` | Polls `mars.db`, dispatches `queued` tasks to `implementWorkflow`. |
 | Queue | `orchestrator/src/core/queue.ts` | LibSQL-backed task store. Tables: `tasks`, `task_suggestions`. |
 | Git/claude/verify primitives | `orchestrator/src/core/lib/git.ts` | `runClaudeCode`, `createWorktree`, `verifyChanges`, `mergeBranch`, lock primitives. |
 | Init pipeline | `orchestrator/src/init/` | Stack detection, GitHub HTTPS fetch against `ayush-that/sub-agents.directory`, supervisor templating. |
-| UI | `ui/` | Vite + React SPA with a small Express SSE server (`ui/server/`). Reads `queue.db` directly via `@libsql/client`. Read-only. |
+| UI | `ui/` | Vite + React SPA with a small Express SSE server (`ui/server/`). Reads `mars.db` directly via `@libsql/client`. Read-only. |
 | Bundled prompts | `orchestrator/src/prompts/vcs-supervisor.md` | Inlined into `claude -p` for git conflict reconciliation. |
 | Chat skill | `.claude/commands/mars/feature/chat.md` | Slash command for refining drafts. **Out of step with current code** — see "Drift" below. |
 
@@ -28,7 +28,7 @@
 `orchestrator/src/core/workflows/implement-workflow.ts`
 
 ```
-                        queue.db row (status=queued)
+                        mars.db row (status=queued)
                                  │
                                  ▼
    ┌─────────────────────────────────────────────────────────────┐
@@ -137,9 +137,10 @@ All state for a target repo lives in `<target-repo>/.mars/`:
 
 | File | Purpose | Status |
 | --- | --- | --- |
-| `queue.db` | LibSQL: `tasks`, `task_suggestions` | Active |
+| `mars.db` | LibSQL: `tasks`, `task_suggestions` | Active |
 | `mastra.db` | Pre-`@mars/workflow` legacy observability DB (cleaned up by `removeLegacyMastraDb` in server.ts) | Legacy |
-| `state.db` | Currently unused; reserved | **Dead — drift** |
+| ~~`queue.db`~~ | Legacy pre-merge artifact (merged into `mars.db`) | **Dead** |
+| ~~`state.db`~~ | Legacy pre-merge artifact (merged into `mars.db`) | **Dead** |
 | `cache/sub-agents/trees.json` | 7-day cached specialist index | Active |
 | `supervisors/<name>.md` | Generated supervisor system prompts | Active |
 | `supervisors/manifest.json` | Supervisor registry | Active |
@@ -149,7 +150,7 @@ All state for a target repo lives in `<target-repo>/.mars/`:
 
 Add `/.mars/` to the target repo's `.gitignore`.
 
-## Task schema (`queue.db`)
+## Task schema (`mars.db`)
 
 `orchestrator/src/core/queue.ts`
 
@@ -226,7 +227,7 @@ strings. No `ANTHROPIC_API_KEY`. See
   - `GET /events` — SSE; emits `{ type: 'tasks' }` on every `.mars/`
     file change (via `node:fs.watch`).
   - `GET /healthz` — `{ ok, repo }`.
-- **SPA:** Read-only Kanban over `queue.db`.
+- **SPA:** Read-only Kanban over `mars.db`.
   - **BACKLOG:** `queued` with no plan
   - **PLANNED:** `queued` with plan
   - **IN PROGRESS:** `running`, `verifying`, `merging`
@@ -242,12 +243,12 @@ Captured here so future-you doesn't trust either side blindly.
    references `features/<id>.md`, `mars feature refine`, `mars rebuild`,
    and `.mars/state.db`. None of those exist in the orchestrator. Vision
    is DB-first; the skill needs to be rewritten to write directly into
-   `queue.db` (`plan_functional` / `plan_technical`).
+   `mars.db` (`plan_functional` / `plan_technical`).
 2. **`ready` status** is in the schema and CLI but redundant with
    `queued` per the vision. Plan to remove.
 3. **`mars run`** (synchronous batch) overlaps with `mars daemon`. Vision
    says watch is canonical.
-4. **`state.db`** exists in `.mars/` but no code reads or writes it.
+4. ~~**`state.db`**~~ merged into `mars.db` — no longer exists as a separate file.
 5. **README points to** `agents/` and `docs/CONTRACTS.md` — neither
    directory/file exists. The relevant agent definitions are in
    `.agents/` and `.claude/agents/`.

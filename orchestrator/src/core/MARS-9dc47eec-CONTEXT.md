@@ -53,7 +53,7 @@ when the slices are filed:
   flags `queue-fix-tasks.ts` (heavy use), `init/databases.ts`,
   `daemon/server.ts`, `workflows/slice-workflow.ts`, and `proposals.ts`
   (dynamic-imports `initQueue` and re-declares its own private
-  `getClient` against `state.db` — that one belongs to the StateStore
+  `getClient` against `mars.db` — that one belongs to the StateStore
   half of ADR-0021, not TaskStore). The four-slice plan in the prior
   note covers these implicitly (Slices 2 and 4) but the parent brief
   enumerates only the lib subset.

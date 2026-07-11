@@ -8,7 +8,7 @@ import type { RaiseActionQueueItem } from '../action-queue'
 
 // Hoisted mock of raiseActionQueueItem so checkOutboxLag's import resolves to
 // the spy.  Other action-queue exports keep their real implementations — only
-// the side-effect surface that would otherwise need a real state.db is
+// the side-effect surface that would otherwise need a real mars.db is
 // stubbed.
 const raiseSpy = vi.hoisted(() =>
   vi.fn(async (_item: unknown): Promise<string> => 'mock-item-id'),

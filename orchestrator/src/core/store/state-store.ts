@@ -16,7 +16,7 @@
  * here.
  *
  * Cross-DB note: proposals and action-queue rows emit lifecycle events into
- * the queue.db events outbox. That ability is preserved — those modules
+ * the mars.db events outbox. That ability is preserved — those modules
  * publish through the TaskStore client (same `mars.db`) in a separate write
  * after the state write commits; see `emitProposalBusEvent` /
  * `emitActionQueueBusEvent`.
@@ -65,7 +65,7 @@ export type { Scope } from './task-store'
 export { resolveStateClient } from './state-client'
 
 /**
- * Idempotent state.db schema migration. Runs the per-table init for proposals
+ * Idempotent mars.db state-domain schema migration. Runs the per-table init for proposals
  * and proposal-notes. ADR-0021: the migration lives behind the store; callers
  * stop hand-sequencing the inits.
  */

@@ -9,27 +9,12 @@
  * running, both commands fail fast — there is no fallback to the raw DB path.
  */
 
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { Command } from '../command'
 import type { Alert } from '../../core/lib/alert'
+import { readDaemonPort } from './shared'
 
 const NO_DAEMON_MSG =
   'alerts: daemon not running — run `mars daemon start` (the alert view is served by the daemon)'
-
-/**
- * Read the daemon's HTTP port from the port file published by `listen(0)`.
- * Returns null when the file is absent or contains a non-integer value.
- */
-const readDaemonPort = async (stateDir: string): Promise<number | null> => {
-  try {
-    const raw = (await readFile(join(stateDir, 'http.port'), 'utf8')).trim()
-    const port = Number(raw)
-    return Number.isInteger(port) && port > 0 ? port : null
-  } catch {
-    return null
-  }
-}
 
 /** Fetch the full Alert list from the daemon. Throws on an unreachable daemon. */
 const fetchAlerts = async (port: number): Promise<Alert[]> => {

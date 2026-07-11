@@ -4,6 +4,9 @@
  * `deps.out`/`deps.err` sinks passed by the caller.
  */
 
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+
 /** Normalise an unknown thrown value to its message string. */
 export const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
@@ -28,5 +31,19 @@ export const spawnNoticeOut =
 export const spawnNoticeErr =
   (err: (s: string) => void) =>
   (pid: number, logFile: string): void => {
-    err(`spawned mars daemon (pid ${pid}, log ${logFile})`)
+    err(`[mars] started daemon (pid ${pid}, log: ${logFile})`)
   }
+
+/**
+ * Read the daemon's HTTP port from the port file published by `listen(0)`.
+ * Returns null when the file is absent or contains a non-integer value.
+ */
+export const readDaemonPort = async (stateDir: string): Promise<number | null> => {
+  try {
+    const raw = (await readFile(join(stateDir, 'http.port'), 'utf8')).trim()
+    const port = Number(raw)
+    return Number.isInteger(port) && port > 0 ? port : null
+  } catch {
+    return null
+  }
+}

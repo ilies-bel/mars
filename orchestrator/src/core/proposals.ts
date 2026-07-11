@@ -24,7 +24,7 @@ export interface Proposal {
 }
 
 /**
- * The state.db client, resolved through the shared seam-internal resolver
+ * The mars.db client (state domain), resolved through the shared seam-internal resolver
  * (`store/state-client`). Same `mars.db` file as the TaskStore (ADR-0034); the
  * three formerly-duplicated private singletons now collapse to this one.
  *
@@ -36,14 +36,13 @@ export interface Proposal {
 const stateClient = (): Client => resolveStateClient()
 
 /**
- * Emit a proposal lifecycle event to the queue.db events outbox.
+ * Emit a proposal lifecycle event to the mars.db events outbox.
  *
- * Proposals live in state.db; the events outbox lives in queue.db. Cross-DB
- * atomicity is not available via libsql transactions, so this emits in a
- * separate write transaction on queue.db (via the TaskStore seam's `atomic`)
- * after the state.db write has committed. Emission failures are non-fatal:
- * the proposal operation succeeds regardless. The Outbox stays in queue.db
- * (ADR-0021).
+ * Proposals and the events outbox both live in mars.db (consolidated from
+ * the former queue.db/state.db split). This emits in a separate write
+ * transaction (via the TaskStore seam's `atomic`) after the proposal write
+ * has committed. Emission failures are non-fatal: the proposal operation
+ * succeeds regardless.
  */
 async function emitProposalBusEvent<T extends EventName>(
   type: T,
@@ -56,7 +55,7 @@ async function emitProposalBusEvent<T extends EventName>(
       await scope.execute(buildEventInsert(type, payload))
     })
   } catch {
-    // Non-fatal: proposal state change already committed in state.db.
+    // Non-fatal: proposal state change already committed in mars.db.
   }
 }
 
@@ -65,7 +64,7 @@ let initialised = false
 export const initProposals = async (): Promise<void> => {
   if (initialised) return
   const c = stateClient()
-  // One-shot rename: a pre-existing state.db has an `ideas` table (and
+  // One-shot rename: a pre-existing mars.db may have an `ideas` table (and
   // possibly `idea_user_stories`). Flip them to the proposal vocabulary
   // before any CREATE/ALTER runs. This is a pure DDL rename with no
   // compatibility view; per ADR-0010, in-flight worktrees at migration
@@ -125,7 +124,7 @@ export const initProposals = async (): Promise<void> => {
   // recursive planner to decide what to grill next) is stored in its own
   // junction, separate from the dispatch graph's `task_blockers`. No
   // polymorphic (kind,id) table. Both endpoints are proposals so the table
-  // lives here in state.db alongside `proposals`. Shape mirrors
+  // lives here in mars.db alongside `proposals`. Shape mirrors
   // `task_blockers` in queue.ts: (subject) waits on (blocker), composite PK,
   // FK on both endpoints, an index per endpoint. The ADR text names this
   // `idea_dependencies` in the original ADR text; the codebase now uses
@@ -277,7 +276,7 @@ export const initProposals = async (): Promise<void> => {
 
 /**
  * One-shot migration: copy any reflection-origin rows out of the legacy
- * `task_suggestions` table (in queue.db) into `proposals` with
+ * `task_suggestions` table (in mars.db) into `proposals` with
  * `source='reflection'`. Runs idempotently — rows whose id already exists
  * in proposals are skipped. The actual DROP of task_suggestions happens
  * during queue init, after this migration has copied the rows out.
@@ -1082,7 +1081,7 @@ export const rejectProposal = async (
   // task ids so the user explicitly redirects or drops them. This check
   // runs BEFORE the status flip so a refused dismiss leaves the proposal
   // untouched (still 'draft'). task_proposal_blockers lives in the separate
-  // queue.db, hence the cross-module read.
+  // mars.db (task domain), hence the cross-module read.
   const { listTasksBlockedByProposal } = await import('./queue')
   const dependents = await listTasksBlockedByProposal(id)
   if (dependents.length > 0) {
@@ -1258,7 +1257,7 @@ export const claimProposalForSlicing = async (
  * Flip a proposal's status from 'slicing' to 'sliced' and emit
  * proposal.sliced on the event bus. Called by the slice workflow's
  * generate-slices step (Phase 4) after tasks have been successfully
- * inserted into queue.db. The conditional UPDATE (status='slicing')
+ * inserted into mars.db. The conditional UPDATE (status='slicing')
  * pairs with `claimProposalForSlicing` so only the caller that holds the
  * claim can finalise the transition — a stale caller whose claim was
  * already reverted by a compensating path will see zero rows updated.

@@ -31,7 +31,7 @@ draft  ──► queued  ──► running  ──► verifying  ──► mergi
    `plan_technical` columns.
 2. **Chat.** I open a chat skill (`/mars:feature:chat`) inside Claude Code.
    The skill grills me one question at a time, writing my answers directly
-   into the task's plan columns in `queue.db`. No markdown specs on disk.
+   into the task's plan columns in `mars.db`. No markdown specs on disk.
    The conversation challenges fuzzy terms, cross-references the codebase,
    and refuses to move on until the plan is precise.
 3. **Queued.** When I'm satisfied, the task transitions to `queued`. The
@@ -51,7 +51,7 @@ state — `mars run` (current code) collapses into the watcher.
 
 ## Glossary (intentionally small)
 
-- **Task.** The unit of work. A row in `queue.db`. Carries a prompt, a
+- **Task.** The unit of work. A row in `mars.db`. Carries a prompt, a
   plan (functional + technical), a status, a worktree path, and a session id.
 - **Plan.** Two free-text columns on a task: `plan_functional` (what and why)
   and `plan_technical` (where and how). Filled by the chat skill.
@@ -78,7 +78,7 @@ or `mars feature refine`, that's drift to be corrected in code.
   LangSmith, or AutoGPT. It uses Mastra as a local workflow runtime and
   nothing more.
 - **No write surface in the UI.** `mars ui` is a read-only viewer over
-  `queue.db`. The CLI is the only way to mutate state.
+  `mars.db`. The CLI is the only way to mutate state.
 - **No background telemetry, no opt-in analytics.** What happens on the
   laptop stays on the laptop.
 
@@ -103,11 +103,10 @@ will be reconciled in subsequent passes.
 - **Chat skill ↔ orchestrator drift.** `.claude/commands/mars/feature/chat.md`
   describes a markdown-first model (`features/<id>.md`, `mars feature refine`,
   `.mars/state.db`). Vision is DB-first. The skill needs to be rewritten to
-  edit `queue.db` directly via `mars set-functional` / `mars set-technical`
+  edit `mars.db` directly via `mars set-functional` / `mars set-technical`
   (or equivalent), not write markdown files.
 - **`mars run` vs `mars daemon`.** Current code has both: `run` is a
   one-shot batch dispatcher, `daemon` is the long-running dispatcher.
   Vision says the daemon is canonical. Decide whether to keep `run` as a
   debug tool or remove it.
-- **`state.db` vs `queue.db`.** Two SQLite files exist in `.mars/`. Only
-  `queue.db` is used. Either consolidate or document why both exist.
+- ~~**`state.db` vs `queue.db`.**~~ Resolved: both merged into `mars.db`.

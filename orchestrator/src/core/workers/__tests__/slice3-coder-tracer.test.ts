@@ -10,7 +10,7 @@
 // brief, so a future refactor that breaks the contract surfaces here
 // before it reaches the implement workflow.
 //
-// AC mapping (see slice brief in queue.db):
+// AC mapping (see slice brief in mars.db):
 //  - AC1 (constructed once, invoked many times) → describe #1
 //  - AC2 (pinned config visible from a single registry file)   → describe #2
 //  - AC3 (implement workflow surfaces role 'Coder' end-to-end) → describe #3

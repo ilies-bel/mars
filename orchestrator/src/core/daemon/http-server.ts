@@ -908,7 +908,7 @@ export const startHttpServer = async (
 
     // GET /view/proposals — draft proposals + open stale-worktree alerts for
     // the proposals/alerts surface. The daemon is the sole reader of its own
-    // DB; the UI server proxies this endpoint instead of querying state.db
+    // DB; the UI server proxies this endpoint instead of querying mars.db
     // directly. Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/view/proposals') {
       deps.appServices

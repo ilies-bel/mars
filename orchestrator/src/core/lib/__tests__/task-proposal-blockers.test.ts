@@ -106,7 +106,7 @@ describe('task_proposal_blockers (ADR-0015 task->idea cross-graph edge)', () => 
 
     // The slicer produces a real task; the transfer re-points the
     // dependent at it. Both writes (task_blockers insert,
-    // task_proposal_blockers delete) are one queue.db transaction.
+    // task_proposal_blockers delete) are one mars.db transaction.
     const newBlocker = await q.enqueueTask('sliced from idea')
     const { transferred } = await q.transferProposalBlockerToTask(
       idea.id,

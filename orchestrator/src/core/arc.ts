@@ -1099,7 +1099,7 @@ export class Arc {
 
     // Inline the source task's prompt so recipes that re-do the original
     // work (e.g. verify:has-diff/no-commits-ahead) don't burn turns
-    // re-fetching it from .mars/queue.db. Handlers should already set
+    // re-fetching it from .mars/mars.db. Handlers should already set
     // `originalPrompt`; backfill from the source row if a direct caller
     // forgot. Default to '' only when the source genuinely has no prompt.
     const incomingPrompt = input.recipeContext.originalPrompt

@@ -93,7 +93,7 @@ export interface LoadCorpusOptions {
   sinceIso?: string
   limit?: number
   /**
-   * Injected TaskStore over `.mars/queue.db`. Defaults to the composition-root
+   * Injected TaskStore over `.mars/mars.db`. Defaults to the composition-root
    * singleton (`getDefaultTaskStore()`) when omitted so existing CLI callers
    * keep working; tests inject an in-memory store.
    */

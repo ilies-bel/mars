@@ -1,7 +1,7 @@
 # bus
 
 Local-first event bus for the Mars orchestrator. Library code publishes events
-atomically with the state writes they describe via a shared `queue.db` (libsql).
+atomically with the state writes they describe via a shared `mars.db` (libsql).
 One daemon tails an `events` outbox table and fans events out over WebSocket.
 
 ## Architecture
@@ -10,13 +10,13 @@ One daemon tails an `events` outbox table and fans events out over WebSocket.
 Writers (queue.ts, action queue.ts, …)
        │ libsql write transaction
        ▼
-queue.db → events table  ──►  Bus Daemon (single poller)  ──►  WebSocket clients
+mars.db → events table  ──►  Bus Daemon (single poller)  ──►  WebSocket clients
                                                                (UI, agents, browser)
 ```
 
 - Writers call `publish(tx, type, payload)` **inside an open libsql write
   transaction** so the event commits atomically with the state row it describes.
-- The `events` table lives in `queue.db` — same file, same driver — so
+- The `events` table lives in `mars.db` — same file, same driver — so
   transactional atomicity is guaranteed.
 - The daemon (`startDaemon()`) uses the shared `getClient()` singleton from
   `queue.ts` — no second connection.

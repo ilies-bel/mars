@@ -267,7 +267,7 @@ const readLandedCommits = async (
 
 /**
  * Return a lazy, once-per-instance memoised migration runner that drives
- * queue.db's schema migration on the passed client's database. The migration
+ * mars.db's schema migration on the passed client's database. The migration
  * lives behind the store per ADR-0021; callers no longer hand-sequence it.
  */
 export const createRunMigrations = (
@@ -566,7 +566,7 @@ export const getDefaultDomainTaskStore = (): DomainTaskStore => {
 /**
  * Composition-root-only access to the underlying libsql `Client` for the
  * wire-bus / outbox subscriber layer (cursor reads on the `events` table,
- * which lives below the domain seam — ADR-0021 keeps the Outbox in queue.db).
+ * which lives below the domain seam — ADR-0021 keeps the Outbox in mars.db).
  *
  * This is NOT a domain escape hatch: domain modules must use the store. The
  * only sanctioned importer is the daemon composition root, which threads this

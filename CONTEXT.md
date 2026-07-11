@@ -203,11 +203,11 @@ A directed edge in the Actionable graph from a source task to its fix-task (fix_
 _Avoid_: fix edge, recovery link, fix_for_task_id edge
 
 **TaskStore**:
-The deep module that owns all access to .mars/queue.db. Exposes domain methods (getTask, listTasks, enqueue, claimQueued, updateTask, addBlockers, ...) plus a generic Stmt-based side door (query/execute/atomic) for queries no domain method covers. Hides the libsql Client, Transaction, schema migration, and row<->Task mapping behind one seam. Constructed at the composition root with an injected libsql Client (file: for prod, :memory: for tests); never exposes the raw client. Replaces the exported getClient()/initQueue() pair from queue.ts.
+The deep module that owns all access to .mars/mars.db (task domain). Exposes domain methods (getTask, listTasks, enqueue, claimQueued, updateTask, addBlockers, ...) plus a generic Stmt-based side door (query/execute/atomic) for queries no domain method covers. Hides the libsql Client, Transaction, schema migration, and row<->Task mapping behind one seam. Constructed at the composition root with an injected libsql Client (file: for prod, :memory: for tests); never exposes the raw client. Replaces the exported getClient()/initQueue() pair from queue.ts.
 _Avoid_: queue client, getClient, task repository, db layer
 
 **StateStore**:
-The deep module that owns all access to .mars/state.db (proposals, inbox). Sibling seam to TaskStore: same constructor-injected libsql Client pattern, same generic side door. Collapses the duplicated private getClient()/clientSingleton currently re-declared independently in proposals.ts and lib/inbox.ts into one connection owner.
+The deep module that owns all access to .mars/mars.db (proposals, action queue). Sibling seam to TaskStore: same constructor-injected libsql Client pattern, same generic side door. Collapses the duplicated private getClient()/clientSingleton currently re-declared independently in proposals.ts and lib/action-queue.ts into one connection owner.
 _Avoid_: proposals client, state db layer, inbox client
 
 **Command seam**:
@@ -227,7 +227,7 @@ A read-only Mars work unit that gathers information for a parent task and writes
 _Avoid_: read-only task, readonly task, diagnostic task, context-gathering task, inquiry
 
 **Proposal**:
-A draft of work to do, persisted in .mars/state.db, regardless of who proposed it; every Proposal carries a source — reflection (synthesized by mars reflect / mars arc reflect from past task signals), human (created by the user), or planner (raised by the planner agent when it spots a gap while refining another Proposal).
+A draft of work to do, persisted in .mars/mars.db, regardless of who proposed it; every Proposal carries a source — reflection (synthesized by mars reflect / mars arc reflect from past task signals), human (created by the user), or planner (raised by the planner agent when it spots a gap while refining another Proposal).
 _Avoid_: idea, suggestion
 
 **task-terminal invalidator**:
@@ -259,7 +259,7 @@ A row in inbox_items representing one stuck origin task; updates in place as rec
 _Avoid_: inbox row, inbox entry, stuck-task notification
 
 **Outbox**:
-The single append-only log in .mars/queue.db where every Bus event is durably persisted in the same transaction as its triggering state mutation, and from which all Subscribers pull.
+The single append-only log in .mars/mars.db where every Bus event is durably persisted in the same transaction as its triggering state mutation, and from which all Subscribers pull.
 _Avoid_: event log, event store, event queue, bus table, outbox_events
 
 **Subscriber**:

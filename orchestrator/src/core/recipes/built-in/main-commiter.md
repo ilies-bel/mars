@@ -51,7 +51,7 @@ your CWD; do not change directory.
 ## What you must NOT do
 
 - **Never touch `.mars/` paths.** They are per-repo orchestrator state
-  (queue.db, mars.db, worktrees, locks). If `git status` includes any
+  (mars.db, worktrees, locks). If `git status` includes any
   `.mars/...` entry, that alone makes the state ambiguous — fail (see
   below). Do not commit, stash, or delete anything under `.mars/`.
 - Do not `git push`, do not create new branches, do not switch branches.

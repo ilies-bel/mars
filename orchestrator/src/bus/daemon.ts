@@ -46,7 +46,7 @@ export interface DaemonHandle {
 /**
  * Start the single-process fan-out daemon.
  *
- * Tails the `events` outbox in queue.db via short polling and pushes each
+ * Tails the `events` outbox in mars.db via short polling and pushes each
  * new row to connected WebSocket clients that are subscribed to its type
  * (or `'*'`). Uses the shared libsql client singleton — no second connection.
  *

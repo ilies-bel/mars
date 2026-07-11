@@ -15,14 +15,12 @@
  */
 
 import { readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import {
   raiseActionQueueItem,
 } from '../../core/lib/action-queue'
 import { actionQueueRaiseSchema } from '../action-queue-raise-schema'
 import type { Command, CommandDeps } from '../command'
-import { errorMessage } from './shared'
+import { errorMessage, readDaemonPort } from './shared'
 import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
 
 const LEAN_PREVIEW = 3
@@ -38,19 +36,9 @@ const readStdin = async (): Promise<string> => {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-/**
- * Read the daemon's HTTP port from the port file published by `listen(0)`.
- * Returns null when the file is absent or contains a non-integer value.
- */
-export const readDaemonPort = async (stateDir: string): Promise<number | null> => {
-  try {
-    const raw = (await readFile(join(stateDir, 'http.port'), 'utf8')).trim()
-    const port = Number(raw)
-    return Number.isInteger(port) && port > 0 ? port : null
-  } catch {
-    return null
-  }
-}
+// readDaemonPort is imported from ./shared and re-exported below for
+// backwards compatibility with modules that import it from this file.
+export { readDaemonPort }
 
 /**
  * Fetch the action queue view from the daemon's derived-view endpoint.
@@ -95,7 +83,7 @@ const actionQueueList: Command = {
     const allowed = new Set(['open', 'all'])
     if (!allowed.has(filter)) {
       deps.err('usage: mars action-queue list [open|all] [--lean]')
-      return { code: 1 }
+      return { code: 2 }
     }
     const port = await readDaemonPort(deps.ctx.stateDir)
     if (port === null) {
@@ -150,7 +138,7 @@ const actionQueueShow: Command = {
     const id = args.positional.filter((a) => a !== '--lean')[0]
     if (!id) {
       deps.err('usage: mars action-queue show <id>')
-      return { code: 1 }
+      return { code: 2 }
     }
     const port = await readDaemonPort(deps.ctx.stateDir)
     if (port === null) {

@@ -25,7 +25,7 @@ const glossarySet: Command = {
       deps.err(
         'usage: mars glossary set "<term>" "<definition>" [--avoid alias1,alias2]',
       )
-      return { code: 1 }
+      return { code: 2 }
     }
     const aliasFlag = args.flags['--avoid']
     const aliases = aliasFlag
@@ -51,7 +51,7 @@ const glossaryRemove: Command = {
     const term = args.positional[0]
     if (!term) {
       deps.err('usage: mars glossary remove "<term>"')
-      return { code: 1 }
+      return { code: 2 }
     }
     await deps.daemon.sendRequest(
       { op: 'glossary-write', kind: 'remove', term },
@@ -89,7 +89,7 @@ const glossaryShow: Command = {
     const term = args.positional[0]
     if (!term) {
       deps.err('usage: mars glossary show "<term>"')
-      return { code: 1 }
+      return { code: 2 }
     }
     const doc = await readGlossaryFile(contextPathFor(deps.ctx.repoRoot))
     const lower = term.toLowerCase()
@@ -113,7 +113,7 @@ const glossaryGroup: Command = {
   usage: 'usage: mars glossary <set|remove|list|show> ...',
   run: (_args, deps) => {
     deps.err('usage: mars glossary <set|remove|list|show> ...')
-    return { code: 1 }
+    return { code: 2 }
   },
 }
 

@@ -6,13 +6,12 @@ import type { EventName, EventPayload } from './outbox'
 import { resolveOriginIdForTask } from './origin'
 
 /**
- * Emit an actionQueue lifecycle event to the queue.db events outbox.
+ * Emit an actionQueue lifecycle event to the mars.db events outbox.
  *
- * action_queue_items live in state.db; the events outbox lives in queue.db.
- * Cross-DB atomicity is not available via libsql transactions, so this
- * emits in a separate write transaction on queue.db after the state.db
- * write has committed. Emission failures are non-fatal: the actionQueue
- * operation succeeds regardless.
+ * Both action_queue_items and the events outbox live in mars.db (consolidated
+ * from the former queue.db/state.db split). This emits in a separate write
+ * transaction after the action-queue write has committed. Emission failures
+ * are non-fatal: the actionQueue operation succeeds regardless.
  */
 async function emitActionQueueBusEvent<T extends EventName>(
   type: T,
@@ -25,7 +24,7 @@ async function emitActionQueueBusEvent<T extends EventName>(
       await scope.execute(buildEventInsert(type, payload))
     })
   } catch {
-    // Non-fatal: actionQueue state change already committed in state.db.
+    // Non-fatal: actionQueue state change already committed in mars.db.
   }
 }
 
@@ -271,7 +270,7 @@ export interface SetActionQueueStateOptions {
 
 let initialised = false
 
-// Shared state.db client (collapsed from the former private singleton); same
+// Shared mars.db client (state domain, collapsed from the former private singleton); same
 // `mars.db` file as the TaskStore (ADR-0034), resolved through the seam.
 const stateClient = resolveStateClient
 

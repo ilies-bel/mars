@@ -324,7 +324,7 @@ const runScaffoldWorkflows = async (written: string[]): Promise<string[]> => {
 }
 
 /**
- * Materialise `.mars/queue.db` + `.mars/state.db` (tasks, ideas, actionQueue) so a
+ * Materialise `.mars/mars.db` (tasks, proposals, actionQueue) so a
  * freshly scaffolded repo is usable without waiting for the first daemon
  * write to lazily create them. All three init paths are idempotent via
  * `CREATE TABLE IF NOT EXISTS`.
@@ -449,7 +449,7 @@ interface InitWorkflowOutput {
 // 'scaffold-workflows', 'init-databases', 'seed-recipes', 'activate-plugin')
 // are load-bearing trace-view labels. Disk side effects (per-folder + root
 // CLAUDE.md, the .mars/workflows/*.js scaffold, the init manifest, and the
-// recipe override seeds) and DB side effects (queue.db/state.db) are preserved
+// recipe override seeds) and DB side effects (mars.db) are preserved
 // verbatim. Failures THROW; the engine records the step failed. 'activate-plugin'
 // is best-effort: it never throws regardless of outcome.
 export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({

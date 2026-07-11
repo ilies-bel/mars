@@ -1329,7 +1329,7 @@ export const startDaemon = async (
         drainAgain = false
         // A throw from any await below (getTask / hasIncompleteBlockers
         // hitting SQLITE_BUSY or a LibSQL client error under a large
-        // queue.db) must not escape: drain() is invoked fire-and-forget
+        // mars.db) must not escape: drain() is invoked fire-and-forget
         // (`void drain()`), so an uncaught rejection silently kills the
         // loop with no log line and the daemon stops claiming work while
         // staying alive. Catch per-pass, log, and let the do/while exit

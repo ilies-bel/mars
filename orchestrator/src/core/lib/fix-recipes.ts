@@ -34,7 +34,7 @@ export interface FixRecipeContext {
    * Prompt of the original (source) task this recovery is unblocking.
    * Injected by `handleTaskFailureWithFixTask` so recipes can inline it
    * verbatim — keeps the recovery agent from burning its turn budget on
-   * `.mars/queue.db` exploration before making the edit. Defaults to ''
+   * `.mars/mars.db` exploration before making the edit. Defaults to ''
    * only when the source task genuinely has no prompt recorded.
    */
   originalPrompt: string
@@ -178,7 +178,7 @@ const noCommitsAheadRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -226,7 +226,7 @@ const noCommitsAheadRecipe: FixRecipe = {
       ` 2. Re-run \`${countCmd}\` immediately after the placeholder commit. It MUST now print a non-zero integer. If it still prints \`0\`, the placeholder did not land on your branch — fix that before anything else.`,
       '',
       ...sourcePromptSection,
-      ` 3. Read the **Original task prompt** above. It is already inlined — do NOT \`grep\` for it, do NOT open \`.mars/queue.db\`.`,
+      ` 3. Read the **Original task prompt** above. It is already inlined — do NOT \`grep\` for it, do NOT open \`.mars/mars.db\`.`,
       ` 4. Identify the smallest viable edit that satisfies the prompt's acceptance criteria. If the prompt names a chokepoint file/symbol/line, edit THAT file and only that file. If you're choosing between two edits, pick the smaller one.`,
       ` 5. Apply that edit IN YOUR CURRENT WORKTREE. A stub plus a TODO test is acceptable — a parked, partly-correct commit is strictly better than no commit at all.`,
       ` 6. Commit your real work: either amend the placeholder commit (\`git add -A && git commit --amend -m "recover: <one-line summary>"\`) or add a follow-up commit (\`git add -A && git commit -m "recover: <one-line summary>"\`). Do this BEFORE running tests, BEFORE refactoring, BEFORE refining.`,
@@ -261,7 +261,7 @@ const vcsAbortedNotFastForwardRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -320,7 +320,7 @@ const typecheckPropertyNotExistRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -390,7 +390,7 @@ const typecheckMissingExportRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -451,7 +451,7 @@ const typecheckArgTypeMismatchRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -537,7 +537,7 @@ const testAssertionErrorRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -608,7 +608,7 @@ const typecheckExcessPropertyRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -674,7 +674,7 @@ const typecheckCannotFindNameRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -739,7 +739,7 @@ const typecheckTypeMismatchRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -835,7 +835,7 @@ const testLibsqlNoSuchTableRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -952,7 +952,7 @@ const testNoSuiteFoundRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -1048,7 +1048,7 @@ const testLibsqlNotAnErrorRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/queue.db)`,
+            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
             '',
             ctx.originalPrompt.trim(),
             '',

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse Bash hook: warn when a command writes to .mars/queue.db with raw SQL
+# PreToolUse Bash hook: warn when a command writes to .mars/mars.db with raw SQL
 # instead of using the `mars` CLI. Non-blocking (exit 0).
 
 set -u
@@ -9,9 +9,9 @@ input="$(cat)"
 cmd="$(printf '%s' "$input" | sed -n 's/.*"command"[[:space:]]*:[[:space:]]*"\(.*\)".*/\1/p')"
 [ -z "$cmd" ] && exit 0
 
-# Only react if the command targets queue.db
+# Only react if the command targets mars.db
 case "$cmd" in
-  *queue.db*) ;;
+  *mars.db*) ;;
   *) exit 0 ;;
 esac
 
@@ -24,7 +24,7 @@ fi
 shopt -u nocasematch
 
 cat >&2 <<'WARN'
-[mars] WARNING: raw SQL write against .mars/queue.db detected.
+[mars] WARNING: raw SQL write against .mars/mars.db detected.
        Use the `mars` CLI instead (e.g. `mars add`, `mars run`, `mars task ...`)
        so queue invariants and orchestrator state stay consistent.
        If you really need raw SQL, ack this warning and proceed.

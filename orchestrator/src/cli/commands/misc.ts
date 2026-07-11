@@ -18,7 +18,7 @@ const where: Command = {
   run: (_args, deps) => {
     deps.out(`repo:           ${deps.ctx.repoRoot}`)
     deps.out(`stateDir:       ${deps.ctx.stateDir}`)
-    deps.out(`queueDb:        ${deps.ctx.queueDbPath}`)
+    deps.out(`db:             ${deps.ctx.queueDbPath}`)
     deps.out(`supervisorsDir: ${deps.ctx.supervisorsDir}`)
     return { code: 0 }
   },

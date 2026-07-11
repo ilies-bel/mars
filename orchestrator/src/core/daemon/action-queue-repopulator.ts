@@ -34,11 +34,11 @@ import { getTask } from '../queue'
  *   does not create them and does not fight them.
  *
  * Each side effect is guarded by processedOnce for at-most-once application:
- * processedOnce atomically commits a dedup row in queue.db, then the actual
- * actionQueue mutations run on state.db AFTER that transaction commits. The two
- * writes are not cross-DB atomic, but actionQueue operations are idempotent, so
- * the rare crash between dedup-commit and actionQueue-write is benign (at-most-once
- * is preserved; the actionQueue write is simply skipped on restart).
+ * processedOnce atomically commits a dedup row in mars.db, then the actual
+ * actionQueue mutations run after that transaction commits. The actionQueue
+ * operations are idempotent, so the rare crash between dedup-commit and
+ * actionQueue-write is benign (at-most-once is preserved; the actionQueue
+ * write is simply skipped on restart).
  */
 export const ACTION_QUEUE_REPOPULATOR_SUBSCRIBER = 'action-queue-repopulator'
 
@@ -102,8 +102,8 @@ export async function ensureActionQueueRepopulator(client: Client): Promise<void
  *
  * Separated from the drain loop so the caller can invoke it AFTER the
  * processedOnce transaction commits — this avoids holding a write
- * transaction on queue.db while also writing to state.db (which may be
- * the same file in some configurations, causing SQLITE_BUSY).
+ * transaction on mars.db while also writing to the actionQueue tables
+ * (same file), avoiding SQLITE_BUSY.
  */
 async function applyActionQueueMutation(event: BusEvent): Promise<void> {
   if (TASK_RAISE_EVENTS.has(event.type)) {
@@ -275,9 +275,9 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
  * Process every event the subscriber has not yet acknowledged, in order.
  *
  * For each handled event type, processedOnce atomically commits a dedup
- * row in queue.db; then the actionQueue mutation runs on state.db after that
- * transaction commits. This two-phase approach avoids holding a write lock
- * on the shared DB file while also mutating the actionQueue tables.
+ * row in mars.db; then the actionQueue mutation runs after that transaction
+ * commits. This two-phase approach avoids holding a write lock while also
+ * mutating the actionQueue tables.
  *
  * Unmapped events (including task.blocked) are skipped (no actionQueue work) but
  * still advance the cursor so the subscriber never stalls.
@@ -286,7 +286,7 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
  * the failed event is retried on the next pass rather than being silently
  * dropped.
  *
- * @param client The libsql client carrying the outbox tables (queue.db).
+ * @param client The libsql client carrying the outbox tables (mars.db).
  * @param log    Optional logger callback for per-event failures.
  * @returns      The count of events for which actionQueue work was applied.
  */

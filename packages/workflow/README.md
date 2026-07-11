@@ -130,19 +130,21 @@ The `ctx` a workflow receives:
 | Field | Purpose |
 |---|---|
 | `runId`, `workflowId` | run identity |
+| `input` | the validated input this run was dispatched with |
 | `step(name, fn, opts?)` | wrap a durable unit |
 | `signal` | `AbortSignal` for the run |
 | `emit(event, payload)` | fine-grained progress events |
 | `logger` | run-scoped child logger |
 | `services` | injected dependencies (agent runtime, git, fs…) |
+| `currentStep` | the `StepHandle` of the step currently executing, or `null` between steps |
 
 ### Run (and resume)
 
 ```ts
-import { runWorkflow, SqliteStore, pinoLogger } from '@mars/workflow';
+import { runWorkflow, SqliteStore, createJsonLogger } from '@mars/workflow';
 
 const store  = new SqliteStore('.mars/workflow.db');
-const logger = pinoLogger();          // any compatible logger
+const logger = createJsonLogger();    // any compatible logger
 
 const result = await runWorkflow(implement, {
   taskId: 'task-abc',
@@ -241,7 +243,7 @@ Inside a step, `handle.logger` is a child scoped to `{ runId, workflowId,
 step }`. `ctx.emit(event, payload)` adds fine-grained progress events, also
 logged at `info` and forwarded to the optional `onEvent` sink. There is no
 `console.log` path in the engine — you bring the logger; the bundled
-`pinoLogger()` is a dependency-free default and `silentLogger()` suppresses
+`createJsonLogger()` is a dependency-free default and `silentLogger()` suppresses
 output (handy in tests).
 
 ## Storage
@@ -273,6 +275,7 @@ CREATE TABLE workflow_step_runs (
   error_summary  TEXT,               -- compact failure summary
   transcript_key TEXT,               -- key into external transcript storage
   result_json    TEXT,               -- recorded return value (resume hands this back)
+  seq            INTEGER NOT NULL,   -- insertion order (trace view renders by seq ASC)
   PRIMARY KEY (run_id, step_name)
 );
 ```

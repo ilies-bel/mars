@@ -318,7 +318,7 @@ const pluginActivate: Command = {
     const pluginDir = args.positional[0]
     if (!pluginDir) {
       deps.err('usage: mars plugin activate <plugin-dir>')
-      return { code: 1 }
+      return { code: 2 }
     }
     const { activatePlugin, realDeps } = await import(
       '../../commands/claude-plugin.js'
@@ -351,7 +351,7 @@ const pluginGroup: Command = {
     const subCmd = args.positional[0]
     deps.err(`mars plugin: unknown subcommand '${subCmd ?? ''}'`)
     deps.err('usage: mars plugin activate <path> | mars plugin deactivate')
-    return { code: 1 }
+    return { code: 2 }
   },
 }
 

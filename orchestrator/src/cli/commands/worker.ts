@@ -43,7 +43,7 @@ const workerAdd: Command = {
     const model = args.flags['--model']
     if (!name || !model) {
       deps.err(WORKER_ADD_USAGE)
-      return { code: 1 }
+      return { code: 2 }
     }
 
     const effortRaw = args.flags['--effort'] ?? 'high'
@@ -52,7 +52,7 @@ const workerAdd: Command = {
       deps.err(
         `effort must be one of low, medium, high, xhigh, max; got '${effortRaw}'`,
       )
-      return { code: 1 }
+      return { code: 2 }
     }
 
     const permRaw = args.flags['--permission-mode'] ?? 'default'
@@ -68,7 +68,7 @@ const workerAdd: Command = {
       deps.err(
         `permission-mode must be one of acceptEdits, auto, bypassPermissions, default, dontAsk, plan; got '${permRaw}'`,
       )
-      return { code: 1 }
+      return { code: 2 }
     }
 
     const tags = args.multiFlags['--tag']

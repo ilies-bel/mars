@@ -479,7 +479,7 @@ export const resolveQueueClient = (): Client => {
 }
 
 /**
- * Seam-internal, idempotent schema migration for queue.db (ADR-0021: the
+ * Seam-internal, idempotent schema migration for mars.db (ADR-0021: the
  * migration lives behind the store). The TaskStore drives this lazily and
  * memoises it; queue's own domain functions call it defensively. NOT public
  * — `initQueue` is gone.
@@ -696,7 +696,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
   // the @mars/workflow engine resumes by re-dispatching with runId=task.id and
   // skipping already-`completed` step records — so this column is no longer
   // read or written. The CREATE is retained (no migration to drop it) so an
-  // existing queue.db keeps its schema; new code simply ignores the column.
+  // existing mars.db keeps its schema; new code simply ignores the column.
   if (!names.has('resume_from')) {
     await c.execute(`ALTER TABLE tasks ADD COLUMN resume_from TEXT`)
   }
@@ -1450,7 +1450,7 @@ export const migrateQueueSchema = async (): Promise<void> => {
   }
   await healBlobPrompts(c)
   // Wire-bus outbox: events published by library code land atomically with the
-  // state writes they describe (same queue.db, same libsql transaction).
+  // state writes they describe (same mars.db, same libsql transaction).
   // Cursor-based fan-out consumers poll for id > cursor.
   // Retention is enforced periodically by orchestrator/src/core/daemon/outbox-sweeper.ts (prune by age + wedged-subscriber lag detection).
   await c.execute(`
@@ -2843,7 +2843,7 @@ export const clearBlockers = async (taskId: string): Promise<void> => {
  * until that idea has been shaped and promoted). Mirrors `addBlockers`: the
  * task must exist and duplicates/no-ops are handled via `INSERT OR IGNORE`.
  *
- * `proposalId` lives in the SEPARATE state.db, so it cannot be FK-validated
+ * `proposalId` lives in a separate domain (proposals), so it cannot be FK-validated
  * here; existence is checked by the caller against `proposals` before this
  * runs (the CLI verb resolves it via `resolveProposalId`). A self-edge is
  * impossible by construction here — endpoints are different kinds (task vs
@@ -2884,7 +2884,7 @@ export const addProposalBlockers = async (
 /**
  * List proposal ids that `taskId` is blocked by in `task_proposal_blockers`,
  * ordered by edge creation time. No status filter: proposal status lives in
- * the separate state.db and the dispatch gate only cares whether ANY row
+ * a separate domain (proposals) and the dispatch gate only cares whether ANY row
  * still references an un-promoted proposal — that join is the dispatcher's
  * concern, not this reader's.
  */
@@ -2944,10 +2944,10 @@ export const listTasksBlockedByProposal = async (
  * For every task that is blocked by `proposalId` in
  * `task_proposal_blockers`, this deletes that (task_id, proposal_id) row and
  * inserts (task_id, newBlockerTaskId) into `task_blockers` in the SAME
- * `batch(..., 'write')`. Because both tables live in queue.db this is a
+ * `batch(..., 'write')`. Because both tables live in mars.db this is a
  * genuine atomic transaction — no dispatcher tick can observe a dependent
  * task with zero blockers between the two writes. (The proposal status flip
- * to 'prd-ready' happens in state.db and is independent of this invariant:
+ * to 'prd-ready' happens in a separate domain and is independent of this invariant:
  * a status flip without the blocker transfer would still leave the task
  * gated by the surviving `task_proposal_blockers` row, never zero-blocked.)
  *

@@ -17,9 +17,8 @@ import type { ReconcileSummary } from '../../core/daemon/startup-reconcile'
 import type { Command, CommandDeps } from '../command'
 import { renderTaskDetail } from './task'
 import { renderProposalDetail } from './proposal'
-import { errorMessage } from './shared'
+import { errorMessage, readDaemonPort } from './shared'
 import {
-  readDaemonPort,
   fetchActionQueueView,
   renderActionQueueDetail,
 } from './action-queue'
@@ -32,7 +31,7 @@ const show: Command = {
     const id = args.positional[0]
     if (!id) {
       deps.err('usage: mars show <id>')
-      return { code: 1 }
+      return { code: 2 }
     }
     const task = await deps.store.getTask(id)
     if (task) {
@@ -79,7 +78,7 @@ const makeSetPlan = (kind: 'functional' | 'technical'): Command => ({
     const value = args.positional.slice(1).join(' ')
     if (!id || !value) {
       deps.err(`usage: mars set-${kind} <id> <text|@file>`)
-      return { code: 1 }
+      return { code: 2 }
     }
     const task = await deps.store.getTask(id)
     if (!task) {
@@ -108,14 +107,14 @@ const makeContinueRestart = (verb: 'continue' | 'restart'): Command => ({
   path: verb,
   summary:
     verb === 'continue'
-      ? 'resume failed tasks on their existing worktree (code-phase failures auto-commit wip and re-enter code; verify/merge failures re-run from the failed step; refuses when worktree is missing or no phase was recorded)'
+      ? 'resume failed tasks from their last checkpoint'
       : 'wipe and re-run failed tasks from setup',
   usage: `usage: mars ${verb} <id> [<id> ...]`,
   run: async (args, deps) => {
     const ids = args.positional.filter((a) => !a.startsWith('--'))
     if (ids.length === 0) {
       deps.err(`usage: mars ${verb} <id> [<id> ...]`)
-      return { code: 1 }
+      return { code: 2 }
     }
     for (const id of ids) {
       let res: unknown
@@ -164,7 +163,7 @@ const purge: Command = {
     const ids = args.positional.filter((a) => !a.startsWith('--'))
     if (ids.length === 0) {
       deps.err('usage: mars purge <id> [<id> ...] [--force]')
-      return { code: 1 }
+      return { code: 2 }
     }
     const force = flagSet.has('--force')
     for (const id of ids) {
@@ -190,9 +189,9 @@ const unblock: Command = {
     const blockerArgs = args.positional.slice(1)
     if (!id) {
       deps.err(
-        `usage: mars unblock <id>                       (phantom-recovery: clears all task_blockers, flips 'blocked' or 'queued' -> 'failed' so the row can then be 'mars purge'd)\n       mars unblock <id> <blocker-id> [<blocker-id> ...]  (edge-removal: removes specific edges, status unchanged)`,
+        `usage: mars unblock <id>                                     clear all blockers and mark task as failed\n       mars unblock <id> <blocker-id> [<blocker-id> ...]     remove specific blocker edges only`,
       )
-      return { code: 1 }
+      return { code: 2 }
     }
     if (blockerArgs.length === 0) {
       const data = (await deps.daemon.sendRequest({ op: 'unblock', id })) as {
@@ -385,7 +384,7 @@ const drop: Command = {
           `the workflow will continue to its natural end, but the row, the\n` +
           `worktree, and the branch are removed immediately.`,
       )
-      return { code: 1 }
+      return { code: 2 }
     }
     const force = flagSet.has('--force')
     const data = (await deps.daemon.sendRequest({ op: 'drop', id, force })) as {
@@ -419,11 +418,11 @@ const block: Command = {
     const blockerArgs = args.positional.slice(1)
     if (!id || blockerArgs.length === 0) {
       deps.err('usage: mars block <task-id> <blocker-id> [<blocker-id> ...]')
-      return { code: 1 }
+      return { code: 2 }
     }
     if (blockerArgs.some((b) => b === id)) {
       deps.err(`task ${id} cannot block itself`)
-      return { code: 1 }
+      return { code: 2 }
     }
     const data = (await deps.daemon.sendRequest({
       op: 'block',
@@ -435,12 +434,34 @@ const block: Command = {
   },
 }
 
+const VALID_TASK_STATUSES: ReadonlySet<string> = new Set<TaskStatus>([
+  'draft',
+  'triaging',
+  'queued',
+  'running',
+  'verifying',
+  'awaiting-validation',
+  'merging',
+  'vega-reconciling',
+  'done',
+  'failed',
+  'dropped',
+  'blocked',
+])
+
 const list: Command = {
   path: 'list',
   summary: 'list tasks (optionally filtered by status)',
   usage: 'usage: mars list [<status>]',
   run: async (args, deps) => {
-    const tasks = await deps.store.listTasks(args.positional[0] as TaskStatus)
+    const statusArg = args.positional[0]
+    if (statusArg !== undefined && !VALID_TASK_STATUSES.has(statusArg)) {
+      deps.err(
+        `unknown status '${statusArg}'; valid values: ${[...VALID_TASK_STATUSES].join(', ')}`,
+      )
+      return { code: 2 }
+    }
+    const tasks = await deps.store.listTasks(statusArg as TaskStatus)
     for (const t of tasks) {
       deps.out(`${t.id}\t${t.status}\tP${t.priority ?? 0}\t${t.prompt.slice(0, 60)}`)
     }
@@ -466,7 +487,7 @@ const update: Command = {
       deps.err(
         'error: --yes (keep your edits) and --accept-all (take new templates) are mutually exclusive',
       )
-      return { code: 1 }
+      return { code: 2 }
     }
 
     // Phase 1: refresh the framework-owned files (CLAUDE.md, supervisors, …)

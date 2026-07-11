@@ -36,7 +36,7 @@ export type {
 } from './store.js';
 
 // Logging
-export { pinoLogger, silentLogger } from './logger.js';
+export { createJsonLogger, silentLogger } from './logger.js';
 export type { Logger, LogFields } from './logger.js';
 
 // Agent runtimes + manual step park/resume hooks

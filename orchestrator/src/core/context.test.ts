@@ -83,7 +83,7 @@ describe('resolveContext repo-root detection', () => {
     expect(ctx.repoRoot).toBe(realRepo)
   })
 
-  it("co-locates Mars's trace-event store inside the unified state.db (mars.db)", () => {
+  it("co-locates Mars's trace-event store inside the unified mars.db", () => {
     const ctx = resolveContext(realRepo)
     // Slice B collapsed the old DuckDB-backed mars-trace store into the
     // shared SQLite mars.db. The framework's observability.duckdb stays a

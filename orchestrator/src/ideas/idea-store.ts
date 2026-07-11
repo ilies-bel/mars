@@ -7,7 +7,7 @@
  * 'mars-proposal-' prefix is never constructed by string concatenation
  * in this module.
  *
- * DB table (in state.db):
+ * DB table (in mars.db):
  *   proposal_notes(id TEXT PK, slug TEXT, text TEXT, created_at INTEGER)
  *
  * The id column stores the bare 8-char hex; the slug column stores the
@@ -25,7 +25,7 @@ export interface ProposalNote {
   createdAt: number
 }
 
-// Shared state.db client (collapsed from the former private singleton); same
+// Shared mars.db client (state domain, collapsed from the former private singleton); same
 // `mars.db` file as the TaskStore (ADR-0034), resolved through the seam.
 const stateClient = resolveStateClient
 

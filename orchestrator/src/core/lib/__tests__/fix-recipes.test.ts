@@ -258,7 +258,7 @@ describe('fix-recipes', () => {
       })
     })
 
-    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
       const recipe = getRecipe('verify:has-diff/no-commits-ahead')
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
@@ -718,7 +718,7 @@ describe('fix-recipes', () => {
       expect(prompt).toContain(ctx.targetPath)
     })
 
-    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-excess-property')
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
@@ -805,7 +805,7 @@ describe('fix-recipes', () => {
       expect(prompt).toContain(ctx.targetPath)
     })
 
-    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-property-not-exist')
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
@@ -870,7 +870,7 @@ describe('fix-recipes', () => {
       expect(prompt).toContain(ctx.targetPath)
     })
 
-    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-missing-export')
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
@@ -942,7 +942,7 @@ describe('fix-recipes', () => {
       expect(prompt).toContain(ctx.targetPath)
     })
 
-    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-arg-type-mismatch')
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
@@ -1020,7 +1020,7 @@ describe('fix-recipes', () => {
       expect(prompt).toContain(ctx.targetPath)
     })
 
-    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-cannot-find-name')
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
@@ -1112,7 +1112,7 @@ describe('fix-recipes', () => {
       expect(prompt).toContain(ctx.targetPath)
     })
 
-    it('inlines the original task prompt when provided so the agent skips .mars/queue.db spelunking', () => {
+    it('inlines the original task prompt when provided so the agent skips .mars/mars.db spelunking', () => {
       const recipe = getRecipe('verify:typecheck/typecheck-type-mismatch')
       const promptWithSource = recipe.buildPrompt({
         ...ctx,
@@ -1246,7 +1246,7 @@ describe('handleTaskFailureWithFixTask routes to a registered recipe by signatur
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('flows the original task prompt into the recovery recipe output so the agent does not need to re-fetch it from .mars/queue.db', async () => {
+  it('flows the original task prompt into the recovery recipe output so the agent does not need to re-fetch it from .mars/mars.db', async () => {
     const { q, ft } = await loadModules(repo)
     process.env.MARS_FIX_RETRY_BUDGET = '1'
     const originalPrompt =

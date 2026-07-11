@@ -415,7 +415,7 @@ const DEFAULT_LIMIT = 100
  * SQLite file at `dbPath`, ensuring the schema and indexes exist. The
  * caller owns the returned handle.
  *
- * Passing the same `dbPath` that `state.db` uses co-locates trace events
+ * Passing the same `dbPath` that `mars.db` uses co-locates trace events
  * alongside actionQueue and proposal data in a single file (see ADR-0034).
  */
 export const openTraceEventStore = async (

@@ -1,14 +1,14 @@
 # @mars/ui
 
 Read-only Progress viewer for the Mars orchestrator queue. Standalone Vite SPA + a
-tiny Node daemon that reads `<repo>/.mars/queue.db` directly. No coupling to the
+tiny Node daemon that reads `<repo>/.mars/mars.db` directly. No coupling to the
 orchestrator process — the contract is the SQLite schema.
 
 ## Stack
 
 - Vite + React + TypeScript
 - Tailwind v4 (CSS-first `@theme` tokens from `design/ui.pen`)
-- `@libsql/client` against `<repo>/.mars/queue.db`
+- `@libsql/client` against `<repo>/.mars/mars.db`
 - `node:fs.watch` on the `.mars/` directory → SSE → browser refetch
 
 ## Dev

@@ -23,7 +23,7 @@ const adrAdd: Command = {
       deps.err(
         'usage: mars adr add "<title>" "<body>" (body may be @path to read a file)',
       )
-      return { code: 1 }
+      return { code: 2 }
     }
     const body = readMaybeFile(bodyArg)
     await deps.daemon.sendRequest(
@@ -76,7 +76,7 @@ const adrShow: Command = {
     const arg = args.positional[0]
     if (!arg) {
       deps.err('usage: mars adr show <NNNN|filename>')
-      return { code: 1 }
+      return { code: 2 }
     }
     const adrDir = adrDirFor(deps.ctx.repoRoot)
     let entries: string[]
@@ -109,7 +109,7 @@ const adrGroup: Command = {
   usage: 'usage: mars adr <add|list|show> ...',
   run: (_args, deps) => {
     deps.err('usage: mars adr <add|list|show> ...')
-    return { code: 1 }
+    return { code: 2 }
   },
 }
 

@@ -244,8 +244,8 @@ export async function computeCostPerArcDistribution(
  * value is null when sampleCount === 0.
  *
  * NOTE: Condition 3 requires action_queue_items to be queryable via the same
- * TaskStore surface. In production, action_queue_items lives in state.db (a
- * separate database from queue.db). When the table is not found the
+ * TaskStore surface. In production, action_queue_items lives in mars.db
+ * (same database as tasks). When the table is not found the
  * action-queue check is silently skipped — condition 2 (recovery edge) remains
  * fully enforced.
  */

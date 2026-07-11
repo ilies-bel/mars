@@ -1,5 +1,5 @@
 /**
- * Seam-internal libsql client resolver for state.db (`.mars/mars.db`, ADR-0034:
+ * Seam-internal libsql client resolver for the state domain (`.mars/mars.db`, ADR-0034:
  * tasks and proposals share one file).
  *
  * This is the single connection the state-domain modules (proposals.ts,

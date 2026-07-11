@@ -1,5 +1,5 @@
 /**
- * `proposal` command group — 18 leaves over .mars/state.db (proposals) plus
+ * `proposal` command group — 18 leaves over .mars/mars.db (proposals) plus
  * the planning-graph and cross-graph blocker edges.
  *
  * Local reads/writes go through the `core/proposals` module and `deps.store`;
@@ -27,7 +27,7 @@ import { getDefaultTaskStore } from '../../core/store/task-store'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { Command, CommandDeps } from '../command'
-import { errorMessage, spawnNoticeOut } from './shared'
+import { errorMessage, spawnNoticeErr } from './shared'
 
 const execFileAsync = promisify(execFile)
 
@@ -115,7 +115,7 @@ const proposalAdd: Command = {
     const goal = args.positional.join(' ')
     if (!goal) {
       deps.err('usage: mars proposal add "<goal>" [--author kind:name]')
-      return { code: 1 }
+      return { code: 2 }
     }
     const author = resolveAuthor(args.flags['--author'])
     const originSessionId = detectOriginSession()
@@ -138,7 +138,7 @@ const proposalShow: Command = {
     const id = args.positional[0]
     if (!id) {
       deps.err('usage: mars proposal show <id>')
-      return { code: 1 }
+      return { code: 2 }
     }
     const resolved = await resolveProposalId(id)
     if (resolved.kind === 'ambiguous') {
@@ -168,7 +168,7 @@ const proposalSet: Command = {
       deps.err(
         'usage: mars proposal set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"',
       )
-      return { code: 1 }
+      return { code: 2 }
     }
     if (
       field !== 'title' &&
@@ -181,7 +181,7 @@ const proposalSet: Command = {
       deps.err(
         `unknown field '${field}'; expected one of title|problem|solution|out-of-scope|notes|status`,
       )
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       await setProposalField(id, field, value)
@@ -203,7 +203,7 @@ const proposalAddUserStory: Command = {
     const story = args.positional.slice(1).join(' ')
     if (!id || story.length === 0) {
       deps.err('usage: mars proposal add-user-story <id> "<text>"')
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       const idea = await addProposalUserStory(id, story)
@@ -225,12 +225,12 @@ const proposalRemoveUserStory: Command = {
     const idxRaw = args.positional[1]
     if (!id || idxRaw === undefined) {
       deps.err('usage: mars proposal remove-user-story <id> <index>')
-      return { code: 1 }
+      return { code: 2 }
     }
     const idx = Number(idxRaw)
     if (!Number.isInteger(idx) || idx < 0) {
       deps.err(`index must be a non-negative integer; got '${idxRaw}'`)
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       await removeProposalUserStory(id, idx)
@@ -251,12 +251,12 @@ const proposalPromote: Command = {
     const id = args.positional[0]
     if (!id) {
       deps.err('usage: mars proposal promote <id>')
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       const r = (await deps.daemon.sendRequest(
         { op: 'proposal.promote', proposalId: id },
-        { onSpawnNotice: spawnNoticeOut(deps.out) },
+        { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; status: string }
       deps.out(`proposal ${r.proposalId} marked ${r.status}`)
       if (!(await isDaemonReachable(deps.ctx.stateDir))) {
@@ -280,12 +280,12 @@ const proposalSlice: Command = {
     const id = args.positional[0]
     if (!id) {
       deps.err('usage: mars proposal slice <id>')
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       const r = (await deps.daemon.sendRequest(
         { op: 'proposal.slice', proposalId: id },
-        { onSpawnNotice: spawnNoticeOut(deps.out) },
+        { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; status: string; taskIds: string[] }
       deps.out(
         `proposal ${r.proposalId} ${r.status} into ${r.taskIds.length} task(s):`,
@@ -307,14 +307,14 @@ const proposalReject: Command = {
     const id = args.positional[0]
     if (!id) {
       deps.err('usage: mars proposal reject <id>')
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       const idea = await rejectProposal(id)
       deps.out(`rejected ${idea.id}`)
       if (!(await isDaemonReachable(deps.ctx.stateDir))) {
         deps.err(
-          `proposal ${idea.id} dismissed; the action-queue row will clear when the daemon next runs (daemon not running — run \`mars daemon start\`).`,
+          `proposal ${idea.id} rejected; the action-queue row will clear when the daemon next runs (daemon not running — run \`mars daemon start\`).`,
         )
       }
     } catch (error: unknown) {
@@ -333,7 +333,7 @@ const proposalDelete: Command = {
     const id = args.positional[0]
     if (!id) {
       deps.err('usage: mars proposal delete <id>')
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       const deletedId = await deleteProposal(id)
@@ -364,7 +364,7 @@ const proposalList: Command = {
       deps.err(
         `--source must be one of: reflection|human|planner; got '${sourceFlag}'`,
       )
-      return { code: 1 }
+      return { code: 2 }
     }
     const filter: {
       source?: 'reflection' | 'human' | 'planner'
@@ -388,19 +388,19 @@ const proposalList: Command = {
 const proposalBlock: Command = {
   path: 'proposal block',
   summary: 'add planning-graph blocker edges (proposal waits on proposal)',
-  usage: 'usage: mars proposal block <idea-id> <blocker-id> [<blocker-id> ...]',
+  usage: 'usage: mars proposal block <proposal-id> <blocker-id> [<blocker-id> ...]',
   run: async (args, deps) => {
     const id = args.positional[0]
     const blockerArgs = args.positional.slice(1)
     if (!id || blockerArgs.length === 0) {
       deps.err(
-        'usage: mars proposal block <idea-id> <blocker-id> [<blocker-id> ...]',
+        'usage: mars proposal block <proposal-id> <blocker-id> [<blocker-id> ...]',
       )
-      return { code: 1 }
+      return { code: 2 }
     }
     if (blockerArgs.some((b) => b === id)) {
       deps.err(`proposal ${id} cannot block itself`)
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       await addProposalDependencies(id, blockerArgs)
@@ -416,15 +416,15 @@ const proposalBlock: Command = {
 const proposalUnblock: Command = {
   path: 'proposal unblock',
   summary: 'remove planning-graph blocker edges',
-  usage: 'usage: mars proposal unblock <idea-id> <blocker-id> [<blocker-id> ...]',
+  usage: 'usage: mars proposal unblock <proposal-id> <blocker-id> [<blocker-id> ...]',
   run: async (args, deps) => {
     const id = args.positional[0]
     const blockerArgs = args.positional.slice(1)
     if (!id || blockerArgs.length === 0) {
       deps.err(
-        'usage: mars proposal unblock <idea-id> <blocker-id> [<blocker-id> ...]',
+        'usage: mars proposal unblock <proposal-id> <blocker-id> [<blocker-id> ...]',
       )
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       const removed: string[] = []
@@ -448,12 +448,12 @@ const proposalUnblock: Command = {
 const proposalBlockers: Command = {
   path: 'proposal blockers',
   summary: 'list planning-graph blockers on a proposal',
-  usage: 'usage: mars proposal blockers <idea-id>',
+  usage: 'usage: mars proposal blockers <proposal-id>',
   run: async (args, deps) => {
     const id = args.positional[0]
     if (!id) {
-      deps.err('usage: mars proposal blockers <idea-id>')
-      return { code: 1 }
+      deps.err('usage: mars proposal blockers <proposal-id>')
+      return { code: 2 }
     }
     try {
       const blockers = await listProposalDependencies(id)
@@ -473,15 +473,15 @@ const proposalBlockers: Command = {
 const proposalBlockTask: Command = {
   path: 'proposal block-task',
   summary: 'add cross-graph edge (task waits on proposal)',
-  usage: 'usage: mars proposal block-task <task-id> <idea-id> [<idea-id> ...]',
+  usage: 'usage: mars proposal block-task <task-id> <proposal-id> [<proposal-id> ...]',
   run: async (args, deps) => {
     const taskId = args.positional[0]
     const ideaArgs = args.positional.slice(1)
     if (!taskId || ideaArgs.length === 0) {
       deps.err(
-        'usage: mars proposal block-task <task-id> <idea-id> [<idea-id> ...]',
+        'usage: mars proposal block-task <task-id> <proposal-id> [<proposal-id> ...]',
       )
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       const resolvedIds: string[] = []
@@ -510,15 +510,15 @@ const proposalBlockTask: Command = {
 const proposalUnblockTask: Command = {
   path: 'proposal unblock-task',
   summary: 'remove cross-graph edges (task waits on proposal)',
-  usage: 'usage: mars proposal unblock-task <task-id> <idea-id> [<idea-id> ...]',
+  usage: 'usage: mars proposal unblock-task <task-id> <proposal-id> [<proposal-id> ...]',
   run: async (args, deps) => {
     const taskId = args.positional[0]
     const ideaArgs = args.positional.slice(1)
     if (!taskId || ideaArgs.length === 0) {
       deps.err(
-        'usage: mars proposal unblock-task <task-id> <idea-id> [<idea-id> ...]',
+        'usage: mars proposal unblock-task <task-id> <proposal-id> [<proposal-id> ...]',
       )
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       const removed: string[] = []
@@ -549,7 +549,7 @@ const proposalTaskBlockers: Command = {
     const taskId = args.positional[0]
     if (!taskId) {
       deps.err('usage: mars proposal task-blockers <task-id>')
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       const blockers = await deps.store.listProposalBlockers(taskId)
@@ -575,7 +575,7 @@ const proposalShipSummary: Command = {
     const emitJson = args.positional.includes('--json')
     if (!id) {
       deps.err('usage: mars proposal ship-summary <id> [--json]')
-      return { code: 1 }
+      return { code: 2 }
     }
     const resolved = await resolveProposalId(id)
     if (resolved.kind === 'ambiguous') {
@@ -692,7 +692,7 @@ const proposalApprove: Command = {
     try {
       const r = (await deps.daemon.sendRequest(
         { op: 'proposal.approve', proposalId: id },
-        { onSpawnNotice: spawnNoticeOut(deps.out) },
+        { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; queuedCount: number; blockedCount: number }
       deps.out(
         `proposal ${r.proposalId} approved: ${r.queuedCount} task(s) queued, ${r.blockedCount} blocked`,
@@ -747,7 +747,7 @@ const proposalTake: Command = {
     try {
       const r = (await deps.daemon.sendRequest(
         { op: 'proposal.take', proposalId: resolved.id, workflow },
-        { onSpawnNotice: spawnNoticeOut(deps.out) },
+        { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; taskId: string }
       deps.out(`proposal ${r.proposalId} taken as task ${r.taskId} (workflow: ${workflow})`)
     } catch (error: unknown) {
@@ -772,7 +772,7 @@ const proposalReslice: Command = {
     try {
       const r = (await deps.daemon.sendRequest(
         { op: 'proposal.reslice', proposalId: id, feedback },
-        { onSpawnNotice: spawnNoticeOut(deps.out) },
+        { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; status: string; taskIds: string[] }
       deps.out(
         `proposal ${r.proposalId} resliced to ${r.status} into ${r.taskIds.length} task(s):`,
@@ -786,16 +786,21 @@ const proposalReslice: Command = {
   },
 }
 
+const proposalGroupUsage = `usage: mars proposal <subcommand>
+
+  CRUD:      add  list  show  set  delete
+  PRD:       add-user-story  remove-user-story
+  Lifecycle: promote  slice  approve  take  reslice  reject
+  Blockers:  block  unblock  blockers  block-task  unblock-task  task-blockers
+  Reports:   ship-summary`
+
 const proposalGroup: Command = {
   path: 'proposal',
   summary: 'proposal subcommands',
-  usage:
-    'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|take|approve|reslice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
+  usage: proposalGroupUsage,
   run: (_args, deps) => {
-    deps.err(
-      'usage: mars proposal <add|list|show|set|add-user-story|remove-user-story|promote|slice|take|approve|reslice|reject|delete|block|unblock|blockers|block-task|unblock-task|task-blockers|ship-summary> ...',
-    )
-    return { code: 1 }
+    deps.err(proposalGroupUsage)
+    return { code: 2 }
   },
 }
 

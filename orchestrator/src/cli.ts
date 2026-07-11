@@ -80,6 +80,10 @@ Commands:
   task priority <id> <0..3>     set the dispatch priority of a queued or blocked
                                 task (0 = lowest, 3 = highest; takes effect on
                                 the next drain cycle without a daemon restart)
+  task note <id> "<text>"       journal a progress note on a task (appended to
+                                the task's note log; useful during live steps)
+  task check <id> <criterion>   mark a done-criterion as complete on a task
+                                with a structured spec (--done flags)
   proposal add "<goal>" [--author kind:name]
                                 create a proposal/plan in .mars/mars.db. Author
                                 is detected from env/git when omitted: human if
@@ -129,20 +133,33 @@ Commands:
                                 remove the listed task->proposal edges only.
   proposal task-blockers <task-id>
                                 list the proposals <task-id> is blocked by.
+  proposal approve <id>         approve a shaped proposal (flips status to
+                                'approved'; signals readiness for slicing)
+  proposal take <id>            take ownership of a proposal (assigns the
+                                current user as the owner for triage)
+  proposal reslice <id>         re-slice a previously sliced proposal into
+                                new tasks (purges old slices first)
   proposal ship-summary <id> [--json]
                                 print a summary of the landed arc for a proposal:
                                 each task's id, status, merge commit sha, and
                                 commit subject. --json emits the raw object.
-  add "<prompt>" [plan flags]   (deprecated) draft a task; lands in 'draft' state
-                                so triage can promote to 'queued'. Prefer
-                                'mars task add' or 'mars proposal add'.
+  step done <id>                signal step completion on a live task; the
+                                workflow advances to the next step (auto steps
+                                run immediately; the next manual step parks
+                                awaiting input)
+  attach <id>                   lease a worktree for interactive work on a
+                                live task. Renders the Step guide for the
+                                current workflow step.
+  release <id>                  release a leased worktree without merging;
+                                the worktree is preserved for inspection.
+                                Use --abort to exit without merging.
   set-functional <id> <text|@file>
                                 set the functional plan on a draft/queued task
   set-technical <id> <text|@file>
                                 set the technical plan on a draft/queued task
   show <id>                     print full detail for an id; looks up tasks
                                 first, then proposals (both in .mars/mars.db)
-  list [status]                 list tasks (draft|queued|running|verifying|merging|vega-reconciling|done|failed|dropped)
+  list [status]                 list tasks (draft|queued|blocked|running|verifying|merging|vega-reconciling|awaiting-human|done|failed|dropped)
   continue <id> [<id> ...]      resume failed task(s) on their existing
                                 worktree+branch, jumping straight into the
                                 failed phase (verify or merge). Refuses if a
@@ -441,6 +458,8 @@ Commands:
                                 Pass 0 to wipe all rows. Prints the number
                                 of rows removed. Safe to run while the
                                 daemon is running.
+  db compact                    compact the mars.db database (VACUUM). Safe
+                                to run while the daemon is running.
   kpi snapshot                  take a KPI snapshot (task throughput + cycle
                                 time) and print it as JSON to stdout
   kpi show                      print the KPI window comparison (previous
@@ -460,6 +479,10 @@ Commands:
                                 --permission-mode (default: default),
                                 --max-messages (default: 0 = unbounded),
                                 --tag (repeatable, routing tags).
+  workflow author               author a new workflow from a JS/TS file
+                                and register it in the workflow registry
+  workflow approve <id>         approve a workflow draft for use in the
+                                orchestrator pipeline
   statusline                    print a one-line Claude Code status segment.
                                 Reads stdin for session JSON (tolerated but
                                 optional). Reads .mars/update.json for an
@@ -474,6 +497,11 @@ Commands:
                                 to bypass).
   help                          show this message
   --version, -v                 print mars version and exit
+
+Deprecated:
+  add "<prompt>" [plan flags]   (deprecated) draft a task; lands in 'draft'
+                                state so triage can promote to 'queued'.
+                                Prefer 'mars task add' or 'mars proposal add'.
 
 Plan flags for 'task add' / 'add':
   --functional <text|@file>     functional plan text (or @path to read a file)
@@ -628,7 +656,25 @@ Subcommands:
                             safe for \${...}, backticks, \$(...)). Missing file is
                             a hard error.
     --prompt-file <path>    same as @<file>, explicit flag form
-    -                       read prompt body from stdin`,
+    -                       read prompt body from stdin
+
+  show <id>
+      Show a single task by id (or unique 8-char prefix).
+
+  priority <id> <0..3>
+      Set the dispatch priority of a queued or blocked task (0 = lowest,
+      3 = highest). Takes effect on the next drain cycle without a
+      daemon restart.
+
+  note <id> "<text>"
+      Journal a progress note on a task. Notes are appended to the
+      task's note log and are useful for recording observations or
+      blockers during live step execution.
+
+  check <id> <criterion>
+      Mark a done-criterion as complete on a task with a structured spec
+      (i.e. one enqueued with --done flags). The criterion string must
+      match one of the declared done-criteria exactly.`,
   proposal: `mars proposal <subcommand> ...
 
 Subcommands:
@@ -640,7 +686,7 @@ Subcommands:
   list [--source reflection|human|planner] [--status <status>]
       List proposals. Filter by source and/or status.
   show <id>
-      Show a proposal from .mars/mars.db. <id> must be the full proposal slug.
+      Show a proposal from .mars/mars.db. <id> accepts a full id or a unique prefix.
   set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"
       Update a single field on an existing proposal. Replaces the field; does
       not append.
@@ -656,7 +702,7 @@ Subcommands:
       and queue them with blockers wired between dependent slices. Flips the
       proposal's status to 'sliced'.
   reject <id>
-      Mark a draft proposal as 'dismissed' so it stops surfacing in reflection
+      Mark a draft proposal as 'rejected' so it stops surfacing in reflection
       follow-ups.
   ship-summary <id> [--json]
       Print the arc-completion summary for a proposal: title, overall arc state
@@ -678,8 +724,8 @@ Print full detail for an id. Looks up tasks first, then proposals
 (both in .mars/mars.db).`,
   list: `mars list [status]
 
-List tasks. Status one of: draft, queued, running, verifying, merging,
-vega-reconciling, done, failed, dropped. Defaults to all when omitted.`,
+List tasks. Status one of: draft, queued, blocked, running, verifying, merging,
+vega-reconciling, awaiting-human, done, failed, dropped. Defaults to all when omitted.`,
   continue: `mars continue <id> [<id> ...]
 
 Resume failed task(s) on their existing worktree+branch, jumping
@@ -1214,6 +1260,57 @@ Subcommands:
                                   (e.g. 'scaffold', 'docs') that do not collide
                                   with built-in tags (coder, planner, slicer,
                                   triager, fixer) unless overriding is intended.`,
+  step: `mars step <subcommand> ...
+
+Subcommands:
+  done <id>
+      Signal step completion on a live task. The workflow advances to
+      the next step: auto steps run immediately; the next manual step
+      parks awaiting input. If the verify step fails, fix inside the
+      worktree and run 'step done' again.`,
+  attach: `mars attach <id>
+
+Lease a worktree for interactive work on a live task. The worktree is
+checked out at .mars/worktrees/<id>/ and the workflow renders its Step
+guide (the runbook for that pipeline). Read the Step guide in full
+before touching anything.
+
+On attach, the current step's expectations and done-criteria are
+printed. Use 'mars task note', 'mars task check', and 'mars step done'
+to progress through the step guide.`,
+  release: `mars release <id>
+
+Release a leased worktree. The worktree is preserved for inspection.
+
+Flags:
+  --abort    exit without merging; the worktree is kept on disk for
+             manual inspection or later re-attach.`,
+  run: `mars run <subcommand> ...
+
+Subcommands:
+  show <run-id>
+      Print the full detail of a workflow run by its run id. Shows
+      step status, timing, and any errors.`,
+  enrich: `mars enrich <subcommand> ...
+
+Subcommands:
+  Enrich tasks or proposals with additional metadata (plans, specs,
+  context). Typically invoked by the orchestrator pipeline rather
+  than directly by operators.`,
+  scorer: `mars scorer <subcommand> ...
+
+Manage scorer definitions and inspect scoring results. Scorers grade
+task instances post-merge and feed signals back to the reflection
+loop.`,
+  kpi: `mars kpi <subcommand> ...
+
+Subcommands:
+  snapshot
+      Take a KPI snapshot (task throughput + cycle time) and print
+      it as JSON to stdout.
+  show
+      Print the KPI window comparison (previous window vs current
+      window) as JSON to stdout.`,
   help: `mars help [command]
 
 Show top-level help, or detailed help for a single command. Equivalent

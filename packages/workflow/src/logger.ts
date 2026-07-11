@@ -2,8 +2,8 @@
  * Structured logging by design.
  *
  * The engine accepts any logger shaped like pino's core surface
- * (`info`, `warn`, `error`, `child`). It ships a `pinoLogger()` helper so
- * callers that don't already have one get a sane default with zero deps —
+ * (`info`, `warn`, `error`, `child`). It ships a `createJsonLogger()` helper
+ * so callers that don't already have one get a sane default with zero deps —
  * but there is no hard dependency on pino itself.
  *
  * There is no `console.log` path anywhere in this package; the only writer
@@ -15,7 +15,7 @@ export type LogFields = Record<string, unknown>;
 
 /**
  * The minimal logger surface the engine relies on. Pino satisfies it
- * directly; so does the bundled `pinoLogger()` default.
+ * directly; so does the bundled `createJsonLogger()` default.
  *
  * Both call shapes pino supports are accepted: `info(msg)` and
  * `info(fields, msg)`.
@@ -53,15 +53,14 @@ function emit(
 
 /**
  * A dependency-free, pino-shaped logger that writes newline-delimited JSON
- * to stdout. Named `pinoLogger` to match the role the old README promised;
- * swap in real pino by passing it as `logger` to `runWorkflow`.
+ * to stdout. Swap in real pino by passing it as `logger` to `runWorkflow`.
  */
-export function pinoLogger(bindings: LogFields = {}): Logger {
+export function createJsonLogger(bindings: LogFields = {}): Logger {
   return {
     info: (arg1: LogFields | string, arg2?: string) => emit('info', bindings, arg1, arg2),
     warn: (arg1: LogFields | string, arg2?: string) => emit('warn', bindings, arg1, arg2),
     error: (arg1: LogFields | string, arg2?: string) => emit('error', bindings, arg1, arg2),
-    child: (extra: LogFields) => pinoLogger({ ...bindings, ...extra }),
+    child: (extra: LogFields) => createJsonLogger({ ...bindings, ...extra }),
   };
 }
 

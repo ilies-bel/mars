@@ -21,7 +21,7 @@ import {
   type TaskSpec,
 } from '../args'
 import type { Command, CommandDeps, CommandResult } from '../command'
-import { errorMessage, spawnNoticeOut } from './shared'
+import { errorMessage, spawnNoticeErr } from './shared'
 
 const TASK_ADD_USAGE =
   'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--preview "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [--workflow <name>] [--live] [plan flags]'
@@ -93,7 +93,7 @@ const enqueueViaDaemon = async (
       ...(originSessionId !== null ? { originSessionId } : {}),
       ...(params.workflow !== undefined ? { workflow: params.workflow } : {}),
     },
-    { onSpawnNotice: spawnNoticeOut(deps.out) },
+    { onSpawnNotice: spawnNoticeErr(deps.err) },
   )) as { id: string; status: string }
   const verb = task.status
   const suffix =
@@ -124,12 +124,12 @@ export const taskAdd: Command = {
     const promptResult = resolvePromptSource(positional, args.flags)
     if (!promptResult.ok) {
       deps.err(promptResult.message)
-      return { code: 1 }
+      return { code: 2 }
     }
     const prompt = promptResult.value
     if (!prompt) {
       deps.err(TASK_ADD_USAGE)
-      return { code: 1 }
+      return { code: 2 }
     }
     const priorityRaw = args.flags['--priority']
     let priority: number | undefined
@@ -137,14 +137,14 @@ export const taskAdd: Command = {
       const parsed = parsePriority(priorityRaw)
       if (!parsed.ok) {
         deps.err(parsed.message)
-        return { code: 1 }
+        return { code: 2 }
       }
       priority = parsed.value
     }
     const specResult = parseTaskSpec(args)
     if (!specResult.ok) {
       deps.err(specResult.message)
-      return { code: 1 }
+      return { code: 2 }
     }
     const intentFlag = args.flags['--intent']?.trim()
     const intent = intentFlag
@@ -284,7 +284,7 @@ export const taskShow: Command = {
     const id = args.positional.filter((a) => a !== '--json')[0]
     if (!id) {
       deps.err('usage: mars task show <id> [--json]')
-      return { code: 1 }
+      return { code: 2 }
     }
     const task = await deps.store.getTask(id)
     if (!task) {
@@ -336,12 +336,12 @@ export const taskPriority: Command = {
     const valueRaw = args.positional[1]
     if (!id || valueRaw === undefined) {
       deps.err('usage: mars task priority <id> <0..3>')
-      return { code: 1 }
+      return { code: 2 }
     }
     const parsed = parsePriority(valueRaw)
     if (!parsed.ok) {
       deps.err(parsed.message)
-      return { code: 1 }
+      return { code: 2 }
     }
     try {
       const task = (await deps.daemon.sendRequest({
@@ -430,7 +430,7 @@ export const taskGroup: Command = {
   usage: 'usage: mars task <add|show|priority|note|check> ...',
   run: (_args, deps) => {
     deps.err('usage: mars task <add|show|priority|note|check> ...')
-    return { code: 1 }
+    return { code: 2 }
   },
 }
 

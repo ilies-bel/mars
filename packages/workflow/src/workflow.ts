@@ -184,14 +184,9 @@ export interface RunWorkflowOptions<Services = unknown> {
 }
 
 /** The terminal result of a run. */
-export interface RunResult<O> {
-  runId: string;
-  status: 'completed' | 'failed';
-  /** The workflow's projected output, present only when `completed`. */
-  output?: O;
-  /** The failure, present only when `failed`. */
-  error?: Error;
-}
+export type RunResult<O> =
+  | { runId: string; status: 'completed'; output: O; error?: undefined }
+  | { runId: string; status: 'failed'; error: Error; output?: undefined };
 
 /**
  * Run (or resume) a workflow.
@@ -395,7 +390,7 @@ async function runStep<T>(args: RunStepArgs<T>): Promise<T> {
   try {
     const result = await fn(handle);
     const finishedAt = Date.now();
-    const summary = summaryOverride ?? summarise(result);
+    const summary = summaryOverride ?? summarize(result);
     await store.putStep({
       runId,
       name,
@@ -450,7 +445,7 @@ export function applyOutcomeMeta(record: StepRecord, meta: StepOutcomeMeta): Ste
 const SUMMARY_MAX = 200;
 
 /** Derive a compact, single-line summary of a step's return value. */
-function summarise(value: unknown): string {
+function summarize(value: unknown): string {
   if (value === undefined) return 'undefined';
   if (value === null) return 'null';
   if (typeof value === 'string') return truncate(value);
@@ -467,7 +462,7 @@ function safeJson(value: unknown): string {
   try {
     return JSON.stringify(value ?? null);
   } catch {
-    return JSON.stringify({ unserialisable: true });
+    return JSON.stringify({ unserializable: true });
   }
 }
 

@@ -19,7 +19,7 @@ a decisive finding:
   steps, stores, `AgentRuntime`, `Logger`) is **genuinely standalone**. It
   knows nothing of tasks, recovery, events, or the daemon. It is a library
   today and needs only a build pipeline to be installable.
-- **Everything else is welded to one thing: the Mars task DB (`queue.db`) and
+- **Everything else is welded to one thing: the Mars task DB (`mars.db`) and
   its domain model.** `queue.ts` (~2,400 lines) and `git.ts` (~2,200 lines,
   containing both worktree operations and the ~2,000-line `runClaudeCode`
   agent wrapper) are the floor that events, recovery, agents, and the official
@@ -108,5 +108,5 @@ events, recovery, agents, or the official workflows can become packages.
   culture makes redrawing a wrong boundary cheap.
 - `@mars/events` ships only generic primitives; consumers wanting Mars-domain
   subscribers (recovery-spawn, blocker-resolution) take `@mars/platform`. The
-  `events` table's co-location with `queue.db` (for transactional atomicity) is
+  `events` table's co-location with `mars.db` (for transactional atomicity) is
   a platform detail, not an engine one.
