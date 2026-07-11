@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
+import { registerHooks } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { resolve as resolvePath } from 'node:path'
 import type { Client } from '@libsql/client'
@@ -377,6 +378,22 @@ export const loadWorkflowByName = async <I, O, S>(
   return importWorkflowFile(name, path)
 }
 
+let resolveHookRegistered = false
+const AUTHORING_PATH = new URL('./authoring.ts', import.meta.url).pathname
+
+const ensureResolveHook = (): void => {
+  if (resolveHookRegistered) return
+  resolveHookRegistered = true
+  registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === 'mars/workflow') {
+        return nextResolve(AUTHORING_PATH, context)
+      }
+      return nextResolve(specifier, context)
+    },
+  })
+}
+
 /**
  * Import a workflow module from an explicit file path and shape-check its
  * default export. This is the raw load step behind {@link loadWorkflowByName}
@@ -388,6 +405,9 @@ export const importWorkflowFile = async <I, O, S>(
   name: string,
   path: string,
 ): Promise<Workflow<I, O, S>> => {
+  // Ensure the 'mars/workflow' bare specifier resolves for consumer workflow
+  // files that live outside the orchestrator's own node_modules tree.
+  ensureResolveHook()
   // Plain-JS user module outside the TS source tree: the specifier is
   // computed at runtime, so TS cannot (and should not) statically resolve it.
   // Import by file URL so absolute paths work cross-platform.
