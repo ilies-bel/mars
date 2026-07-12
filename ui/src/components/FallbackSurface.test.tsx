@@ -42,7 +42,7 @@ describe('FallbackSurface — pane variant', () => {
         variant="pane"
       />,
     )
-    expect(html).toContain('npm run dev:server')
+    expect(html).toContain('mars ui')
   })
 
   it('shows the raw detail in dev', () => {

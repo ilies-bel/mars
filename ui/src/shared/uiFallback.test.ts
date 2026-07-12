@@ -18,7 +18,7 @@ describe('resolveFallback', () => {
   it('maps an ApiError of kind "unreachable" to the start-the-server remedy', () => {
     const fb = resolveFallback(new ApiError('boom', 'unreachable'), 'tasks')
     expect(fb.headline).toContain('reach the dashboard server')
-    expect(fb.remedy).toContain('npm run dev:server')
+    expect(fb.remedy).toContain('mars ui')
     expect(fb.severity).toBe('error')
   })
 

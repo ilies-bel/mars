@@ -640,7 +640,7 @@ describe('actionErrorMessage – daemon-down error message mapping', () => {
     const err = new ApiError('POST /api/actions/resolve → 503', 'unreachable', 503)
     const msg = actionErrorMessage(err)
     expect(msg).toContain("reach the dashboard server")
-    expect(msg).toContain('npm run dev:server')
+    expect(msg).toContain('mars ui')
   })
 
   it('maps ApiError stale-daemon to the daemon-restart remedy copy', () => {
@@ -672,7 +672,7 @@ describe('actionErrorMessage – daemon-down error message mapping', () => {
       new ApiError('POST /api/actions → 503', 'unreachable', 503),
     )
     const html = renderRow(BASE_ITEM, { onRestart: () => {}, restartError: daemonMsg })
-    expect(html).toContain('npm run dev:server')
+    expect(html).toContain('mars ui')
     // Row remains interactive (rollback preserved — button still visible)
     expect(html).toContain('>Restart<')
     expect(html).not.toContain('disabled=""')
