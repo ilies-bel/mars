@@ -21,6 +21,7 @@ import {
 } from '../test-adapter'
 import type { DomainTaskStore } from '../../core/store/task-store'
 import type { OrchestratorContext } from '../../core/context'
+import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
 
 const here = dirname(fileURLToPath(import.meta.url))
 // src/cli/commands -> src/cli -> src -> orchestrator
@@ -170,6 +171,34 @@ describe('mars attach', () => {
     expect(r.code).toBe(1)
     const errJoined = r.err.join('\n')
     expect(errJoined).toContain('active lease')
+  })
+
+  it('attach succeeds when task is parked with AWAIT_HUMAN_SENTINEL (workflow park sentinel)', async () => {
+    // Regression: onManualPark previously wrote 'workflow:manual-step' as the
+    // lease owner, which the attach handler did not recognise as a takeover-able
+    // sentinel — causing 'already has an active lease' on every live task.
+    // After the fix, both onManualPark and awaitHuman write AWAIT_HUMAN_SENTINEL,
+    // which the handler accepts.
+    const taskId = await createAwaitingHumanTask(AWAIT_HUMAN_SENTINEL, '/some/worktree/path')
+    const fake = makeFakeDaemon(() => ({
+      worktreePath: '/some/worktree/path',
+      branch: `task/${taskId}`,
+      title: 'test task',
+      doneCriteria: [],
+      completionReport: null,
+      commitsAhead: [],
+      checklistState: [],
+      progressTail: [],
+    }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['attach', taskId], { store, ctx, daemon: fake })
+
+    // Attach should succeed — AWAIT_HUMAN_SENTINEL is a takeover-able slot
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    const req = fake.calls[0] as { op: string; id: string; leaseOwner: string }
+    expect(req.op).toBe('attach')
+    expect(req.id).toBe(taskId)
   })
 
   it('returns usage error when no task id is provided', async () => {

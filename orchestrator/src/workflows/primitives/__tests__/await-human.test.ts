@@ -14,6 +14,7 @@ import {
   isAwaitHumanError,
   extractAwaitHumanStepName,
 } from '../shared'
+import { AWAIT_HUMAN_SENTINEL } from '../../../core/lib/sentinels'
 
 // ---------------------------------------------------------------------------
 // 1. Sentinel helpers (pure — no mocks needed)
@@ -138,7 +139,7 @@ describe('awaitHuman primitive', () => {
     await expect(awaitHuman(ctx as never)).rejects.toSatisfy(isAwaitHumanError)
     expect(mockUpdateTask).toHaveBeenCalledWith(
       'test-task-id',
-      expect.objectContaining({ status: 'awaiting-human', leaseOwner: 'workflow:await-human' }),
+      expect.objectContaining({ status: 'awaiting-human', leaseOwner: AWAIT_HUMAN_SENTINEL }),
       expect.anything(),
     )
   })

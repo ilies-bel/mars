@@ -19,6 +19,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { runWorkflow, InMemoryStore, awaitManualDone, resolveManualStep } from '@mars/workflow'
+import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
 
 // ---------------------------------------------------------------------------
 // Helper: build a minimal MarsServices stub with an onManualPark hook.
@@ -205,6 +206,63 @@ describe('manual-step park + re-lease semantics', () => {
     // A second call with the same key is a no-op (key was removed on resolve).
     const second = resolveManualStep(runId, 'my-step')
     expect(second).toBe(false)
+  })
+
+  it('parks under AWAIT_HUMAN_SENTINEL when no prior human lease exists', async () => {
+    // Verifies the canonical constant matches the sentinel string the
+    // production onManualPark hook writes.  If onManualPark ever drifts to a
+    // different string, this test catches the mismatch before attach breaks.
+    const taskId = `sentinel-check-${Date.now()}`
+    const parks: ParkRecord[] = []
+
+    // Services with NO prior lease owner (sentinel-owned slot).
+    const services = {
+      store: null as never,
+      traceStore: null as never,
+      onManualPark: async ({
+        runId,
+        taskId: tid,
+        stepName,
+        guide,
+      }: {
+        runId: string
+        taskId: string
+        stepName: string
+        guide: string | null
+      }): Promise<void> => {
+        // Simulates the production path: no human has attached yet, so the
+        // park sentinel is AWAIT_HUMAN_SENTINEL.
+        parks.push({ runId, taskId: tid, stepName, guide, leaseOwner: AWAIT_HUMAN_SENTINEL })
+        return awaitManualDone(runId, stepName)
+      },
+    }
+
+    const workflowFn = async (ctx: {
+      runId: string
+      services: typeof services
+      step: (name: string, fn: () => unknown | Promise<unknown>) => Promise<unknown>
+    }) => {
+      await ctx.step('step-1', () =>
+        ctx.services.onManualPark({ runId: ctx.runId, taskId, stepName: 'step-1', guide: null }),
+      )
+    }
+
+    const store = new InMemoryStore()
+    const resultPromise = runWorkflow(
+      { id: 'test-sentinel-check', fn: workflowFn as never },
+      {},
+      { store, services: services as never, runId: taskId },
+    )
+
+    await vi.waitFor(() => expect(parks).toHaveLength(1), { timeout: 1000 })
+
+    // The park sentinel must be AWAIT_HUMAN_SENTINEL so that `mars attach`
+    // can take over without hitting the 'already has an active lease' guard.
+    expect(parks[0].leaseOwner).toBe(AWAIT_HUMAN_SENTINEL)
+    expect(parks[0].leaseOwner).toBe('workflow:await-human')
+
+    resolveManualStep(taskId, 'step-1')
+    await resultPromise
   })
 
   it('workflow in a single dispatch — no re-attach is needed across manual steps', async () => {

@@ -84,6 +84,7 @@ import { computeFailureSignature } from '../../core/lib/failure-signature'
 import { resolveOriginIdForTask } from '../../core/lib/origin'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
+import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
 import { summarizeUsage } from '../../core/lib/claude-usage'
 import { recordSignals } from '../../core/lib/reflect-signals'
 import { type TraceEventStore } from '../../core/lib/trace-events-store'
@@ -2356,10 +2357,10 @@ export const awaitHuman = async (
     // fall through — no re-lease
   }
   const released =
-    priorOwner !== null && priorOwner !== 'workflow:await-human'
+    priorOwner !== null && priorOwner !== AWAIT_HUMAN_SENTINEL
       ? priorOwner
       : null
-  const leaseOwner = released ?? 'workflow:await-human'
+  const leaseOwner = released ?? AWAIT_HUMAN_SENTINEL
 
   // Transition to 'awaiting-human' through the Arc write funnel (ADR-0052).
   // Uses the same field set as Arc.parkForHuman so the task row is consistent

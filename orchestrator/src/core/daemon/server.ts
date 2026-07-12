@@ -88,6 +88,7 @@ import {
   sweepStaleFailedMainCommiterActionQueue,
 } from './main-dirty-action-queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
+import { AWAIT_HUMAN_SENTINEL } from '../lib/sentinels'
 import { computeFailureSignature } from '../lib/failure-signature'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
 import { RETENTION_MAX_ROWS_DEFAULT } from '../lib/retention-prune'
@@ -855,10 +856,10 @@ export const startDaemon = async (
               // Preserve the prior lease owner across manual steps so the same
               // Foreground operator re-receives the lease at the next park
               // without re-attaching ('mars step done' keepLease:true kept it).
-              let leaseOwner = 'workflow:manual-step'
+              let leaseOwner: string = AWAIT_HUMAN_SENTINEL
               try {
                 const t = await getTask(taskId, taskStore)
-                if (t?.leaseOwner && t.leaseOwner !== 'workflow:await-human' && t.leaseOwner !== 'workflow:manual-step') {
+                if (t?.leaseOwner && t.leaseOwner !== AWAIT_HUMAN_SENTINEL) {
                   leaseOwner = t.leaseOwner
                 }
               } catch { /* fall through — park under sentinel identity */ }
@@ -1010,7 +1011,7 @@ export const startDaemon = async (
             )
           }
         }
-        log(`[implement] ${task.id} parked awaiting-human: lease holder = workflow:await-human`)
+        log(`[implement] ${task.id} parked awaiting-human: lease holder = ${AWAIT_HUMAN_SENTINEL}`)
         return
       }
       log(`[implement] ${task.id} -> ${result.status}`)
@@ -2737,14 +2738,14 @@ export const startDaemon = async (
         `task ${id} is in status '${task.status}'; attach is only valid on 'awaiting-human' tasks`,
       )
     }
-    // 'workflow:await-human' is the park sentinel the awaitHuman primitive
-    // writes — the workflow holding the slot FOR a human. Attach takes it
-    // over. Re-attach by the SAME owner is a no-op refresh (a session that
-    // lost track can re-print the handoff). Only a lease held by a DIFFERENT
-    // human refuses.
+    // AWAIT_HUMAN_SENTINEL is the park sentinel written by both the
+    // awaitHuman primitive and the onManualPark hook — the workflow holding
+    // the slot FOR a human. Attach takes it over. Re-attach by the SAME
+    // owner is a no-op refresh (a session that lost track can re-print the
+    // handoff). Only a lease held by a DIFFERENT human refuses.
     if (
       task.leaseOwner !== null &&
-      task.leaseOwner !== 'workflow:await-human' &&
+      task.leaseOwner !== AWAIT_HUMAN_SENTINEL &&
       task.leaseOwner !== leaseOwner
     ) {
       throw new Error(
