@@ -7,8 +7,9 @@
  * `task_done_criteria` the operator authored with `mars task add --done`) is
  * observable on a *running* surface. It boots the task's preview command
  * (`spec.previewCmd`) as a live dev server in the worktree, dispatches the
- * role-pinned BehaviourVerifier Worker (Playwright MCP, read-only tool
- * surface), and folds the Worker's per-criterion verdict JSON into exactly
+ * role-pinned BehaviourVerifier Worker (read-only tool surface, using
+ * whatever browser/UI-driving MCP tools are wired into the operator's
+ * environment), and folds the Worker's per-criterion verdict JSON into exactly
  * one of THREE outcomes:
  *
  *  - **PASS** — every exercised criterion positively verified (≥1 verified,
@@ -22,11 +23,11 @@
  *    fix-recipes.ts), then THROW — merge never runs on behaviourally-broken
  *    work.
  *  - **CAN'T-VERIFY** — everything else (no previewCmd, empty DoD, dev
- *    server won't boot or health-check, Playwright MCP unavailable, verdict
- *    JSON missing/unparseable, no criterion exercisable). Files a
- *    fingerprint-deduped draft proposal (`behaviour-verify:<originId>`) and
- *    raises a level-triggered `behaviour-unverified` action-queue row, then
- *    RETURNS — the merge proceeds. Never silent, never a hard fail.
+ *    server won't boot or health-check, no UI-driving tool available in the
+ *    environment, verdict JSON missing/unparseable, no criterion exercisable).
+ *    Files a fingerprint-deduped draft proposal (`behaviour-verify:<originId>`)
+ *    and raises a level-triggered `behaviour-unverified` action-queue row,
+ *    then RETURNS — the merge proceeds. Never silent, never a hard fail.
  *
  * THE BOUNDARY IN ONE LINE: FAIL requires positive evidence of contradiction
  * on a reached live surface; absence, ambiguity, or infrastructure error is
@@ -239,24 +240,6 @@ export const foldVerdicts = (
 // Worker construction + prompt
 // ---------------------------------------------------------------------------
 
-/**
- * Playwright MCP server entry for the BehaviourVerifier Worker, pinned to the
- * per-task artifact directory so screenshots land under
- * `.mars/behaviour-verify/<taskId>/`. Injected per run through
- * `WorkerConfig.mcpConfig` → `runClaudeCode`'s `mcpServers` →
- * `claudeStreamArgs`' `--mcp-config` (the only channel that loads under
- * `--strict-mcp-config`).
- */
-export const playwrightMcpServers = (
-  outputDir: string,
-): Readonly<Record<string, unknown>> => ({
-  playwright: {
-    type: 'stdio',
-    command: 'npx',
-    args: ['-y', '@playwright/mcp@latest', '--headless', '--isolated', '--output-dir', outputDir],
-  },
-})
-
 export interface BehaviourVerifyPromptArgs {
   url: string
   criteria: readonly string[]
@@ -275,7 +258,7 @@ export const buildBehaviourVerifyPrompt = (
     '',
     `A live dev server for this task is running at: ${args.url}`,
     '',
-    "Your job: verify each Definition-of-Done criterion below against that RUNNING surface using the playwright MCP browser tools (browser_navigate, browser_snapshot, browser_click, browser_type, browser_take_screenshot, ...). You are an observer with a read-only file surface — you cannot and must not change any code; you only exercise the surface and report what you saw.",
+    "Your job: verify each Definition-of-Done criterion below against that RUNNING surface using whatever browser/UI-driving MCP tools are available in your environment (common examples: browser_navigate, browser_snapshot, browser_click, browser_type, browser_take_screenshot). You are an observer with a read-only file surface — you cannot and must not change any code; you only exercise the surface and report what you saw. If no browser or UI-driving tool is available, mark each criterion 'unverifiable' with a note explaining you lacked the tool.",
     '',
     '## Definition-of-Done criteria',
     '',
@@ -284,7 +267,7 @@ export const buildBehaviourVerifyPrompt = (
     '## Rules',
     '',
     "- Navigate to the URL first and take an accessibility snapshot to orient yourself.",
-    `- For every criterion you exercise, capture a screenshot as evidence with browser_take_screenshot using filename \`criterion-<index>.png\` (screenshots are saved under ${args.artifactsDir}).`,
+    `- For every criterion you exercise, capture a screenshot as evidence (e.g. using browser_take_screenshot if available) using filename \`criterion-<index>.png\` (screenshots are saved under ${args.artifactsDir}).`,
     "- Verdict per criterion, exactly one of:",
     "  - 'pass'         — you REACHED the relevant surface state and positively OBSERVED the criterion satisfied.",
     "  - 'fail'         — you REACHED the relevant surface state and the observed behaviour CONTRADICTS the criterion. A 'fail' MUST carry a screenshot in `evidence`.",
@@ -489,9 +472,9 @@ const unblockHint = (reason: UnverifiableReason, previewCmd: string | null): str
     case 'dev-server-unhealthy':
       return `The preview command (\`${previewCmd ?? ''}\`) spawned but never answered its health check — fix the command or its boot (it must serve HTTP on the injected $PORT).`
     case 'worker-error':
-      return 'The behaviour-verify Worker run failed before producing verdicts — check that Playwright MCP is installable (`npx @playwright/mcp`) and the daemon host can launch a headless browser.'
+      return 'The behaviour-verify Worker run failed before producing verdicts — check the step transcript and ensure any browser/UI-driving MCP tools required by the operator environment are configured.'
     case 'verdict-unparseable':
-      return 'The Worker produced no parseable verdict JSON — usually a Playwright MCP availability problem; check the step transcript.'
+      return 'The Worker produced no parseable verdict JSON — check the step transcript; the worker may lack browser/UI-driving tools needed to exercise the surface.'
     case 'no-exercisable-criteria':
       return 'No Definition-of-Done criterion maps to an exercisable web interaction — reshape the criteria into surface-observable statements, or accept that this task class is not behaviour-verifiable.'
   }
@@ -725,12 +708,12 @@ export const behaviourVerify = async (
       })
     }
 
-    // Per-run Worker: the pinned BehaviourVerifier config plus the Playwright
-    // MCP server pointed at this task's artifact dir (WorkerConfig.mcpConfig).
-    const worker = createWorker({
-      ...WORKER_CONFIGS.BehaviourVerifier,
-      mcpConfig: playwrightMcpServers(artifactsDir),
-    })
+    // Per-run Worker: built from the pinned BehaviourVerifier config with no
+    // extra MCP server injected. The worker uses whatever browser/UI-driving
+    // MCP tools the operator has already wired into their Claude Code
+    // environment; if none are present, the worker cannot exercise the UI
+    // surface and the existing CAN'T-VERIFY path fires.
+    const worker = createWorker(WORKER_CONFIGS.BehaviourVerifier)
     const prompt = buildBehaviourVerifyPrompt({
       url: dev.url,
       criteria,

@@ -163,9 +163,10 @@ export interface RunClaudeArgs {
    * Extra MCP server entries merged into the inline `--mcp-config` JSON on
    * top of the always-injected codegraph server. Because every dispatched
    * worker runs under `--strict-mcp-config`, this is the ONLY way an extra
-   * server (e.g. Playwright for the behaviour-verify Worker) loads for a
-   * dispatched run. Keyed by server name; values follow the `mcpServers`
-   * entry shape (`{ type: 'stdio', command, args }`).
+   * server loads for a dispatched run. A worker MAY pin extra MCP servers
+   * the operator has already provisioned in their environment. Keyed by
+   * server name; values follow the `mcpServers` entry shape
+   * (`{ type: 'stdio', command, args }`).
    */
   mcpServers?: Readonly<Record<string, unknown>>
   /**
@@ -290,9 +291,9 @@ export const codegraphMcpConfigJson = (
         command: 'codegraph',
         args: ['serve', '--mcp', '--no-watch', '--path', repoRoot],
       },
-      // Worker-pinned extra servers (WorkerConfig.mcpConfig) — e.g. the
-      // Playwright MCP server for the behaviour-verify Worker. Merged AFTER
-      // codegraph so a Worker could in principle override it, though none do.
+      // Worker-pinned extra servers (WorkerConfig.mcpConfig) — operator-
+      // provisioned MCP servers a Worker MAY declare. Merged AFTER codegraph
+      // so a Worker could in principle override it, though none do by default.
       ...(extraServers ?? {}),
     },
   })
@@ -618,9 +619,9 @@ export const runClaudeCode = async ({
       // eliminating the fixed token tax from schema + instruction injection on
       // every task. Interactive sessions still get the MCP via .mcp.json (mars
       // init). ONLY when a Worker pins extra MCP servers (WorkerConfig.mcpConfig
-      // — e.g. the Playwright server for the behaviour-verify Worker) do we emit
-      // an mcpConfig; codegraph is then pinned to the main checkout's index
-      // (the worker runs inside a worktree) and the extra servers merge on top.
+      // — operator-provisioned servers the worker MAY declare) do we emit an
+      // mcpConfig; codegraph is then pinned to the main checkout's index (the
+      // worker runs inside a worktree) and the extra servers merge on top.
       ...(mcpServers
         ? { mcpConfig: codegraphMcpConfigJson(resolveCodegraphRoot(cwd), mcpServers) }
         : {}),

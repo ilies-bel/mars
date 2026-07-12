@@ -128,9 +128,10 @@ export interface WorkerConfig {
   // `--mcp-config` JSON on top of the always-injected codegraph server (see
   // claudeStreamArgs' --mcp-config/--strict-mcp-config injection point in
   // ../lib/git/claude.ts). Keyed by server name; values follow the
-  // `mcpServers` entry shape ({ type: 'stdio', command, args }). First
-  // consumer: the behaviour-verify Worker, which loads Playwright MCP for
-  // that step only. Headless runtime only — the pty path does not thread it.
+  // `mcpServers` entry shape ({ type: 'stdio', command, args }). A worker
+  // MAY pin extra MCP servers the operator has already provisioned in their
+  // environment — the framework never installs or spawns servers itself.
+  // Headless runtime only — the pty path does not thread it.
   readonly mcpConfig?: Readonly<Record<string, unknown>>
 }
 
@@ -288,15 +289,17 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     provider: 'claude',
     tags: ['fixer'],
   },
-  // Behaviour-verify Worker: drives Playwright MCP against the live dev
-  // server booted by the behaviour-verify step and emits per-criterion
-  // verdict JSON. Read-only tool surface — it can observe and report but
-  // never "fix" the surface to make a criterion pass. bypassPermissions is
-  // required so headless MCP browser tool calls do not stall on a permission
-  // prompt no human is listening to; the read-only denial list is the actual
-  // safety boundary. The Playwright MCP server itself is injected per run by
-  // the behaviour-verify primitive (it carries the per-task artifact
-  // output dir), via the WorkerConfig.mcpConfig field above.
+  // Behaviour-verify Worker: exercises the live dev server booted by the
+  // behaviour-verify step and emits per-criterion verdict JSON. Uses whatever
+  // browser/UI-driving MCP tools the operator has wired into their Claude Code
+  // environment; if none are present, the worker marks all criteria
+  // 'unverifiable' and the CAN'T-VERIFY path fires — merge still proceeds.
+  // Read-only tool surface — it can observe and report but never "fix" the
+  // surface to make a criterion pass. bypassPermissions is required so
+  // headless MCP tool calls do not stall on a permission prompt no human is
+  // listening to; the read-only denial list is the actual safety boundary.
+  // A worker MAY pin extra MCP servers via WorkerConfig.mcpConfig when the
+  // operator has provisioned them; this worker carries none by default.
   BehaviourVerifier: {
     name: 'BehaviourVerifier',
     model: CLAUDE_SONNET_MODEL,

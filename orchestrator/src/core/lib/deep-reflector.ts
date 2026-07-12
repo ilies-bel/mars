@@ -7,6 +7,7 @@ import {
   type SuggestionVerdict,
   type VerdictedSuggestion,
   type VerdictedScorerSuggestion,
+  type VerdictedCapabilityGapSuggestion,
 } from './reflector'
 import type { DeepReflectArc, SessionArcsResult } from './deep-reflect-query'
 import type { ClaudeEvent } from './claude-stream'
@@ -51,6 +52,14 @@ export interface DeepReflectionReport {
    * the arc shows no such gap.
    */
   scorerSuggestions: VerdictedScorerSuggestion[]
+  /**
+   * Capability-gap findings: steps that self-reported they lacked a tool or
+   * capability needed to do their job (e.g. behaviour-verify that could not
+   * exercise the UI because no browser-driving tool was available). Each entry
+   * is a proposal for a human to act on — the framework never auto-installs.
+   * Empty when no step reported a capability gap.
+   */
+  capabilityGapSuggestions: VerdictedCapabilityGapSuggestion[]
 }
 
 export interface DeepReflectionResult {
@@ -189,6 +198,23 @@ Truncation awareness:
    - \`verdict\`: save | absorb | drop — same scheme as suggestions.
    If there is no measurement gap, return scorerSuggestions: [].
 
+7. Check whether any step SELF-REPORTED that it lacked a tool or capability
+   it needed to do its job (e.g. behaviour verification that could not
+   exercise the UI because no interactive/browser tool was available in the
+   environment). Look for explicit self-report language in step traces: phrases
+   like "no browser tool", "tool unavailable", "cannot exercise", "lacked the
+   tool", or a CAN'T-VERIFY outcome citing a missing capability. When a step's
+   trace shows such a gap, emit a capabilityGapSuggestion describing:
+   - \`stepName\`: the pipeline step that reported the gap (e.g. 'behaviour-verify').
+   - \`capability\`: a short label for what was missing (e.g. 'browser/UI-driving MCP tool').
+   - \`description\`: what the step could not do, and what wiring the capability
+     would unlock for the operator. Be concrete but never prescriptive about
+     HOW to install or configure — that decision belongs to the human.
+   - \`evidence\`: quoted excerpts from the step trace.
+   - \`verdict\`: save | absorb | drop — same scheme as suggestions.
+   Never suggest auto-installing or auto-configuring anything. If no step
+   reported a capability gap, return capabilityGapSuggestions: [].
+
 Output a SINGLE JSON document on stdout. No prose, no markdown, no fences.
 
 Schema:
@@ -238,6 +264,15 @@ Schema:
       "evidence": ["quoted excerpt citing task mars-xxxxx event 12"],
       "verdict": "save|absorb|drop"
     }
+  ],
+  "capabilityGapSuggestions": [
+    {
+      "stepName": "behaviour-verify",
+      "capability": "browser/UI-driving MCP tool",
+      "description": "Behaviour verification could not exercise the UI surface because no browser-driving tool was available. Wiring a browser/UI-driving MCP tool would enable per-criterion verification on live surfaces.",
+      "evidence": ["quoted excerpt from the step trace showing the self-reported gap"],
+      "verdict": "save|absorb|drop"
+    }
   ]
 }
 
@@ -248,6 +283,9 @@ Rules:
 - If the arc shows no measurement gap, return scorerSuggestions: [].
   Most arcs have none — a scorer suggestion is rare and must be grounded
   in a verify gate that passed while quality dissonance was visible.
+- If no step self-reported a capability gap, return capabilityGapSuggestions: [].
+  Only emit an entry when the step's trace EXPLICITLY states it lacked a tool —
+  do not infer gaps from poor results alone.
 - Always include \`task_id\` on dissonantCalls and verifyMismatches —
   without it, the entry cannot be cited and will be dropped.
 - Do not invent event indices or task ids. If you cannot pinpoint one,
@@ -706,6 +744,27 @@ const parseSuggestions = (raw: unknown): VerdictedSuggestion[] => {
 
 const clamp01 = (n: number): number => Math.min(1, Math.max(0, n))
 
+const parseCapabilityGapSuggestions = (raw: unknown): VerdictedCapabilityGapSuggestion[] => {
+  if (!Array.isArray(raw)) return []
+  const out: VerdictedCapabilityGapSuggestion[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const o = item as Record<string, unknown>
+    const stepName = typeof o.stepName === 'string' ? o.stepName.trim() : ''
+    const capability = typeof o.capability === 'string' ? o.capability.trim() : ''
+    const description = typeof o.description === 'string' ? o.description.trim() : ''
+    // stepName and capability are load-bearing; an entry missing either cannot
+    // be meaningfully surfaced to the operator.
+    if (!stepName || !capability) continue
+    const evidence = Array.isArray(o.evidence)
+      ? o.evidence.filter((e): e is string => typeof e === 'string')
+      : []
+    const verdict: SuggestionVerdict = parseVerdict(o.verdict)
+    out.push({ stepName, capability, description, evidence, verdict })
+  }
+  return out
+}
+
 const parseScorerSuggestions = (raw: unknown): VerdictedScorerSuggestion[] => {
   if (!Array.isArray(raw)) return []
   const out: VerdictedScorerSuggestion[] = []
@@ -755,6 +814,7 @@ export const parseDeepReflectionReport = (
     rootCause: typeof o.rootCause === 'string' ? o.rootCause : '',
     suggestions: parseSuggestions(o.suggestions),
     scorerSuggestions: parseScorerSuggestions(o.scorerSuggestions),
+    capabilityGapSuggestions: parseCapabilityGapSuggestions(o.capabilityGapSuggestions),
   }
 }
 
@@ -768,6 +828,7 @@ const emptyReport = (): DeepReflectionReport => ({
   rootCause: '',
   suggestions: [],
   scorerSuggestions: [],
+  capabilityGapSuggestions: [],
 })
 
 export const runDeepReflectorArc = async (

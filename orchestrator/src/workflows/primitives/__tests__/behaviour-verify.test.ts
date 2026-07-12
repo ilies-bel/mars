@@ -14,7 +14,6 @@ import {
   buildFailEvidenceBlock,
   extractVerdictReport,
   foldVerdicts,
-  playwrightMcpServers,
   VERDICT_CLOSE_TAG,
   VERDICT_OPEN_TAG,
   type BehaviourVerifyDeps,
@@ -228,10 +227,10 @@ describe('behaviour-verify:dod-unmet registration (ship-blocker wiring)', () => 
 })
 
 // ---------------------------------------------------------------------------
-// Worker plumbing: MCP config threading + pinned posture
+// Worker plumbing: pinned posture + no shipped MCP dependency
 // ---------------------------------------------------------------------------
 
-describe('BehaviourVerifier Worker + Playwright MCP threading', () => {
+describe('BehaviourVerifier Worker — pinned posture, no shipped MCP dependency', () => {
   it('WORKER_CONFIGS pins sonnet, headless, read-only tool surface', () => {
     const cfg = WORKER_CONFIGS.BehaviourVerifier
     expect(cfg.model).toBe('claude-sonnet-4-6')
@@ -241,27 +240,34 @@ describe('BehaviourVerifier Worker + Playwright MCP threading', () => {
     expect(cfg.disallowedTools).toContain('NotebookEdit')
   })
 
-  it('codegraphMcpConfigJson merges the playwright server on top of codegraph', () => {
-    const json = codegraphMcpConfigJson(
-      '/repo',
-      playwrightMcpServers('/repo/.mars/behaviour-verify/mars-t1'),
-    )
+  it('WORKER_CONFIGS.BehaviourVerifier has no pinned mcpConfig — no MCP server is shipped by the framework', () => {
+    // The framework must not inject any browser/UI-driving MCP server.
+    // Operators wire their own tools; if none are present the existing
+    // CAN'T-VERIFY path fires and merge still proceeds.
+    expect(WORKER_CONFIGS.BehaviourVerifier.mcpConfig).toBeUndefined()
+  })
+
+  it('claudeStreamArgs always includes --strict-mcp-config; --mcp-config is absent without extra servers', () => {
+    // When no extra servers are provided the framework emits no --mcp-config
+    // flag at all — only --strict-mcp-config. The operator's environment
+    // may supply servers via their own Claude Code MCP config.
+    const args = claudeStreamArgs('go', {})
+    expect(args).toContain('--strict-mcp-config')
+    expect(args).not.toContain('--mcp-config')
+  })
+
+  it('codegraphMcpConfigJson merges operator-supplied servers on top of codegraph when provided', () => {
+    // When an operator DOES pin extra servers, codegraphMcpConfigJson merges
+    // them cleanly. This path is available for operator use; the framework
+    // itself no longer calls it for BehaviourVerifier.
+    const json = codegraphMcpConfigJson('/repo', {
+      'my-browser': { type: 'stdio', command: 'my-browser-tool', args: [] },
+    })
     const parsed = JSON.parse(json) as {
       mcpServers: Record<string, { command: string; args: string[] }>
     }
     expect(parsed.mcpServers.codegraph).toBeDefined()
-    expect(parsed.mcpServers.playwright).toBeDefined()
-    expect(parsed.mcpServers.playwright.args).toContain('--output-dir')
-    expect(parsed.mcpServers.playwright.args).toContain('/repo/.mars/behaviour-verify/mars-t1')
-  })
-
-  it('claudeStreamArgs carries the merged config through --mcp-config under --strict-mcp-config', () => {
-    const json = codegraphMcpConfigJson('/repo', playwrightMcpServers('/out'))
-    const args = claudeStreamArgs('go', { mcpConfig: json })
-    const i = args.indexOf('--mcp-config')
-    expect(i).toBeGreaterThan(-1)
-    expect(args[i + 1]).toContain('playwright')
-    expect(args).toContain('--strict-mcp-config')
+    expect(parsed.mcpServers['my-browser']).toBeDefined()
   })
 
   it('the Worker prompt carries the criteria verbatim, the URL, and the verdict contract', () => {

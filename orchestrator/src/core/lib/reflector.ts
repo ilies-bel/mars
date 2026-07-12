@@ -594,6 +594,24 @@ export interface ApplyScorerVerdictsResult {
 }
 
 /**
+ * A capability-gap suggestion emitted by the deep-reflector analyst: a step
+ * self-reported that it lacked a tool or capability needed to do its job.
+ * Surfaces the gap as a proposal for a human to act on — the framework never
+ * auto-installs or auto-configures anything in response.
+ */
+export interface VerdictedCapabilityGapSuggestion {
+  /** The pipeline step that reported the gap (e.g. 'behaviour-verify'). */
+  stepName: string
+  /** Short label for the missing capability (e.g. 'browser/UI-driving MCP tool'). */
+  capability: string
+  /** What the step could not do, and what wiring the capability would unlock. */
+  description: string
+  /** Concrete evidence (quoted excerpts from the step trace) motivating the finding. */
+  evidence: string[]
+  verdict: SuggestionVerdict
+}
+
+/**
  * Apply save/absorb/drop verdicts to scorer suggestions — the parallel of
  * {@link applyVerdicts} for the second reflection output type.
  *
