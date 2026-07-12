@@ -7,6 +7,7 @@ import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks.js'
 import { getTask, updateTask } from '../../core/queue.js'
 import { ensureGateMetaMonitorSchema } from '../../core/lib/gate-meta-monitor.js'
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
+import { registerSubscriberName } from '../registry.js'
 
 /**
  * Durable outbox subscriber that enforces exactly-one recovery per task
@@ -34,6 +35,7 @@ import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
  * never consumed. This subscriber only ensures the monitor's schema exists.
  */
 export const RECOVERY_SPAWN_SUBSCRIBER = 'recovery-spawner'
+registerSubscriberName(RECOVERY_SPAWN_SUBSCRIBER)
 
 /**
  * Register the recovery-spawner subscriber and ensure the dedup schema

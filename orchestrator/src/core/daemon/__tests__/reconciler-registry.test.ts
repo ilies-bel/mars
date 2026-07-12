@@ -36,6 +36,7 @@ describe('RECONCILERS registry', () => {
       'stalled-proposal-slice',
       'stale-action-queue-sweep',
       'code-drift-clear-sweep',
+      'ghost-subscriber-sweep',
     ])
   })
 

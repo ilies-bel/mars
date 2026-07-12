@@ -6,6 +6,7 @@ import {
 import type { BusEvent } from '../../bus/events.js';
 import type { Subscriber } from '../dispatcher.js';
 import { publish } from '../../bus/publisher.js';
+import { registerSubscriberName } from '../registry.js';
 
 /** DDL for the durable signal records table. */
 const SIGNALS_DDL = `
@@ -47,6 +48,7 @@ export function buildSignalRecordingSubscribers(client: Client): Subscriber[] {
 }
 
 export const TASK_TERMINAL_SUBSCRIBER = 'signal-recording:task.terminal';
+registerSubscriberName(TASK_TERMINAL_SUBSCRIBER);
 
 /**
  * Subscriber that converts `task.terminal` outbox events into durable signal

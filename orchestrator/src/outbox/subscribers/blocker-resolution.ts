@@ -3,6 +3,7 @@ import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { Arc } from '../../core/arc.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
+import { registerSubscriberName } from '../registry.js'
 
 /**
  * Durable Outbox Subscriber: drives blocked-task unblocking in response to
@@ -20,6 +21,7 @@ import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
  * re-processed. Re-registration is idempotent — the cursor is never reset.
  */
 export const BLOCKER_RESOLUTION_SUBSCRIBER = 'blocker-resolution'
+registerSubscriberName(BLOCKER_RESOLUTION_SUBSCRIBER)
 
 /**
  * Register the blocker-resolution subscriber. Idempotent: re-registering an

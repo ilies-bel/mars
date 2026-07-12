@@ -382,8 +382,27 @@ describe('runStartupReconcile — ghost-subscriber-sweep', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
+  /**
+   * Import all subscriber modules so they self-register with the fresh
+   * registry after vi.resetModules(). Must be called after loadModules(),
+   * mirroring the daemon startup order (subscribers wired up before reconcile).
+   */
+  async function populateSubscriberRegistry(): Promise<void> {
+    await import('../alert-dismisser')
+    await import('../action-queue-repopulator')
+    await import('../../../outbox/subscribers/invalidator')
+    await import('../../../outbox/subscribers/blocker-resolution')
+    await import('../../../outbox/subscribers/recovery-spawn')
+    await import('../../../outbox/subscribers/idea-lifecycle')
+    await import('../../../outbox/subscribers/signal-recording')
+    await import('../../../outbox/subscribers/transcript-append')
+    await import('../../../outbox/subscribers/question-raise')
+    await import('../../../outbox/subscribers/action-queue-raisers')
+  }
+
   it('removes a ghost subscriber row and its processed-events while legitimate subscribers survive', async () => {
     const { q, reconcile } = await loadModules(repo)
+    await populateSubscriberRegistry()
     const client = q.resolveQueueClient()
 
     // Create the subscribers and dedup tables (normally created lazily at first
@@ -452,6 +471,7 @@ describe('runStartupReconcile — ghost-subscriber-sweep', () => {
 
   it('is a no-op when the subscribers table does not exist yet', async () => {
     const { reconcile } = await loadModules(repo)
+    await populateSubscriberRegistry()
 
     // Do NOT create the subscribers table — it may not exist on a fresh DB.
     const summary = await reconcile.runStartupReconcile(makeDeps())
@@ -465,6 +485,7 @@ describe('runStartupReconcile — ghost-subscriber-sweep', () => {
     // was deleting 'alert-dismisser' because ALERT_DISMISSER_SUBSCRIBER was
     // missing from the knownNames set, even though it is code-declared.
     const { q, reconcile } = await loadModules(repo)
+    await populateSubscriberRegistry()
     const client = q.resolveQueueClient()
 
     const { ensureSubscribersSchema } = await import('../../../bus/subscribers')

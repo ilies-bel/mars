@@ -4,6 +4,7 @@ import {
   fetchPending,
   advanceCursor,
 } from '../../bus/subscribers.js';
+import { registerSubscriberName } from '../registry.js';
 
 /**
  * The Invalidator: a durable Outbox Subscriber that auto-closes
@@ -21,6 +22,7 @@ import {
  * replayed from the cursor on the next startup and the row is closed then.
  */
 export const INVALIDATOR_SUBSCRIBER = 'stall-invalidator';
+registerSubscriberName(INVALIDATOR_SUBSCRIBER);
 
 /**
  * Register the Invalidator subscriber. `replay: false` (tail default) so a

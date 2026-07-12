@@ -6,6 +6,11 @@ import {
 } from '../../bus/processed-once.js';
 import type { Subscriber } from '../dispatcher.js';
 import type { BusEvent } from '../../bus/events.js';
+import { registerSubscriberName } from '../registry.js';
+
+/** Unique name for the durable question-raise subscriber. */
+export const QUESTION_RAISER_SUBSCRIBER = 'question-raiser:task.question';
+registerSubscriberName(QUESTION_RAISER_SUBSCRIBER);
 
 /**
  * Ensure the schema required by the question-raise subscriber is present on

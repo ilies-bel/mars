@@ -11,6 +11,7 @@ import {
   type SupersedeReason,
 } from '../lib/action-queue'
 import { getTask } from '../queue'
+import { registerSubscriberName } from '../../outbox/registry.js'
 
 /**
  * Durable outbox subscriber that keeps action_queue_items current from outbox
@@ -41,6 +42,7 @@ import { getTask } from '../queue'
  * write is simply skipped on restart).
  */
 export const ACTION_QUEUE_REPOPULATOR_SUBSCRIBER = 'action-queue-repopulator'
+registerSubscriberName(ACTION_QUEUE_REPOPULATOR_SUBSCRIBER)
 
 /** Events that ensure exactly one open origin row exists for the task. */
 const TASK_RAISE_EVENTS = new Set<EventName>(['task.failed', 'task.dropped'])

@@ -358,35 +358,13 @@ const ghostSubscriberSweep: Reconciler = {
   async run({ log }) {
     try {
       const { resolveQueueClient } = await import('../queue')
-      const { ALERT_DISMISSER_SUBSCRIBER } = await import('./alert-dismisser')
-      const { ACTION_QUEUE_REPOPULATOR_SUBSCRIBER } = await import('./action-queue-repopulator')
-      const { INVALIDATOR_SUBSCRIBER } = await import('../../outbox/subscribers/invalidator')
-      const { BLOCKER_RESOLUTION_SUBSCRIBER } = await import(
-        '../../outbox/subscribers/blocker-resolution'
-      )
-      const { RECOVERY_SPAWN_SUBSCRIBER } = await import(
-        '../../outbox/subscribers/recovery-spawn'
-      )
-      const { IDEA_LIFECYCLE_SUBSCRIBER } = await import(
-        '../../outbox/subscribers/idea-lifecycle'
-      )
-      const { TASK_TERMINAL_SUBSCRIBER } = await import(
-        '../../outbox/subscribers/signal-recording'
-      )
-      const { TRANSCRIPT_APPEND_SUBSCRIBER_ID } = await import(
-        '../../outbox/subscribers/transcript-append'
-      )
+      const { knownSubscriberNames } = await import('../../outbox/registry')
 
-      const knownNames = new Set([
-        ALERT_DISMISSER_SUBSCRIBER,
-        ACTION_QUEUE_REPOPULATOR_SUBSCRIBER,
-        INVALIDATOR_SUBSCRIBER,
-        BLOCKER_RESOLUTION_SUBSCRIBER,
-        RECOVERY_SPAWN_SUBSCRIBER,
-        IDEA_LIFECYCLE_SUBSCRIBER,
-        TASK_TERMINAL_SUBSCRIBER,
-        TRANSCRIPT_APPEND_SUBSCRIBER_ID,
-      ])
+      // knownSubscriberNames() is populated by module-level registerSubscriberName()
+      // calls in each subscriber module. Those modules are imported during daemon
+      // startup before the reconcile pass runs. Tests that exercise this sweep must
+      // import the subscriber modules themselves to mirror that ordering.
+      const knownNames = knownSubscriberNames()
 
       const client = resolveQueueClient()
 

@@ -3,6 +3,7 @@ import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { dismissAlertsOnStatusChange, resolveAllRowsForTask } from '../lib/action-queue'
 import { drainWithStall } from './subscriber-drain.js'
+import { registerSubscriberName } from '../../outbox/registry.js'
 
 /**
  * The Invalidator (ADR-0027): the sole closer of Action-queue rows for a task.
@@ -36,6 +37,7 @@ import { drainWithStall } from './subscriber-drain.js'
  *     stays open until the entity reaches a terminal state.
  */
 export const ALERT_DISMISSER_SUBSCRIBER = 'alert-dismisser'
+registerSubscriberName(ALERT_DISMISSER_SUBSCRIBER)
 
 /** Terminal reasons on which the Invalidator closes a task's rows. */
 const CLOSE_ON_TERMINAL = new Set(['done', 'dropped', 'purged'])

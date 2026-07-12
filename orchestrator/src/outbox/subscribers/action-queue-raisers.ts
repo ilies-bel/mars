@@ -8,6 +8,11 @@ import type { BusEvent } from '../../bus/events.js';
 import { raiseActionQueueItem, setActionQueueState } from '../../core/lib/action-queue.js';
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js';
 import { resolveStateClient } from '../../core/store/state-client.js';
+import { registerSubscriberName } from '../registry.js';
+
+/** Unique name for the durable action-queue-raiser:task.blocked subscriber. */
+export const ACTION_QUEUE_RAISER_SUBSCRIBER = 'action-queue-raiser:task.blocked';
+registerSubscriberName(ACTION_QUEUE_RAISER_SUBSCRIBER);
 
 /**
  * Mirror the same grace window used by recovery-spawn: treat any failure

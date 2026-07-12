@@ -7,12 +7,14 @@ import {
 } from '../../bus/processed-once.js';
 import type { Subscriber } from '../dispatcher.js';
 import type { BusEvent } from '../../bus/events.js';
+import { registerSubscriberName } from '../registry.js';
 
 const gzipAsync = promisify(gzip);
 
 /** Unique name for the durable transcript-append subscriber. */
 export const TRANSCRIPT_APPEND_SUBSCRIBER_ID =
   'transcript-append:task.completed';
+registerSubscriberName(TRANSCRIPT_APPEND_SUBSCRIBER_ID);
 
 /**
  * Reads the Claude Code transcript for a completed task and returns its

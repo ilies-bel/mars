@@ -2,8 +2,10 @@ import type { Client } from '@libsql/client'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
+import { registerSubscriberName } from '../registry.js'
 
 export const IDEA_LIFECYCLE_SUBSCRIBER = 'idea-lifecycle'
+registerSubscriberName(IDEA_LIFECYCLE_SUBSCRIBER)
 
 /**
  * Proposal lifecycle event types that flow through the Outbox.
