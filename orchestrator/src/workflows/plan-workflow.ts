@@ -4,10 +4,11 @@ import { getTask } from '../core/queue'
 import { createProposal } from '../core/proposals'
 import { Workers } from '../core/workers'
 import { parseClaudeJsonResult } from '../core/lib/claude-json'
-import { getRepoRoot, resolveContext } from '../core/context'
+import { getRepoRoot } from '../core/context'
 import { type DomainTaskStore as TaskStore, getDefaultTaskStore } from '../core/store/task-store'
 import { createQueueWorkflowStore } from './queue-workflow-store'
-import { openTraceEventStore } from '../core/lib/trace-events-store'
+import { type TraceEventStore } from '../core/lib/trace-events-store'
+import { nullTraceStore } from '../core/lib/run-tool'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 
 const planInputSchema = z.object({
@@ -30,10 +31,11 @@ const plannerOutputSchema = z.object({
 })
 
 // The plan workflow reads the task and writes Proposal rows; the daemon
-// wires the TaskStore from the composition root, read inside as
-// `ctx.services.store` (replaces the Mastra RequestContext('taskStore')).
+// wires the TaskStore and TraceEventStore from the composition root, read
+// inside as `ctx.services.store` and `ctx.services.traceStore`.
 export interface PlanServices {
   store: TaskStore
+  traceStore: TraceEventStore
 }
 
 const buildPrompt = (spec: string): string =>
@@ -80,7 +82,7 @@ export const planWorkflow = defineWorkflow<PlanInput, RunPlanResult, PlanService
       const task = await getTask(input.taskId, store)
       if (!task) throw new Error(`task ${input.taskId} not found`)
 
-      const traceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
+      const traceStore = ctx.services.traceStore
       const r = await runWorkerWithSpan({
         worker: Workers.Planner,
         prompt: buildPrompt(task.prompt),
@@ -120,10 +122,14 @@ export const runPlan = async (
   taskId: string,
   refresh = false,
   store?: TaskStore,
+  traceStore?: TraceEventStore,
 ): Promise<RunPlanResult> => {
   const result = await runWorkflow(planWorkflow, { taskId, refresh }, {
     store: createQueueWorkflowStore(),
-    services: { store: store ?? (await getDefaultTaskStore()) },
+    services: {
+      store: store ?? (await getDefaultTaskStore()),
+      traceStore: traceStore ?? nullTraceStore,
+    },
   })
   if (result.status !== 'completed' || !result.output) {
     const cause = result.error instanceof Error ? `: ${result.error.message}` : ''

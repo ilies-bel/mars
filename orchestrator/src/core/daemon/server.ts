@@ -628,7 +628,7 @@ export const startDaemon = async (
     log(`[triage] ${taskId} dispatching`)
     try {
       const { runTriage } = await import('../../workflows/triage-workflow')
-      const result = await runTriage(taskId, getDefaultDomainTaskStore())
+      const result = await runTriage(taskId, getDefaultDomainTaskStore(), traceStore)
       log(`[triage] ${taskId} -> actionable=${result.actionable}`)
       if (result.actionable) {
         const t = await getTask(taskId)
@@ -1262,12 +1262,11 @@ export const startDaemon = async (
     log(`[refine] ${taskId} dispatching (refresh=${refresh})`)
     try {
       const { runPlan } = await import('../../workflows/plan-workflow')
-      // Wire the TaskStore from the composition root into the workflow so
-      // the generate step routes its queue reads through the store
-      // rather than calling getCompositionRootClient() directly (ADR-0021 seam, slice 2).
-      // The store is read inside the workflow as `ctx.services.store`.
+      // Wire the TaskStore and TraceEventStore from the composition root into
+      // the workflow so reads route through the store (ADR-0021 seam) and
+      // span/event capture goes through the daemon-opened traceStore.
       const taskStore = await getDefaultTaskStore()
-      const result = await runPlan(taskId, refresh, taskStore)
+      const result = await runPlan(taskId, refresh, taskStore, traceStore)
       log(
         `[refine] ${taskId} -> suggestions=${result.suggestionCount}`,
       )
@@ -2209,7 +2208,8 @@ export const startDaemon = async (
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }> => {
     assertProposalsSourceFresh(proposalsStamp)
     const { runSlice } = await import('../../workflows/slice-workflow')
-    const result = await runSlice(proposalId, resliceFeedback)
+    const sliceTaskStore = await getDefaultTaskStore()
+    const result = await runSlice(proposalId, resliceFeedback, { store: sliceTaskStore, traceStore })
     // When autoApprovePlans=true, slice tasks are transitioned to 'queued'
     // immediately; emit 'task.queued' for each so the daemon's dispatch
     // loop picks them up under the implement semaphore. When

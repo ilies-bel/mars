@@ -7,12 +7,13 @@ import { claimProposalForSlicing, getProposal, markProposalSliced } from '../cor
 import { getDefaultStateStore } from '../core/store/state-store'
 import { enqueueTask, updateTask } from '../core/queue'
 import { Arc } from '../core/arc'
-import { getDefaultTaskStore } from '../core/store/task-store'
+import { type DomainTaskStore, getDefaultTaskStore } from '../core/store/task-store'
 import { Workers } from '../core/workers'
 import { parseClaudeJsonResult } from '../core/lib/claude-json'
-import { getRepoRoot, resolveContext } from '../core/context'
+import { getRepoRoot } from '../core/context'
 import { listActionQueueItems, raiseActionQueueItem } from '../core/lib/action-queue'
-import { openTraceEventStore } from '../core/lib/trace-events-store'
+import { type TraceEventStore } from '../core/lib/trace-events-store'
+import { nullTraceStore } from '../core/lib/run-tool'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 import { loadDaemonConfig } from '../core/daemon/config'
 import { validateSliceReferences } from './slice-reference-validator'
@@ -1127,14 +1128,20 @@ function buildPlanApprovalBody(
   return lines.join('\n')
 }
 
-// The slice workflow talks to proposals/queue via the composition-root store
-// seams (getDefaultStateStore/getDefaultTaskStore), so no services need wiring.
+// The slice workflow talks to proposals/queue via injected services; the
+// daemon wires the DomainTaskStore and TraceEventStore from the composition
+// root, read inside as `ctx.services.store` and `ctx.services.traceStore`.
 // One imperative step ('generate-slices', load-bearing as the trace-view
 // node label). Failures THROW; the engine records the step failed.
-export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
+export interface SliceServices {
+  store: DomainTaskStore
+  traceStore: TraceEventStore
+}
+
+export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServices>({
   id: 'slice',
   inputSchema: sliceInputSchema,
-  fn: async (ctx: WorkflowCtx, input: SliceInput): Promise<SliceOutput> =>
+  fn: async (ctx: WorkflowCtx<SliceServices>, input: SliceInput): Promise<SliceOutput> =>
     ctx.step('generate-slices', async (): Promise<SliceOutput> => {
     const inputData = input
     const proposal = await getProposal(inputData.proposalId)
@@ -1160,7 +1167,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
     // inner cleanup, which targets the post-Phase-4 'sliced' -> 'prd-ready'
     // window specifically.
     try {
-      const traceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
+      const traceStore = ctx.services.traceStore
     const daemonConfig = loadDaemonConfig()
     const autoApprovePlans = daemonConfig.autoApprovePlans
     let slicedTaskCount = 0
@@ -1304,7 +1311,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
       }
     }
 
-    const taskStore = await getDefaultTaskStore()
+    const taskStore = ctx.services.store
     const stateStore = await getDefaultStateStore()
 
     // Pre-flight: crash-recovery deduplication. A process crash between
@@ -1671,11 +1678,12 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput>({
  */
 export const tryCompleteHitlSlice = async (
   hitlSliceTaskId: string,
+  taskStore?: DomainTaskStore,
 ): Promise<boolean> => {
-  const taskStore = await getDefaultTaskStore()
+  const store = taskStore ?? await getDefaultTaskStore()
 
   // 1. Confirm this is an HITL slice that is still blocked.
-  const taskCheckResult = await taskStore.execute({
+  const taskCheckResult = await store.execute({
     sql: `SELECT status, slice_kind, origin_id, slice_index FROM tasks WHERE id = ?`,
     args: [hitlSliceTaskId],
   })
@@ -1690,7 +1698,7 @@ export const tryCompleteHitlSlice = async (
   if (!taskRow.origin_id || taskRow.slice_index == null) return false
 
   // 2. All blocking sub-tasks must be done.
-  const blockersResult = await taskStore.execute({
+  const blockersResult = await store.execute({
     sql: `SELECT t.status FROM task_blockers tb
           JOIN tasks t ON t.id = tb.blocker_task_id
           WHERE tb.task_id = ?`,
@@ -1716,7 +1724,7 @@ export const tryCompleteHitlSlice = async (
   // catches any illegal transition and so the status write + lifecycle events
   // (task.completed, task.terminal) land in the same atomic batch via
   // store.batch (ADR-0030).
-  await updateTask(hitlSliceTaskId, { status: 'done' }, taskStore)
+  await updateTask(hitlSliceTaskId, { status: 'done' }, store)
   return true
 }
 
@@ -1783,9 +1791,13 @@ export const describeSliceFailure = (result: unknown): string => {
 export const runSlice = async (
   proposalId: string,
   resliceFeedback?: string,
+  services?: Partial<SliceServices>,
 ): Promise<RunSliceResult> => {
+  const taskStore = services?.store ?? await getDefaultTaskStore()
+  const traceStore = services?.traceStore ?? nullTraceStore
   const result = await runWorkflow(sliceWorkflow, { proposalId, resliceFeedback }, {
     store: createQueueWorkflowStore(),
+    services: { store: taskStore, traceStore },
   })
   if (result.status !== 'completed' || !result.output) {
     throw new Error(describeSliceFailure(result))

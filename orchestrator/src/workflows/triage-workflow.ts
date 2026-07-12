@@ -4,9 +4,10 @@ import { type Task } from '../core/queue'
 import { type DomainTaskStore, getDefaultDomainTaskStore } from '../core/store/task-store'
 import { Workers } from '../core/workers'
 import { parseClaudeJsonResult } from '../core/lib/claude-json'
-import { getRepoRoot, resolveContext } from '../core/context'
+import { getRepoRoot } from '../core/context'
 import { createQueueWorkflowStore } from './queue-workflow-store'
-import { openTraceEventStore } from '../core/lib/trace-events-store'
+import { type TraceEventStore } from '../core/lib/trace-events-store'
+import { nullTraceStore } from '../core/lib/run-tool'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 
 const TASK_GRAPH_LIMIT = 30
@@ -36,10 +37,11 @@ const triageJsonSchema = z.object({
 })
 
 // The triage workflow reads + mutates the task graph; the daemon wires the
-// DomainTaskStore from the composition root, read inside as
-// `ctx.services.store` (replaces the Mastra RequestContext('taskStore')).
+// DomainTaskStore and TraceEventStore from the composition root, read inside
+// as `ctx.services.store` and `ctx.services.traceStore`.
 export interface TriageServices {
   store: DomainTaskStore
+  traceStore: TraceEventStore
 }
 
 const buildTaskGraph = (tasks: readonly Task[], excludeId: string): string => {
@@ -121,7 +123,7 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
       const knownIds = new Set(allTasks.map((t) => t.id))
       const taskGraph = buildTaskGraph(allTasks, task.id)
 
-      const traceStore = await openTraceEventStore(resolveContext().stateDbPath).catch(() => undefined)
+      const traceStore = ctx.services.traceStore
 
       // Skip the LLM call when the answer is already obvious from existing
       // task structure. Three rules (any one is sufficient):
@@ -214,10 +216,14 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
 export const runTriage = async (
   taskId: string,
   store?: DomainTaskStore,
+  traceStore?: TraceEventStore,
 ): Promise<TriageResult> => {
   const result = await runWorkflow(triageWorkflow, { taskId }, {
     store: createQueueWorkflowStore(),
-    services: { store: store ?? getDefaultDomainTaskStore() },
+    services: {
+      store: store ?? getDefaultDomainTaskStore(),
+      traceStore: traceStore ?? nullTraceStore,
+    },
   })
   if (result.status !== 'completed' || !result.output) {
     const cause = result.error instanceof Error ? `: ${result.error.message}` : ''
