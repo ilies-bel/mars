@@ -78,14 +78,6 @@ const clearTaskHash = (closeHash: string): void => {
   navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
 }
 
-/**
- * Closes a proposal/proposal-node/primitive/release-notes/shortcuts overlay,
- * returning to the origin page encoded in `?from=` or falling back to Progress.
- */
-const clearOverlayHash = (closeHash: string, parseFn: (h: string) => string | null): void => {
-  const origin = parseFn(closeHash)
-  navigateReplace(origin ? ROUTE_BASE[origin as RouteName] ?? '#/progress' : '#/progress')
-}
 
 const AppInner = () => {
   const qc = useQueryClient()

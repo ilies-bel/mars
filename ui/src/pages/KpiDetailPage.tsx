@@ -16,48 +16,6 @@ const KPI_LABELS: Record<KpiKey, string> = {
   recovery_success_rate: 'Recovery Success',
 }
 
-const KPI_GUIDANCE: Record<KpiKey, { drivers: string; actions: string[] }> = {
-  failure_rate: {
-    drivers:
-      'Arcs fail when the verify step catches regressions, when the coder bails without a fix, or when the daemon kills a run over budget.',
-    actions: [
-      'Tighten task prompts: include file paths, verify commands, and clear done-criteria.',
-      'Improve the verify step: add targeted test commands instead of broad tsc+test sweeps.',
-      'Break complex tasks into smaller, focused sub-tasks via blocker chains.',
-      'Check recent failed arcs below for recurring failure signatures.',
-    ],
-  },
-  autonomous_completion_rate: {
-    drivers:
-      'Arcs lose autonomy when they trigger a recovery task (fix attempt needed) or hit a manual unblock (task-blocked action queue item).',
-    actions: [
-      'Review blocked tasks: are blockers set correctly, or are tasks blocking on unrelated work?',
-      'Improve coder deviation rules: ensure the coder commits partial work and emits --blocked-by follow-ups instead of bailing.',
-      'Tune the recovery mechanism: recovery tasks that fail lower this KPI further.',
-      'Reduce ambiguity in task prompts to prevent the coder from getting stuck.',
-    ],
-  },
-  recovery_success_rate: {
-    drivers:
-      'Recovery fails when the fix task can\'t resolve the original failure, or when the failure signature is inherently non-recoverable (e.g. missing external dependency).',
-    actions: [
-      'Review the failure signatures of failed recoveries — are they the same as the origin failure?',
-      'Consider marking inherently non-recoverable failures (quota, auth, infra) so recovery isn\'t attempted.',
-      'Improve the fix prompt: include the original failure reason and diff context.',
-      'Check if the recovery model (Fixer) is appropriate for the failure type.',
-    ],
-  },
-  cost_per_arc: {
-    drivers:
-      'High cost comes from context bloat (large file reads), cache misses (cold starts), repeated tool invocations, or overly broad verify sweeps.',
-    actions: [
-      'Enable cache utilisation: ensure system prompts and file contents are cache-friendly (stable prefixes).',
-      'Reduce file reads: use --files in task prompts to scope the coder to relevant files.',
-      'Shorten verify commands: targeted test runs instead of full suite.',
-      'Break large arcs into smaller tasks — each runs in a tighter context.',
-    ],
-  },
-}
 
 // ---------------------------------------------------------------------------
 // Diagnostic analysis
