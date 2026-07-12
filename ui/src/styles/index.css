@@ -62,10 +62,10 @@
      both the light info-row bg (#F5EDE4) and the dark Arc rail. */
   --color-trace-mars: #1D4ED8;  /* blue-700 — 6.2:1 on bg, reads blue on dark too */
 
-  /* DAG cluster chip colours — consumed via CSS var() in SVG style props and
-     read at runtime by buildClusterStyleFromVars (topologyGraphModel.ts) to
-     populate the G6 canvas palette. CSS is the single source of truth; no
-     manual sync with TypeScript is required. */
+  /* DAG cluster chip colours — consumed via CSS var() in the React Flow DOM
+     nodes and resolved at runtime by buildClusterStyleFromVars
+     (topologyFlowModel.ts) for the SVG MiniMap. CSS is the single source of
+     truth; no manual sync with TypeScript is required. */
   --color-dag-proposal-fill:       #2e1065;
   --color-dag-proposal-stroke:     #7c3aed;
   --color-dag-proposal-text:       #c4b5fd;
@@ -139,6 +139,48 @@ html, body, #root {
 
 @media (prefers-reduced-motion: reduce) {
   .animate-mars-pulse { animation: none; }
+}
+
+/* ── Topology (React Flow) node emphasis ────────────────────────────────────
+ * Three states resolved by computeEmphasisMap (topologyFlowModel.ts):
+ *   rest — no class; lit — hover-trace member; dim — filtered / outside trace.
+ */
+.topo-node {
+  transition: opacity 160ms ease-out, box-shadow 160ms ease-out;
+}
+.topo-node.topo-dim { opacity: 0.14; }
+.topo-node.topo-lit {
+  box-shadow: 0 0 0 1.5px var(--color-dag-proposal-text), 0 0 12px rgba(167, 139, 250, 0.5);
+}
+/* 'In progress' border pulse — echoes the board view's animate-mars-pulse. */
+@keyframes topo-border-pulse {
+  0%, 100% { border-color: var(--color-dag-in-progress-stroke); }
+  50%      { border-color: color-mix(in srgb, var(--color-dag-in-progress-stroke) 40%, transparent); }
+}
+.topo-pulse { animation: topo-border-pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .topo-pulse { animation: none; }
+  .topo-node { transition: none; }
+}
+
+/* Dark theming for React Flow chrome on the topology canvas. */
+.dag-canvas .react-flow__controls.topo-controls button {
+  background: #1a0f0a;
+  border-bottom: 1px solid var(--color-border-dark);
+  color: var(--color-muted-dark);
+  fill: var(--color-muted-dark);
+}
+.dag-canvas .react-flow__controls.topo-controls button:hover {
+  background: #2a1a12;
+}
+.dag-canvas .react-flow__minimap.topo-minimap {
+  background: #1a0f0a;
+  border: 1px solid var(--color-border-dark);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.dag-canvas .react-flow__minimap.topo-minimap .react-flow__minimap-mask {
+  fill: rgba(37, 24, 18, 0.75);
 }
 
 /* ── Drawer entrance / exit animations ──────────────────────────────────────

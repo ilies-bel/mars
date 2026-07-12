@@ -10,7 +10,7 @@
  * prompt sent to the step's worker, fetched lazily from
  * `GET /api/step-prompt`).
  *
- * Rendering is plain DOM/React — deliberately NOT @antv/g6. The
+ * Rendering is plain DOM/React — deliberately NOT a graph library. The
  * @mars/workflow engine is imperative (no static graph to lay out); a single
  * instance's tree is the observed sequence of ctx.step() spans, near-linear
  * and single-digit in node count, and the nodes need rich interactive HTML

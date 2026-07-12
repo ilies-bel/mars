@@ -1,15 +1,8 @@
 /**
- * TopologyView is a Canvas/G6 component: it needs a real DOM + canvas and will
- * not render under `renderToStaticMarkup` or jsdom once G6 is constructed. So
- * the testable value lives in the PURE model (see topologyGraphModel.test.ts).
- *
- * Here we cover:
- *  - The empty-state path, which short-circuits BEFORE G6 is ever constructed.
- *  - The non-empty container wrapper attrs (role, aria-label). The wrapper is
- *    pure JSX — G6 is only instantiated inside useEffect, which `renderToStaticMarkup`
- *    does not invoke, so these tests are safe under the static renderer.
- *
- * We do NOT attempt to instantiate G6 in tests.
+ * TopologyView renders React Flow, which is SSR-safe: the pure JSX (wrapper
+ * attrs, overlays) renders under `renderToStaticMarkup`; interaction and
+ * viewport behaviour live in effects that the static renderer never runs. The
+ * layout/model logic is covered separately in topologyFlowModel.test.ts.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -66,12 +59,9 @@ describe('TopologyView – empty state', () => {
   })
 })
 
-describe('TopologyView – graph rebuild gate (structural signature)', () => {
-  // The component uses structuralSignature as the mount-effect dependency so
-  // that cluster/status flips do NOT destroy and recreate the G6 graph.
-  // G6 cannot be instantiated in this environment, but we can verify the
-  // structural signature behaves correctly via the model — and that the
-  // component renders without error when a task cluster changes mid-life.
+describe('TopologyView – rebuild gate (structural signature)', () => {
+  // structuralSignature gates the fitView camera reset so cluster/status
+  // flips never yank the viewport; the aria-label depends only on task count.
 
   it('renders the canvas container with the same aria-label regardless of task cluster', () => {
     const htmlQueued = renderToStaticMarkup(
@@ -85,26 +75,6 @@ describe('TopologyView – graph rebuild gate (structural signature)', () => {
     expect(htmlBlocked).toContain('role="img"')
     expect(htmlQueued).toContain('1 task')
     expect(htmlBlocked).toContain('1 task')
-  })
-})
-
-describe('TopologyView – layout affordance', () => {
-  // isLayoutReady starts false (graph.render() hasn't resolved yet in the static
-  // renderer — no effects run).  The "laying out…" overlay should therefore be
-  // present in the initial SSR markup and act as a pointer-events:none shield so
-  // the canvas canvas below doesn't accidentally capture clicks before layout
-  // positions are committed.
-  it('renders the laying-out affordance before the graph has settled', () => {
-    const html = renderToStaticMarkup(
-      <TopologyView tasks={[stubTask('t-1')]} proposals={noProposals} />,
-    )
-    expect(html).toContain('laying out')
-  })
-
-  it('does not show the laying-out affordance in the empty state', () => {
-    // Empty state short-circuits before the canvas is rendered; no overlay.
-    const html = renderToStaticMarkup(<TopologyView tasks={noTasks} proposals={noProposals} />)
-    expect(html).not.toContain('laying out')
   })
 })
 
