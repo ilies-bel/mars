@@ -341,22 +341,22 @@ const TopologyViewInner = ({
   )
 
   // ---- drill-in --------------------------------------------------------------
+  const openArcKeyRef = useRef(openArcKey)
+  openArcKeyRef.current = openArcKey
   const toggleArc = useCallback(
     (arcKey: string) => {
-      setOpenArcKey((open) => {
-        const next = open === arcKey ? null : arcKey
-        onSelectProposalRef.current?.(next)
-        return next
-      })
+      const next = openArcKeyRef.current === arcKey ? null : arcKey
+      setOpenArcKey(next)
+      onSelectProposalRef.current?.(next)
       clearHover()
     },
     [clearHover],
   )
   const collapse = useCallback(() => {
-    setOpenArcKey((open) => {
-      if (open !== null) onSelectProposalRef.current?.(null)
-      return null
-    })
+    if (openArcKeyRef.current !== null) {
+      setOpenArcKey(null)
+      onSelectProposalRef.current?.(null)
+    }
     clearHover()
   }, [clearHover])
 
@@ -379,7 +379,10 @@ const TopologyViewInner = ({
   // pane targets on the wrapper).
   const onWrapperDoubleClick = useCallback(
     (e: ReactMouseEvent) => {
-      if ((e.target as HTMLElement).closest('.react-flow__pane')) collapse()
+      const target = e.target as HTMLElement
+      // Nodes live inside the pane — only genuine empty-canvas double-clicks collapse.
+      if (target.closest('.react-flow__node')) return
+      if (target.closest('.react-flow__pane')) collapse()
     },
     [collapse],
   )
