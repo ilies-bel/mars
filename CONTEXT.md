@@ -455,3 +455,7 @@ _Avoid_: spend governor, budget guard, cost cap, token governor, metric, gauge
 **Main committer**:
 The single recovery task per integration branch that commits or stashes the branch's uncommitted working-tree state so tasks blocked on a dirty integration branch can dispatch.
 _Avoid_: committer, dirty-main recovery, main-commiter task, commit recovery
+
+**Dirty-main source**:
+A regular task parked in 'blocked' because it hit an uncommitted integration branch at dispatch, verify, or merge, and is waiting on the branch's Main committer.
+_Avoid_: blocked dependent, parked task, committer dependent
