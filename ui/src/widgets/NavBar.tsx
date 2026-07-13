@@ -1,13 +1,7 @@
 import { useProgress } from '@/hooks/useProgress'
 import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
 import { detectRoute, actionQueueCount } from '@/shared/routing'
-import {
-  notificationsSupported,
-  notificationPermission,
-  requestNotificationPermission,
-  setNotificationsEnabled,
-  useNotificationsEnabled,
-} from '@/shared/notifications/notificationPrefs'
+import { useNotificationsPreference } from '@/entities/notifications'
 import { ProjectSelector } from './ProjectSelector'
 
 interface NavBarProps {
@@ -32,52 +26,26 @@ const CountBadge = ({ count }: CountBadgeProps) =>
   )
 
 /**
- * Toggle for desktop notifications on new failed-task / stale-worktree alerts.
- * Turning on prompts for browser permission and only enables on a `granted`
- * result; turning off just clears the opt-in. Reflects unsupported and
- * browser-blocked (denied) states so the control never looks broken.
+ * Toggle for native desktop notifications sent by the daemon on new
+ * failed-task / stale-worktree alerts.  The preference is persisted by the
+ * daemon so it survives restarts and is shared across every connected client.
  */
 const NotificationsToggle = () => {
-  const enabled = useNotificationsEnabled()
-
-  if (!notificationsSupported()) {
-    return (
-      <span
-        className="font-mono text-[11px] uppercase tracking-wide text-muted"
-        title="This browser does not support desktop notifications"
-      >
-        Alerts ✕
-      </span>
-    )
-  }
-
-  const blocked = notificationPermission() === 'denied'
-
-  const onClick = async (): Promise<void> => {
-    if (enabled) {
-      setNotificationsEnabled(false)
-      return
-    }
-    const result = await requestNotificationPermission()
-    setNotificationsEnabled(result === 'granted')
-  }
-
-  const label = enabled ? 'Alerts 🔔' : 'Alerts 🔕'
-  const title = blocked
-    ? 'Notifications are blocked in your browser settings — unblock this site to enable'
-    : enabled
-      ? 'Desktop notifications on for new alerts — click to turn off'
-      : 'Click to get desktop notifications for new alerts'
+  const { enabled, setEnabled } = useNotificationsPreference()
 
   return (
     <button
       type="button"
-      onClick={() => void onClick()}
-      title={title}
+      onClick={() => setEnabled(!enabled)}
       aria-pressed={enabled}
+      title={
+        enabled
+          ? 'Desktop notifications on for new alerts — click to turn off'
+          : 'Click to enable desktop notifications for new alerts'
+      }
       className={linkClass(enabled)}
     >
-      {label}
+      Desktop notifications
     </button>
   )
 }

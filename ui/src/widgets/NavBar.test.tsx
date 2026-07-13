@@ -1,20 +1,23 @@
+// @vitest-environment happy-dom
 /**
- * NavBar a11y tests.
+ * NavBar a11y and interaction tests.
  *
  * Strategy: mock the hook/context dependencies so NavBar renders under
- * `renderToStaticMarkup` (node environment, no providers needed).
- * We verify observable HTML behaviour — the badge count must be folded
- * into the link aria-label and the visual badge span must carry
- * aria-hidden so counts are not double-announced by screen readers.
+ * `renderToStaticMarkup` (no providers needed) for state checks.
+ * DOM-based click tests use createRoot + act in the happy-dom environment.
+ *
+ * The `useNotificationsPreference` mock is a vi.fn() so each test can call
+ * `.mockReturnValue()` to control the enabled/disabled state independently.
  */
 
-import { describe, expect, it, mock } from 'bun:test'
+import { describe, expect, it, mock, vi } from 'bun:test'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 
 // ---------------------------------------------------------------------------
-// Module mocks — must be declared before the dynamic import of NavBar.
-// Arrange for non-zero counts so the badge and aria-label code paths
-// both execute.
+// Module mocks — must be declared before the dynamic imports of NavBar.
+// Arrange for non-zero counts so the badge and aria-label code paths execute.
 // ---------------------------------------------------------------------------
 
 mock.module('@/hooks/useProgress', () => ({
@@ -39,20 +42,28 @@ mock.module('@/shared/routing', () => ({
   actionQueueCount: () => 3,
 }))
 
-mock.module('@/shared/notifications/notificationPrefs', () => ({
-  notificationsSupported: () => false,
-  notificationPermission: () => 'default',
-  requestNotificationPermission: async () => 'default' as const,
-  setNotificationsEnabled: () => {},
-  useNotificationsEnabled: () => false,
+// useNotificationsPreference is a vi.fn() so each test can call mockReturnValue
+// to exercise the enabled and disabled rendering paths independently.
+mock.module('@/entities/notifications', () => ({
+  useNotificationsPreference: vi.fn(() => ({
+    enabled: false,
+    setEnabled: vi.fn(),
+    isPending: false,
+  })),
 }))
 
 mock.module('@/widgets/ProjectSelector', () => ({
   ProjectSelector: () => null,
 }))
 
+// Dynamic imports run after all mocks are registered.
 const { NavBar } = await import('./NavBar')
+const { useNotificationsPreference } = await import('@/entities/notifications')
 
+// Type-cast to vi.fn so we can call mockReturnValue per test.
+const mockUseNotificationsPreference = useNotificationsPreference as ReturnType<typeof vi.fn>
+
+// Single render for the badge/a11y tests (default mock state: enabled=false).
 const html = renderToStaticMarkup(<NavBar hash="#/progress" />)
 
 // ---------------------------------------------------------------------------
@@ -75,5 +86,105 @@ describe('NavBar – CountBadge aria-hidden', () => {
     // The badge span is absolutely-positioned beside the link; hiding it from AT
     // prevents "3 Action queue" being read as "3" then "Action queue" separately.
     expect(html).toContain('aria-hidden="true"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Desktop notifications toggle – render state
+// ---------------------------------------------------------------------------
+
+describe('NavBar – Desktop notifications toggle rendering', () => {
+  it('always renders the "Desktop notifications" label', () => {
+    expect(html).toContain('Desktop notifications')
+  })
+
+  it('renders aria-pressed="false" when the hook returns enabled=false', () => {
+    mockUseNotificationsPreference.mockReturnValue({
+      enabled: false,
+      setEnabled: vi.fn(),
+      isPending: false,
+    })
+    const h = renderToStaticMarkup(<NavBar hash="#/" />)
+    expect(h).toContain('Desktop notifications')
+    expect(h).toContain('aria-pressed="false"')
+  })
+
+  it('renders aria-pressed="true" when the hook returns enabled=true', () => {
+    mockUseNotificationsPreference.mockReturnValue({
+      enabled: true,
+      setEnabled: vi.fn(),
+      isPending: false,
+    })
+    const h = renderToStaticMarkup(<NavBar hash="#/" />)
+    expect(h).toContain('Desktop notifications')
+    expect(h).toContain('aria-pressed="true"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Desktop notifications toggle – click interaction
+//
+// These tests mount the NavBar into a real DOM (provided by happy-dom) and
+// simulate a click event to verify the toggle calls the mutator from the hook
+// with the expected !enabled argument.
+// ---------------------------------------------------------------------------
+
+describe('NavBar – Desktop notifications toggle click', () => {
+  it('calls setEnabled(false) when the button is clicked while enabled=true', async () => {
+    const mockSetEnabled = vi.fn()
+    mockUseNotificationsPreference.mockReturnValue({
+      enabled: true,
+      setEnabled: mockSetEnabled,
+      isPending: false,
+    })
+
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+    const root = createRoot(div)
+
+    await act(async () => {
+      root.render(<NavBar hash="#/" />)
+    })
+
+    const btn = div.querySelector('button[aria-pressed="true"]')
+    expect(btn).toBeTruthy()
+
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(mockSetEnabled).toHaveBeenCalledWith(false)
+
+    await act(async () => { root.unmount() })
+    document.body.removeChild(div)
+  })
+
+  it('calls setEnabled(true) when the button is clicked while enabled=false', async () => {
+    const mockSetEnabled = vi.fn()
+    mockUseNotificationsPreference.mockReturnValue({
+      enabled: false,
+      setEnabled: mockSetEnabled,
+      isPending: false,
+    })
+
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+    const root = createRoot(div)
+
+    await act(async () => {
+      root.render(<NavBar hash="#/" />)
+    })
+
+    const btn = div.querySelector('button[aria-pressed="false"]')
+    expect(btn).toBeTruthy()
+
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(mockSetEnabled).toHaveBeenCalledWith(true)
+
+    await act(async () => { root.unmount() })
+    document.body.removeChild(div)
   })
 })
