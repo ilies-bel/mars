@@ -42,6 +42,7 @@ import type { StepHandle, WorkflowCtx } from '@mars/workflow'
 import { runTool, nullTraceStore, type TraceCtx } from '../../core/lib/run-tool'
 import {
   createWorktree,
+  provisionCommitterWorktree,
   removeWorktree,
   attachToOriginWorktree,
   OriginWorktreeMissingError,
@@ -544,13 +545,25 @@ export const setupWorktree = async (
         kind,
         isMainCommiterFix,
       )
+      // A main-commiter recovery MUST carry the integration branch's dirty
+      // state into its fresh worktree (stash push on repoRoot → pop in the
+      // worktree) so the committer coder sees the files it is meant to commit.
+      // The generic createWorktree() branches off the clean integration tip
+      // and leaves the dirty state stranded on the integration checkout —
+      // every downstream task then fails verify:main-dirty forever.
       const ref = attachesToOrigin
         ? await attachOriginWorktreeForFix()
-        : await createWorktree({
-            taskId,
-            integrationBranch,
-            traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
-          })
+        : isMainCommiterFix
+          ? await provisionCommitterWorktree({
+              recoveryTaskId: taskId,
+              integrationBranch,
+              traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
+            })
+          : await createWorktree({
+              taskId,
+              integrationBranch,
+              traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
+            })
       await updateTask(
         taskId,
         { branch: ref.branch, worktreePath: ref.path },

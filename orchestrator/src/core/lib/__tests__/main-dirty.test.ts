@@ -923,3 +923,96 @@ describe('provisionCommitterWorktree carries dirty state into the new tree', () 
   })
 })
 
+// ---------------------------------------------------------------------------
+// Setup provisioning choice for a main-committer fix (regression).
+//
+// The dirty-main leak: setup-worktree conflated "recovery does NOT attach to
+// its origin" with "use the generic createWorktree()". A main-committer fix
+// does not attach to an origin (recoveryAttachesToOrigin === false), but it
+// MUST provision via provisionCommitterWorktree so the integration branch's
+// dirty state is stashed off repoRoot and popped INTO the fix worktree. Routing
+// it through createWorktree() instead branches off the clean integration tip
+// and strands the dirty state on the integration checkout — so the committer
+// coder sees nothing to commit and every downstream task fails
+// verify:main-dirty forever. These tests pin the contract the setup branch
+// relies on.
+// ---------------------------------------------------------------------------
+
+describe('setup provisioning choice for a main-committer fix', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('a main-committer fix does NOT attach to an origin worktree', async () => {
+    // recoveryAttachesToOrigin === false is what steers setup away from the
+    // attach-origin path; the bug was that "not attaching" then fell through to
+    // createWorktree() rather than the committer path.
+    const { recoveryAttachesToOrigin } = await import(
+      '../../../workflows/primitives/shared'
+    )
+    expect(recoveryAttachesToOrigin('fix', /* isMainCommiter */ true)).toBe(
+      false,
+    )
+    // A normal (non-committer) fix DOES attach to its origin.
+    expect(recoveryAttachesToOrigin('fix', /* isMainCommiter */ false)).toBe(
+      true,
+    )
+  })
+
+  it('the committer path carries dirty state; the generic path strands it on main', async () => {
+    // This contrast is the whole reason setup must branch on isMainCommiterFix:
+    // for the SAME dirty integration checkout the two provisioning helpers
+    // produce opposite worktree states.
+    const { provisionCommitterWorktree, createWorktree } = await import(
+      '../git/worktree'
+    )
+
+    // Generic path: branch off the (currently clean) integration tip. The
+    // dirty state we introduce AFTER this call stays on repoRoot — a clean
+    // committer worktree has nothing to commit.
+    const clean = await createWorktree({
+      taskId: 'plain-' + Math.random().toString(36).slice(2, 8),
+      integrationBranch: 'main',
+    })
+    const cleanStatus = execFileSync('git', ['status', '--porcelain'], {
+      cwd: clean.path,
+      encoding: 'utf8',
+    })
+    expect(cleanStatus.trim()).toBe('')
+    execFileSync('git', ['worktree', 'remove', '--force', clean.path], {
+      cwd: repo,
+    })
+
+    // Committer path: dirty main, then provision — the dirty file must appear
+    // in the fix worktree so the committer coder can commit it there.
+    writeFileSync(resolve(repo, 'leaked.ts'), 'must-be-committed-in-worktree\n')
+    const committer = await provisionCommitterWorktree({
+      recoveryTaskId: 'committer-' + Math.random().toString(36).slice(2, 8),
+      integrationBranch: 'main',
+    })
+    const committerStatus = execFileSync('git', ['status', '--porcelain'], {
+      cwd: committer.path,
+      encoding: 'utf8',
+    })
+    expect(committerStatus).toContain('leaked.ts')
+    // And the stash pop moved it OFF the integration checkout.
+    const mainStatus = execFileSync('git', ['status', '--porcelain'], {
+      cwd: repo,
+      encoding: 'utf8',
+    })
+    expect(mainStatus).not.toContain('leaked.ts')
+    execFileSync('git', ['worktree', 'remove', '--force', committer.path], {
+      cwd: repo,
+    })
+  })
+})
+
