@@ -122,6 +122,67 @@ describe('computeFailureSignature', () => {
     expect(a).not.toBe(b)
   })
 
+  describe('idempotency — composing from an already-composed reason string', () => {
+    // Regression guard for the bug observed as
+    //   recovery_exhausted:recovery_exhausted:verify:completeness/unclassified/unclassified
+    // in .mars/mars.db: a correctly-classified signature fed back through
+    // computeFailureSignature was re-run through classifyError, matched nothing,
+    // and came back 'unclassified', clobbering the original class.
+
+    it('preserve verify:completeness/incomplete when errorOutput is already a recovery_exhausted reason string', () => {
+      const composed =
+        'recovery_exhausted:verify:completeness/incomplete: the task had partial criteria'
+      const sig = computeFailureSignature('verify:completeness', composed)
+      expect(sig).toBe('verify:completeness/incomplete')
+      expect(sig).not.toContain(UNCLASSIFIED_ERROR_CLASS)
+    })
+
+    it('preserve verify:completeness/incomplete when errorOutput is already a recovery_failed reason string', () => {
+      const composed =
+        'recovery_failed:verify:completeness/incomplete: previous recovery attempt failed'
+      const sig = computeFailureSignature('verify:completeness', composed)
+      expect(sig).toBe('verify:completeness/incomplete')
+      expect(sig).not.toContain(UNCLASSIFIED_ERROR_CLASS)
+    })
+
+    it('compose∘compose == compose: applying computeFailureSignature twice produces the same result', () => {
+      // First application: raw completeness gate output → well-formed signature
+      const rawOutput = 'incomplete: 2 criterion/criteria not marked done.\nUnmet: add tests'
+      const first = computeFailureSignature('verify:completeness', rawOutput)
+      expect(first).toBe('verify:completeness/incomplete')
+
+      // Second application: composed reason string → must not degrade to .../unclassified
+      const secondInput = `recovery_exhausted:${first}: some truncated error`
+      const second = computeFailureSignature('verify:completeness', secondInput)
+      expect(second).toBe(first)
+    })
+
+    it('does NOT produce verify:completeness/incomplete/unclassified — the specific double-suffix from the incident', () => {
+      // This is the exact shape that was appearing in the DB.
+      const composed =
+        'recovery_exhausted:verify:completeness/incomplete: the task left criteria partial'
+      const sig = computeFailureSignature('verify:completeness', composed)
+      // The signature must have exactly one slash separating step from class
+      const slashCount = sig.split('/').length - 1
+      expect(slashCount).toBe(1)
+      expect(sig).toBe('verify:completeness/incomplete')
+    })
+
+    it('classifyError still returns the correct class for genuine raw completeness gate output', () => {
+      expect(
+        classifyError('missing-completion-report: no fenced block found'),
+      ).toBe('missing-report')
+    })
+
+    it('a genuinely-unclassifiable raw error still returns unclassified', () => {
+      const sig = computeFailureSignature(
+        'verify:completeness',
+        'some novel output that matches no rule',
+      )
+      expect(sig).toBe('verify:completeness/unclassified')
+    })
+  })
+
   it('classifies a missing-worktree verify error as worktree-missing, not unclassified', () => {
     // This is the exact output produced by captureHasDiff in git/verify.ts when
     // the worktree directory has been pruned (e.g. by a daemon restart).

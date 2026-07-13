@@ -371,10 +371,44 @@ export const classifyError = (errorOutput: string): string => {
   return UNCLASSIFIED_ERROR_CLASS
 }
 
+/**
+ * Pattern that matches the recovery-prefix variants prepended by
+ * `queue-fix-tasks.ts` when a task or recovery task fails.
+ * Used by `computeFailureSignature` to short-circuit re-classification.
+ */
+const RECOVERY_REASON_PREFIX_RE = /^recovery_(?:exhausted|failed):/
+
+/**
+ * Returns the `<failingStep>/<errorClass>` failure signature.
+ *
+ * Idempotent: if `errorOutput` is already a composed reason string that
+ * embeds this signature (e.g. `recovery_exhausted:verify:completeness/incomplete: …`),
+ * the function extracts the existing error class rather than re-running
+ * `classifyError`, which would match nothing and clobber the correct class
+ * with `unclassified`.
+ *
+ * Invariant: `computeFailureSignature(step, computeFailureSignature(step, x))`
+ * equals `computeFailureSignature(step, x)` for all inputs.
+ */
 export const computeFailureSignature = (
   failingStep: string,
   errorOutput: string,
 ): string => {
+  // When `errorOutput` is a composed reason string, its first line looks like:
+  //   recovery_exhausted:verify:completeness/incomplete: <truncated error>
+  //   recovery_failed:verify:completeness/incomplete: <truncated error>
+  // Feeding that string through classifyError matches no raw-output rule,
+  // returning 'unclassified' and clobbering the original class.
+  // Detect this by stripping the known prefix and checking whether what
+  // remains starts with `<failingStep>/` — if so, extract the embedded class.
+  const firstLine = firstNonBlankLine(errorOutput)
+  const withoutPrefix = firstLine.replace(RECOVERY_REASON_PREFIX_RE, '')
+  const signaturePrefix = `${failingStep}/`
+  if (withoutPrefix.startsWith(signaturePrefix)) {
+    const tail = withoutPrefix.slice(signaturePrefix.length)
+    const m = tail.match(/^([a-z][a-z0-9-]*)/)
+    if (m !== null) return `${failingStep}/${m[1]}`
+  }
   const errorClass = classifyError(errorOutput)
   return `${failingStep}/${errorClass}`
 }

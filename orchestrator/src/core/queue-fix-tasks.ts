@@ -342,7 +342,12 @@ export const handleTaskFailureWithFixTask = async (
   // Recovery (fix-task) failures escalate to actionQueue; never spawn another
   // recovery. See ADR 0002 — this is the rule that broke the cascade.
   if (task.fixForTaskId !== null) {
-    const recoveryFailureReason = `recovery_failed:${failureSignature}: ${truncatedError.slice(0, 500)}`
+    // Guard: do not double-prepend if failureSignature somehow already carries
+    // the prefix (defence-in-depth against any future path that re-enters here
+    // with a pre-composed reason string).
+    const recoveryFailureReason = failureSignature.startsWith('recovery_failed:')
+      ? `${failureSignature}: ${truncatedError.slice(0, 500)}`
+      : `recovery_failed:${failureSignature}: ${truncatedError.slice(0, 500)}`
     await updateTask(input.taskId, {
       status: 'failed',
       error: recoveryFailureReason,
@@ -482,9 +487,13 @@ export const handleTaskFailureWithFixTask = async (
   const budget = getRetryBudget()
 
   if (task.retryCount > budget) {
+    // Guard: do not double-prepend if failureSignature somehow already carries
+    // the prefix (defence-in-depth; the primary fix is in computeFailureSignature).
     await markTaskFailed(
       input.taskId,
-      `recovery_exhausted:${failureSignature}`,
+      failureSignature.startsWith('recovery_exhausted:')
+        ? failureSignature
+        : `recovery_exhausted:${failureSignature}`,
     )
     await raiseRecoveryExhaustedActionQueue({
       taskId: input.taskId,

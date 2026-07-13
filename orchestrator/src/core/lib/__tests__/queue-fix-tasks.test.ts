@@ -781,6 +781,68 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
+  it('recovery failure with a composed errorOutput does NOT double the recovery_failed: prefix or degrade to /unclassified', async () => {
+    // Regression guard for: recovery_exhausted:recovery_exhausted:verify:completeness/unclassified/unclassified
+    //
+    // Scenario reproduced from .mars/mars.db:
+    //   1. Origin task fails at verify:completeness with 'incomplete: …' output
+    //      → signature verify:completeness/incomplete is stored.
+    //   2. A recovery (fix) task is spawned, runs, and also fails at verify:completeness.
+    //      Its errorOutput is the prior composed reason string from the DB:
+    //        'recovery_exhausted:verify:completeness/incomplete: <truncated>'
+    //   3. handleTaskFailureWithFixTask is called for the recovery task.
+    //      Bug: computeFailureSignature fed the composed string to classifyError,
+    //      which matched nothing and returned 'unclassified', clobbering the class.
+    //      Fix: computeFailureSignature detects the embedded signature and preserves it.
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft, rc } = await loadModules(repo)
+
+    // Register a recipe for the completeness-incomplete signature so the origin
+    // failure spawns a recovery task rather than dead-ending.
+    const cleanup = registerTestRecipe(rc, 'verify:completeness/incomplete')
+
+    const origin = await q.enqueueTask('write tests', undefined, {
+      skipTriage: true,
+    })
+
+    // Step 1: origin fails with raw completeness gate output.
+    const firstFailure = await ft.handleTaskFailureWithFixTask({
+      taskId: origin.id,
+      failingStep: 'verify:completeness',
+      errorOutput:
+        'incomplete: 1 criterion/criteria not marked done.\n  - [partial] add unit tests',
+    })
+    expect(firstFailure.outcome).toBe('blocked')
+    expect(firstFailure.failureSignature).toBe('verify:completeness/incomplete')
+    const recoveryId = firstFailure.fixTaskId!
+    expect(recoveryId).toBeTruthy()
+
+    // Step 2: recovery task fails — its errorOutput is the prior composed reason
+    // string (as it would appear when read back from task.failureReason in the DB).
+    const composedErrorOutput =
+      'recovery_exhausted:verify:completeness/incomplete: the task had partial criteria'
+
+    const secondFailure = await ft.handleTaskFailureWithFixTask({
+      taskId: recoveryId,
+      failingStep: 'verify:completeness',
+      errorOutput: composedErrorOutput,
+    })
+    expect(secondFailure.outcome).toBe('escalated')
+
+    const recoveryRow = await q.getTask(recoveryId)
+    // The signature must be the ORIGINAL class, not /unclassified.
+    expect(recoveryRow?.failureSignature).toBe('verify:completeness/incomplete')
+    expect(recoveryRow?.failureSignature).not.toContain('unclassified')
+    // The stored reason must have exactly one recovery_failed: prefix.
+    expect(recoveryRow?.failureReason).toMatch(
+      /^recovery_failed:verify:completeness\/incomplete:/,
+    )
+    expect(recoveryRow?.failureReason).not.toMatch(/recovery_failed:recovery_/)
+    expect(recoveryRow?.failureReason).not.toMatch(/\/unclassified/)
+
+    cleanup()
+  })
+
   it('no-recipe path: spawns a generic-recipe recovery fix and blocks the source (ADR: uniform failure→fix spawn)', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft } = await loadModules(repo)
