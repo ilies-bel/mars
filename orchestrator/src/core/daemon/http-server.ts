@@ -24,6 +24,8 @@ import {
   RELEASE_NOTES_LAST_VIEWED_KEY,
 } from '../lib/settings'
 import { resolveStateClient } from '../store/state-client'
+import { getNotificationsEnabled, setNotificationsEnabled } from '../store/state-store'
+import { z } from 'zod'
 
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
 export interface StepSpan {
@@ -1125,6 +1127,47 @@ export const startHttpServer = async (
         setSetting(resolveStateClient(), RELEASE_NOTES_LAST_VIEWED_KEY, now)
           .then(() => sendJson(res, 200, { lastViewedAt: now }))
           .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // GET /preferences/notifications — returns { enabled: boolean } reflecting the
+    // stored value (default true when unset). PUT /preferences/notifications —
+    // accepts { enabled: boolean }, persists via setNotificationsEnabled, returns
+    // the new state. Both verbs bypass the draining gate — lightweight preference
+    // writes, not task work.
+    if (req.url === '/preferences/notifications') {
+      if (req.method === 'GET') {
+        getNotificationsEnabled(resolveStateClient())
+          .then((enabled) => sendJson(res, 200, { enabled }))
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+      if (req.method === 'PUT') {
+        let rawBody = ''
+        req.on('data', (chunk: Buffer) => {
+          rawBody += chunk.toString()
+        })
+        req.on('end', () => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+            return
+          }
+          const schema = z.object({ enabled: z.boolean() })
+          const result = schema.safeParse(parsed)
+          if (!result.success) {
+            sendJson(res, 400, { ok: false, error: 'body must be { enabled: boolean }' })
+            return
+          }
+          const { enabled } = result.data
+          setNotificationsEnabled(resolveStateClient(), enabled)
+            .then(() => sendJson(res, 200, { enabled }))
+            .catch((err: unknown) => sendError(res, err))
+        })
+        req.on('error', (err: unknown) => sendError(res, err))
         return
       }
     }
