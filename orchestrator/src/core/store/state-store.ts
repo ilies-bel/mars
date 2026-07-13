@@ -22,7 +22,7 @@
  * `emitActionQueueBusEvent`.
  */
 
-import type { Client, InStatement, InValue, ResultSet } from '@libsql/client'
+import type { Client, InStatement, InValue, ResultSet, Value } from '@libsql/client'
 import { withTransaction } from '../lib/libsql.js'
 import type { Scope } from './task-store'
 import {
@@ -72,6 +72,9 @@ export { resolveStateClient } from './state-client'
 export const migrateStateSchema = async (): Promise<void> => {
   await initProposals()
   await initProposalNotes()
+  await resolveStateClient().execute(
+    'CREATE TABLE IF NOT EXISTS preferences (name TEXT PRIMARY KEY, value TEXT NOT NULL)',
+  )
 }
 
 const toStatement = (
@@ -232,6 +235,35 @@ export const createStateStore = (client: Client | null): DomainStateStore => {
       }
     },
   }
+}
+
+// ── Preferences helpers ───────────────────────────────────────────────────────
+
+/**
+ * Return whether desktop notifications are enabled.
+ * Defaults to `true` when the row is absent (opt-in by default).
+ */
+export const getNotificationsEnabled = async (db: Client): Promise<boolean> => {
+  const result = await db.execute(
+    "SELECT value FROM preferences WHERE name='notifications_enabled'",
+  )
+  if (result.rows.length === 0) return true
+  return (result.rows[0].value as Value) === 'true'
+}
+
+/**
+ * Persist whether desktop notifications are enabled.
+ * Safe to call repeatedly — upserts the single `notifications_enabled` row.
+ */
+export const setNotificationsEnabled = async (
+  db: Client,
+  enabled: boolean,
+): Promise<void> => {
+  await db.execute({
+    sql: `INSERT INTO preferences (name, value) VALUES ('notifications_enabled', ?)
+          ON CONFLICT(name) DO UPDATE SET value=excluded.value`,
+    args: [String(enabled)],
+  })
 }
 
 let cachedDefaultStateStore: DomainStateStore | null = null
