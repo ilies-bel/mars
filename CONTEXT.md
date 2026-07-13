@@ -451,3 +451,7 @@ _Avoid_: e2e gate, ui test, acceptance test, behavioural gate, playwright step
 **Spend meter**:
 An observe-and-warn subsystem that sums cache-weighted token usage over a rolling wall-clock window and per-arc, raising a level-triggered action-queue row when a configured token threshold is crossed; it never pauses dispatch or suppresses recoveries.
 _Avoid_: spend governor, budget guard, cost cap, token governor, metric, gauge
+
+**Main committer**:
+The single recovery task per integration branch that commits or stashes the branch's uncommitted working-tree state so tasks blocked on a dirty integration branch can dispatch.
+_Avoid_: committer, dirty-main recovery, main-commiter task, commit recovery
