@@ -35,6 +35,20 @@ describe('detectNoCommitMarker', () => {
     expect(detectNoCommitMarker('Refactor verify step; produce a commit per file')).toBeNull()
   })
 
+  it('matches "read-only, report only, no edits" batch task phrasing', () => {
+    expect(
+      detectNoCommitMarker(
+        'Read one source file and summarize it in 2 lines. Read-only, report only, no edits. (batch 6)',
+      ),
+    ).not.toBeNull()
+    expect(
+      detectNoCommitMarker('Read-only, report only, no edits.'),
+    ).not.toBeNull()
+    expect(
+      detectNoCommitMarker('read only, report only, no-edits'),
+    ).not.toBeNull()
+  })
+
   it('returns the matched phrase so the caller can surface it', () => {
     const m = detectNoCommitMarker('… Nothing to commit. …')
     expect(m).toMatch(/Nothing to commit/i)

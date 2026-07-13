@@ -14,6 +14,8 @@ const NO_COMMIT_PATTERNS: readonly RegExp[] = [
   /no source[- ]code edit\s+in\s+this\s+task/i,
   /\b(?:build|install)(?:[- /]+(?:build|install))*[- ]only\s+operation/i,
   /no commit (?:is )?(?:expected|required|produced)/i,
+  // Batch read-only/report tasks: "Read-only, report only, no edits"
+  /read[- ]only[,\s]+report[- ]only[,\s]+no[- ]edits/i,
 ]
 
 export const detectNoCommitMarker = (prompt: string): string | null => {
