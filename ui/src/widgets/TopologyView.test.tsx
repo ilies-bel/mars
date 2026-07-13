@@ -168,13 +168,13 @@ describe('TopologyView – zero-state search overlay', () => {
 // ---------------------------------------------------------------------------
 
 describe('TopologyView – navigation hint overlay', () => {
-  it('names every interaction in the click model, not just double-click', () => {
+  it('names every interaction in the click model', () => {
     // The hint must document the three interactions the view actually supports:
-    // double-click on a combo, single-click on a task, and Esc to collapse.
+    // single-click on a card, single-click on a task, and Esc to collapse.
     const html = renderToStaticMarkup(
       <TopologyView tasks={[stubTask('t-1')]} proposals={noProposals} />,
     )
-    expect(html).toContain('double-click')
+    expect(html).toContain('click card')
     expect(html).toContain('click task')
     expect(html.toLowerCase()).toContain('esc')
   })

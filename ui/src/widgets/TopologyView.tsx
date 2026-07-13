@@ -21,7 +21,8 @@
  *
  * NAVIGATION / CLICK MODEL (kept from the G6 view)
  * ------------------------------------------------
- *  - double-click a card/group → drill in / out (and call onSelectProposal).
+ *  - single-click a card      → drill in (and call onSelectProposal);
+ *    double-click the open group → drill out.
  *  - double-click the pane    → collapse the open arc.
  *  - single-click a TASK node → open the task drawer (`#/task/<id>`).
  *  - Escape                   → collapse.
@@ -146,7 +147,7 @@ const ArcCardNode = memo(({ data }: NodeProps<Node<ArcCardNodeData>>) => {
     <div
       className={`topo-node topo-card relative flex h-16 w-[232px] cursor-pointer flex-col justify-center gap-0.5 rounded-lg border-[1.5px] px-3 shadow-[0_2px_12px_rgba(0,0,0,0.4)] ${emphasisClass(data.emphasis)}`}
       style={{ background: style.fill, borderColor: data.isProposal ? PROPOSAL_STROKE : style.stroke }}
-      aria-label={`${data.label} · ${data.count} tasks · double-click to open`}
+      aria-label={`${data.label} · ${data.count} tasks · click to open`}
     >
       <FlowHandles />
       <span
@@ -316,7 +317,7 @@ const TopologyViewInner = ({
         return
       }
       if (node.data.kind === 'arcCard') {
-        setHintText('double-click to open')
+        setHintText('click to open')
         const arcKey = node.data.arcKey
         schedule(() => {
           const chain = chainForProposal({ tasks: tasksRef.current }, arcKey)
@@ -360,17 +361,21 @@ const TopologyViewInner = ({
     clearHover()
   }, [clearHover])
 
-  const onNodeClick = useCallback((_: ReactMouseEvent, node: TopoNode) => {
-    if (node.data.kind === 'task') {
-      window.location.hash = `#/task/${encodeURIComponent(node.id)}`
-    } else if (node.data.kind === 'arcCard') {
-      setHintText('double-click to open')
-    }
-  }, [])
+  const onNodeClick = useCallback(
+    (_: ReactMouseEvent, node: TopoNode) => {
+      if (node.data.kind === 'task') {
+        window.location.hash = `#/task/${encodeURIComponent(node.id)}`
+      } else if (node.data.kind === 'arcCard') {
+        toggleArc(node.data.arcKey)
+      }
+    },
+    [toggleArc],
+  )
 
+  // Single-click opens a card; double-click still toggles an open group shut.
   const onNodeDoubleClick = useCallback(
     (_: ReactMouseEvent, node: TopoNode) => {
-      if (node.data.kind !== 'task') toggleArc(node.data.arcKey)
+      if (node.data.kind === 'arcGroup') toggleArc(node.data.arcKey)
     },
     [toggleArc],
   )
@@ -494,7 +499,7 @@ const TopologyViewInner = ({
         {hintText ? (
           <span className="font-semibold">{hintText}</span>
         ) : (
-          'double-click = expand/collapse · click task = details · esc = collapse'
+          'click card = open · click task = details · esc = collapse'
         )}
       </div>
       {/* Status legend — bottom, over the canvas */}
