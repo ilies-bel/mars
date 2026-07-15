@@ -11,7 +11,7 @@
 # needs to change.
 #
 # Symlinks (e.g. `.claude/skills/mastra → .agents/skills/mastra` in the
-# framework repo) are dereferenced with `cp -RL` so the resulting templates
+# framework repo) are dereferenced (`rsync -aL`) so the resulting templates
 # tree is portable to repos that don't ship `.agents/`.
 
 set -euo pipefail
@@ -44,25 +44,23 @@ if [ ! -d "$SRC_CLAUDE" ]; then
 fi
 
 mkdir -p "$DEST_DIR"
-rm -rf "$DEST_CLAUDE"
-cp -RL "$SRC_CLAUDE" "$DEST_CLAUDE"
 
-# `cp -RL` copies the *entire* live `.claude/` tree, which includes Claude
-# Code runtime artifacts the harness writes there at run time — notably
-# `scheduled_tasks.lock` (a live pid/sessionId/timestamp lock, NOT a seed
-# template) and `worktrees/` (live agent worktree checkouts — full repo
-# copies, megabytes each, NOT seed templates). Letting either land in the
-# committed template source tree dirties the integration working tree and
-# fails `merge:preflight`. Prune them so only real template assets ship.
-find "$DEST_CLAUDE" -type f -name 'scheduled_tasks.lock' -delete
-find "$DEST_CLAUDE" -maxdepth 1 -type d -name 'worktrees' -exec rm -rf {} +
-# `settings.local.json` is a per-developer local override (gitignored in the
-# source tree) and must never ship as a seed template. Remove it so running
-# the refresh from the project root does not surface an untracked bundle file
-# and confuse the template-sync-check CI gate.
-find "$DEST_CLAUDE" -type f -name 'settings.local.json' -delete
+# Sync the framework's `.claude/` tree into the bundle, dereferencing symlinks
+# so the result is portable to repos that don't ship `.agents/` etc.
+# Runtime-only artifacts are EXCLUDED DURING COPY so we never traverse or copy
+# the multi-GB `worktrees/` tree:
+#   - worktrees/           live agent worktree checkouts (full repo copies, NOT templates)
+#   - scheduled_tasks.lock live pid/sessionId lock, NOT a seed template
+#   - settings.local.json  per-developer local override, gitignored, NOT a seed template
+# rsync --delete removes stale files from the destination that no longer exist
+# in the source, keeping the bundle in sync without a full rm-and-recopy.
+rsync -aL --delete \
+  --exclude='worktrees/' \
+  --exclude='scheduled_tasks.lock' \
+  --exclude='settings.local.json' \
+  "$SRC_CLAUDE/" "$DEST_CLAUDE/"
 
-# `cp -RL` preserves source modes; force hooks executable for the case where
+# rsync preserves source modes; force hooks executable for the case where
 # the source bit was somehow stripped (e.g. on a Windows-mounted checkout).
 if [ -d "$DEST_CLAUDE/hooks" ]; then
   find "$DEST_CLAUDE/hooks" -type f -name '*.sh' -exec chmod 0755 {} +
