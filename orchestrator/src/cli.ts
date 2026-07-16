@@ -483,6 +483,15 @@ Commands:
                                 and register it in the workflow registry
   workflow approve <id>         approve a workflow draft for use in the
                                 orchestrator pipeline
+  self-update                   update the mars binary via the running daemon
+                                (prod installs only). Downloads the latest
+                                release, verifies sha256, atomically swaps
+                                the binary, and re-execs the daemon. Dev
+                                installs (git clone + npm install) are
+                                refused — the daemon prints the correct
+                                instruction ('git pull && npm install').
+                                Requires a running daemon
+                                ('mars daemon start').
   statusline                    print a one-line Claude Code status segment.
                                 Reads stdin for session JSON (tolerated but
                                 optional). Reads .mars/update.json for an

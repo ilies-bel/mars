@@ -28,6 +28,7 @@ import { workflowCommands } from './workflow'
 import { stepCommands } from './step'
 import { enrichCommands } from './enrich'
 import { notificationsCommands } from './notifications'
+import { selfUpdateCommands } from './self-update'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -51,6 +52,7 @@ export const allCommands: readonly Command[] = [
   ...workflowCommands,
   ...enrichCommands,
   ...notificationsCommands,
+  ...selfUpdateCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)
