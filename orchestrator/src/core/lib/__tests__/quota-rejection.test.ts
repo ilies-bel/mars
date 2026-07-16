@@ -30,11 +30,8 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { extractQuotaRejected } from '../claude-stream'
-import {
-  isQuotaRejectedAbortError,
-  extractQuotaResetsAt,
-  QUOTA_REJECTED_ABORT_MESSAGE,
-} from '../../../workflows/primitives/shared'
+import { QUOTA_REJECTED_ABORT_MESSAGE } from '../../../workflows/primitives/shared'
+import { WorkflowTerminalError } from '../workflow-terminal-error'
 import { runClaudeCode } from '../git/claude'
 import type { ClaudeEvent } from '../claude-stream'
 
@@ -160,33 +157,24 @@ describe('extractQuotaRejected', () => {
 // Pure unit tests: quota-rejection sentinel functions
 // ---------------------------------------------------------------------------
 
-describe('QUOTA_REJECTED_ABORT_MESSAGE sentinel', () => {
-  it('isQuotaRejectedAbortError returns true for the sentinel', () => {
+describe('QUOTA_REJECTED_ABORT_MESSAGE sentinel — WorkflowTerminalError discriminant', () => {
+  it('quota-rejected kind: WorkflowTerminalError carries the correct kind and resetsAt in meta', () => {
+    const err = new WorkflowTerminalError('quota-rejected', QUOTA_REJECTED_ABORT_MESSAGE('task-abc', 1783081200), { resetsAt: 1783081200 })
+    expect(err).toBeInstanceOf(WorkflowTerminalError)
+    expect(err.kind).toBe('quota-rejected')
+    expect(err.meta.resetsAt).toBe(1783081200)
+    expect(err.message).toContain('task-abc')
+  })
+
+  it('plain Error is not instanceof WorkflowTerminalError', () => {
     const err = new Error(QUOTA_REJECTED_ABORT_MESSAGE('task-abc', 1783081200))
-    expect(isQuotaRejectedAbortError(err)).toBe(true)
+    expect(err instanceof WorkflowTerminalError).toBe(false)
   })
 
-  it('isQuotaRejectedAbortError returns false for unrelated errors', () => {
-    expect(isQuotaRejectedAbortError(new Error('coder exited 1 before completing'))).toBe(false)
-    expect(isQuotaRejectedAbortError(new Error('some other failure'))).toBe(false)
-    expect(isQuotaRejectedAbortError(null)).toBe(false)
-    expect(isQuotaRejectedAbortError(undefined)).toBe(false)
-  })
-
-  it('extractQuotaResetsAt recovers the timestamp from the sentinel', () => {
-    const err = new Error(QUOTA_REJECTED_ABORT_MESSAGE('task-abc', 1783081200))
-    expect(extractQuotaResetsAt(err)).toBe(1783081200)
-  })
-
-  it('extractQuotaResetsAt returns 0 when no timestamp is present', () => {
-    expect(extractQuotaResetsAt(new Error('env-rejected: provider rate limit reached (resetsAt=0)'))).toBe(0)
-    expect(extractQuotaResetsAt(new Error('unrelated error'))).toBe(0)
-  })
-
-  it('isQuotaRejectedAbortError walks the cause chain', () => {
-    const inner = new Error(QUOTA_REJECTED_ABORT_MESSAGE('task-xyz', 0))
-    const outer = new Error('workflow step failed', { cause: inner })
-    expect(isQuotaRejectedAbortError(outer)).toBe(true)
+  it('resetsAt defaults to undefined when not provided in meta', () => {
+    const err = new WorkflowTerminalError('quota-rejected', 'quota hit')
+    expect(err.kind).toBe('quota-rejected')
+    expect(err.meta.resetsAt).toBeUndefined()
   })
 })
 

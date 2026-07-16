@@ -15,15 +15,11 @@ import {
   composePrompt,
   detectPostCoderState,
   failureExcerpt,
-  isBlockersAbortError,
-  isCoderExitNonzeroAbortError,
-  isCoderUncommittedAbortError,
-  isContextExhaustedAbortError,
-  isOriginWorktreeMissingAbortError,
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
   recoveryAttachesToOrigin,
   resolveWorkerSystemPrompt,
 } from '../primitives/shared'
+import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 
 describe('composePrompt — coder default', () => {
@@ -422,27 +418,56 @@ describe('failureExcerpt — verify:test triage excerpt', () => {
   })
 })
 
-describe('isBlockersAbortError — cause-chain robustness', () => {
-  it('detects the bare throw-path sentinel', () => {
-    expect(
-      isBlockersAbortError(new Error(BLOCKERS_ABORT_MESSAGE('mars-abc'))),
-    ).toBe(true)
+describe('WorkflowTerminalError — discriminant dispatch', () => {
+  it('blockers-abort: carries the correct kind and message', () => {
+    const err = new WorkflowTerminalError('blockers-abort', BLOCKERS_ABORT_MESSAGE('mars-abc'))
+    expect(err).toBeInstanceOf(WorkflowTerminalError)
+    expect(err.kind).toBe('blockers-abort')
+    expect(err.message).toContain('mars-abc')
   })
 
-  it('does not false-positive on unrelated failures', () => {
-    expect(isBlockersAbortError(new Error('verify command exited 1'))).toBe(
-      false,
-    )
-    expect(isBlockersAbortError(null)).toBe(false)
-    expect(isBlockersAbortError(undefined)).toBe(false)
+  it('is not instanceof WorkflowTerminalError for a plain Error', () => {
+    expect(new Error('verify command exited 1')).not.toBeInstanceOf(WorkflowTerminalError)
   })
 
-  it('is cycle-safe on a self-referential cause chain', () => {
-    const a = new Error('a')
-    const b = new Error('b', { cause: a })
-    ;(a as { cause?: unknown }).cause = b
-    expect(() => isBlockersAbortError(a)).not.toThrow()
-    expect(isBlockersAbortError(a)).toBe(false)
+  it('null and undefined are not instanceof WorkflowTerminalError', () => {
+    // TypeScript does not allow null/undefined on the left of instanceof at the
+    // type level; cast to unknown first to test the runtime behaviour.
+    expect((null as unknown) instanceof WorkflowTerminalError).toBe(false)
+    expect((undefined as unknown) instanceof WorkflowTerminalError).toBe(false)
+  })
+
+  it('quota-rejected: stores resetsAt in meta', () => {
+    const err = new WorkflowTerminalError('quota-rejected', 'quota hit', { resetsAt: 1234567 })
+    expect(err.kind).toBe('quota-rejected')
+    expect(err.meta.resetsAt).toBe(1234567)
+  })
+
+  it('await-human: stores stepName in meta', () => {
+    const err = new WorkflowTerminalError('await-human', 'parked', { stepName: 'review' })
+    expect(err.kind).toBe('await-human')
+    expect(err.meta.stepName).toBe('review')
+  })
+
+  it('all ten kinds are accepted by the WorkflowTerminalError constructor', () => {
+    const kinds = [
+      'blockers-abort',
+      'context-exhausted',
+      'origin-worktree-missing',
+      'coder-exit-nonzero',
+      'coder-uncommitted',
+      'quota-rejected',
+      'main-dirty-verify',
+      'main-dirty-merge',
+      'preview-gate',
+      'await-human',
+    ] as const
+    for (const kind of kinds) {
+      const err = new WorkflowTerminalError(kind, 'test')
+      expect(err.kind).toBe(kind)
+      expect(err).toBeInstanceOf(WorkflowTerminalError)
+      expect(err).toBeInstanceOf(Error)
+    }
   })
 })
 
@@ -655,103 +680,39 @@ describe('composePrompt — read-first and prescriptive-action sections', () => 
 })
 
 // ---------------------------------------------------------------------------
-// context-exhausted abort sentinel
+// WorkflowTerminalError kind-specific tests
+// (Sentinel detection tests: each kind maps to the correct throw-site message)
 // ---------------------------------------------------------------------------
 
-describe('isContextExhaustedAbortError — context-budget ceiling sentinel', () => {
-  it('recognises the sentinel emitted by the codeStep on context-budget abort', () => {
-    const err = new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE('mars-abc12345'))
-    expect(isContextExhaustedAbortError(err)).toBe(true)
+describe('WorkflowTerminalError — throw-site message embedding', () => {
+  it('context-exhausted carries the taskId in its message', () => {
+    const err = new WorkflowTerminalError('context-exhausted', CONTEXT_EXHAUSTED_ABORT_MESSAGE('mars-abc12345'))
+    expect(err.kind).toBe('context-exhausted')
+    expect(err.message).toContain('mars-abc12345')
+    expect(err.message).toContain('context-budget ceiling')
   })
 
-  it('does not false-positive on unrelated errors', () => {
-    expect(isContextExhaustedAbortError(new Error('some other failure'))).toBe(false)
-    expect(isContextExhaustedAbortError(new Error('verify command exited 1'))).toBe(false)
-    expect(isContextExhaustedAbortError(null)).toBe(false)
-    expect(isContextExhaustedAbortError(undefined)).toBe(false)
+  it('coder-exit-nonzero carries the taskId and exit code in its message', () => {
+    const err = new WorkflowTerminalError('coder-exit-nonzero', CODER_EXIT_NONZERO_ABORT_MESSAGE('mars-9afa7df6', 1))
+    expect(err.kind).toBe('coder-exit-nonzero')
+    expect(err.message).toContain('mars-9afa7df6')
+
+    const err137 = new WorkflowTerminalError('coder-exit-nonzero', CODER_EXIT_NONZERO_ABORT_MESSAGE('mars-abc12345', 137))
+    expect(err137.kind).toBe('coder-exit-nonzero')
+    expect(err137.message).toContain('137')
   })
 
-  it('recognises the sentinel through a wrapped cause chain', () => {
-    const cause = new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE('mars-abc12345'))
-    const wrapped = new Error('Step run-claude-code failed: something')
-    Object.assign(wrapped, { cause })
-    expect(isContextExhaustedAbortError(wrapped)).toBe(true)
-  })
-})
-
-describe('isCoderExitNonzeroAbortError — coder non-zero exit sentinel', () => {
-  it('recognises the sentinel the code step throws on a non-zero coder exit', () => {
-    const err = new Error(CODER_EXIT_NONZERO_ABORT_MESSAGE('mars-9afa7df6', 1))
-    expect(isCoderExitNonzeroAbortError(err)).toBe(true)
+  it('coder-uncommitted is distinct from coder-exit-nonzero', () => {
+    const uncommitted = new WorkflowTerminalError('coder-uncommitted', CODER_UNCOMMITTED_ABORT_MESSAGE('mars-c6cab686'))
+    const exitNonzero = new WorkflowTerminalError('coder-exit-nonzero', CODER_EXIT_NONZERO_ABORT_MESSAGE('mars-c6cab686', 1))
+    expect(uncommitted.kind).not.toBe(exitNonzero.kind)
+    expect(uncommitted.kind).toBe('coder-uncommitted')
   })
 
-  it('matches regardless of the exit code', () => {
-    expect(
-      isCoderExitNonzeroAbortError(
-        new Error(CODER_EXIT_NONZERO_ABORT_MESSAGE('mars-abc12345', 137)),
-      ),
-    ).toBe(true)
-  })
-
-  it('does not false-positive on unrelated errors', () => {
-    expect(isCoderExitNonzeroAbortError(new Error('some other failure'))).toBe(false)
-    expect(isCoderExitNonzeroAbortError(new Error('verify command exited 1'))).toBe(false)
-    expect(isCoderExitNonzeroAbortError(null)).toBe(false)
-    expect(isCoderExitNonzeroAbortError(undefined)).toBe(false)
-  })
-
-  it('recognises the sentinel through a wrapped cause chain', () => {
-    const cause = new Error(CODER_EXIT_NONZERO_ABORT_MESSAGE('mars-9afa7df6', 1))
-    const wrapped = new Error('Step run-claude-code failed: something')
-    Object.assign(wrapped, { cause })
-    expect(isCoderExitNonzeroAbortError(wrapped)).toBe(true)
-  })
-})
-
-describe('isCoderUncommittedAbortError — coder-left-uncommitted sentinel', () => {
-  it('recognises the sentinel the code step throws on a dirty-no-commits tree', () => {
-    const err = new Error(CODER_UNCOMMITTED_ABORT_MESSAGE('mars-c6cab686'))
-    expect(isCoderUncommittedAbortError(err)).toBe(true)
-  })
-
-  it('does not false-positive on unrelated errors', () => {
-    expect(isCoderUncommittedAbortError(new Error('some other failure'))).toBe(false)
-    expect(isCoderUncommittedAbortError(new Error('verify command exited 1'))).toBe(false)
-    // The coder-exit-nonzero sentinel is a DISTINCT self-handled abort and must
-    // not be mistaken for the uncommitted one — the daemon routes both, but the
-    // failureReason / recovery brief differ.
-    expect(
-      isCoderUncommittedAbortError(new Error(CODER_EXIT_NONZERO_ABORT_MESSAGE('mars-abc12345', 1))),
-    ).toBe(false)
-    expect(isCoderUncommittedAbortError(null)).toBe(false)
-    expect(isCoderUncommittedAbortError(undefined)).toBe(false)
-  })
-
-  it('recognises the sentinel through a wrapped cause chain', () => {
-    const cause = new Error(CODER_UNCOMMITTED_ABORT_MESSAGE('mars-c6cab686'))
-    const wrapped = new Error('Step run-claude-code failed: something')
-    Object.assign(wrapped, { cause })
-    expect(isCoderUncommittedAbortError(wrapped)).toBe(true)
-  })
-})
-
-describe('isOriginWorktreeMissingAbortError — recovery-attach sentinel', () => {
-  it('recognises the sentinel the setup step throws when the origin worktree is gone', () => {
-    const err = new Error(ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE('fix-abc12345'))
-    expect(isOriginWorktreeMissingAbortError(err)).toBe(true)
-  })
-
-  it('does not false-positive on unrelated errors', () => {
-    expect(isOriginWorktreeMissingAbortError(new Error('some other failure'))).toBe(false)
-    expect(isOriginWorktreeMissingAbortError(null)).toBe(false)
-    expect(isOriginWorktreeMissingAbortError(undefined)).toBe(false)
-  })
-
-  it('recognises the sentinel through a wrapped cause chain', () => {
-    const cause = new Error(ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE('fix-abc12345'))
-    const wrapped = new Error('Step setup-worktree failed: something')
-    Object.assign(wrapped, { cause })
-    expect(isOriginWorktreeMissingAbortError(wrapped)).toBe(true)
+  it('origin-worktree-missing carries the taskId in its message', () => {
+    const err = new WorkflowTerminalError('origin-worktree-missing', ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE('fix-abc12345'))
+    expect(err.kind).toBe('origin-worktree-missing')
+    expect(err.message).toContain('fix-abc12345')
   })
 })
 

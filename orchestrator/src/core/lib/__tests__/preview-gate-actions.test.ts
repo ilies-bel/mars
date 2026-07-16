@@ -7,10 +7,8 @@
 import { describe, expect, it } from 'vitest'
 import { derivedRowActions } from '../derived-row-actions'
 import { ACTION_QUEUE_KINDS } from '../action-queue'
-import {
-  PREVIEW_GATE_MESSAGE,
-  isPreviewGateError,
-} from '../../../workflows/primitives/shared'
+import { PREVIEW_GATE_MESSAGE } from '../../../workflows/primitives/shared'
+import { WorkflowTerminalError } from '../workflow-terminal-error'
 
 describe('awaiting-validation kind + actions', () => {
   it('is a registered action-queue kind', () => {
@@ -36,19 +34,21 @@ describe('awaiting-validation kind + actions', () => {
   })
 })
 
-describe('preview-gate sentinel', () => {
-  it('isPreviewGateError matches the gate message', () => {
-    expect(isPreviewGateError(new Error(PREVIEW_GATE_MESSAGE('task-9')))).toBe(true)
+describe('preview-gate sentinel — WorkflowTerminalError discriminant', () => {
+  it('preview-gate kind: WorkflowTerminalError carries the correct kind', () => {
+    const err = new WorkflowTerminalError('preview-gate', PREVIEW_GATE_MESSAGE('task-9'))
+    expect(err).toBeInstanceOf(WorkflowTerminalError)
+    expect(err.kind).toBe('preview-gate')
+    expect(err.message).toContain('task-9')
   })
 
-  it('matches when wrapped in a cause chain', () => {
-    const inner = new Error(PREVIEW_GATE_MESSAGE('task-9'))
-    const outer = new Error('step merge failed', { cause: inner })
-    expect(isPreviewGateError(outer)).toBe(true)
+  it('a plain Error is not instanceof WorkflowTerminalError', () => {
+    const err = new Error(PREVIEW_GATE_MESSAGE('task-9'))
+    expect(err instanceof WorkflowTerminalError).toBe(false)
   })
 
-  it('does not match unrelated errors', () => {
-    expect(isPreviewGateError(new Error('verify:main-dirty'))).toBe(false)
-    expect(isPreviewGateError(null)).toBe(false)
+  it('WorkflowTerminalError with different kind does not match preview-gate', () => {
+    const err = new WorkflowTerminalError('blockers-abort', 'some message')
+    expect(err.kind).not.toBe('preview-gate')
   })
 })

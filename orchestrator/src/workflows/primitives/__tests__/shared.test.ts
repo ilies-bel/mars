@@ -3,9 +3,9 @@ import {
   COMPLETION_REPORT_FENCE,
   COMPLETION_REPORT_CONTRACT,
   DEVIATION_RULES,
-  parseCompletionReport,
   composePrompt,
 } from '../shared'
+import { parseCompletionReport } from '../../../core/lib/completion-report'
 
 // ---------------------------------------------------------------------------
 // parseCompletionReport

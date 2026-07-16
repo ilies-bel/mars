@@ -76,7 +76,8 @@ import { Arc, type ProgressEntry } from '../arc'
 import {
   parseCompletionReport,
   type CompletionReport,
-} from '../../workflows/primitives/shared'
+} from '../lib/completion-report'
+import { WorkflowTerminalError } from '../lib/workflow-terminal-error'
 import {
   raiseActionQueueItem,
   supersedeObsoletePreflightDirtyMainRows,
@@ -904,115 +905,107 @@ export const startDaemon = async (
           onEvent,
         },
       )
-      const {
-        isBlockersAbortError,
-        isMainDirtyVerifyError,
-        isMainDirtyMergeError,
-        isContextExhaustedAbortError,
-        isOriginWorktreeMissingAbortError,
-        isPreviewGateError,
-        isAwaitHumanError,
-        extractAwaitHumanStepName,
-        isQuotaRejectedAbortError,
-        extractQuotaResetsAt,
-      } = await import('../../workflows/primitives/shared')
-      // Read the failure off RunResult.error (the engine puts the thrown Error
-      // there verbatim on the `failed` path). The detectors flatten the cause
-      // chain and accept `unknown`, so passing the raw error through is correct
-      // and the previous `instanceof Error` precondition is unnecessary.
-      const resultError = result.status === 'failed' ? result.error : null
-      if (result.status === 'failed' && isBlockersAbortError(resultError)) {
-        log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
-        return
-      }
-      // Provider rate/spend-limit rejection: the code step re-queued the task
-      // with its worktree intact and threw the quota-rejected sentinel. Pause
-      // dispatch until resetsAt + jitter and raise exactly one level-triggered
-      // action-queue row. Task status is already 'queued' — suppress the
-      // task.completed emit so the task stays in the pending queue rather than
-      // transitioning to any failure state.
-      if (result.status === 'failed' && isQuotaRejectedAbortError(resultError)) {
-        const resetsAt = extractQuotaResetsAt(resultError)
-        void handleQuotaRejection(resetsAt)
-        log(`[implement] ${task.id} env-rejected: quota; task re-queued, dispatch paused until ${new Date(resetsAt * 1000).toISOString()}`)
-        return
-      }
-      // Slice F.2: verify-time dirty-main detection. The verify step parked
-      // the source `blocked` behind a `main-commiter` recovery and threw a
-      // sentinel; suppress the misleading `task.completed status=failed`
-      // emit. (Slice K retired the legacy setup-time preflight; the
-      // equivalent dispatch-time check runs in `runMainDirtyDispatchCheck`
-      // before the workflow is dispatched, so no in-workflow suppression
-      // pair is needed there.)
-      if (result.status === 'failed' && isMainDirtyVerifyError(resultError)) {
-        log(`[implement] ${task.id} parked blocked: integration branch dirty at verify; main-commiter spawned/attached`)
-        return
-      }
-      // Merge-time dirty-main detection. The merge step parked the source
-      // `blocked` behind a `main-commiter` recovery and threw a sentinel.
-      // Suppress the misleading `task.completed status=failed` emit. The task
-      // re-enters the merge step (not from scratch) once the committer unblocks it.
-      if (result.status === 'failed' && isMainDirtyMergeError(resultError)) {
-        log(`[implement] ${task.id} parked blocked: integration branch dirty at merge; main-commiter spawned/attached`)
-        return
-      }
-      // A context-budget exhaustion abort marks the task `failed` with cause
-      // 'context-exhausted' and enqueues one follow-up task.
-      if (result.status === 'failed' && isContextExhaustedAbortError(resultError)) {
-        log(`[implement] ${task.id} failed: context-budget ceiling abort; follow-up enqueued`)
-        bus.emit('task.completed', { taskId: task.id, status: result.status })
-        return
-      }
-      // A recovery (kind=fix) task whose origin worktree is gone: the setup
-      // step already marked it failed and raised an operator action-queue item.
-      // Suppress both the re-update and the `task.completed` emit — emitting
-      // would trip recovery-spawn into raising a SECOND escalation for the same
-      // dead-end. The operator resolves via the raised item.
-      if (result.status === 'failed' && isOriginWorktreeMissingAbortError(resultError)) {
-        log(`[implement] ${task.id} failed: origin worktree missing; recovery cannot attach (action-queue item raised)`)
-        return
-      }
-      // Preview gate: the merge step started a live dev server, parked the task
-      // in 'awaiting-validation', and raised the action-queue row, then threw
-      // this sentinel so the merge step stays resumable. The task is
-      // intentionally parked, NOT failed — suppress the failure write and the
-      // `task.completed` emit. The operator's Validate click re-queues it and
-      // the engine re-enters merge past the gate.
-      if (result.status === 'failed' && isPreviewGateError(resultError)) {
-        log(`[implement] ${task.id} parked awaiting-validation: preview server up, waiting for operator Validate/Reject`)
-        return
-      }
-      // awaitHuman gate: the primitive parked the task in 'awaiting-human',
-      // raised the action-queue row, and threw this sentinel so the step does
-      // NOT checkpoint as 'completed'. Patch the step record to 'completed' now
-      // so the engine short-circuits it on re-dispatch (after the operator
-      // releases the lease via `mars release <id>`), preventing a double-park
-      // or double-notify. The task stays in 'awaiting-human' until released.
-      if (result.status === 'failed' && isAwaitHumanError(resultError)) {
-        const stepName = extractAwaitHumanStepName(resultError)
-        if (stepName !== null) {
-          try {
-            const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
-            const wfStore = createQueueWorkflowStore()
-            const step = await wfStore.getStep(task.id, stepName)
-            if (step !== undefined && step.status !== 'completed') {
-              await wfStore.putStep({
-                ...step,
-                status: 'completed',
-                finishedAt: Date.now(),
-                resultJson: JSON.stringify({ parkedForHuman: true }),
-              })
-            }
-          } catch (patchErr) {
-            log(
-              `[implement] ${task.id} await-human: step-completion patch errored (non-fatal): ${
-                patchErr instanceof Error ? patchErr.message : String(patchErr)
-              }`,
-            )
+      // Switch on the WorkflowTerminalError discriminant.  The workflow steps
+      // throw WorkflowTerminalError (subclass of Error) with a `kind` field for
+      // every self-handled terminal condition; the engine propagates it verbatim
+      // via RunResult.error.  A single instanceof check replaces the previous
+      // family of message-substring predicates.
+      const resultTerminal =
+        result.status === 'failed' && result.error instanceof WorkflowTerminalError
+          ? result.error
+          : null
+      if (resultTerminal !== null) {
+        switch (resultTerminal.kind) {
+          case 'blockers-abort':
+            log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
+            return
+
+          case 'quota-rejected': {
+            // Provider rate/spend-limit rejection: the code step re-queued the
+            // task with its worktree intact and threw the quota-rejected sentinel.
+            // Pause dispatch until resetsAt + jitter and raise exactly one
+            // level-triggered action-queue row. Task status is already 'queued' —
+            // suppress the task.completed emit so the task stays pending.
+            const resetsAt = resultTerminal.meta.resetsAt ?? 0
+            void handleQuotaRejection(resetsAt)
+            log(`[implement] ${task.id} env-rejected: quota; task re-queued, dispatch paused until ${new Date(resetsAt * 1000).toISOString()}`)
+            return
           }
+
+          case 'main-dirty-verify':
+            // Slice F.2: verify-time dirty-main detection. The verify step parked
+            // the source `blocked` behind a `main-commiter` recovery and threw a
+            // sentinel; suppress the misleading `task.completed status=failed` emit.
+            log(`[implement] ${task.id} parked blocked: integration branch dirty at verify; main-commiter spawned/attached`)
+            return
+
+          case 'main-dirty-merge':
+            // Merge-time dirty-main detection. The merge step parked the source
+            // `blocked` behind a `main-commiter` recovery and threw a sentinel.
+            log(`[implement] ${task.id} parked blocked: integration branch dirty at merge; main-commiter spawned/attached`)
+            return
+
+          case 'context-exhausted':
+            // A context-budget exhaustion abort marks the task `failed` with cause
+            // 'context-exhausted' and enqueues one follow-up task.
+            log(`[implement] ${task.id} failed: context-budget ceiling abort; follow-up enqueued`)
+            bus.emit('task.completed', { taskId: task.id, status: result.status })
+            return
+
+          case 'origin-worktree-missing':
+            // A recovery (kind=fix) task whose origin worktree is gone: the setup
+            // step already marked it failed and raised an operator action-queue item.
+            // Suppress both the re-update and the `task.completed` emit.
+            log(`[implement] ${task.id} failed: origin worktree missing; recovery cannot attach (action-queue item raised)`)
+            return
+
+          case 'preview-gate':
+            // The merge step started a live dev server, parked the task in
+            // 'awaiting-validation', and raised the action-queue row, then threw
+            // this sentinel so the merge step stays resumable. The task is
+            // intentionally parked, NOT failed.
+            log(`[implement] ${task.id} parked awaiting-validation: preview server up, waiting for operator Validate/Reject`)
+            return
+
+          case 'await-human': {
+            // The primitive parked the task in 'awaiting-human', raised the
+            // action-queue row, and threw this sentinel so the step does NOT
+            // checkpoint as 'completed'. Patch the step record to 'completed' now
+            // so the engine short-circuits it on re-dispatch.
+            const stepName = resultTerminal.meta.stepName ?? null
+            if (stepName !== null) {
+              try {
+                const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
+                const wfStore = createQueueWorkflowStore()
+                const step = await wfStore.getStep(task.id, stepName)
+                if (step !== undefined && step.status !== 'completed') {
+                  await wfStore.putStep({
+                    ...step,
+                    status: 'completed',
+                    finishedAt: Date.now(),
+                    resultJson: JSON.stringify({ parkedForHuman: true }),
+                  })
+                }
+              } catch (patchErr) {
+                log(
+                  `[implement] ${task.id} await-human: step-completion patch errored (non-fatal): ${
+                    patchErr instanceof Error ? patchErr.message : String(patchErr)
+                  }`,
+                )
+              }
+            }
+            log(`[implement] ${task.id} parked awaiting-human: lease holder = ${AWAIT_HUMAN_SENTINEL}`)
+            return
+          }
+
+          case 'coder-exit-nonzero':
+          case 'coder-uncommitted':
+            // These are self-handled in the code step (it already marked the task
+            // failed with a precise failureReason and spawned exactly one recovery
+            // fix-task before throwing). Fall through to the normal bus.emit so the
+            // task transitions out of the running state.
+            break
         }
-        log(`[implement] ${task.id} parked awaiting-human: lease holder = ${AWAIT_HUMAN_SENTINEL}`)
-        return
       }
       log(`[implement] ${task.id} -> ${result.status}`)
       bus.emit('task.completed', { taskId: task.id, status: result.status })
@@ -1031,75 +1024,46 @@ export const startDaemon = async (
       // that rejection would escape this catch. Load it best-effort: if the
       // import fails, treat the error as an ordinary failure rather than a
       // benign blockers-abort — failing the task is the safe default.
-      let isBlockersAbort = false
-      let isContextExhaustedAbort = false
-      let isOriginWorktreeMissingAbort = false
-      // coder-exit-nonzero and coder-left-uncommitted are both self-handled in
-      // the code step (it already marked the task failed with a precise
-      // failureReason and spawned exactly one recovery fix-task before throwing
-      // the sentinel). If such a throw ever reaches THIS catch path, the generic
-      // `else` below would overwrite that precise failureReason with the sentinel
-      // string and recompute the signature as `implement:crashed`, corrupting
-      // recovery routing. Detect them and suppress the re-update, same as the
-      // context-exhausted / origin-worktree-missing self-handled aborts.
-      let isCoderSelfHandledAbort = false
-      let isAwaitHumanAbort = false
-      let isQuotaAbort = false
-      let quotaAbortResetsAt = 0
-      try {
-        const {
-          isBlockersAbortError,
-          isContextExhaustedAbortError,
-          isOriginWorktreeMissingAbortError,
-          isCoderExitNonzeroAbortError,
-          isCoderUncommittedAbortError,
-          isAwaitHumanError: isAwaitHumanErrorFn,
-          isQuotaRejectedAbortError: isQuotaRejectedAbortErrorFn,
-          extractQuotaResetsAt: extractQuotaResetsAtFn,
-        } = await import('../../workflows/primitives/shared')
-        isBlockersAbort = isBlockersAbortError(err)
-        isContextExhaustedAbort = isContextExhaustedAbortError(err)
-        isOriginWorktreeMissingAbort = isOriginWorktreeMissingAbortError(err)
-        isCoderSelfHandledAbort =
-          isCoderExitNonzeroAbortError(err) || isCoderUncommittedAbortError(err)
-        isAwaitHumanAbort = isAwaitHumanErrorFn(err)
-        isQuotaAbort = isQuotaRejectedAbortErrorFn(err)
-        if (isQuotaAbort) quotaAbortResetsAt = extractQuotaResetsAtFn(err)
-      } catch (importErr) {
-        log(
-          `[implement] ${task.id} could not load blockers-abort detector (${
-            importErr instanceof Error ? importErr.message : String(importErr)
-          }); treating as ordinary failure`,
-        )
-      }
-      if (isBlockersAbort) {
-        log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
-      } else if (isContextExhaustedAbort) {
-        // The workflow already marked this task failed with cause 'context-exhausted'
-        // before throwing the sentinel. Suppress the re-update.
-        log(`[implement] ${task.id} context-budget ceiling abort (exception path); task already marked failed`)
-      } else if (isOriginWorktreeMissingAbort) {
-        // The setup step already marked this fix task failed and raised an
-        // operator action-queue item. Suppress the re-update and the emit.
-        log(`[implement] ${task.id} origin-worktree-missing abort (exception path); task already marked failed, item raised`)
-      } else if (isCoderSelfHandledAbort) {
-        // The code step already marked this task failed (with a precise
-        // failureReason: coder-exit-nonzero / coder-left-uncommitted) and
-        // spawned its single recovery fix-task before throwing. Suppress the
-        // re-update so the generic implement:crashed signature does not clobber
-        // the precise one and mis-route the recovery.
-        log(`[implement] ${task.id} coder self-handled abort (exception path); task already marked failed, recovery spawned`)
-      } else if (isAwaitHumanAbort) {
-        // The awaitHuman primitive already parked the task in 'awaiting-human'
-        // and raised the action-queue row before throwing. Suppress the re-update
-        // so the task stays parked rather than flipping to 'failed'.
-        log(`[implement] ${task.id} await-human abort (exception path); task already parked awaiting-human`)
-      } else if (isQuotaAbort) {
-        // The code step already re-queued the task and threw the quota-rejected
-        // sentinel. Pause dispatch and raise the action-queue row. Suppress the
-        // re-update so the task stays 'queued' rather than flipping to 'failed'.
-        void handleQuotaRejection(quotaAbortResetsAt)
-        log(`[implement] ${task.id} env-rejected abort (exception path); task re-queued, dispatch paused`)
+      // On the exception path, WorkflowTerminalError is already available as a
+      // static import — no dynamic import needed. The same discriminant-switch
+      // logic applies, but most terminal kinds are already fully self-handled
+      // inside the workflow before throwing; we only need to suppress the
+      // generic `implement:crashed` re-update for those cases.
+      if (err instanceof WorkflowTerminalError) {
+        switch (err.kind) {
+          case 'blockers-abort':
+            log(`[implement] ${task.id} aborted: blockers added between dispatch and execution; task remains queued`)
+            break
+          case 'context-exhausted':
+            // The workflow already marked this task failed with cause 'context-exhausted'.
+            log(`[implement] ${task.id} context-budget ceiling abort (exception path); task already marked failed`)
+            break
+          case 'origin-worktree-missing':
+            // The setup step already marked this fix task failed and raised an item.
+            log(`[implement] ${task.id} origin-worktree-missing abort (exception path); task already marked failed, item raised`)
+            break
+          case 'coder-exit-nonzero':
+          case 'coder-uncommitted':
+            // The code step already marked this task failed and spawned recovery.
+            log(`[implement] ${task.id} coder self-handled abort (exception path); task already marked failed, recovery spawned`)
+            break
+          case 'await-human':
+            // The awaitHuman primitive already parked the task.
+            log(`[implement] ${task.id} await-human abort (exception path); task already parked awaiting-human`)
+            break
+          case 'quota-rejected': {
+            const resetsAt = err.meta.resetsAt ?? 0
+            void handleQuotaRejection(resetsAt)
+            log(`[implement] ${task.id} env-rejected abort (exception path); task re-queued, dispatch paused`)
+            break
+          }
+          case 'main-dirty-verify':
+          case 'main-dirty-merge':
+          case 'preview-gate':
+            // These are fully self-handled; suppress the generic re-update.
+            log(`[implement] ${task.id} ${err.kind} abort (exception path); task already handled`)
+            break
+        }
       } else {
         log(`[implement] ${task.id} failed: ${message}`)
         try {

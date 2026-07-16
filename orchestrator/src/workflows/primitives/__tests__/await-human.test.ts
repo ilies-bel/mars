@@ -9,55 +9,38 @@
  *     re-running the workflow short-circuits the step without re-parking.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import {
-  AWAIT_HUMAN_MESSAGE,
-  isAwaitHumanError,
-  extractAwaitHumanStepName,
-} from '../shared'
+import { AWAIT_HUMAN_MESSAGE } from '../shared'
+import { WorkflowTerminalError } from '../../../core/lib/workflow-terminal-error'
 import { AWAIT_HUMAN_SENTINEL } from '../../../core/lib/sentinels'
 
 // ---------------------------------------------------------------------------
 // 1. Sentinel helpers (pure — no mocks needed)
 // ---------------------------------------------------------------------------
 
-describe('AWAIT_HUMAN_MESSAGE / isAwaitHumanError / extractAwaitHumanStepName', () => {
+describe('AWAIT_HUMAN_MESSAGE / WorkflowTerminalError await-human discriminant', () => {
   it('AWAIT_HUMAN_MESSAGE embeds taskId and stepName', () => {
     const msg = AWAIT_HUMAN_MESSAGE('mars-abc12345', 'await-human')
     expect(msg).toContain('mars-abc12345')
     expect(msg).toContain("await-human step 'await-human'")
   })
 
-  it('isAwaitHumanError recognises the sentinel', () => {
+  it('WorkflowTerminalError await-human carries the correct kind and stepName in meta', () => {
+    const err = new WorkflowTerminalError('await-human', AWAIT_HUMAN_MESSAGE('task-1', 'my-step'), { stepName: 'my-step' })
+    expect(err).toBeInstanceOf(WorkflowTerminalError)
+    expect(err.kind).toBe('await-human')
+    expect(err.meta.stepName).toBe('my-step')
+    expect(err.message).toContain('my-step')
+  })
+
+  it('plain Error is not instanceof WorkflowTerminalError', () => {
     const err = new Error(AWAIT_HUMAN_MESSAGE('task-1', 'my-step'))
-    expect(isAwaitHumanError(err)).toBe(true)
+    expect(err instanceof WorkflowTerminalError).toBe(false)
   })
 
-  it('isAwaitHumanError rejects unrelated errors', () => {
-    expect(isAwaitHumanError(new Error('some other failure'))).toBe(false)
-    expect(isAwaitHumanError(null)).toBe(false)
-    expect(isAwaitHumanError('string error')).toBe(false)
-  })
-
-  it('isAwaitHumanError walks the cause chain', () => {
-    const inner = new Error(AWAIT_HUMAN_MESSAGE('task-1', 'await-human'))
-    const outer = new Error('wrapper', { cause: inner })
-    expect(isAwaitHumanError(outer)).toBe(true)
-  })
-
-  it('extractAwaitHumanStepName returns the step name', () => {
-    const err = new Error(AWAIT_HUMAN_MESSAGE('task-1', 'my-qa-gate'))
-    expect(extractAwaitHumanStepName(err)).toBe('my-qa-gate')
-  })
-
-  it('extractAwaitHumanStepName extracts from a wrapped cause', () => {
-    const inner = new Error(AWAIT_HUMAN_MESSAGE('task-1', 'qa-step'))
-    const outer = new Error('outer wrapper', { cause: inner })
-    expect(extractAwaitHumanStepName(outer)).toBe('qa-step')
-  })
-
-  it('extractAwaitHumanStepName returns null for non-sentinel errors', () => {
-    expect(extractAwaitHumanStepName(new Error('unrelated'))).toBeNull()
-    expect(extractAwaitHumanStepName(null)).toBeNull()
+  it('stepName defaults to undefined when not provided in meta', () => {
+    const err = new WorkflowTerminalError('await-human', 'parked')
+    expect(err.kind).toBe('await-human')
+    expect(err.meta.stepName).toBeUndefined()
   })
 })
 
@@ -118,12 +101,15 @@ describe('awaitHuman primitive', () => {
     mockRaiseActionQueueItem.mockClear()
   })
 
-  it('throws an isAwaitHumanError-detectable error', async () => {
+  it('throws a WorkflowTerminalError with kind=await-human', async () => {
     const ctx = makeCtx('await-human')
-    await expect(awaitHuman(ctx as never)).rejects.toSatisfy(isAwaitHumanError)
+    await expect(awaitHuman(ctx as never)).rejects.toBeInstanceOf(WorkflowTerminalError)
+    await expect(awaitHuman(ctx as never)).rejects.toSatisfy(
+      (err: unknown) => err instanceof WorkflowTerminalError && err.kind === 'await-human',
+    )
   })
 
-  it('embeds the step name in the thrown sentinel', async () => {
+  it('embeds the step name in the thrown sentinel via meta.stepName', async () => {
     const ctx = makeCtx('my-qa-gate')
     let thrown: unknown
     try {
@@ -131,12 +117,12 @@ describe('awaitHuman primitive', () => {
     } catch (err) {
       thrown = err
     }
-    expect(extractAwaitHumanStepName(thrown)).toBe('my-qa-gate')
+    expect(thrown instanceof WorkflowTerminalError ? thrown.meta.stepName : null).toBe('my-qa-gate')
   })
 
   it('calls updateTask with status=awaiting-human', async () => {
     const ctx = makeCtx('await-human')
-    await expect(awaitHuman(ctx as never)).rejects.toSatisfy(isAwaitHumanError)
+    await expect(awaitHuman(ctx as never)).rejects.toBeInstanceOf(WorkflowTerminalError)
     expect(mockUpdateTask).toHaveBeenCalledWith(
       'test-task-id',
       expect.objectContaining({ status: 'awaiting-human', leaseOwner: AWAIT_HUMAN_SENTINEL }),
@@ -148,7 +134,7 @@ describe('awaitHuman primitive', () => {
     const ctx = makeCtx('await-human')
     await expect(
       awaitHuman(ctx as never, { note: 'QA this feature' }),
-    ).rejects.toSatisfy(isAwaitHumanError)
+    ).rejects.toBeInstanceOf(WorkflowTerminalError)
     expect(mockUpdateTask).toHaveBeenCalledWith(
       'test-task-id',
       expect.objectContaining({ leaseNote: 'QA this feature' }),
@@ -158,7 +144,7 @@ describe('awaitHuman primitive', () => {
 
   it('raises an action-queue row with kind=awaiting-human', async () => {
     const ctx = makeCtx('await-human')
-    await expect(awaitHuman(ctx as never)).rejects.toSatisfy(isAwaitHumanError)
+    await expect(awaitHuman(ctx as never)).rejects.toBeInstanceOf(WorkflowTerminalError)
     expect(mockRaiseActionQueueItem).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'awaiting-human', originTaskId: 'test-task-id' }),
     )
@@ -173,7 +159,7 @@ describe('awaitHuman primitive', () => {
     } catch (err) {
       thrown = err
     }
-    expect(extractAwaitHumanStepName(thrown)).toBe('await-human')
+    expect(thrown instanceof WorkflowTerminalError ? thrown.meta.stepName : null).toBe('await-human')
   })
 
   it('re-grants the lease to the prior human owner (auto re-lease across manual steps)', async () => {
@@ -191,7 +177,7 @@ describe('awaitHuman primitive', () => {
     ;(ctx.services.store.query as ReturnType<typeof vi.fn>).mockResolvedValue({
       rows: [row],
     })
-    await expect(awaitHuman(ctx as never)).rejects.toSatisfy(isAwaitHumanError)
+    await expect(awaitHuman(ctx as never)).rejects.toBeInstanceOf(WorkflowTerminalError)
     expect(mockUpdateTask).toHaveBeenCalledWith(
       'test-task-id',
       expect.objectContaining({
@@ -218,7 +204,9 @@ describe('manual Execution mode on primitives', () => {
     ;(ctx as { input: unknown }).input = { taskId: 'test-task-id', prompt: 'p' }
     await expect(
       runAgent(ctx as never, { mode: 'manual', guide: 'iterate on the hero' }),
-    ).rejects.toSatisfy(isAwaitHumanError)
+    ).rejects.toSatisfy(
+      (err: unknown) => err instanceof WorkflowTerminalError && err.kind === 'await-human',
+    )
     expect(mockUpdateTask).toHaveBeenCalledWith(
       'test-task-id',
       expect.objectContaining({
@@ -233,7 +221,9 @@ describe('manual Execution mode on primitives', () => {
     const ctx = makeCtx('verify')
     await expect(
       verify(ctx as never, { mode: 'manual', guide: 'QA in the browser' }),
-    ).rejects.toSatisfy(isAwaitHumanError)
+    ).rejects.toSatisfy(
+      (err: unknown) => err instanceof WorkflowTerminalError && err.kind === 'await-human',
+    )
     expect(mockUpdateTask).toHaveBeenCalledWith(
       'test-task-id',
       expect.objectContaining({

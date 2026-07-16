@@ -56,62 +56,34 @@ export const specSchema = z
   .default(null)
 
 // ---------------------------------------------------------------------------
-// Failure sentinels (message builders + detectors)
+// Failure sentinels (message builders)
 // ---------------------------------------------------------------------------
+//
+// Sentinel detection is no longer done via `is*Error` predicate functions.
+// Throw sites (in primitives/index.ts) throw `WorkflowTerminalError` with a
+// `kind` discriminant; the dispatch loop in server.ts does a single
+// `instanceof WorkflowTerminalError` check and switches on `kind`.
+// The message builders are kept so the thrown error carries a human-readable
+// description in its `.message`.
 
 export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} has incomplete blockers; aborting dispatch (task remains queued)`
-
-// The failure model is THROW: a step that hits a terminal failure performs its
-// self-heal side-effects and THEN throws a sentinel-carrying Error. The engine
-// records the step failed and returns the thrown Error verbatim on
-// `RunResult.error`. We walk the `cause` chain (depth-bounded against cycles)
-// so a future wrapping layer is still recognised.
-const errorHaystack = (err: unknown): string => {
-  const parts: string[] = []
-  let cur: unknown = err
-  for (let depth = 0; cur != null && depth < 10; depth += 1) {
-    if (cur instanceof Error) {
-      parts.push(cur.message)
-      cur = cur.cause
-    } else {
-      parts.push(String(cur))
-      break
-    }
-  }
-  return parts.join(' :: ')
-}
-
-export const isBlockersAbortError = (err: unknown): boolean =>
-  errorHaystack(err).includes('has incomplete blockers; aborting dispatch')
 
 // Thrown by the verify step's dirty-main check.
 export const MAIN_DIRTY_VERIFY_MESSAGE =
   'integration branch dirty before verify; parked behind main-commiter recovery'
 
-export const isMainDirtyVerifyError = (err: unknown): boolean =>
-  errorHaystack(err).includes('verify:main-dirty')
-
 // Thrown by the merge step's dirty-main check.
 export const MAIN_DIRTY_MERGE_MESSAGE =
   'integration branch dirty before merge; parked behind main-commiter recovery'
-
-export const isMainDirtyMergeError = (err: unknown): boolean =>
-  errorHaystack(err).includes('merge:main-dirty')
 
 // Thrown by the code step when the context token budget fires.
 export const CONTEXT_EXHAUSTED_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} aborted by context-budget ceiling: coder hit the context token limit`
 
-export const isContextExhaustedAbortError = (err: unknown): boolean =>
-  errorHaystack(err).includes('aborted by context-budget ceiling')
-
 // Thrown by the setup step when a recovery cannot attach to a missing origin worktree.
 export const ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE = (taskId: string): string =>
   `recovery ${taskId} aborted: origin worktree is missing and cannot be attached`
-
-export const isOriginWorktreeMissingAbortError = (err: unknown): boolean =>
-  errorHaystack(err).includes('origin worktree is missing and cannot be attached')
 
 // Thrown by the code step when the coder process exits non-zero before doing
 // any work (e.g. claude rejecting a bad --session-id). Without this the empty
@@ -120,9 +92,6 @@ export const CODER_EXIT_NONZERO_ABORT_MESSAGE = (
   taskId: string,
   exitCode: number,
 ): string => `coder for task ${taskId} exited ${exitCode} before completing`
-
-export const isCoderExitNonzeroAbortError = (err: unknown): boolean =>
-  /coder for task .+ exited -?\d+ before completing/.test(errorHaystack(err))
 
 // Thrown by the code step when the coder exits 0 but leaves real work
 // UNCOMMITTED on the branch (dirty tree, 0 commits ahead of integration).
@@ -139,36 +108,16 @@ export const isCoderExitNonzeroAbortError = (err: unknown): boolean =>
 export const CODER_UNCOMMITTED_ABORT_MESSAGE = (taskId: string): string =>
   `coder for task ${taskId} left uncommitted work (dirty tree, 0 commits ahead)`
 
-export const isCoderUncommittedAbortError = (err: unknown): boolean =>
-  /coder for task .+ left uncommitted work \(dirty tree, 0 commits ahead\)/.test(
-    errorHaystack(err),
-  )
-
 // Thrown by the code step when the provider rejects the run due to a rate or
 // spend limit (NOT a code failure). The task is re-queued with its worktree
 // intact; no recovery fix-task is spawned. The daemon catches this sentinel to
 // pause dispatch until the resetsAt epoch + jitter and raise exactly one
 // level-triggered 'provider-rate-limited' action-queue row.
-//
-// The resetsAt value is embedded in the message so the daemon can recover it
-// without a separate data channel.
 export const QUOTA_REJECTED_ABORT_MESSAGE = (
   taskId: string,
   resetsAt: number,
 ): string =>
   `task ${taskId} env-rejected: provider rate limit reached (resetsAt=${resetsAt})`
-
-export const isQuotaRejectedAbortError = (err: unknown): boolean =>
-  errorHaystack(err).includes('env-rejected: provider rate limit reached')
-
-/**
- * Extract the resetsAt timestamp embedded in the QUOTA_REJECTED_ABORT_MESSAGE
- * sentinel. Returns 0 when the haystack does not contain a parseable value.
- */
-export const extractQuotaResetsAt = (err: unknown): number => {
-  const m = errorHaystack(err).match(/resetsAt=(\d+)/)
-  return m ? parseInt(m[1], 10) : 0
-}
 
 // Thrown by the merge step's preview gate when a task carries a previewCmd and
 // has not yet been validated. The step starts a live dev server, parks the task
@@ -180,9 +129,6 @@ export const extractQuotaResetsAt = (err: unknown): number => {
 export const PREVIEW_GATE_MESSAGE = (taskId: string): string =>
   `task ${taskId} parked at preview gate; awaiting operator validation`
 
-export const isPreviewGateError = (err: unknown): boolean =>
-  errorHaystack(err).includes('parked at preview gate; awaiting operator validation')
-
 // Thrown by the awaitHuman primitive when a task is parked for live human work.
 //
 // The sentinel embeds the step name so the daemon can locate the correct
@@ -193,21 +139,6 @@ export const isPreviewGateError = (err: unknown): boolean =>
 // 'awaiting-human' status instead of 'awaiting-validation'.
 export const AWAIT_HUMAN_MESSAGE = (taskId: string, stepName: string): string =>
   `task ${taskId} parked at await-human step '${stepName}'; awaiting lease release`
-
-export const isAwaitHumanError = (err: unknown): boolean =>
-  errorHaystack(err).includes(`parked at await-human step`)
-
-/**
- * Extract the step name embedded in the AWAIT_HUMAN_MESSAGE sentinel so the
- * daemon can locate and complete the matching workflow_step_runs row.
- *
- * Returns null when the haystack does not carry a step name (e.g. a wrapped
- * generic Error that is not the sentinel).
- */
-export const extractAwaitHumanStepName = (err: unknown): string | null => {
-  const m = errorHaystack(err).match(/parked at await-human step '([^']+)'/)
-  return m?.[1] ?? null
-}
 
 // ---------------------------------------------------------------------------
 // Prompt briefs + system-prompt assembly
@@ -435,94 +366,22 @@ export const failureExcerpt = (
 }
 
 // ---------------------------------------------------------------------------
-// Completion-report grammar (exported for the verify-phase gate)
+// Completion-report grammar — re-exported from core/lib for consumers that
+// import from this module (see core/lib/completion-report.ts for the source).
 // ---------------------------------------------------------------------------
 
-/** The info-string that marks the fenced completion-report block. */
-export const COMPLETION_REPORT_FENCE = 'completion-report'
+import {
+  COMPLETION_REPORT_FENCE,
+  parseCompletionReport,
+  type CompletionReport,
+  type CompletionReportLine,
+} from '../../core/lib/completion-report'
 
-export type CompletionReportLine = {
-  status: 'done' | 'partial' | 'blocked'
-  criterion: string
-  evidence: string
-}
-
-/**
- * Typed result of parsing a completion-report block from coder output.
- *
- *  - `parsed`      — block was found and every line is well-formed.
- *  - `absent`      — no completion-report fenced block was found in text.
- *  - `unparseable` — block was found but at least one line is malformed.
- */
-export type CompletionReport =
-  | { kind: 'parsed'; lines: CompletionReportLine[] }
-  | { kind: 'absent' }
-  | { kind: 'unparseable'; raw: string }
-
-/**
- * Extract and parse the LAST completion-report fenced block in `text`.
- *
- * Total: never throws. Malformed input → typed `unparseable` result.
- */
-export const parseCompletionReport = (text: string): CompletionReport => {
-  try {
-    const openTag = '```' + COMPLETION_REPORT_FENCE
-    const lastOpen = text.lastIndexOf(openTag)
-    if (lastOpen === -1) return { kind: 'absent' }
-
-    const bodyStart = lastOpen + openTag.length
-    // Closing fence is '```' on its own line after the opening tag.
-    const closeIdx = text.indexOf('\n```', bodyStart)
-    const raw =
-      closeIdx === -1
-        ? text.slice(bodyStart).trim()
-        : text.slice(bodyStart, closeIdx).trim()
-
-    if (raw.length === 0) return { kind: 'unparseable', raw: '' }
-
-    const lines: CompletionReportLine[] = []
-    for (const rawLine of raw.split('\n')) {
-      const trimmed = rawLine.trim()
-      if (trimmed.length === 0) continue
-      // Full grammar: - [<status>] <criterion> — [evidence: ]<evidence>
-      // (em dash U+2014).  The 'evidence:' keyword is OPTIONAL — some coders
-      // write '- [done] <criterion> — <evidence>' without it.  Greedy (.+)
-      // splits on the LAST ' — ' so criteria containing em dashes are
-      // captured correctly.
-      const fullMatch = trimmed.match(
-        /^-\s+\[(done|partial|blocked)\]\s+(.+)\s+—\s+(?:evidence:\s*)?(.+)$/,
-      )
-      if (fullMatch) {
-        lines.push({
-          status: fullMatch[1] as 'done' | 'partial' | 'blocked',
-          criterion: fullMatch[2].trim(),
-          evidence: fullMatch[3].trim(),
-        })
-        continue
-      }
-      // Fallback grammar: status bracket present but no ' — ' separator.
-      // Parse with empty evidence rather than rejecting the whole block
-      // (Postel's law).  checkEvidenceClaim('', …) falls through to the
-      // "non-verifiable evidence" branch and returns { ok: true }, so this
-      // cannot produce false unsubstantiated-completion failures.
-      const fallbackMatch = trimmed.match(
-        /^-\s+\[(done|partial|blocked)\]\s+(.+)$/,
-      )
-      if (fallbackMatch) {
-        lines.push({
-          status: fallbackMatch[1] as 'done' | 'partial' | 'blocked',
-          criterion: fallbackMatch[2].trim(),
-          evidence: '',
-        })
-      }
-      // Lines matching neither regex are silently skipped.
-    }
-
-    if (lines.length === 0) return { kind: 'unparseable', raw }
-    return { kind: 'parsed', lines }
-  } catch {
-    return { kind: 'unparseable', raw: '' }
-  }
+export {
+  COMPLETION_REPORT_FENCE,
+  parseCompletionReport,
+  type CompletionReport,
+  type CompletionReportLine,
 }
 
 // ---------------------------------------------------------------------------

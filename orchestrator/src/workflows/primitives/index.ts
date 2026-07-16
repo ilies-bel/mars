@@ -114,6 +114,7 @@ import {
   AWAIT_HUMAN_MESSAGE,
   QUOTA_REJECTED_ABORT_MESSAGE,
 } from './shared'
+import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import { startDevServer } from '../../core/lib/dev-server'
 import { resolveTaskCwd } from '../../core/lib/resolve-task-cwd'
 import { randomUUID } from 'node:crypto'
@@ -431,7 +432,7 @@ export const setupWorktree = async (
   // Check blockers BEFORE the span: an abort here means no setup work ran, so
   // no span should be emitted.
   if (await hasIncompleteBlockers(taskId, store)) {
-    throw new Error(BLOCKERS_ABORT_MESSAGE(taskId))
+    throw new WorkflowTerminalError('blockers-abort', BLOCKERS_ABORT_MESSAGE(taskId))
   }
 
   // Resolve a recovery (kind=fix) task's worktree by attaching to its origin's
@@ -516,7 +517,7 @@ export const setupWorktree = async (
           raiseErr,
         )
       })
-      throw new Error(ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE(taskId))
+      throw new WorkflowTerminalError('origin-worktree-missing', ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE(taskId))
     }
   }
 
@@ -965,7 +966,7 @@ export const runAgent = async (
     console.log(
       `[ctx] task ${taskId}: context-exhausted; recovery fix-task spawned to resume the existing worktree`,
     )
-    throw new Error(CONTEXT_EXHAUSTED_ABORT_MESSAGE(taskId))
+    throw new WorkflowTerminalError('context-exhausted', CONTEXT_EXHAUSTED_ABORT_MESSAGE(taskId))
   }
 
   // Provider rate/spend-limit rejection (GLOBAL ENVIRONMENTAL CONDITION).
@@ -986,7 +987,7 @@ export const runAgent = async (
     console.log(
       `[code] task ${taskId}: env-rejected by provider quota (resetsAt=${r.quotaRejected.resetsAt}); re-queued`,
     )
-    throw new Error(QUOTA_REJECTED_ABORT_MESSAGE(taskId, r.quotaRejected.resetsAt))
+    throw new WorkflowTerminalError('quota-rejected', QUOTA_REJECTED_ABORT_MESSAGE(taskId, r.quotaRejected.resetsAt), { resetsAt: r.quotaRejected.resetsAt })
   }
 
   // Catch-all for any OTHER non-zero coder exit (138/context-exhausted is the
@@ -1039,7 +1040,7 @@ export const runAgent = async (
     console.log(
       `[code] task ${taskId}: coder exited ${r.exitCode}; recovery fix-task spawned`,
     )
-    throw new Error(CODER_EXIT_NONZERO_ABORT_MESSAGE(taskId, r.exitCode))
+    throw new WorkflowTerminalError('coder-exit-nonzero', CODER_EXIT_NONZERO_ABORT_MESSAGE(taskId, r.exitCode))
   }
 
   // Classify the worktree end-state. A `dirty-no-commits` tree (the coder did
@@ -1106,7 +1107,7 @@ export const runAgent = async (
     console.log(
       `[post-coder] task ${taskId}: uncommitted-work recovery fix-task spawned`,
     )
-    throw new Error(CODER_UNCOMMITTED_ABORT_MESSAGE(taskId))
+    throw new WorkflowTerminalError('coder-uncommitted', CODER_UNCOMMITTED_ABORT_MESSAGE(taskId))
   }
 
   const usage = summarizeUsage(r.conversation)
@@ -1267,7 +1268,8 @@ export const verify = async (
                     : `attached to existing committer in status=${resolution.attachedToStatus}`
                 })`,
               )
-              throw new Error(
+              throw new WorkflowTerminalError(
+                'main-dirty-verify',
                 `task ${taskId} verify:main-dirty: ${MAIN_DIRTY_VERIFY_MESSAGE}`,
               )
             } else {
@@ -1277,7 +1279,7 @@ export const verify = async (
             }
           }
         } catch (err) {
-          if (err instanceof Error && err.message.includes('verify:main-dirty')) {
+          if (err instanceof WorkflowTerminalError && err.kind === 'main-dirty-verify') {
             throw err
           }
           console.warn(
@@ -1865,7 +1867,7 @@ export const merge = async (
         err,
       )
     })
-    throw new Error(PREVIEW_GATE_MESSAGE(taskId))
+    throw new WorkflowTerminalError('preview-gate', PREVIEW_GATE_MESSAGE(taskId))
   }
 
   let vegaSpanInfo: { workerName: string; sessionId: string | null } | null = null
@@ -2026,7 +2028,8 @@ export const merge = async (
                     : `attached to existing committer in status=${resolution.attachedToStatus}`
                 })`,
               )
-              throw new Error(
+              throw new WorkflowTerminalError(
+                'main-dirty-merge',
                 `task ${taskId} merge:main-dirty: ${MAIN_DIRTY_MERGE_MESSAGE}`,
               )
             } else {
@@ -2436,5 +2439,5 @@ export const awaitHuman = async (
   // 2. Patch this step's workflow_step_runs record to 'completed' so the
   //    engine short-circuits it on the next re-dispatch — no double-park,
   //    no double-notify, even after a daemon restart.
-  throw new Error(AWAIT_HUMAN_MESSAGE(taskId, stepName))
+  throw new WorkflowTerminalError('await-human', AWAIT_HUMAN_MESSAGE(taskId, stepName), { stepName })
 }

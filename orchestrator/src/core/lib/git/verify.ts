@@ -7,7 +7,7 @@ import {
   resolveGitBin,
   type TraceCtx,
 } from './internal'
-import { parseCompletionReport } from '../../../workflows/primitives/shared'
+import { parseCompletionReport } from '../completion-report'
 import type { MonitorDb } from '../gate-meta-monitor'
 import { getGateBurnInStatus, recordGateParse } from '../gate-burn-in'
 
