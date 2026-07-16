@@ -54,6 +54,9 @@ describe('checkIntegrationBranchDirty', () => {
   })
 
   it('returns dirty:false on a clean repo', async () => {
+    // 15 s: the first dynamic import of main-dirty (which pulls in arc.ts and
+    // all its transitive modules) can take 3–5 s on a loaded CI host; add
+    // two git commands on top and the default 5 s timeout is too tight.
     const { checkIntegrationBranchDirty } = await import('../main-dirty')
     const r = await checkIntegrationBranchDirty({
       repoRoot: repo,
@@ -63,7 +66,7 @@ describe('checkIntegrationBranchDirty', () => {
     expect(r.dirty).toBe(false)
     expect(r.hash).toBeNull()
     expect(r.statusOutput).toBe('')
-  })
+  }, 15000)
 
   it('returns dirty:true with a stable hash on a dirty repo', async () => {
     const { checkIntegrationBranchDirty } = await import('../main-dirty')
@@ -530,6 +533,93 @@ describe('spawnOrAttachMainCommitter', () => {
     // Done committer never satisfies dedup → fresh spawn regardless of HEAD.
     expect(second.spawned).toBe(true)
     expect(second.fixTaskId).not.toBe(first.fixTaskId)
+  })
+
+  it('reparents stranded dependents from prior failed committer onto fresh committer', async () => {
+    // Scenario: committer-1 has 3 blocked dependents (daemon crash prevented
+    // releaseMainCommitterDependents from running). src2 arrives → committer-2
+    // spawns → reparenting re-parents all 3 stranded deps. When committer-2
+    // completes, unblockByCompletion re-queues all 3.
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+
+    const c = queue.resolveQueueClient()
+    const now = new Date().toISOString()
+    const { parseMainCommiterPayload, serialiseMainCommiterPayload } = await import('../main-dirty')
+
+    // Seed a phantom origin task (needed for FK on fix_for_task_id).
+    const origin1 = await queue.enqueueTask('origin-1', undefined, { skipTriage: true })
+
+    // Seed committer-1 directly: a failed main-committer for 'main'.
+    const committer1 = 'fix-00000001'
+    const payload1 = { recipe: 'main-commiter' as const, dirtyMainHash: 'aabbcc', episodeHash: null, integrationBranch: 'main' }
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, author_kind, author_name, origin_id, priority, recovery_payload, created_at, updated_at)
+            VALUES (?, 'committer-1', 'failed', 'fix', ?, 'agent', 'seed', ?, 3, ?, ?, ?)`,
+      args: [committer1, origin1.id, origin1.id, serialiseMainCommiterPayload(payload1), now, now],
+    })
+
+    // Seed 3 dependent tasks blocked on committer-1.
+    const dep1 = await queue.enqueueTask('dep-1', undefined, { skipTriage: true })
+    const dep2 = await queue.enqueueTask('dep-2', undefined, { skipTriage: true })
+    const dep3 = await queue.enqueueTask('dep-3', undefined, { skipTriage: true })
+    for (const dep of [dep1, dep2, dep3]) {
+      await c.execute({
+        sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+        args: [dep.id, committer1, now],
+      })
+      await c.execute({
+        sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+        args: [dep.id],
+      })
+    }
+
+    // src2 arrives → committer-2 spawns → reparenting runs.
+    const { spawnOrAttachMainCommitter } = await import('../main-dirty')
+    const src2 = await queue.enqueueTask('source-2', undefined, { skipTriage: true })
+    const second = await spawnOrAttachMainCommitter({
+      sourceTaskId: src2.id,
+      detection: {
+        dirty: true as const,
+        hash: 'beef'.repeat(16),
+        episodeHash: null,
+        statusOutput: '',
+      },
+      integrationBranch: 'main',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'p',
+      sourceOriginId: src2.id,
+      traceStore: nullTraceStore,
+    })
+    expect(second.spawned).toBe(true)
+    const committer2 = second.fixTaskId
+
+    // All 3 stranded dependents + new source must be blocked on committer-2.
+    const edgeRows = await c.execute({
+      sql: `SELECT task_id FROM task_blockers WHERE blocker_task_id = ? ORDER BY task_id`,
+      args: [committer2],
+    })
+    const blockedIds = (edgeRows.rows as unknown as Array<{ task_id: string }>)
+      .map((r) => r.task_id)
+      .sort()
+    expect(blockedIds).toEqual([src2.id, dep1.id, dep2.id, dep3.id].sort())
+
+    // Old committer-1 edges must have been removed so unblockByCompletion can release them.
+    const oldEdgesRow = await c.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE blocker_task_id = ? AND task_id IN (?, ?, ?)`,
+      args: [committer1, dep1.id, dep2.id, dep3.id],
+    })
+    expect(Number((oldEdgesRow.rows[0] as unknown as { n: number }).n)).toBe(0)
+
+    // Integration: when committer-2 completes, unblockByCompletion re-queues all stranded deps.
+    await queue.updateTask(committer2, { status: 'done' })
+    const { Arc } = await import('../../arc')
+    await Arc.unblockByCompletion(committer2)
+
+    for (const dep of [dep1, dep2, dep3]) {
+      const t = await queue.getTask(dep.id)
+      expect(t?.status).toBe('queued')
+    }
   })
 
   it('attaches a second source to the SAME ACTIVE committer even after HEAD advances (core fix)', async () => {

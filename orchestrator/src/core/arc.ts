@@ -2757,6 +2757,74 @@ export class Arc {
   }
 
   /**
+   * Re-parent stranded dependents from prior failed main-committers onto a
+   * freshly-spawned committer (ADR-0040 leaf-node exemption, slice F.3).
+   *
+   * When a main-committer fails and the daemon has not yet called
+   * `releaseMainCommitterDependents` (e.g. after a crash-restart), some tasks
+   * may still be `blocked` on a dead committer. When a new committer is
+   * spawned, this method collects every such stranded task and:
+   *
+   * 1. Inserts `task_blockers(task_id=stranded, blocker_task_id=newCommitterId,
+   *    state='confirmed')` — INSERT OR IGNORE so it's idempotent.
+   * 2. Deletes the old failed-committer edge so `unblockByCompletion` can
+   *    release the stranded tasks when the new committer succeeds.
+   *
+   * Writes directly to `task_blockers` without calling `assertNotRecoveryEdge`,
+   * mirroring the F.1 exemption used by `spawnMainCommitterRecovery`. The new
+   * committer IS a recovery task (kind='fix'), but this edge is legitimate: it
+   * is the continuation of the prior committer's responsibility.
+   *
+   * Returns `{ reparented: N }` where N is the count of unique stranded tasks
+   * that received a new edge. Returns `{ reparented: 0 }` when none are found.
+   */
+  static async reparentStrandedDependentsOntoNewCommitter(
+    newCommitterId: string,
+    integrationBranch: string,
+  ): Promise<{ reparented: number }> {
+    const s = await getDefaultTaskStore()
+    const now = new Date().toISOString()
+
+    // Find all (stranded_task_id, failed_committer_id) pairs where the task is
+    // still `blocked` on a prior FAILED main-committer for this integration branch.
+    const r = await s.query({
+      sql: `SELECT tb.task_id AS id, tb.blocker_task_id AS old_committer
+              FROM task_blockers tb
+              JOIN tasks failed ON failed.id = tb.blocker_task_id
+              JOIN tasks dep    ON dep.id    = tb.task_id
+             WHERE failed.kind = 'fix'
+               AND failed.status = 'failed'
+               AND json_extract(failed.recovery_payload, '$.recipe') = ?
+               AND json_extract(failed.recovery_payload, '$.integrationBranch') = ?
+               AND dep.status = 'blocked'`,
+      args: [MAIN_COMMITER_RECIPE, integrationBranch],
+    })
+
+    const rows = r.rows as unknown as Array<{ id: string; old_committer: string }>
+    if (rows.length === 0) return { reparented: 0 }
+
+    // Collect unique task IDs (a task may have been blocked by multiple failed
+    // committers; INSERT OR IGNORE handles the duplicate-insert case).
+    const uniqueTaskIds = [...new Set(rows.map((row) => row.id))]
+
+    // Batch: add new edge to new committer (idempotent) + delete each old
+    // failed-committer edge so unblockByCompletion can release the task.
+    const stmts = [
+      ...uniqueTaskIds.map((taskId) => ({
+        sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+        args: [taskId, newCommitterId, now],
+      })),
+      ...rows.map(({ id, old_committer }) => ({
+        sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+        args: [id, old_committer],
+      })),
+    ]
+    await s.batch(stmts, 'write')
+
+    return { reparented: uniqueTaskIds.length }
+  }
+
+  /**
    * Propagate-recovery-done write funnel (ADR-0052 sole-writer). When a
    * recovery task (kind='fix', non-null fixForTaskId) reaches `done`, the work
    * the operator was waiting on has shipped. Flip the origin row (`this.arcId`)

@@ -468,6 +468,10 @@ export const spawnOrAttachMainCommitter = async (
       sourceOriginId: input.sourceOriginId,
       traceStore: input.traceStore,
     })
+    await Arc.reparentStrandedDependentsOntoNewCommitter(
+      fixTaskId,
+      input.integrationBranch,
+    )
     return { fixTaskId, spawned: true, attachedToStatus: null }
   }
 
@@ -517,5 +521,9 @@ export const spawnOrAttachMainCommitter = async (
     sourceOriginId: input.sourceOriginId,
     traceStore: input.traceStore,
   })
+  await Arc.reparentStrandedDependentsOntoNewCommitter(
+    fixTaskId,
+    input.integrationBranch,
+  )
   return { fixTaskId, spawned: true, attachedToStatus: null }
 }
