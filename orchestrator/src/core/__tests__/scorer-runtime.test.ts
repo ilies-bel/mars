@@ -309,6 +309,47 @@ describe('runScorersForTask', () => {
     const row = await m.sr.getScorerResult(scorerId, taskId)
     expect(row?.status).toBe('error')
   })
+
+  it('attaches the active workflow-config version id to the scorer_result row', async () => {
+    const m = await loadMods(repo)
+    const taskId = await makeTask(m, 'done')
+    const scorerId = await makeAcceptedScorer(m, 'task')
+    const judge = vi.fn(async () => ({ score: 0.75, rationale: 'well scoped diff' }))
+
+    // Seed a promoted workflow-config for the 'task' workflow kind.
+    const { insertWorkflowConfig, initWorkflowConfigs } = await import('../workflow-configs')
+    const { resolveStateClient } = await import('../store/state-client')
+    await initWorkflowConfigs()
+    const client = resolveStateClient()
+    const config = await insertWorkflowConfig(client, {
+      id: 'wc-test-1',
+      workflow: 'task',
+      version: 1,
+      configHash: 'deadbeef',
+      status: 'promoted',
+    })
+
+    const outcome = await m.rt.runScorersForTask(taskId, { judge })
+    expect(outcome.scored).toBe(1)
+
+    const row = await m.sr.getScorerResult(scorerId, taskId)
+    expect(row).not.toBeNull()
+    expect(row?.workflowConfigVersionId).toBe(config.id)
+  })
+
+  it('stores null workflow_config_version_id when no config version exists', async () => {
+    const m = await loadMods(repo)
+    const taskId = await makeTask(m, 'done')
+    const scorerId = await makeAcceptedScorer(m, 'task')
+    const judge = vi.fn(async () => ({ score: 0.5, rationale: 'baseline run' }))
+
+    // No workflow-config rows seeded — version id must be null.
+    const outcome = await m.rt.runScorersForTask(taskId, { judge })
+    expect(outcome.scored).toBe(1)
+
+    const row = await m.sr.getScorerResult(scorerId, taskId)
+    expect(row?.workflowConfigVersionId).toBeNull()
+  })
 })
 
 describe('scoring pool', () => {

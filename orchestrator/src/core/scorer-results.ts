@@ -55,6 +55,12 @@ export const ScorerResultSchema = z.object({
   rationale: z.string(),
   status: ScorerResultStatusSchema,
   createdAt: z.number(),
+  /**
+   * The workflow-config version that was active (trial preferred, then
+   * promoted/baseline) when this result was recorded. Null when no versions
+   * exist yet, preserving backwards-compatibility with legacy calls.
+   */
+  workflowConfigVersionId: z.string().nullable(),
 })
 export type ScorerResult = z.infer<typeof ScorerResultSchema>
 
@@ -65,6 +71,8 @@ export interface RecordScorerResultInput {
   score: number | null
   rationale: string
   status: ScorerResultStatus
+  /** Workflow-config version id to attach to this result; null when none exists. */
+  workflowConfigVersionId?: string | null
 }
 
 export interface ListScorerResultsFilter {
@@ -111,9 +119,20 @@ export const initScorerResults = async (): Promise<void> => {
       score REAL,
       rationale TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'scored' CHECK(status IN ('scored','error')),
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      workflow_config_version_id TEXT
     )
   `)
+  // Migrate existing databases: add workflow_config_version_id if missing.
+  const cols = await c.execute(`PRAGMA table_info(scorer_results)`)
+  const colNames = new Set(
+    cols.rows.map((r) => (r as unknown as { name: string }).name),
+  )
+  if (!colNames.has('workflow_config_version_id')) {
+    await c.execute(
+      `ALTER TABLE scorer_results ADD COLUMN workflow_config_version_id TEXT`,
+    )
+  }
   // Idempotency guard: one result per (Scorer, instance). recordScorerResult
   // uses INSERT OR IGNORE against this index.
   await c.execute(
@@ -128,6 +147,11 @@ export const initScorerResults = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_scorer_results_task
        ON scorer_results(task_id)`,
+  )
+  // Per-version rolling score queries: group by workflow config version.
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_scorer_results_workflow_config_version
+       ON scorer_results(workflow, workflow_config_version_id)`,
   )
   initialised = true
 }
@@ -149,6 +173,10 @@ const rowToResult = (row: Record<string, unknown>): ScorerResult =>
     rationale: typeof row.rationale === 'string' ? row.rationale : '',
     status: row.status,
     createdAt: Number(row.created_at ?? 0),
+    workflowConfigVersionId:
+      typeof row.workflow_config_version_id === 'string'
+        ? row.workflow_config_version_id
+        : null,
   })
 
 export const generateScorerResultId = (): string =>
@@ -176,11 +204,13 @@ export const recordScorerResult = async (
     rationale: input.rationale,
     status: input.status,
     createdAt: now,
+    workflowConfigVersionId: input.workflowConfigVersionId ?? null,
   })
   const r = await c.execute({
     sql: `INSERT OR IGNORE INTO scorer_results
-            (id, scorer_id, task_id, workflow, score, rationale, status, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, scorer_id, task_id, workflow, score, rationale, status, created_at,
+             workflow_config_version_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     args: [
       candidate.id,
       candidate.scorerId,
@@ -190,6 +220,7 @@ export const recordScorerResult = async (
       candidate.rationale,
       candidate.status,
       candidate.createdAt,
+      candidate.workflowConfigVersionId,
     ],
   })
   if (r.rowsAffected > 0) return { result: candidate, inserted: true }

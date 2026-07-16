@@ -36,6 +36,12 @@ import {
   initScorerResults,
   type ScorerResult,
 } from '../scorer-results'
+import {
+  getTrialWorkflowConfig,
+  getActiveWorkflowConfig,
+  initWorkflowConfigs,
+} from '../workflow-configs'
+import { resolveStateClient } from '../store/state-client'
 import { isReflectDisabled } from './reflect-signals'
 import { getDefaultTaskStore } from '../store/task-store'
 import type { TraceEventStore } from './trace-events-store'
@@ -420,6 +426,16 @@ export const runScorersForTask = async (
   const judge = opts.judge ?? defaultJudge(opts.traceStore)
   // Assembled once per instance — shared across all scorers for this kind.
   const artifacts = await assembleScorerArtifacts(task)
+
+  // Resolve the active workflow-config version for this workflow kind.
+  // Trial takes precedence over promoted/baseline (ADR-0034 scoring seam).
+  // Null when no config rows exist yet (legacy calls remain compatible).
+  const stateC = resolveStateClient()
+  await initWorkflowConfigs()
+  const trialConfig = await getTrialWorkflowConfig(stateC, workflow)
+  const activeConfig = trialConfig ?? (await getActiveWorkflowConfig(stateC, workflow))
+  const workflowConfigVersionId = activeConfig?.id ?? null
+
   const outcome: RunScorersOutcome = { ...base, workflow }
 
   for (const scorer of scorers) {
@@ -440,6 +456,7 @@ export const runScorersForTask = async (
         score: verdict.score,
         rationale: verdict.rationale,
         status: 'scored',
+        workflowConfigVersionId,
       })
       outcome.scored += 1
       outcome.results.push(result)
@@ -466,6 +483,7 @@ export const runScorersForTask = async (
         score: null,
         rationale: message,
         status: 'error',
+        workflowConfigVersionId,
       })
       outcome.errored += 1
       outcome.results.push(result)
