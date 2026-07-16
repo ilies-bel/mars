@@ -63,7 +63,7 @@ describe('runMainDirtyDispatchCheck', () => {
         traceCtx: { store: nullTraceStore, phase: 'setup' },
       })
       expect(detection.dirty).toBe(true)
-      expect(detection.hash).toBeTruthy()
+      expect(detection.statusOutput).toBeTruthy()
 
       const committerRes = await spawnOrAttachMainCommitter({
         sourceTaskId: seedTask.id,

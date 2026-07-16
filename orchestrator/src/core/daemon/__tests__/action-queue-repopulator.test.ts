@@ -494,7 +494,6 @@ describe('action-queue-repopulator outbox subscriber', () => {
       kind: 'fix',
       recoveryPayload: JSON.stringify({
         recipe: 'main-commiter',
-        dirtyMainHash: 'abc123',
         integrationBranch: 'main',
       }),
       failureReasonCode: 'verify:main-dirty',

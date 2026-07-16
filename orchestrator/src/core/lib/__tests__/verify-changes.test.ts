@@ -608,8 +608,6 @@ describe('main-commiter recovery — verify step exemption', () => {
   it('selects zero verify steps when recovery_payload.recipe is main-commiter', () => {
     const payload = serialiseMainCommiterPayload({
       recipe: MAIN_COMMITER_RECIPE,
-      dirtyMainHash: 'deadbeef',
-      episodeHash: null,
       integrationBranch: 'main',
     })
     const commiterPayload = parseMainCommiterPayload(payload)
@@ -632,7 +630,6 @@ describe('main-commiter recovery — verify step exemption', () => {
   it('selects full verify steps when recovery_payload has a different recipe', () => {
     const rawPayload = JSON.stringify({
       recipe: 'some-other-recovery-recipe',
-      dirtyMainHash: 'deadbeef',
       integrationBranch: 'main',
     })
     const commiterPayload = parseMainCommiterPayload(rawPayload)

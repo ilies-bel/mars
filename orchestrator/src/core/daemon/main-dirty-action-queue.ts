@@ -5,10 +5,10 @@
  * `recovery_payload`:
  *
  * 1. `sweepStaleFailedMainCommiterActionQueue`: on committer SUCCESS, scan for
- *    open actionQueue rows raised by previously-failed committer attempts whose
- *    `dirtyMainHash` is no longer the current state of main. Those rows
- *    describe a state that the just-succeeded committer fixed; resolve them
- *    with `SupersedeReason: 'origin-done'`.
+ *    open actionQueue rows raised by previously-failed committer attempts on the
+ *    same integration branch. Those rows describe a state that the
+ *    just-succeeded committer fixed; resolve them with `SupersedeReason:
+ *    'origin-done'`.
  *
  * 2. `raiseAggregatedMainCommiterFailureRow`: on committer FAILURE, raise
  *    one actionQueue row whose body lists every task currently `blocked` on this
@@ -26,10 +26,12 @@ import { Arc } from '../arc'
  * recoveries on the same integration branch as the just-succeeded committer,
  * excluding the fresh committer itself.
  *
- * We join through `recovery_payload.recoveryTaskId` (stored in the
- * action_queue_items payload by `raiseAggregatedMainCommiterFailureRow`) to
- * reach the tasks table, then filter on the branch stored in
- * `recovery_payload.integrationBranch` and exclude the fresh task by id.
+ * Implementation note: rather than crack open the actionQueue payload, we use
+ * the convention that a `main-commiter` failure actionQueue row records the
+ * `recoveryTaskId` in its payload — the same shape the recovery-failed
+ * pipeline already uses. We join tasks via that pointer and filter by
+ * recipe, integration branch (same branch → same committer scope), and
+ * exclude the fresh committer itself so it is never incorrectly swept.
  */
 const FIND_STALE_COMMITTER_ACTION_QUEUE_ROWS_SQL = `
   SELECT i.id AS actionQueue_id,
@@ -50,13 +52,14 @@ const FIND_STALE_COMMITTER_ACTION_QUEUE_ROWS_SQL = `
 
 /**
  * Scan for `failed`-committer actionQueue rows on the same integration branch
- * as the fresh committer, and supersede them with `origin-done`. A successful
- * committer on branch B means every older failed-committer row for branch B
- * describes a state that has since been resolved — sweep them so the operator's
- * action queue no longer shows stale entries for that branch.
+ * (other than the fresh committer), and supersede them with `origin-done`. A
+ * successful committer on branch B means every older failed-committer row for
+ * branch B describes a state that has since been resolved — sweep them so the
+ * operator's action queue no longer shows stale entries for that branch.
  *
- * The fresh committer is excluded by id so its own actionQueue row (if any)
- * is never touched.
+ * `integrationBranch` scopes the sweep to the same branch as the
+ * just-succeeded committer. `freshRecoveryTaskId` is excluded so the fresh
+ * committer's own rows (if any exist) are never swept.
  *
  * The function is idempotent: rerunning when no stale rows exist is a
  * silent no-op.

@@ -4,35 +4,21 @@
  * Both detection points (dispatch-time before worktree spawn, and verify-time
  * at the top of the verify step) share this helper. It probes the integration
  * branch's working tree with `git status --porcelain`. When the branch is
- * dirty, it computes two stable identities for different dedup purposes:
- *
- *   hash        — `sha256(statusOutput)`: HEAD-independent file-set key used
- *                 for active-committer dedup. An active committer is reused
- *                 even after HEAD advances (i.e. when another task merges into
- *                 main while this committer is still running). Different file
- *                 sets → different keys; untracked-only states still get
- *                 distinct keys per their file paths.
- *
- *   episodeHash — `sha256(headSha + '\n' + statusOutput)`: HEAD-aware key used
- *                 ONLY for done-suppression. A done committer that already
- *                 cleaned a given dirty episode (specific HEAD + specific
- *                 file-set) suppresses re-spawn for that same episode. When
- *                 HEAD advances, the episodeHash changes, so a new dirty
- *                 episode with the same files gets a fresh committer instead
- *                 of being silently suppressed.
+ * dirty, active-committer dedup is keyed on the integration branch name:
+ * parallel integration branches each get their own independent committer,
+ * and all tasks on the same branch share one committer regardless of which
+ * files are dirty or where HEAD is.
  *
  * All git calls go through `runTool` so they emit `tool_invoked` trace events
  * (slice C). The single source of truth for "dirty" is the porcelain output —
  * non-empty ⇒ dirty.
  *
  * The helper is best-effort against transient git failures: if `git status`
- * itself errors, it returns `{ dirty: false, hash: null }` and the caller
- * proceeds as if the branch is clean. The legacy `checkSetupPreflight`
- * backstop that used to catch transient git failures was retired in
- * slice K; pessimistically reporting clean here is the documented
- * fallback now.
+ * itself errors, it returns `{ dirty: false }` and the caller proceeds as if
+ * the branch is clean. The legacy `checkSetupPreflight` backstop that used to
+ * catch transient git failures was retired in slice K; pessimistically
+ * reporting clean here is the documented fallback now.
  */
-import { createHash } from 'node:crypto'
 import { runTool, type TraceCtx } from './run-tool'
 import { attachToExistingFixTask } from '../queue-fix-tasks'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store'
@@ -56,28 +42,6 @@ export interface CheckIntegrationBranchDirtyInput {
 export interface IntegrationBranchDirtyResult {
   dirty: boolean
   /**
-   * SHA-256 of `statusOutput` only (HEAD-independent) when dirty; null
-   * otherwise. Using only the dirty file-set as the key ensures an active
-   * committer is reused even after HEAD advances (e.g. when another task
-   * merges into main while the committer is still running). Different file
-   * sets → different keys; untracked-only states get distinct keys per their
-   * file paths so untracked-only dirty states never collide with each other.
-   *
-   * This field is the active-committer dedup key. For done-suppression (to
-   * prevent an infinite re-spawn loop), use `episodeHash` instead.
-   */
-  hash: string | null
-  /**
-   * SHA-256 of `(headSha + '\n' + statusOutput)` — the HEAD-aware episode key.
-   * Used ONLY for done-suppression: when a committer at this episodeHash has
-   * already reached `done`, re-spawn is suppressed for this exact dirty
-   * episode (same HEAD sha + same file-set). When HEAD advances, episodeHash
-   * changes even if the dirty files are the same, so a new dirty episode gets
-   * a fresh committer rather than being silently suppressed.
-   * null when dirty:false or when `git rev-parse HEAD` fails.
-   */
-  episodeHash: string | null
-  /**
    * Raw `git status --porcelain` output (untracked included). Empty string
    * when clean. Surfaced for log lines and the aggregated actionQueue row.
    */
@@ -95,8 +59,6 @@ export interface IntegrationBranchDirtyResult {
  *    would crash the dispatch loop on a transient git hiccup. (The legacy
  *    setup-time preflight that doubled as a backstop was retired in
  *    slice K.)
- *  - `git status` succeeds, `git rev-parse HEAD` fails ⇒ return dirty:true
- *    with hash:null. The committer will still spawn; it just won't dedup.
  */
 export const checkIntegrationBranchDirty = async (
   input: CheckIntegrationBranchDirtyInput,
@@ -163,7 +125,7 @@ export const checkIntegrationBranchDirty = async (
         console.warn(
           `[main-dirty] integration branch repoRoot is checked out on ${currentBranch}, expected ${integrationBranch}; skipping dirty-main probe`,
         )
-        return { dirty: false, hash: null, episodeHash: null, statusOutput: '' }
+        return { dirty: false, statusOutput: '' }
       }
     }
   }
@@ -197,44 +159,14 @@ export const checkIntegrationBranchDirty = async (
   })
 
   if (status.exitCode !== 0) {
-    return { dirty: false, hash: null, episodeHash: null, statusOutput: '' }
+    return { dirty: false, statusOutput: '' }
   }
   const statusOutput = status.stdout
   if (statusOutput.length === 0) {
-    return { dirty: false, hash: null, episodeHash: null, statusOutput: '' }
+    return { dirty: false, statusOutput: '' }
   }
 
-  // Dirty branch: compute the HEAD-independent file-set hash for active-committer
-  // dedup. Using statusOutput (which includes untracked paths) ensures
-  // untracked-only dirty states get distinct hashes per their file set.
-  // This is the primary dedup key: an active committer is reused even after
-  // HEAD advances (because headSha is NOT included here).
-  const hash = createHash('sha256').update(statusOutput).digest('hex')
-
-  // Also compute the HEAD-aware episode hash for done-suppression only.
-  // Including headSha prevents a done committer from silently suppressing a
-  // genuinely new dirty episode that happens to have the same file-set.
-  const headShaResult = await runTool(
-    {
-      tool: 'git',
-      argv: ['rev-parse', 'HEAD'],
-      cwd: repoRoot,
-      taskId: traceCtx.taskId ?? null,
-      originId: traceCtx.originId ?? null,
-      phase: traceCtx.phase ?? null,
-      expectsFailure: true,
-    },
-    traceCtx.store,
-  ).catch(() => null)
-
-  if (headShaResult === null || headShaResult.exitCode !== 0) {
-    // hash is still valid for active-committer dedup; episodeHash is null
-    // so done-suppression is skipped (acceptable: worst case is one extra spawn).
-    return { dirty: true, hash, episodeHash: null, statusOutput }
-  }
-  const headSha = headShaResult.stdout.trim()
-  const episodeHash = createHash('sha256').update(headSha + '\n' + statusOutput).digest('hex')
-  return { dirty: true, hash, episodeHash, statusOutput }
+  return { dirty: true, statusOutput }
 }
 
 /**
@@ -261,25 +193,11 @@ export const MAIN_COMMITER_RECIPE = 'main-commiter'
 export interface MainCommiterPayload {
   recipe: typeof MAIN_COMMITER_RECIPE
   /**
-   * SHA-256 of `statusOutput` only (HEAD-independent). Used for
-   * active-committer dedup: a still-running committer is reused even after
-   * HEAD advances (when another task merges into main), so source tasks
-   * that hit dirty-main at different HEAD positions attach to the same
-   * committer rather than fanning out to many near-identical recovery tasks.
+   * Integration branch the committer is parked on. This is the active-committer
+   * dedup key: parallel integration branches each get their own independent
+   * committer, and all tasks on the same branch share one committer regardless
+   * of what files are dirty or where HEAD is.
    */
-  dirtyMainHash: string
-  /**
-   * SHA-256 of `(headSha + '\n' + statusOutput)` — the HEAD-aware episode
-   * key. Stored for done-suppression ONLY: when a committer at this exact
-   * episodeHash has already reached `done`, re-spawn is suppressed for that
-   * dirty episode, preventing the runaway loop where every dispatch tick
-   * after the committer finishes spawns a new one. When HEAD advances,
-   * episodeHash differs even if the file-set is the same, so a genuinely
-   * new dirty episode gets a fresh committer rather than being suppressed.
-   * null when `git rev-parse HEAD` failed at detection time.
-   */
-  episodeHash: string | null
-  /** Integration branch the committer is parked on. */
   integrationBranch: string
 }
 
@@ -295,13 +213,9 @@ export const parseMainCommiterPayload = (
   try {
     const parsed = JSON.parse(raw) as Partial<MainCommiterPayload>
     if (parsed.recipe !== MAIN_COMMITER_RECIPE) return null
-    if (typeof parsed.dirtyMainHash !== 'string') return null
     if (typeof parsed.integrationBranch !== 'string') return null
     return {
       recipe: MAIN_COMMITER_RECIPE,
-      dirtyMainHash: parsed.dirtyMainHash,
-      // episodeHash is optional for backwards compat with old rows (they lack it)
-      episodeHash: typeof parsed.episodeHash === 'string' ? parsed.episodeHash : null,
       integrationBranch: parsed.integrationBranch,
     }
   } catch {
@@ -321,13 +235,6 @@ export const serialiseMainCommiterPayload = (
  * tasks do not transition back), so attaching a new source to one would
  * create a phantom blocker that can never resolve.
  *
- * Done-suppression (preventing the runaway spawn-loop after a committer
- * finishes) is handled separately via `episodeHash`: `spawnOrAttachMainCommitter`
- * queries for a done committer at the SAME (headSha+files) episode before
- * spawning fresh. This scopes suppression to the exact dirty episode rather
- * than to any historical file-set match, so a new dirty episode with the same
- * files (after HEAD advances) still gets a fresh committer.
- *
  * 'failed' is NOT included: a failed committer is a dead-end that can never
  * unblock its dependents, so attaching new tasks to it would wedge them
  * permanently. The on-failure handler in server.ts releases blocked
@@ -346,18 +253,17 @@ const ACTIVE_COMMITTER_STATUSES = [
 
 /**
  * Look up the most recently created `main-commiter` recovery task whose
- * `dirtyMainHash` (HEAD-independent file-set key) matches `dirtyMainHash`.
- * The recovery_payload column is a TEXT JSON blob; we use sqlite's
- * `json_extract` to filter on it without pulling every row into JS.
+ * `integrationBranch` matches. Dedup is branch-keyed: parallel integration
+ * branches each get their own committer, and all tasks on the same branch
+ * share one active committer.
  *
  * Done committers are NOT included — a done task cannot be reactivated, so
- * attaching a new source to it would create a phantom blocker. Done-suppression
- * (runaway-loop guard) is handled separately by `spawnOrAttachMainCommitter`
- * via the `episodeHash` field — see ACTIVE_COMMITTER_STATUSES comment.
+ * attaching a new source to it would create a phantom blocker. A new dirty
+ * episode on the same branch always spawns a fresh committer.
  * Failed committers are excluded — see ACTIVE_COMMITTER_STATUSES.
  */
 export const findActiveMainCommitter = async (
-  dirtyMainHash: string,
+  integrationBranch: string,
   store: TaskStore,
 ): Promise<{ id: string; status: string } | null> => {
   const placeholders = ACTIVE_COMMITTER_STATUSES.map(() => '?').join(',')
@@ -366,10 +272,10 @@ export const findActiveMainCommitter = async (
            WHERE kind = 'fix'
              AND status IN (${placeholders})
              AND json_extract(recovery_payload, '$.recipe') = ?
-             AND json_extract(recovery_payload, '$.dirtyMainHash') = ?
+             AND json_extract(recovery_payload, '$.integrationBranch') = ?
            ORDER BY created_at DESC
            LIMIT 1`,
-    args: [...ACTIVE_COMMITTER_STATUSES, MAIN_COMMITER_RECIPE, dirtyMainHash],
+    args: [...ACTIVE_COMMITTER_STATUSES, MAIN_COMMITER_RECIPE, integrationBranch],
   })
   if (r.rows.length === 0) return null
   const row = r.rows[0] as unknown as { id: string; status: string }
@@ -416,25 +322,21 @@ export interface SpawnOrAttachInput {
 
 /**
  * Dedup-aware spawn for `main-commiter`. Either inserts a fresh recovery
- * task and parks the source behind it, or — when an active committer at the
- * same hash already exists — attaches the source to the existing recovery
- * via `attachToExistingFixTask`. The `failed` case at the same hash still
- * attaches (so the failed committer's actionQueue row aggregates the new
- * dependent); only a `done` committer or a different-hash failed committer
- * triggers a fresh spawn.
+ * task and parks the source behind it, or — when an active committer for the
+ * same integration branch already exists — attaches the source to the existing
+ * recovery via `attachToExistingFixTask`.
+ *
+ * Dedup is branch-keyed: parallel integration branches each get their own
+ * independent committer, and all tasks on the same branch share one active
+ * committer regardless of which files are dirty or where HEAD is. A done or
+ * failed committer is never reused — done means the work was completed (a new
+ * dirty episode requires a fresh committer), and failed is a dead-end.
  *
  * The new fix-task row is inserted directly (not via `upsertFixTask`)
  * because the catalog-driven recipe path is signature-agnostic — there is
  * no entry for `verify:main-dirty` in the legacy `recipes` map in
  * `fix-recipes.ts`. The two writes (fix-task INSERT + task_blockers INSERT
  * + source UPDATE) share one batch so a crash leaves no orphan row.
- *
- * The recovery row's `failure_signature` carries `verify:main-dirty` so
- * the legacy fix-fail-loop and dedup queries (which key on
- * (fix_for_task_id, failure_signature)) interoperate sanely with the new
- * recipe — though F.2 itself does not rely on that dedup path; the
- * recovery_payload-hash dedup is the source of truth for committer
- * identity.
  *
  * This function is ALSO the legitimate exemption from the F.1 ADR-0040
  * leaf-node guard: the fresh-spawn branch inserts an origin → recovery
@@ -450,38 +352,13 @@ export const spawnOrAttachMainCommitter = async (
       'spawnOrAttachMainCommitter called with a clean detection result',
     )
   }
-  if (input.detection.hash === null) {
-    // Without a hash we cannot dedup; still safe to spawn a fresh committer
-    // — the next task that hits the same broken state without a hash will
-    // simply spawn its own (no worse than the legacy behavior).
-    const arc = Arc.load(
-      input.sourceOriginId,
-      input.store ?? (await getDefaultTaskStore()),
-    )
-    const { fixTaskId } = await arc.spawnMainCommitterRecovery({
-      sourceTaskId: input.sourceTaskId,
-      dirtyMainHash: null,
-      episodeHash: null,
-      integrationBranch: input.integrationBranch,
-      dispatchPhase: input.dispatchPhase,
-      recipePrompt: input.recipePrompt,
-      sourceOriginId: input.sourceOriginId,
-      traceStore: input.traceStore,
-    })
-    await Arc.reparentStrandedDependentsOntoNewCommitter(
-      fixTaskId,
-      input.integrationBranch,
-    )
-    return { fixTaskId, spawned: true, attachedToStatus: null }
-  }
 
   const s = input.store ?? (await getDefaultTaskStore())
 
-  // Step 1: Look for an ACTIVE (non-done, non-failed) committer at the same
-  // file-set hash. The HEAD-independent key means this match fires even if
-  // HEAD advanced since the committer was spawned — that's the core fix for
-  // the duplicate-committer bug.
-  const existing = await findActiveMainCommitter(input.detection.hash, s)
+  // Look for an ACTIVE (non-done, non-failed) committer for this integration
+  // branch. Branch-keyed dedup means: one active committer per branch at a
+  // time, shared by all tasks that hit dirty-main on that branch.
+  const existing = await findActiveMainCommitter(input.integrationBranch, s)
   if (existing) {
     await attachToExistingFixTask({
       sourceTaskId: input.sourceTaskId,
@@ -501,20 +378,13 @@ export const spawnOrAttachMainCommitter = async (
     }
   }
 
-  // Step 2: No active committer — spawn fresh.
-  // Done committers are intentionally NOT checked here. A done committer only
-  // proves that main was clean when the committer verified; it does NOT prove
-  // that main is still clean now (the verify gate enforces that invariant). If
-  // main is still dirty after a committer finishes (e.g. because git stash
-  // refused to capture some files), the committer's verify fails and the task
-  // reaches `failed` — not `done` — so the action queue surfaces it to a human.
-  // If a done committer exists and we re-detect dirt, that is a genuinely new
-  // dirty episode: spawn a fresh committer to handle it.
+  // No active committer for this branch — spawn fresh. Done committers are
+  // intentionally NOT reused: a done committer proves main was clean when it
+  // verified, but re-detecting dirt means a genuinely new dirty episode that
+  // needs a fresh committer.
   const arc = Arc.load(input.sourceOriginId, s)
   const { fixTaskId } = await arc.spawnMainCommitterRecovery({
     sourceTaskId: input.sourceTaskId,
-    dirtyMainHash: input.detection.hash,
-    episodeHash: input.detection.episodeHash,
     integrationBranch: input.integrationBranch,
     dispatchPhase: input.dispatchPhase,
     recipePrompt: input.recipePrompt,

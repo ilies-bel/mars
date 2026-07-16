@@ -282,7 +282,7 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
       const { q, sub, pub } = await loadModules(repo)
       const qc = q.resolveQueueClient()
 
-      const MAIN_COMMITER_PAYLOAD = JSON.stringify({ recipe: 'main-commiter', dirtyMainHash: 'aa'.repeat(32), episodeHash: null, integrationBranch: 'main' })
+      const MAIN_COMMITER_PAYLOAD = JSON.stringify({ recipe: 'main-commiter', integrationBranch: 'main' })
 
       // Source task with high retry_count (budget = 3, so retry_count = 10 is exhausted)
       const src = await q.enqueueTask('implement-feature', undefined, { skipTriage: true })

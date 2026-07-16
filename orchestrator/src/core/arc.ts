@@ -1318,8 +1318,8 @@ export class Arc {
    *   - `recovery_payload` IS written (unlike {@link Arc.spawnRecovery}, which
    *     leaves it NULL — the two writers coexist);
    *   - NO `self_heal_attempts` ledger append (intentional, slice F.2 — the
-   *     hash-based dedup, not the per-(parent,signature) cap, owns committer
-   *     identity);
+   *     branch-keyed singleton (ADR-0071), not the per-(parent,signature) cap,
+   *     governs committer identity);
    *   - the `recovery_spawned` trace emit and the `internalBus().emit` stay
    *     OUTSIDE the batch (best-effort wake hints).
    *
@@ -1330,9 +1330,6 @@ export class Arc {
    */
   async spawnMainCommitterRecovery(input: {
     sourceTaskId: string
-    dirtyMainHash: string | null
-    /** HEAD-aware episode key for done-suppression; null when git rev-parse HEAD failed. */
-    episodeHash: string | null
     integrationBranch: string
     dispatchPhase: 'dispatch' | 'verify' | 'merge'
     recipePrompt: string
@@ -1344,10 +1341,6 @@ export class Arc {
     const now = new Date().toISOString()
     const payload: MainCommiterPayload = {
       recipe: MAIN_COMMITER_RECIPE,
-      // Empty string when hash compute failed — keeps the payload shape stable
-      // and signals "no dedup possible" to anyone reading.
-      dirtyMainHash: input.dirtyMainHash ?? '',
-      episodeHash: input.episodeHash,
       integrationBranch: input.integrationBranch,
     }
     await s.batch(
@@ -1431,7 +1424,6 @@ export class Arc {
         payload: {
           recipe: MAIN_COMMITER_RECIPE,
           sourceTaskId: input.sourceTaskId,
-          dirtyMainHash: input.dirtyMainHash,
           integrationBranch: input.integrationBranch,
           dispatchPhase: input.dispatchPhase,
         },

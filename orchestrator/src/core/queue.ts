@@ -358,9 +358,9 @@ export interface Task {
   previewValidated: boolean
   /**
    * Recipe-specific payload preserved with a recovery task. NULL for every
-   * non-recovery row. Slice F.2 stores `{ recipe, dirtyMainHash }` here for
-   * `main-commiter` recoveries; later recipes that need typed sidecar state
-   * can reuse the same column with their own JSON shape. The persistence
+   * non-recovery row. Slice F.2 stores `{ recipe, integrationBranch }` here
+   * for `main-commiter` recoveries; later recipes that need typed sidecar
+   * state can reuse the same column with their own JSON shape. The persistence
    * layer treats it as an opaque string; recipe code parses it.
    */
   recoveryPayload: string | null
@@ -2377,7 +2377,7 @@ export const updateTask = async (
       failureReasonCode?: string | null
       /**
        * JSON-encoded sidecar for recovery (kind='fix') rows. Slice F.2 stores
-       * `{ recipe, dirtyMainHash }` here for `main-commiter` recoveries.
+       * `{ recipe, integrationBranch }` here for `main-commiter` recoveries.
        */
       recoveryPayload?: string | null
     }
