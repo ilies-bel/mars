@@ -101,9 +101,6 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
               <StringList items={spec.doneCriteria} />
             </div>
           ) : null}
-          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-            {spec.taskType}
-          </p>
         </div>
       ) : null}
     </div>
@@ -244,10 +241,13 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
         aria-hidden="true"
         data-closing={closing ? 'true' : undefined}
         className="modal-scrim fixed inset-0 z-40 bg-fg/40"
-        onClick={handleClose}
       />
-      {/* Centering wrapper at z-50 */}
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Centering wrapper at z-50 — clicking the empty area outside the panel closes the modal */}
+      <div
+        data-testid="release-notes-backdrop"
+        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        onClick={(e) => { if (e.target === e.currentTarget) handleClose() }}
+      >
         <aside
           ref={dialogRef}
           role="dialog"

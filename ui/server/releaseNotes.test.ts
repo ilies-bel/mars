@@ -137,7 +137,6 @@ describe('buildReleaseNotes', () => {
       files: ['src/foo.ts'],
       verifyCmd: 'npm test',
       doneCriteria: ['all tests pass'],
-      taskType: 'auto',
     }
     const tasks = [makeTask({ id: 'task-spec', spec })]
     const entries = buildReleaseNotes(tasks)

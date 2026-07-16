@@ -743,7 +743,6 @@ const releaseNoteSpecSchema = z.object({
   files: z.array(z.string()),
   verifyCmd: z.string().nullable(),
   doneCriteria: z.array(z.string()),
-  taskType: z.string(),
 })
 
 export const releaseNoteEntrySchema = z.object({

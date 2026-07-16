@@ -45,7 +45,6 @@ const ENTRY_WITH_RECOVERY: ReleaseNoteEntry = {
       files: ['src/foo.ts'],
       verifyCmd: 'npm test',
       doneCriteria: ['All tests pass'],
-      taskType: 'auto',
     },
     recoveryCount: 2,
   },
@@ -320,11 +319,11 @@ describe('ReleaseNotesModal – unseen divider', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Click-outside (scrim) dismissal
+// Click-outside (backdrop) dismissal
 // ---------------------------------------------------------------------------
 
 describe('ReleaseNotesModal – click-outside dismissal', () => {
-  it('calls onClose after clicking the backdrop overlay', async () => {
+  it('calls onClose after clicking the empty area outside the panel', async () => {
     vi.useFakeTimers()
 
     const onClose = vi.fn()
@@ -341,23 +340,67 @@ describe('ReleaseNotesModal – click-outside dismissal', () => {
         root.render(<ReleaseNotesModal onClose={onClose} />)
       })
 
-      const overlay = container.querySelector('[data-testid="release-notes-overlay"]') as HTMLElement
-      expect(overlay).not.toBeNull()
+      // The centering wrapper carries the dismiss handler with a target guard.
+      const backdrop = container.querySelector('[data-testid="release-notes-backdrop"]') as HTMLElement
+      expect(backdrop).not.toBeNull()
 
-      // Click the scrim — handleClose fires synchronously, sets closing=true
+      // Dispatch the click directly on the backdrop element so e.target === e.currentTarget.
       await act(async () => {
-        overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       })
 
-      // The panel signals the exit animation immediately via data-closing
+      // The scrim signals the exit animation immediately via data-closing.
+      const overlay = container.querySelector('[data-testid="release-notes-overlay"]') as HTMLElement
       expect(overlay.getAttribute('data-closing')).toBe('true')
 
-      // Advance past the 180 ms exit-animation delay
+      // Advance past the 180 ms exit-animation delay.
       await act(async () => {
         vi.advanceTimersByTime(200)
       })
 
       expect(onClose).toHaveBeenCalledTimes(1)
+    } finally {
+      await act(async () => {
+        root?.unmount()
+      })
+      document.body.removeChild(container)
+      vi.useRealTimers()
+    }
+  })
+
+  it('does NOT call onClose when clicking inside the panel', async () => {
+    vi.useFakeTimers()
+
+    const onClose = vi.fn()
+    nextResult = loaded([ENTRY_NO_RECOVERY])
+    nextCursorResult = { isPending: false, isError: false, data: { lastViewedAt: null } }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    let root: Root | null = null
+    try {
+      await act(async () => {
+        root = createRoot(container)
+        root.render(<ReleaseNotesModal onClose={onClose} />)
+      })
+
+      // Click inside the panel — the event bubbles to the backdrop, but
+      // e.target (the aside) !== e.currentTarget (the backdrop), so the guard
+      // prevents handleClose from firing.
+      const panel = container.querySelector('[data-testid="release-notes-drawer"]') as HTMLElement
+      expect(panel).not.toBeNull()
+
+      await act(async () => {
+        panel.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+
+      // Advance well past the 180 ms exit-animation window — onClose must not fire.
+      await act(async () => {
+        vi.advanceTimersByTime(300)
+      })
+
+      expect(onClose).not.toHaveBeenCalled()
     } finally {
       await act(async () => {
         root?.unmount()
