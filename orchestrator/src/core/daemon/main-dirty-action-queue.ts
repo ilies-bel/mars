@@ -22,17 +22,14 @@ import { MAIN_COMMITER_RECIPE } from '../lib/main-dirty'
 import { Arc } from '../arc'
 
 /**
- * SQL fragment that matches an open actionQueue row associated with a recovery
- * whose `recovery_payload.recipe = 'main-commiter'`. We can't filter on
- * the action_queue_items table alone (it carries no payload-shape pointer at the
- * recipe level beyond the title/raisedBy strings); the canonical query is
- * a join through the recovery task id stored on the actionQueue row's payload.
+ * SQL fragment that matches open actionQueue rows for failed `main-commiter`
+ * recoveries on the same integration branch as the just-succeeded committer,
+ * excluding the fresh committer itself.
  *
- * Implementation note: rather than crack open the actionQueue payload, we use
- * the convention that a `main-commiter` failure actionQueue row records the
- * `recoveryTaskId` in its payload — the same shape the recovery-failed
- * pipeline already uses. We join tasks via that pointer and filter by
- * recipe and a non-matching hash.
+ * We join through `recovery_payload.recoveryTaskId` (stored in the
+ * action_queue_items payload by `raiseAggregatedMainCommiterFailureRow`) to
+ * reach the tasks table, then filter on the branch stored in
+ * `recovery_payload.integrationBranch` and exclude the fresh task by id.
  */
 const FIND_STALE_COMMITTER_ACTION_QUEUE_ROWS_SQL = `
   SELECT i.id AS actionQueue_id,
@@ -46,33 +43,33 @@ const FIND_STALE_COMMITTER_ACTION_QUEUE_ROWS_SQL = `
    WHERE i.state = 'open'
      AND t.kind = 'fix'
      AND json_extract(t.recovery_payload, '$.recipe') = ?
-     AND json_extract(t.recovery_payload, '$.dirtyMainHash') != ?
+     AND json_extract(t.recovery_payload, '$.integrationBranch') = ?
+     AND t.id != ?
      AND t.status = 'failed'
 `
 
 /**
- * Scan for `failed`-committer actionQueue rows whose hash is NOT the freshly-
- * resolved hash, and supersede them with `origin-done`. A clean main
- * after a successful committer means those stale rows describe a state
- * that no longer exists.
+ * Scan for `failed`-committer actionQueue rows on the same integration branch
+ * as the fresh committer, and supersede them with `origin-done`. A successful
+ * committer on branch B means every older failed-committer row for branch B
+ * describes a state that has since been resolved — sweep them so the operator's
+ * action queue no longer shows stale entries for that branch.
  *
- * `freshHash` is the hash carried on the just-succeeded committer's
- * `recovery_payload`. Empty-string hash is a degenerate case (the diff
- * compute failed during spawn); we still run the sweep, comparing
- * against `""`, which simply matches no other row.
+ * The fresh committer is excluded by id so its own actionQueue row (if any)
+ * is never touched.
  *
  * The function is idempotent: rerunning when no stale rows exist is a
  * silent no-op.
  */
 export const sweepStaleFailedMainCommiterActionQueue = async (
-  freshHash: string,
+  integrationBranch: string,
   freshRecoveryTaskId: string,
   log: (msg: string) => void,
 ): Promise<void> => {
   const s = await getDefaultTaskStore()
   const r = await s.query({
     sql: FIND_STALE_COMMITTER_ACTION_QUEUE_ROWS_SQL,
-    args: [MAIN_COMMITER_RECIPE, freshHash],
+    args: [MAIN_COMMITER_RECIPE, integrationBranch, freshRecoveryTaskId],
   })
   if (r.rows.length === 0) return
   const seenOrigins = new Set<string>()

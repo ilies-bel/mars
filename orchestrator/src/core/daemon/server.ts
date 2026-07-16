@@ -1914,7 +1914,7 @@ export const startDaemon = async (
             const payload = parseMainCommiterPayload(after.recoveryPayload)
             if (payload && payload.recipe === MAIN_COMMITER_RECIPE) {
               await sweepStaleFailedMainCommiterActionQueue(
-                payload.dirtyMainHash,
+                payload.integrationBranch,
                 after.id,
                 log,
               )

@@ -150,7 +150,7 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('supersedes actionQueue rows for previously-failed committers at DIFFERENT hashes', async () => {
+  it('resolves both stale rows when two failed committers on main are superseded by a succeeding committer on main', async () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
@@ -158,61 +158,61 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
       const r = await import('../../lib/run-tool')
       return { ...m, nullTraceStore: r.nullTraceStore }
     })()
-    // Old failed committer at hash A.
-    const oldSrc = await queue.enqueueTask('old', undefined, {
-      skipTriage: true,
-    })
-    const old = await spawnOrAttachMainCommitter({
-      sourceTaskId: oldSrc.id,
+    const { raiseAggregatedMainCommiterFailureRow, sweepStaleFailedMainCommiterActionQueue } =
+      await import('../main-dirty-action-queue')
+
+    // First failed committer on main.
+    const src1 = await queue.enqueueTask('first task', undefined, { skipTriage: true })
+    const old1 = await spawnOrAttachMainCommitter({
+      sourceTaskId: src1.id,
       detection: { dirty: true, hash: 'a'.repeat(64), episodeHash: null, statusOutput: '' },
       integrationBranch: 'main',
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
-      sourceOriginId: oldSrc.id,
+      sourceOriginId: src1.id,
       traceStore: nullTraceStore,
     })
-    await queue.updateTask(old.fixTaskId, {
-      status: 'failed',
-      error: 'old committer failed',
-    })
-    const { raiseAggregatedMainCommiterFailureRow } = await import(
-      '../main-dirty-action-queue'
-    )
-    const oldActionQueueId = await raiseAggregatedMainCommiterFailureRow(
-      old.fixTaskId,
-      noopLog,
-    )
-    expect(oldActionQueueId).toBeTruthy()
+    await queue.updateTask(old1.fixTaskId, { status: 'failed', error: 'first committer failed' })
+    const oldId1 = await raiseAggregatedMainCommiterFailureRow(old1.fixTaskId, noopLog)
+    expect(oldId1).toBeTruthy()
 
-    // Fresh committer succeeds at hash B.
-    const newSrc = await queue.enqueueTask('new', undefined, {
-      skipTriage: true,
-    })
-    const fresh = await spawnOrAttachMainCommitter({
-      sourceTaskId: newSrc.id,
+    // Second failed committer on main (first having already failed).
+    const src2 = await queue.enqueueTask('second task', undefined, { skipTriage: true })
+    const old2 = await spawnOrAttachMainCommitter({
+      sourceTaskId: src2.id,
       detection: { dirty: true, hash: 'b'.repeat(64), episodeHash: null, statusOutput: '' },
       integrationBranch: 'main',
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
-      sourceOriginId: newSrc.id,
+      sourceOriginId: src2.id,
+      traceStore: nullTraceStore,
+    })
+    await queue.updateTask(old2.fixTaskId, { status: 'failed', error: 'second committer failed' })
+    const oldId2 = await raiseAggregatedMainCommiterFailureRow(old2.fixTaskId, noopLog)
+    expect(oldId2).toBeTruthy()
+
+    // Fresh committer on main succeeds.
+    const src3 = await queue.enqueueTask('third task', undefined, { skipTriage: true })
+    const fresh = await spawnOrAttachMainCommitter({
+      sourceTaskId: src3.id,
+      detection: { dirty: true, hash: 'c'.repeat(64), episodeHash: null, statusOutput: '' },
+      integrationBranch: 'main',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'p',
+      sourceOriginId: src3.id,
       traceStore: nullTraceStore,
     })
 
-    const { sweepStaleFailedMainCommiterActionQueue } = await import(
-      '../main-dirty-action-queue'
-    )
-    await sweepStaleFailedMainCommiterActionQueue(
-      'b'.repeat(64),
-      fresh.fixTaskId,
-      noopLog,
-    )
+    await sweepStaleFailedMainCommiterActionQueue('main', fresh.fixTaskId, noopLog)
 
     const actionQueue = await import('../../lib/action-queue')
-    const item = await actionQueue.getActionQueueItem(oldActionQueueId!)
-    expect(item!.state).toBe('resolved')
+    const item1 = await actionQueue.getActionQueueItem(oldId1!)
+    const item2 = await actionQueue.getActionQueueItem(oldId2!)
+    expect(item1!.state).toBe('resolved')
+    expect(item2!.state).toBe('resolved')
   })
 
-  it('leaves an actionQueue row alone when its hash matches the fresh hash', async () => {
+  it('leaves a failed committer on release-2026-01 untouched when a committer on main succeeds', async () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
     const { spawnOrAttachMainCommitter, nullTraceStore } = await (async () => {
@@ -220,44 +220,45 @@ describe('sweepStaleFailedMainCommiterActionQueue', () => {
       const r = await import('../../lib/run-tool')
       return { ...m, nullTraceStore: r.nullTraceStore }
     })()
-    const src = await queue.enqueueTask('same-hash', undefined, {
-      skipTriage: true,
+    const { raiseAggregatedMainCommiterFailureRow, sweepStaleFailedMainCommiterActionQueue } =
+      await import('../main-dirty-action-queue')
+
+    // Failed committer on the release branch.
+    const releaseSrc = await queue.enqueueTask('release task', undefined, { skipTriage: true })
+    const releaseCommitter = await spawnOrAttachMainCommitter({
+      sourceTaskId: releaseSrc.id,
+      detection: { dirty: true, hash: 'd'.repeat(64), episodeHash: null, statusOutput: '' },
+      integrationBranch: 'release-2026-01',
+      dispatchPhase: 'dispatch',
+      recipePrompt: 'p',
+      sourceOriginId: releaseSrc.id,
+      traceStore: nullTraceStore,
     })
-    const c = await spawnOrAttachMainCommitter({
-      sourceTaskId: src.id,
-      detection: { dirty: true, hash: 'c'.repeat(64), episodeHash: null, statusOutput: '' },
+    await queue.updateTask(releaseCommitter.fixTaskId, { status: 'failed', error: 'release committer failed' })
+    const releaseActionQueueId = await raiseAggregatedMainCommiterFailureRow(
+      releaseCommitter.fixTaskId,
+      noopLog,
+    )
+    expect(releaseActionQueueId).toBeTruthy()
+
+    // Fresh committer on main succeeds.
+    const mainSrc = await queue.enqueueTask('main task', undefined, { skipTriage: true })
+    const mainFresh = await spawnOrAttachMainCommitter({
+      sourceTaskId: mainSrc.id,
+      detection: { dirty: true, hash: 'e'.repeat(64), episodeHash: null, statusOutput: '' },
       integrationBranch: 'main',
       dispatchPhase: 'dispatch',
       recipePrompt: 'p',
-      sourceOriginId: src.id,
+      sourceOriginId: mainSrc.id,
       traceStore: nullTraceStore,
     })
-    await queue.updateTask(c.fixTaskId, {
-      status: 'failed',
-      error: 'committer failed',
-    })
-    const { raiseAggregatedMainCommiterFailureRow } = await import(
-      '../main-dirty-action-queue'
-    )
-    const actionQueueId = await raiseAggregatedMainCommiterFailureRow(
-      c.fixTaskId,
-      noopLog,
-    )
-    expect(actionQueueId).toBeTruthy()
 
-    const { sweepStaleFailedMainCommiterActionQueue } = await import(
-      '../main-dirty-action-queue'
-    )
-    // Sweep with the SAME hash — must NOT resolve the row.
-    await sweepStaleFailedMainCommiterActionQueue(
-      'c'.repeat(64),
-      'unrelated-fresh',
-      noopLog,
-    )
+    // Sweep only main — must not touch the release-2026-01 row.
+    await sweepStaleFailedMainCommiterActionQueue('main', mainFresh.fixTaskId, noopLog)
 
     const actionQueue = await import('../../lib/action-queue')
-    const item = await actionQueue.getActionQueueItem(actionQueueId!)
-    expect(item!.state).toBe('open')
+    const releaseItem = await actionQueue.getActionQueueItem(releaseActionQueueId!)
+    expect(releaseItem!.state).toBe('open')
   })
 })
 
