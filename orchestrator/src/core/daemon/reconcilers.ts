@@ -16,6 +16,7 @@
  */
 
 import { listTasks } from '../queue'
+import { getDefaultDomainTaskStore } from '../store/task-store'
 import { listProposals } from '../proposals'
 import { sweepOrphanRunningSpans } from '../lib/trace-events-store'
 import { Arc } from '../arc'
@@ -108,12 +109,8 @@ const recoveryDonePropagation: Reconciler = {
   name: 'recovery-done-propagation',
   async run({ log, bus }) {
     try {
-      const { resolveQueueClient, TASK_SEL, rowToTask } = await import('../queue')
       const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import('../lib/main-dirty')
-      const r = await resolveQueueClient().execute(
-        `${TASK_SEL} WHERE t.kind = 'fix' AND t.status = 'done' AND t.fix_for_task_id IS NOT NULL`,
-      )
-      const doneFixes = r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
+      const doneFixes = await getDefaultDomainTaskStore().listDoneFixTasks()
 
       let propagated = 0
       let requeued = 0
@@ -296,6 +293,9 @@ const staleActionQueueSweep: Reconciler = {
   name: 'stale-action-queue-sweep',
   async run({ log }) {
     try {
+      // TODO(mars-8a44f22d): reconcileTerminalTasks currently requires a raw
+      // Client. Convert its API to accept a DomainTaskStore so this dynamic
+      // resolveQueueClient() import can be retired.
       const { resolveQueueClient } = await import('../queue')
       const { reconcileTerminalTasks } = await import('./lifecycle-reconcile')
       const { rowsResolved } = await reconcileTerminalTasks(resolveQueueClient())
@@ -357,6 +357,10 @@ const ghostSubscriberSweep: Reconciler = {
   name: 'ghost-subscriber-sweep',
   async run({ log }) {
     try {
+      // TODO(mars-8a44f22d): ghostSubscriberSweep queries the `subscribers` and
+      // `sqlite_master` tables which are below the task-domain seam. Add a
+      // `listGhostSubscribers(knownNames)` typed method to DomainTaskStore (or a
+      // separate SubscriberStore) to retire this resolveQueueClient() usage.
       const { resolveQueueClient } = await import('../queue')
       const { knownSubscriberNames } = await import('../../outbox/registry')
 

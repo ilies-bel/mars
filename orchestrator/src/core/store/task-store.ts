@@ -56,6 +56,8 @@ import {
   listTasksForProposal as queueListTasksForProposal,
   upsertTranscript as queueUpsertTranscript,
   getTranscript as queueGetTranscript,
+  TASK_SEL,
+  rowToTask,
 } from '../queue'
 import type {
   Task,
@@ -200,6 +202,41 @@ export interface DomainTaskStore {
   listTasksForProposal(
     proposalId: string,
   ): Promise<Array<{ id: string; status: string }>>
+
+  // ── Arc membership / fix-task queries ────────────────────────────────────
+  /**
+   * List every fix task for a given origin task id
+   * (i.e. `tasks WHERE fix_for_task_id = originId`).
+   *
+   * Used by {@link corePurgeTask} to clean up on-disk git artifacts for
+   * cascade fix tasks before the DB row is dropped. Replaces the direct
+   * `resolveQueueClient().execute()` call in daemon/purge-task.ts.
+   */
+  listFixTasksByOrigin(
+    originId: string,
+  ): Promise<Array<{ id: string; worktreePath: string | null; branch: string | null }>>
+
+  /**
+   * List every task sharing the given `origin_id`
+   * (i.e. all arc members including the origin itself).
+   *
+   * Used by {@link coreArcPurge} for its all-or-nothing pre-check and
+   * purge loop. Replaces the direct `resolveQueueClient().execute()` call
+   * in daemon/arc-purge.ts.
+   */
+  listArcMembers(
+    originId: string,
+  ): Promise<Array<{ id: string; branch: string | null }>>
+
+  /**
+   * List every done fix task with a non-null `fix_for_task_id`
+   * (kind='fix', status='done', fix_for_task_id IS NOT NULL).
+   *
+   * Used by the `recovery-done-propagation` reconciler to drive origin
+   * task promotion. Replaces the dynamic `resolveQueueClient().execute()`
+   * call in daemon/reconcilers.ts.
+   */
+  listDoneFixTasks(): Promise<Task[]>
 
   // ── Transcripts ──────────────────────────────────────────────────────────
   upsertTranscript(input: UpsertTranscriptInput): Promise<void>
@@ -351,6 +388,43 @@ export const createTaskStore = (client: Client | null): DomainTaskStore => {
     listSiblings: (originId, excludeTaskId) =>
       queueListSiblings(originId, excludeTaskId),
     listTasksForProposal: (proposalId) => queueListTasksForProposal(proposalId),
+
+    // ── Arc membership / fix-task queries ──────────────────────────────────
+    listFixTasksByOrigin: async (originId) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `SELECT id, worktree_path, branch FROM tasks WHERE fix_for_task_id = ?`,
+        args: [originId],
+      })
+      return r.rows.map((row) => {
+        const r0 = row as unknown as {
+          id: string
+          worktree_path: string | null
+          branch: string | null
+        }
+        return { id: r0.id, worktreePath: r0.worktree_path, branch: r0.branch }
+      })
+    },
+
+    listArcMembers: async (originId) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `SELECT id, branch FROM tasks WHERE origin_id = ?`,
+        args: [originId],
+      })
+      return r.rows.map((row) => {
+        const r0 = row as unknown as { id: string; branch: string | null }
+        return { id: r0.id, branch: r0.branch }
+      })
+    },
+
+    listDoneFixTasks: async () => {
+      const c = guardClient()
+      const r = await c.execute(
+        `${TASK_SEL} WHERE t.kind = 'fix' AND t.status = 'done' AND t.fix_for_task_id IS NOT NULL`,
+      )
+      return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
+    },
 
     // ── Transcripts ────────────────────────────────────────────────────────
     upsertTranscript: (input) => queueUpsertTranscript(input),

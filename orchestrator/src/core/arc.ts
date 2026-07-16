@@ -451,6 +451,9 @@ export class Arc {
       // Common path: wrap state write and event inserts in a single write
       // transaction.  withWriteTx retries on SQLITE_BUSY so a transient lock
       // contention doesn't drop the event.
+      // TODO(mars-8a44f22d): once all callers thread a `store`, retire this
+      // fallback and route through `store.atomic(scope => ...)` like the
+      // `appendSessionId` branch above.
       await withWriteTx(resolveQueueClient(), async (tx) => {
         await tx.execute(updateStmt)
         for (const stmt of input.eventStmts) await tx.execute(stmt)
@@ -524,6 +527,10 @@ export class Arc {
     // so a no-op promote emits nothing. Emitting task.queued lets the
     // Invalidator evict any stale failure row for a task that is live again
     // (ADR-0030).
+    // TODO(mars-8a44f22d): this is the legacy no-store path. Once all callers
+    // of Arc.promoteDraftToQueued / queue.promoteDraftToQueued thread a store,
+    // retire this branch and have them always take the `if (store)` path above
+    // (which uses store.atomic and eliminates this resolveQueueClient() usage).
     const upd = await withWriteTx(resolveQueueClient(), async (tx) => {
       const res = await tx.execute({
         // updated_at first — exempt from STATUS_WRITE arch guard (conditional
@@ -546,12 +553,10 @@ export class Arc {
       return res
     })
     if (upd.rowsAffected === 0) return null
-    const r = await resolveQueueClient().execute({
-      sql: `SELECT * FROM tasks WHERE id = ?`,
-      args: [taskId],
-    })
-    if (r.rows.length === 0) return null
-    return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+    // Read the freshly-promoted row back through the typed getTask seam instead
+    // of a raw resolveQueueClient() SELECT (mars-8a44f22d: close direct-client
+    // escape hatches in arc.ts).
+    return getTask(taskId)
   }
 
   /**
@@ -573,6 +578,12 @@ export class Arc {
   static async promoteDraftToTriaging(taskId: string): Promise<Task | null> {
     await migrateQueueSchema()
     const now = new Date().toISOString()
+    // TODO(mars-8a44f22d): this guarded UPDATE uses a conditional WHERE
+    // (AND status = 'draft') and checks rowsAffected to distinguish a no-op
+    // from a real flip. The `store.atomic(scope => scope.execute(...))` path
+    // (used by promoteDraftToQueued when a store is injected) would express this
+    // cleanly. A store parameter should be threaded through promoteDraftToTriaging
+    // and its callers (dispatcher) to retire this resolveQueueClient() usage.
     const upd = await resolveQueueClient().execute({
       sql: `UPDATE tasks
                SET updated_at = ?, status = 'triaging'
@@ -581,12 +592,10 @@ export class Arc {
       args: [now, taskId],
     })
     if (upd.rowsAffected === 0) return null
-    const r = await resolveQueueClient().execute({
-      sql: `SELECT * FROM tasks WHERE id = ?`,
-      args: [taskId],
-    })
-    if (r.rows.length === 0) return null
-    return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
+    // Read the freshly-promoted row back through the typed getTask seam instead
+    // of a raw resolveQueueClient() SELECT (mars-8a44f22d: close direct-client
+    // escape hatches in arc.ts).
+    return getTask(taskId)
   }
 
   /**
@@ -606,6 +615,10 @@ export class Arc {
    */
   static async unblockTask(taskId: string): Promise<UnblockTaskResult> {
     await migrateQueueSchema()
+    // TODO(mars-8a44f22d): unblockTask drives a write transaction via the raw
+    // client.  Thread a `store?: DomainTaskStore` parameter and use
+    // `store.atomic(scope => ...)` for the UPDATE + event inserts so that this
+    // can retire its resolveQueueClient() usage.
     const c = resolveQueueClient()
     const before = await c.execute({
       sql: `SELECT status FROM tasks WHERE id = ?`,

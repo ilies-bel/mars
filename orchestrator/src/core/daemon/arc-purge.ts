@@ -18,13 +18,10 @@
  * purged last so its `fix_for_task_id` cascade handles any remaining fix tasks
  * atomically.
  */
-import {
-  getTask,
-  resolveQueueClient,
-  migrateQueueSchema,
-} from '../queue'
+import { getTask } from '../queue'
 import { corePurgeTask } from './purge-task'
 import { listUniqueCommitsAhead } from '../lib/sweep'
+import { getDefaultDomainTaskStore } from '../store/task-store'
 
 export interface ArcPurgeResult {
   /** Ids of every task that was purged, in the order they were purged. */
@@ -60,15 +57,7 @@ export const coreArcPurge = async (
   const originId = task.originId
 
   // Collect all arc members (tasks sharing this origin_id).
-  await migrateQueueSchema()
-  const membersResult = await resolveQueueClient().execute({
-    sql: `SELECT id, branch FROM tasks WHERE origin_id = ?`,
-    args: [originId],
-  })
-  const members = membersResult.rows as unknown as Array<{
-    id: string
-    branch: string | null
-  }>
+  const members = await getDefaultDomainTaskStore().listArcMembers(originId)
 
   // Pre-check (all-or-nothing): if !force, verify no member has unique commits
   // ahead of the integration branch BEFORE deleting anything. This ensures the
