@@ -2,6 +2,7 @@ import { runCompositionRootMigrations } from '../core/store/task-store'
 import { initProposals } from '../core/proposals'
 import { initActionQueue } from '../core/lib/action-queue'
 import { initSettings } from '../core/lib/settings'
+import { initWorkflowConfigs } from '../core/workflow-configs'
 import { mergeLegacyDatabases } from './merge-databases'
 
 /**
@@ -27,4 +28,5 @@ export const initDatabases = async (): Promise<void> => {
   await initProposals()
   await initActionQueue()
   await initSettings()
+  await initWorkflowConfigs()
 }
