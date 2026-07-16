@@ -476,6 +476,129 @@ describe('worktree-install', () => {
       expect(buildAttempts).toBe(1)
     })
 
+    it('wipes node_modules and reinstalls when a workspace-dep build fails with the rollup optional-dep race pattern', async () => {
+      // The pnpm v10 optional-dependency linking race: pnpm install exits 0
+      // but the platform-specific rollup native binary symlink is not set up,
+      // causing `pnpm run build` (tsup/rollup) to exit 1 with
+      // "Cannot find module @rollup/rollup-darwin-arm64". Retrying the build
+      // alone won't help — the missing symlink is in node_modules. The fix is
+      // to wipe node_modules and reinstall so pnpm re-creates the link tree,
+      // then retry the build once.
+      mkdirSync(resolve(workDir, 'orchestrator'))
+      writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'orchestrator', 'package.json'),
+        JSON.stringify({
+          name: 'orch',
+          dependencies: { '@mars/workflow': 'file:../packages/workflow' },
+        }),
+      )
+      const wfDir = resolve(workDir, 'packages', 'workflow')
+      mkdirSync(resolve(wfDir, 'node_modules', '.bin'), { recursive: true })
+      // Pre-create the tsup binary so the post-install bin check passes without
+      // triggering a second install — keeps install counts unambiguous.
+      writeFileSync(resolve(wfDir, 'node_modules', '.bin', 'tsup'), '#!/usr/bin/env node\n')
+      // No lockfile in wfDir: it is a pre-build dep only, not its own install
+      // site. This means detectInstallSites won't add a fourth install call.
+      writeFileSync(
+        resolve(wfDir, 'package.json'),
+        JSON.stringify({ name: '@mars/workflow', scripts: { build: 'tsup' } }),
+      )
+
+      let buildAttempts = 0
+      let wfInstallAttempts = 0
+      // Track whether node_modules was absent at the time of the retry install.
+      let nodeModulesAbsentOnRetryInstall: boolean | null = null
+      const runner = async (
+        cmd: string,
+        args: readonly string[],
+        cwd: string,
+      ): Promise<RunSubprocessResult> => {
+        // Count install calls that target the workflow dep directory.
+        if (cwd === wfDir && args[0] !== 'run') {
+          wfInstallAttempts++
+          if (wfInstallAttempts === 2) {
+            // On the retry install, verify node_modules was wiped first.
+            const { existsSync: eS } = await import('node:fs')
+            nodeModulesAbsentOnRetryInstall = !eS(resolve(wfDir, 'node_modules'))
+          }
+          return ok()
+        }
+        if (cmd === 'pnpm' && args[0] === 'run' && args[1] === 'build' && cwd === wfDir) {
+          buildAttempts++
+          if (buildAttempts === 1) {
+            return {
+              exitCode: 1,
+              stdout: '',
+              stderr:
+                'Error: Cannot find module @rollup/rollup-darwin-arm64. npm has a bug related to optional dependencies (https://github.com/npm/cli/issues/4828).',
+            }
+          }
+          return ok()
+        }
+        return ok()
+      }
+
+      await expect(
+        installWorktreeDeps({ worktreeRoot: workDir, runner }),
+      ).resolves.toBeDefined()
+
+      // Two build attempts: one failure, one success after reinstall.
+      expect(buildAttempts).toBe(2)
+      // Two install attempts for the workflow dep: initial + retry after wipe.
+      expect(wfInstallAttempts).toBe(2)
+      // node_modules must have been absent when the retry install ran.
+      expect(nodeModulesAbsentOnRetryInstall).toBe(true)
+    })
+
+    it('does not recover from a rollup optional-dep race if the reinstall also fails', async () => {
+      // If the retry install itself exits non-zero, surface the error immediately
+      // rather than looping indefinitely.
+      mkdirSync(resolve(workDir, 'orchestrator'))
+      writeFileSync(resolve(workDir, 'orchestrator', 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(workDir, 'orchestrator', 'package.json'),
+        JSON.stringify({
+          name: 'orch',
+          dependencies: { '@mars/workflow': 'file:../packages/workflow' },
+        }),
+      )
+      const wfDir = resolve(workDir, 'packages', 'workflow')
+      mkdirSync(wfDir, { recursive: true })
+      writeFileSync(resolve(wfDir, 'pnpm-lock.yaml'), '')
+      writeFileSync(
+        resolve(wfDir, 'package.json'),
+        JSON.stringify({ name: '@mars/workflow', scripts: { build: 'tsup' } }),
+      )
+
+      let wfInstallAttempts = 0
+      const runner = async (
+        cmd: string,
+        args: readonly string[],
+        cwd: string,
+      ): Promise<RunSubprocessResult> => {
+        if (cwd === wfDir && (args[0] === 'install' || args.includes('install'))) {
+          wfInstallAttempts++
+          if (wfInstallAttempts === 2) {
+            return fail('ERR_PNPM_REGISTRY: connection refused')
+          }
+          return ok()
+        }
+        if (cmd === 'pnpm' && args[0] === 'run' && args[1] === 'build' && cwd === wfDir) {
+          return {
+            exitCode: 1,
+            stdout: '',
+            stderr: 'Error: Cannot find module @rollup/rollup-darwin-arm64.',
+          }
+        }
+        return ok()
+      }
+
+      await expect(
+        installWorktreeDeps({ worktreeRoot: workDir, runner }),
+      ).rejects.toThrow(/workspace dep/)
+    })
+
     it('surfaces stdout in the workspace-dep build error (tsc/tsup emit failure detail on stdout)', async () => {
       // The original link:-pre-build regression (3c78adcc) surfaced as
       // `workspace dep build failed (orchestrator): pnpm run build exited 2`

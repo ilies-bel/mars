@@ -449,6 +449,37 @@ export const buildWorkspaceDepsForSite = async (
         env: { CI: 'true' },
       })
     }
+    // Rollup optional-dependency race (pnpm v10): pnpm exits 0 but does not
+    // create the platform-specific native binary symlink (e.g.
+    // @rollup/rollup-darwin-arm64). The subsequent `pnpm run build` (tsup's
+    // rollup DTS pass) exits 1 with "Cannot find module @rollup/rollup-xxx".
+    // Retrying the build alone doesn't help because the missing symlink is in
+    // node_modules. The fix is to wipe node_modules and reinstall so pnpm
+    // re-creates the full link tree, then retry the build once.
+    if (
+      r.exitCode !== 0 &&
+      (r.stderr + r.stdout).includes('Cannot find module @rollup/rollup-')
+    ) {
+      log?.(
+        `[setup:install] workspace dep (${rel}) rollup optional-dep race detected — wiping node_modules and reinstalling`,
+      )
+      await rm(resolve(depDir, 'node_modules'), { recursive: true, force: true })
+      const repairInstallRes = await runner(site.manager, depInstallArgs, depDir, {
+        timeoutMs,
+        env: { CI: 'true' },
+      })
+      if (repairInstallRes.exitCode !== 0) {
+        throw new Error(
+          `[setup:install] workspace dep repair install failed (${rel}): ${site.manager} ${depInstallArgs.join(' ')} exited ${repairInstallRes.exitCode}\n` +
+            `stderr (truncated):\n${repairInstallRes.stderr.slice(0, 1000)}\n` +
+            `stdout (truncated):\n${repairInstallRes.stdout.slice(0, 1000)}`,
+        )
+      }
+      r = await runner(site.manager, ['run', 'build'], depDir, {
+        timeoutMs,
+        env: { CI: 'true' },
+      })
+    }
     if (r.exitCode !== 0) {
       // Include BOTH stderr and stdout: `tsc --noEmit`, `tsup`'s DTS pass,
       // and several other build tools emit failure detail on stdout, not
