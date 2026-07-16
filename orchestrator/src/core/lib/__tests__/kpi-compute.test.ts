@@ -113,6 +113,35 @@ const insertSignal = async (
   })
 }
 
+// Insert an origin-level (Planner/Slicer) trace event: task_id IS NULL,
+// keyed only by origin_id. This is the Path 3 pattern.
+const insertOriginSignal = async (
+  store: TaskStore,
+  opts: {
+    originId: string
+    inputTokens?: number
+    outputTokens?: number
+    cacheCreateTokens?: number
+    cacheReadTokens?: number
+  },
+): Promise<void> => {
+  const payload = JSON.stringify({
+    stepName: 'generate-slices',
+    usageSignals: {
+      inputTokens: opts.inputTokens ?? 0,
+      outputTokens: opts.outputTokens ?? 0,
+      cacheCreateTokens: opts.cacheCreateTokens ?? 0,
+      cacheReadTokens: opts.cacheReadTokens ?? 0,
+      messageCount: 1,
+    },
+  })
+  await store.execute({
+    sql: `INSERT INTO trace_events (id, timestamp, kind, task_id, origin_id, payload)
+          VALUES (?, ?, 'step_ended', NULL, ?, ?)`,
+    args: [randomUUID(), '2026-01-04T12:00:01Z', opts.originId, payload],
+  })
+}
+
 // Window that covers our test tasks
 const WINDOW = {
   windowStart: '2026-01-01T00:00:00Z',
@@ -485,6 +514,83 @@ describe('computeCostPerArcDistribution — dangling-origin arc', () => {
 
     expect(result.sampleCount).toBe(1)
     // Total must be 200 + 300 = 500, not 200 + 300 + 300 (no double-count)
+    expect(result.p50).toBeCloseTo(500, 10)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9b. Path 3 — origin-level (Planner/Slicer) signals (task_id IS NULL)
+// ---------------------------------------------------------------------------
+
+describe('computeCostPerArcDistribution — Path 3: origin-level Planner/Slicer signals', () => {
+  it('includes origin-level signal (task_id NULL, origin_id = arc_id) in weighted_tokens', async () => {
+    const store = await makeStore()
+    // Arc 'planner-arc': member task exists, but the Planner/Slicer ran before
+    // any child task existed, so its step_ended event has task_id=NULL and
+    // origin_id='planner-arc'.
+    await insertTask(store, {
+      id: 'planner-member',
+      status: 'done',
+      origin_id: 'planner-arc',
+    })
+    // cacheReadTokens=1000 → weighted contribution = 1000 * 0.1 = 100
+    await insertOriginSignal(store, { originId: 'planner-arc', cacheReadTokens: 1000 })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.sampleCount).toBe(1)
+    expect(result.p50).toBeCloseTo(100, 10)
+  })
+
+  it('listCostPerArcArcs returns arc with costTokens from origin-level signal', async () => {
+    const store = await makeStore()
+    await insertTask(store, {
+      id: 'planner-member-2',
+      status: 'done',
+      origin_id: 'planner-arc-2',
+    })
+    // cacheReadTokens=2000 → weighted contribution = 2000 * 0.1 = 200
+    await insertOriginSignal(store, { originId: 'planner-arc-2', cacheReadTokens: 2000 })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].arcId).toBe('planner-arc-2')
+    expect(arcs[0].costTokens).toBeCloseTo(200, 10)
+  })
+
+  it('does not double-count when an event matches both a task_id branch and the origin_id branch', async () => {
+    const store = await makeStore()
+    // Arc 'dedup-arc': member task exists.
+    // We insert a trace event with BOTH task_id='dedup-arc' (matches Path 2)
+    // AND origin_id='dedup-arc' (matches Path 3). UNION must deduplicate it.
+    await insertTask(store, {
+      id: 'dedup-member',
+      status: 'done',
+      origin_id: 'dedup-arc',
+    })
+    const payload = JSON.stringify({
+      stepName: 'code',
+      usageSignals: {
+        inputTokens: 500,
+        outputTokens: 0,
+        cacheCreateTokens: 0,
+        cacheReadTokens: 0,
+        messageCount: 1,
+      },
+    })
+    // This event has task_id='dedup-arc' (Path 2 match) AND origin_id='dedup-arc'
+    // (Path 3 match). It must appear only once in the weighted sum.
+    await store.execute({
+      sql: `INSERT INTO trace_events (id, timestamp, kind, task_id, origin_id, payload)
+            VALUES (?, ?, 'step_ended', ?, ?, ?)`,
+      args: [randomUUID(), '2026-01-04T12:00:01Z', 'dedup-arc', 'dedup-arc', payload],
+    })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    expect(result.sampleCount).toBe(1)
+    // Must be 500, NOT 1000 (would be 1000 if the event were double-counted)
     expect(result.p50).toBeCloseTo(500, 10)
   })
 })

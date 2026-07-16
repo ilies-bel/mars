@@ -199,6 +199,15 @@ export async function computeCostPerArcDistribution(
             JOIN trace_events te ON te.task_id = da.arc_id
               AND te.kind = 'step_ended'
               AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+            UNION
+            -- Path 3: origin-level trace event (Planner/Slicer steps that run before a
+            -- child task exists: task_id IS NULL, origin_id = arc_id). Without this the
+            -- planning/slicing phase is dropped from the arc's token total.
+            SELECT da.arc_id, te.id AS te_id, te.payload
+            FROM done_arcs da
+            JOIN trace_events te ON te.origin_id = da.arc_id
+              AND te.kind = 'step_ended'
+              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
           )
           SELECT
             da.arc_id,
@@ -582,6 +591,15 @@ export async function listCostPerArcArcs(
             SELECT da.arc_id, te.id AS te_id, te.payload
             FROM done_arcs da
             JOIN trace_events te ON te.task_id = da.arc_id
+              AND te.kind = 'step_ended'
+              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+            UNION
+            -- Path 3: origin-level trace event (Planner/Slicer steps that run before a
+            -- child task exists: task_id IS NULL, origin_id = arc_id). Without this the
+            -- planning/slicing phase is dropped from the arc's token total.
+            SELECT da.arc_id, te.id AS te_id, te.payload
+            FROM done_arcs da
+            JOIN trace_events te ON te.origin_id = da.arc_id
               AND te.kind = 'step_ended'
               AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
           )
