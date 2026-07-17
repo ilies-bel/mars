@@ -3,6 +3,7 @@ import { initProposals } from '../core/proposals'
 import { initActionQueue } from '../core/lib/action-queue'
 import { initSettings } from '../core/lib/settings'
 import { initWorkflowConfigs } from '../core/workflow-configs'
+import { initPromotionLedger } from '../core/promotion-ledger'
 import { mergeLegacyDatabases } from './merge-databases'
 
 /**
@@ -29,4 +30,5 @@ export const initDatabases = async (): Promise<void> => {
   await initActionQueue()
   await initSettings()
   await initWorkflowConfigs()
+  await initPromotionLedger()
 }
