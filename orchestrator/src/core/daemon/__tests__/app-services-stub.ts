@@ -75,6 +75,8 @@ export const stubAppServices = (
   }),
   viewArcs: async () => [],
   viewScorerTrend: async () => ({ trends: [], recent: [] }),
+  viewWorkflowConfigs: async () => ({ configs: [] }),
+  viewPromotionLedger: async () => ({ entries: [] }),
   viewFrameworkUpdate: async () => ({
     installed: '0.1.0',
     latest: '0.1.0',

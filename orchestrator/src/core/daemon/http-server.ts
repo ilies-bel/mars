@@ -986,6 +986,36 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/workflow-configs?workflow=<kind> — versioned workflow config
+    // records for a given workflow kind (PRD 5b73d277). Returns {configs}
+    // ordered by version desc. Missing workflow param → 400. Pure read.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/workflow-configs')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const workflow = parsed.searchParams.get('workflow')
+      if (!workflow) {
+        sendJson(res, 400, { error: 'workflow query param is required' })
+        return
+      }
+      deps.appServices
+        .viewWorkflowConfigs(workflow)
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/promotion-ledger?workflow=<kind> — promotion gate decision
+    // history (PRD 5b73d277). Omitting workflow returns entries across all
+    // workflows, ordered by createdAt desc. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/promotion-ledger')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const workflow = parsed.searchParams.get('workflow') ?? undefined
+      deps.appServices
+        .viewPromotionLedger(workflow)
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/arcs?limit=N&withTranscriptOnly=true|false — ranked arc
     // candidates for deep reflection. Wraps listDeepReflectArcCandidates from
     // deep-reflect-query.ts so the UI/daemon can surface what `mars arc reflect`

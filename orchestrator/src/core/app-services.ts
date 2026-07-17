@@ -55,6 +55,15 @@ import {
   type ScorerResult,
   type ScorerTrend,
 } from './scorer-results'
+import {
+  listWorkflowConfigs,
+  type WorkflowConfig,
+} from './workflow-configs'
+import {
+  listPromotionLedgerEntries,
+  type PromotionLedgerEntry,
+} from './promotion-ledger'
+import { resolveStateClient } from './store/state-client'
 import { readKpiSeries, type KpiSeries } from './lib/kpi-snapshots'
 import { computeBudgetStatus, type BudgetStatus } from './lib/spend-meter'
 import {
@@ -187,6 +196,9 @@ export interface AppServices {
   }) => Promise<{ trends: ScorerTrend[]; recent: ScorerResult[] }>
   // ── framework update (poller cache reader) ──────────────────────────────────
   viewFrameworkUpdate: () => Promise<FrameworkUpdateState>
+  // ── workflow configs and promotion ledger (PRD 5b73d277) ──────────────────
+  viewWorkflowConfigs: (workflow: string) => Promise<{ configs: WorkflowConfig[] }>
+  viewPromotionLedger: (workflow?: string) => Promise<{ entries: PromotionLedgerEntry[] }>
 }
 
 /**
@@ -1071,6 +1083,18 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return { trends, recent }
   }
 
+  const viewWorkflowConfigs: AppServices['viewWorkflowConfigs'] = async (workflow) => {
+    const client = resolveStateClient()
+    const configs = await listWorkflowConfigs(client, workflow)
+    return { configs }
+  }
+
+  const viewPromotionLedger: AppServices['viewPromotionLedger'] = async (workflow) => {
+    const client = resolveStateClient()
+    const entries = await listPromotionLedgerEntries(client, workflow)
+    return { entries }
+  }
+
   const listKpis: AppServices['listKpis'] = () => defaultListKpis()
 
   const listKpisSeries: AppServices['listKpisSeries'] = (limit) =>
@@ -1105,6 +1129,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewReflect,
     viewArcs,
     viewScorerTrend,
+    viewWorkflowConfigs,
+    viewPromotionLedger,
     viewFrameworkUpdate,
   }
 }
