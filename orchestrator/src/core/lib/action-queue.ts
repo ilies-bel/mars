@@ -168,6 +168,11 @@ export const ACTION_QUEUE_KINDS = [
   // (ADR-0048): the row exists iff the entity is suggested and leaves only
   // via the entity verbs `mars scorer accept` / `mars scorer dismiss`.
   'scorer-suggested',
+  // A beat-yesterday promotion decision ran for a workflow and produced a
+  // 'promote' or 'retire' verdict. One row per promotion_ledger entry
+  // (keyed on signature=`promotion-decision:<ledgerId>`); idempotent
+  // re-raises bump seen_count. Never raised for 'insufficient-data'.
+  'promotion-decision',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

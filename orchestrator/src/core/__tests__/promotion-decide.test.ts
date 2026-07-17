@@ -103,6 +103,9 @@ interface StateClientMod {
   resolveStateClient: typeof import('../store/state-client').resolveStateClient
   __resetStateClientForTests: typeof import('../store/state-client').__resetStateClientForTests
 }
+interface ActionQueueMod {
+  raiseActionQueueItem: typeof import('../lib/action-queue').raiseActionQueueItem
+}
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-pd-test-'))
@@ -117,6 +120,7 @@ interface TestMods {
   sr: ScorerResultsMod
   pl: PromotionLedgerMod
   sc: StateClientMod
+  aq: ActionQueueMod
 }
 
 const loadMods = async (repo: string): Promise<TestMods> => {
@@ -128,13 +132,14 @@ const loadMods = async (repo: string): Promise<TestMods> => {
   const sr = (await import('../scorer-results')) as unknown as ScorerResultsMod
   const pl = (await import('../promotion-ledger')) as unknown as PromotionLedgerMod
   const sc = (await import('../store/state-client')) as unknown as StateClientMod
+  const aq = (await import('../lib/action-queue')) as unknown as ActionQueueMod
 
   // Initialise all tables.
   await wc.initWorkflowConfigs()
   await sr.initScorerResults()
   await pl.initPromotionLedger()
 
-  return { pd, wc, sr, pl, sc }
+  return { pd, wc, sr, pl, sc, aq }
 }
 
 /** Insert a scored result row directly via SQL (bypass idempotency / scorerId uniqueness). */
@@ -342,5 +347,190 @@ describe('runPromotionDecision (integration)', () => {
 
     const outcome = await pd.runPromotionDecision(client, 'task', { minSamples: 5 })
     expect(outcome).toBeNull()
+  })
+
+  it('promote decision raises one action_queue_items row with kind=promotion-decision referencing the ledger id', async () => {
+    const { pd, wc, sc } = await loadMods(repo)
+    const client = sc.resolveStateClient()
+
+    await wc.insertWorkflowConfig(client, {
+      id: 'wfc-v1',
+      workflow: 'task',
+      version: 1,
+      configHash: 'hash1',
+      status: 'baseline',
+    })
+    await wc.insertWorkflowConfig(client, {
+      id: 'wfc-v2',
+      workflow: 'task',
+      version: 2,
+      configHash: 'hash2',
+      status: 'trial',
+    })
+
+    // trial mean 0.9 vs incumbent mean 0.6 → promote
+    for (let i = 0; i < 5; i++) {
+      await insertScoredResult(client, { workflow: 'task', versionId: 'wfc-v2', score: 0.9, index: i })
+      await insertScoredResult(client, { workflow: 'task', versionId: 'wfc-v1', score: 0.6, index: i + 100 })
+    }
+
+    const outcome = await pd.runPromotionDecision(client, 'task', { minSamples: 5 })
+    expect(outcome).toBe('promote')
+
+    // Exactly one action_queue_items row with kind='promotion-decision'.
+    const rows = await client.execute(
+      `SELECT id, kind, body, payload, state FROM action_queue_items WHERE kind = 'promotion-decision'`,
+    )
+    expect(rows.rows).toHaveLength(1)
+
+    const row = rows.rows[0] as unknown as { id: string; kind: string; body: string; payload: string; state: string }
+    expect(row.kind).toBe('promotion-decision')
+    expect(row.state).toBe('open')
+
+    // Body is human-readable and mentions the workflow, scores, and decision.
+    expect(row.body).toContain('Workflow task:')
+    expect(row.body).toContain('decision: promote')
+    expect(row.body).toContain('0.900')
+
+    // Payload references the ledger entry id.
+    const payload = JSON.parse(row.payload) as Record<string, unknown>
+    expect(typeof payload.ledgerId).toBe('string')
+    expect((payload.ledgerId as string).startsWith('pl-')).toBe(true)
+    expect(payload.workflow).toBe('task')
+    expect(payload.decision).toBe('promote')
+  })
+
+  it('retire decision also raises one action_queue_items row', async () => {
+    const { pd, wc, sc } = await loadMods(repo)
+    const client = sc.resolveStateClient()
+
+    await wc.insertWorkflowConfig(client, {
+      id: 'wfc-v1',
+      workflow: 'task',
+      version: 1,
+      configHash: 'hash1',
+      status: 'baseline',
+    })
+    await wc.insertWorkflowConfig(client, {
+      id: 'wfc-v2',
+      workflow: 'task',
+      version: 2,
+      configHash: 'hash2',
+      status: 'trial',
+    })
+
+    // incumbent mean 0.85 vs trial mean 0.5 → retire
+    for (let i = 0; i < 5; i++) {
+      await insertScoredResult(client, { workflow: 'task', versionId: 'wfc-v2', score: 0.5, index: i })
+      await insertScoredResult(client, { workflow: 'task', versionId: 'wfc-v1', score: 0.85, index: i + 100 })
+    }
+
+    const outcome = await pd.runPromotionDecision(client, 'task', { minSamples: 5 })
+    expect(outcome).toBe('retire')
+
+    const rows = await client.execute(
+      `SELECT id, kind, body, payload, state FROM action_queue_items WHERE kind = 'promotion-decision'`,
+    )
+    expect(rows.rows).toHaveLength(1)
+
+    const row = rows.rows[0] as unknown as { body: string; state: string }
+    expect(row.state).toBe('open')
+    expect(row.body).toContain('decision: retire')
+  })
+
+  it('insufficient-data outcome raises no action_queue_items row', async () => {
+    const { pd, wc, sc } = await loadMods(repo)
+    const client = sc.resolveStateClient()
+
+    await wc.insertWorkflowConfig(client, {
+      id: 'wfc-v1',
+      workflow: 'task',
+      version: 1,
+      configHash: 'hash1',
+      status: 'baseline',
+    })
+    await wc.insertWorkflowConfig(client, {
+      id: 'wfc-v2',
+      workflow: 'task',
+      version: 2,
+      configHash: 'hash2',
+      status: 'trial',
+    })
+
+    // Only 2 scores each — below minSamples=5
+    await insertScoredResult(client, { workflow: 'task', versionId: 'wfc-v2', score: 0.9, index: 0 })
+    await insertScoredResult(client, { workflow: 'task', versionId: 'wfc-v1', score: 0.7, index: 100 })
+
+    const outcome = await pd.runPromotionDecision(client, 'task', { minSamples: 5 })
+    expect(outcome).toBe('insufficient-data')
+
+    // action_queue_items table may not exist yet (raiseActionQueueItem was never called).
+    // Guard with sqlite_master check.
+    const tableExists = await client.execute(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='action_queue_items'`,
+    )
+    if (tableExists.rows.length > 0) {
+      const rows = await client.execute(
+        `SELECT id FROM action_queue_items WHERE kind = 'promotion-decision'`,
+      )
+      expect(rows.rows).toHaveLength(0)
+    }
+  })
+
+  it('raising the same ledger id twice is idempotent (seen_count bumps, no new row)', async () => {
+    const { pd, wc, sc, aq } = await loadMods(repo)
+    const client = sc.resolveStateClient()
+
+    await wc.insertWorkflowConfig(client, {
+      id: 'wfc-v1',
+      workflow: 'task',
+      version: 1,
+      configHash: 'hash1',
+      status: 'baseline',
+    })
+    await wc.insertWorkflowConfig(client, {
+      id: 'wfc-v2',
+      workflow: 'task',
+      version: 2,
+      configHash: 'hash2',
+      status: 'trial',
+    })
+
+    for (let i = 0; i < 5; i++) {
+      await insertScoredResult(client, { workflow: 'task', versionId: 'wfc-v2', score: 0.9, index: i })
+      await insertScoredResult(client, { workflow: 'task', versionId: 'wfc-v1', score: 0.6, index: i + 100 })
+    }
+
+    await pd.runPromotionDecision(client, 'task', { minSamples: 5 })
+
+    // Retrieve the ledger id from the action_queue row's payload.
+    const firstRows = await client.execute(
+      `SELECT payload FROM action_queue_items WHERE kind = 'promotion-decision'`,
+    )
+    expect(firstRows.rows).toHaveLength(1)
+    const payload = JSON.parse(
+      (firstRows.rows[0] as unknown as { payload: string }).payload,
+    ) as Record<string, unknown>
+    const ledgerId = payload.ledgerId as string
+
+    // Re-raise with the same signature — should be idempotent.
+    await aq.raiseActionQueueItem({
+      kind: 'promotion-decision',
+      category: 'daemon',
+      priority: 'normal',
+      title: 'Promotion decision: task',
+      body: 'duplicate raise',
+      payload: { ledgerId },
+      context: {},
+      raisedBy: 'test',
+      signature: `promotion-decision:${ledgerId}`,
+    })
+
+    // Still only one row.
+    const afterRows = await client.execute(
+      `SELECT seen_count FROM action_queue_items WHERE kind = 'promotion-decision'`,
+    )
+    expect(afterRows.rows).toHaveLength(1)
+    expect(Number((afterRows.rows[0] as unknown as { seen_count: number }).seen_count)).toBe(2)
   })
 })

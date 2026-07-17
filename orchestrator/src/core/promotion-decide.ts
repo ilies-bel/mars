@@ -14,6 +14,7 @@
 import { type Client } from '@libsql/client'
 import { getActiveWorkflowConfig, getTrialWorkflowConfig } from './workflow-configs'
 import { recordPromotionLedgerEntry } from './promotion-ledger'
+import { raiseActionQueueItem } from './lib/action-queue'
 
 // ---------------------------------------------------------------------------
 // Pure decision function
@@ -142,7 +143,7 @@ export const runPromotionDecision = async (
   }
 
   // Persist ledger entry.
-  await recordPromotionLedgerEntry(client, {
+  const ledgerEntry = await recordPromotionLedgerEntry(client, {
     workflow,
     candidateVersionId: trial.id,
     incumbentVersionId: incumbent.id,
@@ -152,6 +153,29 @@ export const runPromotionDecision = async (
     incumbentN: incumbentScores.length,
     decision: outcome === 'promote' ? 'promoted' : 'retired',
     decidedAt: Date.now(),
+  })
+
+  // Raise a 'never-silent' action-queue row so the operator sees the
+  // before/after scores. Signature-keyed on the ledger entry id —
+  // idempotent re-raises bump seen_count rather than inserting siblings.
+  await raiseActionQueueItem({
+    kind: 'promotion-decision',
+    category: 'daemon',
+    priority: 'normal',
+    title: `Promotion decision: ${workflow}`,
+    body: `Workflow ${workflow}: candidate v${trial.version} scored ${trialMean !== null ? trialMean.toFixed(3) : 'n/a'} vs incumbent v${incumbent.version} ${incumbentMean !== null ? incumbentMean.toFixed(3) : 'n/a'} — decision: ${outcome}`,
+    payload: {
+      workflow,
+      ledgerId: ledgerEntry.id,
+      candidateVersionId: trial.id,
+      incumbentVersionId: incumbent.id,
+      candidateScore: trialMean,
+      incumbentScore: incumbentMean,
+      decision: outcome,
+    },
+    context: {},
+    raisedBy: 'promotion-engine',
+    signature: `promotion-decision:${ledgerEntry.id}`,
   })
 
   return outcome
