@@ -16,6 +16,7 @@ import {
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import {
   kindBadgeLabel,
+  humanizeFailureCode,
   severityColor,
   severityRowClass,
   summarizeTraceEvent,
@@ -83,6 +84,47 @@ export function matchesKindFilter(item: ActionQueueItem, filter: KindFilter): bo
   return item.kind === 'draft-proposal'
 }
 
+// ---- Accent bar & inline-resolver helpers ----
+
+/** Stable kind → accent-bar background colour. Never driven by priority. */
+const KIND_ACCENT_BG: Record<ActionQueueItem['kind'], string> = {
+  'failed-task': 'bg-error',
+  'arc-failed': 'bg-error',
+  'stale-worktree': 'bg-warn',
+  'awaiting-validation': 'bg-[#1D4ED8]',
+  'draft-proposal': 'bg-success',
+}
+
+/** Ops that receive destructive button styling in the inline resolver. */
+const DESTRUCTIVE_OPS_INLINE = new Set(['purge', 'dismiss', 'reject'])
+
+/**
+ * One-line "why now" subtitle — the most actionable reason an operator
+ * should act on this card. Priority: diagnosis text → errorKind (when
+ * distinct from kind) → failureReasonCode → arc reason → body first line.
+ */
+function whyNowText(item: ActionQueueItem): string | null {
+  if (item.diagnosis?.text) {
+    const line = item.diagnosis.text.split('\n')[0]
+    return line.length > 100 ? `${line.slice(0, 100)}…` : line
+  }
+  if (item.errorKind && item.errorKind !== item.kind) {
+    return humanizeFailureCode(item.errorKind)
+  }
+  if (item.failureReasonCode) {
+    return humanizeFailureCode(item.failureReasonCode)
+  }
+  if (item.kind === 'arc-failed') {
+    const line = item.reason.split('\n')[0]
+    return line.length > 100 ? `${line.slice(0, 100)}…` : line
+  }
+  if (item.body) {
+    const line = item.body.split('\n')[0]
+    return line.length === 0 ? null : line.length > 100 ? `${line.slice(0, 100)}…` : line
+  }
+  return null
+}
+
 // ---- Row ----
 
 interface RowProps {
@@ -96,6 +138,11 @@ interface RowProps {
   restartPending: boolean
   /** Non-null when the last restart attempt for this item failed; shows inline error. */
   restartError: string | null
+  /**
+   * Called when any non-restart action button is clicked in the inline resolver.
+   * The page handles the actual mutation so the row stays stateless w.r.t. React Query.
+   */
+  onAction?: (action: ActionDescriptor, item: ActionQueueItem) => void
 }
 
 export const ActionQueueRow = memo(({
@@ -105,15 +152,19 @@ export const ActionQueueRow = memo(({
   onRestart,
   restartPending,
   restartError,
+  onAction,
 }: RowProps) => {
-  const baseClass = [
-    'cursor-pointer px-3 py-2 transition-colors',
-    active ? 'bg-iron/20' : 'hover:bg-iron/10',
-  ].join(' ')
+  const why = whyNowText(item)
+  // Non-restart actions that appear in the inline resolver and compact pill bar.
+  const nonRestartActions = item.actions.filter((a) => a.op !== 'restart')
 
   return (
     <div
-      className={baseClass}
+      className={[
+        'relative cursor-pointer transition-colors flex items-stretch',
+        active ? 'bg-iron/20' : 'hover:bg-iron/10',
+      ].join(' ')}
+      style={{ contentVisibility: 'auto' }}
       role="button"
       tabIndex={0}
       aria-current={active ? 'true' : undefined}
@@ -134,57 +185,152 @@ export const ActionQueueRow = memo(({
         }
       }}
     >
-      <div className="flex items-baseline gap-2">
-        {item.kind !== 'failed-task' && (
-          <span className="shrink-0 font-mono text-[9px] uppercase text-muted">
-            {kindBadgeLabel(item.kind)}
+      {/* 2px left accent bar — kind-coloured, never priority-coloured */}
+      <div
+        className={`w-0.5 shrink-0 ${KIND_ACCENT_BG[item.kind] ?? 'bg-iron'}`}
+        aria-hidden="true"
+      />
+
+      <div className="min-w-0 flex-1 px-3 py-2">
+        {/* Meta band: kind label + priority pill */}
+        <div className="flex items-baseline gap-2">
+          {item.kind !== 'failed-task' && (
+            <span className="shrink-0 font-mono text-[9px] uppercase text-muted">
+              {kindBadgeLabel(item.kind)}
+            </span>
+          )}
+          <span
+            className={`ml-auto shrink-0 font-mono text-[9px] uppercase ${priorityBadgeClass(item.priority)}`}
+          >
+            {item.priority}
           </span>
-        )}
+        </div>
+
+        {/* Entity ID — monospace, ≥11px for legibility */}
         <span className="break-all font-mono text-[11px] text-iron">
           {item.entityId}
         </span>
-        <span
-          className={`ml-auto shrink-0 font-mono text-[9px] uppercase ${priorityBadgeClass(item.priority)}`}
+
+        {/* Headline: title, line-clamped */}
+        <div
+          className={
+            item.kind === 'draft-proposal'
+              ? 'mt-1 line-clamp-2 break-words font-mono text-[12px] text-fg'
+              : 'mt-1 line-clamp-4 break-words font-mono text-[12px] text-fg'
+          }
+          title={item.kind === 'draft-proposal' ? item.title : undefined}
         >
-          {item.priority}
-        </span>
-      </div>
-      <div
-        className={
-          item.kind === 'draft-proposal'
-            ? 'mt-1 line-clamp-2 break-words font-mono text-[12px] text-fg'
-            : 'mt-1 line-clamp-4 break-words font-mono text-[12px] text-fg'
-        }
-        title={item.kind === 'draft-proposal' ? item.title : undefined}
-      >
-        {item.kind === 'draft-proposal'
-          ? draftRowHeadline(item.title) || '(no title)'
-          : item.title || '(no title)'}
-      </div>
-      <div className="mt-1 flex items-center justify-between gap-2">
-        <span className="font-mono text-[10px] text-muted" title={formatTime(item.at)}>
-          {relativeTime(item.at)}
-        </span>
-        {onRestart !== null && (
-          <button
-            type="button"
-            aria-label={`Restart ${item.entityId}`}
-            disabled={restartPending}
-            onClick={(e) => {
-              e.stopPropagation()
-              onRestart(item.entityId)
-            }}
-            className="shrink-0 border border-fg/60 px-2 py-0.5 font-mono text-[10px] uppercase text-fg transition hover:bg-iron/20 active:scale-[0.97] disabled:opacity-50"
+          {item.kind === 'draft-proposal'
+            ? draftRowHeadline(item.title) || '(no title)'
+            : item.title || '(no title)'}
+        </div>
+
+        {/* "Why now" subtitle — explains why the operator must act */}
+        {why !== null && (
+          <div className="mt-0.5 line-clamp-1 font-mono text-[10px] text-muted" title={why}>
+            {why}
+          </div>
+        )}
+
+        {/* Timestamp + restart button */}
+        <div className="mt-1 flex items-center justify-between gap-2">
+          <span className="font-mono text-[10px] text-muted" title={formatTime(item.at)}>
+            {relativeTime(item.at)}
+          </span>
+          {onRestart !== null && (
+            <button
+              type="button"
+              aria-label={`Restart ${item.entityId}`}
+              disabled={restartPending}
+              onClick={(e) => {
+                e.stopPropagation()
+                onRestart(item.entityId)
+              }}
+              className="shrink-0 border border-fg/60 px-2 py-0.5 font-mono text-[10px] uppercase text-fg transition hover:bg-iron/20 active:scale-[0.97] disabled:opacity-50"
+            >
+              {restartPending ? 'Restarting…' : 'Restart'}
+            </button>
+          )}
+        </div>
+
+        {restartError !== null && (
+          <div className="mt-1 font-mono text-[10px] text-error">
+            {restartError}
+          </div>
+        )}
+
+        {/* Compact verb pills — inactive rows; quick visual affordance */}
+        {!active && nonRestartActions.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {nonRestartActions.slice(0, 3).map((a) => (
+              <span
+                key={a.id}
+                className="border border-iron/20 px-1 font-mono text-[9px] uppercase text-muted"
+              >
+                {a.label}
+              </span>
+            ))}
+            {nonRestartActions.length > 3 && (
+              <span className="font-mono text-[9px] text-muted">
+                +{nonRestartActions.length - 3}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Inline resolver — full verb buttons when row is active/expanded */}
+        {active && nonRestartActions.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {nonRestartActions.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onAction?.(action, item)
+                }}
+                className={[
+                  'border px-2 py-0.5 font-mono text-[10px] uppercase transition active:scale-[0.97]',
+                  DESTRUCTIVE_OPS_INLINE.has(action.op)
+                    ? 'border-error/50 text-error hover:bg-error/10'
+                    : 'border-iron/40 text-fg hover:bg-iron/20',
+                ].join(' ')}
+              >
+                {action.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Kind-specific detail blocks — active only */}
+        {active && item.kind === 'failed-task' && item.diagnosis?.text && (
+          <div className="mt-1 line-clamp-2 font-mono text-[10px] text-muted">
+            {item.diagnosis.text}
+          </div>
+        )}
+        {active && item.kind === 'stale-worktree' && (
+          <div className="mt-1 truncate font-mono text-[10px] text-muted">
+            {item.staleWorktreeDetail.branch ??
+              item.staleWorktreeDetail.prompt?.split('\n')[0]}
+          </div>
+        )}
+        {active && item.kind === 'draft-proposal' && item.body && (
+          <div className="mt-1 line-clamp-2 font-mono text-[10px] text-muted">
+            {item.body.split('\n')[0]}
+          </div>
+        )}
+        {active && item.kind === 'awaiting-validation' && item.devServerUrl && (
+          <a
+            href={item.devServerUrl}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="mt-1 block truncate font-mono text-[10px] text-fg underline underline-offset-2"
           >
-            {restartPending ? 'Restarting…' : 'Restart'}
-          </button>
+            {item.devServerUrl}
+          </a>
         )}
       </div>
-      {restartError !== null && (
-        <div className="mt-1 font-mono text-[10px] text-error">
-          {restartError}
-        </div>
-      )}
     </div>
   )
 })
@@ -1012,6 +1158,34 @@ export const ActionQueuePage = () => {
     setRestartToast(null)
   }, [qc, projectId])
 
+  /**
+   * Handles non-restart inline-resolver actions fired from the row card.
+   * Optimistically removes the row then fires the action — same pattern as
+   * ActionBar in the detail pane, but without the 2-step confirm (the detail
+   * pane covers that flow; the inline resolver is a quick-access affordance).
+   */
+  const handleInlineAction = useCallback(async (action: ActionDescriptor, actionItem: ActionQueueItem) => {
+    await qc.cancelQueries({ queryKey: ['action-queue'] })
+    const snapshot = qc.getQueryData<ActionQueueItem[]>(['action-queue', projectId])
+    if (snapshot) {
+      qc.setQueryData(
+        ['action-queue', projectId],
+        snapshot.filter((i) => i.id !== actionItem.id),
+      )
+    }
+    try {
+      const entityId = PROCESS_LEVEL_OPS.has(action.op) ? undefined : actionItem.entityId
+      await invokeAction(action.op, entityId)
+    } catch {
+      if (snapshot) {
+        qc.setQueryData(['action-queue', projectId], snapshot)
+      }
+    } finally {
+      void qc.invalidateQueries({ queryKey: ['action-queue'] })
+      void qc.invalidateQueries({ queryKey: ['progress'] })
+    }
+  }, [qc, projectId])
+
   // Per-section open/collapsed state; all sections start expanded.
   const [openSections, setOpenSections] = useState<Record<ActionQueueItem['kind'], boolean>>({
     'draft-proposal': true,
@@ -1130,6 +1304,7 @@ export const ActionQueuePage = () => {
                                 ? (restartMutation.error as Error).message
                                 : null
                             }
+                            onAction={handleInlineAction}
                           />
                         ))}
                       </div>
