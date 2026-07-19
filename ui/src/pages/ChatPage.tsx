@@ -907,7 +907,7 @@ const ThreadSidebar = ({ selectedId, projectId, onSelect }: ThreadSidebarProps) 
   })
 
   return (
-    <aside className="flex w-52 flex-col border-r border-iron/30 bg-bg">
+    <aside className="flex w-52 flex-shrink-0 flex-col border-r border-iron/30 bg-bg">
       <div className="border-b border-iron/30 px-2 py-2">
         <button
           type="button"
@@ -982,7 +982,7 @@ export const ChatPage = () => {
         onSelect={(id) => setSelectedThreadId(id || null)}
       />
 
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {selectedThreadId ? (
           <>
             {hasMessages ? (

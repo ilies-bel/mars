@@ -346,7 +346,7 @@ export const ContextRail = ({
   if (collapsed) {
     return (
       <aside
-        className="flex w-8 flex-col items-center border-l border-iron/30 bg-bg py-2 gap-3"
+        className="flex w-8 flex-shrink-0 flex-col items-center border-l border-iron/30 bg-bg py-2 gap-3"
         aria-label="Context rail (collapsed)"
       >
         <button
@@ -364,7 +364,7 @@ export const ContextRail = ({
 
   return (
     <aside
-      className="flex w-56 flex-col border-l border-iron/30 bg-bg overflow-y-auto"
+      className="flex w-56 flex-shrink-0 flex-col border-l border-iron/30 bg-bg overflow-y-auto"
       aria-label="Context rail"
     >
       <div className="flex items-center justify-between border-b border-iron/20 px-3 py-2">
