@@ -200,7 +200,7 @@ vi.mock('../../lib/git/claude', () => ({
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: '' }),
   getThread: vi.fn().mockResolvedValue({
-    thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '' },
+    thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false },
     messages: [],
   }),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
@@ -230,7 +230,7 @@ describe('ChatRunner state machine', () => {
     // Default: subprocess completes immediately.
     mockRunSubprocessStreaming.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '' },
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false },
       messages: [],
     })
   })
@@ -399,7 +399,7 @@ describe('ChatRunner state machine', () => {
 
   it('auto-titles the thread from the first message when title is empty', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '' },
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false },
       messages: [],
     })
 
@@ -415,7 +415,7 @@ describe('ChatRunner state machine', () => {
 
   it('does not auto-title when thread already has messages', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '' },
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false },
       messages: [{ id: 'm1', thread_id: 't1', role: 'user', content: 'prior', segments: null, created_at: '' }],
     })
 

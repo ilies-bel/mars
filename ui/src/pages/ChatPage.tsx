@@ -27,6 +27,7 @@ import {
   renameChatThread,
   deleteChatThread,
   stopChatThread,
+  invokeAction,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert } from '@/shared/schemas'
@@ -226,15 +227,34 @@ const AlertCard = ({
   onDiscuss,
 }: {
   alert: ChatSegmentAlert
-  onDiscuss: () => void
+  onDiscuss: (prompt: string) => void
 }) => {
   const isResolved = alert.resolved ?? false
+  const [pendingOp, setPendingOp] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const buttonClass = (style: 'primary' | 'destructive' | 'default') => {
     const base = 'rounded px-3 py-1 font-mono text-[11px] border transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
     if (style === 'primary') return `${base} border-accent/60 bg-accent/20 text-accent hover:bg-accent/30`
     if (style === 'destructive') return `${base} border-red-400/40 bg-red-900/10 text-red-400 hover:bg-red-900/20`
     return `${base} border-iron/30 text-iron hover:bg-iron/20`
+  }
+
+  const handleAction = async (op: string) => {
+    if (pendingOp) return
+    setPendingOp(op)
+    setActionError(null)
+    try {
+      await invokeAction(op, alert.entityId)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPendingOp(null)
+    }
+  }
+
+  const handleDiscuss = () => {
+    onDiscuss(`Help me resolve this: ${alert.title} (${alert.entityId})`)
   }
 
   return (
@@ -257,6 +277,9 @@ const AlertCard = ({
         )}
       </div>
 
+      {/* Entity id — monospace link label */}
+      <p className="mb-1 font-mono text-[10px] text-iron/50 truncate">{alert.entityId}</p>
+
       {/* Why now */}
       <p className="mb-2 font-mono text-[11px] text-iron leading-relaxed">{alert.whyNow}</p>
 
@@ -269,18 +292,25 @@ const AlertCard = ({
               type="button"
               className={buttonClass(action.style)}
               title={action.op}
+              disabled={pendingOp !== null}
+              onClick={() => void handleAction(action.op)}
             >
-              {action.label}
+              {pendingOp === action.op ? '…' : action.label}
             </button>
           ))}
         </div>
+      )}
+
+      {/* Action error */}
+      {actionError && (
+        <p className="mb-2 font-mono text-[10px] text-red-400">{actionError}</p>
       )}
 
       {/* Discuss button */}
       <button
         type="button"
         className="rounded border border-iron/30 px-2 py-0.5 font-mono text-[10px] text-iron hover:bg-iron/20"
-        onClick={onDiscuss}
+        onClick={handleDiscuss}
       >
         Discuss…
       </button>
@@ -289,7 +319,13 @@ const AlertCard = ({
 }
 
 /** A single chat message rendered with segment grouping. */
-const ChatMessageBubble = ({ msg }: { msg: ChatMessage }) => {
+const ChatMessageBubble = ({
+  msg,
+  onDiscuss,
+}: {
+  msg: ChatMessage
+  onDiscuss: (prompt: string) => void
+}) => {
   const segments = groupMessageSegments(msg)
   const isUser = msg.role === 'user'
 
@@ -316,10 +352,7 @@ const ChatMessageBubble = ({ msg }: { msg: ChatMessage }) => {
               <AlertCard
                 key={i}
                 alert={seg.alert}
-                // Discuss button: focus composer — no-op for now since the
-                // composer is in a parent component; a future pass can wire
-                // this via a context or callback prop.
-                onDiscuss={() => {}}
+                onDiscuss={onDiscuss}
               />
             )
           }
@@ -523,9 +556,10 @@ const LiveAssistantBubble = ({
 interface MessageListProps {
   threadId: string
   projectId?: string
+  onDiscuss: (prompt: string) => void
 }
 
-const MessageList = ({ threadId, projectId }: MessageListProps) => {
+const MessageList = ({ threadId, projectId, onDiscuss }: MessageListProps) => {
   const bottomRef = useRef<HTMLDivElement>(null)
   const qc = useQueryClient()
 
@@ -574,7 +608,7 @@ const MessageList = ({ threadId, projectId }: MessageListProps) => {
   return (
     <div className="flex-1 overflow-y-auto py-3">
       {messages.map((msg) => (
-        <ChatMessageBubble key={msg.id} msg={msg} />
+        <ChatMessageBubble key={msg.id} msg={msg} onDiscuss={onDiscuss} />
       ))}
       {showLive && (
         <LiveAssistantBubble
@@ -913,7 +947,11 @@ export const ChatPage = () => {
         {selectedThreadId ? (
           <>
             {hasMessages ? (
-              <MessageList threadId={selectedThreadId} projectId={projectId} />
+              <MessageList
+                threadId={selectedThreadId}
+                projectId={projectId}
+                onDiscuss={(prompt) => setPrefill(prompt)}
+              />
             ) : (
               <WelcomeState onChipClick={handleChipClick} />
             )}
