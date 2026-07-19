@@ -1410,10 +1410,8 @@ export const verify = async (
         recoveryPayload != null
           ? parseMainCommiterPayload(recoveryPayload)
           : null
-      const steps =
-        commiterPayload?.recipe === MAIN_COMMITER_RECIPE
-          ? []
-          : selectVerifySteps(scopes, changedFiles)
+      const isMainCommitter = commiterPayload?.recipe === MAIN_COMMITER_RECIPE
+      const steps = isMainCommitter ? [] : selectVerifySteps(scopes, changedFiles)
 
       // Serialize verify runs so DB-heavy builds (embedded-PG, Gradle) do not
       // tear down each other's database mid-suite.  This mirrors the merge
@@ -1428,6 +1426,12 @@ export const verify = async (
         steps,
         branch,
         integrationBranch,
+        // Pass changedFiles for non-main-committer tasks so verifyChanges can
+        // enforce the zero-gate guard: a task that changed files but has no
+        // configured task-tier steps must not silently pass (verify:no-gates-configured).
+        // The main-committer recipe omits changedFiles because it intentionally
+        // bypasses all task-tier steps.
+        changedFiles: isMainCommitter ? undefined : changedFiles,
         traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
       }).finally(() => releaseVerifyLock())
 
@@ -1518,16 +1522,25 @@ export const verify = async (
       // Append a structured gate-outcomes block so the run-timeline view can
       // surface per-gate metrics (name, tier, passed, duration) without parsing
       // free-form step output.
+      // Note: `has-diff` is included in r.steps when it passes (it is a real
+      // gate that ran). A non-empty gateOutcomes means at least one gate ran;
+      // an empty array only appears when neither has-diff nor any task steps ran
+      // (should not happen in practice — the zero-gate guard catches the case
+      // where changedFiles is non-empty and steps is empty).
       const gateOutcomes = r.steps.map((s) => ({
         name: s.name,
         tier: s.tier ?? 'task',
         passed: s.passed,
         ...(s.duration !== undefined ? { duration: s.duration } : {}),
       }))
+      const gateOutcomesBlock =
+        gateOutcomes.length === 0
+          ? '(no gates ran)\n[]'
+          : JSON.stringify(gateOutcomes, null, 2)
       capturedVerifyOutput =
         verifyOutput +
         '\n\n=== gate outcomes ===\n' +
-        JSON.stringify(gateOutcomes, null, 2)
+        gateOutcomesBlock
 
       if (!r.passed) {
         const failed = r.steps.filter((s) => !s.passed)

@@ -132,10 +132,10 @@ describe('checkBranchHasDiff (zero-ahead is benign)', () => {
     expect(step.output).toContain('already merged')
   })
 
-  it('verifyChanges proceeds to the configured steps for a no-op branch', async () => {
-    // A no-op branch (tip == integration) passes the gate, so the configured
-    // steps still run — the gate no longer short-circuits a clean no-op. (A
-    // passing gate is not appended to steps; only a failing gate is returned.)
+  it('verifyChanges proceeds to the configured steps for a no-op branch, and has-diff appears first', async () => {
+    // A no-op branch (tip == integration) passes the has-diff gate, so the
+    // configured steps still run. The passing has-diff gate is now included in
+    // results so gate-outcomes correctly shows what ran.
     const r = await verifyChanges({
       cwd: repo,
       branch: 'task/empty',
@@ -143,8 +143,10 @@ describe('checkBranchHasDiff (zero-ahead is benign)', () => {
       steps: [{ name: 'runs-after-gate', ...truthyCmd, required: true }],
     })
     expect(r.passed).toBe(true)
-    expect(r.steps.map((s) => s.name)).toEqual(['runs-after-gate'])
+    expect(r.steps.map((s) => s.name)).toEqual(['has-diff', 'runs-after-gate'])
+    expect(r.steps[0].name).toBe('has-diff')
     expect(r.steps[0].passed).toBe(true)
+    expect(r.steps[1].passed).toBe(true)
   })
 
   it('verifyChanges still short-circuits when the has-diff gate cannot compute the range', async () => {
@@ -639,6 +641,21 @@ describe('main-commiter recovery — verify step exemption', () => {
         : selectVerifySteps(scopeWithSteps, changedFiles)
     expect(steps.map((s) => s.name)).toEqual(['test', 'typecheck', 'lint'])
   })
+
+  it('verifyChanges with zero steps and no changedFiles (main-committer recipe) passes without triggering the zero-gate guard', async () => {
+    // The primitive omits changedFiles for main-committer tasks so the
+    // zero-gate guard does not fire. This regression pin ensures that
+    // behaviour holds — the recipe must remain exempt even if the task
+    // changed files.
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [],
+      // changedFiles intentionally absent — mirrors the primitive's call for
+      // the main-committer recipe (isMainCommitter ? undefined : changedFiles)
+    })
+    expect(r.passed).toBe(true)
+    expect(r.steps).toEqual([])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -734,6 +751,140 @@ describe('typecheck step — no-tsc-toolchain skip guard', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Zero-gate guard (verify:no-gates-configured)
+// ---------------------------------------------------------------------------
+// A task that changed files but has no task-tier steps configured in the
+// supervisor manifest must not silently pass. The verify step should fail with
+// verify:no-gates-configured so the operator knows to regenerate the manifest.
+//
+// Deliberate exceptions that must still pass with zero steps:
+//   1. changedFiles not provided — the main-committer recipe and other callers
+//      that legitimately bypass task-tier steps leave changedFiles unset.
+//   2. changedFiles is empty — the task made no changes (genuine no-op).
+// ---------------------------------------------------------------------------
+describe('zero-gate guard — verify:no-gates-configured', () => {
+  it('fails with no-gates-configured when changedFiles is non-empty and no task-tier steps are configured', async () => {
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [],
+      changedFiles: ['src/foo.ts', 'src/bar.ts'],
+    })
+    expect(r.passed).toBe(false)
+    expect(r.steps).toHaveLength(1)
+    expect(r.steps[0].name).toBe('no-gates-configured')
+    expect(r.steps[0].passed).toBe(false)
+    expect(r.steps[0].tier).toBe('task')
+    expect(r.steps[0].output).toContain('verify:no-gates-configured')
+    expect(r.steps[0].output).toContain('src/foo.ts')
+    expect(r.steps[0].output).toContain('mars init')
+  })
+
+  it('passes when changedFiles is empty even with no task-tier steps (genuine no-op)', async () => {
+    // An empty changedFiles means the task made no file changes — no-op is
+    // legitimate and the guard must not fire.
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [],
+      changedFiles: [],
+    })
+    expect(r.passed).toBe(true)
+    expect(r.steps).toEqual([])
+  })
+
+  it('passes when changedFiles is not provided even with no task-tier steps (main-committer / backward-compat path)', async () => {
+    // The main-committer recipe intentionally selects zero steps and omits
+    // changedFiles — the guard must not fire in this case.
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [],
+      // changedFiles intentionally omitted
+    })
+    expect(r.passed).toBe(true)
+    expect(r.steps).toEqual([])
+  })
+
+  it('no-gates-configured step carries a tier:task label so it appears in gate outcomes', async () => {
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [],
+      changedFiles: ['orchestrator/src/core/lib/git/verify.ts'],
+    })
+    const step = r.steps.find((s) => s.name === 'no-gates-configured')
+    expect(step?.tier).toBe('task')
+  })
+
+  it('no-gates-configured output names the mars init command to fix the issue', async () => {
+    const r = await verifyChanges({
+      cwd: process.cwd(),
+      steps: [],
+      changedFiles: ['some/deeply/nested/file.ts'],
+    })
+    expect(r.steps[0].output).toContain('mars init')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// has-diff gate appears in gate outcomes when it passes
+// ---------------------------------------------------------------------------
+// Previously, a passing has-diff gate was silently discarded from results;
+// only a failing gate was returned. Now the passing gate is included so
+// gate-outcomes correctly shows what ran. (A failing gate is still returned
+// alone via early-return — that path is unchanged.)
+// ---------------------------------------------------------------------------
+describe('has-diff appears in gate outcomes when it passes', () => {
+  let repo: string
+
+  beforeAll(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-has-diff-outcomes-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    writeFileSync(resolve(repo, 'README'), 'hello\n')
+    execFileSync('git', ['add', 'README'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: repo })
+    // task/with-step: one commit ahead of main
+    execFileSync('git', ['checkout', '-q', '-b', 'task/with-step', 'main'], { cwd: repo })
+    writeFileSync(resolve(repo, 'CHANGE'), 'change\n')
+    execFileSync('git', ['add', 'CHANGE'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'add change'], { cwd: repo })
+    // task/noop: branch tip equals main
+    execFileSync('git', ['checkout', '-q', '-b', 'task/noop', 'main'], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+  })
+
+  afterAll(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('has-diff appears as the first step in results when it passes with configured task steps', async () => {
+    const r = await verifyChanges({
+      cwd: repo,
+      branch: 'task/with-step',
+      integrationBranch: 'main',
+      steps: [{ name: 'lint', ...truthyCmd, required: true }],
+    })
+    expect(r.passed).toBe(true)
+    expect(r.steps[0].name).toBe('has-diff')
+    expect(r.steps[0].passed).toBe(true)
+    expect(r.steps.map((s) => s.name)).toEqual(['has-diff', 'lint'])
+  })
+
+  it('has-diff is the sole step in results for a no-op branch with no task steps', async () => {
+    // A no-op task with an empty step list still shows has-diff in gate outcomes.
+    // changedFiles is omitted so the zero-gate guard does not fire.
+    const r = await verifyChanges({
+      cwd: repo,
+      branch: 'task/noop',
+      integrationBranch: 'main',
+      steps: [],
+    })
+    expect(r.passed).toBe(true)
+    expect(r.steps.map((s) => s.name)).toEqual(['has-diff'])
+    expect(r.steps[0].passed).toBe(true)
   })
 })
 

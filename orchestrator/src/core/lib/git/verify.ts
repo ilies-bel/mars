@@ -147,6 +147,17 @@ export interface VerifyArgs {
    *  `expectsFailure: true` so the trace severity is info instead of
    *  flagging every failing verify run as warn. */
   traceCtx?: TraceCtx
+  /**
+   * Repo-relative paths of files the task branch changed. When provided and
+   * non-empty, `verifyChanges` enforces that at least one task-tier step is
+   * configured: a zero-step run with changed files is a configuration error
+   * (the supervisor manifest declares no verify scopes for the changed paths)
+   * and must NOT silently pass.
+   *
+   * Omit (or pass an empty array) to allow zero-step runs — the main-committer
+   * recipe and genuine no-diff no-ops leave this unset.
+   */
+  changedFiles?: ReadonlyArray<string>
 }
 
 const runVerifyStep = async (
@@ -420,6 +431,11 @@ export const verifyChanges = async (
   const verifyCtx: TraceCtx | undefined = args.traceCtx
     ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'verify' }
     : undefined
+
+  // Declare results before the has-diff block so the passing gate can be
+  // included in the output (making gate-outcomes show what actually ran).
+  const results: VerifyStep[] = []
+
   if (args.branch && args.integrationBranch) {
     const diffStep = await checkBranchHasDiff(
       args.cwd,
@@ -430,9 +446,37 @@ export const verifyChanges = async (
     if (!diffStep.passed) {
       return { passed: false, steps: [diffStep] }
     }
+    // Include the passing has-diff gate in results so gate-outcomes correctly
+    // reflects what ran rather than silently dropping built-in gates that pass.
+    results.push(diffStep)
   }
 
-  const results: VerifyStep[] = []
+  // Zero-gate guard: when the caller supplies changed files but zero task-tier
+  // steps are configured, the supervisor manifest has no verify scopes for the
+  // changed paths. Silently passing would mask a misconfiguration that lets
+  // broken code merge undetected — fail with a named signature instead.
+  if (
+    args.changedFiles !== undefined &&
+    args.changedFiles.length > 0 &&
+    args.steps.length === 0
+  ) {
+    const changedList =
+      args.changedFiles.slice(0, 10).join(', ') +
+      (args.changedFiles.length > 10 ? ` … and ${args.changedFiles.length - 10} more` : '')
+    const output =
+      `verify:no-gates-configured — no task-tier verify steps are configured for this task.\n` +
+      `Changed files (${args.changedFiles.length}): ${changedList}\n` +
+      `The supervisor manifest declares no verify scopes that cover the changed paths.\n` +
+      `Regenerate the manifest with: mars init`
+    results.push({
+      name: 'no-gates-configured',
+      passed: false,
+      tier: 'task',
+      output,
+    })
+    return { passed: false, steps: results }
+  }
+
   let stoppedOnRequired = false
   for (const spec of args.steps) {
     // Integration-tier steps are always deferred to the integration boundary —
