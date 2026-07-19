@@ -230,7 +230,7 @@ describe('ChatRunner delta emission', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false },
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
       messages: [],
     })
   })

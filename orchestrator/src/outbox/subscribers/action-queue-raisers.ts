@@ -14,6 +14,26 @@ import { registerSubscriberName } from '../registry.js';
 export const ACTION_QUEUE_RAISER_SUBSCRIBER = 'action-queue-raiser:task.blocked';
 registerSubscriberName(ACTION_QUEUE_RAISER_SUBSCRIBER);
 
+/** Unique name for the durable subscriber that resolves stale 'failed' rows when a fix task completes. */
+export const FIX_TASK_DONE_RESOLVER_SUBSCRIBER = 'action-queue-raiser:fix-task-done';
+registerSubscriberName(FIX_TASK_DONE_RESOLVER_SUBSCRIBER);
+
+/**
+ * Fix task statuses that indicate recovery is actively in progress and no
+ * human action is required. Matches the "outstanding" set described in the
+ * invariant (ADR-0051): the alert surface must be clear while automated
+ * recovery is running.
+ */
+const OUTSTANDING_FIX_TASK_STATUSES: ReadonlySet<string> = new Set([
+  'queued',
+  'running',
+  'verifying',
+  'merging',
+  'vega-reconciling',
+  'draft',
+  'blocked',
+]);
+
 /**
  * Mirror the same grace window used by recovery-spawn: treat any failure
  * that fired while the breaker was open (or within 60 s of it opening) as
@@ -46,7 +66,7 @@ export async function ensureActionQueueRaiserSchema(client: Client): Promise<voi
  *   processedOnce dedup table.
  */
 export function buildActionQueueRaiserSubscribers(client: Client): Subscriber[] {
-  return [taskBlockedActionQueueRaiser(client)];
+  return [taskBlockedActionQueueRaiser(client), fixTaskDoneActionQueueResolver(client)];
 }
 
 /**
@@ -137,7 +157,31 @@ function taskBlockedActionQueueRaiser(client: Client): Subscriber {
         return;
       }
 
-      // Non-environmental path: route through the single raise path (ADR-0051).
+      // Non-environmental path: if a fix/recovery task is in flight (or already
+      // completed successfully), automated recovery is handling the failure and
+      // no human action is required. Skip the raise entirely.
+      // Only raise when fixTaskId is null (no recovery task exists) or when the
+      // fix task itself failed/dropped (recovery was exhausted — the separate
+      // orchestrator:recovery-exhausted path in queue-retry.ts is the human-facing
+      // surface for that case, but we also raise here to be conservative).
+      if (p.fixTaskId !== null) {
+        const fixRow = await client.execute({
+          sql: `SELECT status FROM tasks WHERE id = ?`,
+          args: [p.fixTaskId],
+        });
+        if (fixRow.rows.length > 0) {
+          const fixStatus = (fixRow.rows[0] as unknown as { status: string }).status;
+          const isTerminalFailure = fixStatus === 'failed' || fixStatus === 'dropped';
+          if (!isTerminalFailure) {
+            // Fix task is outstanding or completed successfully — no human action needed.
+            return;
+          }
+          // Fix task failed/dropped → fall through and raise.
+        }
+        // Fix task not found in DB → raise (anomaly; conservative default).
+      }
+
+      // Route through the single raise path (ADR-0051).
       // raiseActionQueueItem calls resolveOriginIdForTask(originTaskId) internally
       // so fix/descendant tasks collapse onto their arc root. We pass originTaskId
       // raw and avoid double-resolution at the call site.
@@ -157,6 +201,74 @@ function taskBlockedActionQueueRaiser(client: Client): Subscriber {
         signature: `task.blocked:${p.taskId}`,
         originTaskId: p.originId ?? p.taskId,
       });
+    },
+  };
+}
+
+/**
+ * Subscriber that resolves stale open `kind='failed'` action-queue rows when
+ * the associated fix/recovery task completes successfully.
+ *
+ * When a fix task finishes with `reason='done'`, any open 'failed' row for its
+ * arc origin is no longer actionable — the failure was handled automatically.
+ * This subscriber closes those rows so the action queue only surfaces true
+ * dead-ends that require human intervention.
+ *
+ * Idempotent via `processedOnce`: replaying the same terminal event never
+ * resolves a row a second time.
+ *
+ * A fix task is identified by having a non-null `origin_id` in the tasks
+ * table (pointing at its arc origin). Non-fix tasks (no `origin_id`) are
+ * ignored.
+ */
+function fixTaskDoneActionQueueResolver(client: Client): Subscriber {
+  return {
+    name: FIX_TASK_DONE_RESOLVER_SUBSCRIBER,
+    handler: async (event: BusEvent): Promise<void> => {
+      if (event.type !== 'task.terminal') return;
+
+      const p = event.payload as { taskId: string; reason: string };
+      if (p.reason !== 'done') return;
+
+      const { ran } = await processedOnce({
+        client,
+        subscriberId: FIX_TASK_DONE_RESOLVER_SUBSCRIBER,
+        eventId: event.id,
+        sideEffect: async (_tx) => {
+          // Event-level dedup only; the action-queue write happens outside.
+        },
+      });
+      if (!ran) return;
+
+      // Check whether the completed task is a fix/recovery task (i.e. has an
+      // origin_id pointing at its arc origin). Non-fix tasks have no origin_id.
+      const taskRow = await client.execute({
+        sql: `SELECT origin_id FROM tasks WHERE id = ?`,
+        args: [p.taskId],
+      });
+      if (taskRow.rows.length === 0) return;
+
+      const tr = taskRow.rows[0] as unknown as { origin_id: string | null };
+      if (!tr.origin_id) return; // not a fix/recovery task
+
+      const originId = tr.origin_id;
+
+      // Resolve every open 'failed' row for this arc origin. In practice there
+      // is at most one open row per arc (origin-fingerprint dedup), but we loop
+      // to be defensive.
+      const openRows = await client.execute({
+        sql: `SELECT id FROM action_queue_items
+               WHERE kind = 'failed' AND state = 'open' AND origin_task_id = ?`,
+        args: [originId],
+      });
+
+      for (const row of openRows.rows) {
+        const id = (row as unknown as { id: string }).id;
+        await setActionQueueState(id, 'resolved', {
+          note: `fix task ${p.taskId} completed successfully`,
+          by: `outbox:${FIX_TASK_DONE_RESOLVER_SUBSCRIBER}`,
+        });
+      }
     },
   };
 }

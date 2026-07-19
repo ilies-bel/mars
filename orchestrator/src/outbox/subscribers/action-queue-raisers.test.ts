@@ -103,18 +103,32 @@ async function makeClient(repo: string): Promise<Client> {
 function blockedEvent(
   eventId: number,
   taskId: string,
-  opts?: { failureSignature?: string; failingStep?: string; originId?: string },
+  opts?: { failureSignature?: string; failingStep?: string; originId?: string; fixTaskId?: string | null },
 ): BusEvent {
   return {
     id: eventId,
     type: 'task.blocked',
     payload: {
       taskId,
-      fixTaskId: null,
+      fixTaskId: opts?.fixTaskId ?? null,
       failureSignature: opts?.failureSignature ?? `sig-${taskId}`,
       failingStep: opts?.failingStep ?? 'verify',
       ...(opts?.originId !== undefined ? { originId: opts.originId } : {}),
     },
+    ts: 1_000,
+  };
+}
+
+/** Construct a minimal `task.terminal` BusEvent. */
+function terminalEvent(
+  eventId: number,
+  taskId: string,
+  reason: 'done' | 'dropped' | 'failed' | 'purged',
+): BusEvent {
+  return {
+    id: eventId,
+    type: 'task.terminal',
+    payload: { taskId, reason },
     ts: 1_000,
   };
 }
@@ -406,6 +420,220 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     expect(row).not.toBeNull();
     expect(row!.originTaskId).toBe('arc-root-lima');
     expect(row!.seenCount).toBe(2);
+  });
+
+  // ── Fix-task invariant: no alert while recovery is in flight ──────────
+  // task.blocked events whose payload carries a non-null fixTaskId pointing
+  // at an outstanding (not-yet-terminal) fix task must NOT raise a row.
+
+  it('task.blocked with an outstanding fix task (queued) raises no action-queue row', async () => {
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES ('fix-outstanding-1', '', 'queued', '', '')`,
+    });
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(
+      blockedEvent(500, 'origin-for-outstanding-1', { fixTaskId: 'fix-outstanding-1' }),
+    );
+
+    // Fix task is queued (outstanding) — no human action needed, no row.
+    expect(await openRowCount(client)).toBe(0);
+  });
+
+  it('task.blocked with an outstanding fix task (running) raises no action-queue row', async () => {
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES ('fix-running-1', '', 'running', '', '')`,
+    });
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(
+      blockedEvent(501, 'origin-for-running-1', { fixTaskId: 'fix-running-1' }),
+    );
+
+    expect(await openRowCount(client)).toBe(0);
+  });
+
+  it('task.blocked with a terminal-failed fix task still raises an action-queue row', async () => {
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES ('fix-failed-1', '', 'failed', '', '')`,
+    });
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(
+      blockedEvent(502, 'origin-for-failed-1', { fixTaskId: 'fix-failed-1' }),
+    );
+
+    // Fix task itself failed — recovery exhausted — human action required.
+    expect(await openRowCount(client)).toBe(1);
+    const row = await openRowForTask(client, 'origin-for-failed-1');
+    expect(row).not.toBeNull();
+    expect(row!.kind).toBe('failed');
+  });
+
+  it('task.blocked with a fixTaskId absent from the DB still raises an action-queue row', async () => {
+    // No task inserted for 'fix-absent'. Conservative: if we cannot confirm
+    // recovery is in flight, raise so the operator can investigate.
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(
+      blockedEvent(503, 'origin-for-absent', { fixTaskId: 'fix-absent' }),
+    );
+
+    expect(await openRowCount(client)).toBe(1);
+    const row = await openRowForTask(client, 'origin-for-absent');
+    expect(row).not.toBeNull();
+  });
+
+  it('task.blocked with null fixTaskId always raises (existing behaviour)', async () => {
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(blockedEvent(504, 'origin-null-fix'));
+
+    expect(await openRowCount(client)).toBe(1);
+    const row = await openRowForTask(client, 'origin-null-fix');
+    expect(row).not.toBeNull();
+    expect(row!.kind).toBe('failed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix-task-done: auto-resolve stale 'failed' rows
+// ---------------------------------------------------------------------------
+
+describe('action-queue-raiser:fix-task-done subscriber', () => {
+  let tmpDir: string;
+  let client: Client;
+  let buildActionQueueRaiserSubscribers: typeof import('./action-queue-raisers.js').buildActionQueueRaiserSubscribers;
+  let ensureActionQueueRaiserSchema: typeof import('./action-queue-raisers.js').ensureActionQueueRaiserSchema;
+
+  beforeEach(async () => {
+    tmpDir = setupRepo();
+    process.env.MARS_REPO = tmpDir;
+    vi.resetModules();
+    client = await makeClient(tmpDir);
+
+    const mod = await import('./action-queue-raisers.js');
+    buildActionQueueRaiserSubscribers = mod.buildActionQueueRaiserSubscribers;
+    ensureActionQueueRaiserSchema = mod.ensureActionQueueRaiserSchema;
+
+    await ensureActionQueueRaiserSchema(client);
+  });
+
+  afterEach(() => {
+    client.close();
+    delete process.env.MARS_REPO;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** Insert a pre-existing open 'failed' row keyed on `originId`. */
+  async function insertOpenFailedRow(c: Client, id: string, originId: string): Promise<void> {
+    await c.execute({
+      sql: `INSERT INTO action_queue_items
+              (id, kind, category, priority, state, title, body, raised_by, raised_at, origin_task_id)
+            VALUES (?, 'failed', 'orchestrator', 'high', 'open', 'pre-existing failure', '',
+                    'test', datetime('now'), ?)`,
+      args: [id, originId],
+    });
+  }
+
+  it('task.terminal done for a fix task resolves the open failed row for the arc origin', async () => {
+    const originId = 'arc-fix-done-1';
+    const fixTaskId = 'fix-done-task-1';
+
+    // Insert the fix task with origin_id pointing at the arc origin.
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
+            VALUES (?, '', 'done', '', '', ?)`,
+      args: [fixTaskId, originId],
+    });
+
+    // Pre-existing open 'failed' row that was raised before the fix task ran.
+    await insertOpenFailedRow(client, 'aq-stale-1', originId);
+    expect(await openRowCount(client)).toBe(1);
+
+    // Deliver task.terminal done to all subscribers (each ignores events of wrong type).
+    const subscribers = buildActionQueueRaiserSubscribers(client);
+    for (const sub of subscribers) {
+      await sub.handler(terminalEvent(600, fixTaskId, 'done'));
+    }
+
+    // Stale row must be resolved — recovery succeeded, no human action needed.
+    expect(await openRowCount(client)).toBe(0);
+    const r = await client.execute(
+      `SELECT state FROM action_queue_items WHERE id = 'aq-stale-1'`,
+    );
+    expect((r.rows[0] as unknown as { state: string }).state).toBe('resolved');
+  });
+
+  it('task.terminal done for a non-fix task (no origin_id) does not modify action-queue rows', async () => {
+    const normalTaskId = 'normal-task-done-1';
+
+    // Normal task — no origin_id.
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES (?, '', 'done', '', '')`,
+      args: [normalTaskId],
+    });
+
+    // Unrelated open row.
+    await insertOpenFailedRow(client, 'aq-unrelated-1', 'some-other-origin');
+    expect(await openRowCount(client)).toBe(1);
+
+    const subscribers = buildActionQueueRaiserSubscribers(client);
+    for (const sub of subscribers) {
+      await sub.handler(terminalEvent(601, normalTaskId, 'done'));
+    }
+
+    // Unrelated row must be untouched.
+    expect(await openRowCount(client)).toBe(1);
+  });
+
+  it('task.terminal done is idempotent — replaying the same event does not re-resolve', async () => {
+    const originId = 'arc-fix-done-2';
+    const fixTaskId = 'fix-done-task-2';
+
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
+            VALUES (?, '', 'done', '', '', ?)`,
+      args: [fixTaskId, originId],
+    });
+    await insertOpenFailedRow(client, 'aq-stale-2', originId);
+
+    const subscribers = buildActionQueueRaiserSubscribers(client);
+    // First delivery.
+    for (const sub of subscribers) {
+      await sub.handler(terminalEvent(602, fixTaskId, 'done'));
+    }
+    expect(await openRowCount(client)).toBe(0);
+
+    // Replay — same eventId. Must not throw even though row is already resolved.
+    for (const sub of subscribers) {
+      await sub.handler(terminalEvent(602, fixTaskId, 'done'));
+    }
+    expect(await openRowCount(client)).toBe(0);
+  });
+
+  it('task.terminal failed for a fix task does not resolve the open row', async () => {
+    const originId = 'arc-fix-failed-1';
+    const fixTaskId = 'fix-failed-task-1';
+
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, origin_id)
+            VALUES (?, '', 'failed', '', '', ?)`,
+      args: [fixTaskId, originId],
+    });
+    await insertOpenFailedRow(client, 'aq-stale-3', originId);
+    expect(await openRowCount(client)).toBe(1);
+
+    const subscribers = buildActionQueueRaiserSubscribers(client);
+    for (const sub of subscribers) {
+      // Reason is 'failed', not 'done' — subscriber must be a no-op.
+      await sub.handler(terminalEvent(603, fixTaskId, 'failed'));
+    }
+
+    // Row must remain open — the fix task failed.
+    expect(await openRowCount(client)).toBe(1);
   });
 });
 
