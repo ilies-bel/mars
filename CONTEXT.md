@@ -463,3 +463,7 @@ _Avoid_: blocked dependent, parked task, committer dependent
 **Notifier**:
 The Subscriber that delivers a native OS desktop notification to the operator's machine when an Alert lands on the action queue; best-effort and never stalls its cursor.
 _Avoid_: push notification, notification channel, notification service, alerter
+
+**Thread**:
+A chat surface entry representing one matter that currently needs human intervention; when the need ends it folds into its Arc and leaves the chat surface.
+_Avoid_: chat thread, conversation
