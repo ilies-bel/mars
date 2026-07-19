@@ -67,6 +67,11 @@ const makeTestDeps = (overrides?: Partial<StopDeps>): StopDeps => ({
   removePidFile: () => {},
   gracePeriodMs: 200,
   pollIntervalMs: 10,
+  // Port-listener deps — default to "no listeners, port always free" so that
+  // existing unit tests that don't exercise the port-kill path are unaffected.
+  findPortListeners: () => [],
+  killProcessGroup: () => {},
+  isPortFree: async () => true,
   ...overrides,
 })
 
@@ -312,6 +317,55 @@ describe('stopProcess — real process', () => {
     expect(signals).not.toContain('SIGKILL')
     expect(signals).toContain('SIGTERM')
   }, 8000)
+
+  it('kills orphaned port listener when the recorded pid is already dead (orphaned-bun scenario)', async () => {
+    // Use a high ephemeral port to avoid collisions with other services.
+    const TEST_PORT = 17843
+
+    // Spawn a TCP server on TEST_PORT — this simulates bun continuing to run
+    // after its wrapper (mars-ui.mjs) was killed externally.
+    const orphan = spawn(
+      process.execPath,
+      [
+        '-e',
+        [
+          "const net = require('net');",
+          `net.createServer().listen(${TEST_PORT}, '127.0.0.1', () => process.stdout.write('ready\\n'));`,
+          'setInterval(() => {}, 1_000_000);',
+        ].join(' '),
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    )
+
+    // Wait until the server is actually listening.
+    await new Promise<void>((res) => {
+      orphan.stdout!.on('data', (d: Buffer) => {
+        if (d.toString().includes('ready')) res()
+      })
+    })
+
+    const orphanPid = orphan.pid!
+
+    // Write a pidfile with a DEAD pid (2^31-1) but the real port — this is
+    // the state left behind after the wrapper is externally killed.
+    const entry = makeEntry(2_147_483_647, TEST_PORT)
+    writePidEntry(entry)
+
+    // stopProcess must detect the orphaned listener via lsof and kill it.
+    const result = await stopProcess(entry, pidFilePath(), makeOsStopDeps())
+
+    // The orphaned server process must be gone.
+    expect(makeOsStopDeps().isAlive(orphanPid)).toBe(false)
+
+    // The port must be free.
+    expect(await makeOsStopDeps().isPortFree(TEST_PORT)).toBe(true)
+
+    // The pidfile must be cleaned up.
+    expect(existsSync(pidFilePath())).toBe(false)
+
+    // The result kind is 'stopped' (not 'not-running') because a listener was found.
+    expect(result.kind).toBe('stopped')
+  }, 15000)
 })
 
 // ---------------------------------------------------------------------------
