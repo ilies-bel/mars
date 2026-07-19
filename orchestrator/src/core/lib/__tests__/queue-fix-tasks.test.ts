@@ -865,8 +865,14 @@ describe('queue-fix-tasks', () => {
     expect(r2.fixTaskId).not.toBe(r1.fixTaskId)
     await q.updateTask(r2.fixTaskId!, { status: 'done' })
 
+    // Use self_heal_attempts (not tasks) to count prior fix attempts: updating
+    // a fix task to 'done' clears its failure_signature column (updateTask
+    // scrubs stale failure metadata on done transitions), so a tasks-table
+    // COUNT with failure_signature = sig would incorrectly return 0. The
+    // self_heal_attempts ledger is append-only and survives the fix-task
+    // lifecycle through all terminal statuses.
     const fixCountBefore = await q.resolveQueueClient().execute({
-      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
+      sql: `SELECT COUNT(*) AS n FROM self_heal_attempts WHERE parent_task_id = ? AND failure_signature = ?`,
       args: [t.id, sig],
     })
     expect(
@@ -886,7 +892,7 @@ describe('queue-fix-tasks', () => {
     expect(r3.actionQueueItemId).toBeTruthy()
 
     const fixCountAfter = await q.resolveQueueClient().execute({
-      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
+      sql: `SELECT COUNT(*) AS n FROM self_heal_attempts WHERE parent_task_id = ? AND failure_signature = ?`,
       args: [t.id, sig],
     })
     expect(
@@ -997,9 +1003,12 @@ describe('queue-fix-tasks', () => {
     expect(r5.outcome).toBe('fix-fail-loop')
     expect(r5.actionQueueItemId).toBe(r3.actionQueueItemId)
 
-    // No new task rows beyond the original two fix-tasks.
+    // No new self_heal_attempts rows beyond the original two (the cap fired
+    // and blocked the 3rd, 4th, and 5th from creating new fix-task rows).
+    // Use self_heal_attempts (not tasks): updating a fix-task to 'done' clears
+    // its failure_signature on that row; the ledger is append-only and reliable.
     const fixCount = await q.resolveQueueClient().execute({
-      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
+      sql: `SELECT COUNT(*) AS n FROM self_heal_attempts WHERE parent_task_id = ? AND failure_signature = ?`,
       args: [t.id, sig],
     })
     expect(Number((fixCount.rows[0] as unknown as { n: number }).n)).toBe(2)

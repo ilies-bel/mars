@@ -64,12 +64,17 @@ export const getMaxFixAttempts = (): number => {
 }
 
 /**
- * Count every historical fix-task row for a given (sourceTaskId,
- * failureSignature) pair, regardless of status. Used to drive the
- * fix-fail-loop cap so failed/done/abandoned attempts still count.
+ * Count every historical fix-task attempt for a given (sourceTaskId,
+ * failureSignature) pair, regardless of the fix task's current status.
+ * Used to drive the fix-fail-loop cap so failed/done/abandoned attempts
+ * still count toward the cap.
  *
- * Stays schema-free — relies only on `fix_for_task_id` and
- * `failure_signature` columns that already exist on `tasks`.
+ * Uses the `self_heal_attempts` append-only ledger rather than the `tasks`
+ * table, because `updateTask({ status: 'done' })` automatically clears the
+ * `failure_signature` column on any row transitioning to 'done' (to keep
+ * done rows clean of stale failure metadata). The ledger row is written in
+ * the same atomic batch as the fix-task INSERT and is never mutated, so it
+ * survives the fix-task lifecycle through all terminal statuses.
  */
 export const countFixTaskAttempts = async (
   sourceTaskId: string,
@@ -78,8 +83,8 @@ export const countFixTaskAttempts = async (
 ): Promise<number> => {
   const s = store ?? (await getDefaultTaskStore())
   const r = await s.query({
-    sql: `SELECT COUNT(*) AS n FROM tasks
-           WHERE fix_for_task_id = ?
+    sql: `SELECT COUNT(*) AS n FROM self_heal_attempts
+           WHERE parent_task_id = ?
              AND failure_signature = ?`,
     args: [sourceTaskId, failureSignature],
   })
