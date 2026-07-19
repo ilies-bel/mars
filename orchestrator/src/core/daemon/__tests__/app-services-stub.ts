@@ -78,6 +78,7 @@ export const stubAppServices = (
   viewScorerWorkflows: async () => ({ workflows: [] }),
   viewWorkflowConfigs: async () => ({ configs: [] }),
   viewPromotionLedger: async () => ({ entries: [] }),
+  viewLoopLedger: async () => ({ entries: [] }),
   viewFrameworkUpdate: async () => ({
     installed: '0.1.0',
     latest: '0.1.0',

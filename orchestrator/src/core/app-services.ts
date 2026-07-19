@@ -64,6 +64,7 @@ import {
   listPromotionLedgerEntries,
   type PromotionLedgerEntry,
 } from './promotion-ledger'
+import { listLoopLedger, type LoopLedgerEntry } from './lib/loop-ledger'
 import { resolveStateClient } from './store/state-client'
 import { readKpiSeries, type KpiSeries } from './lib/kpi-snapshots'
 import { computeBudgetStatus, type BudgetStatus } from './lib/spend-meter'
@@ -201,6 +202,8 @@ export interface AppServices {
   // ── workflow configs and promotion ledger (PRD 5b73d277) ──────────────────
   viewWorkflowConfigs: (workflow: string) => Promise<{ configs: WorkflowConfig[] }>
   viewPromotionLedger: (workflow?: string) => Promise<{ entries: PromotionLedgerEntry[] }>
+  // ── loop ledger — per-run score history joined with promotion decisions (PRD 41aa2fb2) ──
+  viewLoopLedger: (workflow: string, limit: number) => Promise<{ entries: LoopLedgerEntry[] }>
   // ── read views: glossary and skills ────────────────────────────────────────
   viewGlossary: () => Promise<{ terms: Array<{ term: string; definition: string; avoid: string[] }> }>
   viewSkills: () => Promise<{ skills: Array<{ name: string; description: string; path: string }> }>
@@ -1108,6 +1111,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return { entries }
   }
 
+  const viewLoopLedger: AppServices['viewLoopLedger'] = async (workflow, limit) => {
+    const entries = await listLoopLedger(workflow, limit)
+    return { entries }
+  }
+
   const viewChatThreads: AppServices['viewChatThreads'] = async () => {
     const { listThreads, toThreadApiView } = await import('./lib/chat-store')
     const threads = await listThreads()
@@ -1207,6 +1215,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewScorerWorkflows,
     viewWorkflowConfigs,
     viewPromotionLedger,
+    viewLoopLedger,
     viewFrameworkUpdate,
     viewGlossary,
     viewSkills,

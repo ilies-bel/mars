@@ -1065,6 +1065,30 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/loop-ledger?workflow=<kind>&limit=N — per-run score history
+    // joining scorer_results with promotion-gate decisions (PRD 41aa2fb2,
+    // Watchtower slice 6). workflow is required (400 if absent); limit is
+    // clamped [1, 200], default 50. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/loop-ledger')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const workflow = parsed.searchParams.get('workflow')
+      if (!workflow) {
+        sendJson(res, 400, { error: 'workflow query param is required' })
+        return
+      }
+      const limitRaw = parsed.searchParams.get('limit')
+      let limit = 50
+      if (limitRaw !== null) {
+        const n = Number.parseInt(limitRaw, 10)
+        if (Number.isFinite(n)) limit = Math.min(200, Math.max(1, n))
+      }
+      deps.appServices
+        .viewLoopLedger(workflow, limit)
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/arcs?limit=N&withTranscriptOnly=true|false — ranked arc
     // candidates for deep reflection. Wraps listDeepReflectArcCandidates from
     // deep-reflect-query.ts so the UI/daemon can surface what `mars arc reflect`

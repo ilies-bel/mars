@@ -19,6 +19,7 @@ import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 import type { WorkflowConfig } from '../../workflow-configs'
 import type { PromotionLedgerEntry } from '../../promotion-ledger'
+import type { LoopLedgerEntry } from '../../lib/loop-ledger'
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-http-promo-routes-'))
@@ -317,6 +318,150 @@ describe('GET /view/promotion-ledger', () => {
       expect(res.status).toBe(200)
       const body = (await res.json()) as { entries: PromotionLedgerEntry[] }
       expect(body.entries).toEqual([])
+    } finally {
+      await close()
+    }
+  })
+})
+
+// ── GET /view/loop-ledger ────────────────────────────────────────────────────
+
+const fixtureLoopEntry: LoopLedgerEntry = {
+  runId: 'task-abc',
+  scoredAt: 1_700_000_000_000,
+  score: 0.85,
+  recorded: true,
+  suggestion: { version: 'wc-v1', decisionKind: 'promoted' },
+  review: { decision: 'promoted', decidedAt: 1_700_000_001_000 },
+}
+
+describe('GET /view/loop-ledger', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns entries from the injected viewLoopLedger dep', async () => {
+    const { httpServer } = await loadModules(repo)
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({
+        viewLoopLedger: async () => ({ entries: [fixtureLoopEntry] }),
+      }),
+    )
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/view/loop-ledger?workflow=task&limit=25`,
+      )
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('application/json')
+      const body = (await res.json()) as { entries: LoopLedgerEntry[] }
+      expect(body.entries).toHaveLength(1)
+      expect(body.entries[0]).toMatchObject({
+        runId: 'task-abc',
+        score: 0.85,
+        recorded: true,
+        suggestion: { version: 'wc-v1', decisionKind: 'promoted' },
+        review: { decision: 'promoted' },
+      })
+    } finally {
+      await close()
+    }
+  })
+
+  it('returns 400 when workflow query param is missing', async () => {
+    const { httpServer } = await loadModules(repo)
+    const { port, close } = await httpServer.startHttpServer(makeDeps())
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/view/loop-ledger`)
+      expect(res.status).toBe(400)
+      expect(res.headers.get('content-type')).toContain('application/json')
+      const body = (await res.json()) as { error: string }
+      expect(body.error).toMatch(/workflow/)
+    } finally {
+      await close()
+    }
+  })
+
+  it('passes workflow and limit params to the service dep', async () => {
+    const { httpServer } = await loadModules(repo)
+    let capturedWorkflow: string | undefined
+    let capturedLimit: number | undefined
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({
+        viewLoopLedger: async (workflow, limit) => {
+          capturedWorkflow = workflow
+          capturedLimit = limit
+          return { entries: [] }
+        },
+      }),
+    )
+    try {
+      await fetch(
+        `http://127.0.0.1:${port}/view/loop-ledger?workflow=fix&limit=25`,
+      )
+      expect(capturedWorkflow).toBe('fix')
+      expect(capturedLimit).toBe(25)
+    } finally {
+      await close()
+    }
+  })
+
+  it('defaults limit to 50 when not provided', async () => {
+    const { httpServer } = await loadModules(repo)
+    let capturedLimit: number | undefined
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({
+        viewLoopLedger: async (_workflow, limit) => {
+          capturedLimit = limit
+          return { entries: [] }
+        },
+      }),
+    )
+    try {
+      await fetch(`http://127.0.0.1:${port}/view/loop-ledger?workflow=task`)
+      expect(capturedLimit).toBe(50)
+    } finally {
+      await close()
+    }
+  })
+
+  it('clamps limit to 200 when provided value exceeds maximum', async () => {
+    const { httpServer } = await loadModules(repo)
+    let capturedLimit: number | undefined
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({
+        viewLoopLedger: async (_workflow, limit) => {
+          capturedLimit = limit
+          return { entries: [] }
+        },
+      }),
+    )
+    try {
+      await fetch(
+        `http://127.0.0.1:${port}/view/loop-ledger?workflow=task&limit=9999`,
+      )
+      expect(capturedLimit).toBe(200)
+    } finally {
+      await close()
+    }
+  })
+
+  it('returns 404 for wrong HTTP method (POST)', async () => {
+    const { httpServer } = await loadModules(repo)
+    const { port, close } = await httpServer.startHttpServer(makeDeps())
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/view/loop-ledger?workflow=task`,
+        { method: 'POST', body: '{}' },
+      )
+      expect(res.status).toBe(404)
     } finally {
       await close()
     }
