@@ -728,6 +728,7 @@ describe('ChatRunner state machine', () => {
         alert_item_id: null, alert_resolved: false, context_seeded: true,
       },
       messages: [],
+      feedbacks: new Map(),
     })
 
     const runner = new ChatRunner()
@@ -776,5 +777,75 @@ describe('ChatRunner state machine', () => {
     expect(prompt).toContain('[assistant] hi there')
     expect(prompt).toContain('how are you?')
     expect(vi.mocked(chatStore.markContextSeeded)).toHaveBeenCalledWith('t1')
+  })
+
+  // ── Attachment tests ───────────────────────────────────────────────────────
+
+  it('injects image attachment path into the prompt passed to claude', async () => {
+    let capturedArgs: readonly string[] = []
+    mockRunSubprocessStreaming.mockImplementation(
+      async (
+        _cmd: string,
+        args: readonly string[],
+      ) => {
+        capturedArgs = args
+        return { exitCode: 0, stdout: '', stderr: '' }
+      },
+    )
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'describe this', '/repo', undefined, [
+      { id: 'att-1', path: '/abs/path/photo.png', mimeType: 'image/png', name: 'photo.png', size: 1024 },
+    ])
+    await new Promise((r) => setTimeout(r, 20))
+
+    // args[1] is the prompt content (after '-p')
+    const prompt = capturedArgs[1] as string
+    expect(prompt).toContain('describe this')
+    expect(prompt).toContain('---')
+    expect(prompt).toContain('The user attached image /abs/path/photo.png — read it with the Read tool.')
+  })
+
+  it('injects audio attachment path into the prompt with ffmpeg guidance', async () => {
+    let capturedArgs: readonly string[] = []
+    mockRunSubprocessStreaming.mockImplementation(
+      async (
+        _cmd: string,
+        args: readonly string[],
+      ) => {
+        capturedArgs = args
+        return { exitCode: 0, stdout: '', stderr: '' }
+      },
+    )
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'transcribe this', '/repo', undefined, [
+      { id: 'att-2', path: '/abs/path/clip.mp3', mimeType: 'audio/mpeg', name: 'clip.mp3', size: 2048 },
+    ])
+    await new Promise((r) => setTimeout(r, 20))
+
+    const prompt = capturedArgs[1] as string
+    expect(prompt).toContain('transcribe this')
+    expect(prompt).toContain('audio file /abs/path/clip.mp3')
+    expect(prompt).toContain('ffmpeg')
+  })
+
+  it('persists attachment segments on the user message', async () => {
+    mockRunSubprocessStreaming.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'show me', '/repo', undefined, [
+      { id: 'att-3', path: '/abs/path/screen.png', mimeType: 'image/png', name: 'screen.png', size: 512 },
+    ])
+    await new Promise((r) => setTimeout(r, 20))
+
+    const calls = vi.mocked(chatStore.appendMessage).mock.calls
+    const userCall = calls.find((c) => c[1] === 'user')
+    expect(userCall).toBeDefined()
+    const segments = userCall![3] as unknown[]
+    const attSeg = (segments ?? []).find((s) => (s as { type?: string }).type === 'attachment')
+    expect(attSeg).toBeDefined()
+    expect((attSeg as { path: string; kindHint: string }).path).toBe('/abs/path/screen.png')
+    expect((attSeg as { path: string; kindHint: string }).kindHint).toBe('image')
   })
 })

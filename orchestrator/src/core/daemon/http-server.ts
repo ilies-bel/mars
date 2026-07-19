@@ -1,4 +1,7 @@
 import { createServer, type Server } from 'node:http'
+import { mkdir, writeFile, rm } from 'node:fs/promises'
+import { join, extname } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { FAILURE_KINDS } from '../lib/failure-kinds'
 import type { RecipeCatalog } from '../lib/recipes'
 import { buildOriginTree } from '../lib/origin-tree'
@@ -33,9 +36,47 @@ import {
   setMessageFeedback,
   clearMessageFeedback,
 } from '../lib/chat-store'
-import type { ChatRunner } from './chat-runner'
+import type { ChatRunner, AttachmentInfo } from './chat-runner'
 import { getRepoRoot } from '../context'
 import { z } from 'zod'
+
+// ── Chat upload constants ─────────────────────────────────────────────────────
+
+/** Maximum allowed upload size (50 MiB). */
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+/** MIME types accepted by the upload route. */
+const ALLOWED_MIME_TYPES = new Set([
+  // Images
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  // Audio
+  'audio/mpeg',
+  'audio/mp4',
+  'audio/wav',
+  'audio/webm',
+  // Video
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+])
+
+/** Fallback extension when the filename carries none. */
+const MIME_TO_EXT = new Map<string, string>([
+  ['image/png', '.png'],
+  ['image/jpeg', '.jpg'],
+  ['image/gif', '.gif'],
+  ['image/webp', '.webp'],
+  ['audio/mpeg', '.mp3'],
+  ['audio/mp4', '.m4a'],
+  ['audio/wav', '.wav'],
+  ['audio/webm', '.webm'],
+  ['video/mp4', '.mp4'],
+  ['video/quicktime', '.mov'],
+  ['video/webm', '.webm'],
+])
 
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
 export interface StepSpan {
@@ -1387,12 +1428,142 @@ export const startHttpServer = async (
           : null
       if (chatDeleteMatch && chatDeleteMatch[1]) {
         const id = decodeURIComponent(chatDeleteMatch[1])
+        const uploadDir = join(getRepoRoot(), '.mars', 'chat-uploads', id)
         deleteThread(id)
+          .then(() => rm(uploadDir, { recursive: true, force: true }))
           .then(() => {
             deps.viewStreamHub?.broadcast('chat')
             sendJson(res, 200, { ok: true })
           })
           .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // POST /chat/threads/:id/attachments — upload a file (multipart/form-data).
+    // Stores the file under .mars/chat-uploads/<threadId>/<uuid>.<ext>.
+    // Allowed types: png/jpg/gif/webp, mp3/m4a/wav/webm (audio), mp4/mov/webm (video).
+    // Size cap: 50 MiB. Returns { id, path, mimeType, name, size }.
+    {
+      const chatAttachMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/attachments$/)
+          : null
+      if (chatAttachMatch && chatAttachMatch[1]) {
+        const threadId = decodeURIComponent(chatAttachMatch[1])
+        const contentType = (req.headers['content-type'] ?? '') as string
+        const boundaryMatch = contentType.match(/multipart\/form-data;\s*boundary=([^\s;]+)/i)
+        if (!boundaryMatch) {
+          sendJson(res, 400, { ok: false, error: 'expected multipart/form-data with boundary' })
+          return
+        }
+        // Strip optional quotes from boundary value.
+        const boundary = boundaryMatch[1].replace(/^["']|["']$/g, '')
+
+        // Reject by Content-Length before reading the body.
+        const clHeader = req.headers['content-length']
+        if (clHeader && parseInt(clHeader, 10) > MAX_UPLOAD_BYTES) {
+          sendJson(res, 413, { ok: false, error: 'file too large (max 50 MB)' })
+          // Destroy the socket so the server does not wait for the body
+          // that it will never read, allowing close() to complete quickly.
+          req.destroy()
+          return
+        }
+
+        const chunks: Buffer[] = []
+        let received = 0
+        let overflowed = false
+
+        req.on('data', (chunk: Buffer) => {
+          if (overflowed) return
+          received += chunk.length
+          if (received > MAX_UPLOAD_BYTES) {
+            overflowed = true
+            sendJson(res, 413, { ok: false, error: 'file too large (max 50 MB)' })
+            req.destroy()
+            return
+          }
+          chunks.push(chunk)
+        })
+
+        req.on('end', () => {
+          if (overflowed) return
+
+          const body = Buffer.concat(chunks)
+
+          // ── Inline multipart parser ────────────────────────────────────────
+          // Finds a byte sequence inside a Buffer (naive O(n·m) scan — fine
+          // for files up to 50 MiB since m is at most a boundary string).
+          const indexOf = (hay: Buffer, needle: Buffer, from = 0): number => {
+            for (let i = from; i <= hay.length - needle.length; i++) {
+              let found = true
+              for (let j = 0; j < needle.length; j++) {
+                if (hay[i + j] !== needle[j]) { found = false; break }
+              }
+              if (found) return i
+            }
+            return -1
+          }
+
+          const CRLF = Buffer.from('\r\n')
+          const DOUBLE_CRLF = Buffer.from('\r\n\r\n')
+          const firstBound = Buffer.from(`--${boundary}`)
+
+          let pos = indexOf(body, firstBound)
+          if (pos === -1 || !body.slice(pos + firstBound.length, pos + firstBound.length + 2).equals(CRLF)) {
+            sendJson(res, 400, { ok: false, error: 'malformed multipart body' })
+            return
+          }
+          pos += firstBound.length + 2 // skip --boundary\r\n
+
+          // Find header/body separator.
+          const headerEnd = indexOf(body, DOUBLE_CRLF, pos)
+          if (headerEnd === -1) {
+            sendJson(res, 400, { ok: false, error: 'malformed multipart body (no header end)' })
+            return
+          }
+          const headerText = body.slice(pos, headerEnd).toString('utf8')
+          const bodyStart = headerEnd + 4
+
+          // Find where the part data ends (before next boundary).
+          const nextDelimBuf = Buffer.from(`\r\n--${boundary}`)
+          const dataEnd = indexOf(body, nextDelimBuf, bodyStart)
+          const fileData = body.slice(bodyStart, dataEnd === -1 ? body.length : dataEnd)
+
+          // Parse headers from the part.
+          const headers: Record<string, string> = {}
+          for (const line of headerText.split('\r\n')) {
+            const colon = line.indexOf(':')
+            if (colon !== -1) {
+              headers[line.slice(0, colon).trim().toLowerCase()] = line.slice(colon + 1).trim()
+            }
+          }
+
+          const cd = headers['content-disposition'] ?? ''
+          const fnMatch = cd.match(/filename="([^"]*)"/)
+          const filename = fnMatch ? fnMatch[1] : 'upload'
+          const mimeType = headers['content-type'] ?? ''
+
+          if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+            sendJson(res, 415, { ok: false, error: `file type not allowed: ${mimeType}` })
+            return
+          }
+
+          const ext = extname(filename) || MIME_TO_EXT.get(mimeType) || ''
+          const id = randomUUID()
+          const uploadDir = join(getRepoRoot(), '.mars', 'chat-uploads', threadId)
+          const filePath = join(uploadDir, `${id}${ext}`)
+
+          mkdir(uploadDir, { recursive: true })
+            .then(() => writeFile(filePath, fileData))
+            .then(() => {
+              const response: AttachmentInfo = { id, path: filePath, mimeType, name: filename, size: fileData.length }
+              sendJson(res, 200, response)
+            })
+            .catch((err: unknown) => sendError(res, err))
+        })
+
+        req.on('error', (err: unknown) => sendError(res, err))
         return
       }
     }
@@ -1419,14 +1590,24 @@ export const startHttpServer = async (
             sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
             return
           }
-          const schema = z.object({ content: z.string().min(1) })
+          const attachmentSchema = z.object({
+            id: z.string(),
+            path: z.string(),
+            mimeType: z.string(),
+            name: z.string(),
+            size: z.number(),
+          })
+          const schema = z.object({
+            content: z.string().min(1),
+            attachments: z.array(attachmentSchema).optional(),
+          })
           const result = schema.safeParse(parsed)
           if (!result.success) {
-            sendJson(res, 400, { ok: false, error: 'body must be { content: string }' })
+            sendJson(res, 400, { ok: false, error: 'body must be { content: string, attachments?: AttachmentInfo[] }' })
             return
           }
           deps.chatRunner
-            .sendMessage(id, result.data.content, getRepoRoot(), deps.viewStreamHub)
+            .sendMessage(id, result.data.content, getRepoRoot(), deps.viewStreamHub, result.data.attachments)
             .then(({ alreadyRunning }) => {
               if (alreadyRunning) {
                 sendJson(res, 409, { ok: false, error: 'thread already has an active run', errorCode: 'ALREADY_RUNNING' })

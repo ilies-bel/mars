@@ -29,12 +29,31 @@ import {
 import type { ViewStreamHub } from './view/stream-hub'
 import { resolveChatSystemPrompt } from './chat-system-prompt'
 
+// ── Attachment info ───────────────────────────────────────────────────────────
+
+/**
+ * Metadata for a file uploaded via `POST /chat/threads/:id/attachments`.
+ * Passed to `sendMessage` so the runner can embed attachment instructions
+ * in the prompt and persist attachment segments on the user message.
+ */
+export interface AttachmentInfo {
+  id: string
+  path: string
+  mimeType: string
+  name: string
+  size: number
+}
+
 // ── Segment types ─────────────────────────────────────────────────────────────
 
 /**
  * A single typed segment produced by the stream-json parser. Each segment
  * maps to one recognisable unit in the Claude output: a text block, a
  * tool call, its result, the final usage summary, or an error.
+ *
+ * The `attachment` variant is produced by the HTTP route when the user
+ * message carries file attachments. It is persisted on the user message and
+ * rendered by the UI; it is NOT emitted by the Claude stream parser.
  */
 export type ChatSegment =
   | { type: 'text'; text: string }
@@ -43,6 +62,11 @@ export type ChatSegment =
   | { type: 'tool_result'; tool_use_id: string; content: unknown; isError: boolean }
   | { type: 'result'; durationMs: number | null; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cost: number | null }
   | { type: 'error'; message: string }
+  | { type: 'attachment'; path: string; mimeType: string; name: string; size: number; kindHint: 'image' | 'audio' | 'video' }
+
+// MIME type classification used when building attachment segments and prompt text.
+const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+const AUDIO_MIMES = new Set(['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm'])
 
 // ── Parser ────────────────────────────────────────────────────────────────────
 
@@ -213,12 +237,17 @@ export class ChatRunner {
    * without spawning if there is already an active run for that thread
    * (the HTTP layer should respond 409). Otherwise starts the run
    * asynchronously and returns `{ alreadyRunning: false }`.
+   *
+   * When `attachments` are provided, they are persisted as `attachment`
+   * segments on the user message and their paths/types are appended to the
+   * prompt so the agent can read or process them.
    */
   async sendMessage(
     threadId: string,
     content: string,
     repoRoot: string,
     hub: ViewStreamHub | undefined,
+    attachments?: AttachmentInfo[],
   ): Promise<{ alreadyRunning: boolean }> {
     if (this.activeRuns.has(threadId)) return { alreadyRunning: true }
 
@@ -226,7 +255,7 @@ export class ChatRunner {
     this.activeRuns.set(threadId, abort)
 
     // Fire-and-forget: HTTP responds immediately; segments arrive via SSE.
-    this._run(threadId, content, repoRoot, hub, abort).catch(() => {
+    this._run(threadId, content, repoRoot, hub, abort, attachments).catch(() => {
       // Ensure the map entry is removed even if _run throws unexpectedly.
       this.activeRuns.delete(threadId)
     })
@@ -265,6 +294,7 @@ export class ChatRunner {
     repoRoot: string,
     hub: ViewStreamHub | undefined,
     abort: AbortController,
+    attachments?: AttachmentInfo[],
   ): Promise<void> {
     const accumulatedSegments: ChatSegment[] = []
     let detectedSessionId: string | null = null
@@ -321,10 +351,34 @@ export class ChatRunner {
       const existingSessionId = threadData.thread.session_id
       const hasMessages = threadData.messages.length > 0
 
+      // Build user segments: always start with a text segment, then append one
+      // attachment segment per uploaded file so the UI can render them.
+      const userSegments: ChatSegment[] = [{ type: 'text', text: content }]
+      let promptContent = content
+
+      if (attachments && attachments.length > 0) {
+        const promptLines: string[] = []
+        for (const att of attachments) {
+          const kindHint: 'image' | 'audio' | 'video' = IMAGE_MIMES.has(att.mimeType)
+            ? 'image'
+            : AUDIO_MIMES.has(att.mimeType)
+              ? 'audio'
+              : 'video'
+          userSegments.push({ type: 'attachment', path: att.path, mimeType: att.mimeType, name: att.name, size: att.size, kindHint })
+          if (kindHint === 'image') {
+            promptLines.push(`The user attached image ${att.path} — read it with the Read tool.`)
+          } else {
+            promptLines.push(
+              `The user attached ${kindHint} file ${att.path} (${att.mimeType}) — the agent may use local tools (e.g. ffmpeg) to inspect or transcode it; the model cannot natively hear or watch it.`,
+            )
+          }
+        }
+        promptContent = `${content}\n\n---\n${promptLines.join('\n')}\n---`
+      }
+
       // Build context preamble for the first run of this thread so the agent
       // has the alert card and conversation history when no claude session
       // exists yet (or when a previous session was lost after a daemon restart).
-      let promptContent = content
       if (!threadData.thread.context_seeded) {
         const preambleParts: string[] = []
 
@@ -400,7 +454,9 @@ export class ChatRunner {
         }
 
         if (preambleParts.length > 0) {
-          promptContent = `<thread_context>\n${preambleParts.join('\n\n')}\n</thread_context>\n\n${content}`
+          // Wrap the attachment-augmented prompt, not the raw content, so the
+          // attachment block survives context seeding on a thread's first run.
+          promptContent = `<thread_context>\n${preambleParts.join('\n\n')}\n</thread_context>\n\n${promptContent}`
         }
 
         // Mark seeded before the subprocess call so a failed run does not
@@ -408,8 +464,8 @@ export class ChatRunner {
         await markContextSeeded(threadId)
       }
 
-      // Persist the user message with a text segment so the UI can render it.
-      await appendMessage(threadId, 'user', content, [{ type: 'text', text: content }])
+      // Persist the user message with typed segments so the UI can render it.
+      await appendMessage(threadId, 'user', content, userSegments)
 
       // Auto-title: set the thread title to the first user message (≤60 chars)
       // when the thread has no title and no prior messages.
