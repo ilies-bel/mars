@@ -34,6 +34,7 @@ const skillForgeScan: Command = {
     const { loadRecentDeepReflectRows } = await import('../../core/lib/deep-reflect-query')
     const { detectCrossArcLessons } = await import('../../core/lib/skill-forge-detector')
     const { synthesizeSkillMarkdown } = await import('../../core/lib/skill-forge-synthesizer')
+    const { validateSkillAgainstArc } = await import('../../core/lib/skill-forge-validate')
     const { createProposal, listProposals, initProposals } = await import('../../core/proposals')
 
     await initProposals()
@@ -68,8 +69,12 @@ const skillForgeScan: Command = {
         continue
       }
 
+      const arcOriginId = lesson.motivatingArcOriginIds[0]
+      const arcRows = rows.filter((r) => r.originId === arcOriginId)
+      const { verdict, evidence } = validateSkillAgainstArc(markdown, arcRows)
+
       const ids = lesson.motivatingArcOriginIds.join(',')
-      const notes = `motivating_arcs: ${ids}\n\n${markdown}`
+      const notes = `validation: ${verdict}\nevidence: ${evidence}\n\nmotivating_arcs: ${ids}\n\n${markdown}`
 
       await createProposal(title, {
         source: 'skill-forge',
