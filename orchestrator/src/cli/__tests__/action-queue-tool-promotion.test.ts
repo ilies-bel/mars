@@ -275,6 +275,9 @@ const makeToolPromotionRow = (
   leaseState: null,
   diagnosis: null,
   failureReasonCode: null,
+  humanSummary: `Helper "${detail.helperKey}" has benchmark evidence ready for review.`,
+  humanDetail: { helperKey: detail.helperKey },
+  verbs: [],
   toolPromotionDetail: detail,
 })
 

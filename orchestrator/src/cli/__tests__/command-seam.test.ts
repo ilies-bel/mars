@@ -403,11 +403,14 @@ describe('mars show (alert fallback)', () => {
     actions: [],
     staleWorktreeDetail: null,
     devServerUrl: null,
-  leaseState: null,
+    leaseState: null,
     diagnosis: null,
     failureReasonCode: null,
+    humanSummary: 'Test alert',
+    humanDetail: {},
+    verbs: [],
     ...overrides,
-  })
+  } as ActionQueueRow)
 
   it('renders alert detail and returns code 0 when the id matches an action-queue alert', async () => {
     const alertRow = makeAlertRow({

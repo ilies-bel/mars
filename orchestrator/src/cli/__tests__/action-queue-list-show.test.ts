@@ -76,8 +76,11 @@ const makeRow = (
   leaseState: null,
   diagnosis: null,
   failureReasonCode: null,
+  humanSummary: 'Test alert',
+  humanDetail: {},
+  verbs: [],
   ...overrides,
-})
+} as ActionQueueRow)
 
 beforeEach(() => {
   repo = setupRepo()

@@ -3383,6 +3383,11 @@ export const startDaemon = async (
       await handleStepDone(id)
       return { next: null }
     },
+    snoozeItem: async (id: string, until: string) => {
+      const { snoozeActionQueueItem } = await import('../lib/action-queue')
+      await snoozeActionQueueItem(id, until)
+      viewStreamHub.broadcast('action-queue')
+    },
     recipeCatalog,
     traceStore,
     viewStreamHub,

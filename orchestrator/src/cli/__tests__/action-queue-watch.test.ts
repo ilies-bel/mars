@@ -61,8 +61,11 @@ const makeRow = (
   leaseState: null,
   diagnosis: null,
   failureReasonCode: null,
+  humanSummary: 'Test alert',
+  humanDetail: {},
+  verbs: [],
   ...overrides,
-})
+} as ActionQueueRow)
 
 let tmpDir: string
 let stateDir: string

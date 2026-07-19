@@ -762,8 +762,12 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     // Build the state store adapter.
     const stateStore = {
       listOpenActionQueueItems: async () => {
+        const now = new Date()
         const items = (await listActionQueueItems('all')).filter(
-          (item) => item.state === 'open',
+          (item) =>
+            item.state === 'open' &&
+            (item.snoozedUntil === null ||
+              new Date(item.snoozedUntil) <= now),
         )
         return items.map((item) => ({
           id: item.id,

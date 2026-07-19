@@ -16,6 +16,13 @@ import {
   failingStepFromSignature,
 } from '../../lib/failure-kinds'
 import { derivedRowActions } from '../../lib/derived-row-actions'
+import {
+  lookupRecipe,
+  getRecipeVerbs,
+  type RecipeHumanDetail,
+  type RecipeVerb,
+} from '../../lib/action-queue-recipes'
+import { isActionQueueKind } from '../../lib/action-queue'
 
 export type DerivedActionQueueKind =
   | 'failed-task'
@@ -113,6 +120,27 @@ export interface ActionQueueRow {
     before: unknown
     after: unknown
   } | null
+  /**
+   * One plain sentence a non-expert understands, stating what happened and
+   * what Mars wants. Derived from the action-queue recipe registry.
+   * Additive field — kept alongside the existing `title`/`body` until the
+   * UI task performs the hard cut.
+   */
+  humanSummary: string
+  /**
+   * Structured fields for the expandable detail section. Carries the full
+   * technical payload (failure signature, branch, worktree, raw error excerpt,
+   * changelog for update kinds, etc.) as a typed object.
+   * Additive field.
+   */
+  humanDetail: RecipeHumanDetail
+  /**
+   * Ordered action buttons derived from the recipe registry, including
+   * compound ops (e.g. daemon-code-drift → Restart & update) and always
+   * ending with [Dismiss, Snooze]. Additive alongside the existing `actions`
+   * field — the UI task will perform the hard cut.
+   */
+  verbs: RecipeVerb[]
 }
 
 /** Raw actionQueue row shape as persisted in `action_queue_items`. */
@@ -210,6 +238,45 @@ export interface BuildActionQueueHistoryViewParams {
   repoRoot: string
   limit?: number
   cursor?: string | null
+}
+
+/**
+ * Build recipe fields (humanSummary, humanDetail, verbs) for a row.
+ * Falls back to generic copy when the kind has no registered recipe
+ * (e.g. a future kind added before a recipe is written).
+ */
+const buildRecipeFields = (
+  row: PersistedActionQueueRow,
+  entityId: string,
+  title: string,
+  body: string,
+): { humanSummary: string; humanDetail: RecipeHumanDetail; verbs: RecipeVerb[] } => {
+  const kind = row.kind
+  if (!isActionQueueKind(kind)) {
+    return {
+      humanSummary: title || body || `Action required (kind: ${kind})`,
+      humanDetail: { raisedAt: row.raisedAt, entityId },
+      verbs: [
+        { op: 'dismiss', label: 'Dismiss', style: 'default' },
+        { op: 'snooze', label: 'Snooze', style: 'default' },
+      ],
+    }
+  }
+  const recipe = lookupRecipe(kind)
+  const ctx = {
+    kind,
+    entityId,
+    payload: row.payload,
+    context: row.context,
+    title,
+    body,
+    raisedAt: row.raisedAt,
+  }
+  return {
+    humanSummary: recipe.humanSummary(ctx),
+    humanDetail: recipe.humanDetail(ctx),
+    verbs: getRecipeVerbs(recipe, ctx),
+  }
 }
 
 /**
@@ -604,6 +671,8 @@ export const buildActionQueueView = async ({
           }
         : null
 
+    const recipeFields = buildRecipeFields(row, entityId, title, body)
+
     rows.push({
       id: row.id,
       kind: uiKind,
@@ -622,6 +691,9 @@ export const buildActionQueueView = async ({
       failureReasonCode,
       fixForTaskId,
       toolPromotionDetail,
+      humanSummary: recipeFields.humanSummary,
+      humanDetail: recipeFields.humanDetail,
+      verbs: recipeFields.verbs,
     })
   }
 
@@ -667,6 +739,16 @@ export const buildActionQueueView = async ({
       ? daemonKilledKind.verboseReason
       : `${daemonKilledVisible.length} tasks were in flight when the daemon was killed.\n` +
         `None of these failures are task faults — a fresh dispatch is very likely to succeed.`
+    const daemonKilledRecipe = lookupRecipe('daemon-killed')
+    const batchRecipeCtx = {
+      kind: 'daemon-killed' as const,
+      entityId: '__daemon-killed-batch__',
+      payload: {},
+      context: {},
+      title: batchTitle,
+      body: batchBody,
+      raisedAt: newest.at,
+    }
     filtered.unshift({
       id: 'failed-task:__daemon-killed-batch__',
       kind: 'failed-task',
@@ -683,6 +765,9 @@ export const buildActionQueueView = async ({
       leaseState: null,
       diagnosis: null,
       failureReasonCode: null,
+      humanSummary: daemonKilledRecipe.humanSummary(batchRecipeCtx),
+      humanDetail: daemonKilledRecipe.humanDetail(batchRecipeCtx),
+      verbs: getRecipeVerbs(daemonKilledRecipe, batchRecipeCtx),
     })
   }
 
@@ -976,6 +1061,8 @@ export const buildActionQueueHistoryView = async ({
           }
         : null
 
+    const historyRecipeFields = buildRecipeFields(row, entityId, title, body)
+
     rows.push({
       id: row.id,
       kind: uiKind,
@@ -997,6 +1084,9 @@ export const buildActionQueueHistoryView = async ({
       failureReasonCode,
       fixForTaskId,
       resolution,
+      humanSummary: historyRecipeFields.humanSummary,
+      humanDetail: historyRecipeFields.humanDetail,
+      verbs: [], // Resolved rows are read-only; no action verbs.
     })
   }
 

@@ -5,6 +5,7 @@ import { buildEventInsert } from './outbox'
 import type { EventName, EventPayload } from './outbox'
 import { resolveOriginIdForTask } from './origin'
 import { derivedRowActions } from './derived-row-actions'
+import { lookupRecipe } from './action-queue-recipes'
 
 // ── Alert-thread notification callback ────────────────────────────────────────
 
@@ -304,6 +305,12 @@ export interface ActionQueueItem {
    * task was not found, or the queue DB is unavailable.
    */
   liveTaskStatus: string | null
+  /**
+   * ISO-8601 timestamp until which this item is snoozed. While snoozed,
+   * the item is excluded from the open view and chat. `null` means not
+   * snoozed. Once the timestamp is in the past the item reappears.
+   */
+  snoozedUntil: string | null
 }
 
 export interface SetActionQueueStateOptions {
@@ -384,6 +391,9 @@ export const initActionQueue = async (): Promise<void> => {
   }
   if (!colNames.has('origin_task_id')) {
     await c.execute(`ALTER TABLE action_queue_items ADD COLUMN origin_task_id TEXT`)
+  }
+  if (!colNames.has('snoozed_until')) {
+    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN snoozed_until TEXT`)
   }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_state
@@ -553,6 +563,7 @@ const rowToActionQueueItem = (
     history,
     originTaskId: (row.origin_task_id as string | null) ?? null,
     liveTaskStatus: null,
+    snoozedUntil: (row.snoozed_until as string | null) ?? null,
   }
 }
 
@@ -634,6 +645,21 @@ const buildAlertSegment = (
 
   const priority = item.priority === 'urgent' || item.priority === 'high' ? 'high' : item.priority
 
+  // Derive humanSummary from the recipe registry when the kind is registered.
+  let humanSummary: string | undefined
+  if (isActionQueueKind(item.kind)) {
+    const recipe = lookupRecipe(item.kind)
+    humanSummary = recipe.humanSummary({
+      kind: item.kind,
+      entityId,
+      payload: item.payload,
+      context: item.context ?? {},
+      title: item.title,
+      body: item.body,
+      raisedAt: new Date().toISOString(),
+    })
+  }
+
   return {
     type: 'alert',
     kind: item.kind,
@@ -643,6 +669,7 @@ const buildAlertSegment = (
     whyNow: item.body,
     actions,
     resolved: false,
+    humanSummary,
   }
 }
 
@@ -1466,6 +1493,56 @@ export const listResolvedActionQueueItems = async ({
       : null
 
   return { items, nextCursor }
+}
+
+/**
+ * Snooze an action-queue item until `until` (ISO-8601 timestamp).
+ *
+ * While snoozed the row is excluded from the open view and chat segments.
+ * Once `until` is in the past the row reappears automatically — there is no
+ * wake-up mechanism; the filter in listActionQueueItems / app-services simply
+ * includes the row again on the next poll.
+ *
+ * Presets (e.g. "1 hour", "tomorrow") are handled client-side — the API
+ * accepts only an absolute ISO-8601 timestamp.
+ *
+ * No-op when the item does not exist (prefix-match fallback as per
+ * `setActionQueueState`). Throws if `until` is not a valid ISO-8601 string.
+ */
+export const snoozeActionQueueItem = async (
+  idOrPrefix: string,
+  until: string,
+): Promise<void> => {
+  // Validate: must be a parse-able date that is in the future.
+  const untilDate = new Date(until)
+  if (isNaN(untilDate.getTime())) {
+    throw new Error(`Invalid snooze timestamp: ${until}`)
+  }
+  await initActionQueue()
+  const c = stateClient()
+
+  let resolvedId: string | null = null
+  const exact = await c.execute({
+    sql: `SELECT id FROM action_queue_items WHERE id = ?`,
+    args: [idOrPrefix],
+  })
+  if (exact.rows.length === 1) {
+    resolvedId = (exact.rows[0] as unknown as { id: string }).id
+  } else if (idOrPrefix.length >= 4) {
+    const pref = await c.execute({
+      sql: `SELECT id FROM action_queue_items WHERE id LIKE ? || '%' LIMIT 2`,
+      args: [idOrPrefix],
+    })
+    if (pref.rows.length === 1) {
+      resolvedId = (pref.rows[0] as unknown as { id: string }).id
+    }
+  }
+  if (!resolvedId) return
+
+  await c.execute({
+    sql: `UPDATE action_queue_items SET snoozed_until = ? WHERE id = ?`,
+    args: [untilDate.toISOString(), resolvedId],
+  })
 }
 
 /**

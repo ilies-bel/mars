@@ -50,6 +50,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   runReflect: async () => ({ proposalsRaised: 0 }),
   enableAutoReflect: async () => {},
   stepDone: async () => ({ next: null as string | null }),
+  snoozeItem: async () => {},
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,
   appServices: stubAppServices(),

@@ -344,6 +344,14 @@ export interface HttpServerDeps {
    */
   stepDone: (id: string) => Promise<{ next: string | null }>
   /**
+   * Snooze an action-queue item until the given ISO-8601 timestamp.
+   * While snoozed the item is excluded from the open view and chat segments.
+   * Once the timestamp is in the past the item reappears automatically.
+   * No-op when the item does not exist. Throws when `until` is not a valid
+   * ISO-8601 string.
+   */
+  snoozeItem: (id: string, until: string) => Promise<void>
+  /**
    * Resolved recovery-recipe catalog (built-in seed + `.mars/recipes/`
    * overrides), loaded once at daemon start. Served verbatim by
    * `GET /recipes` so the actionQueue UI can name which recipe a recovery task
@@ -1600,6 +1608,42 @@ export const startHttpServer = async (
         .then(() => sendJson(res, 200, { ok: true, status: 'started' }))
         .catch((err: unknown) => sendError(res, err))
       return
+    }
+
+    // POST /actions/snooze/:id — snooze an action-queue item until a given
+    // ISO-8601 timestamp. Body: { until: string }.
+    // Presets (e.g. "1 hour", "tomorrow") are handled client-side.
+    {
+      const snoozeMatch = req.url?.match(/^\/actions\/snooze\/([^/?]+)(?:\?.*)?$/)
+      if (snoozeMatch && snoozeMatch[1]) {
+        const id = decodeURIComponent(snoozeMatch[1])
+        let rawBody = ''
+        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+        req.on('end', () => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'Invalid JSON body' })
+            return
+          }
+          const snoozeSchema = z.object({ until: z.string() })
+          const result = snoozeSchema.safeParse(parsed)
+          if (!result.success) {
+            sendJson(res, 400, {
+              ok: false,
+              error: 'Body must be { until: string }',
+            })
+            return
+          }
+          deps
+            .snoozeItem(id, result.data.until)
+            .then(() => sendJson(res, 200, { ok: true }))
+            .catch((err: unknown) => sendError(res, err))
+        })
+        req.on('error', (err: unknown) => sendError(res, err))
+        return
+      }
     }
 
     // POST /actions/:op/:id — per-entity verbs.

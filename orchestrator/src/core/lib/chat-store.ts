@@ -244,6 +244,12 @@ export interface AlertSegment {
   actions: AlertSegmentAction[]
   /** True once the underlying action-queue item has been superseded/resolved. */
   resolved: boolean
+  /**
+   * One plain sentence a non-expert understands, from the recipe registry.
+   * Additive field — the UI task will switch from `title`/`whyNow` to this
+   * once both land.
+   */
+  humanSummary?: string
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
