@@ -114,6 +114,12 @@ const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Prom
       releaseUrl: null,
       selfUpdatable: false,
     }),
+    viewWorkflowConfigs: async () => ({ configs: [] }),
+    viewPromotionLedger: async () => ({ entries: [] }),
+    viewGlossary: async () => ({ terms: [] }),
+    viewSkills: async () => ({ skills: [] }),
+    viewChatThreads: async () => ({ threads: [] }),
+    viewChatThread: async () => null,
   },
 })
 
