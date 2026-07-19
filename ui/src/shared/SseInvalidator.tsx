@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { eventsUrl } from './api'
 import { getOpenTaskId } from './openTaskId'
 import { setSseConnected } from './sseStatus'
+import { pushLiveEvent, type LiveEvent } from './chatBuffer'
 
 export const SseInvalidator = () => {
   const qc = useQueryClient()
@@ -79,6 +80,28 @@ export const SseInvalidator = () => {
         void qc.invalidateQueries({ queryKey: ['chat-threads'] })
         void qc.invalidateQueries({ queryKey: ['chat-thread'] })
       }, 150)
+    })
+
+    // 'chat-delta' events carry live segment data from the daemon chat-runner.
+    // Push each segment into the module-level chatBuffer store so the active
+    // thread's ChatPage can render it incrementally.
+    es.addEventListener('chat-delta', (e) => {
+      try {
+        const me = e as MessageEvent<string>
+        const payload = JSON.parse(me.data) as unknown
+        if (
+          typeof payload === 'object' &&
+          payload !== null &&
+          'threadId' in payload &&
+          typeof (payload as Record<string, unknown>).threadId === 'string' &&
+          'event' in payload
+        ) {
+          const { threadId, event } = payload as { threadId: string; event: LiveEvent }
+          pushLiveEvent(threadId, event)
+        }
+      } catch {
+        // Malformed payload — ignore.
+      }
     })
 
     es.onerror = () => setSseConnected(false)

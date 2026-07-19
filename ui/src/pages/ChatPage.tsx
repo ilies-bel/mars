@@ -26,10 +26,12 @@ import {
   postChatMessage,
   renameChatThread,
   deleteChatThread,
+  stopChatThread,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert } from '@/shared/schemas'
 import { ContextRail } from '@/widgets/chat/ContextRail'
+import { useLiveBuffer, clearLiveBuffer } from '@/shared/chatBuffer'
 
 // ---------------------------------------------------------------------------
 // Welcome state: quick-action chips and slash palette
@@ -446,6 +448,75 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
 }
 
 // ---------------------------------------------------------------------------
+// Live assistant bubble (streaming)
+// ---------------------------------------------------------------------------
+
+interface LiveAssistantBubbleProps {
+  text: string
+  thinking: string | null
+  currentTool: string | null
+  toolCount: number
+  error: string | null
+  done: boolean
+}
+
+/**
+ * Renders the in-progress assistant response while the daemon is streaming.
+ * Shows: activity header with tool info, thinking block, streaming text with
+ * blinking cursor, and an error banner when the run errored.
+ */
+const LiveAssistantBubble = ({
+  text,
+  thinking,
+  currentTool,
+  toolCount,
+  error,
+  done,
+}: LiveAssistantBubbleProps) => (
+  <div className="flex justify-start px-4 py-1">
+    <div className="flex-1 text-[13px]">
+      {/* Activity header — shows when a tool is running or the run started */}
+      {currentTool ? (
+        <div className="mb-2 flex items-center gap-2">
+          <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-amber-400" />
+          <span className="font-mono text-[11px] text-iron/70">
+            Running {currentTool} · {toolCount} tool{toolCount !== 1 ? 's' : ''}
+          </span>
+        </div>
+      ) : !text && !thinking && !error ? (
+        <div className="mb-2 flex items-center gap-2">
+          <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-iron/50" />
+          <span className="font-mono text-[11px] text-iron/50">Thinking…</span>
+        </div>
+      ) : null}
+
+      {/* Streaming thinking block */}
+      {thinking && <ThinkingBlock text={thinking} />}
+
+      {/* Streaming text with blinking cursor */}
+      {text && (
+        <div className="chat-markdown prose prose-sm prose-invert max-w-none">
+          <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
+          {!done && (
+            <span
+              aria-hidden="true"
+              className="ml-0.5 inline-block h-[1em] w-[2px] animate-pulse bg-fg align-text-bottom"
+            />
+          )}
+        </div>
+      )}
+
+      {/* Error banner */}
+      {error && (
+        <div className="mt-1 rounded border border-red-400/40 bg-red-900/10 px-3 py-2 font-mono text-[11px] text-red-400">
+          ⚠ {error}
+        </div>
+      )}
+    </div>
+  </div>
+)
+
+// ---------------------------------------------------------------------------
 // Message list
 // ---------------------------------------------------------------------------
 
@@ -456,21 +527,34 @@ interface MessageListProps {
 
 const MessageList = ({ threadId, projectId }: MessageListProps) => {
   const bottomRef = useRef<HTMLDivElement>(null)
+  const qc = useQueryClient()
 
   const { data, isLoading } = useQuery({
     queryKey: ['chat-thread', threadId, projectId],
     queryFn: () => fetchChatThread(threadId, projectId),
     refetchInterval: (q) => {
-      // Poll faster while a response is running.
+      // Poll while running as a fallback if the SSE bridge is unavailable.
       const status = q.state.data?.thread.status
       return status === 'running' ? 2000 : false
     },
   })
 
-  // Scroll to bottom when new messages arrive.
+  // Live buffer for this thread — non-null while the daemon is streaming.
+  const liveBuffer = useLiveBuffer(threadId)
+
+  // When the run completes (buffer.done), invalidate the thread query so the
+  // persisted transcript loads and clears the live view.
+  useEffect(() => {
+    if (!liveBuffer?.done) return
+    void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
+    void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+    clearLiveBuffer(threadId)
+  }, [liveBuffer?.done, threadId, qc])
+
+  // Scroll to bottom on new persisted messages or live text growth.
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [data?.messages.length])
+  }, [data?.messages.length, liveBuffer?.text.length])
 
   if (isLoading) {
     return (
@@ -481,8 +565,9 @@ const MessageList = ({ threadId, projectId }: MessageListProps) => {
   }
 
   const messages = data?.messages ?? []
+  const showLive = liveBuffer !== null && !liveBuffer.done
 
-  if (messages.length === 0) {
+  if (messages.length === 0 && !showLive) {
     return null
   }
 
@@ -491,6 +576,16 @@ const MessageList = ({ threadId, projectId }: MessageListProps) => {
       {messages.map((msg) => (
         <ChatMessageBubble key={msg.id} msg={msg} />
       ))}
+      {showLive && (
+        <LiveAssistantBubble
+          text={liveBuffer.text}
+          thinking={liveBuffer.thinking}
+          currentTool={liveBuffer.currentTool}
+          toolCount={liveBuffer.toolCount}
+          error={liveBuffer.error}
+          done={liveBuffer.done}
+        />
+      )}
       <div ref={bottomRef} />
     </div>
   )
@@ -602,6 +697,14 @@ const Composer = ({
     },
   })
 
+  const { mutate: stop, isPending: isStopping } = useMutation({
+    mutationFn: () => stopChatThread(threadId, projectId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
+      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+    },
+  })
+
   const handleSend = useCallback(() => {
     const trimmed = text.trim()
     if (!trimmed || disabled || isPending) return
@@ -657,14 +760,26 @@ const Composer = ({
           onBlur={() => setTimeout(() => setShowPalette(false), 150)}
           disabled={isDisabled}
         />
-        <button
-          type="button"
-          className="flex-none rounded border border-iron/40 px-3 py-2 font-mono text-[11px] text-iron transition-colors hover:bg-iron/20 hover:text-fg active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
-          onClick={handleSend}
-          disabled={isDisabled || text.trim().length === 0}
-        >
-          Send
-        </button>
+        {/* Show Stop when thread is running; Send otherwise. */}
+        {disabled && !isPending ? (
+          <button
+            type="button"
+            className="flex-none rounded border border-red-400/40 px-3 py-2 font-mono text-[11px] text-red-400 transition-colors hover:bg-red-900/20 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() => stop()}
+            disabled={isStopping}
+          >
+            Stop
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="flex-none rounded border border-iron/40 px-3 py-2 font-mono text-[11px] text-iron transition-colors hover:bg-iron/20 hover:text-fg active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={handleSend}
+            disabled={isDisabled || text.trim().length === 0}
+          >
+            Send
+          </button>
+        )}
       </div>
     </div>
   )
@@ -771,8 +886,12 @@ export const ChatPage = () => {
     },
   })
 
+  // Subscribe to live buffer so welcome state hides as soon as streaming starts.
+  const liveBufferForThread = useLiveBuffer(selectedThreadId ?? '')
+
   const isRunning = threadDetail?.thread.status === 'running'
-  const hasMessages = (threadDetail?.messages.length ?? 0) > 0
+  const hasMessages =
+    (threadDetail?.messages.length ?? 0) > 0 || liveBufferForThread !== null
 
   const handleChipClick = useCallback((prompt: string) => {
     setPrefill(prompt)

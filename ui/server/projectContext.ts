@@ -3,6 +3,7 @@ import { resolveRepo } from './repo.ts'
 import type { RepoContext } from './repo.ts'
 import { SseHub } from './sse.ts'
 import { watchQueue } from './watch.ts'
+import { startChatBridge } from './chatBridge.ts'
 
 export interface ProjectContextEntry {
   ctx: RepoContext
@@ -47,6 +48,9 @@ export function createProjectContextCache(
       const stateDb = new StateDb(ctx.stateDbPath)
       await stateDb.init()
       const hub = new SseHub()
+      // Bridge daemon live chat segments to the UI SSE hub so browsers receive
+      // `chat-delta` events without polling.
+      startChatBridge(ctx.stateDir, hub)
       watchQueue(ctx.queueDbPath, () => {
         hub.broadcast('tasks')
         hub.broadcast('proposals')
