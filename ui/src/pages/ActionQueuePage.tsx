@@ -16,7 +16,6 @@ import {
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import {
   kindBadgeLabel,
-  humanizeFailureCode,
   severityColor,
   severityRowClass,
   summarizeTraceEvent,
@@ -31,7 +30,7 @@ import type {
 import { relativeTime } from '@/shared/time'
 import { taskHash, proposalHash } from '@/shared/routing'
 import { resolveFallback } from '@/shared/uiFallback'
-import { historyLabel } from './ActionQueuePageFilters'
+import { historyLabel, whyNowText } from './ActionQueuePageFilters'
 
 // ---- Helpers ----
 
@@ -97,33 +96,6 @@ const KIND_ACCENT_BG: Record<ActionQueueItem['kind'], string> = {
 
 /** Ops that receive destructive button styling in the inline resolver. */
 const DESTRUCTIVE_OPS_INLINE = new Set(['purge', 'dismiss', 'reject'])
-
-/**
- * One-line "why now" subtitle — the most actionable reason an operator
- * should act on this card. Priority: diagnosis text → errorKind (when
- * distinct from kind) → failureReasonCode → arc reason → body first line.
- */
-function whyNowText(item: ActionQueueItem): string | null {
-  if (item.diagnosis?.text) {
-    const line = item.diagnosis.text.split('\n')[0]
-    return line.length > 100 ? `${line.slice(0, 100)}…` : line
-  }
-  if (item.errorKind && item.errorKind !== item.kind) {
-    return humanizeFailureCode(item.errorKind)
-  }
-  if (item.failureReasonCode) {
-    return humanizeFailureCode(item.failureReasonCode)
-  }
-  if (item.kind === 'arc-failed') {
-    const line = item.reason.split('\n')[0]
-    return line.length > 100 ? `${line.slice(0, 100)}…` : line
-  }
-  if (item.body) {
-    const line = item.body.split('\n')[0]
-    return line.length === 0 ? null : line.length > 100 ? `${line.slice(0, 100)}…` : line
-  }
-  return null
-}
 
 // ---- Row ----
 

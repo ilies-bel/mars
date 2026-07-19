@@ -13,9 +13,11 @@ import {
   filterProposalItems,
   historyLabel,
   itemKey,
+  whyNowText,
   type AlertItem,
   type ProposalItem,
 } from './ActionQueuePageFilters'
+import type { ActionQueueItem } from '../shared/schemas'
 import {
   decodeAqState,
   defaultAqUrlState,
@@ -356,5 +358,80 @@ describe('historyLabel', () => {
 
   it('appends + when more pages are available', () => {
     expect(historyLabel(50, true)).toBe('History · 50+')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// whyNowText — "why now" subtitle builder for failed-task cards
+// ---------------------------------------------------------------------------
+
+/** Minimal failed-task fixture — only the fields whyNowText reads. */
+const failedTask = (
+  overrides: Partial<{
+    body: string
+    diagnosis: { text: string; diagnosedAt: string } | null
+    errorKind: string
+    failureReasonCode: string | null
+  }>,
+): ActionQueueItem =>
+  ({
+    kind: 'failed-task',
+    id: 'test-task',
+    entityId: 'test-task',
+    priority: 'high',
+    title: 'Some failing task',
+    body: '',
+    at: '2026-01-01T00:00:00.000Z',
+    dag: null,
+    errorKind: 'failed-task',
+    actions: [],
+    diagnosis: null,
+    failureReasonCode: null,
+    fixForTaskId: null,
+    resolution: null,
+    devServerUrl: null,
+    ...overrides,
+  }) as ActionQueueItem
+
+describe('whyNowText', () => {
+  it('returns null for the generic daemon body boilerplate — the bug case', () => {
+    const item = failedTask({
+      body: 'A pipeline step did not complete. See the transcript for details.',
+    })
+    expect(whyNowText(item)).toBeNull()
+  })
+
+  it('returns a non-generic body line when no specific fields are set', () => {
+    const item = failedTask({ body: 'Out of memory: killed by OOM reaper' })
+    expect(whyNowText(item)).toBe('Out of memory: killed by OOM reaper')
+  })
+
+  it('returns the first line of diagnosis.text — highest priority', () => {
+    const item = failedTask({
+      body: 'A pipeline step did not complete. See the transcript for details.',
+      diagnosis: {
+        text: 'TypeScript compilation failed: Cannot find module\nSee imports above.',
+        diagnosedAt: '2026-01-01T00:00:00.000Z',
+      },
+    })
+    expect(whyNowText(item)).toBe('TypeScript compilation failed: Cannot find module')
+  })
+
+  it('truncates diagnosis text longer than 100 chars with an ellipsis', () => {
+    const long = 'x'.repeat(120)
+    const item = failedTask({ diagnosis: { text: long, diagnosedAt: '2026-01-01T00:00:00.000Z' } })
+    const result = whyNowText(item)
+    expect(result).not.toBeNull()
+    expect(result!.length).toBe(101) // 100 chars + '…'
+    expect(result!.endsWith('…')).toBe(true)
+  })
+
+  it('returns null for an empty body and no other fields', () => {
+    expect(whyNowText(failedTask({ body: '' }))).toBeNull()
+  })
+
+  it('uses only the first line of a multi-line body', () => {
+    const item = failedTask({ body: 'Line one: specific error\nLine two: more context' })
+    expect(whyNowText(item)).toBe('Line one: specific error')
   })
 })

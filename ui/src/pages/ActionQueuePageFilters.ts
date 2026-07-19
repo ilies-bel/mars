@@ -1,12 +1,13 @@
 /**
- * Pure filtering and selection helpers for the ActionQueuePage actionQueue sidebar.
+ * Pure filtering, selection, and subtitle helpers for the ActionQueuePage.
  *
  * Extracted here so they can be unit-tested without loading React or any
  * Vite-specific module (e.g. import.meta.env).
  */
 
 import type { StaleWorktree } from '../shared/api'
-import type { DraftFeature } from '../shared/schemas'
+import type { ActionQueueItem, DraftFeature } from '../shared/schemas'
+import { humanizeFailureCode } from '../shared/actionQueueDetail'
 
 // ---- Types ----------------------------------------------------------------
 
@@ -106,4 +107,42 @@ export function deriveSelectedKey(
     return itemKey(filteredItems[0])
   }
   return currentKey
+}
+
+// ---- Why-now subtitle -----------------------------------------------------
+
+/**
+ * One-line "why now" subtitle — the most actionable reason an operator should
+ * act on a failed-task card. Priority: diagnosis text → errorKind (when
+ * distinct from kind) → failureReasonCode → arc reason → body first line
+ * (when non-generic).
+ *
+ * The body fallback deliberately skips the daemon's default boilerplate
+ * "A pipeline step did not complete. See the transcript for details." — that
+ * string appears identically on every failed-task card and conveys no
+ * actionable information.
+ */
+export function whyNowText(item: ActionQueueItem): string | null {
+  if (item.diagnosis?.text) {
+    const line = item.diagnosis.text.split('\n')[0]
+    return line.length > 100 ? `${line.slice(0, 100)}…` : line
+  }
+  if (item.errorKind && item.errorKind !== item.kind) {
+    return humanizeFailureCode(item.errorKind)
+  }
+  if (item.failureReasonCode) {
+    return humanizeFailureCode(item.failureReasonCode)
+  }
+  if (item.kind === 'arc-failed') {
+    const line = item.reason.split('\n')[0]
+    return line.length > 100 ? `${line.slice(0, 100)}…` : line
+  }
+  if (item.body) {
+    const line = item.body.split('\n')[0]
+    const GENERIC_BODY =
+      'A pipeline step did not complete. See the transcript for details.'
+    if (line.length === 0 || line === GENERIC_BODY) return null
+    return line.length > 100 ? `${line.slice(0, 100)}…` : line
+  }
+  return null
 }

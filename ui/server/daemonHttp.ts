@@ -186,20 +186,21 @@ export const proxyGet = async (
   })
 
 /**
- * Forward a POST with a JSON body to the daemon, relaying its status + parsed
- * JSON body verbatim. Used to forward actionQueue mutation verbs (ack/resolve/dismiss)
- * to the daemon — the single writer — so the UI no longer calls the state DB
- * directly. A missing daemon yields a synthetic 503; a transport error yields a
- * 502.
+ * Forward a POST or PUT with a JSON body to the daemon, relaying its status +
+ * parsed JSON body verbatim. Used to forward actionQueue mutation verbs
+ * (ack/resolve/dismiss) and preference writes to the daemon — the single writer
+ * — so the UI no longer calls the state DB directly. A missing daemon yields a
+ * synthetic 503; a transport error yields a 502.
  */
 export const proxyPost = async (
   stateDir: string,
   path: string,
   body: unknown,
+  method: 'POST' | 'PUT' = 'POST',
 ): Promise<DaemonActionResult> =>
   withDaemon(stateDir, async (port) => {
     const res = await fetch(`http://127.0.0.1:${port}${path}`, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })

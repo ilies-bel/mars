@@ -639,6 +639,23 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
+        // GET /api/preferences/notifications — proxy the daemon's desktop-
+        // notification preference so the nav-bar toggle survives page reloads
+        // and is visible to every connected client.
+        if (path === '/api/preferences/notifications' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/preferences/notifications')
+          return jsonResponse(r.status, r.body)
+        }
+
+        // PUT /api/preferences/notifications — update the desktop-notification
+        // preference on the daemon (the single writer).
+        if (path === '/api/preferences/notifications' && req.method === 'PUT') {
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* empty body is fine */ }
+          const result = await proxyPost(ctx.stateDir, '/preferences/notifications', body, 'PUT')
+          return jsonResponse(result.status, result.body)
+        }
+
         // Unknown API path (or /events was already handled above).
         return jsonResponse(404, { error: `no route for ${path}` })
       }
