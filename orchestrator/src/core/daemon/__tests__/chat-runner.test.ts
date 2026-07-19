@@ -342,6 +342,10 @@ describe('ChatRunner delta emission', () => {
 // binary or SQLite database.
 
 // We need to hoist mock declarations before imports so vi.mock hoisting works.
+vi.mock('../chat-system-prompt', () => ({
+  resolveChatSystemPrompt: vi.fn().mockResolvedValue('TEST_SYSTEM_PROMPT'),
+}))
+
 vi.mock('../../lib/git/claude', () => ({
   resolveClaudeBin: vi.fn(() => '/usr/bin/claude'),
   buildWorkerEnv: vi.fn(() => ({})),
@@ -692,6 +696,43 @@ describe('ChatRunner state machine', () => {
     expect(prompt).not.toContain('<thread_context>')
     expect(prompt).toBe('follow-up question')
     expect(vi.mocked(chatStore.markContextSeeded)).not.toHaveBeenCalled()
+  })
+
+  // ── System-prompt tests ────────────────────────────────────────────────────
+
+  it('passes --append-system-prompt on a fresh run (no session)', async () => {
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const args = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
+    const idx = args.indexOf('--append-system-prompt')
+    expect(idx).toBeGreaterThan(-1)
+    expect(args[idx + 1]).toBe('TEST_SYSTEM_PROMPT')
+    // No --resume flag on a fresh run.
+    expect(args).not.toContain('--resume')
+  })
+
+  it('passes --append-system-prompt on a --resume turn', async () => {
+    vi.mocked(chatStore.getThread).mockResolvedValue({
+      thread: {
+        id: 't1', session_id: 'existing-sess', title: 'title', status: 'idle',
+        created_at: '', updated_at: '', origin: null,
+        alert_item_id: null, alert_resolved: false, context_seeded: true,
+      },
+      messages: [],
+    })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'follow-up', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const args = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
+    const idx = args.indexOf('--append-system-prompt')
+    expect(idx).toBeGreaterThan(-1)
+    expect(args[idx + 1]).toBe('TEST_SYSTEM_PROMPT')
+    // Must also include --resume when a session exists.
+    expect(args).toContain('--resume')
   })
 
   it('includes prior messages but no alert block on first run of a non-alert thread', async () => {

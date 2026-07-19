@@ -27,6 +27,7 @@ import {
   type AlertSegment,
 } from '../lib/chat-store'
 import type { ViewStreamHub } from './view/stream-hub'
+import { resolveChatSystemPrompt } from './chat-system-prompt'
 
 // ── Segment types ─────────────────────────────────────────────────────────────
 
@@ -127,7 +128,11 @@ export const parseEventToSegments = (event: ClaudeEvent): ChatSegment[] => {
  * 2. Does NOT include `--no-session-persistence` so the session is saved
  *    between turns and `--resume` can pick it up.
  */
-const buildChatArgs = (content: string, sessionId: string | null): readonly string[] => {
+const buildChatArgs = (
+  content: string,
+  sessionId: string | null,
+  systemPrompt: string,
+): readonly string[] => {
   const base: string[] = [
     '-p',
     content,
@@ -137,6 +142,8 @@ const buildChatArgs = (content: string, sessionId: string | null): readonly stri
     '--dangerously-skip-permissions',
     '--setting-sources',
     'project,local',
+    '--append-system-prompt',
+    systemPrompt,
   ]
   if (sessionId) {
     base.push('--resume', toClaudeSessionId(sessionId))
@@ -423,11 +430,13 @@ export class ChatRunner {
         abort.abort()
       }, CHAT_TIMEOUT_MS)
 
+      const systemPrompt = await resolveChatSystemPrompt(repoRoot)
+
       let subprocessResult: RunSubprocessResult
       try {
         subprocessResult = await runSubprocessStreaming(
           resolveClaudeBin(),
-          buildChatArgs(promptContent, existingSessionId),
+          buildChatArgs(promptContent, existingSessionId, systemPrompt),
           repoRoot,
           ({ stream, line }) => {
             if (stream !== 'stdout') return
