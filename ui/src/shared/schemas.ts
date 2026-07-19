@@ -842,20 +842,47 @@ export const chatSegmentResultSchema = z.object({
   cost: z.number().nullable().optional(),
 })
 
+/**
+ * Tool-result segment: emitted by the daemon alongside tool_use segments to
+ * carry the raw tool output back to the client. The transcript renderer
+ * attaches it to the matching tool_use (by tool_use_id) in the activity-group
+ * rather than rendering it standalone.
+ */
+export const chatSegmentToolResultSchema = z.object({
+  type: z.literal('tool_result'),
+  tool_use_id: z.string().optional(),
+  content: z.unknown(),
+  isError: z.boolean().optional(),
+})
+
 export const chatSegmentSchema = z.discriminatedUnion('type', [
   chatSegmentTextSchema,
   chatSegmentThinkingSchema,
   chatSegmentToolUseSchema,
   chatSegmentAlertSchema,
   chatSegmentResultSchema,
+  chatSegmentToolResultSchema,
 ])
 
 export const chatMessageSchema = z.object({
   id: z.string(),
   threadId: z.string(),
   role: z.enum(['user', 'assistant']),
-  /** Segments; defaults to empty array for legacy messages that have no segments. */
-  segments: z.array(chatSegmentSchema).optional().default([]),
+  /**
+   * Segments; defaults to empty array for legacy messages that have no segments.
+   * Unknown/future segment types are silently dropped rather than failing the
+   * whole message parse — this is the catch/passthrough strategy.
+   */
+  segments: z
+    .array(z.unknown())
+    .optional()
+    .default([])
+    .transform((arr): z.infer<typeof chatSegmentSchema>[] =>
+      arr.flatMap(raw => {
+        const r = chatSegmentSchema.safeParse(raw)
+        return r.success ? [r.data] : []
+      })
+    ),
   createdAt: z.string(),
 })
 
@@ -890,6 +917,7 @@ export type ChatSegment = z.infer<typeof chatSegmentSchema>
 export type ChatSegmentText = z.infer<typeof chatSegmentTextSchema>
 export type ChatSegmentThinking = z.infer<typeof chatSegmentThinkingSchema>
 export type ChatSegmentToolUse = z.infer<typeof chatSegmentToolUseSchema>
+export type ChatSegmentToolResult = z.infer<typeof chatSegmentToolResultSchema>
 export type ChatSegmentResult = z.infer<typeof chatSegmentResultSchema>
 export type ChatMessage = z.infer<typeof chatMessageSchema>
 export type ChatThread = z.infer<typeof chatThreadSchema>

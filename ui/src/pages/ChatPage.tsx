@@ -67,9 +67,17 @@ type FlatSegment =
 /**
  * Collapses consecutive tool_use segments into a single ToolGroup so the UI
  * can render them as a collapsible activity row.
+ *
+ * tool_result segments are absorbed into the preceding ToolGroup by attaching
+ * their content to the matching tool_use (via tool_use_id) rather than being
+ * rendered standalone.
+ *
+ * thinking segments with empty text are silently dropped — they produce no
+ * visible output rather than an empty "Thought process" block.
  */
 export const groupMessageSegments = (msg: ChatMessage): FlatSegment[] => {
   const out: FlatSegment[] = []
+  // Shallow-copy each tool_use so we can safely attach tool_result content.
   let currentTools: ChatSegmentToolUse[] | null = null
 
   const flushTools = () => {
@@ -82,7 +90,20 @@ export const groupMessageSegments = (msg: ChatMessage): FlatSegment[] => {
   for (const seg of msg.segments) {
     if (seg.type === 'tool_use') {
       if (currentTools === null) currentTools = []
-      currentTools.push(seg)
+      // Shallow-copy so we can set .result without mutating the parsed segment.
+      currentTools.push({ ...seg })
+    } else if (seg.type === 'tool_result') {
+      // Attach to the matching tool_use inside the current group. Don't flush —
+      // tool_result is part of the same activity block as its tool_use.
+      if (currentTools !== null) {
+        const match = seg.tool_use_id
+          ? currentTools.find(t => t.id === seg.tool_use_id)
+          : currentTools[currentTools.length - 1]
+        if (match) {
+          match.result = seg.content
+          if (seg.isError) match.isError = true
+        }
+      }
     } else {
       flushTools()
       if (seg.type === 'text') {
@@ -91,10 +112,11 @@ export const groupMessageSegments = (msg: ChatMessage): FlatSegment[] => {
         out.push({ kind: 'alert', alert: seg })
       } else if (seg.type === 'result') {
         out.push({ kind: 'result', result: seg })
-      } else {
-        // thinking
+      } else if (seg.type === 'thinking' && seg.text) {
+        // Skip empty thinking segments — they render as a pointless blank block.
         out.push({ kind: 'thinking', text: seg.text })
       }
+      // Any other (unknown) segment type is silently dropped.
     }
   }
   flushTools()
@@ -322,7 +344,7 @@ const AlertCard = ({
 }
 
 /** A single chat message rendered with segment grouping. */
-const ChatMessageBubble = ({
+export const ChatMessageBubble = ({
   msg,
   onDiscuss,
 }: {
