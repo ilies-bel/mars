@@ -727,7 +727,6 @@ interface ThreadItemProps {
 const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: ThreadItemProps) => {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const startEdit = () => {
@@ -748,30 +747,6 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
   }
 
   const title = thread.title || 'New thread'
-
-  if (confirmDelete) {
-    return (
-      <div className="flex flex-col gap-1 rounded border border-red-400/30 bg-red-900/10 p-2 text-[11px]">
-        <span className="font-mono text-iron">Delete &ldquo;{title}&rdquo;?</span>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            className="flex-1 rounded border border-red-400/40 px-2 py-0.5 font-mono text-[10px] text-red-400 hover:bg-red-900/20"
-            onClick={() => { setConfirmDelete(false); onDelete() }}
-          >
-            Delete
-          </button>
-          <button
-            type="button"
-            className="flex-1 rounded border border-iron/30 px-2 py-0.5 font-mono text-[10px] text-iron hover:bg-iron/20"
-            onClick={() => setConfirmDelete(false)}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div
@@ -815,7 +790,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
           <button
             type="button"
             className="flex-none rounded px-1 py-0.5 text-[10px] text-iron/50 opacity-0 transition-opacity hover:bg-red-900/20 hover:text-red-400 focus-visible:opacity-100 group-hover:opacity-100"
-            onClick={(e) => { e.stopPropagation(); setConfirmDelete(true) }}
+            onClick={(e) => { e.stopPropagation(); onDelete() }}
             aria-label="Delete thread"
           >
             ✕
@@ -1356,7 +1331,26 @@ interface ThreadSidebarProps {
   onSelect: (id: string) => void
 }
 
-const ThreadSidebar = ({ selectedId, projectId, onSelect }: ThreadSidebarProps) => {
+/** How long a deleted thread stays undoable before the delete is sent. */
+const DELETE_UNDO_WINDOW_MS = 5000
+
+/** A delete that has been made on screen but not yet sent to the server. */
+interface PendingThreadDelete {
+  id: string
+  title: string
+  /** True when this thread was the open one, so Undo can re-open it. */
+  wasSelected: boolean
+}
+
+/**
+ * Toast state for the delete flow. `pending` counts down the undo window;
+ * `error` reports a delete the server rejected (the row is already back).
+ */
+type DeleteToast =
+  | { kind: 'pending'; title: string }
+  | { kind: 'error'; message: string }
+
+export const ThreadSidebar = ({ selectedId, projectId, onSelect }: ThreadSidebarProps) => {
   const qc = useQueryClient()
 
   const { data } = useQuery({
@@ -1378,17 +1372,105 @@ const ThreadSidebar = ({ selectedId, projectId, onSelect }: ThreadSidebarProps) 
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['chat-threads'] }),
   })
 
-  const { mutate: remove } = useMutation({
-    mutationFn: (id: string) => deleteChatThread(id, projectId),
-    onSuccess: (_, id) => {
-      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
-      if (selectedId === id) onSelect('')
+  // Threads hidden on screen because a delete is pending. Filtering at render
+  // time rather than editing the query cache keeps the row hidden even if an
+  // unrelated SSE invalidation refetches the list mid-undo-window.
+  const [hiddenIds, setHiddenIds] = useState<string[]>([])
+  const [toast, setToast] = useState<DeleteToast | null>(null)
+  const pendingRef = useRef<PendingThreadDelete | null>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const unhide = useCallback((id: string) => {
+    setHiddenIds((prev) => prev.filter((x) => x !== id))
+  }, [])
+
+  /** Send the delete for real. The row is already hidden; reveal it again on failure. */
+  const commitDelete = useCallback(
+    (p: PendingThreadDelete) => {
+      deleteChatThread(p.id, projectId)
+        .then(() => {
+          unhide(p.id)
+          void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+        })
+        .catch((err: unknown) => {
+          unhide(p.id)
+          if (p.wasSelected) onSelect(p.id)
+          setToast({
+            kind: 'error',
+            message: `Could not delete “${p.title}”: ${
+              err instanceof Error ? err.message : 'unknown error'
+            }`,
+          })
+        })
     },
-  })
+    [projectId, qc, unhide, onSelect],
+  )
+
+  /** Fire any pending delete immediately, so a second delete never drops the first. */
+  const flushPending = useCallback(() => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    const p = pendingRef.current
+    pendingRef.current = null
+    if (p !== null) commitDelete(p)
+  }, [commitDelete])
+
+  const startDelete = useCallback(
+    (thread: ChatThread) => {
+      flushPending()
+      const p: PendingThreadDelete = {
+        id: thread.id,
+        title: thread.title || 'New thread',
+        wasSelected: selectedId === thread.id,
+      }
+      setHiddenIds((prev) => [...prev, p.id])
+      if (p.wasSelected) onSelect('')
+      pendingRef.current = p
+      setToast({ kind: 'pending', title: p.title })
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null
+        const current = pendingRef.current
+        pendingRef.current = null
+        setToast(null)
+        if (current !== null) commitDelete(current)
+      }, DELETE_UNDO_WINDOW_MS)
+    },
+    [flushPending, selectedId, onSelect, commitDelete],
+  )
+
+  const undoDelete = useCallback(() => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    const p = pendingRef.current
+    pendingRef.current = null
+    setToast(null)
+    if (p === null) return
+    unhide(p.id)
+    if (p.wasSelected) onSelect(p.id)
+  }, [unhide, onSelect])
+
+  // Commit anything still pending on unmount — navigating away is not an undo.
+  // The ref reads are deliberate: this must run exactly once, at teardown.
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+      const p = pendingRef.current
+      pendingRef.current = null
+      if (p !== null) void deleteChatThread(p.id, projectId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Alert-origin unresolved threads sort to the top; everything else retains
   // server order (already sorted by updated_at desc from the backend).
-  const threads = (data ?? []).slice().sort((a, b) => {
+  const threads = (data ?? []).filter((t) => !hiddenIds.includes(t.id)).sort((a, b) => {
     const aAlert = a.origin === 'alert' && !a.alertResolved ? 0 : 1
     const bAlert = b.origin === 'alert' && !b.alertResolved ? 0 : 1
     return aAlert - bAlert
@@ -1416,10 +1498,46 @@ const ThreadSidebar = ({ selectedId, projectId, onSelect }: ThreadSidebarProps) 
             isSelected={t.id === selectedId}
             onSelect={() => onSelect(t.id)}
             onRename={(title) => rename({ id: t.id, title })}
-            onDelete={() => remove(t.id)}
+            onDelete={() => startDelete(t)}
           />
         ))}
       </div>
+
+      {/* Delete toast — the row is already gone on screen; the request is not sent
+          until the undo window closes. Fixed so it never shifts the sidebar. */}
+      {toast !== null && (
+        <div
+          data-testid="thread-delete-undo-toast"
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 border border-iron/40 bg-bg px-4 py-2 font-mono text-[11px] text-fg shadow-lg"
+        >
+          {toast.kind === 'pending' ? (
+            <>
+              <span className="max-w-[280px] truncate">Deleted “{toast.title}”</span>
+              <button
+                type="button"
+                onClick={undoDelete}
+                className="border border-iron/40 px-2 py-0.5 font-mono text-[10px] uppercase text-iron transition hover:bg-iron/10 active:scale-[0.97]"
+              >
+                Undo
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="max-w-[360px] text-red-400">{toast.message}</span>
+              <button
+                type="button"
+                onClick={() => setToast(null)}
+                aria-label="Dismiss"
+                className="border border-iron/40 px-2 py-0.5 font-mono text-[10px] uppercase text-iron transition hover:bg-iron/10 active:scale-[0.97]"
+              >
+                Dismiss
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </aside>
   )
 }
