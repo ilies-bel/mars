@@ -13,6 +13,11 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import type { Command } from '../command'
+import {
+  probeProvider,
+  realProviderProbeDeps,
+  type ProviderProbeDeps,
+} from './provider-probe'
 
 // ---------------------------------------------------------------------------
 // Public types (exported for tests)
@@ -113,10 +118,14 @@ export const realProbes: DoctorProbes = {
  * Run all doctor checks and return the results. Pass `dbPath = null` to skip
  * the mars.db presence check (e.g. when called from `mars init` before the
  * DB exists).
+ *
+ * `providerProbeDeps` is optional and defaults to real system calls; tests
+ * pass a stub to control binary/auth detection without spawning real CLIs.
  */
 export const runDoctorChecks = async (
   probes: DoctorProbes,
   dbPath: string | null,
+  providerProbeDeps: ProviderProbeDeps = realProviderProbeDeps,
 ): Promise<CheckResult[]> => {
   const results: CheckResult[] = []
 
@@ -214,6 +223,31 @@ export const runDoctorChecks = async (
       })
     } else {
       results.push({ label: 'mars.db', status: 'PASS', message: `found at ${dbPath}` })
+    }
+  }
+
+  // 7–8. Alternative agent CLIs — WARN-only (optional; gemini and codex
+  //      complement Claude Code but are not required for Mars to operate).
+  for (const name of ['gemini', 'codex'] as const) {
+    const probe = probeProvider(name, providerProbeDeps)
+    if (!probe.installed) {
+      results.push({
+        label: `${name} CLI`,
+        status: 'WARN',
+        message: `not installed — optional alternative agent provider (install: ${probe.installHint})`,
+      })
+    } else if (probe.authed === 'yes') {
+      results.push({
+        label: `${name} CLI`,
+        status: 'PASS',
+        message: `found and logged in (${probe.authDetail})`,
+      })
+    } else {
+      results.push({
+        label: `${name} CLI`,
+        status: 'WARN',
+        message: 'installed but auth status unknown — run the CLI once to authenticate',
+      })
     }
   }
 

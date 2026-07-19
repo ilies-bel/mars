@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { resolveContext } from '../context'
+import type { ProviderName } from '../workers/providers'
 
 export interface DaemonCaps {
   implement: number
@@ -54,6 +55,14 @@ export interface DaemonConfig {
    * Override via MARS_AUTO_APPROVE_PLANS=1 or daemon.json `autoApprovePlans: true`.
    */
   autoApprovePlans: boolean
+  /**
+   * The default agent provider for live/PTY runs. Persisted by `mars init
+   * --provider <name>` and read by the dispatch path for live pipeline runs.
+   * Headless (stream-json) runs always use 'claude' regardless of this setting
+   * — the field is advisory for live task dispatching only.
+   * Default: 'claude'.
+   */
+  defaultProvider: ProviderName
 }
 
 const DEFAULTS: DaemonCaps = {
@@ -77,6 +86,10 @@ const DEFAULT_SCORING: ScoringConfig = {
 }
 
 const DEFAULT_AUTO_APPROVE_PLANS = false
+
+const DEFAULT_PROVIDER: ProviderName = 'claude'
+
+const VALID_PROVIDER_NAMES = new Set<string>(['claude', 'gemini', 'codex'])
 
 const envInt = (name: string, fallback: number): number => {
   const raw = process.env[name]
@@ -240,6 +253,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
   let fileScoringAutoTrigger: boolean | undefined
   let fileScoringThreshold: number | undefined
   let fileScoringWindow: number | undefined
+  let fileDefaultProvider: ProviderName | undefined
 
   try {
     const raw = readFileSync(daemonConfigPath(), 'utf8')
@@ -296,6 +310,10 @@ export const loadDaemonConfig = (): DaemonConfig => {
       fileScoringThreshold = scThreshold
     }
     fileScoringWindow = positiveInt(sc.lowTrendWindow, envScoringWindow)
+    const rawProvider = (parsed as Record<string, unknown>).defaultProvider
+    if (typeof rawProvider === 'string' && VALID_PROVIDER_NAMES.has(rawProvider)) {
+      fileDefaultProvider = rawProvider as ProviderName
+    }
   } catch {
     // No file, unreadable, or invalid JSON — fall back to env+defaults.
   }
@@ -319,5 +337,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
       lowTrendWindow: fileScoringWindow ?? envScoringWindow,
     },
     autoApprovePlans: fileAutoApprovePlans ?? envAutoApprovePlans,
+    defaultProvider: fileDefaultProvider ?? DEFAULT_PROVIDER,
   }
 }

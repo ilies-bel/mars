@@ -11,6 +11,18 @@ import { join } from 'node:path'
 import { MARS_VERSION } from '../../version'
 import type { Command } from '../command'
 import { errorMessage } from './shared'
+import {
+  probeProvider,
+  formatProviderProbe,
+  realProviderProbeDeps,
+  type ProviderProbeDeps,
+} from './provider-probe'
+import type { ProviderName } from '../../core/workers/providers'
+
+// Re-export so the provider probe types are accessible as part of install's
+// public surface (two call sites: init command + doctor checks).
+export type { ProviderProbeDeps, ProviderProbeResult } from './provider-probe'
+export { probeProvider, formatProviderProbe, realProviderProbeDeps } from './provider-probe'
 
 // ---------------------------------------------------------------------------
 // Probe helpers — exported for unit testing (two call sites each: command +
@@ -25,6 +37,8 @@ import { errorMessage } from './shared'
 const KNOWN_MARS_OVERRIDE_NOTES: ReadonlyMap<string, string> = new Map([
   ['MARS_REPO', 'repo root override'],
   ['MARS_CLAUDE_BIN', 'claude binary path override'],
+  ['MARS_GEMINI_BIN', 'gemini binary path override'],
+  ['MARS_CODEX_BIN', 'codex binary path override'],
   ['MARS_WORKER_MODEL', 'worker model override (coder only)'],
   ['MARS_REFLECT_DISABLED', 'disables reflection tracking'],
   ['MARS_RECOVERY_DISABLED', 'disables failure recovery'],
@@ -94,7 +108,7 @@ const init: Command = {
   path: 'init',
   summary: 'detect tech stack and generate supervisors',
   usage:
-    'usage: mars init [--force] [--dry-run] [--verbose] [--yes] [--start] [--wizard] [--wizard-off] [-f|--config <path>] [--skip-doctor]',
+    'usage: mars init [--force] [--dry-run] [--verbose] [--yes] [--start] [--wizard] [--wizard-off] [-f|--config <path>] [--skip-doctor] [--provider claude|gemini|codex]',
   run: async (args, deps) => {
     const { existsSync } = await import('node:fs')
 
@@ -108,6 +122,19 @@ const init: Command = {
     const wizardOff = boolFlags.has('--wizard-off')
     const skipDoctor = boolFlags.has('--skip-doctor')
     const configPath = args.flags['--config']
+
+    // ── Provider selection ────────────────────────────────────────────────
+    // --provider <name> selects the default agent CLI for live/PTY runs.
+    // Defaults to 'claude'. Persisted to .mars/daemon.json after init.
+    const VALID_PROVIDERS = new Set<string>(['claude', 'gemini', 'codex'])
+    const providerRaw = args.flags['--provider']
+    if (providerRaw !== undefined && !VALID_PROVIDERS.has(providerRaw)) {
+      deps.err(
+        `[mars init] --provider must be one of: claude, gemini, codex (got '${providerRaw}')`,
+      )
+      return { code: 1 }
+    }
+    const provider: ProviderName = (providerRaw as ProviderName | undefined) ?? 'claude'
 
     // ── Already-initialized idempotent check ─────────────────────────────
     // Preserve an existing .mars without re-running the wizard. --force bypasses
@@ -180,6 +207,19 @@ const init: Command = {
       deps.out('  Scaffold mode: full  (CLAUDE.md, .mcp.json, workflow templates)')
       deps.out('  Supervisors:   auto-detected from your tech stack')
       deps.out('  Register:      yes')
+      deps.out('')
+
+      // Show per-provider probe results so users see what's available and
+      // can decide whether to re-run with --provider <name>.
+      deps.out('  Agent providers detected:')
+      for (const name of ['claude', 'gemini', 'codex'] as const) {
+        const probe = probeProvider(name, realProviderProbeDeps)
+        deps.out(`    ${formatProviderProbe(probe)}`)
+      }
+      deps.out(`  Default provider: ${provider}`)
+      if (provider === 'claude') {
+        deps.out("  Tip: 'mars init --provider gemini' to use Gemini CLI instead.")
+      }
       deps.out('')
       deps.out("  Tip: run 'mars init --wizard' for step-by-step configuration.")
       deps.out('')
@@ -275,15 +315,31 @@ const init: Command = {
     deps.out('wrote:')
     for (const w of result.written ?? []) deps.out(`  ${w}`)
 
+    // ── Persist provider choice ───────────────────────────────────────────
+    // Write defaultProvider to .mars/daemon.json so the live dispatch path
+    // and chat runner pick it up on subsequent runs. This is a best-effort
+    // write — a failure is non-fatal (daemon.json is optional; missing = defaults).
+    try {
+      const { patchDaemonConfigFile } = await import('../../core/daemon/config')
+      patchDaemonConfigFile({ defaultProvider: provider })
+    } catch {
+      // Non-fatal: daemon.json is optional config; init still succeeded.
+    }
+
     // ── Summary card ──────────────────────────────────────────────────────
     const sep = '─'.repeat(40)
     deps.out('')
     deps.out(sep)
     deps.out(' Mars initialized successfully')
     deps.out(sep)
-    deps.out(`  Repo:    ${deps.ctx.repoRoot}`)
-    deps.out(`  Files:   ${(result.written ?? []).length} written`)
-    deps.out('  Daemon:  will auto-start on first use')
+    deps.out(`  Repo:     ${deps.ctx.repoRoot}`)
+    deps.out(`  Files:    ${(result.written ?? []).length} written`)
+    deps.out(`  Provider: ${provider}`)
+    deps.out('  Daemon:   will auto-start on first use')
+    if (provider !== 'claude') {
+      deps.out(`  Note:     headless (background) runs currently use Claude;`)
+      deps.out(`            ${provider} is used for live/PTY runs only.`)
+    }
     deps.out(sep)
     deps.out('')
     deps.out('Next commands:')
