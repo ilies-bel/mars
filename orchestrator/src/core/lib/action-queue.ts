@@ -1082,6 +1082,8 @@ export type SupersedeReason =
   | 'workflow-approved'
   /** gate-enrichment row cleared because the operator approved or retired the candidate (ADR-0048 entity mutation). */
   | 'enrichment-decided'
+  /** tool-promotion row cleared because the operator approved or rejected the helper (ADR-0048 entity mutation). */
+  | 'tool-promotion-decided'
 
 /**
  * Auto-close every open actionQueue item keyed to the given origin task. Called

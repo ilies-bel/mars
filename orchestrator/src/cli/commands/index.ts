@@ -31,6 +31,7 @@ import { notificationsCommands } from './notifications'
 import { selfUpdateCommands } from './self-update'
 import { skillForgeCommands } from './skill-forge'
 import { toolForgeCommands } from './tool-forge'
+import { toolPromotionCommands } from './tool-promotion'
 import { memoryCommands } from './memory'
 
 export const allCommands: readonly Command[] = [
@@ -51,6 +52,7 @@ export const allCommands: readonly Command[] = [
   ...scorerCommands,
   ...skillForgeCommands,
   ...toolForgeCommands,
+  ...toolPromotionCommands,
   ...installCommands,
   ...doctorCommands,
   ...runCommands,
