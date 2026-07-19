@@ -379,6 +379,15 @@ Commands:
                                 skips lessons that already have a proposal.
                                 Reviews appear in 'mars proposal list
                                 --source skill-forge'.
+  tool-forge scan               scan recent failed tasks for recurring
+                                missing-helper patterns (command-not-found,
+                                module-not-found). When a helperKey's count
+                                reaches the threshold (default 3, override via
+                                MARS_TOOL_FORGE_THRESHOLD), inserts one
+                                'proposed' ledger row in tool_promotion_attempts
+                                and enqueues exactly one task tagged
+                                'tool-forge'. Idempotent — re-running with
+                                unchanged data is a no-op.
   action-queue                         alias for 'action-queue list open'
   action-queue list [state] [--kind <kind>] [--lean]
                                 list action queue items. state one of:
