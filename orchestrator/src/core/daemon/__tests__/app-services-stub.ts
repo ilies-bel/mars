@@ -87,5 +87,7 @@ export const stubAppServices = (
   }),
   viewGlossary: async () => ({ terms: [] }),
   viewSkills: async () => ({ skills: [] }),
+  viewChatThreads: async () => ({ threads: [] }),
+  viewChatThread: async () => null,
   ...overrides,
 })

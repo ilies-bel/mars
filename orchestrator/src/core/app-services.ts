@@ -203,6 +203,9 @@ export interface AppServices {
   // ── read views: glossary and skills ────────────────────────────────────────
   viewGlossary: () => Promise<{ terms: Array<{ term: string; definition: string; avoid: string[] }> }>
   viewSkills: () => Promise<{ skills: Array<{ name: string; description: string; path: string }> }>
+  // ── chat threads + messages ───────────────────────────────────────────────
+  viewChatThreads: () => Promise<{ threads: import('./lib/chat-store').ThreadPreview[] }>
+  viewChatThread: (id: string) => Promise<import('./lib/chat-store').ThreadWithMessages | null>
 }
 
 /**
@@ -1099,6 +1102,17 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return { entries }
   }
 
+  const viewChatThreads: AppServices['viewChatThreads'] = async () => {
+    const { listThreads } = await import('./lib/chat-store')
+    const threads = await listThreads()
+    return { threads }
+  }
+
+  const viewChatThread: AppServices['viewChatThread'] = async (id) => {
+    const { getThread } = await import('./lib/chat-store')
+    return getThread(id)
+  }
+
   const listKpis: AppServices['listKpis'] = () => defaultListKpis()
 
   const listKpisSeries: AppServices['listKpisSeries'] = (limit) =>
@@ -1184,5 +1198,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewFrameworkUpdate,
     viewGlossary,
     viewSkills,
+    viewChatThreads,
+    viewChatThread,
   }
 }

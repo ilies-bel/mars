@@ -25,6 +25,11 @@ import {
 } from '../lib/settings'
 import { resolveStateClient } from '../store/state-client'
 import { getNotificationsEnabled, setNotificationsEnabled } from '../store/state-store'
+import {
+  createThread,
+  updateThreadTitle,
+  deleteThread,
+} from '../lib/chat-store'
 import { z } from 'zod'
 
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
@@ -1224,6 +1229,121 @@ export const startHttpServer = async (
             .catch((err: unknown) => sendError(res, err))
         })
         req.on('error', (err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // GET /view/chat/threads — list all threads newest-first with last-message preview.
+    // GET /view/chat/thread/:id — fetch a single thread with all messages ordered by
+    //   created_at ASC, or 404 when the thread does not exist.
+    // POST /chat/threads — create a new thread. Body: { title?: string }.
+    // POST /chat/threads/:id/title — rename a thread. Body: { title: string }.
+    // POST /chat/threads/:id/delete — delete a thread and cascade its messages.
+    // All chat routes bypass the draining gate (lightweight user-data writes,
+    // not task work). SSE channel 'chat' is broadcast after every write.
+    if (req.method === 'GET' && req.url === '/view/chat/threads') {
+      deps.appServices
+        .viewChatThreads()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+    {
+      const threadViewMatch =
+        req.method === 'GET' && req.url
+          ? req.url.match(/^\/view\/chat\/thread\/([^/?]+)(?:\?.*)?$/)
+          : null
+      if (threadViewMatch && threadViewMatch[1]) {
+        const id = decodeURIComponent(threadViewMatch[1])
+        deps.appServices
+          .viewChatThread(id)
+          .then((result) => {
+            if (result === null) {
+              sendJson(res, 404, { ok: false, error: `thread ${id} not found`, errorCode: 'NOT_FOUND' })
+              return
+            }
+            sendJson(res, 200, result)
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+    if (req.method === 'POST' && req.url === '/chat/threads') {
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown = {}
+        if (rawBody.trim().length > 0) {
+          try {
+            parsed = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+            return
+          }
+        }
+        const schema = z.object({ title: z.string().optional() })
+        const result = schema.safeParse(parsed)
+        if (!result.success) {
+          sendJson(res, 400, { ok: false, error: 'body must be { title?: string }' })
+          return
+        }
+        createThread(result.data.title)
+          .then((thread) => {
+            deps.viewStreamHub?.broadcast('chat')
+            sendJson(res, 200, { ok: true, thread })
+          })
+          .catch((err: unknown) => sendError(res, err))
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+    {
+      const chatTitleMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/title$/)
+          : null
+      if (chatTitleMatch && chatTitleMatch[1]) {
+        const id = decodeURIComponent(chatTitleMatch[1])
+        let rawBody = ''
+        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+        req.on('end', () => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+            return
+          }
+          const schema = z.object({ title: z.string() })
+          const result = schema.safeParse(parsed)
+          if (!result.success) {
+            sendJson(res, 400, { ok: false, error: 'body must be { title: string }' })
+            return
+          }
+          updateThreadTitle(id, result.data.title)
+            .then(() => {
+              deps.viewStreamHub?.broadcast('chat')
+              sendJson(res, 200, { ok: true })
+            })
+            .catch((err: unknown) => sendError(res, err))
+        })
+        req.on('error', (err: unknown) => sendError(res, err))
+        return
+      }
+    }
+    {
+      const chatDeleteMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/delete$/)
+          : null
+      if (chatDeleteMatch && chatDeleteMatch[1]) {
+        const id = decodeURIComponent(chatDeleteMatch[1])
+        deleteThread(id)
+          .then(() => {
+            deps.viewStreamHub?.broadcast('chat')
+            sendJson(res, 200, { ok: true })
+          })
+          .catch((err: unknown) => sendError(res, err))
         return
       }
     }
