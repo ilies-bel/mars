@@ -116,6 +116,66 @@ describe('reconcileTerminalTasks', () => {
     expect(rowsResolved).toBe(1)
   })
 
+  it('closes stale-worktree rows (NULL origin_task_id) whose payload.originalTaskId is a done task', async () => {
+    const { q, actionQueue, reconcile } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    // Seed a task that has completed — the origin of the stale-worktree row.
+    const doneTaskId = 'T-sw-done'
+    await insertTask(client, doneTaskId, 'done')
+
+    // Seed a stale-worktree item as recovery runs raise it: no originTaskId
+    // (so origin_task_id stays NULL), but payload carries originalTaskId.
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'stale-worktree',
+      category: 'orchestrator',
+      priority: 'high',
+      title: 'Stale worktree detected',
+      body: 'worktree left over from a crashed recovery run',
+      payload: { originalTaskId: doneTaskId, recoveryTaskId: 'fix-xxxx' },
+      context: {},
+      raisedBy: 'test',
+      signature: `stale-worktree:${doneTaskId}`,
+      // intentionally no originTaskId — this is the bug scenario
+    })
+
+    const { rowsResolved } = await reconcile.reconcileTerminalTasks(client)
+
+    expect(rowsResolved).toBeGreaterThanOrEqual(1)
+    const item = await actionQueue.getActionQueueItem(itemId)
+    expect(item).not.toBeNull()
+    expect(item!.state).toBe('resolved')
+    expect(item!.resolution).toBe('superseded')
+  })
+
+  it('leaves stale-worktree rows open when payload.originalTaskId points at a non-terminal task', async () => {
+    const { q, actionQueue, reconcile } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    // Seed a task that is still active.
+    const queuedTaskId = 'T-sw-queued'
+    await insertTask(client, queuedTaskId, 'queued')
+
+    const itemId = await actionQueue.raiseActionQueueItem({
+      kind: 'stale-worktree',
+      category: 'orchestrator',
+      priority: 'high',
+      title: 'Stale worktree detected',
+      body: 'worktree from a recovery run whose origin is still running',
+      payload: { originalTaskId: queuedTaskId, recoveryTaskId: 'fix-yyyy' },
+      context: {},
+      raisedBy: 'test',
+      signature: `stale-worktree:${queuedTaskId}`,
+      // intentionally no originTaskId
+    })
+
+    await reconcile.reconcileTerminalTasks(client)
+
+    const item = await actionQueue.getActionQueueItem(itemId)
+    expect(item).not.toBeNull()
+    expect(item!.state).toBe('open')
+  })
+
   it('is idempotent: a second call after everything is already clean is a no-op', async () => {
     const { q, actionQueue, reconcile } = await loadModules(repo)
     const client = q.resolveQueueClient()

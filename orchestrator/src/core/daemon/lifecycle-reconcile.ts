@@ -150,6 +150,33 @@ export async function reconcileTerminalTasks(
     rowsResolved++
   }
 
+  // (b-null-done) NULL origin_task_id, payload.originalTaskId points at a
+  //              DONE/DROPPED task. Covers stale-worktree rows raised by a
+  //              recovery run (payload key is 'originalTaskId', not
+  //              'originTaskId') whose origin task reached a terminal status
+  //              through another path while the action-queue row was never
+  //              closed. These are NOT purged orphans — the task is still
+  //              present in `tasks` — so leg (b-null) misses them.
+  const nullOriginTerminal = await client.execute(`
+    SELECT i.id
+    FROM action_queue_items i
+    JOIN tasks t ON t.id = json_extract(i.payload, '$.originalTaskId')
+    WHERE i.state = 'open'
+      AND i.kind NOT IN (${proposalKindList}, ${scorerKindList})
+      AND i.origin_task_id IS NULL
+      AND t.status IN ('done', 'dropped')
+  `)
+
+  for (const row of nullOriginTerminal.rows) {
+    const itemId = (row as unknown as { id: string }).id
+    await setActionQueueState(itemId, 'resolved', {
+      resolution: 'superseded',
+      note: 'superseded: origin task terminal (payload.originalTaskId done/dropped)',
+      by: 'reconcile:null-origin-terminal',
+    })
+    rowsResolved++
+  }
+
   // (c) Stranded 'failed' rows for sliced tasks whose arc-root (origin_task_id)
   //     is a PRD task that is still live — so leg (a)'s JOIN misses them — but
   //     whose actual failing task (stored in payload.taskId) is now terminal.
