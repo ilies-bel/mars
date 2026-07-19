@@ -9,8 +9,6 @@
  * `isInfraFailureOutput` helper classifies them so the verify primitive can
  * retry once before counting them as real failures.
  *
- * Also includes tests for the always-on completeness gate that parses the
- * coder's completion report and refuses to pass half-done work.
  */
 import { describe, it, expect } from 'vitest'
 import { isInfraFailureOutput } from './verify'

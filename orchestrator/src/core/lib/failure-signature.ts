@@ -350,7 +350,7 @@ const RECOVERY_REASON_PREFIX_RE = /^recovery_(?:exhausted|failed):/
  * Returns the `<failingStep>/<errorClass>` failure signature.
  *
  * Idempotent: if `errorOutput` is already a composed reason string that
- * embeds this signature (e.g. `recovery_exhausted:verify:completeness/incomplete: …`),
+ * embeds this signature (e.g. `recovery_exhausted:verify:typecheck/typecheck-cannot-find-name: …`),
  * the function extracts the existing error class rather than re-running
  * `classifyError`, which would match nothing and clobber the correct class
  * with `unclassified`.
@@ -363,8 +363,8 @@ export const computeFailureSignature = (
   errorOutput: string,
 ): string => {
   // When `errorOutput` is a composed reason string, its first line looks like:
-  //   recovery_exhausted:verify:completeness/incomplete: <truncated error>
-  //   recovery_failed:verify:completeness/incomplete: <truncated error>
+  //   recovery_exhausted:verify:typecheck/typecheck-cannot-find-name: <truncated error>
+  //   recovery_failed:verify:typecheck/typecheck-cannot-find-name: <truncated error>
   // Feeding that string through classifyError matches no raw-output rule,
   // returning 'unclassified' and clobbering the original class.
   // Detect this by stripping the known prefix and checking whether what

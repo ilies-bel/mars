@@ -215,8 +215,8 @@ export const DEVIATION_RULES = [
   '**Rule 6 — Prove pre-existing test failures against the merge base.** If the test suite ends with failures you believe are pre-existing (inherited from the merge base and unrelated to your change), you MUST prove this claim before asserting `tests pass`:',
   '',
   '  1. Run `git stash --include-untracked && npx vitest run <failing-file>; git stash pop` (or the equivalent `git checkout $(git merge-base HEAD origin/main) -- <file>` pattern) to reproduce the failure against the merge base.',
-  '  2. Quote BOTH result summaries verbatim in the completion report: the branch-tip run result and the merge-base baseline run result.',
-  '  3. If the baseline check cannot be run (dirty stash conflict, missing merge base, harness restriction), the completion report MUST use the literal phrase `pre-existing UNVERIFIED` instead of `tests pass`.',
+  '  2. Quote BOTH result summaries verbatim in your final message: the branch-tip run result and the merge-base baseline run result.',
+  '  3. If the baseline check cannot be run (dirty stash conflict, missing merge base, harness restriction), your final message MUST use the literal phrase `pre-existing UNVERIFIED` instead of `tests pass`.',
   '',
   '`$TASK_ID` is the id of the task you are executing right now; the orchestrator passes it to you in the brief below.',
 ].join('\n')
