@@ -293,6 +293,34 @@ export const handleTaskFailureWithFixTask = async (
     return { outcome: 'noop' }
   }
 
+  // Duplicate-event dedup (ADR-0061 incident: task mars-c37f2cbb, 2026-07-19).
+  // A second task.failed for the SAME origin while its recovery (fix task) is
+  // still in-flight is a stale/duplicate signal. Do NOT burn the recovery slot
+  // or raise a false recovery-exhausted alert.
+  //
+  // "Outstanding" = any non-terminal status: queued, running, verifying,
+  // merging, vega-reconciling, draft, blocked. Terminal statuses (done, failed,
+  // dropped) mean the recovery already ran — a subsequent task.failed is a
+  // legitimate re-failure and the exhaustion check below applies.
+  //
+  // We check `fix_for_task_id` rather than the origin's status because the
+  // origin may still be `blocked` after the fix task reaches a terminal status
+  // (if `unblockByCompletion` fires asynchronously). Querying the fix task's
+  // status directly is the most robust discriminant.
+  const outstandingFixResult = await s.query({
+    sql: `SELECT id FROM tasks
+           WHERE fix_for_task_id = ?
+             AND status IN ('queued','running','verifying','merging','vega-reconciling','draft','blocked')
+           LIMIT 1`,
+    args: [input.taskId],
+  })
+  if (outstandingFixResult.rows.length > 0) {
+    // Recovery already in-flight — this task.failed is a duplicate of the
+    // ongoing episode. The existing fix task will unblock the origin when it
+    // completes; no action needed here.
+    return { outcome: 'noop' }
+  }
+
   const { computeFailureSignature } = await import('./lib/failure-signature')
 
   // Diagnose Chores are terminal: a failing diagnose Chore must never

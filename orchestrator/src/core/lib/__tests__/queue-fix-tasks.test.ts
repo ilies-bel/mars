@@ -296,6 +296,67 @@ describe('queue-fix-tasks', () => {
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
   })
 
+  it('duplicate task.failed for a blocked origin does not mark origin failed or raise a recovery-exhausted alert', async () => {
+    // Regression for incident mars-c37f2cbb (2026-07-19): a second task.failed
+    // event for the same origin while its fix task was still queued triggered
+    // the retryCount > budget exhaustion branch, marked the origin terminal
+    // `failed`, and raised a false recovery-exhausted action-queue row —
+    // all while the fix task was still pending and had never run.
+    process.env.MARS_FIX_RETRY_BUDGET = '0' // budget=0; retryCount=1 after first fix → 1>0 = true (exhaustion) without the guard
+    const { q, ft, rc } = await loadModules(repo)
+    const sig = 'verify:typecheck/typecheck-cannot-find-name'
+    const cleanup = registerTestRecipe(rc, sig)
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
+    }
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    // First failure: spawns fix task, transitions origin to blocked, retryCount→1.
+    const r1 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+      branch: 'task/x',
+    })
+    expect(r1.outcome).toBe('blocked')
+    expect(r1.fixTaskId).toBeTruthy()
+
+    const afterFirst = await q.getTask(t.id)
+    expect(afterFirst?.status).toBe('blocked')
+    expect(afterFirst?.retryCount).toBe(1)
+
+    // Second (duplicate) task.failed for the SAME origin while fix is still
+    // queued. Without the guard, retryCount=1 > budget=0 fires exhaustion.
+    const r2 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+      branch: 'task/x',
+    })
+    expect(r2.outcome).toBe('noop')
+
+    // Origin must remain blocked — NOT failed.
+    const afterDuplicate = await q.getTask(t.id)
+    expect(afterDuplicate?.status).toBe('blocked')
+    expect(afterDuplicate?.retryCount).toBe(1)
+
+    // No additional fix task was spawned for the duplicate event.
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ? AND failure_signature = ?`,
+      args: [t.id, sig],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(1)
+
+    // No recovery-exhausted (kind='failed') action-queue row raised.
+    const open = await actionQueue.listActionQueueItems('open')
+    const exhaustedRows = open.filter(
+      (i) => i.kind === 'failed' && i.signature === t.id,
+    )
+    expect(exhaustedRows).toHaveLength(0)
+
+    cleanup()
+  })
+
   it('first failure with default budget (env unset) and a registered recipe spawns a fix-task, not a failed outcome', async () => {
     delete process.env.MARS_FIX_RETRY_BUDGET
     const { q, ft } = await loadModules(repo)
@@ -561,8 +622,14 @@ describe('queue-fix-tasks', () => {
     let reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('blocked')
 
-    // Second failure: retry_count=1 > budget=0 -> failed. The failure must
-    // remove every task_blockers row pointing from this task.
+    // Simulate the fix task completing (terminal = not outstanding).
+    // Without this, a second task.failed for the same origin would be treated
+    // as a duplicate in-flight event and return 'noop' (the bug-fix guard).
+    // Here we specifically test the post-recovery-completion exhaustion path.
+    await q.updateTask(first.fixTaskId!, { status: 'done' })
+
+    // Second failure: no outstanding fix, retry_count=1 > budget=0 -> failed.
+    // The failure must remove every task_blockers row pointing from this task.
     const second = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'merge:preflight',
@@ -625,7 +692,12 @@ describe('queue-fix-tasks', () => {
       openItems.filter((i) => i.kind === 'failed'),
     ).toHaveLength(0)
 
-    // Second failure: retry budget exhausted -> dropped + actionQueue raised.
+    // Simulate the fix task completing (terminal = not outstanding) so the
+    // second call is treated as a post-recovery re-failure, not a duplicate
+    // in-flight event.
+    await q.updateTask(first.fixTaskId!, { status: 'done' })
+
+    // Second failure: no outstanding fix, retry budget exhausted -> failed + actionQueue raised.
     const second = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'merge:preflight',
