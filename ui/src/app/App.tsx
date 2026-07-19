@@ -89,13 +89,17 @@ const AppInner = () => {
 
   // Redirect root / bare hashes to #/chat (the default landing page) and
   // truly unknown hashes to #/progress.
-  // replaceState avoids adding a history entry the back button would return to.
+  // navigateReplace (replaceState + synthetic hashchange) is used here so
+  // useHashRoute's state updates atomically with the URL change.  A bare
+  // history.replaceState would NOT fire hashchange, leaving rawHash stale at
+  // '#/' and allowing a later hashchange from another effect to re-evaluate
+  // the redirect against a different window.location.hash value.
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (rawHash === '' || rawHash === '#' || rawHash === '#/') {
-      history.replaceState(null, '', '#/chat')
+      navigateReplace('#/chat')
     } else if (!isKnownRoute(rawHash)) {
-      history.replaceState(null, '', '#/progress')
+      navigateReplace('#/progress')
     }
   }, [rawHash])
 
