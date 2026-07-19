@@ -36,7 +36,7 @@ A human-readable technical key identifying a class of orchestrator failure (e.g.
 _Avoid_: failure hash, error fingerprint
 
 **Recovery recipe**:
-A code-registered handler keyed by failure signature that builds the prompt for the recovery task spawned when a normal task fails with that signature; without a recipe for the observed signature, the orchestrator does not enqueue a recovery (see Investigator).
+A code-registered handler keyed by failure signature that owns the failure class end-to-end: the plain-language reason shown on its Alert, the operator action set with a recommended action, and the prompt for the spawned recovery task; signatures with no recipe fall back to a first-principles recovery (ADR-0061) and the default action set Diagnose/Continue/Restart.
 
 **Investigator**:
 The agent the orchestrator spawns when a task fails with a signature that has no registered Recovery recipe; its job is to inspect the failure and propose a draft recipe for the maintainer to review, not to fix the failing task.
