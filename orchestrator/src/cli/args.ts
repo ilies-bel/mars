@@ -108,6 +108,8 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--wizard',
   '--wizard-off',
   '--register-project',
+  // `mars init --start`: print daemon URL non-interactively (useful with --yes).
+  '--start',
   // `mars task add --live`: sugar for `--workflow live` (park-at-code live entry).
   '--live',
   '--help',
