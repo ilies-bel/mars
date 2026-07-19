@@ -17,7 +17,6 @@ import {
   selectVerifySteps,
   getChangedFiles,
   checkBranchHasDiff,
-  checkCompletenessGate,
   TSC_DECOY_MARKER,
   type VerifyScope,
 } from '../git/verify'
@@ -738,60 +737,3 @@ describe('typecheck step — no-tsc-toolchain skip guard', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// checkCompletenessGate — regression for 2026-07-03 transcript sourcing fix
-// ---------------------------------------------------------------------------
-// Emergency fix 494d2c03: headless `claude -p` on CC 2.1.175+ no longer
-// writes full transcript bodies to disk. The gate was sourcing coderText
-// exclusively from disk (readAllTranscriptsForTask), finding nothing, and
-// failing closed on every task with "missing-completion-report".
-//
-// The fix adds two earlier sourcing tiers in the verify primitive:
-//   1. task_transcripts streaming chunks (readTranscriptChunks)
-//   2. trace_events step_ended row transcript field
-// before falling back to disk JSONL files.
-//
-// These tests pin the gate's behaviour at both ends of the sourcing spectrum:
-//   • no sources → gate fails with missing-completion-report (old bug)
-//   • coderText assembled from a trace_events-style transcript → gate passes
-// ---------------------------------------------------------------------------
-describe('checkCompletenessGate — transcript-sourcing regression (494d2c03)', () => {
-  it('fails with missing-completion-report when coderText is empty (no trace_events, no disk transcript)', async () => {
-    const step = await checkCompletenessGate({
-      coderText: '',
-      changedFiles: [],
-      worktreePath: process.cwd(),
-      branch: 'main',
-    })
-    expect(step.passed).toBe(false)
-    expect(step.output).toContain('missing-completion-report')
-  })
-
-  it('passes when coderText is assembled from a trace_events step_ended transcript ending in a valid completion-report block', async () => {
-    // Simulates coderText assembled by the verify primitive from a
-    // trace_events step_ended row: the primitive JSON-parses the transcript
-    // field (an array of coder events), extracts text from assistant/result
-    // events, joins them, and passes the result to checkCompletenessGate.
-    // The completion-report block is the last block in the final assistant
-    // message — parseCompletionReport(last-block-wins) picks it up.
-    //
-    // Evidence uses a plain description (no file extension, no hex SHA) so
-    // checkEvidenceClaim accepts it without a filesystem or git probe.
-    const coderText = [
-      'Implemented the requested changes and verified all criteria.',
-      '',
-      '```completion-report',
-      '- [done] regression-hardened completeness-gate transcript sourcing — evidence: trace_events tier added in verify primitive',
-      '```',
-    ].join('\n')
-
-    const step = await checkCompletenessGate({
-      coderText,
-      changedFiles: [],
-      worktreePath: process.cwd(),
-      branch: 'main',
-    })
-    expect(step.passed).toBe(true)
-    expect(step.output).toContain('done')
-  })
-})

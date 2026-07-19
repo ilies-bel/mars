@@ -315,38 +315,6 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     errorClass: 'test-libsql-not-an-error',
     matchFull: /SQLITE_UNKNOWN_0: not an error/,
   },
-  {
-    // verify:completeness/missing-report fires when the coder's final message
-    // contained no fenced completion-report block (absent), or the block was
-    // found but could not be parsed because its lines are malformed. Both
-    // failure modes share the same `missing-completion-report:` prefix on the
-    // first line of checkCompletenessGate's output. The actual implementation
-    // work may be fully committed — only the report is missing or malformed.
-    // Recovery: read git log/diff for what the prior run committed, check it
-    // against the original task criteria, and re-emit a correctly-formatted
-    // completion-report block. Do NOT redo the task.
-    errorClass: 'missing-report',
-    match: /^missing-completion-report:/i,
-  },
-  {
-    // verify:completeness/incomplete fires when the completion report was found
-    // and parsed but one or more criteria are marked [partial] or [blocked].
-    // The gate output lists the exact unmet criteria. Recovery: finish ONLY
-    // those criteria; everything already marked [done] is complete and must
-    // not be re-implemented or re-verified.
-    errorClass: 'incomplete',
-    match: /^incomplete:/i,
-  },
-  {
-    // verify:completeness/unsubstantiated fires when all criteria are marked
-    // [done] but at least one evidence claim could not be verified (referenced
-    // file absent from the worktree, commit sha not in git history, test name
-    // not found). The gate output lists the failing claims. Recovery: provide
-    // or repair the evidence references for the exact listed claims; the
-    // implementation work itself is presumed done.
-    errorClass: 'unsubstantiated',
-    match: /^unsubstantiated-completion:/i,
-  },
 ]
 
 export const classifyError = (errorOutput: string): string => {

@@ -274,8 +274,6 @@ export const listEnrichments = async (
  *                            gate-meta-monitor; enriching the enricher would
  *                            recurse. Non-encodable (orchestration).
  * - `verify:typecheck|test|lint|build/*` — command-reproducible (family (a)).
- * - `verify:completeness/*`— semantic (behaviour verification, proposal
- *                            48e50df0 territory).
  * - `setup:* / merge:*`    — orchestration-step failures: recovery-recipe
  *                            territory (ADR-0002).
  * - `code:*`               — agent-run failures (timeouts, budget,
@@ -298,9 +296,6 @@ export const classifyEncodability = (signature: string): StaticEncodability => {
     step === 'verify:build'
   ) {
     return { encodable: true, family: 'command' }
-  }
-  if (step === 'verify:completeness') {
-    return { encodable: false, reason: 'semantic' }
   }
   if (step.startsWith('setup:') || step.startsWith('merge:')) {
     return { encodable: false, reason: 'orchestration' }

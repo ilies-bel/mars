@@ -105,7 +105,6 @@ describe('mars attach', () => {
       branch: `task/${taskId}`,
       title: 'test task for human work',
       doneCriteria: ['do the thing', 'verify it'],
-      completionReport: null,
       commitsAhead: [],
       checklistState: [
         { criterion: 'do the thing', checked: false },
@@ -144,7 +143,6 @@ describe('mars attach', () => {
       branch: `task/${taskId}`,
       title: 'Implement the feature',
       doneCriteria: [],
-      completionReport: null,
       commitsAhead: [],
       checklistState: [],
       progressTail: [],
@@ -185,7 +183,6 @@ describe('mars attach', () => {
       branch: `task/${taskId}`,
       title: 'test task',
       doneCriteria: [],
-      completionReport: null,
       commitsAhead: [],
       checklistState: [],
       progressTail: [],
@@ -213,17 +210,13 @@ describe('mars attach', () => {
   // Handoff-section tests
   // ---------------------------------------------------------------------------
 
-  it('prints completion report when worker coded the task', async () => {
+  it('prints commits-ahead and checklist when worker coded the task', async () => {
     const taskId = await createAwaitingHumanTask(null, '/wt')
     const fake = makeFakeDaemon(() => ({
       worktreePath: '/wt',
       branch: `task/${taskId}`,
       title: 'test task',
       doneCriteria: ['do the thing'],
-      completionReport: {
-        kind: 'parsed' as const,
-        lines: [{ status: 'done' as const, criterion: 'do the thing', evidence: 'test.ts:45' }],
-      },
       commitsAhead: ['abc1234 Add feature X', 'def5678 Fix bug Y'],
       checklistState: [{ criterion: 'do the thing', checked: true }],
       progressTail: [],
@@ -233,10 +226,6 @@ describe('mars attach', () => {
 
     expect(r.code).toBe(0)
     const outJoined = r.out.join('\n')
-    // Completion report section is present
-    expect(outJoined).toContain('completion report')
-    expect(outJoined).toContain('[done] do the thing')
-    expect(outJoined).toContain('test.ts:45')
     // Commits ahead section is present
     expect(outJoined).toContain('commits ahead')
     expect(outJoined).toContain('abc1234 Add feature X')
@@ -252,7 +241,6 @@ describe('mars attach', () => {
       branch: `task/${taskId}`,
       title: 'test task',
       doneCriteria: [],
-      completionReport: null,
       commitsAhead: [],
       checklistState: [],
       progressTail: [],
@@ -278,7 +266,6 @@ describe('mars attach', () => {
       branch: `task/${taskId}`,
       title: 'test',
       doneCriteria: ['criterion 1', 'criterion 2'],
-      completionReport: null,
       commitsAhead: [],
       checklistState: [
         { criterion: 'criterion 1', checked: true },
@@ -302,7 +289,6 @@ describe('mars attach', () => {
       branch: `task/${taskId}`,
       title: 'test',
       doneCriteria: [],
-      completionReport: null,
       commitsAhead: [],
       checklistState: [],
       progressTail: [

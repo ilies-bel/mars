@@ -30,7 +30,6 @@ import type { Task } from '../../queue'
 import type { Author } from '../../author'
 import type { TaskPlan, TaskTag, TaskSpec } from '../../queue'
 import type { AppendProgressParams, ProgressEntry } from '../../arc'
-import type { CompletionReport } from '../../../workflows/primitives/shared'
 import type { EventEmitter } from 'node:events'
 import type { RunInitOptions, RunInitResult } from '../../../workflows/init-workflow'
 import type { DaemonRequest, DaemonResponse, DaemonStatusPayload } from '../protocol'
@@ -180,8 +179,6 @@ export interface DaemonDeps {
     branch: string
     title: string
     doneCriteria: readonly string[]
-    /** Parsed completion report from the Worker's final message; null if no code step ran. */
-    completionReport: CompletionReport | null
     /** Git log --oneline lines ahead of the integration branch, bounded to 20. */
     commitsAhead: readonly string[]
     /** Per-criterion checked state, derived from the progress journal. */

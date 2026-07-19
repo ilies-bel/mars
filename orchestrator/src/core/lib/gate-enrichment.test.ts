@@ -242,10 +242,6 @@ describe('gate-enrichment: non-encodable signatures', () => {
       encodable: true,
       family: 'command',
     })
-    expect(classifyEncodability('verify:completeness/incomplete')).toEqual({
-      encodable: false,
-      reason: 'semantic',
-    })
     expect(classifyEncodability('merge:dirty-target/unclassified')).toEqual({
       encodable: false,
       reason: 'orchestration',

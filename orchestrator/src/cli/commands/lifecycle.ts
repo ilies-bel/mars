@@ -583,11 +583,6 @@ const attach: Command = {
       branch: string
       title: string
       doneCriteria: readonly string[]
-      completionReport:
-        | { kind: 'parsed'; lines: ReadonlyArray<{ status: string; criterion: string; evidence: string }> }
-        | { kind: 'unparseable'; raw: string }
-        | { kind: 'absent' }
-        | null
       commitsAhead: readonly string[]
       checklistState: ReadonlyArray<{ criterion: string; checked: boolean }>
       progressTail: ReadonlyArray<{
@@ -642,16 +637,6 @@ const attach: Command = {
       }
     }
 
-    // Worker's Completion report.
-    if (data.completionReport !== null && data.completionReport.kind === 'parsed') {
-      addLine('')
-      addLine('completion report:')
-      for (const line of data.completionReport.lines) {
-        const evidencePart = line.evidence ? ` — evidence: ${line.evidence}` : ''
-        addLine(`  - [${line.status}] ${line.criterion}${evidencePart}`)
-      }
-    }
-
     // Progress journal tail.
     if (data.progressTail.length > 0) {
       addLine('')
@@ -675,7 +660,6 @@ const attach: Command = {
     // .mars/handoffs/<id>.md (outside the worktree — never inside it).
     const hasHandoffContent =
       data.commitsAhead.length > 0 ||
-      (data.completionReport !== null && data.completionReport.kind === 'parsed') ||
       data.progressTail.length > 0
     if (hasHandoffContent) {
       try {

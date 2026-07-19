@@ -351,7 +351,6 @@ export const composePrompt = (
   }
   sections.push(CODING_DISCIPLINE)
   sections.push(COMMIT_FOOTER)
-  sections.push(COMPLETION_REPORT_CONTRACT)
   return sections.join('\n\n')
 }
 
@@ -370,51 +369,6 @@ export const failureExcerpt = (
   return `${output.slice(0, headMax)}\n…[middle elided]…\n${output.slice(-tailMax)}`
 }
 
-// ---------------------------------------------------------------------------
-// Completion-report grammar — re-exported from core/lib for consumers that
-// import from this module (see core/lib/completion-report.ts for the source).
-// ---------------------------------------------------------------------------
-
-import {
-  COMPLETION_REPORT_FENCE,
-  parseCompletionReport,
-  type CompletionReport,
-  type CompletionReportLine,
-} from '../../core/lib/completion-report'
-
-export {
-  COMPLETION_REPORT_FENCE,
-  parseCompletionReport,
-  type CompletionReport,
-  type CompletionReportLine,
-}
-
-// ---------------------------------------------------------------------------
-// Completion-report contract brief (injected into every composed prompt)
-// ---------------------------------------------------------------------------
-
-/**
- * Brief appended to every Coder task prompt requiring a machine-parseable
- * completion report.  Phrased as a contract (parsed by verify), not a pep
- * talk — the gate enforces it.
- */
-export const COMPLETION_REPORT_CONTRACT = [
-  '## Completion report',
-  '',
-  'Your FINAL message MUST end with the fenced block below. The verify phase',
-  'parses it; an absent or malformed report fails verification.',
-  '',
-  '```' + COMPLETION_REPORT_FENCE,
-  '- [done|partial|blocked] <criterion or inferred goal> — evidence: <file:line | commit sha | test name>',
-  '```',
-  '',
-  'Rules:',
-  '- One line per `<done>` criterion when the task has a structured spec.',
-  '- For free-prose tasks, one line per top-level goal you inferred (state',
-  '  each explicitly — do not collapse multiple goals into one line).',
-  '- `partial` and `blocked` lines MUST name what remains and why.',
-  '- When asserting a test failure is pre-existing, quote BOTH the branch-tip and merge-base result summaries verbatim. If the baseline check could not be run, write `pre-existing UNVERIFIED` instead of `tests pass`.',
-].join('\n')
 
 // ---------------------------------------------------------------------------
 // Post-coder worktree classifier

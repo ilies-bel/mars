@@ -460,7 +460,7 @@ describe('openTraceEventStore — appendTranscriptChunk + readTranscriptChunks',
     const store = await openTraceEventStore(tmpDbPath())
     try {
       const events1 = [{ type: 'assistant', message: { content: 'hello' } }]
-      const events2 = [{ type: 'result', result: '```completion-report\n- [done] foo\n```' }]
+      const events2 = [{ type: 'result', result: 'work complete' }]
       await store.appendTranscriptChunk!('task-1', 'sess-abc', 0, events1)
       await store.appendTranscriptChunk!('task-1', 'sess-abc', 1, events2)
 

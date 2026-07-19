@@ -73,10 +73,6 @@ import {
   type RecoverAllBlockedTasksResult,
 } from '../blocker-resolution'
 import { Arc, type ProgressEntry } from '../arc'
-import {
-  parseCompletionReport,
-  type CompletionReport,
-} from '../lib/completion-report'
 import { WorkflowTerminalError } from '../lib/workflow-terminal-error'
 import {
   raiseActionQueueItem,
@@ -2695,7 +2691,6 @@ export const startDaemon = async (
     branch: string
     title: string
     doneCriteria: readonly string[]
-    completionReport: CompletionReport | null
     commitsAhead: readonly string[]
     checklistState: ReadonlyArray<{ criterion: string; checked: boolean }>
     progressTail: readonly ProgressEntry[]
@@ -2727,41 +2722,6 @@ export const startDaemon = async (
       task.worktreePath ?? resolvePath(resolveContext().stateDir, 'worktrees', id)
     const doneCriteria = task.spec?.doneCriteria ?? []
 
-    // Derive Completion report from the task's transcripts. Collects text from
-    // 'result' and 'assistant' events and parses the last completion-report block.
-    let completionReport: CompletionReport | null = null
-    try {
-      const coderTextParts: string[] = []
-      for await (const evt of readAllTranscriptsForTask(id)) {
-        if (!evt.raw || typeof evt.raw !== 'object' || Array.isArray(evt.raw)) continue
-        const o = evt.raw as Record<string, unknown>
-        if (o.type === 'result' && typeof o.result === 'string') {
-          coderTextParts.push(o.result)
-        } else if (o.type === 'assistant') {
-          const msg = o.message
-          if (msg && typeof msg === 'object' && !Array.isArray(msg)) {
-            const content = (msg as Record<string, unknown>).content
-            if (Array.isArray(content)) {
-              for (const block of content) {
-                if (block && typeof block === 'object' && !Array.isArray(block)) {
-                  const b = block as Record<string, unknown>
-                  if (b.type === 'text' && typeof b.text === 'string') {
-                    coderTextParts.push(b.text)
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-      if (coderTextParts.length > 0) {
-        const parsed = parseCompletionReport(coderTextParts.join('\n'))
-        completionReport = parsed.kind !== 'absent' ? parsed : null
-      }
-    } catch {
-      // Transcript read errors are non-fatal; omit the report.
-    }
-
     // Commits ahead of the integration branch — bounded to 20.
     let commitsAhead: string[] = []
     try {
@@ -2790,7 +2750,6 @@ export const startDaemon = async (
       branch: task.branch ?? `task/${id}`,
       title: task.prompt,
       doneCriteria,
-      completionReport,
       commitsAhead,
       checklistState,
       progressTail,

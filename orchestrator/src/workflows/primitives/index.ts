@@ -55,13 +55,11 @@ import {
   selectVerifySteps,
   getChangedFiles,
   isInfraFailureOutput,
-  checkCompletenessGate,
 } from '../../core/lib/git/verify'
 import {
   appendEnrichmentScopes,
   recordEnrichmentShadowRuns,
 } from '../../core/lib/gate-enrichment'
-import { readAllTranscriptsForTask } from '../../core/lib/claude-transcript'
 import { mergeBranch, checkMergeTargetStatus } from '../../core/lib/git/merge'
 import { acquireLock } from '../../core/lib/git/lock'
 import {
@@ -1500,113 +1498,6 @@ export const verify = async (
               },
             ],
           }
-        }
-      }
-
-      // Always-on completeness gate (tier: 'task'). Only runs when all other
-      // checks have passed — if typecheck/lint/etc. already failed, focus the
-      // recovery Chore on those first before surfacing completeness issues.
-      if (r.passed) {
-        // Collect all text from the coder's transcript (assistant turns + result
-        // events). parseCompletionReport finds the LAST completion-report block.
-        const coderTextParts: string[] = []
-        const pushEventText = (raw: unknown): void => {
-          if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return
-          const o = raw as Record<string, unknown>
-          if (o.type === 'result' && typeof o.result === 'string') {
-            coderTextParts.push(o.result)
-          } else if (o.type === 'assistant') {
-            const msg = o.message
-            if (msg && typeof msg === 'object' && !Array.isArray(msg)) {
-              const content = (msg as Record<string, unknown>).content
-              if (Array.isArray(content)) {
-                for (const block of content) {
-                  if (
-                    block &&
-                    typeof block === 'object' &&
-                    !Array.isArray(block)
-                  ) {
-                    const b = block as Record<string, unknown>
-                    if (b.type === 'text' && typeof b.text === 'string') {
-                      coderTextParts.push(b.text)
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-        // Primary source: streaming chunks from task_transcripts, written
-        // incrementally during the coder run. This path is durable even when
-        // the coder was watchdog-killed before step_ended was written.
-        const streamedEvents = await trace.traceStore
-          .readTranscriptChunks?.(taskId)
-          .catch(() => undefined)
-        if (streamedEvents !== undefined && streamedEvents.length > 0) {
-          for (const evt of streamedEvents) pushEventText(evt)
-        }
-
-        if (coderTextParts.length === 0) {
-          // Fallback 1: the durable `step_ended` trace events for this task's
-          // run-claude-code steps (written at step end by runWorkerWithSpan).
-          // `query` returns newest-first; reverse to chronological order so
-          // parseCompletionReport's last-block-wins semantic matches session order.
-          const traceRows = await trace.traceStore
-            .query({ taskId, kind: ['step_ended'], limit: 100 })
-            .catch(() => [])
-          for (const row of [...traceRows].reverse()) {
-            const p = row.payload
-            if (p.stepName !== 'run-claude-code') continue
-            if (typeof p.transcript !== 'string' || p.transcript.length === 0) {
-              continue
-            }
-            try {
-              const events = JSON.parse(p.transcript) as unknown
-              if (Array.isArray(events)) {
-                for (const evt of events) pushEventText(evt)
-              }
-            } catch {
-              // Malformed transcript payload — skip; the disk fallback below
-              // may still cover this session.
-            }
-          }
-        }
-
-        if (coderTextParts.length === 0) {
-          // Fallback 2: on-disk JSONL files under ~/.claude/projects/ (legacy
-          // path for arcs that pre-date the streaming transcript store).
-          for await (const evt of readAllTranscriptsForTask(taskId)) {
-            pushEventText(evt.raw)
-          }
-        }
-        // Rule 1: resolve structured done-criteria + checked state so the gate
-        // can treat the structured list as authoritative when all are checked.
-        const taskForCriteria = await getTask(taskId, store).catch(() => null)
-        const doneCriteria = taskForCriteria?.spec?.doneCriteria ?? []
-        let allStructuredCriteriaChecked = false
-        if (doneCriteria.length > 0) {
-          const progressEntries = await Arc.listProgress(taskId, undefined, store).catch(() => [])
-          const checklist = Arc.deriveChecklist(progressEntries, doneCriteria)
-          allStructuredCriteriaChecked = checklist.every((c) => c.checked)
-        }
-
-        const completenessStep = await checkCompletenessGate({
-          coderText: coderTextParts.join('\n'),
-          changedFiles,
-          worktreePath,
-          branch,
-          traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
-          structuredDoneCriteria: doneCriteria,
-          allStructuredCriteriaChecked,
-          // Shadow-mode burn-in: the gate runs in log-only mode until it has
-          // recorded SHADOW_BURN_IN_COUNT clean parses. `store` satisfies
-          // MonitorDb structurally (it exposes .execute() from the libsql
-          // client it wraps).
-          burnInDb: store,
-        })
-        r = {
-          passed: completenessStep.passed,
-          steps: [...r.steps, completenessStep],
         }
       }
 
