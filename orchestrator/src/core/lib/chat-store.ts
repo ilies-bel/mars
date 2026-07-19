@@ -41,6 +41,25 @@ export const initChatStore = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_id ON chat_messages(thread_id)`,
   )
+  // Alert-thread columns — added via ALTER TABLE so existing DBs get them too.
+  const cols = await c.execute(`PRAGMA table_info(chat_threads)`)
+  const colNames = new Set(
+    (cols.rows as unknown as Array<{ name: string }>).map((r) => r.name),
+  )
+  if (!colNames.has('origin')) {
+    await c.execute(`ALTER TABLE chat_threads ADD COLUMN origin TEXT`)
+  }
+  if (!colNames.has('alert_item_id')) {
+    await c.execute(`ALTER TABLE chat_threads ADD COLUMN alert_item_id TEXT`)
+  }
+  if (!colNames.has('alert_resolved')) {
+    await c.execute(
+      `ALTER TABLE chat_threads ADD COLUMN alert_resolved INTEGER NOT NULL DEFAULT 0`,
+    )
+  }
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id ON chat_threads(alert_item_id)`,
+  )
   initialised = true
 }
 
@@ -56,6 +75,12 @@ export interface ChatThread {
   status: ThreadStatus
   created_at: string
   updated_at: string
+  /** 'alert' for proactive alert-origin threads; null for user-created threads. */
+  origin: string | null
+  /** The action-queue item id this thread tracks. Null for non-alert threads. */
+  alert_item_id: string | null
+  /** True when the underlying action-queue item has been resolved. */
+  alert_resolved: boolean
 }
 
 export interface ChatMessage {
@@ -77,6 +102,75 @@ export interface ThreadWithMessages {
   messages: ChatMessage[]
 }
 
+/** Camelcase view shape served over the HTTP API (matches the UI's chatThreadSchema). */
+export interface ChatThreadApiView {
+  id: string
+  title: string
+  status: ThreadStatus
+  createdAt: string
+  updatedAt: string
+  /** 'alert' for proactive threads; null for user-created threads. */
+  origin: string | null
+  /** The action-queue item id this thread tracks. */
+  alertItemId: string | null
+  /** True when the underlying action-queue item has been resolved. */
+  alertResolved: boolean
+}
+
+/** Camelcase view shape for messages served over the HTTP API. */
+export interface ChatMessageApiView {
+  id: string
+  threadId: string
+  role: MessageRole
+  segments: unknown[]
+  createdAt: string
+}
+
+/** Convert a stored thread to its API view shape. */
+export const toThreadApiView = (t: ChatThread): ChatThreadApiView => ({
+  id: t.id,
+  title: t.title,
+  status: t.status,
+  createdAt: t.created_at,
+  updatedAt: t.updated_at,
+  origin: t.origin,
+  alertItemId: t.alert_item_id,
+  alertResolved: t.alert_resolved,
+})
+
+/** Convert a stored message to its API view shape. */
+export const toMessageApiView = (m: ChatMessage): ChatMessageApiView => ({
+  id: m.id,
+  threadId: m.thread_id,
+  role: m.role,
+  segments: Array.isArray(m.segments) ? (m.segments as unknown[]) : [],
+  createdAt: m.created_at,
+})
+
+/** One action button on an alert card. */
+export interface AlertSegmentAction {
+  op: string
+  label: string
+  style: 'primary' | 'destructive' | 'default'
+}
+
+/**
+ * Alert segment stored on the opening assistant message of an alert-origin thread.
+ * Mirrors the action-queue row enough to render a rich card without re-fetching
+ * the action queue.
+ */
+export interface AlertSegment {
+  type: 'alert'
+  kind: string
+  entityId: string
+  priority: string
+  title: string
+  whyNow: string
+  actions: AlertSegmentAction[]
+  /** True once the underlying action-queue item has been superseded/resolved. */
+  resolved: boolean
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const now = (): string => new Date().toISOString()
@@ -88,6 +182,9 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   status: row.status as ThreadStatus,
   created_at: row.created_at as string,
   updated_at: row.updated_at as string,
+  origin: (row.origin as string | null) ?? null,
+  alert_item_id: (row.alert_item_id as string | null) ?? null,
+  alert_resolved: Boolean(row.alert_resolved),
 })
 
 const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
@@ -119,12 +216,22 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
           VALUES (?, ?, NULL, 'idle', ?, ?)`,
     args: [id, threadTitle, ts, ts],
   })
-  return { id, title: threadTitle, session_id: null, status: 'idle', created_at: ts, updated_at: ts }
+  return {
+    id,
+    title: threadTitle,
+    session_id: null,
+    status: 'idle',
+    created_at: ts,
+    updated_at: ts,
+    origin: null,
+    alert_item_id: null,
+    alert_resolved: false,
+  }
 }
 
 /**
- * List all threads newest-first, each augmented with the text of its most recent
- * message (or `null` when the thread has no messages yet).
+ * List all threads, alert-origin unresolved threads first, then newest-first.
+ * Each thread is augmented with the text of its most recent message.
  */
 export const listThreads = async (): Promise<ThreadPreview[]> => {
   await initChatStore()
@@ -137,7 +244,10 @@ export const listThreads = async (): Promise<ThreadPreview[]> => {
              ORDER BY m.rowid DESC
              LIMIT 1) AS last_message
       FROM chat_threads t
-     ORDER BY t.rowid DESC
+     ORDER BY
+       -- Alert threads that are not yet resolved sort first.
+       CASE WHEN t.origin = 'alert' AND (t.alert_resolved = 0 OR t.alert_resolved IS NULL) THEN 0 ELSE 1 END ASC,
+       t.rowid DESC
   `)
   return (result.rows as unknown as Record<string, unknown>[]).map((row) => ({
     ...rowToThread(row),
@@ -240,4 +350,118 @@ export const setThreadSession = async (id: string, sessionId: string | null): Pr
     sql: `UPDATE chat_threads SET session_id = ?, updated_at = ? WHERE id = ?`,
     args: [sessionId, now(), id],
   })
+}
+
+// ── Alert thread API ──────────────────────────────────────────────────────────
+
+/**
+ * Find the alert-origin thread for a given action-queue item id.
+ * Returns null when no such thread exists (not yet created or different item).
+ */
+export const findAlertThreadByItemId = async (
+  alertItemId: string,
+): Promise<ChatThread | null> => {
+  await initChatStore()
+  const c = stateClient()
+  const result = await c.execute({
+    sql: `SELECT * FROM chat_threads WHERE alert_item_id = ? LIMIT 1`,
+    args: [alertItemId],
+  })
+  if (result.rows.length === 0) return null
+  return rowToThread(result.rows[0] as unknown as Record<string, unknown>)
+}
+
+/**
+ * Create a proactive alert-origin thread for the given action-queue item.
+ * Inserts one assistant message containing the alert segment. Idempotent via
+ * `findAlertThreadByItemId` — callers should check before calling.
+ */
+export const createAlertThread = async (
+  alertItemId: string,
+  title: string,
+  segment: AlertSegment,
+): Promise<ChatThread> => {
+  await initChatStore()
+  const c = stateClient()
+  const threadId = randomUUID()
+  const msgId = randomUUID()
+  const ts = now()
+  await c.execute({
+    sql: `INSERT INTO chat_threads
+            (id, title, session_id, status, created_at, updated_at, origin, alert_item_id, alert_resolved)
+          VALUES (?, ?, NULL, 'idle', ?, ?, 'alert', ?, 0)`,
+    args: [threadId, title, ts, ts, alertItemId],
+  })
+  // Persist one assistant message with the alert segment.
+  await c.execute({
+    sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at)
+          VALUES (?, ?, 'assistant', ?, ?, ?)`,
+    args: [msgId, threadId, title, JSON.stringify([segment]), ts],
+  })
+  return {
+    id: threadId,
+    title,
+    session_id: null,
+    status: 'idle',
+    created_at: ts,
+    updated_at: ts,
+    origin: 'alert',
+    alert_item_id: alertItemId,
+    alert_resolved: false,
+  }
+}
+
+/**
+ * Mark the alert thread associated with `alertItemId` as resolved.
+ * Updates the alert segment's `resolved` flag in-place.
+ * Returns `true` if a thread was found and updated, `false` if none exists.
+ */
+export const resolveAlertThread = async (alertItemId: string): Promise<boolean> => {
+  await initChatStore()
+  const c = stateClient()
+  const ts = now()
+  // Find the thread
+  const found = await c.execute({
+    sql: `SELECT id FROM chat_threads WHERE alert_item_id = ? AND alert_resolved = 0 LIMIT 1`,
+    args: [alertItemId],
+  })
+  if (found.rows.length === 0) return false
+  const threadId = (found.rows[0] as unknown as { id: string }).id
+  // Mark the thread as resolved
+  await c.execute({
+    sql: `UPDATE chat_threads SET alert_resolved = 1, updated_at = ? WHERE id = ?`,
+    args: [ts, threadId],
+  })
+  // Update the alert segment's `resolved` field inside the persisted message
+  const msgResult = await c.execute({
+    sql: `SELECT id, segments FROM chat_messages
+           WHERE thread_id = ? AND role = 'assistant'
+           ORDER BY rowid ASC LIMIT 1`,
+    args: [threadId],
+  })
+  if (msgResult.rows.length > 0) {
+    const msgRow = msgResult.rows[0] as unknown as { id: string; segments: string | null }
+    if (msgRow.segments) {
+      try {
+        const segs = JSON.parse(msgRow.segments) as unknown[]
+        const updated = segs.map((s) => {
+          if (
+            s !== null &&
+            typeof s === 'object' &&
+            (s as Record<string, unknown>).type === 'alert'
+          ) {
+            return { ...(s as Record<string, unknown>), resolved: true }
+          }
+          return s
+        })
+        await c.execute({
+          sql: `UPDATE chat_messages SET segments = ? WHERE id = ?`,
+          args: [JSON.stringify(updated), msgRow.id],
+        })
+      } catch {
+        // Non-fatal: the thread is still marked resolved.
+      }
+    }
+  }
+  return true
 }

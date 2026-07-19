@@ -28,7 +28,7 @@ import {
   deleteChatThread,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatMessage, ChatSegmentToolUse } from '@/shared/schemas'
+import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert } from '@/shared/schemas'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 
 // ---------------------------------------------------------------------------
@@ -58,6 +58,7 @@ type FlatSegment =
   | { kind: 'text'; text: string }
   | { kind: 'thinking'; text: string }
   | ToolGroup
+  | { kind: 'alert'; alert: ChatSegmentAlert }
 
 /**
  * Collapses consecutive tool_use segments into a single ToolGroup so the UI
@@ -82,6 +83,8 @@ export const groupMessageSegments = (msg: ChatMessage): FlatSegment[] => {
       flushTools()
       if (seg.type === 'text') {
         out.push({ kind: 'text', text: seg.text })
+      } else if (seg.type === 'alert') {
+        out.push({ kind: 'alert', alert: seg })
       } else {
         // thinking
         out.push({ kind: 'thinking', text: seg.text })
@@ -211,6 +214,78 @@ const ThinkingBlock = ({ text }: { text: string }) => {
   )
 }
 
+/**
+ * Rich card rendered for `alert` segments in proactive alert-origin threads.
+ * Displays the alert title, whyNow explanation, action verb buttons, and a
+ * "Discuss" button that lets the user type a follow-up into the thread.
+ */
+const AlertCard = ({
+  alert,
+  onDiscuss,
+}: {
+  alert: ChatSegmentAlert
+  onDiscuss: () => void
+}) => {
+  const isResolved = alert.resolved ?? false
+
+  const buttonClass = (style: 'primary' | 'destructive' | 'default') => {
+    const base = 'rounded px-3 py-1 font-mono text-[11px] border transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
+    if (style === 'primary') return `${base} border-accent/60 bg-accent/20 text-accent hover:bg-accent/30`
+    if (style === 'destructive') return `${base} border-red-400/40 bg-red-900/10 text-red-400 hover:bg-red-900/20`
+    return `${base} border-iron/30 text-iron hover:bg-iron/20`
+  }
+
+  return (
+    <div
+      className={[
+        'my-2 rounded-lg border p-3 text-[12px]',
+        isResolved
+          ? 'border-iron/20 bg-surface opacity-60'
+          : 'border-accent/30 bg-accent/5',
+      ].join(' ')}
+    >
+      {/* Header */}
+      <div className="mb-1 flex items-center gap-2">
+        <span className="text-[13px]">🔔</span>
+        <span className="font-mono text-[11px] font-semibold text-fg">{alert.title}</span>
+        {isResolved && (
+          <span className="ml-auto rounded bg-iron/20 px-1.5 py-0.5 font-mono text-[10px] text-iron/60">
+            Resolved
+          </span>
+        )}
+      </div>
+
+      {/* Why now */}
+      <p className="mb-2 font-mono text-[11px] text-iron leading-relaxed">{alert.whyNow}</p>
+
+      {/* Action buttons */}
+      {!isResolved && alert.actions.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {alert.actions.map((action) => (
+            <button
+              key={action.op}
+              type="button"
+              className={buttonClass(action.style)}
+              title={action.op}
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Discuss button */}
+      <button
+        type="button"
+        className="rounded border border-iron/30 px-2 py-0.5 font-mono text-[10px] text-iron hover:bg-iron/20"
+        onClick={onDiscuss}
+      >
+        Discuss…
+      </button>
+    </div>
+  )
+}
+
 /** A single chat message rendered with segment grouping. */
 const ChatMessageBubble = ({ msg }: { msg: ChatMessage }) => {
   const segments = groupMessageSegments(msg)
@@ -232,6 +307,18 @@ const ChatMessageBubble = ({ msg }: { msg: ChatMessage }) => {
               <div key={i} className="chat-markdown prose prose-sm prose-invert max-w-none">
                 <Markdown remarkPlugins={[remarkGfm]}>{seg.text}</Markdown>
               </div>
+            )
+          }
+          if (seg.kind === 'alert') {
+            return (
+              <AlertCard
+                key={i}
+                alert={seg.alert}
+                // Discuss button: focus composer — no-op for now since the
+                // composer is in a parent component; a future pass can wire
+                // this via a context or callback prop.
+                onDiscuss={() => {}}
+              />
             )
           }
           if (seg.kind === 'thinking') {
@@ -329,6 +416,17 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
         />
       ) : (
         <>
+          {thread.origin === 'alert' && (
+            <span
+              className={[
+                'flex-none text-[10px]',
+                thread.alertResolved ? 'opacity-30' : 'text-accent',
+              ].join(' ')}
+              title={thread.alertResolved ? 'Alert resolved' : 'Active alert'}
+            >
+              🔔
+            </span>
+          )}
           <span className="flex-1 truncate font-mono text-[11px]">{title}</span>
           {thread.status === 'running' && (
             <span className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-iron/60" />
@@ -612,7 +710,13 @@ const ThreadSidebar = ({ selectedId, projectId, onSelect }: ThreadSidebarProps) 
     },
   })
 
-  const threads = data ?? []
+  // Alert-origin unresolved threads sort to the top; everything else retains
+  // server order (already sorted by updated_at desc from the backend).
+  const threads = (data ?? []).slice().sort((a, b) => {
+    const aAlert = a.origin === 'alert' && !a.alertResolved ? 0 : 1
+    const bAlert = b.origin === 'alert' && !b.alertResolved ? 0 : 1
+    return aAlert - bAlert
+  })
 
   return (
     <aside className="flex w-52 flex-col border-r border-iron/30 bg-bg">

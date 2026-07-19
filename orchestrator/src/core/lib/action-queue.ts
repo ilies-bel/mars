@@ -4,6 +4,26 @@ import { resolveStateClient } from '../store/state-client'
 import { buildEventInsert } from './outbox'
 import type { EventName, EventPayload } from './outbox'
 import { resolveOriginIdForTask } from './origin'
+import { derivedRowActions } from './derived-row-actions'
+
+// ── Alert-thread notification callback ────────────────────────────────────────
+
+/**
+ * Optional callback invoked after an alert thread is created or resolved.
+ * The daemon registers this to broadcast 'chat' SSE so the sidebar updates
+ * immediately. Falls back to a no-op when not set.
+ */
+let _onChatThreadChanged: (() => void) | null = null
+
+/**
+ * Register a callback that fires whenever an alert chat thread is created or
+ * its resolved state changes. Call from the daemon after the SSE hub is ready:
+ *
+ *   setOnChatThreadChanged(() => viewStreamHub.broadcast('chat'))
+ */
+export const setOnChatThreadChanged = (fn: () => void): void => {
+  _onChatThreadChanged = fn
+}
 
 /**
  * Emit an actionQueue lifecycle event to the mars.db events outbox.
@@ -538,6 +558,114 @@ const resolvedOriginFingerprint = async (originId: string): Promise<string> =>
     await resolveOriginIdForTask(originId).catch(() => originId),
   )
 
+// ── Alert-thread helpers ──────────────────────────────────────────────────────
+
+/** Map an action op to its button style on the alert card. */
+const alertActionStyle = (op: string): 'primary' | 'destructive' | 'default' => {
+  if (
+    ['restart', 'validate', 'unblock', 'run-reflect', 'enable-auto-reflect', 'attach'].includes(op)
+  )
+    return 'primary'
+  if (['dismiss', 'purge', 'reject', 'prune-worktree'].includes(op)) return 'destructive'
+  return 'default'
+}
+
+/** Derive the entity-id from an action-queue raise item (mirrors extractEntityId in view/action-queue.ts). */
+const deriveEntityId = (item: RaiseActionQueueItem, fallbackId: string): string => {
+  if (item.originTaskId) return item.originTaskId
+  if (typeof item.payload.taskId === 'string') return item.payload.taskId
+  if (typeof item.payload.proposalId === 'string') return item.payload.proposalId
+  if (typeof item.payload.scorerId === 'string') return item.payload.scorerId
+  if (typeof item.payload.workflowName === 'string') return item.payload.workflowName
+  if (item.signature) return item.signature
+  return fallbackId
+}
+
+/** Map ActionQueueKind to the errorKind string used by derivedRowActions. */
+const toErrorKind = (kind: string): string => (kind === 'failed' ? 'failed-task' : kind)
+
+/**
+ * Build the alert segment for a newly-raised action-queue item.
+ * For failure kinds (failed, cancelled-blocker-cascade, etc.) we use a generic
+ * restart/dismiss pair because the task's failure signature is not yet available
+ * at raise time. Non-failure kinds use the same derivedRowActions registry as
+ * the action-queue view.
+ */
+const buildAlertSegment = (
+  item: RaiseActionQueueItem,
+  itemId: string,
+): import('./chat-store').AlertSegment => {
+  const entityId = deriveEntityId(item, itemId)
+  const errorKind = toErrorKind(item.kind)
+  const rawActions = derivedRowActions(errorKind, entityId)
+
+  // derivedRowActions returns [] for unknown / failure kinds — fall back to generic.
+  const actions =
+    rawActions.length > 0
+      ? rawActions.map((a) => ({
+          op: a.op,
+          label: a.label,
+          style: alertActionStyle(a.op),
+        }))
+      : [
+          { op: 'restart', label: 'Restart', style: 'primary' as const },
+          { op: 'dismiss', label: 'Dismiss', style: 'default' as const },
+        ]
+
+  const priority = item.priority === 'urgent' || item.priority === 'high' ? 'high' : item.priority
+
+  return {
+    type: 'alert',
+    kind: item.kind,
+    entityId,
+    priority,
+    title: item.title,
+    whyNow: item.body,
+    actions,
+    resolved: false,
+  }
+}
+
+/**
+ * Create (or skip if already exists) the alert chat thread for a newly-inserted
+ * action-queue item. Non-fatal: errors are swallowed so the queue raise still
+ * succeeds even if the chat DB is unavailable.
+ */
+const maybeCreateAlertThread = async (
+  item: RaiseActionQueueItem,
+  itemId: string,
+): Promise<void> => {
+  try {
+    const { findAlertThreadByItemId, createAlertThread } = await import('./chat-store')
+    const existing = await findAlertThreadByItemId(itemId)
+    if (existing) return
+    const segment = buildAlertSegment(item, itemId)
+    await createAlertThread(itemId, item.title, segment)
+    _onChatThreadChanged?.()
+  } catch {
+    // Non-fatal: the action-queue item was already committed.
+  }
+}
+
+/**
+ * Resolve the alert chat threads for a set of superseded action-queue item ids.
+ * Non-fatal: errors are swallowed.
+ */
+const maybeResolveAlertThreads = async (ids: string[]): Promise<void> => {
+  if (ids.length === 0) return
+  try {
+    const { resolveAlertThread } = await import('./chat-store')
+    let changed = false
+    for (const id of ids) {
+      const resolved = await resolveAlertThread(id)
+      if (resolved) changed = true
+    }
+    if (changed) _onChatThreadChanged?.()
+  } catch {
+    // Non-fatal.
+  }
+}
+
 export const raiseActionQueueItem = async (
   item: RaiseActionQueueItem,
 ): Promise<string> => {
@@ -627,6 +755,9 @@ export const raiseActionQueueItem = async (
     priority: item.priority,
     signature: item.signature,
   })
+  // Create a proactive alert chat thread for this new action-queue item.
+  // Fire-and-forget — errors are swallowed inside maybeCreateAlertThread.
+  void maybeCreateAlertThread(item, id)
   return id
 }
 
@@ -921,6 +1052,8 @@ export const setActionQueueState = async (
       toState: state,
       by: opts?.by ?? '',
     })
+    // Resolve any proactive alert chat thread tracking this item.
+    void maybeResolveAlertThreads([resolvedId])
   }
 }
 

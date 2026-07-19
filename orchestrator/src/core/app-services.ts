@@ -205,8 +205,8 @@ export interface AppServices {
   viewGlossary: () => Promise<{ terms: Array<{ term: string; definition: string; avoid: string[] }> }>
   viewSkills: () => Promise<{ skills: Array<{ name: string; description: string; path: string }> }>
   // ── chat threads + messages ───────────────────────────────────────────────
-  viewChatThreads: () => Promise<{ threads: import('./lib/chat-store').ThreadPreview[] }>
-  viewChatThread: (id: string) => Promise<import('./lib/chat-store').ThreadWithMessages | null>
+  viewChatThreads: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
+  viewChatThread: (id: string) => Promise<{ thread: import('./lib/chat-store').ChatThreadApiView; messages: import('./lib/chat-store').ChatMessageApiView[] } | null>
 }
 
 /**
@@ -1109,14 +1109,19 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   }
 
   const viewChatThreads: AppServices['viewChatThreads'] = async () => {
-    const { listThreads } = await import('./lib/chat-store')
+    const { listThreads, toThreadApiView } = await import('./lib/chat-store')
     const threads = await listThreads()
-    return { threads }
+    return { threads: threads.map(toThreadApiView) }
   }
 
   const viewChatThread: AppServices['viewChatThread'] = async (id) => {
-    const { getThread } = await import('./lib/chat-store')
-    return getThread(id)
+    const { getThread, toThreadApiView, toMessageApiView } = await import('./lib/chat-store')
+    const result = await getThread(id)
+    if (!result) return null
+    return {
+      thread: toThreadApiView(result.thread),
+      messages: result.messages.map(toMessageApiView),
+    }
   }
 
   const listKpis: AppServices['listKpis'] = () => defaultListKpis()

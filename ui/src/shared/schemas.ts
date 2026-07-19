@@ -802,17 +802,46 @@ export const chatSegmentToolUseSchema = z.object({
   status: z.enum(['pending', 'complete', 'error']).optional().default('complete'),
 })
 
+/** Alert action button rendered on the alert card. */
+export const chatSegmentAlertActionSchema = z.object({
+  op: z.string(),
+  label: z.string(),
+  style: z.enum(['primary', 'destructive', 'default']),
+})
+
+/**
+ * Alert segment: a rich card embedded in the opening message of a proactive
+ * alert-origin chat thread. Contains enough info to render the card and invoke
+ * actions without re-fetching the action queue.
+ */
+export const chatSegmentAlertSchema = z.object({
+  type: z.literal('alert'),
+  /** The ActionQueueKind of the underlying item (e.g. 'failed', 'draft-proposal'). */
+  kind: z.string(),
+  /** Entity id (task id, proposal id, etc.) the alert is about. */
+  entityId: z.string(),
+  priority: z.string(),
+  title: z.string(),
+  /** Human-readable explanation of why this alert appeared now. */
+  whyNow: z.string(),
+  actions: z.array(chatSegmentAlertActionSchema),
+  /** True once the underlying action-queue item has been superseded/resolved. */
+  resolved: z.boolean().optional().default(false),
+})
+
 export const chatSegmentSchema = z.discriminatedUnion('type', [
   chatSegmentTextSchema,
   chatSegmentThinkingSchema,
   chatSegmentToolUseSchema,
+  chatSegmentAlertSchema,
 ])
 
 export const chatMessageSchema = z.object({
   id: z.string(),
   threadId: z.string(),
   role: z.enum(['user', 'assistant']),
-  segments: z.array(chatSegmentSchema),
+  /** Segments; defaults to empty array for legacy messages that have no segments. */
+  segments: z.array(chatSegmentSchema).optional().default([]),
   createdAt: z.string(),
 })
 
@@ -824,6 +853,12 @@ export const chatThreadSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   messageCount: z.number().optional().default(0),
+  /** 'alert' for proactive alert-origin threads; null for user-created threads. */
+  origin: z.string().nullable().optional(),
+  /** The action-queue item id this thread tracks; null for non-alert threads. */
+  alertItemId: z.string().nullable().optional(),
+  /** True when the underlying action-queue item has been resolved. */
+  alertResolved: z.boolean().optional().default(false),
 })
 
 export const chatThreadsResponseSchema = z.object({
@@ -835,6 +870,8 @@ export const chatThreadDetailSchema = z.object({
   messages: z.array(chatMessageSchema),
 })
 
+export type ChatSegmentAlertAction = z.infer<typeof chatSegmentAlertActionSchema>
+export type ChatSegmentAlert = z.infer<typeof chatSegmentAlertSchema>
 export type ChatSegment = z.infer<typeof chatSegmentSchema>
 export type ChatSegmentText = z.infer<typeof chatSegmentTextSchema>
 export type ChatSegmentThinking = z.infer<typeof chatSegmentThinkingSchema>
