@@ -25,6 +25,8 @@ import {
 import { isDaemonReachable } from '../../core/daemon/paths'
 import { getDefaultTaskStore } from '../../core/store/task-store'
 import { execFile } from 'node:child_process'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
@@ -243,6 +245,45 @@ const proposalRemoveUserStory: Command = {
   },
 }
 
+/**
+ * Land a skill-forge proposal: write the embedded SKILL.md into the template
+ * tree and remind the operator to refresh the bundle.
+ *
+ * Returns a code-only result so callers can `return landSkillProposal(...)`.
+ */
+function landSkillProposal(
+  proposal: NonNullable<Awaited<ReturnType<typeof getProposal>>>,
+  deps: CommandDeps,
+): { code: number } {
+  const match = proposal.solution.match(/^name:\s+(\S+)/m)
+  if (!match || !match[1]) {
+    deps.err(
+      `skill-forge proposal ${proposal.id} has no 'name:' field in frontmatter`,
+    )
+    return { code: 1 }
+  }
+  const slug = match[1]
+  const target = join(
+    deps.ctx.repoRoot,
+    'orchestrator/src/init/templates/claude/skills',
+    slug,
+    'SKILL.md',
+  )
+  if (existsSync(target)) {
+    deps.err(
+      `skill already exists at ${target}; remove it first or choose a different name`,
+    )
+    return { code: 1 }
+  }
+  mkdirSync(dirname(target), { recursive: true })
+  writeFileSync(target, proposal.solution)
+  deps.out(`skill ${slug} written to ${target}`)
+  deps.out(
+    'next: run `npm run mars:bundle:refresh` from orchestrator/ to bundle the new skill',
+  )
+  return { code: 0 }
+}
+
 const proposalPromote: Command = {
   path: 'proposal promote',
   summary: 'mark a shaped draft proposal as PRD-ready',
@@ -253,9 +294,28 @@ const proposalPromote: Command = {
       deps.err('usage: mars proposal promote <id>')
       return { code: 2 }
     }
+    // Resolve the proposal locally so we can branch on source before routing
+    // to the daemon (skill-forge proposals are handled entirely client-side).
+    const resolved = await resolveProposalId(id)
+    if (resolved.kind === 'ambiguous') {
+      deps.err(`ambiguous prefix '${id}' matches ${resolved.count} proposals`)
+      return { code: 1 }
+    }
+    if (resolved.kind === 'none') {
+      deps.err(`proposal ${id} not found`)
+      return { code: 1 }
+    }
+    const proposal = await getProposal(resolved.id)
+    if (!proposal) {
+      deps.err(`proposal ${id} not found`)
+      return { code: 1 }
+    }
+    if (proposal.source === 'skill-forge') {
+      return landSkillProposal(proposal, deps)
+    }
     try {
       const r = (await deps.daemon.sendRequest(
-        { op: 'proposal.promote', proposalId: id },
+        { op: 'proposal.promote', proposalId: resolved.id },
         { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; status: string }
       deps.out(`proposal ${r.proposalId} marked ${r.status}`)
