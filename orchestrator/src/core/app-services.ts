@@ -31,9 +31,10 @@
  * and stay in the daemon, not here.
  */
 
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { resolve as resolvePath } from 'node:path'
 import { resolveContext, getRepoRoot } from './context'
+import { readGlossaryFile } from './lib/glossary'
 import {
   getDefaultDomainTaskStore,
   getCompositionRootClient,
@@ -199,6 +200,9 @@ export interface AppServices {
   // ── workflow configs and promotion ledger (PRD 5b73d277) ──────────────────
   viewWorkflowConfigs: (workflow: string) => Promise<{ configs: WorkflowConfig[] }>
   viewPromotionLedger: (workflow?: string) => Promise<{ entries: PromotionLedgerEntry[] }>
+  // ── read views: glossary and skills ────────────────────────────────────────
+  viewGlossary: () => Promise<{ terms: Array<{ term: string; definition: string; avoid: string[] }> }>
+  viewSkills: () => Promise<{ skills: Array<{ name: string; description: string; path: string }> }>
 }
 
 /**
@@ -1105,6 +1109,52 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const budgetStatus: AppServices['budgetStatus'] = () =>
     computeBudgetStatus(getDefaultDomainTaskStore())
 
+  const viewGlossary: AppServices['viewGlossary'] = async () => {
+    const doc = await readGlossaryFile(resolvePath(getRepoRoot(), 'CONTEXT.md'))
+    return {
+      terms: doc.terms.map((t) => ({
+        term: t.term,
+        definition: t.definition,
+        avoid: [...t.aliases],
+      })),
+    }
+  }
+
+  const viewSkills: AppServices['viewSkills'] = async () => {
+    const skillsDir = resolvePath(getRepoRoot(), '.claude', 'skills')
+    let entries: string[]
+    try {
+      entries = await readdir(skillsDir)
+    } catch {
+      return { skills: [] }
+    }
+    const skills: Array<{ name: string; description: string; path: string }> = []
+    for (const entry of entries) {
+      const skillPath = resolvePath(skillsDir, entry, 'SKILL.md')
+      let content: string
+      try {
+        content = await readFile(skillPath, 'utf8')
+      } catch {
+        // Skill directory without SKILL.md — skip
+        skills.push({ name: entry, description: '', path: skillPath })
+        continue
+      }
+      // Parse YAML frontmatter between --- delimiters
+      const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+      let name = entry
+      let description = ''
+      if (fmMatch) {
+        const fm = fmMatch[1] ?? ''
+        const nameMatch = fm.match(/^name:\s*(.+)$/m)
+        const descMatch = fm.match(/^description:\s*(.+)$/m)
+        if (nameMatch?.[1]) name = nameMatch[1].trim()
+        if (descMatch?.[1]) description = descMatch[1].trim()
+      }
+      skills.push({ name, description, path: skillPath })
+    }
+    return { skills }
+  }
+
   return {
     viewActionQueue,
     viewActionQueueHistory,
@@ -1132,5 +1182,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewWorkflowConfigs,
     viewPromotionLedger,
     viewFrameworkUpdate,
+    viewGlossary,
+    viewSkills,
   }
 }

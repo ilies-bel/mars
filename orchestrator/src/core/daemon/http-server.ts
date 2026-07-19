@@ -701,6 +701,32 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/glossary — the repo's domain glossary (CONTEXT.md), parsed and
+    // returned as a structured term list. Each term includes its definition and
+    // any avoid-aliases. Returns { terms: [{ term, definition, avoid }] }. Empty
+    // terms array when CONTEXT.md does not exist. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/glossary') {
+      deps.appServices
+        .viewGlossary()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/skills — the consumer repo's .claude/skills/* catalog. Each
+    // skill is represented by name, one-line description (from SKILL.md
+    // frontmatter), and path. Skills whose SKILL.md is malformed are included
+    // with an empty description rather than causing the route to fail. Returns
+    // { skills: [{ name, description, path }] }. Empty array when no skills
+    // directory exists. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/skills') {
+      deps.appServices
+        .viewSkills()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/stream — long-lived Server-Sent Events channel. Emits one
     // named event per channel ('tasks'|'progress'|'action-queue'|'proposals'|'kpis')
     // whenever the daemon mutates the corresponding store. The UI subscribes

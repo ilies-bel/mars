@@ -85,5 +85,7 @@ export const stubAppServices = (
     releaseUrl: null,
     selfUpdatable: false,
   }),
+  viewGlossary: async () => ({ terms: [] }),
+  viewSkills: async () => ({ skills: [] }),
   ...overrides,
 })
