@@ -106,6 +106,8 @@ const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Prom
     }),
     viewArcs: async () => [],
     viewScorerTrend: async () => ({ trends: [], recent: [] }),
+    viewScorerWorkflows: async () => ({ workflows: [] }),
+    viewLoopLedger: async () => ({ entries: [] }),
     viewFrameworkUpdate: async () => ({
       installed: '0.1.0',
       latest: '0.1.0',

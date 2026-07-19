@@ -16,6 +16,20 @@ vi.mock('@/entities/kpi/useKpis', () => ({
   useKpis: vi.fn(() => ({ data: [], isLoading: false, error: null })),
 }))
 
+// WatchtowerSection renders LoopLedgerPanel, PromotionLedgerTable, and ScoreTrends
+// — mock all three hooks so this test doesn't need a QueryClientProvider.
+vi.mock('@/entities/watchtower/useLoopLedger', () => ({
+  useLoopLedger: vi.fn(() => ({ entries: [], isLoading: false, error: null })),
+}))
+
+vi.mock('@/entities/watchtower/usePromotionLedger', () => ({
+  usePromotionLedger: vi.fn(() => ({ entries: [], isLoading: false, error: null })),
+}))
+
+vi.mock('@/entities/watchtower/useScorerWorkflows', () => ({
+  useScorerWorkflows: vi.fn(() => ({ data: [], isLoading: false, error: null })),
+}))
+
 import { useKpis } from '@/entities/kpi/useKpis'
 
 const makeKpi = (overrides: Partial<Kpi> & { key: Kpi['key'] }): Kpi => ({

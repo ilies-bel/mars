@@ -66,6 +66,16 @@ vi.mock('@/entities/watchtower/usePromotionLedger', () => ({
   })),
 }))
 
+// WatchtowerSection also renders LoopLedgerPanel — mock the hook so the tests
+// don't need a QueryClientProvider.
+vi.mock('@/entities/watchtower/useLoopLedger', () => ({
+  useLoopLedger: vi.fn(() => ({
+    entries: [],
+    isLoading: false,
+    error: null,
+  })),
+}))
+
 import { useScorerTrend } from '@/entities/watchtower/useScorerTrend'
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
 import { useWorkflowConfigs } from '@/entities/watchtower/useWorkflowConfigs'
