@@ -84,6 +84,17 @@ Commands:
                                 the task's note log; useful during live steps)
   task check <id> <criterion>   mark a done-criterion as complete on a task
                                 with a structured spec (--done flags)
+  memory list --domain <d> [--min-salience <n>] [--limit <n>]
+                                list active memory packets for a domain; default
+                                min-salience 0.7, default limit 20. Prints a
+                                table: id, salience, domain, text, created_at.
+  memory add --domain <d> --text "<text>" [--salience <n>] [--origin-arc <id>]
+                                insert a domain-scoped memory packet. --salience
+                                is a float 0..1 (default 0.7). Prints the
+                                inserted id.
+  memory retire <id>            soft-delete a memory packet. Exits 0 and prints
+                                'retired' on success; exits non-zero when the id
+                                is unknown or already retired.
   proposal add "<goal>" [--author kind:name]
                                 create a proposal/plan in .mars/mars.db. Author
                                 is detected from env/git when omitted: human if
@@ -701,6 +712,21 @@ Subcommands:
       Mark a done-criterion as complete on a task with a structured spec
       (i.e. one enqueued with --done flags). The criterion string must
       match one of the declared done-criteria exactly.`,
+  memory: `mars memory <list|add|retire>
+
+Manage domain-scoped memory packets stored in .mars/mars.db.
+
+Subcommands:
+  list --domain <d> [--min-salience <n>] [--limit <n>]
+      List active memory packets for a domain. Filters out retired rows.
+      --min-salience defaults to 0.7, --limit defaults to 20.
+      Output columns: id, salience, domain, text, created_at.
+  add --domain <d> --text "<text>" [--salience <n>] [--origin-arc <id>]
+      Insert a new memory packet. --salience is a float in [0, 1] (default 0.7).
+      --origin-arc ties the packet to an arc id (optional). Prints the inserted id.
+  retire <id>
+      Soft-delete a memory packet by id. Exits 0 and prints 'retired' on success.
+      Exits non-zero when the id is unknown or already retired.`,
   proposal: `mars proposal <subcommand> ...
 
 Subcommands:

@@ -78,6 +78,12 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--supervisors',
   '--scaffold-mode',
   '--feedback',
+  // mars memory — domain-scoped memory packet management
+  '--domain',
+  '--text',
+  '--salience',
+  '--min-salience',
+  '--origin-arc',
 ])
 
 /**
