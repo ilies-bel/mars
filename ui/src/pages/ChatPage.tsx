@@ -587,7 +587,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
           )}
           <button
             type="button"
-            className="hidden flex-none rounded px-1 py-0.5 text-[10px] text-iron/50 hover:bg-red-900/20 hover:text-red-400 group-hover:block"
+            className="flex-none rounded px-1 py-0.5 text-[10px] text-iron/50 opacity-0 transition-opacity hover:bg-red-900/20 hover:text-red-400 focus-visible:opacity-100 group-hover:opacity-100"
             onClick={(e) => { e.stopPropagation(); setConfirmDelete(true) }}
             aria-label="Delete thread"
           >
