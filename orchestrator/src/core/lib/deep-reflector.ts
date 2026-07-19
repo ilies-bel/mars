@@ -12,6 +12,8 @@ import {
 import type { DeepReflectArc, SessionArcsResult } from './deep-reflect-query'
 import type { ClaudeEvent } from './claude-stream'
 import { digestArc } from './arc-digest'
+import { insertMemoryPacket } from '../store/memory-packet-store'
+import { getTask } from '../queue'
 
 export interface DissonantCall {
   taskId: string | null
@@ -831,6 +833,15 @@ const emptyReport = (): DeepReflectionReport => ({
   capabilityGapSuggestions: [],
 })
 
+/**
+ * Resolve the memory-packet domain for an arc: the origin task's workflow name,
+ * its first tag, or the fallback literal 'general'.
+ */
+export const resolveArcDomain = async (originId: string): Promise<string> => {
+  const task = await getTask(originId)
+  return task?.workflow ?? task?.tags?.[0] ?? 'general'
+}
+
 export const runDeepReflectorArc = async (
   arc: DeepReflectArc,
   timeoutMs: number = Number(process.env.MARS_DEEP_REFLECT_TIMEOUT_MS) || 10 * 60 * 1000,
@@ -844,6 +855,24 @@ export const runDeepReflectorArc = async (
   })
   const text = collectAssistantText(r.conversation) || r.stdout
   const report = parseDeepReflectionReport(text)
+
+  // Persist save-verdict suggestions as domain-scoped memory packets.
+  // Gated by MARS_REFLECT_DISABLED=1 (same env-var guard used by CLI commands)
+  // and only when the reflector exited cleanly with a parseable report.
+  if (process.env.MARS_REFLECT_DISABLED !== '1' && r.exitCode === 0 && report !== null) {
+    const domain = await resolveArcDomain(arc.originId)
+    for (const suggestion of report.suggestions) {
+      if (suggestion.verdict === 'save') {
+        await insertMemoryPacket({
+          domain,
+          text: suggestion.prompt,
+          salience: suggestion.confidence ?? 0.7,
+          originArcId: arc.originId,
+        })
+      }
+    }
+  }
+
   return {
     report: report ?? emptyReport(),
     rawOutput: text,
