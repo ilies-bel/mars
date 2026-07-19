@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
-import { stubAppServices } from './app-services-stub'
+import { stubAppServices, stubChatRunner } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
@@ -63,6 +63,7 @@ const makeDeps = (
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
   appServices: stubAppServices({ viewTasks }),
+  chatRunner: stubChatRunner(),
   ...overrides,
 })
 

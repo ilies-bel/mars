@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { HttpServerDeps } from '../http-server'
-import { stubAppServices } from './app-services-stub'
+import { stubAppServices, stubChatRunner } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import {
   openTraceEventStore,
@@ -48,6 +48,7 @@ const makeDeps = (
     cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: store,
   appServices: stubAppServices(),
+  chatRunner: stubChatRunner(),
   ...overrides,
 })
 

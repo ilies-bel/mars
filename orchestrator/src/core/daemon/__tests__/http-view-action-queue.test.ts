@@ -28,7 +28,7 @@ import {
   type PersistedActionQueueRow,
   type TaskForActionQueue,
 } from '../view/action-queue.js'
-import { stubAppServices } from './app-services-stub'
+import { stubAppServices, stubChatRunner } from './app-services-stub'
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -537,6 +537,7 @@ describe('GET /view/action-queue via HTTP server', () => {
           return [row]
         },
       }),
+      chatRunner: stubChatRunner(),
     })
   })
 

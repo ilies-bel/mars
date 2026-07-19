@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HttpServerDeps } from '../http-server'
 import type { AppServices } from '../../app-services'
-import { stubAppServices } from './app-services-stub'
+import { stubAppServices, stubChatRunner } from './app-services-stub'
 import { SelfUpdateError, SELF_UPDATE_ERRORS } from '../self-update'
 import type { RecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
@@ -52,6 +52,7 @@ const makeDeps = (
     }),
     ...appServicesOverrides,
   }),
+  chatRunner: stubChatRunner(),
   ...overrides,
 })
 

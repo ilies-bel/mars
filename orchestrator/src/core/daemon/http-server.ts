@@ -371,12 +371,8 @@ export interface HttpServerDeps {
    * never re-implements projection or enrichment logic.
    */
   appServices: AppServices
-  /**
-   * Chat runner — manages in-flight `claude -p` runs for chat threads. When
-   * provided, `POST /chat/threads/:id/message` and `POST /chat/threads/:id/stop`
-   * become live. Omitted in test stubs that do not exercise the chat run path.
-   */
-  chatRunner?: ChatRunner
+  /** Chat runner — manages in-flight `claude -p` runs for chat threads. */
+  chatRunner: ChatRunner
 }
 
 export interface HttpServerHandle {
@@ -1418,10 +1414,6 @@ export const startHttpServer = async (
             sendJson(res, 400, { ok: false, error: 'body must be { content: string }' })
             return
           }
-          if (!deps.chatRunner) {
-            sendJson(res, 503, { ok: false, error: 'chat runner not available' })
-            return
-          }
           deps.chatRunner
             .sendMessage(id, result.data.content, getRepoRoot(), deps.viewStreamHub)
             .then(({ alreadyRunning }) => {
@@ -1447,10 +1439,6 @@ export const startHttpServer = async (
           : null
       if (chatStopMatch && chatStopMatch[1]) {
         const id = decodeURIComponent(chatStopMatch[1])
-        if (!deps.chatRunner) {
-          sendJson(res, 503, { ok: false, error: 'chat runner not available' })
-          return
-        }
         const stopped = deps.chatRunner.stop(id)
         sendJson(res, 200, { ok: true, stopped })
         return

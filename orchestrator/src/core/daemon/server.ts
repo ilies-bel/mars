@@ -119,6 +119,7 @@ import { rpcRegistry, dispatchRpc } from './rpc/registry'
 import type { DaemonDeps } from './rpc/types'
 import { createAppServices } from '../app-services'
 import { startApiEndpointProbe } from '../lib/api-endpoint-probe'
+import { ChatRunner } from './chat-runner'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -3125,7 +3126,10 @@ export const startDaemon = async (
     },
   })
 
+  const chatRunner = new ChatRunner()
+
   const httpHandle = await startHttpServer({
+    chatRunner,
     restartTask: async (id) => {
       await coreRestart(id, new Set(['failed']), makeWorkflowStore())
       bus.emit('task.queued', { taskId: id })
@@ -4036,6 +4040,7 @@ export const startDaemon = async (
       }
     }
 
+    chatRunner.killAll()
     await Promise.all([
       new Promise<void>((resolve) => server.close(() => resolve())),
       httpHandle.close(),

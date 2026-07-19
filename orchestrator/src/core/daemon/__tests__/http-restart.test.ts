@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
-import { stubAppServices } from './app-services-stub'
+import { stubAppServices, stubChatRunner } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 import { InMemoryStore } from '@mars/workflow'
@@ -71,6 +71,7 @@ const makeDeps = (
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,
   appServices: stubAppServices(),
+  chatRunner: stubChatRunner(),
   ...overrides,
 })
 

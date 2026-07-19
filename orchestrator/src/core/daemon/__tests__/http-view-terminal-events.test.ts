@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
-import { stubAppServices } from './app-services-stub'
+import { stubAppServices, stubChatRunner } from './app-services-stub'
 import type { TerminalEvent, TaskStoreForEvents } from '../view/terminal-events'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
@@ -65,6 +65,7 @@ const makeDeps = (
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
   appServices: stubAppServices({ viewTerminalEvents }),
+  chatRunner: stubChatRunner(),
   ...overrides,
 })
 

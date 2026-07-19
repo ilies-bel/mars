@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { HttpServerDeps, StepPromptView } from '../http-server'
 import type { AppServices } from '../../app-services'
-import { stubAppServices } from './app-services-stub'
+import { stubAppServices, stubChatRunner } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import type { TraceEventStore } from '../../lib/trace-events-store'
 
@@ -56,6 +56,7 @@ const makeDeps = (
   >,
   traceStore: stubTraceStore,
   appServices: stubAppServices(appServicesOverrides),
+  chatRunner: stubChatRunner(),
 })
 
 describe('GET /view/step-prompt', () => {

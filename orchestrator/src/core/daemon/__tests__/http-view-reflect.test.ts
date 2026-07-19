@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { HttpServerDeps } from '../http-server'
 import type { AppServices } from '../../app-services'
-import { stubAppServices } from './app-services-stub'
+import { stubAppServices, stubChatRunner } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 import type { ReflectCorpus } from '../../lib/reflect-query'
@@ -63,6 +63,7 @@ const makeDeps = (
   recipeCatalog: cachedRecipeCatalog!,
   traceStore: nullTraceStore,
   appServices: stubAppServices(appServicesOverrides),
+  chatRunner: stubChatRunner(),
 })
 
 const emptyCorpus: ReflectCorpus = {

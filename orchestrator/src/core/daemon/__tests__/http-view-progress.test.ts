@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { HttpServerDeps } from '../http-server'
 import type { AppServices } from '../../app-services'
-import { stubAppServices } from './app-services-stub'
+import { stubAppServices, stubChatRunner } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'
 import {
   clusterFor,
@@ -61,6 +61,7 @@ const makeDeps = (
   >,
   traceStore: stubTraceStore,
   appServices: stubAppServices(appServicesOverrides),
+  chatRunner: stubChatRunner(),
 })
 
 // ── clusterFor — each cluster bucket ─────────────────────────────────────────

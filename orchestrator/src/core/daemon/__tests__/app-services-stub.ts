@@ -9,9 +9,16 @@
  * {@link stubAppServices} returns a fully-populated AppServices whose every
  * function is a benign empty default; pass `overrides` to replace just the
  * use-case a given test cares about.
+ *
+ * {@link stubChatRunner} returns a no-op {@link ChatRunner} instance for tests
+ * that do not exercise the chat run path (all public methods are silent no-ops).
  */
 
 import type { AppServices } from '../../app-services'
+import { ChatRunner } from '../chat-runner'
+
+/** A no-op ChatRunner for tests that don't exercise the chat routes. */
+export const stubChatRunner = (): ChatRunner => new ChatRunner()
 
 /** A default AppServices where every read use-case returns an empty result. */
 export const stubAppServices = (

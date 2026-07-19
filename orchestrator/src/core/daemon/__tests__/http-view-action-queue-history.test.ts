@@ -28,7 +28,7 @@ import {
   type PersistedActionQueueRow,
   type TaskForActionQueue,
 } from '../view/action-queue.js'
-import { stubAppServices } from './app-services-stub'
+import { stubAppServices, stubChatRunner } from './app-services-stub'
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -324,6 +324,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
           nextCursor: cursor ? null : 'cursor-token-1',
         }),
       }),
+      chatRunner: stubChatRunner(),
     })
   })
 
@@ -385,6 +386,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
       recipeCatalog,
       traceStore: nullTraceStore,
       appServices: stubAppServices(),
+      chatRunner: stubChatRunner(),
     })
 
     try {
