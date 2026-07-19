@@ -56,6 +56,16 @@ vi.mock('@/entities/watchtower/useWorkflowConfigs', () => ({
   useWorkflowConfigs: vi.fn(() => emptyConfigs()),
 }))
 
+// WatchtowerSection now renders PromotionLedgerTable — mock the hook so the
+// WatchtowerSection tests below don't need a QueryClientProvider.
+vi.mock('@/entities/watchtower/usePromotionLedger', () => ({
+  usePromotionLedger: vi.fn(() => ({
+    entries: [],
+    isLoading: false,
+    error: null,
+  })),
+}))
+
 import { useScorerTrend } from '@/entities/watchtower/useScorerTrend'
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
 import { useWorkflowConfigs } from '@/entities/watchtower/useWorkflowConfigs'

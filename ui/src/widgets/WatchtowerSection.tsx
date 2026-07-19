@@ -1,4 +1,5 @@
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
+import { PromotionLedgerTable } from './PromotionLedgerTable'
 import { WatchtowerTrendChart } from './WatchtowerTrendChart'
 
 // ---------------------------------------------------------------------------
@@ -47,7 +48,10 @@ export const WatchtowerSection = () => (
         <h4 className="font-mono text-[11px] uppercase tracking-wide text-iron">Score trends</h4>
         <ScoreTrends />
       </div>
-      <PlaceholderPanel title="Promotion ledger" />
+      <div className="flex flex-col gap-2 rounded border border-border p-4">
+        <h4 className="font-mono text-[11px] uppercase tracking-wide text-iron">Promotion ledger</h4>
+        <PromotionLedgerTable />
+      </div>
       <PlaceholderPanel title="Loop ledger" />
     </div>
   </div>
