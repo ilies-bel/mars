@@ -6,7 +6,7 @@ import { buildEventInsert } from './lib/outbox'
 import { withTransaction } from './lib/libsql.js'
 import type { EventName, EventPayload } from '../bus/events.js'
 
-export type ProposalSource = 'reflection' | 'human' | 'planner'
+export type ProposalSource = 'reflection' | 'human' | 'planner' | 'skill-forge'
 
 export interface Proposal {
   id: string
@@ -406,10 +406,11 @@ const VALID_SOURCES: readonly ProposalSource[] = [
   'reflection',
   'human',
   'planner',
+  'skill-forge',
 ]
 
 const isValidSource = (raw: unknown): raw is ProposalSource =>
-  raw === 'reflection' || raw === 'planner' || raw === 'human'
+  raw === 'reflection' || raw === 'planner' || raw === 'human' || raw === 'skill-forge'
 
 const normaliseSource = (raw: unknown): ProposalSource => {
   if (isValidSource(raw)) return raw

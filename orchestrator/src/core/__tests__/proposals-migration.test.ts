@@ -122,4 +122,16 @@ describe('ideas -> proposals schema migration on startup', () => {
     expect(stateTables.has('ideas')).toBe(false)
     expect(stateTables.has('proposal_user_stories')).toBe(true)
   })
+
+  it('stores and retrieves a proposal with source=skill-forge', async () => {
+    const { createProposal, getProposal } = await import('../proposals')
+    const created = await createProposal('test skill-forge proposal', {
+      source: 'skill-forge',
+    })
+    expect(created.source).toBe('skill-forge')
+
+    const fetched = await getProposal(created.id)
+    expect(fetched).not.toBeNull()
+    expect(fetched!.source).toBe('skill-forge')
+  })
 })
