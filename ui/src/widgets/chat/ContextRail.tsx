@@ -1,0 +1,398 @@
+/**
+ * ContextRail — collapsible right-hand panel on ChatPage.
+ *
+ * Three stacked panels:
+ *   - Live tasks  : non-done tasks from the existing progress view; rows
+ *                   that appeared after `sessionStartedAt` get a "new" accent.
+ *                   Click → `#/task/<id>?from=chat` drawer overlay.
+ *   - Glossary    : searchable term list from /api/glossary; definition +
+ *                   avoid-aliases on expand.
+ *   - Skills      : list from /api/skills; clicking a skill inserts its slash
+ *                   prompt into the composer via `onInsertPrompt`.
+ *
+ * The rail is responsive via a controlled `collapsed` prop: callers render an
+ * icon strip at narrow widths and restore the full rail at wider ones.
+ * Panels lazy-load and degrade gracefully when the daemon is unreachable.
+ */
+
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { fetchGlossary, fetchSkills } from '@/shared/api'
+import { useProgress } from '@/hooks/useProgress'
+import { taskHash } from '@/shared/routing'
+import type { GlossaryTerm, Skill } from '@/shared/schemas'
+import type { ProgressTask } from '@/shared/schemas'
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Relative age string — keeps rows compact (e.g. "2m", "1h", "3d").
+ */
+const relativeAge = (isoString: string): string => {
+  const diffMs = Date.now() - Date.parse(isoString)
+  const diffSec = Math.floor(diffMs / 1000)
+  if (diffSec < 60) return `${diffSec}s`
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin}m`
+  const diffHrs = Math.floor(diffMin / 60)
+  if (diffHrs < 24) return `${diffHrs}h`
+  return `${Math.floor(diffHrs / 24)}d`
+}
+
+/**
+ * Status chip label and colour.
+ */
+const STATUS_CHIP: Record<string, { label: string; className: string }> = {
+  queued: { label: 'queued', className: 'text-amber/80' },
+  running: { label: 'running', className: 'text-flame' },
+  verifying: { label: 'verifying', className: 'text-ochre' },
+  merging: { label: 'merging', className: 'text-success/80' },
+  'vega-reconciling': { label: 'reconciling', className: 'text-ochre' },
+  failed: { label: 'failed', className: 'text-error' },
+  blocked: { label: 'blocked', className: 'text-muted' },
+  under_investigation: { label: 'investigating', className: 'text-warn' },
+  draft: { label: 'draft', className: 'text-muted' },
+}
+
+const statusChip = (status: string) =>
+  STATUS_CHIP[status] ?? { label: status, className: 'text-muted' }
+
+// ---------------------------------------------------------------------------
+// Live tasks panel
+// ---------------------------------------------------------------------------
+
+interface LiveTasksPanelProps {
+  sessionStartedAt: number
+}
+
+const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
+  const { tasks, error } = useProgress()
+
+  if (error) {
+    return (
+      <p className="px-3 py-2 font-mono text-[10px] text-error/70">
+        Tasks unavailable
+      </p>
+    )
+  }
+
+  if (tasks === null) {
+    return (
+      <p className="px-3 py-2 font-mono text-[10px] text-muted animate-pulse">
+        Loading…
+      </p>
+    )
+  }
+
+  if (tasks.length === 0) {
+    return (
+      <p className="px-3 py-2 font-mono text-[10px] text-muted/60">
+        No active tasks
+      </p>
+    )
+  }
+
+  return (
+    <ul className="flex flex-col gap-0.5 py-1">
+      {tasks.map((task: ProgressTask) => {
+        const isNew = Date.parse(task.createdAt) >= sessionStartedAt
+        const chip = statusChip(task.status)
+        const oneLinePrompt =
+          task.prompt.length > 60 ? task.prompt.slice(0, 57) + '…' : task.prompt
+
+        return (
+          <li key={task.id}>
+            <button
+              type="button"
+              className={`group flex w-full flex-col gap-0.5 rounded px-2 py-1.5 text-left transition-colors hover:bg-iron/10 ${isNew ? 'border-l-2 border-flame/60 pl-[6px]' : ''}`}
+              onClick={() => {
+                window.location.hash = taskHash(task.id, 'chat')
+              }}
+              title={task.prompt}
+            >
+              <span className="flex items-baseline justify-between gap-1 min-w-0">
+                <span className={`shrink-0 font-mono text-[10px] uppercase ${chip.className}`}>
+                  {chip.label}
+                </span>
+                {isNew && (
+                  <span className="shrink-0 font-mono text-[9px] uppercase text-flame/70">
+                    new
+                  </span>
+                )}
+                <span className="ml-auto shrink-0 font-mono text-[10px] text-muted/60">
+                  {relativeAge(task.createdAt)}
+                </span>
+              </span>
+              <span className="min-w-0 break-words font-mono text-[10px] text-fg/80 leading-snug">
+                {oneLinePrompt}
+              </span>
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Glossary panel
+// ---------------------------------------------------------------------------
+
+const GlossaryPanel = () => {
+  const [filter, setFilter] = useState('')
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['glossary'],
+    queryFn: fetchGlossary,
+    staleTime: 60_000,
+  })
+
+  if (isLoading) {
+    return (
+      <p className="px-3 py-2 font-mono text-[10px] text-muted animate-pulse">
+        Loading…
+      </p>
+    )
+  }
+
+  if (isError || !data) {
+    return (
+      <p className="px-3 py-2 font-mono text-[10px] text-error/70">
+        Glossary unavailable
+      </p>
+    )
+  }
+
+  const lowerFilter = filter.toLowerCase()
+  const visible: GlossaryTerm[] = filter
+    ? data.filter(
+        (t) =>
+          t.term.toLowerCase().includes(lowerFilter) ||
+          t.definition.toLowerCase().includes(lowerFilter),
+      )
+    : data
+
+  if (data.length === 0) {
+    return (
+      <p className="px-3 py-2 font-mono text-[10px] text-muted/60">
+        No terms defined yet
+      </p>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="px-2 pt-1">
+        <input
+          type="search"
+          placeholder="Search terms…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="w-full rounded border border-iron/30 bg-surface px-2 py-1 font-mono text-[10px] text-fg placeholder:text-muted focus:border-iron/60 focus:outline-none"
+        />
+      </div>
+      {visible.length === 0 ? (
+        <p className="px-3 py-1 font-mono text-[10px] text-muted/60">No matches</p>
+      ) : (
+        <ul className="flex flex-col gap-0.5 py-1">
+          {visible.map((term) => (
+            <li key={term.term}>
+              <details className="px-2">
+                <summary className="cursor-pointer list-none rounded px-1 py-1 font-mono text-[10px] text-fg hover:bg-iron/10 [&::-webkit-details-marker]:hidden">
+                  {term.term}
+                </summary>
+                <div className="pb-1 pl-1 pr-1 pt-0.5">
+                  <p className="font-mono text-[10px] leading-snug text-fg/80">
+                    {term.definition}
+                  </p>
+                  {term.avoid.length > 0 && (
+                    <p className="mt-0.5 font-mono text-[9px] text-muted">
+                      avoid:{' '}
+                      <span className="text-iron/60">
+                        {term.avoid.join(', ')}
+                      </span>
+                    </p>
+                  )}
+                </div>
+              </details>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Skills panel
+// ---------------------------------------------------------------------------
+
+interface SkillsPanelProps {
+  onInsertPrompt: (prompt: string) => void
+}
+
+const SkillsPanel = ({ onInsertPrompt }: SkillsPanelProps) => {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['skills'],
+    queryFn: fetchSkills,
+    staleTime: 60_000,
+  })
+
+  if (isLoading) {
+    return (
+      <p className="px-3 py-2 font-mono text-[10px] text-muted animate-pulse">
+        Loading…
+      </p>
+    )
+  }
+
+  if (isError || !data) {
+    return (
+      <p className="px-3 py-2 font-mono text-[10px] text-error/70">
+        Skills unavailable
+      </p>
+    )
+  }
+
+  if (data.length === 0) {
+    return (
+      <p className="px-3 py-2 font-mono text-[10px] text-muted/60">
+        No skills found
+      </p>
+    )
+  }
+
+  return (
+    <ul className="flex flex-col gap-0.5 py-1">
+      {data.map((skill: Skill) => (
+        <li key={skill.name}>
+          <button
+            type="button"
+            className="flex w-full flex-col gap-0.5 rounded px-2 py-1.5 text-left transition-colors hover:bg-iron/10"
+            onClick={() => onInsertPrompt(`/${skill.name} `)}
+            title={`Insert /${skill.name} into composer`}
+          >
+            <span className="font-mono text-[10px] font-semibold text-fg">
+              /{skill.name}
+            </span>
+            {skill.description && (
+              <span className="font-mono text-[10px] text-muted leading-snug">
+                {skill.description.length > 80
+                  ? skill.description.slice(0, 77) + '…'
+                  : skill.description}
+              </span>
+            )}
+          </button>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Panel section wrapper
+// ---------------------------------------------------------------------------
+
+interface PanelSectionProps {
+  title: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}
+
+const PanelSection = ({ title, defaultOpen = true, children }: PanelSectionProps) => {
+  const [open, setOpen] = useState(defaultOpen)
+
+  return (
+    <div className="border-b border-iron/20">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-muted hover:text-fg transition-colors"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span>{title}</span>
+        <span className="text-[9px]">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && <div className="pb-1">{children}</div>}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ContextRail root
+// ---------------------------------------------------------------------------
+
+export interface ContextRailProps {
+  projectId?: string
+  /** Epoch ms when the current chat session started (for "new task" highlight). */
+  sessionStartedAt: number
+  /** Called when a skill row is clicked; inserts the prompt into the composer. */
+  onInsertPrompt: (prompt: string) => void
+  /** When true the rail collapses to a narrow icon strip. */
+  collapsed?: boolean
+  /** Callback to toggle the collapsed state from outside. */
+  onToggleCollapse?: () => void
+}
+
+export const ContextRail = ({
+  projectId: _projectId,
+  sessionStartedAt,
+  onInsertPrompt,
+  collapsed = false,
+  onToggleCollapse,
+}: ContextRailProps) => {
+  if (collapsed) {
+    return (
+      <aside
+        className="flex w-8 flex-col items-center border-l border-iron/30 bg-bg py-2 gap-3"
+        aria-label="Context rail (collapsed)"
+      >
+        <button
+          type="button"
+          className="rounded p-1 font-mono text-[11px] text-muted hover:bg-iron/10 hover:text-fg transition-colors"
+          onClick={() => onToggleCollapse?.()}
+          title="Expand context rail"
+          aria-label="Expand context rail"
+        >
+          ◂
+        </button>
+      </aside>
+    )
+  }
+
+  return (
+    <aside
+      className="flex w-56 flex-col border-l border-iron/30 bg-bg overflow-y-auto"
+      aria-label="Context rail"
+    >
+      <div className="flex items-center justify-between border-b border-iron/20 px-3 py-2">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
+          Context
+        </span>
+        <button
+          type="button"
+          className="rounded p-0.5 font-mono text-[11px] text-muted hover:bg-iron/10 hover:text-fg transition-colors"
+          onClick={() => onToggleCollapse?.()}
+          title="Collapse context rail"
+          aria-label="Collapse context rail"
+        >
+          ▸
+        </button>
+      </div>
+
+      <PanelSection title="Live tasks" defaultOpen={true}>
+        <LiveTasksPanel sessionStartedAt={sessionStartedAt} />
+      </PanelSection>
+
+      <PanelSection title="Glossary" defaultOpen={false}>
+        <GlossaryPanel />
+      </PanelSection>
+
+      <PanelSection title="Skills" defaultOpen={false}>
+        <SkillsPanel onInsertPrompt={onInsertPrompt} />
+      </PanelSection>
+    </aside>
+  )
+}

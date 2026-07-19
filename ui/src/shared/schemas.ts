@@ -843,3 +843,37 @@ export type ChatMessage = z.infer<typeof chatMessageSchema>
 export type ChatThread = z.infer<typeof chatThreadSchema>
 export type ChatThreadsResponse = z.infer<typeof chatThreadsResponseSchema>
 export type ChatThreadDetail = z.infer<typeof chatThreadDetailSchema>
+
+// ---------------------------------------------------------------------------
+// Glossary
+// ---------------------------------------------------------------------------
+
+export const glossaryTermSchema = z.object({
+  term: z.string(),
+  definition: z.string(),
+  avoid: z.array(z.string()),
+})
+
+export const glossaryResponseSchema = z.object({
+  terms: z.array(glossaryTermSchema),
+})
+
+export type GlossaryTerm = z.infer<typeof glossaryTermSchema>
+export type GlossaryResponse = z.infer<typeof glossaryResponseSchema>
+
+// ---------------------------------------------------------------------------
+// Skills
+// ---------------------------------------------------------------------------
+
+export const skillSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  path: z.string(),
+})
+
+export const skillsResponseSchema = z.object({
+  skills: z.array(skillSchema),
+})
+
+export type Skill = z.infer<typeof skillSchema>
+export type SkillsResponse = z.infer<typeof skillsResponseSchema>

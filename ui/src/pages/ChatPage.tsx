@@ -29,6 +29,7 @@ import {
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { ChatThread, ChatMessage, ChatSegmentToolUse } from '@/shared/schemas'
+import { ContextRail } from '@/widgets/chat/ContextRail'
 
 // ---------------------------------------------------------------------------
 // Welcome state: quick-action chips and slash palette
@@ -651,6 +652,10 @@ export const ChatPage = () => {
   const projectId = useFocusedProjectId() ?? undefined
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
+  const [railCollapsed, setRailCollapsed] = useState(false)
+  // Capture the epoch ms when this ChatPage first mounts so the ContextRail
+  // can highlight tasks that appeared during this session.
+  const sessionStartedAt = useRef(Date.now()).current
 
   const { data: threadDetail } = useQuery({
     queryKey: ['chat-thread', selectedThreadId, projectId],
@@ -665,9 +670,13 @@ export const ChatPage = () => {
   const isRunning = threadDetail?.thread.status === 'running'
   const hasMessages = (threadDetail?.messages.length ?? 0) > 0
 
-  const handleChipClick = (prompt: string) => {
+  const handleChipClick = useCallback((prompt: string) => {
     setPrefill(prompt)
-  }
+  }, [])
+
+  const handleInsertPrompt = useCallback((prompt: string) => {
+    setPrefill(prompt)
+  }, [])
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -701,6 +710,14 @@ export const ChatPage = () => {
           </div>
         )}
       </div>
+
+      <ContextRail
+        projectId={projectId}
+        sessionStartedAt={sessionStartedAt}
+        onInsertPrompt={handleInsertPrompt}
+        collapsed={railCollapsed}
+        onToggleCollapse={() => setRailCollapsed((v) => !v)}
+      />
     </div>
   )
 }

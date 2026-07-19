@@ -8,6 +8,7 @@ import {
   chatThreadsResponseSchema,
   eventsResponseSchema,
   frameworkUpdateSchema,
+  glossaryResponseSchema,
   kpiArcsResponseSchema,
   kpisResponseSchema,
   originsResponseSchema,
@@ -17,6 +18,7 @@ import {
   proposalsResponseSchema,
   releaseNotesCursorSchema,
   releaseNotesResponseSchema,
+  skillsResponseSchema,
   staleWorktreesResponseSchema,
   tasksResponseSchema,
   workerSessionsResponseSchema,
@@ -27,6 +29,7 @@ import {
   type ChatThreadDetail,
   type EventsResponse,
   type FrameworkUpdate,
+  type GlossaryTerm,
   type Kpi,
   type KpiArcsResponse,
   type KpiKey,
@@ -38,6 +41,7 @@ import {
   type ProposalsPayload,
   type ReleaseNoteEntry,
   type ReleaseNotesCursor,
+  type Skill,
   type StaleWorktreesPayload,
   type Task,
   type WorkerSession,
@@ -640,6 +644,30 @@ export const stopChatThread = async (
   if (!r.ok) await throwMutationError(path, r)
 }
 
+// ---------------------------------------------------------------------------
+// Context rail data — glossary terms and skills
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the project glossary from the daemon (via the UI server proxy).
+ * Returns an empty terms list when the daemon is unreachable or the
+ * CONTEXT.md file does not exist.
+ */
+export const fetchGlossary = async (): Promise<GlossaryTerm[]> => {
+  const json = await fetchJson('/api/glossary', glossaryResponseSchema)
+  return json.terms
+}
+
+/**
+ * Fetch available skills from the daemon (via the UI server proxy).
+ * Returns an empty skills list when the daemon is unreachable or the
+ * `.claude/skills/` directory does not exist.
+ */
+export const fetchSkills = async (): Promise<Skill[]> => {
+  const json = await fetchJson('/api/skills', skillsResponseSchema)
+  return json.skills
+}
+
 export type {
   ActionQueueHistoryResponse,
   ActionQueueItem,
@@ -649,6 +677,7 @@ export type {
   DaemonHealth,
   EventsResponse,
   FrameworkUpdate,
+  GlossaryTerm,
   Kpi,
   KpiArc,
   KpiArcsResponse,
@@ -662,6 +691,7 @@ export type {
   ReleaseNotesCursor,
   ReleaseNoteSpec,
   SessionOutcome,
+  Skill,
   StaleWorktree,
   StaleWorktreesPayload,
   TraceEvent,

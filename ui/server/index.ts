@@ -325,6 +325,16 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        if (path === '/api/glossary' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/glossary')
+          return jsonResponse(r.status, r.body)
+        }
+
+        if (path === '/api/skills' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/skills')
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/release-notes-cursor — proxy the daemon's last-viewed
         // release-notes timestamp. POST marks it as viewed (server-clock now).
         if (path === '/api/release-notes-cursor' && req.method === 'GET') {
