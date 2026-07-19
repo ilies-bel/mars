@@ -38,6 +38,7 @@ import { ActionQueuePage } from '@/pages/ActionQueuePage'
 import { ChatPage } from '@/pages/ChatPage'
 import { EventsPage } from '@/pages/EventsPage'
 import { KpiDetailPage } from '@/pages/KpiDetailPage'
+import { KpiIndexPage } from '@/pages/KpiIndexPage'
 import { StudioPage } from '@/pages/StudioPage'
 import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
@@ -86,15 +87,13 @@ const AppInner = () => {
   const rawHash = useHashRoute()
   useGlobalKeyboardShortcuts()
 
-  // Redirect root / bare hashes to #/chat (the default landing page), bare
-  // #/kpi to #/events, and truly unknown hashes to #/progress.
+  // Redirect root / bare hashes to #/chat (the default landing page) and
+  // truly unknown hashes to #/progress.
   // replaceState avoids adding a history entry the back button would return to.
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (rawHash === '' || rawHash === '#' || rawHash === '#/') {
       history.replaceState(null, '', '#/chat')
-    } else if (rawHash === '#/kpi') {
-      history.replaceState(null, '', '#/events')
     } else if (!isKnownRoute(rawHash)) {
       history.replaceState(null, '', '#/progress')
     }
@@ -161,9 +160,11 @@ const AppInner = () => {
             <ProgressPage />
           ) : route === 'kpi' && kpiKey !== null ? (
             <KpiDetailPage kpiKey={kpiKey} />
+          ) : route === 'kpi' ? (
+            <KpiIndexPage />
           ) : route === 'progress' ? (
             <ProgressPage />
-          ) : route === 'events' || route === 'kpi' ? (
+          ) : route === 'events' ? (
             <EventsPage />
           ) : route === 'chat' ? (
             <ChatPage />

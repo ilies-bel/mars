@@ -54,6 +54,13 @@ describe('KpiIndexPage', () => {
     expect(html).toContain('role="alert"')
   })
 
+  it('renders the three Watchtower subsection titles', () => {
+    const html = renderToStaticMarkup(<KpiIndexPage />)
+    expect(html).toContain('Score trends')
+    expect(html).toContain('Promotion ledger')
+    expect(html).toContain('Loop ledger')
+  })
+
   it('renders all KPI tiles when data is populated', () => {
     vi.mocked(useKpis).mockReturnValue({
       data: [
