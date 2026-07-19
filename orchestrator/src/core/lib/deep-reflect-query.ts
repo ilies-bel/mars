@@ -1,7 +1,7 @@
 import { gunzip } from 'node:zlib'
 import { promisify } from 'node:util'
 import { getDefaultTaskStore } from '../store/task-store'
-import { getRepoRoot } from '../context'
+import { getRepoRoot, getStateDir } from '../context'
 import type { ClaudeEvent } from './claude-stream'
 import { isReflectDisabled, listTaskSignals, type TaskSignalRow } from './reflect-signals'
 import {
@@ -1167,4 +1167,92 @@ export const loadSessionArcs = async (
   }
 
   return { sessionId, originIds, arcs, stepRuns }
+}
+
+// ── Skill-forge feed ──────────────────────────────────────────────────────────
+
+/**
+ * A single saved verdict row from a completed arc deep-reflection report.
+ * Mirrors {@link import('./skill-forge-detector').DeepReflectRow} so callers
+ * can pass the result directly to `detectCrossArcLessons`.
+ */
+export interface DeepReflectRow {
+  originId: string
+  title: string
+  rootCauseKey: string
+  summary: string
+}
+
+/**
+ * Scan the on-disk arc reflection reports and return every saved suggestion
+ * as a flat {@link DeepReflectRow} list.
+ *
+ * Reports live at `<stateDir>/deep-reflections/arc-*.json`.  Only files whose
+ * `status === 'complete'` are read; partial/failed reports are skipped.  Only
+ * suggestions whose `verdict === 'save'` contribute rows — absorbed and dropped
+ * verdicts carry no persistent lesson value for the skill-forge pipeline.
+ *
+ * @param opts.limit - Maximum number of report files to read (most-recent first,
+ *   by ISO-stamp filename sort). Defaults to 100.
+ */
+export async function loadRecentDeepReflectRows(opts?: {
+  limit?: number
+}): Promise<DeepReflectRow[]> {
+  const { readdir, readFile } = await import('node:fs/promises')
+  const { resolve: resolvePath } = await import('node:path')
+
+  const dir = resolvePath(getStateDir(), 'deep-reflections')
+  let entries: string[]
+  try {
+    entries = await readdir(dir)
+  } catch {
+    // Directory absent → no reports yet.
+    return []
+  }
+
+  const arcFiles = entries
+    .filter((f) => f.startsWith('arc-') && f.endsWith('.json'))
+    .sort()
+    .reverse() // most-recent first (ISO stamp in filename)
+
+  const limit = opts?.limit ?? 100
+  const toRead = arcFiles.slice(0, limit)
+
+  const rows: DeepReflectRow[] = []
+  for (const file of toRead) {
+    try {
+      const raw = await readFile(resolvePath(dir, file), 'utf8')
+      const data = JSON.parse(raw) as {
+        originId?: string
+        status?: string
+        report?: {
+          suggestions?: Array<{
+            title?: string
+            rootCauseKey?: string
+            rationale?: string
+            verdict?: string
+          }>
+        }
+      }
+      if (data.status !== 'complete' || !data.originId || !data.report?.suggestions) continue
+      for (const s of data.report.suggestions) {
+        if (
+          s.verdict === 'save' &&
+          typeof s.title === 'string' &&
+          typeof s.rootCauseKey === 'string' &&
+          typeof s.rationale === 'string'
+        ) {
+          rows.push({
+            originId: data.originId,
+            title: s.title,
+            rootCauseKey: s.rootCauseKey,
+            summary: s.rationale,
+          })
+        }
+      }
+    } catch {
+      // Malformed or truncated file — skip silently.
+    }
+  }
+  return rows
 }

@@ -29,6 +29,7 @@ import { stepCommands } from './step'
 import { enrichCommands } from './enrich'
 import { notificationsCommands } from './notifications'
 import { selfUpdateCommands } from './self-update'
+import { skillForgeCommands } from './skill-forge'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -46,6 +47,7 @@ export const allCommands: readonly Command[] = [
   ...miscCommands,
   ...reflectCommands,
   ...scorerCommands,
+  ...skillForgeCommands,
   ...installCommands,
   ...doctorCommands,
   ...runCommands,

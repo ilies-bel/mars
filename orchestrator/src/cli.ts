@@ -371,6 +371,14 @@ Commands:
                                 count. With --workflow, also lists the
                                 window's rows with rationales. Kill-switch:
                                 'mars daemon set-flag scoring off'.
+  skill-forge scan [--limit <n>]
+                                scan completed arc reflection reports for
+                                recurring lessons (seen in 3+ distinct arcs)
+                                and file one draft proposal per lesson with
+                                source='skill-forge'. Idempotent — re-running
+                                skips lessons that already have a proposal.
+                                Reviews appear in 'mars proposal list
+                                --source skill-forge'.
   action-queue                         alias for 'action-queue list open'
   action-queue list [state] [--kind <kind>] [--lean]
                                 list action queue items. state one of:
