@@ -47,12 +47,14 @@ vi.mock('../../lib/chat-store', () => ({
       origin: null,
       alert_item_id: null,
       alert_resolved: false,
+      context_seeded: false,
     },
     messages: [],
   }),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   setThreadSession: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
+  markContextSeeded: vi.fn().mockResolvedValue(undefined),
 }))
 
 const { runSubprocessStreaming } = await import('../../lib/git/claude')

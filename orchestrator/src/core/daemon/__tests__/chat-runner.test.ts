@@ -200,12 +200,13 @@ vi.mock('../../lib/git/claude', () => ({
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: '' }),
   getThread: vi.fn().mockResolvedValue({
-    thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false },
+    thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
     messages: [],
   }),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   setThreadSession: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
+  markContextSeeded: vi.fn().mockResolvedValue(undefined),
 }))
 
 // Dynamically import the mocked modules AFTER vi.mock declarations.
@@ -230,7 +231,7 @@ describe('ChatRunner state machine', () => {
     // Default: subprocess completes immediately.
     mockRunSubprocessStreaming.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false },
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
       messages: [],
     })
   })
@@ -399,7 +400,7 @@ describe('ChatRunner state machine', () => {
 
   it('auto-titles the thread from the first message when title is empty', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false },
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
       messages: [],
     })
 
@@ -415,7 +416,7 @@ describe('ChatRunner state machine', () => {
 
   it('does not auto-title when thread already has messages', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false },
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
       messages: [{ id: 'm1', thread_id: 't1', role: 'user', content: 'prior', segments: null, created_at: '' }],
     })
 
@@ -465,5 +466,114 @@ describe('ChatRunner state machine', () => {
     await new Promise((r) => setTimeout(r, 20))
 
     expect(vi.mocked(chatStore.setThreadSession)).toHaveBeenCalledWith('t1', 'sess-abc-123')
+  })
+
+  // ── Context preamble tests ─────────────────────────────────────────────────
+  //
+  // Verify that the runner injects a <thread_context> block on the first run
+  // of a thread (context_seeded=false) and skips it on subsequent turns
+  // (context_seeded=true).
+
+  it('prepends alert context preamble on the first run of an alert thread', async () => {
+    const alertSeg = {
+      type: 'alert',
+      kind: 'daemon-code-drift',
+      entityId: 'daemon',
+      priority: 'high',
+      title: 'Daemon running stale code',
+      whyNow: 'The running binary is 3 commits behind HEAD',
+      actions: [{ op: 'restart', label: 'mars daemon restart', style: 'primary' as const }],
+      resolved: false,
+    }
+    vi.mocked(chatStore.getThread).mockResolvedValue({
+      thread: {
+        id: 't1', session_id: null, title: 'Alert', status: 'idle',
+        created_at: '', updated_at: '', origin: 'alert',
+        alert_item_id: 'item-1', alert_resolved: false, context_seeded: false,
+      },
+      messages: [
+        {
+          id: 'm0', thread_id: 't1', role: 'assistant' as const,
+          content: 'Daemon running stale code',
+          segments: [alertSeg], created_at: '',
+        },
+      ],
+    })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'explain this one, i dont understand', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const subArgs = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
+    // buildChatArgs produces: ['-p', <content>, '--output-format', ...]
+    const prompt = subArgs[1]
+    expect(prompt).toContain('<thread_context>')
+    expect(prompt).toContain('Daemon running stale code')
+    expect(prompt).toContain('The running binary is 3 commits behind HEAD')
+    expect(prompt).toContain('mars daemon restart')
+    expect(prompt).toContain('explain this one, i dont understand')
+    expect(prompt).toContain('</thread_context>')
+    expect(vi.mocked(chatStore.markContextSeeded)).toHaveBeenCalledWith('t1')
+  })
+
+  it('does not prepend preamble on a subsequent turn (context_seeded=true)', async () => {
+    vi.mocked(chatStore.getThread).mockResolvedValue({
+      thread: {
+        id: 't1', session_id: 'sess-existing', title: 'Alert', status: 'idle',
+        created_at: '', updated_at: '', origin: 'alert',
+        alert_item_id: 'item-1', alert_resolved: false, context_seeded: true,
+      },
+      messages: [
+        {
+          id: 'm0', thread_id: 't1', role: 'assistant' as const,
+          content: 'prior', segments: [], created_at: '',
+        },
+      ],
+    })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'follow-up question', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const subArgs = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
+    const prompt = subArgs[1]
+    expect(prompt).not.toContain('<thread_context>')
+    expect(prompt).toBe('follow-up question')
+    expect(vi.mocked(chatStore.markContextSeeded)).not.toHaveBeenCalled()
+  })
+
+  it('includes prior messages but no alert block on first run of a non-alert thread', async () => {
+    vi.mocked(chatStore.getThread).mockResolvedValue({
+      thread: {
+        id: 't1', session_id: null, title: 'Chat', status: 'idle',
+        created_at: '', updated_at: '', origin: null,
+        alert_item_id: null, alert_resolved: false, context_seeded: false,
+      },
+      messages: [
+        {
+          id: 'm0', thread_id: 't1', role: 'user' as const,
+          content: 'hello',
+          segments: [{ type: 'text', text: 'hello' }], created_at: '',
+        },
+        {
+          id: 'm1', thread_id: 't1', role: 'assistant' as const,
+          content: 'hi there',
+          segments: [{ type: 'text', text: 'hi there' }], created_at: '',
+        },
+      ],
+    })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'how are you?', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const subArgs = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
+    const prompt = subArgs[1]
+    expect(prompt).toContain('<thread_context>')
+    expect(prompt).not.toContain('[Alert:')
+    expect(prompt).toContain('[user] hello')
+    expect(prompt).toContain('[assistant] hi there')
+    expect(prompt).toContain('how are you?')
+    expect(vi.mocked(chatStore.markContextSeeded)).toHaveBeenCalledWith('t1')
   })
 })

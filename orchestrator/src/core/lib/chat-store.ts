@@ -57,6 +57,11 @@ export const initChatStore = async (): Promise<void> => {
       `ALTER TABLE chat_threads ADD COLUMN alert_resolved INTEGER NOT NULL DEFAULT 0`,
     )
   }
+  if (!colNames.has('context_seeded')) {
+    await c.execute(
+      `ALTER TABLE chat_threads ADD COLUMN context_seeded INTEGER NOT NULL DEFAULT 0`,
+    )
+  }
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id ON chat_threads(alert_item_id)`,
   )
@@ -81,6 +86,12 @@ export interface ChatThread {
   alert_item_id: string | null
   /** True when the underlying action-queue item has been resolved. */
   alert_resolved: boolean
+  /**
+   * True once the chat runner has injected the thread-context preamble into
+   * the first claude prompt for this thread. Prevents the preamble from being
+   * prepended on every subsequent turn.
+   */
+  context_seeded: boolean
 }
 
 export interface ChatMessage {
@@ -216,6 +227,7 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   origin: (row.origin as string | null) ?? null,
   alert_item_id: (row.alert_item_id as string | null) ?? null,
   alert_resolved: Boolean(row.alert_resolved),
+  context_seeded: Boolean(row.context_seeded),
 })
 
 const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
@@ -257,6 +269,7 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
     origin: null,
     alert_item_id: null,
     alert_resolved: false,
+    context_seeded: false,
   }
 }
 
@@ -383,6 +396,20 @@ export const setThreadSession = async (id: string, sessionId: string | null): Pr
   })
 }
 
+/**
+ * Mark the thread's context as seeded. Called by the chat runner after it has
+ * injected the thread-context preamble into the first claude prompt so that
+ * subsequent turns do not receive a duplicate preamble.
+ */
+export const markContextSeeded = async (id: string): Promise<void> => {
+  await initChatStore()
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE chat_threads SET context_seeded = 1, updated_at = ? WHERE id = ?`,
+    args: [now(), id],
+  })
+}
+
 // ── Alert thread API ──────────────────────────────────────────────────────────
 
 /**
@@ -439,6 +466,7 @@ export const createAlertThread = async (
     origin: 'alert',
     alert_item_id: alertItemId,
     alert_resolved: false,
+    context_seeded: false,
   }
 }
 

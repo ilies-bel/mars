@@ -14,6 +14,7 @@ interface ChatStoreModule {
   deleteThread: typeof import('./chat-store').deleteThread
   setThreadStatus: typeof import('./chat-store').setThreadStatus
   setThreadSession: typeof import('./chat-store').setThreadSession
+  markContextSeeded: typeof import('./chat-store').markContextSeeded
   createAlertThread: typeof import('./chat-store').createAlertThread
   findAlertThreadByItemId: typeof import('./chat-store').findAlertThreadByItemId
   resolveAlertThread: typeof import('./chat-store').resolveAlertThread
@@ -250,6 +251,17 @@ describe('chat-store', () => {
     await m.setThreadSession(thread.id, null)
     const result = await m.getThread(thread.id)
     expect(result!.thread.session_id).toBeNull()
+  })
+
+  // ── markContextSeeded ───────────────────────────────────────────────────────
+
+  it('markContextSeeded flips context_seeded from false to true', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread('seeding test')
+    expect(thread.context_seeded).toBe(false)
+    await m.markContextSeeded(thread.id)
+    const result = await m.getThread(thread.id)
+    expect(result!.thread.context_seeded).toBe(true)
   })
 
   // ── idempotent init ─────────────────────────────────────────────────────────

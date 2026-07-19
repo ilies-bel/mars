@@ -20,9 +20,11 @@ import {
 import {
   appendMessage,
   getThread,
+  markContextSeeded,
   setThreadSession,
   setThreadStatus,
   updateThreadTitle,
+  type AlertSegment,
 } from '../lib/chat-store'
 import type { ViewStreamHub } from './view/stream-hub'
 
@@ -259,6 +261,93 @@ export class ChatRunner {
       const existingSessionId = threadData.thread.session_id
       const hasMessages = threadData.messages.length > 0
 
+      // Build context preamble for the first run of this thread so the agent
+      // has the alert card and conversation history when no claude session
+      // exists yet (or when a previous session was lost after a daemon restart).
+      let promptContent = content
+      if (!threadData.thread.context_seeded) {
+        const preambleParts: string[] = []
+
+        // (a) Alert block when this is an alert-origin thread — render the
+        //     alert segment as structured text so the agent knows the context.
+        if (threadData.thread.origin === 'alert') {
+          for (const msg of threadData.messages) {
+            if (msg.role !== 'assistant' || !Array.isArray(msg.segments)) continue
+            const alertSeg = (msg.segments as unknown[]).find(
+              (s): s is AlertSegment =>
+                typeof s === 'object' &&
+                s !== null &&
+                (s as Record<string, unknown>).type === 'alert',
+            )
+            if (alertSeg) {
+              const actionLabels = alertSeg.actions.map((a) => a.label).join(', ')
+              const alertLines = [
+                `[Alert: ${alertSeg.kind}] ${alertSeg.title}`,
+                `Why now: ${alertSeg.whyNow}`,
+              ]
+              if (actionLabels) alertLines.push(`Available actions: ${actionLabels}`)
+              preambleParts.push(alertLines.join('\n'))
+              break
+            }
+          }
+        }
+
+        // (b) Prior persisted messages — role-tagged, tool segments summarized,
+        //     capped at the last 20 messages and ~8 k chars total.
+        const cappedMsgs = threadData.messages.slice(-20)
+        const msgLines: string[] = []
+        let charCount = 0
+        const CHAR_CAP = 8000
+        for (const msg of cappedMsgs) {
+          if (charCount >= CHAR_CAP) break
+          const segs = Array.isArray(msg.segments) ? (msg.segments as unknown[]) : []
+          let msgText: string
+          if (segs.length > 0) {
+            const parts: string[] = []
+            for (const seg of segs) {
+              if (typeof seg !== 'object' || seg === null) continue
+              const s = seg as Record<string, unknown>
+              if (s.type === 'text' && typeof s.text === 'string') {
+                parts.push(s.text)
+              } else if (s.type === 'tool_use') {
+                const toolName =
+                  typeof s.name === 'string'
+                    ? s.name
+                    : typeof s.toolName === 'string'
+                      ? s.toolName
+                      : 'unknown'
+                parts.push(`used tool ${toolName}`)
+              } else if (s.type === 'alert') {
+                const a = s as unknown as AlertSegment
+                parts.push(`[Alert: ${a.kind}] ${a.title}`)
+              }
+              // thinking, tool_result, result → skip; too noisy / not useful as history
+            }
+            msgText = parts.join(' ')
+          } else {
+            msgText = msg.content
+          }
+          if (!msgText.trim()) continue
+          const remaining = CHAR_CAP - charCount
+          if (msgText.length > remaining) msgText = `${msgText.slice(0, remaining)}…`
+          const line = `[${msg.role}] ${msgText}`
+          msgLines.push(line)
+          charCount += line.length + 1
+        }
+
+        if (msgLines.length > 0) {
+          preambleParts.push(`Prior conversation:\n${msgLines.join('\n')}`)
+        }
+
+        if (preambleParts.length > 0) {
+          promptContent = `<thread_context>\n${preambleParts.join('\n\n')}\n</thread_context>\n\n${content}`
+        }
+
+        // Mark seeded before the subprocess call so a failed run does not
+        // re-inject the preamble on a subsequent retry.
+        await markContextSeeded(threadId)
+      }
+
       // Persist the user message with a text segment so the UI can render it.
       await appendMessage(threadId, 'user', content, [{ type: 'text', text: content }])
 
@@ -285,7 +374,7 @@ export class ChatRunner {
       try {
         subprocessResult = await runSubprocessStreaming(
           resolveClaudeBin(),
-          buildChatArgs(content, existingSessionId),
+          buildChatArgs(promptContent, existingSessionId),
           repoRoot,
           ({ stream, line }) => {
             if (stream !== 'stdout') return
