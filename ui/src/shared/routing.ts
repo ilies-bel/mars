@@ -2,18 +2,22 @@ import type { KpiKey } from './schemas'
 import type { StaleWorktreesPayload } from './schemas'
 import { PRIMITIVE_NAMES, type PrimitiveName } from '@/entities/primitive/types'
 
-export type RouteName = 'action-queue' | 'progress' | 'events' | 'kpi' | 'studio'
+export type RouteName = 'action-queue' | 'progress' | 'events' | 'kpi' | 'studio' | 'chat'
 
 /**
  * Derives the current route from the URL hash.
  *
+ * (empty / root)        → chat  (default landing page)
+ * #/chat[/…]            → chat
  * #/progress[/…]        → progress
  * #/events[/…]          → events
  * #/kpi or #/kpi/<key>  → kpi
  * #/studio/<taskId>     → studio
- * everything else       → action-queue  (default; also covers #/todo legacy)
+ * everything else       → action-queue  (also covers #/todo legacy)
  */
 export const detectRoute = (hash: string): RouteName => {
+  if (hash === '' || hash === '#' || hash === '#/') return 'chat'
+  if (hash.startsWith('#/chat')) return 'chat'
   if (hash.startsWith('#/progress')) return 'progress'
   if (hash.startsWith('#/events')) return 'events'
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return 'kpi'
@@ -26,13 +30,14 @@ export const detectRoute = (hash: string): RouteName => {
  * root — i.e. the router can handle it without a redirect.
  *
  * Used by App to detect truly unknown hashes (e.g. `#/typo`) so they can be
- * redirected to `#/progress` via `history.replaceState` rather than silently
- * rendering the Action Queue under the wrong URL.
+ * redirected to `#/chat` via `history.replaceState` rather than silently
+ * rendering the wrong page.
  */
 export const isKnownRoute = (hash: string): boolean => {
-  // Empty / root hashes → Action Queue (intentional default)
+  // Empty / root hashes → Chat (the default landing page)
   if (hash === '' || hash === '#' || hash === '#/') return true
   // Named page routes
+  if (hash.startsWith('#/chat')) return true
   if (hash.startsWith('#/action-queue')) return true
   if (hash.startsWith('#/progress')) return true
   if (hash.startsWith('#/events')) return true
@@ -118,6 +123,7 @@ const ROUTE_NAMES: readonly RouteName[] = [
   'events',
   'kpi',
   'studio',
+  'chat',
 ]
 
 const isRouteName = (value: string): value is RouteName =>
@@ -387,6 +393,8 @@ export const actionQueueCount = (payload: StaleWorktreesPayload): number =>
  */
 export const pageTitle = (route: RouteName, aqCount = 0): string => {
   switch (route) {
+    case 'chat':
+      return 'mars — chat'
     case 'action-queue':
       return aqCount > 0 ? `mars — action queue (${aqCount})` : 'mars — action queue'
     case 'progress':

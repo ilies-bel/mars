@@ -45,9 +45,10 @@ const withStale = (n: number): StaleWorktreesPayload => ({
 // ---------------------------------------------------------------------------
 
 describe('detectRoute', () => {
-  it('returns action-queue for an empty or root hash', () => {
-    expect(detectRoute('')).toBe('action-queue')
-    expect(detectRoute('#/')).toBe('action-queue')
+  it('returns chat for an empty or root hash (chat is the default landing page)', () => {
+    expect(detectRoute('')).toBe('chat')
+    expect(detectRoute('#/')).toBe('chat')
+    expect(detectRoute('#')).toBe('chat')
   })
 
   it('returns action-queue for the legacy #/todo hash', () => {
@@ -367,8 +368,8 @@ describe('resolvePageRoute', () => {
     expect(resolvePageRoute('#/progress')).toBe('progress')
   })
 
-  it('returns action-queue for an empty hash (no overlay, no named route)', () => {
-    expect(resolvePageRoute('')).toBe('action-queue')
+  it('returns chat for an empty hash (chat is the default landing page)', () => {
+    expect(resolvePageRoute('')).toBe('chat')
   })
 
   it('returns action-queue for a malformed #/task/ hash (empty id)', () => {

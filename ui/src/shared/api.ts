@@ -4,6 +4,8 @@ import {
   actionQueueHistoryResponseSchema,
   actionQueueResponseSchema,
   budgetStatusSchema,
+  chatThreadDetailSchema,
+  chatThreadsResponseSchema,
   eventsResponseSchema,
   frameworkUpdateSchema,
   kpiArcsResponseSchema,
@@ -21,6 +23,8 @@ import {
   type ActionQueueHistoryResponse,
   type ActionQueueItem,
   type BudgetStatus,
+  type ChatThread,
+  type ChatThreadDetail,
   type EventsResponse,
   type FrameworkUpdate,
   type Kpi,
@@ -523,10 +527,125 @@ export const dismissTodoItem = async (
   }
 }
 
+// ---------------------------------------------------------------------------
+// Chat API — threads, messages, mutations
+// ---------------------------------------------------------------------------
+
+/**
+ * List all chat threads for the focused project, newest-first.
+ */
+export const fetchChatThreads = async (projectId?: string): Promise<ChatThread[]> => {
+  const json = await fetchJson(appendProject('/api/chat/threads', projectId), chatThreadsResponseSchema)
+  return json.threads
+}
+
+/**
+ * Fetch a single thread with its full message list.
+ */
+export const fetchChatThread = async (
+  id: string,
+  projectId?: string,
+): Promise<ChatThreadDetail> => {
+  return fetchJson(
+    appendProject(`/api/chat/thread/${encodeURIComponent(id)}`, projectId),
+    chatThreadDetailSchema,
+  )
+}
+
+/**
+ * Create a new chat thread. Returns the created thread (id, title, status, …).
+ */
+export const createChatThread = async (projectId?: string): Promise<ChatThread> => {
+  const path = appendProject('/api/chat/threads', projectId)
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+  const raw = await r.json()
+  const result = chatThreadsResponseSchema.shape.threads.element.safeParse(raw)
+  if (!result.success) {
+    throw new Error(`POST ${path} → response failed schema validation: ${result.error.message}`)
+  }
+  return result.data
+}
+
+/**
+ * Post a user message to a thread. The daemon queues a Claude response.
+ * Returns once the message is enqueued — the response arrives via SSE or
+ * a subsequent `fetchChatThread` call.
+ */
+export const postChatMessage = async (
+  threadId: string,
+  text: string,
+  projectId?: string,
+): Promise<void> => {
+  const path = appendProject(`/api/chat/threads/${encodeURIComponent(threadId)}/message`, projectId)
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
+/**
+ * Rename a thread. The title is updated server-side; the client should
+ * invalidate the threads list query after this resolves.
+ */
+export const renameChatThread = async (
+  threadId: string,
+  title: string,
+  projectId?: string,
+): Promise<void> => {
+  const path = appendProject(`/api/chat/threads/${encodeURIComponent(threadId)}/title`, projectId)
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
+/**
+ * Delete a thread and all its messages. Irreversible.
+ */
+export const deleteChatThread = async (
+  threadId: string,
+  projectId?: string,
+): Promise<void> => {
+  const path = appendProject(`/api/chat/threads/${encodeURIComponent(threadId)}/delete`, projectId)
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
+/**
+ * Stop a running thread response early.
+ */
+export const stopChatThread = async (
+  threadId: string,
+  projectId?: string,
+): Promise<void> => {
+  const path = appendProject(`/api/chat/threads/${encodeURIComponent(threadId)}/stop`, projectId)
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
 export type {
   ActionQueueHistoryResponse,
   ActionQueueItem,
   ActionQueueResolution,
+  ChatThread,
+  ChatThreadDetail,
   DaemonHealth,
   EventsResponse,
   FrameworkUpdate,

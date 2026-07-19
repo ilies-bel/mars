@@ -771,3 +771,75 @@ export const releaseNotesCursorSchema = z.object({
 })
 
 export type ReleaseNotesCursor = z.infer<typeof releaseNotesCursorSchema>
+
+// ----------------------------------------------------------------------------
+// Chat (GET /api/chat/threads, GET /api/chat/thread/:id, POST /api/chat/threads)
+// A chat thread holds an ordered list of messages each composed of typed
+// content segments (text / thinking / tool_use) from the Claude API.
+// ----------------------------------------------------------------------------
+
+export const chatSegmentTextSchema = z.object({
+  type: z.literal('text'),
+  text: z.string(),
+})
+
+export const chatSegmentThinkingSchema = z.object({
+  type: z.literal('thinking'),
+  text: z.string(),
+})
+
+export const chatSegmentToolUseSchema = z.object({
+  type: z.literal('tool_use'),
+  id: z.string().optional(),
+  toolName: z.string(),
+  /** Raw input sent to the tool — any JSON value. */
+  input: z.unknown().optional(),
+  /** Raw output from the tool — any JSON value. */
+  result: z.unknown().optional(),
+  /** True when the tool returned an error result. */
+  isError: z.boolean().optional().default(false),
+  /** 'pending' while the tool is in-flight; 'complete'/'error' once done. */
+  status: z.enum(['pending', 'complete', 'error']).optional().default('complete'),
+})
+
+export const chatSegmentSchema = z.discriminatedUnion('type', [
+  chatSegmentTextSchema,
+  chatSegmentThinkingSchema,
+  chatSegmentToolUseSchema,
+])
+
+export const chatMessageSchema = z.object({
+  id: z.string(),
+  threadId: z.string(),
+  role: z.enum(['user', 'assistant']),
+  segments: z.array(chatSegmentSchema),
+  createdAt: z.string(),
+})
+
+export const chatThreadSchema = z.object({
+  id: z.string(),
+  title: z.string().nullable(),
+  /** 'running' while a response is being streamed; 'idle' otherwise. */
+  status: z.enum(['idle', 'running']),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  messageCount: z.number().optional().default(0),
+})
+
+export const chatThreadsResponseSchema = z.object({
+  threads: z.array(chatThreadSchema),
+})
+
+export const chatThreadDetailSchema = z.object({
+  thread: chatThreadSchema,
+  messages: z.array(chatMessageSchema),
+})
+
+export type ChatSegment = z.infer<typeof chatSegmentSchema>
+export type ChatSegmentText = z.infer<typeof chatSegmentTextSchema>
+export type ChatSegmentThinking = z.infer<typeof chatSegmentThinkingSchema>
+export type ChatSegmentToolUse = z.infer<typeof chatSegmentToolUseSchema>
+export type ChatMessage = z.infer<typeof chatMessageSchema>
+export type ChatThread = z.infer<typeof chatThreadSchema>
+export type ChatThreadsResponse = z.infer<typeof chatThreadsResponseSchema>
+export type ChatThreadDetail = z.infer<typeof chatThreadDetailSchema>

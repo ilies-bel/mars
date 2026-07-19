@@ -64,6 +64,11 @@ export const NavBar = ({ hash }: NavBarProps) => {
       <ProjectSelector />
       <span className="mx-1 h-3 w-px bg-iron/30" aria-hidden="true" />
       <span className="relative">
+        <a className={linkClass(route === 'chat')} href="#/chat">
+          Chat
+        </a>
+      </span>
+      <span className="relative">
         <CountBadge count={actionCount} />
         <a
           className={linkClass(route === 'action-queue')}

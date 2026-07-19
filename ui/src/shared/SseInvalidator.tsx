@@ -69,11 +69,24 @@ export const SseInvalidator = () => {
       }, 150)
     })
 
+    // 'chat' events fire when a thread is created, updated, or a new message
+    // lands. Invalidate both the threads list and any open thread detail view.
+    let chatDebounce: ReturnType<typeof setTimeout> | null = null
+    es.addEventListener('chat', () => {
+      if (chatDebounce !== null) clearTimeout(chatDebounce)
+      chatDebounce = setTimeout(() => {
+        chatDebounce = null
+        void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+        void qc.invalidateQueries({ queryKey: ['chat-thread'] })
+      }, 150)
+    })
+
     es.onerror = () => setSseConnected(false)
     return () => {
       if (tasksDebounce !== null) clearTimeout(tasksDebounce)
       if (proposalsDebounce !== null) clearTimeout(proposalsDebounce)
       if (progressDebounce !== null) clearTimeout(progressDebounce)
+      if (chatDebounce !== null) clearTimeout(chatDebounce)
       es.close()
       setSseConnected(false)
     }

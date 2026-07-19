@@ -549,6 +549,67 @@ export const startServer = async (
           return jsonResponse(status, body)
         }
 
+        // ---------------------------------------------------------------------------
+        // Chat proxy routes — forward to the daemon's chat-store endpoints.
+        // GET  /api/chat/threads             → daemon /view/chat/threads
+        // GET  /api/chat/thread/:id          → daemon /view/chat/thread/:id
+        // POST /api/chat/threads             → daemon /chat/threads (create)
+        // POST /api/chat/threads/:id/message → daemon /chat/threads/:id/message
+        // POST /api/chat/threads/:id/stop    → daemon /chat/threads/:id/stop
+        // POST /api/chat/threads/:id/title   → daemon /chat/threads/:id/title
+        // POST /api/chat/threads/:id/delete  → daemon /chat/threads/:id/delete
+        // ---------------------------------------------------------------------------
+
+        if (path === '/api/chat/threads' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/chat/threads')
+          return jsonResponse(r.status, r.body)
+        }
+
+        if (path === '/api/chat/threads' && req.method === 'POST') {
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* empty body fine */ }
+          const result = await proxyPost(ctx.stateDir, '/chat/threads', body)
+          return jsonResponse(result.status, result.body)
+        }
+
+        if (path.startsWith('/api/chat/thread/') && req.method === 'GET') {
+          const threadId = decodeURIComponent(path.slice('/api/chat/thread/'.length))
+          if (!threadId) {
+            return jsonResponse(400, { error: 'threadId is required' })
+          }
+          const r = await proxyGet(
+            ctx.stateDir,
+            `/view/chat/thread/${encodeURIComponent(threadId)}`,
+          )
+          return jsonResponse(r.status, r.body)
+        }
+
+        if (path.startsWith('/api/chat/threads/') && req.method === 'POST') {
+          // Parse: /api/chat/threads/:id/<action>
+          const rest = path.slice('/api/chat/threads/'.length)
+          const slashIdx = rest.indexOf('/')
+          if (slashIdx === -1) {
+            return jsonResponse(400, { error: 'missing action segment' })
+          }
+          const threadId = decodeURIComponent(rest.slice(0, slashIdx))
+          const action = rest.slice(slashIdx + 1)
+          if (!threadId) {
+            return jsonResponse(400, { error: 'threadId is required' })
+          }
+          const allowed = ['message', 'stop', 'title', 'delete']
+          if (!allowed.includes(action)) {
+            return jsonResponse(400, { error: `unknown chat action: ${action}` })
+          }
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* empty body fine */ }
+          const result = await proxyPost(
+            ctx.stateDir,
+            `/chat/threads/${encodeURIComponent(threadId)}/${action}`,
+            body,
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
         // Unknown API path (or /events was already handled above).
         return jsonResponse(404, { error: `no route for ${path}` })
       }

@@ -35,6 +35,7 @@ import { FocusedProjectProvider, useFocusedProjectId } from '@/shared/useFocused
 import { useReleaseNotesAutoOpen } from '@/shared/useReleaseNotesAutoOpen'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ActionQueuePage } from '@/pages/ActionQueuePage'
+import { ChatPage } from '@/pages/ChatPage'
 import { EventsPage } from '@/pages/EventsPage'
 import { KpiDetailPage } from '@/pages/KpiDetailPage'
 import { StudioPage } from '@/pages/StudioPage'
@@ -45,6 +46,7 @@ import { Breadcrumbs } from '@/widgets/Breadcrumbs'
 
 /** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
 const ROUTE_BASE: Record<RouteName, string> = {
+  chat: '#/chat',
   'action-queue': '#/action-queue',
   progress: '#/progress',
   events: '#/events',
@@ -84,11 +86,14 @@ const AppInner = () => {
   const rawHash = useHashRoute()
   useGlobalKeyboardShortcuts()
 
-  // Redirect unknown hashes to #/progress and bare #/kpi to #/events.
+  // Redirect root / bare hashes to #/chat (the default landing page), bare
+  // #/kpi to #/events, and truly unknown hashes to #/progress.
   // replaceState avoids adding a history entry the back button would return to.
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (rawHash === '#/kpi') {
+    if (rawHash === '' || rawHash === '#' || rawHash === '#/') {
+      history.replaceState(null, '', '#/chat')
+    } else if (rawHash === '#/kpi') {
       history.replaceState(null, '', '#/events')
     } else if (!isKnownRoute(rawHash)) {
       history.replaceState(null, '', '#/progress')
@@ -99,9 +104,10 @@ const AppInner = () => {
   // this against the identical call inside ActionQueuePage — no extra request.
   const { items: aqItems } = useActionQueue()
 
-  // For rendering, treat unknown hashes as #/progress so the nav highlight and
-  // page selection are correct even on the first render before the effect runs.
-  const hash = isKnownRoute(rawHash) ? rawHash : '#/progress'
+  // For rendering, treat unknown hashes as #/chat (the default) so the nav
+  // highlight and page selection are correct even on the first render before
+  // the redirect effect fires.
+  const hash = isKnownRoute(rawHash) ? rawHash : '#/chat'
 
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
@@ -159,6 +165,8 @@ const AppInner = () => {
             <ProgressPage />
           ) : route === 'events' || route === 'kpi' ? (
             <EventsPage />
+          ) : route === 'chat' ? (
+            <ChatPage />
           ) : (
             <ActionQueuePage />
           )}
