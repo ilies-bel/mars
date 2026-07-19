@@ -644,6 +644,38 @@ export const stopChatThread = async (
   if (!r.ok) await throwMutationError(path, r)
 }
 
+/**
+ * Upsert thumbs-up / thumbs-down feedback for an assistant message.
+ * Passing the same rating that's already active clears it (call `clearMessageFeedback`
+ * instead when you know you want to remove it).
+ */
+export const setMessageFeedback = async (
+  messageId: string,
+  rating: 'up' | 'down',
+  note: string | null,
+): Promise<void> => {
+  const path = `/api/chat/messages/${encodeURIComponent(messageId)}/feedback`
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rating, ...(note !== null ? { note } : {}) }),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
+/**
+ * Remove feedback from a message (idempotent).
+ */
+export const clearMessageFeedback = async (messageId: string): Promise<void> => {
+  const path = `/api/chat/messages/${encodeURIComponent(messageId)}/feedback/clear`
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
 // ---------------------------------------------------------------------------
 // Context rail data — glossary terms and skills
 // ---------------------------------------------------------------------------

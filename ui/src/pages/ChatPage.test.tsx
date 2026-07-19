@@ -19,11 +19,12 @@ import {
   groupMessageSegments,
   toolGroupLabel,
   ChatMessageBubble,
+  FeedbackControls,
   pickTopAlert,
   HeroSuggestions,
 } from './ChatPage'
 import { chatThreadDetailSchema } from '@/shared/schemas'
-import type { ChatMessage, ChatSegmentToolUse, ActionQueueItem } from '@/shared/schemas'
+import type { ChatMessage, ChatSegmentToolUse, ActionQueueItem, ChatFeedback } from '@/shared/schemas'
 import fixture from './__fixtures__/chat-thread-fixture.json'
 
 // ---------------------------------------------------------------------------
@@ -33,12 +34,14 @@ import fixture from './__fixtures__/chat-thread-fixture.json'
 const makeMsg = (
   segments: ChatMessage['segments'],
   role: 'user' | 'assistant' = 'assistant',
+  feedback: ChatFeedback | null = null,
 ): ChatMessage => ({
   id: 'msg-1',
   threadId: 'thread-1',
   role,
   segments,
   createdAt: new Date().toISOString(),
+  feedback,
 })
 
 // ---------------------------------------------------------------------------
@@ -397,5 +400,104 @@ describe('HeroSuggestions – with alert', () => {
       createElement(HeroSuggestions, { topAlert: alert, onAlertClick: () => {}, onChipClick: () => {} }),
     )
     expect(html).toContain('💡')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Feedback controls — structure and accessibility
+//
+// Tests drive the observable HTML output through renderToStaticMarkup.
+// Interactive click paths (API calls, optimistic state transitions) cannot be
+// exercised in the SSR/node environment; the HTTP route tests in
+// http-chat-routes.test.ts cover the backend contract.
+// ---------------------------------------------------------------------------
+
+describe('FeedbackControls – structure', () => {
+  it('renders a "helpful" and a "not helpful" button', () => {
+    const html = renderToStaticMarkup(
+      createElement(FeedbackControls, {
+        messageId: 'msg-1',
+        feedback: null,
+        onFeedbackChange: () => {},
+      }),
+    )
+    expect(html).toContain('aria-label="helpful"')
+    expect(html).toContain('aria-label="not helpful"')
+  })
+
+  it('marks the helpful button as pressed when rating is "up"', () => {
+    const html = renderToStaticMarkup(
+      createElement(FeedbackControls, {
+        messageId: 'msg-1',
+        feedback: { rating: 'up', note: null },
+        onFeedbackChange: () => {},
+      }),
+    )
+    // aria-pressed="true" on the helpful button — attributes may appear in any order
+    expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="helpful"|aria-label="helpful"[^>]*aria-pressed="true"/)
+    expect(html).toMatch(/aria-pressed="false"[^>]*aria-label="not helpful"|aria-label="not helpful"[^>]*aria-pressed="false"/)
+  })
+
+  it('marks the not-helpful button as pressed when rating is "down"', () => {
+    const html = renderToStaticMarkup(
+      createElement(FeedbackControls, {
+        messageId: 'msg-1',
+        feedback: { rating: 'down', note: null },
+        onFeedbackChange: () => {},
+      }),
+    )
+    expect(html).toMatch(/aria-pressed="false"[^>]*aria-label="helpful"|aria-label="helpful"[^>]*aria-pressed="false"/)
+    expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="not helpful"|aria-label="not helpful"[^>]*aria-pressed="true"/)
+  })
+
+  it('shows the note text when a down rating has a note', () => {
+    const html = renderToStaticMarkup(
+      createElement(FeedbackControls, {
+        messageId: 'msg-1',
+        feedback: { rating: 'down', note: 'wrong answer' },
+        onFeedbackChange: () => {},
+      }),
+    )
+    expect(html).toContain('wrong answer')
+  })
+
+  it('does not show note text when rating is "up"', () => {
+    const html = renderToStaticMarkup(
+      createElement(FeedbackControls, {
+        messageId: 'msg-1',
+        feedback: { rating: 'up', note: null },
+        onFeedbackChange: () => {},
+      }),
+    )
+    // The note span is only rendered for 'down' + note
+    expect(html).not.toContain('wrong answer')
+  })
+})
+
+describe('ChatMessageBubble – feedback controls presence', () => {
+  it('assistant messages render feedback controls (helpful / not helpful buttons)', () => {
+    const msg = makeMsg([{ type: 'text', text: 'hi' }], 'assistant')
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    expect(html).toContain('aria-label="helpful"')
+    expect(html).toContain('aria-label="not helpful"')
+  })
+
+  it('user messages do NOT render feedback controls', () => {
+    const msg = makeMsg([{ type: 'text', text: 'hello' }], 'user')
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    expect(html).not.toContain('aria-label="helpful"')
+    expect(html).not.toContain('aria-label="not helpful"')
+  })
+
+  it('assistant message with up rating shows helpful button as pressed', () => {
+    const msg = makeMsg([{ type: 'text', text: 'hello' }], 'assistant', { rating: 'up', note: null })
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="helpful"|aria-label="helpful"[^>]*aria-pressed="true"/)
   })
 })

@@ -50,11 +50,21 @@ vi.mock('../../lib/chat-store', () => ({
       context_seeded: false,
     },
     messages: [],
+    feedbacks: new Map(),
   }),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   setThreadSession: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
   markContextSeeded: vi.fn().mockResolvedValue(undefined),
+  setMessageFeedback: vi.fn().mockResolvedValue({
+    message_id: 'msg-1',
+    thread_id: 't1',
+    rating: 'up',
+    note: null,
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  }),
+  clearMessageFeedback: vi.fn().mockResolvedValue(true),
 }))
 
 const { runSubprocessStreaming } = await import('../../lib/git/claude')
@@ -68,6 +78,9 @@ const mockRunSubprocessStreaming = runSubprocessStreaming as unknown as MockInst
     env?: NodeJS.ProcessEnv,
   ) => Promise<RunSubprocessResult>
 >
+
+const { setMessageFeedback: mockSetMessageFeedback, clearMessageFeedback: mockClearMessageFeedback } =
+  await import('../../lib/chat-store')
 
 const nullRecipeCatalog: RecipeCatalog = {
   get: () => null,
@@ -408,5 +421,161 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
     const body = (await stopRes.json()) as { ok: boolean; stopped: boolean }
     expect(body.ok).toBe(true)
     expect(body.stopped).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Feedback routes
+// ---------------------------------------------------------------------------
+
+/** Start a minimal server for feedback route tests. */
+const startFeedbackServer = async () => {
+  const { startHttpServer } = await import('../http-server')
+  return startHttpServer({
+    chatRunner: new ChatRunner(),
+    restartTask: async () => {},
+    unblockTask: async () => {},
+    purgeTask: async () => {},
+    pruneWorktree: async () => {},
+    dismissProposal: async () => {},
+    validateTask: async () => {},
+    rejectTask: async () => {},
+    investigateWorktree: async () => ({ explanation: '' }),
+    diagnoseFailure: async () => ({ diagnosis: '' }),
+    restartDaemon: async () => {},
+    restartAllDaemonKilled: async () => [],
+    isAcceptingWork: () => true,
+    inFlightCount: () => 0,
+    selfUpdate: async () => {},
+    runReflect: async () => ({ proposalsRaised: 0 }),
+    enableAutoReflect: async () => {},
+    stepDone: async () => ({ next: null as string | null }),
+    recipeCatalog: nullRecipeCatalog,
+    traceStore: nullTraceStore,
+    appServices: stubAppServices(),
+  })
+}
+
+describe('POST /chat/messages/:id/feedback — HTTP route wiring', () => {
+  it('returns 200 with the stored feedback on a valid up rating', async () => {
+    server = await startFeedbackServer()
+
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/chat/messages/msg-1/feedback`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rating: 'up' }),
+      },
+    )
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; feedback: { rating: string } }
+    expect(body.ok).toBe(true)
+    expect(body.feedback.rating).toBe('up')
+    expect(mockSetMessageFeedback).toHaveBeenCalledWith('msg-1', 'up', null)
+  })
+
+  it('returns 200 with a note when note is provided', async () => {
+    server = await startFeedbackServer()
+
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/chat/messages/msg-1/feedback`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rating: 'down', note: 'wrong answer' }),
+      },
+    )
+
+    expect(res.status).toBe(200)
+    expect(mockSetMessageFeedback).toHaveBeenCalledWith('msg-1', 'down', 'wrong answer')
+  })
+
+  it('returns 400 when rating is missing', async () => {
+    server = await startFeedbackServer()
+
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/chat/messages/msg-1/feedback`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ note: 'no rating provided' }),
+      },
+    )
+
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { ok: boolean }
+    expect(body.ok).toBe(false)
+  })
+
+  it('returns 400 when rating is invalid', async () => {
+    server = await startFeedbackServer()
+
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/chat/messages/msg-1/feedback`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rating: 'maybe' }),
+      },
+    )
+
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { ok: boolean }
+    expect(body.ok).toBe(false)
+  })
+
+  it('returns 404 when the message does not exist', async () => {
+    ;(mockSetMessageFeedback as unknown as { mockRejectedValueOnce: (e: Error) => void }).mockRejectedValueOnce(
+      new Error('message unknown-msg not found'),
+    )
+    server = await startFeedbackServer()
+
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/chat/messages/unknown-msg/feedback`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rating: 'up' }),
+      },
+    )
+
+    expect(res.status).toBe(404)
+    const body = (await res.json()) as { ok: boolean; errorCode: string }
+    expect(body.ok).toBe(false)
+    expect(body.errorCode).toBe('NOT_FOUND')
+  })
+})
+
+describe('POST /chat/messages/:id/feedback/clear — HTTP route wiring', () => {
+  it('returns 200 with cleared=true when feedback existed', async () => {
+    server = await startFeedbackServer()
+
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/chat/messages/msg-1/feedback/clear`,
+      { method: 'POST' },
+    )
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; cleared: boolean }
+    expect(body.ok).toBe(true)
+    expect(body.cleared).toBe(true)
+    expect(mockClearMessageFeedback).toHaveBeenCalledWith('msg-1')
+  })
+
+  it('returns 200 with cleared=false when no feedback existed (idempotent)', async () => {
+    ;(mockClearMessageFeedback as unknown as { mockResolvedValueOnce: (v: boolean) => void }).mockResolvedValueOnce(false)
+    server = await startFeedbackServer()
+
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/chat/messages/no-feedback/feedback/clear`,
+      { method: 'POST' },
+    )
+
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { ok: boolean; cleared: boolean }
+    expect(body.ok).toBe(true)
+    expect(body.cleared).toBe(false)
   })
 })

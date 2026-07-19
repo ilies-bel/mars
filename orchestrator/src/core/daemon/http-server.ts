@@ -30,6 +30,8 @@ import {
   toThreadApiView,
   updateThreadTitle,
   deleteThread,
+  setMessageFeedback,
+  clearMessageFeedback,
 } from '../lib/chat-store'
 import type { ChatRunner } from './chat-runner'
 import { getRepoRoot } from '../context'
@@ -1442,6 +1444,75 @@ export const startHttpServer = async (
         const id = decodeURIComponent(chatStopMatch[1])
         const stopped = deps.chatRunner.stop(id)
         sendJson(res, 200, { ok: true, stopped })
+        return
+      }
+    }
+
+    // POST /chat/messages/:id/feedback — upsert thumbs-up / thumbs-down for an
+    // assistant message. Body: { rating: 'up'|'down', note?: string }.
+    // 400 on missing/invalid rating; 404 when the message does not exist.
+    // Bypasses the draining gate (user-data write, not orchestrator work).
+    {
+      const chatFeedbackMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/messages\/([^/?]+)\/feedback$/)
+          : null
+      if (chatFeedbackMatch && chatFeedbackMatch[1]) {
+        const messageId = decodeURIComponent(chatFeedbackMatch[1])
+        let rawBody = ''
+        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+        req.on('end', () => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+            return
+          }
+          const schema = z.object({
+            rating: z.enum(['up', 'down']),
+            note: z.string().max(2000).optional(),
+          })
+          const result = schema.safeParse(parsed)
+          if (!result.success) {
+            sendJson(res, 400, { ok: false, error: 'body must be { rating: "up"|"down", note?: string }' })
+            return
+          }
+          const note = result.data.note !== undefined ? result.data.note.trim() : null
+          setMessageFeedback(messageId, result.data.rating, note === '' ? null : note)
+            .then((feedback) => {
+              deps.viewStreamHub?.broadcast('chat')
+              sendJson(res, 200, { ok: true, feedback })
+            })
+            .catch((err: unknown) => {
+              const msg = err instanceof Error ? err.message : String(err)
+              if (msg.includes('not found')) {
+                sendJson(res, 404, { ok: false, error: msg, errorCode: 'NOT_FOUND' })
+              } else {
+                sendError(res, err)
+              }
+            })
+        })
+        req.on('error', (err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // POST /chat/messages/:id/feedback/clear — remove feedback for a message.
+    // 200 either way (idempotent). Bypasses the draining gate.
+    {
+      const chatFeedbackClearMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/messages\/([^/?]+)\/feedback\/clear$/)
+          : null
+      if (chatFeedbackClearMatch && chatFeedbackClearMatch[1]) {
+        const messageId = decodeURIComponent(chatFeedbackClearMatch[1])
+        clearMessageFeedback(messageId)
+          .then((cleared) => {
+            deps.viewStreamHub?.broadcast('chat')
+            sendJson(res, 200, { ok: true, cleared })
+          })
+          .catch((err: unknown) => sendError(res, err))
         return
       }
     }

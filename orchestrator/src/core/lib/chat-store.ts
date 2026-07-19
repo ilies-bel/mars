@@ -65,6 +65,22 @@ export const initChatStore = async (): Promise<void> => {
   await c.execute(
     `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id ON chat_threads(alert_item_id)`,
   )
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS chat_feedback (
+      message_id  TEXT PRIMARY KEY REFERENCES chat_messages(id) ON DELETE CASCADE,
+      thread_id   TEXT NOT NULL,
+      rating      TEXT NOT NULL CHECK (rating IN ('up','down')),
+      note        TEXT,
+      created_at  TEXT NOT NULL,
+      updated_at  TEXT NOT NULL
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_chat_feedback_rating ON chat_feedback(rating)`,
+  )
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_chat_feedback_thread_id ON chat_feedback(thread_id)`,
+  )
   initialised = true
 }
 
@@ -72,6 +88,16 @@ export const initChatStore = async (): Promise<void> => {
 
 export type ThreadStatus = 'idle' | 'running'
 export type MessageRole = 'user' | 'assistant'
+export type FeedbackRating = 'up' | 'down'
+
+export interface ChatFeedback {
+  message_id: string
+  thread_id: string
+  rating: FeedbackRating
+  note: string | null
+  created_at: string
+  updated_at: string
+}
 
 export interface ChatThread {
   id: string
@@ -111,6 +137,8 @@ export interface ThreadPreview extends ChatThread {
 export interface ThreadWithMessages {
   thread: ChatThread
   messages: ChatMessage[]
+  /** Per-message feedback keyed by message id. Populated by `getThread` via a LEFT JOIN. */
+  feedbacks: Map<string, { rating: FeedbackRating; note: string | null }>
 }
 
 /** Camelcase view shape served over the HTTP API (matches the UI's chatThreadSchema). */
@@ -135,6 +163,7 @@ export interface ChatMessageApiView {
   role: MessageRole
   segments: unknown[]
   createdAt: string
+  feedback: { rating: FeedbackRating; note: string | null } | null
 }
 
 /** Convert a stored thread to its API view shape. */
@@ -160,7 +189,10 @@ export const toThreadApiView = (t: ChatThread): ChatThreadApiView => ({
  * This function normalises those differences so the UI receives segments it
  * can parse without error.
  */
-export const toMessageApiView = (m: ChatMessage): ChatMessageApiView => {
+export const toMessageApiView = (
+  m: ChatMessage,
+  feedback?: { rating: FeedbackRating; note: string | null } | null,
+): ChatMessageApiView => {
   const raw: unknown[] = Array.isArray(m.segments) ? (m.segments as unknown[]) : []
   const segments = raw.map((seg) => {
     if (typeof seg !== 'object' || seg === null || Array.isArray(seg)) return seg
@@ -186,6 +218,7 @@ export const toMessageApiView = (m: ChatMessage): ChatMessageApiView => {
     role: m.role,
     segments,
     createdAt: m.created_at,
+    feedback: feedback ?? null,
   }
 }
 
@@ -313,12 +346,28 @@ export const getThread = async (id: string): Promise<ThreadWithMessages | null> 
   if (threadResult.rows.length === 0) return null
   const thread = rowToThread(threadResult.rows[0] as unknown as Record<string, unknown>)
 
+  // Single round trip: LEFT JOIN brings feedback alongside each message.
   const msgResult = await c.execute({
-    sql: `SELECT * FROM chat_messages WHERE thread_id = ? ORDER BY rowid ASC`,
+    sql: `SELECT m.*, f.rating AS feedback_rating, f.note AS feedback_note
+          FROM chat_messages m
+          LEFT JOIN chat_feedback f ON f.message_id = m.id
+          WHERE m.thread_id = ?
+          ORDER BY m.rowid ASC`,
     args: [id],
   })
-  const messages = (msgResult.rows as unknown as Record<string, unknown>[]).map(rowToMessage)
-  return { thread, messages }
+  const feedbacks = new Map<string, { rating: FeedbackRating; note: string | null }>()
+  const messages = (msgResult.rows as unknown as Record<string, unknown>[]).map((row) => {
+    const msg = rowToMessage(row)
+    const feedbackRating = row.feedback_rating as string | null
+    if (feedbackRating === 'up' || feedbackRating === 'down') {
+      feedbacks.set(msg.id, {
+        rating: feedbackRating,
+        note: (row.feedback_note as string | null) ?? null,
+      })
+    }
+    return msg
+  })
+  return { thread, messages, feedbacks }
 }
 
 /**
@@ -408,6 +457,74 @@ export const markContextSeeded = async (id: string): Promise<void> => {
     sql: `UPDATE chat_threads SET context_seeded = 1, updated_at = ? WHERE id = ?`,
     args: [now(), id],
   })
+}
+
+// ── Feedback API ──────────────────────────────────────────────────────────────
+
+/**
+ * Upsert feedback for an assistant message. Throws when the message does not
+ * exist or is not `role='assistant'`. Returns the stored row.
+ *
+ * `note` is stored as-is (callers are responsible for trimming and capping
+ * length). An empty string is stored as NULL.
+ */
+export const setMessageFeedback = async (
+  messageId: string,
+  rating: FeedbackRating,
+  note: string | null,
+): Promise<ChatFeedback> => {
+  await initChatStore()
+  const c = stateClient()
+  const msgResult = await c.execute({
+    sql: `SELECT id, thread_id, role FROM chat_messages WHERE id = ?`,
+    args: [messageId],
+  })
+  if (msgResult.rows.length === 0) {
+    throw new Error(`message ${messageId} not found`)
+  }
+  const msgRow = msgResult.rows[0] as unknown as { id: string; thread_id: string; role: string }
+  if (msgRow.role !== 'assistant') {
+    throw new Error(`message ${messageId} is not an assistant message`)
+  }
+  const ts = now()
+  const storedNote = note === '' ? null : note
+  await c.execute({
+    sql: `INSERT INTO chat_feedback (message_id, thread_id, rating, note, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(message_id) DO UPDATE SET
+            rating     = excluded.rating,
+            note       = excluded.note,
+            updated_at = excluded.updated_at`,
+    args: [messageId, msgRow.thread_id, rating, storedNote, ts, ts],
+  })
+  // Re-read to return the full stored row (created_at may differ on first insert).
+  const stored = await c.execute({
+    sql: `SELECT * FROM chat_feedback WHERE message_id = ?`,
+    args: [messageId],
+  })
+  const row = stored.rows[0] as unknown as Record<string, unknown>
+  return {
+    message_id: row.message_id as string,
+    thread_id: row.thread_id as string,
+    rating: row.rating as FeedbackRating,
+    note: (row.note as string | null) ?? null,
+    created_at: row.created_at as string,
+    updated_at: row.updated_at as string,
+  }
+}
+
+/**
+ * Remove feedback for a message. Idempotent — returns `false` when no feedback
+ * existed for the message.
+ */
+export const clearMessageFeedback = async (messageId: string): Promise<boolean> => {
+  await initChatStore()
+  const c = stateClient()
+  const result = await c.execute({
+    sql: `DELETE FROM chat_feedback WHERE message_id = ?`,
+    args: [messageId],
+  })
+  return ((result as unknown as { rowsAffected?: number }).rowsAffected ?? 0) > 0
 }
 
 // ── Alert thread API ──────────────────────────────────────────────────────────

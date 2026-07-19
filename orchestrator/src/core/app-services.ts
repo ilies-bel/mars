@@ -1128,7 +1128,9 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     if (!result) return null
     return {
       thread: toThreadApiView(result.thread),
-      messages: result.messages.map(toMessageApiView),
+      messages: result.messages.map((m) =>
+        toMessageApiView(m, result.feedbacks.get(m.id) ?? null),
+      ),
     }
   }
 

@@ -29,9 +29,11 @@ import {
   deleteChatThread,
   stopChatThread,
   invokeAction,
+  setMessageFeedback,
+  clearMessageFeedback,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ActionQueueItem } from '@/shared/schemas'
+import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ActionQueueItem, ChatFeedback } from '@/shared/schemas'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { useLiveBuffer, clearLiveBuffer } from '@/shared/chatBuffer'
 
@@ -423,19 +425,237 @@ const AlertCard = ({
   )
 }
 
+// ---------------------------------------------------------------------------
+// Feedback controls for assistant messages
+// ---------------------------------------------------------------------------
+
+// Inline SVG thumbs icons — no icon-library dependency.
+const ThumbUpSvg = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 20 20"
+    fill="currentColor"
+    width="14"
+    height="14"
+    aria-hidden="true"
+  >
+    <path d="M1 8.25a1.25 1.25 0 1 1 2.5 0v7.5a1.25 1.25 0 0 1-2.5 0v-7.5zM11 3V1.7c0-.268.14-.526.395-.607A2 2 0 0 1 14 3c0 .995-.182 1.948-.514 2.826-.204.54.166 1.174.744 1.174h2.52c1.243 0 2.261 1.01 2.146 2.247a23.864 23.864 0 0 1-1.341 5.974C17.153 16.323 16.072 17 14.9 17H8.8c-.72 0-1.4-.285-1.895-.787L4.81 14.098a1.25 1.25 0 0 1 0-1.77l1.5-1.5a1.25 1.25 0 0 1 .884-.366h.738c.64 0 1.18-.42 1.373-1.003L11 3z" />
+  </svg>
+)
+
+const ThumbDownSvg = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 20 20"
+    fill="currentColor"
+    width="14"
+    height="14"
+    aria-hidden="true"
+  >
+    <path d="M19 11.75a1.25 1.25 0 1 1-2.5 0v-7.5a1.25 1.25 0 0 1 2.5 0v7.5zM9 17v1.3c0 .268-.14.526-.395.607A2 2 0 0 1 6 17c0-.995.182-1.948.514-2.826.204-.54-.166-1.174-.744-1.174H3.25C2.007 13 .989 11.99 1.104 10.753a23.864 23.864 0 0 1 1.341-5.974C2.847 3.677 3.928 3 5.1 3h6.1c.72 0 1.4.285 1.895.787l2.095 2.211a1.25 1.25 0 0 1 0 1.77l-1.5 1.5a1.25 1.25 0 0 1-.884.366h-.738c-.64 0-1.18.42-1.373 1.003L9 17z" />
+  </svg>
+)
+
+interface FeedbackControlsProps {
+  messageId: string
+  feedback: ChatFeedback | null
+  onFeedbackChange: () => void
+}
+
+/**
+ * Thumbs-up / thumbs-down controls for assistant messages.
+ *
+ * - Always visible once a rating exists; otherwise shown on hover/focus only.
+ * - Clicking the active rating clears it.
+ * - Thumbs-down reveals a single-line note input (submit on Enter/blur; Escape
+ *   dismisses without clearing the rating).
+ * - Thumbs-up stores immediately with no note.
+ * - Optimistic local state; reverts on error.
+ */
+export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: FeedbackControlsProps) => {
+  // Optimistic local state shadows the persisted value.
+  const [localRating, setLocalRating] = useState<'up' | 'down' | null>(feedback?.rating ?? null)
+  const [localNote, setLocalNote] = useState<string | null>(feedback?.note ?? null)
+  const [showNote, setShowNote] = useState(false)
+  const [noteInput, setNoteInput] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const noteRef = useRef<HTMLInputElement>(null)
+
+  // Sync to persisted value whenever it changes from outside (SSE refetch).
+  useEffect(() => {
+    setLocalRating(feedback?.rating ?? null)
+    setLocalNote(feedback?.note ?? null)
+  }, [feedback?.rating, feedback?.note])
+
+  useEffect(() => {
+    if (showNote) noteRef.current?.focus()
+  }, [showNote])
+
+  const invalidate = () => {
+    onFeedbackChange()
+  }
+
+  const handleUp = async () => {
+    setError(null)
+    if (localRating === 'up') {
+      // Toggle off.
+      const prev = localRating
+      setLocalRating(null)
+      try {
+        await clearMessageFeedback(messageId)
+        invalidate()
+      } catch (e) {
+        setLocalRating(prev)
+        setError(e instanceof Error ? e.message : 'Failed to clear feedback')
+      }
+      return
+    }
+    setShowNote(false)
+    const prevRating = localRating
+    setLocalRating('up')
+    try {
+      await setMessageFeedback(messageId, 'up', null)
+      invalidate()
+    } catch (e) {
+      setLocalRating(prevRating)
+      setError(e instanceof Error ? e.message : 'Failed to set feedback')
+    }
+  }
+
+  const handleDown = async () => {
+    setError(null)
+    if (localRating === 'down') {
+      // Toggle off.
+      const prev = localRating
+      setLocalRating(null)
+      setShowNote(false)
+      try {
+        await clearMessageFeedback(messageId)
+        invalidate()
+      } catch (e) {
+        setLocalRating(prev)
+        setError(e instanceof Error ? e.message : 'Failed to clear feedback')
+      }
+      return
+    }
+    // Set rating immediately, then show note input.
+    const prevRating = localRating
+    setLocalRating('down')
+    try {
+      await setMessageFeedback(messageId, 'down', null)
+      invalidate()
+    } catch (e) {
+      setLocalRating(prevRating)
+      setError(e instanceof Error ? e.message : 'Failed to set feedback')
+      return
+    }
+    setNoteInput(localNote ?? '')
+    setShowNote(true)
+  }
+
+  const submitNote = async () => {
+    const note = noteInput.trim() || null
+    setShowNote(false)
+    const prevNote = localNote
+    setLocalNote(note)
+    try {
+      await setMessageFeedback(messageId, 'down', note)
+      invalidate()
+    } catch (e) {
+      setLocalNote(prevNote)
+      setError(e instanceof Error ? e.message : 'Failed to save note')
+    }
+  }
+
+  const hasRating = localRating !== null
+
+  return (
+    <div
+      className={[
+        'mt-1.5 flex flex-col gap-1',
+        hasRating ? '' : 'opacity-0 focus-within:opacity-100 group-hover:opacity-100',
+      ].join(' ')}
+    >
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          aria-pressed={localRating === 'up'}
+          aria-label="helpful"
+          className={[
+            'rounded p-0.5 transition-colors',
+            localRating === 'up'
+              ? 'text-accent'
+              : 'text-iron/40 hover:text-iron',
+          ].join(' ')}
+          onClick={() => void handleUp()}
+        >
+          <ThumbUpSvg />
+        </button>
+        <button
+          type="button"
+          aria-pressed={localRating === 'down'}
+          aria-label="not helpful"
+          className={[
+            'rounded p-0.5 transition-colors',
+            localRating === 'down'
+              ? 'text-red-400'
+              : 'text-iron/40 hover:text-iron',
+          ].join(' ')}
+          onClick={() => void handleDown()}
+        >
+          <ThumbDownSvg />
+        </button>
+        {localNote && localRating === 'down' && (
+          <span
+            className="max-w-[200px] truncate font-mono text-[10px] text-iron/50"
+            title={localNote}
+          >
+            {localNote}
+          </span>
+        )}
+      </div>
+      {showNote && (
+        <input
+          ref={noteRef}
+          type="text"
+          aria-label="What went wrong? (optional)"
+          placeholder="What went wrong? (optional)"
+          className="w-full max-w-xs rounded border border-iron/30 bg-surface px-2 py-1 font-mono text-[11px] text-fg placeholder:text-iron/40 focus:border-iron/60 focus:outline-none"
+          value={noteInput}
+          onChange={(e) => setNoteInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void submitNote()
+            if (e.key === 'Escape') setShowNote(false)
+          }}
+          onBlur={() => void submitNote()}
+        />
+      )}
+      {error && (
+        <p className="font-mono text-[10px] text-red-400">{error}</p>
+      )}
+    </div>
+  )
+}
+
 /** A single chat message rendered with segment grouping. */
 export const ChatMessageBubble = ({
   msg,
   onDiscuss,
+  onFeedbackChange,
 }: {
   msg: ChatMessage
   onDiscuss: (prompt: string) => void
+  /** Called after a feedback write so the parent can invalidate its query cache. */
+  onFeedbackChange?: () => void
 }) => {
   const segments = groupMessageSegments(msg)
   const isUser = msg.role === 'user'
+  const handleFeedbackChange = useCallback(() => {
+    onFeedbackChange?.()
+  }, [onFeedbackChange])
 
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} px-4 py-1`}>
+    <div className={`group flex ${isUser ? 'justify-end' : 'justify-start'} px-4 py-1`}>
       <div
         className={[
           'max-w-[80%] rounded-lg',
@@ -480,6 +700,13 @@ export const ChatMessageBubble = ({
           }
           return <ToolActivityGroup key={i} tools={seg.tools} />
         })}
+        {!isUser && (
+          <FeedbackControls
+            messageId={msg.id}
+            feedback={msg.feedback ?? null}
+            onFeedbackChange={handleFeedbackChange}
+          />
+        )}
       </div>
     </div>
   )
@@ -683,6 +910,10 @@ const MessageList = ({ threadId, projectId, onDiscuss }: MessageListProps) => {
   const bottomRef = useRef<HTMLDivElement>(null)
   const qc = useQueryClient()
 
+  const handleFeedbackChange = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
+  }, [qc, threadId])
+
   const { data, isLoading } = useQuery({
     queryKey: ['chat-thread', threadId, projectId],
     queryFn: () => fetchChatThread(threadId, projectId),
@@ -762,7 +993,7 @@ const MessageList = ({ threadId, projectId, onDiscuss }: MessageListProps) => {
   return (
     <div ref={scrollContainerRef} className="flex-1 overflow-y-auto py-3">
       {messages.map((msg) => (
-        <ChatMessageBubble key={msg.id} msg={msg} onDiscuss={onDiscuss} />
+        <ChatMessageBubble key={msg.id} msg={msg} onDiscuss={onDiscuss} onFeedbackChange={handleFeedbackChange} />
       ))}
       {showLive && (
         <LiveAssistantBubble

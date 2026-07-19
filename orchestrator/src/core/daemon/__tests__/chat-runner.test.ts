@@ -232,6 +232,7 @@ describe('ChatRunner delta emission', () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
       messages: [],
+      feedbacks: new Map(),
     })
   })
 
@@ -358,6 +359,7 @@ vi.mock('../../lib/chat-store', () => ({
   getThread: vi.fn().mockResolvedValue({
     thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
     messages: [],
+    feedbacks: new Map(),
   }),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   setThreadSession: vi.fn().mockResolvedValue(undefined),
@@ -389,6 +391,7 @@ describe('ChatRunner state machine', () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
       messages: [],
+      feedbacks: new Map(),
     })
   })
 
@@ -558,6 +561,7 @@ describe('ChatRunner state machine', () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
       messages: [],
+      feedbacks: new Map(),
     })
 
     const runner = new ChatRunner()
@@ -574,6 +578,7 @@ describe('ChatRunner state machine', () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
       messages: [{ id: 'm1', thread_id: 't1', role: 'user', content: 'prior', segments: null, created_at: '' }],
+      feedbacks: new Map(),
     })
 
     const runner = new ChatRunner()
@@ -654,6 +659,7 @@ describe('ChatRunner state machine', () => {
           segments: [alertSeg], created_at: '',
         },
       ],
+      feedbacks: new Map(),
     })
 
     const runner = new ChatRunner()
@@ -685,6 +691,7 @@ describe('ChatRunner state machine', () => {
           content: 'prior', segments: [], created_at: '',
         },
       ],
+      feedbacks: new Map(),
     })
 
     const runner = new ChatRunner()
@@ -754,6 +761,7 @@ describe('ChatRunner state machine', () => {
           segments: [{ type: 'text', text: 'hi there' }], created_at: '',
         },
       ],
+      feedbacks: new Map(),
     })
 
     const runner = new ChatRunner()

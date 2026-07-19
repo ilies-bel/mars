@@ -19,6 +19,8 @@ interface ChatStoreModule {
   findAlertThreadByItemId: typeof import('./chat-store').findAlertThreadByItemId
   resolveAlertThread: typeof import('./chat-store').resolveAlertThread
   toMessageApiView: typeof import('./chat-store').toMessageApiView
+  setMessageFeedback: typeof import('./chat-store').setMessageFeedback
+  clearMessageFeedback: typeof import('./chat-store').clearMessageFeedback
 }
 
 const setupRepo = (): string => {
@@ -443,5 +445,82 @@ describe('toMessageApiView — segment shape contract', () => {
     const msg = await m.appendMessage(thread.id, 'user', 'bare message')
     const view = m.toMessageApiView(msg)
     expect(view.segments).toEqual([])
+  })
+
+  // ── setMessageFeedback / clearMessageFeedback ────────────────────────────────
+
+  it('stores an up rating for an assistant message and returns the feedback row', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'assistant', 'hello')
+    const fb = await m.setMessageFeedback(msg.id, 'up', null)
+    expect(fb.message_id).toBe(msg.id)
+    expect(fb.thread_id).toBe(thread.id)
+    expect(fb.rating).toBe('up')
+    expect(fb.note).toBeNull()
+    expect(fb.created_at).toBeTruthy()
+    expect(fb.updated_at).toBeTruthy()
+  })
+
+  it('stores a down rating with a note', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'assistant', 'bad answer')
+    const fb = await m.setMessageFeedback(msg.id, 'down', 'wrong answer')
+    expect(fb.rating).toBe('down')
+    expect(fb.note).toBe('wrong answer')
+  })
+
+  it('upserts feedback when called a second time (re-rating)', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'assistant', 'hello')
+    await m.setMessageFeedback(msg.id, 'up', null)
+    const fb = await m.setMessageFeedback(msg.id, 'down', 'changed mind')
+    // rating flipped, note updated
+    expect(fb.rating).toBe('down')
+    expect(fb.note).toBe('changed mind')
+  })
+
+  it('getThread returns feedback inline via the LEFT JOIN', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'assistant', 'hello')
+    await m.setMessageFeedback(msg.id, 'up', null)
+    const result = await m.getThread(thread.id)
+    expect(result).not.toBeNull()
+    expect(result!.feedbacks.get(msg.id)?.rating).toBe('up')
+  })
+
+  it('throws when the message does not exist', async () => {
+    const m = await loadModule(repo)
+    await expect(m.setMessageFeedback('nonexistent', 'up', null)).rejects.toThrow('not found')
+  })
+
+  it('throws when the message is a user message (not assistant)', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'user', 'hello')
+    await expect(m.setMessageFeedback(msg.id, 'up', null)).rejects.toThrow('not an assistant message')
+  })
+
+  it('clearMessageFeedback returns true when feedback existed', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'assistant', 'hello')
+    await m.setMessageFeedback(msg.id, 'up', null)
+    const cleared = await m.clearMessageFeedback(msg.id)
+    expect(cleared).toBe(true)
+    // Feedback is gone — getThread returns null for this message.
+    const result = await m.getThread(thread.id)
+    expect(result!.feedbacks.has(msg.id)).toBe(false)
+  })
+
+  it('clearMessageFeedback returns false when no feedback existed (idempotent)', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'assistant', 'hello')
+    const cleared = await m.clearMessageFeedback(msg.id)
+    expect(cleared).toBe(false)
   })
 })

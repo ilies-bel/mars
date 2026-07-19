@@ -864,6 +864,11 @@ export const chatSegmentSchema = z.discriminatedUnion('type', [
   chatSegmentToolResultSchema,
 ])
 
+export const chatFeedbackSchema = z.object({
+  rating: z.enum(['up', 'down']),
+  note: z.string().nullable(),
+})
+
 export const chatMessageSchema = z.object({
   id: z.string(),
   threadId: z.string(),
@@ -884,6 +889,8 @@ export const chatMessageSchema = z.object({
       })
     ),
   createdAt: z.string(),
+  /** Thumbs-up / thumbs-down feedback for assistant messages; null when not rated. */
+  feedback: chatFeedbackSchema.nullable().optional().default(null),
 })
 
 export const chatThreadSchema = z.object({
@@ -919,6 +926,7 @@ export type ChatSegmentThinking = z.infer<typeof chatSegmentThinkingSchema>
 export type ChatSegmentToolUse = z.infer<typeof chatSegmentToolUseSchema>
 export type ChatSegmentToolResult = z.infer<typeof chatSegmentToolResultSchema>
 export type ChatSegmentResult = z.infer<typeof chatSegmentResultSchema>
+export type ChatFeedback = z.infer<typeof chatFeedbackSchema>
 export type ChatMessage = z.infer<typeof chatMessageSchema>
 export type ChatThread = z.infer<typeof chatThreadSchema>
 export type ChatThreadsResponse = z.infer<typeof chatThreadsResponseSchema>
