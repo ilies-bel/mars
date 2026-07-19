@@ -57,6 +57,12 @@ export const ACTION_QUEUE_KINDS = [
   'cancelled-blocker-cascade',
   'diagnose-inconclusive',
   'daemon-killed',
+  // The daemon exited without a clean shutdown (unhandled exception, OOM,
+  // SIGKILL, or any exit that bypassed the shutdown() cleanup path). Raised
+  // on the next daemon start when a stale running marker is found. Level-
+  // triggered (ADR-0048): exactly one open row per episode; idempotent raises
+  // bump seen_count. Cleared when the operator acknowledges.
+  'daemon-died',
   'stale-worktree',
   'worktree-ahead',
   'prerequisite-failed',

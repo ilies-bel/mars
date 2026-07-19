@@ -3,6 +3,7 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   renameSync,
   rmSync,
   statSync,
@@ -321,7 +322,44 @@ export const startDaemon = async (
 ): Promise<DaemonHandle> => {
   const integrationBranch =
     opts.integrationBranch ?? process.env.INTEGRATION_BRANCH ?? 'main'
-  const { socket: socketPath, pidFile, logFile, httpPortFile } = daemonPaths()
+  const { socket: socketPath, pidFile, logFile, httpPortFile, runningMarker, crashMarker } = daemonPaths()
+
+  // ── Unclean-exit detection (before any file mutations) ───────────────────
+  // If `daemon.running.json` exists from a prior run that never completed
+  // `shutdown()`, that run exited uncleanly (crash, OOM, SIGKILL, or any path
+  // that bypassed shutdown). Capture its metadata into `daemon.crash.json` so
+  // the daemon-died-sweep reconciler can raise an action-queue alert. This
+  // check runs before the socket guard so it captures every unclean exit
+  // regardless of whether the socket was cleaned up or not.
+  if (existsSync(runningMarker)) {
+    try {
+      const prev: unknown = JSON.parse(readFileSync(runningMarker, 'utf8'))
+      const crashInfo = {
+        pid: typeof prev === 'object' && prev !== null && 'pid' in prev
+          ? (prev as Record<string, unknown>).pid
+          : -1,
+        startedAt: typeof prev === 'object' && prev !== null && 'startedAt' in prev
+          ? (prev as Record<string, unknown>).startedAt
+          : 'unknown',
+        crashDetectedAt: new Date().toISOString(),
+      }
+      writeFileSync(crashMarker, JSON.stringify(crashInfo), 'utf8')
+    } catch {
+      // best-effort: write a minimal crash marker even if reading the running
+      // marker failed (e.g. corrupted JSON from a truncated write at crash time)
+      try {
+        writeFileSync(
+          crashMarker,
+          JSON.stringify({ pid: -1, startedAt: 'unknown', crashDetectedAt: new Date().toISOString() }),
+          'utf8',
+        )
+      } catch {
+        // truly best-effort
+      }
+    }
+    writeLog(logFile, '[warn] previous daemon run exited uncleanly (running marker found); daemon-died alert will be raised')
+  }
+
   // Mutable ref captured by log() below so daemon lines can be teed to the
   // trace store once it's open (assigned after openTraceEventStore resolves).
   // Lines emitted before the store is open are silently dropped — those are
@@ -2934,6 +2972,15 @@ export const startDaemon = async (
   })
 
   writeFileSync(pidFile, String(process.pid), 'utf8')
+  // Running marker: written here (after startup guards pass) and deleted at
+  // the end of shutdown(). Its presence on the NEXT startup indicates this
+  // run exited uncleanly — see the unclean-exit detection block at the top of
+  // startDaemon and the daemon-died-sweep reconciler.
+  writeFileSync(
+    runningMarker,
+    JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
+    'utf8',
+  )
   log(`daemon listening on ${socketPath} (pid ${process.pid}, repo ${resolveContext().repoRoot})`)
 
   // ── Local HTTP action endpoint ────────────────────────────────────────────
@@ -4049,7 +4096,12 @@ export const startDaemon = async (
     // process.exit below would also do this, but be explicit so the handle
     // never lingers if exit is delayed.
     await traceStore.close()
-    for (const f of [socketPath, pidFile, httpPortFile]) {
+    // Delete all sentinel/marker files so the next startup sees a clean state.
+    // runningMarker deletion is load-bearing for unclean-exit detection: its
+    // absence on the next start means this shutdown completed cleanly.
+    // crashMarker deletion clears the crash record once the daemon has run its
+    // startup reconcile and raised (or bumped) the daemon-died action-queue item.
+    for (const f of [socketPath, pidFile, httpPortFile, runningMarker, crashMarker]) {
       if (existsSync(f)) {
         try {
           unlinkSync(f)
@@ -4072,6 +4124,43 @@ export const startDaemon = async (
       void shutdown(false)
     })
   }
+
+  // ── Fatal error handlers ──────────────────────────────────────────────────
+  // Log fatal errors synchronously to watch.log and exit immediately.
+  //
+  // Intentionally do NOT call shutdown() here: shutdown() would delete the
+  // runningMarker, which is the crash-detection sentinel read on the next
+  // daemon start. An unhandledRejection / uncaughtException is always an
+  // unclean exit — preserving the running marker ensures the daemon-died-sweep
+  // reconciler raises an action-queue alert on restart.
+  //
+  // process.exit(1) instead of process.exit(0) so the pid stays in the pid
+  // file (cleanup did not run), ensuring isDaemonAlive() returns 'dead-pid'
+  // rather than 'no-pid', giving the operator a stronger signal.
+  process.on('uncaughtException', (err: Error) => {
+    try {
+      writeLog(
+        logFile,
+        `[fatal] uncaughtException: ${err.message}\n${err.stack ?? '(no stack)'}`,
+      )
+    } catch {
+      // best-effort: if even writeLog fails, just exit
+    }
+    process.exit(1)
+  })
+
+  process.on('unhandledRejection', (reason: unknown) => {
+    try {
+      const msg =
+        reason instanceof Error
+          ? `${reason.message}\n${reason.stack ?? '(no stack)'}`
+          : String(reason)
+      writeLog(logFile, `[fatal] unhandledRejection: ${msg}`)
+    } catch {
+      // best-effort
+    }
+    process.exit(1)
+  })
 
   return {
     stop: shutdown,

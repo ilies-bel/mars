@@ -39,7 +39,9 @@ export type { ReconcileSummary } from './reconciler'
  * Step order (the registry encodes this exact sequence):
  *  1. Daemon-killed sweep — raise alert-only action queue items for tasks
  *     that were SIGKILL'd with a prior daemon; do NOT auto-requeue them.
- *  2. Blocker-drift repair — demote any `queued` task that still has
+ *  2. Daemon-died sweep — raise a `daemon-died` alert when the previous
+ *     daemon exited uncleanly (crash, OOM, SIGKILL, bypass of shutdown()).
+ *  3. Blocker-drift repair — demote any `queued` task that still has
  *     incomplete blockers back to `blocked` (catches invariant violations
  *     in any promotion path).
  *  3. Orphaned-blocked scan — re-queue any `blocked` task whose blocker

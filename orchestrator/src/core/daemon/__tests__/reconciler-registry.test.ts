@@ -25,6 +25,7 @@ describe('RECONCILERS registry', () => {
     const names = RECONCILERS.map((r) => r.name)
     expect(names).toEqual([
       'daemon-killed-sweep',
+      'daemon-died-sweep',
       'blocker-drift-repair',
       'orphaned-blocked-scan',
       'recovery-done-propagation',

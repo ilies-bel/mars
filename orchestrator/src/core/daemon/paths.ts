@@ -10,6 +10,19 @@ export interface DaemonPaths {
   logFile: string
   /** File that stores the TCP port of the daemon's local HTTP API (one line). */
   httpPortFile: string
+  /**
+   * Written at daemon startup start; deleted at clean shutdown end. Its
+   * presence on the next startup indicates the previous run exited uncleanly
+   * (crash, OOM, SIGKILL, or any path that bypassed the shutdown() function).
+   * Content: JSON with `pid` and `startedAt`.
+   */
+  runningMarker: string
+  /**
+   * Written when a stale `runningMarker` is detected at startup. Records the
+   * pid/startedAt of the crashed run for the `daemon-died-sweep` reconciler
+   * to turn into an action-queue alert. Deleted at clean shutdown.
+   */
+  crashMarker: string
 }
 
 export const daemonPaths = (repo?: string): DaemonPaths => {
@@ -19,6 +32,8 @@ export const daemonPaths = (repo?: string): DaemonPaths => {
     pidFile: resolve(ctx.stateDir, 'watch.pid'),
     logFile: resolve(ctx.stateDir, 'watch.log'),
     httpPortFile: resolve(ctx.stateDir, 'http.port'),
+    runningMarker: resolve(ctx.stateDir, 'daemon.running.json'),
+    crashMarker: resolve(ctx.stateDir, 'daemon.crash.json'),
   }
 }
 

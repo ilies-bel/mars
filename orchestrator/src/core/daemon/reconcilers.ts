@@ -46,7 +46,33 @@ const daemonKilledSweep: Reconciler = {
 }
 
 /**
- * 2. Blocker-drift repair — demote any `queued` task that still has incomplete
+ * 2. Daemon-died sweep — raise a `daemon-died` action-queue alert when the
+ *    previous daemon run exited uncleanly (crash, OOM, SIGKILL, or any path
+ *    that bypassed the `shutdown()` cleanup). The crash marker file is written
+ *    by `startDaemon` at startup when it detects a stale running marker from the
+ *    prior run. Does NOT modify task status — alert only.
+ */
+const daemonDiedSweep: Reconciler = {
+  name: 'daemon-died-sweep',
+  async run({ log }) {
+    try {
+      const { daemonPaths } = await import('./paths')
+      const { detectAndRaiseDaemonDied } = await import('./daemon-died-sweep')
+      const { crashMarker } = daemonPaths()
+      const raised = await detectAndRaiseDaemonDied(crashMarker)
+      if (raised !== null) {
+        log('[reconcile] daemon-died alert raised (previous daemon exited uncleanly)')
+      }
+      return { daemonDiedAlerts: raised !== null ? 1 : 0 }
+    } catch (err) {
+      log(`[reconcile] daemon-died sweep failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
+ * 3. Blocker-drift repair — demote any `queued` task that still has incomplete
  *    blockers back to `blocked` BEFORE we re-seed the dispatch queue.
  */
 const blockerDriftRepair: Reconciler = {
@@ -423,6 +449,7 @@ const ghostSubscriberSweep: Reconciler = {
  */
 export const RECONCILERS: readonly Reconciler[] = [
   daemonKilledSweep,
+  daemonDiedSweep,
   blockerDriftRepair,
   orphanedBlockedScan,
   recoveryDonePropagation,

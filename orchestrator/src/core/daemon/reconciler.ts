@@ -66,6 +66,8 @@ export interface ReconcileDeps {
  */
 export interface ReconcileSummary {
   daemonKilledAlerts: number
+  /** Action-queue items raised (or bumped) for unclean daemon exits. */
+  daemonDiedAlerts: number
   blockerDriftRepaired: number
   /** Tasks flipped from blocked→queued because they had zero live blocker edges. */
   orphanedBlockedRequeued: number
@@ -132,6 +134,7 @@ export interface Reconciler {
 /** A fresh, all-zero summary used as the merge target for step results. */
 export const emptyReconcileSummary = (): ReconcileSummary => ({
   daemonKilledAlerts: 0,
+  daemonDiedAlerts: 0,
   blockerDriftRepaired: 0,
   orphanedBlockedRequeued: 0,
   runningRequeued: 0,
