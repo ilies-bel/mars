@@ -30,7 +30,7 @@ import {
   invokeAction,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert } from '@/shared/schemas'
+import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult } from '@/shared/schemas'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { useLiveBuffer, clearLiveBuffer } from '@/shared/chatBuffer'
 
@@ -62,6 +62,7 @@ type FlatSegment =
   | { kind: 'thinking'; text: string }
   | ToolGroup
   | { kind: 'alert'; alert: ChatSegmentAlert }
+  | { kind: 'result'; result: ChatSegmentResult }
 
 /**
  * Collapses consecutive tool_use segments into a single ToolGroup so the UI
@@ -88,6 +89,8 @@ export const groupMessageSegments = (msg: ChatMessage): FlatSegment[] => {
         out.push({ kind: 'text', text: seg.text })
       } else if (seg.type === 'alert') {
         out.push({ kind: 'alert', alert: seg })
+      } else if (seg.type === 'result') {
+        out.push({ kind: 'result', result: seg })
       } else {
         // thinking
         out.push({ kind: 'thinking', text: seg.text })
@@ -356,6 +359,20 @@ const ChatMessageBubble = ({
               />
             )
           }
+          if (seg.kind === 'result') {
+            const { durationMs, inputTokens, outputTokens, cost } = seg.result
+            const parts: string[] = []
+            if (durationMs != null) parts.push(`${(durationMs / 1000).toFixed(1)}s`)
+            if (inputTokens != null || outputTokens != null) {
+              parts.push(`${(inputTokens ?? 0) + (outputTokens ?? 0)} tokens`)
+            }
+            if (cost != null && cost > 0) parts.push(`$${cost.toFixed(4)}`)
+            return (
+              <div key={i} className="mt-2 font-mono text-[10px] text-iron/40">
+                {parts.join(' · ')}
+              </div>
+            )
+          }
           if (seg.kind === 'thinking') {
             return <ThinkingBlock key={i} text={seg.text} />
           }
@@ -385,7 +402,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
   const inputRef = useRef<HTMLInputElement>(null)
 
   const startEdit = () => {
-    setDraft(thread.title ?? 'New thread')
+    setDraft(thread.title || 'New thread')
     setEditing(true)
   }
 
@@ -401,7 +418,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
     setEditing(false)
   }
 
-  const title = thread.title ?? 'New thread'
+  const title = thread.title || 'New thread'
 
   if (confirmDelete) {
     return (

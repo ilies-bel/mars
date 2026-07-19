@@ -589,7 +589,7 @@ export const postChatMessage = async (
   const r = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ content: text }),
   })
   if (!r.ok) await throwMutationError(path, r)
 }

@@ -259,8 +259,8 @@ export class ChatRunner {
       const existingSessionId = threadData.thread.session_id
       const hasMessages = threadData.messages.length > 0
 
-      // Persist the user message.
-      await appendMessage(threadId, 'user', content)
+      // Persist the user message with a text segment so the UI can render it.
+      await appendMessage(threadId, 'user', content, [{ type: 'text', text: content }])
 
       // Auto-title: set the thread title to the first user message (≤60 chars)
       // when the thread has no title and no prior messages.

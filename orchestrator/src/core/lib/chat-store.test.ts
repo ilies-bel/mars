@@ -17,6 +17,7 @@ interface ChatStoreModule {
   createAlertThread: typeof import('./chat-store').createAlertThread
   findAlertThreadByItemId: typeof import('./chat-store').findAlertThreadByItemId
   resolveAlertThread: typeof import('./chat-store').resolveAlertThread
+  toMessageApiView: typeof import('./chat-store').toMessageApiView
 }
 
 const setupRepo = (): string => {
@@ -352,5 +353,83 @@ describe('chat-store', () => {
     const ids = threads.map((t) => t.id)
     // The resolved alert thread should sort after the regular thread (regular sorts by rowid desc)
     expect(ids.indexOf(reg.id)).toBeLessThan(ids.indexOf(alertThread.id))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// toMessageApiView — segment shape contract
+// ---------------------------------------------------------------------------
+// These tests verify that the view serialiser translates runner-internal
+// segment field names into the shape the UI zod schema expects.  A break
+// here means the transcript silently empties in the browser.
+
+describe('toMessageApiView — segment shape contract', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('passes text segments through unchanged', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'user', 'hello', [{ type: 'text', text: 'hello' }])
+    const view = m.toMessageApiView(msg)
+    expect(view.segments).toEqual([{ type: 'text', text: 'hello' }])
+  })
+
+  it('renames runner thinking.thinking to thinking.text for the UI schema', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const runnerSeg = { type: 'thinking', thinking: 'deep thought' }
+    const msg = await m.appendMessage(thread.id, 'assistant', '', [runnerSeg])
+    const view = m.toMessageApiView(msg)
+    expect(view.segments).toEqual([{ type: 'thinking', text: 'deep thought' }])
+  })
+
+  it('renames runner tool_use.name to tool_use.toolName for the UI schema', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const runnerSeg = { type: 'tool_use', id: 'call-1', name: 'Bash', input: { cmd: 'ls' } }
+    const msg = await m.appendMessage(thread.id, 'assistant', '', [runnerSeg])
+    const view = m.toMessageApiView(msg)
+    expect(view.segments).toEqual([
+      { type: 'tool_use', id: 'call-1', toolName: 'Bash', input: { cmd: 'ls' }, isError: false, status: 'complete' },
+    ])
+  })
+
+  it('passes result segments through so the UI can render duration + token footer', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const runnerSeg = { type: 'result', durationMs: 1234, inputTokens: 10, outputTokens: 20, cacheReadTokens: 0, cost: 0.001 }
+    const msg = await m.appendMessage(thread.id, 'assistant', '', [runnerSeg])
+    const view = m.toMessageApiView(msg)
+    expect(view.segments).toEqual([runnerSeg])
+  })
+
+  it('returns user message with text segment so content appears in transcript', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'user', 'what happened today?', [
+      { type: 'text', text: 'what happened today?' },
+    ])
+    const view = m.toMessageApiView(msg)
+    expect(view.role).toBe('user')
+    const textSeg = view.segments.find((s) => (s as { type: string }).type === 'text') as
+      | { type: string; text: string }
+      | undefined
+    expect(textSeg?.text).toBe('what happened today?')
+  })
+
+  it('returns empty segments array when message has no segments', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'user', 'bare message')
+    const view = m.toMessageApiView(msg)
+    expect(view.segments).toEqual([])
   })
 })

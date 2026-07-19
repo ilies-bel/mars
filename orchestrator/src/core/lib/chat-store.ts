@@ -138,14 +138,45 @@ export const toThreadApiView = (t: ChatThread): ChatThreadApiView => ({
   alertResolved: t.alert_resolved,
 })
 
-/** Convert a stored message to its API view shape. */
-export const toMessageApiView = (m: ChatMessage): ChatMessageApiView => ({
-  id: m.id,
-  threadId: m.thread_id,
-  role: m.role,
-  segments: Array.isArray(m.segments) ? (m.segments as unknown[]) : [],
-  createdAt: m.created_at,
-})
+/**
+ * Convert a stored message to its API view shape.
+ *
+ * The runner persists segments using its internal field names, which differ
+ * from the UI schema:
+ *   runner `thinking.thinking` → UI `thinking.text`
+ *   runner `tool_use.name`     → UI `tool_use.toolName`
+ *
+ * This function normalises those differences so the UI receives segments it
+ * can parse without error.
+ */
+export const toMessageApiView = (m: ChatMessage): ChatMessageApiView => {
+  const raw: unknown[] = Array.isArray(m.segments) ? (m.segments as unknown[]) : []
+  const segments = raw.map((seg) => {
+    if (typeof seg !== 'object' || seg === null || Array.isArray(seg)) return seg
+    const s = seg as Record<string, unknown>
+    if (s['type'] === 'thinking' && typeof s['thinking'] === 'string') {
+      return { type: 'thinking', text: s['thinking'] }
+    }
+    if (s['type'] === 'tool_use' && typeof s['name'] === 'string') {
+      return {
+        type: 'tool_use',
+        id: typeof s['id'] === 'string' ? s['id'] : '',
+        toolName: s['name'],
+        input: s['input'] ?? null,
+        isError: false,
+        status: 'complete',
+      }
+    }
+    return s
+  })
+  return {
+    id: m.id,
+    threadId: m.thread_id,
+    role: m.role,
+    segments,
+    createdAt: m.created_at,
+  }
+}
 
 /** One action button on an alert card. */
 export interface AlertSegmentAction {

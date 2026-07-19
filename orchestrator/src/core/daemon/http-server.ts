@@ -27,6 +27,7 @@ import { resolveStateClient } from '../store/state-client'
 import { getNotificationsEnabled, setNotificationsEnabled } from '../store/state-store'
 import {
   createThread,
+  toThreadApiView,
   updateThreadTitle,
   deleteThread,
 } from '../lib/chat-store'
@@ -1328,7 +1329,7 @@ export const startHttpServer = async (
         createThread(result.data.title)
           .then((thread) => {
             deps.viewStreamHub?.broadcast('chat')
-            sendJson(res, 200, { ok: true, thread })
+            sendJson(res, 200, toThreadApiView(thread))
           })
           .catch((err: unknown) => sendError(res, err))
       })

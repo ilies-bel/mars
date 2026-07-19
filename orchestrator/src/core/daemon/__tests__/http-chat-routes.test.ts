@@ -250,6 +250,50 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     )
     expect(res.status).toBe(400)
   })
+
+  it('returns 400 when the body uses the wrong field name { text } instead of { content }', async () => {
+    const { startHttpServer } = await import('../http-server')
+    const chatRunner = new ChatRunner()
+
+    server = await startHttpServer({
+      chatRunner,
+      restartTask: async () => {},
+      unblockTask: async () => {},
+      purgeTask: async () => {},
+      pruneWorktree: async () => {},
+      dismissProposal: async () => {},
+      validateTask: async () => {},
+      rejectTask: async () => {},
+      investigateWorktree: async () => ({ explanation: '' }),
+      diagnoseFailure: async () => ({ diagnosis: '' }),
+      restartDaemon: async () => {},
+      restartAllDaemonKilled: async () => [],
+      isAcceptingWork: () => true,
+      inFlightCount: () => 0,
+      selfUpdate: async () => {},
+      runReflect: async () => ({ proposalsRaised: 0 }),
+      enableAutoReflect: async () => {},
+      stepDone: async () => ({ next: null as string | null }),
+      recipeCatalog: nullRecipeCatalog,
+      traceStore: nullTraceStore,
+      appServices: stubAppServices(),
+    })
+
+    // Sending { text } instead of { content } must be rejected: the daemon
+    // contract requires { content: string } and any deviation must 400.
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/chat/threads/t1/message`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'hello' }),
+      },
+    )
+    expect(res.status).toBe(400)
+    const body = (await res.json()) as { ok: boolean; error: string }
+    expect(body.ok).toBe(false)
+    expect(body.error).toMatch(/content/)
+  })
 })
 
 describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {

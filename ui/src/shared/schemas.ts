@@ -829,11 +829,25 @@ export const chatSegmentAlertSchema = z.object({
   resolved: z.boolean().optional().default(false),
 })
 
+/**
+ * Result segment: emitted by the Claude runner at the end of a run with usage
+ * statistics. Rendered as a subtle footer in the transcript.
+ */
+export const chatSegmentResultSchema = z.object({
+  type: z.literal('result'),
+  durationMs: z.number().nullable().optional(),
+  inputTokens: z.number().nullable().optional(),
+  outputTokens: z.number().nullable().optional(),
+  cacheReadTokens: z.number().nullable().optional(),
+  cost: z.number().nullable().optional(),
+})
+
 export const chatSegmentSchema = z.discriminatedUnion('type', [
   chatSegmentTextSchema,
   chatSegmentThinkingSchema,
   chatSegmentToolUseSchema,
   chatSegmentAlertSchema,
+  chatSegmentResultSchema,
 ])
 
 export const chatMessageSchema = z.object({
@@ -876,6 +890,7 @@ export type ChatSegment = z.infer<typeof chatSegmentSchema>
 export type ChatSegmentText = z.infer<typeof chatSegmentTextSchema>
 export type ChatSegmentThinking = z.infer<typeof chatSegmentThinkingSchema>
 export type ChatSegmentToolUse = z.infer<typeof chatSegmentToolUseSchema>
+export type ChatSegmentResult = z.infer<typeof chatSegmentResultSchema>
 export type ChatMessage = z.infer<typeof chatMessageSchema>
 export type ChatThread = z.infer<typeof chatThreadSchema>
 export type ChatThreadsResponse = z.infer<typeof chatThreadsResponseSchema>
