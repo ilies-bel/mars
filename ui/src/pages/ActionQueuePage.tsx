@@ -1045,7 +1045,8 @@ export const ActionQueuePage = () => {
           i.id.toLowerCase().includes(q) ||
           i.title.toLowerCase().includes(q) ||
           i.body.toLowerCase().includes(q) ||
-          i.kind.toLowerCase().includes(q)),
+          i.kind.toLowerCase().includes(q) ||
+          (i.entityId != null && i.entityId.toLowerCase().includes(q))),
     )
   }, [items, query, kindFilter])
 
@@ -1188,7 +1189,9 @@ export const ActionQueuePage = () => {
             Action queue
           </h1>
           <p className="mt-1 font-mono text-[10px] text-iron">
-            {items.length} item{items.length === 1 ? '' : 's'}
+            {filtered.length === items.length
+            ? `${items.length} item${items.length === 1 ? '' : 's'}`
+            : `${filtered.length} of ${items.length} item${items.length === 1 ? '' : 's'}`}
           </p>
           <div
             role="group"
