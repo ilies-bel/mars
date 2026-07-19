@@ -1017,6 +1017,16 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/scorer-workflows — distinct workflow kinds that have at least one
+    // recorded scorer_result, newest first (PRD 41aa2fb2). Pure read; no drain.
+    if (req.method === 'GET' && req.url === '/view/scorer-workflows') {
+      deps.appServices
+        .viewScorerWorkflows()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/workflow-configs?workflow=<kind> — versioned workflow config
     // records for a given workflow kind (PRD 5b73d277). Returns {configs}
     // ordered by version desc. Missing workflow param → 400. Pure read.

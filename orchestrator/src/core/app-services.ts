@@ -195,6 +195,7 @@ export interface AppServices {
     workflow?: string
     window?: number
   }) => Promise<{ trends: ScorerTrend[]; recent: ScorerResult[] }>
+  viewScorerWorkflows: () => Promise<{ workflows: string[] }>
   // ── framework update (poller cache reader) ──────────────────────────────────
   viewFrameworkUpdate: () => Promise<FrameworkUpdateState>
   // ── workflow configs and promotion ledger (PRD 5b73d277) ──────────────────
@@ -1090,6 +1091,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return { trends, recent }
   }
 
+  const viewScorerWorkflows: AppServices['viewScorerWorkflows'] = async () => {
+    const workflows = await listScoredWorkflows()
+    return { workflows }
+  }
+
   const viewWorkflowConfigs: AppServices['viewWorkflowConfigs'] = async (workflow) => {
     const client = resolveStateClient()
     const configs = await listWorkflowConfigs(client, workflow)
@@ -1193,6 +1199,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewReflect,
     viewArcs,
     viewScorerTrend,
+    viewScorerWorkflows,
     viewWorkflowConfigs,
     viewPromotionLedger,
     viewFrameworkUpdate,

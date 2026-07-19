@@ -322,3 +322,64 @@ describe('GET /view/promotion-ledger', () => {
     }
   })
 })
+
+// ── GET /view/scorer-workflows ───────────────────────────────────────────────
+
+describe('GET /view/scorer-workflows', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns workflows from the injected viewScorerWorkflows dep', async () => {
+    const { httpServer } = await loadModules(repo)
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({
+        viewScorerWorkflows: async () => ({ workflows: ['task', 'fix'] }),
+      }),
+    )
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/view/scorer-workflows`)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toContain('application/json')
+      const body = (await res.json()) as { workflows: string[] }
+      expect(body).toEqual({ workflows: ['task', 'fix'] })
+    } finally {
+      await close()
+    }
+  })
+
+  it('returns empty workflows array when no scored workflows exist', async () => {
+    const { httpServer } = await loadModules(repo)
+    const { port, close } = await httpServer.startHttpServer(makeDeps())
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/view/scorer-workflows`)
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { workflows: string[] }
+      expect(body).toEqual({ workflows: [] })
+    } finally {
+      await close()
+    }
+  })
+
+  it('returns 404 for wrong HTTP method (POST)', async () => {
+    const { httpServer } = await loadModules(repo)
+    const { port, close } = await httpServer.startHttpServer(makeDeps())
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/view/scorer-workflows`, {
+        method: 'POST',
+        body: '{}',
+      })
+      expect(res.status).toBe(404)
+    } finally {
+      await close()
+    }
+  })
+})
