@@ -18,7 +18,7 @@ import {
   vi,
   type MockInstance,
 } from 'vitest'
-import { parseEventToSegments, ChatRunner } from '../chat-runner'
+import { parseEventToSegments, ChatRunner, TextDeltaTracker } from '../chat-runner'
 import type { ClaudeEvent } from '../../lib/claude-stream'
 import type { SubprocessLine, RunSubprocessResult } from '../../lib/git/claude'
 
@@ -180,6 +180,158 @@ describe('parseEventToSegments', () => {
       message: { content: [{ type: 'text' }] },
     }
     expect(parseEventToSegments(event)).toEqual([])
+  })
+})
+
+// ── TextDeltaTracker tests ────────────────────────────────────────────────────
+
+describe('TextDeltaTracker', () => {
+  it('returns the full text on the first call (nothing emitted yet)', () => {
+    const t = new TextDeltaTracker()
+    expect(t.next('Hello')).toBe('Hello')
+  })
+
+  it('returns only the new suffix when events are cumulative (each repeats all prior text)', () => {
+    const t = new TextDeltaTracker()
+    expect(t.next('Hello')).toBe('Hello')
+    expect(t.next('Hello world')).toBe(' world')
+    expect(t.next('Hello world!')).toBe('!')
+  })
+
+  it('returns the full text of each event when events are already incremental deltas', () => {
+    const t = new TextDeltaTracker()
+    expect(t.next('Hello')).toBe('Hello')
+    expect(t.next(' world')).toBe(' world')
+    expect(t.next('!')).toBe('!')
+  })
+
+  it('returns empty string when text is unchanged (duplicate event)', () => {
+    const t = new TextDeltaTracker()
+    t.next('Hello')
+    expect(t.next('Hello')).toBe('')
+  })
+
+  it('handles a mix of empty and non-empty events without emitting empty deltas', () => {
+    const t = new TextDeltaTracker()
+    expect(t.next('')).toBe('')
+    expect(t.next('A')).toBe('A')
+    expect(t.next('A')).toBe('')
+    expect(t.next('AB')).toBe('B')
+  })
+})
+
+// ── Delta emission integration tests ─────────────────────────────────────────
+//
+// These tests drive ChatRunner with a mock subprocess that emits cumulative
+// assistant events, then assert that the ViewStreamHub received incremental
+// delta broadcasts — not the raw cumulative text.
+
+describe('ChatRunner delta emission', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(chatStore.getThread).mockResolvedValue({
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false },
+      messages: [],
+    })
+  })
+
+  it('emits incremental text delta events when the CLI sends cumulative assistant messages', async () => {
+    const broadcasts: unknown[] = []
+    const mockHub = {
+      broadcastData: (_ch: string, data: unknown) => { broadcasts.push(data) },
+      broadcast: vi.fn(),
+    }
+
+    // Simulate the claude CLI emitting cumulative text: each assistant event
+    // has the full text accumulated so far.
+    mockRunSubprocessStreaming.mockImplementation(
+      async (
+        _cmd: string,
+        _args: readonly string[],
+        _cwd: string,
+        onLine: ((l: SubprocessLine) => void) | undefined,
+      ) => {
+        if (onLine) {
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello world' }] } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello world!' }] } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'result', duration_ms: 100, cost_usd: 0.001, usage: { input_tokens: 5, output_tokens: 3, cache_read_input_tokens: 0 } }) })
+        }
+        return { exitCode: 0, stdout: '', stderr: '' }
+      },
+    )
+
+    const runner = new ChatRunner()
+    // Cast to satisfy the typed hub dependency (we only need broadcastData).
+    await runner.sendMessage('t1', 'hi', '/repo', mockHub as never)
+    await new Promise((r) => setTimeout(r, 20))
+
+    // Filter to text delta SSE events only.
+    const textBroadcasts = (broadcasts as Array<{ threadId: string; event: { type: string; text?: string } }>)
+      .filter((b) => b.event.type === 'text')
+      .map((b) => b.event.text)
+
+    // Should receive 3 incremental deltas, not 3 cumulative texts.
+    expect(textBroadcasts).toEqual(['Hello', ' world', '!'])
+  })
+
+  it('emits a single text event when the CLI sends one final assistant message', async () => {
+    const broadcasts: unknown[] = []
+    const mockHub = {
+      broadcastData: (_ch: string, data: unknown) => { broadcasts.push(data) },
+      broadcast: vi.fn(),
+    }
+
+    mockRunSubprocessStreaming.mockImplementation(
+      async (
+        _cmd: string,
+        _args: readonly string[],
+        _cwd: string,
+        onLine: ((l: SubprocessLine) => void) | undefined,
+      ) => {
+        if (onLine) {
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Complete response.' }] } }) })
+        }
+        return { exitCode: 0, stdout: '', stderr: '' }
+      },
+    )
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', mockHub as never)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const textBroadcasts = (broadcasts as Array<{ threadId: string; event: { type: string; text?: string } }>)
+      .filter((b) => b.event.type === 'text')
+      .map((b) => b.event.text)
+
+    expect(textBroadcasts).toEqual(['Complete response.'])
+  })
+
+  it('accumulated text segments join correctly for DB persistence after cumulative events', async () => {
+    mockRunSubprocessStreaming.mockImplementation(
+      async (
+        _cmd: string,
+        _args: readonly string[],
+        _cwd: string,
+        onLine: ((l: SubprocessLine) => void) | undefined,
+      ) => {
+        if (onLine) {
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'A' }] } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'AB' }] } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'ABC' }] } }) })
+        }
+        return { exitCode: 0, stdout: '', stderr: '' }
+      },
+    )
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const calls = vi.mocked(chatStore.appendMessage).mock.calls
+    const assistantCall = calls.find((c) => c[1] === 'assistant')
+    // Concatenation of deltas ('A' + 'B' + 'C') should equal 'ABC'
+    expect(assistantCall![2]).toBe('ABC')
   })
 })
 

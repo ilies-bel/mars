@@ -3,9 +3,13 @@
  *
  * `applyLiveEvent` is a pure reducer — tests exercise observable output
  * (the returned buffer snapshot) without touching any module state.
+ *
+ * Module-level store functions (pushLiveEvent / clearLiveBuffer / getLiveBuffer)
+ * are tested in the "delta pipeline" section, which exercises the observable
+ * behaviour of the full SSE→buffer flow without coupling to internal state.
  */
-import { describe, it, expect } from 'bun:test'
-import { applyLiveEvent } from './chatBuffer'
+import { describe, it, expect, beforeEach } from 'bun:test'
+import { applyLiveEvent, pushLiveEvent, clearLiveBuffer, getLiveBuffer } from './chatBuffer'
 import type { LiveBuffer, LiveEvent } from './chatBuffer'
 
 const empty: LiveBuffer = {
@@ -126,5 +130,74 @@ describe('applyLiveEvent — full run sequence', () => {
     expect(final.text).toBe('Done.')
     expect(final.error).toBeNull()
     expect(final.done).toBe(true)
+  })
+})
+
+// ── Delta pipeline tests ──────────────────────────────────────────────────────
+//
+// These tests verify the observable behaviour of the full delta pipeline:
+// daemon emits incremental text events → client reducer accumulates → done
+// → buffer cleared. They exercise the module-level store functions rather
+// than the pure reducer to confirm the end-to-end observable flow.
+
+describe('delta pipeline — pushLiveEvent / clearLiveBuffer / getLiveBuffer', () => {
+  // Isolate each test by using a unique thread id (avoids cross-test pollution
+  // since the store is module-level).
+  let threadId: string
+  let counter = 0
+
+  beforeEach(() => {
+    counter += 1
+    threadId = `test-thread-${counter}`
+  })
+
+  it('creates a buffer on the first push and returns null when none exists', () => {
+    expect(getLiveBuffer(threadId)).toBeNull()
+    pushLiveEvent(threadId, { type: 'text', text: 'hi' })
+    expect(getLiveBuffer(threadId)).not.toBeNull()
+    clearLiveBuffer(threadId)
+    expect(getLiveBuffer(threadId)).toBeNull()
+  })
+
+  it('builds text incrementally from a sequence of delta events', () => {
+    pushLiveEvent(threadId, { type: 'text', text: 'Hello' })
+    expect(getLiveBuffer(threadId)?.text).toBe('Hello')
+    pushLiveEvent(threadId, { type: 'text', text: ' world' })
+    expect(getLiveBuffer(threadId)?.text).toBe('Hello world')
+    pushLiveEvent(threadId, { type: 'text', text: '!' })
+    expect(getLiveBuffer(threadId)?.text).toBe('Hello world!')
+    clearLiveBuffer(threadId)
+  })
+
+  it('marks the buffer done and preserves accumulated text when result arrives', () => {
+    pushLiveEvent(threadId, { type: 'text', text: 'The answer is 42' })
+    pushLiveEvent(threadId, {
+      type: 'result',
+      durationMs: 800,
+      inputTokens: 30,
+      outputTokens: 5,
+      cacheReadTokens: 0,
+      cost: 0.0003,
+    })
+    const buf = getLiveBuffer(threadId)
+    expect(buf?.done).toBe(true)
+    expect(buf?.text).toBe('The answer is 42')
+    clearLiveBuffer(threadId)
+  })
+
+  it('marks done and records error message when error event arrives', () => {
+    pushLiveEvent(threadId, { type: 'error', message: 'Run timed out' })
+    const buf = getLiveBuffer(threadId)
+    expect(buf?.done).toBe(true)
+    expect(buf?.error).toBe('Run timed out')
+    clearLiveBuffer(threadId)
+  })
+
+  it('clears currentTool when tool_result follows tool_use', () => {
+    pushLiveEvent(threadId, { type: 'tool_use', id: 'tu1', name: 'Bash', input: {} })
+    expect(getLiveBuffer(threadId)?.currentTool).toBe('Bash')
+    pushLiveEvent(threadId, { type: 'tool_result', tool_use_id: 'tu1', content: 'ok', isError: false })
+    expect(getLiveBuffer(threadId)?.currentTool).toBeNull()
+    clearLiveBuffer(threadId)
   })
 })

@@ -144,6 +144,45 @@ const buildChatArgs = (content: string, sessionId: string | null): readonly stri
   return base
 }
 
+// ── Delta tracker ─────────────────────────────────────────────────────────────
+
+/**
+ * Tracks the text head emitted so far for a single streaming assistant turn
+ * and computes per-event text deltas.
+ *
+ * The claude CLI emits `assistant` events with *cumulative* text in each
+ * content block: each event contains all assistant text generated so far, not
+ * just the new chunk. `TextDeltaTracker.next()` converts that into the
+ * incremental delta (text since the last emit) so the SSE client receives
+ * progressive chunks rather than the full text repeated on every event.
+ *
+ * The tracker also handles the simpler "already-delta" format (each event
+ * carries only new text) transparently: a text block that does not extend the
+ * current head is treated as a fresh delta and appended.
+ *
+ * Exported for unit testing.
+ */
+export class TextDeltaTracker {
+  private head = ''
+
+  /**
+   * Given the text from the latest assistant event content block (may be
+   * cumulative or incremental), return only the NEW portion. Returns `''`
+   * when there is nothing new to emit (e.g. a duplicate event).
+   */
+  next(text: string): string {
+    if (text.startsWith(this.head)) {
+      // Cumulative format: this event repeats everything seen so far.
+      const delta = text.slice(this.head.length)
+      this.head = text
+      return delta
+    }
+    // Delta format: the text is a fresh addition, not a cumulative repeat.
+    this.head += text
+    return text
+  }
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 /** 10-minute wall-clock timeout per chat run. */
@@ -222,10 +261,24 @@ export class ChatRunner {
   ): Promise<void> {
     const accumulatedSegments: ChatSegment[] = []
     let detectedSessionId: string | null = null
+    // Tracks cumulative text emitted so far for the current text stream, used
+    // to compute the incremental delta broadcast via SSE on each event.
+    const textDelta = new TextDeltaTracker()
 
     const broadcastSegment = (seg: ChatSegment): void => {
-      accumulatedSegments.push(seg)
-      hub?.broadcastData('chat', { threadId, event: seg })
+      if (seg.type === 'text') {
+        // The claude CLI may emit cumulative text in each assistant event (each
+        // event contains all text generated so far). Compute the delta so the
+        // client receives only the new text on each SSE push.
+        const delta = textDelta.next(seg.text)
+        if (delta.length === 0) return // nothing new to emit
+        const deltaSeg: ChatSegment = { type: 'text', text: delta }
+        accumulatedSegments.push(deltaSeg)
+        hub?.broadcastData('chat', { threadId, event: deltaSeg })
+      } else {
+        accumulatedSegments.push(seg)
+        hub?.broadcastData('chat', { threadId, event: seg })
+      }
     }
 
     const finalize = async (extraSeg?: ChatSegment): Promise<void> => {

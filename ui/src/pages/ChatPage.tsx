@@ -679,6 +679,7 @@ interface MessageListProps {
 }
 
 const MessageList = ({ threadId, projectId, onDiscuss }: MessageListProps) => {
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const qc = useQueryClient()
 
@@ -695,18 +696,48 @@ const MessageList = ({ threadId, projectId, onDiscuss }: MessageListProps) => {
   // Live buffer for this thread — non-null while the daemon is streaming.
   const liveBuffer = useLiveBuffer(threadId)
 
-  // When the run completes (buffer.done), invalidate the thread query so the
-  // persisted transcript loads and clears the live view.
-  useEffect(() => {
-    if (!liveBuffer?.done) return
-    void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
-    void qc.invalidateQueries({ queryKey: ['chat-threads'] })
-    clearLiveBuffer(threadId)
-  }, [liveBuffer?.done, threadId, qc])
+  // Snapshot the message count the moment the run finishes (`done` becomes
+  // true). Used to detect when the subsequent refetch lands with the persisted
+  // assistant message so we can clear the live buffer without a visible flash.
+  const doneMessageCountRef = useRef<number | null>(null)
 
-  // Scroll to bottom on new persisted messages or live text growth.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const messageCount = data?.messages.length ?? 0
+
+    if (!liveBuffer?.done) {
+      // Reset the snapshot whenever a fresh run starts.
+      doneMessageCountRef.current = null
+      return
+    }
+
+    if (doneMessageCountRef.current === null) {
+      // First render after the run completes: snapshot the current count and
+      // trigger a refetch. The live bubble remains visible (with no cursor)
+      // until the persisted data arrives.
+      doneMessageCountRef.current = messageCount
+      void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
+      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+      return
+    }
+
+    // On subsequent renders: once the query refetch returns more messages
+    // (i.e. the persisted assistant reply is now in the data), swap the live
+    // bubble for the stable persisted view with no visual jump.
+    if (messageCount > doneMessageCountRef.current) {
+      clearLiveBuffer(threadId)
+    }
+  }, [liveBuffer?.done, data?.messages.length, threadId, qc])
+
+  // Scroll to the bottom on new persisted messages or live text growth,
+  // but only when the user is already near the bottom (scroll-pin behaviour).
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    // 120 px threshold: auto-scroll only when we were already at (or very near) the bottom.
+    if (distanceFromBottom <= 120) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [data?.messages.length, liveBuffer?.text.length])
 
   if (isLoading) {
@@ -718,14 +749,18 @@ const MessageList = ({ threadId, projectId, onDiscuss }: MessageListProps) => {
   }
 
   const messages = data?.messages ?? []
-  const showLive = liveBuffer !== null && !liveBuffer.done
+  // Show the live bubble until the buffer is cleared — including while
+  // `liveBuffer.done` is true but the persisted message hasn't loaded yet.
+  // This prevents a flicker where the bubble disappears before the persisted
+  // reply takes its place.
+  const showLive = liveBuffer !== null
 
   if (messages.length === 0 && !showLive) {
     return null
   }
 
   return (
-    <div className="flex-1 overflow-y-auto py-3">
+    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto py-3">
       {messages.map((msg) => (
         <ChatMessageBubble key={msg.id} msg={msg} onDiscuss={onDiscuss} />
       ))}
