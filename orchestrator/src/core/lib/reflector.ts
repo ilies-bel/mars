@@ -9,6 +9,8 @@ import {
 import { enqueueTask } from '../queue'
 import type { ReflectCorpus } from './reflect-query'
 import type { SelfEvolveConfig } from '../daemon/config'
+import { isReflectDisabled } from './reflect-signals'
+import { insertMemoryPacket } from '../store/memory-packet-store'
 
 export interface ReflectionSuggestion {
   title: string
@@ -501,6 +503,14 @@ export const persistSuggestions = async (
       })
     } else {
       await persistOneSuggestion(s)
+    }
+    if (!isReflectDisabled()) {
+      await insertMemoryPacket({
+        domain: 'general',
+        text: s.prompt,
+        salience: s.confidence || 0.7,
+        originArcId: null,
+      })
     }
   }
 }
