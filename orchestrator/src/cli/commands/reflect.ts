@@ -107,6 +107,9 @@ const reflect: Command = {
     deps.out(
       `\n${result.suggestions.length} suggestion(s) saved as draft proposals (source='reflection'). Review with 'mars proposal list --source reflection' and promote with 'mars proposal promote <id>'.`,
     )
+    const { runSkillForgeScan } = await import('./skill-forge')
+    const sfRes = await runSkillForgeScan()
+    deps.out(`skill-forge: filed ${sfRes.filed} draft(s)`)
     return { code: 0 }
   },
 }
