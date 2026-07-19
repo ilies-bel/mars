@@ -12,9 +12,9 @@ import type { Command } from '../command'
 const toolForgeGroup: Command = {
   path: 'tool-forge',
   summary: 'tool-forge subcommands',
-  usage: 'usage: mars tool-forge <scan>',
+  usage: 'usage: mars tool-forge <scan|bench>',
   run: (_args, deps) => {
-    deps.err('usage: mars tool-forge <scan>')
+    deps.err('usage: mars tool-forge <scan|bench>')
     return { code: 1 }
   },
 }
@@ -79,4 +79,83 @@ const toolForgeScan: Command = {
   },
 }
 
-export const toolForgeCommands: readonly Command[] = [toolForgeGroup, toolForgeScan]
+const toolForgeBench: Command = {
+  path: 'tool-forge bench',
+  summary: 'replay motivating arcs and record before/after benchmark metrics',
+  usage: 'usage: mars tool-forge bench <attempt-id>',
+  run: async (args, deps) => {
+    const attemptId = args.positional[0]
+    if (!attemptId) {
+      deps.err('usage: mars tool-forge bench <attempt-id>')
+      return { code: 1 }
+    }
+
+    const { runBenchmark } = await import('../../core/lib/tool-benchmark')
+    const { resolveStateClient } = await import('../../core/store/state-client')
+    const { initToolPromotionAttempts, getAttempt } = await import(
+      '../../core/store/tool-promotion-store'
+    )
+
+    await initToolPromotionAttempts()
+    const db = resolveStateClient()
+
+    const attempt = await getAttempt(db, attemptId)
+    if (!attempt) {
+      deps.err(`error: attempt not found: ${attemptId}`)
+      return { code: 1 }
+    }
+
+    deps.out(`benchmarking attempt ${attemptId} (${attempt.motivatingArcIds.length} arc(s))…`)
+
+    // Default arc replayer: placeholder implementation.
+    // Real arc replay (baseline = helper absent, treatment = helper present) requires
+    // task-execution infrastructure outside the scope of this tracer bullet.
+    const result = await runBenchmark(db, attemptId, {
+      arcReplayer: async (_arcId, _mode) => ({
+        tokensIn: 0,
+        tokensOut: 0,
+        wallMs: 0,
+        exitOk: true,
+      }),
+    })
+
+    // ── Compact table output ────────────────────────────────────────────────
+    type ArcRow = { arcId: string; tokensIn: number; tokensOut: number; wallMs: number; exitOk: boolean }
+    const beforeArcs = JSON.parse(result.before) as ArcRow[]
+    const afterArcs = JSON.parse(result.after) as ArcRow[]
+
+    const arcWidth = Math.max(
+      6,
+      ...beforeArcs.map((a) => a.arcId.length),
+    )
+    const colW = 16
+
+    const pad = (s: string, w: number): string => s.padEnd(w)
+    const rpad = (s: string, w: number): string => s.padStart(w)
+
+    deps.out(
+      `${pad('arc-id', arcWidth)}  ${rpad('baseline', colW)}  ${rpad('treatment', colW)}  ${rpad('delta', colW)}`,
+    )
+    deps.out('─'.repeat(arcWidth + colW * 3 + 6))
+
+    for (let i = 0; i < beforeArcs.length; i++) {
+      const arc = beforeArcs[i]
+      const afterArc = afterArcs[i]
+      const baselineTokens = arc.tokensIn + arc.tokensOut
+      const treatmentTokens = afterArc.tokensIn + afterArc.tokensOut
+      const delta = treatmentTokens - baselineTokens
+      const deltaStr = delta === 0 ? '0' : delta > 0 ? `+${delta}` : String(delta)
+      deps.out(
+        `${pad(arc.arcId, arcWidth)}  ${rpad(String(baselineTokens), colW)}  ${rpad(String(treatmentTokens), colW)}  ${rpad(deltaStr, colW)}`,
+      )
+    }
+
+    return { code: 0 }
+  },
+}
+
+export const toolForgeCommands: readonly Command[] = [
+  toolForgeGroup,
+  toolForgeScan,
+  toolForgeBench,
+]
