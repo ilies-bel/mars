@@ -355,6 +355,25 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/scorer-trend?workflow=<kind>&window=N — per-workflow scorer
+        // score trend (median + p90 over a trailing window). Proxied to the
+        // daemon's GET /view/scorer-trend. The UI's WatchtowerTrendChart reads
+        // this to render the per-kind score history chart.
+        if (path === '/api/scorer-trend' && req.method === 'GET') {
+          const qs = url.search
+          const r = await proxyGet(ctx.stateDir, `/view/scorer-trend${qs}`)
+          return jsonResponse(r.status, r.body)
+        }
+
+        // GET /api/scorer-workflows — distinct workflow kinds with at least one
+        // scorer_result row, newest first. Proxied to the daemon's
+        // GET /view/scorer-workflows. Used by WatchtowerSection to enumerate
+        // which charts to render.
+        if (path === '/api/scorer-workflows' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/scorer-workflows')
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/kpis/:key/arcs — per-arc breakdown for a single KPI.
         // Must be matched before /api/kpis so the longer path wins.
         if (path.startsWith('/api/kpis/') && path.endsWith('/arcs') && req.method === 'GET') {
