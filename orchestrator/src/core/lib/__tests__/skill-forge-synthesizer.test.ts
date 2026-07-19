@@ -3,8 +3,10 @@ import { synthesizeSkillMarkdown } from '../skill-forge-synthesizer'
 import type { CrossArcLesson } from '../skill-forge-detector'
 
 const lesson: CrossArcLesson = {
+  key: 'use-structured-tasks-for-clarity::task_spec_ambiguity',
   title: 'Use Structured Tasks for Clarity',
   summary: 'Always emit structured task specs when enqueueing work to reduce ambiguity.',
+  motivatingArcOriginIds: ['arc-1', 'arc-2', 'arc-3'],
   triggerPhrases: ['add structured task', 'emit task spec', 'use structured tasks'],
 }
 
@@ -31,7 +33,7 @@ describe('synthesizeSkillMarkdown', () => {
 
   it('description includes at least one trigger phrase', () => {
     const { markdown } = synthesizeSkillMarkdown(lesson)
-    const anyPhrase = lesson.triggerPhrases.some(phrase => markdown.includes(phrase))
+    const anyPhrase = (lesson.triggerPhrases ?? []).some(phrase => markdown.includes(phrase))
     expect(anyPhrase).toBe(true)
   })
 
@@ -43,8 +45,10 @@ describe('synthesizeSkillMarkdown', () => {
 
   it('slug strips non-alphanumeric characters', () => {
     const edge: CrossArcLesson = {
+      key: 'fix-use-no-verify-sparingly::hook_bypass',
       title: 'Fix: Use --no-verify Sparingly!',
       summary: 'Avoid skipping hooks.',
+      motivatingArcOriginIds: ['arc-1', 'arc-2', 'arc-3'],
       triggerPhrases: ['skip hooks'],
     }
     const { name } = synthesizeSkillMarkdown(edge)

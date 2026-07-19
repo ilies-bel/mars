@@ -13,7 +13,7 @@ export function synthesizeSkillMarkdown(lesson: CrossArcLesson): {
   const name = slugify(lesson.title)
 
   const triggerList =
-    lesson.triggerPhrases.length > 0
+    lesson.triggerPhrases && lesson.triggerPhrases.length > 0
       ? lesson.triggerPhrases.join(', ')
       : lesson.title
 
