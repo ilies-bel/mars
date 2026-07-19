@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { startHttpServer } from '../../orchestrator/src/core/daemon/http-server.ts'
 import type { HttpServerDeps } from '../../orchestrator/src/core/daemon/http-server.ts'
+import { ChatRunner } from '../../orchestrator/src/core/daemon/chat-runner.ts'
 import type { KpiSeries } from '../../orchestrator/src/core/lib/kpi-snapshots.ts'
 import { loadRecipeCatalog } from '../../orchestrator/src/core/lib/recipes.ts'
 import { nullTraceStore } from '../../orchestrator/src/core/lib/run-tool.ts'
@@ -27,6 +28,7 @@ beforeAll(async () => {
 })
 
 const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Promise<KpiSeries>): HttpServerDeps => ({
+  chatRunner: new ChatRunner(),
   runReflect: async () => ({ proposalsRaised: 0 }),
   enableAutoReflect: async () => {},
   restartTask: async () => {},

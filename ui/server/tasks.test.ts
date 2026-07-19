@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { startHttpServer } from '../../orchestrator/src/core/daemon/http-server.ts'
 import type { HttpServerDeps } from '../../orchestrator/src/core/daemon/http-server.ts'
-import { stubAppServices } from '../../orchestrator/src/core/daemon/__tests__/app-services-stub.ts'
+import { stubAppServices, stubChatRunner } from '../../orchestrator/src/core/daemon/__tests__/app-services-stub.ts'
 import { loadRecipeCatalog } from '../../orchestrator/src/core/lib/recipes.ts'
 import { nullTraceStore } from '../../orchestrator/src/core/lib/run-tool.ts'
 import { startServer } from './index.ts'
@@ -33,6 +33,7 @@ beforeAll(async () => {
 const makeDaemonDeps = (
   viewTasks: HttpServerDeps['appServices']['viewTasks'],
 ): HttpServerDeps => ({
+  chatRunner: stubChatRunner(),
   runReflect: async () => ({ proposalsRaised: 0 }),
   enableAutoReflect: async () => {},
   restartTask: async () => {},
