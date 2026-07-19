@@ -22,6 +22,7 @@ import remarkGfm from 'remark-gfm'
 import {
   fetchChatThreads,
   fetchChatThread,
+  fetchActionQueue,
   createChatThread,
   postChatMessage,
   renameChatThread,
@@ -30,7 +31,7 @@ import {
   invokeAction,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult } from '@/shared/schemas'
+import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ActionQueueItem } from '@/shared/schemas'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { useLiveBuffer, clearLiveBuffer } from '@/shared/chatBuffer'
 
@@ -51,6 +52,85 @@ const SLASH_COMMANDS = [
   { cmd: '/action-queue', prompt: 'Groom the action queue' },
   { cmd: '/unblock', prompt: 'Help unblock task ' },
 ] as const
+
+// ---------------------------------------------------------------------------
+// Hero empty state — top-alert prioritization and suggestion chips
+// ---------------------------------------------------------------------------
+
+const PRIORITY_RANK: Record<'high' | 'normal' | 'low', number> = {
+  high: 0,
+  normal: 1,
+  low: 2,
+}
+
+/**
+ * Returns the most important open action-queue alert from a list.
+ * Sort key: priority (high → normal → low), then `at` descending (newest tiebreak).
+ * Returns null for an empty list.
+ */
+export const pickTopAlert = (items: ActionQueueItem[]): ActionQueueItem | null => {
+  if (items.length === 0) return null
+  return [...items].sort((a, b) => {
+    const pd = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
+    if (pd !== 0) return pd
+    // newest first: lexicographic ISO-string comparison works because
+    // all at-values use the same UTC format
+    return b.at.localeCompare(a.at)
+  })[0] ?? null
+}
+
+const KIND_ICON: Record<string, string> = {
+  'failed-task': '⚠️',
+  'stale-worktree': '🗑️',
+  'draft-proposal': '💡',
+  'awaiting-validation': '🔍',
+  'arc-failed': '⛓️',
+}
+
+export interface HeroSuggestionsProps {
+  /** The top open alert, or null when the action queue is clear. */
+  topAlert: ActionQueueItem | null
+  /** Called when the user clicks the alert chip. */
+  onAlertClick: () => void
+  /** Called when the user clicks a quick-action chip; receives the prefill prompt. */
+  onChipClick: (prompt: string) => void
+}
+
+/**
+ * Suggestion row rendered below the hero composer.
+ *
+ * When a top alert is provided it renders as the FIRST chip so the user is
+ * immediately aware of the most pressing item. The standard quick-action chips
+ * follow.
+ */
+export const HeroSuggestions = ({ topAlert, onAlertClick, onChipClick }: HeroSuggestionsProps) => (
+  <div className="flex flex-wrap justify-center gap-2 max-w-2xl">
+    {topAlert !== null && (
+      <button
+        type="button"
+        className="flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/5 px-3 py-1.5 font-mono text-[11px] text-fg transition-colors hover:border-accent/70 hover:bg-accent/10 active:scale-[0.97]"
+        onClick={onAlertClick}
+        data-testid="hero-alert-chip"
+      >
+        <span aria-hidden="true" className="flex-none text-[12px]">
+          {KIND_ICON[topAlert.kind] ?? '🔔'}
+        </span>
+        <span className="max-w-[200px] truncate font-semibold">{topAlert.title}</span>
+        <span className="max-w-[140px] truncate text-iron/60">— {topAlert.body}</span>
+      </button>
+    )}
+    {WELCOME_CHIPS.map(({ label, prompt }) => (
+      <button
+        key={label}
+        type="button"
+        className="rounded border border-iron/40 px-3 py-1.5 font-mono text-[11px] text-iron transition-colors hover:border-iron/70 hover:bg-iron/20 hover:text-fg active:scale-[0.97]"
+        onClick={() => onChipClick(prompt)}
+      >
+        {label}
+      </button>
+    ))}
+  </div>
+)
 
 // ---------------------------------------------------------------------------
 // Segment grouping helpers
@@ -728,6 +808,148 @@ const WelcomeState = ({ onChipClick }: WelcomeStateProps) => (
 )
 
 // ---------------------------------------------------------------------------
+// Hero composer (used in the no-thread hero state)
+// ---------------------------------------------------------------------------
+
+interface HeroComposerProps {
+  onSend: (text: string) => void
+  isPending: boolean
+  prefill?: string
+  onPrefillConsumed: () => void
+}
+
+const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: HeroComposerProps) => {
+  const [text, setText] = useState('')
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (prefill !== undefined) {
+      setText(prefill)
+      onPrefillConsumed()
+      textareaRef.current?.focus()
+    }
+  }, [prefill, onPrefillConsumed])
+
+  const handleSend = useCallback(() => {
+    const trimmed = text.trim()
+    if (!trimmed || isPending) return
+    onSend(trimmed)
+    setText('')
+  }, [text, isPending, onSend])
+
+  return (
+    <div className="relative w-full max-w-2xl">
+      <textarea
+        ref={textareaRef}
+        data-testid="hero-composer"
+        className="w-full resize-none rounded-2xl border border-iron/30 bg-surface px-5 py-4 pr-20 font-mono text-[14px] text-fg placeholder:text-iron/40 focus:border-iron/60 focus:outline-none disabled:opacity-50"
+        placeholder={isPending ? 'Creating thread…' : 'Message mars… (Enter to send, Shift+Enter for newline)'}
+        rows={3}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            handleSend()
+          }
+        }}
+        disabled={isPending}
+      />
+      <button
+        type="button"
+        data-testid="hero-send"
+        className="absolute bottom-3 right-3 rounded-xl border border-iron/40 px-4 py-2 font-mono text-[11px] text-iron transition-colors hover:bg-iron/20 hover:text-fg active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
+        onClick={handleSend}
+        disabled={isPending || text.trim().length === 0}
+      >
+        {isPending ? '…' : 'Send'}
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Hero empty state (shown when no thread is selected)
+// ---------------------------------------------------------------------------
+
+export interface HeroEmptyStateProps {
+  projectId?: string
+  onSelectThread: (id: string) => void
+  onCreateAndSend: (message: string) => void
+  isPending: boolean
+}
+
+/**
+ * Full-pane hero shown when no thread is selected.
+ *
+ * Layout: headline → subtitle → large rounded composer → suggestion row.
+ * The suggestion row shows the top open action-queue alert first (if any),
+ * then the standard quick-action chips. Typing in the composer and hitting
+ * Enter (or clicking Send) creates a new thread and posts the first message
+ * in one gesture via the `onCreateAndSend` callback.
+ */
+export const HeroEmptyState = ({
+  projectId,
+  onSelectThread,
+  onCreateAndSend,
+  isPending,
+}: HeroEmptyStateProps) => {
+  const [prefill, setPrefill] = useState<string | undefined>(undefined)
+
+  const { data: alertItems } = useQuery({
+    queryKey: ['action-queue', projectId],
+    queryFn: () => fetchActionQueue(projectId),
+    staleTime: 15_000,
+  })
+
+  const { data: threads } = useQuery({
+    queryKey: ['chat-threads', projectId],
+    queryFn: () => fetchChatThreads(projectId),
+    staleTime: 15_000,
+  })
+
+  const topAlert = pickTopAlert(alertItems ?? [])
+  const alertThread = topAlert
+    ? (threads ?? []).find((t) => t.alertItemId === topAlert.id) ?? null
+    : null
+
+  const handleAlertClick = useCallback(() => {
+    if (alertThread) {
+      onSelectThread(alertThread.id)
+    } else {
+      window.location.hash = '#/action-queue'
+    }
+  }, [alertThread, onSelectThread])
+
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-6 px-8">
+      <div className="text-center">
+        <h1
+          className="font-mono text-[28px] font-bold text-fg"
+          data-testid="hero-headline"
+        >
+          What should Mars build?
+        </h1>
+        <p className="mt-2 font-mono text-[13px] text-iron/60">
+          Start a conversation or pick a suggestion below.
+        </p>
+      </div>
+      <HeroComposer
+        onSend={onCreateAndSend}
+        isPending={isPending}
+        prefill={prefill}
+        onPrefillConsumed={() => setPrefill(undefined)}
+      />
+      <HeroSuggestions
+        topAlert={topAlert}
+        onAlertClick={handleAlertClick}
+        onChipClick={setPrefill}
+      />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Composer
 // ---------------------------------------------------------------------------
 
@@ -948,6 +1170,22 @@ export const ChatPage = () => {
   // Capture the epoch ms when this ChatPage first mounts so the ContextRail
   // can highlight tasks that appeared during this session.
   const sessionStartedAt = useRef(Date.now()).current
+  const qc = useQueryClient()
+
+  // Create a new thread and post the first message in one gesture — used by
+  // the hero composer so the user never has to click "+ New thread" separately.
+  const { mutate: createAndSend, isPending: isCreatingThread } = useMutation({
+    mutationFn: async (message: string) => {
+      const thread = await createChatThread(projectId)
+      await postChatMessage(thread.id, message, projectId)
+      return thread
+    },
+    onSuccess: (thread) => {
+      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+      void qc.invalidateQueries({ queryKey: ['chat-thread', thread.id] })
+      setSelectedThreadId(thread.id)
+    },
+  })
 
   const { data: threadDetail } = useQuery({
     queryKey: ['chat-thread', selectedThreadId, projectId],
@@ -1003,11 +1241,12 @@ export const ChatPage = () => {
             />
           </>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3">
-            <p className="font-mono text-[13px] text-iron/50">
-              Select or create a thread to start chatting
-            </p>
-          </div>
+          <HeroEmptyState
+            projectId={projectId}
+            onSelectThread={(id) => setSelectedThreadId(id)}
+            onCreateAndSend={(msg) => createAndSend(msg)}
+            isPending={isCreatingThread}
+          />
         )}
       </div>
 

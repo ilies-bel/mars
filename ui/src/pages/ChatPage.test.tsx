@@ -15,9 +15,15 @@
 import { describe, it, expect } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
-import { groupMessageSegments, toolGroupLabel, ChatMessageBubble } from './ChatPage'
+import {
+  groupMessageSegments,
+  toolGroupLabel,
+  ChatMessageBubble,
+  pickTopAlert,
+  HeroSuggestions,
+} from './ChatPage'
 import { chatThreadDetailSchema } from '@/shared/schemas'
-import type { ChatMessage, ChatSegmentToolUse } from '@/shared/schemas'
+import type { ChatMessage, ChatSegmentToolUse, ActionQueueItem } from '@/shared/schemas'
 import fixture from './__fixtures__/chat-thread-fixture.json'
 
 // ---------------------------------------------------------------------------
@@ -290,5 +296,106 @@ describe('real fixture regression', () => {
     expect(html).toContain('384 tokens')
     // Empty thinking block must NOT appear
     expect(html).not.toContain('Thought process')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// pickTopAlert — hero empty state: alert prioritization
+// ---------------------------------------------------------------------------
+
+const makeAlert = (overrides: Partial<ActionQueueItem> = {}): ActionQueueItem => ({
+  id: 'alert-1',
+  kind: 'failed-task',
+  entityId: 'task-1',
+  priority: 'normal',
+  title: 'Some task failed',
+  body: 'It broke.',
+  at: '2026-01-01T00:00:00Z',
+  dag: null,
+  errorKind: 'failed-task',
+  actions: [],
+  diagnosis: null,
+  ...overrides,
+} as ActionQueueItem)
+
+describe('pickTopAlert', () => {
+  it('returns null for an empty list', () => {
+    expect(pickTopAlert([])).toBeNull()
+  })
+
+  it('returns the only item for a single-item list', () => {
+    const item = makeAlert()
+    expect(pickTopAlert([item])).toBe(item)
+  })
+
+  it('returns the high-priority item over a normal-priority item', () => {
+    const high = makeAlert({ id: 'high', priority: 'high' })
+    const normal = makeAlert({ id: 'normal', priority: 'normal' })
+    expect(pickTopAlert([normal, high])?.id).toBe('high')
+  })
+
+  it('returns the normal-priority item over a low-priority item', () => {
+    const normal = makeAlert({ id: 'normal', priority: 'normal' })
+    const low = makeAlert({ id: 'low', priority: 'low' })
+    expect(pickTopAlert([low, normal])?.id).toBe('normal')
+  })
+
+  it('breaks priority ties by most-recent `at` date', () => {
+    const older = makeAlert({ id: 'older', priority: 'high', at: '2026-01-01T00:00:00Z' })
+    const newer = makeAlert({ id: 'newer', priority: 'high', at: '2026-06-01T00:00:00Z' })
+    expect(pickTopAlert([older, newer])?.id).toBe('newer')
+  })
+
+  it('high-priority older item beats normal-priority newer item', () => {
+    const highOld = makeAlert({ id: 'high', priority: 'high', at: '2020-01-01T00:00:00Z' })
+    const normalNew = makeAlert({ id: 'norm', priority: 'normal', at: '2026-12-31T00:00:00Z' })
+    expect(pickTopAlert([highOld, normalNew])?.id).toBe('high')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// HeroSuggestions — suggestion chip rendering
+// ---------------------------------------------------------------------------
+
+describe('HeroSuggestions – no alert', () => {
+  it('renders only quick-action chips when topAlert is null', () => {
+    const html = renderToStaticMarkup(
+      createElement(HeroSuggestions, { topAlert: null, onAlertClick: () => {}, onChipClick: () => {} }),
+    )
+    expect(html).not.toContain('hero-alert-chip')
+    expect(html).toContain('Groom the action queue')
+    expect(html).toContain('Grill an idea')
+    expect(html).toContain('Enqueue a task')
+  })
+})
+
+describe('HeroSuggestions – with alert', () => {
+  it('renders the alert chip before the quick-action chips', () => {
+    const alert = makeAlert({ title: 'Deploy is broken', body: 'Failed with exit code 1' })
+    const html = renderToStaticMarkup(
+      createElement(HeroSuggestions, { topAlert: alert, onAlertClick: () => {}, onChipClick: () => {} }),
+    )
+    // Alert chip present
+    expect(html).toContain('Deploy is broken')
+    // Alert chip appears before the first regular chip in the DOM order
+    const alertPos = html.indexOf('hero-alert-chip')
+    const chipPos = html.indexOf('Groom the action queue')
+    expect(alertPos).toBeLessThan(chipPos)
+  })
+
+  it('shows the kind icon for a failed-task alert', () => {
+    const alert = makeAlert({ kind: 'failed-task' })
+    const html = renderToStaticMarkup(
+      createElement(HeroSuggestions, { topAlert: alert, onAlertClick: () => {}, onChipClick: () => {} }),
+    )
+    expect(html).toContain('⚠️')
+  })
+
+  it('shows the kind icon for a draft-proposal alert', () => {
+    const alert = makeAlert({ kind: 'draft-proposal' })
+    const html = renderToStaticMarkup(
+      createElement(HeroSuggestions, { topAlert: alert, onAlertClick: () => {}, onChipClick: () => {} }),
+    )
+    expect(html).toContain('💡')
   })
 })
