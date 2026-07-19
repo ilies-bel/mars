@@ -1,4 +1,5 @@
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
+import { LoopLedgerPanel } from './LoopLedgerPanel'
 import { PromotionLedgerTable } from './PromotionLedgerTable'
 import { WatchtowerTrendChart } from './WatchtowerTrendChart'
 
@@ -25,17 +26,6 @@ const ScoreTrends = () => {
 }
 
 // ---------------------------------------------------------------------------
-// Generic placeholder panel (Promotion ledger, Loop ledger)
-// ---------------------------------------------------------------------------
-
-const PlaceholderPanel = ({ title }: { title: string }) => (
-  <div className="flex flex-col gap-2 rounded border border-border p-4">
-    <h4 className="font-mono text-[11px] uppercase tracking-wide text-iron">{title}</h4>
-    <p className="text-iron text-xs">No data yet</p>
-  </div>
-)
-
-// ---------------------------------------------------------------------------
 // WatchtowerSection
 // ---------------------------------------------------------------------------
 
@@ -52,7 +42,10 @@ export const WatchtowerSection = () => (
         <h4 className="font-mono text-[11px] uppercase tracking-wide text-iron">Promotion ledger</h4>
         <PromotionLedgerTable />
       </div>
-      <PlaceholderPanel title="Loop ledger" />
+      <div className="flex flex-col gap-2 rounded border border-border p-4">
+        <h4 className="font-mono text-[11px] uppercase tracking-wide text-iron">Loop ledger</h4>
+        <LoopLedgerPanel />
+      </div>
     </div>
   </div>
 )

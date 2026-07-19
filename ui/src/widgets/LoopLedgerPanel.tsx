@@ -1,0 +1,77 @@
+import { useState } from 'react'
+import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
+import { useLoopLedger } from '@/entities/watchtower/useLoopLedger'
+
+const formatTs = (ms: number): string =>
+  new Date(ms).toISOString().replace('T', ' ').slice(0, 19)
+
+/**
+ * Renders the Loop ledger subsection of the Watchtower panel.
+ *
+ * A workflow-kind <select> (defaulting to the first known workflow) sits above
+ * a table with columns [Run, Scored at, Score, Recorded, Suggest, Review].
+ * Each row corresponds to one pass through the run→score→record→suggest→review
+ * loop. Stages that have not yet completed render '—'.
+ */
+export const LoopLedgerPanel = () => {
+  const { data: workflows } = useScorerWorkflows()
+
+  // `selected` is the user's explicit pick; null means "use the first workflow
+  // from the list" so the panel auto-populates when workflows first load.
+  const [selected, setSelected] = useState<string | null>(null)
+  const workflow = selected ?? workflows?.[0] ?? null
+
+  const { entries, isLoading } = useLoopLedger(workflow)
+
+  if (isLoading) return null
+
+  return (
+    <div className="flex flex-col gap-2">
+      <select
+        value={workflow ?? ''}
+        onChange={(e) => setSelected(e.target.value || null)}
+        className="self-start rounded border border-border bg-surface px-2 py-0.5 text-xs"
+      >
+        {(workflows ?? []).map((kind) => (
+          <option key={kind} value={kind}>
+            {kind}
+          </option>
+        ))}
+      </select>
+      {entries.length === 0 ? (
+        <p className="text-iron text-xs">No loop runs yet</p>
+      ) : (
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-iron">
+              <th className="pb-1 pr-2 font-normal">Run</th>
+              <th className="pb-1 pr-2 font-normal">Scored at</th>
+              <th className="pb-1 pr-2 font-normal">Score</th>
+              <th className="pb-1 pr-2 font-normal">Recorded</th>
+              <th className="pb-1 pr-2 font-normal">Suggest</th>
+              <th className="pb-1 font-normal">Review</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => (
+              <tr key={entry.runId}>
+                <td className="py-0.5 pr-2 font-mono">{entry.runId}</td>
+                <td className="py-0.5 pr-2 font-mono">
+                  {entry.scoredAt !== null ? formatTs(entry.scoredAt) : '—'}
+                </td>
+                <td className="py-0.5 pr-2">
+                  {entry.score !== null ? entry.score.toFixed(2) : '—'}
+                </td>
+                <td className="py-0.5 pr-2 font-mono">
+                  {entry.recordedAt !== null ? formatTs(entry.recordedAt) : '—'}
+                </td>
+                <td className="py-0.5 pr-2">{entry.suggestion?.version ?? '—'}</td>
+                <td className="py-0.5">{entry.review?.decision ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  )
+}
