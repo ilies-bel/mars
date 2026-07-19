@@ -47,6 +47,10 @@ import {
   ensureRecoverySpawner,
 } from '../../outbox/subscribers/recovery-spawn'
 import {
+  drainArcVerifier,
+  ensureArcVerifierSubscriber,
+} from '../../outbox/subscribers/arc-verifier-subscriber'
+import {
   buildTranscriptAppendSubscriber,
   ensureTranscriptAppendSchema,
 } from '../../outbox/subscribers/transcript-append'
@@ -3430,6 +3434,20 @@ export const startDaemon = async (
     }
   })()
 
+  // Boot drain for the arc-verifier outbox subscriber: register it and trigger
+  // any pending arc verifications for task.terminal { reason: 'done' } events
+  // that were published while the daemon was down.
+  void (async () => {
+    try {
+      await ensureArcVerifierSubscriber(getCompositionRootClient())
+      const { processed } = await drainArcVerifier(getCompositionRootClient(), log)
+      if (processed > 0)
+        log(`[arc-verifier] triggered ${processed} verification(s) on boot`)
+    } catch (err) {
+      log(`[arc-verifier] boot drain failed: ${(err as Error).message}`)
+    }
+  })()
+
   // ── GitHub release update poller ─────────────────────────────────────────
   // Fetches https://api.github.com/repos/ilies-bel/mars/releases/latest once
   // on startup and then every UPDATE_POLL_INTERVAL_MS (6 h). Writes the result
@@ -3949,6 +3967,25 @@ export const startDaemon = async (
   }, RECOVERY_SPAWNER_DRAIN_MS)
   recoverySpawnerDrain.unref()
 
+  // ── Arc-verifier drain ───────────────────────────────────────────────────
+  // Polls the outbox for task.terminal { reason: 'done' } events and triggers
+  // arc-outcome verification for any arc that has fully completed with merged
+  // commits. Fire-and-forget: the verifier runs asynchronously and never blocks
+  // the merge path or dispatch loop. .unref() so it never holds the process open.
+  const ARC_VERIFIER_DRAIN_MS = Number(
+    process.env.MARS_ARC_VERIFIER_DRAIN_MS ?? 30_000,
+  )
+  const arcVerifierDrain = setInterval(() => {
+    void (async () => {
+      try {
+        await drainArcVerifier(getCompositionRootClient(), log)
+      } catch (err) {
+        log(`[arc-verifier] drain errored: ${(err as Error).message}`)
+      }
+    })()
+  }, ARC_VERIFIER_DRAIN_MS)
+  arcVerifierDrain.unref()
+
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
@@ -3968,6 +4005,7 @@ export const startDaemon = async (
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
     clearInterval(recoverySpawnerDrain)
+    clearInterval(arcVerifierDrain)
     stopEndpointProbe()
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the

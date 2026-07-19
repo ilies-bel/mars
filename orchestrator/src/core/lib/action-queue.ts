@@ -199,6 +199,14 @@ export const ACTION_QUEUE_KINDS = [
   // (keyed on signature=`tool-promotion:<attemptId>`). Superseded when the
   // operator approves or rejects the helper.
   'tool-promotion',
+  // The post-merge arc-outcome verifier ran against main after the last task of
+  // an arc merged, and found that the done criteria or verifyCmd(s) were not
+  // satisfied. One row per arc (signature-keyed `arc-verification-failed:<originId>`),
+  // level-triggered: exists while the issue is unresolved. The operator must
+  // investigate and either fix the arc's output or mark the row resolved manually.
+  // Never auto-spawns fix tasks. Raised by the arc-verifier after merge; cleared
+  // manually by the operator.
+  'arc-verification-failed',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

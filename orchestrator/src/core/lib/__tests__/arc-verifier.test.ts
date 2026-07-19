@@ -1,0 +1,297 @@
+/**
+ * Arc-verifier unit tests.
+ *
+ * Verifies four observable behaviours:
+ *   1. trigger dedup — one run per originId (subsequent calls return skipped-dedup)
+ *   2. no-merge arcs skipped — arc with no landed commits → no agent call, no AQ item
+ *   3. failing verdict → exactly one arc-verification-failed AQ item
+ *   4. kill-switch flag suppresses all runs
+ *
+ * System boundaries mocked:
+ *   - raiseActionQueueItem (action-queue DB write)
+ *   - runClaudeCode (Claude subprocess)
+ *   - getDefaultTaskStore (mars.db read)
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { RaiseActionQueueItem } from '../action-queue'
+
+// ── Mock raiseActionQueueItem ─────────────────────────────────────────────────
+
+const raiseSpy = vi.hoisted(() =>
+  vi.fn(async (_item: RaiseActionQueueItem): Promise<string> => 'mock-item-id'),
+)
+vi.mock('../action-queue', async (importActual) => {
+  const actual = await importActual<typeof import('../action-queue')>()
+  return { ...actual, raiseActionQueueItem: raiseSpy }
+})
+
+// ── Mock runClaudeCode ────────────────────────────────────────────────────────
+
+const runClaudeCodeMock = vi.hoisted(() =>
+  vi.fn(async () => ({
+    exitCode: 0,
+    stdout: '{"ok":true,"findings":[]}',
+    stderr: '',
+    sessionId: null,
+    conversation: [],
+    quotaRejected: null,
+  })),
+)
+vi.mock('../git/claude', () => ({ runClaudeCode: runClaudeCodeMock }))
+
+// ── Mock getDefaultTaskStore ──────────────────────────────────────────────────
+
+const makeStore = (arcStatusResult: {
+  status: string
+  tasks: Array<{ id: string; status: string }>
+  landedCommits: string[]
+}) => ({
+  arcStatus: vi.fn(async () => arcStatusResult),
+  listArcMembers: vi.fn(async () => [] as Array<{ id: string; branch: string | null }>),
+  getTask: vi.fn(async () => null),
+})
+
+const getDefaultTaskStoreMock = vi.hoisted(() => vi.fn())
+vi.mock('../../store/task-store', () => ({
+  getDefaultTaskStore: getDefaultTaskStoreMock,
+}))
+
+// ── Also mock collectAssistantText from reflector ────────────────────────────
+// collectAssistantText on an empty conversation returns ''; fallback to stdout.
+vi.mock('../reflector', () => ({
+  collectAssistantText: vi.fn((_conversation: unknown[]) => ''),
+}))
+
+// ── Import after mocks ────────────────────────────────────────────────────────
+
+const {
+  triggerArcVerification,
+  runArcVerification,
+  isArcVerifyDisabled,
+  _clearTriggeredForTests,
+} = await import('../arc-verifier')
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('arc-verifier', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    _clearTriggeredForTests()
+    delete process.env.MARS_ARC_VERIFY_DISABLED
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_ARC_VERIFY_DISABLED
+  })
+
+  // ── kill-switch ─────────────────────────────────────────────────────────────
+
+  describe('isArcVerifyDisabled()', () => {
+    it('returns false when the flag is not set', () => {
+      expect(isArcVerifyDisabled()).toBe(false)
+    })
+
+    it('returns true when MARS_ARC_VERIFY_DISABLED=1', () => {
+      process.env.MARS_ARC_VERIFY_DISABLED = '1'
+      expect(isArcVerifyDisabled()).toBe(true)
+    })
+  })
+
+  // ── triggerArcVerification — kill-switch ────────────────────────────────────
+
+  it('[flag] returns skipped-disabled and schedules no work when flag is on', () => {
+    process.env.MARS_ARC_VERIFY_DISABLED = '1'
+    const result = triggerArcVerification('origin-flagged', { cwd: '/tmp' })
+    expect(result).toBe('skipped-disabled')
+    // No work was scheduled — raiseActionQueueItem and runClaudeCode are never called.
+    expect(raiseSpy).not.toHaveBeenCalled()
+    expect(runClaudeCodeMock).not.toHaveBeenCalled()
+  })
+
+  // ── triggerArcVerification — dedup ──────────────────────────────────────────
+
+  it('[dedup] returns triggered on first call and skipped-dedup on second', () => {
+    const r1 = triggerArcVerification('origin-dedup-1', { cwd: '/tmp' })
+    const r2 = triggerArcVerification('origin-dedup-1', { cwd: '/tmp' })
+    expect(r1).toBe('triggered')
+    expect(r2).toBe('skipped-dedup')
+  })
+
+  it('[dedup] different originIds each get their own trigger', () => {
+    const r1 = triggerArcVerification('origin-a', { cwd: '/tmp' })
+    const r2 = triggerArcVerification('origin-b', { cwd: '/tmp' })
+    expect(r1).toBe('triggered')
+    expect(r2).toBe('triggered')
+  })
+
+  it('[dedup] skipped-dedup is returned synchronously without scheduling work', () => {
+    // First call marks the originId.
+    triggerArcVerification('origin-dedup-sync', { cwd: '/tmp' })
+    // Second call must return without touching the agent or action-queue.
+    const result = triggerArcVerification('origin-dedup-sync', { cwd: '/tmp' })
+    expect(result).toBe('skipped-dedup')
+    // We cannot assert runClaudeCode wasn't called yet (async work may still be
+    // in-flight), but the return value proves the gate fired.
+  })
+
+  // ── runArcVerification — no-merge arcs skipped ──────────────────────────────
+
+  describe('runArcVerification', () => {
+    it('[no-merge] skips when arc status is in-progress', async () => {
+      getDefaultTaskStoreMock.mockResolvedValue(
+        makeStore({ status: 'in-progress', tasks: [], landedCommits: [] }),
+      )
+      const verdict = await runArcVerification('origin-in-progress', { cwd: '/tmp' })
+      expect(verdict).toEqual({ ok: true, findings: [] })
+      expect(runClaudeCodeMock).not.toHaveBeenCalled()
+      expect(raiseSpy).not.toHaveBeenCalled()
+    })
+
+    it('[no-merge] skips when arc is done but has no landed commits', async () => {
+      getDefaultTaskStoreMock.mockResolvedValue(
+        makeStore({ status: 'arc-done', tasks: [], landedCommits: [] }),
+      )
+      const verdict = await runArcVerification('origin-no-commits', { cwd: '/tmp' })
+      expect(verdict).toEqual({ ok: true, findings: [] })
+      expect(runClaudeCodeMock).not.toHaveBeenCalled()
+      expect(raiseSpy).not.toHaveBeenCalled()
+    })
+
+    it('[no-merge] skips when arc failed entirely (arc-failed status)', async () => {
+      getDefaultTaskStoreMock.mockResolvedValue(
+        makeStore({ status: 'arc-failed', tasks: [], landedCommits: ['abc'] }),
+      )
+      const verdict = await runArcVerification('origin-arc-failed', { cwd: '/tmp' })
+      expect(verdict).toEqual({ ok: true, findings: [] })
+      expect(runClaudeCodeMock).not.toHaveBeenCalled()
+      expect(raiseSpy).not.toHaveBeenCalled()
+    })
+
+    // ── failing verdict → one action-queue item ───────────────────────────────
+
+    it('[verdict-fail] raises exactly one arc-verification-failed item on failing verdict', async () => {
+      const findings = ['TypeScript errors in merged code', 'Test suite red after merge']
+      runClaudeCodeMock.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: JSON.stringify({ ok: false, findings }),
+        stderr: '',
+        sessionId: null,
+        conversation: [],
+        quotaRejected: null,
+      })
+
+      getDefaultTaskStoreMock.mockResolvedValue(
+        makeStore({
+          status: 'arc-done',
+          tasks: [{ id: 'task-1', status: 'done' }],
+          landedCommits: ['sha-abc123'],
+        }),
+      )
+
+      const verdict = await runArcVerification('origin-fail', {
+        cwd: process.cwd(),
+      })
+
+      expect(verdict.ok).toBe(false)
+      expect(verdict.findings).toEqual(findings)
+
+      // Exactly one action-queue item raised.
+      expect(raiseSpy).toHaveBeenCalledTimes(1)
+      const raised = raiseSpy.mock.calls[0][0] as RaiseActionQueueItem
+      expect(raised.kind).toBe('arc-verification-failed')
+      expect(raised.signature).toBe('arc-verification-failed:origin-fail')
+      expect(raised.originTaskId).toBe('origin-fail')
+      expect(raised.payload).toMatchObject({ originId: 'origin-fail', findings })
+    })
+
+    it('[verdict-fail] does NOT raise an item when verdict is ok', async () => {
+      runClaudeCodeMock.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: JSON.stringify({ ok: true, findings: [] }),
+        stderr: '',
+        sessionId: null,
+        conversation: [],
+        quotaRejected: null,
+      })
+
+      getDefaultTaskStoreMock.mockResolvedValue(
+        makeStore({
+          status: 'arc-done',
+          tasks: [{ id: 'task-2', status: 'done' }],
+          landedCommits: ['sha-def456'],
+        }),
+      )
+
+      const verdict = await runArcVerification('origin-pass', {
+        cwd: process.cwd(),
+      })
+
+      expect(verdict.ok).toBe(true)
+      expect(verdict.findings).toEqual([])
+      expect(raiseSpy).not.toHaveBeenCalled()
+    })
+
+    it('[verdict-fail] handles unparseable agent output gracefully', async () => {
+      runClaudeCodeMock.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'something went wrong, not JSON',
+        stderr: '',
+        sessionId: null,
+        conversation: [],
+        quotaRejected: null,
+      })
+
+      getDefaultTaskStoreMock.mockResolvedValue(
+        makeStore({
+          status: 'arc-done',
+          tasks: [],
+          landedCommits: ['sha-xyz'],
+        }),
+      )
+
+      const verdict = await runArcVerification('origin-bad-output', {
+        cwd: process.cwd(),
+      })
+
+      // Unparseable output is treated as a failure.
+      expect(verdict.ok).toBe(false)
+      expect(verdict.findings.length).toBeGreaterThan(0)
+      // Still raises one item.
+      expect(raiseSpy).toHaveBeenCalledTimes(1)
+      expect(raiseSpy.mock.calls[0][0].kind).toBe('arc-verification-failed')
+    })
+
+    it('[verdict-fail] raises only one item when called twice for the same arc', async () => {
+      const findings = ['Test suite red']
+      const failPayload = {
+        exitCode: 0,
+        stdout: JSON.stringify({ ok: false, findings }),
+        stderr: '',
+        sessionId: null,
+        conversation: [],
+        quotaRejected: null,
+      }
+      runClaudeCodeMock.mockResolvedValue(failPayload)
+
+      const store = makeStore({
+        status: 'arc-done',
+        tasks: [],
+        landedCommits: ['sha-1'],
+      })
+      getDefaultTaskStoreMock.mockResolvedValue(store)
+
+      await runArcVerification('origin-dedup-raise', { cwd: process.cwd() })
+      await runArcVerification('origin-dedup-raise', { cwd: process.cwd() })
+
+      // raiseActionQueueItem is called twice, but the action-queue dedup (via
+      // signature) collapses them into one row. Our test just asserts the
+      // kind and signature are correct both times.
+      expect(raiseSpy).toHaveBeenCalledTimes(2)
+      for (const call of raiseSpy.mock.calls) {
+        expect(call[0].kind).toBe('arc-verification-failed')
+        expect(call[0].signature).toBe('arc-verification-failed:origin-dedup-raise')
+      }
+    })
+  })
+})

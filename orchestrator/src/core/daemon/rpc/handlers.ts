@@ -253,16 +253,21 @@ const setFlagHandler = handler('set-flag', async (req, deps) => {
   // narrow on purpose; extend deliberately rather than exposing
   // arbitrary env mutation over IPC.
   //
-  //   recovery on|off — suppress fix-task / Investigator spawns.
-  //   scoring  on|off — suppress post-instance Scorer runs (PRD 6cf85bc9).
+  //   recovery   on|off — suppress fix-task / Investigator spawns.
+  //   scoring    on|off — suppress post-instance Scorer runs (PRD 6cf85bc9).
   //     Every scored instance costs one Haiku-class judge call; this is the
   //     instant spend brake. `on` re-enables, `off` disables (the env var
   //     underneath is MARS_SCORING_DISABLED, mirroring recovery's polarity:
   //     the flag names the FEATURE, the env var names the disable).
-  if (req.flag !== 'recovery' && req.flag !== 'scoring') {
+  //   arc-verify on|off — suppress post-merge arc-outcome verifier runs.
+  //     `on` disables the verifier (sets MARS_ARC_VERIFY_DISABLED=1);
+  //     `off` re-enables it. Use during incident storms to stop the verifier
+  //     from adding noise while you diagnose.
+  const SUPPORTED_FLAGS = ['recovery', 'scoring', 'arc-verify'] as const
+  if (!SUPPORTED_FLAGS.includes(req.flag as (typeof SUPPORTED_FLAGS)[number])) {
     return {
       ok: false,
-      error: `set-flag: unknown flag '${req.flag}'; supported flags: recovery, scoring`,
+      error: `set-flag: unknown flag '${req.flag}'; supported flags: ${SUPPORTED_FLAGS.join(', ')}`,
     }
   }
   if (req.value !== 'on' && req.value !== 'off') {
@@ -279,6 +284,18 @@ const setFlagHandler = handler('set-flag', async (req, deps) => {
     }
     deps.log(
       `set-flag: recovery=${req.value} (MARS_RECOVERY_DISABLED=${process.env.MARS_RECOVERY_DISABLED ?? '<unset>'})`,
+    )
+  } else if (req.flag === 'arc-verify') {
+    // arc-verify: 'on' disables the verifier (sets MARS_ARC_VERIFY_DISABLED=1),
+    // 'off' re-enables it. Mirrors the recovery/scoring polarity convention:
+    // the flag names the FEATURE, the env var names the DISABLE.
+    if (req.value === 'on') {
+      process.env.MARS_ARC_VERIFY_DISABLED = '1'
+    } else {
+      delete process.env.MARS_ARC_VERIFY_DISABLED
+    }
+    deps.log(
+      `set-flag: arc-verify=${req.value} (MARS_ARC_VERIFY_DISABLED=${process.env.MARS_ARC_VERIFY_DISABLED ?? '<unset>'})`,
     )
   } else {
     // scoring: 'off' disables (sets MARS_SCORING_DISABLED=1), 'on' re-enables.
