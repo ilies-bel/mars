@@ -193,6 +193,12 @@ export const ACTION_QUEUE_KINDS = [
   // (keyed on signature=`promotion-decision:<ledgerId>`); idempotent
   // re-raises bump seen_count. Never raised for 'insufficient-data'.
   'promotion-decision',
+  // A helper-generation benchmark (tool-forge PRD) reached status='benchmarked':
+  // before/after timing evidence is ready for operator review. One row per
+  // tool_promotion_attempts entry in status='benchmarked'
+  // (keyed on signature=`tool-promotion:<attemptId>`). Superseded when the
+  // operator approves or rejects the helper.
+  'tool-promotion',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

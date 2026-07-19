@@ -26,6 +26,7 @@ export type DerivedActionQueueKind =
   | 'reflect-recommended'
   | 'workflow-draft-pending'
   | 'scorer-suggested'
+  | 'tool-promotion'
 export type DerivedActionQueueFilter = 'open' | 'all'
 
 /** Resolution metadata carried by resolved rows in history responses. */
@@ -101,6 +102,17 @@ export interface ActionQueueRow {
    * Resolution header and suppress action buttons.
    */
   resolution?: ActionQueueResolutionMeta | null
+  /**
+   * Benchmark evidence for a `tool-promotion` row. Null on every other row kind.
+   * Carries the before/after timing stats and the arc ids that motivated the
+   * helper-generation run.
+   */
+  toolPromotionDetail?: {
+    helperKey: string
+    motivatingArcIds: string[]
+    before: unknown
+    after: unknown
+  } | null
 }
 
 /** Raw actionQueue row shape as persisted in `action_queue_items`. */
@@ -246,6 +258,7 @@ export const buildActionQueueView = async ({
     if (k === 'reflect-recommended') return 'reflect-recommended'
     if (k === 'workflow-draft-pending') return 'workflow-draft-pending'
     if (k === 'scorer-suggested') return 'scorer-suggested'
+    if (k === 'tool-promotion') return 'tool-promotion'
     return 'failed-task'
   }
 
@@ -577,6 +590,20 @@ export const buildActionQueueView = async ({
         : null
     })()
 
+    // Extract tool-promotion benchmark detail from payload for tool-promotion rows.
+    const toolPromotionDetail: ActionQueueRow['toolPromotionDetail'] =
+      uiKind === 'tool-promotion'
+        ? {
+            helperKey:
+              typeof row.payload.helperKey === 'string' ? row.payload.helperKey : '',
+            motivatingArcIds: Array.isArray(row.payload.motivatingArcIds)
+              ? (row.payload.motivatingArcIds as string[])
+              : [],
+            before: row.payload.before ?? null,
+            after: row.payload.after ?? null,
+          }
+        : null
+
     rows.push({
       id: row.id,
       kind: uiKind,
@@ -594,6 +621,7 @@ export const buildActionQueueView = async ({
       diagnosis,
       failureReasonCode,
       fixForTaskId,
+      toolPromotionDetail,
     })
   }
 
@@ -710,6 +738,7 @@ export const buildActionQueueHistoryView = async ({
     if (k === 'reflect-recommended') return 'reflect-recommended'
     if (k === 'workflow-draft-pending') return 'workflow-draft-pending'
     if (k === 'scorer-suggested') return 'scorer-suggested'
+    if (k === 'tool-promotion') return 'tool-promotion'
     return 'failed-task'
   }
 

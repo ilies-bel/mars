@@ -70,6 +70,16 @@ export const renderActionQueueDetail = (deps: CommandDeps, row: ActionQueueRow):
   deps.out(`dag:       ${JSON.stringify(row.dag)}`)
   deps.out('')
   deps.out(row.body)
+  if (row.kind === 'tool-promotion' && row.toolPromotionDetail) {
+    const d = row.toolPromotionDetail
+    deps.out('')
+    deps.out(`helper:    ${d.helperKey}`)
+    deps.out(`arcs:      ${d.motivatingArcIds.join(', ')}`)
+    deps.out('')
+    deps.out('benchmark:')
+    deps.out(`  before   ${JSON.stringify(d.before)}`)
+    deps.out(`  after    ${JSON.stringify(d.after)}`)
+  }
 }
 
 const actionQueueList: Command = {

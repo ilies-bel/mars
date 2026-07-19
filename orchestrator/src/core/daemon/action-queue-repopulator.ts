@@ -274,6 +274,66 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
 }
 
 /**
+ * Scan `tool_promotion_attempts` for rows in status='benchmarked' and raise
+ * one action-queue item per attempt.
+ *
+ * Idempotent: `raiseActionQueueItem` uses the attempt id as the dedup
+ * signature, so re-scanning an already-raised attempt bumps `seen_count`
+ * rather than inserting a duplicate row.
+ *
+ * @returns Count of attempts for which a raise was attempted.
+ */
+export async function drainToolPromotionLedger(
+  client: Client,
+): Promise<{ raised: number }> {
+  const result = await client.execute(
+    `SELECT id, helper_key, before_data, after_data, motivating_arc_ids
+       FROM tool_promotion_attempts
+      WHERE status = 'benchmarked'`,
+  )
+
+  let raised = 0
+  for (const row of result.rows) {
+    const attemptId = row['id'] as string
+    const helperKey = row['helper_key'] as string
+    const before: unknown = row['before_data']
+      ? JSON.parse(row['before_data'] as string)
+      : null
+    const after: unknown = row['after_data']
+      ? JSON.parse(row['after_data'] as string)
+      : null
+    const motivatingArcIds: string[] = row['motivating_arc_ids']
+      ? JSON.parse(row['motivating_arc_ids'] as string)
+      : []
+
+    await raiseActionQueueItem({
+      kind: 'tool-promotion',
+      category: 'reflector',
+      priority: 'normal',
+      title: `Helper ready for promotion: ${helperKey}`,
+      body:
+        `Benchmark evidence is available for helper \`${helperKey}\`.\n` +
+        `Review the before/after stats and approve or reject via ` +
+        `\`mars tool promote ${attemptId}\` or \`mars tool reject ${attemptId}\`.`,
+      payload: {
+        attemptId,
+        helperKey,
+        before,
+        after,
+        motivatingArcIds,
+      },
+      context: {},
+      raisedBy: 'action-queue-repopulator:tool-promotion-scan',
+      signature: `tool-promotion:${attemptId}`,
+      originTaskId: attemptId,
+    })
+    raised++
+  }
+
+  return { raised }
+}
+
+/**
  * Process every event the subscriber has not yet acknowledged, in order.
  *
  * For each handled event type, processedOnce atomically commits a dedup

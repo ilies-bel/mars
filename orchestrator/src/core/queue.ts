@@ -1960,6 +1960,26 @@ const migrateSignalsAndTranscriptsToTraceEvents = async (c: Client): Promise<voi
     `CREATE INDEX IF NOT EXISTS idx_task_progress_task_time
        ON task_progress(task_id, created_at)`,
   )
+  // Tool-forge helper-generation ledger (auto-tool-creation PRD).
+  // One row per helper-generation benchmark attempt. status transitions:
+  //   'pending' → 'benchmarked' (evidence ready, action-queue row raised)
+  //   'benchmarked' → 'promoted' | 'rejected' (operator decision)
+  await c.execute(`
+    CREATE TABLE IF NOT EXISTS tool_promotion_attempts (
+      id                  TEXT NOT NULL PRIMARY KEY,
+      helper_key          TEXT NOT NULL,
+      status              TEXT NOT NULL DEFAULT 'pending'
+                          CHECK(status IN ('pending','benchmarked','promoted','rejected')),
+      before_data         TEXT,
+      after_data          TEXT,
+      motivating_arc_ids  TEXT NOT NULL DEFAULT '[]',
+      created_at          TEXT NOT NULL
+    )
+  `)
+  await c.execute(
+    `CREATE INDEX IF NOT EXISTS idx_tool_promotion_status
+       ON tool_promotion_attempts(status)`,
+  )
 }
 
 const MAX_CONVERSATION_BYTES = 2 * 1024 * 1024
