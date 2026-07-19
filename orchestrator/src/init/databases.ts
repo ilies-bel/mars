@@ -5,6 +5,7 @@ import { initSettings } from '../core/lib/settings'
 import { initWorkflowConfigs } from '../core/workflow-configs'
 import { initPromotionLedger } from '../core/promotion-ledger'
 import { initToolPromotionAttempts } from '../core/store/tool-promotion-store'
+import { initMemoryPackets } from '../core/store/memory-packet-store'
 import { mergeLegacyDatabases } from './merge-databases'
 
 /**
@@ -33,4 +34,5 @@ export const initDatabases = async (): Promise<void> => {
   await initWorkflowConfigs()
   await initPromotionLedger()
   await initToolPromotionAttempts()
+  await initMemoryPackets()
 }
