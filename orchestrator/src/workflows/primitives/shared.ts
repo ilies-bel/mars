@@ -327,6 +327,7 @@ export const composePrompt = (
   taskId = '',
   worktreeRoot = '',
   kind: 'task' | 'fix' | 'diagnose' = 'task',
+  lessons: string[] = [],
 ): string => {
   // Diagnose Chore short-circuit: the prompt arrives fully composed.
   if (kind === 'diagnose') return prompt.trim()
@@ -344,6 +345,10 @@ export const composePrompt = (
   }
   const specBlock = renderSpec(spec, taskId)
   if (specBlock !== null) sections.push(specBlock)
+  if (lessons.length > 0) {
+    const items = lessons.map((l) => `  - ${l}`).join('\n')
+    sections.push(`## Lessons\n\n<lessons>\n${items}\n</lessons>`)
+  }
   sections.push(CODING_DISCIPLINE)
   sections.push(COMMIT_FOOTER)
   sections.push(COMPLETION_REPORT_CONTRACT)

@@ -88,6 +88,10 @@ import { raiseActionQueueItem } from '../../core/lib/action-queue'
 import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
 import { summarizeUsage } from '../../core/lib/claude-usage'
 import { recordSignals } from '../../core/lib/reflect-signals'
+import {
+  resolveTaskDomains,
+  fetchLessonsForTask,
+} from '../../core/store/memory-packet-store'
 import { type TraceEventStore } from '../../core/lib/trace-events-store'
 import {
   runWorkerWithSpan,
@@ -869,6 +873,12 @@ export const runAgent = async (
   const basePrompt = resumeFromCodePhase
     ? `## Code-phase resume\n\nPrior progress is already in this worktree. Run \`git log -p\` first to review what was already completed, then continue from where the last coder stopped. Do NOT restart from scratch.\n\n${prompt}`
     : prompt
+  const fullTask = await store.getTask(taskId).catch(() => null)
+  const domains = resolveTaskDomains({
+    workflow: fullTask?.workflow ?? null,
+    tags,
+  })
+  const lessons = await fetchLessonsForTask(domains).catch(() => [] as string[])
   const fullPrompt = composePrompt(
     basePrompt,
     plan,
@@ -877,6 +887,7 @@ export const runAgent = async (
     taskId,
     worktreePath,
     kind,
+    lessons,
   )
 
   // Registry workers: merge operator-declared Workers so their tag sets are

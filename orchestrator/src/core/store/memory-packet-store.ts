@@ -13,6 +13,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { resolveStateClient } from './state-client'
+import type { Task } from '../queue'
 
 export type MemoryPacket = {
   id: string
@@ -143,4 +144,47 @@ export const retireMemoryPacket = async (id: string): Promise<boolean> => {
     args: [retiredAt, id],
   })
   return (r.rowsAffected ?? 0) > 0
+}
+
+/**
+ * Extract candidate domain strings for a task: the workflow name followed by
+ * all tags. Null workflow and empty strings are filtered out.
+ */
+export const resolveTaskDomains = (task: Pick<Task, 'workflow' | 'tags'>): string[] =>
+  [task.workflow, ...task.tags].filter(
+    (d): d is string => typeof d === 'string' && d.length > 0,
+  )
+
+/**
+ * Fetch lesson texts for a set of candidate domains, applying salience
+ * filtering, deduplication by packet id, and a top-N cap.
+ *
+ * Controlled by env vars:
+ *   MARS_MEMORY_TOPK      — maximum number of lessons returned (default 6)
+ *   MARS_MEMORY_SALIENCE  — minimum salience threshold (default 0.7)
+ */
+export const fetchLessonsForTask = async (domains: string[]): Promise<string[]> => {
+  if (domains.length === 0) return []
+  const limit = Number(process.env.MARS_MEMORY_TOPK ?? 6)
+  const minSalience = Number(process.env.MARS_MEMORY_SALIENCE ?? 0.7)
+
+  const seen = new Set<string>()
+  const packets: MemoryPacket[] = []
+
+  for (const domain of domains) {
+    const results = await listMemoryPackets({ domain, minSalience, limit })
+    for (const packet of results) {
+      if (!seen.has(packet.id)) {
+        seen.add(packet.id)
+        packets.push(packet)
+      }
+    }
+  }
+
+  // Sort collected packets by salience desc, then created_at desc, and cap.
+  packets.sort(
+    (a, b) =>
+      b.salience - a.salience || b.createdAt.localeCompare(a.createdAt),
+  )
+  return packets.slice(0, limit).map((p) => p.text)
 }
