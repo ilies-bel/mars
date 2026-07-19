@@ -50,6 +50,23 @@ export class ViewStreamHub {
     }
   }
 
+  /**
+   * Send `event: <channel>\ndata: <json>\n\n` to every live client. Use this
+   * when the event carries a meaningful payload (e.g. chat segment streaming)
+   * rather than just an invalidation ping. Dead sockets are silently pruned.
+   */
+  broadcastData(channel: StreamChannel, data: unknown): void {
+    const payload = `event: ${channel}\ndata: ${JSON.stringify(data)}\n\n`
+    for (const client of this.clients) {
+      try {
+        client.res.write(payload)
+      } catch {
+        // Dead socket — prune silently.
+        this.clients.delete(client)
+      }
+    }
+  }
+
   /** Number of currently connected clients. Useful for tests and logging. */
   size(): number {
     return this.clients.size

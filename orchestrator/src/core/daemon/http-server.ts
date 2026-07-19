@@ -30,6 +30,8 @@ import {
   updateThreadTitle,
   deleteThread,
 } from '../lib/chat-store'
+import type { ChatRunner } from './chat-runner'
+import { getRepoRoot } from '../context'
 import { z } from 'zod'
 
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
@@ -369,6 +371,12 @@ export interface HttpServerDeps {
    * never re-implements projection or enrichment logic.
    */
   appServices: AppServices
+  /**
+   * Chat runner — manages in-flight `claude -p` runs for chat threads. When
+   * provided, `POST /chat/threads/:id/message` and `POST /chat/threads/:id/stop`
+   * become live. Omitted in test stubs that do not exercise the chat run path.
+   */
+  chatRunner?: ChatRunner
 }
 
 export interface HttpServerHandle {
@@ -1354,6 +1362,73 @@ export const startHttpServer = async (
             sendJson(res, 200, { ok: true })
           })
           .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // POST /chat/threads/:id/message — persist the user message then spawn a
+    // `claude -p` run. Segments stream live over the `chat` SSE channel; the
+    // assistant reply is persisted when the run completes. 409 when a run is
+    // already active for this thread. Bypasses the draining gate (chat is not
+    // orchestrator work).
+    {
+      const chatMessageMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/message$/)
+          : null
+      if (chatMessageMatch && chatMessageMatch[1]) {
+        const id = decodeURIComponent(chatMessageMatch[1])
+        let rawBody = ''
+        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+        req.on('end', () => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+            return
+          }
+          const schema = z.object({ content: z.string().min(1) })
+          const result = schema.safeParse(parsed)
+          if (!result.success) {
+            sendJson(res, 400, { ok: false, error: 'body must be { content: string }' })
+            return
+          }
+          if (!deps.chatRunner) {
+            sendJson(res, 503, { ok: false, error: 'chat runner not available' })
+            return
+          }
+          deps.chatRunner
+            .sendMessage(id, result.data.content, getRepoRoot(), deps.viewStreamHub)
+            .then(({ alreadyRunning }) => {
+              if (alreadyRunning) {
+                sendJson(res, 409, { ok: false, error: 'thread already has an active run', errorCode: 'ALREADY_RUNNING' })
+                return
+              }
+              sendJson(res, 202, { ok: true })
+            })
+            .catch((err: unknown) => sendError(res, err))
+        })
+        req.on('error', (err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // POST /chat/threads/:id/stop — kill the active run for the thread and
+    // finalise the partial assistant message with what streamed so far.
+    {
+      const chatStopMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/stop$/)
+          : null
+      if (chatStopMatch && chatStopMatch[1]) {
+        const id = decodeURIComponent(chatStopMatch[1])
+        if (!deps.chatRunner) {
+          sendJson(res, 503, { ok: false, error: 'chat runner not available' })
+          return
+        }
+        const stopped = deps.chatRunner.stop(id)
+        sendJson(res, 200, { ok: true, stopped })
         return
       }
     }
