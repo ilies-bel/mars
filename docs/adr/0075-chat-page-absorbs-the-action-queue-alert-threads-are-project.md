@@ -1,0 +1,3 @@
+# Chat page absorbs the action queue; alert-Threads are projections with a conversation attached
+
+The action queue page is deleted and the chat page becomes the single operator surface: every queue row surfaces as a Thread. Alert-Threads keep pure-projection semantics (ADR-0048/0054) — they exist iff the backing entity is stuck and clear only by mutating that entity, never by a chat-side close; human- and suggestion-Threads close when their goal artifact lands. Trade-off: we chose projection semantics over conversation semantics for alert-Threads rather than reintroduce a dismiss gesture. The queue's search/filter features and fast action buttons are not dropped — they migrate into the chat page as part of the merge.
