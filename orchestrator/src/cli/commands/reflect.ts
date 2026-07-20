@@ -173,7 +173,7 @@ const arcList: Command = {
 
 const arcReflect: Command = {
   path: 'arc reflect',
-  summary: 'deep-reflect over a whole task arc',
+  summary: 'deep-reflect over a whole task arc (workflow)',
   usage: 'usage: mars arc reflect [<originId>]',
   run: async (args, deps) => {
     if (process.env.MARS_REFLECT_DISABLED === '1') {
@@ -220,45 +220,43 @@ const arcReflect: Command = {
       chosenOriginInput = answer
     }
 
-    const { loadDeepReflectArc, resolveOriginIdForTaskOrSelf } = await import(
+    const { resolveOriginIdForTaskOrSelf } = await import(
       '../../core/lib/deep-reflect-query'
     )
-    const { runDeepReflectorArc } = await import('../../core/lib/deep-reflector')
+    const { runReflect } = await import('../../workflows/reflect-workflow')
     const { applyVerdicts, applyScorerVerdicts } = await import(
       '../../core/lib/reflector'
     )
 
     const originId = await resolveOriginIdForTaskOrSelf(chosenOriginInput)
-    const arc = await loadDeepReflectArc(originId)
-    if (!arc) {
-      deps.err(`no arc found for ${originId}`)
-      return { code: 1 }
-    }
 
-    const statusMixStr = Object.entries(arc.statusMix)
-      .map(([k, v]) => `${k}=${v}`)
-      .join(', ')
-    deps.out(
-      `arc ${originId}: ${arc.taskCount} task(s) [${statusMixStr}], ${arc.totals.eventCount} event(s), ${arc.totals.totalWeightedTokens.toFixed(0)} weighted tokens total`,
-    )
-    for (const t of arc.tasks) {
-      const weightedTokens = Math.round(
-        t.totals.inputTokens +
-          t.totals.outputTokens +
-          t.totals.cacheCreateTokens +
-          t.totals.cacheReadTokens * 0.1,
-      )
-      deps.out(`  task ${t.taskId} [${t.status}]: weighted-tokens=${weightedTokens}`)
-      for (const note of t.transcriptNotes) {
-        deps.out(`  note (${t.taskId}): ${note}`)
-      }
-    }
+    // Track completed steps for real-time progress
+    const stepTimings = new Map<string, number>()
 
-    const result = await runDeepReflectorArc(arc)
+    const result = await runReflect(originId, {
+      onEvent: (event) => {
+        if (event.event === 'step.started' && event.step) {
+          stepTimings.set(event.step, event.time)
+        }
+        if (event.event === 'step.completed' && event.step) {
+          const startedAt = stepTimings.get(event.step)
+          const elapsed = startedAt ? ((event.time - startedAt) / 1000).toFixed(1) : '?'
+          const summary =
+            typeof (event.payload as Record<string, unknown> | undefined)?.summary === 'string'
+              ? (event.payload as Record<string, unknown>).summary
+              : null
+          deps.out(
+            `▸ ${event.step} ✓ (${elapsed}s)${summary ? ` — ${summary}` : ''}`,
+          )
+        }
+        if (event.event === 'step.failed' && event.step) {
+          deps.err(`▸ ${event.step} ✗`)
+        }
+      },
+    })
+
     const report = result.report
 
-    // Compute the report path BEFORE applying scorer verdicts: the persisted
-    // scorers row carries it as provenance (origin_arc_id + report_path).
     const { mkdir, writeFile } = await import('node:fs/promises')
     const { resolve: resolvePath } = await import('node:path')
     const { getStateDir } = await import('../../core/context')
@@ -277,6 +275,7 @@ const arcReflect: Command = {
             status: 'partial',
             reflectorExitCode: result.exitCode,
             report,
+            stepFindings: result.stepFindings,
             rawOutput: result.rawOutput,
           },
           null,
@@ -306,6 +305,7 @@ const arcReflect: Command = {
           recordedAt: new Date().toISOString(),
           status: 'complete',
           report,
+          stepFindings: result.stepFindings,
           sourceTaskId,
           verdictResult: {
             saved: verdictResult.saved,
