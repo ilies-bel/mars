@@ -441,6 +441,7 @@ const startFeedbackServer = async () => {
     chatRunner: new ChatRunner(),
     restartTask: async () => {},
     unblockTask: async () => {},
+    snoozeItem: async () => {},
     purgeTask: async () => {},
     pruneWorktree: async () => {},
     dismissProposal: async () => {},

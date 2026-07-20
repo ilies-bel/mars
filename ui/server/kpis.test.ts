@@ -33,6 +33,7 @@ const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Prom
   enableAutoReflect: async () => {},
   restartTask: async () => {},
   unblockTask: async () => {},
+  snoozeItem: async () => {},
   purgeTask: async () => {},
   pruneWorktree: async () => {},
   dismissProposal: async () => {},

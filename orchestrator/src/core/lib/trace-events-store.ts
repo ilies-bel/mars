@@ -41,7 +41,7 @@ export type TraceEventKind = (typeof TRACE_EVENT_KINDS)[number]
 
 export type TraceEventSeverity = 'info' | 'warn' | 'error'
 
-export type TraceEventPhase = 'setup' | 'code' | 'verify' | 'merge'
+export type TraceEventPhase = 'setup' | 'code' | 'verify' | 'merge' | 'reflect'
 
 const TRACE_EVENT_KIND_SET: ReadonlySet<string> = new Set(TRACE_EVENT_KINDS)
 const TRACE_EVENT_PHASES: readonly TraceEventPhase[] = [

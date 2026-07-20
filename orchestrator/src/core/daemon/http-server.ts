@@ -513,6 +513,7 @@ const TRACE_EVENT_PHASES: readonly TraceEventPhase[] = [
   'code',
   'verify',
   'merge',
+  'reflect',
 ]
 
 /** Floor + ceiling on the page size. Defaults mirror the public API doc. */
@@ -625,6 +626,12 @@ export const startHttpServer = async (
     reject: deps.rejectTask,
   }
 
+  // Track live sockets so close() can force-end long-lived connections (e.g.
+  // the /view/stream SSE channel) instead of hanging forever: Node's
+  // server.close() stops accepting new connections but only invokes its
+  // callback once every existing connection ends on its own, and a
+  // keep-alive SSE client never ends one voluntarily.
+  const openSockets = new Set<import('node:net').Socket>()
   const server: Server = createServer((req, res) => {
     // GET /healthz — liveness probe. Pure read; no draining gate so the UI
     // correctly shows the daemon as live even while it is draining.
@@ -1883,12 +1890,21 @@ export const startHttpServer = async (
   const port = addr.port
   const address = addr.address
 
+  server.on('connection', (socket) => {
+    openSockets.add(socket)
+    socket.once('close', () => openSockets.delete(socket))
+  })
+
   return {
     port,
     address,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()))
+        // Force-end any still-open sockets (e.g. keep-alive /view/stream
+        // clients) so close() resolves promptly instead of waiting for a
+        // client that will never disconnect on its own.
+        for (const socket of openSockets) socket.end()
       }),
   }
 }

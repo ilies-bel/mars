@@ -38,6 +38,7 @@ const makeDaemonDeps = (
   enableAutoReflect: async () => {},
   restartTask: async () => {},
   unblockTask: async () => {},
+  snoozeItem: async () => {},
   purgeTask: async () => {},
   pruneWorktree: async () => {},
   dismissProposal: async () => {},
@@ -100,6 +101,14 @@ describe('GET /api/tasks — proxies daemon /view/tasks', () => {
       expect(ids).toContain('mars-aaa')
       expect(ids).toContain('mars-bbb')
     } finally {
+      // Stop the UI server first: its chatBridge holds a live keep-alive SSE
+      // connection to the daemon's /view/stream, and Node's http
+      // server.close() waits for all connections to end before resolving —
+      // closing the daemon first would hang until the test timeout.
+      if (uiServer) {
+        uiServer.stop(true)
+        uiServer = null
+      }
       await daemonHandle.close()
     }
   })
