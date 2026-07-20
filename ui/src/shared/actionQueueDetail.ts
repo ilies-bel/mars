@@ -10,6 +10,7 @@
  * signature-keyed Failure kind record.
  */
 import type { TraceEvent } from './schemas'
+import { formatDuration } from './time'
 
 /**
  * Convert a machine-readable failure signature / reason code into a short,
@@ -185,7 +186,7 @@ export const summarizeTraceEvent = (event: TraceEvent): string => {
   if (event.kind === 'cli-invocation') {
     const command = typeof p.command === 'string' ? p.command : ''
     const exitCode = typeof p.exitCode === 'number' ? p.exitCode : null
-    const dur = typeof p.durationMs === 'number' ? `${Math.round(p.durationMs)}ms` : ''
+    const dur = typeof p.durationMs === 'number' ? formatDuration(p.durationMs) : ''
     const parts = [`mars ${command}`]
     if (exitCode !== null && exitCode !== 0) parts.push(`→ exit ${exitCode}`)
     if (dur) parts.push(dur)

@@ -36,6 +36,7 @@ import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ActionQueueItem, ChatFeedback } from '@/shared/schemas'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { useLiveBuffer, clearLiveBuffer } from '@/shared/chatBuffer'
+import { formatDuration } from '@/shared/time'
 
 // ---------------------------------------------------------------------------
 // Welcome state: quick-action chips and slash palette
@@ -684,7 +685,7 @@ export const ChatMessageBubble = ({
           if (seg.kind === 'result') {
             const { durationMs, inputTokens, outputTokens, cost } = seg.result
             const parts: string[] = []
-            if (durationMs != null) parts.push(`${(durationMs / 1000).toFixed(1)}s`)
+            if (durationMs != null) parts.push(formatDuration(durationMs))
             if (inputTokens != null || outputTokens != null) {
               parts.push(`${(inputTokens ?? 0) + (outputTokens ?? 0)} tokens`)
             }

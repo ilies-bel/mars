@@ -24,7 +24,7 @@ import type { ProgressProposalNode, ProgressTask, Task, TraceEvent } from '@/sha
 import { taskSchema } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
-import { relativeTime } from '@/shared/time'
+import { relativeTime, formatDuration } from '@/shared/time'
 import { studioHash } from '@/shared/routing'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { FallbackSurface } from '@/components/FallbackSurface'
@@ -331,13 +331,9 @@ const buildSubgraphLayout = (
   return { positioned, edges: subgraph.edges }
 }
 
-/** Format a durationMs value for display (e.g. "500ms" or "12.3s").
- * Negative values (e.g. from killed steps) render as "—" (unknown duration).
- * Exported for reuse by StudioView so durations read identically everywhere. */
-export const formatDuration = (ms: number): string => {
-  if (ms < 0) return '—'
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
-}
+/** Re-exported so StudioView / PrimitiveDetailDrawer keep their existing import
+ * path; the single definition lives in `@/shared/time`. */
+export { formatDuration } from '@/shared/time'
 
 /** Outcome → short human label for the timeline row. */
 const outcomeLabel = (outcome: StepSpan['outcome']): string => {
@@ -1045,11 +1041,11 @@ const StepCard = ({
               <ToolInvocationRow key={t.id} event={t} />
             ))}
           </div>
-        ) : (
+        ) : entry.claudeSessionId == null ? (
           <p className="pt-2 font-mono text-[11px] text-muted/60">
             No tool invocations recorded
           </p>
-        )}
+        ) : null}
 
         {/* Output — collapsed by default; keyboard-accessible via <details>/<summary> */}
         {entry.resultJson != null ? (

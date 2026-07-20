@@ -31,3 +31,16 @@ export const formatRelativeAge = (ms: number): string => {
 
 export const formatRelativeAgeFromHours = (hours: number): string =>
   formatRelativeAge(hours * MS_PER_HOUR)
+
+export const formatDuration = (ms: number): string => {
+  if (ms < 0) return '—'
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  const totalSec = Math.floor(ms / 1000)
+  if (totalSec < 60) return `${(ms / 1000).toFixed(1)}s`
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`
+  const h = Math.floor(m / 60)
+  const rm = m % 60
+  return rm > 0 ? `${h}h ${rm}m` : `${h}h`
+}
