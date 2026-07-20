@@ -20,7 +20,6 @@ export type SpawnOpts = Readonly<{
   disallowedTools?: readonly string[]
   agent?: string
   appendSystemPrompt?: string
-  safeMode?: boolean
 }>
 
 // Minimal handle to a running provider process exposed to feedPrompt and
@@ -109,7 +108,6 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       disallowedTools,
       agent,
       appendSystemPrompt,
-      safeMode,
     }: SpawnOpts): readonly string[] => {
       // claude requires --session-id to be a valid RFC 4122 UUID; task ids are
       // not, so normalize via the shared helper (deterministic UUID v5). This
@@ -142,7 +140,6 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
         [...mergedDisallowed].join(','),
         ...(agent ? ['--agent', agent] : []),
         ...(appendSystemPrompt ? ['--append-system-prompt', appendSystemPrompt] : []),
-        ...(safeMode ? ['--safe-mode'] : []),
       ]
     },
     // Write the prompt into the running pty followed by the submit key

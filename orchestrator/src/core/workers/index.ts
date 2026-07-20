@@ -133,7 +133,6 @@ export interface WorkerConfig {
   // environment — the framework never installs or spawns servers itself.
   // Headless runtime only — the pty path does not thread it.
   readonly mcpConfig?: Readonly<Record<string, unknown>>
-  readonly safeMode?: boolean
 }
 
 // Resolve a Worker's effective context token budget. The env var
@@ -183,7 +182,7 @@ const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 // Exported so tests can pin the exact blast radius (which Workers carry the
 // nudge) and detect unintended additions or removals.
 export const CODEGRAPH_NUDGE =
-  'Before broad file-scanning (rg/fd/Glob across the tree), consult the `codegraph` CLI to locate symbols, trace call graphs, and assess blast radius — it is faster and cheaper than reading files to reconstruct structure. Key commands:\n\n  codegraph query <SymbolName>          # locate a symbol definition\n  codegraph callees <functionName>      # trace what a function calls\n  codegraph callers <symbolName>        # who calls this symbol\n  codegraph impact <symbolName>         # change-impact analysis\n\nFall back to rg/fd+Read when codegraph is not on PATH or lacks the detail you need.'
+  'A pre-indexed code knowledge graph is available via the `codegraph_*` MCP tools (codegraph_explore, codegraph_search, codegraph_callers, codegraph_callees, codegraph_impact, codegraph_node, codegraph_files, codegraph_status). Before broad file-scanning (rg/fd/Glob across the tree), consult codegraph to locate symbols, trace call graphs, and assess blast radius — it is faster and cheaper than reading files to reconstruct structure. Fall back to direct file reads when the graph lacks the detail you need.'
 
 // Resolve the effective model for the Coder Worker. When `MARS_WORKER_MODEL`
 // is set, it overrides the pinned default — useful for one-off sessions that
@@ -228,7 +227,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,
-    safeMode: true,
     appendSystemPrompt: CODEGRAPH_NUDGE,
     disallowedTools: [],
     outputFormat: 'stream-json',
@@ -284,7 +282,6 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,
-    safeMode: true,
     disallowedTools: FIXER_BACKLOG_DENIED_TOOLS,
     outputFormat: 'stream-json',
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
@@ -383,7 +380,6 @@ const buildWorker = (config: WorkerConfig): Worker => {
             disallowedTools: config.disallowedTools,
             agent: config.agent,
             appendSystemPrompt: config.appendSystemPrompt,
-            safeMode: config.safeMode,
           })
         : runClaudeCode({
             cwd: options.cwd,
