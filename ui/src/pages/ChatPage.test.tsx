@@ -169,6 +169,15 @@ describe('groupMessageSegments', () => {
     expect(out[0]).toEqual({ kind: 'text', text: 'before' })
     expect(out[1]).toEqual({ kind: 'text', text: 'after' })
   })
+
+  it('keeps provider errors as visible assistant segments', () => {
+    const out = groupMessageSegments(makeMsg([
+      { type: 'error', message: 'Codex could not authenticate. Sign in and try again.' },
+    ]))
+    expect(out).toEqual([
+      { kind: 'error', message: 'Codex could not authenticate. Sign in and try again.' },
+    ])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -499,5 +508,17 @@ describe('ChatMessageBubble – feedback controls presence', () => {
       createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
     )
     expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="helpful"|aria-label="helpful"[^>]*aria-pressed="true"/)
+  })
+
+  it('renders a persisted provider error as an accessible assistant message', () => {
+    const msg = makeMsg([
+      { type: 'error', message: 'Codex could not authenticate. Sign in and try again.' },
+    ], 'assistant')
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('Codex could not respond.')
+    expect(html).toContain('Codex could not authenticate. Sign in and try again.')
   })
 })

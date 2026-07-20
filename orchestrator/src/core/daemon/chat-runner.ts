@@ -1,5 +1,5 @@
 /**
- * Chat runner — spawns a `claude -p` process for a given thread, streams
+ * Chat runner — spawns a Codex CLI process for a given thread, streams
  * typed segments over the `chat` SSE channel, and persists the assistant
  * reply to `chat_messages` when the run finishes.
  *
@@ -9,11 +9,8 @@
  * daemon shutdown path to SIGKILL all live children.
  */
 
-import { parseClaudeStreamLine, type ClaudeEvent } from '../lib/claude-stream'
 import {
-  resolveClaudeBin,
   buildWorkerEnv,
-  toClaudeSessionId,
   runSubprocessStreaming,
   type RunSubprocessResult,
 } from '../lib/git/claude'
@@ -48,12 +45,12 @@ export interface AttachmentInfo {
 
 /**
  * A single typed segment produced by the stream-json parser. Each segment
- * maps to one recognisable unit in the Claude output: a text block, a
+ * maps to one recognisable unit in the Codex output: a text block, a
  * tool call, its result, the final usage summary, or an error.
  *
  * The `attachment` variant is produced by the HTTP route when the user
  * message carries file attachments. It is persisted on the user message and
- * rendered by the UI; it is NOT emitted by the Claude stream parser.
+ * rendered by the UI; it is NOT emitted by the Codex stream parser.
  */
 export type ChatSegment =
   | { type: 'text'; text: string }
@@ -74,68 +71,32 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
 /**
- * Convert a single Claude stream-json event into zero or more `ChatSegment`
+ * Convert a single Codex JSONL event into zero or more `ChatSegment`
  * values. The function is pure (no I/O) and exported for unit testing.
  *
  * Recognised event → segment mappings:
- * - `assistant` with text blocks       → `text`
- * - `assistant` with thinking blocks   → `thinking`
- * - `assistant` with tool_use blocks   → `tool_use`
- * - `user` with tool_result blocks     → `tool_result`
- * - `result`                           → `result` (usage + cost)
+ * - `item.completed(agent_message)` → `text`
+ * - `turn.completed`                → `result` (usage)
  * All other event types produce no segments.
  */
-export const parseEventToSegments = (event: ClaudeEvent): ChatSegment[] => {
+export const parseEventToSegments = (event: unknown): ChatSegment[] => {
   const segs: ChatSegment[] = []
+  if (!isObject(event)) return segs
 
-  if (event.type === 'assistant') {
-    const msg = event.message
-    if (isObject(msg) && Array.isArray(msg.content)) {
-      for (const block of msg.content as unknown[]) {
-        if (!isObject(block)) continue
-        if (block.type === 'text' && typeof block.text === 'string') {
-          segs.push({ type: 'text', text: block.text })
-        } else if (block.type === 'thinking' && typeof block.thinking === 'string') {
-          segs.push({ type: 'thinking', thinking: block.thinking })
-        } else if (block.type === 'tool_use') {
-          segs.push({
-            type: 'tool_use',
-            id: typeof block.id === 'string' ? block.id : '',
-            name: typeof block.name === 'string' ? block.name : '',
-            input: block.input ?? null,
-          })
-        }
-      }
+  if (event.type === 'item.completed' && isObject(event.item)) {
+    const item = event.item
+    if (item.type === 'agent_message' && typeof item.text === 'string') {
+      segs.push({ type: 'text', text: item.text })
     }
-  } else if (event.type === 'user') {
-    const msg = event.message
-    if (isObject(msg) && Array.isArray(msg.content)) {
-      for (const block of msg.content as unknown[]) {
-        if (!isObject(block)) continue
-        if (block.type === 'tool_result') {
-          segs.push({
-            type: 'tool_result',
-            tool_use_id: typeof block.tool_use_id === 'string' ? block.tool_use_id : '',
-            content: block.content ?? null,
-            isError: block.is_error === true,
-          })
-        }
-      }
-    }
-  } else if (event.type === 'result') {
+  } else if (event.type === 'turn.completed') {
     const usage = event.usage
     segs.push({
       type: 'result',
-      durationMs: typeof event.duration_ms === 'number' ? event.duration_ms : null,
-      inputTokens:
-        isObject(usage) && typeof usage.input_tokens === 'number' ? usage.input_tokens : null,
-      outputTokens:
-        isObject(usage) && typeof usage.output_tokens === 'number' ? usage.output_tokens : null,
-      cacheReadTokens:
-        isObject(usage) && typeof usage.cache_read_input_tokens === 'number'
-          ? usage.cache_read_input_tokens
-          : null,
-      cost: typeof event.cost_usd === 'number' ? event.cost_usd : null,
+      durationMs: null,
+      inputTokens: isObject(usage) && typeof usage.input_tokens === 'number' ? usage.input_tokens : null,
+      outputTokens: isObject(usage) && typeof usage.output_tokens === 'number' ? usage.output_tokens : null,
+      cacheReadTokens: isObject(usage) && typeof usage.cached_input_tokens === 'number' ? usage.cached_input_tokens : null,
+      cost: null,
     })
   }
 
@@ -145,73 +106,35 @@ export const parseEventToSegments = (event: ClaudeEvent): ChatSegment[] => {
 // ── Args builder ──────────────────────────────────────────────────────────────
 
 /**
- * Build the `claude` argv for a chat run. Differs from the worker
- * `claudeStreamArgs` path in two ways:
- * 1. Uses `--resume` (not `--session-id`) when continuing a session so the
- *    assistant has the prior conversation context.
- * 2. Does NOT include `--no-session-persistence` so the session is saved
- *    between turns and `--resume` can pick it up.
+ * Build a Codex CLI invocation for a chat turn. The first turn stores the
+ * session automatically; later turns use `codex exec resume` with that ID.
  */
 const buildChatArgs = (
   content: string,
   sessionId: string | null,
   systemPrompt: string,
 ): readonly string[] => {
-  const base: string[] = [
-    '-p',
-    content,
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    '--dangerously-skip-permissions',
-    '--setting-sources',
-    'project,local',
-    '--append-system-prompt',
-    systemPrompt,
-  ]
   if (sessionId) {
-    base.push('--resume', toClaudeSessionId(sessionId))
+    return [
+      'exec', 'resume', '--json', '--model', 'gpt-5.5',
+      '-c', 'model_reasoning_effort="high"', sessionId, content,
+    ]
   }
-  return base
+  return [
+    'exec', '--json', '--model', 'gpt-5.5',
+    '-c', 'model_reasoning_effort="high"', '--sandbox', 'workspace-write',
+    `${'<system_instructions>'}\n${systemPrompt}\n</system_instructions>\n\n${content}`,
+  ]
 }
 
-// ── Delta tracker ─────────────────────────────────────────────────────────────
+const resolveCodexBin = (): string => process.env.MARS_CODEX_BIN?.trim() || 'codex'
 
-/**
- * Tracks the text head emitted so far for a single streaming assistant turn
- * and computes per-event text deltas.
- *
- * The claude CLI emits `assistant` events with *cumulative* text in each
- * content block: each event contains all assistant text generated so far, not
- * just the new chunk. `TextDeltaTracker.next()` converts that into the
- * incremental delta (text since the last emit) so the SSE client receives
- * progressive chunks rather than the full text repeated on every event.
- *
- * The tracker also handles the simpler "already-delta" format (each event
- * carries only new text) transparently: a text block that does not extend the
- * current head is treated as a fresh delta and appended.
- *
- * Exported for unit testing.
- */
-export class TextDeltaTracker {
-  private head = ''
-
-  /**
-   * Given the text from the latest assistant event content block (may be
-   * cumulative or incremental), return only the NEW portion. Returns `''`
-   * when there is nothing new to emit (e.g. a duplicate event).
-   */
-  next(text: string): string {
-    if (text.startsWith(this.head)) {
-      // Cumulative format: this event repeats everything seen so far.
-      const delta = text.slice(this.head.length)
-      this.head = text
-      return delta
-    }
-    // Delta format: the text is a fresh addition, not a cumulative repeat.
-    this.head += text
-    return text
-  }
+const safeCodexError = (result: RunSubprocessResult): string => {
+  if (result.exitCode === 127) return 'Codex is not available on this machine. Install or make the Codex CLI available, then try again.'
+  const detail = result.stderr.toLowerCase()
+  if (/(auth|login|credential|sign in)/.test(detail)) return 'Codex could not authenticate. Sign in with Codex, then try again.'
+  if (/(rate limit|usage limit|quota|spend limit)/.test(detail)) return 'Codex is temporarily unavailable because the account has reached its usage limit. Try again later.'
+  return 'Codex could not complete this response. Try again; if it continues, check the local Codex setup.'
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -220,7 +143,7 @@ export class TextDeltaTracker {
 const CHAT_TIMEOUT_MS = 10 * 60 * 1000
 
 /**
- * ChatRunner manages in-flight `claude -p` runs for chat threads.
+ * ChatRunner manages in-flight Codex CLI runs for chat threads.
  *
  * Call `sendMessage` to start a run. The run is fire-and-forget from the
  * HTTP handler's perspective: segments are pushed live over SSE and the
@@ -233,7 +156,7 @@ export class ChatRunner {
   private activeRuns = new Map<string, AbortController>()
 
   /**
-   * Start a claude run for `threadId`. Returns `{ alreadyRunning: true }`
+   * Start a Codex run for `threadId`. Returns `{ alreadyRunning: true }`
    * without spawning if there is already an active run for that thread
    * (the HTTP layer should respond 409). Otherwise starts the run
    * asynchronously and returns `{ alreadyRunning: false }`.
@@ -298,20 +221,11 @@ export class ChatRunner {
   ): Promise<void> {
     const accumulatedSegments: ChatSegment[] = []
     let detectedSessionId: string | null = null
-    // Tracks cumulative text emitted so far for the current text stream, used
-    // to compute the incremental delta broadcast via SSE on each event.
-    const textDelta = new TextDeltaTracker()
-
     const broadcastSegment = (seg: ChatSegment): void => {
       if (seg.type === 'text') {
-        // The claude CLI may emit cumulative text in each assistant event (each
-        // event contains all text generated so far). Compute the delta so the
-        // client receives only the new text on each SSE push.
-        const delta = textDelta.next(seg.text)
-        if (delta.length === 0) return // nothing new to emit
-        const deltaSeg: ChatSegment = { type: 'text', text: delta }
-        accumulatedSegments.push(deltaSeg)
-        hub?.broadcastData('chat', { threadId, event: deltaSeg })
+        if (seg.text.length === 0) return
+        accumulatedSegments.push(seg)
+        hub?.broadcastData('chat', { threadId, event: seg })
       } else {
         accumulatedSegments.push(seg)
         hub?.broadcastData('chat', { threadId, event: seg })
@@ -377,7 +291,7 @@ export class ChatRunner {
       }
 
       // Build context preamble for the first run of this thread so the agent
-      // has the alert card and conversation history when no claude session
+      // has the alert card and conversation history when no Codex session
       // exists yet (or when a previous session was lost after a daemon restart).
       if (!threadData.thread.context_seeded) {
         const preambleParts: string[] = []
@@ -491,18 +405,14 @@ export class ChatRunner {
       let subprocessResult: RunSubprocessResult
       try {
         subprocessResult = await runSubprocessStreaming(
-          resolveClaudeBin(),
+          resolveCodexBin(),
           buildChatArgs(promptContent, existingSessionId, systemPrompt),
           repoRoot,
           ({ stream, line }) => {
             if (stream !== 'stdout') return
-            const event = parseClaudeStreamLine(line)
-            if (!event) return
-            // Capture session_id from any event that carries it.
-            const sid = (event as { session_id?: unknown }).session_id
-            if (typeof sid === 'string' && sid.length > 0) {
-              detectedSessionId = sid
-            }
+            let event: unknown
+            try { event = JSON.parse(line) } catch { return }
+            if (isObject(event) && event.type === 'thread.started' && typeof event.thread_id === 'string') detectedSessionId = event.thread_id
             const segs = parseEventToSegments(event)
             for (const seg of segs) broadcastSegment(seg)
           },
@@ -525,8 +435,12 @@ export class ChatRunner {
       }
 
       if (subprocessResult.exitCode !== 0) {
-        const detail = subprocessResult.stderr.trim() || `exit code ${subprocessResult.exitCode}`
-        await finalize({ type: 'error', message: detail })
+        await finalize({ type: 'error', message: safeCodexError(subprocessResult) })
+        return
+      }
+
+      if (!accumulatedSegments.some((seg) => seg.type === 'text')) {
+        await finalize({ type: 'error', message: 'Codex completed without a chat response. Try again.' })
         return
       }
 

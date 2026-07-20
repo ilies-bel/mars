@@ -775,7 +775,7 @@ export type ReleaseNotesCursor = z.infer<typeof releaseNotesCursorSchema>
 // ----------------------------------------------------------------------------
 // Chat (GET /api/chat/threads, GET /api/chat/thread/:id, POST /api/chat/threads)
 // A chat thread holds an ordered list of messages each composed of typed
-// content segments (text / thinking / tool_use) from the Claude API.
+// content segments (text / thinking / tool_use) from the Codex CLI.
 // ----------------------------------------------------------------------------
 
 export const chatSegmentTextSchema = z.object({
@@ -830,7 +830,7 @@ export const chatSegmentAlertSchema = z.object({
 })
 
 /**
- * Result segment: emitted by the Claude runner at the end of a run with usage
+ * Result segment: emitted by the Codex runner at the end of a run with usage
  * statistics. Rendered as a subtle footer in the transcript.
  */
 export const chatSegmentResultSchema = z.object({
@@ -840,6 +840,12 @@ export const chatSegmentResultSchema = z.object({
   outputTokens: z.number().nullable().optional(),
   cacheReadTokens: z.number().nullable().optional(),
   cost: z.number().nullable().optional(),
+})
+
+/** A safe, durable provider error rendered inside the assistant transcript. */
+export const chatSegmentErrorSchema = z.object({
+  type: z.literal('error'),
+  message: z.string(),
 })
 
 /**
@@ -861,6 +867,7 @@ export const chatSegmentSchema = z.discriminatedUnion('type', [
   chatSegmentToolUseSchema,
   chatSegmentAlertSchema,
   chatSegmentResultSchema,
+  chatSegmentErrorSchema,
   chatSegmentToolResultSchema,
 ])
 
@@ -926,6 +933,7 @@ export type ChatSegmentThinking = z.infer<typeof chatSegmentThinkingSchema>
 export type ChatSegmentToolUse = z.infer<typeof chatSegmentToolUseSchema>
 export type ChatSegmentToolResult = z.infer<typeof chatSegmentToolResultSchema>
 export type ChatSegmentResult = z.infer<typeof chatSegmentResultSchema>
+export type ChatSegmentError = z.infer<typeof chatSegmentErrorSchema>
 export type ChatFeedback = z.infer<typeof chatFeedbackSchema>
 export type ChatMessage = z.infer<typeof chatMessageSchema>
 export type ChatThread = z.infer<typeof chatThreadSchema>

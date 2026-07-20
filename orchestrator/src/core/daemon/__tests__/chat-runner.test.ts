@@ -2,7 +2,7 @@
  * Tests for chat-runner.ts — stream-json parser and run state machine.
  *
  * Parser tests: pure unit tests over `parseEventToSegments` fed with
- * synthetic ClaudeEvent fixtures.
+ * synthetic Codex JSONL fixtures.
  *
  * State machine tests: drive the `ChatRunner` class with a mocked
  * subprocess layer to assert 409 on concurrent runs, stop finalisation,
@@ -18,134 +18,28 @@ import {
   vi,
   type MockInstance,
 } from 'vitest'
-import { parseEventToSegments, ChatRunner, TextDeltaTracker } from '../chat-runner'
-import type { ClaudeEvent } from '../../lib/claude-stream'
+import { parseEventToSegments, ChatRunner } from '../chat-runner'
 import type { SubprocessLine, RunSubprocessResult } from '../../lib/git/claude'
 
 // ── Parser tests ──────────────────────────────────────────────────────────────
 
 describe('parseEventToSegments', () => {
   it('produces no segments for an unrecognised event type', () => {
-    const event: ClaudeEvent = { type: 'system_init', session_id: 'abc' }
-    expect(parseEventToSegments(event)).toEqual([])
+    expect(parseEventToSegments({ type: 'turn.started' })).toEqual([])
   })
 
-  it('extracts a text segment from an assistant event', () => {
-    const event: ClaudeEvent = {
-      type: 'assistant',
-      message: { content: [{ type: 'text', text: 'Hello!' }] },
-    }
+  it('extracts a text segment from a completed Codex agent message', () => {
+    const event = { type: 'item.completed', item: { type: 'agent_message', text: 'Hello!' } }
     expect(parseEventToSegments(event)).toEqual([{ type: 'text', text: 'Hello!' }])
   })
 
-  it('extracts a thinking segment from an assistant event', () => {
-    const event: ClaudeEvent = {
-      type: 'assistant',
-      message: { content: [{ type: 'thinking', thinking: 'Let me think...' }] },
-    }
-    expect(parseEventToSegments(event)).toEqual([
-      { type: 'thinking', thinking: 'Let me think...' },
-    ])
-  })
-
-  it('extracts a tool_use segment from an assistant event', () => {
-    const event: ClaudeEvent = {
-      type: 'assistant',
-      message: {
-        content: [
-          {
-            type: 'tool_use',
-            id: 'tu_1',
-            name: 'Bash',
-            input: { command: 'ls' },
-          },
-        ],
-      },
-    }
-    expect(parseEventToSegments(event)).toEqual([
-      {
-        type: 'tool_use',
-        id: 'tu_1',
-        name: 'Bash',
-        input: { command: 'ls' },
-      },
-    ])
-  })
-
-  it('extracts multiple segments from a single assistant event', () => {
-    const event: ClaudeEvent = {
-      type: 'assistant',
-      message: {
-        content: [
-          { type: 'thinking', thinking: 'Thinking...' },
-          { type: 'text', text: 'Done.' },
-        ],
-      },
-    }
-    const segs = parseEventToSegments(event)
-    expect(segs).toHaveLength(2)
-    expect(segs[0]).toEqual({ type: 'thinking', thinking: 'Thinking...' })
-    expect(segs[1]).toEqual({ type: 'text', text: 'Done.' })
-  })
-
-  it('extracts a tool_result segment from a user event', () => {
-    const event: ClaudeEvent = {
-      type: 'user',
-      message: {
-        content: [
-          {
-            type: 'tool_result',
-            tool_use_id: 'tu_1',
-            content: 'file.txt',
-            is_error: false,
-          },
-        ],
-      },
-    }
-    expect(parseEventToSegments(event)).toEqual([
-      {
-        type: 'tool_result',
-        tool_use_id: 'tu_1',
-        content: 'file.txt',
-        isError: false,
-      },
-    ])
-  })
-
-  it('marks tool_result.isError true when is_error is true', () => {
-    const event: ClaudeEvent = {
-      type: 'user',
-      message: {
-        content: [
-          {
-            type: 'tool_result',
-            tool_use_id: 'tu_2',
-            content: 'ENOENT',
-            is_error: true,
-          },
-        ],
-      },
-    }
-    const [seg] = parseEventToSegments(event)
-    expect(seg).toMatchObject({ type: 'tool_result', isError: true })
-  })
-
-  it('extracts a result segment with usage and cost', () => {
-    const event: ClaudeEvent = {
-      type: 'result',
-      duration_ms: 1234,
-      cost_usd: 0.005,
-      usage: {
-        input_tokens: 100,
-        output_tokens: 50,
-        cache_read_input_tokens: 10,
-      },
-    }
+  it('extracts a result segment from Codex turn usage', () => {
+    const event = { type: 'turn.completed', usage: { input_tokens: 100, output_tokens: 50, cached_input_tokens: 10 } }
     expect(parseEventToSegments(event)).toEqual([
       {
         type: 'result',
-        durationMs: 1234,
-        cost: 0.005,
+        durationMs: null,
+        cost: null,
         inputTokens: 100,
         outputTokens: 50,
         cacheReadTokens: 10,
@@ -153,8 +47,8 @@ describe('parseEventToSegments', () => {
     ])
   })
 
-  it('tolerates missing fields in result event', () => {
-    const event: ClaudeEvent = { type: 'result' }
+  it('tolerates missing usage in a completed turn', () => {
+    const event = { type: 'turn.completed' }
     const [seg] = parseEventToSegments(event)
     expect(seg).toMatchObject({
       type: 'result',
@@ -166,65 +60,16 @@ describe('parseEventToSegments', () => {
     })
   })
 
-  it('ignores non-tool_result blocks in user events', () => {
-    const event: ClaudeEvent = {
-      type: 'user',
-      message: { content: [{ type: 'text', text: 'nope' }] },
-    }
+  it('ignores non-message Codex items', () => {
+    const event = { type: 'item.completed', item: { type: 'command_execution', command: 'ls' } }
     expect(parseEventToSegments(event)).toEqual([])
-  })
-
-  it('ignores blocks with missing text in assistant events', () => {
-    const event: ClaudeEvent = {
-      type: 'assistant',
-      message: { content: [{ type: 'text' }] },
-    }
-    expect(parseEventToSegments(event)).toEqual([])
-  })
-})
-
-// ── TextDeltaTracker tests ────────────────────────────────────────────────────
-
-describe('TextDeltaTracker', () => {
-  it('returns the full text on the first call (nothing emitted yet)', () => {
-    const t = new TextDeltaTracker()
-    expect(t.next('Hello')).toBe('Hello')
-  })
-
-  it('returns only the new suffix when events are cumulative (each repeats all prior text)', () => {
-    const t = new TextDeltaTracker()
-    expect(t.next('Hello')).toBe('Hello')
-    expect(t.next('Hello world')).toBe(' world')
-    expect(t.next('Hello world!')).toBe('!')
-  })
-
-  it('returns the full text of each event when events are already incremental deltas', () => {
-    const t = new TextDeltaTracker()
-    expect(t.next('Hello')).toBe('Hello')
-    expect(t.next(' world')).toBe(' world')
-    expect(t.next('!')).toBe('!')
-  })
-
-  it('returns empty string when text is unchanged (duplicate event)', () => {
-    const t = new TextDeltaTracker()
-    t.next('Hello')
-    expect(t.next('Hello')).toBe('')
-  })
-
-  it('handles a mix of empty and non-empty events without emitting empty deltas', () => {
-    const t = new TextDeltaTracker()
-    expect(t.next('')).toBe('')
-    expect(t.next('A')).toBe('A')
-    expect(t.next('A')).toBe('')
-    expect(t.next('AB')).toBe('B')
   })
 })
 
 // ── Delta emission integration tests ─────────────────────────────────────────
 //
-// These tests drive ChatRunner with a mock subprocess that emits cumulative
-// assistant events, then assert that the ViewStreamHub received incremental
-// delta broadcasts — not the raw cumulative text.
+// These tests drive ChatRunner with Codex JSONL events and assert that the
+// ViewStreamHub receives the completed agent messages.
 
 describe('ChatRunner delta emission', () => {
   beforeEach(() => {
@@ -236,15 +81,13 @@ describe('ChatRunner delta emission', () => {
     })
   })
 
-  it('emits incremental text delta events when the CLI sends cumulative assistant messages', async () => {
+  it('emits each completed Codex agent message as a text event', async () => {
     const broadcasts: unknown[] = []
     const mockHub = {
       broadcastData: (_ch: string, data: unknown) => { broadcasts.push(data) },
       broadcast: vi.fn(),
     }
 
-    // Simulate the claude CLI emitting cumulative text: each assistant event
-    // has the full text accumulated so far.
     mockRunSubprocessStreaming.mockImplementation(
       async (
         _cmd: string,
@@ -253,10 +96,10 @@ describe('ChatRunner delta emission', () => {
         onLine: ((l: SubprocessLine) => void) | undefined,
       ) => {
         if (onLine) {
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello world' }] } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello world!' }] } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'result', duration_ms: 100, cost_usd: 0.001, usage: { input_tokens: 5, output_tokens: 3, cache_read_input_tokens: 0 } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Hello' } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: ' world' } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '!' } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 5, output_tokens: 3, cached_input_tokens: 0 } }) })
         }
         return { exitCode: 0, stdout: '', stderr: '' }
       },
@@ -267,12 +110,11 @@ describe('ChatRunner delta emission', () => {
     await runner.sendMessage('t1', 'hi', '/repo', mockHub as never)
     await new Promise((r) => setTimeout(r, 20))
 
-    // Filter to text delta SSE events only.
+    // Filter to text SSE events only.
     const textBroadcasts = (broadcasts as Array<{ threadId: string; event: { type: string; text?: string } }>)
       .filter((b) => b.event.type === 'text')
       .map((b) => b.event.text)
 
-    // Should receive 3 incremental deltas, not 3 cumulative texts.
     expect(textBroadcasts).toEqual(['Hello', ' world', '!'])
   })
 
@@ -291,7 +133,7 @@ describe('ChatRunner delta emission', () => {
         onLine: ((l: SubprocessLine) => void) | undefined,
       ) => {
         if (onLine) {
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Complete response.' }] } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Complete response.' } }) })
         }
         return { exitCode: 0, stdout: '', stderr: '' }
       },
@@ -308,7 +150,7 @@ describe('ChatRunner delta emission', () => {
     expect(textBroadcasts).toEqual(['Complete response.'])
   })
 
-  it('accumulated text segments join correctly for DB persistence after cumulative events', async () => {
+  it('accumulated Codex messages join correctly for DB persistence', async () => {
     mockRunSubprocessStreaming.mockImplementation(
       async (
         _cmd: string,
@@ -317,9 +159,9 @@ describe('ChatRunner delta emission', () => {
         onLine: ((l: SubprocessLine) => void) | undefined,
       ) => {
         if (onLine) {
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'A' }] } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'AB' }] } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'ABC' }] } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'A' } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'B' } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'C' } }) })
         }
         return { exitCode: 0, stdout: '', stderr: '' }
       },
@@ -331,7 +173,6 @@ describe('ChatRunner delta emission', () => {
 
     const calls = vi.mocked(chatStore.appendMessage).mock.calls
     const assistantCall = calls.find((c) => c[1] === 'assistant')
-    // Concatenation of deltas ('A' + 'B' + 'C') should equal 'ABC'
     expect(assistantCall![2]).toBe('ABC')
   })
 })
@@ -339,7 +180,7 @@ describe('ChatRunner delta emission', () => {
 // ── State-machine tests ───────────────────────────────────────────────────────
 //
 // These tests mock the subprocess layer (runSubprocessStreaming) and the
-// chat-store so the runner logic can be exercised without a real claude
+// chat-store so the runner logic can be exercised without a real Codex CLI
 // binary or SQLite database.
 
 // We need to hoist mock declarations before imports so vi.mock hoisting works.
@@ -348,9 +189,7 @@ vi.mock('../chat-system-prompt', () => ({
 }))
 
 vi.mock('../../lib/git/claude', () => ({
-  resolveClaudeBin: vi.fn(() => '/usr/bin/claude'),
   buildWorkerEnv: vi.fn(() => ({})),
-  toClaudeSessionId: vi.fn((id: string) => id),
   runSubprocessStreaming: vi.fn(),
 }))
 
@@ -532,7 +371,7 @@ describe('ChatRunner state machine', () => {
   })
 
   it('persists assistant message with accumulated text on success', async () => {
-    // Simulate a run that emits two text segments.
+    // Simulate Codex emitting two completed agent messages.
     mockRunSubprocessStreaming.mockImplementation(
       async (
         _cmd: string,
@@ -541,8 +380,8 @@ describe('ChatRunner state machine', () => {
         onLine: ((l: SubprocessLine) => void) | undefined,
       ) => {
         if (onLine) {
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Hello ' }] } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'world!' }] } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Hello ' } }) })
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'world!' } }) })
         }
         return { exitCode: 0, stdout: '', stderr: '' }
       },
@@ -589,7 +428,7 @@ describe('ChatRunner state machine', () => {
   })
 
   it('finalises with error segment on non-zero exit code', async () => {
-    mockRunSubprocessStreaming.mockResolvedValue({ exitCode: 127, stdout: '', stderr: 'command not found: claude' })
+    mockRunSubprocessStreaming.mockResolvedValue({ exitCode: 127, stdout: '', stderr: 'command not found: codex' })
 
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'hi', '/repo', undefined)
@@ -600,11 +439,29 @@ describe('ChatRunner state machine', () => {
     const segments = assistantCall![3] as unknown[]
     const errSeg = (segments ?? []).find((s) => (s as { type?: string }).type === 'error')
     expect(errSeg).toBeDefined()
-    expect((errSeg as { message: string }).message).toContain('command not found')
+    expect((errSeg as { message: string }).message).toContain('Codex is not available')
+  })
+
+  it('redacts provider diagnostics from a persisted authentication error', async () => {
+    mockRunSubprocessStreaming.mockResolvedValue({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'authentication failed for token sk-private-value',
+    })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
+    const segments = assistantCall![3] as unknown[]
+    const errSeg = (segments ?? []).find((s) => (s as { type?: string }).type === 'error') as { message: string }
+    expect(errSeg.message).toBe('Codex could not authenticate. Sign in with Codex, then try again.')
+    expect(errSeg.message).not.toContain('sk-private-value')
   })
 
   it('saves detected session_id from stream to the thread', async () => {
-    // Emit a line with session_id
+    // Codex emits its durable session id as thread.started.
     mockRunSubprocessStreaming.mockImplementation(
       async (
         _cmd: string,
@@ -615,7 +472,7 @@ describe('ChatRunner state machine', () => {
         if (onLine) {
           onLine({
             stream: 'stdout',
-            line: JSON.stringify({ type: 'system_init', session_id: 'sess-abc-123' }),
+            line: JSON.stringify({ type: 'thread.started', thread_id: 'sess-abc-123' }),
           })
         }
         return { exitCode: 0, stdout: '', stderr: '' }
@@ -667,8 +524,7 @@ describe('ChatRunner state machine', () => {
     await new Promise((r) => setTimeout(r, 20))
 
     const subArgs = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
-    // buildChatArgs produces: ['-p', <content>, '--output-format', ...]
-    const prompt = subArgs[1]
+    const prompt = subArgs.at(-1)!
     expect(prompt).toContain('<thread_context>')
     expect(prompt).toContain('Daemon running stale code')
     expect(prompt).toContain('The running binary is 3 commits behind HEAD')
@@ -699,7 +555,7 @@ describe('ChatRunner state machine', () => {
     await new Promise((r) => setTimeout(r, 20))
 
     const subArgs = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
-    const prompt = subArgs[1]
+    const prompt = subArgs.at(-1)!
     expect(prompt).not.toContain('<thread_context>')
     expect(prompt).toBe('follow-up question')
     expect(vi.mocked(chatStore.markContextSeeded)).not.toHaveBeenCalled()
@@ -707,20 +563,21 @@ describe('ChatRunner state machine', () => {
 
   // ── System-prompt tests ────────────────────────────────────────────────────
 
-  it('passes --append-system-prompt on a fresh run (no session)', async () => {
+  it('pins gpt-5.5 and high effort, embedding system instructions on a fresh run', async () => {
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'hi', '/repo', undefined)
     await new Promise((r) => setTimeout(r, 20))
 
     const args = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
-    const idx = args.indexOf('--append-system-prompt')
-    expect(idx).toBeGreaterThan(-1)
-    expect(args[idx + 1]).toBe('TEST_SYSTEM_PROMPT')
-    // No --resume flag on a fresh run.
-    expect(args).not.toContain('--resume')
+    expect(args).toContain('exec')
+    expect(args).toContain('--json')
+    expect(args).toContain('gpt-5.5')
+    expect(args).toContain('model_reasoning_effort="high"')
+    expect(args).toContain('--sandbox')
+    expect(args.at(-1)).toContain('<system_instructions>\nTEST_SYSTEM_PROMPT')
   })
 
-  it('passes --append-system-prompt on a --resume turn', async () => {
+  it('resumes the persisted Codex session without repeating system instructions', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: {
         id: 't1', session_id: 'existing-sess', title: 'title', status: 'idle',
@@ -736,11 +593,10 @@ describe('ChatRunner state machine', () => {
     await new Promise((r) => setTimeout(r, 20))
 
     const args = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
-    const idx = args.indexOf('--append-system-prompt')
-    expect(idx).toBeGreaterThan(-1)
-    expect(args[idx + 1]).toBe('TEST_SYSTEM_PROMPT')
-    // Must also include --resume when a session exists.
-    expect(args).toContain('--resume')
+    expect(args.slice(0, 3)).toEqual(['exec', 'resume', '--json'])
+    expect(args).toContain('existing-sess')
+    expect(args.at(-1)).toBe('follow-up')
+    expect(args.at(-1)).not.toContain('system_instructions')
   })
 
   it('includes prior messages but no alert block on first run of a non-alert thread', async () => {
@@ -770,7 +626,7 @@ describe('ChatRunner state machine', () => {
     await new Promise((r) => setTimeout(r, 20))
 
     const subArgs = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
-    const prompt = subArgs[1]
+    const prompt = subArgs.at(-1)!
     expect(prompt).toContain('<thread_context>')
     expect(prompt).not.toContain('[Alert:')
     expect(prompt).toContain('[user] hello')
@@ -781,7 +637,7 @@ describe('ChatRunner state machine', () => {
 
   // ── Attachment tests ───────────────────────────────────────────────────────
 
-  it('injects image attachment path into the prompt passed to claude', async () => {
+  it('injects image attachment path into the prompt passed to Codex', async () => {
     let capturedArgs: readonly string[] = []
     mockRunSubprocessStreaming.mockImplementation(
       async (
@@ -799,8 +655,7 @@ describe('ChatRunner state machine', () => {
     ])
     await new Promise((r) => setTimeout(r, 20))
 
-    // args[1] is the prompt content (after '-p')
-    const prompt = capturedArgs[1] as string
+    const prompt = capturedArgs.at(-1) as string
     expect(prompt).toContain('describe this')
     expect(prompt).toContain('---')
     expect(prompt).toContain('The user attached image /abs/path/photo.png — read it with the Read tool.')
@@ -824,7 +679,7 @@ describe('ChatRunner state machine', () => {
     ])
     await new Promise((r) => setTimeout(r, 20))
 
-    const prompt = capturedArgs[1] as string
+    const prompt = capturedArgs.at(-1) as string
     expect(prompt).toContain('transcribe this')
     expect(prompt).toContain('audio file /abs/path/clip.mp3')
     expect(prompt).toContain('ffmpeg')

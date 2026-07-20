@@ -158,6 +158,7 @@ type ToolGroup = { kind: 'tool_group'; tools: ChatSegmentToolUse[] }
 type FlatSegment =
   | { kind: 'text'; text: string }
   | { kind: 'thinking'; text: string }
+  | { kind: 'error'; message: string }
   | ToolGroup
   | { kind: 'alert'; alert: ChatSegmentAlert }
   | { kind: 'result'; result: ChatSegmentResult }
@@ -213,6 +214,8 @@ export const groupMessageSegments = (msg: ChatMessage): FlatSegment[] => {
       } else if (seg.type === 'thinking' && seg.text) {
         // Skip empty thinking segments — they render as a pointless blank block.
         out.push({ kind: 'thinking', text: seg.text })
+      } else if (seg.type === 'error') {
+        out.push({ kind: 'error', message: seg.message })
       }
       // Any other (unknown) segment type is silently dropped.
     }
@@ -713,6 +716,17 @@ export const ChatMessageBubble = ({
           }
           if (seg.kind === 'thinking') {
             return <ThinkingBlock key={i} text={seg.text} />
+          }
+          if (seg.kind === 'error') {
+            return (
+              <div
+                key={i}
+                role="alert"
+                className="my-2 rounded border border-red-400/40 bg-red-950/20 px-3 py-2 font-mono text-[12px] text-red-200"
+              >
+                <span className="font-semibold">Codex could not respond.</span>{' '}{seg.message}
+              </div>
+            )
           }
           return <ToolActivityGroup key={i} tools={seg.tools} />
         })}
