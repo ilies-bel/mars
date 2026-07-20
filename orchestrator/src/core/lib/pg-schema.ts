@@ -1,0 +1,682 @@
+/**
+ * THE canonical Mars schema (migration 0002 §4) — every table, index, CHECK
+ * and FK in one place. Replaces the SQLite-era imperative migration engine
+ * (queue.ts `migrateQueueSchema` + per-module `init*` DDL) wholesale: Mars is
+ * pre-1.0, the in-place migration history is captured once by the one-time
+ * SQLite importer (`src/init/import-sqlite.ts`), and from here on the schema
+ * evolves through this module + `schema_migrations`.
+ *
+ * Type translation from the SQLite inventory (design 0002 §4):
+ * - `INTEGER PRIMARY KEY AUTOINCREMENT` → `bigint GENERATED ALWAYS AS
+ *   IDENTITY` (events / self_heal_attempts; outbox cursor monotonicity is
+ *   preserved by the sequence).
+ * - every other `INTEGER` → `bigint` (epoch-millis columns exceed int4;
+ *   uniform int8 keeps the wrapper's one type parser sufficient). 0/1 flag
+ *   columns stay integers — retyping to boolean is out of scope.
+ * - `REAL` → `double precision`, `BLOB` → `bytea`.
+ * - `DEFAULT (unixepoch())` → `DEFAULT floor(extract(epoch from now()))::bigint`.
+ * - TEXT ISO-8601 timestamps and JSON-in-TEXT columns stay `text`.
+ *
+ * Conflicts resolved here, once:
+ * - `tool_promotion_attempts` uses the store version
+ *   (store/tool-promotion-store.ts): status proposed/benchmarked/promoted/
+ *   retired, benchmark_before/benchmark_after, bigint created_at/decided_at.
+ *   The queue.ts stub shape is dead.
+ * - `proposals` is the full proposals.ts shape (bigint epoch timestamps),
+ *   superseding the queue.ts FK stub.
+ * - `task_blockers` keeps `provenance` (the SQLite CHECK-rebuild dropped it —
+ *   a latent bug, not a decision).
+ * - trace_events / task_transcripts / task_durable_transcripts exist exactly
+ *   once (they were duplicated across 4/2/3 files).
+ * - `idx_events_id` (redundant with the PK) is not ported.
+ * - `self_heal_attempts.fix_task_id` gains an index: it carries ON DELETE
+ *   CASCADE from tasks and would seq-scan on every task purge otherwise
+ *   (flagged as a real gap by the migration inventory).
+ */
+
+import type { DbClient } from './db.js'
+
+/** Bumped when the canonical DDL changes shape. */
+export const SCHEMA_VERSION = '0002'
+
+/** `DEFAULT (unixepoch())` translation. */
+const EPOCH_NOW = "floor(extract(epoch from now()))::bigint"
+
+/**
+ * The complete DDL, in dependency order (FK targets first). Every statement
+ * is idempotent (IF NOT EXISTS) so ensureSchema can run at every startup.
+ */
+const DDL: readonly string[] = [
+  // ── schema versioning ─────────────────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS schema_migrations (
+    version    text PRIMARY KEY,
+    applied_at text NOT NULL
+  )`,
+
+  // ── proposal domain (FK target of tasks) ──────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS proposals (
+    id                text PRIMARY KEY,
+    title             text NOT NULL DEFAULT '',
+    problem           text NOT NULL DEFAULT '',
+    solution          text NOT NULL DEFAULT '',
+    out_of_scope      text NOT NULL DEFAULT '',
+    notes             text NOT NULL DEFAULT '',
+    status            text NOT NULL DEFAULT 'draft',
+    source            text NOT NULL DEFAULT 'human',
+    author_kind       text,
+    author_name       text,
+    kpi_tag           text,
+    fingerprint       text,
+    origin_session_id text,
+    created_at        bigint NOT NULL,
+    updated_at        bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_proposals_fingerprint
+     ON proposals(fingerprint) WHERE fingerprint IS NOT NULL`,
+  `CREATE TABLE IF NOT EXISTS proposal_user_stories (
+    proposal_id text   NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+    position    bigint NOT NULL,
+    text        text   NOT NULL,
+    PRIMARY KEY (proposal_id, position)
+  )`,
+  `CREATE TABLE IF NOT EXISTS proposal_dependencies (
+    proposal_id         text NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+    blocker_proposal_id text NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+    created_at          text NOT NULL,
+    PRIMARY KEY (proposal_id, blocker_proposal_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_proposal_dependencies_proposal
+     ON proposal_dependencies(proposal_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_proposal_dependencies_blocker
+     ON proposal_dependencies(blocker_proposal_id)`,
+  `CREATE TABLE IF NOT EXISTS proposal_notes (
+    id         text   PRIMARY KEY,
+    slug       text   NOT NULL,
+    text       text   NOT NULL,
+    created_at bigint NOT NULL
+  )`,
+
+  // ── task domain ───────────────────────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS tasks (
+    id                   text   PRIMARY KEY,
+    prompt               text   NOT NULL,
+    status               text   NOT NULL
+                                CHECK (status IN ('draft','triaging','queued','running','verifying','awaiting-validation','awaiting-human','merging','vega-reconciling','done','failed','dropped','blocked','under_investigation')),
+    plan_functional      text,
+    plan_technical       text,
+    branch               text,
+    worktree_path        text,
+    claude_session_id    text,
+    error                text,
+    drop_reason          text,
+    retry_count          bigint NOT NULL DEFAULT 0,
+    author_kind          text,
+    author_name          text,
+    failure_reason       text,
+    failure_reason_code  text,
+    recovery_payload     text,
+    fix_for_task_id      text   REFERENCES tasks(id),
+    failure_signature    text,
+    kind                 text,
+    priority             bigint NOT NULL DEFAULT 0,
+    tag                  text,
+    tags_json            text,
+    origin_id            text,
+    parent_proposal_id   text   REFERENCES proposals(id),
+    slice_index          bigint,
+    failed_phase         text,
+    resume_from          text,
+    verify_cmd           text,
+    preview_cmd          text,
+    dev_server_url       text,
+    dev_server_pid       bigint,
+    preview_validated    bigint NOT NULL DEFAULT 0,
+    task_type            text,
+    read_first_json      text,
+    prescriptive_action  text,
+    slice_kind           text,
+    sub_deliverable_json text,
+    integration_head_sha text,
+    followup_dedup_key   text,
+    intent               text   NOT NULL DEFAULT '',
+    lease_owner          text,
+    leased_at            text,
+    lease_note           text,
+    origin_session_id    text,
+    workflow             text,
+    current_step_name    text,
+    current_step_guide   text,
+    created_at           text   NOT NULL,
+    updated_at           text   NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created
+     ON tasks(priority DESC, created_at ASC)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for
+     ON tasks(fix_for_task_id, failure_signature)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_kind ON tasks(kind)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_origin_id ON tasks(origin_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_parent_proposal_id
+     ON tasks(parent_proposal_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_followup_dedup_key
+     ON tasks(followup_dedup_key)`,
+  `CREATE TABLE IF NOT EXISTS task_blockers (
+    task_id         text NOT NULL REFERENCES tasks(id),
+    blocker_task_id text NOT NULL REFERENCES tasks(id),
+    state           text NOT NULL DEFAULT 'confirmed'
+                         CHECK (state IN ('confirmed','pending-review','rejected')),
+    provenance      text NOT NULL DEFAULT 'inferred',
+    created_at      text NOT NULL,
+    PRIMARY KEY (task_id, blocker_task_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_task_blockers_task ON task_blockers(task_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_task_blockers_blocker
+     ON task_blockers(blocker_task_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_task_blockers_task_state
+     ON task_blockers(task_id, state)`,
+  `CREATE TABLE IF NOT EXISTS task_proposal_blockers (
+    task_id     text NOT NULL REFERENCES tasks(id),
+    proposal_id text NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+    created_at  text NOT NULL,
+    PRIMARY KEY (task_id, proposal_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_task_proposal_blockers_task
+     ON task_proposal_blockers(task_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_task_proposal_blockers_proposal
+     ON task_proposal_blockers(proposal_id)`,
+  `CREATE TABLE IF NOT EXISTS task_acceptance (
+    id         text   PRIMARY KEY,
+    task_id    text   NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    position   bigint NOT NULL,
+    text       text   NOT NULL,
+    status     text   NOT NULL DEFAULT 'pending',
+    note       text,
+    updated_at text   NOT NULL,
+    UNIQUE (task_id, position)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_task_acceptance_task ON task_acceptance(task_id)`,
+  `CREATE TABLE IF NOT EXISTS self_heal_attempts (
+    id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    parent_task_id    text NOT NULL,
+    failure_signature text NOT NULL,
+    fix_task_id       text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    created_at        text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_self_heal_attempts_parent_signature
+     ON self_heal_attempts(parent_task_id, failure_signature)`,
+  `CREATE INDEX IF NOT EXISTS idx_self_heal_attempts_fix_task
+     ON self_heal_attempts(fix_task_id)`,
+  `CREATE TABLE IF NOT EXISTS task_claude_sessions (
+    task_id    text   NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    session_id text   NOT NULL,
+    position   bigint NOT NULL,
+    PRIMARY KEY (task_id, session_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_task_claude_sessions_task
+     ON task_claude_sessions(task_id, position)`,
+  `CREATE TABLE IF NOT EXISTS task_spec_files (
+    task_id  text   NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    path     text   NOT NULL,
+    position bigint NOT NULL,
+    PRIMARY KEY (task_id, path)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_task_spec_files_task
+     ON task_spec_files(task_id, position)`,
+  `CREATE TABLE IF NOT EXISTS task_done_criteria (
+    task_id   text   NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    criterion text   NOT NULL,
+    position  bigint NOT NULL,
+    PRIMARY KEY (task_id, criterion)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_task_done_criteria_task
+     ON task_done_criteria(task_id, position)`,
+  `CREATE TABLE IF NOT EXISTS questions (
+    id         text PRIMARY KEY,
+    task_id    text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    question   text NOT NULL,
+    rationale  text,
+    category   text,
+    answer     text,
+    status     text NOT NULL DEFAULT 'open',
+    created_at text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_questions_task ON questions(task_id)`,
+  `CREATE TABLE IF NOT EXISTS task_progress (
+    id              text   PRIMARY KEY,
+    task_id         text   NOT NULL REFERENCES tasks(id),
+    created_at      text   NOT NULL,
+    author          text   NOT NULL,
+    kind            text   NOT NULL CHECK (kind IN ('note','check','uncheck')),
+    body            text   NOT NULL,
+    criterion_index bigint
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_task_progress_task_time
+     ON task_progress(task_id, created_at)`,
+
+  // ── observability (no FK to tasks on purpose: events outlive tasks) ───────
+  `CREATE TABLE IF NOT EXISTS trace_events (
+    id        text PRIMARY KEY,
+    timestamp text NOT NULL,
+    kind      text NOT NULL,
+    severity  text NOT NULL DEFAULT 'info',
+    task_id   text,
+    origin_id text,
+    phase     text,
+    payload   text NOT NULL DEFAULT '{}'
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_trace_events_task_time
+     ON trace_events (task_id, timestamp)`,
+  `CREATE INDEX IF NOT EXISTS idx_trace_events_time_desc
+     ON trace_events (timestamp DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_trace_events_origin_time
+     ON trace_events (origin_id, timestamp)`,
+  `CREATE INDEX IF NOT EXISTS idx_trace_events_step_ended_time
+     ON trace_events (timestamp) WHERE kind = 'step_ended'`,
+  `CREATE TABLE IF NOT EXISTS task_transcripts (
+    task_id    text   NOT NULL,
+    session_id text   NOT NULL,
+    seq        bigint NOT NULL,
+    chunk      text   NOT NULL,
+    ts         text   NOT NULL,
+    PRIMARY KEY (task_id, session_id, seq)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_task_transcripts_task
+     ON task_transcripts (task_id, ts)`,
+  `CREATE TABLE IF NOT EXISTS task_durable_transcripts (
+    task_id    text   PRIMARY KEY,
+    session_id text   NOT NULL DEFAULT '',
+    step_name  text   NOT NULL DEFAULT '',
+    created_at text   NOT NULL,
+    transcript bytea  NOT NULL,
+    byte_len   bigint NOT NULL
+  )`,
+
+  // ── outbox / wire bus ─────────────────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS events (
+    id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    type    text   NOT NULL,
+    payload text   NOT NULL,
+    ts      bigint NOT NULL DEFAULT ${EPOCH_NOW}
+  )`,
+  `CREATE TABLE IF NOT EXISTS subscribers (
+    name   text   PRIMARY KEY,
+    cursor bigint NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS subscriber_processed_events (
+    subscriber_id text   NOT NULL,
+    event_id      bigint NOT NULL,
+    processed_at  bigint NOT NULL DEFAULT ${EPOCH_NOW},
+    PRIMARY KEY (subscriber_id, event_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS subscriber_stalls (
+    subscriber_id text   NOT NULL,
+    event_id      bigint NOT NULL,
+    last_error    text   NOT NULL,
+    raised_at     bigint NOT NULL DEFAULT ${EPOCH_NOW},
+    PRIMARY KEY (subscriber_id, event_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS signals (
+    id          text   PRIMARY KEY,
+    task_id     text   NOT NULL,
+    kind        text   NOT NULL,
+    recorded_at bigint NOT NULL DEFAULT ${EPOCH_NOW}
+  )`,
+
+  // ── action queue ──────────────────────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS action_queue_items (
+    id              text   PRIMARY KEY,
+    kind            text   NOT NULL,
+    category        text   NOT NULL,
+    priority        text   NOT NULL,
+    state           text   NOT NULL DEFAULT 'open',
+    title           text   NOT NULL,
+    body            text   NOT NULL DEFAULT '',
+    payload         text   NOT NULL DEFAULT '{}',
+    context         text   NOT NULL DEFAULT '{}',
+    raised_by       text   NOT NULL,
+    raised_at       text   NOT NULL,
+    resolved_at     text,
+    resolution      text,
+    resolution_note text,
+    root_cause      text,
+    fingerprint     text,
+    signature       text,
+    seen_count      bigint NOT NULL DEFAULT 1,
+    last_seen_at    text,
+    resolved_by     text,
+    origin_task_id  text,
+    snoozed_until   text
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_state
+     ON action_queue_items(fingerprint, state)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_queue_state ON action_queue_items(state)`,
+  // "by" is a reserved word in PostgreSQL — quoted here, and call sites must
+  // quote it too (all-lowercase, so quoting does not change identity).
+  `CREATE TABLE IF NOT EXISTS action_queue_history (
+    id         text PRIMARY KEY,
+    item_id    text NOT NULL REFERENCES action_queue_items(id),
+    at         text NOT NULL,
+    from_state text,
+    to_state   text NOT NULL,
+    "by"       text,
+    note       text
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_action_queue_history_item
+     ON action_queue_history(item_id, at)`,
+
+  // ── chat ──────────────────────────────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS chat_threads (
+    id             text   PRIMARY KEY,
+    title          text   NOT NULL DEFAULT '',
+    session_id     text,
+    status         text   NOT NULL DEFAULT 'idle',
+    origin         text,
+    alert_item_id  text,
+    alert_resolved bigint NOT NULL DEFAULT 0,
+    context_seeded bigint NOT NULL DEFAULT 0,
+    created_at     text   NOT NULL,
+    updated_at     text   NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id
+     ON chat_threads(alert_item_id)`,
+  `CREATE TABLE IF NOT EXISTS chat_messages (
+    id         text PRIMARY KEY,
+    thread_id  text NOT NULL REFERENCES chat_threads(id),
+    role       text NOT NULL,
+    content    text NOT NULL,
+    segments   text,
+    created_at text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_id
+     ON chat_messages(thread_id)`,
+  `CREATE TABLE IF NOT EXISTS chat_feedback (
+    message_id text PRIMARY KEY REFERENCES chat_messages(id) ON DELETE CASCADE,
+    thread_id  text NOT NULL,
+    rating     text NOT NULL CHECK (rating IN ('up','down')),
+    note       text,
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_chat_feedback_rating ON chat_feedback(rating)`,
+  `CREATE INDEX IF NOT EXISTS idx_chat_feedback_thread_id
+     ON chat_feedback(thread_id)`,
+
+  // ── settings / preferences ────────────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS app_settings (
+    key        text PRIMARY KEY,
+    value      text NOT NULL,
+    updated_at text NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS preferences (
+    name  text PRIMARY KEY,
+    value text NOT NULL
+  )`,
+
+  // ── diagnoses ─────────────────────────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS diagnoses_root_cause (
+    task_id       text PRIMARY KEY,
+    evidence      text NOT NULL,
+    fix_direction text NOT NULL,
+    recorded_at   text NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS diagnoses_inconclusive (
+    task_id      text PRIMARY KEY,
+    what_checked text NOT NULL,
+    why_unscoped text NOT NULL,
+    recorded_at  text NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS diagnosis_involved_files (
+    task_id  text   NOT NULL,
+    position bigint NOT NULL,
+    path     text   NOT NULL,
+    PRIMARY KEY (task_id, position)
+  )`,
+
+  // ── verify gates ──────────────────────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS gate_enrichment (
+    signature            text   PRIMARY KEY,
+    status               text   NOT NULL,
+    encodable_family     text,
+    non_encodable_reason text,
+    step_spec            text,
+    origin_task_id       text   NOT NULL,
+    seen_count           bigint NOT NULL DEFAULT 1,
+    created_at           text   NOT NULL,
+    updated_at           text   NOT NULL,
+    approved_by          text,
+    approved_at          text,
+    retired_at           text
+  )`,
+  `CREATE TABLE IF NOT EXISTS gate_burn_in (
+    gate_name   text   PRIMARY KEY,
+    parse_count bigint NOT NULL DEFAULT 0,
+    promoted_at text
+  )`,
+  `CREATE TABLE IF NOT EXISTS gate_verdict_monitor (
+    id              bigint PRIMARY KEY CHECK (id = 1),
+    current_verdict text,
+    streak_count    bigint NOT NULL DEFAULT 0,
+    last_task_id    text,
+    updated_at      text   NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS gate_suppressed_verdicts (
+    verdict    text PRIMARY KEY,
+    tripped_at text NOT NULL
+  )`,
+
+  // ── KPIs / scoring / promotion ────────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS kpi_snapshots (
+    id text PRIMARY KEY,
+    taken_at     text NOT NULL,
+    window_start text NOT NULL,
+    window_end   text NOT NULL,
+    cost_per_arc_sample_count                 bigint NOT NULL,
+    cost_per_arc_low_confidence               bigint NOT NULL,
+    failure_rate_sample_count                 bigint NOT NULL,
+    failure_rate_low_confidence               bigint NOT NULL,
+    autonomous_completion_rate_sample_count   bigint NOT NULL,
+    autonomous_completion_rate_low_confidence bigint NOT NULL,
+    recovery_success_rate_sample_count        bigint NOT NULL,
+    recovery_success_rate_low_confidence      bigint NOT NULL,
+    cost_per_arc_p50           double precision,
+    cost_per_arc_p90           double precision,
+    failure_rate               double precision,
+    autonomous_completion_rate double precision,
+    recovery_success_rate      double precision
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_kpi_snapshots_taken_at
+     ON kpi_snapshots(taken_at)`,
+  `CREATE TABLE IF NOT EXISTS promotion_ledger (
+    id                   text   PRIMARY KEY,
+    workflow             text   NOT NULL,
+    candidate_version_id text   NOT NULL,
+    incumbent_version_id text   NOT NULL,
+    candidate_score      double precision,
+    incumbent_score      double precision,
+    candidate_n          bigint NOT NULL DEFAULT 0,
+    incumbent_n          bigint NOT NULL DEFAULT 0,
+    decision             text   NOT NULL DEFAULT 'pending'
+                                CHECK (decision IN ('promoted','retired','pending')),
+    decided_at           bigint,
+    created_at           bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_promotion_ledger_workflow
+     ON promotion_ledger(workflow, created_at DESC)`,
+  // output_contract default mirrors SCORER_OUTPUT_CONTRACT in core/scorers.ts
+  // (inlined so the canonical schema stays dependency-free).
+  `CREATE TABLE IF NOT EXISTS scorers (
+    id              text   PRIMARY KEY,
+    workflow        text   NOT NULL,
+    title           text   NOT NULL,
+    rubric          text   NOT NULL,
+    output_contract text   NOT NULL DEFAULT 'continuous-0-1-with-one-line-rationale',
+    status          text   NOT NULL DEFAULT 'suggested',
+    origin_arc_id   text   NOT NULL,
+    report_path     text,
+    evidence        text   NOT NULL DEFAULT '[]',
+    confidence      double precision NOT NULL DEFAULT 0.5,
+    fingerprint     text   NOT NULL,
+    created_at      bigint NOT NULL,
+    updated_at      bigint NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_scorers_fingerprint ON scorers(fingerprint)`,
+  `CREATE INDEX IF NOT EXISTS idx_scorers_status ON scorers(status)`,
+  `CREATE TABLE IF NOT EXISTS scorer_results (
+    id                         text   PRIMARY KEY,
+    scorer_id                  text   NOT NULL,
+    task_id                    text   NOT NULL,
+    workflow                   text   NOT NULL,
+    score                      double precision,
+    rationale                  text   NOT NULL DEFAULT '',
+    status                     text   NOT NULL DEFAULT 'scored'
+                                      CHECK (status IN ('scored','error')),
+    created_at                 bigint NOT NULL,
+    workflow_config_version_id text
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_scorer_results_scorer_task
+     ON scorer_results(scorer_id, task_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_scorer_results_workflow
+     ON scorer_results(workflow, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_scorer_results_task ON scorer_results(task_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_scorer_results_workflow_config_version
+     ON scorer_results(workflow, workflow_config_version_id)`,
+  `CREATE TABLE IF NOT EXISTS workflow_configs (
+    id          text   PRIMARY KEY,
+    workflow    text   NOT NULL,
+    version     bigint NOT NULL,
+    config_hash text   NOT NULL,
+    status      text   NOT NULL DEFAULT 'baseline',
+    created_at  bigint NOT NULL,
+    updated_at  bigint NOT NULL,
+    UNIQUE (workflow, version)
+  )`,
+  `CREATE TABLE IF NOT EXISTS tool_promotion_attempts (
+    id                 text   PRIMARY KEY,
+    helper_key         text   NOT NULL,
+    motivating_arc_ids text   NOT NULL,
+    status             text   NOT NULL
+                              CHECK (status IN ('proposed','benchmarked','promoted','retired')),
+    benchmark_before   text,
+    benchmark_after    text,
+    created_at         bigint NOT NULL,
+    decided_at         bigint
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_tool_promotion_status
+     ON tool_promotion_attempts(status)`,
+
+  // ── memory packets ────────────────────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS memory_packets (
+    id            text PRIMARY KEY,
+    domain        text NOT NULL,
+    text          text NOT NULL,
+    salience      double precision NOT NULL CHECK (salience BETWEEN 0 AND 1),
+    origin_arc_id text,
+    created_at    text NOT NULL,
+    retired_at    text
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_memory_packets_domain_salience
+     ON memory_packets(domain, retired_at, salience DESC)`,
+
+  // ── @mars/workflow engine checkpoint state (queue-workflow-store.ts) ──────
+  `CREATE TABLE IF NOT EXISTS workflow_runs (
+    id          text   PRIMARY KEY,
+    workflow_id text   NOT NULL,
+    input_json  text   NOT NULL,
+    status      text   NOT NULL,
+    created_at  bigint NOT NULL,
+    updated_at  bigint NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS workflow_step_runs (
+    run_id         text   NOT NULL,
+    step_name      text   NOT NULL,
+    status         text   NOT NULL,
+    sha            text,
+    started_at     bigint NOT NULL,
+    finished_at    bigint,
+    attempt        bigint NOT NULL,
+    summary        text,
+    error_summary  text,
+    transcript_key text,
+    result_json    text,
+    seq            bigint NOT NULL,
+    PRIMARY KEY (run_id, step_name)
+  )`,
+]
+
+/**
+ * Every table the canonical schema owns. The importer intersects this set
+ * with the tables found in a legacy mars.db to decide what to copy.
+ */
+export const SCHEMA_TABLES: readonly string[] = [
+  'schema_migrations',
+  'proposals',
+  'proposal_user_stories',
+  'proposal_dependencies',
+  'proposal_notes',
+  'tasks',
+  'task_blockers',
+  'task_proposal_blockers',
+  'task_acceptance',
+  'self_heal_attempts',
+  'task_claude_sessions',
+  'task_spec_files',
+  'task_done_criteria',
+  'questions',
+  'task_progress',
+  'trace_events',
+  'task_transcripts',
+  'task_durable_transcripts',
+  'events',
+  'subscribers',
+  'subscriber_processed_events',
+  'subscriber_stalls',
+  'signals',
+  'action_queue_items',
+  'action_queue_history',
+  'chat_threads',
+  'chat_messages',
+  'chat_feedback',
+  'app_settings',
+  'preferences',
+  'diagnoses_root_cause',
+  'diagnoses_inconclusive',
+  'diagnosis_involved_files',
+  'gate_enrichment',
+  'gate_burn_in',
+  'gate_verdict_monitor',
+  'gate_suppressed_verdicts',
+  'kpi_snapshots',
+  'promotion_ledger',
+  'scorers',
+  'scorer_results',
+  'workflow_configs',
+  'tool_promotion_attempts',
+  'memory_packets',
+  'workflow_runs',
+  'workflow_step_runs',
+]
+
+/**
+ * Tables whose primary key is a `GENERATED ALWAYS AS IDENTITY` column.
+ * Inserting explicit ids into these requires `OVERRIDING SYSTEM VALUE`
+ * (the importer) and the sequence must be re-synced with setval afterwards.
+ */
+export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
+  events: 'id',
+  self_heal_attempts: 'id',
+}
+
+/**
+ * Applies the complete canonical schema (idempotent) and records
+ * SCHEMA_VERSION in schema_migrations. Safe to run at every startup;
+ * everything executes in one transaction (PostgreSQL DDL is transactional).
+ */
+export async function ensureSchema(client: DbClient): Promise<void> {
+  await client.batch([
+    ...DDL,
+    {
+      sql: `INSERT INTO schema_migrations (version, applied_at)
+            VALUES (?, ?) ON CONFLICT (version) DO NOTHING`,
+      args: [SCHEMA_VERSION, new Date().toISOString()],
+    },
+  ])
+}
