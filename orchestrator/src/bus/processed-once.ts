@@ -1,5 +1,14 @@
 import { withTransaction, type DbClient, type DbTx } from '../core/lib/db.js';
 
+/** Idempotent PostgreSQL schema bootstrap retained for legacy test setup. */
+export async function ensureProcessedOnceSchema(client?: DbClient): Promise<void> {
+  const [{ ensureSchema }, { resolveQueueClient }] = await Promise.all([
+    import('../core/lib/pg-schema.js'),
+    import('../core/queue.js'),
+  ]);
+  await ensureSchema(client ?? resolveQueueClient());
+}
+
 /**
  * Per-subscriber dedup over the `subscriber_processed_events` table (schema
  * owned by `core/lib/pg-schema.ts`).

@@ -16,6 +16,13 @@
  */
 
 import type { DbClient } from './db.js'
+import { resolveStateClient } from '../store/state-client'
+
+/** Idempotent PostgreSQL schema bootstrap retained for existing callers. */
+export const initSettings = async (): Promise<void> => {
+  const { ensureSchema } = await import('./pg-schema.js')
+  await ensureSchema(resolveStateClient())
+}
 
 /** Stable key used to persist the last-viewed release-notes timestamp. */
 export const RELEASE_NOTES_LAST_VIEWED_KEY = 'release_notes.last_viewed_at'

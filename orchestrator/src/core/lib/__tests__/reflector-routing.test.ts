@@ -29,6 +29,7 @@ vi.mock('../git/claude', () => ({ runClaudeCode: vi.fn() }))
 vi.mock('../../context', () => ({
   getRepoRoot: vi.fn().mockReturnValue('/tmp'),
   resolveContext: vi.fn().mockReturnValue({ stateDir: '/tmp' }),
+  resolveDbTarget: vi.fn().mockReturnValue('pglite://reflector-routing'),
 }))
 
 import { persistSuggestions, buildPrompt } from '../reflector'

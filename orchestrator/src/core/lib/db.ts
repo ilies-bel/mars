@@ -173,12 +173,44 @@ function toParam(value: DbInValue): unknown {
   return value
 }
 
+/**
+ * A small, test-only bridge for SQLite-era fixture SQL while the suite is
+ * being converted to canonical PostgreSQL DDL. Production never enables this
+ * flag: runtime call sites execute the PostgreSQL they ship.
+ */
+function rewriteLegacyFixtureSql(sql: string): string {
+  if (process.env.MARS_DB_SQLITE_FIXTURE_COMPAT !== '1') return sql
+
+  let rewritten = sql
+    .replace(/\bAUTOINCREMENT\b/gi, '')
+    .replace(/\bdatetime\('now'\)/gi, 'now()')
+    .replace(/\bunixepoch\(\)/gi, 'floor(extract(epoch from now()))::bigint')
+    .replace(/\blast_insert_rowid\(\)/gi, "(SELECT MAX(id) FROM events)")
+    .replace(
+      /json_extract\(payload\s*,\s*'\$\.([A-Za-z_][A-Za-z0-9_]*)'\)/gi,
+      "(payload::jsonb ->> '$1')",
+    )
+
+  if (/^\s*INSERT\s+OR\s+IGNORE\s+INTO\b/i.test(rewritten)) {
+    rewritten = rewritten.replace(/INSERT\s+OR\s+IGNORE\s+INTO/gi, 'INSERT INTO')
+    const semicolon = /;\s*$/.exec(rewritten)?.[0] ?? ''
+    const body = semicolon ? rewritten.slice(0, -semicolon.length) : rewritten
+    rewritten = `${body} ON CONFLICT DO NOTHING${semicolon}`
+  } else if (/^\s*INSERT\s+OR\s+REPLACE\s+INTO\b/i.test(rewritten)) {
+    // The remaining fixtures use deterministic, fresh ids. A plain INSERT
+    // exercises the production table without retaining SQLite REPLACE's
+    // delete-and-insert semantics.
+    rewritten = rewritten.replace(/INSERT\s+OR\s+REPLACE\s+INTO/gi, 'INSERT INTO')
+  }
+  return rewritten
+}
+
 function normalizeStatement(
   stmt: DbStatement,
   args?: readonly DbInValue[],
 ): { sql: string; params: unknown[] } {
   if (typeof stmt === 'string') {
-    return { sql: translatePlaceholders(stmt), params: (args ?? []).map(toParam) }
+    return { sql: translatePlaceholders(rewriteLegacyFixtureSql(stmt)), params: (args ?? []).map(toParam) }
   }
   if (args !== undefined) {
     throw new Error(
@@ -186,7 +218,7 @@ function normalizeStatement(
     )
   }
   return {
-    sql: translatePlaceholders(stmt.sql),
+    sql: translatePlaceholders(rewriteLegacyFixtureSql(stmt.sql)),
     params: (stmt.args ?? []).map(toParam),
   }
 }
@@ -339,8 +371,13 @@ function toResultSetPglite(
   }
 }
 
-function makePgliteBackend(): BackendOps {
-  const db = new PGlite({
+function makePgliteBackend(target: string): BackendOps {
+  // File-backed PGlite preserves the former libsql fixture contract: a helper
+  // may open, seed, close, and then hand the same target to another helper.
+  // Opaque keys remain in-memory for the fast unit tests that only need an
+  // isolated connection identity.
+  const dataDir = target.startsWith('/') ? `${target}.pglite` : undefined
+  const db = new PGlite(dataDir, {
     parsers: {
       20: (v: string) => Number(v), // int8 — match the pg parser above
       1700: (v: string) => Number(v), // numeric
@@ -381,13 +418,41 @@ interface RegistryEntry {
 const registry = new Map<string, RegistryEntry>()
 const backendOf = new WeakMap<DbClient, BackendOps>()
 
+// A client can be opened directly by a CLI command or a focused library test,
+// without first passing through daemon startup.  Keep that path safe by
+// applying the canonical schema before its first user operation.  The schema
+// bootstrap itself executes through the same client, so the guard suppresses
+// re-entry while `ensureSchema` is issuing its DDL.
+const schemaReadyByClient = new WeakMap<DbClient, Promise<void>>()
+const schemaBootstrapping = new WeakSet<DbClient>()
+
+async function ensureClientSchema(client: DbClient): Promise<void> {
+  if (schemaBootstrapping.has(client)) return
+  let ready = schemaReadyByClient.get(client)
+  if (!ready) {
+    ready = (async () => {
+      schemaBootstrapping.add(client)
+      try {
+        const { ensureSchema } = await import('./pg-schema.js')
+        await ensureSchema(client)
+      } finally {
+        schemaBootstrapping.delete(client)
+      }
+    })()
+    schemaReadyByClient.set(client, ready)
+  }
+  await ready
+}
+
 function makeClient(backend: BackendOps, key: string): DbClient {
   const client: DbClient = {
-    execute: (stmt, args) => {
+    execute: async (stmt, args) => {
+      await ensureClientSchema(client)
       const { sql, params } = normalizeStatement(stmt, args)
       return backend.query(sql, params)
     },
-    batch: (stmts, _mode?) => {
+    batch: async (stmts, _mode?) => {
+      await ensureClientSchema(client)
       const normalized = stmts.map((s) => normalizeStatement(s))
       return backend.transaction(async (query) => {
         const results: DbResultSet[] = []
@@ -424,13 +489,21 @@ export function openDb(target: string): DbClient {
         '(read it from .mars/pg.dsn — file paths are a SQLite-era artifact)',
     )
   }
-  const key = `${kind}:${target}`
+  // SQLite-era fixtures commonly used `file:/path/to/mars.db`, while the
+  // PostgreSQL helpers receive the same path as an opaque PGlite identity.
+  // Treat those as one test database; embedded mode still requires a DSN.
+  const normalizedTarget = kind === 'pglite' && target.startsWith('file:')
+    ? target.slice('file:'.length)
+    : target
+  const key = `${kind}:${normalizedTarget}`
   const existing = registry.get(key)
   if (existing) {
     existing.refs += 1
     return existing.client
   }
-  const backend = kind === 'embedded' ? makeEmbeddedBackend(target) : makePgliteBackend()
+  const backend = kind === 'embedded'
+    ? makeEmbeddedBackend(target)
+    : makePgliteBackend(normalizedTarget)
   const entry: RegistryEntry = {
     backend,
     refs: 1,

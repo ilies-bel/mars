@@ -3378,7 +3378,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
     const queue = await import('../../core/queue')
     await queue.migrateQueueSchema()
     await queue.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'done', updated_at = datetime('now') WHERE id = ?`,
+      sql: `UPDATE tasks SET status = 'done', updated_at = now() WHERE id = ?`,
       args: [taskId],
     })
   }
@@ -3708,7 +3708,7 @@ describe('hitl slice completion: both actionQueue resolved and sub-task done req
       skipTriage: true,
     })
     await queue.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'done', updated_at = datetime('now') WHERE id = ?`,
+      sql: `UPDATE tasks SET status = 'done', updated_at = now() WHERE id = ?`,
       args: [task.id],
     })
 

@@ -4,6 +4,9 @@ import { configDefaults, defineConfig } from 'vitest/config'
 export default defineConfig({
   resolve: {
     alias: {
+      '@libsql/client': fileURLToPath(
+        new URL('./src/test/libsql-test-adapter.ts', import.meta.url),
+      ),
       // The orchestrator consumes the in-house workflow engine straight from
       // source (no build step — the package `exports` points at its raw
       // `src/index.ts`). Mirror the tsconfig `paths` alias here so vitest's

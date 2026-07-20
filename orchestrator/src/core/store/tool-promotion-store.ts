@@ -17,6 +17,13 @@
  */
 
 import type { DbClient } from '../lib/db.js'
+import { resolveStateClient } from './state-client'
+
+/** Idempotent PostgreSQL schema bootstrap retained for command callers. */
+export const initToolPromotionAttempts = async (): Promise<void> => {
+  const { ensureSchema } = await import('../lib/pg-schema.js')
+  await ensureSchema(resolveStateClient())
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

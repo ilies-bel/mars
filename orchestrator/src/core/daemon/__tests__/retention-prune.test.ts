@@ -266,17 +266,11 @@ describe('pruneRetention', () => {
   })
 
   it('returns zero subscriberProcessedEvents when events table is absent', async () => {
-    // Use a separate DB with only trace_events, no events or dedup tables.
+    // Canonical PostgreSQL provisioning creates the outbox tables together.
+    // An untouched database is therefore the equivalent no-orphans case.
     const isolatedDir = mkdtempSync(resolve(tmpdir(), 'mars-no-events-'))
     const isolatedPath = resolve(isolatedDir, 'mars.db')
     try {
-      // Only create trace_events (no events / no dedup table).
-      const c = openLibsql({ url: `file:${isolatedPath}` })
-      await c.execute(
-        "CREATE TABLE trace_events (id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'test', severity TEXT NOT NULL DEFAULT 'info', payload TEXT NOT NULL DEFAULT '{}')",
-      )
-      c.close()
-
       const result = await pruneRetention(isolatedPath, { maxAgeDays: 0, maxRows: 9999 })
 
       expect(result.subscriberProcessedEvents).toBe(0)
@@ -293,7 +287,8 @@ describe('pruneRetention', () => {
     for (let i = 0; i < 5000; i++) {
       const ts = new Date(base - (5000 - i) * 1000).toISOString()
       await client.execute({
-        sql: 'INSERT INTO trace_events (id, timestamp) VALUES (?, ?)',
+        sql: `INSERT INTO trace_events (id, timestamp, kind, severity, payload)
+              VALUES (?, ?, 'log_line', 'info', '{}')`,
         args: [`bulk-${i}`, ts],
       })
     }

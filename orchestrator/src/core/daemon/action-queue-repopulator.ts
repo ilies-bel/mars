@@ -284,7 +284,7 @@ export async function drainToolPromotionLedger(
   client: DbClient,
 ): Promise<{ raised: number }> {
   const result = await client.execute(
-    `SELECT id, helper_key, before_data, after_data, motivating_arc_ids
+    `SELECT id, helper_key, benchmark_before, benchmark_after, motivating_arc_ids
        FROM tool_promotion_attempts
       WHERE status = 'benchmarked'`,
   )
@@ -293,11 +293,11 @@ export async function drainToolPromotionLedger(
   for (const row of result.rows) {
     const attemptId = row['id'] as string
     const helperKey = row['helper_key'] as string
-    const before: unknown = row['before_data']
-      ? JSON.parse(row['before_data'] as string)
+    const before: unknown = row['benchmark_before']
+      ? JSON.parse(row['benchmark_before'] as string)
       : null
-    const after: unknown = row['after_data']
-      ? JSON.parse(row['after_data'] as string)
+    const after: unknown = row['benchmark_after']
+      ? JSON.parse(row['benchmark_after'] as string)
       : null
     const motivatingArcIds: string[] = row['motivating_arc_ids']
       ? JSON.parse(row['motivating_arc_ids'] as string)

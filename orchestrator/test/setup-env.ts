@@ -13,3 +13,7 @@ process.env.MARS_ARC_INVARIANT_CHECK = '1'
 // tests need no daemon-provisioned embedded-postgres server. `??=` so a
 // developer can still force `MARS_DB_BACKEND=embedded` against a live server.
 process.env.MARS_DB_BACKEND ??= 'pglite'
+
+// Temporary compatibility for test fixtures that still spell their setup DDL
+// in SQLite syntax. Production code never sets this flag.
+process.env.MARS_DB_SQLITE_FIXTURE_COMPAT = '1'

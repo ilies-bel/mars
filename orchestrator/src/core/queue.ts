@@ -494,6 +494,12 @@ export const ensureQueueSchema = (): Promise<void> => {
   return schemaReady
 }
 
+/**
+ * Compatibility name retained while callers migrate from the SQLite-era
+ * bootstrap API. PostgreSQL has one canonical, idempotent schema.
+ */
+export const migrateQueueSchema = (): Promise<void> => ensureQueueSchema()
+
 const MAX_CONVERSATION_BYTES = 2 * 1024 * 1024
 const HALF_WINDOW_BYTES = 1 * 1024 * 1024
 

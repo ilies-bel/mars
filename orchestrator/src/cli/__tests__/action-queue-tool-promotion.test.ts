@@ -140,11 +140,11 @@ describe('drainToolPromotionLedger — repopulator scan', () => {
   it('raises one action-queue row per benchmarked attempt', async () => {
     const { q, actionQueue, rep } = await loadModules(repo)
     const client = q.resolveQueueClient()
-    const now = new Date().toISOString()
+    const now = Date.now()
 
     await client.execute({
       sql: `INSERT INTO tool_promotion_attempts
-              (id, helper_key, status, before_data, after_data, motivating_arc_ids, created_at)
+              (id, helper_key, status, benchmark_before, benchmark_after, motivating_arc_ids, created_at)
             VALUES (?, ?, 'benchmarked', ?, ?, ?, ?)`,
       args: [
         'attempt-001',
@@ -170,11 +170,11 @@ describe('drainToolPromotionLedger — repopulator scan', () => {
   it('does not duplicate rows on re-scan (idempotent by attemptId)', async () => {
     const { q, actionQueue, rep } = await loadModules(repo)
     const client = q.resolveQueueClient()
-    const now = new Date().toISOString()
+    const now = Date.now()
 
     await client.execute({
       sql: `INSERT INTO tool_promotion_attempts
-              (id, helper_key, status, before_data, after_data, motivating_arc_ids, created_at)
+              (id, helper_key, status, benchmark_before, benchmark_after, motivating_arc_ids, created_at)
             VALUES (?, ?, 'benchmarked', NULL, NULL, '[]', ?)`,
       args: ['attempt-idem', 'dedupHelper', now],
     })
@@ -197,12 +197,12 @@ describe('drainToolPromotionLedger — repopulator scan', () => {
   it('skips attempts with status other than benchmarked', async () => {
     const { q, actionQueue, rep } = await loadModules(repo)
     const client = q.resolveQueueClient()
-    const now = new Date().toISOString()
+    const now = Date.now()
 
     await client.execute({
       sql: `INSERT INTO tool_promotion_attempts
-              (id, helper_key, status, before_data, after_data, motivating_arc_ids, created_at)
-            VALUES (?, ?, 'pending', NULL, NULL, '[]', ?)`,
+              (id, helper_key, status, benchmark_before, benchmark_after, motivating_arc_ids, created_at)
+            VALUES (?, ?, 'proposed', NULL, NULL, '[]', ?)`,
       args: ['attempt-pending', 'notYetHelper', now],
     })
 
@@ -216,12 +216,12 @@ describe('drainToolPromotionLedger — repopulator scan', () => {
   it('raises multiple rows when multiple benchmarked attempts exist', async () => {
     const { q, actionQueue, rep } = await loadModules(repo)
     const client = q.resolveQueueClient()
-    const now = new Date().toISOString()
+    const now = Date.now()
 
     for (const id of ['attempt-m1', 'attempt-m2', 'attempt-m3']) {
       await client.execute({
         sql: `INSERT INTO tool_promotion_attempts
-                (id, helper_key, status, before_data, after_data, motivating_arc_ids, created_at)
+                (id, helper_key, status, benchmark_before, benchmark_after, motivating_arc_ids, created_at)
               VALUES (?, ?, 'benchmarked', NULL, NULL, '[]', ?)`,
         args: [id, `helper-${id}`, now],
       })

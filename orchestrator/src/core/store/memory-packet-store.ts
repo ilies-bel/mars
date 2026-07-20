@@ -16,6 +16,15 @@ import { randomBytes } from 'node:crypto'
 import { resolveStateClient } from './state-client'
 import type { Task } from '../queue'
 
+/** Idempotent PostgreSQL schema bootstrap retained for existing callers. */
+export const initMemoryPackets = async (): Promise<void> => {
+  const { ensureSchema } = await import('../lib/pg-schema.js')
+  await ensureSchema(resolveStateClient())
+}
+
+/** The store has no additional cache; retained as a test seam. */
+export const __resetMemoryPacketsForTests = (): void => {}
+
 export type MemoryPacket = {
   id: string
   domain: string

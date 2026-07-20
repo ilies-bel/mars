@@ -14,6 +14,12 @@ import { resolveStateClient } from '../store/state-client'
 
 const stateClient = resolveStateClient
 
+/** Idempotent PostgreSQL schema bootstrap retained for existing callers. */
+export const initChatStore = async (): Promise<void> => {
+  const { ensureSchema } = await import('./pg-schema.js')
+  await ensureSchema(stateClient())
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type ThreadStatus = 'idle' | 'running'

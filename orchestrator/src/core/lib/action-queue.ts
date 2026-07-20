@@ -26,6 +26,12 @@ export const setOnChatThreadChanged = (fn: () => void): void => {
   _onChatThreadChanged = fn
 }
 
+/** Idempotent PostgreSQL schema bootstrap retained for existing callers. */
+export const initActionQueue = async (): Promise<void> => {
+  const { ensureSchema } = await import('./pg-schema.js')
+  await ensureSchema(resolveStateClient())
+}
+
 /**
  * Emit an actionQueue lifecycle event to the events outbox.
  *

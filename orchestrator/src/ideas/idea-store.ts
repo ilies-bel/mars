@@ -20,6 +20,12 @@ import { randomBytes } from 'node:crypto'
 import { resolveStateClient } from '../core/store/state-client.js'
 import { MarsId, parseMarsId } from '../mars-id/index.js'
 
+/** Idempotent PostgreSQL schema bootstrap retained for existing callers. */
+export const initProposalNotes = async (): Promise<void> => {
+  const { ensureSchema } = await import('../core/lib/pg-schema.js')
+  await ensureSchema(resolveStateClient())
+}
+
 export interface ProposalNote {
   /** Rendered id: mars-proposal-<hex>-<slug> */
   id: string

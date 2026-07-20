@@ -1,6 +1,15 @@
 import type { DbClient } from '../core/lib/db.js';
 import type { BusEvent, EventName, EventPayload } from './events.js';
 
+/** Idempotent PostgreSQL schema bootstrap retained for legacy test setup. */
+export async function ensureSubscribersSchema(client?: DbClient): Promise<void> {
+  const [{ ensureSchema }, { resolveQueueClient }] = await Promise.all([
+    import('../core/lib/pg-schema.js'),
+    import('../core/queue.js'),
+  ]);
+  await ensureSchema(client ?? resolveQueueClient());
+}
+
 /**
  * Durable Subscriber cursor registry.
  *
