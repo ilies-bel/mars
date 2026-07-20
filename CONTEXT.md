@@ -471,3 +471,6 @@ _Avoid_: chat thread, conversation, lateral thread
 **Reflector**:
 The synthesis process that reviews completed work and system telemetry to emit draft proposals and suggestion cards, consulting its checklist and past operator decisions before suggesting.
 _Avoid_: reflection engine, suggester
+
+**Reflector checklist**:
+The CLI-managed catalog of environment and workflow improvements the Reflector screens before suggesting, each item carrying the operator's past decision (accepted, declined, or snoozed-until) per project.
