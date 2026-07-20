@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { DraftFeature, ProgressTask } from '@/shared/schemas'
-import { BoardView } from './BoardView'
+import { BoardView, buildArcsByCluster } from './BoardView'
 
 const task = (
   overrides: Partial<ProgressTask> & { id: string; cluster: ProgressTask['cluster'] },
@@ -43,6 +43,95 @@ const emptyByCluster = () => ({
   'In progress': [] as ProgressTask[],
   Blocked: [] as ProgressTask[],
   Failed: [] as ProgressTask[],
+})
+
+describe('buildArcsByCluster', () => {
+  it('shows a recovery Arc once, using its current queued state rather than an older failure', () => {
+    const failedOrigin = task({
+      id: 'origin-1',
+      cluster: 'Failed',
+      status: 'failed',
+      originId: 'origin-1',
+      updatedAt: '2024-01-01T00:00:00Z',
+    })
+    const queuedRecovery = task({
+      id: 'fix-1',
+      cluster: 'Queued',
+      status: 'queued',
+      originId: 'origin-1',
+      fixForTaskId: 'origin-1',
+      kind: 'fix',
+      updatedAt: '2024-01-02T00:00:00Z',
+    })
+
+    const arcs = buildArcsByCluster([failedOrigin, queuedRecovery])
+
+    expect(arcs.Failed).toHaveLength(0)
+    expect(arcs.Queued).toHaveLength(1)
+    expect(arcs.Queued[0]).toMatchObject({ id: 'origin-1', cluster: 'Queued' })
+    expect(arcs.Queued[0]?.tasks.map((t) => t.id)).toEqual(['origin-1', 'fix-1'])
+  })
+
+  it('keeps legacy tasks without origin ids as individual arcs', () => {
+    const first = task({ id: 'legacy-1', cluster: 'Queued' })
+    const second = task({ id: 'legacy-2', cluster: 'Queued' })
+
+    const arcs = buildArcsByCluster([first, second])
+
+    expect(arcs.Queued.map((arc) => arc.id)).toEqual(['legacy-1', 'legacy-2'])
+  })
+})
+
+describe('BoardView – Arc summaries', () => {
+  it('renders a single collapsed Arc with its tasks revealed on expansion', () => {
+    const origin = task({
+      id: 'origin-1',
+      cluster: 'Failed',
+      status: 'failed',
+      originId: 'origin-1',
+    })
+    const recovery = task({
+      id: 'fix-1',
+      cluster: 'Queued',
+      status: 'queued',
+      originId: 'origin-1',
+      fixForTaskId: 'origin-1',
+      kind: 'fix',
+    })
+    const byCluster = { ...emptyByCluster(), Failed: [origin], Queued: [recovery] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html.match(/data-arc-id="origin-1"/g)).toHaveLength(1)
+    expect(html).toContain('data-arc-status="Queued"')
+    expect(html).toContain('origin-1')
+    expect(html).toContain('fix-1')
+    expect(html).not.toMatch(/data-arc-id="origin-1"[^>]*\bopen(?:=|\s|>)/)
+  })
+
+  it('counts Arcs, not contained tasks, in the status tab', () => {
+    const origin = task({
+      id: 'origin-1',
+      cluster: 'Queued',
+      originId: 'origin-1',
+    })
+    const followUp = task({
+      id: 'fix-1',
+      cluster: 'Queued',
+      originId: 'origin-1',
+      fixForTaskId: 'origin-1',
+      kind: 'fix',
+    })
+    const byCluster = { ...emptyByCluster(), Queued: [origin, followUp] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toMatch(/data-tab="Queued"[^>]*>Queued<span[^>]*>1<\/span>/)
+  })
 })
 
 describe('BoardView – proposal filter on cluster columns', () => {

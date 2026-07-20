@@ -3,7 +3,7 @@ import { ProposalCard } from '@/components/ProposalCard'
 import type { Cluster, DraftFeature, ProgressTask } from '@/shared/schemas'
 import type { Role, UITask } from '@/shared/types'
 import { titleFromPrompt } from '@/shared/promptTitle'
-import { Column } from '@/widgets/Column'
+import { ArcColumn, type BoardArc } from '@/widgets/Column'
 
 // ---------------------------------------------------------------------------
 // Types and constants
@@ -59,6 +59,65 @@ const toUI = (t: ProgressTask): UITask => ({
 // and ALL_TABS so desktop and mobile tell the same story.
 const CLUSTERS: readonly Cluster[] = ['Failed', 'Blocked', 'In progress', 'Queued']
 
+const ARC_CLUSTER_PRIORITY: readonly Cluster[] = ['Blocked', 'In progress', 'Queued']
+
+const compareNewestFirst = (a: ProgressTask, b: ProgressTask): number =>
+  b.updatedAt.localeCompare(a.updatedAt)
+
+/**
+ * Collapse the open task projection into its durable Arc roots. An Arc that
+ * has a recovery in flight is deliberately placed by that live recovery rather
+ * than its historical failure: the board should show the state of the work now.
+ */
+export const buildArcsByCluster = (
+  tasks: ProgressTask[],
+): Record<Cluster, BoardArc[]> => {
+  const grouped = new Map<string, ProgressTask[]>()
+
+  for (const task of tasks) {
+    const arcId = task.originId ?? task.id
+    const arcTasks = grouped.get(arcId)
+    if (arcTasks) arcTasks.push(task)
+    else grouped.set(arcId, [task])
+  }
+
+  const arcsByCluster: Record<Cluster, BoardArc[]> = {
+    Queued: [],
+    'In progress': [],
+    Blocked: [],
+    Failed: [],
+  }
+
+  for (const [id, arcTasks] of grouped) {
+    // A queued/running/blocked descendant supersedes a prior failed attempt in
+    // the same Arc. Among live states, attention still wins over activity.
+    const cluster = ARC_CLUSTER_PRIORITY.find((candidate) =>
+      arcTasks.some((task) => task.cluster === candidate),
+    ) ?? 'Failed'
+    const orderedTasks = [...arcTasks].sort((a, b) => {
+      if (a.id === id) return -1
+      if (b.id === id) return 1
+      return a.createdAt.localeCompare(b.createdAt)
+    })
+    const originTask = orderedTasks.find((task) => task.id === id)
+    const latestTask = [...arcTasks].sort(compareNewestFirst)[0]!
+
+    arcsByCluster[cluster].push({
+      id,
+      cluster,
+      tasks: orderedTasks.map(toUI),
+      title: titleFromPrompt((originTask ?? latestTask).prompt),
+      updatedAt: latestTask.updatedAt,
+    })
+  }
+
+  for (const cluster of CLUSTERS) {
+    arcsByCluster[cluster].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+  }
+
+  return arcsByCluster
+}
+
 // ---------------------------------------------------------------------------
 // BoardView component
 // ---------------------------------------------------------------------------
@@ -94,36 +153,24 @@ export const BoardView = ({
       ? drafts.filter((d) => d.id === selectedProposalId)
       : drafts
 
-  // Pre-compute filtered+searched task lists per cluster (used for both rendering and counts)
-  const filteredByCluster = Object.fromEntries(
-    CLUSTERS.map((cluster) => {
-      const clusterTasks = byCluster[cluster]
-      const filtered =
-        selectedProposalId !== null
-          ? clusterTasks.filter((t) => t.parentProposalId === selectedProposalId)
-          : clusterTasks
-      const searched =
-        searchMatchIds != null
-          ? filtered.filter((t) => searchMatchIds.has(t.id))
-          : filtered
-      return [cluster, searched.map(toUI)]
-    }),
-  ) as Record<Cluster, UITask[]>
+  // Filter before grouping so an Arc spanning a failure and its recovery is
+  // represented exactly once, in the status that describes its current work.
+  const visibleTasks = CLUSTERS.flatMap((cluster) => byCluster[cluster]).filter((task) => {
+    if (selectedProposalId !== null && task.parentProposalId !== selectedProposalId) return false
+    return searchMatchIds == null || searchMatchIds.has(task.id)
+  })
+  const arcsByCluster = buildArcsByCluster(visibleTasks)
 
   // Total tasks visible across all clusters after proposal + search filtering.
   // Used to detect the search zero-state (active query that matches nothing).
-  const totalMatchedTasks =
-    filteredByCluster.Queued.length +
-    filteredByCluster['In progress'].length +
-    filteredByCluster.Blocked.length +
-    filteredByCluster.Failed.length
+  const totalMatchedTasks = visibleTasks.length
 
-  // Task count per tab (for the mobile strip badges)
+  // Arc count per tab (for the mobile strip badges)
   const tabCounts: Record<ActiveTab, number> = {
-    Queued: filteredByCluster.Queued.length,
-    'In progress': filteredByCluster['In progress'].length,
-    Blocked: filteredByCluster.Blocked.length,
-    Failed: filteredByCluster.Failed.length,
+    Queued: arcsByCluster.Queued.length,
+    'In progress': arcsByCluster['In progress'].length,
+    Blocked: arcsByCluster.Blocked.length,
+    Failed: arcsByCluster.Failed.length,
     Proposals: visibleDrafts.length,
   }
 
@@ -132,8 +179,6 @@ export const BoardView = ({
 
   // Active tab controls which single column is visible on mobile
   const [activeTab, setActiveTab] = useState<ActiveTab>(defaultTab)
-
-  let cursor = 0
 
   // Tabs to show in the strip (Proposals only when there are visible drafts)
   const visibleTabs = visibleDrafts.length > 0 ? ALL_TABS : (ALL_TABS.slice(0, 4) as readonly ActiveTab[])
@@ -193,9 +238,7 @@ export const BoardView = ({
           </div>
         )}
         {CLUSTERS.map((cluster) => {
-          const tasksForCluster = filteredByCluster[cluster]
-          const startIndex = cursor
-          cursor += tasksForCluster.length
+          const arcsForCluster = arcsByCluster[cluster]
           const accent: 'flame' | 'muted' =
             cluster === 'In progress' ? 'flame' : 'muted'
           // Mobile: show only the active tab's column. Tablet+: show all.
@@ -206,11 +249,11 @@ export const BoardView = ({
               data-cluster={cluster}
               className={`${isActiveOnMobile ? 'flex' : 'hidden'} flex-col flex-1 min-h-0 md:flex lg:flex-1 lg:basis-0`}
             >
-              <Column
+              <ArcColumn
                 label={cluster}
                 accent={accent}
-                tasks={tasksForCluster}
-                startIndex={startIndex}
+                arcs={arcsForCluster}
+                expandAll={searchMatchIds != null}
               />
             </div>
           )
