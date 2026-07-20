@@ -27,7 +27,7 @@ import { fetchReleaseNotes, getReleaseNotesCursor, postReleaseNotesViewed } from
 import type { ReleaseNoteEntry } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
-import { computeUnseen } from '@/shared/useReleaseNotesAutoOpen'
+import { computeUnseen } from '@/shared/useUnseenReleaseNotes'
 
 interface ReleaseNotesModalProps {
   /** Clears the `#/release-notes` hash so the modal closes. */

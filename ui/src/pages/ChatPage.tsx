@@ -35,6 +35,7 @@ import {
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ActionQueueItem, ActionDescriptor, ChatFeedback } from '@/shared/schemas'
 import { ContextRail } from '@/widgets/chat/ContextRail'
+import { WhileYouWereAwayPanel } from '@/widgets/WhileYouWereAwayPanel'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { QueueThreadRow } from '@/widgets/chat/QueueThreadRow'
 import { QueueThreadDetail, PROCESS_LEVEL_OPS } from '@/widgets/chat/QueueThreadDetail'
@@ -1182,6 +1183,7 @@ export const HeroEmptyState = ({
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 px-8">
+      <WhileYouWereAwayPanel projectId={projectId ?? null} />
       <div className="text-center">
         <h1
           className="font-mono text-[28px] font-bold text-fg"

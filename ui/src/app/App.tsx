@@ -31,8 +31,7 @@ import type { RouteName } from '@/shared/routing'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useProgress } from '@/hooks/useProgress'
-import { FocusedProjectProvider, useFocusedProjectId } from '@/shared/useFocusedProject'
-import { useReleaseNotesAutoOpen } from '@/shared/useReleaseNotesAutoOpen'
+import { FocusedProjectProvider } from '@/shared/useFocusedProject'
 import { ProgressPage } from '@/pages/ProgressPage'
 import { ChatPage } from '@/pages/ChatPage'
 import { EventsPage } from '@/pages/EventsPage'
@@ -128,10 +127,6 @@ const AppInner = () => {
   const studioTaskId = parseStudioRoute(hash)
   const activeStepName = parseTaskStep(hash) ?? undefined
 
-  // Auto-open the Release Notes drawer when arcs have landed since the user
-  // last viewed them. Re-runs whenever the focused project changes.
-  const projectId = useFocusedProjectId()
-  useReleaseNotesAutoOpen(projectId)
   // Proposal fields come from the `/api/proposals` fetch — no new
   // endpoint is introduced for the drawer.
   const { proposals: drafts } = useProposals()
