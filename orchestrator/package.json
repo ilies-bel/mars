@@ -33,8 +33,10 @@
     "node": ">=22.13.0"
   },
   "dependencies": {
-    "@libsql/client": "^0.17.3",
+    "@electric-sql/pglite": "^0.5.4",
     "@mars/workflow": "file:../packages/workflow",
+    "embedded-postgres": "18.4.0-beta.17",
+    "pg": "^8.22.0",
     "ink": "^7.0.2",
     "js-yaml": "^4.1.1",
     "node-pty": "^1.1.0",
@@ -47,6 +49,7 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.6.0",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19.2.0",
     "@types/ws": "^8.5.13",
     "knip": "^6.14.0",
@@ -55,6 +58,12 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "@embedded-postgres/darwin-arm64",
+      "@embedded-postgres/darwin-x64",
+      "@embedded-postgres/linux-arm64",
+      "@embedded-postgres/linux-x64",
+      "@embedded-postgres/windows-x64",
+      "embedded-postgres",
       "node-pty"
     ]
   }

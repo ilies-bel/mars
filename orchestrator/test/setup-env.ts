@@ -8,3 +8,8 @@
  * method that strands an entity fails loudly.
  */
 process.env.MARS_ARC_INVARIANT_CHECK = '1'
+
+// Migration 0002: the whole suite runs on the in-process PGlite backend so
+// tests need no daemon-provisioned embedded-postgres server. `??=` so a
+// developer can still force `MARS_DB_BACKEND=embedded` against a live server.
+process.env.MARS_DB_BACKEND ??= 'pglite'
