@@ -1,4 +1,5 @@
 import { existsSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { extname, join, normalize, resolve } from 'node:path'
 import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
 import {
@@ -96,9 +97,51 @@ const staticResponse = (root: string, urlPath: string): Response | null => {
   return new Response(Bun.file(target), { headers: { 'Content-Type': mime } })
 }
 
+const killPortListeners = (port: number): void => {
+  let pids: number[]
+  try {
+    const out = execFileSync('lsof', ['-tiTCP:' + port, '-sTCP:LISTEN'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    pids = out.trim().split('\n').filter(Boolean).map(Number).filter((n) => !isNaN(n))
+  } catch {
+    return
+  }
+  for (const pid of pids) {
+    try { process.kill(-pid, 'SIGTERM') } catch {
+      try { process.kill(pid, 'SIGTERM') } catch { /* already gone */ }
+    }
+  }
+  setTimeout(() => {
+    for (const pid of pids) {
+      try { process.kill(pid, 0); process.kill(-pid, 'SIGKILL') } catch {
+        try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
+      }
+    }
+  }, 1000)
+}
+
+const waitForPortFree = async (port: number, timeoutMs: number): Promise<void> => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const out = execFileSync('lsof', ['-tiTCP:' + port, '-sTCP:LISTEN'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+      if (out.trim().length === 0) return
+    } catch {
+      return
+    }
+    await new Promise((r) => setTimeout(r, 100))
+  }
+}
+
 export const startServer = async (
   args: CliArgs,
   deps: ServerDeps = {},
+  _retried = false,
 ): Promise<ReturnType<typeof Bun.serve>> => {
   const proxyGet = deps.proxyGet ?? realProxyGet
   // Resolve the default context once for startup logging and healthz.
@@ -689,10 +732,16 @@ export const startServer = async (
       }
       if (existingRepo !== null) {
         if (existingRepo === defaultCtx.repoRoot) {
-          console.log(
-            `mars-ui: already running at ${baseUrl} — use \`mars ui stop\` to replace it`,
-          )
-          process.exit(0)
+          if (_retried) {
+            console.error(
+              `mars-ui: port ${args.port} still in use after stopping the previous instance — kill it manually`,
+            )
+            process.exit(1)
+          }
+          console.log(`mars-ui: stopping previous instance on port ${args.port}…`)
+          killPortListeners(args.port)
+          await waitForPortFree(args.port, 3000)
+          return startServer(args, deps, true)
         }
         console.error(
           `mars-ui: port ${args.port} is in use by mars-ui for a different project (${existingRepo}) — pass --port <n> to use another port`,
