@@ -107,6 +107,12 @@ describe('QueueThreadRow – Decisions', () => {
 // ---------------------------------------------------------------------------
 
 describe('QueueThreadRow – projection semantics', () => {
+  it('uses Mars as the sender so a queue row reads as a conversation preview', () => {
+    const html = renderRow(BASE_ITEM)
+    expect(html).toContain('>Mars<')
+    expect(html).toContain('Some failed task')
+  })
+
   it('has no delete affordance (projection entries evaporate via entity mutation)', () => {
     const html = renderRow(BASE_ITEM)
     expect(html).not.toContain('aria-label="Delete thread"')

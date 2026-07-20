@@ -58,6 +58,13 @@ const renderDetail = (item: ActionQueueItem): string => {
 // ---------------------------------------------------------------------------
 
 describe('QueueThreadDetail – Decisions', () => {
+  it('renders a queue alert as Mars’s opening conversation message', () => {
+    const html = renderDetail(BASE_ITEM)
+    expect(html).toContain('data-testid="queue-opening-message"')
+    expect(html).toContain('Opening alert message from Mars')
+    expect(html).toContain('Action needed')
+  })
+
   it('renders every Decision the row carries under Move forward', () => {
     const html = renderDetail(
       makeItem({

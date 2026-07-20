@@ -67,7 +67,7 @@ import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { WhileYouWereAwayPanel } from '@/widgets/WhileYouWereAwayPanel'
 import { FallbackSurface } from '@/components/FallbackSurface'
-import { QueueThreadRow } from '@/widgets/chat/QueueThreadRow'
+import { QueueThreadRow, priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { QueueThreadDetail, PROCESS_LEVEL_OPS } from '@/widgets/chat/QueueThreadDetail'
 import {
   mergeSidebarEntries,
@@ -135,10 +135,10 @@ const KIND_ICON: Record<string, string> = {
 }
 
 export interface HeroSuggestionsProps {
-  /** The top open alert, or null when the action queue is clear. */
-  topAlert: ActionQueueItem | null
-  /** Called when the user clicks the alert chip. */
-  onAlertClick: () => void
+  /** Open alerts, already ranked with the most urgent item first. */
+  alerts: ActionQueueItem[]
+  /** Opens an alert's conversation when it exists, or its queue projection. */
+  onAlertClick: (alert: ActionQueueItem) => void
   /** Called when the user clicks a quick-action chip; receives the prefill prompt. */
   onChipClick: (prompt: string) => void
 }
@@ -146,38 +146,75 @@ export interface HeroSuggestionsProps {
 /**
  * Suggestion row rendered below the hero composer.
  *
- * When a top alert is provided it renders as the FIRST chip so the user is
- * immediately aware of the most pressing item. The standard quick-action chips
- * follow.
+ * The most important alert becomes the opening card in the hero; the next few
+ * actionable conversations remain one click away before the normal shortcuts.
  */
-export const HeroSuggestions = ({ topAlert, onAlertClick, onChipClick }: HeroSuggestionsProps) => (
-  <div className="flex flex-wrap justify-center gap-2 max-w-2xl">
-    {topAlert !== null && (
-      <button
-        type="button"
-        className="flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/5 px-3 py-1.5 font-mono text-[11px] text-fg transition-colors hover:border-accent/70 hover:bg-accent/10 active:scale-[0.97]"
-        onClick={onAlertClick}
-        data-testid="hero-alert-chip"
-      >
-        <span aria-hidden="true" className="flex-none text-[12px]">
-          {KIND_ICON[topAlert.kind] ?? '🔔'}
-        </span>
-        <span className="max-w-[200px] truncate font-semibold">{topAlert.title}</span>
-        <span className="max-w-[140px] truncate text-iron/60">— {topAlert.body}</span>
-      </button>
-    )}
-    {WELCOME_CHIPS.map(({ label, prompt }) => (
-      <button
-        key={label}
-        type="button"
-        className="rounded border border-iron/40 px-3 py-1.5 font-mono text-[11px] text-iron transition-colors hover:border-iron/70 hover:bg-iron/20 hover:text-fg active:scale-[0.97]"
-        onClick={() => onChipClick(prompt)}
-      >
-        {label}
-      </button>
-    ))}
-  </div>
-)
+export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick }: HeroSuggestionsProps) => {
+  const [topAlert, ...otherAlerts] = alerts
+
+  return (
+    <div className="w-full max-w-2xl space-y-3">
+      {topAlert && (
+        <article
+          className="border border-iron/40 bg-surface p-4 text-left"
+          data-testid="hero-alert-preview"
+          aria-label="Most important conversation"
+        >
+          <div className="flex items-center gap-2 font-mono text-[10px] text-muted">
+            <span aria-hidden="true" className="text-[13px]">{KIND_ICON[topAlert.kind] ?? '🔔'}</span>
+            <span>Mars</span>
+            <span aria-hidden="true">·</span>
+            <span>{kindBadgeLabel(topAlert.kind)}</span>
+            <span className={`ml-auto uppercase ${priorityBadgeClass(topAlert.priority)}`}>{topAlert.priority}</span>
+          </div>
+          <h2 className="mt-2 font-mono text-[14px] font-semibold text-fg">{topAlert.title}</h2>
+          <p className="mt-1 line-clamp-2 font-mono text-[12px] leading-relaxed text-iron">{topAlert.body}</p>
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <span className="truncate font-mono text-[10px] text-muted">{topAlert.entityId}</span>
+            <button
+              type="button"
+              data-testid="hero-alert-open"
+              className="shrink-0 border border-iron/50 px-3 py-1.5 font-mono text-[10px] uppercase text-fg transition-colors hover:bg-iron/15 active:scale-[0.98]"
+              onClick={() => onAlertClick(topAlert)}
+            >
+              Open conversation
+            </button>
+          </div>
+        </article>
+      )}
+
+      {otherAlerts.length > 0 && (
+        <div className="flex flex-wrap gap-2" aria-label="Other conversations needing attention">
+          {otherAlerts.slice(0, 3).map((alert) => (
+            <button
+              key={alert.id}
+              type="button"
+              data-testid="hero-alert-option"
+              className="flex min-w-0 max-w-full items-center gap-1.5 border border-iron/30 px-2.5 py-1.5 font-mono text-[11px] text-iron transition-colors hover:bg-iron/10 hover:text-fg active:scale-[0.98]"
+              onClick={() => onAlertClick(alert)}
+            >
+              <span aria-hidden="true">{KIND_ICON[alert.kind] ?? '🔔'}</span>
+              <span className="max-w-[220px] truncate">{alert.title}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap justify-center gap-2">
+        {WELCOME_CHIPS.map(({ label, prompt }) => (
+          <button
+            key={label}
+            type="button"
+            className="border border-iron/40 px-3 py-1.5 font-mono text-[11px] text-iron transition-colors hover:border-iron/70 hover:bg-iron/15 hover:text-fg active:scale-[0.98]"
+            onClick={() => onChipClick(prompt)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Message part → AI Element rendering
@@ -1032,11 +1069,11 @@ export interface HeroEmptyStateProps {
 /**
  * Full-pane hero shown when no thread is selected.
  *
- * Layout: headline → subtitle → large rounded composer → suggestion row.
- * The suggestion row shows the top open action-queue alert first (if any),
- * then the standard quick-action chips. Typing in the composer and hitting
- * Enter (or clicking Send) creates a new thread and posts the first message
- * in one gesture via the `onCreateAndSend` callback.
+ * Layout: headline → subtitle → large rounded composer → conversation choices.
+ * The highest-priority alert is shown as a full conversation preview and the
+ * next few alerts remain available as compact choices. Typing in the composer
+ * and hitting Enter (or clicking Send) creates a new thread and posts the
+ * first message in one gesture via the `onCreateAndSend` callback.
  */
 export const HeroEmptyState = ({
   projectId,
@@ -1060,18 +1097,22 @@ export const HeroEmptyState = ({
     staleTime: 15_000,
   })
 
-  const topAlert = pickTopAlert(alertItems ?? [])
-  const alertThread = topAlert
-    ? (threads ?? []).find((t) => t.alertItemId === topAlert.id) ?? null
-    : null
+  const rankedAlerts = useMemo(
+    () => [...(alertItems ?? [])].sort((a, b) => {
+      const priority = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
+      return priority !== 0 ? priority : b.at.localeCompare(a.at)
+    }),
+    [alertItems],
+  )
 
-  const handleAlertClick = useCallback(() => {
+  const handleAlertClick = useCallback((alert: ActionQueueItem) => {
+    const alertThread = (threads ?? []).find((t) => t.alertItemId === alert.id) ?? null
     if (alertThread) {
       onSelectThread(alertThread.id)
-    } else if (topAlert) {
-      onOpenQueueItem?.(topAlert.id)
+    } else {
+      onOpenQueueItem?.(alert.id)
     }
-  }, [alertThread, topAlert, onSelectThread, onOpenQueueItem])
+  }, [threads, onSelectThread, onOpenQueueItem])
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 px-8">
@@ -1103,7 +1144,7 @@ export const HeroEmptyState = ({
         </p>
       )}
       <HeroSuggestions
-        topAlert={topAlert}
+        alerts={rankedAlerts}
         onAlertClick={handleAlertClick}
         onChipClick={setPrefill}
       />

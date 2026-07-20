@@ -1,10 +1,10 @@
 /**
  * QueueThreadRow — a projection Thread in the chat sidebar.
  *
- * Renders one open action-queue row as a virtual Thread entry: kind accent
- * bar, priority pill, headline, "why now" subtitle, and the quick Decision
- * pills (the server-supplied action descriptors). Projection entries carry no
- * delete affordance — they evaporate only when the row leaves the queue.
+ * Renders one open action-queue row as a conversation preview: Mars as the
+ * sender, a compact first-message headline, why-now context, and the available
+ * Decisions. Projection entries carry no delete affordance — they evaporate
+ * only when the row leaves the queue.
  */
 
 import { memo } from 'react'
@@ -29,13 +29,12 @@ export const priorityBadgeClass = (priority: string): string => {
   return 'text-muted'
 }
 
-/** Stable kind → accent-bar background colour. Never driven by priority. */
-export const KIND_ACCENT_BG: Record<ActionQueueItem['kind'], string> = {
-  'failed-task': 'bg-error',
-  'arc-failed': 'bg-error',
-  'stale-worktree': 'bg-warn',
-  'awaiting-validation': 'bg-[#1D4ED8]',
-  'draft-proposal': 'bg-success',
+const KIND_ICON: Record<ActionQueueItem['kind'], string> = {
+  'failed-task': '⚠',
+  'arc-failed': '⛓',
+  'stale-worktree': '◌',
+  'awaiting-validation': '⌁',
+  'draft-proposal': '✦',
 }
 
 /** Ops that receive destructive button styling in the inline resolver. */
@@ -105,20 +104,13 @@ export const QueueThreadRow = memo(({
         }
       }}
     >
-      {/* 2px left accent bar — kind-coloured, never priority-coloured */}
-      <div
-        className={`w-0.5 shrink-0 ${KIND_ACCENT_BG[item.kind] ?? 'bg-iron'}`}
-        aria-hidden="true"
-      />
-
       <div className="min-w-0 flex-1 px-3 py-2">
-        {/* Meta band: kind label + priority pill */}
+        {/* Sender band: all queue rows read like the first message from Mars. */}
         <div className="flex items-baseline gap-2">
-          {item.kind !== 'failed-task' && (
-            <span className="shrink-0 font-mono text-[9px] uppercase text-muted">
-              {kindBadgeLabel(item.kind)}
-            </span>
-          )}
+          <span aria-hidden="true" className="shrink-0 text-[11px] text-iron">{KIND_ICON[item.kind]}</span>
+          <span className="shrink-0 font-mono text-[10px] text-fg">Mars</span>
+          <span aria-hidden="true" className="text-muted">·</span>
+          <span className="shrink-0 font-mono text-[9px] uppercase text-muted">{kindBadgeLabel(item.kind)}</span>
           {hasConversation && (
             <span
               className="shrink-0 font-mono text-[9px] text-muted"

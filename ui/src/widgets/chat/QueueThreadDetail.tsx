@@ -498,24 +498,36 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-auto">
-      <header className="min-w-0 border-b border-iron/30 px-6 py-4">
-        {/* Headline: original task id, kind badge, priority */}
-        <div className="flex items-baseline gap-3">
-          <span className="break-all font-mono text-[11px] uppercase text-iron">
-            {item.entityId}
-          </span>
-          <span className="shrink-0 font-mono text-[10px] uppercase text-muted">
-            {kindBadgeLabel(item.kind)}
-          </span>
+      <div className="px-4 pt-4">
+        <header
+          className="min-w-0 border border-iron/35 bg-surface px-4 py-3"
+          data-testid="queue-opening-message"
+          aria-label="Opening alert message from Mars"
+        >
+          <div className="mb-3 flex items-center gap-2 font-mono text-[10px] text-muted">
+            <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center rounded-full bg-iron/15 text-[11px] text-iron">M</span>
+            <span className="text-fg">Mars</span>
+            <span aria-hidden="true">·</span>
+            <span>{relativeTime(item.at)}</span>
+            <span className="ml-auto uppercase">Action needed</span>
+          </div>
+          {/* Headline: original task id, kind badge, priority */}
+          <div className="flex items-baseline gap-3">
+            <span className="break-all font-mono text-[11px] uppercase text-iron">
+              {item.entityId}
+            </span>
+            <span className="shrink-0 font-mono text-[10px] uppercase text-muted">
+              {kindBadgeLabel(item.kind)}
+            </span>
           <span
             className={`ml-auto font-mono text-[10px] uppercase ${priorityBadgeClass(item.priority)}`}
           >
             {item.priority}
           </span>
-        </div>
-        {/* For arc-failed: goal is the headline, reason is the subordinate line. */}
-        {/* For all other kinds: title is the headline, body shown for failed-task. */}
-        {item.kind === 'arc-failed' ? (
+          </div>
+          {/* For arc-failed: goal is the headline, reason is the subordinate line. */}
+          {/* For all other kinds: title is the headline, body shown for failed-task. */}
+          {item.kind === 'arc-failed' ? (
           <>
             <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
               {item.goal || '(no goal)'}
@@ -524,7 +536,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
               {item.reason}
             </p>
           </>
-        ) : (
+          ) : (
           <>
             <h2 className="mt-2 break-all font-mono text-[15px] text-fg">
               {item.title || '(no title)'}
@@ -536,8 +548,8 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
               </p>
             ) : null}
           </>
-        )}
-        {isRealFailedTask ? (
+          )}
+          {isRealFailedTask ? (
           <button
             type="button"
             data-testid="aq-open-task-detail"
@@ -546,8 +558,9 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           >
             Open task detail
           </button>
-        ) : null}
-      </header>
+          ) : null}
+        </header>
+      </div>
 
       <main className="flex-1 px-6 py-4">
         <dl className="flex flex-col gap-4 font-mono text-[12px] max-w-[75ch]">
