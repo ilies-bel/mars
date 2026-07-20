@@ -252,7 +252,7 @@ describe('encodeAqState / decodeAqState round-trip', () => {
 
   it('item is preserved through encode + decode', () => {
     const encoded = encodeAqState({ item: 'failed-task:t-1', kind: 'all', q: '' })
-    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    const decoded = decodeAqState(`#/chat${encoded}`)
     expect(decoded.item).toBe('failed-task:t-1')
     expect(decoded.kind).toBe('all')
     expect(decoded.q).toBe('')
@@ -260,27 +260,27 @@ describe('encodeAqState / decodeAqState round-trip', () => {
 
   it('kind=alerts is preserved', () => {
     const encoded = encodeAqState({ item: null, kind: 'alerts', q: '' })
-    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    const decoded = decodeAqState(`#/chat${encoded}`)
     expect(decoded.kind).toBe('alerts')
     expect(decoded.item).toBeNull()
   })
 
   it('kind=drafts is preserved', () => {
     const encoded = encodeAqState({ item: null, kind: 'drafts', q: '' })
-    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    const decoded = decodeAqState(`#/chat${encoded}`)
     expect(decoded.kind).toBe('drafts')
   })
 
   it('search query is preserved', () => {
     const encoded = encodeAqState({ item: null, kind: 'all', q: 'deploy fix' })
-    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    const decoded = decodeAqState(`#/chat${encoded}`)
     expect(decoded.q).toBe('deploy fix')
   })
 
   it('all three params together round-trip correctly', () => {
     const state = { item: 'failed-task:mars-abc', kind: 'alerts' as const, q: 'merge' }
     const encoded = encodeAqState(state)
-    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    const decoded = decodeAqState(`#/chat${encoded}`)
     expect(decoded.item).toBe('failed-task:mars-abc')
     expect(decoded.kind).toBe('alerts')
     expect(decoded.q).toBe('merge')
@@ -292,21 +292,21 @@ describe('encodeAqState / decodeAqState round-trip', () => {
   })
 
   it('default kind decodes correctly from a bare hash', () => {
-    const decoded = decodeAqState('#/action-queue')
+    const decoded = decodeAqState('#/chat')
     expect(decoded.kind).toBe('all')
     expect(decoded.item).toBeNull()
     expect(decoded.q).toBe('')
   })
 
   it('unrecognised kind param falls back to all', () => {
-    const decoded = decodeAqState('#/action-queue?kind=unknown')
+    const decoded = decodeAqState('#/chat?kind=unknown')
     expect(decoded.kind).toBe('all')
   })
 
   it('item with colon in entityId survives encode/decode', () => {
     const state = { item: 'failed-task:some:complex:id', kind: 'all' as const, q: '' }
     const encoded = encodeAqState(state)
-    const decoded = decodeAqState(`#/action-queue${encoded}`)
+    const decoded = decodeAqState(`#/chat${encoded}`)
     expect(decoded.item).toBe('failed-task:some:complex:id')
   })
 })
@@ -317,25 +317,25 @@ describe('encodeAqState / decodeAqState round-trip', () => {
 //
 // When an origin-tree node is clicked and the task is NOT a live action-queue
 // row (e.g. a "done" sibling task), ActionQueuePage falls back to opening the
-// task drawer via `window.location.hash = taskHash(taskId, 'action-queue')`.
-// The `from=action-queue` param tells the drawer to restore the AQ view on Esc.
+// task drawer via `window.location.hash = taskHash(taskId, 'chat')`.
+// The `from=chat` param tells the drawer to restore the AQ view on Esc.
 //
 // These tests verify the hash contract that the fallback relies on.
 
 describe('origin navigation fallback hash contract', () => {
-  it('produces a task-drawer hash with action-queue origin for a done sibling', () => {
-    const hash = taskHash('mars-done-abc', 'action-queue')
-    expect(hash).toBe('#/task/mars-done-abc?from=action-queue')
+  it('produces a task-drawer hash with chat origin for a done sibling', () => {
+    const hash = taskHash('mars-done-abc', 'chat')
+    expect(hash).toBe('#/task/mars-done-abc?from=chat')
   })
 
   it('the fallback hash resolves to the task drawer overlay (parseTaskRoute)', () => {
-    const hash = taskHash('mars-done-abc', 'action-queue')
+    const hash = taskHash('mars-done-abc', 'chat')
     expect(parseTaskRoute(hash)).toBe('mars-done-abc')
   })
 
-  it('the fallback hash encodes action-queue as origin so Esc returns to AQ', () => {
-    const hash = taskHash('mars-done-abc', 'action-queue')
-    expect(parseTaskOrigin(hash)).toBe('action-queue')
+  it('the fallback hash encodes chat as origin so Esc returns to the chat page', () => {
+    const hash = taskHash('mars-done-abc', 'chat')
+    expect(parseTaskOrigin(hash)).toBe('chat')
   })
 })
 

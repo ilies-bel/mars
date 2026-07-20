@@ -60,13 +60,13 @@ const pressKey = (key: string, target: EventTarget = document, extra?: KeyboardE
 }
 
 // ---------------------------------------------------------------------------
-// 't' key — navigate to action-queue
+// 't' key — navigate to chat
 // ---------------------------------------------------------------------------
 
 describe('useGlobalKeyboardShortcuts — t key', () => {
-  it('navigates to #/action-queue when pressed in a plain context', () => {
+  it('navigates to #/chat when pressed in a plain context', () => {
     pressKey('t')
-    expect(window.location.hash).toBe('#/action-queue')
+    expect(window.location.hash).toBe('#/chat')
   })
 })
 

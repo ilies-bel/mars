@@ -2,7 +2,7 @@ import type { KpiKey } from './schemas'
 import type { StaleWorktreesPayload } from './schemas'
 import { PRIMITIVE_NAMES, type PrimitiveName } from '@/entities/primitive/types'
 
-export type RouteName = 'action-queue' | 'progress' | 'events' | 'kpi' | 'studio' | 'chat'
+export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat'
 
 /**
  * Derives the current route from the URL hash.
@@ -13,7 +13,9 @@ export type RouteName = 'action-queue' | 'progress' | 'events' | 'kpi' | 'studio
  * #/events[/…]          → events
  * #/kpi or #/kpi/<key>  → kpi
  * #/studio/<taskId>     → studio
- * everything else       → action-queue  (also covers #/todo legacy)
+ * everything else       → chat  (also covers the legacy #/action-queue and
+ *                                #/todo hashes — the chat page absorbed the
+ *                                action queue as projection Threads)
  */
 export const detectRoute = (hash: string): RouteName => {
   if (hash === '' || hash === '#' || hash === '#/') return 'chat'
@@ -22,7 +24,7 @@ export const detectRoute = (hash: string): RouteName => {
   if (hash.startsWith('#/events')) return 'events'
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return 'kpi'
   if (parseStudioRoute(hash) !== null) return 'studio'
-  return 'action-queue'
+  return 'chat'
 }
 
 /**
@@ -38,7 +40,9 @@ export const isKnownRoute = (hash: string): boolean => {
   if (hash === '' || hash === '#' || hash === '#/') return true
   // Named page routes
   if (hash.startsWith('#/chat')) return true
+  // Legacy action-queue hashes — the App redirects them onto #/chat.
   if (hash.startsWith('#/action-queue')) return true
+  if (hash.startsWith('#/todo')) return true
   if (hash.startsWith('#/progress')) return true
   if (hash.startsWith('#/events')) return true
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return true
@@ -118,7 +122,6 @@ export const parseTaskRoute = (hash: string): string | null => {
 }
 
 const ROUTE_NAMES: readonly RouteName[] = [
-  'action-queue',
   'progress',
   'events',
   'kpi',
@@ -378,8 +381,8 @@ export const parseReleaseNotesRoute = (hash: string): boolean =>
 export const parseShortcutsRoute = (hash: string): boolean => hash === '#/shortcuts'
 
 /**
- * Badge count for the Action queue nav entry — stale worktrees only.
- * Drafts are surfaced inline in the Action queue and must not appear here.
+ * Badge count for the Chat nav entry — stale worktrees only.
+ * Drafts are surfaced as projection Threads and must not appear here.
  */
 export const actionQueueCount = (payload: StaleWorktreesPayload): number =>
   payload.staleWorktrees.length
@@ -387,16 +390,14 @@ export const actionQueueCount = (payload: StaleWorktreesPayload): number =>
 /**
  * Returns the document.title string for the given page route.
  *
- * When the route is 'action-queue' and `aqCount` is positive, the live item
- * count is appended in parentheses so multiple mars tabs are distinguishable
- * in the browser tab bar and history (e.g. "mars — action queue (3)").
+ * When the route is 'chat' and `aqCount` is positive, the live action-queue
+ * item count is appended in parentheses so multiple mars tabs are
+ * distinguishable in the browser tab bar and history (e.g. "mars — chat (3)").
  */
 export const pageTitle = (route: RouteName, aqCount = 0): string => {
   switch (route) {
     case 'chat':
-      return 'mars — chat'
-    case 'action-queue':
-      return aqCount > 0 ? `mars — action queue (${aqCount})` : 'mars — action queue'
+      return aqCount > 0 ? `mars — chat (${aqCount})` : 'mars — chat'
     case 'progress':
       return 'mars — progress'
     case 'events':

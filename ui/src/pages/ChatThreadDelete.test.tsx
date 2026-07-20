@@ -75,8 +75,18 @@ const mount = async (onSelect: (id: string) => void = () => {}, selectedId: stri
     )
   })
   // react-query resolves the fetch across several microtask/timer turns; keep
-  // flushing until the rows land rather than guessing a single tick.
-  for (let i = 0; i < 20 && container.querySelectorAll('button').length <= 1; i++) {
+  // flushing until the thread rows (with their delete buttons) land rather
+  // than guessing a single tick. The sidebar header now always renders the
+  // kind-toggle / history buttons, so wait on the delete affordance instead
+  // of the raw button count.
+  for (
+    let i = 0;
+    i < 20 &&
+    ![...container.querySelectorAll('button')].some(
+      (b) => b.getAttribute('aria-label') === 'Delete thread',
+    );
+    i++
+  ) {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1)
     })

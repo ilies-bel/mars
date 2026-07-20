@@ -21,7 +21,7 @@ const isOverlayHash = (hash: string): boolean => {
  * Registers global keyboard shortcuts for the operator keyboard-first workflow.
  *
  * - 1-9  focus the nth visible task card on the Board (via [data-task-index])
- * - t     navigate to #/action-queue (triage)
+ * - t     navigate to #/chat (triage — the chat page hosts the action queue)
  * - ?     open the keyboard shortcuts help overlay (#/shortcuts)
  *
  * Shortcuts are silenced when:
@@ -38,7 +38,7 @@ export const useGlobalKeyboardShortcuts = (): void => {
 
       if (e.key === 't') {
         e.preventDefault()
-        window.location.hash = '#/action-queue'
+        window.location.hash = '#/chat'
         return
       }
       if (e.key === '?') {

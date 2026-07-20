@@ -14,7 +14,7 @@
  * composer as canned prompt prefills (not RPC calls).
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import Markdown from 'react-markdown'
@@ -33,10 +33,24 @@ import {
   clearMessageFeedback,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ActionQueueItem, ChatFeedback } from '@/shared/schemas'
+import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ActionQueueItem, ActionDescriptor, ChatFeedback } from '@/shared/schemas'
 import { ContextRail } from '@/widgets/chat/ContextRail'
+import { FallbackSurface } from '@/components/FallbackSurface'
+import { QueueThreadRow } from '@/widgets/chat/QueueThreadRow'
+import { QueueThreadDetail, PROCESS_LEVEL_OPS } from '@/widgets/chat/QueueThreadDetail'
+import {
+  mergeSidebarEntries,
+  isResolvedSelection,
+  type KindFilter,
+} from '@/widgets/chat/queueThreads'
+import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
+import { historyLabel } from '@/pages/ActionQueuePageFilters'
+import { kindBadgeLabel } from '@/shared/actionQueueDetail'
+import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
+import { taskHash } from '@/shared/routing'
 import { useLiveBuffer, clearLiveBuffer } from '@/shared/chatBuffer'
-import { formatDuration } from '@/shared/time'
+import { formatDuration, relativeTime } from '@/shared/time'
 
 // ---------------------------------------------------------------------------
 // Welcome state: quick-action chips and slash palette
@@ -1119,6 +1133,8 @@ export interface HeroEmptyStateProps {
   onSelectThread: (id: string) => void
   onCreateAndSend: (message: string) => void
   isPending: boolean
+  /** Opens the projection Thread for an action-queue item id in the sidebar/detail. */
+  onOpenQueueItem?: (id: string) => void
 }
 
 /**
@@ -1135,6 +1151,7 @@ export const HeroEmptyState = ({
   onSelectThread,
   onCreateAndSend,
   isPending,
+  onOpenQueueItem,
 }: HeroEmptyStateProps) => {
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
 
@@ -1158,10 +1175,10 @@ export const HeroEmptyState = ({
   const handleAlertClick = useCallback(() => {
     if (alertThread) {
       onSelectThread(alertThread.id)
-    } else {
-      window.location.hash = '#/action-queue'
+    } else if (topAlert) {
+      onOpenQueueItem?.(topAlert.id)
     }
-  }, [alertThread, onSelectThread])
+  }, [alertThread, topAlert, onSelectThread, onOpenQueueItem])
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 px-8">
@@ -1203,6 +1220,13 @@ interface ComposerProps {
   /** Called with the prefill text when a chip or slash command is selected. */
   initialText?: string
   onInitialTextConsumed: () => void
+  /**
+   * When set, sending routes here instead of posting to `threadId` — used on
+   * projection Threads, where the first message creates the conversation.
+   */
+  onSendOverride?: (msg: string) => void
+  /** In-flight state for the override send (create-thread + first message). */
+  sendPending?: boolean
 }
 
 const Composer = ({
@@ -1211,6 +1235,8 @@ const Composer = ({
   disabled,
   initialText,
   onInitialTextConsumed,
+  onSendOverride,
+  sendPending = false,
 }: ComposerProps) => {
   const [text, setText] = useState('')
   const [showPalette, setShowPalette] = useState(false)
@@ -1244,11 +1270,15 @@ const Composer = ({
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim()
-    if (!trimmed || disabled || isPending) return
-    send(trimmed)
+    if (!trimmed || disabled || isPending || sendPending) return
+    if (onSendOverride) {
+      onSendOverride(trimmed)
+    } else {
+      send(trimmed)
+    }
     setText('')
     setShowPalette(false)
-  }, [text, disabled, isPending, send])
+  }, [text, disabled, isPending, sendPending, onSendOverride, send])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1271,7 +1301,7 @@ const Composer = ({
     textareaRef.current?.focus()
   }
 
-  const isDisabled = disabled || isPending
+  const isDisabled = disabled || isPending || sendPending
 
   return (
     <div className="relative border-t border-iron/30 px-4 py-3">
@@ -1326,10 +1356,42 @@ const Composer = ({
 // Thread sidebar
 // ---------------------------------------------------------------------------
 
+/** History pagination state passed down from the ChatPage root. */
+interface SidebarHistory {
+  items: ActionQueueItem[]
+  nextCursor: string | null
+  isLoadingMore: boolean
+  loadMore: () => void
+}
+
+const EMPTY_HISTORY: SidebarHistory = {
+  items: [],
+  nextCursor: null,
+  isLoadingMore: false,
+  loadMore: () => {},
+}
+
 interface ThreadSidebarProps {
   selectedId: string | null
   projectId?: string
   onSelect: (id: string) => void
+  /** Selected projection Thread (action-queue item id), if any. */
+  selectedQueueItemId?: string | null
+  onSelectQueueItem?: (id: string) => void
+  /** Open action-queue rows rendered as projection Threads. */
+  queueItems?: ActionQueueItem[]
+  /** Resolved-rows archive for the History accordion. */
+  history?: SidebarHistory
+  query?: string
+  onQueryChange?: (q: string) => void
+  kindFilter?: KindFilter
+  onKindFilterChange?: (k: KindFilter) => void
+  /** Fires a Decision from the quick pills (optimistic removal + rollback upstream). */
+  onQueueAction?: (action: ActionDescriptor, item: ActionQueueItem) => void
+  /** First non-null error from the action-queue / projects queries. */
+  queueError?: Error | null
+  /** True when GET /api/projects succeeded but returned zero projects. */
+  projectsEmpty?: boolean
 }
 
 /** How long a deleted thread stays undoable before the delete is sent. */
@@ -1351,8 +1413,24 @@ type DeleteToast =
   | { kind: 'pending'; title: string }
   | { kind: 'error'; message: string }
 
-export const ThreadSidebar = ({ selectedId, projectId, onSelect }: ThreadSidebarProps) => {
+export const ThreadSidebar = ({
+  selectedId,
+  projectId,
+  onSelect,
+  selectedQueueItemId = null,
+  onSelectQueueItem,
+  queueItems = [],
+  history = EMPTY_HISTORY,
+  query = '',
+  onQueryChange,
+  kindFilter = 'all',
+  onKindFilterChange,
+  onQueueAction,
+  queueError = null,
+  projectsEmpty = false,
+}: ThreadSidebarProps) => {
   const qc = useQueryClient()
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   const { data } = useQuery({
     queryKey: ['chat-threads', projectId],
@@ -1469,16 +1547,29 @@ export const ThreadSidebar = ({ selectedId, projectId, onSelect }: ThreadSidebar
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Alert-origin unresolved threads sort to the top; everything else retains
-  // server order (already sorted by updated_at desc from the backend).
-  const threads = (data ?? []).filter((t) => !hiddenIds.includes(t.id)).sort((a, b) => {
+  // Visible chat threads (delete-pending rows stay hidden).
+  const visibleThreads = (data ?? []).filter((t) => !hiddenIds.includes(t.id))
+
+  // Merge live queue rows and chat threads: projection Threads float above
+  // regular threads; alert-origin threads backed by a live row merge into a
+  // single projection entry. Search / kind filter apply inside the merge.
+  const { projections, regular } = mergeSidebarEntries(
+    queueItems,
+    visibleThreads,
+    query,
+    kindFilter,
+  )
+
+  // Alert-origin unresolved threads sort to the top of the regular list;
+  // everything else retains server order (updated_at desc from the backend).
+  const threads = [...regular].sort((a, b) => {
     const aAlert = a.origin === 'alert' && !a.alertResolved ? 0 : 1
     const bAlert = b.origin === 'alert' && !b.alertResolved ? 0 : 1
     return aAlert - bAlert
   })
 
   return (
-    <aside className="flex w-52 flex-shrink-0 flex-col border-r border-iron/30 bg-bg">
+    <aside className="flex w-64 flex-shrink-0 flex-col border-r border-iron/30 bg-bg">
       <div className="border-b border-iron/30 px-2 py-2">
         <button
           type="button"
@@ -1487,10 +1578,93 @@ export const ThreadSidebar = ({ selectedId, projectId, onSelect }: ThreadSidebar
         >
           + New thread
         </button>
+        <div
+          role="group"
+          aria-label="Filter action queue by kind"
+          className="mt-2 flex border border-iron/30"
+        >
+          {(['all', 'alerts', 'drafts'] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              aria-pressed={kindFilter === f}
+              data-testid={`action-queue-filter-${f}`}
+              onClick={() => onKindFilterChange?.(f)}
+              className={[
+                'flex-1 border-r border-iron/30 px-2 py-0.5 font-mono text-[10px] last:border-r-0 focus:outline-none focus:ring-1 focus:ring-iron/50',
+                kindFilter === f ? 'bg-iron/20 text-fg' : 'bg-bg text-iron',
+              ].join(' ')}
+            >
+              {f === 'all' ? 'All' : f === 'alerts' ? 'Alerts' : 'Drafts'}
+            </button>
+          ))}
+        </div>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => onQueryChange?.(e.target.value)}
+          placeholder="Search…"
+          aria-label="Search threads and action queue"
+          data-testid="action-queue-search"
+          className="mt-2 w-full border border-iron/30 bg-bg px-2 py-1 font-mono text-[12px] text-fg placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-iron/50"
+        />
       </div>
       <div className="flex-1 overflow-y-auto px-1 py-1 space-y-0.5">
-        {threads.length === 0 && (
-          <p className="px-2 py-3 font-mono text-[10px] text-iron/40">No threads yet</p>
+        {/* Projection Threads — open queue rows; no delete affordance, they
+            evaporate only when the backing row leaves the queue. */}
+        {projections.map(({ item, thread }) => (
+          <QueueThreadRow
+            key={item.id}
+            item={item}
+            hasConversation={thread !== null}
+            active={
+              thread !== null
+                ? thread.id === selectedId
+                : item.id === selectedQueueItemId
+            }
+            onSelect={() => {
+              if (thread !== null) onSelect(thread.id)
+              else onSelectQueueItem?.(item.id)
+            }}
+            onRestart={
+              item.actions.some((a) => a.op === 'restart')
+                ? () => {
+                    const restart = item.actions.find((a) => a.op === 'restart')
+                    if (restart) onQueueAction?.(restart, item)
+                  }
+                : null
+            }
+            restartPending={false}
+            restartError={null}
+            onAction={(action, actionItem) => onQueueAction?.(action, actionItem)}
+          />
+        ))}
+        {/* Queue status surfaces — errors and empty-registry guidance, kept in
+            the sidebar where the projection Threads live. */}
+        {queueError ? (
+          <FallbackSurface error={queueError} of="action queue" variant="pane" />
+        ) : projectsEmpty && queueItems.length === 0 ? (
+          <div
+            className="px-2 py-3 font-mono text-[11px] text-iron"
+            data-testid="no-projects-registered"
+          >
+            <p className="text-fg">No projects registered.</p>
+            <p className="mt-1">
+              Run <code className="rounded bg-iron/20 px-1">mars init</code> inside
+              your repo — it registers the project automatically.
+            </p>
+            <p className="mt-1 text-muted">
+              Or register an existing repo:{' '}
+              <code className="rounded bg-iron/20 px-1">mars project add &lt;repo&gt;</code>
+            </p>
+          </div>
+        ) : queueItems.length === 0 && !query.trim() ? (
+          <p className="px-2 py-1 font-mono text-[10px] text-iron/40">No items.</p>
+        ) : null}
+        {threads.length === 0 && projections.length === 0 && (
+          <p className="px-2 py-3 font-mono text-[10px] text-iron/40">
+            {query.trim() ? 'No matches' : 'No threads yet'}
+          </p>
         )}
         {threads.map((t) => (
           <ThreadItem
@@ -1502,6 +1676,80 @@ export const ThreadSidebar = ({ selectedId, projectId, onSelect }: ThreadSidebar
             onDelete={() => startDelete(t)}
           />
         ))}
+      </div>
+
+      {/* History accordion — the resolved-rows archive, collapsed by default. */}
+      <div data-testid="history-accordion">
+        <button
+          type="button"
+          aria-expanded={historyOpen}
+          aria-controls="section-body-history"
+          onClick={() => setHistoryOpen((v) => !v)}
+          className="flex w-full items-center justify-between border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide text-muted hover:bg-iron/5"
+        >
+          <span>{historyLabel(history.items.length, history.nextCursor !== null)}</span>
+          <span aria-hidden="true">{historyOpen ? '▾' : '▸'}</span>
+        </button>
+        {historyOpen && (
+          <div id="section-body-history" className="max-h-56 overflow-y-auto">
+            {history.items.length === 0 ? (
+              <p className="px-3 py-2 font-mono text-[11px] text-muted">
+                No resolved items.
+              </p>
+            ) : (
+              history.items.map((item) => (
+                <div
+                  key={item.id}
+                  data-testid="history-row"
+                  role="button"
+                  tabIndex={0}
+                  aria-current={item.id === selectedQueueItemId ? 'true' : undefined}
+                  className={[
+                    'cursor-pointer px-3 py-2 transition-colors',
+                    item.id === selectedQueueItemId ? 'bg-iron/20' : 'hover:bg-iron/10',
+                  ].join(' ')}
+                  onClick={() => onSelectQueueItem?.(item.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      onSelectQueueItem?.(item.id)
+                    }
+                  }}
+                >
+                  <div className="flex items-baseline gap-2">
+                    {item.kind !== 'failed-task' && (
+                      <span className="shrink-0 font-mono text-[9px] uppercase text-muted">
+                        {kindBadgeLabel(item.kind)}
+                      </span>
+                    )}
+                    <span className="break-all font-mono text-[10px] text-muted">
+                      {item.entityId}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 break-words font-mono text-[11px] text-muted">
+                    {(item.resolution?.resolution ?? item.title) || '(no title)'}
+                  </div>
+                  <div className="mt-0.5 font-mono text-[10px] text-muted">
+                    {item.resolution
+                      ? relativeTime(item.resolution.resolvedAt)
+                      : relativeTime(item.at)}
+                  </div>
+                </div>
+              ))
+            )}
+            {history.nextCursor !== null ? (
+              <button
+                type="button"
+                data-testid="history-load-more"
+                disabled={history.isLoadingMore}
+                onClick={history.loadMore}
+                className="w-full border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase text-muted hover:bg-iron/5 disabled:opacity-50"
+              >
+                {history.isLoadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            ) : null}
+          </div>
+        )}
       </div>
 
       {/* Delete toast — the row is already gone on screen; the request is not sent
@@ -1548,14 +1796,112 @@ export const ThreadSidebar = ({ selectedId, projectId, onSelect }: ThreadSidebar
 // ---------------------------------------------------------------------------
 
 export const ChatPage = () => {
-  const projectId = useFocusedProjectId() ?? undefined
+  const rawProjectId = useFocusedProjectId()
+  const projectId = rawProjectId ?? undefined
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
+  // Projection-Thread selection (an action-queue item id) plus the sidebar
+  // filter state — all three restore from the chat URL hash on F5.
+  const [selectedQueueItemId, setSelectedQueueItemId] = useState<string | null>(
+    () => readAqStateFromUrl().item,
+  )
+  const [query, setQuery] = useState<string>(() => readAqStateFromUrl().q)
+  const [kindFilter, setKindFilter] = useState<KindFilter>(() => readAqStateFromUrl().kind)
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
   const [railCollapsed, setRailCollapsed] = useState(false)
   // Capture the epoch ms when this ChatPage first mounts so the ContextRail
   // can highlight tasks that appeared during this session.
   const sessionStartedAt = useRef(Date.now()).current
   const qc = useQueryClient()
+
+  // Live queue rows + resolved-rows archive for the sidebar and detail pane.
+  const {
+    items: queueItems,
+    error: queueError,
+    projectsError,
+    projectsEmpty,
+  } = useActionQueue()
+  const {
+    items: historyItems,
+    nextCursor: historyNextCursor,
+    isLoadingMore: historyLoadingMore,
+    loadMore: loadMoreHistory,
+  } = useActionQueueHistory()
+
+  // Threads at the root so a deep-linked queue item can resolve to its merged
+  // alert-origin conversation. React Query dedupes this against the sidebar's
+  // identical query — no extra request.
+  const { data: threadsData } = useQuery({
+    queryKey: ['chat-threads', projectId],
+    queryFn: () => fetchChatThreads(projectId),
+  })
+
+  // Debounced URL write-back — mirrors selection, kind filter, and search so
+  // F5 restores the exact view. Uses replaceState (no hashchange event) to
+  // avoid disturbing the app-level hash router.
+  const urlWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
+    urlWriteTimerRef.current = setTimeout(() => {
+      writeAqStateToUrl({ item: selectedQueueItemId, kind: kindFilter, q: query })
+    }, 300)
+    return () => {
+      if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
+    }
+  }, [selectedQueueItemId, kindFilter, query])
+
+  // Selection is exclusive: a conversation or a projection Thread, never both.
+  const handleSelectThread = useCallback((id: string) => {
+    setSelectedThreadId(id || null)
+    setSelectedQueueItemId(null)
+  }, [])
+
+  const handleSelectQueueItem = useCallback((id: string) => {
+    setSelectedQueueItemId(id)
+    setSelectedThreadId(null)
+  }, [])
+
+  // Deep link: when the selected queue item is backed by an alert-origin
+  // conversation, open the conversation instead (the merged sidebar entry).
+  useEffect(() => {
+    if (selectedQueueItemId === null) return
+    const thread = (threadsData ?? []).find(
+      (t) => t.origin === 'alert' && t.alertItemId === selectedQueueItemId,
+    )
+    if (thread) {
+      setSelectedThreadId(thread.id)
+      setSelectedQueueItemId(null)
+    }
+  }, [selectedQueueItemId, threadsData])
+
+  /**
+   * Fires a Decision from the sidebar quick pills: optimistic removal of the
+   * row from the cache, rollback on error, reconcile on settle — the inline
+   * resolver semantics (no two-step confirm; the detail ActionBar covers that).
+   */
+  const handleQueueAction = useCallback(
+    async (action: ActionDescriptor, actionItem: ActionQueueItem) => {
+      await qc.cancelQueries({ queryKey: ['action-queue'] })
+      const snapshot = qc.getQueryData<ActionQueueItem[]>(['action-queue', rawProjectId])
+      if (snapshot) {
+        qc.setQueryData(
+          ['action-queue', rawProjectId],
+          snapshot.filter((i) => i.id !== actionItem.id),
+        )
+      }
+      try {
+        const entityId = PROCESS_LEVEL_OPS.has(action.op) ? undefined : actionItem.entityId
+        await invokeAction(action.op, entityId)
+      } catch {
+        if (snapshot) {
+          qc.setQueryData(['action-queue', rawProjectId], snapshot)
+        }
+      } finally {
+        void qc.invalidateQueries({ queryKey: ['action-queue'] })
+        void qc.invalidateQueries({ queryKey: ['progress'] })
+      }
+    },
+    [qc, rawProjectId],
+  )
 
   // Create a new thread and post the first message in one gesture — used by
   // the hero composer so the user never has to click "+ New thread" separately.
@@ -1569,6 +1915,7 @@ export const ChatPage = () => {
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
       void qc.invalidateQueries({ queryKey: ['chat-thread', thread.id] })
       setSelectedThreadId(thread.id)
+      setSelectedQueueItemId(null)
     },
   })
 
@@ -1597,12 +1944,44 @@ export const ChatPage = () => {
     setPrefill(prompt)
   }, [])
 
+  // Resolve the selected projection Thread against live rows first, then the
+  // history archive (a resolved history row renders its Resolution block).
+  const selectedQueueItem = useMemo(() => {
+    if (selectedQueueItemId === null) return null
+    return (
+      queueItems.find((i) => i.id === selectedQueueItemId) ??
+      historyItems.find((i) => i.id === selectedQueueItemId) ??
+      null
+    )
+  }, [selectedQueueItemId, queueItems, historyItems])
+
+  // "Resolved" when the pinned row vanished from the live queue (and isn't a
+  // history selection) — the projection evaporated via entity mutation.
+  const queueSelectionResolved =
+    selectedQueueItem === null && isResolvedSelection(selectedQueueItemId, queueItems)
+
   return (
     <div className="flex h-full overflow-hidden">
       <ThreadSidebar
         selectedId={selectedThreadId}
         projectId={projectId}
-        onSelect={(id) => setSelectedThreadId(id || null)}
+        onSelect={handleSelectThread}
+        selectedQueueItemId={selectedQueueItemId}
+        onSelectQueueItem={handleSelectQueueItem}
+        queueItems={queueItems}
+        history={{
+          items: historyItems,
+          nextCursor: historyNextCursor,
+          isLoadingMore: historyLoadingMore,
+          loadMore: loadMoreHistory,
+        }}
+        query={query}
+        onQueryChange={setQuery}
+        kindFilter={kindFilter}
+        onKindFilterChange={setKindFilter}
+        onQueueAction={handleQueueAction}
+        queueError={queueError ?? projectsError}
+        projectsEmpty={projectsEmpty}
       />
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -1625,12 +2004,75 @@ export const ChatPage = () => {
               onInitialTextConsumed={() => setPrefill(undefined)}
             />
           </>
+        ) : queueSelectionResolved ? (
+          <div
+            data-testid="resolved-pane"
+            className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
+          >
+            <p className="font-mono text-[13px] text-fg">This item has been resolved.</p>
+            <p className="font-mono text-[11px] text-iron">
+              It was removed from the action queue.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-iron hover:bg-iron/10"
+                onClick={() => {
+                  const id = selectedQueueItemId!
+                  window.location.hash = taskHash(
+                    id.includes(':') ? id.split(':').slice(1).join(':') : id,
+                    'chat',
+                  )
+                }}
+              >
+                View task →
+              </button>
+              <button
+                type="button"
+                className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-iron hover:bg-iron/10"
+                onClick={() => setSelectedQueueItemId(null)}
+              >
+                ← Back to chat
+              </button>
+            </div>
+          </div>
+        ) : selectedQueueItem ? (
+          <>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <QueueThreadDetail
+                key={selectedQueueItem.id}
+                item={selectedQueueItem}
+                onNavigateToTask={(taskId: string) => {
+                  const found = queueItems.find((i) => i.entityId === taskId)
+                  if (found) {
+                    setSelectedQueueItemId(found.id)
+                  } else {
+                    window.location.hash = taskHash(taskId, 'chat')
+                  }
+                }}
+              />
+            </div>
+            {/* Composer — start the conversation on this projection Thread.
+                Sending creates the thread and posts the first message. */}
+            {selectedQueueItem.resolution == null && (
+              <Composer
+                threadId=""
+                projectId={projectId}
+                disabled={false}
+                initialText={prefill}
+                onInitialTextConsumed={() => setPrefill(undefined)}
+                onSendOverride={(msg) => createAndSend(msg)}
+                sendPending={isCreatingThread}
+              />
+            )}
+          </>
         ) : (
           <HeroEmptyState
             projectId={projectId}
-            onSelectThread={(id) => setSelectedThreadId(id)}
+            onSelectThread={handleSelectThread}
             onCreateAndSend={(msg) => createAndSend(msg)}
             isPending={isCreatingThread}
+            onOpenQueueItem={handleSelectQueueItem}
           />
         )}
       </div>

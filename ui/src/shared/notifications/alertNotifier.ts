@@ -69,7 +69,7 @@ const fireNotification = (item: ActionQueueItem): void => {
     })
     notification.onclick = () => {
       window.focus()
-      window.location.hash = '#/action-queue'
+      window.location.hash = `#/chat?item=${encodeURIComponent(item.id)}`
       notification.close()
     }
   } catch {

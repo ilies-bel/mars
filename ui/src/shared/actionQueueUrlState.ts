@@ -1,23 +1,28 @@
 /**
- * URL state encoding/decoding for the Action Queue page's filter controls.
+ * URL state encoding/decoding for the chat sidebar's projection-Thread
+ * filter controls (the absorbed action queue).
  *
  * Three filter dimensions are encoded as query parameters appended to the
- * `#/action-queue` hash:
+ * `#/chat` hash:
  *
- *   item   selected item id (omitted when null)
+ *   item   selected action-queue item id (omitted when null)
  *   kind   'all' (default, omitted) | 'alerts' | 'drafts'
  *   q      search text (omitted when empty)
  *
- * Example: `#/action-queue?item=failed-task%3At-1&kind=alerts`
+ * Example: `#/chat?item=failed-task%3At-1&kind=alerts`
  *
  * Default values are omitted to keep URLs clean. Absent parameters decode as
- * defaults, so a bare `#/action-queue` hash produces the full-default state.
+ * defaults, so a bare `#/chat` hash produces the full-default state.
+ *
+ * Legacy `#/action-queue` / `#/todo` deep links decode too (the App redirects
+ * them onto `#/chat` preserving the query), so existing links land on the
+ * right projection Thread.
  *
  * URL updates use `history.replaceState` — no hashchange event is emitted, so
  * the app-level hash router is not disturbed by filter-state updates.
  */
 
-import type { KindFilter } from '../pages/ActionQueuePage'
+import type { KindFilter } from '../widgets/chat/queueThreads'
 
 export type AqUrlState = {
   item: string | null
@@ -33,7 +38,7 @@ export const defaultAqUrlState = (): AqUrlState => ({
 })
 
 /**
- * Encode filter state as a query string suitable for appending to `#/action-queue`.
+ * Encode filter state as a query string suitable for appending to `#/chat`.
  * Default values are omitted so an all-default state returns `''`.
  */
 export const encodeAqState = (state: AqUrlState): string => {
@@ -53,7 +58,7 @@ export const encodeAqState = (state: AqUrlState): string => {
 }
 
 /**
- * Decode filter state from a hash string like `#/action-queue?item=x&kind=alerts`.
+ * Decode filter state from a hash string like `#/chat?item=x&kind=alerts`.
  * Unrecognised or missing parameters fall back to defaults.
  */
 export const decodeAqState = (hash: string): AqUrlState => {
@@ -82,27 +87,35 @@ export const decodeAqState = (hash: string): AqUrlState => {
   return { item, kind, q }
 }
 
+/** Hash prefixes that carry projection-Thread filter state. */
+const STATE_HASH_PREFIXES = ['#/chat', '#/action-queue', '#/todo']
+
+const hasStatePrefix = (hash: string): boolean =>
+  STATE_HASH_PREFIXES.some((p) => hash.startsWith(p))
+
 /**
- * Read the current action-queue filter state from the browser URL.
+ * Read the current projection-Thread filter state from the browser URL.
+ * Accepts the `#/chat` hash plus the legacy `#/action-queue` / `#/todo`
+ * hashes (read before the App's redirect lands on `#/chat`).
  * Falls back to defaults when called outside a browser (SSR, tests).
  */
 export const readAqStateFromUrl = (): AqUrlState => {
   if (typeof window === 'undefined') return defaultAqUrlState()
   const hash = window.location.hash || '#/'
-  if (!hash.startsWith('#/action-queue')) return defaultAqUrlState()
+  if (!hasStatePrefix(hash)) return defaultAqUrlState()
   return decodeAqState(hash)
 }
 
 /**
- * Write the current action-queue filter state back to the browser URL via
- * `history.replaceState`. No hashchange event is fired, so the app-level
- * hash router is not disturbed.
- * Safe to call in non-browser environments (no-ops silently).
+ * Write the current projection-Thread filter state back to the browser URL
+ * via `history.replaceState`. No hashchange event is fired, so the app-level
+ * hash router is not disturbed. Only writes when the current hash is a chat
+ * hash (post-redirect). Safe to call in non-browser environments.
  */
 export const writeAqStateToUrl = (state: AqUrlState): void => {
   if (typeof window === 'undefined' || typeof history === 'undefined') return
   const current = window.location.hash || ''
-  if (!current.startsWith('#/action-queue')) return
+  if (!current.startsWith('#/chat')) return
   const params = encodeAqState(state)
-  history.replaceState(null, '', params ? `#/action-queue${params}` : '#/action-queue')
+  history.replaceState(null, '', params ? `#/chat${params}` : '#/chat')
 }

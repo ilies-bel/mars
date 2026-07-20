@@ -34,7 +34,6 @@ import { useProgress } from '@/hooks/useProgress'
 import { FocusedProjectProvider, useFocusedProjectId } from '@/shared/useFocusedProject'
 import { useReleaseNotesAutoOpen } from '@/shared/useReleaseNotesAutoOpen'
 import { ProgressPage } from '@/pages/ProgressPage'
-import { ActionQueuePage } from '@/pages/ActionQueuePage'
 import { ChatPage } from '@/pages/ChatPage'
 import { EventsPage } from '@/pages/EventsPage'
 import { KpiDetailPage } from '@/pages/KpiDetailPage'
@@ -48,7 +47,6 @@ import { Breadcrumbs } from '@/widgets/Breadcrumbs'
 /** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
 const ROUTE_BASE: Record<RouteName, string> = {
   chat: '#/chat',
-  'action-queue': '#/action-queue',
   progress: '#/progress',
   events: '#/events',
   kpi: '#/events',
@@ -98,13 +96,18 @@ const AppInner = () => {
     if (typeof window === 'undefined') return
     if (rawHash === '' || rawHash === '#' || rawHash === '#/') {
       navigateReplace('#/chat')
+    } else if (rawHash.startsWith('#/action-queue') || rawHash.startsWith('#/todo')) {
+      // Legacy action-queue deep links: the chat page absorbed the action
+      // queue, so map the old ?item=/kind=/q= state onto the chat hash.
+      const qIdx = rawHash.indexOf('?')
+      navigateReplace(qIdx === -1 ? '#/chat' : `#/chat${rawHash.slice(qIdx)}`)
     } else if (!isKnownRoute(rawHash)) {
       navigateReplace('#/progress')
     }
   }, [rawHash])
 
   // Live action queue count for the tab title badge. React Query deduplicates
-  // this against the identical call inside ActionQueuePage — no extra request.
+  // this against the identical call inside ChatPage — no extra request.
   const { items: aqItems } = useActionQueue()
 
   // For rendering, treat unknown hashes as #/chat (the default) so the nav
@@ -170,10 +173,8 @@ const AppInner = () => {
             <ProgressPage />
           ) : route === 'events' ? (
             <EventsPage />
-          ) : route === 'chat' ? (
-            <ChatPage />
           ) : (
-            <ActionQueuePage />
+            <ChatPage />
           )}
         </FallbackBoundary>
       </div>

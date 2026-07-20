@@ -51,13 +51,13 @@ describe('detectRoute', () => {
     expect(detectRoute('#')).toBe('chat')
   })
 
-  it('returns action-queue for the legacy #/todo hash', () => {
-    expect(detectRoute('#/todo')).toBe('action-queue')
+  it('returns chat for the legacy #/todo hash', () => {
+    expect(detectRoute('#/todo')).toBe('chat')
   })
 
-  it('returns action-queue for the #/action-queue hash', () => {
-    expect(detectRoute('#/action-queue')).toBe('action-queue')
-    expect(detectRoute('#/action-queue/sub')).toBe('action-queue')
+  it('returns chat for the legacy #/action-queue hash', () => {
+    expect(detectRoute('#/action-queue')).toBe('chat')
+    expect(detectRoute('#/action-queue/sub')).toBe('chat')
   })
 
   it('returns progress for the #/progress hash', () => {
@@ -68,7 +68,7 @@ describe('detectRoute', () => {
   it('does not recognise the legacy #/kanban hash', () => {
     // Hard cut — no alias, no redirect. The legacy hash falls through to the
     // default route.
-    expect(detectRoute('#/kanban')).toBe('action-queue')
+    expect(detectRoute('#/kanban')).toBe('chat')
   })
 
   it('returns events for the #/events hash', () => {
@@ -170,7 +170,7 @@ describe('parseTaskRoute', () => {
 
   it('returns the id even with a ?from=<route> suffix', () => {
     // The `[^/?#]+` capture stops at the `?`, so the origin suffix is ignored.
-    expect(parseTaskRoute('#/task/x?from=action-queue')).toBe('x')
+    expect(parseTaskRoute('#/task/x?from=chat')).toBe('x')
   })
 })
 
@@ -180,7 +180,7 @@ describe('parseTaskRoute', () => {
 
 describe('parseTaskOrigin', () => {
   it('returns the route from ?from=<route>', () => {
-    expect(parseTaskOrigin('#/task/x?from=action-queue')).toBe('action-queue')
+    expect(parseTaskOrigin('#/task/x?from=chat')).toBe('chat')
     expect(parseTaskOrigin('#/task/x?from=progress')).toBe('progress')
     expect(parseTaskOrigin('#/task/x?from=events')).toBe('events')
   })
@@ -195,7 +195,7 @@ describe('parseTaskOrigin', () => {
 
   it('returns null for a non-task hash', () => {
     expect(parseTaskOrigin('#/progress')).toBeNull()
-    expect(parseTaskOrigin('#/proposal/x?from=action-queue')).toBeNull()
+    expect(parseTaskOrigin('#/proposal/x?from=chat')).toBeNull()
   })
 })
 
@@ -209,12 +209,12 @@ describe('taskHash', () => {
   })
 
   it('appends ?from=<route> when an origin is given', () => {
-    expect(taskHash('x', 'action-queue')).toBe('#/task/x?from=action-queue')
+    expect(taskHash('x', 'chat')).toBe('#/task/x?from=chat')
   })
 
   it('percent-encodes the id', () => {
-    expect(taskHash('mars-123', 'action-queue')).toBe(
-      '#/task/mars-123?from=action-queue',
+    expect(taskHash('mars-123', 'chat')).toBe(
+      '#/task/mars-123?from=chat',
     )
   })
 
@@ -299,7 +299,7 @@ describe('proposalHash', () => {
   })
 
   it('appends ?from=<route> when an origin is given', () => {
-    expect(proposalHash('x', 'action-queue')).toBe('#/proposal/x?from=action-queue')
+    expect(proposalHash('x', 'chat')).toBe('#/proposal/x?from=chat')
   })
 
   it('percent-encodes the id', () => {
@@ -317,7 +317,7 @@ describe('proposalHash', () => {
 
 describe('parseProposalOrigin', () => {
   it('returns the route from ?from=<route>', () => {
-    expect(parseProposalOrigin('#/proposal/x?from=action-queue')).toBe('action-queue')
+    expect(parseProposalOrigin('#/proposal/x?from=chat')).toBe('chat')
     expect(parseProposalOrigin('#/proposal/x?from=progress')).toBe('progress')
     expect(parseProposalOrigin('#/proposal/x?from=events')).toBe('events')
   })
@@ -332,7 +332,7 @@ describe('parseProposalOrigin', () => {
 
   it('returns null for a non-proposal hash', () => {
     expect(parseProposalOrigin('#/progress')).toBeNull()
-    expect(parseProposalOrigin('#/task/x?from=action-queue')).toBeNull()
+    expect(parseProposalOrigin('#/task/x?from=chat')).toBeNull()
   })
 })
 
@@ -350,7 +350,7 @@ describe('resolvePageRoute', () => {
   it('returns the from-route when a task overlay carries ?from=', () => {
     // Opening the drawer from the Action queue keeps the AQ list mounted
     // behind it (and closing returns there).
-    expect(resolvePageRoute('#/task/x?from=action-queue')).toBe('action-queue')
+    expect(resolvePageRoute('#/task/x?from=chat')).toBe('chat')
   })
 
   it('still returns progress for a plain task hash (no from)', () => {
@@ -372,19 +372,19 @@ describe('resolvePageRoute', () => {
     expect(resolvePageRoute('')).toBe('chat')
   })
 
-  it('returns action-queue for a malformed #/task/ hash (empty id)', () => {
+  it('returns chat for a malformed #/task/ hash (empty id)', () => {
     // A stray '#/task/' must not open a blank overlay or force the progress route.
-    expect(resolvePageRoute('#/task/')).toBe('action-queue')
+    expect(resolvePageRoute('#/task/')).toBe('chat')
   })
 
   it('returns progress when a proposal overlay hash is present (no from)', () => {
     expect(resolvePageRoute('#/proposal/prop-abc')).toBe('progress')
   })
 
-  it('returns the from-route when a proposal overlay carries ?from=action-queue', () => {
+  it('returns the from-route when a proposal overlay carries ?from=chat', () => {
     // Opening the proposal drawer from the Action Queue should keep AQ mounted
     // behind it and closing returns there — matching task drawer behaviour.
-    expect(resolvePageRoute('#/proposal/x?from=action-queue')).toBe('action-queue')
+    expect(resolvePageRoute('#/proposal/x?from=chat')).toBe('chat')
   })
 
   it('falls back to progress for a proposal with an unrecognised from value', () => {
@@ -435,17 +435,17 @@ describe('parseReleaseNotesRoute', () => {
 // ---------------------------------------------------------------------------
 
 describe('pageTitle', () => {
-  it('returns "mars — action queue" for the action-queue route with no items', () => {
-    expect(pageTitle('action-queue', 0)).toBe('mars — action queue')
+  it('returns "mars — chat" for the chat route with no items', () => {
+    expect(pageTitle('chat', 0)).toBe('mars — chat')
   })
 
-  it('returns "mars — action queue (N)" when there are N action queue items', () => {
-    expect(pageTitle('action-queue', 3)).toBe('mars — action queue (3)')
-    expect(pageTitle('action-queue', 12)).toBe('mars — action queue (12)')
+  it('returns "mars — chat (N)" when there are N action queue items', () => {
+    expect(pageTitle('chat', 3)).toBe('mars — chat (3)')
+    expect(pageTitle('chat', 12)).toBe('mars — chat (12)')
   })
 
   it('defaults aqCount to 0 when omitted', () => {
-    expect(pageTitle('action-queue')).toBe('mars — action queue')
+    expect(pageTitle('chat')).toBe('mars — chat')
   })
 
   it('returns "mars — progress" for the progress route', () => {
@@ -531,8 +531,8 @@ describe('studio route integration', () => {
     expect(detectRoute('#/studio/mars-abc')).toBe('studio')
   })
 
-  it('detectRoute falls back to action-queue for a bare #/studio/', () => {
-    expect(detectRoute('#/studio/')).toBe('action-queue')
+  it('detectRoute falls back to chat for a bare #/studio/', () => {
+    expect(detectRoute('#/studio/')).toBe('chat')
   })
 
   it('isKnownRoute accepts #/studio/<id> but rejects a bare #/studio/', () => {
@@ -599,7 +599,7 @@ describe('primitive route integration', () => {
   it('detectRoute leaves the underlying page resolution to resolvePageRoute', () => {
     // A primitive hash is an overlay, not a page route — detectRoute's
     // default applies and resolvePageRoute overrides it to progress.
-    expect(detectRoute('#/primitive/verify')).toBe('action-queue')
+    expect(detectRoute('#/primitive/verify')).toBe('chat')
     expect(resolvePageRoute('#/primitive/verify')).toBe('progress')
   })
 })
@@ -610,7 +610,7 @@ describe('primitive route integration', () => {
 
 describe('parseOverlayOrigin', () => {
   it('reads from= from a proposal-node hash', () => {
-    expect(parseOverlayOrigin('#/proposal-node/x?from=action-queue')).toBe('action-queue')
+    expect(parseOverlayOrigin('#/proposal-node/x?from=chat')).toBe('chat')
     expect(parseOverlayOrigin('#/proposal-node/x?from=events')).toBe('events')
   })
 
@@ -642,7 +642,7 @@ describe('proposalNodeHash', () => {
   })
 
   it('appends ?from=<route> when an origin is given', () => {
-    expect(proposalNodeHash('x', 'action-queue')).toBe('#/proposal-node/x?from=action-queue')
+    expect(proposalNodeHash('x', 'chat')).toBe('#/proposal-node/x?from=chat')
   })
 })
 
@@ -655,8 +655,8 @@ describe('resolvePageRoute — overlay from support', () => {
     expect(resolvePageRoute('#/proposal-node/x?from=events')).toBe('events')
   })
 
-  it('proposal-node with ?from=action-queue keeps AQ mounted', () => {
-    expect(resolvePageRoute('#/proposal-node/x?from=action-queue')).toBe('action-queue')
+  it('proposal-node with ?from=chat keeps AQ mounted', () => {
+    expect(resolvePageRoute('#/proposal-node/x?from=chat')).toBe('chat')
   })
 
   it('primitive with ?from=events keeps events mounted', () => {

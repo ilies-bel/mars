@@ -33,7 +33,7 @@ mock.module('@/hooks/useProgress', () => ({
 }))
 
 mock.module('@/entities/stale-worktrees/useStaleWorktrees', () => ({
-  // 3 stale worktrees → actionCount=3 → Action queue link gets aria-label
+  // 3 stale worktrees → actionCount=3 → Chat link gets aria-label
   useStaleWorktrees: () => ({ staleWorktrees: [1, 2, 3] }),
 }))
 
@@ -76,15 +76,15 @@ describe('NavBar – Progress badge reading order', () => {
     expect(html).toContain('aria-label="Progress, 7 open tasks"')
   })
 
-  it('Action queue link carries an aria-label that includes the action count', () => {
-    expect(html).toContain('aria-label="Action queue, 3 items"')
+  it('Chat link carries an aria-label that includes the action count', () => {
+    expect(html).toContain('aria-label="Chat, 3 items"')
   })
 })
 
 describe('NavBar – CountBadge aria-hidden', () => {
   it('visual badge carries aria-hidden="true" so the count is not double-announced', () => {
     // The badge span is absolutely-positioned beside the link; hiding it from AT
-    // prevents "3 Action queue" being read as "3" then "Action queue" separately.
+    // prevents "3 Chat" being read as "3" then "Chat" separately.
     expect(html).toContain('aria-hidden="true"')
   })
 })
