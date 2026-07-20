@@ -51,6 +51,7 @@ const TRACE_EVENT_PHASES: readonly TraceEventPhase[] = [
   'code',
   'verify',
   'merge',
+  'reflect',
 ] as const
 const TRACE_EVENT_PHASE_SET: ReadonlySet<string> = new Set(TRACE_EVENT_PHASES)
 

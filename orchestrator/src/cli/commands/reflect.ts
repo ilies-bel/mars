@@ -227,33 +227,48 @@ const arcReflect: Command = {
     const { applyVerdicts, applyScorerVerdicts } = await import(
       '../../core/lib/reflector'
     )
+    const { openTraceEventStore } = await import(
+      '../../core/lib/trace-events-store'
+    )
+    const { resolveContext } = await import('../../core/context')
 
     const originId = await resolveOriginIdForTaskOrSelf(chosenOriginInput)
+
+    const traceStore = await openTraceEventStore(resolveContext().stateDbPath)
 
     // Track completed steps for real-time progress
     const stepTimings = new Map<string, number>()
 
-    const result = await runReflect(originId, {
-      onEvent: (event) => {
-        if (event.event === 'step.started' && event.step) {
-          stepTimings.set(event.step, event.time)
-        }
-        if (event.event === 'step.completed' && event.step) {
-          const startedAt = stepTimings.get(event.step)
-          const elapsed = startedAt ? ((event.time - startedAt) / 1000).toFixed(1) : '?'
-          const summary =
-            typeof (event.payload as Record<string, unknown> | undefined)?.summary === 'string'
-              ? (event.payload as Record<string, unknown>).summary
-              : null
-          deps.out(
-            `▸ ${event.step} ✓ (${elapsed}s)${summary ? ` — ${summary}` : ''}`,
-          )
-        }
-        if (event.event === 'step.failed' && event.step) {
-          deps.err(`▸ ${event.step} ✗`)
-        }
-      },
-    })
+    let result
+    try {
+      result = await runReflect(originId, {
+        traceStore,
+        onEvent: (event) => {
+          if (event.event === 'step.started' && event.step) {
+            stepTimings.set(event.step, event.time)
+          }
+          if (event.event === 'step.completed' && event.step) {
+            const startedAt = stepTimings.get(event.step)
+            const elapsed = startedAt
+              ? ((event.time - startedAt) / 1000).toFixed(1)
+              : '?'
+            const summary =
+              typeof (event.payload as Record<string, unknown> | undefined)
+                ?.summary === 'string'
+                ? (event.payload as Record<string, unknown>).summary
+                : null
+            deps.out(
+              `▸ ${event.step} ✓ (${elapsed}s)${summary ? ` — ${summary}` : ''}`,
+            )
+          }
+          if (event.event === 'step.failed' && event.step) {
+            deps.err(`▸ ${event.step} ✗`)
+          }
+        },
+      })
+    } finally {
+      await traceStore.close()
+    }
 
     const report = result.report
 
