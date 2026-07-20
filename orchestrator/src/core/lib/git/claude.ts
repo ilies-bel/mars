@@ -152,6 +152,7 @@ export interface RunClaudeArgs {
   effort?: ClaudeEffort
   permissionMode?: ClaudePermissionMode
   bare?: boolean
+  safeMode?: boolean
   agent?: string
   disallowedTools?: ReadonlyArray<string>
   // Per-invocation context token budget. When the LATEST assistant event's
@@ -224,6 +225,7 @@ interface ClaudeStreamArgsOptions {
   effort?: ClaudeEffort
   permissionMode?: ClaudePermissionMode
   bare?: boolean
+  safeMode?: boolean
   agent?: string
   // Caller-supplied disallowed tools. Unioned with AGENT_TO_USER_DENIED_TOOLS;
   // duplicates collapse. The agent-to-user denial cannot be removed by a caller.
@@ -424,6 +426,7 @@ export const claudeStreamArgs = (
   '--no-session-persistence',
   '--exclude-dynamic-system-prompt-sections',
   ...(options.bare ? ['--bare'] : []),
+  ...(options.safeMode ? ['--safe-mode'] : []),
   ...(options.agent ? ['--agent', options.agent] : []),
   ...(options.effort ? ['--effort', options.effort] : []),
   '--disallowedTools',
@@ -547,6 +550,7 @@ export const runClaudeCode = async ({
   effort,
   permissionMode,
   bare,
+  safeMode,
   agent,
   disallowedTools,
   maxContextTokens,
@@ -612,6 +616,7 @@ export const runClaudeCode = async ({
       effort,
       permissionMode,
       bare,
+      safeMode,
       agent,
       disallowedTools,
       // Default workers get NO mcpConfig: they use the codegraph CLI directly

@@ -65,6 +65,7 @@ export interface RunPtySessionArgs {
   readonly disallowedTools?: readonly string[]
   readonly agent?: string
   readonly appendSystemPrompt?: string
+  readonly safeMode?: boolean
 }
 
 /**
@@ -96,6 +97,7 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
     disallowedTools,
     agent,
     appendSystemPrompt,
+    safeMode,
   } = args
 
   // Set up trace logging under <cwd>/.mars/pty/
@@ -130,6 +132,7 @@ export const runPtySession = async (args: RunPtySessionArgs): Promise<RunClaudeR
       disallowedTools,
       agent,
       appendSystemPrompt,
+      safeMode,
     })
     const [cmd, ...rest] = argv as string[]
     // Pass the sanitized worker env, NOT the inherited process.env. A daemon

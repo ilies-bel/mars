@@ -28,11 +28,11 @@ describe('CODEGRAPH_NUDGE blast radius', () => {
     })
   }
 
-  it('CODEGRAPH_NUDGE is a non-empty string that references codegraph_* MCP tools', () => {
-    // Guards against the constant being blanked out or renamed without updating the test.
+  it('CODEGRAPH_NUDGE is a non-empty string that references codegraph CLI commands', () => {
     expect(typeof CODEGRAPH_NUDGE).toBe('string')
     expect(CODEGRAPH_NUDGE.length).toBeGreaterThan(0)
-    expect(CODEGRAPH_NUDGE).toMatch(/codegraph_/)
+    expect(CODEGRAPH_NUDGE).toMatch(/codegraph query/)
+    expect(CODEGRAPH_NUDGE).toMatch(/codegraph callers/)
   })
 
   it('exactly 3 workers carry the nudge — no silent additions', () => {
