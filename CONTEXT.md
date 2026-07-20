@@ -465,5 +465,5 @@ The Subscriber that delivers a native OS desktop notification to the operator's 
 _Avoid_: push notification, notification channel, notification service, alerter
 
 **Thread**:
-A chat surface entry representing one matter that currently needs human intervention; when the need ends it folds into its Arc and leaves the chat surface.
-_Avoid_: chat thread, conversation
+A single-goal unit of operator decision on the chat page, either projected from an Alert (exists iff the Alert exists, clears only via entity mutation) or spawned by a human (closes when its goal artifact lands).
+_Avoid_: chat thread, conversation, lateral thread
