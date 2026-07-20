@@ -52,3 +52,11 @@ test-results/
 
 # JVM crash dumps
 hs_err_pid*
+
+# Transient scratch files — operator debug dumps and stray screenshots that
+# otherwise dirty the working tree and trip the main-committer dispatch guard.
+# Verified clean before adding: `git ls-files | grep -E 'failed-tasks-'` → none.
+# PNG pattern is root-anchored (/*.png) to stay narrow: the only tracked images
+# are docs/assets/*.png (subdirectory), which are unaffected.
+failed-tasks-*
+/*.png
