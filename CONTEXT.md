@@ -467,3 +467,7 @@ _Avoid_: push notification, notification channel, notification service, alerter
 **Thread**:
 A single-goal unit of operator decision on the chat page, either projected from an Alert (exists iff the Alert exists, clears only via entity mutation) or spawned by a human (closes when its goal artifact lands).
 _Avoid_: chat thread, conversation, lateral thread
+
+**Reflector**:
+The synthesis process that reviews completed work and system telemetry to emit draft proposals and suggestion cards, consulting its checklist and past operator decisions before suggesting.
+_Avoid_: reflection engine, suggester
