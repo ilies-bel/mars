@@ -335,6 +335,7 @@ export const loadWorkflowByName = async <I, O, S>(
 
 let resolveHookRegistered = false
 const AUTHORING_PATH = new URL('./authoring.ts', import.meta.url).pathname
+const WORKFLOW_ENGINE_URL = new URL('../../../packages/workflow/src/index.ts', import.meta.url).href
 
 const ensureResolveHook = (): void => {
   if (resolveHookRegistered) return
@@ -342,7 +343,25 @@ const ensureResolveHook = (): void => {
   registerHooks({
     resolve(specifier, context, nextResolve) {
       if (specifier === 'mars/workflow') {
-        return nextResolve(AUTHORING_PATH, context)
+        // This is an explicit virtual-module alias, not a request for Node to
+        // keep resolving `mars/workflow` from the consumer workflow's
+        // directory.  Returning the source URL directly prevents Node 26's
+        // resolver from falling through to the package boundary and trying to
+        // load a non-existent default export.
+        return {
+          url: pathToFileURL(AUTHORING_PATH).href,
+          shortCircuit: true,
+        }
+      }
+      // `registerHooks()` sits ahead of tsx's resolver.  Passing this package
+      // specifier through `nextResolve` therefore makes Node's native resolver
+      // inspect the source-only workspace package before tsx can load its
+      // TypeScript entrypoint.  Pin the engine to that entrypoint explicitly.
+      if (specifier === '@mars/workflow') {
+        return {
+          url: WORKFLOW_ENGINE_URL,
+          shortCircuit: true,
+        }
       }
       return nextResolve(specifier, context)
     },
