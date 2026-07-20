@@ -146,12 +146,12 @@ describe('action-queue list', () => {
     expect(r.out.join('\n')).toContain('action queue empty')
   })
 
-  it('rejects an unknown filter with code 1', async () => {
+  it('rejects an unknown filter with code 2', async () => {
     const opts = await loadOpts(repo)
 
     const r = await runCommandInProcess(['action-queue', 'list', 'bogus'], opts)
 
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.err.join('\n')).toContain('usage: mars action-queue list')
   })
 
@@ -370,7 +370,7 @@ describe('action-queue show', () => {
 
     const r = await runCommandInProcess(['action-queue', 'show'], opts)
 
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.err.join('\n')).toContain('usage: mars action-queue show <id>')
   })
 })

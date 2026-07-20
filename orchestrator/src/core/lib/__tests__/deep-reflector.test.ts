@@ -491,7 +491,7 @@ describe('buildArcPrompt — prompt size cap and elision markers', () => {
 
   it('sets environmentalFailure in digest when conversation contains rate_limit_event', () => {
     const conversation: ClaudeEvent[] = [
-      { type: 'rate_limit_event', retry_after: 30 } as unknown as ClaudeEvent,
+      { type: 'rate_limit_event', retry_after: 30, rate_limit_info: { status: 'rejected', resetsAt: 0 } } as unknown as ClaudeEvent,
       readCallEvent('r1'),
       largeResultEvent('r1', 500),
     ]

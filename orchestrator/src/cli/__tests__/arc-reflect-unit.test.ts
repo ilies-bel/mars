@@ -33,6 +33,7 @@ vi.mock('../../core/lib/deep-reflect-query', () => ({
 
 vi.mock('../../core/lib/reflector', () => ({
   applyVerdicts: vi.fn(),
+  applyScorerVerdicts: vi.fn(),
 }))
 
 vi.mock('node:fs/promises', () => ({

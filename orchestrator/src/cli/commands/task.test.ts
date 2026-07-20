@@ -191,7 +191,7 @@ describe('task add prompt input channels', () => {
       ['task', 'add', '@/nonexistent/mars-test-path.txt'],
       { store, ctx, daemon: fake },
     )
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(fake.calls).toHaveLength(0)
     expect(r.err.join('\n')).toContain('/nonexistent/mars-test-path.txt')
   })
@@ -231,7 +231,7 @@ describe('task add prompt input channels', () => {
       ['task', 'add', `@${filePath}`, '--prompt-file', filePath],
       { store, ctx, daemon: fake },
     )
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(fake.calls).toHaveLength(0)
     expect(r.err.join('\n')).toContain('multiple prompt sources')
   })
@@ -245,7 +245,7 @@ describe('task add prompt input channels', () => {
       ['task', 'add', 'literal prompt', '--prompt-file', filePath],
       { store, ctx, daemon: fake },
     )
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(fake.calls).toHaveLength(0)
     expect(r.err.join('\n')).toContain('multiple prompt sources')
   })

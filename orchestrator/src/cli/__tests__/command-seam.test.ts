@@ -91,7 +91,7 @@ describe('routing', () => {
 
   it('falls back to the group fallback for a bare ladder command', async () => {
     const r = await runCommandInProcess(['task'], await baseOpts())
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.err.join('\n')).toContain('usage: mars task <add|show|priority|note|check>')
   })
 
@@ -117,9 +117,9 @@ describe('task add (daemon-routed)', () => {
     expect(r.out.join('\n')).toContain('queued mars-task-1234')
   })
 
-  it('rejects an empty prompt with code 1 and a usage line', async () => {
+  it('rejects an empty prompt with code 2 and a usage line', async () => {
     const r = await runCommandInProcess(['task', 'add'], await baseOpts())
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.err.join('\n')).toContain('usage: mars task add')
   })
 
@@ -130,7 +130,7 @@ describe('task add (daemon-routed)', () => {
       ['task', 'add', 'x', '--priority', '9'],
       { store, ctx, daemon: fake },
     )
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.err.join('\n')).toContain("priority must be an integer in 0..3")
     expect(fake.calls).toHaveLength(0)
   })
@@ -306,7 +306,7 @@ describe('task priority (daemon-routed mutation)', () => {
       ['task', 'priority', 'mars-task-7', '5'],
       { store, ctx, daemon: fake },
     )
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(fake.calls).toHaveLength(0)
   })
 })

@@ -131,15 +131,15 @@ describe('mars worker add', () => {
     expect(registry['ModelCheck']?.model).toBe('claude-opus-4-7')
   })
 
-  it('exits 1 with usage message when --model is omitted', () => {
+  it('exits 2 with usage message when --model is omitted', () => {
     const result = runCli(['worker', 'add', 'NoModel'], ENV())
-    expect(result.status).toBe(1)
+    expect(result.status).toBe(2)
     expect(result.stderr).toContain('usage:')
   })
 
-  it('exits 1 with usage message when name and --model are both omitted', () => {
+  it('exits 2 with usage message when name and --model are both omitted', () => {
     const result = runCli(['worker', 'add'], ENV())
-    expect(result.status).toBe(1)
+    expect(result.status).toBe(2)
     expect(result.stderr).toContain('usage:')
   })
 
@@ -164,7 +164,7 @@ describe('mars worker add', () => {
     expect(registry['EffortWorker']?.effort).toBe('medium')
   })
 
-  it('exits 1 with error when --effort has an invalid value', () => {
+  it('exits 2 with error when --effort has an invalid value', () => {
     const result = runCli(
       [
         'worker',
@@ -177,7 +177,7 @@ describe('mars worker add', () => {
       ],
       ENV(),
     )
-    expect(result.status).toBe(1)
+    expect(result.status).toBe(2)
     expect(result.stderr).toContain('effort')
   })
 

@@ -500,7 +500,7 @@ describe('mars update — command wiring (in-process)', () => {
       ctx: fakeCtx(),
       daemon: fake,
     })
-    expect(r.code).toBe(1)
+    expect(r.code).toBe(2)
     expect(r.err.join('\n')).toContain('mutually exclusive')
   })
 })
