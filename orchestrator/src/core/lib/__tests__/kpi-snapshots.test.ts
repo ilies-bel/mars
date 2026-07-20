@@ -106,8 +106,15 @@ const insertTask = async (
   opts: { id: string; status: string; fix_for_task_id?: string | null; updated_at?: string },
 ): Promise<void> => {
   await store.execute({
-    sql: 'INSERT INTO tasks (id, status, origin_id, fix_for_task_id, updated_at) VALUES (?, ?, NULL, ?, ?)',
-    args: [opts.id, opts.status, opts.fix_for_task_id ?? null, opts.updated_at ?? '2026-01-04T12:00:00Z'],
+    sql: `INSERT INTO tasks (id, prompt, status, origin_id, fix_for_task_id, created_at, updated_at)
+          VALUES (?, '', ?, NULL, ?, ?, ?)`,
+    args: [
+      opts.id,
+      opts.status,
+      opts.fix_for_task_id ?? null,
+      opts.updated_at ?? '2026-01-04T12:00:00Z',
+      opts.updated_at ?? '2026-01-04T12:00:00Z',
+    ],
   })
 }
 
@@ -676,9 +683,10 @@ describe('takeKpiSnapshot — autonomous_completion_rate column', () => {
     const store = await makeStore()
     await insertTask(store, { id: 'blocked-task', status: 'done' })
     await store.execute({
-      sql: `INSERT INTO action_queue_items (id, kind, origin_task_id)
-            VALUES (?, 'task-blocked', ?)`,
-      args: ['aq-1', 'blocked-task'],
+      sql: `INSERT INTO action_queue_items
+              (id, kind, category, priority, title, raised_by, raised_at, origin_task_id)
+            VALUES (?, 'task-blocked', 'orchestrator', 'high', 'blocked', 'test', ?, ?)`,
+      args: ['aq-1', NOW, 'blocked-task'],
     })
 
     const snapshot = await takeKpiSnapshot({ surface: store, now: NOW })
