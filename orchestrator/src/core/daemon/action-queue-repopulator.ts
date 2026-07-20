@@ -1,7 +1,6 @@
-import type { Client } from '@libsql/client'
+import type { DbClient } from '../lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
-import { ensureProcessedOnceSchema } from '../../bus/processed-once.js'
 import { drainWithStall } from './subscriber-drain.js'
 import { resolveFailureKind } from '../lib/failure-kinds'
 import {
@@ -88,12 +87,10 @@ const SCORER_EVICT_REASONS: Partial<Record<EventName, SupersedeReason>> = {
  * Register the action-queue-repopulator subscriber. `replay: false` so it starts
  * at the current outbox head and only reacts to future events — historical
  * actionQueue state is already reconciled by existing chokepoints. Idempotent.
- *
- * Also ensures the processedOnce dedup schema exists so that
- * {@link drainActionQueueRepopulations} can safely call processedOnce.
+ * (The processedOnce dedup table is part of the canonical schema, guaranteed
+ * by ensureSchema at daemon boot.)
  */
-export async function ensureActionQueueRepopulator(client: Client): Promise<void> {
-  await ensureProcessedOnceSchema(client)
+export async function ensureActionQueueRepopulator(client: DbClient): Promise<void> {
   await registerSubscriber(client, ACTION_QUEUE_REPOPULATOR_SUBSCRIBER, {
     replay: false,
   })
@@ -103,9 +100,9 @@ export async function ensureActionQueueRepopulator(client: Client): Promise<void
  * Apply the actionQueue mutation for a single mapped event.
  *
  * Separated from the drain loop so the caller can invoke it AFTER the
- * processedOnce transaction commits — this avoids holding a write
- * transaction on mars.db while also writing to the actionQueue tables
- * (same file), avoiding SQLITE_BUSY.
+ * processedOnce transaction commits — the dedup claim and the actionQueue
+ * mutation stay in separate transactions, so a crash between them replays a
+ * benign no-op instead of double-applying (see drainWithStall).
  */
 async function applyActionQueueMutation(event: BusEvent): Promise<void> {
   if (TASK_RAISE_EVENTS.has(event.type)) {
@@ -284,7 +281,7 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
  * @returns Count of attempts for which a raise was attempted.
  */
 export async function drainToolPromotionLedger(
-  client: Client,
+  client: DbClient,
 ): Promise<{ raised: number }> {
   const result = await client.execute(
     `SELECT id, helper_key, before_data, after_data, motivating_arc_ids
@@ -337,9 +334,9 @@ export async function drainToolPromotionLedger(
  * Process every event the subscriber has not yet acknowledged, in order.
  *
  * For each handled event type, processedOnce atomically commits a dedup
- * row in mars.db; then the actionQueue mutation runs after that transaction
- * commits. This two-phase approach avoids holding a write lock while also
- * mutating the actionQueue tables.
+ * row; then the actionQueue mutation runs after that transaction commits.
+ * The two-phase shape keeps the crash window benign: a replay after a crash
+ * between the phases re-runs an idempotent mutation.
  *
  * Unmapped events (including task.blocked) are skipped (no actionQueue work) but
  * still advance the cursor so the subscriber never stalls.
@@ -348,12 +345,12 @@ export async function drainToolPromotionLedger(
  * the failed event is retried on the next pass rather than being silently
  * dropped.
  *
- * @param client The libsql client carrying the outbox tables (mars.db).
+ * @param client The DB client carrying the outbox tables.
  * @param log    Optional logger callback for per-event failures.
  * @returns      The count of events for which actionQueue work was applied.
  */
 export async function drainActionQueueRepopulations(
-  client: Client,
+  client: DbClient,
   log?: (msg: string) => void,
 ): Promise<{ processed: number }> {
   // Stall contract (ADR-0032) is shared with the Invalidator via

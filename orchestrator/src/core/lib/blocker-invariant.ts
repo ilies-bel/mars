@@ -1,15 +1,15 @@
-import type { InStatement, ResultSet } from '@libsql/client'
+import type { DbStatement, DbResultSet } from './db.js'
 import { getDefaultTaskStore } from '../store/task-store'
 
 /**
  * Minimal statement-runner the invariant checks depend on. Satisfied by the
  * TaskStore (`store.query`/`store.execute`), the {@link Scope} passed inside an
- * `atomic` callback, and a raw libsql client/transaction — so callers can run
- * the probe in the same transaction that inserts the edge without the raw
+ * `atomic` callback, and a raw DB client/transaction executor — so callers can
+ * run the probe in the same transaction that inserts the edge without the raw
  * handle crossing the seam.
  */
 export interface StatementRunner {
-  execute(stmt: InStatement): Promise<ResultSet>
+  execute(stmt: DbStatement): Promise<DbResultSet>
 }
 
 /**

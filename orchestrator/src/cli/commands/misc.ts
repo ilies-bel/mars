@@ -15,10 +15,22 @@ const where: Command = {
   path: 'where',
   summary: 'print resolved repo/state paths',
   usage: 'usage: mars where',
-  run: (_args, deps) => {
+  run: async (_args, deps) => {
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    // The live DB is the daemon-provisioned embedded PostgreSQL server; its
+    // DSN is published to `.mars/pg.dsn` while the daemon runs.
+    const dsnPath = resolve(deps.ctx.stateDir, 'pg.dsn')
+    let dbLine = `${dsnPath} (not published — daemon not running)`
+    try {
+      const dsn = readFileSync(dsnPath, 'utf8').trim()
+      if (dsn) dbLine = dsn
+    } catch {
+      // keep the not-published placeholder
+    }
     deps.out(`repo:           ${deps.ctx.repoRoot}`)
     deps.out(`stateDir:       ${deps.ctx.stateDir}`)
-    deps.out(`db:             ${deps.ctx.queueDbPath}`)
+    deps.out(`db:             ${dbLine}`)
     deps.out(`supervisorsDir: ${deps.ctx.supervisorsDir}`)
     return { code: 0 }
   },
@@ -254,7 +266,8 @@ const observabilityPrune: Command = {
     const { pruneObservability } = await import(
       '../../core/lib/observability-prune'
     )
-    const deleted = await pruneObservability(deps.ctx.stateDbPath, maxAgeDays)
+    const { resolveDbTarget } = await import('../../core/context')
+    const deleted = await pruneObservability(resolveDbTarget(), maxAgeDays)
     deps.out(`pruned ${deleted} telemetry row${deleted === 1 ? '' : 's'}`)
     return { code: 0 }
   },
@@ -274,25 +287,27 @@ const observabilityGroup: Command = {
 
 const dbCompact: Command = {
   path: 'db compact',
-  summary: 'prune all high-volume tables, checkpoint the WAL, then VACUUM',
+  summary: 'prune all high-volume tables, then VACUUM (ANALYZE)',
   usage: 'usage: mars db compact',
   run: async (_args, deps) => {
     const { pruneRetention, RETENTION_BATCH_SIZE } = await import(
       '../../core/lib/retention-prune'
     )
-    const { openLibsql } = await import('../../core/lib/libsql')
+    const { openDb } = await import('../../core/lib/db')
+    const { resolveDbTarget } = await import('../../core/context')
+    const dbTarget = resolveDbTarget()
 
     deps.out('Pruning high-volume tables…')
 
     // Run repeated batched passes until a full pass produces no deletions so
-    // large DBs are fully cleaned without any single write-lock exceeding the
+    // large DBs are fully cleaned without any single pass exceeding the
     // batch ceiling.
     let totalTraceByAge = 0
     let totalTraceByCount = 0
     let totalSPE = 0
 
     while (true) {
-      const r = await pruneRetention(deps.ctx.stateDbPath, {
+      const r = await pruneRetention(dbTarget, {
         batchSize: RETENTION_BATCH_SIZE,
       })
       totalTraceByAge += r.traceEventsByAge
@@ -316,21 +331,18 @@ const dbCompact: Command = {
       `  subscriber_processed_events: ${totalSPE} orphaned row(s) removed`,
     )
 
-    // WAL checkpoint: move WAL pages into the main DB file.
-    const client = openLibsql({ url: `file:${deps.ctx.stateDbPath}` })
+    // VACUUM (ANALYZE): reclaim dead tuples from the prune above and refresh
+    // planner statistics. PostgreSQL's autovacuum handles routine upkeep; this
+    // is the deliberate operator-run compaction after a bulk prune. Plain
+    // VACUUM never takes an exclusive lock, so it is safe alongside a running
+    // daemon.
+    const client = openDb(dbTarget)
     try {
-      deps.out('Running WAL checkpoint…')
-      await client.execute('PRAGMA wal_checkpoint(TRUNCATE)')
-      deps.out('  checkpoint complete')
-
-      // VACUUM: rewrite the DB file to reclaim freed pages on disk.
-      // This briefly takes a write lock on the whole file — safe for a manual
-      // operator command but never called from the hot daemon sweep.
-      deps.out('Running VACUUM…')
-      await client.execute('VACUUM')
+      deps.out('Running VACUUM (ANALYZE)…')
+      await client.execute('VACUUM (ANALYZE)')
       deps.out('  VACUUM complete')
     } finally {
-      client.close()
+      await client.close()
     }
 
     return { code: 0 }

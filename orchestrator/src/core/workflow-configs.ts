@@ -12,12 +12,13 @@
  * row in 'promoted' or 'baseline' status that the scoring system treats as the
  * current reference point.
  *
- * Storage: the `workflow_configs` table in `.mars/mars.db` via the same
- * state-client seam as scorers.ts (ADR-0034).
+ * Storage: the `workflow_configs` table in the embedded PostgreSQL database
+ * via the same state-client seam as scorers.ts (ADR-0034).
  */
 
-import { type Client } from '@libsql/client'
 import { z } from 'zod'
+import type { DbClient } from './lib/db'
+import { ensureSchema } from './lib/pg-schema'
 import { resolveStateClient } from './store/state-client'
 
 /** Lifecycle states of a WorkflowConfig record. */
@@ -52,25 +53,15 @@ export interface InsertWorkflowConfigInput {
   status: WorkflowConfigStatus
 }
 
-const stateClient = (): Client => resolveStateClient()
+const stateClient = (): DbClient => resolveStateClient()
 
 let initialised = false
 
 export const initWorkflowConfigs = async (): Promise<void> => {
   if (initialised) return
-  const c = stateClient()
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS workflow_configs (
-      id TEXT PRIMARY KEY,
-      workflow TEXT NOT NULL,
-      version INTEGER NOT NULL,
-      config_hash TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'baseline',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      UNIQUE(workflow, version)
-    )
-  `)
+  // DDL lives in core/lib/pg-schema.ts (migration 0002); this just guarantees
+  // the canonical schema exists before the first read/write.
+  await ensureSchema(stateClient())
   initialised = true
 }
 
@@ -95,7 +86,7 @@ const rowToConfig = (row: Record<string, unknown>): WorkflowConfig =>
  * violation — callers must ensure monotonicity before inserting.
  */
 export const insertWorkflowConfig = async (
-  client: Client,
+  client: DbClient,
   input: InsertWorkflowConfigInput,
 ): Promise<WorkflowConfig> => {
   await initWorkflowConfigs()
@@ -118,7 +109,7 @@ export const insertWorkflowConfig = async (
  * first.
  */
 export const listWorkflowConfigs = async (
-  client: Client,
+  client: DbClient,
   workflow: string,
 ): Promise<WorkflowConfig[]> => {
   await initWorkflowConfigs()
@@ -139,7 +130,7 @@ export const listWorkflowConfigs = async (
  * migration), the promoted row is returned.
  */
 export const getActiveWorkflowConfig = async (
-  client: Client,
+  client: DbClient,
   workflow: string,
 ): Promise<WorkflowConfig | null> => {
   await initWorkflowConfigs()
@@ -159,7 +150,7 @@ export const getActiveWorkflowConfig = async (
  * row with status='trial' exists.
  */
 export const getTrialWorkflowConfig = async (
-  client: Client,
+  client: DbClient,
   workflow: string,
 ): Promise<WorkflowConfig | null> => {
   await initWorkflowConfigs()

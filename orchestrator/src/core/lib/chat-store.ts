@@ -1,10 +1,11 @@
 /**
- * Chat persistence layer — `chat_threads` and `chat_messages` tables in mars.db.
+ * Chat persistence layer — `chat_threads`, `chat_messages` and
+ * `chat_feedback` tables in the Mars database.
  *
- * Follow the same idempotent-init pattern as `action-queue.ts`: every exported
- * function calls `await initChatStore()` as its first statement; the init is a
- * no-op after the first call. The `resolveStateClient` function (not its result)
- * is stored so the DB client is resolved lazily and tests can reset it via
+ * Schema ownership: all three tables (and their indexes) are created by
+ * `ensureSchema` in core/lib/pg-schema.ts (migration 0002) — this module
+ * carries no DDL. The `resolveStateClient` function (not its result) is
+ * stored so the DB client is resolved lazily and tests can reset it via
  * `vi.resetModules()`.
  */
 
@@ -12,77 +13,6 @@ import { randomUUID } from 'node:crypto'
 import { resolveStateClient } from '../store/state-client'
 
 const stateClient = resolveStateClient
-
-let initialised = false
-
-export const initChatStore = async (): Promise<void> => {
-  if (initialised) return
-  const c = stateClient()
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS chat_threads (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL DEFAULT '',
-      session_id TEXT,
-      status TEXT NOT NULL DEFAULT 'idle',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS chat_messages (
-      id TEXT PRIMARY KEY,
-      thread_id TEXT NOT NULL REFERENCES chat_threads(id),
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      segments TEXT,
-      created_at TEXT NOT NULL
-    )
-  `)
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_id ON chat_messages(thread_id)`,
-  )
-  // Alert-thread columns — added via ALTER TABLE so existing DBs get them too.
-  const cols = await c.execute(`PRAGMA table_info(chat_threads)`)
-  const colNames = new Set(
-    (cols.rows as unknown as Array<{ name: string }>).map((r) => r.name),
-  )
-  if (!colNames.has('origin')) {
-    await c.execute(`ALTER TABLE chat_threads ADD COLUMN origin TEXT`)
-  }
-  if (!colNames.has('alert_item_id')) {
-    await c.execute(`ALTER TABLE chat_threads ADD COLUMN alert_item_id TEXT`)
-  }
-  if (!colNames.has('alert_resolved')) {
-    await c.execute(
-      `ALTER TABLE chat_threads ADD COLUMN alert_resolved INTEGER NOT NULL DEFAULT 0`,
-    )
-  }
-  if (!colNames.has('context_seeded')) {
-    await c.execute(
-      `ALTER TABLE chat_threads ADD COLUMN context_seeded INTEGER NOT NULL DEFAULT 0`,
-    )
-  }
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id ON chat_threads(alert_item_id)`,
-  )
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS chat_feedback (
-      message_id  TEXT PRIMARY KEY REFERENCES chat_messages(id) ON DELETE CASCADE,
-      thread_id   TEXT NOT NULL,
-      rating      TEXT NOT NULL CHECK (rating IN ('up','down')),
-      note        TEXT,
-      created_at  TEXT NOT NULL,
-      updated_at  TEXT NOT NULL
-    )
-  `)
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_chat_feedback_rating ON chat_feedback(rating)`,
-  )
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_chat_feedback_thread_id ON chat_feedback(thread_id)`,
-  )
-  initialised = true
-}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -288,7 +218,6 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
  * callers can update it later via {@link updateThreadTitle}.
  */
 export const createThread = async (title?: string): Promise<ChatThread> => {
-  await initChatStore()
   const c = stateClient()
   const id = randomUUID()
   const ts = now()
@@ -317,20 +246,19 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
  * Each thread is augmented with the text of its most recent message.
  */
 export const listThreads = async (): Promise<ThreadPreview[]> => {
-  await initChatStore()
   const c = stateClient()
   const result = await c.execute(`
     SELECT t.*,
            (SELECT content
               FROM chat_messages m
              WHERE m.thread_id = t.id
-             ORDER BY m.rowid DESC
+             ORDER BY m.created_at DESC, m.id DESC
              LIMIT 1) AS last_message
       FROM chat_threads t
      ORDER BY
        -- Alert threads that are not yet resolved sort first.
        CASE WHEN t.origin = 'alert' AND (t.alert_resolved = 0 OR t.alert_resolved IS NULL) THEN 0 ELSE 1 END ASC,
-       t.rowid DESC
+       t.created_at DESC, t.id DESC
   `)
   return (result.rows as unknown as Record<string, unknown>[]).map((row) => ({
     ...rowToThread(row),
@@ -343,7 +271,6 @@ export const listThreads = async (): Promise<ThreadPreview[]> => {
  * or `null` when no thread with `id` exists.
  */
 export const getThread = async (id: string): Promise<ThreadWithMessages | null> => {
-  await initChatStore()
   const c = stateClient()
   const threadResult = await c.execute({
     sql: `SELECT * FROM chat_threads WHERE id = ?`,
@@ -358,7 +285,7 @@ export const getThread = async (id: string): Promise<ThreadWithMessages | null> 
           FROM chat_messages m
           LEFT JOIN chat_feedback f ON f.message_id = m.id
           WHERE m.thread_id = ?
-          ORDER BY m.rowid ASC`,
+          ORDER BY m.created_at ASC, m.id ASC`,
     args: [id],
   })
   const feedbacks = new Map<string, { rating: FeedbackRating; note: string | null }>()
@@ -386,7 +313,6 @@ export const appendMessage = async (
   content: string,
   segments?: unknown,
 ): Promise<ChatMessage> => {
-  await initChatStore()
   const c = stateClient()
   const id = randomUUID()
   const ts = now()
@@ -412,7 +338,6 @@ export const appendMessage = async (
 
 /** Rename a thread. No-op when the thread does not exist. */
 export const updateThreadTitle = async (id: string, title: string): Promise<void> => {
-  await initChatStore()
   const c = stateClient()
   await c.execute({
     sql: `UPDATE chat_threads SET title = ?, updated_at = ? WHERE id = ?`,
@@ -425,7 +350,6 @@ export const updateThreadTitle = async (id: string, title: string): Promise<void
  * does not exist.
  */
 export const deleteThread = async (id: string): Promise<void> => {
-  await initChatStore()
   const c = stateClient()
   await c.execute({ sql: `DELETE FROM chat_messages WHERE thread_id = ?`, args: [id] })
   await c.execute({ sql: `DELETE FROM chat_threads WHERE id = ?`, args: [id] })
@@ -433,7 +357,6 @@ export const deleteThread = async (id: string): Promise<void> => {
 
 /** Transition a thread between `'idle'` and `'running'` states. */
 export const setThreadStatus = async (id: string, status: ThreadStatus): Promise<void> => {
-  await initChatStore()
   const c = stateClient()
   await c.execute({
     sql: `UPDATE chat_threads SET status = ?, updated_at = ? WHERE id = ?`,
@@ -443,7 +366,6 @@ export const setThreadStatus = async (id: string, status: ThreadStatus): Promise
 
 /** Bind (or unbind) a Claude session ID to a thread. */
 export const setThreadSession = async (id: string, sessionId: string | null): Promise<void> => {
-  await initChatStore()
   const c = stateClient()
   await c.execute({
     sql: `UPDATE chat_threads SET session_id = ?, updated_at = ? WHERE id = ?`,
@@ -457,7 +379,6 @@ export const setThreadSession = async (id: string, sessionId: string | null): Pr
  * subsequent turns do not receive a duplicate preamble.
  */
 export const markContextSeeded = async (id: string): Promise<void> => {
-  await initChatStore()
   const c = stateClient()
   await c.execute({
     sql: `UPDATE chat_threads SET context_seeded = 1, updated_at = ? WHERE id = ?`,
@@ -479,7 +400,6 @@ export const setMessageFeedback = async (
   rating: FeedbackRating,
   note: string | null,
 ): Promise<ChatFeedback> => {
-  await initChatStore()
   const c = stateClient()
   const msgResult = await c.execute({
     sql: `SELECT id, thread_id, role FROM chat_messages WHERE id = ?`,
@@ -524,7 +444,6 @@ export const setMessageFeedback = async (
  * existed for the message.
  */
 export const clearMessageFeedback = async (messageId: string): Promise<boolean> => {
-  await initChatStore()
   const c = stateClient()
   const result = await c.execute({
     sql: `DELETE FROM chat_feedback WHERE message_id = ?`,
@@ -542,7 +461,6 @@ export const clearMessageFeedback = async (messageId: string): Promise<boolean> 
 export const findAlertThreadByItemId = async (
   alertItemId: string,
 ): Promise<ChatThread | null> => {
-  await initChatStore()
   const c = stateClient()
   const result = await c.execute({
     sql: `SELECT * FROM chat_threads WHERE alert_item_id = ? LIMIT 1`,
@@ -562,7 +480,6 @@ export const createAlertThread = async (
   title: string,
   segment: AlertSegment,
 ): Promise<ChatThread> => {
-  await initChatStore()
   const c = stateClient()
   const threadId = randomUUID()
   const msgId = randomUUID()
@@ -599,7 +516,6 @@ export const createAlertThread = async (
  * Returns `true` if a thread was found and updated, `false` if none exists.
  */
 export const resolveAlertThread = async (alertItemId: string): Promise<boolean> => {
-  await initChatStore()
   const c = stateClient()
   const ts = now()
   // Find the thread
@@ -618,7 +534,7 @@ export const resolveAlertThread = async (alertItemId: string): Promise<boolean> 
   const msgResult = await c.execute({
     sql: `SELECT id, segments FROM chat_messages
            WHERE thread_id = ? AND role = 'assistant'
-           ORDER BY rowid ASC LIMIT 1`,
+           ORDER BY created_at ASC, id ASC LIMIT 1`,
     args: [threadId],
   })
   if (msgResult.rows.length > 0) {

@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client'
+import type { DbClient } from '../../core/lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { Arc } from '../../core/arc.js'
@@ -27,7 +27,7 @@ registerSubscriberName(BLOCKER_RESOLUTION_SUBSCRIBER)
  * Register the blocker-resolution subscriber. Idempotent: re-registering an
  * existing subscriber preserves its cursor.
  */
-export async function ensureBlockerResolutionSubscriber(client: Client): Promise<void> {
+export async function ensureBlockerResolutionSubscriber(client: DbClient): Promise<void> {
   await registerSubscriber(client, BLOCKER_RESOLUTION_SUBSCRIBER, {
     replay: false,
   })
@@ -43,7 +43,7 @@ export async function ensureBlockerResolutionSubscriber(client: Client): Promise
  * @returns The number of events that resulted in at least one state change.
  */
 export async function drainBlockerResolution(
-  client: Client,
+  client: DbClient,
   log?: (msg: string) => void,
 ): Promise<{ processed: number }> {
   return drainWithStall({

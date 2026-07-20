@@ -945,7 +945,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     // Check if the proposals table exists (absent on a fresh repo before
     // the first `mars init` / daemon run that initialises the schema).
     const tablesResult = await client.execute(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='proposals'`,
+      `SELECT table_name AS name FROM information_schema.tables
+        WHERE table_schema = current_schema() AND table_name = 'proposals'`,
     )
     const drafts: DraftFeature[] = []
     if (tablesResult.rows.length > 0) {

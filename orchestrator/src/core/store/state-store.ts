@@ -1,29 +1,30 @@
 /**
- * StateStore — the deep seam over `.mars/mars.db` (state side: proposals,
+ * StateStore — the deep seam over the Mars database (state side: proposals,
  * proposal-notes, action-queue items). ADR-0021.
  *
  * Mirror of {@link DomainTaskStore}: typed domain methods (delegating to the
  * proposals / proposal-notes / action-queue modules) are the front door, and
  * the generic `query` / `execute` / `atomic` side door is the escape hatch.
- * The libsql Transaction never crosses the seam — `atomic` inverts control
+ * The transaction handle never crosses the seam — `atomic` inverts control
  * and passes a revocable {@link Scope}.
  *
- * Per ADR-0034 `tasks` and `proposals` share one physical file (`mars.db`), so
- * the StateStore and the TaskStore are backed by the same libsql client; the
- * two facades exist to keep the *domain vocabularies* separate, not the files.
- * The two previously-duplicated private `getClient()` singletons
- * (proposals.ts, ideas/idea-store.ts) collapse into {@link resolveStateClient}
- * here.
+ * Per ADR-0034 `tasks` and `proposals` share one physical database, so the
+ * StateStore and the TaskStore are backed by the same client (openDb dedupes
+ * per target); the two facades exist to keep the *domain vocabularies*
+ * separate, not the connections. The two previously-duplicated private
+ * `getClient()` singletons (proposals.ts, ideas/idea-store.ts) collapse into
+ * {@link resolveStateClient} here.
  *
- * Cross-DB note: proposals and action-queue rows emit lifecycle events into
- * the mars.db events outbox. That ability is preserved — those modules
- * publish through the TaskStore client (same `mars.db`) in a separate write
- * after the state write commits; see `emitProposalBusEvent` /
+ * Cross-domain note: proposals and action-queue rows emit lifecycle events
+ * into the events outbox. That ability is preserved — those modules publish
+ * through the TaskStore client (same database) in a separate write after the
+ * state write commits; see `emitProposalBusEvent` /
  * `emitActionQueueBusEvent`.
  */
 
-import type { Client, InStatement, InValue, ResultSet, Value } from '@libsql/client'
-import { withTransaction } from '../lib/libsql.js'
+import type { DbClient, DbStatement, DbInValue, DbResultSet } from '../lib/db.js'
+import { withTransaction } from '../lib/db.js'
+import { ensureSchema } from '../lib/pg-schema.js'
 import type { Scope } from './task-store'
 import {
   resolveStateClient,
@@ -31,7 +32,6 @@ import {
 } from './state-client'
 
 import {
-  initProposals,
   getProposal,
   listProposals,
   createProposal,
@@ -54,7 +54,6 @@ import {
   type ProposalField,
 } from '../proposals'
 import {
-  initProposalNotes,
   addProposalNote,
   listProposalNotes,
   getProposalNote,
@@ -65,22 +64,19 @@ export type { Scope } from './task-store'
 export { resolveStateClient } from './state-client'
 
 /**
- * Idempotent mars.db state-domain schema migration. Runs the per-table init for proposals
- * and proposal-notes. ADR-0021: the migration lives behind the store; callers
- * stop hand-sequencing the inits.
+ * Idempotent state-domain schema entry point. Applies the canonical schema
+ * via `ensureSchema` (pg-schema.ts owns every table — the per-module init
+ * DDL is gone, migration 0002). ADR-0021: the migration lives behind the
+ * store; callers stop hand-sequencing the inits.
  */
 export const migrateStateSchema = async (): Promise<void> => {
-  await initProposals()
-  await initProposalNotes()
-  await resolveStateClient().execute(
-    'CREATE TABLE IF NOT EXISTS preferences (name TEXT PRIMARY KEY, value TEXT NOT NULL)',
-  )
+  await ensureSchema(resolveStateClient())
 }
 
 const toStatement = (
-  stmt: InStatement | string,
-  params?: InValue[],
-): InStatement => {
+  stmt: DbStatement | string,
+  params?: DbInValue[],
+): DbStatement => {
   if (typeof stmt === 'string') {
     return params === undefined ? stmt : { sql: stmt, args: params }
   }
@@ -135,24 +131,24 @@ export interface DomainStateStore {
   getProposalNote(input: string): Promise<ProposalNote | null>
 
   // ── Generic SQL escape hatches ───────────────────────────────────────────
-  query(stmt: InStatement | string, params?: InValue[]): Promise<ResultSet>
-  execute(stmt: InStatement | string, params?: InValue[]): Promise<ResultSet>
+  query(stmt: DbStatement | string, params?: DbInValue[]): Promise<DbResultSet>
+  execute(stmt: DbStatement | string, params?: DbInValue[]): Promise<DbResultSet>
   atomic<T>(fn: (scope: Scope) => Promise<T>): Promise<T>
 }
 
 /**
- * Create a `DomainStateStore` over the given libsql client.
+ * Create a `DomainStateStore` over the given DB client.
  *
  * Passing `null` is supported for call sites that only use domain methods.
  * Calling a generic escape hatch on a null-client store throws a clear error.
  */
-export const createStateStore = (client: Client | null): DomainStateStore => {
+export const createStateStore = (client: DbClient | null): DomainStateStore => {
   let inTransaction = false
 
-  const guardClient = (): Client => {
+  const guardClient = (): DbClient => {
     if (!client)
       throw new Error(
-        'StateStore: a libsql Client is required for query/execute/atomic — pass a non-null client to createStateStore',
+        'StateStore: a DbClient is required for query/execute/atomic — pass a non-null client to createStateStore',
       )
     return client
   }
@@ -243,12 +239,12 @@ export const createStateStore = (client: Client | null): DomainStateStore => {
  * Return whether desktop notifications are enabled.
  * Defaults to `true` when the row is absent (opt-in by default).
  */
-export const getNotificationsEnabled = async (db: Client): Promise<boolean> => {
+export const getNotificationsEnabled = async (db: DbClient): Promise<boolean> => {
   const result = await db.execute(
     "SELECT value FROM preferences WHERE name='notifications_enabled'",
   )
   if (result.rows.length === 0) return true
-  return (result.rows[0].value as Value) === 'true'
+  return result.rows[0].value === 'true'
 }
 
 /**
@@ -256,7 +252,7 @@ export const getNotificationsEnabled = async (db: Client): Promise<boolean> => {
  * Safe to call repeatedly — upserts the single `notifications_enabled` row.
  */
 export const setNotificationsEnabled = async (
-  db: Client,
+  db: DbClient,
   enabled: boolean,
 ): Promise<void> => {
   await db.execute({
@@ -270,8 +266,8 @@ let cachedDefaultStateStore: DomainStateStore | null = null
 
 /**
  * Composition-root accessor: the single process-wide `DomainStateStore` over
- * `.mars/mars.db`. Lazily runs the state-schema migration and constructs the
- * store around the seam-internal libsql client.
+ * the Mars database. Lazily ensures the canonical schema and constructs the
+ * store around the seam-internal client.
  */
 export const getDefaultStateStore = async (): Promise<DomainStateStore> => {
   if (cachedDefaultStateStore) return cachedDefaultStateStore

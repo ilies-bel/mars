@@ -1,8 +1,5 @@
-import type { Client } from '@libsql/client';
-import {
-  processedOnce,
-  ensureProcessedOnceSchema,
-} from '../../bus/processed-once.js';
+import type { DbClient } from '../../core/lib/db.js';
+import { processedOnce } from '../../bus/processed-once.js';
 import type { Subscriber } from '../dispatcher.js';
 import type { BusEvent } from '../../bus/events.js';
 import { raiseActionQueueItem, setActionQueueState } from '../../core/lib/action-queue.js';
@@ -44,15 +41,6 @@ const OUTSTANDING_FIX_TASK_STATUSES: ReadonlySet<string> = new Set([
 const GRACE_MS = 60_000
 
 /**
- * Ensure the schema required by action-queue-raiser subscribers is present on
- * `client`. Creates the `subscriber_processed_events` dedup table if it does
- * not exist. Idempotent — safe to call on every startup.
- */
-export async function ensureActionQueueRaiserSchema(client: Client): Promise<void> {
-  await ensureProcessedOnceSchema(client);
-}
-
-/**
  * Build the Outbox Subscribers that durably raise action-queue items
  * in reaction to state-change events.
  *
@@ -62,10 +50,10 @@ export async function ensureActionQueueRaiserSchema(client: Client): Promise<voi
  * arc-key normalization, origin resolution via `resolveOriginIdForTask`, and
  * origin-fingerprint dedup all happen at the single raise path (ADR-0051).
  *
- * @param client  The shared `mars.db` client used for the per-subscriber
+ * @param client  The shared DB client used for the per-subscriber
  *   processedOnce dedup table.
  */
-export function buildActionQueueRaiserSubscribers(client: Client): Subscriber[] {
+export function buildActionQueueRaiserSubscribers(client: DbClient): Subscriber[] {
   return [taskBlockedActionQueueRaiser(client), fixTaskDoneActionQueueResolver(client)];
 }
 
@@ -92,7 +80,7 @@ export function buildActionQueueRaiserSubscribers(client: Client): Subscriber[] 
  * arc surfaces as exactly one row regardless of which slice triggered the
  * block.
  */
-function taskBlockedActionQueueRaiser(client: Client): Subscriber {
+function taskBlockedActionQueueRaiser(client: DbClient): Subscriber {
   return {
     name: 'action-queue-raiser:task.blocked',
     handler: async (event: BusEvent): Promise<void> => {
@@ -221,7 +209,7 @@ function taskBlockedActionQueueRaiser(client: Client): Subscriber {
  * table (pointing at its arc origin). Non-fix tasks (no `origin_id`) are
  * ignored.
  */
-function fixTaskDoneActionQueueResolver(client: Client): Subscriber {
+function fixTaskDoneActionQueueResolver(client: DbClient): Subscriber {
   return {
     name: FIX_TASK_DONE_RESOLVER_SUBSCRIBER,
     handler: async (event: BusEvent): Promise<void> => {

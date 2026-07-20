@@ -171,11 +171,13 @@ export async function statuslineCommand(repo?: string): Promise<void> {
       // Can't resolve repo or can't read cache — no nudge.
     }
 
-    // Detect if cwd sits inside a Mars-leased worktree and, if so, query the
-    // task row for the lease segment prefix. Uses the sqlite3 CLI for a fast
-    // synchronous read without loading the heavy @libsql native addon.
-    // Reads current_step_name to render `step <name> · <mode>` when the task
-    // is parked at a named step; falls back to lease_note / intent otherwise.
+    // Detect if cwd sits inside a Mars-leased worktree and, if so, read the
+    // task row for the lease segment prefix via the daemon's HTTP API
+    // (`/view/tasks`, port published to `.mars/http.port`) with a tight
+    // timeout so the status bar never stalls. When the daemon is down the
+    // segment is simply omitted — no fallback process is spawned.
+    // Reads currentStepName to render `step <name> · <mode>` when the task
+    // is parked at a named step; falls back to leaseNote / intent otherwise.
     let leaseTaskId: string | null = null
     let leaseTitle: string | null = null
     let leaseStepGuide: string | null = null
@@ -190,42 +192,52 @@ export async function statuslineCommand(repo?: string): Promise<void> {
         const taskId = afterSeg.split(sep)[0]
         if (taskId) {
           const repoRoot = cwd.slice(0, idx)
-          const marsDbPath = join(repoRoot, '.mars', 'mars.db')
-          if (existsSync(marsDbPath)) {
-            // Sanitise taskId: mars IDs are alphanumeric + hyphens only.
-            const safeId = taskId.replace(/[^a-zA-Z0-9-]/g, '')
-            const row = execSync(
-              `sqlite3 "${marsDbPath}" "SELECT id,intent,leased_at,lease_note,current_step_name FROM tasks WHERE id='${safeId}' LIMIT 1"`,
-              { encoding: 'utf8', timeout: 400, stdio: ['pipe', 'pipe', 'pipe'] },
-            ).trim()
-            if (row) {
-              const parts = row.split('|')
-              const candidateId = parts[0] ?? null
-              const candidateTitle = parts[1] ?? null
-              const leasedAt = parts[2] && parts[2].length > 0 ? parts[2] : null
-              const leaseNoteVal = parts[3] && parts[3].length > 0 ? parts[3] : null
-              const stepNameVal = parts[4] && parts[4].length > 0 ? parts[4] : null
-              // Activate the lease segment when leased (manual step parked) or
-              // when a named step is active (auto step visible to anyone in the
-              // worktree directory). Tasks that are queued/done with no active
-              // step produce no segment, falling back to today's rendering.
-              if (leasedAt !== null || stepNameVal !== null) {
-                leaseTaskId = candidateId
-                leaseTitle = candidateTitle
-                leaseStepGuide = leaseNoteVal
-                leaseStepName = stepNameVal
-                leaseStepMode = stepNameVal
-                  ? leasedAt !== null
-                    ? 'manual'
-                    : 'auto'
-                  : null
+          const portFile = join(repoRoot, '.mars', 'http.port')
+          if (existsSync(portFile)) {
+            const port = Number.parseInt(readFileSync(portFile, 'utf8').trim(), 10)
+            if (Number.isInteger(port) && port > 0) {
+              const res = await fetch(`http://127.0.0.1:${port}/view/tasks`, {
+                signal: AbortSignal.timeout(300),
+              })
+              if (res.ok) {
+                const body = (await res.json()) as {
+                  tasks?: Array<{
+                    id?: string
+                    intent?: string | null
+                    leasedAt?: string | null
+                    leaseNote?: string | null
+                    currentStepName?: string | null
+                  }>
+                }
+                const row = (body.tasks ?? []).find((t) => t.id === taskId)
+                if (row) {
+                  const leasedAt = row.leasedAt ?? null
+                  const leaseNoteVal = row.leaseNote ?? null
+                  const stepNameVal = row.currentStepName ?? null
+                  // Activate the lease segment when leased (manual step parked)
+                  // or when a named step is active (auto step visible to anyone
+                  // in the worktree directory). Tasks that are queued/done with
+                  // no active step produce no segment, falling back to today's
+                  // rendering.
+                  if (leasedAt !== null || stepNameVal !== null) {
+                    leaseTaskId = row.id ?? null
+                    leaseTitle = row.intent ?? null
+                    leaseStepGuide = leaseNoteVal
+                    leaseStepName = stepNameVal
+                    leaseStepMode = stepNameVal
+                      ? leasedAt !== null
+                        ? 'manual'
+                        : 'auto'
+                      : null
+                  }
+                }
               }
             }
           }
         }
       }
     } catch {
-      // Lease detection failed (sqlite3 absent, DB not found, etc.) — proceed without lease segment.
+      // Lease detection failed (daemon down, timeout, etc.) — proceed without lease segment.
     }
 
     const leasePfx = buildLeaseSegment(leaseTaskId, leaseTitle, leaseStepGuide, leaseStepName, leaseStepMode)

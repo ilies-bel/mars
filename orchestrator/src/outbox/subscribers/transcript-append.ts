@@ -1,10 +1,7 @@
 import { gzip } from 'node:zlib';
 import { promisify } from 'node:util';
-import type { Client } from '@libsql/client';
-import {
-  processedOnce,
-  ensureProcessedOnceSchema,
-} from '../../bus/processed-once.js';
+import type { DbClient } from '../../core/lib/db.js';
+import { processedOnce } from '../../bus/processed-once.js';
 import type { Subscriber } from '../dispatcher.js';
 import type { BusEvent } from '../../bus/events.js';
 import { registerSubscriberName } from '../registry.js';
@@ -27,33 +24,9 @@ registerSubscriberName(TRANSCRIPT_APPEND_SUBSCRIBER_ID);
 export type ReadTranscript = (taskId: string) => Promise<string | null>;
 
 /**
- * Ensure the DB schema required by the transcript-append subscriber exists.
- *
- * Creates:
- * - `subscriber_processed_events` — processedOnce dedup table
- * - `task_durable_transcripts` — compressed transcript storage destination
- *
- * Idempotent — safe to call on every daemon startup.
- */
-export async function ensureTranscriptAppendSchema(
-  client: Client,
-): Promise<void> {
-  await ensureProcessedOnceSchema(client);
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS task_durable_transcripts (
-      task_id    TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL DEFAULT '',
-      step_name  TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      transcript BLOB NOT NULL,
-      byte_len   INTEGER NOT NULL
-    )
-  `);
-}
-
-/**
  * Build the durable Outbox Subscriber that appends a completed task's
- * Claude transcript to `task_durable_transcripts` as a gzip-compressed BLOB.
+ * Claude transcript to `task_durable_transcripts` as a gzip-compressed
+ * `bytea` value.
  *
  * The handler is wrapped in {@link processedOnce} so that replaying the
  * same `task.completed` event id never produces duplicate rows — exactly-once
@@ -69,7 +42,7 @@ export async function ensureTranscriptAppendSchema(
  * `processedOnce` allows the sideEffect to run on the second attempt and
  * exactly one row is written.
  *
- * @param client          The `mars.db` client. Must hold both
+ * @param client          The DB client. Must hold both
  *   `task_durable_transcripts` and `subscriber_processed_events` so the
  *   dedup row and transcript insert are covered by the same write transaction.
  * @param readTranscript  Filesystem boundary — reads the Claude Code
@@ -78,7 +51,7 @@ export async function ensureTranscriptAppendSchema(
  *   not re-delivered.
  */
 export function buildTranscriptAppendSubscriber(
-  client: Client,
+  client: DbClient,
   readTranscript: ReadTranscript,
 ): Subscriber {
   return {
@@ -107,12 +80,13 @@ export function buildTranscriptAppendSubscriber(
         subscriberId: TRANSCRIPT_APPEND_SUBSCRIBER_ID,
         eventId: event.id,
         sideEffect: async (tx) => {
-          // INSERT OR IGNORE: if runWorkerWithSpan already wrote a durable
-          // transcript for this task, leave the newer compressed row intact.
+          // ON CONFLICT DO NOTHING: if runWorkerWithSpan already wrote a
+          // durable transcript for this task, leave the existing row intact.
           await tx.execute({
-            sql: `INSERT OR IGNORE INTO task_durable_transcripts
+            sql: `INSERT INTO task_durable_transcripts
                     (task_id, session_id, step_name, created_at, transcript, byte_len)
-                  VALUES (?, ?, ?, ?, ?, ?)`,
+                  VALUES (?, ?, ?, ?, ?, ?)
+                  ON CONFLICT (task_id) DO NOTHING`,
             args: [taskId, '', 'code', now, compressed, byteLen],
           });
         },

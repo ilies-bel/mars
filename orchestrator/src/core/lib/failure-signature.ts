@@ -283,37 +283,34 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /No test suite found in file/,
   },
   {
-    // verify:test/test-libsql-no-such-table fires when a test opens a libsql
-    // client with an in-memory URL (`createClient({ url: ':memory:' })`),
-    // creates a schema via `client.execute()`, then starts concurrent write
-    // transactions with `client.transaction('write')`. The libsql sqlite3
-    // backend detaches the active connection after each transaction call
-    // (`this.#db = null`) and lazily creates a NEW empty in-memory SQLite
-    // database on the next call — so the second concurrent transaction runs
-    // against a fresh database that has no schema, producing "no such table".
-    // Fix: replace the in-memory URL with a temp file-based path in the test
-    // setup so all connections share the same on-disk database.
-    errorClass: 'test-libsql-no-such-table',
-    matchFull: /no such table:/i,
+    // verify:test/test-pg-undefined-table fires when a test hits PostgreSQL
+    // error 42P01 (undefined_table, "relation ... does not exist"). The
+    // canonical cause is a test fixture that queries a table before applying
+    // the canonical schema (pg-schema.ts `ensureSchema`) to its per-test
+    // database — the schema-lifecycle successor to the SQLite-era "no such
+    // table" class. Fix: run ensureSchema (or the fixture's setup path) on
+    // the test's database before the first query.
+    errorClass: 'test-pg-undefined-table',
+    matchFull: /42P01|relation "[^"]+" does not exist/,
   },
   {
-    // verify:test/test-libsql-not-an-error fires when a SQL migration runner
-    // passes a comment-only SQL fragment to @libsql/client's `execute()`.
-    // SQLite returns SQLITE_OK (code 0) when asked to prepare a statement
-    // consisting entirely of `--` comments — no real statement is produced.
-    // The libsql sqlite3 backend surfaces this SQLITE_OK as a LibsqlError
-    // with code SQLITE_UNKNOWN_0 and message "not an error".
-    //
-    // Investigated 2026-05-27 (task mars-8c56c297): the Drizzle migration
-    // runner in src/db/migrate.ts splits SQL files on
-    // `'--> statement-breakpoint'` but does NOT filter the leading comment
-    // block that precedes the first breakpoint. That comment block becomes
-    // a non-empty "statement" after trim(), and executing it via
-    // `c.execute(stmt)` triggers the SQLITE_OK / "not an error" error.
-    // Fix: add a filter in `runMigration` that skips any fragment whose
-    // every non-empty line starts with `--`.
-    errorClass: 'test-libsql-not-an-error',
-    matchFull: /SQLITE_UNKNOWN_0: not an error/,
+    // verify:test/test-pg-connection-refused fires when a test cannot reach
+    // the PostgreSQL server: 57P03 (cannot_connect_now — server starting up
+    // or shutting down) or a plain TCP ECONNREFUSED (server absent, stale
+    // DSN in .mars/pg.dsn, or the daemon that provisions the embedded
+    // server is not running). Environmental, not a code defect — the fix is
+    // to start/restart the daemon or repair the DSN, not to edit code.
+    errorClass: 'test-pg-connection-refused',
+    matchFull: /57P03|ECONNREFUSED/,
+  },
+  {
+    // verify:test/test-pg-deadlock fires on PostgreSQL 40P01 (deadlock
+    // detected): two concurrent transactions acquired row locks in opposite
+    // orders. Under MVCC this replaces the SQLite-era single-writer
+    // SQLITE_BUSY contention class. Fix: order writes consistently or
+    // serialize the conflicting transactions in the test.
+    errorClass: 'test-pg-deadlock',
+    matchFull: /40P01|deadlock detected/,
   },
 ]
 

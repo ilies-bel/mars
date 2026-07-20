@@ -11,8 +11,8 @@
  * See orchestrator/docs/runbook-cut-tagged-ids.md for the full procedure.
  */
 
-import { openLibsql } from '../core/lib/libsql'
-import { resolveContext } from '../core/context'
+import { openDb } from '../core/lib/db'
+import { resolveDbTarget } from '../core/context'
 
 /** The seven proposals that must be re-entered after the cut (PRD 52ec700f slice 9). */
 const CARRY_FORWARD: ReadonlyArray<{ readonly hex: string; readonly title: string }> = [
@@ -107,9 +107,21 @@ export const isCutPhase = (s: unknown): s is CutPhase =>
  * @param repo    Override repo root (uses MARS_REPO / git detection when omitted).
  */
 export async function runCutVerify(phase: CutPhase, repo?: string): Promise<void> {
-  const ctx = resolveContext(repo)
-  const c = openLibsql({ url: `file:${ctx.queueDbPath}` })
+  // Reference-counted handle onto the shared per-process client; the finally
+  // below balances it so the harness never leaks a PG connection slot (the
+  // old SQLite file client was leaked on purpose and relied on process exit).
+  const c = openDb(resolveDbTarget(repo))
+  try {
+    await runPhase(c, phase)
+  } finally {
+    await c.close()
+  }
+}
 
+async function runPhase(
+  c: ReturnType<typeof openDb>,
+  phase: CutPhase,
+): Promise<void> {
   if (phase === 'drain') {
     let inFlight: Array<{ id: string; status: string; prompt: string }> = []
     try {

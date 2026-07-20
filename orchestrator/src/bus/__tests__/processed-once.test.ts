@@ -1,37 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createClient, type Client } from '@libsql/client';
-import {
-  ensureProcessedOnceSchema,
-  processedOnce,
-} from '../processed-once.js';
+import { openDb, type DbClient } from '../../core/lib/db.js';
+import { ensureSchema } from '../../core/lib/pg-schema.js';
+import { processedOnce } from '../processed-once.js';
+
+let dbSeq = 0;
 
 /**
- * File-backed libsql client. `:memory:` is unsuitable for libsql local
- * because each transaction opens a fresh in-process connection and sees
- * an empty database.
+ * Fresh in-memory PGlite instance per test (MARS_DB_BACKEND=pglite is set by
+ * test/setup-env.ts; the target string is only an identity key).
  */
-async function makeClient(dir: string): Promise<Client> {
-  const client = createClient({ url: `file:${join(dir, 'events.db')}` });
-  // The dedup table is the SUT's responsibility.
-  await ensureProcessedOnceSchema(client);
+async function makeClient(): Promise<DbClient> {
+  const client = openDb(`test:processed-once:${process.pid}:${dbSeq++}`);
+  // The canonical schema carries the subscriber_processed_events dedup table.
+  await ensureSchema(client);
   // A toy "side effects" table acts as the observable boundary for the
   // tests — we count rows here rather than poking at the dedup table.
   await client.execute(`
     CREATE TABLE IF NOT EXISTS side_effects (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      subscriber_id TEXT    NOT NULL,
-      event_id      INTEGER NOT NULL,
-      note          TEXT    NOT NULL
+      id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      subscriber_id text   NOT NULL,
+      event_id      bigint NOT NULL,
+      note          text   NOT NULL
     )
   `);
   return client;
 }
 
 async function countSideEffects(
-  client: Client,
+  client: DbClient,
   subscriberId: string,
   eventId: number,
 ): Promise<number> {
@@ -44,17 +40,14 @@ async function countSideEffects(
 }
 
 describe('processedOnce', () => {
-  let tmpDir: string;
-  let client: Client;
+  let client: DbClient;
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'mars-processed-once-test-'));
-    client = await makeClient(tmpDir);
+    client = await makeClient();
   });
 
-  afterEach(() => {
-    client.close();
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await client.close();
   });
 
   it('runs the side effect exactly once across two invocations with the same eventId', async () => {

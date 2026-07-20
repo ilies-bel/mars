@@ -15,7 +15,10 @@ import { insertMemoryPacket } from '../core/store/memory-packet-store'
 import { getRepoRoot } from '../core/context'
 import { createQueueWorkflowStore } from './queue-workflow-store'
 import { runNonLlmStepWithSpan } from '../core/lib/run-worker-with-span'
-import type { TraceEventStore } from '../core/lib/trace-events-store'
+import type {
+  TraceEventPhase,
+  TraceEventStore,
+} from '../core/lib/trace-events-store'
 import { nullTraceStore } from '../core/lib/run-tool'
 
 // ─── Finding types ──────────────────────────────────────────────────────────
@@ -678,7 +681,11 @@ export const reflectWorkflow = defineWorkflow<ReflectInput, ReflectOutput, Refle
           // run invisible in `mars ui`. Carrying both ids satisfies the
           // originId-filtered proposal view too.
           taskId: input.originId,
-          phase: 'reflect',
+          // TODO(trace-events-store): 'reflect' is not yet in the
+          // TraceEventPhase union / TRACE_EVENT_PHASES list — reads coerce it
+          // to null until the union gains 'reflect'. The cast preserves the
+          // stored value (and today's runtime behavior) in the meantime.
+          phase: 'reflect' as TraceEventPhase,
           traceStore,
           fn: async () => {
             const result = await fn()

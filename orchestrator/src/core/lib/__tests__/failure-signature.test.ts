@@ -296,23 +296,42 @@ describe('matchFull rules are checked against full output', () => {
     ).toBe('merge:vcs-supervisor-aborted/not-fast-forward')
   })
 
-  it('computeFailureSignature produces verify:test/test-libsql-no-such-table for the real libsql concurrent-transaction error shape', () => {
-    // The actual error captured when two concurrent publishWithRetry() calls race
-    // against a libsql client backed by ':memory:'. The second transaction gets a
-    // fresh empty in-memory DB (libsql sets this.#db = null after each transaction
-    // call), so it sees no schema. The distinguishing signal ("no such table:") is
-    // buried in the body after the vitest test-runner preamble — hence matchFull.
+  it('computeFailureSignature produces verify:test/test-pg-undefined-table for the PostgreSQL undefined-table error shape', () => {
+    // The error captured when a test fixture queries a table before applying
+    // the canonical schema (pg-schema.ts ensureSchema) to its per-test
+    // database. The distinguishing signal (42P01 / relation "..." does not
+    // exist) is buried in the body after the vitest preamble - hence matchFull.
     const errorOutput = [
-      ' × src/bus/__tests__/publisher.test.ts > publishWithRetry > two concurrent publishWithRetry calls both commit',
-      '   → SQLITE_ERROR: no such table: events',
+      ' \u00d7 src/bus/__tests__/publisher.test.ts > publishWithRetry > two concurrent publishWithRetry calls both commit',
+      '   \u2192 relation "events" does not exist',
       '',
       ' FAIL  src/bus/__tests__/publisher.test.ts > publishWithRetry > ...',
-      'LibsqlError: SQLITE_ERROR: no such table: events',
-      ' ❯ mapSqliteError node_modules/.pnpm/@libsql+client@0.17.3/...',
-      'Caused by: SqliteError: no such table: events',
+      'error: relation "events" does not exist',
+      "    code: '42P01',",
     ].join('\n')
     expect(computeFailureSignature('verify:test', errorOutput)).toBe(
-      'verify:test/test-libsql-no-such-table',
+      'verify:test/test-pg-undefined-table',
+    )
+  })
+
+  it('computeFailureSignature produces verify:test/test-pg-connection-refused when the embedded server is unreachable', () => {
+    const errorOutput = [
+      ' FAIL  src/core/store/__tests__/task-store.test.ts > opens the store',
+      'Error: connect ECONNREFUSED 127.0.0.1:54321',
+    ].join('\n')
+    expect(computeFailureSignature('verify:test', errorOutput)).toBe(
+      'verify:test/test-pg-connection-refused',
+    )
+  })
+
+  it('computeFailureSignature produces verify:test/test-pg-deadlock for the PostgreSQL deadlock error shape', () => {
+    const errorOutput = [
+      ' FAIL  src/core/__tests__/arc.test.ts > concurrent status flips',
+      'error: deadlock detected',
+      "    code: '40P01',",
+    ].join('\n')
+    expect(computeFailureSignature('verify:test', errorOutput)).toBe(
+      'verify:test/test-pg-deadlock',
     )
   })
 
@@ -341,15 +360,13 @@ describe('matchFull rules are checked against full output', () => {
     expect(classifyError(assertionWithSuiteText)).toBe('test-assertion-error')
   })
 
-  it('test-libsql-no-such-table does not interfere with AssertionError classification', () => {
-    // An AssertionError that happens to contain "no such table" text should still
-    // classify as test-assertion-error (AssertionError rule comes first in the list).
+  it('test-pg-undefined-table does not interfere with AssertionError classification', () => {
+    // An AssertionError that happens to contain "does not exist" text should
+    // still classify as test-assertion-error (AssertionError rule comes first
+    // in the list).
     const assertionWithTableText = [
-      'AssertionError: expected events table to have 2 rows but found no such table: events',
+      'AssertionError: expected relation "events" does not exist to be caught',
     ].join('\n')
-    // test-assertion-error fires because AssertionError: appears in the body;
-    // since test-assertion-error is listed before test-libsql-no-such-table in
-    // errorClassRules, it takes priority.
     expect(classifyError(assertionWithTableText)).toBe('test-assertion-error')
   })
 
@@ -369,35 +386,6 @@ describe('matchFull rules are checked against full output', () => {
     ).toBe('merge:vcs-supervisor-aborted/rebase-no-in-progress-state')
   })
 
-  it('computeFailureSignature produces verify:test/test-libsql-not-an-error for the real libsql comment-only SQL error shape', () => {
-    // The actual error captured when runMigration (src/db/migrate.ts) splits a
-    // SQL migration file on '--> statement-breakpoint' and passes the leading
-    // comment block (which precedes the first breakpoint) to c.execute().
-    // SQLite returns SQLITE_OK for a comment-only statement; @libsql/client maps
-    // this to LibsqlError with code SQLITE_UNKNOWN_0 and message "not an error".
-    // The distinguishing signal is buried in the body after the vitest preamble,
-    // hence matchFull.
-    const errorOutput = [
-      ' FAIL  src/core/lib/__tests__/triaging-and-blocker-state.test.ts > Triaging status + Blocker state schema > initialises the tasks schema',
-      'LibsqlError: SQLITE_UNKNOWN_0: not an error',
-      ' ❯ mapSqliteError node_modules/@libsql/client/lib-esm/sqlite3.js:434:16',
-      ' ❯ runMigration src/db/migrate.ts:280:13',
-      'Caused by: SqliteError: not an error',
-      "Serialized Error: { code: 'SQLITE_OK', rawCode: +0 }",
-    ].join('\n')
-    expect(computeFailureSignature('verify:test', errorOutput)).toBe(
-      'verify:test/test-libsql-not-an-error',
-    )
-  })
-
-  it('test-libsql-not-an-error does not interfere with AssertionError classification', () => {
-    // An AssertionError that happens to contain "not an error" should still
-    // classify as test-assertion-error (AssertionError rule comes first in list).
-    const assertionWithNotAnError = [
-      "AssertionError: expected 'not an error' to be null",
-    ].join('\n')
-    expect(classifyError(assertionWithNotAnError)).toBe('test-assertion-error')
-  })
 })
 
 describe('errorClassRules registry', () => {

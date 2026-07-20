@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 interface QueueModule {
-  migrateQueueSchema: typeof import('../../core/queue').migrateQueueSchema
+  ensureQueueSchema: typeof import('../../core/queue').ensureQueueSchema
   resolveQueueClient: typeof import('../../core/queue').resolveQueueClient
 }
 
@@ -38,7 +38,7 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../core/queue')) as unknown as QueueModule
-  await q.migrateQueueSchema()
+  await q.ensureQueueSchema()
   const sub = (await import('./idea-lifecycle')) as unknown as IdeaLifecycleModule
   const pub = (await import('../../bus/publisher')) as unknown as PublisherModule
   return { q, sub, pub }

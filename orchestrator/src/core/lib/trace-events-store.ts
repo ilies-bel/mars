@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { gzip, gunzip } from 'node:zlib'
 import { promisify } from 'node:util'
 import { z } from 'zod'
-import { openLibsql } from './libsql'
+import { openDb } from './db.js'
 
 const gzipAsync = promisify(gzip)
 const gunzipAsync = promisify(gunzip)
@@ -10,8 +10,10 @@ const gunzipAsync = promisify(gunzip)
 /**
  * The single Mars trace-event surface. All step telemetry lives in the
  * `trace_events` table as an append-only event log alongside the rest of
- * `.mars/mars.db`. The former `step_spans` table was superseded by
- * `trace_events` step_ended payloads and is dropped on first open.
+ * the Mars database. Schema ownership: `trace_events`, `task_transcripts`
+ * and `task_durable_transcripts` (plus their indexes) are created by
+ * `ensureSchema` in core/lib/pg-schema.ts (migration 0002) — this module
+ * carries no DDL.
  *
  * Every row is one event, tagged by `kind` from a closed vocabulary. The
  * kind-specific shape lives in `payload` as JSON. Callers never pick
@@ -83,9 +85,9 @@ export interface TraceEventFilter {
   sinceIso?: string
   untilIso?: string
   /**
-   * Substring match against the serialized payload JSON. SQLite `LIKE`
-   * with `%q%` wrappers; case-insensitive (the LIKE collation is the
-   * default — NOCASE on ASCII only). Empty/undefined → no filter.
+   * Substring match against the serialized payload JSON. `ILIKE` with
+   * `%q%` wrappers — case-insensitive, preserving the old SQLite LIKE
+   * (NOCASE-on-ASCII) behaviour. Empty/undefined → no filter.
    */
   q?: string
   /** Opaque cursor returned by a previous `query`. Newest-first ordering. */
@@ -144,8 +146,9 @@ export interface TraceEventStore {
 
   /**
    * Store the full conversation transcript for a task as a gzip-compressed
-   * BLOB in `task_durable_transcripts`. Uses INSERT OR REPLACE so calling
-   * again for the same taskId updates the row with the latest conversation.
+   * bytea in `task_durable_transcripts`. Uses an upsert (ON CONFLICT DO
+   * UPDATE) so calling again for the same taskId updates the row with the
+   * latest conversation.
    *
    * Prefer this over embedding the transcript string in `step_ended` payloads —
    * payloads are scanned by hot aggregate queries and must remain small.
@@ -174,8 +177,8 @@ export interface TraceEventStore {
   /**
    * One-time migration: find all `step_ended` rows whose payload embeds an
    * inline `transcript` string, write them compressed to
-   * `task_durable_transcripts` (INSERT OR IGNORE — does not overwrite an
-   * existing row), and rewrite the payload with a `transcriptRef` marker
+   * `task_durable_transcripts` (ON CONFLICT DO NOTHING — does not overwrite
+   * an existing row), and rewrite the payload with a `transcriptRef` marker
    * (byte length only) in place of the raw string.
    *
    * Idempotent — safe to call on every startup; after migration all matching
@@ -243,87 +246,9 @@ export const TRANSCRIPT_RETENTION_DAYS = 30
  * How many streaming events to batch before flushing a `task_transcripts` row.
  * Smaller values increase durability for killed sessions at the cost of more
  * DB writes; larger values reduce write frequency but risk losing more on kill.
- * 20 events ≈ 1-5 KB per row — well within SQLite comfortable range.
+ * 20 events ≈ 1-5 KB per row — a comfortable row size.
  */
 export const TRANSCRIPT_CHUNK_BATCH = 20
-
-const TASK_TRANSCRIPTS_DDL = `
-CREATE TABLE IF NOT EXISTS task_transcripts (
-  task_id    TEXT NOT NULL,
-  session_id TEXT NOT NULL,
-  seq        INTEGER NOT NULL,
-  chunk      TEXT NOT NULL,
-  ts         TEXT NOT NULL,
-  PRIMARY KEY (task_id, session_id, seq)
-)
-`
-
-const INDEX_TASK_TRANSCRIPTS = `
-CREATE INDEX IF NOT EXISTS idx_task_transcripts_task
-  ON task_transcripts (task_id, ts)
-`
-
-/**
- * Durable compressed transcript table. One row per task: the full
- * conversation JSON serialised and gzip-compressed. Callers write here
- * instead of embedding the transcript string in `step_ended` payloads so
- * hot aggregate queries over trace_events are not slowed by multi-MB blobs.
- *
- * byte_len stores the uncompressed length so callers can surface the size
- * without decompressing.
- */
-const DURABLE_TRANSCRIPTS_DDL = `
-CREATE TABLE IF NOT EXISTS task_durable_transcripts (
-  task_id    TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL DEFAULT '',
-  step_name  TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,
-  transcript BLOB NOT NULL,
-  byte_len   INTEGER NOT NULL
-)
-`
-
-const TRACE_EVENTS_DDL = `
-CREATE TABLE IF NOT EXISTS trace_events (
-  id        TEXT PRIMARY KEY,
-  timestamp TEXT NOT NULL,
-  kind      TEXT NOT NULL,
-  severity  TEXT NOT NULL DEFAULT 'info',
-  task_id   TEXT,
-  origin_id TEXT,
-  phase     TEXT,
-  payload   TEXT NOT NULL DEFAULT '{}'
-)
-`
-
-const INDEX_TASK_TIME = `
-CREATE INDEX IF NOT EXISTS idx_trace_events_task_time
-  ON trace_events (task_id, timestamp)
-`
-
-const INDEX_TIME_DESC = `
-CREATE INDEX IF NOT EXISTS idx_trace_events_time_desc
-  ON trace_events (timestamp DESC)
-`
-
-const INDEX_ORIGIN_TIME = `
-CREATE INDEX IF NOT EXISTS idx_trace_events_origin_time
-  ON trace_events (origin_id, timestamp)
-`
-
-/**
- * Partial index backing the spend meter's rolling-window query
- * (`SUM(cache-weighted usageSignals) WHERE kind='step_ended' AND
- * timestamp >= now - window`, see lib/spend-meter.ts). Restricting the
- * index to step_ended rows keeps each sweep an index range scan over just
- * the rows inside the window instead of a full-table scan. Exported so the
- * spend sweep can ensure it exists when running against a store opened
- * before this index shipped.
- */
-export const INDEX_STEP_ENDED_TIME = `
-CREATE INDEX IF NOT EXISTS idx_trace_events_step_ended_time
-  ON trace_events (timestamp) WHERE kind = 'step_ended'
-`
 
 // Zod schema for parsing the JSON-blob payload at read time. JSON.parse
 // alone can return anything — narrow it to a string-keyed object so the
@@ -411,28 +336,21 @@ const decodeCursor = (cursor: string): CursorPayload | null => {
 const DEFAULT_LIMIT = 100
 
 /**
- * Open (creating it if absent) the Mars trace-event store backed by the
- * SQLite file at `dbPath`, ensuring the schema and indexes exist. The
- * caller owns the returned handle.
+ * Open the Mars trace-event store on the database identified by `dbTarget`
+ * (a `postgres://` DSN from `.mars/pg.dsn`, or the identity key under the
+ * PGlite test backend). The schema is owned by `ensureSchema`
+ * (pg-schema.ts) and must have been applied by the init/daemon flow; this
+ * function performs no DDL. The caller owns the returned handle —
+ * `close()` releases the (reference-counted) shared client.
  *
- * Passing the same `dbPath` that `mars.db` uses co-locates trace events
- * alongside actionQueue and proposal data in a single file (see ADR-0034).
+ * The daemon opens one persistent instance at startup (open early / close
+ * late); short-lived CLI invocations open per call — `openDb` dedupes onto
+ * the same pool either way.
  */
 export const openTraceEventStore = async (
-  dbPath: string,
+  dbTarget: string,
 ): Promise<TraceEventStore> => {
-  const client = openLibsql({ url: `file:${dbPath}` })
-  // Migration: drop the legacy step_spans table (superseded by trace_events
-  // step_ended payloads; last write 2026-05-29; no code reads it any more).
-  await client.execute('DROP TABLE IF EXISTS step_spans')
-  await client.execute(TRACE_EVENTS_DDL)
-  await client.execute(INDEX_TASK_TIME)
-  await client.execute(INDEX_TIME_DESC)
-  await client.execute(INDEX_ORIGIN_TIME)
-  await client.execute(TASK_TRANSCRIPTS_DDL)
-  await client.execute(INDEX_TASK_TRANSCRIPTS)
-  await client.execute(DURABLE_TRANSCRIPTS_DDL)
-  await client.execute(INDEX_STEP_ENDED_TIME)
+  const client = openDb(dbTarget)
 
   return {
     record: async (event: TraceEventInput): Promise<void> => {
@@ -492,17 +410,17 @@ export const openTraceEventStore = async (
         args.push(filter.untilIso)
       }
       if (filter.q !== undefined && filter.q !== '') {
-        // SQLite LIKE is case-insensitive on ASCII by default. We wrap with
-        // `%` so any substring inside the JSON-serialized payload matches.
-        where.push('payload LIKE ?')
+        // ILIKE preserves the old SQLite LIKE case-insensitivity. We wrap
+        // with `%` so any substring inside the JSON-serialized payload
+        // matches.
+        where.push('payload ILIKE ?')
         args.push(`%${filter.q}%`)
       }
 
       // Cursor-based pagination: rows are ordered (timestamp DESC, id DESC).
       // The cursor pins the last (ts, id) seen; the next page starts strictly
       // before it in that ordering. `id` is a uuid so it tie-breaks equal
-      // timestamps deterministically — the SQLite default text comparison is
-      // enough.
+      // timestamps deterministically — plain text comparison is enough.
       if (filter.cursor !== undefined) {
         const cur = decodeCursor(filter.cursor)
         if (cur !== null) {
@@ -527,7 +445,7 @@ export const openTraceEventStore = async (
     },
 
     close: async (): Promise<void> => {
-      client.close()
+      await client.close()
     },
 
     appendTranscriptChunk: async (
@@ -538,9 +456,10 @@ export const openTraceEventStore = async (
     ): Promise<void> => {
       if (events.length === 0) return
       await client.execute({
-        sql: `INSERT OR IGNORE INTO task_transcripts
+        sql: `INSERT INTO task_transcripts
               (task_id, session_id, seq, chunk, ts)
-              VALUES (?, ?, ?, ?, ?)`,
+              VALUES (?, ?, ?, ?, ?)
+              ON CONFLICT (task_id, session_id, seq) DO NOTHING`,
         args: [
           taskId,
           sessionId,
@@ -596,9 +515,15 @@ export const openTraceEventStore = async (
     ): Promise<void> => {
       const compressed = await gzipAsync(Buffer.from(transcriptJson, 'utf8'))
       await client.execute({
-        sql: `INSERT OR REPLACE INTO task_durable_transcripts
+        sql: `INSERT INTO task_durable_transcripts
               (task_id, session_id, step_name, created_at, transcript, byte_len)
-              VALUES (?, ?, ?, ?, ?, ?)`,
+              VALUES (?, ?, ?, ?, ?, ?)
+              ON CONFLICT (task_id) DO UPDATE SET
+                session_id = excluded.session_id,
+                step_name  = excluded.step_name,
+                created_at = excluded.created_at,
+                transcript = excluded.transcript,
+                byte_len   = excluded.byte_len`,
         args: [
           taskId,
           sessionId,
@@ -631,7 +556,7 @@ export const openTraceEventStore = async (
       const rows = await client.execute(
         `SELECT id, task_id, payload FROM trace_events
           WHERE kind = 'step_ended'
-            AND json_extract(payload, '$.transcript') IS NOT NULL`,
+            AND payload::jsonb ->> 'transcript' IS NOT NULL`,
       )
       let migrated = 0
       for (const row of rows.rows) {
@@ -648,13 +573,14 @@ export const openTraceEventStore = async (
         const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : ''
         const stepName = typeof payload.stepName === 'string' ? payload.stepName : 'code'
         const byteLen = transcriptRaw.length
-        // Write compressed transcript — INSERT OR IGNORE so a newer durable row
-        // written by runWorkerWithSpan is left intact.
+        // Write compressed transcript — ON CONFLICT DO NOTHING so a newer
+        // durable row written by runWorkerWithSpan is left intact.
         const compressed = await gzipAsync(Buffer.from(transcriptRaw, 'utf8'))
         await client.execute({
-          sql: `INSERT OR IGNORE INTO task_durable_transcripts
+          sql: `INSERT INTO task_durable_transcripts
                 (task_id, session_id, step_name, created_at, transcript, byte_len)
-                VALUES (?, ?, ?, ?, ?, ?)`,
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT (task_id) DO NOTHING`,
           args: [r.task_id, sessionId, stepName, new Date().toISOString(), compressed, byteLen],
         })
         // Rewrite the payload without the inline transcript; add a lightweight

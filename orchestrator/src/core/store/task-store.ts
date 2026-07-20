@@ -8,7 +8,7 @@
  * - `query(stmt | sql, params?)` — single read in a read-only batch.
  * - `execute(stmt | sql, params?)` — single ad-hoc write.
  * - `batch(stmts, mode?)` — multi-statement transaction (all-or-nothing).
- * - `atomic(fn)` — callback-scoped write transaction. The libsql Transaction
+ * - `atomic(fn)` — callback-scoped write transaction. The transaction handle
  *   NEVER crosses the seam: `atomic` inverts control (you give a callback, you
  *   never get a handle) and the {@link Scope} it passes exposes only
  *   query/execute, is non-nestable, and is revoked the moment the callback
@@ -16,26 +16,26 @@
  *   error.
  * - `arcStatus(originId, opts?)` — per-arc rollup predicate.
  *
- * Both side-door reads/writes and domain methods accept either the libsql
- * `InStatement` shape (`{ sql, args }` or a bare string) or the
+ * Both side-door reads/writes and domain methods accept either the
+ * `DbStatement` shape (`{ sql, args }` or a bare string) or the
  * `(sql, params)` two-argument form, so call sites can use whichever reads
  * cleanest.
  *
- * No raw libsql `Client` is ever exported from this seam. The composition
- * root constructs exactly one store per process via {@link getDefaultDomainTaskStore}
- * (production, file: client) or `createTaskStore(client)` with a `:memory:`/
- * file-URL client (tests).
+ * No raw `DbClient` is ever exported from this seam. The composition root
+ * constructs exactly one store per process via {@link getDefaultDomainTaskStore}
+ * (production, DSN from `.mars/pg.dsn`) or `createTaskStore(client)` with an
+ * isolated client (tests, PGlite backend).
  */
 
-import type { Client, InStatement, InValue, ResultSet } from '@libsql/client'
-import { withTransaction } from '../lib/libsql.js'
+import type { DbClient, DbStatement, DbInValue, DbResultSet } from '../lib/db.js'
+import { withTransaction } from '../lib/db.js'
+import { ensureSchema } from '../lib/pg-schema.js'
 import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import {
   resolveQueueClient,
-  migrateQueueSchema,
   getTask as queueGetTask,
   listTasks as queueListTasks,
   updateTask as queueUpdateTask,
@@ -118,12 +118,12 @@ const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
 
 /**
  * Normalise the two accepted side-door call shapes into a single
- * `InStatement`. `query(stmt)` / `query(sql, params)` both resolve here.
+ * `DbStatement`. `query(stmt)` / `query(sql, params)` both resolve here.
  */
 const toStatement = (
-  stmt: InStatement | string,
-  params?: InValue[],
-): InStatement => {
+  stmt: DbStatement | string,
+  params?: DbInValue[],
+): DbStatement => {
   if (typeof stmt === 'string') {
     return params === undefined ? stmt : { sql: stmt, args: params }
   }
@@ -139,9 +139,9 @@ const toStatement = (
  */
 export interface Scope {
   /** Execute a read statement inside the active transaction. */
-  query(stmt: InStatement | string, params?: InValue[]): Promise<ResultSet>
+  query(stmt: DbStatement | string, params?: DbInValue[]): Promise<DbResultSet>
   /** Execute a write statement inside the active transaction. */
-  execute(stmt: InStatement | string, params?: InValue[]): Promise<ResultSet>
+  execute(stmt: DbStatement | string, params?: DbInValue[]): Promise<DbResultSet>
 }
 
 /**
@@ -251,17 +251,18 @@ export interface DomainTaskStore {
 
   // ── Generic SQL escape hatches ───────────────────────────────────────────
   /** Execute a single read in a read-only transaction. Non-null client. */
-  query(stmt: InStatement | string, params?: InValue[]): Promise<ResultSet>
+  query(stmt: DbStatement | string, params?: DbInValue[]): Promise<DbResultSet>
   /** Execute a single ad-hoc write. Non-null client. */
-  execute(stmt: InStatement | string, params?: InValue[]): Promise<ResultSet>
+  execute(stmt: DbStatement | string, params?: DbInValue[]): Promise<DbResultSet>
   /**
-   * Run all statements in one transaction under `mode` (default `'write'`);
-   * rolls the whole batch back if any statement fails. Non-null client.
+   * Run all statements in one transaction; rolls the whole batch back if any
+   * statement fails. `mode` is accepted for call-shape compatibility and
+   * ignored (PostgreSQL has no read/write batch distinction). Non-null client.
    */
   batch(
-    stmts: InStatement[],
+    stmts: DbStatement[],
     mode?: 'write' | 'read' | 'deferred',
-  ): Promise<ResultSet[]>
+  ): Promise<DbResultSet[]>
   /**
    * Run `fn` inside a write transaction. Commits when `fn` returns; rolls back
    * and rethrows when `fn` throws. The {@link Scope} is revoked the moment the
@@ -303,34 +304,34 @@ const readLandedCommits = async (
 }
 
 /**
- * Return a lazy, once-per-instance memoised migration runner that drives
- * mars.db's schema migration on the passed client's database. The migration
- * lives behind the store per ADR-0021; callers no longer hand-sequence it.
+ * Return a lazy, once-per-instance memoised migration runner that applies the
+ * canonical schema (`ensureSchema`, pg-schema.ts) on the passed client's
+ * database. The migration lives behind the store per ADR-0021; callers no
+ * longer hand-sequence it.
  */
 export const createRunMigrations = (
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _client: Client,
+  client: DbClient,
 ): (() => Promise<void>) => {
   let promise: Promise<void> | null = null
   return (): Promise<void> => {
-    if (!promise) promise = migrateQueueSchema()
+    if (!promise) promise = ensureSchema(client)
     return promise
   }
 }
 
 /**
- * Create a `DomainTaskStore` over the given libsql client.
+ * Create a `DomainTaskStore` over the given DB client.
  *
  * Passing `null` is supported for call sites that only use domain methods.
  * Calling a generic escape hatch on a null-client store throws a clear error.
  */
-export const createTaskStore = (client: Client | null): DomainTaskStore => {
+export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
   let inTransaction = false
 
-  const guardClient = (): Client => {
+  const guardClient = (): DbClient => {
     if (!client)
       throw new Error(
-        'TaskStore: a libsql Client is required for query/execute/batch/atomic — pass a non-null client to createTaskStore',
+        'TaskStore: a DbClient is required for query/execute/batch/atomic — pass a non-null client to createTaskStore',
       )
     return client
   }
@@ -476,7 +477,9 @@ export const createTaskStore = (client: Client | null): DomainTaskStore => {
 
     batch: (stmts, mode) => {
       const c = guardClient()
-      return c.batch(stmts, mode ?? 'write')
+      // 'deferred' was a libsql mode; the seam only distinguishes read/write
+      // (and ignores even that) — collapse it to 'write'.
+      return c.batch(stmts, mode === 'read' ? 'read' : 'write')
     },
 
     atomic: async <T>(fn: (scope: Scope) => Promise<T>): Promise<T> => {
@@ -545,8 +548,8 @@ const computeStateDirForGuard = (): string | null => {
 
 /**
  * Composition-root accessor: the single process-wide `DomainTaskStore` over
- * `.mars/mars.db`. Lazily runs the queue migration and constructs the store
- * around the seam-internal libsql client. This is the only sanctioned way for
+ * the Mars database. Lazily ensures the canonical schema and constructs the
+ * store around the seam-internal client. This is the only sanctioned way for
  * production modules to obtain a store when one was not threaded in via DI.
  *
  * Two cross-boundary write guards are applied on the default-resolution path
@@ -580,8 +583,8 @@ export const getDefaultTaskStore = async (): Promise<DomainTaskStore> => {
     if (!process.env.MARS_REPO && cwd.startsWith(stateDir + sep + 'worktrees' + sep)) {
       throw new Error(
         `[mars] getDefaultTaskStore() refused: process CWD is inside a worktree ` +
-          `(${cwd}). This would write to the PARENT production database at ` +
-          `${stateDir}/mars.db. ` +
+          `(${cwd}). This would write to the PARENT repo's production database ` +
+          `(resolved via ${stateDir}). ` +
           `Use createTaskStore() with an isolated client, or inject the store via DI.`,
       )
     }
@@ -593,24 +596,24 @@ export const getDefaultTaskStore = async (): Promise<DomainTaskStore> => {
       const td = tmpdir()
       if (!stateDir.startsWith(td + sep) && !stateDir.startsWith(td + '/')) {
         throw new Error(
-          `[mars] getDefaultTaskStore() resolved to ${stateDir}/mars.db which is NOT ` +
+          `[mars] getDefaultTaskStore() resolved to ${stateDir} which is NOT ` +
             `inside the system temp directory (${td}). ` +
             `Tests must use an isolated store: set MARS_REPO to a mkdtempSync() path ` +
-            `or use createTaskStore() with a :memory: client.`,
+            `or use createTaskStore() with an isolated client.`,
         )
       }
     }
   }
 
-  await migrateQueueSchema()
+  await ensureSchema(resolveQueueClient())
   cachedDefaultStore = createTaskStore(resolveQueueClient())
   return cachedDefaultStore
 }
 
 /**
  * Synchronous composition-root accessor for call sites that only need domain
- * methods and cannot await. The migration is driven on first domain call by
- * queue.ts's own defensive `migrateQueueSchema()` guards.
+ * methods and cannot await. The schema is expected to exist already — the
+ * daemon (and every init flow) runs `ensureSchema` at startup.
  *
  * Applies the same worktree cross-boundary guard as {@link getDefaultTaskStore}
  * to prevent dispatched Workers from writing to the parent production database.
@@ -628,8 +631,8 @@ export const getDefaultDomainTaskStore = (): DomainTaskStore => {
     if (stateDir !== null && cwd.startsWith(stateDir + sep + 'worktrees' + sep)) {
       throw new Error(
         `[mars] getDefaultDomainTaskStore() refused: process CWD is inside a worktree ` +
-          `(${cwd}). This would write to the PARENT production database at ` +
-          `${stateDir}/mars.db. ` +
+          `(${cwd}). This would write to the PARENT repo's production database ` +
+          `(resolved via ${stateDir}). ` +
           `Use createTaskStore() with an isolated client, or inject the store via DI.`,
       )
     }
@@ -638,26 +641,27 @@ export const getDefaultDomainTaskStore = (): DomainTaskStore => {
 }
 
 /**
- * Composition-root-only access to the underlying libsql `Client` for the
+ * Composition-root-only access to the underlying `DbClient` for the
  * wire-bus / outbox subscriber layer (cursor reads on the `events` table,
- * which lives below the domain seam — ADR-0021 keeps the Outbox in mars.db).
+ * which lives below the domain seam — ADR-0021 keeps the Outbox in the same
+ * database).
  *
  * This is NOT a domain escape hatch: domain modules must use the store. The
  * only sanctioned importer is the daemon composition root, which threads this
  * client into `ensure*`/`drain*` subscriber wiring. Returning the raw client
- * here is the ADR's "constructor injection of a libsql Client at the
- * composition root" — the leak the ADR closes is *domain* modules importing a
- * raw `getClient`, not the root wiring the bus.
+ * here is the ADR's "constructor injection of a DB client at the composition
+ * root" — the leak the ADR closes is *domain* modules importing a raw
+ * `getClient`, not the root wiring the bus.
  */
-export const getCompositionRootClient = (): Client => resolveQueueClient()
+export const getCompositionRootClient = (): DbClient => resolveQueueClient()
 
 /**
- * Composition-root migration entry point. Runs the (memoised) queue schema
- * migration. The daemon calls this once at startup so the schema exists before
- * any subscriber or store touches the DB.
+ * Composition-root migration entry point. Applies the canonical schema
+ * (`ensureSchema`, idempotent). The daemon calls this once at startup so the
+ * schema exists before any subscriber or store touches the DB.
  */
 export const runCompositionRootMigrations = (): Promise<void> =>
-  migrateQueueSchema()
+  ensureSchema(resolveQueueClient())
 
 /**
  * Test-only: drop the cached default store so a subsequent

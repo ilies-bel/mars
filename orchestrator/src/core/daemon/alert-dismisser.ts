@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client'
+import type { DbClient } from '../lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { dismissAlertsOnStatusChange, resolveAllRowsForTask } from '../lib/action-queue'
@@ -69,7 +69,7 @@ function evictionFor(
  * Register the Invalidator subscriber. `replay: false` (ADR-0031 tail
  * default) so a fresh cursor sees only future events. Idempotent.
  */
-export async function ensureAlertDismisser(client: Client): Promise<void> {
+export async function ensureAlertDismisser(client: DbClient): Promise<void> {
   await registerSubscriber(client, ALERT_DISMISSER_SUBSCRIBER, {
     replay: false,
   })
@@ -86,12 +86,12 @@ export async function ensureAlertDismisser(client: Client): Promise<void> {
  * subscriber-stalled actionQueue item after K consecutive failures (ADR-0032)
  * — all handled by the shared {@link drainWithStall} helper.
  *
- * @param client The libsql client carrying the outbox + actionQueue tables.
+ * @param client The DB client carrying the outbox + actionQueue tables.
  * @param log    Optional logger callback for per-event failures.
  * @returns      The count of events whose side effect ran (closed rows).
  */
 export async function drainAlertDismissals(
-  client: Client,
+  client: DbClient,
   log?: (msg: string) => void,
 ): Promise<{ processed: number }> {
   return drainWithStall({

@@ -1,11 +1,19 @@
-import type { Client, InStatement, Transaction } from '@libsql/client';
-import { withTransaction } from '../core/lib/libsql.js';
+import {
+  withTransaction,
+  type DbClient,
+  type DbStatement,
+  type DbTx,
+} from '../core/lib/db.js';
 import { EventMap, type EventName, type EventPayload } from './events.js';
 
 /**
  * Validate `payload` against the registered Zod schema for `type` and
  * return the `INSERT INTO events` statement ready to pass to a transaction
  * or batch.
+ *
+ * The `events.id` column is `GENERATED ALWAYS AS IDENTITY`; no caller
+ * consumes the generated id at insert time, so no `RETURNING id` clause is
+ * needed (add one at the call site if that ever changes).
  *
  * Throws if the type is unknown or the payload fails Zod validation — let
  * the caller decide whether to propagate or swallow. When called upfront
@@ -15,7 +23,7 @@ import { EventMap, type EventName, type EventPayload } from './events.js';
 export function buildEventInsert<T extends EventName>(
   type: T,
   payload: EventPayload<T>,
-): InStatement {
+): DbStatement {
   const schema = EventMap[type];
   if (!schema) {
     throw new Error(`Unknown event type: ${String(type)}`);
@@ -31,15 +39,14 @@ export function buildEventInsert<T extends EventName>(
  * Publish an event to the outbox.
  *
  * Validates `payload` against the registered zod schema for `type` and
- * inserts a row into `events`. Call inside an active libsql write
- * transaction so the event commits atomically with the state row it
- * describes.
+ * inserts a row into `events`. Call inside an active write transaction so
+ * the event commits atomically with the state row it describes.
  *
  * Throws if the payload fails validation; the surrounding transaction
  * will then roll back, leaving no orphan event or partial state.
  */
 export async function publish<T extends EventName>(
-  tx: Transaction,
+  tx: DbTx,
   type: T,
   payload: EventPayload<T>,
 ): Promise<void> {
@@ -47,89 +54,33 @@ export async function publish<T extends EventName>(
   await tx.execute(stmt);
 }
 
-/** Options for {@link publishWithRetry} and {@link withWriteTx}. All fields are optional; defaults match the PRD. */
-export interface RetryOpts {
-  /** Maximum number of attempts including the first (default 5). */
-  attempts?: number;
-  /** Base delay in ms for exponential backoff (default 10). */
-  baseMs?: number;
-  /** Jitter factor in [0, 1] applied as ±jitter×exp (default 0.5 → ±50%). */
-  jitter?: number;
-  /** Upper cap on computed delay in ms (default 200). */
-  capMs?: number;
-}
-
-function isSqliteBusy(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const e = err as Error & { code?: string };
-  return e.code === 'SQLITE_BUSY' || e.message.includes('database is locked');
-}
-
 /**
- * Open a libsql write transaction on `client`, run `fn` inside it, then
- * commit. On a SQLITE_BUSY error (code `'SQLITE_BUSY'` or message
- * containing `'database is locked'`) retries with bounded jittered
- * exponential backoff; rethrows the original error once all attempts are
- * exhausted. Any non-busy error thrown by `fn` propagates immediately —
- * the transaction is closed (rolled back) and the error surfaces to the
+ * Open a write transaction on `client`, run `fn` inside it, then commit.
+ * Any error thrown by `fn` rolls the transaction back and surfaces to the
  * caller.
  *
- * Default retry parameters: 5 attempts, 10 ms base, ±50% jitter, 200 ms cap.
+ * Historically this carried SQLITE_BUSY retry + reconnect machinery; under
+ * PostgreSQL MVCC that contention class no longer exists, so this is a plain
+ * {@link withTransaction} wrapper kept for its call-site shape.
  */
 export async function withWriteTx<T>(
-  client: Client,
-  fn: (tx: Transaction) => Promise<T>,
-  opts?: RetryOpts,
+  client: DbClient,
+  fn: (tx: DbTx) => Promise<T>,
 ): Promise<T> {
-  const maxAttempts = opts?.attempts ?? 5;
-  const baseMs = opts?.baseMs ?? 10;
-  const jitter = opts?.jitter ?? 0.5;
-  const capMs = opts?.capMs ?? 200;
-
-  let firstBusyErr: unknown;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    try {
-      return await withTransaction(client, fn);
-    } catch (err) {
-      if (!isSqliteBusy(err)) {
-        throw err;
-      }
-      if (firstBusyErr === undefined) {
-        firstBusyErr = err;
-      }
-      if (attempt < maxAttempts - 1) {
-        // Reconnect to get a fresh underlying SQLite connection. The libsql
-        // local backend leaves the connection in an unusable state after a
-        // SQLITE_BUSY on BEGIN IMMEDIATE; without this, every subsequent
-        // transaction attempt on the same client returns
-        // "cannot commit transaction - SQL statements in progress".
-        await client.reconnect();
-        const exp = Math.min(baseMs * 2 ** attempt, capMs);
-        const jitterFactor = 1 - jitter + Math.random() * jitter * 2;
-        await new Promise<void>(r => setTimeout(r, exp * jitterFactor));
-      }
-    }
-  }
-
-  throw firstBusyErr;
+  return withTransaction(client, fn);
 }
 
 /**
  * Publish an event to the outbox, opening and committing its own write
- * transaction.
+ * transaction on `client`.
  *
- * On a SQLITE_BUSY error (code `'SQLITE_BUSY'` or message containing
- * `'database is locked'`) retries with bounded jittered exponential
- * backoff; rethrows the original error once all attempts are exhausted.
- *
- * Default retry parameters: 5 attempts, 10 ms base, ±50% jitter, 200 ms cap.
+ * Throws if the payload fails validation or the insert fails; nothing is
+ * committed in that case.
  */
 export async function publishWithRetry<T extends EventName>(
-  client: Client,
+  client: DbClient,
   type: T,
   payload: EventPayload<T>,
-  opts?: RetryOpts,
 ): Promise<void> {
-  return withWriteTx(client, (tx) => publish(tx, type, payload), opts);
+  return withWriteTx(client, (tx) => publish(tx, type, payload));
 }

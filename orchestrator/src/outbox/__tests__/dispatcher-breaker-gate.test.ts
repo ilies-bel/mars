@@ -1,48 +1,37 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createClient, type Client } from '@libsql/client';
+import { openDb, type DbClient } from '../../core/lib/db.js';
+import { ensureSchema } from '../../core/lib/pg-schema.js';
 import { publishWithRetry } from '../../bus/publisher.js';
 import { registerSubscriber, getCursor } from '../../bus/subscribers.js';
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js';
 import { startDispatcher, type Dispatcher } from '../dispatcher.js';
 
+let dbSeq = 0;
+
 /**
- * File-backed libsql client with the production `events` schema.
- * File-backed rather than `:memory:` because the libsql local backend opens
- * a fresh connection per transaction for in-memory URLs, making tables
- * invisible across transactions.
+ * Fresh in-memory PGlite instance per test carrying the canonical schema
+ * (MARS_DB_BACKEND=pglite is set by test/setup-env.ts; the target string is
+ * only an identity key).
  */
-async function makeClient(dir: string): Promise<Client> {
-  const client = createClient({ url: `file:${join(dir, 'events.db')}` });
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS events (
-      id      INTEGER PRIMARY KEY AUTOINCREMENT,
-      type    TEXT    NOT NULL,
-      payload TEXT    NOT NULL,
-      ts      INTEGER NOT NULL DEFAULT (unixepoch())
-    )
-  `);
+async function makeClient(): Promise<DbClient> {
+  const client = openDb(`test:breaker-gate:${process.pid}:${dbSeq++}`);
+  await ensureSchema(client);
   return client;
 }
 
 describe('Dispatcher breaker gate', () => {
-  let tmpDir: string;
-  let client: Client;
+  let client: DbClient;
   const dispatchers: Dispatcher[] = [];
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'mars-breaker-test-'));
-    client = await makeClient(tmpDir);
+    client = await makeClient();
     dispatchers.length = 0;
     apiCircuitBreaker.close(); // ensure clean state before each test
   });
 
   afterEach(async () => {
     await Promise.all(dispatchers.map(d => d.stop()));
-    client.close();
-    rmSync(tmpDir, { recursive: true, force: true });
+    await client.close();
     apiCircuitBreaker.close(); // reset singleton after each test
   });
 

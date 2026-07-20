@@ -1,32 +1,9 @@
-import type { Client } from '@libsql/client';
-import {
-  ensureProcessedOnceSchema,
-  processedOnce,
-} from '../../bus/processed-once.js';
+import type { DbClient } from '../../core/lib/db.js';
+import { processedOnce } from '../../bus/processed-once.js';
 import type { BusEvent } from '../../bus/events.js';
 import type { Subscriber } from '../dispatcher.js';
 import { publish } from '../../bus/publisher.js';
 import { registerSubscriberName } from '../registry.js';
-
-/** DDL for the durable signal records table. */
-const SIGNALS_DDL = `
-  CREATE TABLE IF NOT EXISTS signals (
-    id          TEXT    PRIMARY KEY,
-    task_id     TEXT    NOT NULL,
-    kind        TEXT    NOT NULL,
-    recorded_at INTEGER NOT NULL DEFAULT (unixepoch())
-  )
-`;
-
-/**
- * Ensure the schema required by signal-recording subscribers is present on
- * `client`. Creates the `signals` table and the `subscriber_processed_events`
- * dedup table. Idempotent — safe to call on every startup.
- */
-export async function ensureSignalRecordingSchema(client: Client): Promise<void> {
-  await client.execute(SIGNALS_DDL);
-  await ensureProcessedOnceSchema(client);
-}
 
 /**
  * Build the Outbox Subscribers that durably record signals in reaction to
@@ -39,11 +16,11 @@ export async function ensureSignalRecordingSchema(client: Client): Promise<void>
  * write and the signal record cannot result in a missing or duplicate
  * record — either both commit or neither does.
  *
- * @param client  The shared `mars.db` client. Must hold the outbox `events`
+ * @param client  The shared DB client. Must hold the outbox `events`
  *   table and the `signals` table so all writes are co-located and the dedup
  *   transaction is cross-table atomic.
  */
-export function buildSignalRecordingSubscribers(client: Client): Subscriber[] {
+export function buildSignalRecordingSubscribers(client: DbClient): Subscriber[] {
   return [taskTerminalSignalRecorder(client)];
 }
 
@@ -59,7 +36,7 @@ registerSubscriberName(TASK_TERMINAL_SUBSCRIBER);
  * and a `signal.recorded` event is published atomically alongside the row so
  * downstream subscribers can react without polling the `signals` table.
  */
-function taskTerminalSignalRecorder(client: Client): Subscriber {
+function taskTerminalSignalRecorder(client: DbClient): Subscriber {
   return {
     name: TASK_TERMINAL_SUBSCRIBER,
     handler: async (event: BusEvent): Promise<void> => {

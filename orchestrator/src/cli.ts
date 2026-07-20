@@ -96,14 +96,14 @@ Commands:
                                 'retired' on success; exits non-zero when the id
                                 is unknown or already retired.
   proposal add "<goal>" [--author kind:name]
-                                create a proposal/plan in .mars/mars.db. Author
+                                create a proposal/plan in the Mars database. Author
                                 is detected from env/git when omitted: human if
                                 running interactively, agent if MARS_AGENT_NAME
                                 or CLAUDE_CODE/CLAUDECODE is set.
   proposal list [--source reflection|human|planner] [--status <status>]
                                 list proposals; filter by source and/or status
-  proposal show <id>            show a proposal from .mars/mars.db
-  proposal delete <id>          remove a proposal row from .mars/mars.db
+  proposal show <id>            show a proposal from the Mars database
+  proposal delete <id>          remove a proposal row from the Mars database
                                 (cascades proposal_user_stories rows). No
                                 worktree, no merge — pure local DB write.
   proposal set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"
@@ -127,7 +127,7 @@ Commands:
                                 ADR-0008 planning-graph edge: <proposal-id> waits
                                 on each <blocker-id>. Both endpoints must
                                 exist; self-blocking is rejected. Stored in
-                                proposal_dependencies (.mars/mars.db).
+                                proposal_dependencies (Mars database).
   proposal unblock <proposal-id> <blocker-id> [<blocker-id> ...]
                                 remove the listed planning-graph edges only;
                                 the proposal's status is left untouched.
@@ -137,7 +137,7 @@ Commands:
                                 ADR-0015 cross-graph edge: <task-id> cannot
                                 dispatch until each <proposal-id> is promoted.
                                 Stored in task_proposal_blockers
-                                (.mars/mars.db). Transferred onto a real
+                                (Mars database). Transferred onto a real
                                 task_blockers edge atomically when the proposal
                                 is sliced.
   proposal unblock-task <task-id> <proposal-id> [<proposal-id> ...]
@@ -169,7 +169,7 @@ Commands:
   set-technical <id> <text|@file>
                                 set the technical plan on a draft/queued task
   show <id>                     print full detail for an id; looks up tasks
-                                first, then proposals (both in .mars/mars.db)
+                                first, then proposals (both in the Mars database)
   list [status]                 list tasks (draft|queued|blocked|running|verifying|merging|vega-reconciling|awaiting-human|done|failed|dropped)
   continue <id> [<id> ...]      resume failed task(s) on their existing
                                 worktree+branch, jumping straight into the
@@ -231,7 +231,7 @@ Commands:
                                 Requires an interactive terminal (TTY).
   worktree clean [--dry-run] [--force-orphans]
                                 classify every directory under .mars/worktrees/
-                                (and legacy .worktrees/) against mars.db and
+                                (and legacy .worktrees/) against the task rows and
                                 remove the safe ones: done+merged branches,
                                 failed/dropped+zero-commit branches, and orphan
                                 rows whose branch never advanced. Skips
@@ -361,7 +361,7 @@ Commands:
                                 list Scorers (per-Workflow quality rubrics
                                 suggested by 'mars arc reflect' when a
                                 measurement gap is found). Stored in the
-                                scorers table (.mars/mars.db).
+                                scorers table (Mars database).
   scorer show <id>              print a Scorer in full: target workflow kind,
                                 quality dimension, rubric prompt, the
                                 0..1-plus-rationale output contract, the
@@ -486,8 +486,9 @@ Commands:
                                 Pass 0 to wipe all rows. Prints the number
                                 of rows removed. Safe to run while the
                                 daemon is running.
-  db compact                    compact the mars.db database (VACUUM). Safe
-                                to run while the daemon is running.
+  db compact                    prune high-volume tables, then VACUUM
+                                (ANALYZE). Safe to run while the daemon is
+                                running.
   kpi snapshot                  take a KPI snapshot (task throughput + cycle
                                 time) and print it as JSON to stdout
   kpi show                      print the KPI window comparison (previous
@@ -529,7 +530,7 @@ Commands:
                                 always.
   where                         print resolved repo + state directory
   doctor                        preflight: verify claude CLI, git, Node, codegraph,
-                                daemon status, mars.db. Exits non-zero on FAIL.
+                                daemon status, database. Exits non-zero on FAIL.
                                 'mars init' runs this automatically (--skip-doctor
                                 to bypass).
   help                          show this message
@@ -714,7 +715,7 @@ Subcommands:
       match one of the declared done-criteria exactly.`,
   memory: `mars memory <list|add|retire>
 
-Manage domain-scoped memory packets stored in .mars/mars.db.
+Manage domain-scoped memory packets stored in the Mars database.
 
 Subcommands:
   list --domain <d> [--min-salience <n>] [--limit <n>]
@@ -731,14 +732,14 @@ Subcommands:
 
 Subcommands:
   add "<goal>" [--author kind:name]
-      Create a plan/proposal in .mars/mars.db. Author is detected from env
+      Create a plan/proposal in the Mars database. Author is detected from env
       and git when omitted (agent if MARS_AGENT_NAME/CLAUDE_CODE is set,
       otherwise human with git user.email). Use --author to override,
       e.g. --author agent:vega.
   list [--source reflection|human|planner] [--status <status>]
       List proposals. Filter by source and/or status.
   show <id>
-      Show a proposal from .mars/mars.db. <id> accepts a full id or a unique prefix.
+      Show a proposal from the Mars database. <id> accepts a full id or a unique prefix.
   set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"
       Update a single field on an existing proposal. Replaces the field; does
       not append.
@@ -773,7 +774,7 @@ file.`,
   show: `mars show <id>
 
 Print full detail for an id. Looks up tasks first, then proposals
-(both in .mars/mars.db).`,
+(both in the Mars database).`,
   list: `mars list [status]
 
 List tasks. Status one of: draft, queued, blocked, running, verifying, merging,
@@ -874,7 +875,7 @@ there are none.`,
 mars worktree prune [--dry-run]
 
 Walk .mars/worktrees/ (and legacy .worktrees/), classify each directory
-by joining against the matching mars.db row, and remove the safe ones.
+by joining against the matching task row, and remove the safe ones.
 
 'clean' classifications:
   done + branch merged into main          → remove
@@ -1262,8 +1263,9 @@ Phases:
 
   reset
       Exits 0 only when every id-bearing table (tasks, proposals, action_queue_items,
-      etc.) has zero rows in the DB. Run after deleting .mars/mars.db and
-      re-initialising with 'mars init'.
+      etc.) has zero rows in the DB. Run after resetting the database
+      (delete .mars/pg/data with the daemon stopped) and re-initialising
+      with 'mars init'.
 
   recreate
       Exits 0 only when none of the superseded/dropped ids (04830c8e,
@@ -1379,7 +1381,7 @@ Checks:
   PASS/FAIL  Node.js       version >= 22.13.0
   PASS/WARN  codegraph     optional code-intelligence binary (ADR-0062)
   PASS/WARN  daemon        running; warns on stale dev install
-  PASS/WARN  mars.db       .mars/mars.db present and readable
+  PASS/WARN  database      embedded PostgreSQL DSN published (.mars/pg.dsn)
 
 'mars init' runs the same checks automatically (pass --skip-doctor to
 bypass) and fails fast on claude/git/Node FAIL items.`,
@@ -1462,14 +1464,59 @@ const normalizeDaemonAliases = (positional: string[]): string[] => {
  * The single `process.exit` mapping site lives in the trailer below.
  */
 /**
+ * Resolve the DB target for the best-effort CLI trace WITHOUT creating
+ * `.mars/`. Returns `null` — and the trace is silently skipped — when the
+ * repo root cannot be determined, `.mars/` does not exist yet, or (embedded
+ * backend) the daemon has not published `.mars/pg.dsn`. Only once those
+ * non-creating checks pass does it delegate to `resolveDbTarget` (whose
+ * `resolveContext` mkdir is then a no-op on the existing directory).
+ */
+const findReachableDbTarget = async (
+  repo: string | undefined,
+): Promise<string | null> => {
+  try {
+    const { existsSync } = await import('node:fs')
+    const { execFileSync } = await import('node:child_process')
+    const { dirname, join, resolve } = await import('node:path')
+    const explicit = repo ?? process.env.MARS_REPO
+    let repoRoot: string
+    if (explicit) {
+      repoRoot = resolve(explicit)
+    } else {
+      // `--git-common-dir` resolves to the real repo's `.git` even from a
+      // linked worktree (`.mars/worktrees/<id>`), matching detectRepoRoot.
+      const gitCommonDir = execFileSync(
+        'git',
+        ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+        { encoding: 'utf8' },
+      ).trim()
+      repoRoot = dirname(gitCommonDir)
+    }
+    const stateDir = join(repoRoot, '.mars')
+    if (!existsSync(stateDir)) return null
+    if (
+      process.env.MARS_DB_BACKEND !== 'pglite' &&
+      !existsSync(join(stateDir, 'pg.dsn'))
+    ) {
+      return null
+    }
+    const { resolveDbTarget } = await import('./core/context')
+    return resolveDbTarget(repo)
+  } catch {
+    return null
+  }
+}
+
+/**
  * Best-effort cli-invocation trace: emits one row into trace_events after a
  * command returns.  Never throws, never creates `.mars/`, gated by
  * MARS_REFLECT_DISABLED=1.
  *
  * The constraint "only when repo context is already resolvable" is enforced by
- * `findExistingMarsDb`: it checks whether `.mars/mars.db` already exists
- * without calling `mkdirSync`, so commands that never touched `deps.ctx` (and
- * thus never created `.mars/`) silently skip the trace.
+ * `findReachableDbTarget`: it checks `.mars/` (and, on the embedded backend,
+ * the daemon-published `.mars/pg.dsn`) without calling `mkdirSync`, so
+ * commands that never touched `deps.ctx` (and thus never created `.mars/`)
+ * silently skip the trace, as do repos whose daemon is not running.
  */
 const emitCliInvocationTrace = async (
   repo: string | undefined,
@@ -1484,16 +1531,15 @@ const emitCliInvocationTrace = async (
   if (command === 'cut' || command.startsWith('cut ')) return
   const { isReflectDisabled } = await import('./core/lib/reflect-signals')
   if (isReflectDisabled()) return
-  const { findExistingMarsDb } = await import('./core/context')
-  const dbPath = findExistingMarsDb(repo)
-  if (!dbPath) return
+  const dbTarget = await findReachableDbTarget(repo)
+  if (!dbTarget) return
   const { openTraceEventStore } = await import('./core/lib/trace-events-store')
   const { detectOriginSession } = await import('./core/author')
   const truncatedFlags: Record<string, string> = {}
   for (const [k, v] of Object.entries(flags)) {
     truncatedFlags[k] = String(v ?? '').slice(0, 200)
   }
-  const store = await openTraceEventStore(dbPath)
+  const store = await openTraceEventStore(dbTarget)
   try {
     await store.record({
       kind: 'cli-invocation',

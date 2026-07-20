@@ -6,7 +6,7 @@ description: Run `mars reflect` to synthesize draft proposals (source='reflectio
 # Mars: reflect on recent completed tasks
 
 Synthesize reflection-source proposals from completed Mars tasks. `mars reflect`
-reads token + scorer signals from `.mars/mars.db`,
+reads token + scorer signals from the Mars database,
 defaults to the last 10 completed tasks, and inserts draft proposals into the
 `proposals` table with `source='reflection'`. Proposals are **never auto-run** —
 they are for the user to triage.
@@ -76,7 +76,7 @@ Never invent task ids or fabricate suggestions. The CLI is the only producer.
 
 ## Conventions
 
-- **Never bypass the CLI.** Don't poke at `.mars/mars.db` directly;
+- **Never bypass the CLI.** Don't poke at the Mars database directly;
   don't insert into `proposals` by hand.
 - **Foreground only.** `mars reflect` is the user-visible action; do not
   run it with `run_in_background`.

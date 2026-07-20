@@ -177,7 +177,7 @@ const loadVerifyOutput = async (taskId: string): Promise<string | null> => {
   const r = await store.query({
     sql: `SELECT payload FROM trace_events
            WHERE kind = 'step_ended' AND task_id = ?
-             AND json_extract(payload, '$.verifyOutput') IS NOT NULL
+             AND payload::jsonb ->> 'verifyOutput' IS NOT NULL
            ORDER BY timestamp DESC
            LIMIT 1`,
     args: [taskId],

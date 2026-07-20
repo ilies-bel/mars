@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { createClient, type Client } from '@libsql/client'
+import { openDb, type DbClient } from '../../core/lib/db.js'
+import { ensureSchema } from '../../core/lib/pg-schema.js'
 import { publishWithRetry } from '../publisher.js'
 import {
   registerSubscriber,
@@ -11,38 +9,28 @@ import {
   fetchPending,
 } from '../subscribers.js'
 
+let dbSeq = 0
+
 /**
- * Create a file-backed libsql client carrying the production `events`
- * schema (see `src/core/queue.ts`). File-backed rather than
- * `:memory:` because the libsql local backend opens a fresh
- * connection per transaction for in-memory URLs, which makes the
- * table invisible across transactions.
+ * Fresh in-memory PGlite instance per test carrying the canonical schema
+ * (`events` + `subscribers`; MARS_DB_BACKEND=pglite is set by
+ * test/setup-env.ts, the target string is only an identity key).
  */
-async function makeClient(dir: string): Promise<Client> {
-  const client = createClient({ url: `file:${join(dir, 'events.db')}` })
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS events (
-      id      INTEGER PRIMARY KEY AUTOINCREMENT,
-      type    TEXT    NOT NULL,
-      payload TEXT    NOT NULL,
-      ts      INTEGER NOT NULL DEFAULT (unixepoch())
-    )
-  `)
+async function makeClient(): Promise<DbClient> {
+  const client = openDb(`test:subscribers:${process.pid}:${dbSeq++}`)
+  await ensureSchema(client)
   return client
 }
 
 describe('Subscriber cursor registry', () => {
-  let tmpDir: string
-  let client: Client
+  let client: DbClient
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'mars-subscribers-test-'))
-    client = await makeClient(tmpDir)
+    client = await makeClient()
   })
 
-  afterEach(() => {
-    client.close()
-    rmSync(tmpDir, { recursive: true, force: true })
+  afterEach(async () => {
+    await client.close()
   })
 
   it('initialises a new Subscriber to the current head — observes zero historical events', async () => {

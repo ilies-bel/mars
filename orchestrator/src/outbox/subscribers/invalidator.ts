@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client';
+import type { DbClient } from '../../core/lib/db.js';
 import {
   registerSubscriber,
   fetchPending,
@@ -29,7 +29,7 @@ registerSubscriberName(INVALIDATOR_SUBSCRIBER);
  * fresh cursor observes only future events. Idempotent — re-registering an
  * existing subscriber is a no-op.
  */
-export async function ensureInvalidator(client: Client): Promise<void> {
+export async function ensureInvalidator(client: DbClient): Promise<void> {
   await registerSubscriber(client, INVALIDATOR_SUBSCRIBER, { replay: false });
 }
 
@@ -38,11 +38,11 @@ export async function ensureInvalidator(client: Client): Promise<void> {
  * acknowledged, closing the corresponding `subscriber_stalls` row for each.
  * All other event types advance the cursor without side effect.
  *
- * @param client  The libsql client carrying the outbox and subscriber_stalls tables.
+ * @param client  The DB client carrying the outbox and subscriber_stalls tables.
  * @returns       The count of stall rows that were closed.
  */
 export async function drainInvalidations(
-  client: Client,
+  client: DbClient,
 ): Promise<{ processed: number }> {
   const pending = await fetchPending(client, INVALIDATOR_SUBSCRIBER);
   let processed = 0;

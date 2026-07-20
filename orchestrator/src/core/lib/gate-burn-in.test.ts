@@ -10,13 +10,13 @@
  * Test boundary: public interfaces only.
  *  - gate-burn-in.ts: getGateBurnInStatus, recordGateParse, SHADOW_BURN_IN_COUNT
  *
- * DB setup: per-test in-memory libsql clients so no state leaks between tests.
+ * DB setup: per-test in-memory PGlite clients so no state leaks between tests.
  * The module-level "schema ensured" latch is reset before each test via the
  * exported test helper.
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-import { createClient } from '@libsql/client'
-import type { Client } from '@libsql/client'
+import { openDb, type DbClient } from './db.js'
+import { ensureSchema } from './pg-schema.js'
 import {
   SHADOW_BURN_IN_COUNT,
   getGateBurnInStatus,
@@ -28,8 +28,13 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Create a fresh in-memory libsql client satisfying the MonitorDb seam. */
-const makeDb = (): Client => createClient({ url: ':memory:' })
+/** Create a fresh in-memory PGlite client satisfying the MonitorDb seam. */
+let dbSeq = 0
+const makeDb = async (): Promise<DbClient> => {
+  const client = openDb(`gate-burn-in-test-${process.pid}-${++dbSeq}`)
+  await ensureSchema(client)
+  return client
+}
 
 beforeEach(() => {
   resetGateBurnInSchemaLatchForTests()
@@ -41,7 +46,7 @@ beforeEach(() => {
 
 describe('getGateBurnInStatus', () => {
   it('returns inShadow: true and parseCount: 0 for a gate that has never been seen', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     const status = await getGateBurnInStatus(db, 'completeness')
     expect(status.inShadow).toBe(true)
     expect(status.parseCount).toBe(0)
@@ -50,14 +55,14 @@ describe('getGateBurnInStatus', () => {
 
 describe('recordGateParse', () => {
   it('increments parse count from 0 to 1', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     const result = await recordGateParse(db, 'completeness')
     expect(result.parseCount).toBe(1)
     expect(result.promoted).toBe(false)
   })
 
   it('accumulates parse count across calls', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     for (let i = 0; i < 5; i++) {
       await recordGateParse(db, 'completeness')
     }
@@ -67,7 +72,7 @@ describe('recordGateParse', () => {
   })
 
   it(`promotes the gate on exactly the ${SHADOW_BURN_IN_COUNT}th clean parse`, async () => {
-    const db = makeDb()
+    const db = await makeDb()
     let last = { parseCount: 0, promoted: false }
     for (let i = 0; i < SHADOW_BURN_IN_COUNT; i++) {
       last = await recordGateParse(db, 'completeness')
@@ -77,7 +82,7 @@ describe('recordGateParse', () => {
   })
 
   it('leaves gate in shadow mode one parse before the threshold', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     for (let i = 0; i < SHADOW_BURN_IN_COUNT - 1; i++) {
       await recordGateParse(db, 'completeness')
     }
@@ -86,7 +91,7 @@ describe('recordGateParse', () => {
   })
 
   it('does not increment parse_count once the gate is promoted', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     // Promote the gate
     for (let i = 0; i < SHADOW_BURN_IN_COUNT; i++) {
       await recordGateParse(db, 'completeness')
@@ -101,7 +106,7 @@ describe('recordGateParse', () => {
   })
 
   it('tracks burn-in state independently per gate name', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     for (let i = 0; i < SHADOW_BURN_IN_COUNT; i++) {
       await recordGateParse(db, 'gate-a')
     }

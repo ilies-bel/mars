@@ -248,10 +248,12 @@ output (handy in tests).
 
 ## Storage
 
-`WorkflowStore` is an interface — the seam the consumer (Mars) implements
-against its own `.mars/mars.db`. Two reference impls ship: `InMemoryStore`
-(tests, ephemeral runs) and the default `SqliteStore` (`node:sqlite`), which
-creates two tables:
+`WorkflowStore` is an interface — the seam the consumer implements
+against its own database (Mars implements it against its embedded
+Postgres store). Two reference impls ship with the engine:
+`InMemoryStore` (tests, ephemeral runs) and the default `SqliteStore`
+(`node:sqlite` — the engine's standalone reference store, unaffected by
+any consumer's storage choice), which creates two tables:
 
 ```sql
 CREATE TABLE workflow_runs (

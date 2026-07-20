@@ -2,83 +2,33 @@
  * Question-raise Outbox Subscriber — behaviour tests.
  *
  * These tests drive the subscriber handler directly (without a running
- * dispatcher) so every assertion is synchronous and deterministic. The
- * file-backed SQLite client mirrors the real daemon setup: a single
- * `mars.db` that holds both the outbox `events` table and the
- * `action_queue_items` table, so the processedOnce dedup row and the
- * action-queue write are co-located and covered by the same write transaction.
+ * dispatcher) so every assertion is synchronous and deterministic. One
+ * database per test mirrors the real daemon setup: a single store that
+ * holds both the outbox `events` table and the `action_queue_items` table,
+ * so the processedOnce dedup row and the action-queue write are co-located
+ * and covered by the same write transaction.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createClient, type Client } from '@libsql/client';
-import {
-  buildQuestionRaiseSubscribers,
-  ensureQuestionRaiseSchema,
-} from './question-raise.js';
+import { openDb, type DbClient } from '../../core/lib/db.js';
+import { ensureSchema } from '../../core/lib/pg-schema.js';
+import { buildQuestionRaiseSubscribers } from './question-raise.js';
 import type { BusEvent } from '../../bus/events.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
+let dbSeq = 0;
+
 /**
- * File-backed libsql client with all tables required by the question-raise
- * subscriber. In-memory URLs are unsuitable because libsql's local backend
- * opens a fresh connection per transaction and would see empty tables.
+ * Fresh in-memory PGlite instance per test carrying the canonical schema
+ * (`events` + `action_queue_items` + `action_queue_history`;
+ * MARS_DB_BACKEND=pglite is set by test/setup-env.ts, the target string is
+ * only an identity key).
  */
-async function makeClient(dir: string): Promise<Client> {
-  const client = createClient({ url: `file:${join(dir, 'mars.db')}` });
-
-  // Outbox events table (the subscriber cursor lives here).
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS events (
-      id      INTEGER PRIMARY KEY AUTOINCREMENT,
-      type    TEXT    NOT NULL,
-      payload TEXT    NOT NULL,
-      ts      INTEGER NOT NULL DEFAULT (unixepoch())
-    )
-  `);
-
-  // Action-queue tables (the subscriber's side-effect destination).
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS action_queue_items (
-      id              TEXT    PRIMARY KEY,
-      kind            TEXT    NOT NULL,
-      category        TEXT    NOT NULL,
-      priority        TEXT    NOT NULL,
-      state           TEXT    NOT NULL DEFAULT 'open',
-      title           TEXT    NOT NULL,
-      body            TEXT    NOT NULL DEFAULT '',
-      payload         TEXT    NOT NULL DEFAULT '{}',
-      context         TEXT    NOT NULL DEFAULT '{}',
-      raised_by       TEXT    NOT NULL,
-      raised_at       TEXT    NOT NULL,
-      resolved_at     TEXT,
-      resolution      TEXT,
-      resolution_note TEXT,
-      root_cause      TEXT,
-      fingerprint     TEXT,
-      signature       TEXT,
-      seen_count      INTEGER NOT NULL DEFAULT 1,
-      last_seen_at    TEXT,
-      resolved_by     TEXT,
-      origin_task_id  TEXT
-    )
-  `);
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS action_queue_history (
-      id         TEXT PRIMARY KEY,
-      item_id    TEXT NOT NULL,
-      at         TEXT NOT NULL,
-      from_state TEXT,
-      to_state   TEXT NOT NULL,
-      by         TEXT,
-      note       TEXT
-    )
-  `);
-
+async function makeClient(): Promise<DbClient> {
+  const client = openDb(`test:question-raise:${process.pid}:${dbSeq++}`);
+  await ensureSchema(client);
   return client;
 }
 
@@ -97,7 +47,7 @@ function questionEvent(
 }
 
 /** Count open action-queue rows. */
-async function openRowCount(client: Client): Promise<number> {
+async function openRowCount(client: DbClient): Promise<number> {
   const r = await client.execute(
     `SELECT COUNT(*) AS n FROM action_queue_items WHERE state = 'open'`,
   );
@@ -106,7 +56,7 @@ async function openRowCount(client: Client): Promise<number> {
 
 /** Return the open action-queue row for `taskId`, or null if absent. */
 async function openRowForTask(
-  client: Client,
+  client: DbClient,
   taskId: string,
 ): Promise<{ kind: string; seenCount: number; originTaskId: string } | null> {
   const r = await client.execute({
@@ -134,18 +84,14 @@ async function openRowForTask(
 // ---------------------------------------------------------------------------
 
 describe('question-raiser:task.question subscriber', () => {
-  let tmpDir: string;
-  let client: Client;
+  let client: DbClient;
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'mars-question-raise-test-'));
-    client = await makeClient(tmpDir);
-    await ensureQuestionRaiseSchema(client);
+    client = await makeClient();
   });
 
-  afterEach(() => {
-    client.close();
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await client.close();
   });
 
   // ── Acceptance criterion 1 ─────────────────────────────────────────────

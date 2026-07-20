@@ -25,8 +25,8 @@ import type { MonitorDb } from './gate-meta-monitor'
  *
  * State is persisted in the `gate_burn_in` table — a small durable table in
  * the same DB as `gate_verdict_monitor`. The {@link MonitorDb} seam
- * (`.execute()` only) is structurally satisfied by a raw libsql
- * {@link import('@libsql/client').Client}, by a `TaskStore`, and by any stub
+ * (`.execute()` only) is structurally satisfied by a raw
+ * {@link import('./db.js').DbClient}, by a `TaskStore`, and by any stub
  * that exposes `.execute()`.
  */
 
@@ -45,34 +45,23 @@ import type { MonitorDb } from './gate-meta-monitor'
  */
 export const SHADOW_BURN_IN_COUNT = 10
 
-const GATE_BURN_IN_DDL = `
-  CREATE TABLE IF NOT EXISTS gate_burn_in (
-    gate_name   TEXT PRIMARY KEY,
-    parse_count INTEGER NOT NULL DEFAULT 0,
-    promoted_at TEXT
-  )
-`
-
-let burnInSchemaEnsured = false
-
 /**
- * Ensure the burn-in table exists. Idempotent; safe to call on every gate
- * invocation.
+ * The `gate_burn_in` table is owned by the canonical schema (pg-schema.ts
+ * `ensureSchema`, applied at daemon/init start). This function is retained as
+ * the historical call-site seam and is now a no-op.
  */
 export const ensureGateBurnInSchema = async (
-  client: MonitorDb,
+  _client: MonitorDb,
 ): Promise<void> => {
-  if (burnInSchemaEnsured) return
-  await client.execute(GATE_BURN_IN_DDL)
-  burnInSchemaEnsured = true
+  // Schema is guaranteed by pg-schema.ts ensureSchema at startup.
 }
 
 /**
- * Reset the in-process "schema ensured" latch. Test-only — each test loads a
- * fresh per-test DB client, so the latch must not leak across them.
+ * Historical test hook for the removed in-process "schema ensured" latch.
+ * No-op since the canonical schema owns the table.
  */
 export const resetGateBurnInSchemaLatchForTests = (): void => {
-  burnInSchemaEnsured = false
+  // No latch remains; schema ownership moved to pg-schema.ts.
 }
 
 export interface GateBurnInStatus {
@@ -141,8 +130,8 @@ export const recordGateParse = async (
           VALUES (?, 1)
           ON CONFLICT(gate_name) DO UPDATE SET
             parse_count = CASE
-              WHEN promoted_at IS NOT NULL THEN parse_count
-              ELSE parse_count + 1
+              WHEN gate_burn_in.promoted_at IS NOT NULL THEN gate_burn_in.parse_count
+              ELSE gate_burn_in.parse_count + 1
             END`,
     args: [gateName],
   })

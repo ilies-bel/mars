@@ -14,7 +14,7 @@
  * is returned without touching the database again.
  */
 
-import type { Client } from '@libsql/client'
+import type { DbClient } from './db.js'
 import {
   getAttempt,
   updateAttemptStatus,
@@ -68,7 +68,7 @@ interface ArcBenchmark extends ArcRunResult {
  * returns the existing data without issuing another UPDATE.
  */
 export async function runBenchmark(
-  db: Client,
+  db: DbClient,
   attemptId: string,
   opts: BenchmarkOptions,
 ): Promise<BenchmarkResult> {

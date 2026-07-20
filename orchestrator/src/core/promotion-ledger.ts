@@ -9,13 +9,14 @@
  * timestamps. `pending` rows represent gates that have been opened but not yet
  * resolved.
  *
- * Storage: the `promotion_ledger` table in `.mars/mars.db` via the same
- * state-client seam as scorer-results.ts (ADR-0034).
+ * Storage: the `promotion_ledger` table in the embedded PostgreSQL database
+ * via the same state-client seam as scorer-results.ts (ADR-0034).
  */
 
-import { type Client } from '@libsql/client'
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
+import type { DbClient } from './lib/db'
+import { ensureSchema } from './lib/pg-schema'
 import { resolveStateClient } from './store/state-client'
 
 /** Decision outcome of a promotion gate evaluation. */
@@ -60,34 +61,15 @@ export interface RecordPromotionLedgerEntryInput {
   decidedAt: number | null
 }
 
-const stateClient = (): Client => resolveStateClient()
+const stateClient = (): DbClient => resolveStateClient()
 
 let initialised = false
 
 export const initPromotionLedger = async (): Promise<void> => {
   if (initialised) return
-  const c = stateClient()
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS promotion_ledger (
-      id TEXT PRIMARY KEY,
-      workflow TEXT NOT NULL,
-      candidate_version_id TEXT NOT NULL,
-      incumbent_version_id TEXT NOT NULL,
-      candidate_score REAL,
-      incumbent_score REAL,
-      candidate_n INTEGER NOT NULL DEFAULT 0,
-      incumbent_n INTEGER NOT NULL DEFAULT 0,
-      decision TEXT NOT NULL DEFAULT 'pending'
-        CHECK(decision IN ('promoted','retired','pending')),
-      decided_at INTEGER,
-      created_at INTEGER NOT NULL
-    )
-  `)
-  // List queries scan per workflow, newest first.
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_promotion_ledger_workflow
-       ON promotion_ledger(workflow, created_at DESC)`,
-  )
+  // DDL lives in core/lib/pg-schema.ts (migration 0002); this just guarantees
+  // the canonical schema exists before the first read/write.
+  await ensureSchema(stateClient())
   initialised = true
 }
 
@@ -129,7 +111,7 @@ export const generateLedgerEntryId = (): string =>
  * Persist a new promotion gate decision row.
  */
 export const recordPromotionLedgerEntry = async (
-  client: Client,
+  client: DbClient,
   input: RecordPromotionLedgerEntryInput,
 ): Promise<PromotionLedgerEntry> => {
   await initPromotionLedger()
@@ -178,7 +160,7 @@ export const recordPromotionLedgerEntry = async (
  * newest first.
  */
 export const listPromotionLedgerEntries = async (
-  client: Client,
+  client: DbClient,
   workflow?: string,
 ): Promise<PromotionLedgerEntry[]> => {
   await initPromotionLedger()
@@ -198,7 +180,7 @@ export const listPromotionLedgerEntries = async (
  * no rows exist for that workflow.
  */
 export const getLatestLedgerEntry = async (
-  client: Client,
+  client: DbClient,
   workflow: string,
 ): Promise<PromotionLedgerEntry | null> => {
   await initPromotionLedger()

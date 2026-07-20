@@ -10,7 +10,7 @@
  * `makeProductionDeps` wires the real seams: the composition-root TaskStore,
  * the real daemon-client `sendRequest`, the resolved context, and the
  * `console.log`/`console.error` sinks. The in-process test adapter
- * (`test-adapter.ts`) supplies a `:memory:` store and a fake daemon instead.
+ * (`test-adapter.ts`) supplies an in-memory store and a fake daemon instead.
  */
 
 import { resolve } from 'node:path'
@@ -64,11 +64,12 @@ export const isUnknown = (
  * ordering where `ui` ran before context resolution.
  *
  * `store` laziness: the queue client singleton inside `resolveQueueClient()`
- * resolves its DB path from the context singleton the first time it is
+ * resolves its DB target (the `.mars/pg.dsn` DSN, or the state-dir identity
+ * key on the PGlite backend) from the context singleton the first time it is
  * called. By deferring store construction until after `deps.ctx` is
  * accessed (which writes the correct --repo path into the context cache),
- * the queue client is guaranteed to open the right `.mars/mars.db` — the
- * one under `--repo`, not the one under `CWD`/`MARS_REPO`. Without this
+ * the queue client is guaranteed to connect to the right repo's database —
+ * the one under `--repo`, not the one under `CWD`/`MARS_REPO`. Without this
  * ordering, `getDefaultDomainTaskStore()` called eagerly would pick up
  * whatever the CWD resolved to, silently reading the wrong database.
  */
@@ -123,7 +124,7 @@ export const makeProductionDeps = async (
     get(): DomainTaskStore {
       if (!resolvedStore) {
         // Force context resolution first so that the queue client singleton
-        // (created inside resolveQueueClient()) picks up the correct DB path
+        // (created inside resolveQueueClient()) picks up the correct DB target
         // from the already-cached context rather than falling back to CWD.
         void deps.ctx
         resolvedStore = getDefaultDomainTaskStore()

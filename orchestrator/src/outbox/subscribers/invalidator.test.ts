@@ -1,50 +1,46 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createClient, type Client } from '@libsql/client';
+import { openDb, type DbClient } from '../../core/lib/db.js';
+import { ensureSchema } from '../../core/lib/pg-schema.js';
 import { publishWithRetry } from '../../bus/publisher.js';
 import { registerSubscriber, getCursor } from '../../bus/subscribers.js';
-import { ensureStallSchema } from '../stall.js';
 import {
   INVALIDATOR_SUBSCRIBER,
   ensureInvalidator,
   drainInvalidations,
 } from './invalidator.js';
 
+let dbSeq = 0;
+
 /**
- * File-backed libsql client with the production `events` + subscriber_stalls schemas.
- * File-backed (not :memory:) so a second connection to the same path sees
- * the same data, which lets us simulate a daemon restart mid-test.
+ * Fresh in-memory PGlite instance per test carrying the canonical schema
+ * (`events` + `subscriber_stalls` + `subscribers`; MARS_DB_BACKEND=pglite is
+ * set by test/setup-env.ts, the target string is only an identity key).
+ * Returns the key too so a test can model a reconnect: `openDb` with the
+ * same key hands back a handle onto the same instance, mirroring a daemon
+ * restart against the same durable database.
  */
-async function makeClient(dir: string): Promise<Client> {
-  const client = createClient({ url: `file:${join(dir, 'test.db')}` });
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS events (
-      id      INTEGER PRIMARY KEY AUTOINCREMENT,
-      type    TEXT    NOT NULL,
-      payload TEXT    NOT NULL,
-      ts      INTEGER NOT NULL DEFAULT (unixepoch())
-    )
-  `);
-  await ensureStallSchema(client);
-  return client;
+async function makeClient(): Promise<{ client: DbClient; key: string }> {
+  const key = `test:invalidator:${process.pid}:${dbSeq++}`;
+  const client = openDb(key);
+  await ensureSchema(client);
+  return { client, key };
 }
 
 async function insertStallRow(
-  client: Client,
+  client: DbClient,
   subscriberId: string,
   eventId: number,
 ): Promise<void> {
   await client.execute({
-    sql: `INSERT OR IGNORE INTO subscriber_stalls (subscriber_id, event_id, last_error)
-          VALUES (?, ?, ?)`,
+    sql: `INSERT INTO subscriber_stalls (subscriber_id, event_id, last_error)
+          VALUES (?, ?, ?)
+          ON CONFLICT (subscriber_id, event_id) DO NOTHING`,
     args: [subscriberId, eventId, 'test-error'],
   });
 }
 
 async function stallRowExists(
-  client: Client,
+  client: DbClient,
   subscriberId: string,
   eventId: number,
 ): Promise<boolean> {
@@ -56,17 +52,17 @@ async function stallRowExists(
 }
 
 describe('Invalidator outbox subscriber', () => {
-  let tmpDir: string;
-  let client: Client;
+  let client: DbClient;
+  let dbKey: string;
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'mars-invalidator-test-'));
-    client = await makeClient(tmpDir);
+    const made = await makeClient();
+    client = made.client;
+    dbKey = made.key;
   });
 
   afterEach(async () => {
-    client.close();
-    rmSync(tmpDir, { recursive: true, force: true });
+    await client.close();
   });
 
   it('auto-closes a stall row whose justifying condition is resolved', async () => {
@@ -101,13 +97,10 @@ describe('Invalidator outbox subscriber', () => {
       eventId: 3,
     });
 
-    // Simulate a daemon crash: close the client without draining.
-    client.close();
-
-    // Restart: open a new connection to the same on-disk database.
-    const clientAfterRestart = createClient({
-      url: `file:${join(tmpDir, 'test.db')}`,
-    });
+    // Simulate a daemon restart: acquire a fresh handle onto the same
+    // database (the process-wide registry hands back the shared instance;
+    // cursor and stall row live in the DB, not in any drained state).
+    const clientAfterRestart = openDb(dbKey);
 
     try {
       // The cursor is still in the DB pointing before the subscriber.unstalled
@@ -117,9 +110,7 @@ describe('Invalidator outbox subscriber', () => {
       expect(processed).toBe(1);
       expect(await stallRowExists(clientAfterRestart, 'sub-b', 3)).toBe(false);
     } finally {
-      clientAfterRestart.close();
-      // Prevent afterEach from trying to close the already-closed original client.
-      client = clientAfterRestart; // afterEach will close this one; it's already closed — that's fine because close() is idempotent
+      await clientAfterRestart.close();
     }
   });
 

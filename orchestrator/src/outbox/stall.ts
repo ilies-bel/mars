@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client';
+import type { DbClient } from '../core/lib/db.js';
 import type { BusEvent } from '../bus/events.js';
 import { publishWithRetry } from '../bus/publisher.js';
 import { startDispatcher, type Subscriber, type Dispatcher } from './dispatcher.js';
@@ -12,25 +12,6 @@ export const STALL_THRESHOLD = 3;
  * to callers.
  */
 export type StallAwareDispatcher = Dispatcher;
-
-/**
- * Create the `subscriber_stalls` table that stores stall notifications.
- * Idempotent — safe to call on every startup.
- *
- * Must be called before {@link startStallAwareDispatcher} so that stall rows
- * can be inserted when the threshold is crossed.
- */
-export async function ensureStallSchema(client: Client): Promise<void> {
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS subscriber_stalls (
-      subscriber_id TEXT    NOT NULL,
-      event_id      INTEGER NOT NULL,
-      last_error    TEXT    NOT NULL,
-      raised_at     INTEGER NOT NULL DEFAULT (unixepoch()),
-      PRIMARY KEY (subscriber_id, event_id)
-    )
-  `);
-}
 
 /**
  * Start a stall-aware dispatcher. Each Subscriber's handler is wrapped with
@@ -47,11 +28,12 @@ export async function ensureStallSchema(client: Client): Promise<void> {
  * not advance until the handler eventually succeeds. Other Subscribers
  * continue to advance independently.
  *
- * Call {@link ensureStallSchema} before this function to ensure the
- * `subscriber_stalls` table exists.
+ * The `subscriber_stalls` table is part of the canonical schema
+ * (`core/lib/pg-schema.ts` — `ensureSchema`); production init applies it
+ * before any dispatcher starts.
  */
 export function startStallAwareDispatcher(
-  client: Client,
+  client: DbClient,
   subscribers: Subscriber[],
   opts?: { pollMs?: number },
 ): StallAwareDispatcher {
@@ -113,9 +95,10 @@ export function startStallAwareDispatcher(
           // one open row per (subscriber, event).
           await client
             .execute({
-              sql: `INSERT OR IGNORE INTO subscriber_stalls
+              sql: `INSERT INTO subscriber_stalls
                       (subscriber_id, event_id, last_error)
-                    VALUES (?, ?, ?)`,
+                    VALUES (?, ?, ?)
+                    ON CONFLICT (subscriber_id, event_id) DO NOTHING`,
               args: [sub.name, event.id, lastError],
             })
             .catch(() => {

@@ -137,7 +137,7 @@ export const upsertFixTask = async (
  * source.
  *
  * No-op when the source is already blocked on this exact recovery
- * (`INSERT OR IGNORE` on the edge).
+ * (`ON CONFLICT DO NOTHING` on the edge).
  */
 export const attachToExistingFixTask = async (
   input: AttachToExistingFixTaskInput,

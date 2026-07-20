@@ -1,4 +1,4 @@
-import { openLibsql } from './libsql'
+import { openDb } from './db.js'
 import { raiseActionQueueItem } from './action-queue'
 
 /**
@@ -13,7 +13,7 @@ export interface OutboxLagCheck {
 }
 
 /**
- * Inspect the events outbox at `dbPath` and raise (or dedupe) an action-queue
+ * Inspect the events outbox at `dbTarget` and raise (or dedupe) an action-queue
  * item when the lag between the newest event and the slowest durable subscriber
  * exceeds `threshold`.
  *
@@ -30,10 +30,10 @@ export interface OutboxLagCheck {
  * the payload.
  */
 export const checkOutboxLag = async (
-  dbPath: string,
+  dbTarget: string,
   threshold: number,
 ): Promise<OutboxLagCheck> => {
-  const client = openLibsql({ url: `file:${dbPath}` })
+  const client = openDb(dbTarget)
   try {
     const headResult = await client.execute(
       'SELECT COALESCE(MAX(id), 0) AS head FROM events',
@@ -67,6 +67,6 @@ export const checkOutboxLag = async (
 
     return { lag, raised: true }
   } finally {
-    client.close()
+    await client.close()
   }
 }

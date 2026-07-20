@@ -5,8 +5,8 @@
  * real filesystem calls. The goal is to verify that:
  *   - detectMarsEnvOverrides correctly classifies known vs. unknown MARS_* vars
  *   - formatClaudeAuthNote produces the right message for each auth state
- *   - checkAlreadyInitialized delegates to the injected fileExists and checks
- *     the correct path
+ *   - checkAlreadyInitialized delegates to the injected fileExists and probes
+ *     the correct marker paths (init manifest, embedded-PG data dir)
  */
 
 import { describe, expect, it } from 'vitest'
@@ -134,16 +134,20 @@ describe('checkAlreadyInitialized', () => {
     expect(result).toBe(true)
   })
 
-  it('passes the expected mars.db path to fileExists', () => {
+  it('probes the init manifest and embedded-PG data dir under the repo root', () => {
     const seen: string[] = []
     checkAlreadyInitialized('/my/project', (p) => {
       seen.push(p)
       return false
     })
-    expect(seen).toHaveLength(1)
-    // The path must end with .mars/mars.db under the repo root
-    expect(seen[0]).toMatch(/\.mars[/\\]mars\.db$/)
-    expect(seen[0]).toContain('my')
-    expect(seen[0]).toContain('project')
+    expect(seen).toHaveLength(2)
+    // Primary marker: the init manifest `mars init` writes on every run.
+    expect(seen[0]).toMatch(/\.mars[/\\]init-manifest\.json$/)
+    // Secondary marker: the daemon-provisioned embedded PostgreSQL data dir.
+    expect(seen[1]).toMatch(/\.mars[/\\]pg[/\\]data$/)
+    for (const p of seen) {
+      expect(p).toContain('my')
+      expect(p).toContain('project')
+    }
   })
 })

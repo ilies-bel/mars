@@ -47,8 +47,8 @@ State lives at `<target-repo>/.mars/`:
 
 | File                  | Purpose                       |
 | --------------------- | ----------------------------- |
-| `mars.db`             | Consolidated task store + workflow checkpoints |
-| `mars.db` tables      | `@mars/workflow` run/step checkpoints (workflow_runs / workflow_step_runs) |
+| `pg/data/`            | Embedded PostgreSQL data dir — consolidated task store + workflow checkpoints (`workflow_runs` / `workflow_step_runs`) |
+| `pg.port` / `pg.dsn`  | Published PG port + connection string (read the file, never guess) |
 | `worktrees/<task-id>` | Per-task git worktree         |
 | `.merge.lock`         | Serializes the merge step     |
 
@@ -60,7 +60,7 @@ Add `/.mars/` to the target repo's `.gitignore`.
 | ------------------------------- | -------------------------------------------------- |
 | `src/cli.ts`                    | CLI: `task add`, `list`, `run`, `where`            |
 | `src/core/context.ts`         | Resolves target repo + state paths                 |
-| `src/core/queue.ts`           | LibSQL-backed task queue                           |
+| `src/core/queue.ts`           | Postgres-backed task queue                         |
 | `src/core/lib/git.ts`         | All shell side-effects (git, claude, verify)       |
 | `src/workflows/`                | `@mars/workflow` pipelines: implement, triage, plan, slice, init |
 | `src/prompts/vcs-supervisor.md` | Bundled supervisor spec, inlined into `claude -p`  |
@@ -182,7 +182,7 @@ env vars below without restarting); a kill + restart also picks them up.
 
 Excess work queues into in-memory pending sets and drains as slots free
 — it is not dropped. Restarting the daemon re-reads `draft` / `queued`
-rows from `.mars/mars.db` and re-pends them, so restarts are safe.
+rows from the Mars database and re-pends them, so restarts are safe.
 
 Dispatched `claude -p` workers run clean-room: their env is scrubbed of
 every `CLAUDE*` session-context var inherited from the daemon's parent
@@ -238,7 +238,7 @@ Both Claude dispatches (the `code` step and the `vcs-supervisor` invocation in
   completes, open Studio → Run history → click the step → **Metadata** tab.
   The `code` step exposes `claudeSessionId` and `usage`; the full
   conversation is persisted to `task_transcripts.conversation_json` in
-  `.mars/mars.db` instead, which is what `mars arc reflect` and
+  the Mars database instead, which is what `mars arc reflect` and
   external skills read. The `merge` step still exposes
   `supervisorConversation` and `supervisorConversationBytes` (only
   populated when a conflict triggered the supervisor).
@@ -255,10 +255,10 @@ lets you synthesize them into draft task suggestions on demand.
 
 **Per-task signals (automatic).** After the `code` and `vcs-supervisor`
 steps, token and cost totals are summed from the captured Claude
-conversation and persisted to the `task_signals` table in `.mars/mars.db`:
+conversation and persisted to the `task_signals` table in the Mars database:
 
 ```
-sqlite3 .mars/mars.db "select * from task_signals where task_id = '<id>'"
+psql "$(cat .mars/pg.dsn)" -c "select * from task_signals where task_id = '<id>'"
 ```
 
 Columns: `step_id`, `input_tokens`, `output_tokens`, `cache_create_tokens`,
@@ -299,7 +299,7 @@ transcript-aware analysis across every task in a Mars arc (the origin
 task plus any recovery / fix tasks that share its `originId`). The
 implement workflow persists the full trimmed `ClaudeEvent[]`
 conversation (and the concatenated typecheck/test/lint output) into a
-`task_transcripts` row in `.mars/mars.db` after each run. `arc reflect`
+`task_transcripts` row in the Mars database after each run. `arc reflect`
 walks every transcript event-by-event and surfaces:
 
 - **Dissonant tool calls** — successful tool calls that did not achieve
@@ -381,7 +381,7 @@ mars action-queue list --kind no-recipe
 
 Cross-cutting findings that don't belong to a single task — daemon
 desyncs, self-heal investigations, anything raised by a dispatched
-agent — land in the action queue at `.mars/mars.db`.
+agent — land in the action queue in the Mars database.
 
 CLI surface:
 

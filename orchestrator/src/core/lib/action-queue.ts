@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client'
+import type { DbClient } from './db.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { resolveStateClient } from '../store/state-client'
 import { buildEventInsert } from './outbox'
@@ -27,10 +27,10 @@ export const setOnChatThreadChanged = (fn: () => void): void => {
 }
 
 /**
- * Emit an actionQueue lifecycle event to the mars.db events outbox.
+ * Emit an actionQueue lifecycle event to the events outbox.
  *
- * Both action_queue_items and the events outbox live in mars.db (consolidated
- * from the former queue.db/state.db split). This emits in a separate write
+ * Both action_queue_items and the events outbox live in the same Mars
+ * database (consolidated per ADR-0034). This emits in a separate write
  * transaction after the action-queue write has committed. Emission failures
  * are non-fatal: the actionQueue operation succeeds regardless.
  */
@@ -45,7 +45,7 @@ async function emitActionQueueBusEvent<T extends EventName>(
       await scope.execute(buildEventInsert(type, payload))
     })
   } catch {
-    // Non-fatal: actionQueue state change already committed in mars.db.
+    // Non-fatal: actionQueue state change already committed.
   }
 }
 
@@ -320,10 +320,12 @@ export interface SetActionQueueStateOptions {
   by?: string
 }
 
-let initialised = false
-
-// Shared mars.db client (state domain, collapsed from the former private singleton); same
-// `mars.db` file as the TaskStore (ADR-0034), resolved through the seam.
+// Shared state-domain client (collapsed from the former private singleton);
+// same database as the TaskStore (ADR-0034), resolved through the seam.
+// Schema ownership: `action_queue_items` / `action_queue_history` are created
+// by `ensureSchema` in core/lib/pg-schema.ts (migration 0002) — the SQLite-era
+// init/ALTER/data-fix machinery is gone; the one-time importer carries legacy
+// rows across.
 const stateClient = resolveStateClient
 
 const sha1Hex = (input: string): string =>
@@ -333,106 +335,6 @@ const computeFingerprint = (kind: string, signature: string): string =>
   sha1Hex(`${kind}:${signature}`)
 
 const generateActionQueueId = (): string => randomUUID().slice(0, 8)
-
-export const initActionQueue = async (): Promise<void> => {
-  if (initialised) return
-  const c = stateClient()
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS action_queue_items (
-      id TEXT PRIMARY KEY,
-      kind TEXT NOT NULL,
-      category TEXT NOT NULL,
-      priority TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'open',
-      title TEXT NOT NULL,
-      body TEXT NOT NULL DEFAULT '',
-      payload TEXT NOT NULL DEFAULT '{}',
-      context TEXT NOT NULL DEFAULT '{}',
-      raised_by TEXT NOT NULL,
-      raised_at TEXT NOT NULL,
-      resolved_at TEXT,
-      resolution TEXT,
-      resolution_note TEXT,
-      root_cause TEXT
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS action_queue_history (
-      id TEXT PRIMARY KEY,
-      item_id TEXT NOT NULL,
-      at TEXT NOT NULL,
-      from_state TEXT,
-      to_state TEXT NOT NULL,
-      by TEXT,
-      note TEXT,
-      FOREIGN KEY (item_id) REFERENCES action_queue_items(id)
-    )
-  `)
-  const cols = await c.execute(`PRAGMA table_info(action_queue_items)`)
-  const colNames = new Set(
-    cols.rows.map((r) => (r as unknown as { name: string }).name),
-  )
-  if (!colNames.has('fingerprint')) {
-    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN fingerprint TEXT`)
-  }
-  if (!colNames.has('signature')) {
-    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN signature TEXT`)
-  }
-  if (!colNames.has('seen_count')) {
-    await c.execute(
-      `ALTER TABLE action_queue_items ADD COLUMN seen_count INTEGER NOT NULL DEFAULT 1`,
-    )
-  }
-  if (!colNames.has('last_seen_at')) {
-    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN last_seen_at TEXT`)
-  }
-  if (!colNames.has('resolved_by')) {
-    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN resolved_by TEXT`)
-  }
-  if (!colNames.has('origin_task_id')) {
-    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN origin_task_id TEXT`)
-  }
-  if (!colNames.has('snoozed_until')) {
-    await c.execute(`ALTER TABLE action_queue_items ADD COLUMN snoozed_until TEXT`)
-  }
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_state
-       ON action_queue_items(fingerprint, state)`,
-  )
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_action_queue_state ON action_queue_items(state)`,
-  )
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_action_queue_history_item ON action_queue_history(item_id, at)`,
-  )
-  // One-time rename: retry_budget_exhausted → recovery_exhausted in action_queue_items
-  // payload and body. Idempotent: WHERE guards against rows already migrated.
-  await c.execute(
-    `UPDATE action_queue_items
-        SET payload = replace(payload, 'retry_budget_exhausted', 'recovery_exhausted')
-      WHERE payload LIKE '%retry_budget_exhausted%'`,
-  )
-  await c.execute(
-    `UPDATE action_queue_items
-        SET body = replace(body, 'retry_budget_exhausted', 'recovery_exhausted')
-      WHERE body LIKE '%retry_budget_exhausted%'`,
-  )
-  // Drop legacy inbox_* tables left behind by the inbox→action_queue rename.
-  // Sanity-assert action_queue_items exists first so we never drop before the
-  // rename has run. DROP TABLE IF EXISTS is idempotent on subsequent inits.
-  const aqCheck = await c.execute(
-    `SELECT name FROM sqlite_master WHERE type='table' AND name='action_queue_items'`,
-  )
-  if (aqCheck.rows.length > 0) {
-    // Drop children before the parent so PRAGMA foreign_keys=ON never sees a
-    // parent-first teardown.  inbox_history.item_id → inbox_items(id); dropping
-    // inbox_items first with rows present throws SQLITE_CONSTRAINT (FK violated).
-    await c.execute(`DROP TABLE IF EXISTS inbox_history`)
-    await c.execute(`DROP TABLE IF EXISTS inbox_dismissals`)
-    await c.execute(`DROP TABLE IF EXISTS inbox_items`)
-  }
-  initialised = true
-}
 
 const parseJsonObject = (
   raw: string | null | undefined,
@@ -466,11 +368,11 @@ const toState = (raw: unknown): ActionQueueState => {
 }
 
 const loadHistory = async (
-  c: Client,
+  c: DbClient,
   itemId: string,
 ): Promise<ActionQueueHistoryEntry[]> => {
   const r = await c.execute({
-    sql: `SELECT at, from_state, to_state, by, note
+    sql: `SELECT at, from_state, to_state, "by", note
             FROM action_queue_history
            WHERE item_id = ?
            ORDER BY at ASC`,
@@ -496,7 +398,7 @@ const loadHistory = async (
 }
 
 const insertHistory = async (
-  c: Client,
+  c: DbClient,
   itemId: string,
   fromState: ActionQueueState | null,
   toStateValue: ActionQueueState,
@@ -504,7 +406,7 @@ const insertHistory = async (
   note: string | null,
 ): Promise<void> => {
   await c.execute({
-    sql: `INSERT INTO action_queue_history (id, item_id, at, from_state, to_state, by, note)
+    sql: `INSERT INTO action_queue_history (id, item_id, at, from_state, to_state, "by", note)
           VALUES (?, ?, ?, ?, ?, ?, ?)`,
     args: [
       randomUUID(),
@@ -716,7 +618,6 @@ const maybeResolveAlertThreads = async (ids: string[]): Promise<void> => {
 export const raiseActionQueueItem = async (
   item: RaiseActionQueueItem,
 ): Promise<string> => {
-  await initActionQueue()
   const c = stateClient()
 
   // Resolve through the arc root so fix-tasks and follow-up slices fold onto
@@ -821,7 +722,6 @@ export const setRecoveryFindings = async (
   originTaskId: string,
   findings: string,
 ): Promise<string | null> => {
-  await initActionQueue()
   const c = stateClient()
   const fingerprint = await resolvedOriginFingerprint(originTaskId)
   const existing = await c.execute({
@@ -851,7 +751,6 @@ export const patchOpenActionQueuePayload = async (
   originTaskId: string,
   patch: Record<string, unknown>,
 ): Promise<string | null> => {
-  await initActionQueue()
   const c = stateClient()
   const fingerprint = await resolvedOriginFingerprint(originTaskId)
   const existing = await c.execute({
@@ -884,7 +783,6 @@ export const patchActionQueuePayloadById = async (
   id: string,
   patch: Record<string, unknown>,
 ): Promise<boolean> => {
-  await initActionQueue()
   const c = stateClient()
   const existing = await c.execute({
     sql: `SELECT payload FROM action_queue_items WHERE id = ?`,
@@ -926,7 +824,7 @@ const enrichWithLiveStatus = async (
 }
 
 const fetchById = async (
-  c: Client,
+  c: DbClient,
   id: string,
 ): Promise<ActionQueueItem | null> => {
   const r = await c.execute({
@@ -943,7 +841,6 @@ export const getActionQueueItem = async (
   idOrPrefix: string,
   liveTaskLookup: LiveTaskLookup = defaultLiveTaskLookup,
 ): Promise<ActionQueueItem | null> => {
-  await initActionQueue()
   const c = stateClient()
   const exact = await fetchById(c, idOrPrefix)
   if (exact) return enrichWithLiveStatus(exact, liveTaskLookup)
@@ -967,7 +864,6 @@ export const listActionQueueItems = async (
   state: ActionQueueState | 'all' = 'open',
   opts: ListActionQueueOptions = {},
 ): Promise<ActionQueueItem[]> => {
-  await initActionQueue()
   const c = stateClient()
 
   const fetchByState = async (s: ActionQueueState | 'all'): Promise<ActionQueueItem[]> => {
@@ -1005,7 +901,6 @@ export const setActionQueueState = async (
   state: ActionQueueState,
   opts?: SetActionQueueStateOptions,
 ): Promise<void> => {
-  await initActionQueue()
   const c = stateClient()
 
   let resolvedId: string | null = null
@@ -1141,7 +1036,6 @@ export const supersedeActionQueueItemsForOrigin = async (
   reason: SupersedeReason,
   by = 'daemon:auto-supersede',
 ): Promise<string[]> => {
-  await initActionQueue()
   const c = stateClient()
   // Arc-resolve so sliced tasks (origin_id ≠ own id) produce the same
   // fingerprint as the row that was stored at raise time.
@@ -1182,7 +1076,6 @@ export const supersedeActionQueueItemsBySignature = async (
   reason: SupersedeReason,
   by = 'daemon:auto-supersede',
 ): Promise<string[]> => {
-  await initActionQueue()
   const c = stateClient()
   const rows = await c.execute({
     sql: `SELECT id FROM action_queue_items WHERE kind = ? AND signature = ? AND state = 'open'`,
@@ -1252,23 +1145,23 @@ export const reconcileStaleActionQueueItems = async (
 export const supersedeObsoletePreflightDirtyMainRows = async (
   by = 'daemon:slice-k-cleanup',
 ): Promise<string[]> => {
-  await initActionQueue()
   const c = stateClient()
   // The legacy strings can appear in any of three places:
   //  - `payload` (JSON blob) → matches the failure-signature or wrapped
   //    `recovery_exhausted:setup:preflight/...` form;
   //  - `body` (rendered markdown) → matches the actionQueue row's own description
   //    of the failure mode.
-  // SQL LIKE substring match is enough here because the legacy strings are
-  // distinctive enough not to collide with live wording.
+  // ILIKE substring match (preserving SQLite LIKE's case-insensitivity) is
+  // enough here because the legacy strings are distinctive enough not to
+  // collide with live wording.
   const rows = await c.execute({
     sql: `SELECT id FROM action_queue_items
            WHERE state = 'open'
              AND (
-               payload LIKE '%setup:preflight/dirty-main%'
-               OR payload LIKE '%recovery_exhausted:setup:preflight%'
-               OR payload LIKE '%retry_budget_exhausted:setup:preflight%'
-               OR body LIKE '%setup:preflight/dirty-main%'
+               payload ILIKE '%setup:preflight/dirty-main%'
+               OR payload ILIKE '%recovery_exhausted:setup:preflight%'
+               OR payload ILIKE '%retry_budget_exhausted:setup:preflight%'
+               OR body ILIKE '%setup:preflight/dirty-main%'
              )`,
     args: [],
   })
@@ -1304,10 +1197,9 @@ export const supersedeObsoletePreflightDirtyMainRows = async (
 export const supersedeOrphanedHitlActionQueueRows = async (
   by = 'daemon:hitl-orphan-sweep',
 ): Promise<string[]> => {
-  await initActionQueue()
   const c = stateClient()
   // Fetch all open hitl-slice-needs-operator rows. Both action_queue_items
-  // and tasks live in the same mars.db file (ADR-0034), so we can JOIN them.
+  // and tasks live in the same database (ADR-0034), so we can JOIN them.
   const openRows = await c.execute({
     sql: `SELECT id, signature FROM action_queue_items
            WHERE kind = 'hitl-slice-needs-operator' AND state = 'open'`,
@@ -1362,7 +1254,6 @@ export const dismissAlertsOnStatusChange = async (
   taskId: string,
   newStatus: string,
 ): Promise<string[]> => {
-  await initActionQueue()
   const c = stateClient()
   const fingerprint = await resolvedOriginFingerprint(taskId)
   // Two predicates cover both row shapes for this task:
@@ -1454,7 +1345,6 @@ export const listResolvedActionQueueItems = async ({
   limit?: number
   cursor?: string | null
 } = {}): Promise<ResolvedActionQueuePage> => {
-  await initActionQueue()
   const c = stateClient()
 
   const conditions: string[] = ["state = 'resolved'", 'resolved_at IS NOT NULL']
@@ -1518,7 +1408,6 @@ export const snoozeActionQueueItem = async (
   if (isNaN(untilDate.getTime())) {
     throw new Error(`Invalid snooze timestamp: ${until}`)
   }
-  await initActionQueue()
   const c = stateClient()
 
   let resolvedId: string | null = null
@@ -1553,7 +1442,7 @@ export const snoozeActionQueueItem = async (
  *
  * Three predicates cover the known row shapes:
  *   - `origin_task_id = :taskId` — the normal path (task is its own arc root)
- *   - `json_extract(payload, '$.taskId') = :taskId` — the arc-resolved path
+ *   - `payload::jsonb ->> 'taskId' = :taskId` — the arc-resolved path
  *     (where `origin_task_id` holds the proposal/origin id while the actual
  *     task id is stored in `payload.taskId`)
  *   - `kind IN ('failed','diagnose-inconclusive') AND signature = :taskId
@@ -1568,14 +1457,13 @@ export const snoozeActionQueueItem = async (
 export const resolveAllRowsForTask = async (
   taskId: string,
 ): Promise<void> => {
-  await initActionQueue()
   const c = stateClient()
   await c.execute({
     sql: `UPDATE action_queue_items
              SET state = 'resolved',
                  resolved_at = ?
            WHERE (origin_task_id = ?
-                  OR json_extract(payload, '$.taskId') = ?
+                  OR payload::jsonb ->> 'taskId' = ?
                   OR (kind IN ('failed', 'diagnose-inconclusive')
                       AND signature = ?
                       AND origin_task_id IS NULL))

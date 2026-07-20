@@ -14,22 +14,22 @@ describe('mapDaemonError', () => {
   // Pre-rename daemon vs migrated DB: the daemon code still issues
   // `SELECT … FROM ideas`, the table has been renamed to `proposals`. The
   // operator-facing message must include a daemon-restart instruction so
-  // they aren't left staring at a raw libsql error.
-  it('rewrites `no such table: ideas` into the restart hint', () => {
-    const raw = 'SQLITE_ERROR: no such table: ideas'
+  // they aren't left staring at a raw database error.
+  it('rewrites `relation "ideas" does not exist` into the restart hint', () => {
+    const raw = 'error: relation "ideas" does not exist'
     const mapped = mapDaemonError(raw)
     expect(mapped).not.toBe(raw)
     expect(mapped).toContain('mars daemon restart')
     // Original underlying error is preserved for debugging.
     expect(mapped).toContain(raw)
     // The string the operator looks for: a restart instruction, not a raw
-    // SQLite line on its own.
-    expect(mapped).not.toMatch(/^SQLITE_ERROR/)
+    // 42P01 line on its own.
+    expect(mapped).not.toMatch(/^error: relation/)
   })
 
   // Symmetric case: a fresh daemon talking to a yet-to-migrate DB.
-  it('rewrites `no such table: proposals` into the restart hint', () => {
-    const raw = 'SqliteError: no such table: proposals'
+  it('rewrites `relation "proposals" does not exist` into the restart hint', () => {
+    const raw = 'error: relation "proposals" does not exist'
     const mapped = mapDaemonError(raw)
     expect(mapped).toContain('Restart the daemon')
     expect(mapped).toContain(raw)
@@ -37,7 +37,7 @@ describe('mapDaemonError', () => {
 
   it('matches case-insensitively and with arbitrary surrounding context', () => {
     const raw =
-      'libsql_client: query failed: SQLITE_ERROR: NO SUCH TABLE: Ideas (statement: SELECT …)'
+      'daemon query failed: 42P01: RELATION "ideas" DOES NOT EXIST (statement: SELECT …)'
     expect(mapDaemonError(raw)).toContain('mars daemon restart')
   })
 
@@ -46,8 +46,8 @@ describe('mapDaemonError', () => {
     expect(mapDaemonError(raw)).toBe(raw)
   })
 
-  it('does not match unrelated `no such table: <other>` errors', () => {
-    const raw = 'SQLITE_ERROR: no such table: tasks'
+  it('does not match unrelated `relation "<other>" does not exist` errors', () => {
+    const raw = 'error: relation "tasks" does not exist'
     expect(mapDaemonError(raw)).toBe(raw)
   })
 

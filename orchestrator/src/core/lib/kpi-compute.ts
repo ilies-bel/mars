@@ -189,7 +189,7 @@ export async function computeCostPerArcDistribution(
             JOIN tasks t ON COALESCE(t.origin_id, t.id) = da.arc_id
             JOIN trace_events te ON te.task_id = t.id
               AND te.kind = 'step_ended'
-              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
             UNION
             -- Path 2: trace event keyed by the arc/origin id directly
             -- (dangling-origin pattern: no task row has id=arc_id, only
@@ -198,7 +198,7 @@ export async function computeCostPerArcDistribution(
             FROM done_arcs da
             JOIN trace_events te ON te.task_id = da.arc_id
               AND te.kind = 'step_ended'
-              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
             UNION
             -- Path 3: origin-level trace event (Planner/Slicer steps that run before a
             -- child task exists: task_id IS NULL, origin_id = arc_id). Without this the
@@ -207,15 +207,15 @@ export async function computeCostPerArcDistribution(
             FROM done_arcs da
             JOIN trace_events te ON te.origin_id = da.arc_id
               AND te.kind = 'step_ended'
-              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
           )
           SELECT
             da.arc_id,
             COALESCE(SUM(
-              CAST(json_extract(ate.payload, '$.usageSignals.inputTokens')        AS REAL) +
-              CAST(json_extract(ate.payload, '$.usageSignals.outputTokens')       AS REAL) +
-              CAST(json_extract(ate.payload, '$.usageSignals.cacheCreateTokens')  AS REAL) +
-              CAST(json_extract(ate.payload, '$.usageSignals.cacheReadTokens')    AS REAL) * 0.1
+              CAST(ate.payload::jsonb #>> '{usageSignals,inputTokens}'        AS double precision) +
+              CAST(ate.payload::jsonb #>> '{usageSignals,outputTokens}'       AS double precision) +
+              CAST(ate.payload::jsonb #>> '{usageSignals,cacheCreateTokens}'  AS double precision) +
+              CAST(ate.payload::jsonb #>> '{usageSignals,cacheReadTokens}'    AS double precision) * 0.1
             ), 0) AS weighted_tokens
           FROM done_arcs da
           INNER JOIN arc_te ate ON ate.arc_id = da.arc_id
@@ -253,8 +253,8 @@ export async function computeCostPerArcDistribution(
  * value is null when sampleCount === 0.
  *
  * NOTE: Condition 3 requires action_queue_items to be queryable via the same
- * TaskStore surface. In production, action_queue_items lives in mars.db
- * (same database as tasks). When the table is not found the
+ * TaskStore surface. In production, action_queue_items lives in the same
+ * Mars database as tasks. When the table is not found the
  * action-queue check is silently skipped — condition 2 (recovery edge) remains
  * fully enforced.
  */
@@ -381,32 +381,42 @@ export async function listFailureRateArcs(
   surface: TaskStore,
   window: KpiWindow,
 ): Promise<KpiArcRow[]> {
+  // Correlated title/representative lookups happen OUTSIDE the grouped
+  // subquery: PostgreSQL rejects grouping-expression references from inside a
+  // correlated subquery, so the arc aggregation runs first and the lookups key
+  // on the resulting plain arc_id column.
   const result = await surface.query({
     sql: `SELECT
-            COALESCE(t.origin_id, t.id) AS arc_id,
+            g.arc_id,
             COALESCE(
-              (SELECT t_rep.id FROM tasks t_rep WHERE t_rep.id = COALESCE(t.origin_id, t.id) LIMIT 1),
-              MIN(t.id)
+              (SELECT t_rep.id FROM tasks t_rep WHERE t_rep.id = g.arc_id LIMIT 1),
+              g.min_task_id
             ) AS origin_task_id,
-            MAX(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS has_done,
-            MAX(CASE WHEN t.status = 'failed' THEN t.status ELSE t.status END) AS arc_status,
+            g.has_done,
+            g.arc_status,
             COALESCE(
               (SELECT SUBSTR(t2.prompt, 1, 120)
                FROM tasks t2
-               WHERE t2.id = COALESCE(t.origin_id, t.id)
+               WHERE t2.id = g.arc_id
                LIMIT 1),
               (SELECT SUBSTR(t3.prompt, 1, 120)
                FROM tasks t3
-               WHERE COALESCE(t3.origin_id, t3.id) = COALESCE(t.origin_id, t.id)
+               WHERE COALESCE(t3.origin_id, t3.id) = g.arc_id
                  AND t3.prompt IS NOT NULL
                ORDER BY t3.id
                LIMIT 1)
             ) AS title
-          FROM tasks t
-          WHERE t.status IN ('done', 'failed')
-            AND t.updated_at >= ?
-            AND t.updated_at <= ?
-          GROUP BY COALESCE(t.origin_id, t.id)`,
+          FROM (
+            SELECT COALESCE(t.origin_id, t.id) AS arc_id,
+                   MIN(t.id) AS min_task_id,
+                   MAX(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END) AS has_done,
+                   MAX(CASE WHEN t.status = 'failed' THEN t.status ELSE t.status END) AS arc_status
+            FROM tasks t
+            WHERE t.status IN ('done', 'failed')
+              AND t.updated_at >= ?
+              AND t.updated_at <= ?
+            GROUP BY COALESCE(t.origin_id, t.id)
+          ) AS g`,
     args: [window.windowStart, window.windowEnd],
   })
 
@@ -440,31 +450,36 @@ export async function listAutonomousArcs(
   surface: TaskStore,
   window: KpiWindow,
 ): Promise<KpiArcRow[]> {
-  // Done arcs
+  // Done arcs. Same inner-grouped-subquery shape as listFailureRateArcs: the
+  // correlated lookups key on the plain arc_id column of the grouped result.
   const doneArcsResult = await surface.query({
     sql: `SELECT
-            COALESCE(t.origin_id, t.id) AS arc_id,
+            g.arc_id,
             COALESCE(
-              (SELECT t_rep.id FROM tasks t_rep WHERE t_rep.id = COALESCE(t.origin_id, t.id) LIMIT 1),
-              MIN(t.id)
+              (SELECT t_rep.id FROM tasks t_rep WHERE t_rep.id = g.arc_id LIMIT 1),
+              g.min_task_id
             ) AS origin_task_id,
             COALESCE(
               (SELECT SUBSTR(t2.prompt, 1, 120)
                FROM tasks t2
-               WHERE t2.id = COALESCE(t.origin_id, t.id)
+               WHERE t2.id = g.arc_id
                LIMIT 1),
               (SELECT SUBSTR(t3.prompt, 1, 120)
                FROM tasks t3
-               WHERE COALESCE(t3.origin_id, t3.id) = COALESCE(t.origin_id, t.id)
+               WHERE COALESCE(t3.origin_id, t3.id) = g.arc_id
                  AND t3.prompt IS NOT NULL
                ORDER BY t3.id
                LIMIT 1)
             ) AS title
-          FROM tasks t
-          WHERE t.status = 'done'
-            AND t.updated_at >= ?
-            AND t.updated_at <= ?
-          GROUP BY COALESCE(t.origin_id, t.id)`,
+          FROM (
+            SELECT COALESCE(t.origin_id, t.id) AS arc_id,
+                   MIN(t.id) AS min_task_id
+            FROM tasks t
+            WHERE t.status = 'done'
+              AND t.updated_at >= ?
+              AND t.updated_at <= ?
+            GROUP BY COALESCE(t.origin_id, t.id)
+          ) AS g`,
     args: [window.windowStart, window.windowEnd],
   })
 
@@ -586,13 +601,13 @@ export async function listCostPerArcArcs(
             JOIN tasks t ON COALESCE(t.origin_id, t.id) = da.arc_id
             JOIN trace_events te ON te.task_id = t.id
               AND te.kind = 'step_ended'
-              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
             UNION
             SELECT da.arc_id, te.id AS te_id, te.payload
             FROM done_arcs da
             JOIN trace_events te ON te.task_id = da.arc_id
               AND te.kind = 'step_ended'
-              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
             UNION
             -- Path 3: origin-level trace event (Planner/Slicer steps that run before a
             -- child task exists: task_id IS NULL, origin_id = arc_id). Without this the
@@ -601,7 +616,7 @@ export async function listCostPerArcArcs(
             FROM done_arcs da
             JOIN trace_events te ON te.origin_id = da.arc_id
               AND te.kind = 'step_ended'
-              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
           )
           SELECT
             da.arc_id,
@@ -610,10 +625,10 @@ export async function listCostPerArcArcs(
               (SELECT t_rep.id FROM tasks t_rep WHERE COALESCE(t_rep.origin_id, t_rep.id) = da.arc_id ORDER BY t_rep.id LIMIT 1)
             ) AS origin_task_id,
             SUM(
-              CAST(json_extract(ate.payload, '$.usageSignals.inputTokens')        AS REAL) +
-              CAST(json_extract(ate.payload, '$.usageSignals.outputTokens')       AS REAL) +
-              CAST(json_extract(ate.payload, '$.usageSignals.cacheCreateTokens')  AS REAL) +
-              CAST(json_extract(ate.payload, '$.usageSignals.cacheReadTokens')    AS REAL) * 0.1
+              CAST(ate.payload::jsonb #>> '{usageSignals,inputTokens}'        AS double precision) +
+              CAST(ate.payload::jsonb #>> '{usageSignals,outputTokens}'       AS double precision) +
+              CAST(ate.payload::jsonb #>> '{usageSignals,cacheCreateTokens}'  AS double precision) +
+              CAST(ate.payload::jsonb #>> '{usageSignals,cacheReadTokens}'    AS double precision) * 0.1
             ) AS weighted_tokens,
             COALESCE(
               (SELECT SUBSTR(t2.prompt, 1, 120)

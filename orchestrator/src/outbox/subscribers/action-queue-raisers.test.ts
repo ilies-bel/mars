@@ -6,17 +6,20 @@
  *
  * The test setup mirrors the pattern used in action-queue.test.ts: a real
  * git repo is created in a temp directory, MARS_REPO is set to point to it,
- * and vi.resetModules() ensures stateClient() (used by raiseActionQueueItem)
- * opens the same `mars.db` file as the test client. All writes — the
- * processedOnce dedup row and the action_queue_items row — land in the same
- * file, so assertions on the test client see the rows raised by the handler.
+ * and vi.resetModules() ensures resolveStateClient() (used by
+ * raiseActionQueueItem) opens the same database as the test client. Under
+ * MARS_DB_BACKEND=pglite the DB identity key is the resolved `.mars` state
+ * dir, so the test acquires its client from the SAME freshly-reset db module
+ * with that key — all writes (the processedOnce dedup row and the
+ * action_queue_items row) land in one in-memory instance and assertions on
+ * the test client see the rows raised by the handler.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { createClient, type Client } from '@libsql/client';
+import type { DbClient } from '../../core/lib/db.js';
 import type { BusEvent } from '../../bus/events.js';
 
 // ---------------------------------------------------------------------------
@@ -25,9 +28,9 @@ import type { BusEvent } from '../../bus/events.js';
 
 /**
  * Create a minimal git repo in a temp directory so resolveContext() (used by
- * stateClient()) can locate the repo root. Sets MARS_REPO so the repo is
- * found without git, then resets all module caches so stateClient() and
- * resolveOriginIdForTask() open the fresh test DB.
+ * resolveStateClient()) can locate the repo root. Sets MARS_REPO so the repo
+ * is found without git, then resets all module caches so resolveStateClient()
+ * and resolveOriginIdForTask() open the fresh test DB.
  */
 function setupRepo(): string {
   const repo = mkdtempSync(join(tmpdir(), 'mars-action-queue-raisers-test-'));
@@ -37,65 +40,17 @@ function setupRepo(): string {
 }
 
 /**
- * File-backed libsql client pointing at the same path stateClient() would
- * use for the given repo root. Includes all tables the action-queue-raiser subscriber
- * writes to or reads from.
+ * Acquire the client for the SAME database identity resolveStateClient()
+ * will use for the given repo root (under pglite the key is the resolved
+ * `.mars` state dir), from the freshly-reset db module, and apply the
+ * canonical schema. MUST be called after `vi.resetModules()` so the handle
+ * comes from the same module registry the subscriber module uses.
  */
-async function makeClient(repo: string): Promise<Client> {
-  const dbPath = resolve(repo, '.mars', 'mars.db');
-  const client = createClient({ url: `file:${dbPath}` });
-
-  // Action-queue tables (written by raiseActionQueueItem).
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS action_queue_items (
-      id              TEXT    PRIMARY KEY,
-      kind            TEXT    NOT NULL,
-      category        TEXT    NOT NULL,
-      priority        TEXT    NOT NULL,
-      state           TEXT    NOT NULL DEFAULT 'open',
-      title           TEXT    NOT NULL,
-      body            TEXT    NOT NULL DEFAULT '',
-      payload         TEXT    NOT NULL DEFAULT '{}',
-      context         TEXT    NOT NULL DEFAULT '{}',
-      raised_by       TEXT    NOT NULL,
-      raised_at       TEXT    NOT NULL,
-      resolved_at     TEXT,
-      resolution      TEXT,
-      resolution_note TEXT,
-      root_cause      TEXT,
-      fingerprint     TEXT,
-      signature       TEXT,
-      seen_count      INTEGER NOT NULL DEFAULT 1,
-      last_seen_at    TEXT,
-      resolved_by     TEXT,
-      origin_task_id  TEXT
-    )
-  `);
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS action_queue_history (
-      id         TEXT PRIMARY KEY,
-      item_id    TEXT NOT NULL,
-      at         TEXT NOT NULL,
-      from_state TEXT,
-      to_state   TEXT NOT NULL,
-      by         TEXT,
-      note       TEXT
-    )
-  `);
-
-  // Minimal tasks table for origin-resolution tests.
-  // resolveOriginIdForTask queries: SELECT origin_id, id FROM tasks WHERE id = ?
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS tasks (
-      id         TEXT PRIMARY KEY,
-      prompt     TEXT NOT NULL DEFAULT '',
-      status     TEXT NOT NULL DEFAULT 'queued',
-      created_at TEXT NOT NULL DEFAULT '',
-      updated_at TEXT NOT NULL DEFAULT '',
-      origin_id  TEXT
-    )
-  `);
-
+async function makeClient(repo: string): Promise<DbClient> {
+  const { openDb } = await import('../../core/lib/db.js');
+  const { ensureSchema } = await import('../../core/lib/pg-schema.js');
+  const client = openDb(resolve(repo, '.mars'));
+  await ensureSchema(client);
   return client;
 }
 
@@ -134,7 +89,7 @@ function terminalEvent(
 }
 
 /** Count open action-queue rows. */
-async function openRowCount(client: Client): Promise<number> {
+async function openRowCount(client: DbClient): Promise<number> {
   const r = await client.execute(
     `SELECT COUNT(*) AS n FROM action_queue_items WHERE state = 'open'`,
   );
@@ -143,7 +98,7 @@ async function openRowCount(client: Client): Promise<number> {
 
 /** Return the open action-queue row for `taskId`, or null if absent. */
 async function openRowForTask(
-  client: Client,
+  client: DbClient,
   taskId: string,
 ): Promise<{ kind: string; seenCount: number; originTaskId: string } | null> {
   const r = await client.execute({
@@ -172,36 +127,32 @@ async function openRowForTask(
 
 describe('action-queue-raiser:task.blocked subscriber', () => {
   let tmpDir: string;
-  let client: Client;
+  let client: DbClient;
   let buildActionQueueRaiserSubscribers: typeof import('./action-queue-raisers.js').buildActionQueueRaiserSubscribers;
-  let ensureActionQueueRaiserSchema: typeof import('./action-queue-raisers.js').ensureActionQueueRaiserSchema;
 
   beforeEach(async () => {
     tmpDir = setupRepo();
 
-    // Set MARS_REPO before resetting modules so stateClient() and
-    // resolveOriginIdForTask() both open the test repo's mars.db on first use.
+    // Set MARS_REPO before resetting modules so resolveStateClient() and
+    // resolveOriginIdForTask() both open the test repo's DB on first use.
     process.env.MARS_REPO = tmpDir;
 
-    // Reset all module-level singletons (stateClient, queueClient, context
-    // cache, action-queue initialised flag, etc.) so each test gets a clean
-    // module environment pointed at the fresh tmpDir.
+    // Reset all module-level singletons (state client, queue client, context
+    // cache, action-queue initialised flag, db registry, etc.) so each test
+    // gets a clean module environment pointed at the fresh tmpDir.
     vi.resetModules();
 
-    // Create the test DB at the same path stateClient() will use.
+    // Acquire the test client for the same DB identity resolveStateClient()
+    // will use, and apply the canonical schema.
     client = await makeClient(tmpDir);
 
     // Dynamic import AFTER resetModules so we get the fresh module instances.
     const mod = await import('./action-queue-raisers.js');
     buildActionQueueRaiserSubscribers = mod.buildActionQueueRaiserSubscribers;
-    ensureActionQueueRaiserSchema = mod.ensureActionQueueRaiserSchema;
-
-    // Create the subscriber_processed_events dedup table on the shared client.
-    await ensureActionQueueRaiserSchema(client);
   });
 
-  afterEach(() => {
-    client.close();
+  afterEach(async () => {
+    await client.close();
     delete process.env.MARS_REPO;
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -503,9 +454,8 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
 
 describe('action-queue-raiser:fix-task-done subscriber', () => {
   let tmpDir: string;
-  let client: Client;
+  let client: DbClient;
   let buildActionQueueRaiserSubscribers: typeof import('./action-queue-raisers.js').buildActionQueueRaiserSubscribers;
-  let ensureActionQueueRaiserSchema: typeof import('./action-queue-raisers.js').ensureActionQueueRaiserSchema;
 
   beforeEach(async () => {
     tmpDir = setupRepo();
@@ -515,25 +465,22 @@ describe('action-queue-raiser:fix-task-done subscriber', () => {
 
     const mod = await import('./action-queue-raisers.js');
     buildActionQueueRaiserSubscribers = mod.buildActionQueueRaiserSubscribers;
-    ensureActionQueueRaiserSchema = mod.ensureActionQueueRaiserSchema;
-
-    await ensureActionQueueRaiserSchema(client);
   });
 
-  afterEach(() => {
-    client.close();
+  afterEach(async () => {
+    await client.close();
     delete process.env.MARS_REPO;
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
   /** Insert a pre-existing open 'failed' row keyed on `originId`. */
-  async function insertOpenFailedRow(c: Client, id: string, originId: string): Promise<void> {
+  async function insertOpenFailedRow(c: DbClient, id: string, originId: string): Promise<void> {
     await c.execute({
       sql: `INSERT INTO action_queue_items
               (id, kind, category, priority, state, title, body, raised_by, raised_at, origin_task_id)
             VALUES (?, 'failed', 'orchestrator', 'high', 'open', 'pre-existing failure', '',
-                    'test', datetime('now'), ?)`,
-      args: [id, originId],
+                    'test', ?, ?)`,
+      args: [id, new Date().toISOString(), originId],
     });
   }
 
@@ -643,9 +590,8 @@ describe('action-queue-raiser:fix-task-done subscriber', () => {
 
 describe('api-outage coalescing — circuit-breaker-open failures', () => {
   let tmpDir: string;
-  let client: Client;
+  let client: DbClient;
   let buildActionQueueRaiserSubscribers: typeof import('./action-queue-raisers.js').buildActionQueueRaiserSubscribers;
-  let ensureActionQueueRaiserSchema: typeof import('./action-queue-raisers.js').ensureActionQueueRaiserSchema;
   let resolveOutageRowOnBreakerClose: typeof import('./action-queue-raisers.js').resolveOutageRowOnBreakerClose;
   let apiCircuitBreaker: typeof import('../../core/lib/api-circuit-breaker.js').apiCircuitBreaker;
 
@@ -661,20 +607,17 @@ describe('api-outage coalescing — circuit-breaker-open failures', () => {
     // raisers module is using, so our test manipulations affect the right singleton.
     const mod = await import('./action-queue-raisers.js');
     buildActionQueueRaiserSubscribers = mod.buildActionQueueRaiserSubscribers;
-    ensureActionQueueRaiserSchema = mod.ensureActionQueueRaiserSchema;
     resolveOutageRowOnBreakerClose = mod.resolveOutageRowOnBreakerClose;
 
     const breakerMod = await import('../../core/lib/api-circuit-breaker.js');
     apiCircuitBreaker = breakerMod.apiCircuitBreaker;
-
-    await ensureActionQueueRaiserSchema(client);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     // Ensure the breaker is closed after each test so module state does not
     // bleed (even though vi.resetModules() would reset it on the next cycle).
     apiCircuitBreaker.close();
-    client.close();
+    await client.close();
     delete process.env.MARS_REPO;
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -746,7 +689,8 @@ describe('api-outage coalescing — circuit-breaker-open failures', () => {
     // Insert the affected tasks as 'failed' so they simulate tasks that were
     // mid-flight when the breaker tripped.
     await client.execute({
-      sql: `INSERT INTO tasks (id, status) VALUES ('task-drain-x', 'failed'), ('task-drain-y', 'failed')`,
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES ('task-drain-x', '', 'failed', '', ''), ('task-drain-y', '', 'failed', '', '')`,
     });
 
     const [subscriber] = buildActionQueueRaiserSubscribers(client);

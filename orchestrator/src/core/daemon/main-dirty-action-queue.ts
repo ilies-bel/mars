@@ -39,13 +39,13 @@ const FIND_STALE_COMMITTER_ACTION_QUEUE_ROWS_SQL = `
     FROM action_queue_items i
     JOIN tasks t
       ON t.id = COALESCE(
-           json_extract(i.payload, '$.recoveryTaskId'),
+           i.payload::jsonb ->> 'recoveryTaskId',
            i.origin_task_id
          )
    WHERE i.state = 'open'
      AND t.kind = 'fix'
-     AND json_extract(t.recovery_payload, '$.recipe') = ?
-     AND json_extract(t.recovery_payload, '$.integrationBranch') = ?
+     AND (t.recovery_payload::jsonb ->> 'recipe') = ?
+     AND (t.recovery_payload::jsonb ->> 'integrationBranch') = ?
      AND t.id != ?
      AND t.status = 'failed'
 `

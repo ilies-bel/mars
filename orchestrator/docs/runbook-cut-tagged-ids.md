@@ -121,12 +121,13 @@ Before starting the cut, confirm all of the following:
 **Goal:** wipe all pre-cut rows so the fresh binary starts from a completely
 clean slate.
 
-> **Database file note.**
-> The live Mars database is `.mars/mars.db` — the single consolidated store
-> for tasks, proposals, and all related tables. The older split files
-> `.mars/queue.db` and `.mars/state.db` are stale pre-merge artifacts; if
-> they exist on disk they are typically 0-byte placeholders and hold no live
-> data. Delete them for tidiness, but the operative reset is `.mars/mars.db`.
+> **Database note.**
+> The live Mars database is the embedded PostgreSQL instance under
+> `.mars/pg/data/` — the single consolidated store for tasks, proposals,
+> and all related tables. Any `mars.db*`, `queue.db`, or `state.db` files
+> on disk are dead pre-import SQLite artifacts and hold no live data.
+> Delete them for tidiness, but the operative reset is the `.mars/pg/data/`
+> directory — and only ever with the daemon stopped.
 
 1. Confirm the daemon is stopped:
 
@@ -140,10 +141,13 @@ clean slate.
    mars daemon stop
    ```
 
-2. Delete the database files, stale worktrees, and lock/port files:
+2. Delete the Postgres data dir, stale worktrees, and lock/port files
+   (daemon must be stopped — step 1):
 
    ```sh
-   rm -f .mars/mars.db .mars/queue.db .mars/state.db
+   rm -rf .mars/pg/data
+   rm -f .mars/pg.port .mars/pg.dsn
+   rm -f .mars/mars.db* .mars/queue.db .mars/state.db   # dead pre-import artifacts, if any
    rm -rf .mars/worktrees/
    rm -f .mars/.merge.lock .mars/http.port
    ```
@@ -161,8 +165,8 @@ clean slate.
    ```
 
    Exit 0 confirms every entity table has zero rows. If non-zero, the output
-   lists each non-empty table and its row count. Delete `.mars/mars.db` and
-   re-run `mars init`, then re-run the gate check.
+   lists each non-empty table and its row count. Stop the daemon, delete
+   `.mars/pg/data` and re-run `mars init`, then re-run the gate check.
 
 ---
 
@@ -284,7 +288,7 @@ restarting from the beginning:
 | ------------ | --------------- |
 | **Phase 1 — drain** | Purge or wait for remaining in-flight tasks, then re-run the drain gate check. |
 | **Phase 2 — ship** | Re-run the install command, confirm `mars --version`, then re-run the drain gate check with the new binary. |
-| **Phase 3 — reset** | Delete `.mars/mars.db` again and re-run `mars init`, then re-run the reset gate check. |
+| **Phase 3 — reset** | Stop the daemon, delete `.mars/pg/data` again and re-run `mars init`, then re-run the reset gate check. |
 | **Phase 4 — recreate** | Run `mars proposal list` to see what was already entered; re-enter only the missing titles, then re-run the recreate gate check. |
 
 Do not attempt to migrate or backfill pre-cut ids. Any entity not explicitly

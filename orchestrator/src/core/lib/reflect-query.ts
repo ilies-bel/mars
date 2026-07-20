@@ -93,7 +93,7 @@ export interface LoadCorpusOptions {
   sinceIso?: string
   limit?: number
   /**
-   * Injected TaskStore over `.mars/mars.db`. Defaults to the composition-root
+   * Injected TaskStore over the Mars database. Defaults to the composition-root
    * singleton (`getDefaultTaskStore()`) when omitted so existing CLI callers
    * keep working; tests inject an in-memory store.
    */
@@ -288,19 +288,19 @@ export const loadRecentTaskCorpus = async (
   const placeholders = taskIds.map(() => '?').join(',')
 
   // After PRD 436f14c7 slice 5, usage signals live in trace_events as step_ended
-  // events. json_extract reads the usageSignals sub-object; rows without it
-  // (e.g. verify-output-only events) are excluded by the IS NOT NULL filter.
+  // events. The jsonb extraction reads the usageSignals sub-object; rows without
+  // it (e.g. verify-output-only events) are excluded by the IS NOT NULL filter.
   const signalRows = await queue.query({
     sql: `SELECT task_id,
-                 json_extract(payload, '$.stepName') AS step_id,
-                 CAST(json_extract(payload, '$.usageSignals.inputTokens') AS INTEGER) AS input_tokens,
-                 CAST(json_extract(payload, '$.usageSignals.outputTokens') AS INTEGER) AS output_tokens,
-                 CAST(json_extract(payload, '$.usageSignals.cacheCreateTokens') AS INTEGER) AS cache_create_tokens,
-                 CAST(json_extract(payload, '$.usageSignals.cacheReadTokens') AS INTEGER) AS cache_read_tokens,
-                 CAST(json_extract(payload, '$.usageSignals.messageCount') AS INTEGER) AS message_count
+                 payload::jsonb ->> 'stepName' AS step_id,
+                 CAST(payload::jsonb #>> '{usageSignals,inputTokens}' AS bigint) AS input_tokens,
+                 CAST(payload::jsonb #>> '{usageSignals,outputTokens}' AS bigint) AS output_tokens,
+                 CAST(payload::jsonb #>> '{usageSignals,cacheCreateTokens}' AS bigint) AS cache_create_tokens,
+                 CAST(payload::jsonb #>> '{usageSignals,cacheReadTokens}' AS bigint) AS cache_read_tokens,
+                 CAST(payload::jsonb #>> '{usageSignals,messageCount}' AS bigint) AS message_count
             FROM trace_events
            WHERE kind = 'step_ended'
-             AND json_extract(payload, '$.usageSignals') IS NOT NULL
+             AND payload::jsonb ->> 'usageSignals' IS NOT NULL
              AND task_id IN (${placeholders})`,
     args: taskIds,
   })
@@ -314,14 +314,14 @@ export const loadRecentTaskCorpus = async (
   // Querying both lets this work on historical rows without a migration.
   const toolErrorRows = await queue.query({
     sql: `SELECT task_id,
-                 json_extract(payload, '$.tool') AS tool,
-                 COALESCE(json_extract(payload, '$.argv[0]'), '') AS argv0,
+                 payload::jsonb ->> 'tool' AS tool,
+                 COALESCE(payload::jsonb #>> '{argv,0}', '') AS argv0,
                  COUNT(*) AS cnt
             FROM trace_events
            WHERE kind = 'tool_invoked'
              AND severity IN ('warn', 'error')
-             AND (json_extract(payload, '$.expectsFailure') IS NULL
-                  OR json_extract(payload, '$.expectsFailure') = 0)
+             AND (payload::jsonb ->> 'expectsFailure' IS NULL
+                  OR payload::jsonb ->> 'expectsFailure' IN ('false', '0'))
              AND task_id IN (${placeholders})
            GROUP BY task_id, tool, argv0
            ORDER BY task_id, cnt DESC`,
@@ -358,8 +358,8 @@ export const loadRecentTaskCorpus = async (
     sql: `SELECT COUNT(*) AS count
             FROM trace_events
            WHERE kind = 'log_line'
-             AND json_extract(payload, '$.fields.payload.type') = 'rate_limit_event'
-             AND json_extract(payload, '$.fields.payload.rate_limit_info.status') = 'rejected'
+             AND payload::jsonb #>> '{fields,payload,type}' = 'rate_limit_event'
+             AND payload::jsonb #>> '{fields,payload,rate_limit_info,status}' = 'rejected'
              AND timestamp >= ?`,
     args: [windowStart],
   })
@@ -368,8 +368,8 @@ export const loadRecentTaskCorpus = async (
   )
 
   // Scorer results per task (PRD 6cf85bc9). The table lives in the same
-  // consolidated mars.db; a store that predates it (or an injected in-memory
-  // test store) simply yields no rows.
+  // consolidated Mars database; a store that predates it (or an injected
+  // in-memory test store) simply yields no rows.
   const scorerResultsByTask = new Map<
     string,
     ReflectCorpusEntry['scorerResults'][number][]

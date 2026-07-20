@@ -11,10 +11,8 @@
  *      still delivers within the configured poll interval.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createClient, type Client } from '@libsql/client';
+import { openDb, type DbClient } from '../core/lib/db.js';
+import { ensureSchema } from '../core/lib/pg-schema.js';
 import { registerSubscriber } from '../bus/subscribers.js';
 import { publishWithRetry } from '../bus/publisher.js';
 import { startDispatcher, type Dispatcher } from './dispatcher.js';
@@ -33,19 +31,15 @@ async function loadWakeHint(): Promise<{
 }
 
 // -------------------------------------------------------------------
-// DB helper — mirrors the fixture in dispatcher.test.ts.
+// DB helper — mirrors the fixture in dispatcher.test.ts: a fresh
+// in-memory PGlite instance per test carrying the canonical schema.
 // -------------------------------------------------------------------
 
-async function makeClient(dir: string): Promise<Client> {
-  const client = createClient({ url: `file:${join(dir, 'events.db')}` });
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS events (
-      id      INTEGER PRIMARY KEY AUTOINCREMENT,
-      type    TEXT    NOT NULL,
-      payload TEXT    NOT NULL,
-      ts      INTEGER NOT NULL DEFAULT (unixepoch())
-    )
-  `);
+let dbSeq = 0;
+
+async function makeClient(): Promise<DbClient> {
+  const client = openDb(`test:wake-hint:${process.pid}:${dbSeq++}`);
+  await ensureSchema(client);
   return client;
 }
 
@@ -111,20 +105,17 @@ describe('registerWakeHint / signalWakeHint', () => {
 // -------------------------------------------------------------------
 
 describe('wake-hint + dispatcher integration', () => {
-  let tmpDir: string;
-  let client: Client;
+  let client: DbClient;
   const dispatchers: Dispatcher[] = [];
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'mars-wake-hint-test-'));
-    client = await makeClient(tmpDir);
+    client = await makeClient();
     dispatchers.length = 0;
   });
 
   afterEach(async () => {
     await Promise.all(dispatchers.map(d => d.stop()));
-    client.close();
-    rmSync(tmpDir, { recursive: true, force: true });
+    await client.close();
   });
 
   function track(d: Dispatcher): Dispatcher {

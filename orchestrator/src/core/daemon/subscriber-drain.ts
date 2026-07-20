@@ -1,10 +1,7 @@
-import type { Client } from '@libsql/client'
+import type { DbClient } from '../lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { advanceCursor, fetchPending } from '../../bus/subscribers.js'
-import {
-  ensureProcessedOnceSchema,
-  processedOnce,
-} from '../../bus/processed-once.js'
+import { processedOnce } from '../../bus/processed-once.js'
 import {
   raiseActionQueueItem,
   supersedeActionQueueItemsBySignature,
@@ -54,7 +51,7 @@ const stallKey = (subscriberId: string, eventId: number): string =>
  * happens only after a fresh successful handler run).
  */
 async function alreadyProcessed(
-  client: Client,
+  client: DbClient,
   subscriberId: string,
   eventId: number,
 ): Promise<boolean> {
@@ -70,7 +67,7 @@ const stallSignature = (subscriberId: string, eventId: number): string =>
   `${subscriberId}:${eventId}`
 
 export interface DrainWithStallArgs {
-  client: Client
+  client: DbClient
   subscriberId: string
   /**
    * Per-event side effect. Return `true` if the event did work (counts
@@ -89,7 +86,6 @@ export async function drainWithStall(
   args: DrainWithStallArgs,
 ): Promise<{ processed: number }> {
   const { client, subscriberId, handle, log } = args
-  await ensureProcessedOnceSchema(client)
   const pending = await fetchPending(client, subscriberId)
   let processed = 0
 

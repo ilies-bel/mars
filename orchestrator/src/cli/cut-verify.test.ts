@@ -1,19 +1,26 @@
 /**
- * Integration tests for `mars cut verify <phase>`.
+ * Tests for `mars cut verify <phase>`.
  *
- * Each describe block seeds a specific DB state, runs the CLI command,
- * and asserts the exit code and human-readable output. Tests use a
- * fresh git-init'd temp directory for each describe block so there is no
- * cross-contamination.
+ * DB-state phases run IN-PROCESS against the PGlite backend: the old
+ * spawn-the-CLI pattern relied on seeding a shared `.mars/mars.db` file that
+ * a subprocess could reopen, which has no equivalent under the in-memory
+ * test backend (each process gets its own PGlite instance). Each describe
+ * block seeds a fresh repo-keyed database via the seam, invokes
+ * `runCutVerify`, and asserts on captured stdout/stderr lines and the
+ * process.exit code (stubbed to throw).
+ *
+ * The DB-free argument-validation and --help cases still exercise the real
+ * CLI binary via a subprocess.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
+import { spawnSync, execFileSync, type SpawnSyncReturns } from 'node:child_process'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { execFileSync } from 'node:child_process'
-import { createClient } from '@libsql/client'
+import { openDb, type DbClient } from '../core/lib/db'
+import { ensureSchema } from '../core/lib/pg-schema'
+import { runCutVerify } from './cut-verify'
 
 const here = dirname(fileURLToPath(import.meta.url))
 // src/cli -> src -> orchestrator
@@ -39,140 +46,80 @@ const makeRepo = (): string => {
   return dir
 }
 
-/** Open a libsql client against <repo>/.mars/mars.db. */
-const openDb = (repo: string) =>
-  createClient({ url: `file:${resolve(repo, '.mars', 'mars.db')}` })
+/**
+ * Open the repo-keyed PGlite client (`resolveDbTarget` under
+ * MARS_DB_BACKEND=pglite is the resolved `.mars` state dir) and apply the
+ * canonical schema. The returned handle MUST stay open for the duration of
+ * the tests — `close()` is reference-counted and tearing the last reference
+ * down discards the in-memory instance along with the seeded rows.
+ */
+const openSeededDb = async (repo: string): Promise<DbClient> => {
+  const client = openDb(resolve(repo, '.mars'))
+  await ensureSchema(client)
+  return client
+}
 
-/** Minimal tasks table init (subset of migrateQueueSchema). */
-const initTables = async (repo: string): Promise<void> => {
-  const c = openDb(repo)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS tasks (
-      id TEXT PRIMARY KEY,
-      prompt TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT 0,
-      updated_at INTEGER NOT NULL DEFAULT 0
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS proposals (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL DEFAULT '',
-      problem TEXT NOT NULL DEFAULT '',
-      solution TEXT NOT NULL DEFAULT '',
-      out_of_scope TEXT NOT NULL DEFAULT '',
-      notes TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'draft',
-      source TEXT NOT NULL DEFAULT 'human',
-      author TEXT,
-      created_at INTEGER NOT NULL DEFAULT 0,
-      updated_at INTEGER NOT NULL DEFAULT 0
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS task_blockers (
-      task_id TEXT NOT NULL,
-      blocker_task_id TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'confirmed',
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (task_id, blocker_task_id)
-    )
-  `)
-  // task_signals removed (migrated to trace_events in PRD 436f14c7 slice 5)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS task_proposal_blockers (
-      task_id TEXT NOT NULL,
-      proposal_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (task_id, proposal_id)
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS task_acceptance (
-      id TEXT PRIMARY KEY,
-      task_id TEXT NOT NULL,
-      position INTEGER NOT NULL,
-      text TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'pending'
-    )
-  `)
-  // task_transcripts removed (migrated to trace_events in PRD 436f14c7 slice 5)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS trace_events (
-      id        TEXT PRIMARY KEY,
-      timestamp TEXT NOT NULL,
-      kind      TEXT NOT NULL,
-      severity  TEXT NOT NULL DEFAULT 'info',
-      task_id   TEXT,
-      origin_id TEXT,
-      phase     TEXT,
-      payload   TEXT NOT NULL DEFAULT '{}'
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS self_heal_attempts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      parent_task_id TEXT NOT NULL,
-      failure_signature TEXT NOT NULL,
-      fix_task_id TEXT,
-      created_at TEXT NOT NULL
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT NOT NULL,
-      payload TEXT NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT 0
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS kpi_snapshots (
-      id TEXT PRIMARY KEY,
-      taken_at TEXT NOT NULL,
-      window_start TEXT NOT NULL,
-      window_end TEXT NOT NULL
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS action_queue_items (
-      id TEXT PRIMARY KEY,
-      kind TEXT NOT NULL,
-      category TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'open',
-      created_at TEXT NOT NULL
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS action_queue_history (
-      id TEXT PRIMARY KEY,
-      item_id TEXT NOT NULL,
-      at TEXT NOT NULL,
-      action TEXT NOT NULL
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS proposal_user_stories (
-      proposal_id TEXT NOT NULL,
-      position INTEGER NOT NULL,
-      text TEXT NOT NULL,
-      PRIMARY KEY (proposal_id, position)
-    )
-  `)
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS proposal_dependencies (
-      proposal_id TEXT NOT NULL,
-      blocker_proposal_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (proposal_id, blocker_proposal_id)
-    )
-  `)
-  c.close()
+const NOW_ISO = new Date().toISOString()
+
+const insertTask = (c: DbClient, id: string, prompt: string, status: string) =>
+  c.execute({
+    sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?)`,
+    args: [id, prompt, status, NOW_ISO, NOW_ISO],
+  })
+
+const insertProposal = (c: DbClient, id: string, title: string) =>
+  c.execute({
+    sql: `INSERT INTO proposals (id, title, created_at, updated_at)
+          VALUES (?, ?, ?, ?)`,
+    args: [id, title, 0, 0],
+  })
+
+// ── in-process harness: captured console output + throwing process.exit ─────
+
+class ExitError extends Error {
+  constructor(readonly code: number) {
+    super(`process.exit(${code})`)
+  }
+}
+
+let stdoutLines: string[] = []
+let stderrLines: string[] = []
+
+beforeEach(() => {
+  stdoutLines = []
+  stderrLines = []
+  vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+    stdoutLines.push(args.map(String).join(' '))
+  })
+  vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+    stderrLines.push(args.map(String).join(' '))
+  })
+  vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+    throw new ExitError(code ?? 0)
+  }) as never)
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+/** Run the gate check; returns the exit code (0 = returned normally). */
+const runPhaseForExitCode = async (
+  phase: 'drain' | 'reset' | 'recreate',
+  repo: string,
+): Promise<number> => {
+  try {
+    await runCutVerify(phase, repo)
+    return 0
+  } catch (err: unknown) {
+    if (err instanceof ExitError) return err.code
+    throw err
+  }
 }
 
 // ---------------------------------------------------------------------------
-// mars cut verify -- no phase
+// mars cut verify -- no phase (subprocess: DB-free argument validation)
 // ---------------------------------------------------------------------------
 
 describe('mars cut verify — missing phase argument', () => {
@@ -213,22 +160,19 @@ describe('mars cut verify — unknown phase', () => {
 
 describe('mars cut verify drain — empty DB', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
+    db = await openSeededDb(repo)
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits 0 when no tasks exist', () => {
-    const r = runCli(['cut', 'verify', 'drain'], { MARS_REPO: repo })
-    expect(r.status).toBe(0)
-  })
-
-  it('prints a ✓ message on success', () => {
-    const r = runCli(['cut', 'verify', 'drain'], { MARS_REPO: repo })
-    expect(r.stdout).toContain('✓')
+  it('exits 0 and prints a ✓ message when no tasks exist', async () => {
+    expect(await runPhaseForExitCode('drain', repo)).toBe(0)
+    expect(stdoutLines.join('\n')).toContain('✓')
   })
 })
 
@@ -238,108 +182,78 @@ describe('mars cut verify drain — empty DB', () => {
 
 describe('mars cut verify drain — queued task', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
-    const c = openDb(repo)
-    await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status) VALUES (?, ?, ?)`,
-      args: ['mars-aabbccdd', 'Some pending work', 'queued'],
-    })
-    c.close()
+    db = await openSeededDb(repo)
+    await insertTask(db, 'mars-aabbccdd', 'Some pending work', 'queued')
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits non-zero when a queued task exists', () => {
-    const r = runCli(['cut', 'verify', 'drain'], { MARS_REPO: repo })
-    expect(r.status).not.toBe(0)
-  })
-
-  it('prints the in-flight task id to stderr', () => {
-    const r = runCli(['cut', 'verify', 'drain'], { MARS_REPO: repo })
-    expect(r.stderr).toContain('mars-aabbccdd')
-  })
-
-  it('stderr mentions the status', () => {
-    const r = runCli(['cut', 'verify', 'drain'], { MARS_REPO: repo })
-    expect(r.stderr).toContain('queued')
+  it('exits non-zero and prints the in-flight task id + status to stderr', async () => {
+    expect(await runPhaseForExitCode('drain', repo)).not.toBe(0)
+    const err = stderrLines.join('\n')
+    expect(err).toContain('mars-aabbccdd')
+    expect(err).toContain('queued')
   })
 })
 
 describe('mars cut verify drain — blocked task', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
-    const c = openDb(repo)
-    await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status) VALUES (?, ?, ?)`,
-      args: ['mars-11223344', 'Blocked work', 'blocked'],
-    })
-    c.close()
+    db = await openSeededDb(repo)
+    await insertTask(db, 'mars-11223344', 'Blocked work', 'blocked')
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits non-zero when a blocked task exists', () => {
-    const r = runCli(['cut', 'verify', 'drain'], { MARS_REPO: repo })
-    expect(r.status).not.toBe(0)
-  })
-
-  it('lists the blocked task in stderr', () => {
-    const r = runCli(['cut', 'verify', 'drain'], { MARS_REPO: repo })
-    expect(r.stderr).toContain('mars-11223344')
+  it('exits non-zero and lists the blocked task in stderr', async () => {
+    expect(await runPhaseForExitCode('drain', repo)).not.toBe(0)
+    expect(stderrLines.join('\n')).toContain('mars-11223344')
   })
 })
 
 describe('mars cut verify drain — running task', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
-    const c = openDb(repo)
-    await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status) VALUES (?, ?, ?)`,
-      args: ['mars-99887766', 'Active work', 'running'],
-    })
-    c.close()
+    db = await openSeededDb(repo)
+    await insertTask(db, 'mars-99887766', 'Active work', 'running')
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits non-zero when a running task exists', () => {
-    const r = runCli(['cut', 'verify', 'drain'], { MARS_REPO: repo })
-    expect(r.status).not.toBe(0)
+  it('exits non-zero when a running task exists', async () => {
+    expect(await runPhaseForExitCode('drain', repo)).not.toBe(0)
   })
 })
 
 describe('mars cut verify drain — only done/failed tasks', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
-    const c = openDb(repo)
-    await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status) VALUES (?, ?, ?)`,
-      args: ['mars-aaa00001', 'Finished work', 'done'],
-    })
-    await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status) VALUES (?, ?, ?)`,
-      args: ['mars-aaa00002', 'Failed work', 'failed'],
-    })
-    c.close()
+    db = await openSeededDb(repo)
+    await insertTask(db, 'mars-aaa00001', 'Finished work', 'done')
+    await insertTask(db, 'mars-aaa00002', 'Failed work', 'failed')
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits 0 when only done/failed tasks exist', () => {
-    const r = runCli(['cut', 'verify', 'drain'], { MARS_REPO: repo })
-    expect(r.status).toBe(0)
+  it('exits 0 when only done/failed tasks exist', async () => {
+    expect(await runPhaseForExitCode('drain', repo)).toBe(0)
   })
 })
 
@@ -349,22 +263,19 @@ describe('mars cut verify drain — only done/failed tasks', () => {
 
 describe('mars cut verify reset — empty DB', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
+    db = await openSeededDb(repo)
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits 0 when all tables are empty', () => {
-    const r = runCli(['cut', 'verify', 'reset'], { MARS_REPO: repo })
-    expect(r.status).toBe(0)
-  })
-
-  it('prints a ✓ message on success', () => {
-    const r = runCli(['cut', 'verify', 'reset'], { MARS_REPO: repo })
-    expect(r.stdout).toContain('✓')
+  it('exits 0 and prints a ✓ message when all tables are empty', async () => {
+    expect(await runPhaseForExitCode('reset', repo)).toBe(0)
+    expect(stdoutLines.join('\n')).toContain('✓')
   })
 })
 
@@ -374,55 +285,39 @@ describe('mars cut verify reset — empty DB', () => {
 
 describe('mars cut verify reset — tasks table non-empty', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
-    const c = openDb(repo)
-    await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status) VALUES (?, ?, ?)`,
-      args: ['mars-deadbeef', 'Leftover task', 'done'],
-    })
-    c.close()
+    db = await openSeededDb(repo)
+    await insertTask(db, 'mars-deadbeef', 'Leftover task', 'done')
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits non-zero when the tasks table has rows', () => {
-    const r = runCli(['cut', 'verify', 'reset'], { MARS_REPO: repo })
-    expect(r.status).not.toBe(0)
-  })
-
-  it('names the non-empty table in stderr', () => {
-    const r = runCli(['cut', 'verify', 'reset'], { MARS_REPO: repo })
-    expect(r.stderr).toContain('tasks')
+  it('exits non-zero and names the non-empty table in stderr', async () => {
+    expect(await runPhaseForExitCode('reset', repo)).not.toBe(0)
+    expect(stderrLines.join('\n')).toContain('tasks')
   })
 })
 
 describe('mars cut verify reset — proposals table non-empty', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
-    const c = openDb(repo)
-    await c.execute({
-      sql: `INSERT INTO proposals (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`,
-      args: ['prop-12345678', 'Old proposal', 0, 0],
-    })
-    c.close()
+    db = await openSeededDb(repo)
+    await insertProposal(db, 'prop-12345678', 'Old proposal')
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits non-zero when the proposals table has rows', () => {
-    const r = runCli(['cut', 'verify', 'reset'], { MARS_REPO: repo })
-    expect(r.status).not.toBe(0)
-  })
-
-  it('names proposals in the stderr output', () => {
-    const r = runCli(['cut', 'verify', 'reset'], { MARS_REPO: repo })
-    expect(r.stderr).toContain('proposals')
+  it('exits non-zero and names proposals in the stderr output', async () => {
+    expect(await runPhaseForExitCode('reset', repo)).not.toBe(0)
+    expect(stderrLines.join('\n')).toContain('proposals')
   })
 })
 
@@ -432,33 +327,23 @@ describe('mars cut verify reset — proposals table non-empty', () => {
 
 describe('mars cut verify recreate — no forbidden ids', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
+    db = await openSeededDb(repo)
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits 0 when there are no forbidden ids', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.status).toBe(0)
-  })
-
-  it('prints the carry-forward checklist to stdout', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.stdout).toContain('Carry-forward proposals:')
-  })
-
-  it('prints ✗ for proposals not yet re-entered', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.stdout).toContain('[✗]')
-  })
-
-  it('prints a ✓ success line at the end', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.stdout).toContain('✓')
-    expect(r.stdout).toContain('no forbidden ids')
+  it('exits 0, prints the carry-forward checklist and a ✓ success line', async () => {
+    expect(await runPhaseForExitCode('recreate', repo)).toBe(0)
+    const out = stdoutLines.join('\n')
+    expect(out).toContain('Carry-forward proposals:')
+    expect(out).toContain('[✗]')
+    expect(out).toContain('✓')
+    expect(out).toContain('no forbidden ids')
   })
 })
 
@@ -468,90 +353,72 @@ describe('mars cut verify recreate — no forbidden ids', () => {
 
 describe('mars cut verify recreate — forbidden id 04830c8e in tasks', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
-    const c = openDb(repo)
+    db = await openSeededDb(repo)
     // Seed a task whose id ends with the forbidden hex 04830c8e.
-    await c.execute({
-      sql: `INSERT INTO tasks (id, prompt, status) VALUES (?, ?, ?)`,
-      args: ['mars-04830c8e', 'Superseded centralise-id-generation PRD task', 'failed'],
-    })
-    c.close()
+    await insertTask(
+      db,
+      'mars-04830c8e',
+      'Superseded centralise-id-generation PRD task',
+      'failed',
+    )
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits non-zero when a task id contains the forbidden suffix 04830c8e', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.status).not.toBe(0)
-  })
-
-  it('reports the forbidden id in stderr', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.stderr).toContain('04830c8e')
+  it('exits non-zero and reports the forbidden id in stderr', async () => {
+    expect(await runPhaseForExitCode('recreate', repo)).not.toBe(0)
+    expect(stderrLines.join('\n')).toContain('04830c8e')
   })
 })
 
 describe('mars cut verify recreate — forbidden id 07201a16 in proposals', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
-    const c = openDb(repo)
-    // Seed a proposal whose id ends with the forbidden hex 07201a16.
-    await c.execute({
-      sql: `INSERT INTO proposals (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`,
-      args: [
-        '07201a16-fix-pre-existing-tests',
-        'Fix pre-existing failing tests',
-        0,
-        0,
-      ],
-    })
-    c.close()
+    db = await openSeededDb(repo)
+    await insertProposal(
+      db,
+      '07201a16-fix-pre-existing-tests',
+      'Fix pre-existing failing tests',
+    )
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits non-zero when a proposal id contains the forbidden suffix 07201a16', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.status).not.toBe(0)
-  })
-
-  it('names the forbidden proposal in stderr', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.stderr).toContain('07201a16')
+  it('exits non-zero and names the forbidden proposal in stderr', async () => {
+    expect(await runPhaseForExitCode('recreate', repo)).not.toBe(0)
+    expect(stderrLines.join('\n')).toContain('07201a16')
   })
 })
 
 describe('mars cut verify recreate — forbidden id 26471262 in proposals', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
-    const c = openDb(repo)
-    // Seed a proposal whose id ends with the forbidden hex 26471262.
-    await c.execute({
-      sql: `INSERT INTO proposals (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`,
-      args: ['26471262-typescript-errors', 'Pre-existing TypeScript errors', 0, 0],
-    })
-    c.close()
+    db = await openSeededDb(repo)
+    await insertProposal(
+      db,
+      '26471262-typescript-errors',
+      'Pre-existing TypeScript errors',
+    )
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits non-zero when a proposal id contains the forbidden suffix 26471262', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.status).not.toBe(0)
-  })
-
-  it('names the forbidden proposal in stderr', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.stderr).toContain('26471262')
+  it('exits non-zero and names the forbidden proposal in stderr', async () => {
+    expect(await runPhaseForExitCode('recreate', repo)).not.toBe(0)
+    expect(stderrLines.join('\n')).toContain('26471262')
   })
 })
 
@@ -561,40 +428,28 @@ describe('mars cut verify recreate — forbidden id 26471262 in proposals', () =
 
 describe('mars cut verify recreate — one carry-forward proposal re-entered', () => {
   let repo: string
+  let db: DbClient
   beforeAll(async () => {
     repo = makeRepo()
-    await initTables(repo)
-    const c = openDb(repo)
+    db = await openSeededDb(repo)
     // Seed the KPI drift proposal (5f10ed5f) as re-entered.
-    await c.execute({
-      sql: `INSERT INTO proposals (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`,
-      args: [
-        '5f10ed5f-kpi-drift-self-evolve',
-        'Opt-in self-evolve trigger: KPI drift raises a draft proposal, off by default',
-        0,
-        0,
-      ],
-    })
-    c.close()
+    await insertProposal(
+      db,
+      '5f10ed5f-kpi-drift-self-evolve',
+      'Opt-in self-evolve trigger: KPI drift raises a draft proposal, off by default',
+    )
   })
-  afterAll(() => {
+  afterAll(async () => {
+    await db.close()
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('exits 0 (no forbidden ids)', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.status).toBe(0)
-  })
-
-  it('marks the re-entered proposal with ✓ in the checklist', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
-    expect(r.stdout).toContain('[✓]')
-  })
-
-  it('still marks the other six proposals as ✗', () => {
-    const r = runCli(['cut', 'verify', 'recreate'], { MARS_REPO: repo })
+  it('exits 0 and marks the re-entered proposal with ✓ (others ✗)', async () => {
+    expect(await runPhaseForExitCode('recreate', repo)).toBe(0)
+    const out = stdoutLines.join('\n')
+    expect(out).toContain('[✓]')
     // Six proposals not yet re-entered — expect at least one ✗
-    expect(r.stdout).toContain('[✗]')
+    expect(out).toContain('[✗]')
   })
 })
 

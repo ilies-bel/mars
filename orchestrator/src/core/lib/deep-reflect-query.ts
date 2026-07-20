@@ -279,9 +279,10 @@ const fetchArcTaskRows = async (
   originId: string,
 ): Promise<ArcTaskRow[]> => {
   // Try the full query including origin_session_id (added in a later migration).
-  // If that column is absent (pre-migration DB), fall back to the column-free
-  // form so a missing column never surfaces as a raw SQLITE_ERROR — which would
-  // bypass the arc-existence check and expose an unformatted error to the user.
+  // If that column is absent (e.g. an injected legacy/test store), fall back to
+  // the column-free form so a missing column never surfaces as a raw database
+  // error — which would bypass the arc-existence check and expose an
+  // unformatted error to the user.
   let hasSessionIdColumn = true
   let r: Awaited<ReturnType<typeof store.query>>
   try {
@@ -344,7 +345,7 @@ const loadTaskTranscript = async (
     sql: `SELECT payload
             FROM trace_events
            WHERE kind = 'step_ended' AND task_id = ?
-             AND json_extract(payload, '$.verifyOutput') IS NOT NULL
+             AND payload::jsonb ->> 'verifyOutput' IS NOT NULL
            ORDER BY timestamp DESC
            LIMIT 1`,
     args: [taskId],
@@ -560,7 +561,7 @@ const loadForegroundSlice = async (
       sql: `SELECT timestamp
               FROM trace_events
              WHERE kind = 'cli-invocation'
-               AND json_extract(payload, '$.originSessionId') = ?
+               AND payload::jsonb ->> 'originSessionId' = ?
              ORDER BY timestamp DESC
              LIMIT 10`,
       args: [originSessionId],
@@ -913,8 +914,8 @@ const fetchArcAggregateRows = async (
   store: Awaited<ReturnType<typeof getDefaultTaskStore>>,
 ): Promise<ArcAggregateRow[]> => {
   // Usage signals live in trace_events step_ended payloads (small after the
-  // transcript migration). json_extract is now fast because payloads no longer
-  // embed multi-megabyte transcript strings.
+  // transcript migration). The jsonb extraction is fast because payloads no
+  // longer embed multi-megabyte transcript strings.
   // has_transcript uses EXISTS against the dedicated transcript tables — never
   // scans step_ended payloads — so the join over multi-MB blobs is eliminated.
   const r = await store.query(`
@@ -923,8 +924,8 @@ const fetchArcAggregateRows = async (
            t.status AS status,
            t.created_at AS created_at,
            t.updated_at AS updated_at,
-           COALESCE(CAST(SUM(json_extract(te.payload, '$.usageSignals.inputTokens')) AS INTEGER), 0) AS total_input,
-           COALESCE(CAST(SUM(json_extract(te.payload, '$.usageSignals.outputTokens')) AS INTEGER), 0) AS total_output,
+           COALESCE(CAST(SUM(CAST(te.payload::jsonb #>> '{usageSignals,inputTokens}' AS numeric)) AS bigint), 0) AS total_input,
+           COALESCE(CAST(SUM(CAST(te.payload::jsonb #>> '{usageSignals,outputTokens}' AS numeric)) AS bigint), 0) AS total_output,
            CASE WHEN EXISTS(SELECT 1 FROM task_durable_transcripts dt WHERE dt.task_id = t.id)
                   OR EXISTS(SELECT 1 FROM task_transcripts tt WHERE tt.task_id = t.id LIMIT 1)
                 THEN 1 ELSE 0 END AS has_transcript

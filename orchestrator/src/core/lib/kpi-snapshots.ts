@@ -271,7 +271,7 @@ export async function readKpiSeries(opts: {
             FROM kpi_snapshots
             ORDER BY taken_at DESC
             LIMIT ?
-          )
+          ) AS recent
           ORDER BY taken_at ASC`,
     args: [limit],
   })

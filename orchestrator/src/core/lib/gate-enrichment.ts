@@ -121,40 +121,23 @@ export interface EnrichmentRecord {
   retiredAt: string | null
 }
 
-const GATE_ENRICHMENT_DDL = `
-  CREATE TABLE IF NOT EXISTS gate_enrichment (
-    signature            TEXT PRIMARY KEY,
-    status               TEXT NOT NULL,
-    encodable_family     TEXT,
-    non_encodable_reason TEXT,
-    step_spec            TEXT,
-    origin_task_id       TEXT NOT NULL,
-    seen_count           INTEGER NOT NULL DEFAULT 1,
-    created_at           TEXT NOT NULL,
-    updated_at           TEXT NOT NULL,
-    approved_by          TEXT,
-    approved_at          TEXT,
-    retired_at           TEXT
-  )
-`
-
-let enrichmentSchemaEnsured = false
-
-/** Ensure the registry table exists. Idempotent. */
+/**
+ * The `gate_enrichment` registry table is owned by the canonical schema
+ * (pg-schema.ts `ensureSchema`, applied at daemon/init start). This function
+ * is retained as the historical call-site seam and is now a no-op.
+ */
 export const ensureGateEnrichmentSchema = async (
-  client: MonitorDb,
+  _client: MonitorDb,
 ): Promise<void> => {
-  if (enrichmentSchemaEnsured) return
-  await client.execute(GATE_ENRICHMENT_DDL)
-  enrichmentSchemaEnsured = true
+  // Schema is guaranteed by pg-schema.ts ensureSchema at startup.
 }
 
 /**
- * Reset the in-process "schema ensured" latch. Test-only — each test loads a
- * fresh per-test DB client, so the latch must not leak across them.
+ * Historical test hook for the removed in-process "schema ensured" latch.
+ * No-op since the canonical schema owns the table.
  */
 export const resetGateEnrichmentSchemaLatchForTests = (): void => {
-  enrichmentSchemaEnsured = false
+  // No latch remains; schema ownership moved to pg-schema.ts.
 }
 
 interface EnrichmentRow {
@@ -367,7 +350,7 @@ export const observeFailureSignature = async (
              step_spec, origin_task_id, seen_count, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
           ON CONFLICT(signature) DO UPDATE SET
-            seen_count = seen_count + 1,
+            seen_count = gate_enrichment.seen_count + 1,
             updated_at = excluded.updated_at`,
     args: [
       input.signature,

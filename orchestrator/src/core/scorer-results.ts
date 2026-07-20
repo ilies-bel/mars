@@ -14,15 +14,16 @@
  * A failed scoring run lands as an `error` row (score NULL, rationale =
  * failure message) and stops — level-triggered, no retry.
  *
- * Storage: `scorer_results` in `.mars/mars.db` via the same state-client seam
- * as `scorers` (ADR-0034). The UNIQUE(scorer_id, task_id) index makes result
- * recording idempotent per instance — a duplicate `task.completed` delivery
- * can never double-score.
+ * Storage: `scorer_results` in the embedded PostgreSQL database via the same
+ * state-client seam as `scorers` (ADR-0034). The UNIQUE(scorer_id, task_id)
+ * index makes result recording idempotent per instance — a duplicate
+ * `task.completed` delivery can never double-score.
  */
 
-import { type Client } from '@libsql/client'
 import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
+import type { DbClient } from './lib/db'
+import { ensureSchema } from './lib/pg-schema'
 import { resolveStateClient } from './store/state-client'
 
 /** Terminal status of one scoring run. */
@@ -103,56 +104,16 @@ export interface ScorerTrend {
   latest: number | null
 }
 
-const stateClient = (): Client => resolveStateClient()
+const stateClient = (): DbClient => resolveStateClient()
 
 let initialised = false
 
 export const initScorerResults = async (): Promise<void> => {
   if (initialised) return
-  const c = stateClient()
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS scorer_results (
-      id TEXT PRIMARY KEY,
-      scorer_id TEXT NOT NULL,
-      task_id TEXT NOT NULL,
-      workflow TEXT NOT NULL,
-      score REAL,
-      rationale TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'scored' CHECK(status IN ('scored','error')),
-      created_at INTEGER NOT NULL,
-      workflow_config_version_id TEXT
-    )
-  `)
-  // Migrate existing databases: add workflow_config_version_id if missing.
-  const cols = await c.execute(`PRAGMA table_info(scorer_results)`)
-  const colNames = new Set(
-    cols.rows.map((r) => (r as unknown as { name: string }).name),
-  )
-  if (!colNames.has('workflow_config_version_id')) {
-    await c.execute(
-      `ALTER TABLE scorer_results ADD COLUMN workflow_config_version_id TEXT`,
-    )
-  }
-  // Idempotency guard: one result per (Scorer, instance). recordScorerResult
-  // uses INSERT OR IGNORE against this index.
-  await c.execute(
-    `CREATE UNIQUE INDEX IF NOT EXISTS idx_scorer_results_scorer_task
-       ON scorer_results(scorer_id, task_id)`,
-  )
-  // Trend queries scan per workflow, newest first.
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_scorer_results_workflow
-       ON scorer_results(workflow, created_at)`,
-  )
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_scorer_results_task
-       ON scorer_results(task_id)`,
-  )
-  // Per-version rolling score queries: group by workflow config version.
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_scorer_results_workflow_config_version
-       ON scorer_results(workflow, workflow_config_version_id)`,
-  )
+  // DDL — including the UNIQUE(scorer_id, task_id) idempotency index — lives
+  // in core/lib/pg-schema.ts (migration 0002); this just guarantees the
+  // canonical schema exists before the first read/write.
+  await ensureSchema(stateClient())
   initialised = true
 }
 
@@ -207,10 +168,11 @@ export const recordScorerResult = async (
     workflowConfigVersionId: input.workflowConfigVersionId ?? null,
   })
   const r = await c.execute({
-    sql: `INSERT OR IGNORE INTO scorer_results
+    sql: `INSERT INTO scorer_results
             (id, scorer_id, task_id, workflow, score, rationale, status, created_at,
              workflow_config_version_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (scorer_id, task_id) DO NOTHING`,
     args: [
       candidate.id,
       candidate.scorerId,

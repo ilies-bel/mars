@@ -1,6 +1,5 @@
-import type { Client } from '@libsql/client'
+import type { DbClient } from '../lib/db.js'
 import {
-  initActionQueue,
   resolveAllRowsForTask,
   setActionQueueState,
   supersedeActionQueueItemsForOrigin,
@@ -43,11 +42,8 @@ const SCORER_ORIGIN_KINDS = ['scorer-suggested'] as const
  * Idempotent — safe to call on every daemon start. Returns counts for logging.
  */
 export async function reconcileTerminalTasks(
-  client: Client,
+  client: DbClient,
 ): Promise<{ rowsResolved: number }> {
-  // Ensure the table exists before querying it (idempotent).
-  await initActionQueue()
-
   // (a) Terminal tasks with at least one open action-queue row.
   const terminalRows = await client.execute(`
     SELECT DISTINCT t.id
@@ -136,8 +132,8 @@ export async function reconcileTerminalTasks(
     WHERE i.state = 'open'
       AND i.kind NOT IN (${proposalKindList}, ${scorerKindList})
       AND i.origin_task_id IS NULL
-      AND json_extract(i.payload, '$.originTaskId') IS NOT NULL
-      AND json_extract(i.payload, '$.originTaskId') NOT IN (SELECT id FROM tasks)
+      AND (i.payload::jsonb ->> 'originTaskId') IS NOT NULL
+      AND (i.payload::jsonb ->> 'originTaskId') NOT IN (SELECT id FROM tasks)
   `)
 
   for (const row of nullOriginOrphans.rows) {
@@ -160,7 +156,7 @@ export async function reconcileTerminalTasks(
   const nullOriginTerminal = await client.execute(`
     SELECT i.id
     FROM action_queue_items i
-    JOIN tasks t ON t.id = json_extract(i.payload, '$.originalTaskId')
+    JOIN tasks t ON t.id = (i.payload::jsonb ->> 'originalTaskId')
     WHERE i.state = 'open'
       AND i.kind NOT IN (${proposalKindList}, ${scorerKindList})
       AND i.origin_task_id IS NULL
@@ -191,9 +187,9 @@ export async function reconcileTerminalTasks(
   //     Rows already closed by legs (a) / (b) are excluded by the `state='open'`
   //     filter; the call is idempotent if a row was already closed.
   const strandedByPayload = await client.execute(`
-    SELECT DISTINCT json_extract(i.payload, '$.taskId') AS task_id, t.status
+    SELECT DISTINCT (i.payload::jsonb ->> 'taskId') AS task_id, t.status
     FROM action_queue_items i
-    JOIN tasks t ON t.id = json_extract(i.payload, '$.taskId')
+    JOIN tasks t ON t.id = (i.payload::jsonb ->> 'taskId')
     WHERE i.state = 'open'
       AND i.kind = 'failed'
       AND t.status IN ('done', 'dropped')

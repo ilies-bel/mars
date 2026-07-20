@@ -9,7 +9,7 @@ interface QueueModule {
   addBlockers: typeof import('./queue').addBlockers
   getTask: typeof import('./queue').getTask
   resolveQueueClient: typeof import('./queue').resolveQueueClient
-  migrateQueueSchema: typeof import('./queue').migrateQueueSchema
+  ensureQueueSchema: typeof import('./queue').ensureQueueSchema
 }
 
 interface ArcModule {
@@ -44,7 +44,7 @@ const loadModules = async (
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('./queue')) as unknown as QueueModule
-  await q.migrateQueueSchema()
+  await q.ensureQueueSchema()
   const proposals = (await import('./proposals')) as unknown as ProposalsModule
   await proposals.initProposals()
   const arc = (await import('./arc')) as unknown as ArcModule

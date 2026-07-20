@@ -324,18 +324,29 @@ const runScaffoldWorkflows = async (written: string[]): Promise<string[]> => {
 }
 
 /**
- * Materialise `.mars/mars.db` (tasks, proposals, actionQueue) so a
- * freshly scaffolded repo is usable without waiting for the first daemon
- * write to lazily create them. All three init paths are idempotent via
- * `CREATE TABLE IF NOT EXISTS`.
+ * Materialise the canonical Mars schema (tasks, proposals, actionQueue, …) in
+ * the per-repo database and fold in any legacy `.mars/mars.db` SQLite file.
+ * Idempotent (`ensureSchema` is IF-NOT-EXISTS DDL; the importer no-ops after
+ * its first successful run).
+ *
+ * Under the embedded backend the database only exists while the daemon runs
+ * (it provisions the PostgreSQL server and publishes `.mars/pg.dsn`). When the
+ * DSN is not published yet — the common `mars init` case on a fresh repo —
+ * skip with a note instead of failing: the daemon applies the same schema and
+ * import on its next start.
  */
 const runInitDatabases = async (written: string[]): Promise<string[]> => {
   const ctx = resolveContext()
-  await initDatabases()
-  const dbWrites = [
-    relative(ctx.repoRoot, ctx.queueDbPath),
-    relative(ctx.repoRoot, ctx.stateDbPath),
-  ]
+  const reachable =
+    process.env.MARS_DB_BACKEND === 'pglite' ||
+    existsSync(resolve(ctx.stateDir, 'pg.dsn'))
+  if (reachable) {
+    await initDatabases()
+  } else {
+    process.stdout.write(
+      '[mars init] database not provisioned yet (daemon not running) — schema will be applied on first daemon start\n',
+    )
+  }
 
   // Merge any root-level CLAUDE.md (written by scaffold) into the init
   // manifest so it is listed alongside the per-folder CLAUDE.md files that
@@ -343,8 +354,7 @@ const runInitDatabases = async (written: string[]): Promise<string[]> => {
   // written earlier in write-slim-init; here we only extend it with paths that
   // scaffold produced (i.e. those ending in 'CLAUDE.md' and not already
   // present in the manifest).
-  const allWritten = [...written, ...dbWrites]
-  const rootClaudePaths = allWritten.filter((p) => p.endsWith('CLAUDE.md'))
+  const rootClaudePaths = written.filter((p) => p.endsWith('CLAUDE.md'))
   if (rootClaudePaths.length > 0) {
     const existing = readInitManifest(ctx.stateDir)
     const existingSet = new Set(existing)
@@ -354,7 +364,7 @@ const runInitDatabases = async (written: string[]): Promise<string[]> => {
     }
   }
 
-  return allWritten
+  return written
 }
 
 /**
@@ -449,7 +459,7 @@ interface InitWorkflowOutput {
 // 'scaffold-workflows', 'init-databases', 'seed-recipes', 'activate-plugin')
 // are load-bearing trace-view labels. Disk side effects (per-folder + root
 // CLAUDE.md, the .mars/workflows/*.js scaffold, the init manifest, and the
-// recipe override seeds) and DB side effects (mars.db) are preserved
+// recipe override seeds) and DB side effects (schema + legacy import) are preserved
 // verbatim. Failures THROW; the engine records the step failed. 'activate-plugin'
 // is best-effort: it never throws regardless of outcome.
 export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({

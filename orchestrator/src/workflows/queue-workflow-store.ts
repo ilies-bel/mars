@@ -2,7 +2,6 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { resolve as resolvePath } from 'node:path'
-import type { Client } from '@libsql/client'
 import type {
   RunRecord,
   RunStatus,
@@ -11,62 +10,32 @@ import type {
   Workflow,
   WorkflowStore,
 } from '@mars/workflow'
+import type { DbClient } from '../core/lib/db'
 import { getCompositionRootClient } from '../core/store/task-store'
 import { getRepoRoot } from '../core/context'
 import { readWorkflowProvenance } from './agent-draft'
 
 /**
- * `WorkflowStore` adapter over the orchestrator's consolidated `.mars/mars.db`.
+ * `WorkflowStore` adapter over the orchestrator's Mars database (the
+ * daemon-provisioned embedded PostgreSQL instance; PGlite in tests).
  *
  * The @mars/workflow engine persists run + step lifecycle into two tables it
  * defines — `workflow_runs` and `workflow_step_runs`, keyed by
  * `(run_id, step_name)`. The reference `SqliteStore` (packages/workflow's
  * store-sqlite.ts) backs those tables with `node:sqlite`; here we mirror its
- * column/SQL shape exactly but route through the orchestrator's existing
- * libsql `Client` (same connection `queue.ts` uses), so the engine's
- * checkpoint-resume state lives alongside the task queue in one file. (The old
- * `queue.db`/`state.db` split was merged into `mars.db`; any leftover files are
- * stale post-merge artifacts.)
+ * column/SQL shape but route through the orchestrator's shared `DbClient`
+ * (same pool `queue.ts` uses), so the engine's checkpoint-resume state lives
+ * alongside the task queue in one database. The DDL lives in the canonical
+ * schema module (`core/lib/pg-schema.ts`), applied by `ensureSchema` at
+ * startup — this adapter runs no DDL of its own.
  *
- * Resume is the whole point of co-locating in `.mars/mars.db`: the daemon
+ * Resume is the whole point of co-locating with the queue: the daemon
  * dispatches `runWorkflow(..., { runId: task.id })`, so a `mars continue`
  * re-dispatch of the same task id finds the prior run's `'completed'` step
  * records here and short-circuits them.
  */
 
-// `CREATE TABLE IF NOT EXISTS` so the schema is materialised on first use and
-// is a no-op thereafter. Mirrors store-sqlite.ts's DDL verbatim except for the
-// libsql-friendly statement split (libsql `execute` takes one statement).
-const RUNS_DDL = `
-  CREATE TABLE IF NOT EXISTS workflow_runs (
-    id          TEXT PRIMARY KEY,
-    workflow_id TEXT    NOT NULL,
-    input_json  TEXT    NOT NULL,
-    status      TEXT    NOT NULL,
-    created_at  INTEGER NOT NULL,
-    updated_at  INTEGER NOT NULL
-  )
-`
-
-const STEP_RUNS_DDL = `
-  CREATE TABLE IF NOT EXISTS workflow_step_runs (
-    run_id         TEXT    NOT NULL,
-    step_name      TEXT    NOT NULL,
-    status         TEXT    NOT NULL,
-    sha            TEXT,
-    started_at     INTEGER NOT NULL,
-    finished_at    INTEGER,
-    attempt        INTEGER NOT NULL,
-    summary        TEXT,
-    error_summary  TEXT,
-    transcript_key TEXT,
-    result_json    TEXT,
-    seq            INTEGER NOT NULL,
-    PRIMARY KEY (run_id, step_name)
-  )
-`
-
-// Row shapes as libsql returns them (snake_case columns).
+// Row shapes as the db seam returns them (snake_case columns).
 interface RunRow {
   id: string
   workflow_id: string
@@ -96,8 +65,8 @@ const rowToRun = (row: RunRow): RunRecord => ({
   workflowId: row.workflow_id,
   inputJson: row.input_json,
   status: row.status as RunStatus,
-  // libsql can hand back INTEGER columns as bigint depending on the value;
-  // normalise to number so consumers compare against `Date.now()` cleanly.
+  // The db seam already parses int8 to number; Number() is a cheap safety
+  // net so consumers compare against `Date.now()` cleanly regardless.
   createdAt: Number(row.created_at),
   updatedAt: Number(row.updated_at),
 })
@@ -117,35 +86,27 @@ const rowToStep = (row: StepRow): StepRecord => ({
 })
 
 /**
- * Build a `WorkflowStore` over an existing libsql `Client`. Tables are created
- * lazily on first method call (a single guarded `CREATE TABLE IF NOT EXISTS`
- * pass) so construction stays synchronous and cheap.
+ * Build a `WorkflowStore` over an existing `DbClient`. The backing tables are
+ * part of the canonical schema (`ensureSchema` in `core/lib/pg-schema.ts`),
+ * so construction is synchronous and runs no DDL.
  *
- * @param client Defaults to the composition-root libsql client
+ * @param client Defaults to the composition-root client
  *   (`getCompositionRootClient()`), so the engine's run/step state lands in
- *   the same `.mars/mars.db`. Tests inject an in-memory client.
+ *   the same Mars database as the task queue. Tests inject their own client.
  */
 export const createQueueWorkflowStore = (
-  client: Client = getCompositionRootClient(),
+  client: DbClient = getCompositionRootClient(),
 ): WorkflowStore => {
-  let initialised = false
-  const ensureSchema = async (): Promise<void> => {
-    if (initialised) return
-    await client.execute(RUNS_DDL)
-    await client.execute(STEP_RUNS_DDL)
-    initialised = true
-  }
-
   return {
     async createRun(run: RunRecord): Promise<void> {
-      await ensureSchema()
-      // Idempotent on `id` (INSERT OR IGNORE): a resumed run re-enters
+      // Idempotent on `id` (ON CONFLICT DO NOTHING): a resumed run re-enters
       // runWorkflow, which only inserts when getRun returns undefined, but the
-      // OR IGNORE keeps a racing double-create harmless.
+      // conflict clause keeps a racing double-create harmless.
       await client.execute({
-        sql: `INSERT OR IGNORE INTO workflow_runs
+        sql: `INSERT INTO workflow_runs
                 (id, workflow_id, input_json, status, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?)`,
+              VALUES (?, ?, ?, ?, ?, ?)
+              ON CONFLICT (id) DO NOTHING`,
         args: [
           run.id,
           run.workflowId,
@@ -158,7 +119,6 @@ export const createQueueWorkflowStore = (
     },
 
     async getRun(runId: string): Promise<RunRecord | undefined> {
-      await ensureSchema()
       const r = await client.execute({
         sql: `SELECT * FROM workflow_runs WHERE id = ?`,
         args: [runId],
@@ -172,7 +132,6 @@ export const createQueueWorkflowStore = (
       status: RunStatus,
       updatedAt: number,
     ): Promise<void> {
-      await ensureSchema()
       await client.execute({
         sql: `UPDATE workflow_runs SET status = ?, updated_at = ? WHERE id = ?`,
         args: [status, updatedAt, runId],
@@ -180,7 +139,6 @@ export const createQueueWorkflowStore = (
     },
 
     async getStep(runId: string, name: string): Promise<StepRecord | undefined> {
-      await ensureSchema()
       const r = await client.execute({
         sql: `SELECT * FROM workflow_step_runs WHERE run_id = ? AND step_name = ?`,
         args: [runId, name],
@@ -190,7 +148,6 @@ export const createQueueWorkflowStore = (
     },
 
     async listSteps(runId: string): Promise<StepRecord[]> {
-      await ensureSchema()
       const r = await client.execute({
         sql: `SELECT * FROM workflow_step_runs WHERE run_id = ? ORDER BY seq ASC`,
         args: [runId],
@@ -199,7 +156,6 @@ export const createQueueWorkflowStore = (
     },
 
     async deleteRun(runId: string): Promise<void> {
-      await ensureSchema()
       await client.batch(
         [
           {
@@ -216,7 +172,6 @@ export const createQueueWorkflowStore = (
     },
 
     async putStep(record: StepRecord): Promise<void> {
-      await ensureSchema()
       // Preserve first-seen ordering: keep the existing seq on update,
       // otherwise append after the current max for this run. Mirrors
       // store-sqlite.ts's seq bookkeeping so listSteps renders the trace in

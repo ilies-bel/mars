@@ -34,8 +34,9 @@ export interface FixRecipeContext {
    * Prompt of the original (source) task this recovery is unblocking.
    * Injected by `handleTaskFailureWithFixTask` so recipes can inline it
    * verbatim — keeps the recovery agent from burning its turn budget on
-   * `.mars/mars.db` exploration before making the edit. Defaults to ''
-   * only when the source task genuinely has no prompt recorded.
+   * Mars-DB exploration (psql against the daemon's published DSN) before
+   * making the edit. Defaults to '' only when the source task genuinely has
+   * no prompt recorded.
    */
   originalPrompt: string
 }
@@ -178,7 +179,7 @@ const noCommitsAheadRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -226,7 +227,7 @@ const noCommitsAheadRecipe: FixRecipe = {
       ` 2. Re-run \`${countCmd}\` immediately after the placeholder commit. It MUST now print a non-zero integer. If it still prints \`0\`, the placeholder did not land on your branch — fix that before anything else.`,
       '',
       ...sourcePromptSection,
-      ` 3. Read the **Original task prompt** above. It is already inlined — do NOT \`grep\` for it, do NOT open \`.mars/mars.db\`.`,
+      ` 3. Read the **Original task prompt** above. It is already inlined — do NOT \`grep\` for it, do NOT re-query the Mars DB via \`psql "$(cat .mars/pg.dsn)"\`.`,
       ` 4. Identify the smallest viable edit that satisfies the prompt's acceptance criteria. If the prompt names a chokepoint file/symbol/line, edit THAT file and only that file. If you're choosing between two edits, pick the smaller one.`,
       ` 5. Apply that edit IN YOUR CURRENT WORKTREE. A stub plus a TODO test is acceptable — a parked, partly-correct commit is strictly better than no commit at all.`,
       ` 6. Commit your real work: either amend the placeholder commit (\`git add -A && git commit --amend -m "recover: <one-line summary>"\`) or add a follow-up commit (\`git add -A && git commit -m "recover: <one-line summary>"\`). Do this BEFORE running tests, BEFORE refactoring, BEFORE refining.`,
@@ -261,7 +262,7 @@ const vcsAbortedNotFastForwardRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -320,7 +321,7 @@ const typecheckPropertyNotExistRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -390,7 +391,7 @@ const typecheckMissingExportRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -451,7 +452,7 @@ const typecheckArgTypeMismatchRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -537,7 +538,7 @@ const testAssertionErrorRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -608,7 +609,7 @@ const typecheckExcessPropertyRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -674,7 +675,7 @@ const typecheckCannotFindNameRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -739,7 +740,7 @@ const typecheckTypeMismatchRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -819,123 +820,6 @@ const typecheckTypeMismatchRecipe: FixRecipe = {
   },
 }
 
-const testLibsqlNoSuchTableRecipe: FixRecipe = {
-  signature: 'verify:test/test-libsql-no-such-table',
-  title: () =>
-    `Fix libsql concurrent-transaction test failure (no such table — switch to file-based DB)`,
-  buildPrompt: (ctx) => {
-    const integration = ctx.integrationBranch ?? 'main'
-    const countCmd = `git rev-list --count ${integration}..HEAD`
-    const sanitizedBranch = ctx.targetBranch.replace(/[^a-zA-Z0-9-]/g, '-')
-    const patchFile = `/tmp/recover-${sanitizedBranch}.patch`
-    const failureOutput =
-      ctx.statusOutput.length > 0
-        ? ctx.statusOutput
-        : '(no test output captured)'
-    const sourcePromptSection =
-      ctx.originalPrompt.trim().length > 0
-        ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
-            '',
-            ctx.originalPrompt.trim(),
-            '',
-          ]
-        : []
-    return [
-      `The previous attempt on branch ${ctx.targetBranch} failed the verify:test step with a "no such table" SQLite error. The root cause is a known incompatibility between \`@libsql/client\`'s in-memory URL (\`':memory:'\`) and concurrent write transactions.`,
-      '',
-      `## Root cause`,
-      '',
-      `When \`client.transaction('write')\` is called on a libsql client backed by \`:memory:\`, the implementation detaches the current connection (\`this.#db = null\`) and lazily creates a NEW empty in-memory SQLite database the next time a connection is needed. Two concurrent calls to \`client.transaction('write')\` therefore each get a different in-memory database — the second one has no schema (no tables), producing "no such table: <name>" even though \`beforeEach\` correctly created the table on the first connection.`,
-      '',
-      `## Fix`,
-      '',
-      `Replace the in-memory URL with a temp file-based URL so that all connections (direct \`execute\` calls AND transaction connections) share the same on-disk SQLite database. A temp directory is created per test, cleaned up in \`afterEach\`, and behaves identically to an in-memory database from a test-isolation perspective.`,
-      '',
-      `Pattern to change in the failing test file:`,
-      '',
-      '```typescript',
-      `// BEFORE (broken for concurrent transactions)`,
-      `const client = createClient({ url: ':memory:' })`,
-      '',
-      `// AFTER — use a temp file so all connections share the same database`,
-      `import { mkdtempSync, rmSync } from 'node:fs'`,
-      `import { tmpdir } from 'node:os'`,
-      `import { join } from 'node:path'`,
-      '',
-      `const dir = mkdtempSync(join(tmpdir(), 'test-'))`,
-      `const dbPath = join(dir, 'events.db')`,
-      `const client = createClient({ url: \`file:\${dbPath}\` })`,
-      '```',
-      '',
-      `Also update the \`afterEach\` / cleanup to remove the temp directory:`,
-      '',
-      '```typescript',
-      `afterEach(() => {`,
-      `  client.close()`,
-      `  rmSync(dir, { recursive: true, force: true })`,
-      `})`,
-      '```',
-      '',
-      `You are running in a FRESH recovery worktree on a FRESH branch (not ${ctx.targetBranch}). Your job is to leave a commit HERE — in your own cwd, on your own branch. Do NOT \`cd\` into ${ctx.targetPath} and do NOT edit files there: that is the failing tree, inspect it read-only only.`,
-      '',
-      ...renderReproSection(ctx.reproCommand),
-      `STEP 1 — sanity-check first. From your current working directory, run \`${countCmd}\` to count commits on your recovery branch not yet on ${integration}. The output is a plain integer.`,
-      ` - If it prints a non-zero integer, your recovery branch already has commits: this is a false positive — do NOT modify files, exit successfully.`,
-      ` - If it prints \`0\`, your branch is genuinely empty: proceed to STEP 2.`,
-      '',
-      `Do not use \`git log\` or any other command to make this decision — only the integer from \`rev-list --count\` is authoritative.`,
-      '',
-      `STEP 2 — Lift the failing worktree's diff into YOUR recovery worktree. Only enter this step when \`${countCmd}\` printed \`0\`.`,
-      '',
-      `Your recovery worktree is on a FRESH branch based on current ${integration}. Before lifting the diff, confirm: \`git merge-base --is-ancestor ${integration} HEAD\` must exit 0. If it exits non-zero, rebase first: \`git rebase ${integration}\`.`,
-      '',
-      `Inspect what the previous agent did (read-only against the failing worktree). Use the MERGE-BASE to capture only this task's own commits — not stale baseline content that would silently revert newer ${integration} commits:`,
-      '',
-      '```',
-      `BASE=$(git -C ${ctx.targetPath} merge-base ${integration} HEAD)`,
-      `git -C ${ctx.targetPath} diff $BASE..HEAD --stat`,
-      `git -C ${ctx.targetPath} diff $BASE..HEAD`,
-      '```',
-      '',
-      ` 1. Compute the merge-base: \`BASE=$(git -C ${ctx.targetPath} merge-base ${integration} HEAD)\``,
-      ` 2. Capture only the task's own changes: \`git -C ${ctx.targetPath} diff $BASE..HEAD > ${patchFile}\``,
-      ` 3. Apply: \`git apply --3way ${patchFile}\` (resolve any \`.rej\` files by hand if needed).`,
-      ` 4. **Guard before committing**: run \`git diff ${integration}..HEAD --stat\` in YOUR recovery worktree. The stat must list ONLY files this task legitimately changed. If the diff removes or reverts files that appeared on ${integration} after this task's branch diverged — files the task never touched — **STOP: do not commit. This is a stale-baseline lift.** File a \`--blocked-by\` follow-up task or \`mars proposal add\` describing the spurious reversions, then exit.`,
-      ` 5. **Commit immediately**: \`git add -A && git commit -m "recover: lift diff from ${ctx.targetBranch}"\`. Do this BEFORE running tests or fixing anything.`,
-      ` 6. Re-run \`${countCmd}\`. It MUST now print a non-zero integer. If it still prints \`0\`, fix that before anything else.`,
-      '',
-      `STEP 3 — Apply the fix. Find every test file in the lifted diff that opens a libsql client with \`url: ':memory:'\` and replace each with a temp file URL as shown in the ## Fix section above. The fix is typically a one-file change to the test helper or \`beforeEach\` setup. Also add \`rmSync(dir, { recursive: true, force: true })\` to the \`afterEach\` cleanup.`,
-      '',
-      `STEP 4 — Run the failing test(s) to confirm they now pass:`,
-      '',
-      '```',
-      `cd orchestrator && npm test`,
-      '```',
-      '',
-      `STEP 5 — Commit the fix: \`git add -A && git commit -m "fix: use temp file-based DB in tests to fix concurrent libsql transaction failures"\``,
-      '',
-      `## Important constraints`,
-      ` - The in-memory URL (\`:memory:\`) must be replaced with a file URL — do NOT add WAL PRAGMA calls or other workarounds.`,
-      ` - Make sure the temp directory is removed in \`afterEach\` / \`after\` to avoid leaving garbage in \`/tmp\`.`,
-      ` - Do NOT change production code (e.g. \`publisher.ts\` or any non-test file) — the bug is in the test setup only.`,
-      ` - If the diff is empty or the root cause is not an in-memory libsql client, raise a high-priority actionQueue item via \`mars actionQueue raise --from -\` explaining what you found, then exit.`,
-      '',
-      ...sourcePromptSection,
-      `Failing task branch (for context only — do not check it out): ${ctx.targetBranch}`,
-      `Failing task worktree (read-only — \`git -C ${ctx.targetPath} ...\` for inspection only, never edit there): ${ctx.targetPath}`,
-      `Integration branch: ${integration}`,
-      '',
-      'Captured test failure output (use this to identify the exact test file):',
-      '```',
-      failureOutput,
-      '```',
-      '',
-      `Save your work. The orchestrator does not commit on your behalf.`,
-    ].join('\n')
-  },
-}
-
 const testNoSuiteFoundRecipe: FixRecipe = {
   signature: 'verify:test/test-no-suite-found',
   title: (ctx) =>
@@ -952,7 +836,7 @@ const testNoSuiteFoundRecipe: FixRecipe = {
     const sourcePromptSection =
       ctx.originalPrompt.trim().length > 0
         ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
             '',
             ctx.originalPrompt.trim(),
             '',
@@ -1023,124 +907,6 @@ const testNoSuiteFoundRecipe: FixRecipe = {
       `Integration branch: ${integration}`,
       '',
       'Captured test failure output (use the "No test suite found in file <path>" line to identify the empty file):',
-      '```',
-      failureOutput,
-      '```',
-      '',
-      `Save your work. The orchestrator does not commit on your behalf.`,
-    ].join('\n')
-  },
-}
-
-const testLibsqlNotAnErrorRecipe: FixRecipe = {
-  signature: 'verify:test/test-libsql-not-an-error',
-  title: (ctx) =>
-    `Fix migration runner passing comment-only SQL to libsql (SQLITE_UNKNOWN_0: not an error) on ${ctx.targetBranch}`,
-  buildPrompt: (ctx) => {
-    const integration = ctx.integrationBranch ?? 'main'
-    const countCmd = `git rev-list --count ${integration}..HEAD`
-    const sanitizedBranch = ctx.targetBranch.replace(/[^a-zA-Z0-9-]/g, '-')
-    const patchFile = `/tmp/recover-${sanitizedBranch}.patch`
-    const failureOutput =
-      ctx.statusOutput.length > 0
-        ? ctx.statusOutput
-        : '(no test output captured)'
-    const sourcePromptSection =
-      ctx.originalPrompt.trim().length > 0
-        ? [
-            `## Original task prompt (inlined — do not re-fetch from .mars/mars.db)`,
-            '',
-            ctx.originalPrompt.trim(),
-            '',
-          ]
-        : []
-    return [
-      `The previous attempt on branch ${ctx.targetBranch} failed the verify:test step with \`LibsqlError: SQLITE_UNKNOWN_0: not an error\`. The root cause is that the Drizzle migration runner in \`src/db/migrate.ts\` splits SQL migration files on \`'--> statement-breakpoint'\` but does NOT filter the leading comment block that precedes the first breakpoint. That comment fragment is passed as a SQL "statement" to \`@libsql/client\`'s \`execute()\`. SQLite returns SQLITE_OK (code 0) for a comment-only statement — no real statement is compiled — and libsql maps this unexpected SQLITE_OK into \`LibsqlError: SQLITE_UNKNOWN_0: not an error\`.`,
-      '',
-      `## Root cause`,
-      '',
-      `In \`runMigration\` (src/db/migrate.ts), the statement-splitting logic is:`,
-      '',
-      '```typescript',
-      `const statements = sql`,
-      `  .split('--> statement-breakpoint')`,
-      `  .map((s) => s.trim())`,
-      `  .filter((s) => s.length > 0)`,
-      '```',
-      '',
-      `Migration files like \`0001_baseline.sql\` start with a multi-line comment block before the first \`--> statement-breakpoint\` marker. After splitting, the first array element is that comment block — it is non-empty after \`.trim()\`, so the \`.filter(s => s.length > 0)\` guard does NOT remove it. Passing a comment-only string to \`c.execute(stmt)\` causes \`@libsql/client\` to throw \`SQLITE_UNKNOWN_0: not an error\`.`,
-      '',
-      `## Fix`,
-      '',
-      `Add a guard to \`runMigration\` in \`src/db/migrate.ts\` that skips any statement fragment whose every non-empty line starts with \`--\`:`,
-      '',
-      '```typescript',
-      `const statements = sql`,
-      `  .split('--> statement-breakpoint')`,
-      `  .map((s) => s.trim())`,
-      `  .filter((s) => s.length > 0)`,
-      `  .filter(`,
-      `    (s) =>`,
-      `      !s`,
-      `        .split('\\n')`,
-      `        .every((line) => line.trim() === '' || line.trim().startsWith('--')),`,
-      `  )`,
-      '```',
-      '',
-      `This is a one-line change to the filter chain in \`runMigration\` — do NOT modify the SQL migration files themselves or any test files.`,
-      '',
-      `You are running in a FRESH recovery worktree on a FRESH branch (not ${ctx.targetBranch}). Your job is to leave a commit HERE — in your own cwd, on your own branch. Do NOT \`cd\` into ${ctx.targetPath} and do NOT edit files there: that is the failing tree, inspect it read-only only.`,
-      '',
-      ...renderReproSection(ctx.reproCommand),
-      `STEP 1 — sanity-check first. From your current working directory, run \`${countCmd}\` to count commits on your recovery branch not yet on ${integration}. The output is a plain integer.`,
-      ` - If it prints a non-zero integer, your recovery branch already has commits: this is a false positive — do NOT modify files, exit successfully.`,
-      ` - If it prints \`0\`, your branch is genuinely empty: proceed to STEP 2.`,
-      '',
-      `Do not use \`git log\` or any other command to make this decision — only the integer from \`rev-list --count\` is authoritative.`,
-      '',
-      `STEP 2 — Lift the failing worktree's diff into YOUR recovery worktree. Only enter this step when \`${countCmd}\` printed \`0\`.`,
-      '',
-      `Your recovery worktree is on a FRESH branch based on current ${integration}. Before lifting the diff, confirm: \`git merge-base --is-ancestor ${integration} HEAD\` must exit 0. If it exits non-zero, rebase first: \`git rebase ${integration}\`.`,
-      '',
-      `Inspect what the previous agent did (read-only against the failing worktree). Use the MERGE-BASE to capture only this task's own commits — not stale baseline content that would silently revert newer ${integration} commits:`,
-      '',
-      '```',
-      `BASE=$(git -C ${ctx.targetPath} merge-base ${integration} HEAD)`,
-      `git -C ${ctx.targetPath} diff $BASE..HEAD --stat`,
-      `git -C ${ctx.targetPath} diff $BASE..HEAD`,
-      '```',
-      '',
-      ` 1. Compute the merge-base: \`BASE=$(git -C ${ctx.targetPath} merge-base ${integration} HEAD)\``,
-      ` 2. Capture only the task's own changes: \`git -C ${ctx.targetPath} diff $BASE..HEAD > ${patchFile}\``,
-      ` 3. Apply: \`git apply --3way ${patchFile}\` (resolve any \`.rej\` files by hand if needed).`,
-      ` 4. **Guard before committing**: run \`git diff ${integration}..HEAD --stat\` in YOUR recovery worktree. The stat must list ONLY files this task legitimately changed. If the diff removes or reverts files that appeared on ${integration} after this task's branch diverged — files the task never touched — **STOP: do not commit. This is a stale-baseline lift.** File a \`--blocked-by\` follow-up task or \`mars proposal add\` describing the spurious reversions, then exit.`,
-      ` 5. **Commit immediately**: \`git add -A && git commit -m "recover: lift diff from ${ctx.targetBranch}"\`. Do this BEFORE running tests or fixing anything.`,
-      ` 6. Re-run \`${countCmd}\`. It MUST now print a non-zero integer. If it still prints \`0\`, fix that before anything else.`,
-      '',
-      `STEP 3 — Apply the fix. Open \`orchestrator/src/db/migrate.ts\` in YOUR worktree and find the \`runMigration\` function. Locate the \`statements\` array construction (the \`.split('--> statement-breakpoint')\` chain) and add the comment-only filter as shown in the ## Fix section above.`,
-      '',
-      `STEP 4 — Run the full test suite to confirm the error is gone:`,
-      '',
-      '```',
-      `cd orchestrator && npm test`,
-      '```',
-      '',
-      ` - The \`SQLITE_UNKNOWN_0: not an error\` errors must no longer appear.`,
-      ` - The migration tests must pass (search for "migrates a legacy task_blockers row" in the output).`,
-      '',
-      `STEP 5 — Commit the fix: \`git add -A && git commit -m "fix: skip comment-only SQL fragments in runMigration to avoid libsql SQLITE_UNKNOWN_0 error"\``,
-      '',
-      `## Important constraints`,
-      ` - Fix \`src/db/migrate.ts\` only — do NOT modify test files or SQL migration files.`,
-      ` - Do NOT remove the comment blocks from the SQL files — filter them in the runner instead.`,
-      ` - If the diff from the failing worktree is empty or the root cause appears different from what is described here, raise a high-priority actionQueue item via \`mars actionQueue raise --from -\` explaining what you found, then exit.`,
-      '',
-      ...sourcePromptSection,
-      `Failing task branch (for context only — do not check it out): ${ctx.targetBranch}`,
-      `Failing task worktree (read-only — \`git -C ${ctx.targetPath} ...\` for inspection only, never edit there): ${ctx.targetPath}`,
-      `Integration branch: ${integration}`,
-      '',
-      'Captured test failure output:',
       '```',
       failureOutput,
       '```',
@@ -1445,9 +1211,7 @@ const recipeList: readonly FixRecipe[] = [
   typecheckCannotFindNameRecipe,
   typecheckTypeMismatchRecipe,
   testAssertionErrorRecipe,
-  testLibsqlNoSuchTableRecipe,
   testNoSuiteFoundRecipe,
-  testLibsqlNotAnErrorRecipe,
 ]
 
 /**

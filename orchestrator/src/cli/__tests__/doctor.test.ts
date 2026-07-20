@@ -34,7 +34,7 @@ const loadStoreAndCtx = async (): Promise<{ store: DomainTaskStore; ctx: Orchest
   vi.resetModules()
   process.env.MARS_REPO = repo
   const queueModule = await import('../../core/queue')
-  await queueModule.migrateQueueSchema()
+  await queueModule.ensureQueueSchema()
   const storeModule = await import('../../core/store/task-store')
   const contextModule = await import('../../core/context')
   return {
@@ -76,7 +76,7 @@ const passingProbes = (overrides?: Partial<DoctorProbes>): DoctorProbes => ({
 
 describe('runDoctorChecks — all passing', () => {
   it('returns all PASS/WARN results and no FAILs when probes are healthy', async () => {
-    const results = await runDoctorChecks(passingProbes(), '/some/mars.db')
+    const results = await runDoctorChecks(passingProbes(), '/some/.mars/pg.dsn')
     expect(results.every((r) => r.status !== 'FAIL')).toBe(true)
   })
 })
@@ -232,25 +232,25 @@ describe('runDoctorChecks — daemon', () => {
   })
 })
 
-describe('runDoctorChecks — mars.db', () => {
-  it('WARN when dbPath is provided but file does not exist', async () => {
+describe('runDoctorChecks — database', () => {
+  it('WARN when pgDsnPath is provided but the DSN file does not exist', async () => {
     const probes = passingProbes({ fileReadable: () => false })
-    const results = await runDoctorChecks(probes, '/some/mars.db')
-    const check = results.find((r) => r.label === 'mars.db')
+    const results = await runDoctorChecks(probes, '/some/.mars/pg.dsn')
+    const check = results.find((r) => r.label === 'database')
     expect(check?.status).toBe('WARN')
-    expect(check?.message).toContain('mars init')
+    expect(check?.message).toContain('mars daemon start')
   })
 
-  it('PASS when dbPath is provided and file exists', async () => {
+  it('PASS when pgDsnPath is provided and the DSN file exists', async () => {
     const probes = passingProbes({ fileReadable: () => true })
-    const results = await runDoctorChecks(probes, '/some/mars.db')
-    const check = results.find((r) => r.label === 'mars.db')
+    const results = await runDoctorChecks(probes, '/some/.mars/pg.dsn')
+    const check = results.find((r) => r.label === 'database')
     expect(check?.status).toBe('PASS')
   })
 
-  it('skips mars.db check when dbPath is null', async () => {
+  it('skips the database check when pgDsnPath is null', async () => {
     const results = await runDoctorChecks(passingProbes(), null)
-    expect(results.find((r) => r.label === 'mars.db')).toBeUndefined()
+    expect(results.find((r) => r.label === 'database')).toBeUndefined()
   })
 })
 

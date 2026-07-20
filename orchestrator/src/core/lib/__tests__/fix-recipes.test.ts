@@ -411,108 +411,6 @@ describe('fix-recipes', () => {
     })
   })
 
-  describe('verify:test/test-libsql-no-such-table recipe', () => {
-    const ctx = {
-      targetPath: '/tmp/worktrees/task-mars-9a654a2e',
-      statusOutput: [
-        ' × src/bus/__tests__/publisher.test.ts > publishWithRetry > two concurrent publishWithRetry calls both commit',
-        'LibsqlError: SQLITE_ERROR: no such table: events',
-        'Caused by: SqliteError: no such table: events',
-      ].join('\n'),
-      targetBranch: 'task/mars-9a654a2e',
-      integrationBranch: 'main',
-      originalPrompt: '',
-    }
-
-    it('produces a stable title', () => {
-      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
-      expect(recipe.title(ctx)).toBe(
-        'Fix libsql concurrent-transaction test failure (no such table — switch to file-based DB)',
-      )
-    })
-
-    it('embeds the failing path, branch, integration branch, and captured failure output', () => {
-      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toContain(ctx.targetPath)
-      expect(prompt).toContain(ctx.targetBranch)
-      expect(prompt).toContain(ctx.integrationBranch)
-      expect(prompt).toContain('no such table: events')
-      expect(prompt).toContain('Save your work')
-    })
-
-    it('explains the root cause: libsql detaches the connection on each transaction call', () => {
-      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toMatch(/this\.#db = null/i)
-      expect(prompt).toMatch(/in-memory/i)
-      expect(prompt).toMatch(/:memory:/i)
-    })
-
-    it('instructs the agent to replace :memory: with a temp file URL', () => {
-      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toContain(`createClient({ url: ':memory:' })`)
-      expect(prompt).toContain('file:${dbPath}')
-      expect(prompt).toContain('mkdtempSync')
-      expect(prompt).toContain('rmSync')
-    })
-
-    it('instructs the recovery agent to lift the diff from the failing worktree using git -C', () => {
-      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toContain(`git -C ${ctx.targetPath} diff`)
-      expect(prompt).toMatch(/never edit there/i)
-      expect(prompt).toMatch(/FRESH recovery worktree/i)
-    })
-
-    it('gates the false-positive escape hatch on a non-zero rev-list count', () => {
-      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toContain('git rev-list --count main..HEAD')
-      const exitLine = prompt
-        .split('\n')
-        .find((line) => /exit successfully/i.test(line))
-      expect(exitLine).toBeDefined()
-      expect(exitLine).toMatch(/non-zero/i)
-    })
-
-    it('falls back to `main` when integrationBranch is absent', () => {
-      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
-      const prompt = recipe.buildPrompt({
-        targetPath: ctx.targetPath,
-        statusOutput: ctx.statusOutput,
-        targetBranch: ctx.targetBranch,
-        originalPrompt: '',
-      })
-      expect(prompt).toContain('git rev-list --count main..HEAD')
-    })
-
-    it('instructs the agent NOT to change production code', () => {
-      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
-      const prompt = recipe.buildPrompt(ctx)
-      expect(prompt).toMatch(/do not change production code/i)
-    })
-
-    it('inlines the original task prompt when provided', () => {
-      const recipe = getRecipe('verify:test/test-libsql-no-such-table')
-      const promptWithSource = recipe.buildPrompt({
-        ...ctx,
-        originalPrompt:
-          'add publishWithRetry helper in src/bus/publisher.ts with concurrent-writers test',
-      })
-      expect(promptWithSource).toContain(
-        'add publishWithRetry helper in src/bus/publisher.ts with concurrent-writers test',
-      )
-      expect(promptWithSource).toMatch(/inlined/i)
-      const promptWithout = recipe.buildPrompt(ctx)
-      expect(promptWithout).not.toContain(
-        'add publishWithRetry helper in src/bus/publisher.ts with concurrent-writers test',
-      )
-      expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
-    })
-  })
-
   describe('getRecipe', () => {
     it('throws on unknown signature', () => {
       expect(() => getRecipe('does_not_exist')).toThrow(
@@ -1205,7 +1103,7 @@ interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
   resolveQueueClient: typeof import('../../queue').resolveQueueClient
-  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  ensureQueueSchema: typeof import('../../queue').ensureQueueSchema
 }
 
 interface FixTaskModule {
@@ -1226,7 +1124,7 @@ const loadModules = async (
   process.env.MARS_REPO = repo
   delete process.env.MARS_FIX_RETRY_BUDGET
   const q = (await import('../../queue')) as unknown as QueueModule
-  await q.migrateQueueSchema()
+  await q.ensureQueueSchema()
   const ft = (await import(
     '../../queue-fix-tasks'
   )) as unknown as FixTaskModule
@@ -1516,9 +1414,7 @@ describe('lift-diff stale-baseline guard (all five lift-diff / re-land recipe si
   const signatures = [
     'merge:vcs-supervisor-aborted/not-fast-forward',
     'verify:test/test-assertion-error',
-    'verify:test/test-libsql-no-such-table',
     'verify:test/test-no-suite-found',
-    'verify:test/test-libsql-not-an-error',
   ] as const
   const ctx = {
     targetPath: '/tmp/worktrees/task-abc',
@@ -1577,107 +1473,4 @@ describe('lift-diff stale-baseline guard (all five lift-diff / re-land recipe si
       })
     })
   }
-})
-
-describe('verify:test/test-libsql-not-an-error recipe', () => {
-  const ctx = {
-    targetPath: '/tmp/worktrees/task-mars-8c56c297',
-    statusOutput: [
-      ' FAIL  src/core/lib/__tests__/triaging-and-blocker-state.test.ts > Triaging status + Blocker state schema > initialises the tasks schema with no `actionable` column',
-      'LibsqlError: SQLITE_UNKNOWN_0: not an error',
-      ' ❯ runMigration src/db/migrate.ts:280:13',
-      'Caused by: SqliteError: not an error',
-      'Serialized Error: { code: \'SQLITE_OK\', rawCode: +0 }',
-    ].join('\n'),
-    targetBranch: 'task/mars-8c56c297',
-    integrationBranch: 'main',
-    originalPrompt: '',
-  }
-
-  it('is registered under the correct signature', () => {
-    expect(hasRecipe('verify:test/test-libsql-not-an-error')).toBe(true)
-  })
-
-  it('produces a stable title naming the failing branch', () => {
-    const recipe = getRecipe('verify:test/test-libsql-not-an-error')
-    expect(recipe.title(ctx)).toContain('SQLITE_UNKNOWN_0: not an error')
-    expect(recipe.title(ctx)).toContain(ctx.targetBranch)
-  })
-
-  it('explains the root cause: comment-only SQL fragment passed to libsql execute', () => {
-    const recipe = getRecipe('verify:test/test-libsql-not-an-error')
-    const prompt = recipe.buildPrompt(ctx)
-    expect(prompt).toMatch(/comment-only/i)
-    expect(prompt).toMatch(/statement-breakpoint/i)
-    expect(prompt).toMatch(/SQLITE_OK/i)
-  })
-
-  it('prescribes the exact filter change in runMigration in src/db/migrate.ts', () => {
-    const recipe = getRecipe('verify:test/test-libsql-not-an-error')
-    const prompt = recipe.buildPrompt(ctx)
-    expect(prompt).toContain('src/db/migrate.ts')
-    expect(prompt).toContain('runMigration')
-    expect(prompt).toContain(`startsWith('--')`)
-  })
-
-  it('instructs the recovery agent to fix migrate.ts only, not test files', () => {
-    const recipe = getRecipe('verify:test/test-libsql-not-an-error')
-    const prompt = recipe.buildPrompt(ctx)
-    expect(prompt).toContain('src/db/migrate.ts')
-    expect(prompt).toMatch(/only.*do NOT modify|do NOT modify.*test file/i)
-    expect(prompt).not.toMatch(/fix the test file/i)
-  })
-
-  it('instructs the recovery agent to lift the diff from the failing worktree using git -C', () => {
-    const recipe = getRecipe('verify:test/test-libsql-not-an-error')
-    const prompt = recipe.buildPrompt(ctx)
-    expect(prompt).toContain(`git -C ${ctx.targetPath} diff`)
-    expect(prompt).toMatch(/never edit there/i)
-    expect(prompt).toMatch(/FRESH recovery worktree/i)
-  })
-
-  it('gates the false-positive escape hatch on a non-zero rev-list count', () => {
-    const recipe = getRecipe('verify:test/test-libsql-not-an-error')
-    const prompt = recipe.buildPrompt(ctx)
-    expect(prompt).toContain('git rev-list --count main..HEAD')
-    const exitLine = prompt
-      .split('\n')
-      .find((line) => /exit successfully/i.test(line))
-    expect(exitLine).toBeDefined()
-    expect(exitLine).toMatch(/non-zero/i)
-  })
-
-  it('falls back to `main` when integrationBranch is absent', () => {
-    const recipe = getRecipe('verify:test/test-libsql-not-an-error')
-    const prompt = recipe.buildPrompt({
-      targetPath: ctx.targetPath,
-      statusOutput: ctx.statusOutput,
-      targetBranch: ctx.targetBranch,
-      originalPrompt: '',
-    })
-    expect(prompt).toContain('git rev-list --count main..HEAD')
-  })
-
-  it('embeds the failing worktree path, branch, integration branch, and captured failure output', () => {
-    const recipe = getRecipe('verify:test/test-libsql-not-an-error')
-    const prompt = recipe.buildPrompt(ctx)
-    expect(prompt).toContain(ctx.targetPath)
-    expect(prompt).toContain(ctx.targetBranch)
-    expect(prompt).toContain(ctx.integrationBranch)
-    expect(prompt).toContain('SQLITE_UNKNOWN_0: not an error')
-    expect(prompt).toContain('Save your work')
-  })
-
-  it('inlines the original task prompt when provided', () => {
-    const recipe = getRecipe('verify:test/test-libsql-not-an-error')
-    const promptWithSource = recipe.buildPrompt({
-      ...ctx,
-      originalPrompt: 'replace hand-rolled init ladders with Drizzle schema + versioned migrations',
-    })
-    expect(promptWithSource).toContain('replace hand-rolled init ladders with Drizzle schema')
-    expect(promptWithSource).toMatch(/inlined/i)
-    const promptWithout = recipe.buildPrompt(ctx)
-    expect(promptWithout).not.toContain('replace hand-rolled init ladders')
-    expect(promptWithout).not.toMatch(/Original task prompt \(inlined/i)
-  })
 })

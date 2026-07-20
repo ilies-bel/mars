@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client';
+import type { DbClient } from '../core/lib/db.js';
 import type { BusEvent, EventName, EventPayload } from './events.js';
 
 /**
@@ -28,22 +28,7 @@ export interface RegisterOpts {
   replay?: boolean;
 }
 
-/**
- * Create the `subscribers` table if it does not exist. Idempotent.
- *
- * The schema is intentionally tiny: a Subscriber is just a name and a
- * cursor. Filter/replay policy lives in code, not the table.
- */
-export async function ensureSubscribersSchema(client: Client): Promise<void> {
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS subscribers (
-      name   TEXT    PRIMARY KEY,
-      cursor INTEGER NOT NULL
-    )
-  `);
-}
-
-async function currentHead(client: Client): Promise<number> {
+async function currentHead(client: DbClient): Promise<number> {
   const result = await client.execute(
     'SELECT COALESCE(MAX(id), 0) AS head FROM events',
   );
@@ -62,12 +47,10 @@ async function currentHead(client: Client): Promise<number> {
  * observe the full history.
  */
 export async function registerSubscriber(
-  client: Client,
+  client: DbClient,
   name: string,
   opts?: RegisterOpts,
 ): Promise<void> {
-  await ensureSubscribersSchema(client);
-
   const existing = await client.execute({
     sql: 'SELECT cursor FROM subscribers WHERE name = ?',
     args: [name],
@@ -88,7 +71,7 @@ export async function registerSubscriber(
  * Return the current cursor for a Subscriber. Throws if the
  * Subscriber has not been registered.
  */
-export async function getCursor(client: Client, name: string): Promise<number> {
+export async function getCursor(client: DbClient, name: string): Promise<number> {
   const result = await client.execute({
     sql: 'SELECT cursor FROM subscribers WHERE name = ?',
     args: [name],
@@ -107,7 +90,7 @@ export async function getCursor(client: Client, name: string): Promise<number> {
  * Throws if the Subscriber has not been registered.
  */
 export async function advanceCursor(
-  client: Client,
+  client: DbClient,
   name: string,
   eventId: number,
 ): Promise<void> {
@@ -135,7 +118,7 @@ export async function advanceCursor(
  * {@link advanceCursor} after the events are processed.
  */
 export async function fetchPending(
-  client: Client,
+  client: DbClient,
   name: string,
 ): Promise<BusEvent[]> {
   const cursor = await getCursor(client, name);

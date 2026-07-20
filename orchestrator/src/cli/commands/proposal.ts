@@ -1,6 +1,6 @@
 /**
- * `proposal` command group — 18 leaves over .mars/mars.db (proposals) plus
- * the planning-graph and cross-graph blocker edges.
+ * `proposal` command group — 18 leaves over the Mars database (proposals)
+ * plus the planning-graph and cross-graph blocker edges.
  *
  * Local reads/writes go through the `core/proposals` module and `deps.store`;
  * the two daemon-routed verbs (`promote`, `slice`) go through `deps.daemon`.

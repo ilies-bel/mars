@@ -16,7 +16,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import type { Client } from '@libsql/client'
+import type { DbClient } from './db.js'
 import {
   classifyMissingHelper,
   type FailureSignature,
@@ -90,7 +90,7 @@ export interface ToolForgeScanResult {
  * Returns a summary suitable for CLI display.
  */
 export async function scanForRecurringHelperGaps(
-  db: Client,
+  db: DbClient,
   opts: ToolForgeScanOptions = {},
 ): Promise<ToolForgeScanResult> {
   const threshold =

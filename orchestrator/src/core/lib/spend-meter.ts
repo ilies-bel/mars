@@ -10,7 +10,7 @@
  *    `payload.usageSignals` object. Unlike cost_per_arc there is NO join to
  *    tasks and NO status filter — spend counts the moment each step lands.
  *    Backed by the partial index `idx_trace_events_step_ended_time`
- *    (see trace-events-store.ts) so each evaluation is an index range scan.
+ *    (canonical schema, pg-schema.ts) so each evaluation is an index range scan.
  * 2. PER-ARC CEILING METER — for each live (non-terminal) arc, sums the
  *    arc's LIFETIME weighted tokens using the same two trace_events join
  *    paths as computeCostPerArcDistribution (member-task + dangling-origin)
@@ -37,7 +37,6 @@ import {
   setActionQueueState,
 } from './action-queue.js'
 import { readDaemonConfigFile, patchDaemonConfigFile } from '../daemon/config.js'
-import { INDEX_STEP_ENDED_TIME } from './trace-events-store.js'
 
 // ---------------------------------------------------------------------------
 // Config
@@ -175,10 +174,10 @@ export const budgetArcSignature = (arcId: string): string => `budget-arc:${arcId
 // ---------------------------------------------------------------------------
 
 const WEIGHTED_TOKENS_EXPR = `
-  CAST(json_extract(te.payload, '$.usageSignals.inputTokens')       AS REAL) +
-  CAST(json_extract(te.payload, '$.usageSignals.outputTokens')      AS REAL) +
-  CAST(json_extract(te.payload, '$.usageSignals.cacheCreateTokens') AS REAL) +
-  CAST(json_extract(te.payload, '$.usageSignals.cacheReadTokens')   AS REAL) * 0.1
+  CAST(te.payload::jsonb #>> '{usageSignals,inputTokens}'       AS double precision) +
+  CAST(te.payload::jsonb #>> '{usageSignals,outputTokens}'      AS double precision) +
+  CAST(te.payload::jsonb #>> '{usageSignals,cacheCreateTokens}' AS double precision) +
+  CAST(te.payload::jsonb #>> '{usageSignals,cacheReadTokens}'   AS double precision) * 0.1
 `
 
 const TERMINAL_STATUSES_SQL = `('done', 'failed', 'dropped')`
@@ -207,7 +206,7 @@ export const computeWindowSpend = async (
           FROM trace_events te
           WHERE te.kind = 'step_ended'
             AND te.timestamp >= ?
-            AND json_extract(te.payload, '$.usageSignals') IS NOT NULL`,
+            AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL`,
     args: [opts.sinceIso],
   })
   const row = result.rows[0] as unknown as { weighted_tokens: number | null }
@@ -230,7 +229,7 @@ export const computeWindowTopArcs = async (
           FROM trace_events te
           WHERE te.kind = 'step_ended'
             AND te.timestamp >= ?
-            AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+            AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
             AND COALESCE(te.origin_id, te.task_id) IS NOT NULL
           GROUP BY COALESCE(te.origin_id, te.task_id)
           ORDER BY weighted_tokens DESC
@@ -251,7 +250,7 @@ export const listLiveArcIds = async (surface: TaskStore): Promise<Set<string>> =
                    MAX(CASE WHEN status NOT IN ${TERMINAL_STATUSES_SQL} THEN 1 ELSE 0 END) AS is_live
             FROM tasks
             GROUP BY COALESCE(origin_id, id)
-          ) WHERE is_live = 1`,
+          ) AS arc_liveness WHERE is_live = 1`,
     args: [],
   })
   return new Set(
@@ -291,7 +290,7 @@ export const computeLiveArcSpends = async (
                      MAX(CASE WHEN status NOT IN ${TERMINAL_STATUSES_SQL} THEN 1 ELSE 0 END) AS is_live
               FROM tasks
               GROUP BY COALESCE(origin_id, id)
-            ) WHERE is_live = 1 ${touchedFilter}
+            ) AS arc_liveness WHERE is_live = 1 ${touchedFilter}
           ),
           arc_te AS (
             -- Path 1: trace event keyed by a member task id (normal dispatch path)
@@ -300,7 +299,7 @@ export const computeLiveArcSpends = async (
             JOIN tasks t ON COALESCE(t.origin_id, t.id) = la.arc_id
             JOIN trace_events te ON te.task_id = t.id
               AND te.kind = 'step_ended'
-              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
             UNION
             -- Path 2: trace event keyed by the arc/origin id directly
             -- (dangling-origin pattern: no task row has id=arc_id)
@@ -308,14 +307,14 @@ export const computeLiveArcSpends = async (
             FROM live_arcs la
             JOIN trace_events te ON te.task_id = la.arc_id
               AND te.kind = 'step_ended'
-              AND json_extract(te.payload, '$.usageSignals') IS NOT NULL
+              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
           )
           SELECT la.arc_id,
                  COALESCE(SUM(
-                   CAST(json_extract(ate.payload, '$.usageSignals.inputTokens')       AS REAL) +
-                   CAST(json_extract(ate.payload, '$.usageSignals.outputTokens')      AS REAL) +
-                   CAST(json_extract(ate.payload, '$.usageSignals.cacheCreateTokens') AS REAL) +
-                   CAST(json_extract(ate.payload, '$.usageSignals.cacheReadTokens')   AS REAL) * 0.1
+                   CAST(ate.payload::jsonb #>> '{usageSignals,inputTokens}'       AS double precision) +
+                   CAST(ate.payload::jsonb #>> '{usageSignals,outputTokens}'      AS double precision) +
+                   CAST(ate.payload::jsonb #>> '{usageSignals,cacheCreateTokens}' AS double precision) +
+                   CAST(ate.payload::jsonb #>> '{usageSignals,cacheReadTokens}'   AS double precision) * 0.1
                  ), 0) AS weighted_tokens
           FROM live_arcs la
           INNER JOIN arc_te ate ON ate.arc_id = la.arc_id
@@ -342,13 +341,11 @@ export const computeLiveArcSpends = async (
 export interface SpendSweepState {
   lastSweepIso: string | null
   arcSpends: Map<string, number>
-  indexEnsured: boolean
 }
 
 export const createSpendSweepState = (): SpendSweepState => ({
   lastSweepIso: null,
   arcSpends: new Map(),
-  indexEnsured: false,
 })
 
 /** What one sweep tick did — for the daemon log line. */
@@ -409,14 +406,6 @@ export const runSpendSweep = async (opts: {
 
   const raised: string[] = []
   const resolved: string[] = []
-
-  if (!state.indexEnsured) {
-    // The daemon's task-store connection may predate the partial index
-    // shipping in openTraceEventStore; CREATE INDEX IF NOT EXISTS is
-    // idempotent and cheap once present.
-    await surface.execute(INDEX_STEP_ENDED_TIME)
-    state.indexEnsured = true
-  }
 
   const windowEnabled =
     config !== null && config.windowMs !== null && config.windowTokens !== null

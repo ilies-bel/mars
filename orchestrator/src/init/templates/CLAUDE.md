@@ -50,9 +50,11 @@ Prefer `/mars:task <prompt>` from a Claude Code session for a
 light-shaping wrapper that checks terminology against the glossary
 before enqueueing.
 
-Tasks live in `.mars/mars.db`. Enqueue via `mars task add "..."`; the
-orchestrator dispatches automatically (worktree → code → verify →
-merge). Inspect via `mars list`.
+Tasks live in the embedded PostgreSQL database the daemon provisions
+per repo (data dir `.mars/pg/data`, DSN published to `.mars/pg.dsn`).
+Enqueue via `mars task add "..."`; the orchestrator dispatches
+automatically (worktree → code → verify → merge). Inspect via `mars
+list`. For direct reads, query with `psql "$(cat .mars/pg.dsn)"`.
 
 **All mutations route through the orchestrator.** Direct `Edit`/`Write`
 on the working tree is a last resort — see Routing above. Never assume
@@ -66,7 +68,8 @@ re-confirmed, even within the same session.
   file lock; coding parallel).
 - Default merge target is `main`. Override per-invocation with
   `INTEGRATION_BRANCH=<branch>`.
-- Per-repo state lives under `.mars/` (gitignored): `mars.db`,
+- Per-repo state lives under `.mars/` (gitignored): `pg/data/` (the
+  embedded Postgres data dir), `pg.dsn`/`pg.port`,
   `worktrees/<task-id>/`, `.merge.lock`.
 - **Incident kill-switch:** `mars daemon set-flag recovery on|off` suppresses
   fix-task / Investigator spawns in-memory (not persisted across daemon

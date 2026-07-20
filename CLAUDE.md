@@ -58,14 +58,16 @@ Prefer `/mars:task <prompt>` from a Claude Code session for a
 light-shaping wrapper that checks terminology against the glossary
 before enqueueing.
 
-Tasks live in `.mars/mars.db` (the single consolidated store — the old
-`queue.db`/`state.db` split was merged into `mars.db` by
-`orchestrator/src/init/merge-databases.ts`; any leftover `queue.db` /
-`state.db` files on disk are stale post-merge artifacts, often 0 bytes,
-and are NOT the live data). Enqueue via `mars task add "..."`; the
-orchestrator dispatches automatically (worktree → code → verify → merge).
-Inspect via `mars list`. For direct reads, query `.mars/mars.db` with
-`sqlite3` (tables `tasks`, `task_blockers`, …), never `queue.db`.
+Tasks live in the embedded PostgreSQL database the daemon provisions
+per repo (data dir `.mars/pg/data`, DSN published to `.mars/pg.dsn` —
+read the file, never guess the port). A legacy `.mars/mars.db` is
+imported once by `orchestrator/src/init/import-sqlite.ts` on first
+start and renamed to `mars.db.bak-<ts>`; any `mars.db*` / `queue.db` /
+`state.db` files on disk are dead pre-import artifacts, NOT the live
+data. Enqueue via `mars task add "..."`; the orchestrator dispatches
+automatically (worktree → code → verify → merge). Inspect via `mars
+list`. For direct reads, query with `psql "$(cat .mars/pg.dsn)"`
+(tables `tasks`, `task_blockers`, …).
 
 **All mutations route through the orchestrator.** Direct `Edit`/`Write`
 on the working tree (i.e. on `main`) is a last resort — see Routing
@@ -78,9 +80,11 @@ per-change and must be re-confirmed, even within the same session.
   `@mars/workflow` engine (`packages/workflow/`). Headless Claude Code in
   parallel worktrees → verify → fast-forward into `main`. Conflicts go
   to `vcs-supervisor` ("Vega"). Node `>=22.13.0`.
-- `.mars/` — per-repo state (`mars.db` — the single consolidated
-  task+state store; `worktrees/<task-id>/`, `.merge.lock`). Gitignored.
-  Any `queue.db`/`state.db` on disk are dead pre-merge artifacts.
+- `.mars/` — per-repo state (`pg/data/` — the embedded Postgres data
+  dir; `pg.dsn`/`pg.port` — published connection info;
+  `worktrees/<task-id>/`, `.merge.lock`). Gitignored. Any
+  `mars.db*`/`queue.db`/`state.db` on disk are dead pre-import
+  artifacts.
 
 ## Live execution
 

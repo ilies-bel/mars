@@ -7,8 +7,10 @@
  * 'mars-proposal-' prefix is never constructed by string concatenation
  * in this module.
  *
- * DB table (in mars.db):
- *   proposal_notes(id TEXT PK, slug TEXT, text TEXT, created_at INTEGER)
+ * DB table:
+ *   proposal_notes(id text PK, slug text, text text, created_at bigint)
+ * Schema ownership: `ensureSchema` in core/lib/pg-schema.ts (migration
+ * 0002) — this module carries no DDL.
  *
  * The id column stores the bare 8-char hex; the slug column stores the
  * slugified text. Together they form the rendered id:
@@ -25,25 +27,9 @@ export interface ProposalNote {
   createdAt: number
 }
 
-// Shared mars.db client (state domain, collapsed from the former private singleton); same
-// `mars.db` file as the TaskStore (ADR-0034), resolved through the seam.
+// Shared state-domain client (collapsed from the former private singleton);
+// same database as the TaskStore (ADR-0034), resolved through the seam.
 const stateClient = resolveStateClient
-
-let initialised = false
-
-export const initProposalNotes = async (): Promise<void> => {
-  if (initialised) return
-  const c = stateClient()
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS proposal_notes (
-      id         TEXT    NOT NULL PRIMARY KEY,
-      slug       TEXT    NOT NULL,
-      text       TEXT    NOT NULL,
-      created_at INTEGER NOT NULL
-    )
-  `)
-  initialised = true
-}
 
 const slugify = (text: string): string => {
   const slug = text
@@ -64,7 +50,6 @@ const rowToProposalNote = (row: ProposalNoteRow): ProposalNote => ({
 })
 
 export const addProposalNote = async (text: string): Promise<ProposalNote> => {
-  await initProposalNotes()
   const c = stateClient()
   const hex = randomBytes(4).toString('hex')
   const slug = slugify(text)
@@ -77,14 +62,13 @@ export const addProposalNote = async (text: string): Promise<ProposalNote> => {
 }
 
 export const listProposalNotes = async (): Promise<ProposalNote[]> => {
-  await initProposalNotes()
   const c = stateClient()
-  // Tie-break on the implicit rowid so two notes added within the same
-  // millisecond still sort deterministically newest-first (higher rowid =
-  // inserted later). Without this, ties fall back to ascending rowid order
-  // and the older note surfaces first.
+  // Tie-break on the primary key so two notes added within the same
+  // millisecond still sort deterministically (id is random hex, so ties
+  // are stable rather than insertion-ordered — created_at carries the
+  // real ordering).
   const r = await c.execute(
-    `SELECT id, slug, text, created_at FROM proposal_notes ORDER BY created_at DESC, rowid DESC`,
+    `SELECT id, slug, text, created_at FROM proposal_notes ORDER BY created_at DESC, id DESC`,
   )
   return r.rows.map((row) => rowToProposalNote(row as unknown as ProposalNoteRow))
 }
@@ -101,7 +85,6 @@ export const listProposalNotes = async (): Promise<ProposalNote[]> => {
  * Returns null when no unique match is found.
  */
 export const getProposalNote = async (input: string): Promise<ProposalNote | null> => {
-  await initProposalNotes()
   const c = stateClient()
 
   const parsed = parseMarsId(input)

@@ -1,5 +1,5 @@
 import { pruneOutbox } from '../lib/outbox-prune.js'
-import { openLibsql } from '../lib/libsql.js'
+import { openDb } from '../lib/db.js'
 import { raiseActionQueueItem } from '../lib/action-queue.js'
 
 const OUTBOX_LAG_WARN_THRESHOLD_DEFAULT = 100_000
@@ -8,7 +8,7 @@ const OUTBOX_LAG_WARN_THRESHOLD_DEFAULT = 100_000
 const OUTBOX_MAX_AGE_SECONDS = 86_400 // 24 hours
 
 /**
- * Query the events outbox at `dbPath` and return the overall lag
+ * Query the events outbox at `dbTarget` and return the overall lag
  * (`MAX(events.id) - COALESCE(MIN(subscribers.cursor), 0)`) along with the
  * name(s) of any subscriber(s) sitting at the minimum cursor.
  *
@@ -18,10 +18,10 @@ const OUTBOX_MAX_AGE_SECONDS = 86_400 // 24 hours
  * `wedged` lists every subscriber whose cursor equals `MIN(cursor)`.
  */
 export const detectOutboxLag = async (
-  dbPath: string,
+  dbTarget: string,
   threshold: number,
 ): Promise<{ lag: number; wedged: string[] }> => {
-  const client = openLibsql({ url: `file:${dbPath}` })
+  const client = openDb(dbTarget)
   try {
     const subResult = await client.execute(
       'SELECT COUNT(*) AS cnt, COALESCE(MIN(cursor), 0) AS min_cursor FROM subscribers',
@@ -55,7 +55,7 @@ export const detectOutboxLag = async (
 
     return { lag, wedged }
   } finally {
-    client.close()
+    await client.close()
   }
 }
 
@@ -68,7 +68,7 @@ export const detectOutboxLag = async (
  * and an unresolved item bumps `seen_count` on the existing row rather than
  * inserting a duplicate (deduped on `signature = 'outbox-lag:<subscriber>'`).
  */
-export const sweepOutbox = async (dbPath: string): Promise<void> => {
+export const sweepOutbox = async (dbTarget: string): Promise<void> => {
   const rawThreshold = Number.parseInt(
     process.env.MARS_OUTBOX_LAG_WARN_THRESHOLD ?? '',
     10,
@@ -77,9 +77,9 @@ export const sweepOutbox = async (dbPath: string): Promise<void> => {
     ? rawThreshold
     : OUTBOX_LAG_WARN_THRESHOLD_DEFAULT
 
-  await pruneOutbox(dbPath, OUTBOX_MAX_AGE_SECONDS)
+  await pruneOutbox(dbTarget, OUTBOX_MAX_AGE_SECONDS)
 
-  const { lag, wedged } = await detectOutboxLag(dbPath, threshold)
+  const { lag, wedged } = await detectOutboxLag(dbTarget, threshold)
 
   for (const subscriber of wedged) {
     await raiseActionQueueItem({

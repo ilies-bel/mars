@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client'
+import type { DbClient } from '../../core/lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
@@ -27,7 +27,7 @@ const LIFECYCLE_TYPES = new Set<string>([
  * `replay: false` places the cursor at the current outbox head on first
  * registration; subsequent registrations are no-ops.
  */
-export async function ensureIdeaLifecycleSubscriber(client: Client): Promise<void> {
+export async function ensureIdeaLifecycleSubscriber(client: DbClient): Promise<void> {
   await registerSubscriber(client, IDEA_LIFECYCLE_SUBSCRIBER, { replay: false })
 }
 
@@ -49,7 +49,7 @@ export async function ensureIdeaLifecycleSubscriber(client: Client): Promise<voi
  * @returns The number of lifecycle events consumed in this drain.
  */
 export async function drainIdeaLifecycle(
-  client: Client,
+  client: DbClient,
   log?: (msg: string) => void,
 ): Promise<{ processed: number }> {
   return drainWithStall({

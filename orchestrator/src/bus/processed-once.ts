@@ -1,32 +1,16 @@
-import type { Client, Transaction } from '@libsql/client';
-import { withTransaction } from '../core/lib/libsql.js';
+import { withTransaction, type DbClient, type DbTx } from '../core/lib/db.js';
 
 /**
- * Schema for the per-subscriber dedup table.
+ * Per-subscriber dedup over the `subscriber_processed_events` table (schema
+ * owned by `core/lib/pg-schema.ts`).
  *
  * One row per (subscriber, event) pair successfully processed. The primary
  * key enforces that a Subscriber can never observe a side effect more than
  * once for the same event id, even across daemon restarts.
  */
-export const SUBSCRIBER_PROCESSED_EVENTS_DDL = `
-  CREATE TABLE IF NOT EXISTS subscriber_processed_events (
-    subscriber_id TEXT    NOT NULL,
-    event_id      INTEGER NOT NULL,
-    processed_at  INTEGER NOT NULL DEFAULT (unixepoch()),
-    PRIMARY KEY (subscriber_id, event_id)
-  )
-`;
-
-/**
- * Ensure the dedup table exists on `client`. Safe to call repeatedly;
- * idempotent via `CREATE TABLE IF NOT EXISTS`.
- */
-export async function ensureProcessedOnceSchema(client: Client): Promise<void> {
-  await client.execute(SUBSCRIBER_PROCESSED_EVENTS_DDL);
-}
 
 export interface ProcessedOnceArgs {
-  client: Client;
+  client: DbClient;
   subscriberId: string;
   eventId: number;
   /**
@@ -35,7 +19,7 @@ export interface ProcessedOnceArgs {
    * dedup row and any work performed by `sideEffect` disappear, so the
    * next invocation re-runs the handler.
    */
-  sideEffect: (tx: Transaction) => Promise<void>;
+  sideEffect: (tx: DbTx) => Promise<void>;
 }
 
 export interface ProcessedOnceResult {
@@ -61,8 +45,6 @@ class AlreadyProcessedSignal extends Error {
  *
  * If `sideEffect` throws, the transaction is rolled back; no dedup row is
  * left behind, so the next call re-runs the handler.
- *
- * The caller must have ensured the schema via {@link ensureProcessedOnceSchema}.
  */
 export async function processedOnce(
   args: ProcessedOnceArgs,
@@ -99,8 +81,8 @@ export async function processedOnce(
 function isUniqueConstraint(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const e = err as Error & { code?: string };
-  if (e.code === 'SQLITE_CONSTRAINT' || e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
-    return true;
-  }
-  return /UNIQUE constraint failed|PRIMARY KEY/i.test(e.message);
+  // PostgreSQL unique_violation; both pg and PGlite surface the SQLSTATE
+  // on `code`, with the message fallback covering any wrapper re-throw.
+  if (e.code === '23505') return true;
+  return /duplicate key value violates unique constraint/i.test(e.message);
 }

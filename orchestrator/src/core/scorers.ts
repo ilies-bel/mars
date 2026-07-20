@@ -13,16 +13,17 @@
  * the rubric, record-only, into `scorer_results` (see scorer-results.ts and
  * lib/scorer-runtime.ts). A Scorer is a quality signal, never a merge gate.
  *
- * Storage: the `scorers` table in `.mars/mars.db` (same state client seam as
- * proposals, ADR-0034). Dedup: a fingerprint over (workflow, quality
- * dimension) mirrors the proposals fingerprint pattern — a re-derived
- * suggestion accrues evidence on the existing suggested row instead of
- * inserting a duplicate.
+ * Storage: the `scorers` table in the embedded PostgreSQL database (same
+ * state client seam as proposals, ADR-0034). Dedup: a fingerprint over
+ * (workflow, quality dimension) mirrors the proposals fingerprint pattern — a
+ * re-derived suggestion accrues evidence on the existing suggested row
+ * instead of inserting a duplicate.
  */
 
-import { type Client } from '@libsql/client'
 import { createHash, randomBytes } from 'node:crypto'
 import { z } from 'zod'
+import type { DbClient } from './lib/db'
+import { ensureSchema } from './lib/pg-schema'
 import { resolveStateClient } from './store/state-client'
 import { buildEventInsert } from './lib/outbox'
 import type { EventName, EventPayload } from '../bus/events.js'
@@ -96,7 +97,7 @@ export interface SuggestScorerResult {
   outcome: SuggestScorerOutcome
 }
 
-const stateClient = (): Client => resolveStateClient()
+const stateClient = (): DbClient => resolveStateClient()
 
 /**
  * Emit a scorer lifecycle event to the events outbox. Mirrors
@@ -115,7 +116,7 @@ async function emitScorerBusEvent<T extends EventName>(
       await scope.execute(buildEventInsert(type, payload))
     })
   } catch {
-    // Non-fatal: scorer state change already committed in state.db.
+    // Non-fatal: scorer state change already committed.
   }
 }
 
@@ -123,31 +124,10 @@ let initialised = false
 
 export const initScorers = async (): Promise<void> => {
   if (initialised) return
-  const c = stateClient()
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS scorers (
-      id TEXT PRIMARY KEY,
-      workflow TEXT NOT NULL,
-      title TEXT NOT NULL,
-      rubric TEXT NOT NULL,
-      output_contract TEXT NOT NULL DEFAULT '${SCORER_OUTPUT_CONTRACT}',
-      status TEXT NOT NULL DEFAULT 'suggested',
-      origin_arc_id TEXT NOT NULL,
-      report_path TEXT,
-      evidence TEXT NOT NULL DEFAULT '[]',
-      confidence REAL NOT NULL DEFAULT 0.5,
-      fingerprint TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )
-  `)
-  // Mirrors idx_proposals_fingerprint: fast dedup lookup at suggest time.
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_scorers_fingerprint ON scorers(fingerprint)`,
-  )
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_scorers_status ON scorers(status)`,
-  )
+  // DDL lives in core/lib/pg-schema.ts (migration 0002; its output_contract
+  // default mirrors SCORER_OUTPUT_CONTRACT). This just guarantees the
+  // canonical schema exists before the first read/write.
+  await ensureSchema(stateClient())
   initialised = true
 }
 
@@ -222,7 +202,7 @@ const rowToScorer = (row: Record<string, unknown>): Scorer =>
   })
 
 const fetchByFingerprint = async (
-  c: Client,
+  c: DbClient,
   fingerprint: string,
 ): Promise<Scorer | null> => {
   const r = await c.execute({
@@ -233,7 +213,7 @@ const fetchByFingerprint = async (
   return rowToScorer(r.rows[0] as unknown as Record<string, unknown>)
 }
 
-const fetchScorerById = async (c: Client, id: string): Promise<Scorer | null> => {
+const fetchScorerById = async (c: DbClient, id: string): Promise<Scorer | null> => {
   const r = await c.execute({
     sql: `SELECT * FROM scorers WHERE id = ?`,
     args: [id],

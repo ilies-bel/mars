@@ -1,38 +1,38 @@
-import { runCompositionRootMigrations } from '../core/store/task-store'
-import { initProposals } from '../core/proposals'
-import { initActionQueue } from '../core/lib/action-queue'
-import { initSettings } from '../core/lib/settings'
-import { initWorkflowConfigs } from '../core/workflow-configs'
-import { initPromotionLedger } from '../core/promotion-ledger'
-import { initToolPromotionAttempts } from '../core/store/tool-promotion-store'
-import { initMemoryPackets } from '../core/store/memory-packet-store'
-import { mergeLegacyDatabases } from './merge-databases'
+import { resolve } from 'node:path'
+import { openDb } from '../core/lib/db'
+import { ensureSchema } from '../core/lib/pg-schema'
+import { resolveContext, resolveDbTarget } from '../core/context'
+import { importLegacySqlite } from './import-sqlite'
 
 /**
- * Eagerly materialise the per-repo SQLite databases that `mars` writes into
- * at runtime — a single `.mars/mars.db` (tasks + proposals + actionQueue; see
- * ADR-0034) — so a freshly scaffolded repo is usable without first having
- * to wait for the daemon to lazily create them on the next write.
+ * Materialise the canonical Mars schema in the per-repo database (the
+ * daemon-provisioned embedded PostgreSQL instance; PGlite in tests) and fold
+ * in any legacy `.mars/mars.db` SQLite file left behind by a pre-migration
+ * install.
  *
- * Every init path uses `CREATE TABLE IF NOT EXISTS`, so calling this on a
- * repo that already has populated databases is a safe no-op.
+ * `ensureSchema` applies the complete canonical DDL idempotently, so calling
+ * this on a repo whose database is already populated is a safe no-op.
+ * `importLegacySqlite` is equally idempotent: a missing file, a prior import
+ * marker, or pre-existing PG task data each short-circuit to a no-op.
+ *
+ * Requires a reachable database: under the embedded backend the daemon must
+ * be running (it publishes `.mars/pg.dsn`); `resolveDbTarget` throws an
+ * operator-facing error otherwise. Callers that want to skip instead of fail
+ * (e.g. `mars init` before the daemon exists) check reachability first.
  */
 export const initDatabases = async (): Promise<void> => {
-  // Lift any repo still on the historical queue.db + state.db layout up
-  // to the merged `mars.db` BEFORE any client opens the new path —
-  // otherwise the libsql client materialises an empty mars.db and the
-  // merge sentinel never fires.
-  await mergeLegacyDatabases()
-  // Order matters: `initProposals` runs the queue migration internally to align
-  // FK expectations, but we run the queue migration explicitly first (through
-  // the TaskStore seam) so the queue's own migrations land before any
-  // proposals-side `ALTER TABLE` ordering kicks in.
-  await runCompositionRootMigrations()
-  await initProposals()
-  await initActionQueue()
-  await initSettings()
-  await initWorkflowConfigs()
-  await initPromotionLedger()
-  await initToolPromotionAttempts()
-  await initMemoryPackets()
+  const ctx = resolveContext()
+  const client = openDb(resolveDbTarget())
+  try {
+    await ensureSchema(client)
+    // Fold a pre-migration `.mars/mars.db` into PG before anything writes new
+    // rows. The importer renames the SQLite file to `mars.db.bak-<ts>` on
+    // success, so subsequent runs are no-sqlite no-ops.
+    await importLegacySqlite({
+      sqlitePath: resolve(ctx.stateDir, 'mars.db'),
+      client,
+    })
+  } finally {
+    await client.close()
+  }
 }

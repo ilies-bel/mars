@@ -383,8 +383,8 @@ const ghostSubscriberSweep: Reconciler = {
   name: 'ghost-subscriber-sweep',
   async run({ log }) {
     try {
-      // TODO(mars-8a44f22d): ghostSubscriberSweep queries the `subscribers` and
-      // `sqlite_master` tables which are below the task-domain seam. Add a
+      // TODO(mars-8a44f22d): ghostSubscriberSweep queries the `subscribers`
+      // table and catalog metadata which are below the task-domain seam. Add a
       // `listGhostSubscribers(knownNames)` typed method to DomainTaskStore (or a
       // separate SubscriberStore) to retire this resolveQueueClient() usage.
       const { resolveQueueClient } = await import('../queue')
@@ -400,9 +400,9 @@ const ghostSubscriberSweep: Reconciler = {
 
       // If the subscribers table doesn't exist yet, there are no ghosts to sweep.
       const tableCheck = await client.execute(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='subscribers'`,
+        `SELECT to_regclass('public.subscribers') AS reg`,
       )
-      if (tableCheck.rows.length === 0) return {}
+      if (tableCheck.rows[0]?.reg == null) return {}
 
       const allRows = await client.execute('SELECT name FROM subscribers')
       const ghosts = allRows.rows
@@ -412,11 +412,11 @@ const ghostSubscriberSweep: Reconciler = {
       if (ghosts.length === 0) return { ghostSubscribersSwept: 0 }
 
       // Check if subscriber_processed_events table exists before attempting to
-      // delete from it (it is created lazily on first processedOnce call).
+      // delete from it (belt-and-suspenders for pre-ensureSchema stores).
       const speCheck = await client.execute(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='subscriber_processed_events'`,
+        `SELECT to_regclass('public.subscriber_processed_events') AS reg`,
       )
-      const hasSPE = speCheck.rows.length > 0
+      const hasSPE = speCheck.rows[0]?.reg != null
 
       for (const name of ghosts) {
         if (hasSPE) {

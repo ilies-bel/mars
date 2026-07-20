@@ -92,11 +92,11 @@ export const sendRequest = async (
           if (res.ok) {
             resolve(res.data)
           } else {
-            // Rewrite stale-table SQLite failures (e.g. a daemon that
-            // predates the ideas->proposals rename and still references the
-            // legacy `ideas` table) into an actionable restart hint, so
-            // operators are never left staring at a raw libsql message.
-            // Non-matching errors pass through unchanged.
+            // Rewrite stale-table (42P01 undefined_table) failures (e.g. a
+            // daemon that predates the ideas->proposals rename and still
+            // references the legacy `ideas` table) into an actionable restart
+            // hint, so operators are never left staring at a raw database
+            // error. Non-matching errors pass through unchanged.
             const e = new Error(mapDaemonError(res.error)) as Error & {
               code?: string
             }

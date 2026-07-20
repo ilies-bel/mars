@@ -4,6 +4,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { createServer, type Server } from 'node:http'
 import { buildStatusLine, buildContextSegment, buildLeaseSegment } from '../statusline.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -350,24 +351,47 @@ describe('mars statusline CLI', () => {
     }
   })
 
-  it('prepends lease segment when CWD is inside a leased Mars worktree', () => {
-    // sqlite3 must be on PATH for this test — skip gracefully if it isn't.
-    const sqlite3Available = spawnSync('sqlite3', ['--version']).status === 0
-    if (!sqlite3Available) return
+  // The lease segment is read from the daemon's HTTP API (`/view/tasks`,
+  // port published to `.mars/http.port`). Stand up a stub daemon that serves
+  // the given task rows and publish its port the way the real daemon does.
+  const startStubDaemon = (repo: string, tasks: unknown[]): Promise<Server> =>
+    new Promise((resolveStart) => {
+      const server = createServer((req, res) => {
+        if (req.url === '/view/tasks') {
+          res.setHeader('content-type', 'application/json')
+          res.end(JSON.stringify({ tasks }))
+          return
+        }
+        res.statusCode = 404
+        res.end()
+      })
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address()
+        const port = typeof addr === 'object' && addr !== null ? addr.port : 0
+        writeFileSync(resolve(repo, '.mars', 'http.port'), String(port))
+        resolveStart(server)
+      })
+    })
 
+  const stopStubDaemon = (server: Server): Promise<void> =>
+    new Promise((resolveStop) => {
+      server.close(() => resolveStop())
+    })
+
+  it('prepends lease segment when CWD is inside a leased Mars worktree', async () => {
     const tmpRepo = makeRepo()
     const taskId = 'mars-testlease1'
     const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
     mkdirSync(worktreeDir, { recursive: true })
 
-    const marsDbPath = resolve(tmpRepo, '.mars', 'mars.db')
-    // Create a minimal tasks table with one leased row (include lease_note and
-    // current_step_name to match the real schema; the statusline query selects
-    // both columns).
-    spawnSync('sqlite3', [
-      marsDbPath,
-      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT, lease_note TEXT, current_step_name TEXT);` +
-      `INSERT INTO tasks VALUES ('${taskId}', 'Fix the statusline lease', '2024-01-01T10:00:00Z', NULL, NULL);`,
+    const server = await startStubDaemon(tmpRepo, [
+      {
+        id: taskId,
+        intent: 'Fix the statusline lease',
+        leasedAt: '2024-01-01T10:00:00Z',
+        leaseNote: null,
+        currentStepName: null,
+      },
     ])
 
     try {
@@ -383,25 +407,25 @@ describe('mars statusline CLI', () => {
       // Base "mars" label must still appear
       expect(line).toContain('mars')
     } finally {
+      await stopStubDaemon(server)
       rmSync(tmpRepo, { recursive: true, force: true })
     }
   })
 
-  it('shows Step guide (leaseNote) instead of intent when leaseNote is set', () => {
-    // sqlite3 must be on PATH for this test — skip gracefully if it isn't.
-    const sqlite3Available = spawnSync('sqlite3', ['--version']).status === 0
-    if (!sqlite3Available) return
-
+  it('shows Step guide (leaseNote) instead of intent when leaseNote is set', async () => {
     const tmpRepo = makeRepo()
     const taskId = 'mars-steple1234'
     const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
     mkdirSync(worktreeDir, { recursive: true })
 
-    const marsDbPath = resolve(tmpRepo, '.mars', 'mars.db')
-    spawnSync('sqlite3', [
-      marsDbPath,
-      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT, lease_note TEXT, current_step_name TEXT);` +
-      `INSERT INTO tasks VALUES ('${taskId}', 'Overall task intent', '2024-01-01T10:00:00Z', 'QA the hero section', NULL);`,
+    const server = await startStubDaemon(tmpRepo, [
+      {
+        id: taskId,
+        intent: 'Overall task intent',
+        leasedAt: '2024-01-01T10:00:00Z',
+        leaseNote: 'QA the hero section',
+        currentStepName: null,
+      },
     ])
 
     try {
@@ -417,16 +441,17 @@ describe('mars statusline CLI', () => {
       // Intent should NOT appear — leaseNote replaces it
       expect(line).not.toContain('Overall task intent')
     } finally {
+      await stopStubDaemon(server)
       rmSync(tmpRepo, { recursive: true, force: true })
     }
   })
 
-  it('exits 0 and emits "mars" when worktree path has no mars.db', () => {
+  it('exits 0 and emits "mars" when the daemon is not running (no http.port)', () => {
     const tmpRepo = makeRepo()
     const taskId = 'mars-nodb1234'
     const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
     mkdirSync(worktreeDir, { recursive: true })
-    // No mars.db created — lease detection should fail gracefully
+    // No http.port published — lease detection should fail gracefully
 
     try {
       const result = runCli(['statusline'], {

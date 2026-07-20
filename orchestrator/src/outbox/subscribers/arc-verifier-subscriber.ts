@@ -15,7 +15,7 @@
  *      events for tasks in the same arc).
  */
 
-import type { Client } from '@libsql/client'
+import type { DbClient } from '../../core/lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
@@ -30,7 +30,7 @@ registerSubscriberName(ARC_VERIFIER_SUBSCRIBER)
  * Register the arc-verifier subscriber. Idempotent: re-registering an
  * existing subscriber preserves its cursor.
  */
-export async function ensureArcVerifierSubscriber(client: Client): Promise<void> {
+export async function ensureArcVerifierSubscriber(client: DbClient): Promise<void> {
   await registerSubscriber(client, ARC_VERIFIER_SUBSCRIBER, {
     replay: false,
   })
@@ -47,7 +47,7 @@ export async function ensureArcVerifierSubscriber(client: Client): Promise<void>
  * @returns The number of events that triggered a verification run.
  */
 export async function drainArcVerifier(
-  client: Client,
+  client: DbClient,
   log?: (msg: string) => void,
 ): Promise<{ processed: number }> {
   return drainWithStall({

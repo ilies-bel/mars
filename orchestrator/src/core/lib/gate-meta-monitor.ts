@@ -1,15 +1,15 @@
-import type { InStatement, ResultSet } from '@libsql/client'
+import type { DbResultSet, DbStatement } from './db.js'
 import { raiseActionQueueItem } from './action-queue'
 
 /**
  * Minimal write/read seam the monitor needs. Satisfied structurally by both a
- * raw libsql {@link import('@libsql/client').Client} (the subscriber passes one
- * to {@link ensureGateMetaMonitorSchema}) and a `DomainTaskStore` (the failure
+ * raw {@link import('./db.js').DbClient} (the subscriber passes one to
+ * {@link ensureGateMetaMonitorSchema}) and a `DomainTaskStore` (the failure
  * chokepoint threads one in), so the monitor stays decoupled from which seam
  * calls it. Only `.execute()` is used — the one method both expose identically.
  */
 export interface MonitorDb {
-  execute(stmt: InStatement): Promise<ResultSet>
+  execute(stmt: DbStatement): Promise<DbResultSet>
 }
 
 /**
@@ -52,50 +52,27 @@ export const GATE_VERDICT_TRIP_THRESHOLD = 5
 /** Action-queue kind for the level-triggered "gate may be broken" row. */
 export const GATE_BROKEN_ACTION_QUEUE_KIND = 'gate-broken' as const
 
-const MONITOR_STATE_DDL = `
-  CREATE TABLE IF NOT EXISTS gate_verdict_monitor (
-    id                INTEGER PRIMARY KEY CHECK (id = 1),
-    current_verdict   TEXT,
-    streak_count      INTEGER NOT NULL DEFAULT 0,
-    last_task_id      TEXT,
-    updated_at        TEXT NOT NULL
-  )
-`
-
 /**
- * Per-verdict suppression ledger. A row exists iff its verdict is currently
- * suppressed. Kept separate from {@link MONITOR_STATE_DDL}'s single streak row
- * so that a later, different verdict tripping the monitor does not clear an
- * earlier suppression that an operator has not yet acted on.
- */
-const SUPPRESSED_VERDICTS_DDL = `
-  CREATE TABLE IF NOT EXISTS gate_suppressed_verdicts (
-    verdict     TEXT PRIMARY KEY,
-    tripped_at  TEXT NOT NULL
-  )
-`
-
-let schemaEnsured = false
-
-/**
- * Ensure the meta-monitor tables exist on `client`. Idempotent; safe to call
- * on every subscriber drain.
+ * The meta-monitor tables (`gate_verdict_monitor` — a singleton streak row via
+ * `CHECK (id = 1)` — and the per-verdict suppression ledger
+ * `gate_suppressed_verdicts`, kept separate so a later verdict tripping the
+ * monitor does not clear an earlier suppression an operator has not yet acted
+ * on) are owned by the canonical schema (pg-schema.ts `ensureSchema`, applied
+ * at daemon/init start). This function is retained as the historical call-site
+ * seam and is now a no-op.
  */
 export const ensureGateMetaMonitorSchema = async (
-  client: MonitorDb,
+  _client: MonitorDb,
 ): Promise<void> => {
-  if (schemaEnsured) return
-  await client.execute(MONITOR_STATE_DDL)
-  await client.execute(SUPPRESSED_VERDICTS_DDL)
-  schemaEnsured = true
+  // Schema is guaranteed by pg-schema.ts ensureSchema at startup.
 }
 
 /**
- * Reset the in-process "schema ensured" latch. Test-only — each test loads a
- * fresh per-test DB client, so the latch must not leak across them.
+ * Historical test hook for the removed in-process "schema ensured" latch.
+ * No-op since the canonical schema owns the tables.
  */
 export const resetGateMetaMonitorSchemaLatchForTests = (): void => {
-  schemaEnsured = false
+  // No latch remains; schema ownership moved to pg-schema.ts.
 }
 
 interface MonitorRow {
@@ -232,8 +209,9 @@ const markVerdictSuppressed = async (
   verdict: string,
 ): Promise<void> => {
   await client.execute({
-    sql: `INSERT OR IGNORE INTO gate_suppressed_verdicts (verdict, tripped_at)
-          VALUES (?, ?)`,
+    sql: `INSERT INTO gate_suppressed_verdicts (verdict, tripped_at)
+          VALUES (?, ?)
+          ON CONFLICT (verdict) DO NOTHING`,
     args: [verdict, new Date().toISOString()],
   })
 }

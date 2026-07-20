@@ -2,29 +2,25 @@
  * transcript-append Outbox Subscriber — behaviour tests.
  *
  * These tests drive the subscriber handler directly (without a running
- * dispatcher) so every assertion is synchronous and deterministic. The
- * file-backed SQLite client mirrors the real daemon setup: a single
- * `mars.db` that holds both the `task_durable_transcripts` table and the
+ * dispatcher) so every assertion is synchronous and deterministic. One
+ * database per test mirrors the real daemon setup: a single store that
+ * holds both the `task_durable_transcripts` table and the
  * `subscriber_processed_events` dedup table, so the processedOnce row and
  * the transcript insert are co-located and covered by the same write
  * transaction.
  *
  * Since the durable-transcript migration, transcripts are stored as
- * gzip-compressed BLOBs in `task_durable_transcripts` — not as JSON strings
- * inside `trace_events` payloads. All assertions now check that table.
+ * gzip-compressed `bytea` values in `task_durable_transcripts` — not as
+ * JSON strings inside `trace_events` payloads. All assertions check that
+ * table.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { gunzip } from 'node:zlib';
 import { promisify } from 'node:util';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createClient, type Client } from '@libsql/client';
-import {
-  buildTranscriptAppendSubscriber,
-  ensureTranscriptAppendSchema,
-} from './transcript-append.js';
+import { openDb, type DbClient } from '../../core/lib/db.js';
+import { ensureSchema } from '../../core/lib/pg-schema.js';
+import { buildTranscriptAppendSubscriber } from './transcript-append.js';
 import type { BusEvent } from '../../bus/events.js';
 
 const gunzipAsync = promisify(gunzip);
@@ -32,6 +28,19 @@ const gunzipAsync = promisify(gunzip);
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
+
+let dbSeq = 0;
+
+/**
+ * Fresh in-memory PGlite instance per test carrying the canonical schema
+ * (MARS_DB_BACKEND=pglite is set by test/setup-env.ts; the target string is
+ * only an identity key).
+ */
+async function makeClient(): Promise<DbClient> {
+  const client = openDb(`test:transcript-append:${process.pid}:${dbSeq++}`);
+  await ensureSchema(client);
+  return client;
+}
 
 /** Construct a minimal `task.completed` BusEvent. */
 function completedEvent(eventId: number, taskId: string): BusEvent {
@@ -44,7 +53,7 @@ function completedEvent(eventId: number, taskId: string): BusEvent {
 }
 
 /** Count task_durable_transcripts rows for the given taskId. */
-async function durableTranscriptCount(client: Client, taskId: string): Promise<number> {
+async function durableTranscriptCount(client: DbClient, taskId: string): Promise<number> {
   const r = await client.execute({
     sql: `SELECT COUNT(*) AS n FROM task_durable_transcripts WHERE task_id = ?`,
     args: [taskId],
@@ -53,7 +62,7 @@ async function durableTranscriptCount(client: Client, taskId: string): Promise<n
 }
 
 /** Read and decompress the stored transcript for a task. Returns null if not present. */
-async function readDurableTranscript(client: Client, taskId: string): Promise<string | null> {
+async function readDurableTranscript(client: DbClient, taskId: string): Promise<string | null> {
   const r = await client.execute({
     sql: `SELECT transcript FROM task_durable_transcripts WHERE task_id = ?`,
     args: [taskId],
@@ -70,18 +79,14 @@ async function readDurableTranscript(client: Client, taskId: string): Promise<st
 // ---------------------------------------------------------------------------
 
 describe('transcript-append:task.completed subscriber', () => {
-  let tmpDir: string;
-  let client: Client;
+  let client: DbClient;
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'mars-transcript-append-test-'));
-    client = createClient({ url: `file:${join(tmpDir, 'mars.db')}` });
-    await ensureTranscriptAppendSchema(client);
+    client = await makeClient();
   });
 
-  afterEach(() => {
-    client.close();
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await client.close();
   });
 
   // ── Acceptance criterion 1 ─────────────────────────────────────────────

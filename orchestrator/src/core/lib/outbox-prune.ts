@@ -1,4 +1,4 @@
-import { openLibsql } from './libsql'
+import { openDb } from './db.js'
 
 /**
  * Delete rows from the `events` outbox table that have been consumed by
@@ -7,8 +7,9 @@ import { openLibsql } from './libsql'
  * Two-axis safety:
  *   - Cursor gate: only deletes rows with id <= MIN(subscribers.cursor), so
  *     no row is removed before every subscriber has acknowledged it.
- *   - Age gate: only deletes rows where ts < (unixepoch() - maxAgeSeconds),
- *     so a recently-consumed row is kept until it ages out.
+ *   - Age gate: only deletes rows where ts is older than `maxAgeSeconds`
+ *     (events.ts stores integer epoch seconds), so a recently-consumed row
+ *     is kept until it ages out.
  *
  * If the `subscribers` table has no rows (no consumers registered), returns 0
  * immediately — age alone never triggers a delete.
@@ -16,10 +17,10 @@ import { openLibsql } from './libsql'
  * Returns the count of deleted rows.
  */
 export const pruneOutbox = async (
-  dbPath: string,
+  dbTarget: string,
   maxAgeSeconds: number,
 ): Promise<number> => {
-  const client = openLibsql({ url: `file:${dbPath}` })
+  const client = openDb(dbTarget)
   try {
     const cursorResult = await client.execute(
       'SELECT COALESCE(MIN(cursor), -1) AS min_cursor, COUNT(*) AS sub_count FROM subscribers',
@@ -29,11 +30,12 @@ export const pruneOutbox = async (
 
     const minCursor = Number(cursorResult.rows[0].min_cursor)
     const result = await client.execute({
-      sql: 'DELETE FROM events WHERE id <= ? AND ts < (unixepoch() - ?)',
+      sql: `DELETE FROM events
+            WHERE id <= ? AND ts < (floor(extract(epoch from now()))::bigint - ?)`,
       args: [minCursor, maxAgeSeconds],
     })
     return result.rowsAffected
   } finally {
-    client.close()
+    await client.close()
   }
 }

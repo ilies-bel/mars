@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import type { Client } from '@libsql/client'
+import type { DbClient } from '../../core/lib/db.js'
 import type { EventName, EventPayload } from '../../bus/events.js'
 
 // ---------------------------------------------------------------------------
@@ -22,11 +22,10 @@ interface QueueModule {
   updateTask: typeof import('../../core/queue').updateTask
   getTask: typeof import('../../core/queue').getTask
   resolveQueueClient: typeof import('../../core/queue').resolveQueueClient
-  migrateQueueSchema: typeof import('../../core/queue').migrateQueueSchema
+  ensureQueueSchema: typeof import('../../core/queue').ensureQueueSchema
 }
 
 interface ActionQueueModule {
-  initActionQueue: typeof import('../../core/lib/action-queue').initActionQueue
   listActionQueueItems: typeof import('../../core/lib/action-queue').listActionQueueItems
 }
 
@@ -74,7 +73,7 @@ interface Loaded {
   gm: GateMonitorModule
   pub: PublisherModule
   cb: CircuitBreakerModule
-  client: Client
+  client: DbClient
 }
 
 // ---------------------------------------------------------------------------
@@ -97,11 +96,10 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../core/queue')) as unknown as QueueModule
-  await q.migrateQueueSchema()
+  await q.ensureQueueSchema()
   const aq = (await import(
     '../../core/lib/action-queue'
   )) as unknown as ActionQueueModule
-  await aq.initActionQueue()
   const ft = (await import(
     '../../core/queue-fix-tasks'
   )) as unknown as FixTasksModule
@@ -150,7 +148,7 @@ const registerTestRecipe = (
 
 const publish = async <T extends EventName>(
   pub: PublisherModule,
-  client: Client,
+  client: DbClient,
   type: T,
   payload: EventPayload<T>,
 ): Promise<void> => {
@@ -458,7 +456,7 @@ describe('verify-gate meta-monitor suppression', () => {
   }
 
   const countFixTasksFor = async (
-    client: Client,
+    client: DbClient,
     originId: string,
   ): Promise<number> => {
     const r = await client.execute({

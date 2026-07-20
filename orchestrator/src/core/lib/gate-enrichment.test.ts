@@ -15,14 +15,15 @@
  *    (human verb), then shadow → enforcing (burn-in) — never candidate →
  *    enforcing directly.
  *
- * DB setup: per-test in-memory libsql clients; module-level schema latches
+ * DB setup: per-test in-memory PGlite clients; module-level schema latches
  * reset per test.
  */
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it, expect, beforeEach } from 'vitest'
-import { createClient, type Client } from '@libsql/client'
+import { openDb, type DbClient } from './db.js'
+import { ensureSchema } from './pg-schema.js'
 import {
   approveEnrichment,
   appendEnrichmentScopes,
@@ -51,7 +52,12 @@ import {
   type VerifyStep,
 } from './git/verify'
 
-const makeDb = (): Client => createClient({ url: ':memory:' })
+let dbSeq = 0
+const makeDb = async (): Promise<DbClient> => {
+  const client = openDb(`gate-enrichment-test-${process.pid}-${++dbSeq}`)
+  await ensureSchema(client)
+  return client
+}
 
 /** A registered ENCODABLE signature (FailureKind facet: command family). */
 const ENCODABLE_SIG = 'verify:typecheck/typecheck-cannot-find-name'
@@ -59,7 +65,7 @@ const ENCODABLE_SIG = 'verify:typecheck/typecheck-cannot-find-name'
 const NON_ENCODABLE_SIG = 'setup:install/install-timeout'
 
 const baseObserveInput = (
-  db: Client,
+  db: DbClient,
   signature: string,
 ): ObserveFailureForEnrichmentInput => ({
   db,
@@ -106,7 +112,7 @@ beforeEach(() => {
 
 describe('gate-enrichment: signature-keyed idempotency', () => {
   it('the same signature never appends twice — repeat failures bump seen_count on the one record', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     const effects = makeEffects()
 
     const first = await observeFailureForEnrichment(
@@ -136,7 +142,7 @@ describe('gate-enrichment: signature-keyed idempotency', () => {
   })
 
   it('a claimed signature in ANY status only bumps seen_count — approval state survives repeat failures', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     const effects = makeEffects()
     await observeFailureForEnrichment(baseObserveInput(db, ENCODABLE_SIG), effects)
     await approveEnrichment(db, ENCODABLE_SIG, 'tester')
@@ -164,7 +170,7 @@ describe('gate-enrichment: signature-keyed idempotency', () => {
   })
 
   it('duplicate merge is belted at scope level: an enrichment step colliding with a same-scope recipe step name is skipped', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     await observeFailureSignature(db, {
       signature: ENCODABLE_SIG,
       originTaskId: 't1',
@@ -201,7 +207,7 @@ describe('gate-enrichment: signature-keyed idempotency', () => {
 
 describe('gate-enrichment: non-encodable signatures', () => {
   it('a non-encodable signature is recorded as non-encodable and produces NO check', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     const effects = makeEffects()
 
     const outcome = await observeFailureForEnrichment(
@@ -260,7 +266,7 @@ describe('gate-enrichment: non-encodable signatures', () => {
 
 describe('gate-enrichment: approval and shadow burn-in', () => {
   it('approval flips a check candidate → shadow (human gate), never straight to enforcing', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     await observeFailureForEnrichment(
       baseObserveInput(db, ENCODABLE_SIG),
       makeEffects(),
@@ -278,7 +284,7 @@ describe('gate-enrichment: approval and shadow burn-in', () => {
   })
 
   it('approval requires a landed draft check', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     // Claim without ranVerifySteps → no mechanically-derived draft.
     await observeFailureSignature(db, {
       signature: ENCODABLE_SIG,
@@ -299,7 +305,7 @@ describe('gate-enrichment: approval and shadow burn-in', () => {
   })
 
   it('a candidate shadow-runs before enforcing: a failing shadow verdict can never fail verify', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     await observeFailureSignature(db, {
       signature: ENCODABLE_SIG,
       originTaskId: 't1',
@@ -333,7 +339,7 @@ describe('gate-enrichment: approval and shadow burn-in', () => {
   })
 
   it(`${SHADOW_BURN_IN_COUNT} clean parses promote shadow → enforcing; the enforcing check then fails verify`, async () => {
-    const db = makeDb()
+    const db = await makeDb()
     await observeFailureSignature(db, {
       signature: ENCODABLE_SIG,
       originTaskId: 't1',
@@ -373,7 +379,7 @@ describe('gate-enrichment: approval and shadow burn-in', () => {
   })
 
   it('a starved shadow check (failing with EMPTY output) never records a parse and never promotes', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     await observeFailureSignature(db, {
       signature: ENCODABLE_SIG,
       originTaskId: 't1',
@@ -402,7 +408,7 @@ describe('gate-enrichment: approval and shadow burn-in', () => {
   })
 
   it('retire keeps the signature claimed; reopen is the only way back (explicit verb)', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     const effects = makeEffects()
     await observeFailureForEnrichment(baseObserveInput(db, ENCODABLE_SIG), effects)
     await approveEnrichment(db, ENCODABLE_SIG, 'tester')
@@ -420,7 +426,7 @@ describe('gate-enrichment: approval and shadow burn-in', () => {
 
 describe('gate-enrichment: family-(a) draft derivation', () => {
   it('derives the failed verify command re-run, scoped by relativising stepDir against the worktree', async () => {
-    const db = makeDb()
+    const db = await makeDb()
     const outcome = await observeFailureForEnrichment(
       baseObserveInput(db, ENCODABLE_SIG),
       makeEffects(),

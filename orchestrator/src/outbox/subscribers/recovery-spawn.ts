@@ -1,11 +1,9 @@
-import type { Client } from '@libsql/client'
+import type { DbClient } from '../../core/lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
-import { ensureProcessedOnceSchema } from '../../bus/processed-once.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks.js'
 import { getTask, updateTask } from '../../core/queue.js'
-import { ensureGateMetaMonitorSchema } from '../../core/lib/gate-meta-monitor.js'
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
 import { registerSubscriberName } from '../registry.js'
 
@@ -32,19 +30,17 @@ import { registerSubscriberName } from '../registry.js'
  * Placing the gate there (not here) makes suppression authoritative regardless
  * of which path fires first: a suppressed verify-gate verdict marks its origin
  * `failed` (restartable) and spawns NO recovery, so the one recovery slot is
- * never consumed. This subscriber only ensures the monitor's schema exists.
+ * never consumed.
  */
 export const RECOVERY_SPAWN_SUBSCRIBER = 'recovery-spawner'
 registerSubscriberName(RECOVERY_SPAWN_SUBSCRIBER)
 
 /**
- * Register the recovery-spawner subscriber and ensure the dedup schema
- * exists. `replay: false` so the cursor starts at the current outbox head on
- * first registration, observing only future events. Idempotent.
+ * Register the recovery-spawner subscriber. `replay: false` so the cursor
+ * starts at the current outbox head on first registration, observing only
+ * future events. Idempotent.
  */
-export async function ensureRecoverySpawner(client: Client): Promise<void> {
-  await ensureProcessedOnceSchema(client)
-  await ensureGateMetaMonitorSchema(client)
+export async function ensureRecoverySpawner(client: DbClient): Promise<void> {
   await registerSubscriber(client, RECOVERY_SPAWN_SUBSCRIBER, { replay: false })
 }
 
@@ -61,12 +57,12 @@ export async function ensureRecoverySpawner(client: Client): Promise<void> {
  * leaves the dedup row in place — the next drain reads `alreadyProcessed` and
  * skips without re-spawning.
  *
- * @param client The libsql client carrying the outbox + subscriber tables.
+ * @param client The DB client carrying the outbox + subscriber tables.
  * @param log    Optional logger for per-event failures and stall notices.
  * @returns      The count of `task.failed` events whose side effect ran.
  */
 export async function drainRecoverySpawner(
-  client: Client,
+  client: DbClient,
   log?: (msg: string) => void,
 ): Promise<{ processed: number }> {
   return drainWithStall({

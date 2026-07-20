@@ -1,9 +1,6 @@
-import type { Client } from '@libsql/client';
+import type { DbClient } from '../../core/lib/db.js';
 import { randomUUID } from 'node:crypto';
-import {
-  processedOnce,
-  ensureProcessedOnceSchema,
-} from '../../bus/processed-once.js';
+import { processedOnce } from '../../bus/processed-once.js';
 import type { Subscriber } from '../dispatcher.js';
 import type { BusEvent } from '../../bus/events.js';
 import { registerSubscriberName } from '../registry.js';
@@ -11,15 +8,6 @@ import { registerSubscriberName } from '../registry.js';
 /** Unique name for the durable question-raise subscriber. */
 export const QUESTION_RAISER_SUBSCRIBER = 'question-raiser:task.question';
 registerSubscriberName(QUESTION_RAISER_SUBSCRIBER);
-
-/**
- * Ensure the schema required by the question-raise subscriber is present on
- * `client`. Creates the `subscriber_processed_events` dedup table if it does
- * not exist. Idempotent — safe to call on every startup.
- */
-export async function ensureQuestionRaiseSchema(client: Client): Promise<void> {
-  await ensureProcessedOnceSchema(client);
-}
 
 /**
  * Build the Outbox Subscriber that durably raises action-queue items
@@ -36,12 +24,12 @@ export async function ensureQuestionRaiseSchema(client: Client): Promise<void> {
  * Each question event produces its own action-queue item (no origin-fingerprint
  * collapse — questions are independent operator tasks).
  *
- * @param client  The shared `mars.db` client. Must hold both the outbox
+ * @param client  The shared DB client. Must hold both the outbox
  *   `events` table and the `action_queue_items` / `action_queue_history`
  *   tables so all writes are co-located and the dedup transaction is
  *   cross-table atomic.
  */
-export function buildQuestionRaiseSubscribers(client: Client): Subscriber[] {
+export function buildQuestionRaiseSubscribers(client: DbClient): Subscriber[] {
   return [questionRaiseSubscriber(client)];
 }
 
@@ -51,7 +39,7 @@ export function buildQuestionRaiseSubscribers(client: Client): Subscriber[] {
  * item; replaying the same event id is structurally blocked by
  * processedOnce's dedup row.
  */
-function questionRaiseSubscriber(client: Client): Subscriber {
+function questionRaiseSubscriber(client: DbClient): Subscriber {
   return {
     name: 'question-raiser:task.question',
     handler: async (event: BusEvent): Promise<void> => {
@@ -96,7 +84,7 @@ function questionRaiseSubscriber(client: Client): Subscriber {
           });
           await tx.execute({
             sql: `INSERT INTO action_queue_history (
-                   id, item_id, at, from_state, to_state, by, note
+                   id, item_id, at, from_state, to_state, "by", note
                  ) VALUES (?, ?, ?, NULL, 'open', ?, NULL)`,
             args: [randomUUID(), id, now, raisedBy],
           });

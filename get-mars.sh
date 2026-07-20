@@ -13,6 +13,17 @@
 #   GET_MARS_DRY_RUN      Set to 1 to print resolved URLs/paths and exit
 #   GET_MARS_GITHUB_REPO  Override GitHub repo      (default: ilies-bel/mars)
 #   GET_MARS_VERSION      Pin a specific release tag (default: latest)
+#
+# TODO(embedded-postgres): this script installs only the `mars` CLI
+# binary. The Bun-compiled prod binaries ship without node_modules, so
+# the embedded PostgreSQL server binaries (delivered to dev installs by
+# the `embedded-postgres` npm platform packages) have no prod delivery
+# path yet — the daemon cannot provision its per-repo PG instance from a
+# bootstrap-installed binary alone. Distribution story (per-platform PG
+# release assets fetched here, or a checksummed first-run download by
+# the daemon) is an explicit follow-up — NOT part of the
+# migrate/embedded-postgres branch. See
+# orchestrator/docs/migrations/0002-sqlite-to-embedded-postgres.md §10.
 
 set -euo pipefail
 

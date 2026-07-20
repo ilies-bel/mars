@@ -41,120 +41,12 @@ export const DIAGNOSIS_KINDS: readonly DiagnosisKind[] = [
 const isDiagnosisKind = (value: unknown): value is DiagnosisKind =>
   value === 'root-cause-found' || value === 'inconclusive'
 
-let initialised = false
-
-const parseFiles = (raw: unknown): readonly string[] => {
-  if (typeof raw !== 'string' || raw.length === 0) return []
-  try {
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((x): x is string => typeof x === 'string')
-  } catch {
-    return []
-  }
-}
-
-/**
- * Create the normalized diagnosis tables (diagnoses_root_cause,
- * diagnoses_inconclusive, diagnosis_involved_files) and backfill from the
- * legacy polymorphic diagnoses table if it still exists. The legacy table
- * is dropped once data is safely copied so subsequent startups skip the
- * migration entirely.
- */
-const initDiagnoses = async (): Promise<void> => {
-  if (initialised) return
-  const store = await getDefaultTaskStore()
-
-  await store.execute(`
-    CREATE TABLE IF NOT EXISTS diagnoses_root_cause (
-      task_id       TEXT NOT NULL PRIMARY KEY,
-      evidence      TEXT NOT NULL,
-      fix_direction TEXT NOT NULL,
-      recorded_at   TEXT NOT NULL
-    )
-  `)
-  await store.execute(`
-    CREATE TABLE IF NOT EXISTS diagnoses_inconclusive (
-      task_id      TEXT NOT NULL PRIMARY KEY,
-      what_checked TEXT NOT NULL,
-      why_unscoped TEXT NOT NULL,
-      recorded_at  TEXT NOT NULL
-    )
-  `)
-  await store.execute(`
-    CREATE TABLE IF NOT EXISTS diagnosis_involved_files (
-      task_id  TEXT    NOT NULL,
-      position INTEGER NOT NULL,
-      path     TEXT    NOT NULL,
-      PRIMARY KEY (task_id, position)
-    )
-  `)
-
-  // One-time migration: backfill the legacy polymorphic diagnoses table into
-  // the normalized child tables, then drop it. Idempotent: once the legacy
-  // table is gone this block is a no-op on every subsequent startup.
-  const oldTable = await store.query(
-    `SELECT name FROM sqlite_master WHERE type='table' AND name='diagnoses'`,
-  )
-  if (oldTable.rows.length > 0) {
-    const rcRows = await store.query(`
-      SELECT task_id, evidence, involved_files_json, fix_direction, recorded_at
-        FROM diagnoses
-       WHERE kind = 'root-cause-found'
-    `)
-    for (const row of rcRows.rows) {
-      const r = row as unknown as {
-        task_id: string
-        evidence: string | null
-        involved_files_json: string | null
-        fix_direction: string | null
-        recorded_at: string
-      }
-      await store.execute({
-        sql: `INSERT OR IGNORE INTO diagnoses_root_cause
-                (task_id, evidence, fix_direction, recorded_at)
-              VALUES (?, ?, ?, ?)`,
-        args: [r.task_id, r.evidence ?? '', r.fix_direction ?? '', r.recorded_at],
-      })
-      const files = parseFiles(r.involved_files_json)
-      for (let i = 0; i < files.length; i++) {
-        await store.execute({
-          sql: `INSERT OR IGNORE INTO diagnosis_involved_files
-                  (task_id, position, path)
-                VALUES (?, ?, ?)`,
-          args: [r.task_id, i, files[i]],
-        })
-      }
-    }
-    const incRows = await store.query(`
-      SELECT task_id, what_checked, why_unscoped, recorded_at
-        FROM diagnoses
-       WHERE kind = 'inconclusive'
-    `)
-    for (const row of incRows.rows) {
-      const r = row as unknown as {
-        task_id: string
-        what_checked: string | null
-        why_unscoped: string | null
-        recorded_at: string
-      }
-      await store.execute({
-        sql: `INSERT OR IGNORE INTO diagnoses_inconclusive
-                (task_id, what_checked, why_unscoped, recorded_at)
-              VALUES (?, ?, ?, ?)`,
-        args: [
-          r.task_id,
-          r.what_checked ?? '',
-          r.why_unscoped ?? '',
-          r.recorded_at,
-        ],
-      })
-    }
-    await store.execute(`DROP TABLE diagnoses`)
-  }
-
-  initialised = true
-}
+// The normalized diagnosis tables (diagnoses_root_cause,
+// diagnoses_inconclusive, diagnosis_involved_files) are owned by the
+// canonical schema (pg-schema.ts `ensureSchema`, applied at daemon/init
+// start). The SQLite-era in-place backfill from the legacy polymorphic
+// `diagnoses` table is gone — legacy history is handled once by the
+// one-time importer (src/init/import-sqlite.ts).
 
 const requireNonEmpty = (value: string, field: string): void => {
   if (typeof value !== 'string' || value.trim().length === 0) {
@@ -208,7 +100,6 @@ export const setDiagnosis = async (
     whyUnscoped = verdict.whyUnscoped.trim()
   }
 
-  await initDiagnoses()
   const store = await getDefaultTaskStore()
   const now = new Date().toISOString()
 
@@ -258,7 +149,6 @@ export const setDiagnosis = async (
  * success. The caller branches on `result.kind`.
  */
 export const getDiagnosis = async (taskId: string): Promise<StoredDiagnosis> => {
-  await initDiagnoses()
   const store = await getDefaultTaskStore()
 
   const rcResult = await store.query({

@@ -11,7 +11,7 @@
  * appropriate status updates, and persists a promotion_ledger row.
  */
 
-import { type Client } from '@libsql/client'
+import type { DbClient } from './lib/db'
 import { getActiveWorkflowConfig, getTrialWorkflowConfig } from './workflow-configs'
 import { recordPromotionLedgerEntry } from './promotion-ledger'
 import { raiseActionQueueItem } from './lib/action-queue'
@@ -67,7 +67,7 @@ export interface RunPromotionDecisionOptions {
  * no incumbent exists).
  */
 export const runPromotionDecision = async (
-  client: Client,
+  client: DbClient,
   workflow: string,
   opts: RunPromotionDecisionOptions = {},
 ): Promise<PromotionOutcome | null> => {

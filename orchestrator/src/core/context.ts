@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, resolve, sep } from 'node:path'
 
 export interface OrchestratorContext {
@@ -121,6 +121,38 @@ export const __resetContextCacheForTests = (): void => {
 
 export const getRepoRoot = (): string => resolveContext().repoRoot
 export const getStateDir = (): string => resolveContext().stateDir
+
+/**
+ * Resolve the database target string to hand to `openDb` (migration 0002).
+ *
+ * - `MARS_DB_BACKEND=pglite` (tests): returns the resolved `.mars` state dir —
+ *   a stable per-repo identity key; PGlite storage is in-memory, the string
+ *   only keys the process-wide client registry.
+ * - embedded (default): reads the DSN the daemon published to `.mars/pg.dsn`
+ *   and throws an operator-facing error when the file is missing (the daemon
+ *   provisions the embedded PostgreSQL server; without it there is no DB).
+ */
+export const resolveDbTarget = (override?: string): string => {
+  const ctx = resolveContext(override)
+  if (process.env.MARS_DB_BACKEND === 'pglite') {
+    return ctx.stateDir
+  }
+  const dsnPath = resolve(ctx.stateDir, 'pg.dsn')
+  let dsn = ''
+  try {
+    dsn = readFileSync(dsnPath, 'utf8').trim()
+  } catch {
+    // fall through to the shared error below
+  }
+  if (!dsn) {
+    throw new Error(
+      `Mars database unavailable: ${dsnPath} is missing — the daemon is not running ` +
+        '(it provisions the embedded PostgreSQL server and publishes its DSN). ' +
+        'Run `mars daemon start` and retry.',
+    )
+  }
+  return dsn
+}
 
 /**
  * Resolve the repo root using the same precedence as the rest of the

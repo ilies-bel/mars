@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 interface QueueModule {
-  migrateQueueSchema: typeof import('../../core/queue').migrateQueueSchema
+  ensureQueueSchema: typeof import('../../core/queue').ensureQueueSchema
   enqueueTask: typeof import('../../core/queue').enqueueTask
   addBlockers: typeof import('../../core/queue').addBlockers
   getTask: typeof import('../../core/queue').getTask
@@ -46,7 +46,7 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../core/queue')) as unknown as QueueModule
-  await q.migrateQueueSchema()
+  await q.ensureQueueSchema()
   const sub = (await import('./blocker-resolution')) as unknown as BlockerResolutionSubscriberModule
   const pub = (await import('../../bus/publisher')) as unknown as PublisherModule
   const subs = (await import('../../bus/subscribers')) as unknown as SubscribersModule
@@ -283,6 +283,7 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
       const qc = q.resolveQueueClient()
 
       const MAIN_COMMITER_PAYLOAD = JSON.stringify({ recipe: 'main-commiter', integrationBranch: 'main' })
+      const minutesAgo = (m: number): string => new Date(Date.now() - m * 60_000).toISOString()
 
       // Source task with high retry_count (budget = 3, so retry_count = 10 is exhausted)
       const src = await q.enqueueTask('implement-feature', undefined, { skipTriage: true })
@@ -292,22 +293,22 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
       const c1Id = `fix-old1-${src.id.slice(0, 6)}`
       await qc.execute({
         sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, recovery_payload, created_at, updated_at)
-              VALUES (?, 'clean main (old)', 'done', 'fix', 'agent', 'main-commiter-spawn', ?, 0, ?, 3, ?, datetime('now', '-5 minutes'), datetime('now', '-4 minutes'))`,
-        args: [c1Id, src.id, src.id, MAIN_COMMITER_PAYLOAD],
+              VALUES (?, 'clean main (old)', 'done', 'fix', 'agent', 'main-commiter-spawn', ?, 0, ?, 3, ?, ?, ?)`,
+        args: [c1Id, src.id, src.id, MAIN_COMMITER_PAYLOAD, minutesAgo(5), minutesAgo(4)],
       })
 
       // New main-committer C2: the one that just completed
       const c2Id = `fix-new-${src.id.slice(0, 6)}`
       await qc.execute({
         sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, recovery_payload, created_at, updated_at)
-              VALUES (?, 'clean main (new)', 'done', 'fix', 'agent', 'main-commiter-spawn', ?, 0, ?, 3, ?, datetime('now', '-1 minute'), datetime('now'))`,
-        args: [c2Id, src.id, src.id, MAIN_COMMITER_PAYLOAD],
+              VALUES (?, 'clean main (new)', 'done', 'fix', 'agent', 'main-commiter-spawn', ?, 0, ?, 3, ?, ?, ?)`,
+        args: [c2Id, src.id, src.id, MAIN_COMMITER_PAYLOAD, minutesAgo(1), minutesAgo(0)],
       })
 
       // Park src behind C2 (raw SQL — ADR-0040 guard exemption for main-committers)
       await qc.execute({
-        sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', datetime('now'))`,
-        args: [src.id, c2Id],
+        sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+        args: [src.id, c2Id, new Date().toISOString()],
       })
       await qc.execute({ sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`, args: [src.id] })
 
@@ -343,16 +344,16 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
       const fixId = `fix-real-${origin.id.slice(0, 6)}`
       await qc.execute({
         sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, recovery_payload, created_at, updated_at)
-              VALUES (?, 'fix the code', 'done', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, NULL, datetime('now', '-1 minute'), datetime('now'))`,
-        args: [fixId, origin.id, origin.id],
+              VALUES (?, 'fix the code', 'done', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, NULL, ?, ?)`,
+        args: [fixId, origin.id, origin.id, new Date(Date.now() - 60_000).toISOString(), new Date().toISOString()],
       })
 
       // A separate blocker that just completed — triggers unblockByCompletion
       const blocker = await q.enqueueTask('separate-blocker', undefined, { skipTriage: true })
       await qc.execute({ sql: `UPDATE tasks SET status = 'done' WHERE id = ?`, args: [blocker.id] })
       await qc.execute({
-        sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', datetime('now'))`,
-        args: [origin.id, blocker.id],
+        sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+        args: [origin.id, blocker.id, new Date().toISOString()],
       })
       await qc.execute({ sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`, args: [origin.id] })
 
@@ -423,8 +424,8 @@ describe('blocker-resolution: late recovery success must resurrect failed origin
       const dep = await q.enqueueTask('dep-on-origin', undefined, { skipTriage: true })
       await qc.execute({
         sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
-              VALUES (?, ?, 'confirmed', datetime('now'))`,
-        args: [dep.id, origin.id],
+              VALUES (?, ?, 'confirmed', ?)`,
+        args: [dep.id, origin.id, new Date().toISOString()],
       })
       await qc.execute({
         sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
@@ -436,8 +437,8 @@ describe('blocker-resolution: late recovery success must resurrect failed origin
       const fixId = `fix-${origin.id.slice(0, 8)}`
       await qc.execute({
         sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, created_at, updated_at)
-              VALUES (?, 'fix the code', 'done', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, datetime('now'), datetime('now'))`,
-        args: [fixId, origin.id, origin.id],
+              VALUES (?, 'fix the code', 'done', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?)`,
+        args: [fixId, origin.id, origin.id, new Date().toISOString(), new Date().toISOString()],
       })
 
       await sub.ensureBlockerResolutionSubscriber(qc)

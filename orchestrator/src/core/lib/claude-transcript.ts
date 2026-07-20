@@ -110,7 +110,7 @@ const loadTaskRow = async (
   const r = await store.query({
     sql: `SELECT t.worktree_path,
   COALESCE(
-    (SELECT json_group_array(session_id ORDER BY position)
+    (SELECT json_agg(session_id ORDER BY position)::text
        FROM task_claude_sessions WHERE task_id = t.id),
     '[]'
   ) AS claude_session_ids

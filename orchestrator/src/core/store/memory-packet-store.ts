@@ -7,8 +7,9 @@
  * origin arc id. Rows are soft-deleted via `retired_at` so the history is
  * preserved while listing filters them out.
  *
- * Storage: the `memory_packets` table in `.mars/mars.db` via the same
- * state-client seam as the other stores (ADR-0034).
+ * Storage: the `memory_packets` table via the same state-client seam as the
+ * other stores (ADR-0034). Schema ownership: `ensureSchema` in
+ * core/lib/pg-schema.ts (migration 0002) — this module carries no DDL.
  */
 
 import { randomBytes } from 'node:crypto'
@@ -23,34 +24,6 @@ export type MemoryPacket = {
   originArcId: string | null
   createdAt: string
   retiredAt: string | null
-}
-
-let initialised = false
-
-export const initMemoryPackets = async (): Promise<void> => {
-  if (initialised) return
-  const c = resolveStateClient()
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS memory_packets (
-      id            TEXT PRIMARY KEY,
-      domain        TEXT NOT NULL,
-      text          TEXT NOT NULL,
-      salience      REAL NOT NULL CHECK(salience BETWEEN 0 AND 1),
-      origin_arc_id TEXT,
-      created_at    TEXT NOT NULL,
-      retired_at    TEXT
-    )
-  `)
-  await c.execute(`
-    CREATE INDEX IF NOT EXISTS idx_memory_packets_domain_salience
-      ON memory_packets(domain, retired_at, salience DESC)
-  `)
-  initialised = true
-}
-
-/** Test-only: forget the init latch so a fresh temp DB re-runs the DDL. */
-export const __resetMemoryPacketsForTests = (): void => {
-  initialised = false
 }
 
 const rowToPacket = (row: Record<string, unknown>): MemoryPacket => ({
@@ -81,7 +54,6 @@ export const insertMemoryPacket = async (input: {
   salience: number
   originArcId?: string | null
 }): Promise<MemoryPacket> => {
-  await initMemoryPackets()
   const c = resolveStateClient()
   const id = `mp-${randomBytes(8).toString('hex')}`
   const createdAt = new Date().toISOString()
@@ -112,7 +84,6 @@ export const listMemoryPackets = async (opts: {
   minSalience?: number
   limit?: number
 }): Promise<MemoryPacket[]> => {
-  await initMemoryPackets()
   const c = resolveStateClient()
   const minSalience = opts.minSalience ?? 0
   const limit = opts.limit ?? 100
@@ -136,7 +107,6 @@ export const listMemoryPackets = async (opts: {
  * does not exist or was already retired.
  */
 export const retireMemoryPacket = async (id: string): Promise<boolean> => {
-  await initMemoryPackets()
   const c = resolveStateClient()
   const retiredAt = new Date().toISOString()
   const r = await c.execute({

@@ -11,6 +11,17 @@ name: Release
 # pipeline end to end but never creates a GitHub Release — proving the
 # packaging and validation logic without shipping anything. Releases are
 # only ever created on a real `push` of a v* tag.
+#
+# TODO(embedded-postgres): prod distribution needs a PostgreSQL-binary
+# story. The Bun-compiled `mars` binaries ship without node_modules, so
+# the `embedded-postgres` npm platform packages (which deliver the PG
+# server binaries at `npm install` time) never materialize for prod
+# consumers. Options on the table: per-platform PG tarballs uploaded as
+# extra Release assets here (fetched by get-mars.sh or the daemon), or a
+# checksummed first-run download by the daemon. Explicit follow-up — NOT
+# part of the migrate/embedded-postgres branch. Dev installs (tsx from
+# source) are unaffected. See
+# orchestrator/docs/migrations/0002-sqlite-to-embedded-postgres.md §10.
 on:
   push:
     tags:

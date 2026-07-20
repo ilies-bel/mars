@@ -92,13 +92,20 @@ export const formatClaudeAuthNote = (
 }
 
 /**
- * Return true when the target repo already has a `mars.db` (i.e. `mars init`
- * has been run before). `fileExists` is injectable so tests never touch disk.
+ * Return true when the target repo has already been initialised by `mars init`.
+ * The marker is the init manifest `mars init` writes on every run (the old
+ * `.mars/mars.db` sentinel died with the embedded-PostgreSQL migration — the
+ * database is server-provisioned, not a file). The embedded-PG data dir is
+ * accepted as a secondary signal so a repo whose daemon already provisioned a
+ * database is never re-initialised destructively.
+ * `fileExists` is injectable so tests never touch disk.
  */
 export const checkAlreadyInitialized = (
   repoRoot: string,
   fileExists: (path: string) => boolean,
-): boolean => fileExists(join(repoRoot, '.mars', 'mars.db'))
+): boolean =>
+  fileExists(join(repoRoot, '.mars', 'init-manifest.json')) ||
+  fileExists(join(repoRoot, '.mars', 'pg', 'data'))
 
 // ---------------------------------------------------------------------------
 // Commands
@@ -141,7 +148,7 @@ const init: Command = {
     // this so operators can re-initialize a repo explicitly.
     if (!force && checkAlreadyInitialized(deps.ctx.repoRoot, existsSync)) {
       deps.out('Mars is already initialized in this repository.')
-      deps.out(`  ${join(deps.ctx.repoRoot, '.mars', 'mars.db')} — found`)
+      deps.out(`  ${join(deps.ctx.repoRoot, '.mars')} — found`)
       deps.out('')
       deps.out("Run 'mars update' to refresh workflow templates.")
       deps.out("Run 'mars doctor' to re-check prerequisites any time.")
@@ -169,7 +176,8 @@ const init: Command = {
     let claudeAvailable = true
     if (!skipDoctor) {
       const { runDoctorChecks, realProbes } = await import('./doctor')
-      // Pass null for dbPath — the DB doesn't exist yet before init runs.
+      // Pass null for pgDsnPath — the daemon hasn't provisioned a DB yet
+      // before init runs.
       const checks = await runDoctorChecks(realProbes, null)
       const failures = checks.filter((c) => c.status === 'FAIL')
       const warns = checks.filter((c) => c.status === 'WARN')

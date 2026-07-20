@@ -1,4 +1,4 @@
-import { openLibsql } from './libsql'
+import { openDb } from './db.js'
 
 /**
  * Effective retention policy for trace_events (all constants documented here
@@ -16,8 +16,8 @@ import { openLibsql } from './libsql'
  *     cap or RETENTION_SWEEP_BUDGET_MS (500 ms) is spent, whichever comes first.
  *     Previous behaviour: one batch (1 000 rows) per hour-interval sweep — only
  *     1 k deletes/h against 13 k inserts/h, so the cap was never reachable.
- *     The budget loop makes the cap real while keeping individual DELETEs short
- *     (no long write lock).
+ *     The budget loop makes the cap real while keeping each sweep tick's work
+ *     bounded and predictable.
  *
  *   - Every sweep returns traceEventsRemaining so the caller can log a gauge
  *     line (current rows vs cap) making drift visible instead of silent.
@@ -44,17 +44,17 @@ export const RETENTION_MAX_ROWS_DEFAULT = 50_000
 
 /**
  * Maximum rows deleted from any single DELETE statement. Keeps each DELETE
- * short so it cannot hold a write lock long enough to starve the event loop
- * (the root cause of the daemon-wedge this sweep is meant to prevent).
+ * short and its dead-tuple churn bounded, so one sweep tick can never turn
+ * into an unbounded long-running statement.
  */
 export const RETENTION_BATCH_SIZE = 1_000
 
 /**
  * Wall-clock budget in ms for the row-count cap pass. The pass loops
  * batchSize-sized DELETEs until the table is under maxRows or this budget is
- * spent, whichever comes first. Bounding by time (not by pass count) preserves
- * the "no long write lock" property while allowing real catch-up when the table
- * is significantly over cap.
+ * spent, whichever comes first. Bounding by time (not by pass count) keeps
+ * each sweep tick short while allowing real catch-up when the table is
+ * significantly over cap.
  */
 export const RETENTION_SWEEP_BUDGET_MS = 500
 
@@ -110,8 +110,8 @@ export interface RetentionResult {
 }
 
 /**
- * Prune high-volume append-only tables to prevent mars.db from growing without
- * bound and starving the synchronous better-sqlite3 write path.
+ * Prune high-volume append-only tables to prevent the Mars database from
+ * growing without bound.
  *
  * Four bounded passes:
  *
@@ -129,18 +129,18 @@ export interface RetentionResult {
  * passed), meaning no subscriber will ever be asked to process it again. The
  * dedup row is therefore stale and its removal cannot cause reprocessing.
  *
- * Each DELETE is bounded by `batchSize` so no single statement holds a write
- * lock long enough to reproduce the daemon wedge. For full compaction (manual
+ * Each DELETE is bounded by `batchSize` (primary-key IN-subquery batching) so
+ * a single sweep tick's work stays predictable. For full compaction (manual
  * `mars db compact`) pass a very large batchSize.
  *
- * Does NOT run VACUUM or WAL checkpoint — those are the caller's
- * responsibility.
+ * Space reclamation after the DELETEs is autovacuum's job — there is no
+ * explicit VACUUM or checkpoint step here.
  *
  * Returns a breakdown of the rows removed in each category plus
  * `traceEventsRemaining` (current count after pruning) for gauge logging.
  */
 export async function pruneRetention(
-  dbPath: string,
+  dbTarget: string,
   opts?: RetentionOptions,
 ): Promise<RetentionResult> {
   const maxAgeDays = opts?.maxAgeDays ?? RETENTION_DAYS_DEFAULT
@@ -149,22 +149,8 @@ export async function pruneRetention(
   const batchSize = opts?.batchSize ?? RETENTION_BATCH_SIZE
   const sweepBudgetMs = opts?.sweepBudgetMs ?? RETENTION_SWEEP_BUDGET_MS
 
-  const client = openLibsql({ url: `file:${dbPath}` })
+  const client = openDb(dbTarget)
   try {
-    // Ensure trace_events exists so this is safe to call on a fresh repo.
-    await client.execute(`
-      CREATE TABLE IF NOT EXISTS trace_events (
-        id        TEXT PRIMARY KEY,
-        timestamp TEXT NOT NULL,
-        kind      TEXT NOT NULL,
-        severity  TEXT NOT NULL DEFAULT 'info',
-        task_id   TEXT,
-        origin_id TEXT,
-        phase     TEXT,
-        payload   TEXT NOT NULL DEFAULT '{}'
-      )
-    `)
-
     // ── Pass 1: trace_events by age ────────────────────────────────────────
     let traceEventsByAge = 0
     if (maxAgeDays > 0) {
@@ -172,11 +158,11 @@ export async function pruneRetention(
         Date.now() - maxAgeDays * 24 * 60 * 60 * 1000,
       ).toISOString()
       const r = await client.execute({
-        // rowid-based IN subquery: works on any table without WITHOUT ROWID.
-        // LIMIT on the inner SELECT bounds the write-lock duration.
+        // PK-based IN subquery: LIMIT on the inner SELECT bounds each batch
+        // (DELETE has no LIMIT of its own).
         sql: `DELETE FROM trace_events
-              WHERE rowid IN (
-                SELECT rowid FROM trace_events
+              WHERE id IN (
+                SELECT id FROM trace_events
                 WHERE timestamp < ?
                 LIMIT ?
               )`,
@@ -195,8 +181,8 @@ export async function pruneRetention(
       ).toISOString()
       const r = await client.execute({
         sql: `DELETE FROM trace_events
-              WHERE rowid IN (
-                SELECT rowid FROM trace_events
+              WHERE id IN (
+                SELECT id FROM trace_events
                 WHERE kind = 'log_line' AND timestamp < ?
                 LIMIT ?
               )`,
@@ -208,10 +194,9 @@ export async function pruneRetention(
     // ── Pass 2: trace_events by row count (looping) ───────────────────────
     // Loop batchSize-sized DELETEs until the table is under maxRows or the
     // sweep budget (sweepBudgetMs) is exhausted, whichever comes first.
-    // Each iteration is a bounded DELETE so no single statement holds a write
-    // lock long enough to stall the event loop. The budget replaces the old
-    // "single batch per sweep" behaviour that made the row cap unreachable
-    // at high insert rates.
+    // Each iteration is a bounded DELETE so a sweep tick's work stays
+    // predictable. The budget replaces the old "single batch per sweep"
+    // behaviour that made the row cap unreachable at high insert rates.
     let traceEventsByCount = 0
     {
       const budgetDeadline = Date.now() + sweepBudgetMs
@@ -223,8 +208,8 @@ export async function pruneRetention(
         const toDelete = Math.min(currentCount - maxRows, batchSize)
         const r = await client.execute({
           sql: `DELETE FROM trace_events
-                WHERE rowid IN (
-                  SELECT rowid FROM trace_events
+                WHERE id IN (
+                  SELECT id FROM trace_events
                   ORDER BY timestamp ASC
                   LIMIT ?
                 )`,
@@ -242,22 +227,15 @@ export async function pruneRetention(
     }
 
     // ── Pass 3: subscriber_processed_events orphan prune ───────────────────
-    // Only runs when both tables are present — skip on fresh repos or DBs
-    // that predate the subscriber pipeline.
+    // events and subscriber_processed_events are both owned by the canonical
+    // schema (pg-schema.ts), so no existence probe is needed. The composite
+    // PK (subscriber_id, event_id) drives the batch subquery.
     let subscriberProcessedEvents = 0
-    const tableCheck = await client.execute({
-      sql: `SELECT COUNT(*) AS n FROM sqlite_master
-            WHERE type = 'table' AND name IN ('events', 'subscriber_processed_events')`,
-      args: [],
-    })
-    const presentTableCount = Number(
-      (tableCheck.rows[0] as unknown as { n: number | bigint }).n,
-    )
-    if (presentTableCount === 2) {
+    {
       const r = await client.execute({
         sql: `DELETE FROM subscriber_processed_events
-              WHERE rowid IN (
-                SELECT rowid FROM subscriber_processed_events
+              WHERE (subscriber_id, event_id) IN (
+                SELECT subscriber_id, event_id FROM subscriber_processed_events
                 WHERE event_id NOT IN (SELECT id FROM events)
                 LIMIT ?
               )`,
@@ -282,6 +260,6 @@ export async function pruneRetention(
       traceEventsRemaining,
     }
   } finally {
-    client.close()
+    await client.close()
   }
 }

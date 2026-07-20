@@ -1377,7 +1377,10 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
     let proposalFlipped = false
 
     // The writes span two domain seams (tasks/blockers and proposals) within
-    // the same mars.db. We use separate transactions for each domain. We
+    // the same Mars database. We use separate transactions for each domain
+    // (a historical SQLite-era constraint kept deliberately: folding both
+    // domains into one PG transaction is possible now, but changes crash-
+    // recovery semantics and is deferred as an intentional design pass). We
     // do best-effort with cleanup on error: if anything fails after task
     // inserts begin, delete the inserted slice tasks AND revert the
     // proposal's status back to 'prd-ready' if we already flipped it, before
@@ -1540,7 +1543,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
       }
       // Phase 4: flip the proposal row to 'sliced' so subsequent invocations
       // refuse to re-slice (the precondition above checks 'prd-ready').
-      // markProposalSliced updates the proposal row in mars.db and emits
+      // markProposalSliced updates the proposal row and emits
       // proposal.sliced on the event bus (best-effort).
       await markProposalSliced(proposal.id, taskIds.length)
       proposalFlipped = true
@@ -1550,8 +1553,8 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
       // dependent with zero blockers between the delete and the insert.
       // transferProposalBlockerToTask does both writes (delete the
       // task_proposal_blockers row, insert the task_blockers row) in ONE
-      // mars.db `batch(..., 'write')` transaction — both tables are in
-      // mars.db, so this is genuinely atomic, not merely ordered.
+      // `batch(..., 'write')` transaction — both tables live in the same
+      // Mars database, so this is genuinely atomic, not merely ordered.
       //
       // TODO(ADR-0015 fan-out): the ADR pins only the single
       // new_blocker_task_id case. A slice produces N tasks; ADR-0015 is
@@ -1618,9 +1621,10 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
         )
       }
       // Compensating revert: the proposal status flip (Phase 4) and the
-      // task cleanup above run in separate transactions within mars.db.
-      // They cannot be wrapped in a single transaction with the task
-      // inserts. If we already flipped the proposal to 'sliced' before
+      // task cleanup above run in separate transactions within the Mars
+      // database (see the compensation note above Phase 1: wrapping them in
+      // one PG transaction is a deferred, deliberate redesign, not a port
+      // detail). If we already flipped the proposal to 'sliced' before
       // failing later (e.g. in Phase 5's blocker-transfer), revert it
       // back to 'prd-ready' so the daemon auto-slice loop and
       // `mars proposal slice` can pick it up again. Best-effort — a revert

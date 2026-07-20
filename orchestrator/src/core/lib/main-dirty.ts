@@ -271,8 +271,8 @@ export const findActiveMainCommitter = async (
     sql: `SELECT id, status FROM tasks
            WHERE kind = 'fix'
              AND status IN (${placeholders})
-             AND json_extract(recovery_payload, '$.recipe') = ?
-             AND json_extract(recovery_payload, '$.integrationBranch') = ?
+             AND recovery_payload::jsonb ->> 'recipe' = ?
+             AND recovery_payload::jsonb ->> 'integrationBranch' = ?
            ORDER BY created_at DESC
            LIMIT 1`,
     args: [...ACTIVE_COMMITTER_STATUSES, MAIN_COMMITER_RECIPE, integrationBranch],

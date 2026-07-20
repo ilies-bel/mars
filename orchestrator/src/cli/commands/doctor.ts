@@ -5,13 +5,14 @@
  * FAIL. WARN items are informational (soft dependencies or auto-starting
  * services). All I/O is through CommandDeps sinks.
  *
- * The check logic lives in `runDoctorChecks(probes, dbPath)` so tests can
+ * The check logic lives in `runDoctorChecks(probes, pgDsnPath)` so tests can
  * inject a stubbed `DoctorProbes` without spawning real binaries or touching
  * a real daemon.
  */
 
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type { Command } from '../command'
 import {
   probeProvider,
@@ -115,16 +116,16 @@ export const realProbes: DoctorProbes = {
 // ---------------------------------------------------------------------------
 
 /**
- * Run all doctor checks and return the results. Pass `dbPath = null` to skip
- * the mars.db presence check (e.g. when called from `mars init` before the
- * DB exists).
+ * Run all doctor checks and return the results. Pass `pgDsnPath = null` to
+ * skip the database check (e.g. when called from `mars init` before the
+ * daemon has ever provisioned the embedded PostgreSQL server).
  *
  * `providerProbeDeps` is optional and defaults to real system calls; tests
  * pass a stub to control binary/auth detection without spawning real CLIs.
  */
 export const runDoctorChecks = async (
   probes: DoctorProbes,
-  dbPath: string | null,
+  pgDsnPath: string | null,
   providerProbeDeps: ProviderProbeDeps = realProviderProbeDeps,
 ): Promise<CheckResult[]> => {
   const results: CheckResult[] = []
@@ -212,17 +213,23 @@ export const runDoctorChecks = async (
     })
   }
 
-  // 6. mars.db — WARN if absent (run `mars init`); FAIL if present but
-  //    unreadable. Skip entirely when dbPath is null (called from init).
-  if (dbPath !== null) {
-    if (!probes.fileReadable(dbPath)) {
+  // 6. database — the daemon provisions the embedded PostgreSQL server and
+  //    publishes its DSN to `.mars/pg.dsn`; WARN when the DSN is not
+  //    published (daemon down / repo never started). Skip entirely when
+  //    pgDsnPath is null (called from init).
+  if (pgDsnPath !== null) {
+    if (!probes.fileReadable(pgDsnPath)) {
       results.push({
-        label: 'mars.db',
+        label: 'database',
         status: 'WARN',
-        message: `not found at ${dbPath} — run 'mars init' to create it`,
+        message: `no DSN published at ${pgDsnPath} — the daemon provisions the embedded PostgreSQL server; run 'mars daemon start'`,
       })
     } else {
-      results.push({ label: 'mars.db', status: 'PASS', message: `found at ${dbPath}` })
+      results.push({
+        label: 'database',
+        status: 'PASS',
+        message: `embedded PostgreSQL DSN published at ${pgDsnPath}`,
+      })
     }
   }
 
@@ -263,7 +270,10 @@ const doctor: Command = {
   summary: 'preflight check: verify runtime prerequisites',
   usage: 'usage: mars doctor',
   run: async (_args, deps) => {
-    const results = await runDoctorChecks(realProbes, deps.ctx.queueDbPath)
+    const results = await runDoctorChecks(
+      realProbes,
+      resolve(deps.ctx.stateDir, 'pg.dsn'),
+    )
     let hasFail = false
     for (const r of results) {
       const line = `${r.status.padEnd(4)} ${r.label}: ${r.message}`

@@ -14,7 +14,11 @@ import { readFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { dirname, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveContext } from '../context'
+import { findExistingMarsDb, resolveContext, resolveDbTarget } from '../context'
+import { openDb, type DbClient } from '../lib/db'
+import { ensureSchema } from '../lib/pg-schema'
+import { startEmbeddedPg, type EmbeddedPgHandle } from '../lib/pg-server'
+import { importLegacySqlite } from '../../init/import-sqlite'
 import {
   addBlockers,
   dropTask,
@@ -51,10 +55,7 @@ import {
   drainArcVerifier,
   ensureArcVerifierSubscriber,
 } from '../../outbox/subscribers/arc-verifier-subscriber'
-import {
-  buildTranscriptAppendSubscriber,
-  ensureTranscriptAppendSchema,
-} from '../../outbox/subscribers/transcript-append'
+import { buildTranscriptAppendSubscriber } from '../../outbox/subscribers/transcript-append'
 import { readAllTranscriptsForTask } from '../lib/claude-transcript'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { createHash } from 'node:crypto'
@@ -65,12 +66,10 @@ import { createScoringPool, resolveScoringLimit } from './scoring-pool'
 import { exec, resolveGitBin } from '../lib/git/internal'
 import { classifyInstallRoute } from './install-route'
 import { isStaleDev } from './dev-staleness'
-import { initSettings } from '../lib/settings'
 import {
   getDefaultTaskStore,
   getDefaultDomainTaskStore,
   getCompositionRootClient,
-  runCompositionRootMigrations,
 } from '../store/task-store'
 import { promoteProposal } from '../proposals'
 import {
@@ -384,7 +383,7 @@ export const startDaemon = async (
 
   // Refuse to clobber a live daemon. Probe the socket before unlinking —
   // a non-atomic existsSync check used to let two daemons coexist, leaking
-  // DuckDB/LibSQL handles and making "kill the daemon" recovery unreliable.
+  // DuckDB/DB-pool handles and making "kill the daemon" recovery unreliable.
   if (existsSync(socketPath)) {
     if (await tryConnectSocket(socketPath)) {
       log(`another daemon is already listening on ${socketPath}; exiting`)
@@ -424,11 +423,58 @@ export const startDaemon = async (
       )
     }
   }
-  // Open the unified Mars trace-event store. It lives in `mars.db` alongside
-  // the rest of the state, so there is no separate file lock to probe — the
-  // SQLite connection is shared via libsql's normal pool.
+  // ── Embedded PostgreSQL provisioning (migration 0002) ────────────────────
+  // The daemon owns the repo's PG server: start (or adopt) it BEFORE anything
+  // opens the store. startEmbeddedPg publishes `.mars/pg.port`/`.mars/pg.dsn`
+  // once the server answers, so every later resolveDbTarget() read succeeds.
+  // Under MARS_DB_BACKEND=pglite (tests) the in-process instance needs no
+  // server and no published files.
+  let pgHandle: EmbeddedPgHandle | null = null
+  if (process.env.MARS_DB_BACKEND !== 'pglite') {
+    try {
+      pgHandle = await startEmbeddedPg({
+        stateDir: resolveContext().stateDir,
+        onLog: (line) => log(`[pg] ${line}`),
+      })
+      log(
+        `[pg] embedded PostgreSQL ${pgHandle.adopted ? 'adopted' : 'started'} on port ${pgHandle.port}`,
+      )
+    } catch (err) {
+      log(`embedded PostgreSQL failed to start: ${(err as Error).message}; refusing to start`)
+      process.exit(1)
+    }
+  }
+
+  // Guarantee the canonical schema (single DDL source: pg-schema.ts), then
+  // fold any legacy SQLite `.mars/mars.db` in exactly once. The importer is
+  // idempotent (schema_migrations marker + pg-has-data guard) and renames the
+  // SQLite file to `mars.db.bak-<ts>` on success; a failed import is logged
+  // and retried on the next boot rather than blocking startup.
+  const dbClient: DbClient = openDb(resolveDbTarget())
+  await ensureSchema(dbClient)
+  try {
+    const legacySqlitePath = findExistingMarsDb()
+    if (legacySqlitePath !== null) {
+      const imported = await importLegacySqlite({
+        sqlitePath: legacySqlitePath,
+        client: dbClient,
+      })
+      if (imported.status === 'imported') {
+        const total = Object.values(imported.tables).reduce((a, b) => a + b, 0)
+        log(
+          `[pg-import] imported legacy mars.db (${total} row(s)); renamed to ${imported.renamedTo}`,
+        )
+      }
+    }
+  } catch (err) {
+    log(`[pg-import] legacy SQLite import failed (will retry next start): ${(err as Error).message}`)
+  }
+
+  // Open the unified Mars trace-event store. It lives in the same database
+  // as the rest of the state — the client registry in lib/db.ts shares one
+  // pool per target, so this is a handle onto the daemon's connection pool.
   const traceStore: TraceEventStore = await openTraceEventStore(
-    resolveContext().stateDbPath,
+    resolveDbTarget(),
   )
   // Wire the trace store into the log() closure so every daemon line from
   // this point forward is also recorded as a log_line trace event (tee).
@@ -481,20 +527,6 @@ export const startDaemon = async (
     log(`[cleanup] legacy mastra.db sweep failed: ${(err as Error).message}`)
   }
 
-  // Self-heal: fold any residual legacy queue.db / state.db (the historical
-  // two-DB layout, ADR-0034) into mars.db. Must run BEFORE any client opens
-  // mars.db to preserve the ordering guarantee in databases.ts. Idempotent
-  // and a no-op once both legacy files are gone. Failure is logged but never
-  // prevents the daemon from starting.
-  try {
-    const { mergeLegacyDatabases } = await import('../../init/merge-databases.js')
-    await mergeLegacyDatabases()
-  } catch (err) {
-    log(`[cleanup] legacy database merge failed: ${(err as Error).message}`)
-  }
-
-  await runCompositionRootMigrations()
-  await initSettings()
 
   // Load the persisted Worker registry. When the file is absent, the existing
   // hard-coded WORKER_CONFIGS continue to serve as defaults. Dispatch
@@ -1332,8 +1364,8 @@ export const startDaemon = async (
       do {
         drainAgain = false
         // A throw from any await below (getTask / hasIncompleteBlockers
-        // hitting SQLITE_BUSY or a LibSQL client error under a large
-        // mars.db) must not escape: drain() is invoked fire-and-forget
+        // hitting a transient connection or query error under load)
+        // must not escape: drain() is invoked fire-and-forget
         // (`void drain()`), so an uncaught rejection silently kills the
         // loop with no log line and the daemon stops claiming work while
         // staying alive. Catch per-pass, log, and let the do/while exit
@@ -1525,7 +1557,6 @@ export const startDaemon = async (
   // daemon restarts (each task.completed is unique to one task lifetime,
   // so a stable-per-task id is the right key).
   const compositionClient = getCompositionRootClient()
-  await ensureTranscriptAppendSchema(compositionClient)
   const transcriptAppendSubscriber = buildTranscriptAppendSubscriber(
     compositionClient,
     async (taskId: string): Promise<string | null> => {
@@ -3014,7 +3045,6 @@ export const startDaemon = async (
     const { listTasks: qListTasks } = await import('../queue')
     const { getDefaultDomainTaskStore } = await import('../store/task-store')
     const { resolveOriginIdForTask } = await import('../lib/origin')
-    await runCompositionRootMigrations()
     return {
       listFailedArcs: async () => {
         const tasks = await qListTasks()
@@ -3418,7 +3448,7 @@ export const startDaemon = async (
   //
   // reconcileTerminalTasks is deliberately NOT part of the RECONCILERS
   // startup registry (see ./reconciler.ts): it is an action-queue concern,
-  // takes a libsql Client rather than ReconcileDeps, and must run *here* —
+  // takes a DbClient rather than ReconcileDeps, and must run *here* —
   // after ensureAlertDismisser and before drainAlertDismissals — not in the
   // task-status recovery pass that runs earlier in boot. Folding it into the
   // registry would change when it runs relative to the alert-dismisser drain.
@@ -3698,9 +3728,7 @@ export const startDaemon = async (
   const observabilityWatchdog = setInterval(() => {
     void (async () => {
       try {
-        const itemId = await checkObservabilityStoreSize(
-          resolveContext().stateDbPath,
-        )
+        const itemId = await checkObservabilityStoreSize(resolveDbTarget())
         if (itemId) {
           log(
             `[observability-watchdog] store oversize — raised/bumped action-queue item ${itemId}`,
@@ -3726,7 +3754,7 @@ export const startDaemon = async (
   const outboxSweep = setInterval(() => {
     void (async () => {
       try {
-        await sweepOutbox(resolveContext().stateDbPath)
+        await sweepOutbox(resolveDbTarget())
       } catch (err) {
         log(`[outbox-sweep] errored: ${(err as Error).message}`)
       }
@@ -3808,7 +3836,7 @@ export const startDaemon = async (
 
   // ── Observability telemetry sweeper ───────────────────────────────────────
   // Periodically deletes trace_events rows older than three days so the
-  // SQLite state DB stays bounded across multi-day sessions. The sweep reuses
+  // state store stays bounded across multi-day sessions. The sweep reuses
   // the same pruneObservability routine that `mars observability prune` calls —
   // the retention window is always 3 days and is never shortened by the sweeper.
   // Logs the row count when any rows are removed. .unref() so the timer never
@@ -3820,10 +3848,10 @@ export const startDaemon = async (
   const observabilitySweep = setInterval(() => {
     void (async () => {
       try {
-        const dbPath = resolveContext().stateDbPath
+        const dbTarget = resolveDbTarget()
 
         // Primary time-based telemetry prune (3-day window).
-        const deleted = await sweepObservability(dbPath)
+        const deleted = await sweepObservability(dbTarget)
         if (deleted > 0) {
           log(
             `[observability-sweep] pruned ${deleted} telemetry row(s) older than 3 days`,
@@ -3833,7 +3861,7 @@ export const startDaemon = async (
         // Secondary retention sweep: row-count cap on trace_events (50 000
         // rows / 30 days) and orphan prune of subscriber_processed_events.
         // Runs in the same interval so no extra timer is needed.
-        const retention = await sweepRetention(dbPath)
+        const retention = await sweepRetention(dbTarget)
         const retentionDeleted =
           retention.traceEventsByAge +
           retention.traceEventsByLogLineAge +
@@ -3856,33 +3884,6 @@ export const startDaemon = async (
     })()
   }, OBSERVABILITY_SWEEP_MS)
   observabilitySweep.unref()
-
-  // ── WAL checkpoint sweep ──────────────────────────────────────────────────
-  // Periodically runs PRAGMA wal_checkpoint(TRUNCATE) on the daemon's DB
-  // client so the WAL file stays bounded even when the long-lived connection
-  // suppresses SQLite's built-in autocheckpoint.  A blocked result (busy=1)
-  // is expected under write load and is logged, not thrown.  Default: 60 s;
-  // override via MARS_WAL_CHECKPOINT_INTERVAL_MS.  .unref() so the timer
-  // never holds the daemon process alive after shutdown.
-  const WAL_CHECKPOINT_MS = Number(
-    process.env.MARS_WAL_CHECKPOINT_INTERVAL_MS ?? 60_000,
-  )
-  const { sweepWalCheckpoint } = await import('./wal-checkpoint-sweeper')
-  const walCheckpointSweep = setInterval(() => {
-    void (async () => {
-      try {
-        const { busy, log: walLog, checkpointed } = await sweepWalCheckpoint(
-          getCompositionRootClient(),
-        )
-        log(
-          `[wal-checkpoint] busy=${busy} log=${walLog} checkpointed=${checkpointed}`,
-        )
-      } catch (err) {
-        log(`[wal-checkpoint] errored: ${(err as Error).message}`)
-      }
-    })()
-  }, WAL_CHECKPOINT_MS)
-  walCheckpointSweep.unref()
 
   // ── KPI snapshot sweep ────────────────────────────────────────────────────
   // Takes a rolling 7-day KPI snapshot once per interval and persists a row
@@ -4054,7 +4055,6 @@ export const startDaemon = async (
     clearInterval(observabilityWatchdog)
     clearInterval(phantomWatchdog)
     clearInterval(observabilitySweep)
-    clearInterval(walCheckpointSweep)
     clearInterval(kpiSnapshotSweep)
     clearInterval(spendSweep)
     clearInterval(alertDrain)
@@ -4097,16 +4097,41 @@ export const startDaemon = async (
       new Promise<void>((resolve) => server.close(() => resolve())),
       httpHandle.close(),
     ])
-    // Close the trace-event store handle so libsql releases its connection.
+    // Close the trace-event store handle so its pool reference is released.
     // process.exit below would also do this, but be explicit so the handle
     // never lingers if exit is delayed.
     await traceStore.close()
+    // Release the boot-time DB handle, then stop the embedded PostgreSQL
+    // server — AFTER the trace store closed so no live consumer loses its
+    // backend mid-write. stop() is a no-op for an adopted postmaster (owned
+    // by an overlapping daemon or a deliberate orphan; see pg-server.ts).
+    try {
+      await dbClient.close()
+    } catch {
+      // best-effort
+    }
+    if (pgHandle !== null) {
+      try {
+        await pgHandle.stop()
+      } catch (err) {
+        log(`[pg] stop failed: ${(err as Error).message}`)
+      }
+    }
     // Delete all sentinel/marker files so the next startup sees a clean state.
     // runningMarker deletion is load-bearing for unclean-exit detection: its
     // absence on the next start means this shutdown completed cleanly.
     // crashMarker deletion clears the crash record once the daemon has run its
     // startup reconcile and raised (or bumped) the daemon-died action-queue item.
-    for (const f of [socketPath, pidFile, httpPortFile, runningMarker, crashMarker]) {
+    // pg.port/pg.dsn join the list ONLY when this daemon started the PG server
+    // — an adopted server stays up, so its published files must stay valid.
+    const pgPublishFiles =
+      pgHandle !== null && !pgHandle.adopted
+        ? [
+            resolvePath(resolveContext().stateDir, 'pg.port'),
+            resolvePath(resolveContext().stateDir, 'pg.dsn'),
+          ]
+        : []
+    for (const f of [socketPath, pidFile, httpPortFile, runningMarker, crashMarker, ...pgPublishFiles]) {
       if (existsSync(f)) {
         try {
           unlinkSync(f)
@@ -4117,9 +4142,10 @@ export const startDaemon = async (
     }
     log('daemon stopped')
     // The daemon process is expected to exit on shutdown: pending workflow
-    // runners, DuckDB/LibSQL handles, and child Claude processes keep the
-    // event loop alive otherwise, which leaks the DuckDB single-writer lock
-    // across restarts. SIGINT/SIGTERM already exit; mirror that for RPC.
+    // runners, DuckDB handles, PG pool sockets, and child Claude processes
+    // keep the event loop alive otherwise, which leaks the DuckDB
+    // single-writer lock across restarts. SIGINT/SIGTERM already exit;
+    // mirror that for RPC.
     process.exit(0)
   }
 

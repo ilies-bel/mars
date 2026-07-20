@@ -33,7 +33,7 @@ import {
   __resetForTests,
 } from './desktop-notify.js';
 import type { BusEvent } from '../../bus/events.js';
-import type { Client } from '@libsql/client';
+import type { DbClient } from '../../core/lib/db.js';
 
 // Typed mocks — avoids littering tests with `as unknown as X` casts.
 const mockExecFile = vi.mocked(execFile);
@@ -41,7 +41,7 @@ const mockGetEnabled = vi.mocked(getNotificationsEnabled);
 
 // A dummy Client stub — the real DB is never queried because the preference
 // reader is mocked at module level.
-const db = {} as Client;
+const db = {} as DbClient;
 
 // ---------------------------------------------------------------------------
 // Helpers

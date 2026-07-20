@@ -1,4 +1,4 @@
-import type { Client } from '@libsql/client';
+import type { DbClient } from '../core/lib/db.js';
 import type { BusEvent } from '../bus/events.js';
 import { fetchPending, advanceCursor } from '../bus/subscribers.js';
 import { apiCircuitBreaker } from '../core/lib/api-circuit-breaker.js';
@@ -62,7 +62,7 @@ export interface Dispatcher {
  * not delay another.
  */
 export function startDispatcher(
-  client: Client,
+  client: DbClient,
   subscribers: Subscriber[],
   opts?: { pollMs?: number },
 ): Dispatcher {

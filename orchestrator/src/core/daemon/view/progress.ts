@@ -8,7 +8,7 @@
  * GET /view/progress so the UI can proxy without a local DB read.
  */
 
-import type { Client } from '@libsql/client'
+import type { DbClient } from '../../lib/db.js'
 
 export type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed'
 export type ProposalSource = 'reflection' | 'human' | 'planner'
@@ -239,10 +239,16 @@ const parseBlockedBy = (raw: unknown): string[] => {
 }
 
 /**
- * Create a ProgressTaskStore backed by a libsql Client.
+ * Create a ProgressTaskStore backed by a DbClient.
  * Queries all tasks with their blocker list and parent_proposal_id.
+ *
+ * The aggregate subselects are COALESCE'd to '[]' / cast to text so the row
+ * shape matches the historical behavior exactly: the SQLite-era JSON array
+ * aggregate over zero rows produced the string '[]' (never NULL), and
+ * downstream `anySpec` detection relies on files_json/done_criteria_json
+ * being non-null strings.
  */
-export const createProgressTaskStore = (client: Client): ProgressTaskStore => ({
+export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => ({
   async listProgressTasks() {
     const r = await client.execute(`
       SELECT t.id, t.prompt, t.status,
@@ -251,20 +257,19 @@ export const createProgressTaskStore = (client: Client): ProgressTaskStore => ({
              t.failure_signature, t.drop_reason,
              COALESCE(t.retry_count, 0) AS retry_count,
              t.parent_proposal_id,
-             (SELECT json_group_array(path ORDER BY position)
+             (SELECT COALESCE(json_agg(path ORDER BY position)::text, '[]')
                 FROM task_spec_files WHERE task_id = t.id) AS files_json,
              t.read_first_json, t.prescriptive_action,
              t.verify_cmd,
-             (SELECT json_group_array(criterion ORDER BY position)
+             (SELECT COALESCE(json_agg(criterion ORDER BY position)::text, '[]')
                 FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
              t.task_type,
              t.origin_id, t.fix_for_task_id, t.kind,
              t.created_at, t.updated_at,
              (SELECT b.blocker_task_id FROM task_blockers b
                WHERE b.task_id = t.id ORDER BY b.created_at ASC LIMIT 1) AS blocker_task_id,
-             (SELECT GROUP_CONCAT(b.blocker_task_id, ',')
-                FROM (SELECT blocker_task_id, created_at FROM task_blockers
-                       WHERE task_id = t.id ORDER BY created_at ASC) b) AS blocker_task_ids
+             (SELECT string_agg(b.blocker_task_id, ',' ORDER BY b.created_at)
+                FROM task_blockers b WHERE b.task_id = t.id) AS blocker_task_ids
       FROM tasks t ORDER BY t.created_at
     `)
     return r.rows.map((row) => {
@@ -301,17 +306,22 @@ export const createProgressTaskStore = (client: Client): ProgressTaskStore => ({
 })
 
 /**
- * Create an AggregateReader backed by a libsql Client.
+ * Create an AggregateReader backed by a DbClient.
  * Executes three cheap COUNT queries:
  *   - doneToday: tasks completed in the last 24 hours (rolling window).
  *   - doneTotal: all-time completed task count.
  *   - failedOpen: tasks currently in status='failed'.
+ *
+ * updated_at is a TEXT ISO-8601 UTC timestamp (migration 0002 keeps it), so
+ * the rolling window compares lexically against an app-format cutoff string
+ * rendered from now() - interval '1 day'.
  */
-export const createAggregateReader = (client: Client): AggregateReader => ({
+export const createAggregateReader = (client: DbClient): AggregateReader => ({
   async readAggregates() {
     const r = await client.execute(`
       SELECT
-        (SELECT COUNT(*) FROM tasks WHERE status = 'done' AND updated_at >= datetime('now', '-1 day')) AS done_today,
+        (SELECT COUNT(*) FROM tasks WHERE status = 'done'
+           AND updated_at >= to_char((now() at time zone 'utc') - interval '1 day', 'YYYY-MM-DD"T"HH24:MI:SS')) AS done_today,
         (SELECT COUNT(*) FROM tasks WHERE status = 'done') AS done_total,
         (SELECT COUNT(*) FROM tasks WHERE status = 'failed') AS failed_open
     `)
@@ -325,17 +335,17 @@ export const createAggregateReader = (client: Client): AggregateReader => ({
 })
 
 /**
- * Create a ProposalReader backed by a libsql Client.
+ * Create a ProposalReader backed by a DbClient.
  * Returns ProposalNode for each of the given proposal IDs.
- * Tolerates a missing proposals table (fresh or queue-only DBs).
+ * Tolerates a missing proposals table (pre-ensureSchema stores).
  */
-export const createProposalReader = (client: Client): ProposalReader => ({
+export const createProposalReader = (client: DbClient): ProposalReader => ({
   async listByIds(ids) {
     if (ids.length === 0) return []
     const tableCheck = await client.execute(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='proposals'`,
+      `SELECT to_regclass('public.proposals') AS reg`,
     )
-    if (tableCheck.rows.length === 0) return []
+    if (tableCheck.rows[0]?.reg == null) return []
     const placeholders = ids.map(() => '?').join(', ')
     const r = await client.execute({
       sql: `SELECT id, title, status, source FROM proposals WHERE id IN (${placeholders})`,

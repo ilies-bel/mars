@@ -87,7 +87,7 @@ bundled fallback (`loadWorkflowForKind`) — then calls:
 
 ```ts
 const result = await runWorkflow(workflowToRun, input, {
-  store:    createQueueWorkflowStore(),        // run/step checkpoints in .mars/mars.db
+  store:    createQueueWorkflowStore(),        // run/step checkpoints in the Mars database
   services: { store: taskStore, traceStore },  // → ctx.services
   runId:    task.id,                            // ← makes `mars continue` resume
   logger:   makeWorkflowLogger(log),
@@ -330,9 +330,10 @@ checkpoint-resume keyed on `runId = task.id`:
 ## Persistence
 
 `createQueueWorkflowStore()` implements the engine's `WorkflowStore`
-against the orchestrator's libsql client, creating `workflow_runs` and
-`workflow_step_runs` (`CREATE TABLE IF NOT EXISTS`) in the consolidated
-`.mars/mars.db`. The per-step record is lean — status, SHA, timestamps,
+against the orchestrator's Postgres client (`core/lib/db.ts`), using the
+`workflow_runs` and `workflow_step_runs` tables (created by
+`ensureSchema` in `core/lib/pg-schema.ts`) in the consolidated Mars
+database. The per-step record is lean — status, SHA, timestamps,
 attempt count, a compact summary, and the transcript key — and is the
 single row that serves both resume and the trace view.
 

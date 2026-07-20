@@ -10,12 +10,12 @@
  *
  * The class is constructed only via the static factories ({@link Arc.load},
  * {@link Arc.createOrigin}); the constructor is private. Every instance holds
- * an injected {@link DomainTaskStore} (the deep seam over `.mars/mars.db`) so
- * all persistence routes through the store rather than a raw libsql client.
+ * an injected {@link DomainTaskStore} (the deep seam over the shared DB) so
+ * all persistence routes through the store rather than a raw DB client.
  */
 
 import { randomUUID } from 'node:crypto'
-import { type InStatement } from '@libsql/client'
+import { type DbStatement } from './lib/db'
 import {
   coerceToString,
   validatePriority,
@@ -25,7 +25,7 @@ import {
   TASK_SEL,
   rowToTask,
   assertTaskKindInvariant,
-  migrateQueueSchema,
+  ensureQueueSchema,
   getTask,
   updateTask,
   resolveQueueClient,
@@ -273,7 +273,7 @@ export class Arc {
         `tags must be an array of non-empty strings; got ${JSON.stringify(opts.tags)}`,
       )
     }
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     const id = `mars-${randomUUID().slice(0, 8)}`
     const now = new Date().toISOString()
     const status: TaskStatus = opts?.skipTriage ? 'queued' : 'draft'
@@ -370,7 +370,7 @@ export class Arc {
     if (taskSpec?.files && taskSpec.files.length > 0) {
       for (let i = 0; i < taskSpec.files.length; i++) {
         await resolvedStore.execute({
-          sql: `INSERT OR IGNORE INTO task_spec_files (task_id, path, position) VALUES (?, ?, ?)`,
+          sql: `INSERT INTO task_spec_files (task_id, path, position) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
           args: [id, taskSpec.files[i], i],
         })
       }
@@ -379,7 +379,7 @@ export class Arc {
     if (taskSpec?.doneCriteria && taskSpec.doneCriteria.length > 0) {
       for (let i = 0; i < taskSpec.doneCriteria.length; i++) {
         await resolvedStore.execute({
-          sql: `INSERT OR IGNORE INTO task_done_criteria (task_id, criterion, position) VALUES (?, ?, ?)`,
+          sql: `INSERT INTO task_done_criteria (task_id, criterion, position) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
           args: [id, taskSpec.doneCriteria[i], i],
         })
       }
@@ -413,29 +413,29 @@ export class Arc {
    *   - `store` provided → `store.batch([updateStmt, ...eventStmts], 'write')`
    *     so the row change and event inserts share one commit;
    *   - else → `withWriteTx(resolveQueueClient())` wrapping the row UPDATE and
-   *     the event INSERTs (retries on `SQLITE_BUSY`).
+   *     the event INSERTs in one transaction.
    */
   static async applyStatusWrite(input: {
     id: string
     fields: string[]
     args: unknown[]
-    eventStmts: InStatement[]
+    eventStmts: DbStatement[]
     store?: DomainTaskStore
     appendSessionId?: boolean
-    sessionIdStmt?: InStatement
+    sessionIdStmt?: DbStatement
   }): Promise<void> {
-    const updateStmt: InStatement = {
+    const updateStmt: DbStatement = {
       sql: `UPDATE tasks SET ${input.fields.join(', ')} WHERE id = ?`,
       args: input.args as never,
     }
 
     if (input.appendSessionId) {
       // Atomically (a) apply the field updates, (b) insert the new session id
-      // into task_claude_sessions (OR IGNORE deduplicates), and (c) insert the
+      // into task_claude_sessions (ON CONFLICT DO NOTHING deduplicates), and (c) insert the
       // outbox event row.  All three writes share one write transaction so a
       // crash between any two leaves the DB consistent (either everything
       // committed or nothing).
-      const sessionIdStmt = input.sessionIdStmt as InStatement
+      const sessionIdStmt = input.sessionIdStmt as DbStatement
       await withWriteTx(resolveQueueClient(), async (tx) => {
         await tx.execute(updateStmt)
         await tx.execute(sessionIdStmt)
@@ -444,13 +444,12 @@ export class Arc {
         for (const stmt of input.eventStmts) await tx.execute(stmt)
       })
     } else if (input.store) {
-      // store.batch runs all statements atomically (BEGIN IMMEDIATE … COMMIT)
-      // so the state write and event inserts are in the same commit.
+      // store.batch runs all statements atomically (BEGIN … COMMIT) so the
+      // state write and event inserts are in the same commit.
       await input.store.batch([updateStmt, ...input.eventStmts], 'write')
     } else {
       // Common path: wrap state write and event inserts in a single write
-      // transaction.  withWriteTx retries on SQLITE_BUSY so a transient lock
-      // contention doesn't drop the event.
+      // transaction so a failure between the two never drops the event.
       // TODO(mars-8a44f22d): once all callers thread a `store`, retire this
       // fallback and route through `store.atomic(scope => ...)` like the
       // `appendSessionId` branch above.
@@ -488,7 +487,7 @@ export class Arc {
     taskId: string,
     store?: DomainTaskStore,
   ): Promise<Task | null> {
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     const now = new Date().toISOString()
     if (store) {
       const upd = await store.atomic(async (scope) => {
@@ -576,7 +575,7 @@ export class Arc {
    * (missing, or not currently in `'draft'`).
    */
   static async promoteDraftToTriaging(taskId: string): Promise<Task | null> {
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     const now = new Date().toISOString()
     // TODO(mars-8a44f22d): this guarded UPDATE uses a conditional WHERE
     // (AND status = 'draft') and checks rowsAffected to distinguish a no-op
@@ -604,7 +603,7 @@ export class Arc {
    * clears its `task_blockers` rows, and emits `task.failed` + `task.terminal`
    * — all in ONE write transaction (ADR-0030) so the status write is never a
    * silent bypass of the event substrate. Used by `mars unblock <id>` so users
-   * do not reach for sqlite when a row has slipped into an inconsistent state.
+   * do not reach for raw SQL when a row has slipped into an inconsistent state.
    *
    * PARITY (preserved bit-for-bit from the historic `unblockTask`):
    *   - `'queued'` is accepted alongside `'blocked'` (drop a not-yet-dispatched
@@ -614,7 +613,7 @@ export class Arc {
    *     Invalidator deliberately does NOT close action-queue rows on `failed`.
    */
   static async unblockTask(taskId: string): Promise<UnblockTaskResult> {
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     // TODO(mars-8a44f22d): unblockTask drives a write transaction via the raw
     // client.  Thread a `store?: DomainTaskStore` parameter and use
     // `store.atomic(scope => ...)` for the UPDATE + event inserts so that this
@@ -687,9 +686,8 @@ export class Arc {
    *
    * Store routing (ADR-0021 / ADR-0030): when `store` is provided the row
    * UPDATE + event INSERT run via `store.batch([updateStmt, ...eventStmts],
-   * 'write')` (one BEGIN IMMEDIATE … COMMIT); otherwise the body is the
-   * historic `withWriteTx(resolveQueueClient(), …)` form preserved bit-for-bit
-   * (retries on SQLITE_BUSY).
+   * 'write')` (one BEGIN … COMMIT); otherwise the body is the historic
+   * `withWriteTx(resolveQueueClient(), …)` form preserved bit-for-bit.
    */
   static async setTaskStatus(
     taskId: string,
@@ -702,7 +700,7 @@ export class Arc {
     if (store) {
       // Transitioning to 'done': clear stale failure fields from any prior
       // failed attempt so done rows never carry a misleading failure_reason.
-      const updateStmt: InStatement = {
+      const updateStmt: DbStatement = {
         sql:
           newStatus === 'done'
             ? 'UPDATE tasks SET status = ?, updated_at = ?, failure_reason = NULL, failure_signature = NULL, failure_reason_code = NULL WHERE id = ?'
@@ -717,7 +715,7 @@ export class Arc {
       // Build the matching event payload exactly as the historic publish()
       // branches did; buildEventInsert validates the payload against the same
       // Zod schema publish() uses, so the rows are bit-for-bit identical.
-      let eventStmt: InStatement
+      let eventStmt: DbStatement
       if (newStatus === 'done') {
         eventStmt = buildEventInsert('task.completed', {
           taskId,
@@ -922,7 +920,7 @@ export class Arc {
    */
   async reprioritize(priority: number): Promise<Task> {
     validatePriority(priority)
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     const id = this.arcId
     const s = this.store
     const before = await s.execute({
@@ -959,7 +957,7 @@ export class Arc {
    * other origin; the `origin_id = self` semantics are preserved.
    */
   async insertReflection(corpusSize: number): Promise<string> {
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     const id = `reflect-${randomUUID().slice(0, 8)}`
     const now = new Date().toISOString()
     const prompt = `mars reflect run over ${corpusSize} task(s) at ${now}`
@@ -1072,8 +1070,8 @@ export class Arc {
       await s.batch(
         [
           {
-            sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
-                VALUES (?, ?, ?)`,
+            sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at)
+                VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
             args: [input.sourceTaskId, existingId, now],
           },
           {
@@ -1112,7 +1110,7 @@ export class Arc {
 
     // Inline the source task's prompt so recipes that re-do the original
     // work (e.g. verify:has-diff/no-commits-ahead) don't burn turns
-    // re-fetching it from .mars/mars.db. Handlers should already set
+    // re-fetching it from the database. Handlers should already set
     // `originalPrompt`; backfill from the source row if a direct caller
     // forgot. Default to '' only when the source genuinely has no prompt.
     const incomingPrompt = input.recipeContext.originalPrompt
@@ -1164,8 +1162,8 @@ export class Arc {
           // DIRECTLY here, not through addBlockers/assertNotRecoveryEdge.
           // `spawnRecovery` is the one legitimate origin → recovery edge
           // writer; see the method-level note above.
-          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at)
-              VALUES (?, ?, ?)`,
+          sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at)
+              VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
           args: [input.sourceTaskId, fixTaskId, now],
         },
         {
@@ -1233,7 +1231,7 @@ export class Arc {
    * we are not adding a new attempt — we are joining an existing one).
    *
    * No-op when the source is already blocked on this exact recovery
-   * (`INSERT OR IGNORE` on the edge).
+   * (`ON CONFLICT DO NOTHING` on the edge).
    */
   async attachToRecovery(input: AttachToExistingFixTaskInput): Promise<void> {
     const s = this.store
@@ -1251,8 +1249,8 @@ export class Arc {
           // the documented bypass of the ADR-0040 guard, and this helper is its
           // dedup sibling. See ADR-0040 clarification: the origin → recovery
           // edge is the canonical attach mechanism.
-          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at)
-                VALUES (?, ?, 'confirmed', ?)`,
+          sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
+                VALUES (?, ?, 'confirmed', ?) ON CONFLICT DO NOTHING`,
           args: [input.sourceTaskId, input.fixTaskId, now],
         },
         {
@@ -1305,7 +1303,7 @@ export class Arc {
    *   1. INSERT the `kind='fix'` committer row (priority 3,
    *      author='main-commiter-spawn', `recovery_payload` = the serialised
    *      {@link MainCommiterPayload});
-   *   2. INSERT OR IGNORE the origin → recovery `task_blockers` edge
+   *   2. Insert (ON CONFLICT DO NOTHING) the origin → recovery `task_blockers` edge
    *      (`state='confirmed'`) — the F.1 ADR-0040 leaf-node exemption mirror;
    *   3. UPDATE the source to `status='blocked'`, overwriting
    *      `error`/`failure_reason`/`failure_reason_code = VERIFY_MAIN_DIRTY_CODE`
@@ -1377,8 +1375,8 @@ export class Arc {
           // mirror of `upsertFixTask`. The recovery side cannot grow further
           // edges (recovery-of-recovery is rejected by
           // `handleTaskFailureWithFixTask`), so the leaf invariant holds.
-          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at)
-              VALUES (?, ?, 'confirmed', ?)`,
+          sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
+              VALUES (?, ?, 'confirmed', ?) ON CONFLICT DO NOTHING`,
           args: [input.sourceTaskId, fixTaskId, now],
         },
         {
@@ -1461,7 +1459,7 @@ export class Arc {
     options?: { provenance?: 'file-overlap' | 'inferred' },
   ): Promise<void> {
     if (blockerIds.length === 0) return
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     const s = this.store
 
     const taskRow = await s.execute({
@@ -1502,7 +1500,7 @@ export class Arc {
     // whether the edge was forced by file overlap ('file-overlap') or
     // proposed by an LLM ('inferred').
     const stmts = unique.map((blockerId) => ({
-      sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, provenance, created_at) VALUES (?, ?, 'confirmed', ?, ?)`,
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, provenance, created_at) VALUES (?, ?, 'confirmed', ?, ?) ON CONFLICT DO NOTHING`,
       args: [taskId, blockerId, provenance, now],
     }))
     await s.batch(stmts, 'write')
@@ -1518,7 +1516,7 @@ export class Arc {
     taskId: string,
     blockerId: string,
   ): Promise<{ removed: boolean }> {
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     const r = await this.store.execute({
       sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
       args: [taskId, blockerId],
@@ -1533,7 +1531,7 @@ export class Arc {
    * unchanged; callers update status separately via `updateTask`.
    */
   async clearBlockers(taskId: string): Promise<void> {
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     await this.store.execute({
       sql: `DELETE FROM task_blockers WHERE task_id = ?`,
       args: [taskId],
@@ -1553,7 +1551,7 @@ export class Arc {
     blockerIds: readonly string[],
   ): Promise<void> {
     if (blockerIds.length === 0) return
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     const s = this.store
 
     const taskRow = await s.execute({
@@ -1587,7 +1585,7 @@ export class Arc {
     }
     const now = new Date().toISOString()
     const stmts = unique.map((blockerId) => ({
-      sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'pending-review', ?)`,
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'pending-review', ?) ON CONFLICT DO NOTHING`,
       args: [taskId, blockerId, now],
     }))
     await s.batch(stmts, 'write')
@@ -1620,7 +1618,7 @@ export class Arc {
       await assertNotRecoveryEdge(taskId, newBlockerTaskId, { client: store })
     }
     const now = new Date().toISOString()
-    const stmts: InStatement[] = []
+    const stmts: DbStatement[] = []
     for (const taskId of dependents) {
       // Insert the task_blockers row BEFORE deleting the task_proposal_blockers
       // row so statement ordering inside the batch also preserves the
@@ -1628,7 +1626,7 @@ export class Arc {
       // mirroring addBlocker.
       if (taskId !== newBlockerTaskId) {
         stmts.push({
-          sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?)`,
+          sql: `INSERT INTO task_blockers (task_id, blocker_task_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
           args: [taskId, newBlockerTaskId, now],
         })
       }
@@ -1659,7 +1657,7 @@ export class Arc {
    * Action-queue rows are invalidated atomically (ADR-0049).
    */
   async drop(): Promise<DropTaskResult> {
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     const id = this.arcId
 
     // Belt-and-suspenders: close action-queue rows for this task and its
@@ -1844,9 +1842,8 @@ export class Arc {
         args: [id],
       })
       // questions has a FK on task_id → tasks(id). Remove its rows before the
-      // task row is deleted so the FK constraint never fires. The table may not
-      // yet exist on older DB snapshots that haven't been migrated; the execute
-      // is safe because migrateQueueSchema() runs at the top of drop() and will
+      // task row is deleted so the FK constraint never fires. The execute is
+      // safe because ensureQueueSchema() runs at the top of drop() and will
       // have created the table before we reach this point.
       await scope.execute({
         sql: `DELETE FROM questions WHERE task_id = ?`,
@@ -2758,7 +2755,7 @@ export class Arc {
    * spawned, this method collects every such stranded task and:
    *
    * 1. Inserts `task_blockers(task_id=stranded, blocker_task_id=newCommitterId,
-   *    state='confirmed')` — INSERT OR IGNORE so it's idempotent.
+   *    state='confirmed')` — ON CONFLICT DO NOTHING so it's idempotent.
    * 2. Deletes the old failed-committer edge so `unblockByCompletion` can
    *    release the stranded tasks when the new committer succeeds.
    *
@@ -2786,8 +2783,8 @@ export class Arc {
               JOIN tasks dep    ON dep.id    = tb.task_id
              WHERE failed.kind = 'fix'
                AND failed.status = 'failed'
-               AND json_extract(failed.recovery_payload, '$.recipe') = ?
-               AND json_extract(failed.recovery_payload, '$.integrationBranch') = ?
+               AND (failed.recovery_payload::jsonb ->> 'recipe') = ?
+               AND (failed.recovery_payload::jsonb ->> 'integrationBranch') = ?
                AND dep.status = 'blocked'`,
       args: [MAIN_COMMITER_RECIPE, integrationBranch],
     })
@@ -2796,14 +2793,14 @@ export class Arc {
     if (rows.length === 0) return { reparented: 0 }
 
     // Collect unique task IDs (a task may have been blocked by multiple failed
-    // committers; INSERT OR IGNORE handles the duplicate-insert case).
+    // committers; ON CONFLICT DO NOTHING handles the duplicate-insert case).
     const uniqueTaskIds = [...new Set(rows.map((row) => row.id))]
 
     // Batch: add new edge to new committer (idempotent) + delete each old
     // failed-committer edge so unblockByCompletion can release the task.
     const stmts = [
       ...uniqueTaskIds.map((taskId) => ({
-        sql: `INSERT OR IGNORE INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+        sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?) ON CONFLICT DO NOTHING`,
         args: [taskId, newCommitterId, now],
       })),
       ...rows.map(({ id, old_committer }) => ({
@@ -3059,7 +3056,7 @@ export class Arc {
     params: AppendProgressParams,
     store?: DomainTaskStore,
   ): Promise<ProgressEntry> {
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     const resolvedStore = store ?? getDefaultDomainTaskStore()
     const task = await getTask(params.taskId, resolvedStore)
     if (!task) {
@@ -3110,7 +3107,7 @@ export class Arc {
     opts?: { limit?: number },
     store?: DomainTaskStore,
   ): Promise<ProgressEntry[]> {
-    await migrateQueueSchema()
+    await ensureQueueSchema()
     const resolvedStore = store ?? getDefaultDomainTaskStore()
     const limitClause =
       opts?.limit !== undefined ? ` LIMIT ${Math.floor(opts.limit)}` : ''

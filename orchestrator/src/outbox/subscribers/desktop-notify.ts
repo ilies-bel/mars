@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import type { Client } from '@libsql/client';
+import type { DbClient } from '../../core/lib/db.js';
 import { getNotificationsEnabled } from '../../core/store/state-store.js';
 import type { Subscriber } from '../dispatcher.js';
 import type { BusEvent } from '../../bus/events.js';
@@ -93,14 +93,14 @@ function flush(): void {
  * delivery errors must NOT stall the subscriber cursor — see the notifier
  * ADR for rationale.
  *
- * @param db        The shared mars.db client used to read notification
+ * @param db        The shared DB client used to read notification
  *                  preferences.
  * @param platform  The runtime platform string (defaults to
  *                  `process.platform`). Override in tests to exercise
  *                  platform-conditional branches without mocking globals.
  */
 export function buildDesktopNotifySubscriber(
-  db: Client,
+  db: DbClient,
   platform: string = process.platform,
 ): Subscriber {
   return {

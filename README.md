@@ -63,7 +63,7 @@ You drop work into a queue; the daemon turns it into merged commits.
   mars task add "<prompt>"
             │
             ▼
-     mars.db (status=queued) ──► daemon claims it
+     tasks row (status=queued) ──► daemon claims it
             │
             ▼
   ┌──────────────────────────────────────────────────────┐

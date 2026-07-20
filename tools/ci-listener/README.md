@@ -28,7 +28,7 @@ GitHub workflow_run event
 
 4. **Copy `.env.example` to `.env`** and fill in:
    - `GH_WEBHOOK_SECRET` — same secret as GitHub
-   - `MARS_REPO` — absolute path to the local repo whose `.mars/mars.db` receives tasks
+   - `MARS_REPO` — absolute path to the local repo whose Mars database receives tasks
    - `SMEE_URL` — your smee channel
    - `ONLY_FAILURES=1` to skip enqueueing on green runs (optional)
 

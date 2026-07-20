@@ -236,20 +236,27 @@ const computeTaskTokenSpend = async (
   store: TaskStore,
   windowStart: string,
 ): Promise<Array<{ taskId: string; weightedTokens: number }>> => {
+  // HAVING may not reference a SELECT alias on PostgreSQL — the aggregate
+  // expression is repeated verbatim.
   const r = await store.query({
     sql: `SELECT task_id,
                  SUM(
-                   CAST(JSON_EXTRACT(payload, '$.usageSignals.inputTokens') AS REAL) +
-                   CAST(JSON_EXTRACT(payload, '$.usageSignals.outputTokens') AS REAL) +
-                   CAST(JSON_EXTRACT(payload, '$.usageSignals.cacheCreateTokens') AS REAL) +
-                   CAST(JSON_EXTRACT(payload, '$.usageSignals.cacheReadTokens') AS REAL) * 0.1
+                   CAST(payload::jsonb #>> '{usageSignals,inputTokens}' AS double precision) +
+                   CAST(payload::jsonb #>> '{usageSignals,outputTokens}' AS double precision) +
+                   CAST(payload::jsonb #>> '{usageSignals,cacheCreateTokens}' AS double precision) +
+                   CAST(payload::jsonb #>> '{usageSignals,cacheReadTokens}' AS double precision) * 0.1
                  ) AS weighted_tokens
             FROM trace_events
            WHERE kind = 'step_ended'
-             AND JSON_EXTRACT(payload, '$.usageSignals') IS NOT NULL
+             AND payload::jsonb ->> 'usageSignals' IS NOT NULL
              AND timestamp > ?
            GROUP BY task_id
-          HAVING weighted_tokens > 0
+          HAVING SUM(
+                   CAST(payload::jsonb #>> '{usageSignals,inputTokens}' AS double precision) +
+                   CAST(payload::jsonb #>> '{usageSignals,outputTokens}' AS double precision) +
+                   CAST(payload::jsonb #>> '{usageSignals,cacheCreateTokens}' AS double precision) +
+                   CAST(payload::jsonb #>> '{usageSignals,cacheReadTokens}' AS double precision) * 0.1
+                 ) > 0
            ORDER BY weighted_tokens DESC`,
     args: [windowStart],
   })
@@ -274,7 +281,7 @@ const detectFailureClusters = async (
              AND status = 'failed'
              AND created_at > ?
            GROUP BY failure_signature
-          HAVING cnt >= ?
+          HAVING COUNT(*) >= ?
            ORDER BY cnt DESC
            LIMIT 10`,
     args: [windowStart, FAILURE_CLUSTER_MIN],

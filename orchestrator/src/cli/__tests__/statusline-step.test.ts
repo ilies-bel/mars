@@ -4,14 +4,15 @@
  * Covers three branches:
  *   - parked-manual: task is leased at a manual step → `step <name> · manual`
  *   - running-auto:  task is at a step but not leased → `step <name> · auto`
- *   - no-step:       task has no current_step_name → falls back to today's rendering
+ *   - no-step:       task has no currentStepName → falls back to today's rendering
  */
 
 import { describe, it, expect } from 'vitest'
-import { mkdtempSync, rmSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { createServer, type Server } from 'node:http'
 import { buildLeaseSegment } from '../statusline.js'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
@@ -111,20 +112,47 @@ describe('mars statusline CLI — step rendering', () => {
     return dir
   }
 
-  it('parked-manual: renders "step <name> · manual" when task is leased at a named step', () => {
-    const sqlite3Available = spawnSync('sqlite3', ['--version']).status === 0
-    if (!sqlite3Available) return
+  // The lease segment is read from the daemon's HTTP API (`/view/tasks`, port
+  // published to `.mars/http.port`). Stand up a stub daemon serving the given
+  // task rows and publish its port the way the real daemon does.
+  const startStubDaemon = (repo: string, tasks: unknown[]): Promise<Server> =>
+    new Promise((resolveStart) => {
+      const server = createServer((req, res) => {
+        if (req.url === '/view/tasks') {
+          res.setHeader('content-type', 'application/json')
+          res.end(JSON.stringify({ tasks }))
+          return
+        }
+        res.statusCode = 404
+        res.end()
+      })
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address()
+        const port = typeof addr === 'object' && addr !== null ? addr.port : 0
+        writeFileSync(resolve(repo, '.mars', 'http.port'), String(port))
+        resolveStart(server)
+      })
+    })
 
+  const stopStubDaemon = (server: Server): Promise<void> =>
+    new Promise((resolveStop) => {
+      server.close(() => resolveStop())
+    })
+
+  it('parked-manual: renders "step <name> · manual" when task is leased at a named step', async () => {
     const tmpRepo = makeRepo()
     const taskId = 'mars-stepman1'
     const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
     mkdirSync(worktreeDir, { recursive: true })
 
-    const marsDbPath = resolve(tmpRepo, '.mars', 'mars.db')
-    spawnSync('sqlite3', [
-      marsDbPath,
-      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT, lease_note TEXT, current_step_name TEXT);` +
-      `INSERT INTO tasks VALUES ('${taskId}', 'Implement feature X', '2024-01-01T10:00:00Z', 'Do the thing', 'code');`,
+    const server = await startStubDaemon(tmpRepo, [
+      {
+        id: taskId,
+        intent: 'Implement feature X',
+        leasedAt: '2024-01-01T10:00:00Z',
+        leaseNote: 'Do the thing',
+        currentStepName: 'code',
+      },
     ])
 
     try {
@@ -137,25 +165,26 @@ describe('mars statusline CLI — step rendering', () => {
       expect(line).toContain('⛏')
       expect(line).toContain('step code · manual')
     } finally {
+      await stopStubDaemon(server)
       rmSync(tmpRepo, { recursive: true, force: true })
     }
   })
 
-  it('running-auto: renders "step <name> · auto" when current_step_name is set but task is not leased', () => {
-    const sqlite3Available = spawnSync('sqlite3', ['--version']).status === 0
-    if (!sqlite3Available) return
-
+  it('running-auto: renders "step <name> · auto" when currentStepName is set but task is not leased', async () => {
     const tmpRepo = makeRepo()
     const taskId = 'mars-stepauto1'
     const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
     mkdirSync(worktreeDir, { recursive: true })
 
-    const marsDbPath = resolve(tmpRepo, '.mars', 'mars.db')
-    // leased_at is NULL → auto mode; current_step_name is 'verify'
-    spawnSync('sqlite3', [
-      marsDbPath,
-      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT, lease_note TEXT, current_step_name TEXT);` +
-      `INSERT INTO tasks VALUES ('${taskId}', 'Implement feature Y', NULL, NULL, 'verify');`,
+    // leasedAt is null → auto mode; currentStepName is 'verify'
+    const server = await startStubDaemon(tmpRepo, [
+      {
+        id: taskId,
+        intent: 'Implement feature Y',
+        leasedAt: null,
+        leaseNote: null,
+        currentStepName: 'verify',
+      },
     ])
 
     try {
@@ -168,25 +197,26 @@ describe('mars statusline CLI — step rendering', () => {
       expect(line).toContain('⛏')
       expect(line).toContain('step verify · auto')
     } finally {
+      await stopStubDaemon(server)
       rmSync(tmpRepo, { recursive: true, force: true })
     }
   })
 
-  it('no-step: falls back to today\'s rendering when current_step_name is null and task is not leased', () => {
-    const sqlite3Available = spawnSync('sqlite3', ['--version']).status === 0
-    if (!sqlite3Available) return
-
+  it('no-step: falls back to today\'s rendering when currentStepName is null and task is not leased', async () => {
     const tmpRepo = makeRepo()
     const taskId = 'mars-stepnone1'
     const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
     mkdirSync(worktreeDir, { recursive: true })
 
-    const marsDbPath = resolve(tmpRepo, '.mars', 'mars.db')
     // Neither leased nor has a current step → no lease segment
-    spawnSync('sqlite3', [
-      marsDbPath,
-      `CREATE TABLE tasks (id TEXT PRIMARY KEY, intent TEXT NOT NULL DEFAULT '', leased_at TEXT, lease_note TEXT, current_step_name TEXT);` +
-      `INSERT INTO tasks VALUES ('${taskId}', 'Queued task', NULL, NULL, NULL);`,
+    const server = await startStubDaemon(tmpRepo, [
+      {
+        id: taskId,
+        intent: 'Queued task',
+        leasedAt: null,
+        leaseNote: null,
+        currentStepName: null,
+      },
     ])
 
     try {
@@ -201,6 +231,7 @@ describe('mars statusline CLI — step rendering', () => {
       expect(line).not.toContain('⛏')
       expect(line).not.toContain('step ')
     } finally {
+      await stopStubDaemon(server)
       rmSync(tmpRepo, { recursive: true, force: true })
     }
   })

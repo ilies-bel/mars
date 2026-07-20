@@ -4,17 +4,19 @@
  * A promotion attempt tracks the lifecycle of a candidate helper from initial
  * proposal through benchmarking to a final verdict (promoted or retired).
  *
- * The table lives in mars.db (the single consolidated store). Each attempt
+ * The table lives in the single consolidated Mars database. Each attempt
  * references the arc ids that motivated the candidate and carries optional
  * before/after benchmark blobs so comparisons can be replayed offline.
  *
- * Domain functions accept an explicit `db: Client` argument for easy isolation
- * in tests. The no-arg `initToolPromotionAttempts()` uses `resolveStateClient()`
- * and is the entry point called from `initDatabases()`.
+ * Schema ownership: `tool_promotion_attempts` is created by `ensureSchema`
+ * in core/lib/pg-schema.ts (migration 0002; the store shape is canonical —
+ * the old queue.ts stub is gone). This module carries no DDL.
+ *
+ * Domain functions accept an explicit `db: DbClient` argument for easy
+ * isolation in tests.
  */
 
-import type { Client } from '@libsql/client'
-import { resolveStateClient } from './state-client'
+import type { DbClient } from '../lib/db.js'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -51,42 +53,6 @@ export interface UpdateAttemptStatusPayload {
   decidedAt?: number
 }
 
-// ── Schema ────────────────────────────────────────────────────────────────────
-
-const TOOL_PROMOTION_ATTEMPTS_DDL = `
-  CREATE TABLE IF NOT EXISTS tool_promotion_attempts (
-    id                 TEXT    PRIMARY KEY,
-    helper_key         TEXT    NOT NULL,
-    motivating_arc_ids TEXT    NOT NULL,
-    status             TEXT    NOT NULL CHECK(status IN ('proposed','benchmarked','promoted','retired')),
-    benchmark_before   TEXT,
-    benchmark_after    TEXT,
-    created_at         INTEGER NOT NULL,
-    decided_at         INTEGER
-  )
-`
-
-// ── Init ──────────────────────────────────────────────────────────────────────
-
-let initialised = false
-
-/**
- * Idempotent schema migration for the tool_promotion_attempts table.
- * Uses the process-wide state client (`resolveStateClient`). Called by
- * `initDatabases()` at startup.
- */
-export const initToolPromotionAttempts = async (): Promise<void> => {
-  if (initialised) return
-  const db = resolveStateClient()
-  await db.execute(TOOL_PROMOTION_ATTEMPTS_DDL)
-  initialised = true
-}
-
-/** Test-only: reset the init latch so the next call re-runs the migration. */
-export const __resetToolPromotionAttemptsForTests = (): void => {
-  initialised = false
-}
-
 // ── Row mapper ────────────────────────────────────────────────────────────────
 
 const rowToAttempt = (row: Record<string, unknown>): ToolPromotionAttempt => ({
@@ -107,7 +73,7 @@ const rowToAttempt = (row: Record<string, unknown>): ToolPromotionAttempt => ({
  * Returns the persisted row.
  */
 export const insertAttempt = async (
-  db: Client,
+  db: DbClient,
   input: InsertAttemptInput,
 ): Promise<ToolPromotionAttempt> => {
   await db.execute({
@@ -132,7 +98,7 @@ export const insertAttempt = async (
  * Return the attempt with the given id, or `null` if none exists.
  */
 export const getAttempt = async (
-  db: Client,
+  db: DbClient,
   id: string,
 ): Promise<ToolPromotionAttempt | null> => {
   const result = await db.execute({
@@ -147,7 +113,7 @@ export const getAttempt = async (
  * Return all attempts with the given status, ordered by `created_at` ascending.
  */
 export const listAttemptsByStatus = async (
-  db: Client,
+  db: DbClient,
   status: ToolPromotionStatus,
 ): Promise<ToolPromotionAttempt[]> => {
   const result = await db.execute({
@@ -164,7 +130,7 @@ export const listAttemptsByStatus = async (
  * payloads and a decision timestamp.
  */
 export const updateAttemptStatus = async (
-  db: Client,
+  db: DbClient,
   id: string,
   status: ToolPromotionStatus,
   payload: UpdateAttemptStatusPayload = {},

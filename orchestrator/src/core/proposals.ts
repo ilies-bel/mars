@@ -1,9 +1,9 @@
-import { type Client } from '@libsql/client'
 import { randomBytes } from 'node:crypto'
 import type { Author, AuthorKind } from './author'
 import { resolveStateClient } from './store/state-client'
 import { buildEventInsert } from './lib/outbox'
-import { withTransaction } from './lib/libsql.js'
+import { withTransaction, type DbClient } from './lib/db.js'
+import { ensureSchema } from './lib/pg-schema.js'
 import type { EventName, EventPayload } from '../bus/events.js'
 
 export type ProposalSource = 'reflection' | 'human' | 'planner' | 'skill-forge'
@@ -24,25 +24,25 @@ export interface Proposal {
 }
 
 /**
- * The mars.db client (state domain), resolved through the shared seam-internal resolver
- * (`store/state-client`). Same `mars.db` file as the TaskStore (ADR-0034); the
- * three formerly-duplicated private singletons now collapse to this one.
+ * The state-domain DB client, resolved through the shared seam-internal
+ * resolver (`store/state-client`). Same embedded-PostgreSQL database as the
+ * TaskStore (ADR-0034); the three formerly-duplicated private singletons now
+ * collapse to this one.
  *
  * Module-internal only — the public seam is the StateStore
  * (`store/state-store.ts`). No raw client crosses the module boundary
  * (ADR-0021); the old `getProposalsClient()` escape hatch is gone, and the
  * slicer's cross-table coordination routes through the StateStore.
  */
-const stateClient = (): Client => resolveStateClient()
+const stateClient = (): DbClient => resolveStateClient()
 
 /**
- * Emit a proposal lifecycle event to the mars.db events outbox.
+ * Emit a proposal lifecycle event to the events outbox.
  *
- * Proposals and the events outbox both live in mars.db (consolidated from
- * the former queue.db/state.db split). This emits in a separate write
- * transaction (via the TaskStore seam's `atomic`) after the proposal write
- * has committed. Emission failures are non-fatal: the proposal operation
- * succeeds regardless.
+ * Proposals and the events outbox live in the same database (ADR-0034). This
+ * emits in a separate write transaction (via the TaskStore seam's `atomic`)
+ * after the proposal write has committed. Emission failures are non-fatal:
+ * the proposal operation succeeds regardless.
  */
 async function emitProposalBusEvent<T extends EventName>(
   type: T,
@@ -55,7 +55,7 @@ async function emitProposalBusEvent<T extends EventName>(
       await scope.execute(buildEventInsert(type, payload))
     })
   } catch {
-    // Non-fatal: proposal state change already committed in mars.db.
+    // Non-fatal: proposal state change already committed.
   }
 }
 
@@ -63,328 +63,14 @@ let initialised = false
 
 export const initProposals = async (): Promise<void> => {
   if (initialised) return
-  const c = stateClient()
-  // One-shot rename: a pre-existing mars.db may have an `ideas` table (and
-  // possibly `idea_user_stories`). Flip them to the proposal vocabulary
-  // before any CREATE/ALTER runs. This is a pure DDL rename with no
-  // compatibility view; per ADR-0010, in-flight worktrees at migration
-  // time may be orphaned.
-  const tables = await c.execute(
-    `SELECT name FROM sqlite_master WHERE type='table'`,
-  )
-  const tableSet = new Set(
-    (tables.rows as unknown as Array<{ name: string }>).map((r) => r.name),
-  )
-  if (tableSet.has('ideas') && !tableSet.has('proposals')) {
-    await c.execute(`ALTER TABLE ideas RENAME TO proposals`)
-  }
-  if (
-    tableSet.has('idea_user_stories') &&
-    !tableSet.has('proposal_user_stories')
-  ) {
-    await c.execute(
-      `ALTER TABLE idea_user_stories RENAME TO proposal_user_stories`,
-    )
-    const usCols = await c.execute(`PRAGMA table_info(proposal_user_stories)`)
-    const usColNames = new Set(
-      (usCols.rows as unknown as Array<{ name: string }>).map((r) => r.name),
-    )
-    if (usColNames.has('idea_id') && !usColNames.has('proposal_id')) {
-      await c.execute(
-        `ALTER TABLE proposal_user_stories RENAME COLUMN idea_id TO proposal_id`,
-      )
-    }
-  }
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS proposals (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL DEFAULT '',
-      problem TEXT NOT NULL DEFAULT '',
-      solution TEXT NOT NULL DEFAULT '',
-      out_of_scope TEXT NOT NULL DEFAULT '',
-      notes TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'draft',
-      source TEXT NOT NULL DEFAULT 'human',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )
-  `)
-  // The PRD-shaped user-stories list. New name; pre-existing databases keep
-  // their `idea_acceptance` rows and get migrated below.
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS proposal_user_stories (
-      proposal_id TEXT NOT NULL,
-      position INTEGER NOT NULL,
-      text TEXT NOT NULL,
-      PRIMARY KEY(proposal_id, position),
-      FOREIGN KEY(proposal_id) REFERENCES proposals(id) ON DELETE CASCADE
-    )
-  `)
-  // ADR-0008: the planning graph (Ideas blocking Ideas, traversed by the
-  // recursive planner to decide what to grill next) is stored in its own
-  // junction, separate from the dispatch graph's `task_blockers`. No
-  // polymorphic (kind,id) table. Both endpoints are proposals so the table
-  // lives here in mars.db alongside `proposals`. Shape mirrors
-  // `task_blockers` in queue.ts: (subject) waits on (blocker), composite PK,
-  // FK on both endpoints, an index per endpoint. The ADR text names this
-  // `idea_dependencies` in the original ADR text; the codebase now uses
-  // `proposal_*` vocabulary throughout, so we follow the current convention.
-  await c.execute(`
-    CREATE TABLE IF NOT EXISTS proposal_dependencies (
-      proposal_id TEXT NOT NULL,
-      blocker_proposal_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (proposal_id, blocker_proposal_id),
-      FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE,
-      FOREIGN KEY (blocker_proposal_id) REFERENCES proposals(id) ON DELETE CASCADE
-    )
-  `)
-  await c.execute(`
-    CREATE INDEX IF NOT EXISTS idx_proposal_dependencies_proposal ON proposal_dependencies(proposal_id)
-  `)
-  await c.execute(`
-    CREATE INDEX IF NOT EXISTS idx_proposal_dependencies_blocker ON proposal_dependencies(blocker_proposal_id)
-  `)
-  const cols = await c.execute(`PRAGMA table_info(proposals)`)
-  const colNames = new Set(
-    cols.rows.map((r) => (r as unknown as { name: string }).name),
-  )
-  if (!colNames.has('author_kind')) {
-    await c.execute(`ALTER TABLE proposals ADD COLUMN author_kind TEXT`)
-  }
-  if (!colNames.has('author_name')) {
-    await c.execute(`ALTER TABLE proposals ADD COLUMN author_name TEXT`)
-  }
-  // PRD-shape columns. Add idempotently for repos with the old shape.
-  if (!colNames.has('title')) {
-    await c.execute(
-      `ALTER TABLE proposals ADD COLUMN title TEXT NOT NULL DEFAULT ''`,
-    )
-  }
-  if (!colNames.has('problem')) {
-    await c.execute(
-      `ALTER TABLE proposals ADD COLUMN problem TEXT NOT NULL DEFAULT ''`,
-    )
-  }
-  if (!colNames.has('solution')) {
-    await c.execute(
-      `ALTER TABLE proposals ADD COLUMN solution TEXT NOT NULL DEFAULT ''`,
-    )
-  }
-  if (!colNames.has('out_of_scope')) {
-    await c.execute(
-      `ALTER TABLE proposals ADD COLUMN out_of_scope TEXT NOT NULL DEFAULT ''`,
-    )
-  }
-  if (!colNames.has('notes')) {
-    await c.execute(
-      `ALTER TABLE proposals ADD COLUMN notes TEXT NOT NULL DEFAULT ''`,
-    )
-  }
-  // One-shot backfill from the legacy goal/story/technical columns. Runs
-  // only when the new columns are still empty for the row, so re-running
-  // initProposals after manual edits never clobbers user data.
-  if (colNames.has('goal')) {
-    await c.execute(
-      `UPDATE proposals SET title = goal WHERE (title IS NULL OR title = '')`,
-    )
-  }
-  if (colNames.has('story')) {
-    await c.execute(
-      `UPDATE proposals SET solution = story WHERE (solution IS NULL OR solution = '')`,
-    )
-  }
-  if (colNames.has('technical')) {
-    await c.execute(
-      `UPDATE proposals SET notes = technical WHERE (notes IS NULL OR notes = '')`,
-    )
-  }
-  // Migrate legacy `origin` column (values 'user' | 'agent') into `source`
-  // (values 'human' | 'planner' | 'reflection'). The legacy column is
-  // dropped after the values are copied across.
-  if (colNames.has('origin') && !colNames.has('source')) {
-    await c.execute(
-      `ALTER TABLE proposals ADD COLUMN source TEXT NOT NULL DEFAULT 'human'`,
-    )
-    await c.execute(
-      `UPDATE proposals
-          SET source = CASE
-            WHEN author_kind = 'agent' THEN 'planner'
-            WHEN origin = 'agent'      THEN 'planner'
-            ELSE 'human'
-          END`,
-    )
-    await c.execute(`ALTER TABLE proposals DROP COLUMN origin`)
-  } else if (!colNames.has('source')) {
-    await c.execute(
-      `ALTER TABLE proposals ADD COLUMN source TEXT NOT NULL DEFAULT 'human'`,
-    )
-    // Backfill from author_kind: rows authored by an agent (i.e. whose
-    // rendered author starts with 'agent:') become 'planner'; everything
-    // else stays at the 'human' default. Runs only at column-add time —
-    // a subsequent initProposals() won't re-enter this branch, so the
-    // backfill is naturally idempotent.
-    if (colNames.has('author_kind')) {
-      await c.execute(
-        `UPDATE proposals SET source = 'planner' WHERE author_kind = 'agent'`,
-      )
-    }
-  }
-  // Migrate idea_acceptance rows into proposal_user_stories. Idempotent —
-  // runs only if the legacy table still exists. Rows are copied; the
-  // legacy table is dropped after.
-  const accCheck = await c.execute({
-    sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='idea_acceptance'`,
-    args: [],
-  })
-  if (accCheck.rows.length > 0) {
-    await c.execute(
-      `INSERT OR IGNORE INTO proposal_user_stories (proposal_id, position, text)
-         SELECT idea_id, position, text FROM idea_acceptance`,
-    )
-    await c.execute(`DROP TABLE idea_acceptance`)
-  }
-  // KPI dedup tag: added for the self-evolve trigger so the drift checker
-  // can look up open reflection drafts by the KPI they cover without
-  // parsing free-form titles.
-  if (!colNames.has('kpi_tag')) {
-    await c.execute(`ALTER TABLE proposals ADD COLUMN kpi_tag TEXT`)
-  }
-  // Root-cause fingerprint: a stable hash(source, rootCauseKey, kpiTag) that
-  // lets the reflector merge evidence from separate runs into one draft instead
-  // of emitting near-duplicate proposals for the same underlying pattern.
-  if (!colNames.has('fingerprint')) {
-    await c.execute(`ALTER TABLE proposals ADD COLUMN fingerprint TEXT`)
-  }
-  await c.execute(
-    `CREATE INDEX IF NOT EXISTS idx_proposals_fingerprint ON proposals(fingerprint) WHERE fingerprint IS NOT NULL`,
-  )
-  // origin_session_id: UUID of the Claude Code operator session that created
-  // the proposal, captured from CLAUDE_CODE_SESSION_ID at the CLI boundary.
-  // NULL on every row created outside a Claude Code session and on legacy rows.
-  if (!colNames.has('origin_session_id')) {
-    await c.execute(`ALTER TABLE proposals ADD COLUMN origin_session_id TEXT`)
-  }
-  // Run after the queue migration has had a chance to migrate
-  // `tasks.blocker_id` out into `task_blockers` rows, since that migration
-  // reads `task_suggestions` and we are about to drop it.
-  const { migrateQueueSchema } = await import('./queue')
-  await migrateQueueSchema()
-  await migrateTaskSuggestions(c)
+  // DDL lives in core/lib/pg-schema.ts (migration 0002): one canonical schema
+  // covering the proposal AND task domains, so this single call replaces both
+  // the old proposal DDL and the chained queue-schema migration. The
+  // SQLite-era in-place migration history (ideas→proposals renames,
+  // goal/story/technical backfills, the task_suggestions lift) is captured
+  // once by the importer (init/import-sqlite.ts), not replayed here.
+  await ensureSchema(stateClient())
   initialised = true
-}
-
-/**
- * One-shot migration: copy any reflection-origin rows out of the legacy
- * `task_suggestions` table (in mars.db) into `proposals` with
- * `source='reflection'`. Runs idempotently — rows whose id already exists
- * in proposals are skipped. The actual DROP of task_suggestions happens
- * during queue init, after this migration has copied the rows out.
- */
-const migrateTaskSuggestions = async (c: Client): Promise<void> => {
-  // tasks and proposals share one `mars.db` file (ADR-0034), so the legacy
-  // `task_suggestions` table is reachable through the same state client `c`.
-  // We must NOT close `c` here — it is the shared seam-internal singleton.
-  const tableCheck = await c.execute({
-    sql: `SELECT name FROM sqlite_master WHERE type='table' AND name='task_suggestions'`,
-    args: [],
-  })
-  if (tableCheck.rows.length === 0) return
-
-  const cols = await c.execute(`PRAGMA table_info(task_suggestions)`)
-  const colNames = new Set(
-    cols.rows.map((r) => (r as unknown as { name: string }).name),
-  )
-  const hasKind = colNames.has('kind')
-  const sql = hasKind
-    ? `SELECT id, title, prompt, rationale, status, kind, created_task_id, created_at
-         FROM task_suggestions
-        WHERE kind = 'reflection' OR kind IS NULL`
-    : `SELECT id, title, prompt, rationale, status, created_task_id, created_at,
-              NULL AS kind FROM task_suggestions`
-  const rows = await c.execute(sql)
-
-  await withTransaction(c, async (tx) => {
-    for (const row of rows.rows) {
-      const r = row as unknown as {
-        id: string
-        title: string | null
-        prompt: string | null
-        rationale: string | null
-        status: string | null
-        kind: string | null
-        created_task_id: string | null
-        created_at: string | null
-      }
-      const title = (r.title ?? '').trim() || '(reflection)'
-      const solution = (r.prompt ?? '').trim()
-      const notes = (r.rationale ?? '').trim()
-      const status =
-        r.status === 'promoted' || r.status === 'accepted'
-          ? 'sliced'
-          : r.status === 'rejected'
-            ? 'dismissed'
-            : 'draft'
-      const createdMs = Date.parse(r.created_at ?? '')
-      const now = Date.now()
-      const createdAt = Number.isFinite(createdMs) ? createdMs : now
-      // Detect whether the legacy `goal` column is still present (and
-      // therefore NOT NULL) on this DB. New repos have only `title`.
-      const proposalCols = await tx.execute(`PRAGMA table_info(proposals)`)
-      const hasLegacyGoal = (
-        proposalCols.rows as unknown as Array<{ name: string }>
-      ).some((rr) => rr.name === 'goal')
-      if (hasLegacyGoal) {
-        await tx.execute({
-          sql: `INSERT OR IGNORE INTO proposals
-                  (id, goal, story, technical, title, solution, notes,
-                   status, source, author_kind, author_name,
-                   created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?,
-                        ?, 'reflection', 'agent', 'reflector',
-                        ?, ?)`,
-          args: [
-            r.id,
-            title,
-            solution,
-            notes,
-            title,
-            solution,
-            notes,
-            status,
-            createdAt,
-            createdAt,
-          ],
-        })
-      } else {
-        await tx.execute({
-          sql: `INSERT OR IGNORE INTO proposals
-                  (id, title, solution, notes, status, source,
-                   author_kind, author_name,
-                   created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, 'reflection',
-                        'agent', 'reflector',
-                        ?, ?)`,
-          args: [
-            r.id,
-            title,
-            solution,
-            notes,
-            status,
-            createdAt,
-            createdAt,
-          ],
-        })
-      }
-    }
-  })
-  // After copying reflection rows out, drop the legacy table. Any remaining
-  // rows (kind='fix') are vestigial — fix tasks are now first-class entries
-  // in `tasks` linked via `task_blockers`. Uses the shared client `c`; never
-  // close it (it is the seam-internal singleton).
-  await c.execute(`DROP INDEX IF EXISTS idx_task_suggestions_source_task_id`)
-  await c.execute(`DROP INDEX IF EXISTS idx_task_suggestions_failure_signature`)
-  await c.execute(`DROP TABLE IF EXISTS task_suggestions`)
 }
 
 const slugify = (title: string): string => {
@@ -451,7 +137,7 @@ const rowToProposal = (
 }
 
 const loadUserStories = async (
-  c: Client,
+  c: DbClient,
   proposalId: string,
 ): Promise<string[]> => {
   const r = await c.execute({
@@ -502,66 +188,29 @@ export const createProposal = async (
   const kpiTag = opts?.kpiTag ?? null
   const fingerprint = opts?.fingerprint ?? null
   const originSessionId = opts?.originSessionId ?? null
-  // Detect whether the legacy goal/story/technical columns still exist as
-  // NOT NULL — pre-existing repos do, fresh repos don't. Write to both
-  // sets when present so the legacy NOT NULL constraint is satisfied.
-  const proposalCols = await c.execute(`PRAGMA table_info(proposals)`)
-  const hasLegacyGoal = (
-    proposalCols.rows as unknown as Array<{ name: string }>
-  ).some((rr) => rr.name === 'goal')
-  if (hasLegacyGoal) {
-    await c.execute({
-      sql: `INSERT INTO proposals
-              (id, goal, story, technical,
-               title, problem, solution, out_of_scope, notes,
-               status, source, author_kind, author_name,
-               kpi_tag, fingerprint, origin_session_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [
-        id,
-        title,
-        solution,
-        notes,
-        title,
-        problem,
-        solution,
-        outOfScope,
-        notes,
-        source,
-        authorKind,
-        authorName,
-        kpiTag,
-        fingerprint,
-        originSessionId,
-        now,
-        now,
-      ],
-    })
-  } else {
-    await c.execute({
-      sql: `INSERT INTO proposals
-              (id, title, problem, solution, out_of_scope, notes,
-               status, source, author_kind, author_name,
-               kpi_tag, fingerprint, origin_session_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [
-        id,
-        title,
-        problem,
-        solution,
-        outOfScope,
-        notes,
-        source,
-        authorKind,
-        authorName,
-        kpiTag,
-        fingerprint,
-        originSessionId,
-        now,
-        now,
-      ],
-    })
-  }
+  await c.execute({
+    sql: `INSERT INTO proposals
+            (id, title, problem, solution, out_of_scope, notes,
+             status, source, author_kind, author_name,
+             kpi_tag, fingerprint, origin_session_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      id,
+      title,
+      problem,
+      solution,
+      outOfScope,
+      notes,
+      source,
+      authorKind,
+      authorName,
+      kpiTag,
+      fingerprint,
+      originSessionId,
+      now,
+      now,
+    ],
+  })
   const proposal: Proposal = {
     id,
     title,
@@ -649,7 +298,7 @@ export const getProposal = async (
  * `proposalId` waits on each `blockerId`. Mirrors `addBlockers` in queue.ts:
  * the subject and every blocker id must already exist, self-edges are
  * rejected (a proposal cannot block itself), duplicates are de-duped, and the
- * insert is `INSERT OR IGNORE` so re-adding an existing edge is a no-op.
+ * insert is `ON CONFLICT DO NOTHING` so re-adding an existing edge is a no-op.
  * Ids are resolved through `resolveProposalId` so prefixes work like every
  * other proposal verb.
  */
@@ -696,7 +345,7 @@ export const addProposalDependencies = async (
   if (unique.length === 0) return
   const now = new Date().toISOString()
   const stmts = unique.map((blockerId) => ({
-    sql: `INSERT OR IGNORE INTO proposal_dependencies (proposal_id, blocker_proposal_id, created_at) VALUES (?, ?, ?)`,
+    sql: `INSERT INTO proposal_dependencies (proposal_id, blocker_proposal_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
     args: [proposalId, blockerId, now],
   }))
   await c.batch(stmts, 'write')
@@ -1082,7 +731,7 @@ export const rejectProposal = async (
   // task ids so the user explicitly redirects or drops them. This check
   // runs BEFORE the status flip so a refused dismiss leaves the proposal
   // untouched (still 'draft'). task_proposal_blockers lives in the separate
-  // mars.db (task domain), hence the cross-module read.
+  // task domain, hence the cross-module read.
   const { listTasksBlockedByProposal } = await import('./queue')
   const dependents = await listTasksBlockedByProposal(id)
   if (dependents.length > 0) {
@@ -1206,7 +855,7 @@ export const appendProposalNotes = async (
     sql: `UPDATE proposals
              SET notes = CASE WHEN notes = '' OR notes IS NULL
                               THEN ?
-                              ELSE notes || char(10) || ?
+                              ELSE notes || chr(10) || ?
                          END,
                  updated_at = ?
            WHERE id = ?`,
@@ -1258,7 +907,7 @@ export const claimProposalForSlicing = async (
  * Flip a proposal's status from 'slicing' to 'sliced' and emit
  * proposal.sliced on the event bus. Called by the slice workflow's
  * generate-slices step (Phase 4) after tasks have been successfully
- * inserted into mars.db. The conditional UPDATE (status='slicing')
+ * inserted into the task table. The conditional UPDATE (status='slicing')
  * pairs with `claimProposalForSlicing` so only the caller that holds the
  * claim can finalise the transition — a stale caller whose claim was
  * already reverted by a compensating path will see zero rows updated.

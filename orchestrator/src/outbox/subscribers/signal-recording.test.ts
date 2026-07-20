@@ -2,45 +2,32 @@
  * Signal-recording Outbox Subscriber — behaviour tests.
  *
  * Tests drive the subscriber handlers directly (without a running dispatcher)
- * for synchronous, deterministic assertions. The file-backed SQLite client
- * mirrors the real daemon setup: a single `mars.db` that holds both the
- * outbox `events` table and the `signals` table so the processedOnce dedup
- * row and the signal write are co-located and covered by the same write
- * transaction.
+ * for synchronous, deterministic assertions. One database per test mirrors
+ * the real daemon setup: a single store that holds both the outbox `events`
+ * table and the `signals` table so the processedOnce dedup row and the
+ * signal write are co-located and covered by the same write transaction.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { createClient, type Client } from '@libsql/client';
-import {
-  buildSignalRecordingSubscribers,
-  ensureSignalRecordingSchema,
-} from './signal-recording.js';
+import { openDb, type DbClient } from '../../core/lib/db.js';
+import { ensureSchema } from '../../core/lib/pg-schema.js';
+import { buildSignalRecordingSubscribers } from './signal-recording.js';
 import type { BusEvent } from '../../bus/events.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
+let dbSeq = 0;
+
 /**
- * File-backed libsql client with all tables required by the signal-recording
- * subscriber. In-memory URLs are unsuitable because libsql's local backend
- * opens a fresh connection per transaction and would see empty tables.
+ * Fresh in-memory PGlite instance per test carrying the canonical schema
+ * (`events` + `signals` + `subscriber_processed_events`;
+ * MARS_DB_BACKEND=pglite is set by test/setup-env.ts, the target string is
+ * only an identity key).
  */
-async function makeClient(dir: string): Promise<Client> {
-  const client = createClient({ url: `file:${join(dir, 'mars.db')}` });
-
-  // Outbox events table (required by publish() calls inside the sideEffect).
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS events (
-      id      INTEGER PRIMARY KEY AUTOINCREMENT,
-      type    TEXT    NOT NULL,
-      payload TEXT    NOT NULL,
-      ts      INTEGER NOT NULL DEFAULT (unixepoch())
-    )
-  `);
-
+async function makeClient(): Promise<DbClient> {
+  const client = openDb(`test:signal-recording:${process.pid}:${dbSeq++}`);
+  await ensureSchema(client);
   return client;
 }
 
@@ -59,14 +46,14 @@ function terminalEvent(
 }
 
 /** Count all rows in the `signals` table. */
-async function signalCount(client: Client): Promise<number> {
+async function signalCount(client: DbClient): Promise<number> {
   const r = await client.execute(`SELECT COUNT(*) AS n FROM signals`);
   return Number((r.rows[0] as unknown as { n: number | bigint }).n);
 }
 
 /** Return the signal row for `taskId`, or null if absent. */
 async function signalForTask(
-  client: Client,
+  client: DbClient,
   taskId: string,
 ): Promise<{ kind: string } | null> {
   const r = await client.execute({
@@ -83,18 +70,14 @@ async function signalForTask(
 // ---------------------------------------------------------------------------
 
 describe('signal-recording:task.terminal subscriber', () => {
-  let tmpDir: string;
-  let client: Client;
+  let client: DbClient;
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'mars-signal-recording-test-'));
-    client = await makeClient(tmpDir);
-    await ensureSignalRecordingSchema(client);
+    client = await makeClient();
   });
 
-  afterEach(() => {
-    client.close();
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await client.close();
   });
 
   // ── Acceptance criterion 1 ─────────────────────────────────────────────

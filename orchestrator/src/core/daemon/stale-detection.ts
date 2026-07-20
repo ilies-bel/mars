@@ -9,25 +9,26 @@ import { fileURLToPath } from 'node:url'
  * table rename in `proposals.ts` lands on disk and any fresh CLI sees the
  * new shape, but a daemon started before the rename is still in memory with
  * code that references the legacy `ideas` table. The first proposal-touching
- * RPC against the migrated DB throws `SQLITE_ERROR: no such table: ideas`
- * (or, symmetrically, a daemon running the new code against a yet-to-migrate
- * DB throws `no such table: proposals`).
+ * RPC against the migrated DB throws PostgreSQL error 42P01 undefined_table
+ * (`relation "ideas" does not exist`) — or, symmetrically, a daemon running
+ * the new code against a yet-to-migrate DB throws
+ * `relation "proposals" does not exist`.
  *
  * The two defences here cover both ends of that hand-off:
  *
  * - Source-stamp guard (primary): the daemon captures `proposals.ts`'s mtime
  *   at startup and refuses proposal-mutating RPCs the moment it sees a newer
- *   file on disk, surfacing the restart hint *before* SQLite is touched.
- *   This catches the next rename automatically; it doesn't help a daemon
- *   that predates this guard itself.
+ *   file on disk, surfacing the restart hint *before* the database is
+ *   touched. This catches the next rename automatically; it doesn't help a
+ *   daemon that predates this guard itself.
  *
  * - Error-message rewrite (fallback): the CLI rewrites
- *   `no such table: ideas|proposals` SQLite errors coming back from any
+ *   `relation "ideas"|"proposals" does not exist` errors coming back from any
  *   un-stamped daemon into the same actionable restart hint, so operators
- *   are never left staring at the raw libsql message.
+ *   are never left staring at the raw database error.
  */
 
-const STALE_TABLE_RE = /no such table:\s*(ideas|proposals)\b/i
+const STALE_TABLE_RE = /relation "(ideas|proposals)" does not exist/i
 
 export const STALE_DAEMON_HINT =
   'orchestrator daemon appears to be running stale code ' +
@@ -35,7 +36,7 @@ export const STALE_DAEMON_HINT =
   'Restart the daemon: `mars daemon restart`, then retry.'
 
 /**
- * Rewrite a raw daemon-returned error string so a stale-table SQLite failure
+ * Rewrite a raw daemon-returned error string so a stale-table (42P01) failure
  * becomes an actionable restart hint. Non-matching errors pass through
  * unchanged.
  */
