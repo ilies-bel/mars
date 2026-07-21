@@ -37,10 +37,13 @@ your CWD; do not change directory.
      slipped through (build artifacts, editor swap files, `.DS_Store`,
      local-only debug edits, unstaged temporary prints).
   3. **Ambiguous.** Anything else — see the explicit list below.
-- On **safe to commit**: run `git commit -am "<descriptive message>"` (or
+- On **safe to commit**: run `git add -A && git commit -m "<descriptive message>"` (or
   `git add` specific files then `git commit -m "..."` when only a subset
-  belongs in this commit). The message must name the touched files or the
-  domain, not "auto-commit". Example:
+  belongs in this commit). **Always use `git add -A`, never `git commit -am`.**
+  `git commit -am` only stages already-tracked paths and silently drops new
+  untracked files — that was the root cause of the 2026-07-20 data-loss incident
+  where `reflect-workflow.ts` was destroyed. The message must name the touched
+  files or the domain, not "auto-commit". Example:
   `chore(orchestrator): land partial typecheck-fixer edits stranded on main`.
 - On **safe to stash**: run `git stash push --include-untracked -m
   "main-commiter: parked transient files <yyyy-mm-dd>"` so the work is
