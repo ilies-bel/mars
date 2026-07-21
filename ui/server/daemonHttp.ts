@@ -82,6 +82,21 @@ const withDaemon = async (
   try {
     return await call(port)
   } catch (err) {
+    // A connection-refused error means the port file is stale: the daemon exited
+    // without removing it. Surface this as NO_DAEMON (503) — the same envelope
+    // as a missing port file — so the UI shows "restart daemon" rather than a
+    // generic proxy error.
+    //
+    // Node's fetch wraps the syscall error in `err.cause`; Bun may surface it
+    // directly on `err`. Check both.
+    const rawErr = err as { code?: string; cause?: { code?: string } }
+    const errCode = rawErr.code ?? rawErr.cause?.code
+    if (errCode === 'ECONNREFUSED') {
+      return {
+        status: 503,
+        body: { ok: false, error: 'daemon not running', errorCode: DAEMON_ERROR.NO_DAEMON },
+      }
+    }
     return {
       status: 502,
       body: { ok: false, error: (err as Error).message, errorCode: DAEMON_ERROR.PROXY_FAILED },

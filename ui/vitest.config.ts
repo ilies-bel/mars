@@ -33,6 +33,7 @@ export default defineConfig({
           // plus the server tests that use Node.js HTTP and mocks.
           include: [
             'src/**/*.test.{ts,tsx}',
+            'server/daemonHttp.test.ts',
             'server/kpis.test.ts',
             'server/projectHealth.test.ts',
             'server/projectsStart.test.ts',
