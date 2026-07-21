@@ -11,7 +11,9 @@ import {
   proxyGet as realProxyGet,
   proxyPost,
   proxyStream,
+  readDaemonHttpPort,
 } from './daemonHttp.ts'
+import { DAEMON_ERROR } from '../src/shared/daemonErrors.ts'
 import { createProjectContextCache, type ProjectContextEntry } from './projectContext.ts'
 import { probeDaemonHealth } from './projectHealth.ts'
 import { resolveRepo, UnknownProjectError } from './repo.ts'
@@ -640,6 +642,60 @@ export const startServer = async (
           try { body = await req.json() } catch { /* empty body fine */ }
           const result = await proxyPost(ctx.stateDir, '/chat/threads', body)
           return jsonResponse(result.status, result.body)
+        }
+
+        // GET /api/chat/thread/:id/ui-stream — stream the daemon's resumable
+        // UIMessage-chunk SSE straight through (no JSON buffering). Must precede
+        // the generic thread-detail GET below, which would otherwise treat
+        // `<id>/ui-stream` as the thread id.
+        if (
+          path.startsWith('/api/chat/thread/') &&
+          path.endsWith('/ui-stream') &&
+          req.method === 'GET'
+        ) {
+          const rest = path.slice('/api/chat/thread/'.length, -'/ui-stream'.length)
+          const threadId = decodeURIComponent(rest)
+          if (!threadId) {
+            return jsonResponse(400, { error: 'threadId is required' })
+          }
+          const port = await readDaemonHttpPort(ctx.stateDir)
+          if (port === null) {
+            return jsonResponse(503, {
+              ok: false,
+              error: 'daemon not running',
+              errorCode: DAEMON_ERROR.NO_DAEMON,
+            })
+          }
+          let daemonResp: Response
+          try {
+            daemonResp = await fetch(
+              `http://127.0.0.1:${port}/chat/threads/${encodeURIComponent(threadId)}/ui-stream${url.search}`,
+              { headers: { Accept: 'text/event-stream' }, signal: req.signal },
+            )
+          } catch (err) {
+            return jsonResponse(502, {
+              ok: false,
+              error: (err as Error).message,
+              errorCode: DAEMON_ERROR.PROXY_FAILED,
+            })
+          }
+          // 204: no active run to attach to (resume mode) — relay verbatim.
+          if (daemonResp.status === 204) return new Response(null, { status: 204 })
+          if (!daemonResp.ok || daemonResp.body === null) {
+            return jsonResponse(daemonResp.status, {
+              ok: false,
+              error: `daemon ui-stream responded ${daemonResp.status}`,
+            })
+          }
+          return new Response(daemonResp.body, {
+            status: 200,
+            headers: {
+              'Content-Type': 'text/event-stream; charset=utf-8',
+              'Cache-Control': 'no-cache, no-transform',
+              Connection: 'keep-alive',
+              'Access-Control-Allow-Origin': '*',
+            },
+          })
         }
 
         if (path.startsWith('/api/chat/thread/') && req.method === 'GET') {

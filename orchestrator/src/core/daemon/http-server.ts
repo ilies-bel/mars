@@ -37,6 +37,7 @@ import {
   clearMessageFeedback,
 } from '../lib/chat-store'
 import type { ChatRunner, AttachmentInfo } from './chat-runner'
+import type { ChatStreamHub, SeqChunk } from './chat-stream-hub'
 import { getRepoRoot } from '../context'
 import { z } from 'zod'
 
@@ -427,6 +428,13 @@ export interface HttpServerDeps {
   appServices: AppServices
   /** Chat runner — manages in-flight `claude -p` runs for chat threads. */
   chatRunner: ChatRunner
+  /**
+   * Per-thread `UIMessageChunk` source backing `GET /chat/threads/:id/ui-stream`.
+   * Optional so unit tests that build a bare deps object (and never exercise the
+   * stream route) need not construct one — the route then serves 204. In the
+   * daemon this is the SAME hub instance injected into the {@link ChatRunner}.
+   */
+  chatStreamHub?: ChatStreamHub
 }
 
 export interface HttpServerHandle {
@@ -1387,6 +1395,119 @@ export const startHttpServer = async (
         return
       }
     }
+    // GET /chat/threads/:id/ui-stream — resumable UIMessage-chunk stream for one
+    // thread's active run. This is the daemon-native replacement for the old
+    // client-side `chat-delta` → `UIMessageChunk` mapping: the daemon maps and
+    // buffers chunks (see chat-stream-hub.ts) and this route replays + follows
+    // them over a small versioned JSON-lines-over-SSE contract.
+    //
+    //   frames:  event: protocol\ndata: {"v":1}\n\n   (once, first)
+    //            id: <gen>.<seq>\ndata: <UIMessageChunk JSON>\n\n
+    //            : ping\n\n                            (heartbeat)
+    //   query:   mode=send|resume (default resume)
+    //            lastEventId=<gen>.<seq>  (resume dedup cursor)
+    //
+    // mode=send   → always stream the current/next run (used right after POST
+    //               /message; buffer replay covers a fast run that finished
+    //               before the client connected).
+    // mode=resume → stream only when a run is currently ACTIVE, else 204 (there
+    //               is nothing to resume). Backs the transport's reconnectToStream.
+    {
+      const uiStreamMatch =
+        req.method === 'GET' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/ui-stream(?:\?.*)?$/)
+          : null
+      if (uiStreamMatch && uiStreamMatch[1]) {
+        const threadId = decodeURIComponent(uiStreamMatch[1])
+        const parsed = new URL(req.url!, 'http://localhost')
+        const mode = parsed.searchParams.get('mode') === 'send' ? 'send' : 'resume'
+        const lastEventId = parsed.searchParams.get('lastEventId')
+        const hub = deps.chatStreamHub
+        if (!hub) {
+          res.writeHead(204).end()
+          return
+        }
+
+        const snapshot = hub.snapshot(threadId)
+        // Resume has nothing to attach to unless a run is actively streaming.
+        if (mode === 'resume' && (!snapshot || !snapshot.active)) {
+          res.writeHead(204).end()
+          return
+        }
+
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        })
+        res.write('event: protocol\ndata: {"v":1}\n\n')
+
+        // Parse the resume cursor. It only suppresses replay of chunks the client
+        // already holds when its generation matches the live run's generation.
+        let lastWritten: { gen: number; seq: number } | null = null
+        if (lastEventId) {
+          const dot = lastEventId.indexOf('.')
+          const g = Number.parseInt(lastEventId.slice(0, dot), 10)
+          const s = Number.parseInt(lastEventId.slice(dot + 1), 10)
+          if (Number.isInteger(g) && Number.isInteger(s)) lastWritten = { gen: g, seq: s }
+        }
+        // A cursor from a different (older) generation is stale — replay in full.
+        if (snapshot && lastWritten && lastWritten.gen !== snapshot.gen) lastWritten = null
+
+        const writeChunk = (sc: SeqChunk): void => {
+          const newer =
+            lastWritten === null ||
+            sc.gen > lastWritten.gen ||
+            (sc.gen === lastWritten.gen && sc.seq > lastWritten.seq)
+          if (!newer) return
+          lastWritten = { gen: sc.gen, seq: sc.seq }
+          try {
+            res.write(`id: ${sc.gen}.${sc.seq}\ndata: ${JSON.stringify(sc.chunk)}\n\n`)
+          } catch {
+            // Dead socket — cleanup runs on the 'close' handler.
+          }
+        }
+
+        // Subscribe BEFORE replaying the snapshot so no chunk published between
+        // the two can slip through the gap (the dedup in writeChunk makes an
+        // overlap harmless). Both run synchronously here — no publish interleaves.
+        let heartbeat: ReturnType<typeof setInterval> | null = null
+        const closeStream = (): void => {
+          if (heartbeat) { clearInterval(heartbeat); heartbeat = null }
+          unsubscribe()
+          try { res.end() } catch { /* already closed */ }
+        }
+        const unsubscribe = hub.subscribe(threadId, {
+          onChunk: writeChunk,
+          onEnd: closeStream,
+        })
+
+        if (snapshot) {
+          for (const sc of snapshot.buffer) writeChunk(sc)
+          // A run that already sealed replays fully, then closes immediately.
+          if (!snapshot.active) {
+            closeStream()
+            return
+          }
+        }
+
+        heartbeat = setInterval(() => {
+          try { res.write(': ping\n\n') } catch { closeStream() }
+        }, 30_000)
+
+        req.on('close', () => {
+          if (heartbeat) { clearInterval(heartbeat); heartbeat = null }
+          unsubscribe()
+        })
+        req.on('error', () => {
+          if (heartbeat) { clearInterval(heartbeat); heartbeat = null }
+          unsubscribe()
+        })
+        return
+      }
+    }
+
     if (req.method === 'POST' && req.url === '/chat/threads') {
       let rawBody = ''
       req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })

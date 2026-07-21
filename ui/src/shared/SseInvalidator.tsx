@@ -3,8 +3,6 @@ import { useQueryClient } from '@tanstack/react-query'
 import { eventsUrl } from './api'
 import { getOpenTaskId } from './openTaskId'
 import { setSseConnected } from './sseStatus'
-import { publishChatDelta } from './chatDeltaBus'
-import type { LiveEvent } from './liveEvent'
 
 export const SseInvalidator = () => {
   const qc = useQueryClient()
@@ -83,28 +81,11 @@ export const SseInvalidator = () => {
       }, 150)
     })
 
-    // 'chat-delta' events carry live segment data from the daemon chat-runner.
-    // Publish each raw segment onto the per-thread delta bus; the active
-    // thread's MarsChatTransport subscribes and normalises it into the
-    // UIMessage stream that useChat renders.
-    es.addEventListener('chat-delta', (e) => {
-      try {
-        const me = e as MessageEvent<string>
-        const payload = JSON.parse(me.data) as unknown
-        if (
-          typeof payload === 'object' &&
-          payload !== null &&
-          'threadId' in payload &&
-          typeof (payload as Record<string, unknown>).threadId === 'string' &&
-          'event' in payload
-        ) {
-          const { threadId, event } = payload as { threadId: string; event: LiveEvent }
-          publishChatDelta(threadId, event)
-        }
-      } catch {
-        // Malformed payload — ignore.
-      }
-    })
+    // Live chat token streaming no longer flows through this global SSE channel:
+    // the daemon exposes a per-thread UIMessage-chunk stream
+    // (`GET /api/chat/thread/:id/ui-stream`) that `MarsChatTransport` consumes
+    // directly. The `chat` invalidation ping above still refetches the thread
+    // list + open thread detail so persisted history reconciles.
 
     es.onerror = () => setSseConnected(false)
     return () => {

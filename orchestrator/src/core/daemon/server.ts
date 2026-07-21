@@ -3208,10 +3208,16 @@ export const startDaemon = async (
     },
   })
 
-  const chatRunner = new ChatRunner()
+  // The chat stream hub is the per-thread UIMessageChunk source: the ChatRunner
+  // publishes mapped+buffered chunks into it, and the GET /chat/threads/:id/
+  // ui-stream route replays/follows them. One instance shared by both.
+  const { ChatStreamHub } = await import('./chat-stream-hub')
+  const chatStreamHub = new ChatStreamHub()
+  const chatRunner = new ChatRunner(chatStreamHub)
 
   const httpHandle = await startHttpServer({
     chatRunner,
+    chatStreamHub,
     restartTask: async (id) => {
       await coreRestart(id, new Set(['failed']), makeWorkflowStore())
       bus.emit('task.queued', { taskId: id })

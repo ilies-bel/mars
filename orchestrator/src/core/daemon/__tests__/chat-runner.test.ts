@@ -19,6 +19,8 @@ import {
   type MockInstance,
 } from 'vitest'
 import { parseEventToSegments, ChatRunner } from '../chat-runner'
+import { ChatStreamHub } from '../chat-stream-hub'
+import type { UiMessageChunk } from '../ui-message-chunks'
 import type { SubprocessLine, RunSubprocessResult } from '../../lib/git/claude'
 
 // ── Parser tests ──────────────────────────────────────────────────────────────
@@ -103,12 +105,15 @@ describe('parseEventToSegments', () => {
   })
 })
 
-// ── Delta emission integration tests ─────────────────────────────────────────
+// ── UIMessage-chunk streaming integration tests ─────────────────────────────
 //
 // These tests drive ChatRunner with Codex JSONL events and assert that the
-// ViewStreamHub receives the completed agent messages.
+// injected ChatStreamHub receives the mapped UIMessageChunks (the daemon-native
+// replacement for the old client-side `chat-delta` mapping). A subscriber
+// attached before the run receives every chunk live (start → text-delta … →
+// finish).
 
-describe('ChatRunner delta emission', () => {
+describe('ChatRunner UIMessage-chunk streaming', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(chatStore.getThread).mockResolvedValue({
@@ -118,12 +123,10 @@ describe('ChatRunner delta emission', () => {
     })
   })
 
-  it('emits each completed Codex agent message as a text event', async () => {
-    const broadcasts: unknown[] = []
-    const mockHub = {
-      broadcastData: (_ch: string, data: unknown) => { broadcasts.push(data) },
-      broadcast: vi.fn(),
-    }
+  it('streams each completed Codex agent message as a text-delta chunk', async () => {
+    const hub = new ChatStreamHub()
+    const chunks: UiMessageChunk[] = []
+    hub.subscribe('t1', { onChunk: (sc) => chunks.push(sc.chunk), onEnd: () => {} })
 
     mockRunSubprocessStreaming.mockImplementation(
       async (
@@ -142,25 +145,24 @@ describe('ChatRunner delta emission', () => {
       },
     )
 
-    const runner = new ChatRunner()
-    // Cast to satisfy the typed hub dependency (we only need broadcastData).
-    await runner.sendMessage('t1', 'hi', '/repo', mockHub as never)
+    const runner = new ChatRunner(hub)
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
     await new Promise((r) => setTimeout(r, 20))
 
-    // Filter to text SSE events only.
-    const textBroadcasts = (broadcasts as Array<{ threadId: string; event: { type: string; text?: string } }>)
-      .filter((b) => b.event.type === 'text')
-      .map((b) => b.event.text)
-
-    expect(textBroadcasts).toEqual(['Hello', ' world', '!'])
+    // Opening chunks, then a text-delta per agent message, then a terminal finish.
+    expect(chunks[0]).toEqual({ type: 'start' })
+    expect(chunks[1]).toEqual({ type: 'start-step' })
+    const textDeltas = chunks
+      .filter((c): c is Extract<UiMessageChunk, { type: 'text-delta' }> => c.type === 'text-delta')
+      .map((c) => c.delta)
+    expect(textDeltas).toEqual(['Hello', ' world', '!'])
+    expect(chunks.at(-1)).toMatchObject({ type: 'finish', finishReason: 'stop' })
   })
 
-  it('emits a single text event when the CLI sends one final assistant message', async () => {
-    const broadcasts: unknown[] = []
-    const mockHub = {
-      broadcastData: (_ch: string, data: unknown) => { broadcasts.push(data) },
-      broadcast: vi.fn(),
-    }
+  it('streams a single text-delta when the CLI sends one final assistant message', async () => {
+    const hub = new ChatStreamHub()
+    const chunks: UiMessageChunk[] = []
+    hub.subscribe('t1', { onChunk: (sc) => chunks.push(sc.chunk), onEnd: () => {} })
 
     mockRunSubprocessStreaming.mockImplementation(
       async (
@@ -176,15 +178,14 @@ describe('ChatRunner delta emission', () => {
       },
     )
 
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', mockHub as never)
+    const runner = new ChatRunner(hub)
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
     await new Promise((r) => setTimeout(r, 20))
 
-    const textBroadcasts = (broadcasts as Array<{ threadId: string; event: { type: string; text?: string } }>)
-      .filter((b) => b.event.type === 'text')
-      .map((b) => b.event.text)
-
-    expect(textBroadcasts).toEqual(['Complete response.'])
+    const textDeltas = chunks
+      .filter((c): c is Extract<UiMessageChunk, { type: 'text-delta' }> => c.type === 'text-delta')
+      .map((c) => c.delta)
+    expect(textDeltas).toEqual(['Complete response.'])
   })
 
   it('accumulated Codex messages join correctly for DB persistence', async () => {

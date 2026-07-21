@@ -24,6 +24,7 @@ import {
   type AlertSegment,
 } from '../lib/chat-store'
 import type { ViewStreamHub } from './view/stream-hub'
+import type { ChatStreamHub } from './chat-stream-hub'
 import { resolveChatSystemPrompt } from './chat-system-prompt'
 
 // ── Attachment info ───────────────────────────────────────────────────────────
@@ -188,6 +189,14 @@ export class ChatRunner {
   private activeRuns = new Map<string, AbortController>()
 
   /**
+   * @param chatStreamHub Optional per-thread `UIMessageChunk` source backing the
+   *   `GET /chat/threads/:id/ui-stream` route. When present, the runner mirrors
+   *   every streamed segment into it (mapped + buffered for resume); when absent
+   *   (e.g. a bare `new ChatRunner()` in a unit test), streaming is a no-op.
+   */
+  constructor(private readonly chatStreamHub?: ChatStreamHub) {}
+
+  /**
    * Start a Codex run for `threadId`. Returns `{ alreadyRunning: true }`
    * without spawning if there is already an active run for that thread
    * (the HTTP layer should respond 409). Otherwise starts the run
@@ -254,19 +263,24 @@ export class ChatRunner {
     const accumulatedSegments: ChatSegment[] = []
     let detectedSessionId: string | null = null
     const broadcastSegment = (seg: ChatSegment): void => {
-      if (seg.type === 'text') {
-        if (seg.text.length === 0) return
-        accumulatedSegments.push(seg)
-        hub?.broadcastData('chat', { threadId, event: seg })
-      } else {
-        accumulatedSegments.push(seg)
-        hub?.broadcastData('chat', { threadId, event: seg })
-      }
+      if (seg.type === 'text' && seg.text.length === 0) return
+      accumulatedSegments.push(seg)
+      // Live UIMessage-chunk streaming: the hub maps + buffers each segment for
+      // GET /chat/threads/:id/ui-stream (replacing the old `chat-delta` carrier
+      // that the client transport used to map itself).
+      this.chatStreamHub?.publish(threadId, seg)
     }
 
     const finalize = async (extraSeg?: ChatSegment): Promise<void> => {
       this.activeRuns.delete(threadId)
-      if (extraSeg) accumulatedSegments.push(extraSeg)
+      if (extraSeg) {
+        accumulatedSegments.push(extraSeg)
+        this.chatStreamHub?.publish(threadId, extraSeg)
+      }
+      // Seal the UIMessage-chunk stream so connected clients settle. A `result`
+      // or `error` segment already emitted the terminal `finish`; otherwise
+      // (e.g. a manual stop) this emits `finish` with reason `stop`.
+      this.chatStreamHub?.finishRun(threadId)
       // Build a plain-text content from all text segments for the message body.
       const textContent = accumulatedSegments
         .filter((s): s is { type: 'text'; text: string } => s.type === 'text')
@@ -286,11 +300,18 @@ export class ChatRunner {
       hub?.broadcast('chat')
     }
 
+    // Open the UIMessage-chunk buffer up-front so EVERY exit path (including an
+    // early error before the subprocess) streams into a live run that connected
+    // clients can settle on. The POST that triggered this run already returned
+    // 202, so the ui-stream is the client's only channel for run outcomes.
+    this.chatStreamHub?.startRun(threadId)
+
     try {
       // Fetch thread for session_id and existence check.
       const threadData = await getThread(threadId)
       if (!threadData) {
         this.activeRuns.delete(threadId)
+        this.chatStreamHub?.finishRun(threadId)
         return
       }
 

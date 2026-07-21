@@ -14,8 +14,7 @@
  */
 
 import { useState } from 'react'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { Response } from '@/components/ai-elements/response'
 import { invokeAction, snoozeActionQueueItem, restoreSnoozedItem } from '@/shared/api'
 import type { AlertHumanDetail, AlertVerb } from '@/shared/schemas'
 
@@ -178,7 +177,7 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
             <div>
               <dt className="font-mono text-[9px] uppercase text-iron/40">Changelog</dt>
               <dd className="mt-0.5 chat-markdown prose prose-sm prose-invert max-w-none text-[11px]">
-                <Markdown remarkPlugins={[remarkGfm]}>{detail.changelog}</Markdown>
+                <Response>{detail.changelog}</Response>
               </dd>
             </div>
           )}

@@ -1,27 +1,30 @@
 /**
- * marsChatTransport — a custom AI-SDK `ChatTransport` that bridges the daemon's
- * existing `chat-delta` SSE protocol onto the `useChat` (`@ai-sdk/react`)
- * `UIMessage`/parts model.
+ * marsChatTransport — a custom AI-SDK `ChatTransport` that is now a THIN PIPE
+ * over the daemon's native UIMessage-chunk stream.
  *
- * The daemon streaming protocol is unchanged: the transport POSTs the user turn
- * through the existing `postChatMessage` and then translates the daemon's
- * `LiveEvent` stream (delivered via `chatDeltaBus`) into a
- * `ReadableStream<UIMessageChunk>`. This is the single normaliser — the same
- * `LiveEvent -> UIMessageChunk` mapping used for live streaming will back the
- * persisted-history mapping when ChatPage is rewired.
+ * The `LiveEvent -> UIMessageChunk` mapping used to live here, folding the
+ * daemon's `chat-delta` SSE (via `chatDeltaBus`) client-side. That mapping moved
+ * SERVER-SIDE (orchestrator `ui-message-chunks.ts` + `chat-stream-hub.ts`): the
+ * daemon now emits mapped, buffered `UIMessageChunk`s over
+ * `GET /chat/threads/:id/ui-stream` (proxied to `/api/chat/thread/:id/ui-stream`).
+ * This transport just POSTs the user turn and pipes that stream into `useChat`.
  *
- * A daemon-native AI-SDK data-stream endpoint is an explicit follow-up, not
- * part of this migration; hence `reconnectToStream` returns `null` (no
- * resumable-stream endpoint) and history reconciliation is left to
- * `fetchChatThread`.
+ * Wire contract (small, explicit, versioned — both ends are ours):
+ *   text/event-stream frames
+ *     event: protocol\ndata: {"v":1}\n\n          (once, first)
+ *     id: <gen>.<seq>\ndata: <UIMessageChunk JSON>\n\n
+ *     : ping\n\n                                   (heartbeat, ignored)
+ * The `id` is a `<generation>.<sequence>` cursor. On a mid-run drop the pipe
+ * reconnects with `?lastEventId=<gen>.<seq>` and the daemon replays only chunks
+ * after it — so the stream is RESUMABLE. `reconnectToStream` uses the same
+ * endpoint (mode=resume) so `useChat.resumeStream()` can attach to an in-flight
+ * daemon-initiated (alert-origin) run.
  */
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
-import { ApiError, postChatMessage, stopChatThread } from './api'
-import { subscribeChatDelta } from './chatDeltaBus'
-import type { LiveEvent } from './liveEvent'
+import { ApiError, chatUiStreamUrl, postChatMessage, stopChatThread } from './api'
 import type { ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment } from './schemas'
 
-/** Usage stats carried on the terminal `result` event, surfaced as metadata. */
+/** Usage stats carried on the terminal `finish` chunk's metadata. */
 export interface MarsMessageMetadata {
   usage?: {
     durationMs: number | null
@@ -39,7 +42,7 @@ export interface MarsMessageMetadata {
 }
 
 /**
- * Mars-specific `data-*` parts. The live transport never emits these — they are
+ * Mars-specific `data-*` parts. The live stream never emits these — they are
  * produced only by the persisted-history normaliser (`chatMessageMapping.ts`)
  * for segment kinds that have no first-class AI-SDK part (`alert`, `attachment`,
  * `error`). Rendering narrows on the `data-<name>` discriminant.
@@ -79,8 +82,101 @@ const flattenText = (message: MarsUIMessage | undefined): string => {
 }
 
 /**
+ * Open the ui-stream endpoint. Resolves to the streaming `Response`, or `null`
+ * when the daemon reports no run to attach to (HTTP 204 — resume mode with no
+ * active run, or no stream hub available).
+ */
+const openUiStream = async (url: string, signal?: AbortSignal): Promise<Response | null> => {
+  const resp = await fetch(url, {
+    headers: { Accept: 'text/event-stream' },
+    ...(signal ? { signal } : {}),
+  })
+  if (resp.status === 204) return null
+  if (!resp.ok || resp.body === null) {
+    throw new ApiError(`GET ${url} → ${resp.status}`, 'other', resp.status)
+  }
+  return resp
+}
+
+/**
+ * Read a ui-stream `Response`, enqueueing each parsed `UIMessageChunk` and
+ * tracking the `<gen>.<seq>` cursor. When the body ends WITHOUT a terminal
+ * `finish` chunk (a mid-run network drop) it reconnects from the last cursor —
+ * the daemon replays only newer chunks. Returns once a `finish` chunk is seen,
+ * the signal aborts, or a reconnect yields 204 (run gone).
+ */
+const pumpUiStream = async (
+  initial: Response,
+  threadId: string,
+  projectId: string | undefined,
+  enqueue: (chunk: UIMessageChunk) => void,
+  isClosed: () => boolean,
+  signal?: AbortSignal,
+): Promise<void> => {
+  let resp: Response | null = initial
+  let lastId = ''
+  let sawFinish = false
+
+  while (resp && !sawFinish && !isClosed() && !signal?.aborted) {
+    const reader = resp.body!.pipeThrough(new TextDecoderStream()).getReader()
+    let lineBuffer = ''
+    let evName = ''
+    let dataField = ''
+    let idField = ''
+    try {
+      while (!isClosed() && !signal?.aborted) {
+        const { done, value } = await reader.read()
+        if (done) break
+        lineBuffer += value
+        const lines = lineBuffer.split('\n')
+        lineBuffer = lines.pop() ?? ''
+        for (const line of lines) {
+          const t = line.replace(/\r$/, '')
+          if (t.startsWith('event: ')) {
+            evName = t.slice('event: '.length)
+          } else if (t.startsWith('id: ')) {
+            idField = t.slice('id: '.length)
+          } else if (t.startsWith('data: ')) {
+            dataField = t.slice('data: '.length)
+          } else if (t === '') {
+            // Blank line terminates one SSE event.
+            if (dataField && evName !== 'protocol') {
+              try {
+                const chunk = JSON.parse(dataField) as UIMessageChunk
+                if (idField) lastId = idField
+                enqueue(chunk)
+                if ((chunk as { type: string }).type === 'finish') sawFinish = true
+              } catch {
+                // Malformed chunk — ignore.
+              }
+            }
+            evName = ''
+            dataField = ''
+            idField = ''
+          }
+        }
+      }
+    } finally {
+      try { reader.releaseLock() } catch { /* already released */ }
+    }
+
+    if (sawFinish || isClosed() || signal?.aborted) {
+      resp = null
+    } else {
+      // Premature end mid-run: reconnect and replay from the last cursor. Always
+      // use send-mode so a run that finished during the drop still replays its
+      // terminal `finish` (resume-mode would 204 once the run is no longer active).
+      resp = await openUiStream(
+        chatUiStreamUrl(threadId, { mode: 'send', lastEventId: lastId, projectId }),
+        signal,
+      )
+    }
+  }
+}
+
+/**
  * Create a `ChatTransport` bound to a single thread. `useChat` calls
- * `sendMessages` on submit/regenerate; the returned stream drives the message.
+ * `sendMessages` on submit/regenerate and `reconnectToStream` on `resumeStream`.
  */
 export const createMarsChatTransport = (
   options: MarsChatTransportOptions,
@@ -97,118 +193,15 @@ export const createMarsChatTransport = (
       const stream = new ReadableStream<UIMessageChunk>({
         start(controller) {
           let closed = false
-          let textId: string | null = null
-
+          const isClosed = (): boolean => closed
           const enqueue = (chunk: UIMessageChunk): void => {
             if (!closed) controller.enqueue(chunk)
           }
-
-          const openTextIfNeeded = (): string => {
-            if (textId === null) {
-              textId = crypto.randomUUID()
-              enqueue({ type: 'text-start', id: textId })
-            }
-            return textId
-          }
-
-          const closeText = (): void => {
-            if (textId !== null) {
-              enqueue({ type: 'text-end', id: textId })
-              textId = null
-            }
-          }
-
-          let unsubscribe: (() => void) | null = null
-
-          const cleanup = (): void => {
-            if (unsubscribe) {
-              unsubscribe()
-              unsubscribe = null
-            }
-            abortSignal?.removeEventListener('abort', onAbort)
-          }
-
-          const closeStream = (): void => {
+          const close = (): void => {
             if (closed) return
             closed = true
-            cleanup()
+            abortSignal?.removeEventListener('abort', onAbort)
             controller.close()
-          }
-
-          // Fold one daemon LiveEvent into UIMessageChunk(s).
-          const onEvent = (event: LiveEvent): void => {
-            if (closed) return
-            switch (event.type) {
-              case 'text': {
-                if (event.text.length === 0) return // drop empty text blocks
-                const id = openTextIfNeeded()
-                enqueue({ type: 'text-delta', id, delta: event.text })
-                return
-              }
-              case 'thinking': {
-                if (event.thinking.length === 0) return // drop empty reasoning
-                closeText()
-                const rId = crypto.randomUUID()
-                enqueue({ type: 'reasoning-start', id: rId })
-                enqueue({ type: 'reasoning-delta', id: rId, delta: event.thinking })
-                enqueue({ type: 'reasoning-end', id: rId })
-                return
-              }
-              case 'tool_use': {
-                enqueue({ type: 'tool-input-start', toolCallId: event.id, toolName: event.name })
-                enqueue({
-                  type: 'tool-input-available',
-                  toolCallId: event.id,
-                  toolName: event.name,
-                  input: event.input,
-                })
-                return
-              }
-              case 'tool_result': {
-                // A tool result ends any open prose run before the tool panel resolves.
-                closeText()
-                if (event.isError) {
-                  enqueue({
-                    type: 'tool-output-error',
-                    toolCallId: event.tool_use_id,
-                    errorText: stringifyError(event.content),
-                  })
-                } else {
-                  enqueue({
-                    type: 'tool-output-available',
-                    toolCallId: event.tool_use_id,
-                    output: event.content,
-                  })
-                }
-                return
-              }
-              case 'result': {
-                closeText()
-                enqueue({ type: 'finish-step' })
-                enqueue({
-                  type: 'finish',
-                  finishReason: 'stop',
-                  messageMetadata: {
-                    usage: {
-                      durationMs: event.durationMs,
-                      inputTokens: event.inputTokens,
-                      outputTokens: event.outputTokens,
-                      cacheReadTokens: event.cacheReadTokens,
-                      cost: event.cost,
-                    },
-                  },
-                })
-                closeStream()
-                return
-              }
-              case 'error': {
-                closeText()
-                enqueue({ type: 'error', errorText: event.message })
-                enqueue({ type: 'finish', finishReason: 'error' })
-                closeStream()
-                return
-              }
-            }
           }
 
           // Stop button / unmount: ask the daemon to stop, then settle useChat.
@@ -216,53 +209,90 @@ export const createMarsChatTransport = (
             void stopChatThread(threadId, projectId).catch(() => {
               // Best-effort — the run may already be finishing.
             })
-            closeText()
-            enqueue({ type: 'finish', finishReason: 'stop' })
-            closeStream()
+            enqueue({ type: 'finish', finishReason: 'stop' } as UIMessageChunk)
+            close()
           }
 
           if (abortSignal?.aborted) {
-            // Already aborted before we started: settle immediately.
-            enqueue({ type: 'start' })
-            enqueue({ type: 'start-step' })
             onAbort()
             return
           }
           abortSignal?.addEventListener('abort', onAbort)
 
-          // Subscribe BEFORE posting so a fast `result` cannot race past attach.
-          unsubscribe = subscribeChatDelta(threadId, onEvent)
+          void (async () => {
+            // Post the user turn. A 409 "already running" is a valid race — attach
+            // to the existing run's stream instead of surfacing an error.
+            try {
+              await postChatMessage(threadId, content, projectId, attachmentIds)
+            } catch (err: unknown) {
+              if (!(err instanceof ApiError && err.status === 409)) {
+                const message = err instanceof Error ? err.message : String(err)
+                enqueue({ type: 'error', errorText: message } as UIMessageChunk)
+                enqueue({ type: 'finish', finishReason: 'error' } as UIMessageChunk)
+                close()
+                return
+              }
+            }
 
-          enqueue({ type: 'start' })
-          enqueue({ type: 'start-step' })
-
-          void postChatMessage(threadId, content, projectId, attachmentIds).catch((err: unknown) => {
-            // 409 "already running" is a valid race: keep reading the existing
-            // run's live stream instead of surfacing an error.
-            if (err instanceof ApiError && err.status === 409) return
-            const message = err instanceof Error ? err.message : String(err)
-            enqueue({ type: 'error', errorText: message })
-            enqueue({ type: 'finish', finishReason: 'error' })
-            closeStream()
-          })
+            // Follow the run's UIMessage-chunk stream (buffer replay covers a run
+            // that started/finished before we connected).
+            try {
+              const first = await openUiStream(
+                chatUiStreamUrl(threadId, { mode: 'send', projectId }),
+                abortSignal,
+              )
+              if (first === null) {
+                // No stream available (hub absent) — settle cleanly.
+                enqueue({ type: 'finish', finishReason: 'stop' } as UIMessageChunk)
+              } else {
+                await pumpUiStream(first, threadId, projectId, enqueue, isClosed, abortSignal)
+              }
+            } catch (err: unknown) {
+              if (!closed && !abortSignal?.aborted) {
+                const message = err instanceof Error ? err.message : String(err)
+                enqueue({ type: 'error', errorText: message } as UIMessageChunk)
+                enqueue({ type: 'finish', finishReason: 'error' } as UIMessageChunk)
+              }
+            } finally {
+              close()
+            }
+          })()
         },
       })
 
       return Promise.resolve(stream)
     },
 
-    // No resumable-stream endpoint on the daemon yet — reconciliation happens
-    // via `fetchChatThread`, driven by ChatPage on reconnect.
-    reconnectToStream: () => Promise.resolve(null),
-  }
-}
-
-/** Render arbitrary tool-error content to a string for `errorText`. */
-const stringifyError = (content: unknown): string => {
-  if (typeof content === 'string') return content
-  try {
-    return JSON.stringify(content)
-  } catch {
-    return String(content)
+    // Resume an in-flight run (e.g. a daemon-initiated alert-origin run) for
+    // `useChat.resumeStream()`. Returns null when no run is active to attach to.
+    reconnectToStream: async () => {
+      let first: Response | null
+      try {
+        first = await openUiStream(chatUiStreamUrl(threadId, { mode: 'resume', projectId }))
+      } catch {
+        return null
+      }
+      if (first === null) return null
+      const initial = first
+      return new ReadableStream<UIMessageChunk>({
+        start(controller) {
+          let closed = false
+          const isClosed = (): boolean => closed
+          const enqueue = (chunk: UIMessageChunk): void => {
+            if (!closed) controller.enqueue(chunk)
+          }
+          const close = (): void => {
+            if (closed) return
+            closed = true
+            controller.close()
+          }
+          void pumpUiStream(initial, threadId, projectId, enqueue, isClosed)
+            .catch(() => {
+              // Best-effort resume — the history refetch reconciles on failure.
+            })
+            .finally(close)
+        },
+      })
+    },
   }
 }

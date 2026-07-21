@@ -411,6 +411,28 @@ export const restoreSnoozedItem = async (id: string): Promise<void> => {
 
 export const eventsUrl = (): string => `${BASE}/events`
 
+/**
+ * Build the URL for a thread's resumable UIMessage-chunk stream
+ * (`GET /api/chat/thread/:id/ui-stream`, proxied to the daemon). Consumed by
+ * `MarsChatTransport`:
+ * - `mode: 'send'`   → follow the run just triggered by `postChatMessage`
+ *   (the daemon replays its buffer, so a fast run that finished before we
+ *   connected is not lost).
+ * - `mode: 'resume'` → reconnect to an in-flight run (204 → no active run).
+ * `lastEventId` is the `<gen>.<seq>` cursor of the last chunk the client saw;
+ * the daemon replays only chunks after it, making mid-run reconnects seamless.
+ */
+export const chatUiStreamUrl = (
+  threadId: string,
+  opts: { mode: 'send' | 'resume'; lastEventId?: string | null; projectId?: string },
+): string => {
+  const params = new URLSearchParams()
+  params.set('mode', opts.mode)
+  if (opts.lastEventId) params.set('lastEventId', opts.lastEventId)
+  if (opts.projectId) params.set('project', opts.projectId)
+  return `${BASE}/api/chat/thread/${encodeURIComponent(threadId)}/ui-stream?${params.toString()}`
+}
+
 export interface EventsFilter {
   taskId?: string
   originId?: string

@@ -55,6 +55,14 @@ import { Reasoning, ReasoningTrigger, ReasoningContent } from '@/components/ai-e
 import { Tool, ToolHeader, ToolContent, ToolInput, ToolOutput } from '@/components/ai-elements/tool'
 import { Loader } from '@/components/ai-elements/loader'
 import { Suggestions, Suggestion } from '@/components/ai-elements/suggestion'
+import {
+  PromptInputTextarea,
+  PromptInputToolbar,
+  PromptInputTools,
+  PromptInputButton,
+  PromptInputSubmit,
+} from '@/components/ai-elements/prompt-input'
+import { PaperclipIcon, MicIcon, SquareIcon, XIcon } from 'lucide-react'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { WhileYouWereAwayPanel } from '@/widgets/WhileYouWereAwayPanel'
@@ -766,7 +774,7 @@ const ChatConversation = ({
     [threadDetail],
   )
 
-  const { messages, status, sendMessage, stop, error, setMessages } = useMarsChat({
+  const { messages, status, sendMessage, stop, error, setMessages, resumeStream } = useMarsChat({
     threadId,
     projectId,
     initialMessages: persisted,
@@ -789,6 +797,25 @@ const ChatConversation = ({
 
   const isBusy = status === 'streaming' || status === 'submitted'
   const serverRunning = threadDetail?.thread.status === 'running'
+
+  // Attach live to a daemon-initiated run the client did NOT start (an
+  // alert-origin thread whose run began server-side). `resumeStream` opens the
+  // daemon's ui-stream in resume mode; when there is no active run it 204s and
+  // this is a no-op. Guarded to fire at most once per running-period per thread,
+  // and never while the client is already streaming its own send (`isBusy`), so
+  // it can't double-consume. The history refetch remains the fallback.
+  const resumedThreadRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!serverRunning) {
+      if (resumedThreadRef.current === threadId) resumedThreadRef.current = null
+      return
+    }
+    if (isBusy || resumedThreadRef.current === threadId) return
+    resumedThreadRef.current = threadId
+    void resumeStream().catch(() => {
+      if (resumedThreadRef.current === threadId) resumedThreadRef.current = null
+    })
+  }, [threadId, serverRunning, isBusy, resumeStream])
 
   const handleSend = useCallback(
     async (text: string, attachmentIds?: string[]) => {
@@ -945,32 +972,35 @@ const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: HeroCom
   }, [text, isPending, onSend])
 
   return (
-    <div className="relative w-full max-w-2xl">
-      <textarea
-        ref={textareaRef}
-        data-testid="hero-composer"
-        className="w-full resize-none rounded-2xl border border-iron/30 bg-surface px-5 py-4 pr-20 font-mono text-[14px] text-fg placeholder:text-iron/40 focus:border-iron/60 focus:outline-none disabled:opacity-50"
-        placeholder={isPending ? 'Creating thread…' : 'Message mars… (Enter to send, Shift+Enter for newline)'}
-        rows={3}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault()
-            handleSend()
-          }
-        }}
-        disabled={isPending}
-      />
-      <button
-        type="button"
-        data-testid="hero-send"
-        className="absolute bottom-3 right-3 rounded-xl border border-iron/40 px-4 py-2 font-mono text-[11px] text-iron transition-colors hover:bg-iron/20 hover:text-fg active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
-        onClick={handleSend}
-        disabled={isPending || text.trim().length === 0}
-      >
-        {isPending ? '…' : 'Send'}
-      </button>
+    <div className="w-full max-w-2xl">
+      {/* AI-Elements PromptInput shell (HeroComposer owns its own text state). */}
+      <div className="w-full divide-y divide-border overflow-hidden rounded-2xl border bg-background shadow-sm">
+        <PromptInputTextarea
+          ref={textareaRef}
+          data-testid="hero-composer"
+          className="min-h-24 text-[14px]"
+          placeholder={isPending ? 'Creating thread…' : 'Message mars… (Enter to send, Shift+Enter for newline)'}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              handleSend()
+            }
+          }}
+          disabled={isPending}
+        />
+        <PromptInputToolbar>
+          <PromptInputTools />
+          <PromptInputSubmit
+            type="button"
+            data-testid="hero-send"
+            status={isPending ? 'submitted' : undefined}
+            disabled={isPending || text.trim().length === 0}
+            onClick={handleSend}
+          />
+        </PromptInputToolbar>
+      </div>
     </div>
   )
 }
@@ -1372,7 +1402,7 @@ export const Composer = ({
   return (
     <div
       data-testid="composer"
-      className="relative border-t border-iron/30 px-4 py-3"
+      className="relative border-t border-border px-4 py-3"
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
@@ -1383,57 +1413,21 @@ export const Composer = ({
         />
       )}
 
-      {/* Attachment preview chips */}
-      {attachments.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-1.5" data-testid="attachment-chips">
-          {attachments.map((a) => (
-            <div
-              key={a.localId}
-              data-testid="attachment-chip"
-              className="flex items-center gap-1 rounded border border-iron/30 bg-surface px-2 py-0.5"
-            >
-              {a.previewUrl ? (
-                <img
-                  src={a.previewUrl}
-                  alt={a.file.name}
-                  className="h-6 w-6 rounded object-cover"
-                />
-              ) : (
-                <span className="text-[11px]">
-                  {fileMediaKind(a.file) === 'audio' ? '🎵' : '🎬'}
-                </span>
-              )}
-              <span className="max-w-[120px] truncate font-mono text-[10px] text-iron">
-                {a.file.name}
-              </span>
-              <button
-                type="button"
-                data-testid="remove-attachment"
-                aria-label={`Remove ${a.file.name}`}
-                className="ml-0.5 text-iron/50 hover:text-red-400"
-                onClick={() => removeAttachment(a.localId)}
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Voice-note CTA — shown after mic stops */}
       {voiceBlob && !micActive && (
         <div className="mb-2 flex items-center gap-2">
-          <span className="font-mono text-[10px] text-iron/60">Voice note recorded</span>
-          <button
-            type="button"
-            className="rounded border border-iron/40 px-2 py-0.5 font-mono text-[10px] text-iron hover:bg-iron/20"
+          <span className="text-[10px] text-muted-foreground">Voice note recorded</span>
+          <PromptInputButton
+            size="sm"
+            variant="outline"
+            className="h-7 text-[10px]"
             onClick={handleAttachVoiceNote}
           >
             Send as voice note
-          </button>
+          </PromptInputButton>
           <button
             type="button"
-            className="font-mono text-[10px] text-iron/40 hover:text-iron"
+            className="text-[10px] text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setVoiceBlob(null)}
           >
             Discard
@@ -1441,8 +1435,14 @@ export const Composer = ({
         </div>
       )}
 
-      <div className="flex items-end gap-2">
-        {/* Hidden file input — triggered by the + button */}
+      {/* AI-Elements PromptInput shell. Mars owns attachment/send/mic state, so
+          the vendored PromptInput *form* wrapper (and its internal file-input +
+          attachment context) is not used — its exact classNames are applied to
+          a plain container and the presentational subcomponents are composed on
+          top, preserving the upload path and the composer test's file-input
+          contract. */}
+      <div className="w-full divide-y divide-border overflow-hidden rounded-xl border bg-background shadow-sm">
+        {/* Hidden file input — the only file input in the composer, wired to Mars addFiles. */}
         <input
           ref={fileInputRef}
           type="file"
@@ -1457,24 +1457,46 @@ export const Composer = ({
           }}
         />
 
-        {/* + attach button */}
-        <button
-          type="button"
-          data-testid="attach-btn"
-          aria-label="Attach file"
-          title="Attach image, audio or video"
-          className="flex-none rounded border border-iron/40 px-2 py-2 font-mono text-[11px] text-iron transition-colors hover:bg-iron/20 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-          disabled={isDisabled}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          +
-        </button>
+        {/* Attachment preview chips */}
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 p-3" data-testid="attachment-chips">
+            {attachments.map((a) => (
+              <div
+                key={a.localId}
+                data-testid="attachment-chip"
+                className="group relative flex items-center gap-2 rounded-md border bg-muted/50 py-1 pr-1 pl-2 text-xs"
+              >
+                {a.previewUrl ? (
+                  <img
+                    src={a.previewUrl}
+                    alt={a.file.name}
+                    className="size-8 rounded object-cover"
+                  />
+                ) : (
+                  <span className="text-sm">
+                    {fileMediaKind(a.file) === 'audio' ? '🎵' : '🎬'}
+                  </span>
+                )}
+                <span className="max-w-[120px] truncate text-muted-foreground">
+                  {a.file.name}
+                </span>
+                <button
+                  type="button"
+                  data-testid="remove-attachment"
+                  aria-label={`Remove ${a.file.name}`}
+                  className="ml-0.5 rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-destructive"
+                  onClick={() => removeAttachment(a.localId)}
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
-        <textarea
+        <PromptInputTextarea
           ref={textareaRef}
-          className="flex-1 resize-none rounded border border-iron/30 bg-surface px-3 py-2 font-mono text-[12px] text-fg placeholder:text-iron/40 focus:border-iron/60 focus:outline-none disabled:opacity-50"
           placeholder={isDisabled ? 'Running…' : 'Message mars… (Enter to send, Shift+Enter for newline)'}
-          rows={3}
           value={text}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
@@ -1487,54 +1509,62 @@ export const Composer = ({
           disabled={isDisabled}
         />
 
-        <div className="flex flex-col items-stretch gap-1">
-          {/* Mic button — hidden when Web Speech API is unavailable */}
-          {speechAvailable && (
-            <button
-              type="button"
-              data-testid="mic-btn"
-              aria-label={micActive ? 'Stop dictation' : 'Start dictation'}
-              title={micActive ? 'Click to stop dictation' : 'Dictate into the composer'}
-              className={[
-                'flex-none rounded border px-2 py-1.5 font-mono text-[11px] transition-colors',
-                micActive
-                  ? 'border-red-400/60 bg-red-900/10 text-red-400 hover:bg-red-900/20'
-                  : 'border-iron/40 text-iron hover:bg-iron/20 hover:text-fg',
-              ].join(' ')}
-              onClick={() => void handleMicToggle()}
+        <PromptInputToolbar>
+          <PromptInputTools>
+            {/* Attach button */}
+            <PromptInputButton
+              data-testid="attach-btn"
+              aria-label="Attach file"
+              title="Attach image, audio or video"
+              disabled={isDisabled}
+              onClick={() => fileInputRef.current?.click()}
             >
-              {micActive ? '⏹' : '🎤'}
-            </button>
-          )}
+              <PaperclipIcon className="size-4" />
+            </PromptInputButton>
+
+            {/* Mic button — hidden when Web Speech API is unavailable */}
+            {speechAvailable && (
+              <PromptInputButton
+                data-testid="mic-btn"
+                aria-label={micActive ? 'Stop dictation' : 'Start dictation'}
+                title={micActive ? 'Click to stop dictation' : 'Dictate into the composer'}
+                className={micActive ? 'text-destructive hover:text-destructive' : undefined}
+                onClick={() => void handleMicToggle()}
+              >
+                {micActive ? <SquareIcon className="size-4" /> : <MicIcon className="size-4" />}
+              </PromptInputButton>
+            )}
+          </PromptInputTools>
 
           {/* Show Stop while a reply streams / the thread runs; Send otherwise. */}
           {isBusy && !isPending ? (
-            <button
-              type="button"
+            <PromptInputButton
               data-testid="stop-btn"
-              className="flex-none rounded border border-red-400/40 px-3 py-2 font-mono text-[11px] text-red-400 transition-colors hover:bg-red-900/20 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Stop"
+              variant="outline"
+              className="text-destructive hover:text-destructive"
               onClick={() => onStop?.()}
             >
+              <SquareIcon className="size-4" />
               Stop
-            </button>
+            </PromptInputButton>
           ) : (
-            <button
+            <PromptInputSubmit
               type="button"
               data-testid="send-btn"
-              className="flex-none rounded border border-iron/40 px-3 py-2 font-mono text-[11px] text-iron transition-colors hover:bg-iron/20 hover:text-fg active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
-              onClick={handleSend}
+              status={isUploading ? 'submitted' : undefined}
               disabled={isDisabled || (text.trim().length === 0 && attachments.length === 0)}
-            >
-              {isUploading ? '↑' : 'Send'}
-            </button>
+              onClick={handleSend}
+            />
           )}
-        </div>
+        </PromptInputToolbar>
       </div>
+
       {(sendError || localSendError) && (
         <p
           role="alert"
           data-testid="composer-send-error"
-          className="mt-1 font-mono text-[10px] text-red-400"
+          className="mt-1 text-[10px] text-destructive"
         >
           {sendError ?? localSendError}
         </p>

@@ -1,12 +1,12 @@
 /**
- * chatBridge — connects to the daemon's `/view/stream` SSE channel and
- * forwards `chat` events to the UI's per-project `SseHub`.
+ * chatBridge — connects to the daemon's `/view/stream` SSE channel and forwards
+ * `chat` invalidation pings to the UI's per-project `SseHub` as `chat`.
  *
- * Event routing:
- * - daemon `chat` with `{ threadId, event }` payload → UI `chat-delta`
- *   (live segment streaming; consumed by ChatPage via the chatBuffer store)
- * - daemon `chat` with `{}` payload → UI `chat`
- *   (cache-invalidation ping; consumed by SseInvalidator)
+ * Live chat token streaming NO LONGER flows through this channel: the daemon
+ * exposes a per-thread UIMessage-chunk stream (`GET /chat/threads/:id/ui-stream`,
+ * proxied to `/api/chat/thread/:id/ui-stream`) that `MarsChatTransport` consumes
+ * directly. The `chat` events here are pure cache-invalidation pings consumed by
+ * `SseInvalidator` (thread list + open thread detail refetch).
  *
  * Reconnects with exponential backoff whenever the daemon is unreachable,
  * restarts, or the SSE connection drops.
@@ -62,7 +62,6 @@ async function runBridge(
       const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader()
       let lineBuffer = ''
       let currentEvent = ''
-      let currentData = ''
 
       while (!isStopped()) {
         const { done, value } = await reader.read()
@@ -78,17 +77,15 @@ async function runBridge(
           const trimmed = line.trimEnd()
           if (trimmed.startsWith('event: ')) {
             currentEvent = trimmed.slice('event: '.length)
-          } else if (trimmed.startsWith('data: ')) {
-            currentData = trimmed.slice('data: '.length)
           } else if (trimmed === '') {
             // Empty line signals end of one SSE event.
             if (currentEvent === 'chat') {
-              routeChatEvent(currentData, hub)
+              // Pure invalidation ping — refetch thread list + open detail.
+              hub.broadcast('chat')
             }
             currentEvent = ''
-            currentData = ''
           }
-          // Ignore comment lines (': ping'), id:, retry: etc.
+          // Ignore data:, comment lines (': ping'), id:, retry: etc.
         }
       }
 
@@ -105,30 +102,6 @@ async function runBridge(
       await sleep(delay)
       delay = Math.min(delay * 2, RECONNECT_MAX_MS)
     }
-  }
-}
-
-/**
- * Route a parsed `chat` SSE payload to the appropriate UI hub event.
- *
- * - `{ threadId, event }` → `chat-delta` (live segment)
- * - anything else         → `chat` (invalidation ping)
- */
-function routeChatEvent(dataStr: string, hub: SseHub): void {
-  try {
-    const data = JSON.parse(dataStr) as unknown
-    if (
-      typeof data === 'object' &&
-      data !== null &&
-      'threadId' in data &&
-      'event' in data
-    ) {
-      hub.broadcast('chat-delta', data)
-    } else {
-      hub.broadcast('chat')
-    }
-  } catch {
-    // Malformed JSON payload — ignore.
   }
 }
 
