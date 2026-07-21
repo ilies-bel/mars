@@ -474,3 +474,7 @@ _Avoid_: reflection engine, suggester
 
 **Reflector checklist**:
 The CLI-managed catalog of environment and workflow improvements the Reflector screens before suggesting, each item carrying the operator's past decision (accepted, declined, or snoozed-until) per project.
+
+**Operator**:
+The human-or-agent principal who runs Mars's control loop: triages the action queue and sets the control levers that govern dispatch and spend.
+_Avoid_: user, admin, operator queue
