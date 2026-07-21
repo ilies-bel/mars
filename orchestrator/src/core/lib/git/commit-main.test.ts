@@ -25,6 +25,14 @@ const setupRepo = (): string => {
   return repo
 }
 
+/** Return all file names tracked by the HEAD commit tree (committed files, not working tree). */
+const headCommitTree = (repo: string): string[] =>
+  execSync('git ls-tree --name-only -r HEAD', { cwd: repo })
+    .toString()
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+
 /** Return the file names recorded in the HEAD commit (excluding empty lines). */
 const headCommitFiles = (repo: string): string[] =>
   execSync('git show --name-only --format= HEAD', { cwd: repo })
@@ -71,5 +79,22 @@ describe('commitMain', () => {
   it('throws when there is nothing to commit', async () => {
     // The tree is clean after setupRepo — git commit exits non-zero.
     await expect(commitMain({ cwd: repo, message: 'empty' })).rejects.toThrow()
+  })
+
+  it('does NOT stage files listed in .gitignore', async () => {
+    // The task brief calls out .gitignore as the safety valve: git add -A
+    // respects .gitignore, so scratch files / secrets / build artefacts
+    // covered by .gitignore entries are never accidentally committed.
+    writeFileSync(resolve(repo, '.gitignore'), 'secret.env\n')
+    writeFileSync(resolve(repo, 'secret.env'), 'API_KEY=do-not-commit\n')
+    // Add a legitimate new file so the commit is non-empty.
+    writeFileSync(resolve(repo, 'legit.ts'), 'export const x = 1\n')
+
+    await commitMain({ cwd: repo, message: 'chore: .gitignore boundary test' })
+
+    const tree = headCommitTree(repo)
+    expect(tree).toContain('.gitignore')
+    expect(tree).toContain('legit.ts')
+    expect(tree).not.toContain('secret.env')
   })
 })
