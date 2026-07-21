@@ -488,5 +488,5 @@ The daemon behaviour of automatically triggering reflection (session-scoped refl
 _Avoid_: auto reflect, reflect trigger, MARS_REFLECT_DISABLED
 
 **Steward**:
-The autonomous agent that tends the framework's own operating parameters (worker count, budgets, schedules) to hold the KPI vector at its setpoints; never addressed directly by the human, it speaks only through the unified Mars first-person voice.
+The event-driven subagent the orchestrator spawns to set up or modify a workflow and the framework's operating parameters (worker count, budgets, schedules) in response to signals — degraded KPIs, resource-load spikes, or onboarding; woken fresh per event, never long-running, never addressed directly by the human, and speaking only through the unified Mars voice.
 _Avoid_: ai operator, operator agent, self-optimizer, tuner, auto-tuner
