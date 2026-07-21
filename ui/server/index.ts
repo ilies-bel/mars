@@ -32,6 +32,8 @@ interface CliArgs {
  */
 export interface ServerDeps {
   proxyGet?: (stateDir: string, path: string) => Promise<DaemonActionResult>
+  /** SSE heartbeat interval in ms. Defaults to 15 000. Override in tests to avoid slow polls. */
+  sseHeartbeatMs?: number
 }
 
 const parseArgs = (argv: string[]): CliArgs => {
@@ -101,6 +103,7 @@ export const startServer = async (
   deps: ServerDeps = {},
 ): Promise<ReturnType<typeof Bun.serve>> => {
   const proxyGet = deps.proxyGet ?? realProxyGet
+  const sseHeartbeatMs = deps.sseHeartbeatMs ?? 15_000
   // Resolve the default context once for startup logging and healthz.
   const defaultCtx = resolveRepo(args.repo)
   // Per-project handle cache: lazily opens TaskDb/StateDb/SseHub on first
@@ -114,6 +117,7 @@ export const startServer = async (
     server = Bun.serve({
       port: args.port,
       hostname: args.host,
+      idleTimeout: 0,
       async fetch(req): Promise<Response> {
       const url = new URL(req.url)
       const path = url.pathname
@@ -432,7 +436,15 @@ export const startServer = async (
               const encoder = new TextEncoder()
               controller.enqueue(encoder.encode(`event: hello\ndata: {}\n\n`))
               const client = hub.add(controller)
+              const heartbeat = setInterval(() => {
+                try {
+                  controller.enqueue(encoder.encode(`: ping\n\n`))
+                } catch {
+                  // controller already closed
+                }
+              }, sseHeartbeatMs)
               req.signal.addEventListener('abort', () => {
+                clearInterval(heartbeat)
                 hub.remove(client)
                 try {
                   controller.close()

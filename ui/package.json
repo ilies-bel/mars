@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "npm run test:src && npm run test:server",
     "test:src": "vitest run",
-    "test:server": "bun test server/actionQueue.test.ts server/events.test.ts server/preferences.test.ts server/progress.test.ts server/releaseNotes.test.ts server/sessions.test.ts server/stepSpans.test.ts server/taskDetail.test.ts server/tasks.test.ts server/tasksBlockedBy.test.ts server/todo.test.ts",
+    "test:server": "bun test server/actionQueue.test.ts server/events.test.ts server/preferences.test.ts server/progress.test.ts server/releaseNotes.test.ts server/sessions.test.ts server/sseStream.test.ts server/stepSpans.test.ts server/taskDetail.test.ts server/tasks.test.ts server/tasksBlockedBy.test.ts server/todo.test.ts",
     "lint": "knip --no-exit-code",
     "start": "node bin/mars-ui.mjs",
     "knip": "knip --no-exit-code"
