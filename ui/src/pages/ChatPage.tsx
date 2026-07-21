@@ -16,6 +16,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -1779,7 +1780,32 @@ export const ChatPage = () => {
   const [query, setQuery] = useState<string>(() => readAqStateFromUrl().q)
   const [kindFilter, setKindFilter] = useState<KindFilter>(() => readAqStateFromUrl().kind)
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
-  const [railCollapsed, setRailCollapsed] = useState(false)
+
+  // ---------------------------------------------------------------------------
+  // Responsive breakpoints
+  // ---------------------------------------------------------------------------
+  // Rail: auto-expand at xl (1280 px+). Below 1024 px the three-column layout
+  // is too cramped; using the xl threshold means the rail collapses at both
+  // 768 px and 1024 px (matching the verify spec) and only opens at 1280 px+.
+  const isXlScreen = useMediaQuery('(min-width: 1280px)')
+  // Sidebar: hide below 769 px (standard md breakpoint boundary) and replace
+  // with a hamburger/sheet toggle.
+  const isMdScreen = useMediaQuery('(min-width: 769px)')
+
+  // Rail collapse: viewport drives the default; the toggle provides a per-
+  // session override that resets whenever the viewport crosses the xl boundary.
+  const [railCollapsed, setRailCollapsed] = useState(!isXlScreen)
+  useEffect(() => {
+    setRailCollapsed(!isXlScreen)
+  }, [isXlScreen])
+
+  // Mobile sidebar sheet
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  // Auto-close the overlay when the viewport expands to md+
+  useEffect(() => {
+    if (isMdScreen) setSidebarOpen(false)
+  }, [isMdScreen])
+
   // Capture the epoch ms when this ChatPage first mounts so the ContextRail
   // can highlight tasks that appeared during this session.
   const sessionStartedAt = useRef(Date.now()).current
@@ -1934,29 +1960,87 @@ export const ChatPage = () => {
 
   return (
     <div className="flex h-full overflow-hidden">
-      <ThreadSidebar
-        selectedId={selectedThreadId}
-        projectId={projectId}
-        onSelect={handleSelectThread}
-        selectedQueueItemId={selectedQueueItemId}
-        onSelectQueueItem={handleSelectQueueItem}
-        queueItems={queueItems}
-        history={{
-          items: historyItems,
-          nextCursor: historyNextCursor,
-          isLoadingMore: historyLoadingMore,
-          loadMore: loadMoreHistory,
-        }}
-        query={query}
-        onQueryChange={setQuery}
-        kindFilter={kindFilter}
-        onKindFilterChange={setKindFilter}
-        onQueueAction={handleQueueAction}
-        queueError={queueError ?? projectsError}
-        projectsEmpty={projectsEmpty}
-      />
+      {/* Thread sidebar — in-flow on md+, hidden on mobile with overlay sheet */}
+      {isMdScreen && (
+        <ThreadSidebar
+          selectedId={selectedThreadId}
+          projectId={projectId}
+          onSelect={handleSelectThread}
+          selectedQueueItemId={selectedQueueItemId}
+          onSelectQueueItem={handleSelectQueueItem}
+          queueItems={queueItems}
+          history={{
+            items: historyItems,
+            nextCursor: historyNextCursor,
+            isLoadingMore: historyLoadingMore,
+            loadMore: loadMoreHistory,
+          }}
+          query={query}
+          onQueryChange={setQuery}
+          kindFilter={kindFilter}
+          onKindFilterChange={setKindFilter}
+          onQueueAction={handleQueueAction}
+          queueError={queueError ?? projectsError}
+          projectsEmpty={projectsEmpty}
+        />
+      )}
+
+      {/* Mobile sidebar overlay — backdrop + sliding sheet */}
+      {!isMdScreen && sidebarOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40 bg-black/50"
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden="true"
+          />
+          {/* Sheet */}
+          <div className="fixed inset-y-0 left-0 z-50 flex flex-col shadow-xl">
+            <ThreadSidebar
+              selectedId={selectedThreadId}
+              projectId={projectId}
+              onSelect={(id) => {
+                handleSelectThread(id)
+                setSidebarOpen(false)
+              }}
+              selectedQueueItemId={selectedQueueItemId}
+              onSelectQueueItem={(id) => {
+                handleSelectQueueItem(id)
+                setSidebarOpen(false)
+              }}
+              queueItems={queueItems}
+              history={{
+                items: historyItems,
+                nextCursor: historyNextCursor,
+                isLoadingMore: historyLoadingMore,
+                loadMore: loadMoreHistory,
+              }}
+              query={query}
+              onQueryChange={setQuery}
+              kindFilter={kindFilter}
+              onKindFilterChange={setKindFilter}
+              onQueueAction={handleQueueAction}
+              queueError={queueError ?? projectsError}
+              projectsEmpty={projectsEmpty}
+            />
+          </div>
+        </>
+      )}
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/* Mobile top bar — hamburger button */}
+        {!isMdScreen && (
+          <div className="flex items-center border-b border-iron/30 px-3 py-2">
+            <button
+              type="button"
+              aria-label="Open sidebar"
+              onClick={() => setSidebarOpen(true)}
+              className="mr-3 font-mono text-[16px] text-iron hover:text-fg"
+            >
+              ☰
+            </button>
+          </div>
+        )}
         {selectedThreadId ? (
           <>
             {hasMessages ? (
