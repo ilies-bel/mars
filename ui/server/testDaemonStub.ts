@@ -42,8 +42,10 @@ import {
 } from '../../orchestrator/src/core/daemon/view/action-queue.ts'
 import {
   buildProgressView,
-  createAggregateReader,
-  createProposalReader,
+  type AggregateReader,
+  type ProgressAggregates,
+  type ProposalNode,
+  type ProposalReader,
   type ProgressTaskRow,
   type ProgressTaskStore,
 } from '../../orchestrator/src/core/daemon/view/progress.ts'
@@ -55,7 +57,6 @@ import {
   type TaskStoreForReleaseNotes,
 } from '../../orchestrator/src/core/daemon/view/release-notes.ts'
 import { openTraceEventStore } from '../../orchestrator/src/core/lib/trace-events-store.ts'
-import type { DbClient, DbInValue, DbResultSet, DbStatement } from '../../orchestrator/src/core/lib/db.ts'
 import { MARS_VERSION } from '../../orchestrator/src/version.ts'
 import type {
   DraftFeature,
@@ -73,34 +74,6 @@ const parseJsonObj = (raw: unknown): Record<string, unknown> => {
       : {}
   } catch {
     return {}
-  }
-}
-
-/**
- * The test fixture uses libsql directly while the shared progress readers are
- * typed against Mars's database seam. Adapt the small common surface here
- * rather than pretending libsql's mutable `batch` signature is assignable to
- * the seam's readonly statement contract.
- */
-const asProgressDbClient = (client: Client): DbClient => {
-  const execute = async (
-    statement: DbStatement,
-    args?: readonly DbInValue[],
-  ): Promise<DbResultSet> => {
-    const query = typeof statement === 'string'
-      ? { sql: statement, args: args?.map((value) => value ?? null) }
-      : { sql: statement.sql, args: statement.args?.map((value) => value ?? null) }
-    return client.execute(query)
-  }
-
-  return {
-    execute,
-    async batch(statements) {
-      return Promise.all(statements.map((statement) => execute(statement)))
-    },
-    async close() {
-      client.close()
-    },
   }
 }
 
@@ -403,9 +376,68 @@ const makeProgressTaskStore = (
 })
 
 /**
+ * SQLite-compatible ProposalReader. The daemon's `createProposalReader` uses
+ * PostgreSQL-specific SQL (`to_regclass`); this adapter uses PRAGMA/catch to
+ * tolerate a missing proposals table in legacy fixtures.
+ */
+const makeProposalReader = (client: Client): ProposalReader => ({
+  async listByIds(ids: string[]): Promise<ProposalNode[]> {
+    if (ids.length === 0) return []
+    try {
+      const placeholders = ids.map(() => '?').join(', ')
+      const r = await client.execute({
+        sql: `SELECT id, title, status, source FROM proposals WHERE id IN (${placeholders})`,
+        args: ids,
+      })
+      return r.rows.map((row) => {
+        const ro = row as unknown as Record<string, unknown>
+        const src = ro.source
+        const source: 'reflection' | 'human' | 'planner' =
+          src === 'reflection' || src === 'planner' ? src : 'human'
+        return {
+          id: ro.id as string,
+          title: (ro.title as string | null) ?? '',
+          status: (ro.status as string | null) ?? 'draft',
+          source,
+        }
+      })
+    } catch {
+      return []
+    }
+  },
+})
+
+/**
+ * SQLite-compatible AggregateReader. The daemon's `createAggregateReader` uses
+ * PostgreSQL `to_char` / `interval`; this adapter uses `datetime('now', '-1 day')`
+ * which is the SQLite equivalent.
+ */
+const makeAggregateReader = (client: Client): AggregateReader => ({
+  async readAggregates(): Promise<ProgressAggregates> {
+    try {
+      const r = await client.execute(`
+        SELECT
+          (SELECT COUNT(*) FROM tasks WHERE status = 'done'
+             AND updated_at >= datetime('now', '-1 day')) AS done_today,
+          (SELECT COUNT(*) FROM tasks WHERE status = 'done') AS done_total,
+          (SELECT COUNT(*) FROM tasks WHERE status = 'failed') AS failed_open
+      `)
+      const row = r.rows[0] as unknown as Record<string, unknown>
+      return {
+        doneToday: Number(row?.done_today ?? 0),
+        doneTotal: Number(row?.done_total ?? 0),
+        failedOpen: Number(row?.failed_open ?? 0),
+      }
+    } catch {
+      return { doneToday: 0, doneTotal: 0, failedOpen: 0 }
+    }
+  },
+})
+
+/**
  * `/view/progress` — mirrors `appServices.viewProgress()`
  * (`{ tasks, proposals }`) by feeding a schema-tolerant store to the SAME pure
- * `buildProgressView` + `createProposalReader` the daemon uses.
+ * `buildProgressView` + local SQLite-compatible readers.
  */
 const viewProgress = async (
   dbPath: string,
@@ -414,11 +446,10 @@ const viewProgress = async (
   const cols = await tableColumns(client, 'tasks')
   if (cols.size === 0) return { tasks: [], proposals: [], aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 } }
   const blockerMap = await loadBlockerMap(client)
-  const progressClient = asProgressDbClient(client)
   return buildProgressView(
     makeProgressTaskStore(client, cols, blockerMap),
-    createProposalReader(progressClient),
-    createAggregateReader(progressClient),
+    makeProposalReader(client),
+    makeAggregateReader(client),
   )
 }
 
