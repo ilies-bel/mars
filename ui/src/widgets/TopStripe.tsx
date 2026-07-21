@@ -22,28 +22,36 @@ export const TopStripe = ({ inProgress, failed, doneToday, connected }: Props) =
         Release Notes
       </button>
     </div>
-    <div className="flex items-center gap-3">
-      <div className="flex items-center gap-2.5 font-mono text-[12px] tracking-wide">
-        <span className="font-bold text-flame">{inProgress} IN PROGRESS</span>
+    <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3 font-mono tracking-wide">
+        <div data-testid="stat-in-progress" className="flex items-center gap-1">
+          <span className="text-[14px] font-bold text-flame">{inProgress}</span>
+          <span className="text-[10px] text-muted">IN PROGRESS</span>
+        </div>
         <span className="text-muted">·</span>
         <button
           type="button"
+          data-testid="stat-done"
           title="Tasks completed in the last 24 hours — click to view release notes"
           onClick={() => {
             window.location.hash = releaseNotesHash()
           }}
-          className="cursor-pointer font-semibold text-muted hover:text-fg"
+          className="flex cursor-pointer items-center gap-1 hover:opacity-80"
         >
-          {doneToday} DONE TODAY
+          <span className="text-[14px] font-bold text-success">{doneToday}</span>
+          <span className="text-[10px] text-muted">DONE TODAY</span>
         </button>
         <span className="text-muted">·</span>
-        <span className="font-semibold text-muted">{failed} FAILED</span>
+        <div data-testid="stat-failed" className="flex items-center gap-1">
+          <span className="text-[14px] font-bold text-error">{failed}</span>
+          <span className="text-[10px] text-muted">FAILED</span>
+        </div>
       </div>
       <div className="flex items-center gap-1.5">
         <span
-          className={`h-2 w-2 rounded-full bg-flame ${connected ? 'animate-mars-pulse' : 'opacity-30'}`}
+          className={`h-2 w-2 rounded-full bg-success ${connected ? 'animate-mars-pulse' : 'opacity-30'}`}
         />
-        <span className="font-mono text-[12px] font-medium text-fg">
+        <span className="font-mono text-[12px] text-muted">
           {connected ? 'live' : 'offline'}
         </span>
       </div>

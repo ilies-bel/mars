@@ -159,7 +159,24 @@ describe('ProgressPage – SSE connection indicator', () => {
 // ---------------------------------------------------------------------------
 // Header stats: the TopStripe must show the correct counts so that operators
 // can trust the numbers at a glance.
+//
+// Numbers and labels are rendered in separate elements (different sizes and
+// colours), so assertions use data-testid section extraction rather than
+// checking for a contiguous "N LABEL" substring.
 // ---------------------------------------------------------------------------
+
+// Extract the HTML chunk between two data-testid markers.
+function between(html: string, startId: string, endId: string): string {
+  const s = html.indexOf(`data-testid="${startId}"`)
+  const e = html.indexOf(`data-testid="${endId}"`)
+  if (s === -1) return ''
+  return e === -1 ? html.slice(s) : html.slice(s, e)
+}
+
+function from(html: string, startId: string): string {
+  const s = html.indexOf(`data-testid="${startId}"`)
+  return s === -1 ? '' : html.slice(s)
+}
 
 describe('ProgressPage – header stats', () => {
   const makeTask = (id: string, status: ProgressTask['status']): ProgressTask =>
@@ -176,10 +193,11 @@ describe('ProgressPage – header stats', () => {
     }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
+      const doneSection = between(html, 'stat-done', 'stat-failed')
       // Two done tasks → DONE must read 2
-      expect(html).toContain('2 DONE')
+      expect(doneSection).toContain('>2<')
       // Must not use the failed count (1) for the DONE slot
-      expect(html).not.toContain('1 DONE')
+      expect(doneSection).not.toContain('>1<')
     } finally {
       mockUseProgress.mockImplementation(() => baseState([]))
     }
@@ -195,9 +213,12 @@ describe('ProgressPage – header stats', () => {
     }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
-      expect(html).toContain('2 FAILED')
-      // DONE must not be 2 (the failed count)
-      expect(html).not.toContain('2 DONE')
+      const doneSection = between(html, 'stat-done', 'stat-failed')
+      const failedSection = from(html, 'stat-failed')
+      // Failed count (2) appears in the FAILED section
+      expect(failedSection).toContain('>2<')
+      // DONE must not show 2 (the failed count) — it shows 0
+      expect(doneSection).not.toContain('>2<')
     } finally {
       mockUseProgress.mockImplementation(() => baseState([]))
     }
@@ -211,8 +232,10 @@ describe('ProgressPage – header stats', () => {
     }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
-      expect(html).toContain('0 DONE')
-      expect(html).toContain('0 FAILED')
+      const doneSection = between(html, 'stat-done', 'stat-failed')
+      const failedSection = from(html, 'stat-failed')
+      expect(doneSection).toContain('>0<')
+      expect(failedSection).toContain('>0<')
     } finally {
       mockUseProgress.mockImplementation(() => baseState([]))
     }
