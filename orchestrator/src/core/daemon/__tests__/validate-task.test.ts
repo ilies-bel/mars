@@ -17,6 +17,10 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
+// PGlite cold start can take longer than the default 5 s timeout per-test;
+// raise both timeouts so each dynamically-loaded PGlite instance gets 30 s.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })
+
 // Capture pids passed to killDevServer; spawn is never reached in these tests.
 const killed: Array<number | null> = []
 vi.mock('../../lib/dev-server', () => ({
