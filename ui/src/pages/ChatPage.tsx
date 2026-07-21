@@ -1837,7 +1837,7 @@ export const ThreadSidebar = ({
 export const ChatPage = () => {
   const rawProjectId = useFocusedProjectId()
   const projectId = rawProjectId ?? undefined
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readAqStateFromUrl().thread)
   // Projection-Thread selection (an action-queue item id) plus the sidebar
   // filter state — all three restore from the chat URL hash on F5.
   const [selectedQueueItemId, setSelectedQueueItemId] = useState<string | null>(
@@ -1881,12 +1881,12 @@ export const ChatPage = () => {
   useEffect(() => {
     if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
     urlWriteTimerRef.current = setTimeout(() => {
-      writeAqStateToUrl({ item: selectedQueueItemId, kind: kindFilter, q: query })
+      writeAqStateToUrl({ item: selectedQueueItemId, kind: kindFilter, q: query, thread: selectedThreadId })
     }, 300)
     return () => {
       if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
     }
-  }, [selectedQueueItemId, kindFilter, query])
+  }, [selectedQueueItemId, kindFilter, query, selectedThreadId])
 
   // Selection is exclusive: a conversation or a projection Thread, never both.
   const handleSelectThread = useCallback((id: string) => {
