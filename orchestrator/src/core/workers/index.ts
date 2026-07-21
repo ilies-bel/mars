@@ -194,6 +194,24 @@ export const CODEGRAPH_NUDGE =
 export const CODER_MODEL: string =
   process.env.MARS_WORKER_MODEL ?? CLAUDE_SONNET_MODEL
 
+// Resolve the effective provider for the Coder Worker. When `MARS_WORKER_PROVIDER`
+// is set, it overrides the pinned default — useful for running Coder sessions
+// under Codex or Gemini without editing code. The env var is read at process
+// start and affects every Coder run for the lifetime of that daemon process.
+// All other Workers (Planner, Slicer, Fixer, Triager, BehaviourVerifier, Scorer)
+// stay pinned to Claude.
+const KNOWN_PROVIDERS: readonly ProviderName[] = ['claude', 'codex', 'gemini'] as const
+const _rawProvider = process.env.MARS_WORKER_PROVIDER
+if (
+  _rawProvider !== undefined &&
+  !(KNOWN_PROVIDERS as readonly string[]).includes(_rawProvider)
+) {
+  throw new Error(
+    `Unknown MARS_WORKER_PROVIDER '${_rawProvider}' — known: ${KNOWN_PROVIDERS.join(', ')}`,
+  )
+}
+export const CODER_PROVIDER: ProviderName = (_rawProvider as ProviderName | undefined) ?? 'claude'
+
 // Day-one defaults agreed in the grill for PRD 948691d0. The Coder runs on
 // sonnet / high effort / bypassPermissions with the full tool surface (no
 // per-Worker disallows beyond the wrapper-layer agent-to-user ban). Fixer
@@ -231,7 +249,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: CODER_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: CODER_PROVIDER,
     tags: ['coder'],
   },
   Planner: {

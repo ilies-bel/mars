@@ -40,6 +40,7 @@ const KNOWN_MARS_OVERRIDE_NOTES: ReadonlyMap<string, string> = new Map([
   ['MARS_GEMINI_BIN', 'gemini binary path override'],
   ['MARS_CODEX_BIN', 'codex binary path override'],
   ['MARS_WORKER_MODEL', 'worker model override (coder only)'],
+  ['MARS_WORKER_PROVIDER', 'worker provider override (coder only)'],
   ['MARS_REFLECT_DISABLED', 'disables reflection tracking'],
   ['MARS_RECOVERY_DISABLED', 'disables failure recovery'],
 ])

@@ -219,7 +219,7 @@ recovery-spawn path itself.
   `claude-sonnet-4-6`. Override the Coder model for the lifetime of a daemon
   process via `MARS_WORKER_MODEL=<model>` (e.g. `MARS_WORKER_MODEL=claude-opus-4-7`
   for a high-complexity session). Planner, Slicer, Writer, and Fixer models are
-  always pinned; only Coder is overridable.
+  always pinned; only Coder is overridable. Override the Coder Provider similarly via `MARS_WORKER_PROVIDER=<claude|codex|gemini>`; other Worker classes stay pinned to Claude.
 - To inspect live runs, open `mars ui` (read-only Kanban + trace dashboard)
   or query the daemon HTTP API: read `PORT=$(cat .mars/http.port)` first —
   the daemon binds an OS-assigned ephemeral port (see Conventions).
