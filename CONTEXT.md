@@ -469,8 +469,8 @@ A single-goal unit of operator decision on the chat page, either projected from 
 _Avoid_: chat thread, conversation, lateral thread
 
 **Reflector**:
-The synthesis process that reviews completed work and system telemetry to emit draft proposals and suggestion cards, consulting its checklist and past operator decisions before suggesting.
-_Avoid_: reflection engine, suggester
+The mostly-deterministic agent woken fresh at the end of a Session or an Arc (or on manual/orchestrator trigger) to synthesize reflections over completed work into draft proposals; not a long-running thread.
+_Avoid_: reflect worker, reflection agent, reflect loop
 
 **Reflector checklist**:
 The CLI-managed catalog of environment and workflow improvements the Reflector screens before suggesting, each item carrying the operator's past decision (accepted, declined, or snoozed-until) per project.
