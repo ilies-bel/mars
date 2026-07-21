@@ -75,6 +75,7 @@ const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Prom
       openRows: [],
     }),
     viewTasks: async () => ({ tasks: [] }),
+    viewTask: async () => null,
     viewProgress: async () => ({ tasks: [], proposals: [], aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 } }),
     viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
     viewProposal: async () => null,

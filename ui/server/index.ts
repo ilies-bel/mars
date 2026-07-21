@@ -147,7 +147,7 @@ export const startServer = async (
           }
           throw e
         }
-        const { ctx, db, hub } = pctx
+        const { ctx, hub } = pctx
 
         if (path === '/api/tasks') {
           const r = await proxyGet(ctx.stateDir, '/view/tasks')
