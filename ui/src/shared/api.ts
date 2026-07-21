@@ -651,19 +651,61 @@ export const createChatThread = async (projectId?: string): Promise<ChatThread> 
  * Post a user message to a thread. The daemon queues a Claude response.
  * Returns once the message is enqueued — the response arrives via SSE or
  * a subsequent `fetchChatThread` call.
+ *
+ * Pass `attachmentIds` (returned by `uploadAttachment`) to reference uploaded
+ * files in the message body.
  */
 export const postChatMessage = async (
   threadId: string,
   text: string,
   projectId?: string,
+  attachmentIds?: string[],
 ): Promise<void> => {
   const path = appendProject(`/api/chat/threads/${encodeURIComponent(threadId)}/message`, projectId)
   const r = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: text }),
+    body: JSON.stringify({
+      content: text,
+      ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
+    }),
   })
   if (!r.ok) await throwMutationError(path, r)
+}
+
+/**
+ * Upload a file attachment to a thread. Returns the server-assigned attachment
+ * metadata (id, path, mimeType, name). Pass the returned `id` in
+ * `postChatMessage`'s `attachmentIds` array to reference the file in the message.
+ *
+ * The multipart body is streamed to the daemon via the UI server proxy without
+ * buffering the entire file in memory.
+ */
+export const uploadAttachment = async (
+  threadId: string,
+  file: File,
+  projectId?: string,
+): Promise<{ id: string; path: string; mimeType: string; name: string }> => {
+  const path = appendProject(
+    `/api/chat/threads/${encodeURIComponent(threadId)}/attachments`,
+    projectId,
+  )
+  const fd = new FormData()
+  fd.append('file', file)
+  let r: Response
+  try {
+    r = await fetch(`${BASE}${path}`, { method: 'POST', body: fd })
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new ApiError(
+        `POST ${path} → cannot reach the mars-ui API server`,
+        'unreachable',
+      )
+    }
+    throw err
+  }
+  if (!r.ok) await throwMutationError(path, r)
+  return r.json() as Promise<{ id: string; path: string; mimeType: string; name: string }>
 }
 
 /**

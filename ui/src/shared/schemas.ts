@@ -926,6 +926,21 @@ export const chatSegmentToolResultSchema = z.object({
   isError: z.boolean().optional(),
 })
 
+/**
+ * Attachment segment: a file reference embedded in a user or assistant message.
+ * The `path` is relative to `.mars/chat-uploads/` and is served by the UI
+ * server's GET `/api/chat/uploads/:path` route.
+ */
+export const chatSegmentAttachmentSchema = z.object({
+  type: z.literal('attachment'),
+  /** Server-side path relative to `.mars/chat-uploads/`. */
+  path: z.string(),
+  mimeType: z.string(),
+  name: z.string(),
+  /** Renderer hint: 'image', 'audio', or 'video'. */
+  kindHint: z.enum(['image', 'audio', 'video']).optional(),
+})
+
 export const chatSegmentSchema = z.discriminatedUnion('type', [
   chatSegmentTextSchema,
   chatSegmentThinkingSchema,
@@ -934,6 +949,7 @@ export const chatSegmentSchema = z.discriminatedUnion('type', [
   chatSegmentResultSchema,
   chatSegmentErrorSchema,
   chatSegmentToolResultSchema,
+  chatSegmentAttachmentSchema,
 ])
 
 export const chatFeedbackSchema = z.object({
@@ -999,6 +1015,7 @@ export type ChatSegmentText = z.infer<typeof chatSegmentTextSchema>
 export type ChatSegmentThinking = z.infer<typeof chatSegmentThinkingSchema>
 export type ChatSegmentToolUse = z.infer<typeof chatSegmentToolUseSchema>
 export type ChatSegmentToolResult = z.infer<typeof chatSegmentToolResultSchema>
+export type ChatSegmentAttachment = z.infer<typeof chatSegmentAttachmentSchema>
 export type ChatSegmentResult = z.infer<typeof chatSegmentResultSchema>
 export type ChatSegmentError = z.infer<typeof chatSegmentErrorSchema>
 export type ChatFeedback = z.infer<typeof chatFeedbackSchema>

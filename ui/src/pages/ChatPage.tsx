@@ -26,6 +26,7 @@ import {
   fetchActionQueue,
   createChatThread,
   postChatMessage,
+  uploadAttachment,
   renameChatThread,
   deleteChatThread,
   stopChatThread,
@@ -35,7 +36,7 @@ import {
   ApiError,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ActionQueueItem, ActionDescriptor, ChatFeedback } from '@/shared/schemas'
+import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ChatSegmentAttachment, ActionQueueItem, ActionDescriptor, ChatFeedback } from '@/shared/schemas'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { WhileYouWereAwayPanel } from '@/widgets/WhileYouWereAwayPanel'
@@ -165,6 +166,7 @@ type FlatSegment =
   | ToolGroup
   | { kind: 'alert'; alert: ChatSegmentAlert }
   | { kind: 'result'; result: ChatSegmentResult }
+  | { kind: 'attachment'; attachment: ChatSegmentAttachment }
 
 /**
  * Collapses consecutive tool_use segments into a single ToolGroup so the UI
@@ -219,6 +221,8 @@ export const groupMessageSegments = (msg: ChatMessage): FlatSegment[] => {
         out.push({ kind: 'thinking', text: seg.text })
       } else if (seg.type === 'error') {
         out.push({ kind: 'error', message: seg.message })
+      } else if (seg.type === 'attachment') {
+        out.push({ kind: 'attachment', attachment: seg })
       }
       // Any other (unknown) segment type is silently dropped.
     }
@@ -581,6 +585,78 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
   )
 }
 
+/**
+ * Derives the media kind from a segment's kindHint or mimeType.
+ * Returns 'image', 'audio', 'video', or 'other'.
+ */
+export const resolveMediaKind = (attachment: ChatSegmentAttachment): 'image' | 'audio' | 'video' | 'other' => {
+  if (attachment.kindHint) return attachment.kindHint
+  const mime = attachment.mimeType.toLowerCase()
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('audio/')) return 'audio'
+  if (mime.startsWith('video/')) return 'video'
+  return 'other'
+}
+
+/**
+ * Renders an attachment segment in the transcript:
+ *  - image  → inline <img> with max-height; click opens full size in new tab
+ *  - audio  → <audio controls>
+ *  - video  → <video controls>
+ *  - other  → plain download link
+ */
+export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttachment }) => {
+  const src = `/api/chat/uploads/${encodeURIComponent(attachment.path)}`
+  const kind = resolveMediaKind(attachment)
+
+  if (kind === 'image') {
+    return (
+      <a
+        href={src}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-testid="attachment-image"
+        className="my-1 block"
+      >
+        <img
+          src={src}
+          alt={attachment.name}
+          className="max-h-64 rounded border border-iron/20 object-contain"
+        />
+      </a>
+    )
+  }
+  if (kind === 'audio') {
+    return (
+      <div className="my-1" data-testid="attachment-audio">
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <audio controls src={src} className="w-full max-w-sm" />
+        <p className="mt-0.5 font-mono text-[10px] text-iron/60 truncate">{attachment.name}</p>
+      </div>
+    )
+  }
+  if (kind === 'video') {
+    return (
+      <div className="my-1" data-testid="attachment-video">
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <video controls src={src} className="max-h-64 w-full rounded border border-iron/20 object-contain" />
+        <p className="mt-0.5 font-mono text-[10px] text-iron/60 truncate">{attachment.name}</p>
+      </div>
+    )
+  }
+  return (
+    <a
+      href={src}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-testid="attachment-other"
+      className="my-1 flex items-center gap-1.5 font-mono text-[11px] text-accent underline"
+    >
+      📎 {attachment.name}
+    </a>
+  )
+}
+
 /** A safe, compact recovery surface for an interrupted assistant response. */
 const ChatResponseError = ({ onTryAgain }: { onTryAgain: () => void }) => (
   <div
@@ -680,6 +756,9 @@ export const ChatMessageBubble = ({
                 onTryAgain={() => onDiscuss('Please retry my last request.')}
               />
             )
+          }
+          if (seg.kind === 'attachment') {
+            return <AttachmentDisplay key={i} attachment={seg.attachment} />
           }
           return <ToolActivityGroup key={i} tools={seg.tools} />
         })}
@@ -1214,7 +1293,7 @@ export const HeroEmptyState = ({
 // Composer
 // ---------------------------------------------------------------------------
 
-interface ComposerProps {
+export interface ComposerProps {
   threadId: string
   projectId?: string
   /** Whether the thread is running (disables send). */
@@ -1227,6 +1306,9 @@ interface ComposerProps {
    * projection Threads, where the first message creates the conversation.
    * Receives a `clearText` callback the caller should invoke on success so the
    * composer only clears when the send actually succeeded.
+   *
+   * Attachments cannot be uploaded on this path (the thread id needed to
+   * upload them is not yet known) and are cleared alongside the text.
    */
   onSendOverride?: (msg: string, clearText: () => void) => void
   /** In-flight state for the override send (create-thread + first message). */
@@ -1235,7 +1317,24 @@ interface ComposerProps {
   sendError?: string | null
 }
 
-const Composer = ({
+/** A pending file attachment in the composer before it is uploaded. */
+interface PendingAttachment {
+  /** Stable local key for React rendering. */
+  localId: string
+  file: File
+  /** Object-URL for image thumbnail previews — null for audio/video. */
+  previewUrl: string | null
+}
+
+/** Determine if a file is an image, audio, or video from its MIME type. */
+export const fileMediaKind = (file: File): 'image' | 'audio' | 'video' | 'other' => {
+  if (file.type.startsWith('image/')) return 'image'
+  if (file.type.startsWith('audio/')) return 'audio'
+  if (file.type.startsWith('video/')) return 'video'
+  return 'other'
+}
+
+export const Composer = ({
   threadId,
   projectId,
   disabled,
@@ -1248,8 +1347,22 @@ const Composer = ({
   const [text, setText] = useState('')
   const [showPalette, setShowPalette] = useState(false)
   const [localSendError, setLocalSendError] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const [isUploading, setIsUploading] = useState(false)
+  /** True while the mic is recording / dictating. */
+  const [micActive, setMicActive] = useState(false)
+  /** Voice-note blob recorded via MediaRecorder (null until recording stops). */
+  const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
   const qc = useQueryClient()
+
+  // Detect Web Speech API availability once on mount.
+  const speechAvailable = typeof window !== 'undefined' &&
+    ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
 
   // Apply chip / slash-command prefill from welcome state.
   useEffect(() => {
@@ -1260,11 +1373,62 @@ const Composer = ({
     }
   }, [initialText, onInitialTextConsumed])
 
+  // Revoke object URLs when attachments are removed to avoid memory leaks.
+  useEffect(() => {
+    return () => {
+      for (const a of attachments) {
+        if (a.previewUrl) URL.revokeObjectURL(a.previewUrl)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const arr = Array.from(files).filter((f) =>
+      f.type.startsWith('image/') || f.type.startsWith('audio/') || f.type.startsWith('video/'),
+    )
+    setAttachments((prev) => [
+      ...prev,
+      ...arr.map((file) => ({
+        localId: `${Date.now()}-${Math.random()}`,
+        file,
+        previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+      })),
+    ])
+  }, [])
+
+  const removeAttachment = useCallback((localId: string) => {
+    setAttachments((prev) => {
+      const removed = prev.find((a) => a.localId === localId)
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl)
+      return prev.filter((a) => a.localId !== localId)
+    })
+  }, [])
+
   const { mutate: send, isPending } = useMutation({
-    mutationFn: (msg: string) => postChatMessage(threadId, msg, projectId),
+    // The override path (projection threads) is handled directly in handleSend,
+    // so this mutation only runs for the ordinary post-to-threadId case.
+    mutationFn: async (msg: string) => {
+      // Upload attachments first, then post the message referencing their IDs.
+      let attachmentIds: string[] | undefined
+      if (attachments.length > 0 && threadId) {
+        setIsUploading(true)
+        try {
+          const results = await Promise.all(
+            attachments.map((a) => uploadAttachment(threadId, a.file, projectId)),
+          )
+          attachmentIds = results.map((r) => r.id)
+        } finally {
+          setIsUploading(false)
+        }
+      }
+      await postChatMessage(threadId, msg, projectId, attachmentIds)
+    },
     onMutate: () => setLocalSendError(null),
     onSuccess: () => {
       setText('')
+      setAttachments([])
+      setVoiceBlob(null)
       void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
     },
@@ -1281,16 +1445,21 @@ const Composer = ({
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim()
-    if (!trimmed || disabled || isPending || sendPending) return
+    // Allow sending with just attachments (empty text) or just text.
+    if ((!trimmed && attachments.length === 0) || disabled || isPending || sendPending || isUploading) return
     setShowPalette(false)
     setLocalSendError(null)
     if (onSendOverride) {
-      onSendOverride(trimmed, () => setText(''))
+      onSendOverride(trimmed, () => {
+        setText('')
+        setAttachments([])
+        setVoiceBlob(null)
+      })
     } else {
       send(trimmed)
-      // setText('') is handled inside send.onSuccess so text survives failure
+      // setText('') / attachment clearing handled inside send.onSuccess so inputs survive failure
     }
-  }, [text, disabled, isPending, sendPending, onSendOverride, send])
+  }, [text, attachments.length, disabled, isPending, sendPending, isUploading, onSendOverride, send])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1302,7 +1471,6 @@ const Composer = ({
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value
     setText(value)
-    // Show palette when the input starts with '/' and has no space yet
     const trimmed = value.trimStart()
     setShowPalette(trimmed.startsWith('/') && !trimmed.includes(' '))
   }
@@ -1313,17 +1481,207 @@ const Composer = ({
     textareaRef.current?.focus()
   }
 
-  const isDisabled = disabled || isPending || sendPending
+  // Drag-and-drop onto the composer container.
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.dataTransfer.files.length > 0) {
+      addFiles(e.dataTransfer.files)
+    }
+  }
+
+  // Paste images from the clipboard.
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = e.clipboardData?.files
+    if (files && files.length > 0) {
+      addFiles(files)
+      // Only prevent default when there are actual files to attach, to avoid
+      // blocking normal text paste.
+      e.preventDefault()
+    }
+  }
+
+  // Mic: toggle dictation via Web Speech API + MediaRecorder.
+  const handleMicToggle = useCallback(async () => {
+    if (micActive) {
+      // Stop both recognition and recorder.
+      recognitionRef.current?.stop()
+      recognitionRef.current = null
+      recorderRef.current?.stop()
+      recorderRef.current = null
+      setMicActive(false)
+      return
+    }
+
+    setMicActive(true)
+    setVoiceBlob(null)
+
+    // Start MediaRecorder for the voice-note feature.
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const chunks: BlobPart[] = []
+      const recorder = new MediaRecorder(stream)
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'audio/webm' })
+        setVoiceBlob(blob)
+        // Stop all tracks to release the microphone.
+        for (const track of stream.getTracks()) track.stop()
+      }
+      recorder.start()
+      recorderRef.current = recorder
+    } catch {
+      // Microphone permission denied or not available — fall back to recognition-only.
+    }
+
+    // Start SpeechRecognition for live dictation.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition: any = new SR()
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.lang = navigator.language || 'en-US'
+
+    let committed = ''
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
+      let interim = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = event.results[i] as any
+        if (result.isFinal) {
+          committed += result[0].transcript
+        } else {
+          interim += result[0].transcript
+        }
+      }
+      setText(committed + interim)
+    }
+    recognition.onend = () => {
+      setMicActive(false)
+      recognitionRef.current = null
+    }
+    recognition.start()
+    recognitionRef.current = recognition
+  }, [micActive])
+
+  /** Attach the recorded voice blob as a voice-note attachment. */
+  const handleAttachVoiceNote = useCallback(() => {
+    if (!voiceBlob) return
+    const file = new File([voiceBlob], `voice-note-${Date.now()}.webm`, { type: 'audio/webm' })
+    addFiles([file])
+    setVoiceBlob(null)
+  }, [voiceBlob, addFiles])
+
+  const isDisabled = disabled || isPending || sendPending || isUploading
 
   return (
-    <div className="relative border-t border-iron/30 px-4 py-3">
+    <div
+      data-testid="composer"
+      className="relative border-t border-iron/30 px-4 py-3"
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       {showPalette && (
         <SlashPalette
           filter={text.trimStart()}
           onSelect={handleSlashSelect}
         />
       )}
+
+      {/* Attachment preview chips */}
+      {attachments.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5" data-testid="attachment-chips">
+          {attachments.map((a) => (
+            <div
+              key={a.localId}
+              data-testid="attachment-chip"
+              className="flex items-center gap-1 rounded border border-iron/30 bg-surface px-2 py-0.5"
+            >
+              {a.previewUrl ? (
+                <img
+                  src={a.previewUrl}
+                  alt={a.file.name}
+                  className="h-6 w-6 rounded object-cover"
+                />
+              ) : (
+                <span className="text-[11px]">
+                  {fileMediaKind(a.file) === 'audio' ? '🎵' : '🎬'}
+                </span>
+              )}
+              <span className="max-w-[120px] truncate font-mono text-[10px] text-iron">
+                {a.file.name}
+              </span>
+              <button
+                type="button"
+                data-testid="remove-attachment"
+                aria-label={`Remove ${a.file.name}`}
+                className="ml-0.5 text-iron/50 hover:text-red-400"
+                onClick={() => removeAttachment(a.localId)}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Voice-note CTA — shown after mic stops */}
+      {voiceBlob && !micActive && (
+        <div className="mb-2 flex items-center gap-2">
+          <span className="font-mono text-[10px] text-iron/60">Voice note recorded</span>
+          <button
+            type="button"
+            className="rounded border border-iron/40 px-2 py-0.5 font-mono text-[10px] text-iron hover:bg-iron/20"
+            onClick={handleAttachVoiceNote}
+          >
+            Send as voice note
+          </button>
+          <button
+            type="button"
+            className="font-mono text-[10px] text-iron/40 hover:text-iron"
+            onClick={() => setVoiceBlob(null)}
+          >
+            Discard
+          </button>
+        </div>
+      )}
+
       <div className="flex items-end gap-2">
+        {/* Hidden file input — triggered by the + button */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,audio/*,video/*"
+          multiple
+          className="hidden"
+          aria-hidden="true"
+          onChange={(e) => {
+            if (e.target.files) addFiles(e.target.files)
+            // Reset so re-selecting the same file fires onChange again.
+            e.target.value = ''
+          }}
+        />
+
+        {/* + attach button */}
+        <button
+          type="button"
+          data-testid="attach-btn"
+          aria-label="Attach file"
+          title="Attach image, audio or video"
+          className="flex-none rounded border border-iron/40 px-2 py-2 font-mono text-[11px] text-iron transition-colors hover:bg-iron/20 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={isDisabled}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          +
+        </button>
+
         <textarea
           ref={textareaRef}
           className="flex-1 resize-none rounded border border-iron/30 bg-surface px-3 py-2 font-mono text-[12px] text-fg placeholder:text-iron/40 focus:border-iron/60 focus:outline-none disabled:opacity-50"
@@ -1332,6 +1690,7 @@ const Composer = ({
           value={text}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           onFocus={() => {
             const trimmed = text.trimStart()
             setShowPalette(trimmed.startsWith('/') && !trimmed.includes(' '))
@@ -1339,26 +1698,49 @@ const Composer = ({
           onBlur={() => setTimeout(() => setShowPalette(false), 150)}
           disabled={isDisabled}
         />
-        {/* Show Stop when thread is running; Send otherwise. */}
-        {disabled && !isPending ? (
-          <button
-            type="button"
-            className="flex-none rounded border border-red-400/40 px-3 py-2 font-mono text-[11px] text-red-400 transition-colors hover:bg-red-900/20 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
-            onClick={() => stop()}
-            disabled={isStopping}
-          >
-            Stop
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="flex-none rounded border border-iron/40 px-3 py-2 font-mono text-[11px] text-iron transition-colors hover:bg-iron/20 hover:text-fg active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
-            onClick={handleSend}
-            disabled={isDisabled || text.trim().length === 0}
-          >
-            Send
-          </button>
-        )}
+
+        <div className="flex flex-col items-stretch gap-1">
+          {/* Mic button — hidden when Web Speech API is unavailable */}
+          {speechAvailable && (
+            <button
+              type="button"
+              data-testid="mic-btn"
+              aria-label={micActive ? 'Stop dictation' : 'Start dictation'}
+              title={micActive ? 'Click to stop dictation' : 'Dictate into the composer'}
+              className={[
+                'flex-none rounded border px-2 py-1.5 font-mono text-[11px] transition-colors',
+                micActive
+                  ? 'border-red-400/60 bg-red-900/10 text-red-400 hover:bg-red-900/20'
+                  : 'border-iron/40 text-iron hover:bg-iron/20 hover:text-fg',
+              ].join(' ')}
+              onClick={() => void handleMicToggle()}
+            >
+              {micActive ? '⏹' : '🎤'}
+            </button>
+          )}
+
+          {/* Show Stop when thread is running; Send otherwise. */}
+          {disabled && !isPending ? (
+            <button
+              type="button"
+              className="flex-none rounded border border-red-400/40 px-3 py-2 font-mono text-[11px] text-red-400 transition-colors hover:bg-red-900/20 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={() => stop()}
+              disabled={isStopping}
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid="send-btn"
+              className="flex-none rounded border border-iron/40 px-3 py-2 font-mono text-[11px] text-iron transition-colors hover:bg-iron/20 hover:text-fg active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={handleSend}
+              disabled={isDisabled || (text.trim().length === 0 && attachments.length === 0)}
+            >
+              {isUploading ? '↑' : 'Send'}
+            </button>
+          )}
+        </div>
       </div>
       {(sendError || localSendError) && (
         <p

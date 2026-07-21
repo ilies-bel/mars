@@ -209,6 +209,32 @@ export const proxyPost = async (
   })
 
 /**
+ * Stream a POST body (e.g. multipart/form-data) to the daemon without buffering
+ * the entire body in memory. Preserves the incoming Content-Type header verbatim
+ * so the multipart boundary is forwarded correctly.
+ *
+ * A missing daemon yields a synthetic 503; a transport error yields a 502.
+ */
+export const proxyStream = async (
+  stateDir: string,
+  path: string,
+  req: Request,
+): Promise<DaemonActionResult> =>
+  withDaemon(stateDir, async (port) => {
+    const ct = req.headers.get('Content-Type')
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: 'POST',
+      headers: ct ? { 'Content-Type': ct } : {},
+      body: req.body,
+      // duplex: 'half' is required by some runtimes (Node ≥18) when the body
+      // is a ReadableStream. Bun supports it natively without this option.
+      duplex: 'half',
+    })
+    const body = await res.json().catch(() => ({}))
+    return { status: res.status, body }
+  })
+
+/**
  * Forward a recovery action to the daemon. `op` is the verb from the registry;
  * `entityId` is the task/worktree id (omitted for process-level ops like
  * `restart-daemon`). Returns the daemon's status + parsed body so the route can

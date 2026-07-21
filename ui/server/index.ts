@@ -1,5 +1,6 @@
 import { existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
+import { resolveUploadPath } from './chatUploadPath.ts'
 import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
 import {
   fetchKpis,
@@ -9,6 +10,7 @@ import {
   proxyAction,
   proxyGet as realProxyGet,
   proxyPost,
+  proxyStream,
 } from './daemonHttp.ts'
 import { createProjectContextCache, type ProjectContextEntry } from './projectContext.ts'
 import { probeDaemonHealth } from './projectHealth.ts'
@@ -74,6 +76,18 @@ const MIME: Record<string, string> = {
   '.png': 'image/png',
   '.woff2': 'font/woff2',
   '.map': 'application/json; charset=utf-8',
+  // Media types served from chat-uploads/
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
 }
 
 const jsonResponse = (status: number, body: unknown): Response =>
@@ -638,6 +652,46 @@ export const startServer = async (
             `/view/chat/thread/${encodeURIComponent(threadId)}`,
           )
           return jsonResponse(r.status, r.body)
+        }
+
+        // POST /api/chat/threads/:id/attachments — stream multipart upload to
+        // daemon without buffering the file in memory. Must be checked before
+        // the general thread-actions handler below.
+        if (
+          path.startsWith('/api/chat/threads/') &&
+          path.endsWith('/attachments') &&
+          req.method === 'POST'
+        ) {
+          const rest = path.slice('/api/chat/threads/'.length, -'/attachments'.length)
+          const threadId = decodeURIComponent(rest)
+          if (!threadId) {
+            return jsonResponse(400, { error: 'threadId is required' })
+          }
+          const result = await proxyStream(
+            ctx.stateDir,
+            `/chat/threads/${encodeURIComponent(threadId)}/attachments`,
+            req,
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
+        // GET /api/chat/uploads/* — serve files from .mars/chat-uploads/ with
+        // path-traversal protection (resolve + prefix check).
+        if (path.startsWith('/api/chat/uploads/') && req.method === 'GET') {
+          const rawSuffix = decodeURIComponent(path.slice('/api/chat/uploads/'.length))
+          const uploadsRoot = resolve(ctx.stateDir, 'chat-uploads')
+          const target = resolveUploadPath(uploadsRoot, rawSuffix)
+          // Reject any path that escapes the uploads root.
+          if (target === null) {
+            return jsonResponse(400, { error: 'invalid path' })
+          }
+          if (!existsSync(target)) {
+            return jsonResponse(404, { error: 'not found' })
+          }
+          const mimeType = MIME[extname(target)] ?? 'application/octet-stream'
+          return new Response(Bun.file(target), {
+            headers: { 'Content-Type': mimeType },
+          })
         }
 
         if (path.startsWith('/api/chat/threads/') && req.method === 'POST') {

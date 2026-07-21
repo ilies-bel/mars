@@ -22,9 +22,12 @@ import {
   FeedbackControls,
   pickTopAlert,
   HeroSuggestions,
+  AttachmentDisplay,
+  resolveMediaKind,
+  fileMediaKind,
 } from './ChatPage'
 import { chatThreadDetailSchema } from '@/shared/schemas'
-import type { ChatMessage, ChatSegmentToolUse, ActionQueueItem, ChatFeedback, ChatSegmentAlert } from '@/shared/schemas'
+import type { ChatMessage, ChatSegmentToolUse, ActionQueueItem, ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment } from '@/shared/schemas'
 import fixture from './__fixtures__/chat-thread-fixture.json'
 
 // ---------------------------------------------------------------------------
@@ -582,5 +585,184 @@ describe('ChatMessageBubble – feedback controls presence', () => {
     expect(html).toContain('Try again')
     expect(html).not.toContain('credentials=secret')
     expect(html).not.toContain('monthly account limit')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveMediaKind — attachment kind derivation
+// ---------------------------------------------------------------------------
+
+const makeAttachment = (overrides: Partial<ChatSegmentAttachment> = {}): ChatSegmentAttachment => ({
+  type: 'attachment',
+  path: 'file.bin',
+  mimeType: 'application/octet-stream',
+  name: 'file.bin',
+  ...overrides,
+})
+
+describe('resolveMediaKind', () => {
+  it('returns kindHint when present, overriding mimeType', () => {
+    // kindHint='audio' wins even though mimeType says image
+    expect(resolveMediaKind(makeAttachment({ kindHint: 'audio', mimeType: 'image/png' }))).toBe('audio')
+  })
+
+  it('derives "image" from image/* mimeType when no kindHint', () => {
+    expect(resolveMediaKind(makeAttachment({ mimeType: 'image/jpeg' }))).toBe('image')
+    expect(resolveMediaKind(makeAttachment({ mimeType: 'image/png' }))).toBe('image')
+  })
+
+  it('derives "audio" from audio/* mimeType when no kindHint', () => {
+    expect(resolveMediaKind(makeAttachment({ mimeType: 'audio/mpeg' }))).toBe('audio')
+    expect(resolveMediaKind(makeAttachment({ mimeType: 'audio/webm' }))).toBe('audio')
+  })
+
+  it('derives "video" from video/* mimeType when no kindHint', () => {
+    expect(resolveMediaKind(makeAttachment({ mimeType: 'video/mp4' }))).toBe('video')
+    expect(resolveMediaKind(makeAttachment({ mimeType: 'video/webm' }))).toBe('video')
+  })
+
+  it('returns "other" for unrecognised MIME types', () => {
+    expect(resolveMediaKind(makeAttachment({ mimeType: 'application/pdf' }))).toBe('other')
+    expect(resolveMediaKind(makeAttachment({ mimeType: 'text/plain' }))).toBe('other')
+  })
+
+  it('is case-insensitive for mimeType prefix matching', () => {
+    expect(resolveMediaKind(makeAttachment({ mimeType: 'IMAGE/PNG' }))).toBe('image')
+    expect(resolveMediaKind(makeAttachment({ mimeType: 'Audio/Ogg' }))).toBe('audio')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fileMediaKind — File MIME-type to kind mapping
+// ---------------------------------------------------------------------------
+
+describe('fileMediaKind', () => {
+  const makeFile = (name: string, type: string) => new File([], name, { type })
+
+  it('returns "image" for image/* types', () => {
+    expect(fileMediaKind(makeFile('photo.jpg', 'image/jpeg'))).toBe('image')
+    expect(fileMediaKind(makeFile('icon.png', 'image/png'))).toBe('image')
+  })
+
+  it('returns "audio" for audio/* types', () => {
+    expect(fileMediaKind(makeFile('track.mp3', 'audio/mpeg'))).toBe('audio')
+    expect(fileMediaKind(makeFile('note.webm', 'audio/webm'))).toBe('audio')
+  })
+
+  it('returns "video" for video/* types', () => {
+    expect(fileMediaKind(makeFile('clip.mp4', 'video/mp4'))).toBe('video')
+    expect(fileMediaKind(makeFile('screen.webm', 'video/webm'))).toBe('video')
+  })
+
+  it('returns "other" for non-media types', () => {
+    expect(fileMediaKind(makeFile('doc.pdf', 'application/pdf'))).toBe('other')
+    expect(fileMediaKind(makeFile('data.json', 'application/json'))).toBe('other')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AttachmentDisplay — transcript rendering for each media kind
+// ---------------------------------------------------------------------------
+
+describe('AttachmentDisplay – image', () => {
+  it('renders an img element with data-testid="attachment-image"', () => {
+    const attachment = makeAttachment({ mimeType: 'image/png', path: 'photos/snap.png', name: 'snap.png' })
+    const html = renderToStaticMarkup(createElement(AttachmentDisplay, { attachment }))
+    expect(html).toContain('data-testid="attachment-image"')
+    expect(html).toContain('<img')
+    expect(html).toContain('snap.png')
+  })
+
+  it('builds src URL via /api/chat/uploads/ with encoded path', () => {
+    const attachment = makeAttachment({ mimeType: 'image/jpeg', path: 'thread-1/photo.jpg', name: 'photo.jpg' })
+    const html = renderToStaticMarkup(createElement(AttachmentDisplay, { attachment }))
+    expect(html).toContain('/api/chat/uploads/')
+    expect(html).toContain(encodeURIComponent('thread-1/photo.jpg'))
+  })
+
+  it('wraps the image in a link that opens full size', () => {
+    const attachment = makeAttachment({ mimeType: 'image/png', path: 'img.png', name: 'img.png' })
+    const html = renderToStaticMarkup(createElement(AttachmentDisplay, { attachment }))
+    expect(html).toContain('target="_blank"')
+    expect(html).toContain('rel="noopener noreferrer"')
+  })
+})
+
+describe('AttachmentDisplay – audio', () => {
+  it('renders an audio element with controls and data-testid="attachment-audio"', () => {
+    const attachment = makeAttachment({ mimeType: 'audio/mpeg', path: 'sound.mp3', name: 'sound.mp3' })
+    const html = renderToStaticMarkup(createElement(AttachmentDisplay, { attachment }))
+    expect(html).toContain('data-testid="attachment-audio"')
+    expect(html).toContain('<audio')
+    // The filename is shown below the player
+    expect(html).toContain('sound.mp3')
+  })
+})
+
+describe('AttachmentDisplay – video', () => {
+  it('renders a video element with controls and data-testid="attachment-video"', () => {
+    const attachment = makeAttachment({ mimeType: 'video/mp4', path: 'clip.mp4', name: 'clip.mp4' })
+    const html = renderToStaticMarkup(createElement(AttachmentDisplay, { attachment }))
+    expect(html).toContain('data-testid="attachment-video"')
+    expect(html).toContain('<video')
+    expect(html).toContain('clip.mp4')
+  })
+})
+
+describe('AttachmentDisplay – other', () => {
+  it('renders a download link with data-testid="attachment-other"', () => {
+    const attachment = makeAttachment({ mimeType: 'application/pdf', path: 'report.pdf', name: 'report.pdf' })
+    const html = renderToStaticMarkup(createElement(AttachmentDisplay, { attachment }))
+    expect(html).toContain('data-testid="attachment-other"')
+    expect(html).toContain('report.pdf')
+    // Link opens in a new tab
+    expect(html).toContain('target="_blank"')
+  })
+
+  it('uses kindHint to force image rendering even for application/octet-stream', () => {
+    const attachment = makeAttachment({ mimeType: 'application/octet-stream', kindHint: 'image', path: 'f.bin', name: 'f.bin' })
+    const html = renderToStaticMarkup(createElement(AttachmentDisplay, { attachment }))
+    expect(html).toContain('data-testid="attachment-image"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ChatMessageBubble — attachment segment integration
+// ---------------------------------------------------------------------------
+
+describe('ChatMessageBubble – attachment segment rendering', () => {
+  it('renders an image attachment inline in the transcript', () => {
+    const msg = makeMsg([
+      { type: 'text', text: 'Here is the screenshot:' },
+      { type: 'attachment', path: 'img.png', mimeType: 'image/png', name: 'img.png' },
+    ])
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    expect(html).toContain('data-testid="attachment-image"')
+    expect(html).toContain('<img')
+    expect(html).toContain('Here is the screenshot:')
+  })
+
+  it('renders an audio attachment with the audio player', () => {
+    const msg = makeMsg([
+      { type: 'attachment', path: 'voice.webm', mimeType: 'audio/webm', name: 'voice.webm' },
+    ])
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    expect(html).toContain('data-testid="attachment-audio"')
+    expect(html).toContain('<audio')
+  })
+
+  it('renders a video attachment with the video player', () => {
+    const msg = makeMsg([
+      { type: 'attachment', path: 'demo.mp4', mimeType: 'video/mp4', name: 'demo.mp4' },
+    ])
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    expect(html).toContain('data-testid="attachment-video"')
+    expect(html).toContain('<video')
   })
 })
