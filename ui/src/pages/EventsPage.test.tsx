@@ -33,6 +33,7 @@ const {
   SEVERITY_OPTIONS,
   PHASE_OPTIONS,
   TIME_RANGE_MS,
+  groupConsecutiveEvents,
 } = __test__
 
 // ---------------------------------------------------------------------------
@@ -829,6 +830,143 @@ describe('EventsPage error state', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     logFallbackError(new Error('Connection refused'))
     expect(spy).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5. groupConsecutiveEvents — pure grouping function
+// ---------------------------------------------------------------------------
+
+describe('groupConsecutiveEvents', () => {
+  it('returns an empty array for empty input', () => {
+    expect(groupConsecutiveEvents([])).toEqual([])
+  })
+
+  it('wraps each non-duplicate event as a single row when all payloads differ', () => {
+    const events = [
+      makeEvent({ id: 'a', payload: { x: 1 } }),
+      makeEvent({ id: 'b', payload: { x: 2 } }),
+    ]
+    const rows = groupConsecutiveEvents(events)
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toEqual({ type: 'single', event: events[0] })
+    expect(rows[1]).toEqual({ type: 'single', event: events[1] })
+  })
+
+  it('collapses consecutive identical-payload events into one group row', () => {
+    const payload = { msg: 'mars statusline', source: 'daemon' }
+    const events = [
+      makeEvent({ id: 'a', payload }),
+      makeEvent({ id: 'b', payload }),
+      makeEvent({ id: 'c', payload }),
+    ]
+    const rows = groupConsecutiveEvents(events)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].type).toBe('group')
+    if (rows[0].type === 'group') expect(rows[0].events).toHaveLength(3)
+  })
+
+  it('does not merge non-consecutive identical payloads (they are separated by a different event)', () => {
+    const payload = { msg: 'statusline' }
+    const events = [
+      makeEvent({ id: 'a', payload }),
+      makeEvent({ id: 'b', payload: { msg: 'other' } }),
+      makeEvent({ id: 'c', payload }),
+    ]
+    const rows = groupConsecutiveEvents(events)
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toEqual({ type: 'single', event: events[0] })
+    expect(rows[1]).toEqual({ type: 'single', event: events[1] })
+    expect(rows[2]).toEqual({ type: 'single', event: events[2] })
+  })
+
+  it('does not merge events that share kind but have different payloads', () => {
+    const events = [
+      makeEvent({ id: 'a', kind: 'log_line', payload: { msg: 'line A' } }),
+      makeEvent({ id: 'b', kind: 'log_line', payload: { msg: 'line B' } }),
+    ]
+    const rows = groupConsecutiveEvents(events)
+    expect(rows).toHaveLength(2)
+    expect(rows[0].type).toBe('single')
+    expect(rows[1].type).toBe('single')
+  })
+
+  it('produces correct groups for a mixed run: single + group + single', () => {
+    const repeatedPayload = { msg: 'statusline' }
+    const events = [
+      makeEvent({ id: 'solo-1', payload: { msg: 'unique' } }),
+      makeEvent({ id: 'g1', payload: repeatedPayload }),
+      makeEvent({ id: 'g2', payload: repeatedPayload }),
+      makeEvent({ id: 'solo-2', payload: { msg: 'also unique' } }),
+    ]
+    const rows = groupConsecutiveEvents(events)
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toEqual({ type: 'single', event: events[0] })
+    expect(rows[1].type).toBe('group')
+    if (rows[1].type === 'group') {
+      expect(rows[1].events).toHaveLength(2)
+      expect(rows[1].events[0].id).toBe('g1')
+    }
+    expect(rows[2]).toEqual({ type: 'single', event: events[3] })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5a. EventsPage — consecutive event grouping (render)
+// ---------------------------------------------------------------------------
+
+describe('EventsPage — consecutive identical event grouping', () => {
+  it('collapses N consecutive identical-payload events into a single row showing ×N count', () => {
+    const payload = { msg: 'mars statusline', source: 'daemon' }
+    const events = [
+      makeEvent({ id: 'ev-g1', payload }),
+      makeEvent({ id: 'ev-g2', payload }),
+      makeEvent({ id: 'ev-g3', payload }),
+    ]
+    const qc = makeClient(makeResponse(events))
+    const html = renderPage(qc)
+    // Count badge present
+    expect(html).toContain('×3')
+    // Group row testid uses the first event id
+    expect(html).toContain('data-testid="group-row-ev-g1"')
+    // Individual event rows NOT rendered in collapsed state
+    expect(html).not.toContain('data-testid="event-row-ev-g1"')
+    expect(html).not.toContain('data-testid="event-row-ev-g2"')
+    expect(html).not.toContain('data-testid="event-row-ev-g3"')
+  })
+
+  it('shows a time range spanning the first and last event timestamp in the grouped row', () => {
+    const payload = { msg: 'mars statusline' }
+    const now = Date.now()
+    const events = [
+      makeEvent({
+        id: 'g-first',
+        payload,
+        timestamp: new Date(now - 60 * 1000).toISOString(),
+      }),
+      makeEvent({
+        id: 'g-last',
+        payload,
+        timestamp: new Date(now - 1000).toISOString(),
+      }),
+    ]
+    const qc = makeClient(makeResponse(events))
+    const html = renderPage(qc)
+    // Both relative timestamps should appear in the collapsed group row
+    expect(html).toContain('1m ago')
+    expect(html).toContain('1s ago')
+  })
+
+  it('keeps individual event rows when payloads differ (no grouping)', () => {
+    const events = [
+      makeEvent({ id: 'ev-diff-1', payload: { msg: 'alpha' } }),
+      makeEvent({ id: 'ev-diff-2', payload: { msg: 'beta' } }),
+    ]
+    const qc = makeClient(makeResponse(events))
+    const html = renderPage(qc)
+    expect(html).toContain('data-testid="event-row-ev-diff-1"')
+    expect(html).toContain('data-testid="event-row-ev-diff-2"')
+    expect(html).not.toContain('×2')
   })
 })
 

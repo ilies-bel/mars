@@ -347,6 +347,108 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
 })
 
 // ---------------------------------------------------------------------------
+// Run-length grouping — collapses consecutive identical-payload events
+// ---------------------------------------------------------------------------
+
+type EventListRow =
+  | { type: 'single'; event: TraceEvent }
+  | { type: 'group'; events: TraceEvent[] }
+
+/**
+ * Collapse consecutive events whose payload serialises to the same JSON
+ * string into a single group row. Groups require at least 2 events — a run
+ * of 1 is always a `single` row. Events are compared by full payload
+ * equality, so different payloads never merge even when `kind` matches.
+ */
+const groupConsecutiveEvents = (events: readonly TraceEvent[]): EventListRow[] => {
+  const rows: EventListRow[] = []
+  let i = 0
+  while (i < events.length) {
+    const key = JSON.stringify(events[i].payload)
+    let j = i + 1
+    while (j < events.length && JSON.stringify(events[j].payload) === key) j++
+    if (j - i === 1) {
+      rows.push({ type: 'single', event: events[i] })
+    } else {
+      rows.push({ type: 'group', events: events.slice(i, j) })
+    }
+    i = j
+  }
+  return rows
+}
+
+interface GroupedRowProps {
+  events: TraceEvent[]
+  /** Stable group identity — the first event's id. */
+  groupId: string
+  expanded: boolean
+  /** Stable callback; called with groupId. */
+  onToggleGroup: (groupId: string) => void
+  now: number
+  fieldsExpandedSet: Set<string>
+  onToggleFields: (eventId: string) => void
+}
+
+/** Collapsed/expanded row for a run of consecutive identical-payload events. */
+const GroupedRow = memo(({
+  events,
+  groupId,
+  expanded,
+  onToggleGroup,
+  now,
+  fieldsExpandedSet,
+  onToggleFields,
+}: GroupedRowProps) => {
+  const handleToggle = useCallback(() => onToggleGroup(groupId), [onToggleGroup, groupId])
+  const first = events[0]
+  const last = events[events.length - 1]
+
+  if (expanded) {
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={handleToggle}
+          className="mb-1 flex w-full items-center gap-2 rounded border border-iron/30 bg-iron/10 px-3 py-1 font-mono text-[10px] text-iron hover:text-fg"
+          data-testid={`group-row-${first.id}`}
+        >
+          <span>▾</span>
+          <span className="rounded bg-iron/20 px-1 font-semibold">×{events.length}</span>
+          <span className="text-muted">{relativeTime(first.timestamp, now)} – {relativeTime(last.timestamp, now)}</span>
+          <span className="min-w-0 truncate">{summarizeTraceEvent(first)}</span>
+        </button>
+        <div className="flex flex-col gap-1">
+          {events.map((e) => (
+            <EventRow
+              key={e.id}
+              event={e}
+              now={now}
+              fieldsExpanded={fieldsExpandedSet.has(e.id)}
+              onToggleFields={onToggleFields}
+            />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleToggle}
+      className="flex w-full items-center gap-2 rounded border border-iron/20 bg-iron/5 px-3 py-1.5 font-mono text-[12px] text-fg hover:bg-iron/15"
+      data-testid={`group-row-${first.id}`}
+    >
+      <span className="shrink-0 text-[10px] text-muted">{relativeTime(first.timestamp, now)}</span>
+      <span className="shrink-0 text-[10px] text-muted">–</span>
+      <span className="shrink-0 text-[10px] text-muted">{relativeTime(last.timestamp, now)}</span>
+      <span className="shrink-0 rounded bg-iron/20 px-1.5 font-mono text-[10px] font-semibold text-iron">×{events.length}</span>
+      <span className="min-w-0 truncate text-[11px] text-muted">{summarizeTraceEvent(first)}</span>
+    </button>
+  )
+})
+
+// ---------------------------------------------------------------------------
 // Timeline view components
 // ---------------------------------------------------------------------------
 
@@ -630,6 +732,21 @@ export const EventsPage = () => {
     })
   }, [])
 
+  // Page-level expansion Set for grouped rows — keyed by first event id of the
+  // group. Lifted out of the GroupedRow component so virtualizer row recycling
+  // (unmount → re-mount) preserves the expanded state.
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(
+    () => new Set(),
+  )
+  const toggleGroupExpanded = useCallback((groupId: string) => {
+    setExpandedGroupIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(groupId)) next.delete(groupId)
+      else next.add(groupId)
+      return next
+    })
+  }, [])
+
   // Debounced text filter values — the query key uses these so that rapid
   // typing (taskId / originId / q) fires at most one request per 300 ms
   // burst rather than one request per keystroke.
@@ -713,12 +830,16 @@ export const EventsPage = () => {
       ? (initial.data?.nextCursor ?? null)
       : overrideCursor
 
+  // Collapse runs of consecutive identical-payload events into grouped rows.
+  // Individual events and groups with distinct payloads stay as single rows.
+  const groupedRows = useMemo(() => groupConsecutiveEvents(events), [events])
+
   // Virtual list for the events stream (100+ items per page, multiple pages possible).
   // scrollRef and virtualizer are declared here — before the conditional early
   // return — to satisfy the rules of hooks.
   const scrollRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
-    count: events.length,
+    count: groupedRows.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 45,
     overscan: 5,
@@ -954,28 +1075,43 @@ export const EventsPage = () => {
               position: 'relative',
             }}
           >
-            {virtualizer.getVirtualItems().map((vItem) => (
-              <div
-                key={vItem.key}
-                data-index={vItem.index}
-                ref={virtualizer.measureElement}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  transform: `translateY(${vItem.start}px)`,
-                  paddingBottom: '4px',
-                }}
-              >
-                <EventRow
-                  event={events[vItem.index]}
-                  now={now}
-                  fieldsExpanded={fieldsExpandedSet.has(events[vItem.index].id)}
-                  onToggleFields={toggleFieldsExpanded}
-                />
-              </div>
-            ))}
+            {virtualizer.getVirtualItems().map((vItem) => {
+              const row = groupedRows[vItem.index]
+              return (
+                <div
+                  key={vItem.key}
+                  data-index={vItem.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${vItem.start}px)`,
+                    paddingBottom: '4px',
+                  }}
+                >
+                  {row.type === 'group' ? (
+                    <GroupedRow
+                      events={row.events}
+                      groupId={row.events[0].id}
+                      expanded={expandedGroupIds.has(row.events[0].id)}
+                      onToggleGroup={toggleGroupExpanded}
+                      now={now}
+                      fieldsExpandedSet={fieldsExpandedSet}
+                      onToggleFields={toggleFieldsExpanded}
+                    />
+                  ) : (
+                    <EventRow
+                      event={row.event}
+                      now={now}
+                      fieldsExpanded={fieldsExpandedSet.has(row.event.id)}
+                      onToggleFields={toggleFieldsExpanded}
+                    />
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
 
@@ -1011,4 +1147,5 @@ export const __test__ = {
   SEVERITY_OPTIONS,
   PHASE_OPTIONS,
   TIME_RANGE_MS,
+  groupConsecutiveEvents,
 }
