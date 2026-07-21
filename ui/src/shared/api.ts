@@ -337,6 +337,78 @@ export const invokeAction = async (
  */
 export const triggerSelfUpdate = (): Promise<void> => invokeAction('self-update')
 
+/** Valid preset durations for the snooze preset menu. */
+export type SnoozePreset = '1h' | '4h' | 'tomorrow-morning' | 'next-week'
+
+/**
+ * Snooze an action-queue item for the given preset duration.
+ * Routes to POST /api/actions/snooze/:id on the UI server, which proxies to
+ * the daemon's /actions/snooze/:id endpoint.
+ *
+ * @param id  The action-queue row id (e.g. "failed-task:abc123").
+ * @param preset  How long to snooze.
+ */
+export const snoozeActionQueueItem = async (
+  id: string,
+  preset: SnoozePreset,
+): Promise<void> => {
+  let r: Response
+  try {
+    r = await fetch(`${BASE}/api/actions/snooze/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preset }),
+    })
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new ApiError(
+        `POST /api/actions/snooze → cannot reach the mars-ui API server`,
+        'unreachable',
+      )
+    }
+    throw err
+  }
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { error?: string; errorCode?: string }
+    throw new ApiError(
+      `POST /api/actions/snooze → ${r.status}${body.error ? `: ${body.error}` : ''}`,
+      errorCodeToKind(body.errorCode),
+      r.status,
+    )
+  }
+}
+
+/**
+ * Restore (un-snooze) a previously snoozed action-queue item.
+ * Routes to POST /api/actions/snooze/:id with restore=true.
+ */
+export const restoreSnoozedItem = async (id: string): Promise<void> => {
+  let r: Response
+  try {
+    r = await fetch(`${BASE}/api/actions/snooze/${encodeURIComponent(id)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ restore: true }),
+    })
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new ApiError(
+        `POST /api/actions/snooze (restore) → cannot reach the mars-ui API server`,
+        'unreachable',
+      )
+    }
+    throw err
+  }
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { error?: string; errorCode?: string }
+    throw new ApiError(
+      `POST /api/actions/snooze (restore) → ${r.status}${body.error ? `: ${body.error}` : ''}`,
+      errorCodeToKind(body.errorCode),
+      r.status,
+    )
+  }
+}
+
 export const eventsUrl = (): string => `${BASE}/events`
 
 export interface EventsFilter {

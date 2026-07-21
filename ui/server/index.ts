@@ -252,6 +252,28 @@ export const startServer = async (
           }
         }
 
+        // POST /api/actions/snooze/:id — proxy the daemon's snooze endpoint.
+        // Body: { preset: '1h' | '4h' | 'tomorrow-morning' | 'next-week' }
+        // or   { restore: true } to un-snooze.
+        if (path.startsWith('/api/actions/snooze/') && req.method === 'POST') {
+          const rawId = path.slice('/api/actions/snooze/'.length)
+          const id = decodeURIComponent(rawId)
+          if (!id) {
+            return jsonResponse(400, { error: 'id is required' })
+          }
+          try {
+            const body = (await req.json()) as Record<string, unknown>
+            const result = await proxyPost(
+              ctx.stateDir,
+              `/actions/snooze/${encodeURIComponent(id)}`,
+              body,
+            )
+            return jsonResponse(result.status, result.body)
+          } catch (err) {
+            return jsonResponse(500, { error: (err as Error).message })
+          }
+        }
+
         if (path === '/api/events') {
           const result = await proxyGet(ctx.stateDir, '/view/terminal-events')
           return jsonResponse(result.status, result.body)

@@ -1,0 +1,448 @@
+/**
+ * AlertCard — rich alert card shared between chat transcript alert segments
+ * and action-queue row detail views.
+ *
+ * Design:
+ *   - Headline: humanSummary (plain-language sentence), kind icon + accent.
+ *   - entityId shown small/monospace as a copy-able identifier.
+ *   - "Details ▸" expander revealing humanDetail as labeled fields.
+ *   - Verb buttons from the recipe (styles respected).
+ *   - Snooze verb opens a preset menu (1 h / 4 h / tomorrow / next week).
+ *   - Snoozed cards render dimmed with "reappears in …" and a Restore option.
+ *   - Resolution state shown inline after a verb succeeds.
+ *   - NO Discuss button — the composer is the discussion path.
+ */
+
+import { useState } from 'react'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import { invokeAction, snoozeActionQueueItem, restoreSnoozedItem } from '@/shared/api'
+import type { AlertHumanDetail, AlertVerb } from '@/shared/schemas'
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const KIND_ICON: Record<string, string> = {
+  'failed-task': '⚠️',
+  'stale-worktree': '🗑️',
+  'draft-proposal': '💡',
+  'awaiting-validation': '🔍',
+  'arc-failed': '⛓️',
+}
+
+/** Left accent-bar + border tint per kind. */
+const KIND_ACCENT: Record<string, string> = {
+  'failed-task': 'border-l-error',
+  'arc-failed': 'border-l-error',
+  'stale-worktree': 'border-l-warn',
+  'awaiting-validation': 'border-l-[#1D4ED8]',
+  'draft-proposal': 'border-l-success',
+}
+
+export type SnoozePreset = '1h' | '4h' | 'tomorrow-morning' | 'next-week'
+
+const SNOOZE_PRESETS: { value: SnoozePreset; label: string }[] = [
+  { value: '1h', label: '1 hour' },
+  { value: '4h', label: '4 hours' },
+  { value: 'tomorrow-morning', label: 'Tomorrow morning' },
+  { value: 'next-week', label: 'Next week' },
+]
+
+// ---------------------------------------------------------------------------
+// Snooze helpers
+// ---------------------------------------------------------------------------
+
+/** Compute a human-readable "reappears in X" string for an ISO snoozeUntil. */
+const reappearsIn = (snoozeUntilIso: string): string => {
+  const ms = new Date(snoozeUntilIso).getTime() - Date.now()
+  if (ms <= 0) return 'soon'
+  const h = Math.floor(ms / 3_600_000)
+  const m = Math.floor((ms % 3_600_000) / 60_000)
+  if (h >= 24) {
+    const d = Math.floor(h / 24)
+    return `${d} day${d === 1 ? '' : 's'}`
+  }
+  if (h > 0) return `${h} h ${m} min`
+  return `${m} min`
+}
+
+// ---------------------------------------------------------------------------
+// Button styling
+// ---------------------------------------------------------------------------
+
+const verbButtonClass = (style: AlertVerb['style']): string => {
+  const base =
+    'rounded px-3 py-1 font-mono text-[11px] border transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
+  if (style === 'primary')
+    return `${base} border-accent/60 bg-accent/20 text-accent hover:bg-accent/30`
+  if (style === 'destructive')
+    return `${base} border-red-400/40 bg-red-900/10 text-red-400 hover:bg-red-900/20`
+  if (style === 'snooze')
+    return `${base} border-iron/30 text-iron/70 hover:bg-iron/20`
+  return `${base} border-iron/30 text-iron hover:bg-iron/20`
+}
+
+// ---------------------------------------------------------------------------
+// AlertCard props
+// ---------------------------------------------------------------------------
+
+export interface AlertCardProps {
+  /**
+   * Action-queue row id used for snooze API calls (e.g. "failed-task:abc123").
+   * Pass the chat segment's entityId when the row id is unavailable — the server
+   * will infer it.
+   */
+  itemId: string
+  /** Entity id shown small/monospace under the headline. */
+  entityId: string
+  /** Kind key — drives the icon and accent color. */
+  kind: string
+  /** Plain-language headline (humanSummary from the recipe). */
+  summary: string
+  /** Structured detail fields revealed by the "Details ▸" expander. */
+  detail?: AlertHumanDetail
+  /** Ordered verb buttons from the per-kind recipe. */
+  verbs: AlertVerb[]
+  /** True once the underlying item is resolved/superseded. */
+  resolved?: boolean
+  /** ISO timestamp of snooze expiry — when set the card starts in snoozed state. */
+  snoozeUntil?: string
+}
+
+// ---------------------------------------------------------------------------
+// DetailExpander — the "Details ▸" collapsible section
+// ---------------------------------------------------------------------------
+
+const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
+  const [open, setOpen] = useState(false)
+
+  const hasContent =
+    detail.failureSignature ??
+    detail.branch ??
+    detail.worktree ??
+    detail.rawError ??
+    detail.changelog
+
+  if (!hasContent) return null
+
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="font-mono text-[10px] text-iron/60 hover:text-iron transition-colors select-none"
+        data-testid="alert-detail-toggle"
+      >
+        Details {open ? '▾' : '▸'}
+      </button>
+
+      {open && (
+        <dl
+          className="mt-1.5 space-y-1"
+          data-testid="alert-detail-panel"
+        >
+          {detail.failureSignature && (
+            <div>
+              <dt className="font-mono text-[9px] uppercase text-iron/40">Failure</dt>
+              <dd className="font-mono text-[10px] text-iron">{detail.failureSignature}</dd>
+            </div>
+          )}
+          {detail.branch && (
+            <div>
+              <dt className="font-mono text-[9px] uppercase text-iron/40">Branch</dt>
+              <dd className="font-mono text-[10px] text-iron">{detail.branch}</dd>
+            </div>
+          )}
+          {detail.worktree && (
+            <div>
+              <dt className="font-mono text-[9px] uppercase text-iron/40">Worktree</dt>
+              <dd className="font-mono text-[10px] text-iron break-all">{detail.worktree}</dd>
+            </div>
+          )}
+          {detail.rawError && (
+            <div>
+              <dt className="font-mono text-[9px] uppercase text-iron/40">Error</dt>
+              <dd>
+                <pre
+                  className="mt-0.5 max-h-32 overflow-y-auto rounded bg-iron/10 p-1.5 font-mono text-[10px] text-iron/80 whitespace-pre-wrap break-all"
+                  data-testid="alert-detail-raw-error"
+                >
+                  {detail.rawError}
+                </pre>
+              </dd>
+            </div>
+          )}
+          {detail.changelog && (
+            <div>
+              <dt className="font-mono text-[9px] uppercase text-iron/40">Changelog</dt>
+              <dd className="mt-0.5 chat-markdown prose prose-sm prose-invert max-w-none text-[11px]">
+                <Markdown remarkPlugins={[remarkGfm]}>{detail.changelog}</Markdown>
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// SnoozeMenu — preset picker that drops down from the Snooze verb button
+// ---------------------------------------------------------------------------
+
+interface SnoozeMenuProps {
+  onSelect: (preset: SnoozePreset) => void
+  onClose: () => void
+  disabled: boolean
+}
+
+const SnoozeMenu = ({ onSelect, onClose, disabled }: SnoozeMenuProps) => (
+  <div
+    className="absolute z-10 mt-1 rounded border border-iron/30 bg-surface shadow-lg"
+    data-testid="snooze-menu"
+  >
+    {SNOOZE_PRESETS.map(({ value, label }) => (
+      <button
+        key={value}
+        type="button"
+        disabled={disabled}
+        onClick={() => onSelect(value)}
+        className="block w-full px-4 py-1.5 text-left font-mono text-[11px] text-iron hover:bg-iron/20 disabled:opacity-40 transition-colors"
+        data-testid={`snooze-preset-${value}`}
+      >
+        {label}
+      </button>
+    ))}
+    <button
+      type="button"
+      onClick={onClose}
+      className="block w-full border-t border-iron/20 px-4 py-1.5 text-left font-mono text-[10px] text-iron/50 hover:bg-iron/10 transition-colors"
+    >
+      Cancel
+    </button>
+  </div>
+)
+
+// ---------------------------------------------------------------------------
+// AlertCard
+// ---------------------------------------------------------------------------
+
+export const AlertCard = ({
+  itemId,
+  entityId,
+  kind,
+  summary,
+  detail,
+  verbs,
+  resolved = false,
+  snoozeUntil: initialSnoozeUntil,
+}: AlertCardProps) => {
+  const [pendingOp, setPendingOp] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [resolvedOp, setResolvedOp] = useState<string | null>(null)
+  const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false)
+  const [snoozedUntil, setSnoozedUntil] = useState<string | null>(
+    initialSnoozeUntil ?? null,
+  )
+
+  const isSnoozed = snoozedUntil !== null && new Date(snoozedUntil) > new Date()
+
+  const handleAction = async (op: string) => {
+    if (pendingOp !== null) return
+    setPendingOp(op)
+    setActionError(null)
+    try {
+      await invokeAction(op, entityId)
+      setResolvedOp(op)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPendingOp(null)
+    }
+  }
+
+  const handleSnoozeSelect = async (preset: SnoozePreset) => {
+    setSnoozeMenuOpen(false)
+    if (pendingOp !== null) return
+    setPendingOp('snooze')
+    setActionError(null)
+    try {
+      await snoozeActionQueueItem(itemId, preset)
+      // Compute optimistic expiry for the dimmed state display.
+      const now = Date.now()
+      const durations: Record<SnoozePreset, number> = {
+        '1h': 3_600_000,
+        '4h': 14_400_000,
+        'tomorrow-morning': msUntilTomorrowMorning(now),
+        'next-week': msUntilNextWeekMonday(now),
+      }
+      setSnoozedUntil(new Date(now + durations[preset]).toISOString())
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPendingOp(null)
+    }
+  }
+
+  const handleRestore = async () => {
+    if (pendingOp !== null) return
+    setPendingOp('restore')
+    setActionError(null)
+    try {
+      await restoreSnoozedItem(itemId)
+      setSnoozedUntil(null)
+    } catch (err) {
+      // If restore fails, still clear local snooze state so the card is usable.
+      setSnoozedUntil(null)
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPendingOp(null)
+    }
+  }
+
+  const accentClass = KIND_ACCENT[kind] ?? 'border-l-iron'
+
+  if (isSnoozed) {
+    return (
+      <div
+        className={`my-2 rounded-lg border border-iron/20 border-l-4 ${accentClass} bg-surface p-3 text-[12px] opacity-50`}
+        data-testid="alert-card-snoozed"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-[13px]" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
+          <span className="flex-1 font-mono text-[11px] text-iron/60 line-clamp-1">{summary}</span>
+          <span className="font-mono text-[10px] text-iron/40">
+            reappears in {reappearsIn(snoozedUntil)}
+          </span>
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            disabled={pendingOp !== null}
+            onClick={() => void handleRestore()}
+            className="rounded border border-iron/30 px-2 py-0.5 font-mono text-[10px] text-iron hover:bg-iron/20 disabled:opacity-40 transition-colors"
+            data-testid="alert-card-restore"
+          >
+            {pendingOp === 'restore' ? '…' : 'Restore'}
+          </button>
+          {actionError && (
+            <span className="font-mono text-[10px] text-red-400">{actionError}</span>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className={[
+        'my-2 rounded-lg border border-l-4 p-3 text-[12px]',
+        accentClass,
+        resolved
+          ? 'border-iron/20 bg-surface opacity-60'
+          : 'border-accent/30 bg-accent/5',
+      ].join(' ')}
+      data-testid="alert-card"
+    >
+      {/* Header: icon + headline + resolved badge */}
+      <div className="mb-1 flex items-center gap-2">
+        <span className="text-[13px] shrink-0" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
+        <span className="flex-1 font-mono text-[11px] font-semibold text-fg line-clamp-3" data-testid="alert-card-summary">
+          {summary}
+        </span>
+        {resolved && (
+          <span className="ml-auto shrink-0 rounded bg-iron/20 px-1.5 py-0.5 font-mono text-[10px] text-iron/60">
+            Resolved
+          </span>
+        )}
+      </div>
+
+      {/* Entity id — monospace identifier */}
+      <p
+        className="mb-1 font-mono text-[10px] text-iron/50 truncate"
+        data-testid="alert-card-entity-id"
+      >
+        {entityId}
+      </p>
+
+      {/* Resolution success message */}
+      {resolvedOp !== null && (
+        <p className="mb-2 font-mono text-[10px] text-success" data-testid="alert-card-resolved-state">
+          ✓ {resolvedOp} completed
+        </p>
+      )}
+
+      {/* Verb buttons */}
+      {!resolved && resolvedOp === null && verbs.length > 0 && (
+        <div className="relative flex flex-wrap gap-1.5 mb-2">
+          {verbs.map((verb) => (
+            verb.style === 'snooze' ? (
+              <div key={verb.op} className="relative">
+                <button
+                  type="button"
+                  className={verbButtonClass(verb.style)}
+                  disabled={pendingOp !== null}
+                  onClick={() => setSnoozeMenuOpen((v) => !v)}
+                  data-testid="alert-card-snooze-trigger"
+                >
+                  {pendingOp === 'snooze' ? '…' : verb.label}
+                </button>
+                {snoozeMenuOpen && (
+                  <SnoozeMenu
+                    disabled={pendingOp !== null}
+                    onSelect={(preset) => void handleSnoozeSelect(preset)}
+                    onClose={() => setSnoozeMenuOpen(false)}
+                  />
+                )}
+              </div>
+            ) : (
+              <button
+                key={verb.op}
+                type="button"
+                className={verbButtonClass(verb.style)}
+                title={verb.op}
+                disabled={pendingOp !== null}
+                onClick={() => void handleAction(verb.op)}
+                data-testid={`alert-card-verb-${verb.op}`}
+              >
+                {pendingOp === verb.op ? '…' : verb.label}
+              </button>
+            )
+          ))}
+        </div>
+      )}
+
+      {/* Action error */}
+      {actionError && (
+        <p className="mb-2 font-mono text-[10px] text-red-400" data-testid="alert-card-error">
+          {actionError}
+        </p>
+      )}
+
+      {/* Detail expander */}
+      {detail && <DetailExpander detail={detail} />}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Duration helpers (no Date.now() in workflow scripts, but fine in React components)
+// ---------------------------------------------------------------------------
+
+function msUntilTomorrowMorning(nowMs: number): number {
+  const d = new Date(nowMs)
+  d.setDate(d.getDate() + 1)
+  d.setHours(9, 0, 0, 0)
+  return d.getTime() - nowMs
+}
+
+function msUntilNextWeekMonday(nowMs: number): number {
+  const d = new Date(nowMs)
+  const dayOfWeek = d.getDay() // 0=Sun, 1=Mon, …
+  const daysUntilMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek
+  d.setDate(d.getDate() + daysUntilMonday)
+  d.setHours(9, 0, 0, 0)
+  return d.getTime() - nowMs
+}

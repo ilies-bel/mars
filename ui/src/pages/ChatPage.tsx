@@ -34,6 +34,7 @@ import {
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ActionQueueItem, ActionDescriptor, ChatFeedback } from '@/shared/schemas'
+import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { WhileYouWereAwayPanel } from '@/widgets/WhileYouWereAwayPanel'
 import { FallbackSurface } from '@/components/FallbackSurface'
@@ -343,104 +344,26 @@ const ThinkingBlock = ({ text }: { text: string }) => {
   )
 }
 
-/**
- * Rich card rendered for `alert` segments in proactive alert-origin threads.
- * Displays the alert title, whyNow explanation, action verb buttons, and a
- * "Discuss" button that lets the user type a follow-up into the thread.
- */
-const AlertCard = ({
-  alert,
-  onDiscuss,
-}: {
-  alert: ChatSegmentAlert
-  onDiscuss: (prompt: string) => void
-}) => {
-  const isResolved = alert.resolved ?? false
-  const [pendingOp, setPendingOp] = useState<string | null>(null)
-  const [actionError, setActionError] = useState<string | null>(null)
-
-  const buttonClass = (style: 'primary' | 'destructive' | 'default') => {
-    const base = 'rounded px-3 py-1 font-mono text-[11px] border transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
-    if (style === 'primary') return `${base} border-accent/60 bg-accent/20 text-accent hover:bg-accent/30`
-    if (style === 'destructive') return `${base} border-red-400/40 bg-red-900/10 text-red-400 hover:bg-red-900/20`
-    return `${base} border-iron/30 text-iron hover:bg-iron/20`
-  }
-
-  const handleAction = async (op: string) => {
-    if (pendingOp) return
-    setPendingOp(op)
-    setActionError(null)
-    try {
-      await invokeAction(op, alert.entityId)
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setPendingOp(null)
-    }
-  }
-
-  const handleDiscuss = () => {
-    onDiscuss(`Help me resolve this: ${alert.title} (${alert.entityId})`)
-  }
-
+/** Adapt a ChatSegmentAlert to AlertCard props and render it. */
+const AlertCardFromSegment = ({ alert }: { alert: ChatSegmentAlert }) => {
+  // Defensive: verbs/actions may be absent on legacy items bypassing schema defaults.
+  const recipeVerbs = alert.verbs ?? []
+  const legacyActions = alert.actions ?? []
+  const verbs =
+    recipeVerbs.length > 0
+      ? recipeVerbs
+      : legacyActions.map((a) => ({ op: a.op, label: a.label, style: a.style }))
   return (
-    <div
-      className={[
-        'my-2 rounded-lg border p-3 text-[12px]',
-        isResolved
-          ? 'border-iron/20 bg-surface opacity-60'
-          : 'border-accent/30 bg-accent/5',
-      ].join(' ')}
-    >
-      {/* Header */}
-      <div className="mb-1 flex items-center gap-2">
-        <span className="text-[13px]">🔔</span>
-        <span className="font-mono text-[11px] font-semibold text-fg">{alert.title}</span>
-        {isResolved && (
-          <span className="ml-auto rounded bg-iron/20 px-1.5 py-0.5 font-mono text-[10px] text-iron/60">
-            Resolved
-          </span>
-        )}
-      </div>
-
-      {/* Entity id — monospace link label */}
-      <p className="mb-1 font-mono text-[10px] text-iron/50 truncate">{alert.entityId}</p>
-
-      {/* Why now */}
-      <p className="mb-2 font-mono text-[11px] text-iron leading-relaxed">{alert.whyNow}</p>
-
-      {/* Action buttons */}
-      {!isResolved && alert.actions.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {alert.actions.map((action) => (
-            <button
-              key={action.op}
-              type="button"
-              className={buttonClass(action.style)}
-              title={action.op}
-              disabled={pendingOp !== null}
-              onClick={() => void handleAction(action.op)}
-            >
-              {pendingOp === action.op ? '…' : action.label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Action error */}
-      {actionError && (
-        <p className="mb-2 font-mono text-[10px] text-red-400">{actionError}</p>
-      )}
-
-      {/* Discuss button */}
-      <button
-        type="button"
-        className="rounded border border-iron/30 px-2 py-0.5 font-mono text-[10px] text-iron hover:bg-iron/20"
-        onClick={handleDiscuss}
-      >
-        Discuss…
-      </button>
-    </div>
+    <AlertCard
+      itemId={`${alert.kind}:${alert.entityId}`}
+      entityId={alert.entityId}
+      kind={alert.kind}
+      summary={alert.humanSummary || alert.title}
+      detail={alert.humanDetail}
+      verbs={verbs}
+      resolved={alert.resolved}
+      snoozeUntil={alert.snoozeUntil}
+    />
   )
 }
 
@@ -725,10 +648,9 @@ export const ChatMessageBubble = ({
           }
           if (seg.kind === 'alert') {
             return (
-              <AlertCard
+              <AlertCardFromSegment
                 key={i}
                 alert={seg.alert}
-                onDiscuss={onDiscuss}
               />
             )
           }

@@ -202,6 +202,30 @@ export const dagContextSchema = z.object({
   edges: z.array(dagEdgeSchema),
 })
 
+/**
+ * Ordered, styled verb button from the per-kind recipe.
+ * 'snooze' style opens the preset menu rather than immediately invoking the op.
+ */
+export const alertVerbSchema = z.object({
+  op: z.string(),
+  label: z.string(),
+  style: z.enum(['primary', 'destructive', 'default', 'snooze']),
+})
+
+/**
+ * Structured detail block revealed behind the "Details ▸" expander on alert cards.
+ * All fields are optional — the backend only populates fields relevant to the
+ * specific alert kind (e.g. rawError for failed tasks, changelog for update kinds).
+ */
+export const alertHumanDetailSchema = z.object({
+  failureSignature: z.string().optional(),
+  branch: z.string().optional(),
+  worktree: z.string().optional(),
+  rawError: z.string().optional(),
+  /** Rendered as markdown on update-kind alerts. */
+  changelog: z.string().optional(),
+})
+
 export const actionDescriptorSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -273,6 +297,20 @@ const actionQueueBaseSchema = z.object({
    * clickable link the operator opens before clicking Validate / Reject.
    */
   devServerUrl: z.string().nullable().optional(),
+  /**
+   * Plain-language headline from the per-kind recipe. Falls back to empty for
+   * rows from daemon versions predating recipe fields.
+   */
+  humanSummary: z.string().optional().default(''),
+  /** Structured detail block for the "Details ▸" expander. */
+  humanDetail: alertHumanDetailSchema.optional(),
+  /**
+   * Ordered, styled verb buttons from the per-kind recipe.
+   * Falls back to empty for daemon versions predating recipe fields.
+   */
+  verbs: z.array(alertVerbSchema).optional().default([]),
+  /** ISO timestamp until which this row is snoozed. Absent when not snoozed. */
+  snoozeUntil: z.string().optional(),
 })
 
 // Detail block carried by every 'stale-worktree' row — absent on all other kinds.
@@ -395,6 +433,8 @@ export const actionQueueResponseSchema = z.array(
       actions: [],
       diagnosis: null,
       failureReasonCode: null,
+      humanSummary: '',
+      verbs: [],
     }
   }),
 )
@@ -708,6 +748,8 @@ export const actionQueueHistoryResponseSchema = z.object({
         actions: [],
         diagnosis: null,
         failureReasonCode: null,
+        humanSummary: '',
+        verbs: [],
       }
     }),
   ),
@@ -802,7 +844,7 @@ export const chatSegmentToolUseSchema = z.object({
   status: z.enum(['pending', 'complete', 'error']).optional().default('complete'),
 })
 
-/** Alert action button rendered on the alert card. */
+/** Alert action button rendered on the alert card (legacy — prefer alertVerbSchema). */
 export const chatSegmentAlertActionSchema = z.object({
   op: z.string(),
   label: z.string(),
@@ -821,10 +863,33 @@ export const chatSegmentAlertSchema = z.object({
   /** Entity id (task id, proposal id, etc.) the alert is about. */
   entityId: z.string(),
   priority: z.string(),
-  title: z.string(),
-  /** Human-readable explanation of why this alert appeared now. */
-  whyNow: z.string(),
-  actions: z.array(chatSegmentAlertActionSchema),
+  /**
+   * Plain-language headline — replaces the old `title` field.
+   * Falls back to empty string for backward-compat with daemon messages that
+   * predate the recipe fields.
+   */
+  humanSummary: z.string().optional().default(''),
+  /** Structured detail block for the "Details ▸" expander. */
+  humanDetail: alertHumanDetailSchema.optional(),
+  /**
+   * Ordered, styled verb buttons from the per-kind recipe.
+   * Falls back to empty for daemon messages that predate recipe fields.
+   */
+  verbs: z.array(alertVerbSchema).optional().default([]),
+  /** ISO timestamp until which this alert is snoozed. Absent when not snoozed. */
+  snoozeUntil: z.string().optional(),
+  /**
+   * Legacy title field — kept optional so old daemon messages still parse.
+   * UI code should prefer humanSummary; use title as the fallback.
+   */
+  title: z.string().optional().default(''),
+  /**
+   * Legacy why-now field — kept optional for backward compat.
+   * Superseded by humanDetail.
+   */
+  whyNow: z.string().optional().default(''),
+  /** Legacy action buttons — kept optional; prefer verbs. */
+  actions: z.array(chatSegmentAlertActionSchema).optional().default([]),
   /** True once the underlying action-queue item has been superseded/resolved. */
   resolved: z.boolean().optional().default(false),
 })
@@ -926,6 +991,8 @@ export const chatThreadDetailSchema = z.object({
 })
 
 export type ChatSegmentAlertAction = z.infer<typeof chatSegmentAlertActionSchema>
+export type AlertVerb = z.infer<typeof alertVerbSchema>
+export type AlertHumanDetail = z.infer<typeof alertHumanDetailSchema>
 export type ChatSegmentAlert = z.infer<typeof chatSegmentAlertSchema>
 export type ChatSegment = z.infer<typeof chatSegmentSchema>
 export type ChatSegmentText = z.infer<typeof chatSegmentTextSchema>
