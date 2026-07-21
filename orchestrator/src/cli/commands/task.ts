@@ -50,13 +50,10 @@ const enqueueViaDaemon = async (
   const marker = detectNoCommitMarker(params.prompt)
   if (marker !== null) {
     deps.err(
-      `[mars] refusing to enqueue: prompt declares it produces no commit (matched: ${marker.slice(0, 80)}).`,
+      `[mars] refusing to enqueue: prompt declares it produces no source-code change (matched: ${marker.slice(0, 80)}).`,
     )
     deps.err(
-      `[mars] the orchestrator's verify step requires at least one commit ahead of the integration branch;`,
-    )
-    deps.err(
-      `[mars] running this through Mars would loop forever. Run the operation manually instead.`,
+      `[mars] such tasks are typically read-only queries or scripts — run them manually rather than routing through Mars.`,
     )
     return { code: 1 }
   }

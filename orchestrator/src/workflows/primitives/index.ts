@@ -1304,19 +1304,29 @@ export const verify = async (
       // declarations" when multiple tasks' commits are combined on one branch.
       // Catch it early with a clear `verify:branch-contaminated` signal.
       //
-      // Check: `git merge-base --is-ancestor HEAD <integrationBranch>` exits 0
-      // iff HEAD is already reachable from the integration branch without any
-      // task-specific work on top — i.e. the branch was repointed to a commit
-      // that is already on the main timeline. That is the contamination signal.
+      // Three shapes are distinguished:
+      //   1. Zero commits ahead (`integrationBranch..HEAD` == 0): the agent
+      //      legitimately produced no commits, or its commits were already
+      //      fast-forwarded into integration via another path. Both sub-shapes
+      //      are benign — fall through to verifyChanges, which accepts them as
+      //      "no-op accepted" or "work already merged" (checkBranchHasDiff).
+      //   2. Positive commits AND HEAD is an ancestor of integrationBranch:
+      //      the branch was externally repointed onto the integration timeline
+      //      (parallel recovery/restart race). Hard-fail.
       //
       // Not applied to fix tasks (they run on the origin's branch, which is
       // expected to start on the integration timeline and then add commits).
       if (kind !== 'fix') {
         try {
-          const ancestorResult = await runTool(
+          // Count task-specific commits first. A zero-ahead count means there
+          // is no un-integrated work — verifyChanges handles both the
+          // "no-op" and "already merged" sub-shapes correctly. Only when the
+          // branch has commits that are NOT yet on integration can --is-ancestor
+          // returning 0 indicate a genuine external repoint.
+          const countResult = await runTool(
             {
               tool: 'git',
-              argv: ['merge-base', '--is-ancestor', 'HEAD', integrationBranch],
+              argv: ['rev-list', '--count', `${integrationBranch}..HEAD`],
               cwd: worktreePath,
               expectsFailure: true,
               taskId,
@@ -1325,12 +1335,14 @@ export const verify = async (
             },
             trace.traceStore,
           )
-          if (ancestorResult.exitCode === 0) {
-            // HEAD is on the integration timeline — branch was contaminated.
-            const headShortResult = await runTool(
+          const aheadCount = Number.parseInt(countResult.stdout.trim(), 10)
+          if (Number.isInteger(aheadCount) && aheadCount > 0) {
+            // Task produced commits not yet on integration; check if HEAD was
+            // externally repointed onto the integration timeline.
+            const ancestorResult = await runTool(
               {
                 tool: 'git',
-                argv: ['rev-parse', '--short', 'HEAD'],
+                argv: ['merge-base', '--is-ancestor', 'HEAD', integrationBranch],
                 cwd: worktreePath,
                 expectsFailure: true,
                 taskId,
@@ -1339,28 +1351,44 @@ export const verify = async (
               },
               trace.traceStore,
             )
-            const headShort = headShortResult.stdout.trim() || 'unknown'
-            const contamMsg = `branch HEAD ${headShort} is already an ancestor of ${integrationBranch} — task branch was repointed onto the integration timeline (parallel recovery/restart race)`
-            const contamSignature = computeFailureSignature(
-              'verify:branch-contaminated',
-              contamMsg,
-            )
-            await updateTask(
-              taskId,
-              {
-                status: 'failed',
-                error: contamMsg,
-                failedPhase: 'verify',
-                failureReason: 'verify:branch-contaminated',
-                failureSignature: contamSignature,
-                failureReasonCode: contamSignature,
-              },
-              store,
-            )
-            throw new Error(
-              `task ${taskId} verify:branch-contaminated: ${contamMsg}`,
-            )
+            if (ancestorResult.exitCode === 0) {
+              // HEAD is on the integration timeline — branch was contaminated.
+              const headShortResult = await runTool(
+                {
+                  tool: 'git',
+                  argv: ['rev-parse', '--short', 'HEAD'],
+                  cwd: worktreePath,
+                  expectsFailure: true,
+                  taskId,
+                  originId: trace.originId,
+                  phase: 'verify',
+                },
+                trace.traceStore,
+              )
+              const headShort = headShortResult.stdout.trim() || 'unknown'
+              const contamMsg = `branch HEAD ${headShort} is already an ancestor of ${integrationBranch} — task branch was repointed onto the integration timeline (parallel recovery/restart race)`
+              const contamSignature = computeFailureSignature(
+                'verify:branch-contaminated',
+                contamMsg,
+              )
+              await updateTask(
+                taskId,
+                {
+                  status: 'failed',
+                  error: contamMsg,
+                  failedPhase: 'verify',
+                  failureReason: 'verify:branch-contaminated',
+                  failureSignature: contamSignature,
+                  failureReasonCode: contamSignature,
+                },
+                store,
+              )
+              throw new Error(
+                `task ${taskId} verify:branch-contaminated: ${contamMsg}`,
+              )
+            }
           }
+          // aheadCount == 0 (or unparseable): fall through to verifyChanges.
         } catch (guardErr) {
           // Re-throw contamination sentinel so it stops the pipeline.
           if (
