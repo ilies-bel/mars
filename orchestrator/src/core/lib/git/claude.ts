@@ -25,14 +25,17 @@ const liveChildPids = new Set<number>()
 
 export const getLiveChildPids = (): readonly number[] => Array.from(liveChildPids)
 
-// SIGKILL every tracked child. Best-effort: a PID that has already exited or
-// that the process lacks permission to signal is silently skipped. Returns
-// the list of PIDs we attempted to kill.
+// SIGKILL every tracked child's process group. Each child is spawned with
+// `detached: true` so it leads its own process group; signalling -pid kills
+// the leader AND every descendant (npm → vitest → forks) atomically.
+// Best-effort: a group that has already exited or that the process lacks
+// permission to signal is silently skipped. Returns the list of PIDs we
+// attempted to kill.
 export const killAllChildren = (): readonly number[] => {
   const killed: number[] = []
   for (const pid of liveChildPids) {
     try {
-      process.kill(pid, 'SIGKILL')
+      process.kill(-pid, 'SIGKILL')
       killed.push(pid)
     } catch {
       // child already gone or unsignalable
@@ -54,6 +57,12 @@ export const runSubprocessStreaming = (
       cwd,
       env: env ?? process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // Make the child the leader of a new process group so that
+      // `process.kill(-pid, 'SIGKILL')` reaps the entire subtree
+      // (npm → vitest → forks) on abort/kill, not just the direct child.
+      // We do NOT call child.unref() — the daemon must still stream output
+      // and await the 'close' event.
+      detached: true,
     })
     if (typeof child.pid === 'number') liveChildPids.add(child.pid)
     let stdout = ''
@@ -80,7 +89,18 @@ export const runSubprocessStreaming = (
     }
 
     const onAbort = () => {
-      if (!child.killed) child.kill('SIGKILL')
+      // Signal the entire process group so descendants (npm → vitest → forks)
+      // die with the direct child. Falls back to child.kill() when pid is
+      // unavailable (spawn failure before a pid was assigned).
+      if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, 'SIGKILL')
+        } catch {
+          // process group already gone
+        }
+      } else if (!child.killed) {
+        child.kill('SIGKILL')
+      }
     }
     if (signal) {
       if (signal.aborted) onAbort()
