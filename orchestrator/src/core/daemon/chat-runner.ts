@@ -71,12 +71,25 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
 /**
+ * Derive a short display name for a shell command.
+ * - `mars <verb> ...` → `mars <verb>` (e.g. `mars task add "..."` → `mars task`)
+ * - anything else     → first token   (e.g. `ls -la` → `ls`)
+ */
+const deriveCommandName = (command: string): string => {
+  const tokens = command.trim().split(/\s+/)
+  if (tokens[0] === 'mars' && tokens[1]) return `mars ${tokens[1]}`
+  return tokens[0] ?? 'shell'
+}
+
+/**
  * Convert a single Codex JSONL event into zero or more `ChatSegment`
  * values. The function is pure (no I/O) and exported for unit testing.
  *
  * Recognised event → segment mappings:
- * - `item.completed(agent_message)` → `text`
- * - `turn.completed`                → `result` (usage)
+ * - `item.completed(agent_message)`          → `text`
+ * - `item.completed(command_execution)`      → `tool_use`
+ * - `item.completed(command_execution_output)` → `tool_result`
+ * - `turn.completed`                         → `result` (usage)
  * All other event types produce no segments.
  */
 export const parseEventToSegments = (event: unknown): ChatSegment[] => {
@@ -87,6 +100,25 @@ export const parseEventToSegments = (event: unknown): ChatSegment[] => {
     const item = event.item
     if (item.type === 'agent_message' && typeof item.text === 'string') {
       segs.push({ type: 'text', text: item.text })
+    } else if (item.type === 'command_execution' && typeof item.command === 'string') {
+      segs.push({
+        type: 'tool_use',
+        id: typeof item.id === 'string' ? item.id : String(item.id ?? ''),
+        name: deriveCommandName(item.command),
+        input: { command: item.command, cwd: typeof item.cwd === 'string' ? item.cwd : undefined },
+      })
+    } else if (item.type === 'command_execution_output' && typeof item.tool_use_id === 'string') {
+      const exitCode = typeof item.exit_code === 'number' ? item.exit_code : 0
+      segs.push({
+        type: 'tool_result',
+        tool_use_id: item.tool_use_id,
+        content: {
+          stdout: typeof item.stdout === 'string' ? item.stdout : '',
+          stderr: typeof item.stderr === 'string' ? item.stderr : '',
+          exitCode,
+        },
+        isError: exitCode !== 0,
+      })
     }
   } else if (event.type === 'turn.completed') {
     const usage = event.usage

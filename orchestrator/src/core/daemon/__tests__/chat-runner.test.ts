@@ -60,9 +60,46 @@ describe('parseEventToSegments', () => {
     })
   })
 
-  it('ignores non-message Codex items', () => {
-    const event = { type: 'item.completed', item: { type: 'command_execution', command: 'ls' } }
-    expect(parseEventToSegments(event)).toEqual([])
+  it('emits tool_use for a command_execution item', () => {
+    const event = { type: 'item.completed', item: { type: 'command_execution', id: 'cmd-1', command: 'ls -la', cwd: '/repo' } }
+    const segs = parseEventToSegments(event)
+    expect(segs).toHaveLength(1)
+    expect(segs[0]).toMatchObject({
+      type: 'tool_use',
+      id: 'cmd-1',
+      name: 'ls',
+      input: { command: 'ls -la', cwd: '/repo' },
+    })
+  })
+
+  it('emits tool_result with isError=false for command_execution_output with exit_code 0', () => {
+    const event = {
+      type: 'item.completed',
+      item: { type: 'command_execution_output', tool_use_id: 'cmd-1', stdout: 'file.txt\n', stderr: '', exit_code: 0 },
+    }
+    const segs = parseEventToSegments(event)
+    expect(segs).toHaveLength(1)
+    expect(segs[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'cmd-1',
+      content: { stdout: 'file.txt\n', stderr: '', exitCode: 0 },
+      isError: false,
+    })
+  })
+
+  it('emits tool_result with isError=true for non-zero exit code in command_execution_output', () => {
+    const event = {
+      type: 'item.completed',
+      item: { type: 'command_execution_output', tool_use_id: 'cmd-2', stdout: '', stderr: 'not found', exit_code: 127 },
+    }
+    const segs = parseEventToSegments(event)
+    expect(segs).toHaveLength(1)
+    expect(segs[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 'cmd-2',
+      content: { stdout: '', stderr: 'not found', exitCode: 127 },
+      isError: true,
+    })
   })
 })
 
