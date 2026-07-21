@@ -486,3 +486,7 @@ _Avoid_: flag, kill-switch, toggle, set-flag
 **Auto-reflect**:
 The daemon behaviour of automatically triggering reflection (session-scoped reflect and arc deep-reflect) off completed work; a control lever gates it independently of per-task signal capture.
 _Avoid_: auto reflect, reflect trigger, MARS_REFLECT_DISABLED
+
+**Steward**:
+The autonomous agent that tends the framework's own operating parameters (worker count, budgets, schedules) to hold the KPI vector at its setpoints; never addressed directly by the human, it speaks only through the unified Mars first-person voice.
+_Avoid_: ai operator, operator agent, self-optimizer, tuner, auto-tuner
