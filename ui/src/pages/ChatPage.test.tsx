@@ -510,15 +510,18 @@ describe('ChatMessageBubble – feedback controls presence', () => {
     expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="helpful"|aria-label="helpful"[^>]*aria-pressed="true"/)
   })
 
-  it('renders a persisted provider error as an accessible assistant message', () => {
+  it('renders an interrupted response as a safe, accessible recovery message', () => {
     const msg = makeMsg([
-      { type: 'error', message: 'Codex could not authenticate. Sign in and try again.' },
+      { type: 'error', message: 'stderr: credentials=secret; monthly account limit reached' },
     ], 'assistant')
     const html = renderToStaticMarkup(
       createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
     )
     expect(html).toContain('role="alert"')
-    expect(html).toContain('Codex could not respond.')
-    expect(html).toContain('Codex could not authenticate. Sign in and try again.')
+    expect(html).toContain('Response interrupted')
+    expect(html).toContain('Send another message to try again.')
+    expect(html).toContain('Try again')
+    expect(html).not.toContain('credentials=secret')
+    expect(html).not.toContain('monthly account limit')
   })
 })

@@ -656,6 +656,32 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
   )
 }
 
+/** A safe, compact recovery surface for an interrupted assistant response. */
+const ChatResponseError = ({ onTryAgain }: { onTryAgain: () => void }) => (
+  <div
+    role="alert"
+    className="my-2 flex items-start gap-3 rounded-md border border-error/25 bg-error/5 px-3 py-2.5 text-[13px] text-fg"
+  >
+    <span
+      aria-hidden="true"
+      className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-error text-[10px] font-bold leading-none text-white"
+    >
+      !
+    </span>
+    <div className="min-w-0 leading-relaxed">
+      <p className="font-medium">Response interrupted</p>
+      <p className="text-muted">Codex could not finish this reply. Send another message to try again.</p>
+      <button
+        type="button"
+        className="mt-1.5 text-[12px] font-medium text-error underline decoration-error/40 underline-offset-2 transition-colors hover:text-fg"
+        onClick={onTryAgain}
+      >
+        Try again
+      </button>
+    </div>
+  </div>
+)
+
 /** A single chat message rendered with segment grouping. */
 export const ChatMessageBubble = ({
   msg,
@@ -719,13 +745,10 @@ export const ChatMessageBubble = ({
           }
           if (seg.kind === 'error') {
             return (
-              <div
+              <ChatResponseError
                 key={i}
-                role="alert"
-                className="my-2 rounded border border-red-400/40 bg-red-950/20 px-3 py-2 font-mono text-[12px] text-red-200"
-              >
-                <span className="font-semibold">Codex could not respond.</span>{' '}{seg.message}
-              </div>
+                onTryAgain={() => onDiscuss('Please retry my last request.')}
+              />
             )
           }
           return <ToolActivityGroup key={i} tools={seg.tools} />
