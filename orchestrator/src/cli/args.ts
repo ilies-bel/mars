@@ -279,7 +279,15 @@ export const resolvePromptSource = (
   }
 
   // Literal or empty
-  return { ok: true, value: positional.join(' ') }
+  const joined = positional.join(' ')
+  if (joined.includes('\n')) {
+    return {
+      ok: false,
+      message:
+        '[mars] error: inline prompt contains a newline; multi-line prompts must be passed via @<file>, --prompt-file <path>, or - (stdin) — not an inline "<prompt>" argument',
+    }
+  }
+  return { ok: true, value: joined }
 }
 
 // ── Per-flag validators ─────────────────────────────────────────────────────
@@ -322,6 +330,15 @@ export interface TaskSpec {
 }
 
 /**
+ * Returns true when `value` contains an odd number of `"` characters OR an odd
+ * number of `'` characters — a signal that the shell mangled a quoted argument.
+ * Applied only to command-shaped flags (`--verify`, `--preview`); prose fields
+ * like `--done` legitimately contain apostrophes (e.g. "don't") and are excluded.
+ */
+export const hasUnbalancedQuotes = (value: string): boolean =>
+  (value.split('"').length - 1) % 2 !== 0 || (value.split("'").length - 1) % 2 !== 0
+
+/**
  * Build a structured-task spec from the `--files`/`--verify`/`--done`/`--type`
  * flags. Returns `{ ok: true, value: undefined }` when none are present (the
  * row keeps the legacy free-prose shape). Validates `--type` when present.
@@ -341,6 +358,19 @@ export const parseTaskSpec = (
     previewRaw !== undefined ||
     typeRaw !== undefined
   if (!anySpec) return { ok: true, value: undefined }
+
+  if (verifyRaw !== undefined && hasUnbalancedQuotes(verifyRaw)) {
+    return {
+      ok: false,
+      message: `--verify value has an unbalanced quote (${verifyRaw}); this usually means the shell mangled the argument — re-quote the whole value in single quotes: --verify 'cmd && cmd'`,
+    }
+  }
+  if (previewRaw !== undefined && hasUnbalancedQuotes(previewRaw)) {
+    return {
+      ok: false,
+      message: `--preview value has an unbalanced quote (${previewRaw}); this usually means the shell mangled the argument — re-quote the whole value in single quotes: --preview 'cmd && cmd'`,
+    }
+  }
 
   let taskType: 'auto' | 'checkpoint' = 'auto'
   if (typeRaw !== undefined) {

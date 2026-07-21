@@ -17,7 +17,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolvePromptSource } from '../args'
+import { resolvePromptSource, hasUnbalancedQuotes, parseTaskSpec } from '../args'
 import {
   runCommandInProcess,
   makeFakeDaemon,
@@ -275,6 +275,77 @@ describe('task add prompt input channels', () => {
     )
     expect(r.code).toBe(0)
     expect((fake.calls[0] as { prompt?: string }).prompt).toBe('inline literal prompt here')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Guard 1 — resolvePromptSource rejects inline literal containing newline
+// ---------------------------------------------------------------------------
+
+describe('resolvePromptSource — inline newline guard', () => {
+  it('rejects an inline literal containing a newline, mentioning @file/--prompt-file/stdin', () => {
+    const result = resolvePromptSource(['line one\nline two'], {})
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.message).toContain('@')
+      expect(result.message).toContain('--prompt-file')
+    }
+  })
+
+  it('accepts a single-line inline literal', () => {
+    const result = resolvePromptSource(['single line prompt'], {})
+    expect(result).toEqual({ ok: true, value: 'single line prompt' })
+  })
+
+  it('stdin - multi-line content is still accepted (not blocked by inline guard)', () => {
+    const result = resolvePromptSource(['-'], {}, () => 'line one\nline two\n')
+    expect(result).toEqual({ ok: true, value: 'line one\nline two' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Guard 2a — hasUnbalancedQuotes helper
+// ---------------------------------------------------------------------------
+
+describe('hasUnbalancedQuotes', () => {
+  it('"cd ui → true (unbalanced leading double quote)', () => {
+    expect(hasUnbalancedQuotes('"cd ui')).toBe(true)
+  })
+
+  it('cd ui && npx tsc → false (no quotes at all)', () => {
+    expect(hasUnbalancedQuotes('cd ui && npx tsc')).toBe(false)
+  })
+
+  it("echo 'hi' → false (balanced single quotes)", () => {
+    expect(hasUnbalancedQuotes("echo 'hi'")).toBe(false)
+  })
+
+  it("it's → true (documents why --done is excluded: apostrophe = unbalanced single quote)", () => {
+    expect(hasUnbalancedQuotes("it's")).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Guard 2b — parseTaskSpec rejects --verify/--preview with unbalanced quotes
+// ---------------------------------------------------------------------------
+
+describe('parseTaskSpec — unbalanced quote guard', () => {
+  it('rejects --verify with an unbalanced double quote', () => {
+    const result = parseTaskSpec({ flags: { '--verify': '"cd ui' }, multiFlags: {} })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.message).toContain('--verify')
+    }
+  })
+
+  it('accepts --verify with a balanced command (no quotes)', () => {
+    const result = parseTaskSpec({ flags: { '--verify': 'cd ui && npx tsc --noEmit' }, multiFlags: {} })
+    expect(result.ok).toBe(true)
+  })
+
+  it('does not reject --done containing an apostrophe', () => {
+    const result = parseTaskSpec({ flags: {}, multiFlags: { '--done': ["don't break things"] } })
+    expect(result.ok).toBe(true)
   })
 })
 
