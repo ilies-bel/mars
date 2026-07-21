@@ -34,6 +34,14 @@ import { PROVIDERS } from '../providers'
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Minimal headless stub for pty tests. The headless dispatch path is never
+// exercised in this suite; the stub exists only to satisfy the required
+// Provider.headless field added by the provider-adapter seam (slice 1/5).
+const PTY_TEST_HEADLESS_STUB = {
+  capabilities: { contextTokenMetering: false, quotaRejected: false, sessionId: false },
+  run: (): Promise<never> => Promise.reject(new Error('headless not exercised in pty tests')),
+} as const
+
 const makeFakeHandle = (): PtyHandle & { _exitListeners: Array<(code: number, signal: number) => void> } => {
   const exitListeners: Array<(code: number, signal: number) => void> = []
   return {
@@ -62,6 +70,7 @@ const makeProvider = (
     kind: 'status-file',
     wait: doneSignalWait,
   },
+  headless: PTY_TEST_HEADLESS_STUB,
 })
 
 // ---------------------------------------------------------------------------
@@ -249,6 +258,7 @@ describe('runPtySession — no doneSignal (process-exit fallback)', () => {
       name: 'claude',
       spawnArgv: () => ['claude'],
       feedPrompt: async () => {},
+      headless: PTY_TEST_HEADLESS_STUB,
       // no doneSignal
     }
 
@@ -523,6 +533,7 @@ describe('runPtySession — provider.prepare hook', () => {
       feedPrompt: async () => {},
       prepare: prepareSpy,
       doneSignal: { kind: 'status-file', wait: () => Promise.resolve() },
+      headless: PTY_TEST_HEADLESS_STUB,
     }
 
     await runPtySession({
@@ -554,6 +565,7 @@ describe('runPtySession — provider.prepare hook', () => {
       feedPrompt: async () => {},
       prepare: prepareSpy,
       doneSignal: { kind: 'status-file', wait: () => Promise.resolve() },
+      headless: PTY_TEST_HEADLESS_STUB,
     }
 
     const taskId = 'mars-77bd313c' // typical task-id format from the dispatch path
@@ -579,6 +591,7 @@ describe('runPtySession — provider.prepare hook', () => {
       feedPrompt: async () => {},
       prepare: prepareSpy,
       doneSignal: { kind: 'status-file', wait: () => Promise.resolve() },
+      headless: PTY_TEST_HEADLESS_STUB,
     }
 
     await runPtySession({
@@ -738,6 +751,7 @@ describe('runPtySession — readiness gate', () => {
       },
       isReady: (buf: string) => buf.includes('READY'),
       doneSignal: { kind: 'status-file', wait: () => Promise.resolve() },
+      headless: PTY_TEST_HEADLESS_STUB,
     }
 
     const runPromise = runPtySession({
@@ -791,6 +805,7 @@ describe('runPtySession — readiness gate', () => {
       },
       isReady: () => false, // never signals readiness
       doneSignal: { kind: 'status-file', wait: () => Promise.resolve() },
+      headless: PTY_TEST_HEADLESS_STUB,
     }
 
     const runPromise = runPtySession({

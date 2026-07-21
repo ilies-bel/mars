@@ -166,6 +166,20 @@ describe('PROVIDERS registry', () => {
   })
 })
 
+describe("PROVIDERS.claude headless adapter", () => {
+  it("exists and exposes a 'run' function", () => {
+    expect(PROVIDERS.claude.headless).toBeDefined()
+    expect(typeof PROVIDERS.claude.headless.run).toBe('function')
+  })
+
+  it('capabilities has contextTokenMetering: true, quotaRejected: true, sessionId: true', () => {
+    const { capabilities } = PROVIDERS.claude.headless
+    expect(capabilities.contextTokenMetering).toBe(true)
+    expect(capabilities.quotaRejected).toBe(true)
+    expect(capabilities.sessionId).toBe(true)
+  })
+})
+
 describe('WORKER_CONFIGS provider field', () => {
   const workerNames = Object.keys(WORKER_CONFIGS) as Array<keyof typeof WORKER_CONFIGS>
 

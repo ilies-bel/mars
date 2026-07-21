@@ -3,10 +3,59 @@
 // builder, the prompt-feed method, and an optional done-signal hook.
 
 import { installClaudeStopHook, waitForClaudeDone } from './claude-done-signal'
-import { AGENT_TO_USER_DENIED_TOOLS, toClaudeSessionId } from '../lib/git/claude'
-import type { ClaudeEffort, ClaudePermissionMode } from '../lib/git/claude'
+import {
+  runClaudeCode,
+  AGENT_TO_USER_DENIED_TOOLS,
+  toClaudeSessionId,
+  type RunClaudeResult,
+  type ClaudeEffort,
+  type ClaudePermissionMode,
+} from '../lib/git/claude'
+import type { ClaudeEvent } from '../lib/claude-stream'
 
 export type ProviderName = 'claude' | 'gemini' | 'codex'
+
+// Runtime options forwarded to HeadlessAdapter.run when the orchestrator
+// dispatches a headless (non-interactive subprocess) invocation. Mirrors
+// the fields currently threaded into runClaudeCode from buildWorker so
+// the Claude adapter is a thin pass-through with no argument mapping.
+// The `systemPrompt` field carries the fully-resolved prompt string —
+// callers collapse `options.systemPrompt ?? config.systemPrompt ??
+// config.appendSystemPrompt` before calling run().
+export type HeadlessRunOpts = Readonly<{
+  cwd: string
+  sessionId?: string
+  onEvent?: (event: ClaudeEvent) => void | Promise<void>
+  model?: string
+  systemPrompt?: string
+  effort?: ClaudeEffort
+  permissionMode?: ClaudePermissionMode
+  bare?: boolean
+  agent?: string
+  disallowedTools?: ReadonlyArray<string>
+  maxContextTokens?: number
+  mcpServers?: Readonly<Record<string, unknown>>
+  externalAbort?: AbortSignal
+}>
+
+// Adapter for headless (non-interactive subprocess) dispatch of a Provider's
+// agent CLI. A Provider that supports headless dispatch implements this
+// interface; one that does not provides a stub that throws so callers fail
+// fast at runtime rather than silently falling back to an unintended path.
+//
+// The `capabilities` descriptor advertises which result fields the adapter
+// populates so dispatch logic can branch without inspecting the return value
+// at runtime. All three flags are true for the Claude adapter because
+// runClaudeCode extracts the session_id, detects quota-rejection, and tracks
+// context token usage.
+export interface HeadlessAdapter {
+  run(prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult>
+  readonly capabilities: {
+    readonly contextTokenMetering: boolean
+    readonly quotaRejected: boolean
+    readonly sessionId: boolean
+  }
+}
 
 // Runtime options forwarded to spawnArgv when the orchestrator launches
 // a Provider process. Named fields instead of a plain record so callers
@@ -80,6 +129,11 @@ export interface Provider {
   readonly doneSignal?: ProviderDoneSignal
   prepare?(cwd: string, sessionId: string): void
   readonly isReady?: (strippedBuffer: string) => boolean
+  // Headless dispatch adapter. Required on every Provider so buildWorker's
+  // headless branch can call it uniformly. Providers that do not yet have a
+  // real headless implementation (gemini, codex) supply a stub that rejects —
+  // their adapter slices land this in a later PRD slice.
+  readonly headless: HeadlessAdapter
 }
 
 // Registry of every known Provider keyed by ProviderName.
@@ -171,6 +225,19 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     isReady: (buf: string): boolean =>
       buf.includes('❯') &&
       /bypass permissions|shift\+tab to cycle|Haiku|Sonnet|Opus/i.test(buf),
+    // Headless adapter: delegates directly to runClaudeCode so the headless
+    // dispatch path is bit-identical to the pre-seam behaviour. All three
+    // capability flags are true because runClaudeCode extracts the session_id,
+    // detects quota-rejection, and tracks context token usage.
+    headless: {
+      capabilities: {
+        contextTokenMetering: true,
+        quotaRejected: true,
+        sessionId: true,
+      },
+      run: (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> =>
+        runClaudeCode({ prompt, ...opts }),
+    },
   },
   gemini: {
     name: 'gemini',
@@ -193,6 +260,18 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       // Braille spinner characters emitted by gemini while processing a task,
       // followed by optional whitespace / ANSI clear sequences.
       spinnerOverride: /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/,
+    },
+    // Headless adapter stub — not yet implemented. A headless dispatch routed
+    // to the gemini provider will throw at runtime; its adapter slice lands in
+    // a later PRD iteration.
+    headless: {
+      capabilities: {
+        contextTokenMetering: false,
+        quotaRejected: false,
+        sessionId: false,
+      },
+      run: (_prompt: string, _opts: HeadlessRunOpts): Promise<RunClaudeResult> =>
+        Promise.reject(new Error('gemini headless adapter not yet implemented')),
     },
   },
   codex: {
@@ -219,6 +298,18 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       // Braille spinner characters emitted by codex while processing a task,
       // followed by a space and the rest of the spinner text up to end-of-line.
       spinnerOverride: /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .*$/,
+    },
+    // Headless adapter stub — not yet implemented. A headless dispatch routed
+    // to the codex provider will throw at runtime; its adapter slice lands in
+    // a later PRD iteration.
+    headless: {
+      capabilities: {
+        contextTokenMetering: false,
+        quotaRejected: false,
+        sessionId: false,
+      },
+      run: (_prompt: string, _opts: HeadlessRunOpts): Promise<RunClaudeResult> =>
+        Promise.reject(new Error('codex headless adapter not yet implemented')),
     },
   },
 } as const

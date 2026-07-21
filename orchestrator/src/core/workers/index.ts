@@ -12,7 +12,6 @@
 // See PRD 948691d0-stop-dispatched-implement-workers-from-c.
 
 import {
-  runClaudeCode,
   type ClaudeEffort,
   type ClaudePermissionMode,
   type RunClaudeResult,
@@ -381,13 +380,12 @@ const buildWorker = (config: WorkerConfig): Worker => {
             agent: config.agent,
             appendSystemPrompt: config.appendSystemPrompt,
           })
-        : runClaudeCode({
+        : PROVIDERS[config.provider].headless.run(prompt, {
             cwd: options.cwd,
-            prompt,
-            model: config.model,
-            systemPrompt: options.systemPrompt ?? config.systemPrompt ?? config.appendSystemPrompt,
             sessionId: options.sessionId,
             onEvent: options.onEvent,
+            model: config.model,
+            systemPrompt: options.systemPrompt ?? config.systemPrompt ?? config.appendSystemPrompt,
             effort: config.effort,
             permissionMode: config.permissionMode,
             bare: config.bare,
