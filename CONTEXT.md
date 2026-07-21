@@ -478,3 +478,7 @@ The CLI-managed catalog of environment and workflow improvements the Reflector s
 **Operator**:
 The human-or-agent principal who runs Mars's control loop: triages the action queue and sets the control levers that govern dispatch and spend.
 _Avoid_: user, admin, operator queue
+
+**Control lever**:
+A single operator-settable, persisted daemon.json field that gates a spend- or dispatch-affecting daemon behaviour (recovery, scoring, arc-verify, auto-reflect, dispatch, budget thresholds), read and flipped through the one operator surface.
+_Avoid_: flag, kill-switch, toggle, set-flag
