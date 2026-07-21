@@ -11,13 +11,12 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { startHttpServer } from '../../orchestrator/src/core/daemon/http-server.ts'
-import type { HttpServerDeps } from '../../orchestrator/src/core/daemon/http-server.ts'
-import { ChatRunner } from '../../orchestrator/src/core/daemon/chat-runner.ts'
 import type { KpiSeries } from '../../orchestrator/src/core/lib/kpi-snapshots.ts'
 import { loadRecipeCatalog } from '../../orchestrator/src/core/lib/recipes.ts'
-import { nullTraceStore } from '../../orchestrator/src/core/lib/run-tool.ts'
+import { stubAppServices } from '../../orchestrator/src/core/daemon/__tests__/app-services-stub.ts'
 import { fetchKpis, fetchKpiSeries } from './daemonHttp.ts'
 import type { KpiRecord } from './daemonHttp.ts'
+import { makeHttpServerDeps } from './__testing__/httpServerDeps.ts'
 
 let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
 
@@ -27,107 +26,14 @@ beforeAll(async () => {
   )
 })
 
-const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Promise<KpiSeries>): HttpServerDeps => ({
-  chatRunner: new ChatRunner(),
-  runReflect: async () => ({ proposalsRaised: 0 }),
-  enableAutoReflect: async () => {},
-  restartTask: async () => {},
-  unblockTask: async () => {},
-  snoozeItem: async () => {},
-  purgeTask: async () => {},
-  pruneWorktree: async () => {},
-  dismissProposal: async () => {},
-  validateTask: async () => {},
-  rejectTask: async () => {},
-  investigateWorktree: async () => ({ explanation: '' }),
-  diagnoseFailure: async () => ({ diagnosis: '' }),
-  restartDaemon: async () => {},
-  restartAllDaemonKilled: async () => [],
-  isAcceptingWork: () => true,
-  inFlightCount: () => 0,
-  selfUpdate: async () => {},
-  recipeCatalog:
-    cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
-  traceStore: nullTraceStore,
-  stepDone: async () => ({ next: null }),
-  appServices: {
-    viewActionQueue: async () => [],
-    viewActionQueueHistory: async () => ({ rows: [], nextCursor: null }),
-    viewAlerts: async () => [],
-    viewAlert: async () => null,
-    listKpis: async () => kpis,
-    listKpisSeries: seriesOverride ?? (async (_limit: number) => ({
-      failure_rate: [],
-      autonomous_completion_rate: [],
-      recovery_success_rate: [],
-      cost_per_arc_p50: [],
-    })),
-    listKpiArcs: async () => ({
-      key: 'failure_rate' as const,
-      window: { windowStart: '', windowEnd: '' },
-      arcs: [],
+const makeKpiDeps = (kpis: KpiRecord[], seriesOverride?: (limit: number) => Promise<KpiSeries>) =>
+  makeHttpServerDeps({
+    recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
+    appServices: stubAppServices({
+      listKpis: async () => kpis,
+      ...(seriesOverride && { listKpisSeries: seriesOverride }),
     }),
-    budgetStatus: async () => ({
-      configured: false,
-      config: null,
-      window: null,
-      arcs: null,
-      openRows: [],
-    }),
-    viewTasks: async () => ({ tasks: [] }),
-    viewTask: async () => null,
-    viewProgress: async () => ({ tasks: [], proposals: [], aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 } }),
-    viewProposals: async () => ({ drafts: [], staleWorktrees: [] }),
-    viewProposal: async () => null,
-    viewStepSpans: async () => ({ spans: [] }),
-    viewRunTimeline: async (taskId: string) => ({ taskId, runs: [] }),
-    viewStepPrompt: async ({ workflowInstanceId, stepName }: { workflowInstanceId: string; stepName: string }) => ({
-      workflowInstanceId,
-      stepName,
-      prompt: null,
-      source: null,
-    }),
-    viewPrimitives: async () => ({ primitives: [] }),
-    viewPrimitive: async () => null,
-    viewSessions: async () => ({ sessions: [] }),
-    viewTerminalEvents: async () => ({ events: [] }),
-    viewReleaseNotes: async () => ({ entries: [] }),
-    viewReflect: async () => ({
-      entries: [],
-      costSummary: {
-        totalWeightedTokens: 0,
-        taskCount: 0,
-        successCount: 0,
-        failureCount: 0,
-        blockedCount: 0,
-        droppedCount: 0,
-        cacheHitRatio: 0,
-        rateLimitRejections: 0,
-        topTokenHeavyTasks: [],
-        topExpensiveSteps: [],
-        tokensByStep: [],
-      },
-    }),
-    viewArcs: async () => [],
-    viewScorerTrend: async () => ({ trends: [], recent: [] }),
-    viewScorerWorkflows: async () => ({ workflows: [] }),
-    viewLoopLedger: async () => ({ entries: [] }),
-    viewFrameworkUpdate: async () => ({
-      installed: '0.1.0',
-      latest: '0.1.0',
-      available: false,
-      checkedAt: null,
-      releaseUrl: null,
-      selfUpdatable: false,
-    }),
-    viewWorkflowConfigs: async () => ({ configs: [] }),
-    viewPromotionLedger: async () => ({ entries: [] }),
-    viewGlossary: async () => ({ terms: [] }),
-    viewSkills: async () => ({ skills: [] }),
-    viewChatThreads: async () => ({ threads: [] }),
-    viewChatThread: async () => null,
-  },
-})
+  })
 
 // ---------------------------------------------------------------------------
 // Shared fixture KPI data

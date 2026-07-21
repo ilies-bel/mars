@@ -17,10 +17,10 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { startHttpServer } from '../../orchestrator/src/core/daemon/http-server.ts'
 import type { HttpServerDeps } from '../../orchestrator/src/core/daemon/http-server.ts'
-import { stubAppServices, stubChatRunner } from '../../orchestrator/src/core/daemon/__tests__/app-services-stub.ts'
+import { stubAppServices } from '../../orchestrator/src/core/daemon/__tests__/app-services-stub.ts'
 import { loadRecipeCatalog } from '../../orchestrator/src/core/lib/recipes.ts'
-import { nullTraceStore } from '../../orchestrator/src/core/lib/run-tool.ts'
 import { startServer } from './index.ts'
+import { makeHttpServerDeps } from './__testing__/httpServerDeps.ts'
 
 let cachedRecipeCatalog: Awaited<ReturnType<typeof loadRecipeCatalog>> | null = null
 
@@ -32,31 +32,11 @@ beforeAll(async () => {
 
 const makeDaemonDeps = (
   viewTasks: HttpServerDeps['appServices']['viewTasks'],
-): HttpServerDeps => ({
-  chatRunner: stubChatRunner(),
-  runReflect: async () => ({ proposalsRaised: 0 }),
-  enableAutoReflect: async () => {},
-  restartTask: async () => {},
-  unblockTask: async () => {},
-  snoozeItem: async () => {},
-  purgeTask: async () => {},
-  pruneWorktree: async () => {},
-  dismissProposal: async () => {},
-  validateTask: async () => {},
-  rejectTask: async () => {},
-  investigateWorktree: async () => ({ explanation: '' }),
-  diagnoseFailure: async () => ({ diagnosis: '' }),
-  restartDaemon: async () => {},
-  restartAllDaemonKilled: async () => [],
-  isAcceptingWork: () => true,
-  inFlightCount: () => 0,
-  selfUpdate: async () => {},
-  recipeCatalog:
-    cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
-  traceStore: nullTraceStore,
-  stepDone: async () => ({ next: null }),
-  appServices: stubAppServices({ viewTasks }),
-})
+) =>
+  makeHttpServerDeps({
+    recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
+    appServices: stubAppServices({ viewTasks }),
+  })
 
 describe('GET /api/tasks — proxies daemon /view/tasks', () => {
   let repo: string
