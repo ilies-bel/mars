@@ -6,6 +6,7 @@ import type { EventName, EventPayload } from './outbox'
 import { resolveOriginIdForTask } from './origin'
 import { derivedRowActions } from './derived-row-actions'
 import { lookupRecipe } from './action-queue-recipes'
+import { classifyMarsVerb } from './chat-mars-verbs'
 
 // ── Alert-thread notification callback ────────────────────────────────────────
 
@@ -501,11 +502,9 @@ const resolvedOriginFingerprint = async (originId: string): Promise<string> =>
 
 /** Map an action op to its button style on the alert card. */
 const alertActionStyle = (op: string): 'primary' | 'destructive' | 'default' => {
-  if (
-    ['restart', 'validate', 'unblock', 'run-reflect', 'enable-auto-reflect', 'attach'].includes(op)
-  )
-    return 'primary'
-  if (['dismiss', 'purge', 'reject', 'prune-worktree'].includes(op)) return 'destructive'
+  const classification = classifyMarsVerb(op)
+  if (classification === 'safe') return 'primary'
+  if (classification === 'destructive') return 'destructive'
   return 'default'
 }
 
