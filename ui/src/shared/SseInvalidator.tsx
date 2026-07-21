@@ -3,7 +3,8 @@ import { useQueryClient } from '@tanstack/react-query'
 import { eventsUrl } from './api'
 import { getOpenTaskId } from './openTaskId'
 import { setSseConnected } from './sseStatus'
-import { pushLiveEvent, type LiveEvent } from './chatBuffer'
+import { publishChatDelta } from './chatDeltaBus'
+import type { LiveEvent } from './liveEvent'
 
 export const SseInvalidator = () => {
   const qc = useQueryClient()
@@ -83,8 +84,9 @@ export const SseInvalidator = () => {
     })
 
     // 'chat-delta' events carry live segment data from the daemon chat-runner.
-    // Push each segment into the module-level chatBuffer store so the active
-    // thread's ChatPage can render it incrementally.
+    // Publish each raw segment onto the per-thread delta bus; the active
+    // thread's MarsChatTransport subscribes and normalises it into the
+    // UIMessage stream that useChat renders.
     es.addEventListener('chat-delta', (e) => {
       try {
         const me = e as MessageEvent<string>
@@ -97,7 +99,7 @@ export const SseInvalidator = () => {
           'event' in payload
         ) {
           const { threadId, event } = payload as { threadId: string; event: LiveEvent }
-          pushLiveEvent(threadId, event)
+          publishChatDelta(threadId, event)
         }
       } catch {
         // Malformed payload — ignore.

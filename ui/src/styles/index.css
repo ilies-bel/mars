@@ -97,6 +97,82 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+/* ── shadcn semantic layer — aliases onto Mars @theme tokens ──
+ * Single source of truth stays the Mars --color-* tokens above. This layer
+ * only maps shadcn/AI-Elements semantic names onto them so the vendored
+ * components render on the Mars palette. Do NOT edit the @theme block for this.
+ */
+:root {
+  --background: var(--color-bg);             /* #F5EDE4 */
+  --foreground: var(--color-fg);             /* #1A0F0A */
+  --card: var(--color-surface);              /* #FFFFFF */
+  --card-foreground: var(--color-fg);
+  --popover: var(--color-surface);
+  --popover-foreground: var(--color-fg);
+  --primary: var(--color-iron);              /* #9C2E35 — chat de-facto primary */
+  --primary-foreground: #FFFFFF;
+  --secondary: var(--color-panel);           /* #FBF7F2 */
+  --secondary-foreground: var(--color-fg);
+  --muted: var(--color-bg);                  /* #F5EDE4 — bg, NOT Mars text-muted */
+  --muted-foreground: var(--color-muted);    /* #705F50 — Mars's old text-muted value */
+  --accent: var(--color-border);             /* #E5D9CB — neutral hover bg */
+  --accent-foreground: var(--color-fg);
+  --destructive: var(--color-error);         /* #B91C1C */
+  --destructive-foreground: #FFFFFF;
+  --border: var(--color-border);             /* #E5D9CB */
+  --input: var(--color-border);
+  --ring: var(--color-flame);                /* #9A4F00 — matches :focus-visible */
+  --radius: 0.5rem;                          /* rounded-lg */
+}
+
+.dark {
+  --background: var(--color-surface-dark);   /* #251812 */
+  --foreground: var(--color-fg-dark);        /* #F5EDE4 */
+  --card: #2E1E15;                           /* elevated (no Mars dark-card token) */
+  --card-foreground: var(--color-fg-dark);
+  --popover: #2E1E15;
+  --popover-foreground: var(--color-fg-dark);
+  --primary: var(--color-iron);
+  --primary-foreground: var(--color-fg-dark);
+  --secondary: var(--color-border-dark);     /* #3A2820 */
+  --secondary-foreground: var(--color-fg-dark);
+  --muted: var(--color-border-dark);
+  --muted-foreground: var(--color-muted-dark);/* #A89684 */
+  --accent: var(--color-border-dark);
+  --accent-foreground: var(--color-fg-dark);
+  --destructive: #DC2626;
+  --destructive-foreground: var(--color-fg-dark);
+  --border: var(--color-border-dark);
+  --input: var(--color-border-dark);
+  --ring: var(--color-amber);                /* #E8A33D — matches .dag-canvas ring */
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
 /* ── Global keyboard focus ring ─────────────────────────────────────────────
  * Replaces the UA default outline (browser blue, off-brand, inconsistent)
  * with a single Mars brand ring on every interactive element.

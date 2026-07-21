@@ -1,24 +1,24 @@
 /**
- * Tests for ChatPage segment-grouping and label helpers.
+ * Tests for ChatPage after the AI-Elements migration.
  *
- * Segment grouping (groupMessageSegments) and label formatting
- * (toolGroupLabel) are pure functions that describe observable
- * chat-rendering behaviour without requiring a DOM or React rendering.
- * These are the most important correctness properties for the
- * message-rendering pipeline.
+ * The message-rendering pipeline is now two pieces:
+ *   1. `chatMessageToUIMessage` (shared/chatMessageMapping) — the pure
+ *      persisted-segment → UIMessage-parts normaliser. This replaces the old
+ *      `groupMessageSegments`/`toolGroupLabel` helpers; its correctness is the
+ *      most important property for the transcript.
+ *   2. `MessageView` (ChatPage) — renders one `MarsUIMessage` through AI
+ *      Elements (Response / Reasoning / Tool) plus the bespoke alert / result /
+ *      error / attachment surfaces that have no first-class AI-SDK part.
  *
- * A render test using the real captured fixture is included to guard against
- * the message-drop regression where tool_result segments caused the whole
- * assistant message to be silently discarded.
+ * The real captured fixture is exercised end-to-end to guard the historical
+ * message-drop regression (tool_result segments silently discarding a message).
  */
 
 import { describe, it, expect } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createElement } from 'react'
 import {
-  groupMessageSegments,
-  toolGroupLabel,
-  ChatMessageBubble,
+  MessageView,
   FeedbackControls,
   pickTopAlert,
   HeroSuggestions,
@@ -26,8 +26,10 @@ import {
   resolveMediaKind,
   fileMediaKind,
 } from './ChatPage'
+import { chatMessageToUIMessage } from '@/shared/chatMessageMapping'
 import { chatThreadDetailSchema } from '@/shared/schemas'
-import type { ChatMessage, ChatSegmentToolUse, ActionQueueItem, ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment } from '@/shared/schemas'
+import type { ChatMessage, ActionQueueItem, ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment } from '@/shared/schemas'
+import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import fixture from './__fixtures__/chat-thread-fixture.json'
 
 // ---------------------------------------------------------------------------
@@ -47,184 +49,137 @@ const makeMsg = (
   feedback,
 })
 
+/** Narrow a mapped part to a tool part (`tool-<name>`). */
+const toolParts = (m: MarsUIMessage) => m.parts.filter((p) => p.type.startsWith('tool-'))
+
 // ---------------------------------------------------------------------------
-// groupMessageSegments
+// chatMessageToUIMessage — persisted segments → UIMessage parts
 // ---------------------------------------------------------------------------
 
-describe('groupMessageSegments', () => {
-  it('passes a lone text segment through as-is', () => {
-    const msg = makeMsg([{ type: 'text', text: 'hello' }])
-    const out = groupMessageSegments(msg)
-    expect(out).toEqual([{ kind: 'text', text: 'hello' }])
+describe('chatMessageToUIMessage', () => {
+  it('maps a lone text segment to a single text part', () => {
+    const out = chatMessageToUIMessage(makeMsg([{ type: 'text', text: 'hello' }]))
+    expect(out.parts).toEqual([{ type: 'text', text: 'hello', state: 'done' }])
   })
 
-  it('passes a lone thinking segment through as-is', () => {
-    const msg = makeMsg([{ type: 'thinking', text: 'thinking...' }])
-    const out = groupMessageSegments(msg)
-    expect(out).toEqual([{ kind: 'thinking', text: 'thinking...' }])
+  it('maps a thinking segment to a reasoning part', () => {
+    const out = chatMessageToUIMessage(makeMsg([{ type: 'thinking', text: 'thinking...' }]))
+    expect(out.parts).toEqual([{ type: 'reasoning', text: 'thinking...', state: 'done' }])
   })
 
-  it('collapses consecutive tool_use segments into a single tool_group', () => {
-    const msg = makeMsg([
-      { type: 'tool_use', toolName: 'Bash', input: { cmd: 'ls' }, status: 'complete', isError: false },
-      { type: 'tool_use', toolName: 'Read', input: { path: '/foo' }, status: 'complete', isError: false },
-    ])
-    const out = groupMessageSegments(msg)
-    expect(out).toHaveLength(1)
-    expect(out[0]!.kind).toBe('tool_group')
-    const group = out[0] as { kind: 'tool_group'; tools: ChatMessage['segments'] }
-    expect(group.tools).toHaveLength(2)
+  it('carries the persisted id, role and feedback onto the UIMessage', () => {
+    const out = chatMessageToUIMessage(
+      makeMsg([{ type: 'text', text: 'hi' }], 'assistant', { rating: 'up', note: null }),
+    )
+    expect(out.id).toBe('msg-1')
+    expect(out.role).toBe('assistant')
+    expect(out.metadata?.feedback).toEqual({ rating: 'up', note: null })
   })
 
-  it('does not merge non-consecutive tool_use segments', () => {
-    const msg = makeMsg([
-      { type: 'tool_use', toolName: 'Bash', input: {}, status: 'complete', isError: false },
-      { type: 'text', text: 'between' },
-      { type: 'tool_use', toolName: 'Read', input: {}, status: 'complete', isError: false },
-    ])
-    const out = groupMessageSegments(msg)
-    expect(out).toHaveLength(3)
-    expect(out[0]!.kind).toBe('tool_group')
-    expect(out[1]!.kind).toBe('text')
-    expect(out[2]!.kind).toBe('tool_group')
+  it('emits a separate tool part per tool_use (no grouping)', () => {
+    const out = chatMessageToUIMessage(makeMsg([
+      { type: 'tool_use', id: 'a', toolName: 'Bash', input: { cmd: 'ls' }, status: 'complete', isError: false },
+      { type: 'tool_use', id: 'b', toolName: 'Read', input: { path: '/foo' }, status: 'complete', isError: false },
+    ]))
+    const tools = toolParts(out)
+    expect(tools).toHaveLength(2)
+    expect(tools[0]!.type).toBe('tool-Bash')
+    expect(tools[1]!.type).toBe('tool-Read')
   })
 
-  it('handles a mixed message: thinking → tools → text', () => {
-    const msg = makeMsg([
-      { type: 'thinking', text: 'let me think' },
-      { type: 'tool_use', toolName: 'Bash', input: {}, status: 'complete', isError: false },
-      { type: 'tool_use', toolName: 'Bash', input: {}, status: 'complete', isError: false },
-      { type: 'text', text: 'done' },
-    ])
-    const out = groupMessageSegments(msg)
-    expect(out).toHaveLength(3)
-    expect(out[0]!.kind).toBe('thinking')
-    expect(out[1]!.kind).toBe('tool_group')
-    expect(out[2]!.kind).toBe('text')
-  })
-
-  it('returns an empty array for a message with no segments', () => {
-    const msg = makeMsg([])
-    expect(groupMessageSegments(msg)).toEqual([])
-  })
-
-  it('attaches tool_result content to the matching tool_use in the same group', () => {
-    const msg = makeMsg([
+  it('folds a tool_result into the matching tool_use as output-available', () => {
+    const out = chatMessageToUIMessage(makeMsg([
       { type: 'tool_use', id: 'tu-1', toolName: 'Bash', input: { cmd: 'ls' }, status: 'complete', isError: false },
       { type: 'tool_result', tool_use_id: 'tu-1', content: 'file1.ts\nfile2.ts', isError: false },
-    ])
-    const out = groupMessageSegments(msg)
-    // One tool_group containing one enriched tool_use
-    expect(out).toHaveLength(1)
-    expect(out[0]!.kind).toBe('tool_group')
-    const group = out[0] as { kind: 'tool_group'; tools: ChatSegmentToolUse[] }
-    expect(group.tools).toHaveLength(1)
-    expect(group.tools[0]!.result).toBe('file1.ts\nfile2.ts')
+    ]))
+    const tool = toolParts(out)[0] as Extract<MarsUIMessage['parts'][number], { toolCallId: string }>
+    expect(tool.state).toBe('output-available')
+    expect((tool as { output: unknown }).output).toBe('file1.ts\nfile2.ts')
   })
 
-  it('tool_result with isError=true marks the matching tool as error', () => {
-    const msg = makeMsg([
+  it('marks a tool with an error result as output-error', () => {
+    const out = chatMessageToUIMessage(makeMsg([
       { type: 'tool_use', id: 'tu-err', toolName: 'Bash', input: {}, status: 'complete', isError: false },
       { type: 'tool_result', tool_use_id: 'tu-err', content: 'Permission denied', isError: true },
-    ])
-    const out = groupMessageSegments(msg)
-    const group = out[0] as { kind: 'tool_group'; tools: ChatSegmentToolUse[] }
-    expect(group.tools[0]!.isError).toBe(true)
-    expect(group.tools[0]!.result).toBe('Permission denied')
+    ]))
+    const tool = toolParts(out)[0] as { state: string; errorText: string }
+    expect(tool.state).toBe('output-error')
+    expect(tool.errorText).toBe('Permission denied')
   })
 
-  it('does not flush the tool group when tool_result is encountered', () => {
-    // tool_use → tool_result → tool_use should produce ONE group of two tools
-    const msg = makeMsg([
+  it('folds tool_results across an interleaved tool_use/tool_result run', () => {
+    const out = chatMessageToUIMessage(makeMsg([
       { type: 'tool_use', id: 'tu-a', toolName: 'Read', input: {}, status: 'complete', isError: false },
       { type: 'tool_result', tool_use_id: 'tu-a', content: 'contents', isError: false },
       { type: 'tool_use', id: 'tu-b', toolName: 'Bash', input: {}, status: 'complete', isError: false },
       { type: 'tool_result', tool_use_id: 'tu-b', content: 'output', isError: false },
-    ])
-    const out = groupMessageSegments(msg)
-    expect(out).toHaveLength(1)
-    const group = out[0] as { kind: 'tool_group'; tools: ChatSegmentToolUse[] }
-    expect(group.tools).toHaveLength(2)
-    expect(group.tools[0]!.result).toBe('contents')
-    expect(group.tools[1]!.result).toBe('output')
+    ]))
+    const tools = toolParts(out) as { output: unknown }[]
+    expect(tools).toHaveLength(2)
+    expect(tools[0]!.output).toBe('contents')
+    expect(tools[1]!.output).toBe('output')
   })
 
-  it('does not mutate the original message segments when attaching tool_result', () => {
+  it('does not mutate the original message segments', () => {
     const toolSeg = { type: 'tool_use' as const, id: 'tu-1', toolName: 'Bash', input: {}, status: 'complete' as const, isError: false }
-    const msg = makeMsg([
+    chatMessageToUIMessage(makeMsg([
       toolSeg,
       { type: 'tool_result', tool_use_id: 'tu-1', content: 'out', isError: false },
-    ])
-    groupMessageSegments(msg)
-    // Original segment should be untouched
+    ]))
     expect(toolSeg.result).toBeUndefined()
   })
 
   it('drops a thinking segment whose text is empty', () => {
-    const msg = makeMsg([
+    const out = chatMessageToUIMessage(makeMsg([
       { type: 'text', text: 'before' },
       { type: 'thinking', text: '' },
       { type: 'text', text: 'after' },
+    ]))
+    expect(out.parts).toEqual([
+      { type: 'text', text: 'before', state: 'done' },
+      { type: 'text', text: 'after', state: 'done' },
     ])
-    const out = groupMessageSegments(msg)
-    // The empty thinking block is silently dropped
-    expect(out).toHaveLength(2)
-    expect(out[0]).toEqual({ kind: 'text', text: 'before' })
-    expect(out[1]).toEqual({ kind: 'text', text: 'after' })
   })
 
-  it('keeps provider errors as visible assistant segments', () => {
-    const out = groupMessageSegments(makeMsg([
+  it('maps a provider error segment to a data-chatError part', () => {
+    const out = chatMessageToUIMessage(makeMsg([
       { type: 'error', message: 'Codex could not authenticate. Sign in and try again.' },
     ]))
-    expect(out).toEqual([
-      { kind: 'error', message: 'Codex could not authenticate. Sign in and try again.' },
+    expect(out.parts).toEqual([
+      { type: 'data-chatError', data: { message: 'Codex could not authenticate. Sign in and try again.' } },
     ])
   })
-})
 
-// ---------------------------------------------------------------------------
-// toolGroupLabel
-// ---------------------------------------------------------------------------
-
-describe('toolGroupLabel', () => {
-  it('labels a single tool without a count suffix', () => {
-    const tools = [
-      { type: 'tool_use' as const, toolName: 'Read', input: {}, status: 'complete' as const, isError: false },
-    ]
-    expect(toolGroupLabel(tools)).toBe('Used 1 tool — Read')
+  it('folds a result segment into message metadata usage', () => {
+    const out = chatMessageToUIMessage(makeMsg([
+      { type: 'text', text: 'done' },
+      { type: 'result', durationMs: 1000, inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cost: 0.001 },
+    ]))
+    // No result part — usage rides as metadata.
+    expect(out.parts.some((p) => p.type === 'data-result')).toBe(false)
+    expect(out.metadata?.usage).toEqual({
+      durationMs: 1000, inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cost: 0.001,
+    })
   })
 
-  it('appends ×N for repeated tool names', () => {
-    const tools = [
-      { type: 'tool_use' as const, toolName: 'Bash', input: {}, status: 'complete' as const, isError: false },
-      { type: 'tool_use' as const, toolName: 'Bash', input: {}, status: 'complete' as const, isError: false },
-      { type: 'tool_use' as const, toolName: 'Bash', input: {}, status: 'complete' as const, isError: false },
-    ]
-    const label = toolGroupLabel(tools)
-    expect(label).toBe('Used 3 tools — Bash ×3')
+  it('maps an attachment segment to a data-attachment part', () => {
+    const out = chatMessageToUIMessage(makeMsg([
+      { type: 'attachment', path: 'img.png', mimeType: 'image/png', name: 'img.png' },
+    ]))
+    expect(out.parts[0]!.type).toBe('data-attachment')
   })
 
-  it('lists multiple distinct tools in insertion order', () => {
-    const tools = [
-      { type: 'tool_use' as const, toolName: 'Bash', input: {}, status: 'complete' as const, isError: false },
-      { type: 'tool_use' as const, toolName: 'Bash', input: {}, status: 'complete' as const, isError: false },
-      { type: 'tool_use' as const, toolName: 'Read', input: {}, status: 'complete' as const, isError: false },
-    ]
-    const label = toolGroupLabel(tools)
-    expect(label).toBe('Used 3 tools — Bash ×2, Read')
+  it('returns an empty parts array for a message with no segments', () => {
+    expect(chatMessageToUIMessage(makeMsg([])).parts).toEqual([])
   })
 })
 
 // ---------------------------------------------------------------------------
-// Schema round-trip + render regression — real captured fixture
+// Schema round-trip + mapping regression — real captured fixture
 //
-// The fixture is an assistant reply that contains:
+// The fixture is an assistant reply:
 //   text → tool_use → tool_result → thinking(empty) → tool_use → tool_result
 //   → text → result
-//
-// Previously, the missing tool_result variant in chatSegmentSchema caused
-// parse to fail and the whole assistant message to be silently dropped.
 // ---------------------------------------------------------------------------
 
 describe('real fixture regression', () => {
@@ -235,44 +190,25 @@ describe('real fixture regression', () => {
     expect(parsed.messages[1]!.role).toBe('assistant')
   })
 
-  it('assistant message segments include both tool_use entries (tool_result absorbed)', () => {
+  it('assistant message keeps both tool_use and both tool_result segments', () => {
     const parsed = chatThreadDetailSchema.parse(fixture)
     const assistantMsg = parsed.messages[1]!
-    // Raw segments: text, tool_use, tool_result, thinking(empty), tool_use, tool_result, text, result
-    // After parsing: tool_result segments are included in the ChatSegment union
-    const toolUseSegments = assistantMsg.segments.filter(s => s.type === 'tool_use')
-    const toolResultSegments = assistantMsg.segments.filter(s => s.type === 'tool_result')
-    expect(toolUseSegments).toHaveLength(2)
-    expect(toolResultSegments).toHaveLength(2)
+    expect(assistantMsg.segments.filter((s) => s.type === 'tool_use')).toHaveLength(2)
+    expect(assistantMsg.segments.filter((s) => s.type === 'tool_result')).toHaveLength(2)
   })
 
-  it('groupMessageSegments on fixture assistant message yields text, 2 tool_groups, text, result', () => {
+  it('maps the fixture assistant message to text, 2 tools, text (+usage), empty thinking dropped', () => {
     const parsed = chatThreadDetailSchema.parse(fixture)
-    const assistantMsg = parsed.messages[1]!
-    const flat = groupMessageSegments(assistantMsg)
-    // text + tool_group + tool_group + text + result  (empty thinking dropped)
-    expect(flat).toHaveLength(5)
-    expect(flat[0]!.kind).toBe('text')
-    expect(flat[1]!.kind).toBe('tool_group')
-    expect(flat[2]!.kind).toBe('tool_group')
-    expect(flat[3]!.kind).toBe('text')
-    expect(flat[4]!.kind).toBe('result')
-  })
-
-  it('each tool_group has exactly one tool with its result attached', () => {
-    const parsed = chatThreadDetailSchema.parse(fixture)
-    const assistantMsg = parsed.messages[1]!
-    const flat = groupMessageSegments(assistantMsg)
-    const group1 = flat[1] as { kind: 'tool_group'; tools: ChatSegmentToolUse[] }
-    const group2 = flat[2] as { kind: 'tool_group'; tools: ChatSegmentToolUse[] }
-    expect(group1.tools).toHaveLength(1)
-    expect(group2.tools).toHaveLength(1)
-    // Both tools are Bash
-    expect(group1.tools[0]!.toolName).toBe('Bash')
-    expect(group2.tools[0]!.toolName).toBe('Bash')
-    // Results are attached
-    expect(group1.tools[0]!.result).toBeDefined()
-    expect(group2.tools[0]!.result).toBeDefined()
+    const out = chatMessageToUIMessage(parsed.messages[1]!)
+    const kinds = out.parts.map((p) => (p.type.startsWith('tool-') ? 'tool' : p.type))
+    expect(kinds).toEqual(['text', 'tool', 'tool', 'text'])
+    // Both tools resolved with their outputs.
+    const tools = toolParts(out) as { state: string; type: string }[]
+    expect(tools.every((t) => t.state === 'output-available')).toBe(true)
+    expect(tools.every((t) => t.type === 'tool-Bash')).toBe(true)
+    // Usage folded to metadata; empty thinking produced no reasoning part.
+    expect(out.metadata?.usage?.outputTokens).toBe(378)
+    expect(out.parts.some((p) => p.type === 'reasoning')).toBe(false)
   })
 
   it('unknown segment types are silently dropped, not crashing the parse', () => {
@@ -290,27 +226,26 @@ describe('real fixture regression', () => {
       ],
     }
     const parsed = chatThreadDetailSchema.parse(withUnknown)
-    // The unknown segment is silently dropped; the two text segments survive
     expect(parsed.messages[0]!.segments).toHaveLength(2)
     expect(parsed.messages[0]!.segments[0]).toMatchObject({ type: 'text', text: 'hello' })
     expect(parsed.messages[0]!.segments[1]).toMatchObject({ type: 'text', text: 'world' })
   })
 
-  it('renders the assistant message bubble with both tool groups and final text visible', () => {
+  it('renders the fixture assistant message with both tools and the final text + usage footer', () => {
     const parsed = chatThreadDetailSchema.parse(fixture)
-    const assistantMsg = parsed.messages[1]!
+    const msg = chatMessageToUIMessage(parsed.messages[1]!)
     const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg: assistantMsg, onDiscuss: () => undefined }),
+      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
     )
-    // Both tool groups (collapsed) show their labels
-    expect(html).toContain('Used 1 tool')
-    // Final text is rendered (markdown bold → <strong>)
+    // Tool panels show the tool name (Bash).
+    expect(html).toContain('Bash')
+    // Final text is rendered (markdown bold → <strong>).
     expect(html).toContain('Nothing pending')
-    // Result footer: duration and token count
+    // Usage footer: duration and token count.
     expect(html).toContain('8.4s')
     expect(html).toContain('384 tokens')
-    // Empty thinking block must NOT appear
-    expect(html).not.toContain('Thought process')
+    // Empty thinking must NOT surface a reasoning block.
+    expect(html).not.toContain('Thought for')
   })
 })
 
@@ -390,9 +325,7 @@ describe('HeroSuggestions – with alert', () => {
     const html = renderToStaticMarkup(
       createElement(HeroSuggestions, { topAlert: alert, onAlertClick: () => {}, onChipClick: () => {} }),
     )
-    // Alert chip present
     expect(html).toContain('Deploy is broken')
-    // Alert chip appears before the first regular chip in the DOM order
     const alertPos = html.indexOf('hero-alert-chip')
     const chipPos = html.indexOf('Groom the action queue')
     expect(alertPos).toBeLessThan(chipPos)
@@ -417,21 +350,12 @@ describe('HeroSuggestions – with alert', () => {
 
 // ---------------------------------------------------------------------------
 // Feedback controls — structure and accessibility
-//
-// Tests drive the observable HTML output through renderToStaticMarkup.
-// Interactive click paths (API calls, optimistic state transitions) cannot be
-// exercised in the SSR/node environment; the HTTP route tests in
-// http-chat-routes.test.ts cover the backend contract.
 // ---------------------------------------------------------------------------
 
 describe('FeedbackControls – structure', () => {
   it('renders a "helpful" and a "not helpful" button', () => {
     const html = renderToStaticMarkup(
-      createElement(FeedbackControls, {
-        messageId: 'msg-1',
-        feedback: null,
-        onFeedbackChange: () => {},
-      }),
+      createElement(FeedbackControls, { messageId: 'msg-1', feedback: null, onFeedbackChange: () => {} }),
     )
     expect(html).toContain('aria-label="helpful"')
     expect(html).toContain('aria-label="not helpful"')
@@ -439,24 +363,15 @@ describe('FeedbackControls – structure', () => {
 
   it('marks the helpful button as pressed when rating is "up"', () => {
     const html = renderToStaticMarkup(
-      createElement(FeedbackControls, {
-        messageId: 'msg-1',
-        feedback: { rating: 'up', note: null },
-        onFeedbackChange: () => {},
-      }),
+      createElement(FeedbackControls, { messageId: 'msg-1', feedback: { rating: 'up', note: null }, onFeedbackChange: () => {} }),
     )
-    // aria-pressed="true" on the helpful button — attributes may appear in any order
     expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="helpful"|aria-label="helpful"[^>]*aria-pressed="true"/)
     expect(html).toMatch(/aria-pressed="false"[^>]*aria-label="not helpful"|aria-label="not helpful"[^>]*aria-pressed="false"/)
   })
 
   it('marks the not-helpful button as pressed when rating is "down"', () => {
     const html = renderToStaticMarkup(
-      createElement(FeedbackControls, {
-        messageId: 'msg-1',
-        feedback: { rating: 'down', note: null },
-        onFeedbackChange: () => {},
-      }),
+      createElement(FeedbackControls, { messageId: 'msg-1', feedback: { rating: 'down', note: null }, onFeedbackChange: () => {} }),
     )
     expect(html).toMatch(/aria-pressed="false"[^>]*aria-label="helpful"|aria-label="helpful"[^>]*aria-pressed="false"/)
     expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="not helpful"|aria-label="not helpful"[^>]*aria-pressed="true"/)
@@ -464,37 +379,24 @@ describe('FeedbackControls – structure', () => {
 
   it('shows the note text when a down rating has a note', () => {
     const html = renderToStaticMarkup(
-      createElement(FeedbackControls, {
-        messageId: 'msg-1',
-        feedback: { rating: 'down', note: 'wrong answer' },
-        onFeedbackChange: () => {},
-      }),
+      createElement(FeedbackControls, { messageId: 'msg-1', feedback: { rating: 'down', note: 'wrong answer' }, onFeedbackChange: () => {} }),
     )
     expect(html).toContain('wrong answer')
   })
 
   it('does not show note text when rating is "up"', () => {
     const html = renderToStaticMarkup(
-      createElement(FeedbackControls, {
-        messageId: 'msg-1',
-        feedback: { rating: 'up', note: null },
-        onFeedbackChange: () => {},
-      }),
+      createElement(FeedbackControls, { messageId: 'msg-1', feedback: { rating: 'up', note: null }, onFeedbackChange: () => {} }),
     )
-    // The note span is only rendered for 'down' + note
     expect(html).not.toContain('wrong answer')
   })
 })
 
 // ---------------------------------------------------------------------------
-// ChatMessageBubble – assistant message card styling
-//
-// Assistant messages with non-alert content should render inside a bordered
-// card. Pure-alert messages skip the outer card border because AlertCard
-// already provides its own card chrome.
+// MessageView — role, feedback presence, and Mars-specific surfaces
 // ---------------------------------------------------------------------------
 
-/** Minimal unresolved alert segment (AlertCard uses border-accent/30 when unresolved). */
+/** Minimal unresolved alert segment. */
 const makeAlertSeg = (): ChatSegmentAlert => ({
   type: 'alert',
   kind: 'failed-task',
@@ -506,79 +408,55 @@ const makeAlertSeg = (): ChatSegmentAlert => ({
   resolved: false,
 })
 
-describe('ChatMessageBubble – assistant card border', () => {
-  it('assistant message with text content renders inside a bordered card', () => {
-    const msg = makeMsg([{ type: 'text', text: 'hi there' }], 'assistant')
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
-    // The inner wrapper div should carry the card border class
-    expect(html).toContain('border-iron/20')
+const renderMessage = (msg: ChatMessage) =>
+  renderToStaticMarkup(
+    createElement(MessageView, { message: chatMessageToUIMessage(msg), onDiscuss: () => {} }),
+  )
+
+describe('MessageView – role + content', () => {
+  it('renders an assistant text message and tags its role', () => {
+    const html = renderMessage(makeMsg([{ type: 'text', text: 'hi there' }], 'assistant'))
+    expect(html).toContain('data-message-role="assistant"')
+    expect(html).toContain('is-assistant')
+    expect(html).toContain('hi there')
   })
 
-  it('user message does NOT get the assistant card border', () => {
-    const msg = makeMsg([{ type: 'text', text: 'hello' }], 'user')
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
-    // User pill has no border-iron/20 class
-    expect(html).not.toContain('border-iron/20')
+  it('renders a user message with the user role marker', () => {
+    const html = renderMessage(makeMsg([{ type: 'text', text: 'hello' }], 'user'))
+    expect(html).toContain('data-message-role="user"')
+    expect(html).toContain('is-user')
   })
 
-  it('assistant message with only an unresolved alert omits the outer card border', () => {
-    // Unresolved AlertCard uses border-accent/30, so border-iron/20 should be
-    // absent from the entire output if the outer card is correctly suppressed.
-    const msg = makeMsg([makeAlertSeg()], 'assistant')
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
-    expect(html).not.toContain('border-iron/20')
-  })
-
-  it('assistant message with mixed text+alert content renders the outer card border', () => {
-    // The text segment makes hasNonAlert=true, so the card chrome applies.
-    const msg = makeMsg([{ type: 'text', text: 'See alert below' }, makeAlertSeg()], 'assistant')
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
-    expect(html).toContain('border-iron/20')
+  it('renders a pure-alert assistant message via AlertCard without the message bubble', () => {
+    const html = renderMessage(makeMsg([makeAlertSeg()], 'assistant'))
+    expect(html).toContain('Task failed')
+    // Alert-only messages are not wrapped in the AI-Elements Message bubble.
+    expect(html).not.toContain('is-assistant')
   })
 })
 
-describe('ChatMessageBubble – feedback controls presence', () => {
-  it('assistant messages render feedback controls (helpful / not helpful buttons)', () => {
-    const msg = makeMsg([{ type: 'text', text: 'hi' }], 'assistant')
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
+describe('MessageView – feedback controls presence', () => {
+  it('assistant messages render feedback controls', () => {
+    const html = renderMessage(makeMsg([{ type: 'text', text: 'hi' }], 'assistant'))
     expect(html).toContain('aria-label="helpful"')
     expect(html).toContain('aria-label="not helpful"')
   })
 
   it('user messages do NOT render feedback controls', () => {
-    const msg = makeMsg([{ type: 'text', text: 'hello' }], 'user')
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
+    const html = renderMessage(makeMsg([{ type: 'text', text: 'hello' }], 'user'))
     expect(html).not.toContain('aria-label="helpful"')
     expect(html).not.toContain('aria-label="not helpful"')
   })
 
   it('assistant message with up rating shows helpful button as pressed', () => {
-    const msg = makeMsg([{ type: 'text', text: 'hello' }], 'assistant', { rating: 'up', note: null })
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
+    const html = renderMessage(makeMsg([{ type: 'text', text: 'hello' }], 'assistant', { rating: 'up', note: null }))
     expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="helpful"|aria-label="helpful"[^>]*aria-pressed="true"/)
   })
 
-  it('renders an interrupted response as a safe, accessible recovery message', () => {
-    const msg = makeMsg([
+  it('renders an interrupted response as a safe, redacted recovery message', () => {
+    const html = renderMessage(makeMsg([
       { type: 'error', message: 'stderr: credentials=secret; monthly account limit reached' },
-    ], 'assistant')
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
+    ], 'assistant'))
     expect(html).toContain('role="alert"')
     expect(html).toContain('Response interrupted')
     expect(html).toContain('Send another message to try again.')
@@ -602,7 +480,6 @@ const makeAttachment = (overrides: Partial<ChatSegmentAttachment> = {}): ChatSeg
 
 describe('resolveMediaKind', () => {
   it('returns kindHint when present, overriding mimeType', () => {
-    // kindHint='audio' wins even though mimeType says image
     expect(resolveMediaKind(makeAttachment({ kindHint: 'audio', mimeType: 'image/png' }))).toBe('audio')
   })
 
@@ -694,7 +571,6 @@ describe('AttachmentDisplay – audio', () => {
     const html = renderToStaticMarkup(createElement(AttachmentDisplay, { attachment }))
     expect(html).toContain('data-testid="attachment-audio"')
     expect(html).toContain('<audio')
-    // The filename is shown below the player
     expect(html).toContain('sound.mp3')
   })
 })
@@ -715,7 +591,6 @@ describe('AttachmentDisplay – other', () => {
     const html = renderToStaticMarkup(createElement(AttachmentDisplay, { attachment }))
     expect(html).toContain('data-testid="attachment-other"')
     expect(html).toContain('report.pdf')
-    // Link opens in a new tab
     expect(html).toContain('target="_blank"')
   })
 
@@ -727,41 +602,32 @@ describe('AttachmentDisplay – other', () => {
 })
 
 // ---------------------------------------------------------------------------
-// ChatMessageBubble — attachment segment integration
+// MessageView — attachment segment integration (via data-attachment parts)
 // ---------------------------------------------------------------------------
 
-describe('ChatMessageBubble – attachment segment rendering', () => {
+describe('MessageView – attachment segment rendering', () => {
   it('renders an image attachment inline in the transcript', () => {
-    const msg = makeMsg([
+    const html = renderMessage(makeMsg([
       { type: 'text', text: 'Here is the screenshot:' },
       { type: 'attachment', path: 'img.png', mimeType: 'image/png', name: 'img.png' },
-    ])
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
+    ]))
     expect(html).toContain('data-testid="attachment-image"')
     expect(html).toContain('<img')
     expect(html).toContain('Here is the screenshot:')
   })
 
   it('renders an audio attachment with the audio player', () => {
-    const msg = makeMsg([
+    const html = renderMessage(makeMsg([
       { type: 'attachment', path: 'voice.webm', mimeType: 'audio/webm', name: 'voice.webm' },
-    ])
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
+    ]))
     expect(html).toContain('data-testid="attachment-audio"')
     expect(html).toContain('<audio')
   })
 
   it('renders a video attachment with the video player', () => {
-    const msg = makeMsg([
+    const html = renderMessage(makeMsg([
       { type: 'attachment', path: 'demo.mp4', mimeType: 'video/mp4', name: 'demo.mp4' },
-    ])
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
+    ]))
     expect(html).toContain('data-testid="attachment-video"')
     expect(html).toContain('<video')
   })

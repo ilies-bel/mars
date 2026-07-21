@@ -2,24 +2,28 @@
  * ChatPage — default landing screen for mars.
  *
  * Layout: narrow threads sidebar (create, rename on double-click, delete with
- * confirm) + main area (message list with segment rendering + composer).
+ * confirm) + main area (`ConversationView` transcript + composer).
  *
- * Message segments:
- *   text      → react-markdown + remark-gfm inside `.chat-markdown` prose div
- *   thinking  → collapsible "Thought process" block at reduced opacity
- *   tool_use  → consecutive runs collapse into an activity group header
- *               "Used N tools — Bash ×3, Read" expandable to per-tool detail
+ * Rendering runs on the Vercel AI SDK: `useChat` (via `useMarsChat`) is the
+ * single source of the on-screen transcript. Persisted history is mapped in
+ * through `chatMessageToUIMessage` and reconciled on refetch; the live reply
+ * streams through `MarsChatTransport`. Each `UIMessage` is rendered by
+ * `MessageView` via shadcn AI Elements:
+ *   text       → Response (Streamdown)
+ *   reasoning  → Reasoning / ReasoningTrigger / ReasoningContent
+ *   tool-*     → Tool / ToolHeader / ToolContent / ToolInput / ToolOutput
+ * plus Mars-only surfaces with no first-class AI-SDK part — alert cards,
+ * attachments, the interrupted-response banner, and the usage footer.
  *
- * Welcome state (no messages): quick-action chips + slash palette on `/` in
- * composer as canned prompt prefills (not RPC calls).
+ * Welcome state (no messages): quick-action Suggestions + slash palette on `/`
+ * in the composer as canned prompt prefills (not RPC calls).
  */
 
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { isStaticToolUIPart } from 'ai'
 import {
   fetchChatThreads,
   fetchChatThread,
@@ -29,14 +33,28 @@ import {
   uploadAttachment,
   renameChatThread,
   deleteChatThread,
-  stopChatThread,
   invokeAction,
   setMessageFeedback,
   clearMessageFeedback,
   ApiError,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ChatSegmentAttachment, ActionQueueItem, ActionDescriptor, ChatFeedback } from '@/shared/schemas'
+import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ActionDescriptor, ChatFeedback } from '@/shared/schemas'
+import type { MarsUIMessage } from '@/shared/marsChatTransport'
+import { useMarsChat } from '@/shared/useMarsChat'
+import { chatMessageToUIMessage, transcriptSignature } from '@/shared/chatMessageMapping'
+import {
+  Conversation,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
+} from '@/components/ai-elements/conversation'
+import { Message, MessageContent } from '@/components/ai-elements/message'
+import { Response } from '@/components/ai-elements/response'
+import { Reasoning, ReasoningTrigger, ReasoningContent } from '@/components/ai-elements/reasoning'
+import { Tool, ToolHeader, ToolContent, ToolInput, ToolOutput } from '@/components/ai-elements/tool'
+import { Loader } from '@/components/ai-elements/loader'
+import { Suggestions, Suggestion } from '@/components/ai-elements/suggestion'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { WhileYouWereAwayPanel } from '@/widgets/WhileYouWereAwayPanel'
@@ -54,7 +72,6 @@ import { historyLabel } from '@/pages/ActionQueuePageFilters'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
-import { useLiveBuffer, clearLiveBuffer } from '@/shared/chatBuffer'
 import { formatDuration, relativeTime } from '@/shared/time'
 
 // ---------------------------------------------------------------------------
@@ -155,200 +172,17 @@ export const HeroSuggestions = ({ topAlert, onAlertClick, onChipClick }: HeroSug
 )
 
 // ---------------------------------------------------------------------------
-// Segment grouping helpers
+// Message part → AI Element rendering
 // ---------------------------------------------------------------------------
 
-type ToolGroup = { kind: 'tool_group'; tools: ChatSegmentToolUse[] }
-type FlatSegment =
-  | { kind: 'text'; text: string }
-  | { kind: 'thinking'; text: string }
-  | { kind: 'error'; message: string }
-  | ToolGroup
-  | { kind: 'alert'; alert: ChatSegmentAlert }
-  | { kind: 'result'; result: ChatSegmentResult }
-  | { kind: 'attachment'; attachment: ChatSegmentAttachment }
+type UIPart = MarsUIMessage['parts'][number]
 
-/**
- * Collapses consecutive tool_use segments into a single ToolGroup so the UI
- * can render them as a collapsible activity row.
- *
- * tool_result segments are absorbed into the preceding ToolGroup by attaching
- * their content to the matching tool_use (via tool_use_id) rather than being
- * rendered standalone.
- *
- * thinking segments with empty text are silently dropped — they produce no
- * visible output rather than an empty "Thought process" block.
- */
-export const groupMessageSegments = (msg: ChatMessage): FlatSegment[] => {
-  const out: FlatSegment[] = []
-  // Shallow-copy each tool_use so we can safely attach tool_result content.
-  let currentTools: ChatSegmentToolUse[] | null = null
-
-  const flushTools = () => {
-    if (currentTools !== null) {
-      out.push({ kind: 'tool_group', tools: currentTools })
-      currentTools = null
-    }
-  }
-
-  for (const seg of msg.segments) {
-    if (seg.type === 'tool_use') {
-      if (currentTools === null) currentTools = []
-      // Shallow-copy so we can set .result without mutating the parsed segment.
-      currentTools.push({ ...seg })
-    } else if (seg.type === 'tool_result') {
-      // Attach to the matching tool_use inside the current group. Don't flush —
-      // tool_result is part of the same activity block as its tool_use.
-      if (currentTools !== null) {
-        const match = seg.tool_use_id
-          ? currentTools.find(t => t.id === seg.tool_use_id)
-          : currentTools[currentTools.length - 1]
-        if (match) {
-          match.result = seg.content
-          if (seg.isError) match.isError = true
-        }
-      }
-    } else {
-      flushTools()
-      if (seg.type === 'text') {
-        out.push({ kind: 'text', text: seg.text })
-      } else if (seg.type === 'alert') {
-        out.push({ kind: 'alert', alert: seg })
-      } else if (seg.type === 'result') {
-        out.push({ kind: 'result', result: seg })
-      } else if (seg.type === 'thinking' && seg.text) {
-        // Skip empty thinking segments — they render as a pointless blank block.
-        out.push({ kind: 'thinking', text: seg.text })
-      } else if (seg.type === 'error') {
-        out.push({ kind: 'error', message: seg.message })
-      } else if (seg.type === 'attachment') {
-        out.push({ kind: 'attachment', attachment: seg })
-      }
-      // Any other (unknown) segment type is silently dropped.
-    }
-  }
-  flushTools()
-  return out
-}
-
-/**
- * Summarises a tool group for the collapsed header:
- *   "Used 4 tools — Bash ×3, Read"
- */
-export const toolGroupLabel = (tools: ChatSegmentToolUse[]): string => {
-  const counts: Record<string, number> = {}
-  for (const t of tools) {
-    counts[t.toolName] = (counts[t.toolName] ?? 0) + 1
-  }
-  const parts = Object.entries(counts).map(([name, n]) =>
-    n > 1 ? `${name} ×${n}` : name,
-  )
-  return `Used ${tools.length} tool${tools.length !== 1 ? 's' : ''} — ${parts.join(', ')}`
-}
-
-// ---------------------------------------------------------------------------
-// Small, single-use presentational components (all private to this file)
-// ---------------------------------------------------------------------------
-
-/** Render a tool_use segment's input/result JSON in a capped scroll box. */
-const JsonBox = ({ value }: { value: unknown }) => (
-  <pre className="max-h-40 overflow-auto rounded bg-iron/10 p-2 font-mono text-[11px] leading-relaxed text-iron">
-    {JSON.stringify(value, null, 2)}
+/** Render an arbitrary tool output value inside the AI-Elements ToolOutput. */
+const ToolResultBox = ({ value }: { value: unknown }) => (
+  <pre className="max-h-60 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed">
+    {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
   </pre>
 )
-
-/** One expanded tool entry inside an activity group. */
-const ToolDetail = ({ tool }: { tool: ChatSegmentToolUse }) => {
-  const [open, setOpen] = useState(false)
-  const isError = tool.isError ?? false
-
-  return (
-    <div className="border-b border-iron/20 last:border-0">
-      <button
-        type="button"
-        className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left font-mono text-[11px] hover:bg-iron/10"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="text-iron/60">{open ? '▼' : '▶'}</span>
-        <span className={isError ? 'text-red-400' : 'text-iron'}>{tool.toolName}</span>
-        <span className={`ml-auto ${isError ? 'text-red-400' : 'text-iron/60'}`}>
-          {isError ? '✕' : '✓'}
-        </span>
-      </button>
-      {open && (
-        <div className="px-3 pb-2 space-y-1.5">
-          {tool.input !== undefined && (
-            <div>
-              <div className="mb-0.5 font-mono text-[10px] uppercase tracking-wide text-iron/50">
-                Input
-              </div>
-              <JsonBox value={tool.input} />
-            </div>
-          )}
-          {tool.result !== undefined && (
-            <div>
-              <div className="mb-0.5 font-mono text-[10px] uppercase tracking-wide text-iron/50">
-                Result
-              </div>
-              <div className={isError ? 'rounded border border-red-400/30 bg-red-900/10' : ''}>
-                <JsonBox value={tool.result} />
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Collapsible activity group for consecutive tool_use segments. */
-const ToolActivityGroup = ({ tools }: { tools: ChatSegmentToolUse[] }) => {
-  const [expanded, setExpanded] = useState(false)
-  const label = toolGroupLabel(tools)
-
-  return (
-    <div className="my-1 rounded border border-iron/20 bg-surface text-[12px]">
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[11px] text-iron hover:bg-iron/10"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <span className="text-iron/50">{expanded ? '▼' : '▶'}</span>
-        <span>{label}</span>
-      </button>
-      {expanded && (
-        <div className="border-t border-iron/20">
-          {tools.map((t, i) => (
-            <ToolDetail key={t.id ?? i} tool={t} />
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Collapsible thinking block at reduced opacity. */
-const ThinkingBlock = ({ text }: { text: string }) => {
-  const [open, setOpen] = useState(false)
-
-  return (
-    <div className="my-1 rounded border border-iron/20 bg-surface opacity-60">
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-[11px] text-iron hover:bg-iron/10"
-        onClick={() => setOpen((v) => !v)}
-      >
-        <span className="text-iron/50">{open ? '▼' : '▶'}</span>
-        <span>Thought process</span>
-      </button>
-      {open && (
-        <div className="border-t border-iron/20 px-3 py-2 font-mono text-[11px] leading-relaxed text-iron/80 whitespace-pre-wrap">
-          {text}
-        </div>
-      )}
-    </div>
-  )
-}
 
 /** Adapt a ChatSegmentAlert to AlertCard props and render it. */
 const AlertCardFromSegment = ({ alert }: { alert: ChatSegmentAlert }) => {
@@ -683,94 +517,123 @@ const ChatResponseError = ({ onTryAgain }: { onTryAgain: () => void }) => (
   </div>
 )
 
-/** A single chat message rendered with segment grouping. */
-export const ChatMessageBubble = ({
-  msg,
+/** Subtle usage footer: duration · tokens · cost, from message metadata. */
+const ResultFooter = ({ usage }: { usage: NonNullable<MarsUIMessage['metadata']>['usage'] }) => {
+  if (!usage) return null
+  const { durationMs, inputTokens, outputTokens, cost } = usage
+  const parts: string[] = []
+  if (durationMs != null) parts.push(formatDuration(durationMs))
+  if (inputTokens != null || outputTokens != null) {
+    parts.push(`${(inputTokens ?? 0) + (outputTokens ?? 0)} tokens`)
+  }
+  if (cost != null && cost > 0) parts.push(`$${cost.toFixed(4)}`)
+  if (parts.length === 0) return null
+  return <div className="mt-2 font-mono text-[10px] text-muted-foreground">{parts.join(' · ')}</div>
+}
+
+/** Render one `UIMessage` part as its AI Element. Returns null for inert parts. */
+const renderPart = (
+  part: UIPart,
+  key: number,
+  onDiscuss: (prompt: string) => void,
+): ReactNode => {
+  if (part.type === 'text') {
+    return <Response key={key}>{part.text}</Response>
+  }
+  if (part.type === 'reasoning') {
+    return (
+      <Reasoning key={key} isStreaming={part.state === 'streaming'}>
+        <ReasoningTrigger />
+        <ReasoningContent>{part.text}</ReasoningContent>
+      </Reasoning>
+    )
+  }
+  if (isStaticToolUIPart(part)) {
+    let output: ReactNode
+    let errorText: string | undefined
+    if (part.state === 'output-available') output = <ToolResultBox value={part.output} />
+    else if (part.state === 'output-error') errorText = part.errorText
+    return (
+      <Tool key={key}>
+        <ToolHeader type={part.type} state={part.state} />
+        <ToolContent>
+          <ToolInput input={part.input} />
+          <ToolOutput output={output} errorText={errorText} />
+        </ToolContent>
+      </Tool>
+    )
+  }
+  if (part.type === 'data-alert') {
+    return <AlertCardFromSegment key={key} alert={part.data} />
+  }
+  if (part.type === 'data-attachment') {
+    return <AttachmentDisplay key={key} attachment={part.data} />
+  }
+  if (part.type === 'data-chatError') {
+    return (
+      <ChatResponseError key={key} onTryAgain={() => onDiscuss('Please retry my last request.')} />
+    )
+  }
+  return null
+}
+
+/**
+ * A single chat message rendered through AI Elements. Persisted history and the
+ * live streamed reply share this component — both arrive as a `MarsUIMessage`
+ * (history via `chatMessageToUIMessage`, live via the transport).
+ */
+export const MessageView = ({
+  message,
   onDiscuss,
   onFeedbackChange,
 }: {
-  msg: ChatMessage
+  message: MarsUIMessage
   onDiscuss: (prompt: string) => void
   /** Called after a feedback write so the parent can invalidate its query cache. */
   onFeedbackChange?: () => void
 }) => {
-  const segments = groupMessageSegments(msg)
-  const isUser = msg.role === 'user'
-  // For assistant messages, apply card chrome only when the message contains
-  // non-alert content. AlertCard already renders its own bordered card, so a
-  // pure-alert message skips the outer border to avoid double-boxing.
-  const assistantHasNonAlert = !isUser && segments.some(seg => seg.kind !== 'alert')
+  const isUser = message.role === 'user'
+  const parts = message.parts
+  const feedback = message.metadata?.feedback ?? null
+  const usage = message.metadata?.usage
   const handleFeedbackChange = useCallback(() => {
     onFeedbackChange?.()
   }, [onFeedbackChange])
 
-  return (
-    <div className={`group flex ${isUser ? 'justify-end' : 'justify-start'} px-4 py-1`}>
-      <div
-        className={[
-          'max-w-[80%] rounded-lg',
-          isUser
-            ? 'bg-iron/20 px-3 py-2 font-mono text-[12px] text-fg'
-            : assistantHasNonAlert
-              ? 'flex-1 border border-iron/20 bg-surface px-3 py-2 text-[13px]'
-              : 'flex-1 text-[13px]',
-        ].join(' ')}
-      >
-        {segments.map((seg, i) => {
-          if (seg.kind === 'text') {
-            return (
-              <div key={i} className="chat-markdown prose prose-sm prose-invert max-w-none">
-                <Markdown remarkPlugins={[remarkGfm]}>{seg.text}</Markdown>
-              </div>
-            )
-          }
-          if (seg.kind === 'alert') {
-            return (
-              <AlertCardFromSegment
-                key={i}
-                alert={seg.alert}
-              />
-            )
-          }
-          if (seg.kind === 'result') {
-            const { durationMs, inputTokens, outputTokens, cost } = seg.result
-            const parts: string[] = []
-            if (durationMs != null) parts.push(formatDuration(durationMs))
-            if (inputTokens != null || outputTokens != null) {
-              parts.push(`${(inputTokens ?? 0) + (outputTokens ?? 0)} tokens`)
-            }
-            if (cost != null && cost > 0) parts.push(`$${cost.toFixed(4)}`)
-            return (
-              <div key={i} className="mt-2 font-mono text-[10px] text-iron/40">
-                {parts.join(' · ')}
-              </div>
-            )
-          }
-          if (seg.kind === 'thinking') {
-            return <ThinkingBlock key={i} text={seg.text} />
-          }
-          if (seg.kind === 'error') {
-            return (
-              <ChatResponseError
-                key={i}
-                onTryAgain={() => onDiscuss('Please retry my last request.')}
-              />
-            )
-          }
-          if (seg.kind === 'attachment') {
-            return <AttachmentDisplay key={i} attachment={seg.attachment} />
-          }
-          return <ToolActivityGroup key={i} tools={seg.tools} />
-        })}
+  // A pure-alert assistant message renders its AlertCard(s) directly — AlertCard
+  // owns its own card chrome, so wrapping it in MessageContent would double-box.
+  const isAlertOnly =
+    !isUser && parts.length > 0 && parts.every((p) => p.type === 'data-alert')
+
+  if (isAlertOnly) {
+    return (
+      <div className="group flex flex-col gap-2 px-1 py-2" data-message-role={message.role}>
+        {parts.map((p, i) => renderPart(p, i, onDiscuss))}
         {!isUser && (
           <FeedbackControls
-            messageId={msg.id}
-            feedback={msg.feedback ?? null}
+            messageId={message.id}
+            feedback={feedback}
             onFeedbackChange={handleFeedbackChange}
           />
         )}
       </div>
-    </div>
+    )
+  }
+
+  return (
+    <Message from={message.role} data-message-role={message.role}>
+      <MessageContent variant={isUser ? 'contained' : 'flat'}>
+        {parts.map((p, i) => renderPart(p, i, onDiscuss))}
+        <ResultFooter usage={usage} />
+        {!isUser && (
+          <FeedbackControls
+            messageId={message.id}
+            feedback={feedback}
+            onFeedbackChange={handleFeedbackChange}
+          />
+        )}
+      </MessageContent>
+    </Message>
   )
 }
 
@@ -864,191 +727,139 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
 }
 
 // ---------------------------------------------------------------------------
-// Live assistant bubble (streaming)
+// Conversation — AI-Elements transcript driven by useChat
 // ---------------------------------------------------------------------------
 
-interface LiveAssistantBubbleProps {
-  text: string
-  thinking: string | null
-  currentTool: string | null
-  toolCount: number
-  error: string | null
-  done: boolean
+interface ChatConversationProps {
+  threadId: string
+  projectId?: string
+  /** Prefill flowing into the composer (chip / slash / discuss). */
+  prefill?: string
+  onPrefillConsumed: () => void
+  /** Insert a prompt into the composer (welcome chips + "try again"). */
+  onInsertPrompt: (prompt: string) => void
 }
 
 /**
- * Renders the in-progress assistant response while the daemon is streaming.
- * Shows: activity header with tool info, thinking block, streaming text with
- * blinking cursor, and an error banner when the run errored.
+ * The in-thread transcript + composer. `useChat` (via `useMarsChat`) is the
+ * single source of rendered messages: persisted history is mapped in as
+ * `initialMessages` and reconciled on refetch, and the live streamed reply
+ * arrives through the same `MarsChatTransport`. The old `chatBuffer` live path
+ * is gone.
  */
-const LiveAssistantBubble = ({
-  text,
-  thinking,
-  currentTool,
-  toolCount,
-  error,
-  done,
-}: LiveAssistantBubbleProps) => (
-  <div className="flex justify-start px-4 py-1">
-    <div className="flex-1 text-[13px]">
-      {/* Activity header — shows when a tool is running or the run started */}
-      {currentTool ? (
-        <div className="mb-2 flex items-center gap-2">
-          <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-amber-400" />
-          <span className="font-mono text-[11px] text-iron/70">
-            Running {currentTool} · {toolCount} tool{toolCount !== 1 ? 's' : ''}
-          </span>
-        </div>
-      ) : !text && !thinking && !error ? (
-        <div className="mb-2 flex items-center gap-2">
-          {/* Three staggered bouncing dots — livelier than a single static pulse */}
-          <span className="flex items-center gap-[3px]">
-            <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:0ms]" />
-            <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:150ms]" />
-            <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:300ms]" />
-          </span>
-          <span className="font-mono text-[11px] text-iron/50">Thinking…</span>
-        </div>
-      ) : null}
-
-      {/* Streaming thinking block */}
-      {thinking && <ThinkingBlock text={thinking} />}
-
-      {/* Streaming text with blinking cursor */}
-      {text && (
-        <div className="chat-markdown prose prose-sm prose-invert max-w-none">
-          <Markdown remarkPlugins={[remarkGfm]}>{text}</Markdown>
-          {!done && (
-            <span
-              aria-hidden="true"
-              className="ml-0.5 inline-block h-[1em] w-[2px] animate-pulse bg-fg align-text-bottom"
-            />
-          )}
-        </div>
-      )}
-
-      {/* Error banner */}
-      {error && (
-        <div className="mt-1 rounded border border-red-400/40 bg-red-900/10 px-3 py-2 font-mono text-[11px] text-red-400">
-          ⚠ {error}
-        </div>
-      )}
-    </div>
-  </div>
-)
-
-// ---------------------------------------------------------------------------
-// Message list
-// ---------------------------------------------------------------------------
-
-interface MessageListProps {
-  threadId: string
-  projectId?: string
-  onDiscuss: (prompt: string) => void
-}
-
-const MessageList = ({ threadId, projectId, onDiscuss }: MessageListProps) => {
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
+const ChatConversation = ({
+  threadId,
+  projectId,
+  prefill,
+  onPrefillConsumed,
+  onInsertPrompt,
+}: ChatConversationProps) => {
   const qc = useQueryClient()
+
+  const { data: threadDetail, isLoading } = useQuery({
+    queryKey: ['chat-thread', threadId, projectId],
+    queryFn: () => fetchChatThread(threadId, projectId),
+  })
+
+  const persisted = useMemo(
+    () => (threadDetail?.messages ?? []).map(chatMessageToUIMessage),
+    [threadDetail],
+  )
+
+  const { messages, status, sendMessage, stop, error, setMessages } = useMarsChat({
+    threadId,
+    projectId,
+    initialMessages: persisted,
+  })
+
+  // Reconcile persisted history into useChat when a refetch actually changed it,
+  // but never mid-stream — useChat owns the transcript while a reply streams.
+  const appliedSigRef = useRef<string>(' ')
+  useEffect(() => {
+    if (status === 'streaming' || status === 'submitted') return
+    const sig = transcriptSignature(threadDetail?.messages ?? [])
+    if (sig === appliedSigRef.current) return
+    appliedSigRef.current = sig
+    setMessages(persisted)
+  }, [threadDetail, status, persisted, setMessages])
 
   const handleFeedbackChange = useCallback(() => {
     void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
   }, [qc, threadId])
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['chat-thread', threadId, projectId],
-    queryFn: () => fetchChatThread(threadId, projectId),
-    refetchInterval: (q) => {
-      // Poll while running as a fallback if the SSE bridge is unavailable.
-      const status = q.state.data?.thread.status
-      return status === 'running' ? 2000 : false
-    },
-  })
+  const isBusy = status === 'streaming' || status === 'submitted'
+  const serverRunning = threadDetail?.thread.status === 'running'
 
-  // Live buffer for this thread — non-null while the daemon is streaming.
-  const liveBuffer = useLiveBuffer(threadId)
-
-  // Snapshot the message count the moment the run finishes (`done` becomes
-  // true). Used to detect when the subsequent refetch lands with the persisted
-  // assistant message so we can clear the live buffer without a visible flash.
-  const doneMessageCountRef = useRef<number | null>(null)
-
-  useEffect(() => {
-    const messageCount = data?.messages.length ?? 0
-
-    if (!liveBuffer?.done) {
-      // Reset the snapshot whenever a fresh run starts.
-      doneMessageCountRef.current = null
-      return
-    }
-
-    if (doneMessageCountRef.current === null) {
-      // First render after the run completes: snapshot the current count and
-      // trigger a refetch. The live bubble remains visible (with no cursor)
-      // until the persisted data arrives.
-      doneMessageCountRef.current = messageCount
-      void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
+  const handleSend = useCallback(
+    async (text: string, attachmentIds?: string[]) => {
+      await sendMessage(
+        { text },
+        attachmentIds && attachmentIds.length > 0 ? { body: { attachmentIds } } : undefined,
+      )
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
-      return
-    }
+    },
+    [sendMessage, qc],
+  )
 
-    // On subsequent renders: once the query refetch returns more messages
-    // (i.e. the persisted assistant reply is now in the data), swap the live
-    // bubble for the stable persisted view with no visual jump.
-    if (messageCount > doneMessageCountRef.current) {
-      clearLiveBuffer(threadId)
-    }
-  }, [liveBuffer?.done, data?.messages.length, threadId, qc])
+  const handleStop = useCallback(() => {
+    void stop()
+  }, [stop])
 
-  // Scroll to the bottom on new persisted messages or live text growth,
-  // but only when the user is already near the bottom (scroll-pin behaviour).
-  useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-    // 120 px threshold: auto-scroll only when we were already at (or very near) the bottom.
-    if (distanceFromBottom <= 120) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
-  }, [data?.messages.length, liveBuffer?.text.length])
-
-  if (isLoading) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-iron/50 font-mono text-[11px]">
-        Loading…
-      </div>
-    )
-  }
-
-  const messages = data?.messages ?? []
-  // Show the live bubble until the buffer is cleared — including while
-  // `liveBuffer.done` is true but the persisted message hasn't loaded yet.
-  // This prevents a flicker where the bubble disappears before the persisted
-  // reply takes its place.
-  const showLive = liveBuffer !== null
-
-  if (messages.length === 0 && !showLive) {
-    return null
-  }
+  const showWelcome = !isLoading && messages.length === 0
 
   return (
-    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto py-3">
-      {messages.map((msg) => (
-        <ChatMessageBubble key={msg.id} msg={msg} onDiscuss={onDiscuss} onFeedbackChange={handleFeedbackChange} />
-      ))}
-      {showLive && (
-        <LiveAssistantBubble
-          text={liveBuffer.text}
-          thinking={liveBuffer.thinking}
-          currentTool={liveBuffer.currentTool}
-          toolCount={liveBuffer.toolCount}
-          error={liveBuffer.error}
-          done={liveBuffer.done}
-        />
-      )}
-      <div ref={bottomRef} />
-    </div>
+    <>
+      <Conversation className="flex-1">
+        <ConversationContent>
+          {showWelcome ? (
+            <ConversationEmptyState>
+              <p className="font-mono text-[13px] text-muted-foreground">
+                What would you like to do?
+              </p>
+              <Suggestions className="justify-center">
+                {WELCOME_CHIPS.map(({ label, prompt }) => (
+                  <Suggestion key={label} suggestion={prompt} onClick={onInsertPrompt}>
+                    {label}
+                  </Suggestion>
+                ))}
+              </Suggestions>
+            </ConversationEmptyState>
+          ) : (
+            <>
+              {messages.map((m) => (
+                <MessageView
+                  key={m.id}
+                  message={m}
+                  onDiscuss={onInsertPrompt}
+                  onFeedbackChange={handleFeedbackChange}
+                />
+              ))}
+              {status === 'submitted' && (
+                <div className="px-4 py-2">
+                  <Loader />
+                </div>
+              )}
+              {error && (
+                <ChatResponseError
+                  onTryAgain={() => onInsertPrompt('Please retry my last request.')}
+                />
+              )}
+            </>
+          )}
+        </ConversationContent>
+        <ConversationScrollButton />
+      </Conversation>
+      <Composer
+        threadId={threadId}
+        projectId={projectId}
+        disabled={serverRunning || isBusy}
+        isBusy={isBusy || serverRunning}
+        onSend={handleSend}
+        onStop={handleStop}
+        initialText={prefill}
+        onInitialTextConsumed={onPrefillConsumed}
+      />
+    </>
   )
 }
 
@@ -1086,34 +897,6 @@ const SlashPalette = ({ filter, onSelect }: SlashPaletteProps) => {
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Welcome state (no messages yet in the selected thread)
-// ---------------------------------------------------------------------------
-
-interface WelcomeStateProps {
-  onChipClick: (prompt: string) => void
-}
-
-const WelcomeState = ({ onChipClick }: WelcomeStateProps) => (
-  <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8">
-    <p className="font-mono text-[13px] text-iron/60">
-      What would you like to do?
-    </p>
-    <div className="flex flex-wrap justify-center gap-2">
-      {WELCOME_CHIPS.map(({ label, prompt }) => (
-        <button
-          key={label}
-          type="button"
-          className="rounded border border-iron/40 px-3 py-1.5 font-mono text-[11px] text-iron transition-colors hover:border-iron/70 hover:bg-iron/20 hover:text-fg active:scale-[0.97]"
-          onClick={() => onChipClick(prompt)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  </div>
-)
 
 // ---------------------------------------------------------------------------
 // Send-error message helper
@@ -1315,6 +1098,17 @@ export interface ComposerProps {
   sendPending?: boolean
   /** External error from an override-send failure; shown inline below the textarea. */
   sendError?: string | null
+  /**
+   * Ordinary-thread send. Attachments are uploaded here first (the composer owns
+   * the File objects), then the resulting ids are handed off. Wired by
+   * `ChatConversation` to `useChat.sendMessage`, which drives the
+   * `MarsChatTransport` (postChatMessage lives inside the transport now).
+   */
+  onSend?: (text: string, attachmentIds?: string[]) => Promise<void>
+  /** Stop the in-flight run. Wired to `useChat.stop` (aborts + stopChatThread). */
+  onStop?: () => void
+  /** True while a reply is streaming / the thread is running — shows the Stop button. */
+  isBusy?: boolean
 }
 
 /** A pending file attachment in the composer before it is uploaded. */
@@ -1343,6 +1137,9 @@ export const Composer = ({
   onSendOverride,
   sendPending = false,
   sendError,
+  onSend,
+  onStop,
+  isBusy = false,
 }: ComposerProps) => {
   const [text, setText] = useState('')
   const [showPalette, setShowPalette] = useState(false)
@@ -1358,7 +1155,6 @@ export const Composer = ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
-  const qc = useQueryClient()
 
   // Detect Web Speech API availability once on mount.
   const speechAvailable = typeof window !== 'undefined' &&
@@ -1407,9 +1203,11 @@ export const Composer = ({
 
   const { mutate: send, isPending } = useMutation({
     // The override path (projection threads) is handled directly in handleSend,
-    // so this mutation only runs for the ordinary post-to-threadId case.
+    // so this mutation only runs for the ordinary send-to-threadId case. It
+    // uploads attachments (the composer owns the Files), then hands text + ids
+    // to `onSend`, which drives useChat/the transport (postChatMessage now lives
+    // inside the transport).
     mutationFn: async (msg: string) => {
-      // Upload attachments first, then post the message referencing their IDs.
       let attachmentIds: string[] | undefined
       if (attachments.length > 0 && threadId) {
         setIsUploading(true)
@@ -1422,25 +1220,15 @@ export const Composer = ({
           setIsUploading(false)
         }
       }
-      await postChatMessage(threadId, msg, projectId, attachmentIds)
+      await onSend?.(msg, attachmentIds)
     },
     onMutate: () => setLocalSendError(null),
     onSuccess: () => {
       setText('')
       setAttachments([])
       setVoiceBlob(null)
-      void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
-      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
     },
     onError: (err) => setLocalSendError(sendErrorMessage(err)),
-  })
-
-  const { mutate: stop, isPending: isStopping } = useMutation({
-    mutationFn: () => stopChatThread(threadId, projectId),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
-      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
-    },
   })
 
   const handleSend = useCallback(() => {
@@ -1455,11 +1243,11 @@ export const Composer = ({
         setAttachments([])
         setVoiceBlob(null)
       })
-    } else {
+    } else if (onSend) {
       send(trimmed)
       // setText('') / attachment clearing handled inside send.onSuccess so inputs survive failure
     }
-  }, [text, attachments.length, disabled, isPending, sendPending, isUploading, onSendOverride, send])
+  }, [text, attachments.length, disabled, isPending, sendPending, isUploading, onSendOverride, onSend, send])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1719,13 +1507,13 @@ export const Composer = ({
             </button>
           )}
 
-          {/* Show Stop when thread is running; Send otherwise. */}
-          {disabled && !isPending ? (
+          {/* Show Stop while a reply streams / the thread runs; Send otherwise. */}
+          {isBusy && !isPending ? (
             <button
               type="button"
+              data-testid="stop-btn"
               className="flex-none rounded border border-red-400/40 px-3 py-2 font-mono text-[11px] text-red-400 transition-colors hover:bg-red-900/20 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
-              onClick={() => stop()}
-              disabled={isStopping}
+              onClick={() => onStop?.()}
             >
               Stop
             </button>
@@ -2350,27 +2138,6 @@ export const ChatPage = () => {
     onError: (err) => setSendError(sendErrorMessage(err)),
   })
 
-  const { data: threadDetail } = useQuery({
-    queryKey: ['chat-thread', selectedThreadId, projectId],
-    queryFn: () => fetchChatThread(selectedThreadId!, projectId),
-    enabled: selectedThreadId !== null,
-    refetchInterval: (q) => {
-      const status = q.state.data?.thread.status
-      return status === 'running' ? 2000 : false
-    },
-  })
-
-  // Subscribe to live buffer so welcome state hides as soon as streaming starts.
-  const liveBufferForThread = useLiveBuffer(selectedThreadId ?? '')
-
-  const isRunning = threadDetail?.thread.status === 'running'
-  const hasMessages =
-    (threadDetail?.messages.length ?? 0) > 0 || liveBufferForThread !== null
-
-  const handleChipClick = useCallback((prompt: string) => {
-    setPrefill(prompt)
-  }, [])
-
   const handleInsertPrompt = useCallback((prompt: string) => {
     setPrefill(prompt)
   }, [])
@@ -2475,24 +2242,14 @@ export const ChatPage = () => {
           </div>
         )}
         {selectedThreadId ? (
-          <>
-            {hasMessages ? (
-              <MessageList
-                threadId={selectedThreadId}
-                projectId={projectId}
-                onDiscuss={(prompt) => setPrefill(prompt)}
-              />
-            ) : (
-              <WelcomeState onChipClick={handleChipClick} />
-            )}
-            <Composer
-              threadId={selectedThreadId}
-              projectId={projectId}
-              disabled={isRunning}
-              initialText={prefill}
-              onInitialTextConsumed={() => setPrefill(undefined)}
-            />
-          </>
+          <ChatConversation
+            key={selectedThreadId}
+            threadId={selectedThreadId}
+            projectId={projectId}
+            prefill={prefill}
+            onPrefillConsumed={() => setPrefill(undefined)}
+            onInsertPrompt={handleInsertPrompt}
+          />
         ) : queueSelectionResolved ? (
           <div
             data-testid="resolved-pane"

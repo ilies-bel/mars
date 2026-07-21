@@ -51,13 +51,14 @@ const makeQueryClient = () =>
 const makeFile = (name: string, type: string) =>
   new File(['media content'], name, { type })
 
-/** Renders the Composer into a container div, returns the root. */
+/** Renders the Composer into a container div, returns the root + onSend spy. */
 function renderComposer(
   container: HTMLElement,
-  props?: { threadId?: string; disabled?: boolean },
+  props?: { threadId?: string; disabled?: boolean; onSend?: (text: string, ids?: string[]) => Promise<void> },
 ) {
   const qc = makeQueryClient()
   const root = createRoot(container)
+  const onSend = props?.onSend ?? vi.fn().mockResolvedValue(undefined)
   root.render(
     createElement(
       QueryClientProvider,
@@ -66,10 +67,11 @@ function renderComposer(
         threadId: props?.threadId ?? 'thread-1',
         disabled: props?.disabled ?? false,
         onInitialTextConsumed: () => {},
+        onSend,
       }),
     ),
   )
-  return root
+  return { root, onSend }
 }
 
 /**
@@ -227,11 +229,12 @@ describe('Composer – attachment chip add/remove', () => {
 // ---------------------------------------------------------------------------
 
 describe('Composer – send flow', () => {
-  it('calls uploadAttachment before postChatMessage when attachments are present', async () => {
-    const { uploadAttachment, postChatMessage } = await import('@/shared/api')
+  it('uploads attachments then hands the resulting ids to onSend (postChatMessage lives in the transport now)', async () => {
+    const { uploadAttachment } = await import('@/shared/api')
 
+    let onSend!: ReturnType<typeof vi.fn>
     await act(() => {
-      renderComposer(container, { threadId: 'thread-42' })
+      onSend = renderComposer(container, { threadId: 'thread-42' }).onSend as ReturnType<typeof vi.fn>
     })
 
     // Add an image file
@@ -250,50 +253,36 @@ describe('Composer – send flow', () => {
       await Promise.resolve()
     })
 
-    // Wait for the mutation to have completed
+    // uploadAttachment is called first, with the composer's thread id.
     await vi.waitFor(() => {
       expect(uploadAttachment).toHaveBeenCalledTimes(1)
     })
+    expect(uploadAttachment).toHaveBeenCalledWith('thread-42', expect.any(File), undefined)
 
-    expect(postChatMessage).toHaveBeenCalledTimes(1)
-
-    // postChatMessage receives the upload ID from uploadAttachment's return value
-    const [calledThreadId, , , calledAttachmentIds] = (postChatMessage as ReturnType<typeof vi.fn>).mock.calls[0] as [string, string, string | undefined, string[] | undefined]
-    expect(calledThreadId).toBe('thread-42')
+    // onSend then receives the upload id from uploadAttachment's return value.
+    await vi.waitFor(() => {
+      expect(onSend).toHaveBeenCalledTimes(1)
+    })
+    const [calledText, calledAttachmentIds] = onSend.mock.calls[0] as [string, string[] | undefined]
+    expect(calledText).toBe('')
     expect(calledAttachmentIds).toEqual(['upload-1'])
   })
 
-  it('does not call uploadAttachment when there are no attachments', async () => {
-    const { uploadAttachment, postChatMessage } = await import('@/shared/api')
+  it('does not call uploadAttachment or onSend when there is no text and no attachments', async () => {
+    const { uploadAttachment } = await import('@/shared/api')
 
+    let onSend!: ReturnType<typeof vi.fn>
     await act(() => {
-      renderComposer(container)
+      onSend = renderComposer(container).onSend as ReturnType<typeof vi.fn>
     })
 
-    // Type some text directly
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
-    await act(() => {
-      textarea.value = 'Hello mars'
-      textarea.dispatchEvent(new Event('input', { bubbles: true }))
-      textarea.dispatchEvent(new Event('change', { bubbles: true }))
-    })
-
-    // NOTE: React's onChange fires on 'input', but the component listens for
-    // React synthetic onChange which fires on both. We also set the value
-    // via nativeInputValueSetter if needed. Simplest: set value on the React
-    // state by dispatching the React-compatible event.
-    //
-    // Alternative test: verify uploadAttachment is never called even when send fires.
-    // We still need text in the textarea to enable send (no attachments either).
-    // Since setting value via DOM doesn't sync React state, we'll just verify
-    // that with no text and no attachments, postChatMessage is not called.
+    // Empty text + no attachments → send is blocked.
     const sendBtn = container.querySelector('[data-testid="send-btn"]') as HTMLButtonElement
     await act(() => {
       sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    // Empty text + no attachments → send is blocked
     expect(uploadAttachment).not.toHaveBeenCalled()
-    expect(postChatMessage).not.toHaveBeenCalled()
+    expect(onSend).not.toHaveBeenCalled()
   })
 })
