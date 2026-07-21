@@ -1749,12 +1749,52 @@ export const merge = async (
     const ctxResolved = resolveContext()
     const previewCwd = resolveTaskCwd(worktreePath, gateTask?.spec?.files ?? [])
     const logDir = join(ctxResolved.stateDir, 'dev-servers')
-    const dev = await startDevServer({
-      command: previewCmd,
-      cwd: previewCwd,
-      taskId,
-      logDir,
-    })
+    let dev: { url: string; pid: number; logPath: string; port: number } | null = null
+    try {
+      dev = await startDevServer({
+        command: previewCmd,
+        cwd: previewCwd,
+        taskId,
+        logDir,
+      })
+    } catch (bootErr) {
+      // The preview server failed to start. Still park the task in
+      // 'awaiting-validation' and raise an action-queue row so the operator
+      // knows a human decision is required — the task must NOT silently strand
+      // with no alert. The row title says "preview failed to boot" so the
+      // operator understands the dev server is not running.
+      console.error(`[merge:preview-gate] task ${taskId} dev-server boot failed:`, bootErr)
+      await updateTask(
+        taskId,
+        { status: 'awaiting-validation', failedPhase: null, devServerUrl: null, devServerPid: null },
+        store,
+      )
+      raiseActionQueueItem({
+        kind: 'awaiting-validation',
+        category: 'user',
+        priority: 'high',
+        title: `Validate ${taskId}: preview failed to boot`,
+        body: [
+          `Task \`${taskId}\` passed verify and is ready to merge into \`${integrationBranch}\`, but its preview server failed to start.`,
+          '',
+          `Preview command: \`${previewCmd}\``,
+          `Boot error: ${bootErr instanceof Error ? bootErr.message : String(bootErr)}`,
+          '',
+          `Fix the preview command or choose:`,
+          `  - **Validate** to merge into \`${integrationBranch}\` without previewing, or`,
+          `  - **Reject** to stop the merge and fail the task (its worktree is kept so you can restart or drop it).`,
+        ].join('\n'),
+        payload: { taskId, devServerUrl: null, devServerPid: null, previewCmd, integrationBranch, branch },
+        context: { repoRoot: process.env.MARS_REPO ?? null },
+        raisedBy: 'merge:preview-gate',
+        signature: `${taskId}:awaiting-validation`,
+        originTaskId: taskId,
+        occurrence: { at: new Date().toISOString(), taskId, devServerUrl: null },
+      }).catch((err) => {
+        console.error(`[merge:preview-gate] task ${taskId} action-queue raise errored:`, err)
+      })
+      throw new WorkflowTerminalError('preview-gate', PREVIEW_GATE_MESSAGE(taskId))
+    }
     await updateTask(
       taskId,
       {

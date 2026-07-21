@@ -81,6 +81,7 @@ import { WorkflowTerminalError } from '../lib/workflow-terminal-error'
 import {
   raiseActionQueueItem,
   setOnChatThreadChanged,
+  supersedeActionQueueItemsBySignature,
   supersedeObsoletePreflightDirtyMainRows,
   supersedeOrphanedHitlActionQueueRows,
 } from '../lib/action-queue'
@@ -2889,6 +2890,10 @@ export const startDaemon = async (
       throw new Error(`task ${id} has no active lease; use 'mars attach ${id}' first`)
     }
     const stepName = task.currentStepName ?? 'unknown'
+    // Close the awaiting-human row for this step. The row uses signature=taskId
+    // (level-triggered, ADR-0048). Without this call the row stays open after
+    // the step advances, pointing the operator at a completed step.
+    await supersedeActionQueueItemsBySignature('awaiting-human', id, 'step-done', 'daemon:step-done')
     // Path 1: promise-based — resolve the in-flight workflow's pending park.
     const resolved = resolveManualStep(id, stepName)
     if (resolved) {

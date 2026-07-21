@@ -1025,6 +1025,8 @@ export type SupersedeReason =
   | 'enrichment-decided'
   /** tool-promotion row cleared because the operator approved or rejected the helper (ADR-0048 entity mutation). */
   | 'tool-promotion-decided'
+  /** awaiting-human row cleared because the operator signalled mars step done, advancing the task past the manual step. */
+  | 'step-done'
 
 /**
  * Auto-close every open actionQueue item keyed to the given origin task. Called
