@@ -55,6 +55,7 @@ import {
   type TaskStoreForReleaseNotes,
 } from '../../orchestrator/src/core/daemon/view/release-notes.ts'
 import { openTraceEventStore } from '../../orchestrator/src/core/lib/trace-events-store.ts'
+import type { DbClient, DbInValue, DbResultSet, DbStatement } from '../../orchestrator/src/core/lib/db.ts'
 import { MARS_VERSION } from '../../orchestrator/src/version.ts'
 import type {
   DraftFeature,
@@ -72,6 +73,34 @@ const parseJsonObj = (raw: unknown): Record<string, unknown> => {
       : {}
   } catch {
     return {}
+  }
+}
+
+/**
+ * The test fixture uses libsql directly while the shared progress readers are
+ * typed against Mars's database seam. Adapt the small common surface here
+ * rather than pretending libsql's mutable `batch` signature is assignable to
+ * the seam's readonly statement contract.
+ */
+const asProgressDbClient = (client: Client): DbClient => {
+  const execute = async (
+    statement: DbStatement,
+    args?: readonly DbInValue[],
+  ): Promise<DbResultSet> => {
+    const query = typeof statement === 'string'
+      ? { sql: statement, args: args?.map((value) => value ?? null) }
+      : { sql: statement.sql, args: statement.args?.map((value) => value ?? null) }
+    return client.execute(query)
+  }
+
+  return {
+    execute,
+    async batch(statements) {
+      return Promise.all(statements.map((statement) => execute(statement)))
+    },
+    async close() {
+      client.close()
+    },
   }
 }
 
@@ -385,10 +414,11 @@ const viewProgress = async (
   const cols = await tableColumns(client, 'tasks')
   if (cols.size === 0) return { tasks: [], proposals: [], aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 } }
   const blockerMap = await loadBlockerMap(client)
+  const progressClient = asProgressDbClient(client)
   return buildProgressView(
     makeProgressTaskStore(client, cols, blockerMap),
-    createProposalReader(client),
-    createAggregateReader(client),
+    createProposalReader(progressClient),
+    createAggregateReader(progressClient),
   )
 }
 
