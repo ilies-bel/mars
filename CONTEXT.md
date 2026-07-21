@@ -469,8 +469,8 @@ A single-goal unit of operator decision on the chat page, either projected from 
 _Avoid_: chat thread, conversation, lateral thread
 
 **Reflector**:
-The synthesis process that reviews completed work and system telemetry to emit draft proposals and suggestion cards, consulting its checklist and past operator decisions before suggesting.
-_Avoid_: reflection engine, suggester
+The mostly-deterministic agent woken fresh at the end of a Session or an Arc (or on manual/orchestrator trigger) to synthesize reflections over completed work into draft proposals; not a long-running thread.
+_Avoid_: reflect worker, reflection agent, reflect loop
 
 **Reflector checklist**:
 The CLI-managed catalog of environment and workflow improvements the Reflector screens before suggesting, each item carrying the operator's past decision (accepted, declined, or snoozed-until) per project.
@@ -488,5 +488,5 @@ The daemon behaviour of automatically triggering reflection (session-scoped refl
 _Avoid_: auto reflect, reflect trigger, MARS_REFLECT_DISABLED
 
 **Steward**:
-The autonomous agent that tends the framework's own operating parameters (worker count, budgets, schedules) to hold the KPI vector at its setpoints; never addressed directly by the human, it speaks only through the unified Mars first-person voice.
+The event-driven subagent the orchestrator spawns to set up or modify a workflow and the framework's operating parameters (worker count, budgets, schedules) in response to signals — degraded KPIs, resource-load spikes, or onboarding; woken fresh per event, never long-running, never addressed directly by the human, and speaking only through the unified Mars voice.
 _Avoid_: ai operator, operator agent, self-optimizer, tuner, auto-tuner
