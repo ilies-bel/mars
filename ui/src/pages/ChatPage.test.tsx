@@ -483,6 +483,77 @@ describe('FeedbackControls – structure', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// ChatMessageBubble – assistant message card styling
+//
+// Assistant messages with non-alert content should render inside a bordered
+// card. Pure-alert messages skip the outer card border because AlertCard
+// already provides its own card chrome.
+// ---------------------------------------------------------------------------
+
+describe('ChatMessageBubble – assistant card border', () => {
+  it('assistant message with text content renders a bordered card', () => {
+    const msg = makeMsg([{ type: 'text', text: 'hi there' }], 'assistant')
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    // The outer wrapper should carry the card border class
+    expect(html).toContain('border-iron/20')
+  })
+
+  it('user message does NOT render the assistant card border', () => {
+    const msg = makeMsg([{ type: 'text', text: 'hello' }], 'user')
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    expect(html).not.toContain('border-iron/20')
+  })
+
+  it('assistant message with only alert segments omits the outer card border', () => {
+    const alertSeg = {
+      type: 'alert' as const,
+      id: 'a-1',
+      entityId: 'task-1',
+      title: 'Task failed',
+      whyNow: 'Just now',
+      kind: 'failed-task' as const,
+      actions: [] as never[],
+      resolved: false,
+    }
+    const msg = makeMsg([alertSeg], 'assistant')
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    // AlertCard renders its own border; the outer wrapper must not add a second one
+    // Verify there's no duplicate outer border-iron/20 wrapping the alert card.
+    // (AlertCard itself uses border-accent/30 or border-iron/20 depending on resolved state,
+    //  but the outer assistant wrapper class should NOT contain border-iron/20.)
+    // We check by counting: the only border class should come from AlertCard itself.
+    const outerDivEnd = html.indexOf('>') // first closing > of the outer wrapper div
+    const outerDiv = html.slice(0, outerDivEnd)
+    expect(outerDiv).not.toContain('border-iron/20')
+  })
+
+  it('assistant message with mixed text+alert content renders the outer card border', () => {
+    const alertSeg = {
+      type: 'alert' as const,
+      id: 'a-1',
+      entityId: 'task-1',
+      title: 'Task failed',
+      whyNow: 'Just now',
+      kind: 'failed-task' as const,
+      actions: [] as never[],
+      resolved: false,
+    }
+    const msg = makeMsg([{ type: 'text', text: 'See alert below' }, alertSeg], 'assistant')
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    // Has non-alert content → outer card applies
+    expect(html).toContain('border-iron/20')
+  })
+})
+
 describe('ChatMessageBubble – feedback controls presence', () => {
   it('assistant messages render feedback controls (helpful / not helpful buttons)', () => {
     const msg = makeMsg([{ type: 'text', text: 'hi' }], 'assistant')

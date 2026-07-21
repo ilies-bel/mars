@@ -695,6 +695,10 @@ export const ChatMessageBubble = ({
 }) => {
   const segments = groupMessageSegments(msg)
   const isUser = msg.role === 'user'
+  // For assistant messages, apply card chrome only when the message contains
+  // non-alert content. AlertCard already renders its own bordered card, so a
+  // pure-alert message skips the outer border to avoid double-boxing.
+  const assistantHasNonAlert = !isUser && segments.some(seg => seg.kind !== 'alert')
   const handleFeedbackChange = useCallback(() => {
     onFeedbackChange?.()
   }, [onFeedbackChange])
@@ -706,7 +710,9 @@ export const ChatMessageBubble = ({
           'max-w-[80%] rounded-lg',
           isUser
             ? 'bg-iron/20 px-3 py-2 font-mono text-[12px] text-fg'
-            : 'flex-1 text-[13px]',
+            : assistantHasNonAlert
+              ? 'flex-1 border border-iron/20 bg-surface px-3 py-2 text-[13px]'
+              : 'flex-1 text-[13px]',
         ].join(' ')}
       >
         {segments.map((seg, i) => {
@@ -892,7 +898,12 @@ const LiveAssistantBubble = ({
         </div>
       ) : !text && !thinking && !error ? (
         <div className="mb-2 flex items-center gap-2">
-          <span className="h-2 w-2 flex-none animate-pulse rounded-full bg-iron/50" />
+          {/* Three staggered bouncing dots — livelier than a single static pulse */}
+          <span className="flex items-center gap-[3px]">
+            <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:0ms]" />
+            <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:150ms]" />
+            <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:300ms]" />
+          </span>
           <span className="font-mono text-[11px] text-iron/50">Thinking…</span>
         </div>
       ) : null}
