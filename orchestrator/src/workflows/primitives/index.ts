@@ -1383,6 +1383,12 @@ export const verify = async (
         { status: 'verifying', failedPhase: null },
         store,
       )
+      // Wrap the verify body: any unexpected throw (e.g. verifyChanges rejects,
+      // lock acquisition fails) must transition the task to 'failed' before
+      // rethrowing, so the row never stays pinned in 'verifying' until the
+      // phantom-task watchdog ceiling (mars-42b5bfec).
+      let _verifyFailedRecorded = false
+      try {
       // Verify step dirs are repo-root-relative supervisor scopes (for example
       // `ui` or `orchestrator`). Anchor them at the worktree root so each
       // scoped command runs in `<worktree>/<scope>`, not beneath whichever
@@ -1580,6 +1586,7 @@ export const verify = async (
           },
           store,
         )
+        _verifyFailedRecorded = true
         await runNonLlmStepWithSpan({
           stepName: 'recovery-dispatch',
           workflowInstanceId: trace.workflowInstanceId,
@@ -1613,6 +1620,25 @@ export const verify = async (
       }
 
       return { verified: true }
+      } catch (err) {
+        // Only stamp if the deliberate !r.passed path has not already recorded
+        // a failure. Best-effort write (mirrors phantom-task-watchdog pattern):
+        // if the status write itself throws, swallow it so the original error
+        // propagates unchanged.
+        if (!_verifyFailedRecorded) {
+          await updateTask(
+            taskId,
+            {
+              status: 'failed',
+              failedPhase: 'verify',
+              failureReason: err instanceof Error ? err.message : String(err),
+              failureReasonCode: 'verify:step-threw',
+            },
+            store,
+          ).catch(() => {})
+        }
+        throw err
+      }
     },
   })
 }
