@@ -33,6 +33,12 @@ export default defineConfig({
       '**/worktrees/**',
     ],
     environment: 'node',
+    // PGlite cold-start takes 5-25 s per test that calls vi.resetModules() +
+    // dynamic import (or boots a fresh instance in beforeEach). The default
+    // 5 s timeout is too tight for those tests when many instances run
+    // concurrently. 30 s gives enough headroom without hiding real hangs.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     // Turn ON the Arc-invariant debug-assert seam for the whole suite (ADR-0052)
     // so every arc-mutating test exercises Arc.assertArcInvariant after commit.
     setupFiles: ['./test/setup-env.ts'],
