@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
@@ -20,6 +20,14 @@ import {
 } from '../primitives/shared'
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
+
+describe('workflow verify cwd', () => {
+  it('anchors repo-relative supervisor scopes at the worktree root', () => {
+    const source = readFileSync(resolve(import.meta.dirname, '../primitives/index.ts'), 'utf8')
+    expect(source).toContain('const verifyCwd = worktreePath')
+    expect(source).not.toContain('const verifyCwd = resolveVerifyCwd(worktreePath)')
+  })
+})
 
 describe('composePrompt — coder default', () => {
   it('appends the commit footer to a bare prompt', () => {

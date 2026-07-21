@@ -95,10 +95,7 @@ import {
   runWorkerWithSpan,
   runNonLlmStepWithSpan,
 } from '../../core/lib/run-worker-with-span'
-import {
-  resolveVerifyCwd,
-  type RanVerifyStep,
-} from '../../core/lib/derive-repro-command'
+import { type RanVerifyStep } from '../../core/lib/derive-repro-command'
 import {
   composePrompt,
   detectPostCoderState,
@@ -1386,7 +1383,11 @@ export const verify = async (
         { status: 'verifying', failedPhase: null },
         store,
       )
-      const verifyCwd = resolveVerifyCwd(worktreePath)
+      // Verify step dirs are repo-root-relative supervisor scopes (for example
+      // `ui` or `orchestrator`). Anchor them at the worktree root so each
+      // scoped command runs in `<worktree>/<scope>`, not beneath whichever
+      // subproject happens to be selected by the legacy repro heuristic.
+      const verifyCwd = worktreePath
       const verifyCtx = resolveContext()
       const recipeScopes = await loadVerifyScopes(verifyCtx.supervisorsManifest)
       // Gate-enrichment merge (PRD 745f33e0): human-approved shadow/enforcing
