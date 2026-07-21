@@ -670,8 +670,11 @@ export const reflectWorkflow = defineWorkflow<ReflectInput, ReflectOutput, Refle
       fn: () => Promise<T> | T,
       summarize: (result: T) => string,
     ): Promise<T> =>
-      ctx.step(name, () =>
-        runNonLlmStepWithSpan({
+      ctx.step(name, () => {
+        // Captured by getExtraPayload after fn() resolves so the summary
+        // lands in the step_ended trace-event payload (→ UI step card).
+        let stepSummary = ''
+        return runNonLlmStepWithSpan({
           stepName: name,
           workflowInstanceId: ctx.runId,
           originId: input.originId,
@@ -690,12 +693,14 @@ export const reflectWorkflow = defineWorkflow<ReflectInput, ReflectOutput, Refle
           fn: async () => {
             const result = await fn()
             const summary = summarize(result)
+            stepSummary = summary
             ctx.currentStep?.setSummary(summary)
             ctx.emit('reflect.step-result', { step: name, summary })
             return result
           },
-        }),
-      )
+          getExtraPayload: () => ({ summary: stepSummary }),
+        })
+      })
 
     // Loading is cheap and deterministic, so it sits outside the step contract:
     // on resume we want the arc in hand before any step short-circuits.

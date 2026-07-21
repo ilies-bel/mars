@@ -421,6 +421,10 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
             ? endEvent.payload.failureReason
             : null,
         resultJson: null,
+        summary:
+          endEvent && typeof endEvent.payload.summary === 'string'
+            ? endEvent.payload.summary
+            : null,
       }
 
       runMap.get(wfId)!.push(step)

@@ -114,6 +114,8 @@ export interface RunTimelineStep {
   failureReason: string | null
   /** JSON-serialised return value from the step function, or null when absent. */
   resultJson: string | null
+  /** Human-readable one-line summary produced by non-LLM steps (e.g. reflect). */
+  summary: string | null
 }
 
 /**

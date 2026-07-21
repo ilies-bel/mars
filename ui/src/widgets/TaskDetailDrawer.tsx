@@ -65,6 +65,8 @@ export interface RunTimelineStep {
   failureReason: string | null
   /** JSON-serialised return value of the step function, or null when absent. */
   resultJson?: string | null
+  /** Human-readable one-line summary produced by non-LLM steps (e.g. reflect). */
+  summary?: string | null
 }
 
 /** One workflow run with its ordered step list. */
@@ -106,6 +108,8 @@ export interface StepCardEntry {
   claudeSessionId?: string | null
   /** JSON-serialised step result, rendered as an expandable Output panel. */
   resultJson?: string | null
+  /** Human-readable one-line summary produced by non-LLM steps (e.g. reflect). */
+  summary?: string | null
 }
 
 // ── Drill-in trail helpers ────────────────────────────────────────────────────
@@ -421,6 +425,7 @@ export const runStepToCard = (
   cacheReadTokens: step.cacheReadTokens,
   claudeSessionId: step.claudeSessionId,
   resultJson: step.resultJson,
+  summary: step.summary,
 })
 
 // ── Detail body ───────────────────────────────────────────────────────────────
@@ -942,7 +947,8 @@ const StepCard = ({
   toolEvents: TraceEvent[]
   isActive: boolean
 }) => {
-  const summary = deriveStepSummary(toolEvents, entry.failureReason, entry.outcome)
+  const summary =
+    deriveStepSummary(toolEvents, entry.failureReason, entry.outcome) || entry.summary || ''
 
   const borderClass =
     entry.outcome === 'running'
