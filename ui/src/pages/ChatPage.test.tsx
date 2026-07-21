@@ -24,7 +24,7 @@ import {
   HeroSuggestions,
 } from './ChatPage'
 import { chatThreadDetailSchema } from '@/shared/schemas'
-import type { ChatMessage, ChatSegmentToolUse, ActionQueueItem, ChatFeedback } from '@/shared/schemas'
+import type { ChatMessage, ChatSegmentToolUse, ActionQueueItem, ChatFeedback, ChatSegmentAlert } from '@/shared/schemas'
 import fixture from './__fixtures__/chat-thread-fixture.json'
 
 // ---------------------------------------------------------------------------
@@ -491,65 +491,53 @@ describe('FeedbackControls – structure', () => {
 // already provides its own card chrome.
 // ---------------------------------------------------------------------------
 
+/** Minimal unresolved alert segment (AlertCard uses border-accent/30 when unresolved). */
+const makeAlertSeg = (): ChatSegmentAlert => ({
+  type: 'alert',
+  kind: 'failed-task',
+  entityId: 'task-1',
+  priority: 'normal',
+  title: 'Task failed',
+  whyNow: 'Just now',
+  actions: [],
+  resolved: false,
+})
+
 describe('ChatMessageBubble – assistant card border', () => {
-  it('assistant message with text content renders a bordered card', () => {
+  it('assistant message with text content renders inside a bordered card', () => {
     const msg = makeMsg([{ type: 'text', text: 'hi there' }], 'assistant')
     const html = renderToStaticMarkup(
       createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
     )
-    // The outer wrapper should carry the card border class
+    // The inner wrapper div should carry the card border class
     expect(html).toContain('border-iron/20')
   })
 
-  it('user message does NOT render the assistant card border', () => {
+  it('user message does NOT get the assistant card border', () => {
     const msg = makeMsg([{ type: 'text', text: 'hello' }], 'user')
+    const html = renderToStaticMarkup(
+      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+    )
+    // User pill has no border-iron/20 class
+    expect(html).not.toContain('border-iron/20')
+  })
+
+  it('assistant message with only an unresolved alert omits the outer card border', () => {
+    // Unresolved AlertCard uses border-accent/30, so border-iron/20 should be
+    // absent from the entire output if the outer card is correctly suppressed.
+    const msg = makeMsg([makeAlertSeg()], 'assistant')
     const html = renderToStaticMarkup(
       createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
     )
     expect(html).not.toContain('border-iron/20')
   })
 
-  it('assistant message with only alert segments omits the outer card border', () => {
-    const alertSeg = {
-      type: 'alert' as const,
-      id: 'a-1',
-      entityId: 'task-1',
-      title: 'Task failed',
-      whyNow: 'Just now',
-      kind: 'failed-task' as const,
-      actions: [] as never[],
-      resolved: false,
-    }
-    const msg = makeMsg([alertSeg], 'assistant')
-    const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
-    )
-    // AlertCard renders its own border; the outer wrapper must not add a second one
-    // Verify there's no duplicate outer border-iron/20 wrapping the alert card.
-    // (AlertCard itself uses border-accent/30 or border-iron/20 depending on resolved state,
-    //  but the outer assistant wrapper class should NOT contain border-iron/20.)
-    // We check by counting: the only border class should come from AlertCard itself.
-    const outerDivEnd = html.indexOf('>') // first closing > of the outer wrapper div
-    const outerDiv = html.slice(0, outerDivEnd)
-    expect(outerDiv).not.toContain('border-iron/20')
-  })
-
   it('assistant message with mixed text+alert content renders the outer card border', () => {
-    const alertSeg = {
-      type: 'alert' as const,
-      id: 'a-1',
-      entityId: 'task-1',
-      title: 'Task failed',
-      whyNow: 'Just now',
-      kind: 'failed-task' as const,
-      actions: [] as never[],
-      resolved: false,
-    }
-    const msg = makeMsg([{ type: 'text', text: 'See alert below' }, alertSeg], 'assistant')
+    // The text segment makes hasNonAlert=true, so the card chrome applies.
+    const msg = makeMsg([{ type: 'text', text: 'See alert below' }, makeAlertSeg()], 'assistant')
     const html = renderToStaticMarkup(
       createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
     )
-    // Has non-alert content → outer card applies
     expect(html).toContain('border-iron/20')
   })
 })
