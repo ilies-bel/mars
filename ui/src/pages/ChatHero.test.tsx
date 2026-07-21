@@ -56,8 +56,9 @@ const makeQc = () =>
 const renderHeroStatic = (
   opts: {
     onSelectThread?: (id: string) => void
-    onCreateAndSend?: (msg: string) => void
+    onCreateAndSend?: (msg: string, clearText: () => void) => void
     isPending?: boolean
+    sendError?: string | null
   } = {},
 ) =>
   renderToStaticMarkup(
@@ -67,6 +68,7 @@ const renderHeroStatic = (
         onSelectThread={opts.onSelectThread ?? (() => {})}
         onCreateAndSend={opts.onCreateAndSend ?? (() => {})}
         isPending={opts.isPending ?? false}
+        sendError={opts.sendError}
       />
     </QueryClientProvider>,
   )
@@ -148,7 +150,7 @@ describe('HeroEmptyState – composer creates and sends', () => {
       )
     })
 
-    expect(onCreateAndSend).toHaveBeenCalledWith('Build me a feature')
+    expect(onCreateAndSend).toHaveBeenCalledWith('Build me a feature', expect.any(Function))
 
     await act(async () => { root.unmount() })
     document.body.removeChild(container)
@@ -186,7 +188,7 @@ describe('HeroEmptyState – composer creates and sends', () => {
       sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(onCreateAndSend).toHaveBeenCalledWith('Enqueue a task')
+    expect(onCreateAndSend).toHaveBeenCalledWith('Enqueue a task', expect.any(Function))
 
     await act(async () => { root.unmount() })
     document.body.removeChild(container)
@@ -226,5 +228,111 @@ describe('HeroEmptyState – composer creates and sends', () => {
 
     await act(async () => { root.unmount() })
     document.body.removeChild(container)
+  })
+
+  it('preserves typed text when onCreateAndSend does not invoke the clearText callback (failure path)', async () => {
+    // Simulate a rejected send: onCreateAndSend is called but never invokes clearText.
+    const onCreateAndSend = vi.fn() // does not call clearText
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <HeroEmptyState
+            projectId={undefined}
+            onSelectThread={() => {}}
+            onCreateAndSend={onCreateAndSend}
+            isPending={false}
+          />
+        </QueryClientProvider>,
+      )
+    })
+
+    const textarea = container.querySelector(
+      '[data-testid="hero-composer"]',
+    ) as HTMLTextAreaElement
+
+    await act(async () => {
+      setTextareaValue(textarea, 'Build something great')
+    })
+
+    await act(async () => {
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      )
+    })
+
+    // clearText was never called, so the text should still be present.
+    expect(textarea.value).toBe('Build something great')
+
+    await act(async () => { root.unmount() })
+    document.body.removeChild(container)
+  })
+
+  it('clears typed text when onCreateAndSend invokes the clearText callback (success path)', async () => {
+    // Simulate a successful send: onCreateAndSend calls clearText immediately.
+    const onCreateAndSend = vi.fn((_msg: string, clearText: () => void) => clearText())
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <HeroEmptyState
+            projectId={undefined}
+            onSelectThread={() => {}}
+            onCreateAndSend={onCreateAndSend}
+            isPending={false}
+          />
+        </QueryClientProvider>,
+      )
+    })
+
+    const textarea = container.querySelector(
+      '[data-testid="hero-composer"]',
+    ) as HTMLTextAreaElement
+
+    await act(async () => {
+      setTextareaValue(textarea, 'Build something great')
+    })
+
+    await act(async () => {
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      )
+    })
+
+    // clearText was invoked, so the textarea should be empty.
+    expect(textarea.value).toBe('')
+
+    await act(async () => { root.unmount() })
+    document.body.removeChild(container)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Hero error surface
+// ---------------------------------------------------------------------------
+
+describe('HeroEmptyState – surfaces send errors', () => {
+  it('shows an error message when the sendError prop is set', () => {
+    const html = renderHeroStatic({
+      sendError: 'Daemon not running — start it with `mars daemon start`.',
+    })
+    expect(html).toContain('Daemon not running')
+    expect(html).toContain('hero-send-error')
+  })
+
+  it('shows no error element when sendError is null', () => {
+    const html = renderHeroStatic({ sendError: null })
+    expect(html).not.toContain('hero-send-error')
+  })
+
+  it('shows no error element when sendError is absent', () => {
+    const html = renderHeroStatic()
+    expect(html).not.toContain('hero-send-error')
   })
 })

@@ -32,6 +32,7 @@ import {
   invokeAction,
   setMessageFeedback,
   clearMessageFeedback,
+  ApiError,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { ChatThread, ChatMessage, ChatSegmentToolUse, ChatSegmentAlert, ChatSegmentResult, ActionQueueItem, ActionDescriptor, ChatFeedback } from '@/shared/schemas'
@@ -1036,11 +1037,28 @@ const WelcomeState = ({ onChipClick }: WelcomeStateProps) => (
 )
 
 // ---------------------------------------------------------------------------
+// Send-error message helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps a thrown error to a user-facing string distinguishing daemon-down from
+ * generic failures. Used by both the hero `createAndSend` mutation and the
+ * regular `Composer` own send mutation.
+ */
+function sendErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.kind === 'unreachable') return 'Daemon not running — start it with `mars daemon start`.'
+    if (err.kind === 'stale-daemon') return 'Daemon error — try restarting with `mars daemon restart`.'
+  }
+  return 'Message could not be sent — please try again.'
+}
+
+// ---------------------------------------------------------------------------
 // Hero composer (used in the no-thread hero state)
 // ---------------------------------------------------------------------------
 
 interface HeroComposerProps {
-  onSend: (text: string) => void
+  onSend: (text: string, clearText: () => void) => void
   isPending: boolean
   prefill?: string
   onPrefillConsumed: () => void
@@ -1061,8 +1079,7 @@ const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: HeroCom
   const handleSend = useCallback(() => {
     const trimmed = text.trim()
     if (!trimmed || isPending) return
-    onSend(trimmed)
-    setText('')
+    onSend(trimmed, () => setText(''))
   }, [text, isPending, onSend])
 
   return (
@@ -1103,8 +1120,10 @@ const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: HeroCom
 export interface HeroEmptyStateProps {
   projectId?: string
   onSelectThread: (id: string) => void
-  onCreateAndSend: (message: string) => void
+  onCreateAndSend: (message: string, clearText: () => void) => void
   isPending: boolean
+  /** Non-null when the last send attempt failed; renders an error banner. */
+  sendError?: string | null
   /** Opens the projection Thread for an action-queue item id in the sidebar/detail. */
   onOpenQueueItem?: (id: string) => void
 }
@@ -1123,6 +1142,7 @@ export const HeroEmptyState = ({
   onSelectThread,
   onCreateAndSend,
   isPending,
+  sendError,
   onOpenQueueItem,
 }: HeroEmptyStateProps) => {
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
@@ -1172,6 +1192,15 @@ export const HeroEmptyState = ({
         prefill={prefill}
         onPrefillConsumed={() => setPrefill(undefined)}
       />
+      {sendError && (
+        <p
+          role="alert"
+          data-testid="hero-send-error"
+          className="font-mono text-[11px] text-red-400"
+        >
+          {sendError}
+        </p>
+      )}
       <HeroSuggestions
         topAlert={topAlert}
         onAlertClick={handleAlertClick}
@@ -1196,10 +1225,14 @@ interface ComposerProps {
   /**
    * When set, sending routes here instead of posting to `threadId` — used on
    * projection Threads, where the first message creates the conversation.
+   * Receives a `clearText` callback the caller should invoke on success so the
+   * composer only clears when the send actually succeeded.
    */
-  onSendOverride?: (msg: string) => void
+  onSendOverride?: (msg: string, clearText: () => void) => void
   /** In-flight state for the override send (create-thread + first message). */
   sendPending?: boolean
+  /** External error from an override-send failure; shown inline below the textarea. */
+  sendError?: string | null
 }
 
 const Composer = ({
@@ -1210,9 +1243,11 @@ const Composer = ({
   onInitialTextConsumed,
   onSendOverride,
   sendPending = false,
+  sendError,
 }: ComposerProps) => {
   const [text, setText] = useState('')
   const [showPalette, setShowPalette] = useState(false)
+  const [localSendError, setLocalSendError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const qc = useQueryClient()
 
@@ -1227,10 +1262,13 @@ const Composer = ({
 
   const { mutate: send, isPending } = useMutation({
     mutationFn: (msg: string) => postChatMessage(threadId, msg, projectId),
+    onMutate: () => setLocalSendError(null),
     onSuccess: () => {
+      setText('')
       void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
     },
+    onError: (err) => setLocalSendError(sendErrorMessage(err)),
   })
 
   const { mutate: stop, isPending: isStopping } = useMutation({
@@ -1244,13 +1282,14 @@ const Composer = ({
   const handleSend = useCallback(() => {
     const trimmed = text.trim()
     if (!trimmed || disabled || isPending || sendPending) return
+    setShowPalette(false)
+    setLocalSendError(null)
     if (onSendOverride) {
-      onSendOverride(trimmed)
+      onSendOverride(trimmed, () => setText(''))
     } else {
       send(trimmed)
+      // setText('') is handled inside send.onSuccess so text survives failure
     }
-    setText('')
-    setShowPalette(false)
   }, [text, disabled, isPending, sendPending, onSendOverride, send])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1321,6 +1360,15 @@ const Composer = ({
           </button>
         )}
       </div>
+      {(sendError || localSendError) && (
+        <p
+          role="alert"
+          data-testid="composer-send-error"
+          className="mt-1 font-mono text-[10px] text-red-400"
+        >
+          {sendError ?? localSendError}
+        </p>
+      )}
     </div>
   )
 }
@@ -1903,18 +1951,21 @@ export const ChatPage = () => {
 
   // Create a new thread and post the first message in one gesture — used by
   // the hero composer so the user never has to click "+ New thread" separately.
+  const [sendError, setSendError] = useState<string | null>(null)
   const { mutate: createAndSend, isPending: isCreatingThread } = useMutation({
     mutationFn: async (message: string) => {
       const thread = await createChatThread(projectId)
       await postChatMessage(thread.id, message, projectId)
       return thread
     },
+    onMutate: () => setSendError(null),
     onSuccess: (thread) => {
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
       void qc.invalidateQueries({ queryKey: ['chat-thread', thread.id] })
       setSelectedThreadId(thread.id)
       setSelectedQueueItemId(null)
     },
+    onError: (err) => setSendError(sendErrorMessage(err)),
   })
 
   const { data: threadDetail } = useQuery({
@@ -2117,8 +2168,9 @@ export const ChatPage = () => {
                 disabled={false}
                 initialText={prefill}
                 onInitialTextConsumed={() => setPrefill(undefined)}
-                onSendOverride={(msg) => createAndSend(msg)}
+                onSendOverride={(msg, clearText) => createAndSend(msg, { onSuccess: () => clearText() })}
                 sendPending={isCreatingThread}
+                sendError={sendError}
               />
             )}
           </>
@@ -2126,8 +2178,9 @@ export const ChatPage = () => {
           <HeroEmptyState
             projectId={projectId}
             onSelectThread={handleSelectThread}
-            onCreateAndSend={(msg) => createAndSend(msg)}
+            onCreateAndSend={(msg, clearText) => createAndSend(msg, { onSuccess: () => clearText() })}
             isPending={isCreatingThread}
+            sendError={sendError}
             onOpenQueueItem={handleSelectQueueItem}
           />
         )}
