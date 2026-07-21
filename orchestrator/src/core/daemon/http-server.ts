@@ -757,6 +757,26 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/tasks/:id — single task by id. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/tasks/')) {
+      const id = decodeURIComponent(req.url.slice('/view/tasks/'.length))
+      if (!id) {
+        sendJson(res, 400, { error: 'id is required' })
+        return
+      }
+      deps.appServices
+        .viewTask(id)
+        .then((result) => {
+          if (result) {
+            sendJson(res, 200, result)
+          } else {
+            sendJson(res, 404, { error: 'not_found', id })
+          }
+        })
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/tasks — full task list from the daemon's DomainTaskStore.
     // The read-only UI proxies this endpoint instead of opening the DB
     // directly, so the daemon is the single reader of its own database.

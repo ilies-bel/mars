@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { createClient, type Client } from '@libsql/client'
+import { createClient } from '@libsql/client'
 
 import { startServer } from './index.ts'
 import { makeDaemonStub } from './testDaemonStub.ts'
@@ -15,74 +15,47 @@ const setupRepo = (): string => {
   return repo
 }
 
-const createQueueSchema = async (path: string): Promise<Client> => {
-  const c = createClient({ url: `file:${path}` })
-  await c.execute(`CREATE TABLE tasks (
-    id TEXT PRIMARY KEY,
-    prompt TEXT NOT NULL,
-    status TEXT NOT NULL,
-    plan_functional TEXT,
-    plan_technical TEXT,
-    branch TEXT,
-    worktree_path TEXT,
-    claude_session_id TEXT,
-    error TEXT,
-    drop_reason TEXT,
-    retry_count INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  )`)
-  return c
+const seedTask = async (dbPath: string, id: string, status: string): Promise<void> => {
+  const c = createClient({ url: `file:${dbPath}` })
+  try {
+    await c.execute(`CREATE TABLE IF NOT EXISTS tasks (
+      id TEXT PRIMARY KEY,
+      prompt TEXT NOT NULL,
+      status TEXT NOT NULL,
+      plan_functional TEXT,
+      plan_technical TEXT,
+      branch TEXT,
+      worktree_path TEXT,
+      claude_session_id TEXT,
+      error TEXT,
+      drop_reason TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`)
+    const now = new Date().toISOString()
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at)
+            VALUES (?, ?, ?, 0, ?, ?)`,
+      args: [id, `prompt for ${id}`, status, now, now],
+    })
+  } finally {
+    c.close()
+  }
 }
 
-const createStateSchema = async (path: string): Promise<Client> => {
-  const c = createClient({ url: `file:${path}` })
-  await c.execute(`CREATE TABLE proposals (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL DEFAULT '',
-    problem TEXT NOT NULL DEFAULT '',
-    solution TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'draft',
-    source TEXT NOT NULL DEFAULT 'human',
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  )`)
-  return c
-}
-
-const insertTask = async (
-  c: Client,
-  id: string,
-  status: string,
-): Promise<void> => {
-  const now = new Date().toISOString()
-  await c.execute({
-    sql: `INSERT INTO tasks (id, prompt, status, retry_count, created_at, updated_at)
-          VALUES (?, ?, ?, 0, ?, ?)`,
-    args: [id, `prompt for ${id}`, status, now, now],
-  })
-}
-
-describe('GET /api/tasks/:id', () => {
+describe('GET /api/tasks/:id — proxies daemon /view/tasks/:id', () => {
   let repo: string
   let server: ReturnType<typeof Bun.serve> | null = null
   let baseUrl: string
+  let dbPath: string
 
   beforeEach(async () => {
     repo = setupRepo()
-    const queueDbPath = resolve(repo, '.mars/mars.db')
-    const stateDbPath = resolve(repo, '.mars/mars.db')
-    const qc = await createQueueSchema(queueDbPath)
-    const sc = await createStateSchema(stateDbPath)
-    qc.close()
-    sc.close()
+    dbPath = resolve(repo, '.mars/mars.db')
 
     server = await startServer(
-      {
-        repo,
-        port: 0,
-        host: '127.0.0.1',
-      },
+      { repo, port: 0, host: '127.0.0.1' },
       { proxyGet: makeDaemonStub(repo) },
     )
     baseUrl = `http://${server.hostname}:${server.port}`
@@ -103,9 +76,7 @@ describe('GET /api/tasks/:id', () => {
   })
 
   it('returns 200 with the task when the id exists', async () => {
-    const qc = createClient({ url: `file:${resolve(repo, '.mars/mars.db')}` })
-    await insertTask(qc, 'task-1', 'queued')
-    qc.close()
+    await seedTask(dbPath, 'task-1', 'queued')
 
     const res = await fetch(`${baseUrl}/api/tasks/task-1`)
     expect(res.status).toBe(200)

@@ -175,6 +175,7 @@ export interface AppServices {
   budgetStatus: () => Promise<BudgetStatus>
   // ── task / progress / proposals views ───────────────────────────────────────
   viewTasks: () => Promise<{ tasks: unknown[] }>
+  viewTask: (id: string) => Promise<{ task: unknown } | null>
   viewProgress: () => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[]; aggregates: ProgressAggregates }>
   viewProposals: () => Promise<{ drafts: DraftFeature[]; staleWorktrees: StaleWorktreeAlert[] }>
   viewProposal: (id: string) => Promise<Proposal | null>
@@ -260,6 +261,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     getDefaultDomainTaskStore()
       .listTasks()
       .then((tasks) => ({ tasks }))
+
+  const viewTask: AppServices['viewTask'] = (id) =>
+    getDefaultDomainTaskStore()
+      .getTask(id)
+      .then((task) => (task ? { task } : null))
 
   const viewProgress: AppServices['viewProgress'] = async () => {
     const { buildProgressView, createProgressTaskStore, createProposalReader, createAggregateReader } =
@@ -1205,6 +1211,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     listKpiArcs,
     budgetStatus,
     viewTasks,
+    viewTask,
     viewProgress,
     viewProposals,
     viewProposal,

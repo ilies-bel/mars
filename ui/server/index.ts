@@ -164,15 +164,8 @@ export const startServer = async (
           if (!id) {
             return jsonResponse(400, { error: 'id is required' })
           }
-          try {
-            const task = await db.findTaskById(id)
-            if (!task) {
-              return jsonResponse(404, { error: 'not_found', id })
-            }
-            return jsonResponse(200, { task })
-          } catch (err) {
-            return jsonResponse(500, { error: (err as Error).message })
-          }
+          const r = await proxyGet(ctx.stateDir, `/view/tasks/${encodeURIComponent(id)}`)
+          return jsonResponse(r.status, r.body)
         }
 
         // GET /api/action-queue — proxy the daemon's derived action-queue view.

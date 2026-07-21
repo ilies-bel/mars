@@ -786,6 +786,17 @@ export const makeDaemonStub = (
       return { status: 200, body: await viewTasks(dbPath) }
     }
 
+    {
+      const taskByIdMatch = url.pathname.match(/^\/view\/tasks\/([^/?]+)$/)
+      if (taskByIdMatch?.[1]) {
+        const taskId = decodeURIComponent(taskByIdMatch[1])
+        const { tasks } = await viewTasks(dbPath)
+        const found = (tasks as Array<{ id: string }>).find((t) => t.id === taskId)
+        if (!found) return { status: 404, body: { error: 'not_found', id: taskId } }
+        return { status: 200, body: { task: found } }
+      }
+    }
+
     if (url.pathname === '/view/progress') {
       return { status: 200, body: await viewProgress(dbPath) }
     }
