@@ -267,24 +267,6 @@ export const raiseOrphanedOriginActionQueue = async (
   }
 }
 
-/**
- * A blocked dependent is failed at unblock time only when its retry
- * budget is actually spent: it has burned at least one retry
- * (retryCount > 0) AND has no remaining budget (retryCount >= budget).
- *
- * DEFAULT_RETRY_BUDGET is 0, so a fresh, never-run dependent has
- * retryCount=0/budget=0 and must still pass through to `queued` — a
- * blanket `>=` would fail every fresh dependent (0 >= 0). The
- * `retryCount > 0` clause preserves that fresh case while still failing
- * a dependent that burned a retry under the default budget=0
- * (retryCount=1, budget=0) and one that exhausted an explicit budget
- * (retryCount=1, budget=1 — the old `>` let this slip to `queued`).
- *
- * Used by Arc.unblockByCompletion (the live path driven by the outbox subscriber).
- */
-export const retryBudgetExhausted = (retryCount: number, budget: number): boolean =>
-  retryCount > 0 && retryCount >= budget
-
 export const raiseActionQueueForBlockedTask = async (taskId: string): Promise<void> => {
   const task = await getTask(taskId)
   if (!task) return

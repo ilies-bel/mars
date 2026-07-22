@@ -150,10 +150,11 @@ describe('blocker-resolution (task_blockers)', () => {
     )
   })
 
-  it('fails dependent that already burned a retry (retry_count=1, default budget=0) at unblock time', async () => {
-    // No MARS_FIX_RETRY_BUDGET => DEFAULT_RETRY_BUDGET (0). A dependent with
-    // retry_count=1 has burned a retry, so the guard (retryCount > budget,
-    // i.e. 1 > 0) must still fire and fail it.
+  it('queues a dependent that already burned a retry (retry_count=1) at unblock time — no retry-budget gate', async () => {
+    // The retry-budget silent-fail gate was removed (mars-3d63fe52): a
+    // dependent that becomes eligible must ALWAYS re-dispatch (queued),
+    // regardless of retry_count. Previously a retry_count>=1 dependent was
+    // silently failed with recovery_exhausted_at_unblock and never ran.
     const { q, br } = await loadModules(repo)
     const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
     const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
@@ -167,20 +168,19 @@ describe('blocker-resolution (task_blockers)', () => {
 
     const r = await br.onBlockerTaskCompleted(fix.id)
     expect(r.outcomes).toHaveLength(1)
-    expect(r.outcomes[0].outcome).toBe('failed')
+    expect(r.outcomes[0].outcome).toBe('queued')
+    expect(r.outcomes[0].retryCount).toBe(1)
     const reloaded = await q.getTask(dep.id)
-    expect(reloaded?.status).toBe('failed')
-    expect(reloaded?.failureReason).toBe('recovery_exhausted_at_unblock')
+    expect(reloaded?.status).toBe('queued')
+    expect(reloaded?.failureReason).toBeFalsy()
 
+    // No silent-fail action-queue item is raised for a re-queued dependent.
     const actionQueue = (await import('../action-queue')) as unknown as {
       listActionQueueItems: typeof import('../action-queue').listActionQueueItems
     }
     const open = await actionQueue.listActionQueueItems('open')
     const taskBlocked = open.filter((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
-    expect(taskBlocked).toHaveLength(1)
-    expect(taskBlocked[0].kind).toBe('failed')
-    expect(taskBlocked[0].signature).toBe(dep.id)
-    expect(taskBlocked[0].payload.taskId).toBe(dep.id)
+    expect(taskBlocked).toHaveLength(0)
   })
 
   it('onBlockerTaskCompleted queues a never-run dependent (retry_count=0, default budget=0) instead of failing it', async () => {
@@ -236,65 +236,6 @@ describe('blocker-resolution (task_blockers)', () => {
     expect(r.outcomes[0].outcome).toBe('noop')
     const reloaded = await q.getTask(dep.id)
     expect(reloaded?.status).toBe('blocked')
-  })
-
-  it('never-run dependent (no error field) produces actionQueue lastStep of "blocked-dependent", not "unblock"', async () => {
-    // A task that sat in blocked without ever running has no error field.
-    // The actionQueue item must NOT use the bogus 'unblock' sentinel — it must
-    // use 'blocked-dependent' so a human reading mars actionQueue can tell this
-    // task never executed vs failing at a real workflow step.
-    const { q, br } = await loadModules(repo)
-    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
-    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
-    // retry_count=1 so retryBudgetExhausted fires; no error field (never ran).
-    await blockTask(q, dep.id, fix.id, 1)
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
-      args: [fix.id],
-    })
-
-    await br.onBlockerTaskCompleted(fix.id)
-
-    const actionQueue = (await import('../action-queue')) as unknown as {
-      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
-    }
-    const open = await actionQueue.listActionQueueItems('open')
-    const item = open.find((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
-    expect(item).toBeDefined()
-    expect(item!.payload.lastStep).toBe('blocked-dependent')
-    expect(item!.payload.lastStep).not.toBe('unblock')
-    expect(item!.body).not.toContain('at step `unblock`')
-    expect(item!.body).toMatch(/never ran|blocked dependent/i)
-  })
-
-  it('task that failed at a real step produces actionQueue lastStep matching the step name', async () => {
-    // A task with error='verify:test: npm test failed' should surface
-    // lastStep='verify:test' — the real step — not 'blocked-dependent'.
-    const { q, br } = await loadModules(repo)
-    const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
-    const fix = await q.enqueueTask('fix', undefined, { skipTriage: true })
-    await blockTask(q, dep.id, fix.id, 1)
-    // Give it a real step error.
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET error = 'verify:test: npm test failed' WHERE id = ?`,
-      args: [dep.id],
-    })
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
-      args: [fix.id],
-    })
-
-    await br.onBlockerTaskCompleted(fix.id)
-
-    const actionQueue = (await import('../action-queue')) as unknown as {
-      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
-    }
-    const open = await actionQueue.listActionQueueItems('open')
-    const item = open.find((i) => i.kind === 'failed' && i.payload.taskId === dep.id)
-    expect(item).toBeDefined()
-    expect(item!.payload.lastStep).toBe('verify:test')
-    expect(item!.body).toContain('at step `verify:test`')
-    expect(item!.body).not.toContain('never ran')
   })
 
   describe('onBlockerTaskFailed — block downstream queued dependents', () => {
@@ -1031,10 +972,13 @@ describe('blocker-resolution (task_blockers)', () => {
   })
 
   // -----------------------------------------------------------------------
-  // Retry-budget race fix: a blocked task with its own in-flight or done
-  // recovery must never be failed by the budget guard.
+  // No retry-budget gate: an eligible dependent ALWAYS re-dispatches (queued)
+  // at unblock time, regardless of retry_count. The retry-budget silent-fail
+  // gate (recovery_exhausted_at_unblock) was removed — mars-3d63fe52. The
+  // one-recovery-per-origin model is unaffected: a recovery reaching done
+  // still reconciles its origin to done via propagateRecoveryDone.
   // -----------------------------------------------------------------------
-  describe('retry-budget race — own-recovery short-circuit', () => {
+  describe('unblock re-queues eligible dependents regardless of retry_count', () => {
     const makeOwnRecovery = async (
       q: QueueModule,
       originTaskId: string,
@@ -1052,68 +996,27 @@ describe('blocker-resolution (task_blockers)', () => {
       return fix.id
     }
 
-    it('(a) recoverBlocked: budget exhausted + DONE own-recovery → origin reconciles to done, NOT failed', async () => {
-      // Regression for the live race: recoverAllBlocked fires while
-      // propagateRecoveryDone is pending; origin has retry_count=1,
-      // budget=0, and its own recovery is already done.  The budget guard
-      // must NOT fail the origin — it must reconcile to done instead.
+    it('recoverBlocked: retry_count=1 with all blockers resolved → queued (was failed under the removed gate)', async () => {
+      // The gate used to fail this task with recovery_exhausted_at_unblock.
+      // Now a dependent that burned a retry re-dispatches like any other.
       const { q, br } = await loadModules(repo)
       const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      // Block origin with retry_count=1 (budget=0 via default env).
+      const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
+      await blockTask(q, origin.id, blocker.id, 1)
       await q.resolveQueueClient().execute({
-        sql: `UPDATE tasks SET status = 'blocked', retry_count = 1 WHERE id = ?`,
-        args: [origin.id],
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [blocker.id],
       })
-      await makeOwnRecovery(q, origin.id, 'done')
 
       const result = await br.recoverBlockedTask(origin.id)
 
-      expect(result.outcome).toBe('noop')
+      expect(result.outcome).toBe('queued')
       const reloaded = await q.getTask(origin.id)
-      expect(reloaded?.status).toBe('done')
-      expect(reloaded?.failureReason).not.toBe('recovery_exhausted_at_unblock')
-    })
-
-    it('(b) recoverBlocked: budget exhausted + IN-FLIGHT own-recovery → noop, NOT failed', async () => {
-      // Recovery is running — let propagateRecoveryDone handle the terminal
-      // transition.  The budget guard must return noop without failing.
-      const { q, br } = await loadModules(repo)
-      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      await q.resolveQueueClient().execute({
-        sql: `UPDATE tasks SET status = 'blocked', retry_count = 1 WHERE id = ?`,
-        args: [origin.id],
-      })
-      await makeOwnRecovery(q, origin.id, 'running')
-
-      const result = await br.recoverBlockedTask(origin.id)
-
-      expect(result.outcome).toBe('noop')
-      const reloaded = await q.getTask(origin.id)
-      // Must still be blocked — the in-flight recovery has not shipped yet.
-      expect(reloaded?.status).toBe('blocked')
+      expect(reloaded?.status).toBe('queued')
       expect(reloaded?.failureReason).toBeFalsy()
     })
 
-    it('(c) recoverBlocked: budget exhausted + NO own-recovery → failed (unchanged behavior)', async () => {
-      // Genuine no-recovery case must still fail.
-      const { q, br } = await loadModules(repo)
-      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      await q.resolveQueueClient().execute({
-        sql: `UPDATE tasks SET status = 'blocked', retry_count = 1 WHERE id = ?`,
-        args: [origin.id],
-      })
-      // No own recovery task created.
-
-      const result = await br.recoverBlockedTask(origin.id)
-
-      expect(result.outcome).toBe('failed')
-      expect(result.failureReason).toBe('recovery_exhausted_at_unblock')
-      const reloaded = await q.getTask(origin.id)
-      expect(reloaded?.status).toBe('failed')
-    })
-
-    it('(d) recoverBlocked: fresh task retry_count=0 → proceeds to queued (unchanged behavior)', async () => {
-      // A never-run task (retry_count=0) must still pass through to queued.
+    it('recoverBlocked: fresh task retry_count=0 with all blockers resolved → queued', async () => {
       const { q, br } = await loadModules(repo)
       const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
       const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
@@ -1129,108 +1032,70 @@ describe('blocker-resolution (task_blockers)', () => {
       expect((await q.getTask(origin.id))?.status).toBe('queued')
     })
 
-    it('regression: recoverAllBlocked with done own-recovery → origin=done, dependent unblocked', async () => {
-      // Simulate the exact live sequence: origin is blocked with retry_count=1
-      // (budget=0), recovery shipped done, daemon restarts and runs
-      // recoverAllBlocked.  The origin must flip to done (NOT failed) and its
-      // downstream dependent must move to queued.
+    it('recoverBlocked: a large retry_count is not a cap — still queues', async () => {
+      // There is no budget ceiling anymore, so even a task that "burned"
+      // many retries re-dispatches once its blockers resolve.
+      const { q, br } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      const blocker = await q.enqueueTask('blocker', undefined, { skipTriage: true })
+      await blockTask(q, origin.id, blocker.id, 7)
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [blocker.id],
+      })
+
+      const result = await br.recoverBlockedTask(origin.id)
+
+      expect(result.outcome).toBe('queued')
+      expect((await q.getTask(origin.id))?.status).toBe('queued')
+    })
+
+    it('unblockByCompletion: retry_count=1 dependent released by an external blocker → queued', async () => {
+      const { q, br } = await loadModules(repo)
+      const dep = await q.enqueueTask('dep', undefined, { skipTriage: true })
+      const externalBlocker = await q.enqueueTask('external', undefined, { skipTriage: true })
+      await blockTask(q, dep.id, externalBlocker.id, 1)
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
+        args: [externalBlocker.id],
+      })
+
+      const r = await br.onBlockerTaskCompleted(externalBlocker.id)
+
+      const outcome = r.outcomes.find((o) => o.taskId === dep.id)
+      expect(outcome?.outcome).toBe('queued')
+      const reloaded = await q.getTask(dep.id)
+      expect(reloaded?.status).toBe('queued')
+      expect(reloaded?.failureReason).toBeFalsy()
+    })
+
+    it('one-recovery model preserved: a recovery reaching done reconciles its origin to done (retry_count does not fail it)', async () => {
+      // The removed gate is orthogonal to the one-recovery-per-origin model.
+      // When a recovery ships done, propagateRecoveryDone (the daemon path)
+      // flips the origin to done and cascades — regardless of retry_count.
       const { q, br } = await loadModules(repo)
       const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
       const dep = await q.enqueueTask('downstream', undefined, { skipTriage: true })
-      // Park origin as blocked with retry_count=1.
+      // Origin parked as blocked with retry_count=1; its recovery is done.
       await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'blocked', retry_count = 1 WHERE id = ?`,
         args: [origin.id],
       })
-      // Block dep on origin (retry_count=0 — never ran, should queue once origin is done).
       await q.addBlockers(dep.id, [origin.id])
       await q.resolveQueueClient().execute({
         sql: `UPDATE tasks SET status = 'blocked', retry_count = 0 WHERE id = ?`,
         args: [dep.id],
       })
-      // Recovery already shipped done.
       await makeOwnRecovery(q, origin.id, 'done')
 
-      const result = await br.recoverAllBlockedTasks()
+      const propagation = await br.markOriginDoneFromRecovery(origin.id)
+      expect(propagation.originFlipped).toBe(true)
 
       const originReloaded = await q.getTask(origin.id)
       const depReloaded = await q.getTask(dep.id)
       expect(originReloaded?.status).toBe('done')
       expect(originReloaded?.failureReason).not.toBe('recovery_exhausted_at_unblock')
       expect(depReloaded?.status).toBe('queued')
-      // recoverBlocked returns 'noop' for the origin itself (propagateRecoveryDone
-      // handled it); dep is unblocked as a side-effect via propagateRecoveryDone.
-      const originOutcome = result.outcomes.find((o) => o.taskId === origin.id)
-      expect(originOutcome?.outcome).toBe('noop')
-    })
-
-    it('unblockByCompletion: budget exhausted + DONE own-recovery → origin=done, NOT failed', async () => {
-      // External blocker completes while the dependent's own recovery is also done.
-      // unblockByCompletion must not race propagateRecoveryDone by failing on budget.
-      const { q, br } = await loadModules(repo)
-      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      const externalBlocker = await q.enqueueTask('external', undefined, { skipTriage: true })
-      // origin blocked on the external blocker, retry_count=1.
-      await q.addBlockers(origin.id, [externalBlocker.id])
-      await q.resolveQueueClient().execute({
-        sql: `UPDATE tasks SET status = 'blocked', retry_count = 1 WHERE id = ?`,
-        args: [origin.id],
-      })
-      // origin's own recovery is done.
-      await makeOwnRecovery(q, origin.id, 'done')
-      // external blocker completes — triggers unblockByCompletion.
-      await q.resolveQueueClient().execute({
-        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
-        args: [externalBlocker.id],
-      })
-
-      const r = await br.onBlockerTaskCompleted(externalBlocker.id)
-
-      const outcome = r.outcomes.find((o) => o.taskId === origin.id)
-      expect(outcome?.outcome).toBe('noop')
-      const reloaded = await q.getTask(origin.id)
-      expect(reloaded?.status).toBe('done')
-      expect(reloaded?.failureReason).not.toBe('recovery_exhausted_at_unblock')
-    })
-
-    it('unblockByCompletion: budget exhausted + IN-FLIGHT own-recovery → noop, NOT failed', async () => {
-      const { q, br } = await loadModules(repo)
-      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      const externalBlocker = await q.enqueueTask('external', undefined, { skipTriage: true })
-      await q.addBlockers(origin.id, [externalBlocker.id])
-      await q.resolveQueueClient().execute({
-        sql: `UPDATE tasks SET status = 'blocked', retry_count = 1 WHERE id = ?`,
-        args: [origin.id],
-      })
-      await makeOwnRecovery(q, origin.id, 'running')
-      await q.resolveQueueClient().execute({
-        sql: `UPDATE tasks SET status = 'done' WHERE id = ?`,
-        args: [externalBlocker.id],
-      })
-
-      const r = await br.onBlockerTaskCompleted(externalBlocker.id)
-
-      const outcome = r.outcomes.find((o) => o.taskId === origin.id)
-      expect(outcome?.outcome).toBe('noop')
-      const reloaded = await q.getTask(origin.id)
-      expect(reloaded?.status).toBe('blocked')
-      expect(reloaded?.failureReason).toBeFalsy()
-    })
-
-    it('a failed own-recovery does not protect the origin — budget still fails it', async () => {
-      // A recovery that is itself failed (or dropped) provides no protection.
-      const { q, br } = await loadModules(repo)
-      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
-      await q.resolveQueueClient().execute({
-        sql: `UPDATE tasks SET status = 'blocked', retry_count = 1 WHERE id = ?`,
-        args: [origin.id],
-      })
-      await makeOwnRecovery(q, origin.id, 'failed')
-
-      const result = await br.recoverBlockedTask(origin.id)
-
-      expect(result.outcome).toBe('failed')
-      expect((await q.getTask(origin.id))?.status).toBe('failed')
     })
   })
 

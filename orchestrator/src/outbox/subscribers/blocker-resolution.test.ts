@@ -327,18 +327,28 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
   )
 
   it(
-    'non-main-committer own recovery that is done still triggers propagateRecoveryDone normally',
+    'non-main-committer recovery reaching done reconciles its origin to done (propagateRecoveryDone)',
     async () => {
       // Regression guard: ensure we did NOT accidentally break the normal
       // recovery-done path.  A real (non-main-committer) fix task with
-      // fix_for_task_id = origin should still cause origin → done.
-      process.env.MARS_FIX_RETRY_BUDGET = '3'
-      const { q, sub, pub } = await loadModules(repo)
+      // fix_for_task_id = origin causes origin → done via propagateRecoveryDone
+      // — the mechanism the daemon runs on a fix-task completion. This holds
+      // regardless of the origin's retry_count (the retry-budget silent-fail
+      // gate was removed — mars-3d63fe52).
+      const { q, sub } = await loadModules(repo)
       const qc = q.resolveQueueClient()
+      // Import Arc after vi.resetModules() (inside loadModules) so it shares the
+      // same module instance and DB binding as sub/q.
+      const { Arc } = (await import('../../core/arc')) as {
+        Arc: typeof import('../../core/arc').Arc
+      }
 
-      // Origin + a "real" fix task (no main-commiter recipe)
+      // Origin parked as blocked with a high retry_count.
       const origin = await q.enqueueTask('origin-task', undefined, { skipTriage: true })
-      await qc.execute({ sql: `UPDATE tasks SET retry_count = 10 WHERE id = ?`, args: [origin.id] })
+      await qc.execute({
+        sql: `UPDATE tasks SET status = 'blocked', retry_count = 10 WHERE id = ?`,
+        args: [origin.id],
+      })
 
       // Real recovery task (kind='fix', no recovery_payload → not a main-committer)
       const fixId = `fix-real-${origin.id.slice(0, 6)}`
@@ -348,18 +358,11 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
         args: [fixId, origin.id, origin.id, new Date(Date.now() - 60_000).toISOString(), new Date().toISOString()],
       })
 
-      // A separate blocker that just completed — triggers unblockByCompletion
-      const blocker = await q.enqueueTask('separate-blocker', undefined, { skipTriage: true })
-      await qc.execute({ sql: `UPDATE tasks SET status = 'done' WHERE id = ?`, args: [blocker.id] })
-      await qc.execute({
-        sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
-        args: [origin.id, blocker.id, new Date().toISOString()],
-      })
-      await qc.execute({ sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`, args: [origin.id] })
-
       await sub.ensureBlockerResolutionSubscriber(qc)
-      await pub.publishWithRetry(qc, 'task.terminal', { taskId: blocker.id, reason: 'done' })
-      await sub.drainBlockerResolution(qc)
+
+      // The daemon calls propagateRecoveryDone(origin) when a real fix task lands done.
+      const propagation = await Arc.load(origin.id).propagateRecoveryDone()
+      expect(propagation.originFlipped).toBe(true)
 
       // origin should now be 'done' (propagated from the real fix task)
       const originAfter = await q.getTask(origin.id)
