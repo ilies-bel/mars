@@ -507,6 +507,51 @@ export const mergeBranch = async ({
     let finalTaskSha = ''
     let finalIntegrationSha = ''
 
+    // Step 0: already-merged short-circuit. When the task branch is fully
+    // contained in the integration branch (0 commits ahead), its work is
+    // already integrated — there is nothing to rebase or fast-forward. Without
+    // this guard the merge dead-loops: preflight classifies the branch
+    // `needs-rebase` (integration is AHEAD, so not an ancestor of the task
+    // tip), the attempt loop's rebase is a no-op, and the fast-forward-ancestry
+    // check keeps failing because integration is not an ancestor of the (behind)
+    // task branch — spinning through the retry budget and the vcs-supervisor
+    // path without terminating. `git rev-list --count <integration>..<task>`
+    // is the robust signal; corroborate with `merge-base --is-ancestor
+    // <task> <integration>` (exit 0). Both probes forward `combinedSignal`, so
+    // the watchdog still bounds them. Treat as a successful no-op: mirror the
+    // clean fast-forward success return, but with no merge work performed and
+    // WITHOUT invoking the supervisor or integration-gate callbacks, since
+    // nothing changed on integration.
+    lastStep = 'already-merged-check'
+    const aheadCount = Number.parseInt(
+      (
+        await gexec(
+          ['rev-list', '--count', `${integrationBranch}..${branch}`],
+          repoRoot(),
+        )
+      ).stdout.trim(),
+      10,
+    )
+    const taskIsAncestorOfIntegration =
+      (
+        await gprobe(
+          ['merge-base', '--is-ancestor', branch, integrationBranch],
+          repoRoot(),
+        )
+      ).exitCode === 0
+    if (aheadCount === 0 && taskIsAncestorOfIntegration) {
+      lastStep = 'already-merged-noop'
+      return {
+        merged: true,
+        conflictResolved: false,
+        aborted: false,
+        output: `task branch ${branch} is already fully contained in ${integrationBranch} (0 commits ahead); merge is a no-op.`,
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      }
+    }
+
     for (let attempt = 1; attempt <= MAX_MERGE_ATTEMPTS; attempt++) {
       // Capture the integration tip BEFORE rebasing so we can later distinguish
       // a retryable forward advance from a non-retryable divergent state when
