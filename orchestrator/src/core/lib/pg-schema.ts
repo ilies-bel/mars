@@ -373,11 +373,16 @@ const DDL: readonly string[] = [
     alert_item_id  text,
     alert_resolved bigint NOT NULL DEFAULT 0,
     context_seeded bigint NOT NULL DEFAULT 0,
+    evaporated_at  text,
     created_at     text   NOT NULL,
     updated_at     text   NOT NULL
   )`,
+  // Idempotent column migration for already-provisioned databases.
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id
      ON chat_threads(alert_item_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_chat_threads_evaporated_at
+     ON chat_threads(evaporated_at)`,
   `CREATE TABLE IF NOT EXISTS chat_messages (
     id         text PRIMARY KEY,
     thread_id  text NOT NULL REFERENCES chat_threads(id),

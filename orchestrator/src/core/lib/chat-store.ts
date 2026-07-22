@@ -54,6 +54,12 @@ export interface ChatThread {
    * prepended on every subsequent turn.
    */
   context_seeded: boolean
+  /**
+   * ISO-8601 timestamp set when the thread is marked as evaporated (i.e. its
+   * purpose has been fulfilled and it is eligible for retention-window purge).
+   * Null for active threads.
+   */
+  evaporated_at: string | null
 }
 
 export interface ChatMessage {
@@ -203,6 +209,7 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   alert_item_id: (row.alert_item_id as string | null) ?? null,
   alert_resolved: Boolean(row.alert_resolved),
   context_seeded: Boolean(row.context_seeded),
+  evaporated_at: (row.evaporated_at as string | null) ?? null,
 })
 
 const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
@@ -244,6 +251,7 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
     alert_item_id: null,
     alert_resolved: false,
     context_seeded: false,
+    evaporated_at: null,
   }
 }
 
@@ -392,6 +400,20 @@ export const markContextSeeded = async (id: string): Promise<void> => {
   })
 }
 
+/**
+ * Mark a thread as evaporated by stamping `evaporated_at` with the current
+ * ISO-8601 timestamp. Idempotent: if the thread is already evaporated, the
+ * existing timestamp is preserved (the WHERE clause guards against overwrite).
+ */
+export const markThreadEvaporated = async (id: string): Promise<void> => {
+  const c = stateClient()
+  const ts = now()
+  await c.execute({
+    sql: `UPDATE chat_threads SET evaporated_at = ?, updated_at = ? WHERE id = ? AND evaporated_at IS NULL`,
+    args: [ts, ts, id],
+  })
+}
+
 // ── Feedback API ──────────────────────────────────────────────────────────────
 
 /**
@@ -513,6 +535,7 @@ export const createAlertThread = async (
     alert_item_id: alertItemId,
     alert_resolved: false,
     context_seeded: false,
+    evaporated_at: null,
   }
 }
 

@@ -15,6 +15,7 @@ interface ChatStoreModule {
   setThreadStatus: typeof import('./chat-store').setThreadStatus
   setThreadSession: typeof import('./chat-store').setThreadSession
   markContextSeeded: typeof import('./chat-store').markContextSeeded
+  markThreadEvaporated: typeof import('./chat-store').markThreadEvaporated
   createAlertThread: typeof import('./chat-store').createAlertThread
   findAlertThreadByItemId: typeof import('./chat-store').findAlertThreadByItemId
   resolveAlertThread: typeof import('./chat-store').resolveAlertThread
@@ -264,6 +265,45 @@ describe('chat-store', () => {
     await m.markContextSeeded(thread.id)
     const result = await m.getThread(thread.id)
     expect(result!.thread.context_seeded).toBe(true)
+  })
+
+  // ── markThreadEvaporated ────────────────────────────────────────────────────
+
+  it('freshly created thread has evaporated_at === null', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread('evaporation test')
+    expect(thread.evaporated_at).toBeNull()
+  })
+
+  it('markThreadEvaporated stamps evaporated_at with an ISO timestamp', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread('to evaporate')
+    await m.markThreadEvaporated(thread.id)
+    const result = await m.getThread(thread.id)
+    expect(result!.thread.evaporated_at).not.toBeNull()
+    // Must be a valid ISO-8601 date string
+    expect(() => new Date(result!.thread.evaporated_at!)).not.toThrow()
+  })
+
+  it('second call to markThreadEvaporated does not overwrite the original timestamp', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread('idempotent evaporate')
+    await m.markThreadEvaporated(thread.id)
+    const first = (await m.getThread(thread.id))!.thread.evaporated_at
+
+    // Ensure at least 1ms passes so a second stamp would differ
+    await new Promise((r) => setTimeout(r, 2))
+    await m.markThreadEvaporated(thread.id)
+    const second = (await m.getThread(thread.id))!.thread.evaporated_at
+
+    expect(second).toBe(first)
+  })
+
+  it('createAlertThread leaves evaporated_at null', async () => {
+    const m = await loadModule(repo)
+    const seg = makeAlertSegment()
+    const thread = await m.createAlertThread('item-evap-1', 'Alert evap', seg)
+    expect(thread.evaporated_at).toBeNull()
   })
 
   // ── idempotent init ─────────────────────────────────────────────────────────

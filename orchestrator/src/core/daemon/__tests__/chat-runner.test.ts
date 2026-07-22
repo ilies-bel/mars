@@ -117,7 +117,7 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
       messages: [],
       feedbacks: new Map(),
     })
@@ -234,7 +234,7 @@ vi.mock('../../lib/git/claude', () => ({
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: '' }),
   getThread: vi.fn().mockResolvedValue({
-    thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
+    thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
     messages: [],
     feedbacks: new Map(),
   }),
@@ -266,7 +266,7 @@ describe('ChatRunner state machine', () => {
     // Default: subprocess completes immediately.
     mockRunSubprocessStreaming.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
       messages: [],
       feedbacks: new Map(),
     })
@@ -436,7 +436,7 @@ describe('ChatRunner state machine', () => {
 
   it('auto-titles the thread from the first message when title is empty', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
       messages: [],
       feedbacks: new Map(),
     })
@@ -453,7 +453,7 @@ describe('ChatRunner state machine', () => {
 
   it('does not auto-title when thread already has messages', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false },
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
       messages: [{ id: 'm1', thread_id: 't1', role: 'user', content: 'prior', segments: null, created_at: '' }],
       feedbacks: new Map(),
     })
@@ -545,7 +545,7 @@ describe('ChatRunner state machine', () => {
       thread: {
         id: 't1', session_id: null, title: 'Alert', status: 'idle',
         created_at: '', updated_at: '', origin: 'alert',
-        alert_item_id: 'item-1', alert_resolved: false, context_seeded: false,
+        alert_item_id: 'item-1', alert_resolved: false, context_seeded: false, evaporated_at: null,
       },
       messages: [
         {
@@ -577,7 +577,7 @@ describe('ChatRunner state machine', () => {
       thread: {
         id: 't1', session_id: 'sess-existing', title: 'Alert', status: 'idle',
         created_at: '', updated_at: '', origin: 'alert',
-        alert_item_id: 'item-1', alert_resolved: false, context_seeded: true,
+        alert_item_id: 'item-1', alert_resolved: false, context_seeded: true, evaporated_at: null,
       },
       messages: [
         {
@@ -620,7 +620,7 @@ describe('ChatRunner state machine', () => {
       thread: {
         id: 't1', session_id: 'existing-sess', title: 'title', status: 'idle',
         created_at: '', updated_at: '', origin: null,
-        alert_item_id: null, alert_resolved: false, context_seeded: true,
+        alert_item_id: null, alert_resolved: false, context_seeded: true, evaporated_at: null,
       },
       messages: [],
       feedbacks: new Map(),
@@ -642,7 +642,7 @@ describe('ChatRunner state machine', () => {
       thread: {
         id: 't1', session_id: null, title: 'Chat', status: 'idle',
         created_at: '', updated_at: '', origin: null,
-        alert_item_id: null, alert_resolved: false, context_seeded: false,
+        alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null,
       },
       messages: [
         {
