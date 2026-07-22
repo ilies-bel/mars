@@ -23,6 +23,13 @@ export interface DaemonPaths {
    * to turn into an action-queue alert. Deleted at clean shutdown.
    */
   crashMarker: string
+  /**
+   * Exclusive advisory startup lock. Written with the current daemon PID once
+   * the startup guards pass; deleted at clean shutdown. A second concurrent
+   * daemon start that finds a live PID here refuses to start (exits nonzero)
+   * rather than running split-brain against the incumbent.
+   */
+  lockFile: string
 }
 
 export const daemonPaths = (repo?: string): DaemonPaths => {
@@ -34,6 +41,7 @@ export const daemonPaths = (repo?: string): DaemonPaths => {
     httpPortFile: resolve(ctx.stateDir, 'http.port'),
     runningMarker: resolve(ctx.stateDir, 'daemon.running.json'),
     crashMarker: resolve(ctx.stateDir, 'daemon.crash.json'),
+    lockFile: resolve(ctx.stateDir, 'daemon.lock'),
   }
 }
 
@@ -62,6 +70,28 @@ export const isProcessAlive = (pid: number): boolean => {
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === 'EPERM'
   }
+}
+
+/**
+ * Wait for a process to exit by polling its liveness at 200 ms intervals.
+ *
+ * Returns `true` if the process exited within `timeoutMs`.
+ * Returns `false` if the process is still alive after the deadline.
+ *
+ * A pid that was never alive (signal 0 returns ESRCH) is treated as
+ * already-exited and returns `true` immediately.
+ */
+export const waitForProcessExit = async (
+  pid: number,
+  timeoutMs: number,
+): Promise<boolean> => {
+  const POLL_INTERVAL_MS = 200
+  const deadline = Date.now() + timeoutMs
+  while (isProcessAlive(pid)) {
+    if (Date.now() >= deadline) return false
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+  }
+  return true
 }
 
 export const tryConnectSocket = async (socketPath: string): Promise<boolean> => {

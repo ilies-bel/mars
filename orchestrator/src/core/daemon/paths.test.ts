@@ -1,16 +1,21 @@
 /**
  * Tests for isDaemonReachable — the HTTP-port-based daemon liveness probe.
+ * Tests for waitForProcessExit — the bounded process-exit poller.
  *
- * These tests exercise the observable contract: absent/malformed port file →
- * false; stale port (no listener) → false; live TCP listener → true.
+ * These tests exercise the observable contracts:
+ *   isDaemonReachable: absent/malformed port file → false; stale port (no
+ *     listener) → false; live TCP listener → true.
+ *   waitForProcessExit: dead pid → true immediately; process exits within
+ *     timeout → true; process still alive at deadline → false.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { createServer, type Server } from 'node:net'
-import { isDaemonReachable } from './paths'
+import { isDaemonReachable, waitForProcessExit } from './paths'
 
 let stateDir: string
 
@@ -89,6 +94,54 @@ describe('isDaemonReachable — TCP connection probe', () => {
       expect(result).toBe(true)
     } finally {
       await new Promise<void>((done) => server.close(() => done()))
+    }
+  })
+})
+
+describe('waitForProcessExit', () => {
+  // ── Tracer bullet: already-dead pid ──────────────────────────────────────
+
+  it('returns true immediately for a pid that is already dead', async () => {
+    // Use a pid that is virtually guaranteed not to exist.
+    const result = await waitForProcessExit(2147483647, 1_000)
+    expect(result).toBe(true)
+  })
+
+  // ── Process exits within timeout ─────────────────────────────────────────
+
+  it('returns true when the process exits before the deadline', async () => {
+    // Start a real child process and kill it; waitForProcessExit should detect exit.
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], {
+      detached: true,
+      stdio: 'ignore',
+    })
+    child.unref()
+    const pid = child.pid!
+
+    // Signal the child to exit.
+    process.kill(pid, 'SIGTERM')
+
+    const result = await waitForProcessExit(pid, 5_000)
+    expect(result).toBe(true)
+  })
+
+  // ── Process still alive at deadline ──────────────────────────────────────
+
+  it('returns false when the process is still alive at the deadline', async () => {
+    const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], {
+      detached: true,
+      stdio: 'ignore',
+    })
+    child.unref()
+    const pid = child.pid!
+
+    try {
+      // Very short timeout — child is still running
+      const result = await waitForProcessExit(pid, 50)
+      expect(result).toBe(false)
+    } finally {
+      // Clean up: kill the child so it doesn't linger
+      try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
     }
   })
 })

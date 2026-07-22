@@ -96,7 +96,7 @@ import { computeFailureSignature } from '../lib/failure-signature'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
 import { RETENTION_MAX_ROWS_DEFAULT } from '../lib/retention-prune'
 import { setBusLogSink } from '../../bus/log'
-import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket } from './paths'
+import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForProcessExit } from './paths'
 import { loadDaemonConfig } from './config'
 import { setInstallSemCap } from '../lib/worktree-install'
 import { probeDuckDBLock } from './duckdb-lock'
@@ -322,7 +322,7 @@ export const startDaemon = async (
 ): Promise<DaemonHandle> => {
   const integrationBranch =
     opts.integrationBranch ?? process.env.INTEGRATION_BRANCH ?? 'main'
-  const { socket: socketPath, pidFile, logFile, httpPortFile, runningMarker, crashMarker } = daemonPaths()
+  const { socket: socketPath, pidFile, logFile, httpPortFile, runningMarker, crashMarker, lockFile } = daemonPaths()
 
   // ── Unclean-exit detection (before any file mutations) ───────────────────
   // If `daemon.running.json` exists from a prior run that never completed
@@ -382,6 +382,19 @@ export const startDaemon = async (
     }
   }
 
+  // ── Exclusive advisory startup lock ─────────────────────────────────────
+  // daemon.lock holds the PID of the daemon that last passed the startup
+  // guards. A second concurrent start finds a live PID here and refuses
+  // rather than running split-brain (two daemons sharing the DB / PG server).
+  const lockPid = readDaemonPid(lockFile)
+  if (lockPid !== null && isProcessAlive(lockPid)) {
+    log(
+      `daemon (pid ${lockPid}) holds the exclusive startup lock; refusing to start`,
+    )
+    process.exit(1)
+  }
+
+  // ── Socket probe ─────────────────────────────────────────────────────────
   // Refuse to clobber a live daemon. Probe the socket before unlinking —
   // a non-atomic existsSync check used to let two daemons coexist, leaking
   // DuckDB/DB-pool handles and making "kill the daemon" recovery unreliable.
@@ -390,18 +403,48 @@ export const startDaemon = async (
       log(`another daemon is already listening on ${socketPath}; exiting`)
       process.exit(0)
     }
-    const recordedPid = readDaemonPid(pidFile)
-    if (recordedPid !== null && isProcessAlive(recordedPid)) {
-      log(
-        `warning: stale-but-running daemon (pid ${recordedPid}) not responding on ${socketPath}; taking over socket`,
-      )
-    }
+    // Stale socket — unlink it before the kill-and-wait so the next
+    // incarnation cannot find and try to connect to it.
     try {
       unlinkSync(socketPath)
     } catch {
       // best-effort
     }
   }
+
+  // ── Kill-and-wait for any live prior process ──────────────────────────────
+  // Covers both the stale-socket case (socket present but unresponsive) and
+  // the race where the old daemon deleted its socket mid-shutdown but has not
+  // yet exited the process — which would leave it holding DB connections and
+  // producing SQLITE_BUSY / PG "too many connections" storms.
+  const priorPid = readDaemonPid(pidFile)
+  if (priorPid !== null && isProcessAlive(priorPid)) {
+    log(
+      `prior daemon (pid ${priorPid}) still alive; sending SIGTERM and waiting (max 30 s)`,
+    )
+    try {
+      process.kill(priorPid, 'SIGTERM')
+    } catch {
+      // might already have exited between the isProcessAlive check and here
+    }
+    const exited = await waitForProcessExit(priorPid, 30_000)
+    if (!exited) {
+      log(
+        `prior daemon (pid ${priorPid}) did not exit within 30 s; sending SIGKILL`,
+      )
+      try {
+        process.kill(priorPid, 'SIGKILL')
+      } catch {
+        // best-effort
+      }
+      await waitForProcessExit(priorPid, 5_000)
+    }
+  }
+
+  // Acquire the exclusive advisory lock. Written before any DB / socket work
+  // so a concurrent start racing through the guard above (TOCTOU window) will
+  // see a live PID and refuse on its next lock check or on restart.
+  writeFileSync(lockFile, String(process.pid), 'utf8')
 
   // Probe the DuckDB observability file before the first workflow dispatch
   // lazily opens it. A live foreign holder is a hard error here so the user
@@ -4168,7 +4211,7 @@ export const startDaemon = async (
             resolvePath(resolveContext().stateDir, 'pg.dsn'),
           ]
         : []
-    for (const f of [socketPath, pidFile, httpPortFile, runningMarker, crashMarker, ...pgPublishFiles]) {
+    for (const f of [socketPath, pidFile, httpPortFile, runningMarker, crashMarker, lockFile, ...pgPublishFiles]) {
       if (existsSync(f)) {
         try {
           unlinkSync(f)
