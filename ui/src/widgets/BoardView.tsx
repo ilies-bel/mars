@@ -104,14 +104,22 @@ export const buildArcsByCluster = (
     const latestTask = [...arcTasks].sort(compareNewestFirst)[0]!
 
     const displayTask = originTask ?? latestTask
+    // When the origin task is absent (force-purged / deleted), use the arc id as
+    // the title so users can cross-reference with the compensation arc badge
+    // ("↩ compensates arc <id>"). Do NOT use the recovery prompt as the title:
+    // it is technical noise and the line-through treatment would be misleading.
+    const hasOrphanedOrigin = originTask === undefined
+    const title = hasOrphanedOrigin
+      ? `Abandoned arc ${id}`
+      : titleFromPrompt(displayTask.prompt)
     arcsByCluster[cluster].push({
       id,
       cluster,
       tasks: orderedTasks.map(toUI),
-      title: titleFromPrompt(displayTask.prompt),
+      title,
       updatedAt: latestTask.updatedAt,
       compensatesArcId: displayTask.compensatesArcId ?? null,
-      hasOrphanedOrigin: originTask === undefined,
+      hasOrphanedOrigin,
     })
   }
 

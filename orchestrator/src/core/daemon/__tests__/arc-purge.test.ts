@@ -26,6 +26,7 @@ interface QueueModule {
   migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
   updateTask: typeof import('../../queue').updateTask
   addBlockers: typeof import('../../queue').addBlockers
+  listTasks: typeof import('../../queue').listTasks
 }
 
 interface ArcPurgeModule {
@@ -248,5 +249,86 @@ describe('coreArcPurge', () => {
     // Both branches should be deleted.
     expect(branchExists(repo, siblingBranch)).toBe(false)
     expect(branchExists(repo, originBranch)).toBe(false)
+  })
+
+  // ── Force-purge with integrated work creates a compensation task ──────────
+  it('creates a compensation task when force-purging an arc with integrated work', async () => {
+    const { q, ap } = await loadModules(repo)
+
+    // status='done' means the task's work was merged into the integration branch.
+    const origin = await q.enqueueTask('implement auth flow', undefined, {
+      skipTriage: true,
+    })
+    await q.updateTask(origin.id, { status: 'done' })
+
+    const result = await ap.coreArcPurge(origin.id, true, 'main', repo)
+
+    // A compensation task must be created.
+    expect(result.compensationTaskId).toBeDefined()
+    expect(typeof result.compensationTaskId).toBe('string')
+
+    // The compensation task must be retrievable and link back to the abandoned arc.
+    const compensationTask = await q.getTask(result.compensationTaskId!)
+    expect(compensationTask).not.toBeNull()
+    expect(compensationTask?.compensatesArcId).toBe(origin.id)
+
+    // Compensation is a normal task, NOT a recovery — fix_for_task_id must be null.
+    expect(compensationTask?.fixForTaskId).toBeNull()
+
+    // The origin is gone (purged).
+    expect(await q.getTask(origin.id)).toBeNull()
+  })
+
+  // ── Force-purge without integrated work does NOT create a cleanup task ───
+  it('does not create a compensation task when no arc member has integrated work', async () => {
+    const { q, ap } = await loadModules(repo)
+
+    // status='failed' = the work was never merged; branch-only unmerged work.
+    const origin = await q.enqueueTask('implement feature', undefined, {
+      skipTriage: true,
+    })
+    await q.updateTask(origin.id, { status: 'failed', error: 'test' })
+
+    const result = await ap.coreArcPurge(origin.id, true, 'main', repo)
+
+    // No compensation task for unmerged branch-only work.
+    expect(result.compensationTaskId).toBeUndefined()
+    // Origin is still purged.
+    expect(await q.getTask(origin.id)).toBeNull()
+  })
+
+  // ── Idempotency: existing compensation task is returned without duplicating ─
+  it('is idempotent: returns existing compensation task if one already exists', async () => {
+    const { q, ap } = await loadModules(repo)
+    const client = q.resolveQueueClient()
+
+    const origin = await q.enqueueTask('implement auth flow', undefined, {
+      skipTriage: true,
+    })
+    await q.updateTask(origin.id, { status: 'done' })
+
+    // Simulate a prior interrupted run by pre-creating the compensation task
+    // with the same followup_dedup_key that coreArcPurge would use.
+    const dedupKey = `arc-force-purge-compensation:${origin.id}`
+    const priorCompensation = await q.enqueueTask(
+      `Compensate for force-purged arc ${origin.id}`,
+      undefined,
+      {
+        skipTriage: true,
+        compensatesArcId: origin.id,
+        followupDedupKey: dedupKey,
+      },
+    )
+
+    // coreArcPurge must find and return the existing compensation task, not create a new one.
+    const result = await ap.coreArcPurge(origin.id, true, 'main', repo)
+    expect(result.compensationTaskId).toBe(priorCompensation.id)
+
+    // Only ONE compensation task must exist for this arc.
+    const rows = await client.execute({
+      sql: `SELECT id FROM tasks WHERE compensates_arc_id = ?`,
+      args: [origin.id],
+    })
+    expect((rows.rows as unknown as { id: string }[]).length).toBe(1)
   })
 })

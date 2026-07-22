@@ -75,11 +75,22 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
             const isCompensation = Boolean(arc.compensatesArcId)
             const isOrphaned = Boolean(arc.hasOrphanedOrigin)
 
+            // arc-state encodes the lifecycle position for tests and accessibility:
+            //   "cleanup-required" — compensation arc for a force-purged arc
+            //   "orphaned-origin"  — live recovery whose origin was force-purged
+            //   "active"           — normal origin-recovery arc (origin present)
+            const arcState = isCompensation
+              ? 'cleanup-required'
+              : isOrphaned
+                ? 'orphaned-origin'
+                : 'active'
+
             return (
               <details
                 key={arc.id}
                 data-arc-id={arc.id}
                 data-arc-status={arc.cluster}
+                data-arc-state={arcState}
                 data-compensates-arc={arc.compensatesArcId ?? undefined}
                 open={expandAll || undefined}
                 className="group rounded-md border border-border bg-surface transition-colors duration-150 hover:bg-panel"
@@ -95,7 +106,9 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
                     ▾
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className={`block line-clamp-2 text-body font-medium leading-snug ${isOrphaned ? 'text-muted line-through' : 'text-fg'}`}>
+                    {/* Title: muted for orphaned arcs (origin force-purged, recovery live).
+                        No line-through — the recovery is active, not abandoned. */}
+                    <span className={`block line-clamp-2 text-body font-medium leading-snug ${isOrphaned ? 'text-muted/70' : 'text-fg'}`}>
                       {arc.title}
                     </span>
                     <span className="mt-1 block font-mono text-meta text-muted">
@@ -107,8 +120,8 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
                       </span>
                     ) : null}
                     {isOrphaned ? (
-                      <span className="mt-1 block font-mono text-[10px] text-muted/70">
-                        origin dropped · recovery in progress
+                      <span className="mt-1 block font-mono text-[10px] text-muted/70" data-arc-state="orphaned-origin">
+                        ↱ recovery in progress · origin force-purged
                       </span>
                     ) : null}
                   </span>
