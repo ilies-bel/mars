@@ -465,8 +465,8 @@ The Subscriber that delivers a native OS desktop notification to the operator's 
 _Avoid_: push notification, notification channel, notification service, alerter
 
 **Thread**:
-A single-goal unit of operator decision on the chat page, either projected from an Alert (exists iff the Alert exists, clears only via entity mutation) or spawned by a human (closes when its goal artifact lands).
-_Avoid_: chat thread, conversation, lateral thread
+A created conversation on the chat surface — attached to an alert, purely informational, or free chat to shape a draft — that is a real entity with its own lifecycle, so unlike the action queue (a pure projection) it can be created and cleaned up directly.
+_Avoid_: chat session, conversation, chat thread, action queue item
 
 **Reflector**:
 The mostly-deterministic agent woken fresh at the end of a Session or an Arc (or on manual/orchestrator trigger) to synthesize reflections over completed work into draft proposals; not a long-running thread.
