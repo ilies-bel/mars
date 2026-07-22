@@ -1225,7 +1225,7 @@ const ProposalStepTimeline = ({
           ? 'bg-error/80 border-error/60'
           : s.outcome === 'killed'
             ? 'bg-ochre/80 border-ochre/60'
-            : 'bg-muted/40 border-muted/30'
+            : 'bg-accent/40 border-accent/30'
     return (
       <li
         key={`${s.workflowInstanceId}-${s.stepName}-${i}`}

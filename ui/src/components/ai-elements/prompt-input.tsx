@@ -221,7 +221,7 @@ export const PromptInputAttachment = ({
   return (
     <div
       className={cn(
-        "group relative flex items-center gap-2 rounded-md border bg-muted/50 py-1 pr-1 pl-2 text-xs",
+        "group relative flex items-center gap-2 rounded-md border bg-accent/50 py-1 pr-1 pl-2 text-xs",
         className
       )}
       {...props}

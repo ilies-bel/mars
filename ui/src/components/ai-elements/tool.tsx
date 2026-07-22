@@ -97,7 +97,7 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => (
     <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
       Parameters
     </h4>
-    <pre className="overflow-x-auto rounded-md bg-muted/50 p-3 text-xs">
+    <pre className="overflow-x-auto rounded-md bg-accent/50 p-3 text-xs">
       <code>{JSON.stringify(input, null, 2)}</code>
     </pre>
   </div>
@@ -128,7 +128,7 @@ export const ToolOutput = ({
           "overflow-x-auto rounded-md text-xs [&_table]:w-full",
           errorText
             ? "bg-destructive/10 text-destructive"
-            : "bg-muted/50 text-foreground"
+            : "bg-accent/50 text-foreground"
         )}
       >
         {errorText && <div className="p-3">{errorText}</div>}
