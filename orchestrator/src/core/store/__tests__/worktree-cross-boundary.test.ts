@@ -56,7 +56,7 @@ describe('store-layer worktree cross-boundary guard', () => {
     ;({ parentDir, worktreeCwd, decoyDb } = setupDecoyParent())
   })
 
-  afterEach(async () => {
+  afterEach(() => {
     cwdSpy?.mockRestore()
     delete process.env.MARS_REPO
     vi.resetModules()
@@ -95,11 +95,19 @@ describe('store-layer worktree cross-boundary guard', () => {
     const { getDefaultTaskStore, __resetDefaultTaskStoreForTests } = await import(
       '../task-store'
     )
+    // Import resolveQueueClient from the same fresh module set so we can
+    // close PGLite before afterEach removes parentDir.
+    const { resolveQueueClient } = await import('../../queue')
     __resetDefaultTaskStoreForTests()
 
     // Should not throw — explicit binding is honoured.
     const store = await getDefaultTaskStore()
     expect(store).toBeDefined()
+
+    // Close PGLite before afterEach removes parentDir. Without this, PGLite's
+    // background WASM processes (WAL writer, autovacuum) race with rmSync and
+    // produce an ENOENT unhandled rejection.
+    await resolveQueueClient().close()
   })
 
   it('getDefaultDomainTaskStore() refuses when CWD is inside .mars/worktrees/<id>/ with NO explicit MARS_REPO', async () => {
@@ -123,10 +131,18 @@ describe('store-layer worktree cross-boundary guard', () => {
 
     vi.resetModules()
     const { getDefaultDomainTaskStore } = await import('../task-store')
+    // Import resolveQueueClient from the same fresh module set so we can close
+    // PGLite before afterEach removes parentDir.
+    const { resolveQueueClient } = await import('../../queue')
 
     // Should not throw.
     const store = getDefaultDomainTaskStore()
     expect(store).toBeDefined()
+
+    // Close PGLite before afterEach removes parentDir. getDefaultDomainTaskStore()
+    // triggers openDb() → new PGlite(dataDir) whose async WASM init continues in
+    // the background; awaiting close() drains that init before rmSync fires.
+    await resolveQueueClient().close()
   })
 
   it('createTaskStore() is unguarded and works from a worktree CWD (escape hatch for hermetic test stores)', async () => {
@@ -148,6 +164,11 @@ describe('store-layer worktree cross-boundary guard', () => {
     })
     const fetched = await store.getTask(task.id)
     expect(fetched?.prompt).toBe('isolated test task')
+
+    // Close PGLite before afterEach removes parentDir. Without this, PGLite's
+    // background WASM processes (WAL writer, autovacuum) race with rmSync and
+    // produce an ENOENT unhandled rejection.
+    await queueModule.resolveQueueClient().close()
   })
 })
 
@@ -185,12 +206,19 @@ describe('vitest hermetic store guard', () => {
     const { getDefaultTaskStore, __resetDefaultTaskStoreForTests } = await import(
       '../task-store'
     )
+    // Import resolveQueueClient from the same fresh module set so we can
+    // close PGLite before removing the temp directory.
+    const { resolveQueueClient } = await import('../../queue')
     __resetDefaultTaskStoreForTests()
 
     // Should resolve without throwing.
     const store = await getDefaultTaskStore()
     expect(store).toBeDefined()
 
+    // Close PGLite before removing the temp directory. Without this, PGLite's
+    // background WASM processes (WAL writer, autovacuum) race with rmSync and
+    // produce an ENOENT unhandled rejection.
+    await resolveQueueClient().close()
     rmSync(repo, { recursive: true, force: true })
   })
 })
