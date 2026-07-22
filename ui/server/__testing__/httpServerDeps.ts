@@ -5,6 +5,11 @@
  * grows a new required member, TypeScript reports a compile error here (one
  * file) rather than in every test that constructs the deps inline.
  *
+ * Optional members (`viewStreamHub`, `chatStreamHub`) are intentionally absent
+ * from the factory defaults — they default to `undefined`, which is valid per
+ * the interface. Pass them via the `overrides` bag when a test exercises those
+ * routes.
+ *
  * Usage:
  *
  *   const deps = makeHttpServerDeps()
