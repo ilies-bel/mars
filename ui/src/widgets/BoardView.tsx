@@ -50,6 +50,7 @@ const toUI = (t: ProgressTask): UITask => ({
   retryCount: t.retryCount ?? 0,
   blockerTaskId: t.blockerTaskId ?? null,
   spec: t.spec ?? null,
+  compensatesArcId: t.compensatesArcId ?? null,
   createdAt: t.createdAt,
   updatedAt: t.updatedAt,
 })
@@ -102,12 +103,15 @@ export const buildArcsByCluster = (
     const originTask = orderedTasks.find((task) => task.id === id)
     const latestTask = [...arcTasks].sort(compareNewestFirst)[0]!
 
+    const displayTask = originTask ?? latestTask
     arcsByCluster[cluster].push({
       id,
       cluster,
       tasks: orderedTasks.map(toUI),
-      title: titleFromPrompt((originTask ?? latestTask).prompt),
+      title: titleFromPrompt(displayTask.prompt),
       updatedAt: latestTask.updatedAt,
+      compensatesArcId: displayTask.compensatesArcId ?? null,
+      hasOrphanedOrigin: originTask === undefined,
     })
   }
 

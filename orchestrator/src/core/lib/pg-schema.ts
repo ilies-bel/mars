@@ -377,7 +377,8 @@ const DDL: readonly string[] = [
     created_at     text   NOT NULL,
     updated_at     text   NOT NULL
   )`,
-  // Idempotent column migration for already-provisioned databases.
+  // Idempotent column migrations for already-provisioned databases.
+  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS compensates_arc_id text`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id
      ON chat_threads(alert_item_id)`,

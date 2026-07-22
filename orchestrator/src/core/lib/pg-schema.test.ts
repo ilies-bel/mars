@@ -70,7 +70,8 @@ describe('ensureSchema', () => {
       'prescriptive_action', 'slice_kind', 'sub_deliverable_json',
       'integration_head_sha', 'followup_dedup_key', 'intent', 'lease_owner',
       'leased_at', 'lease_note', 'origin_session_id', 'workflow',
-      'current_step_name', 'current_step_guide', 'created_at', 'updated_at',
+      'current_step_name', 'current_step_guide', 'compensates_arc_id',
+      'created_at', 'updated_at',
     ]) {
       expect(cols.has(name), `tasks.${name} missing`).toBe(true)
     }

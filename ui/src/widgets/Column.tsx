@@ -11,6 +11,17 @@ export interface BoardArc {
   tasks: UITask[]
   title: string
   updatedAt: string
+  /**
+   * When set, this arc's origin task is a compensation/cleanup task for the
+   * force-purged arc with this origin_id. Used to render the lifecycle badge.
+   */
+  compensatesArcId?: string | null
+  /**
+   * True when the arc's origin task is not present in the board tasks (e.g.
+   * it was dropped while a recovery task is still in flight). The arc shows
+   * the recovery in a muted "abandoned origin" presentation.
+   */
+  hasOrphanedOrigin?: boolean
 }
 
 interface Props {
@@ -61,17 +72,20 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
             taskIndex += arc.tasks.length
             const taskLabel = arc.tasks.length === 1 ? 'task' : 'tasks'
             const isLive = arc.cluster === 'In progress'
+            const isCompensation = Boolean(arc.compensatesArcId)
+            const isOrphaned = Boolean(arc.hasOrphanedOrigin)
 
             return (
               <details
                 key={arc.id}
                 data-arc-id={arc.id}
                 data-arc-status={arc.cluster}
+                data-compensates-arc={arc.compensatesArcId ?? undefined}
                 open={expandAll || undefined}
                 className="group rounded-md border border-border bg-surface transition-colors duration-150 hover:bg-panel"
               >
                 <summary
-                  aria-label={`Arc ${arc.id}: ${arc.cluster}, ${arc.tasks.length} ${taskLabel}`}
+                  aria-label={`Arc ${arc.id}: ${arc.cluster}, ${arc.tasks.length} ${taskLabel}${isCompensation ? `, compensating arc ${arc.compensatesArcId}` : ''}`}
                   className="flex cursor-pointer list-none items-start gap-2 p-3 [&::-webkit-details-marker]:hidden"
                 >
                   <span
@@ -81,12 +95,22 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
                     ▾
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block line-clamp-2 text-body font-medium leading-snug text-fg">
+                    <span className={`block line-clamp-2 text-body font-medium leading-snug ${isOrphaned ? 'text-muted line-through' : 'text-fg'}`}>
                       {arc.title}
                     </span>
                     <span className="mt-1 block font-mono text-meta text-muted">
                       arc {arc.id}
                     </span>
+                    {isCompensation ? (
+                      <span className="mt-1 block font-mono text-[10px] text-ochre">
+                        ↩ compensates arc {arc.compensatesArcId}
+                      </span>
+                    ) : null}
+                    {isOrphaned ? (
+                      <span className="mt-1 block font-mono text-[10px] text-muted/70">
+                        origin dropped · recovery in progress
+                      </span>
+                    ) : null}
                   </span>
                   <span className="flex shrink-0 flex-col items-end gap-1">
                     <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wide ${STATUS_CLASS[arc.cluster]}`}>

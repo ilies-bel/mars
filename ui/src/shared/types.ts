@@ -33,6 +33,11 @@ export interface UITask {
    * in the same order as the implementor brief.
    */
   spec: UITaskSpec | null
+  /**
+   * When set, this task was created to compensate/cleanup a force-purged arc.
+   * The value is the `origin_id` of the abandoned arc. Null/absent for regular tasks.
+   */
+  compensatesArcId?: string | null
   createdAt: string
   updatedAt: string
 }

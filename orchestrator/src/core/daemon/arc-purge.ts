@@ -18,7 +18,7 @@
  * purged last so its `fix_for_task_id` cascade handles any remaining fix tasks
  * atomically.
  */
-import { getTask } from '../queue'
+import { getTask, enqueueTask } from '../queue'
 import { corePurgeTask } from './purge-task'
 import { listUniqueCommitsAhead } from '../lib/sweep'
 import { getDefaultDomainTaskStore } from '../store/task-store'
@@ -28,6 +28,13 @@ export interface ArcPurgeResult {
   purgedIds: string[]
   /** The resolved origin_id of the arc. */
   originId: string
+  /**
+   * Id of the compensation/cleanup task created when the arc had integrated
+   * work on the integration branch. Absent when no compensation task was
+   * needed (branch-only work) or when the task already existed (idempotent).
+   * Always set when force=true and any arc member had status='done'.
+   */
+  compensationTaskId?: string
 }
 
 /**
@@ -85,6 +92,21 @@ export const coreArcPurge = async (
     }
   }
 
+  // Collect full task details BEFORE purging: status determines whether the arc
+  // had work integrated into the branch (status='done' means merged).
+  const memberTaskDetails = await Promise.all(members.map((m) => getTask(m.id)))
+  const integratedMemberIds = memberTaskDetails
+    .filter((t): t is NonNullable<typeof t> => t !== null && t.status === 'done')
+    .map((t) => t.id)
+  const hasIntegratedWork = integratedMemberIds.length > 0
+
+  // Capture the origin task's title/intent BEFORE it is deleted.
+  const originTaskDetail = memberTaskDetails.find((t) => t?.id === originId)
+  const originTitle =
+    (originTaskDetail?.intent !== '' ? originTaskDetail?.intent : null) ??
+    originTaskDetail?.prompt.split('\n')[0] ??
+    `arc ${originId}`
+
   // Purge each member. Non-origin members are purged first so the origin's
   // Arc.drop() cascade (fix children via fix_for_task_id) handles any remaining
   // fix tasks atomically. Members that were already cascade-deleted by a prior
@@ -102,5 +124,57 @@ export const coreArcPurge = async (
     purgedIds.push(member.id)
   }
 
-  return { purgedIds, originId }
+  // When the arc had integrated work and this was a force-purge, create exactly
+  // one compensation/cleanup task. The followup_dedup_key makes this idempotent:
+  // a second force-purge (or a crash-retry) finds the existing task and returns
+  // its id without creating a duplicate.
+  if (!force || !hasIntegratedWork) {
+    return { purgedIds, originId }
+  }
+
+  const dedupKey = `arc-force-purge-compensation:${originId}`
+  const store = getDefaultDomainTaskStore()
+  const existing = await store.execute({
+    sql: `SELECT id FROM tasks WHERE followup_dedup_key = ?`,
+    args: [dedupKey],
+  })
+  const existingRows = existing.rows as unknown as { id: string }[]
+  if (existingRows.length > 0) {
+    return { purgedIds, originId, compensationTaskId: existingRows[0].id }
+  }
+
+  const memberList = integratedMemberIds.map((mid) => `  - ${mid}`).join('\n')
+  const compensationTask = await enqueueTask(
+    `Compensate for force-purged arc ${originId}.
+
+The arc below was force-purged while some of its work had already been integrated
+into the integration branch (${integrationBranch}). Review the integration branch to
+identify and handle any orphaned code from this abandoned arc.
+
+**Abandoned arc:** ${originId}
+**Origin task:** ${originTitle}
+**Members with integrated commits (status was 'done'):**
+${memberList}
+
+**Expected cleanup or revert scope:**
+1. Run \`git log ${integrationBranch} --oneline\` to find commits from the task branches above.
+2. Decide whether to revert the integrated changes or keep them with documentation.
+3. If reverting: use \`git revert <sha>\` for each relevant commit and push to ${integrationBranch}.
+4. If keeping: add a code comment or ADR entry referencing this abandoned arc with rationale.
+
+**Verification expectations:**
+- The integration branch is in a known, consistent state.
+- Either the orphaned changes are explicitly reverted, OR a written decision exists
+  to keep them with rationale documented (comment, ADR, or task note).
+- No dead code or broken imports remain from the abandoned arc.`,
+    undefined,
+    {
+      skipTriage: true,
+      compensatesArcId: originId,
+      followupDedupKey: dedupKey,
+      intent: `Compensate for force-purged arc ${originId}`,
+    },
+  )
+
+  return { purgedIds, originId, compensationTaskId: compensationTask.id }
 }

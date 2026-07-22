@@ -412,6 +412,16 @@ export interface Task {
    * step. `null` when no guide was provided or the task is not parked.
    */
   currentStepGuide: string | null
+  /**
+   * When set, this is a compensation/cleanup task for a force-purged arc. The
+   * value is the `origin_id` of the abandoned arc. `null` for all other tasks.
+   * Compensation tasks are regular tasks (not recovery/fix tasks) — they have
+   * their own arc lifecycle and appear on the board as actionable cleanup work.
+   * Optional on the type for backwards compat with test fixtures that predate
+   * this field; always populated at the persistence boundary (`null` for non-
+   * compensation rows).
+   */
+  compensatesArcId?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -662,6 +672,7 @@ SELECT
   t.lease_owner, t.leased_at, t.lease_note,
   t.origin_session_id, t.workflow,
   t.current_step_name, t.current_step_guide,
+  t.compensates_arc_id,
   t.created_at, t.updated_at
 FROM tasks t`
 
@@ -734,6 +745,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     workflow: (row.workflow as string | null) ?? null,
     currentStepName: (row.current_step_name as string | null) ?? null,
     currentStepGuide: (row.current_step_guide as string | null) ?? null,
+    compensatesArcId: (row.compensates_arc_id as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -846,6 +858,19 @@ export interface EnqueueTaskOptions {
    * kind-default file. Omitted/null → default-by-kind.
    */
   workflow?: string | null
+  /**
+   * When set, marks this task as a compensation/cleanup task for the arc
+   * identified by this `origin_id`. Stored in `compensates_arc_id`. Only set
+   * by the force-purge path — do not use this for recovery tasks.
+   */
+  compensatesArcId?: string
+  /**
+   * Dedup key stored in `followup_dedup_key` to prevent duplicate tasks on
+   * repeated invocations. The force-purge compensation path uses
+   * `arc-force-purge-compensation:<originId>` so that repeated force operations
+   * on the same arc do not produce multiple cleanup tasks.
+   */
+  followupDedupKey?: string
 }
 
 /**

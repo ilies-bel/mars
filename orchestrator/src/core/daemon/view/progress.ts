@@ -72,6 +72,12 @@ export interface ProgressTask {
   fixForTaskId: string | null
   /** Task role: 'task' | 'fix' | 'diagnose' | null for legacy rows. */
   kind: string | null
+  /**
+   * When set, this task was created to compensate/cleanup a force-purged arc.
+   * The value is the `origin_id` of the abandoned arc. Null for all other tasks.
+   * Optional for backwards compat with callers that predated this field.
+   */
+  compensatesArcId?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -101,6 +107,7 @@ export interface ProgressTaskRow {
   originId: string | null
   fixForTaskId: string | null
   kind: string | null
+  compensatesArcId?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -222,6 +229,7 @@ export const buildProgressView = async (
       originId: row.originId,
       fixForTaskId: row.fixForTaskId,
       kind: row.kind,
+      compensatesArcId: row.compensatesArcId,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     })
@@ -265,6 +273,7 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
                 FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
              t.task_type,
              t.origin_id, t.fix_for_task_id, t.kind,
+             t.compensates_arc_id,
              t.created_at, t.updated_at,
              (SELECT b.blocker_task_id FROM task_blockers b
                WHERE b.task_id = t.id ORDER BY b.created_at ASC LIMIT 1) AS blocker_task_id,
@@ -298,6 +307,7 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
         originId: (ro.origin_id as string | null) ?? null,
         fixForTaskId: (ro.fix_for_task_id as string | null) ?? null,
         kind: (ro.kind as string | null) ?? null,
+        compensatesArcId: (ro.compensates_arc_id as string | null) ?? null,
         createdAt: ro.created_at as string,
         updatedAt: ro.updated_at as string,
       }

@@ -109,6 +109,12 @@ export const taskSchema = z.object({
    * Used to distinguish the arc origin from its recovery tasks.
    */
   kind: z.string().nullable().optional(),
+  /**
+   * When set, this task was created to compensate/cleanup a force-purged arc.
+   * The value is the `origin_id` of the abandoned arc. Null for all other tasks.
+   * Used by the board to show the arc lifecycle (compensation badge/indicator).
+   */
+  compensatesArcId: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
