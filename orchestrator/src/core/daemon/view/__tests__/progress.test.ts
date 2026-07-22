@@ -131,4 +131,24 @@ describe('buildProgressView — aggregate counts', () => {
     expect(aggregates.doneToday).toBe(5)
     expect(aggregates.failedOpen).toBe(2)
   })
+
+  it('passes through failedOpen unchanged — reader is responsible for excluding recovery tasks', async () => {
+    // The real createAggregateReader filters AND fix_for_task_id IS NULL so
+    // that a failed origin + its failed recovery count as 1, not 2.
+    // buildProgressView must NOT re-count from the task rows; it trusts the
+    // reader. This test pins that contract: two failed tasks in the view but
+    // the reader says failedOpen=1 → the view reports 1.
+    const reader: AggregateReader = {
+      readAggregates: async () => ({ doneToday: 0, doneTotal: 0, failedOpen: 1 }),
+    }
+    const failedOrigin = makeRow({ id: 'origin-1', status: 'failed', fixForTaskId: null })
+    const failedRecovery = makeRow({ id: 'fix-1', status: 'failed', fixForTaskId: 'origin-1' })
+    const { aggregates } = await buildProgressView(
+      makeStore([failedOrigin, failedRecovery]),
+      noProposals,
+      reader,
+    )
+    // Reader already excluded the recovery row; view must not inflate to 2.
+    expect(aggregates.failedOpen).toBe(1)
+  })
 })
