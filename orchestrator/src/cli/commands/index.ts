@@ -32,6 +32,8 @@ import { skillForgeCommands } from './skill-forge'
 import { toolForgeCommands } from './tool-forge'
 import { toolPromotionCommands } from './tool-promotion'
 import { memoryCommands } from './memory'
+import { visionCommands } from './vision'
+import { operatorCommands } from './operator'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -59,6 +61,8 @@ export const allCommands: readonly Command[] = [
   ...notificationsCommands,
   ...selfUpdateCommands,
   ...memoryCommands,
+  ...visionCommands,
+  ...operatorCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)
