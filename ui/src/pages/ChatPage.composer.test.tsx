@@ -54,11 +54,18 @@ const makeFile = (name: string, type: string) =>
 /** Renders the Composer into a container div, returns the root + onSend spy. */
 function renderComposer(
   container: HTMLElement,
-  props?: { threadId?: string; disabled?: boolean; onSend?: (text: string, ids?: string[]) => Promise<void> },
+  props?: {
+    threadId?: string
+    disabled?: boolean
+    onSend?: (text: string, ids?: string[]) => Promise<void>
+    onStop?: () => void
+    isBusy?: boolean
+  },
 ) {
   const qc = makeQueryClient()
   const root = createRoot(container)
   const onSend = props?.onSend ?? vi.fn().mockResolvedValue(undefined)
+  const onStop = props?.onStop ?? vi.fn()
   root.render(
     createElement(
       QueryClientProvider,
@@ -68,10 +75,12 @@ function renderComposer(
         disabled: props?.disabled ?? false,
         onInitialTextConsumed: () => {},
         onSend,
+        onStop,
+        isBusy: props?.isBusy ?? false,
       }),
     ),
   )
-  return { root, onSend }
+  return { root, onSend, onStop }
 }
 
 /**
@@ -284,5 +293,43 @@ describe('Composer – send flow', () => {
 
     expect(uploadAttachment).not.toHaveBeenCalled()
     expect(onSend).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Stop button — shown when isBusy, calls onStop to abort the in-flight run
+// ---------------------------------------------------------------------------
+
+describe('Composer – stop button', () => {
+  it('shows the stop button and hides the send button when isBusy', async () => {
+    await act(() => {
+      renderComposer(container, { isBusy: true })
+    })
+    expect(container.querySelector('[data-testid="stop-btn"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="send-btn"]')).toBeNull()
+  })
+
+  it('shows the send button and hides the stop button when not busy', async () => {
+    await act(() => {
+      renderComposer(container)
+    })
+    expect(container.querySelector('[data-testid="send-btn"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="stop-btn"]')).toBeNull()
+  })
+
+  it('calls onStop when the stop button is clicked', async () => {
+    let onStop!: ReturnType<typeof vi.fn>
+    await act(() => {
+      onStop = renderComposer(container, { isBusy: true }).onStop as ReturnType<typeof vi.fn>
+    })
+
+    const stopBtn = container.querySelector('[data-testid="stop-btn"]') as HTMLButtonElement
+    expect(stopBtn).not.toBeNull()
+
+    await act(() => {
+      stopBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(onStop).toHaveBeenCalledTimes(1)
   })
 })
