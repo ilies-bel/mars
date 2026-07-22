@@ -250,6 +250,21 @@ export const proxyStream = async (
   })
 
 /**
+ * Forward a DELETE request to the daemon, relaying its status + parsed JSON
+ * body verbatim. Used for the un-teach learned-recipe route. A missing daemon
+ * yields a synthetic 503; a transport error yields a 502.
+ */
+export const proxyDelete = async (
+  stateDir: string,
+  path: string,
+): Promise<DaemonActionResult> =>
+  withDaemon(stateDir, async (port) => {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'DELETE' })
+    const body = await res.json().catch(() => ({}))
+    return { status: res.status, body }
+  })
+
+/**
  * Process-level action ops that have no entity scope.
  *
  * These ops target the daemon process itself rather than a specific task or

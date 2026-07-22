@@ -3,6 +3,7 @@ import { DAEMON_ERROR } from './daemonErrors'
 import {
   actionQueueHistoryResponseSchema,
   actionQueueResponseSchema,
+  autoRecipeRunsResponseSchema,
   chatThreadDetailSchema,
   chatThreadsResponseSchema,
   eventsResponseSchema,
@@ -10,6 +11,7 @@ import {
   glossaryResponseSchema,
   kpiArcsResponseSchema,
   kpisResponseSchema,
+  learnedRecipesResponseSchema,
   originsResponseSchema,
   progressResponseSchema,
   projectsResponseSchema,
@@ -23,6 +25,7 @@ import {
   workerSessionsResponseSchema,
   type ActionQueueHistoryResponse,
   type ActionQueueItem,
+  type AutoRecipeRun,
   type ChatThread,
   type ChatThreadDetail,
   type EventsResponse,
@@ -31,6 +34,7 @@ import {
   type Kpi,
   type KpiArcsResponse,
   type KpiKey,
+  type LearnedRecipe,
   type OriginsResponse,
   type ProgressProposalNode,
   type ProgressTask,
@@ -825,10 +829,77 @@ export const fetchSkills = async (): Promise<Skill[]> => {
   return json.skills
 }
 
+// ---------------------------------------------------------------------------
+// Learned recipes
+// ---------------------------------------------------------------------------
+
+/** Fetch all operator-taught auto-run rules. Returns [] when daemon unreachable. */
+export const fetchLearnedRecipes = async (): Promise<LearnedRecipe[]> => {
+  const json = await fetchJson('/api/failure-kinds/learned-recipes', learnedRecipesResponseSchema)
+  return json.learnedRecipes
+}
+
+/** Teach the daemon to auto-run `op` next time `signature` fires. Idempotent. */
+export const teachRecipe = async (signature: string, op: string): Promise<void> => {
+  let r: Response
+  try {
+    r = await fetch(`${BASE}/api/failure-kinds/${encodeURIComponent(signature)}/recipe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op }),
+    })
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new ApiError(`POST /api/failure-kinds/recipe → cannot reach the mars-ui API server`, 'unreachable')
+    }
+    throw err
+  }
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { error?: string; errorCode?: string }
+    throw new ApiError(
+      `POST /api/failure-kinds/recipe → ${r.status}${body.error ? `: ${body.error}` : ''}`,
+      errorCodeToKind(body.errorCode),
+      r.status,
+    )
+  }
+}
+
+/** Remove the auto-run rule for `signature`. No-op when no rule is stored. */
+export const unlearnRecipe = async (signature: string): Promise<void> => {
+  let r: Response
+  try {
+    r = await fetch(`${BASE}/api/failure-kinds/${encodeURIComponent(signature)}/recipe`, { method: 'DELETE' })
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new ApiError(`DELETE /api/failure-kinds/recipe → cannot reach the mars-ui API server`, 'unreachable')
+    }
+    throw err
+  }
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { error?: string; errorCode?: string }
+    throw new ApiError(
+      `DELETE /api/failure-kinds/recipe → ${r.status}${body.error ? `: ${body.error}` : ''}`,
+      errorCodeToKind(body.errorCode),
+      r.status,
+    )
+  }
+}
+
+/** Fetch recent auto-recipe run log entries, newest-first. Used by WYWA panel. */
+export const fetchAutoRecipeRuns = async (opts?: { since?: string; limit?: number }): Promise<AutoRecipeRun[]> => {
+  const params: string[] = []
+  if (opts?.since) params.push(`since=${encodeURIComponent(opts.since)}`)
+  if (opts?.limit !== undefined) params.push(`limit=${opts.limit}`)
+  const qs = params.length > 0 ? `?${params.join('&')}` : ''
+  const json = await fetchJson(`/api/auto-recipe-runs${qs}`, autoRecipeRunsResponseSchema)
+  return json.autoRecipeRuns
+}
+
 export type {
   ActionQueueHistoryResponse,
   ActionQueueItem,
   ActionQueueResolution,
+  AutoRecipeRun,
   ChatThread,
   ChatThreadDetail,
   DaemonHealth,
@@ -839,6 +910,7 @@ export type {
   KpiArc,
   KpiArcsResponse,
   KpiKey,
+  LearnedRecipe,
   OriginsResponse,
   ProgressProposalNode,
   Project,

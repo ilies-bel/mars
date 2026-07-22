@@ -1,6 +1,6 @@
 /**
- * "While you were away" — the chat hero summary of release notes that landed
- * since the user's last visit.
+ * "While you were away" — the chat hero summary of release notes and
+ * auto-executed learned recipes that fired since the user's last visit.
  *
  * Rendering this panel is the act of viewing: the backing hook
  * (`useUnseenReleaseNotes`) POSTs the view cursor when a non-empty unseen set
@@ -9,7 +9,9 @@
  * "Release notes" link here points at it.
  */
 
-import type { ReleaseNoteEntry } from '@/shared/schemas'
+import { useQuery } from '@tanstack/react-query'
+import type { AutoRecipeRun, ReleaseNoteEntry } from '@/shared/schemas'
+import { fetchAutoRecipeRuns, getReleaseNotesCursor } from '@/shared/api'
 import { useUnseenReleaseNotes } from '@/shared/useUnseenReleaseNotes'
 import { releaseNotesHash } from '@/shared/routing'
 
@@ -22,6 +24,12 @@ export const entryOneLiner = (entry: ReleaseNoteEntry): string => {
   return firstLine.length > 140 ? `${firstLine.slice(0, 137)}…` : firstLine
 }
 
+/** Short human-readable description of an auto-recipe run. */
+export const autoRunLabel = (run: AutoRecipeRun): string => {
+  const task = run.taskId ? ` on ${run.taskId}` : ''
+  return `Auto-${run.actionOp}${task} (${run.signature})`
+}
+
 export interface WhileYouWereAwayPanelProps {
   projectId: string | null
 }
@@ -29,7 +37,28 @@ export interface WhileYouWereAwayPanelProps {
 export const WhileYouWereAwayPanel = ({ projectId }: WhileYouWereAwayPanelProps) => {
   const { unseenEntries } = useUnseenReleaseNotes(projectId)
 
-  if (unseenEntries.length === 0) return null
+  // Fetch the release-notes cursor so we know the "since" timestamp for
+  // auto-recipe runs. The cursor marks when the user last viewed the panel.
+  const { data: cursor } = useQuery({
+    queryKey: ['release-notes-cursor', projectId],
+    queryFn: () => getReleaseNotesCursor(projectId ?? undefined),
+    enabled: projectId !== null,
+    staleTime: 30_000,
+  })
+
+  // Auto-recipe runs since the last-viewed cursor.
+  const { data: autoRuns = [] } = useQuery({
+    queryKey: ['auto-recipe-runs', cursor?.lastViewedAt],
+    queryFn: () =>
+      fetchAutoRecipeRuns({
+        since: cursor?.lastViewedAt ?? undefined,
+        limit: 20,
+      }),
+    enabled: projectId !== null,
+    staleTime: 30_000,
+  })
+
+  if (unseenEntries.length === 0 && autoRuns.length === 0) return null
 
   const visible = unseenEntries.slice(0, MAX_VISIBLE_ENTRIES)
   const overflow = unseenEntries.length - visible.length
@@ -51,22 +80,38 @@ export const WhileYouWereAwayPanel = ({ projectId }: WhileYouWereAwayPanelProps)
           Release notes
         </a>
       </div>
-      <ul className="mt-3 flex flex-col gap-2">
-        {visible.map((entry) => (
-          <li key={entry.originId} data-testid="wywa-entry">
-            <span className="font-mono text-[13px] font-semibold text-fg">{entry.title}</span>
-            {entryOneLiner(entry) !== '' && (
-              <span className="ml-2 font-mono text-[12px] text-iron/60">
-                {entryOneLiner(entry)}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
+      {visible.length > 0 && (
+        <ul className="mt-3 flex flex-col gap-2">
+          {visible.map((entry) => (
+            <li key={entry.originId} data-testid="wywa-entry">
+              <span className="font-mono text-[13px] font-semibold text-fg">{entry.title}</span>
+              {entryOneLiner(entry) !== '' && (
+                <span className="ml-2 font-mono text-[12px] text-iron/60">
+                  {entryOneLiner(entry)}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
       {overflow > 0 && (
         <p data-testid="wywa-overflow" className="mt-2 font-mono text-[12px] text-iron/50">
           and {overflow} more
         </p>
+      )}
+      {autoRuns.length > 0 && (
+        <div className="mt-4" data-testid="wywa-auto-runs">
+          <p className="font-mono text-[10px] uppercase tracking-wider text-iron">
+            Auto-applied
+          </p>
+          <ul className="mt-2 flex flex-col gap-1">
+            {autoRuns.map((run) => (
+              <li key={run.id} data-testid="wywa-auto-run" className="font-mono text-[12px] text-fg/80">
+                {autoRunLabel(run)}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </section>
   )

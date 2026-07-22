@@ -606,6 +606,28 @@ const DDL: readonly string[] = [
     seq            bigint NOT NULL,
     PRIMARY KEY (run_id, step_name)
   )`,
+
+  // ── learned recipes (operator-taught auto-run rules) ─────────────────────
+  // Per failure signature, global: the operator teaches a recovery op once
+  // and the system auto-executes it on every subsequent occurrence of the
+  // same failure signature instead of raising a card (recipe-teaching ADR).
+  `CREATE TABLE IF NOT EXISTS learned_recipes (
+    failure_signature text PRIMARY KEY,
+    action_op         text NOT NULL,
+    learned_at        text NOT NULL
+  )`,
+
+  // Auto-run log: one row per auto-executed learned recipe, newest-first.
+  // Used by the WYWA delta to surface background recoveries to the operator.
+  `CREATE TABLE IF NOT EXISTS auto_recipe_runs (
+    id            text PRIMARY KEY,
+    signature     text NOT NULL,
+    action_op     text NOT NULL,
+    task_id       text,
+    ran_at        text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_auto_recipe_runs_ran_at
+     ON auto_recipe_runs(ran_at DESC)`,
 ]
 
 /**
@@ -659,6 +681,8 @@ export const SCHEMA_TABLES: readonly string[] = [
   'memory_packets',
   'workflow_runs',
   'workflow_step_runs',
+  'learned_recipes',
+  'auto_recipe_runs',
 ]
 
 /**

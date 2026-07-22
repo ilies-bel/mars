@@ -16,7 +16,7 @@ import { CopyButton } from '@/components/CopyButton'
 import { OriginTree } from '@/widgets/OriginTree'
 import ArcChainRail from '@/widgets/ArcChainRail'
 import { ArcTree } from '@/widgets/ArcTree'
-import { fetchEvents, fetchProposalDetail, invokeAction } from '@/shared/api'
+import { fetchEvents, fetchLearnedRecipes, fetchProposalDetail, invokeAction, teachRecipe, unlearnRecipe } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import {
   kindBadgeLabel,
@@ -85,6 +85,12 @@ const INVESTIGATE_OP = 'investigate'
 const DIAGNOSE_OP = 'diagnose-failure'
 
 /**
+ * Ops the daemon can auto-run when a recipe is taught. Matches the
+ * `executeLearnedOp` implementation in `learned-recipes.ts`.
+ */
+export const TEACHABLE_OPS = new Set(['restart', 'purge'])
+
+/**
  * Ops that are process-level and carry no entity id when forwarded to the
  * daemon. The proxy builds `/actions/<op>` (no id segment) for these; any
  * other op gets `/actions/<op>/<entityId>`.
@@ -123,6 +129,9 @@ export const ActionBar = ({ item }: ActionBarProps) => {
   // Two-step confirm: tracks which needsConfirm action is awaiting a second click.
   const [pendingConfirmId, setPendingConfirmId] = useState<string | null>(null)
   const pendingConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Teach prompt: shown after a successful teachable-op mutation.
+  const [teachPromptOp, setTeachPromptOp] = useState<string | null>(null)
+  const [teachStatus, setTeachStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
 
   // Clear the confirm timer on unmount to avoid setState-after-unmount.
   useEffect(() => {
@@ -139,6 +148,8 @@ export const ActionBar = ({ item }: ActionBarProps) => {
     },
     onMutate: async () => {
       setErrorMsg(null)
+      setTeachPromptOp(null)
+      setTeachStatus('idle')
       // Prevent an in-flight refetch from overwriting our optimistic removal.
       await qc.cancelQueries({ queryKey: ['action-queue'] })
       // Snapshot the current list so we can roll back on error.
@@ -151,6 +162,16 @@ export const ActionBar = ({ item }: ActionBarProps) => {
         )
       }
       return { snapshot }
+    },
+    onSuccess: (_data, vars) => {
+      const op = vars.action.op
+      const sig = item.failureReasonCode
+      // Show the teach prompt for teachable ops on failed-task rows with a
+      // failure signature. This gives the operator a one-click path to persist
+      // this recovery choice for future occurrences.
+      if (sig && TEACHABLE_OPS.has(op)) {
+        setTeachPromptOp(op)
+      }
     },
     onError: (err, _vars, context) => {
       setErrorMsg(actionErrorMessage(err))
@@ -167,6 +188,22 @@ export const ActionBar = ({ item }: ActionBarProps) => {
       void qc.invalidateQueries({ queryKey: ['progress'] })
     },
   })
+
+  const handleTeachYes = async () => {
+    const sig = item.failureReasonCode
+    if (!sig || !teachPromptOp) return
+    setTeachStatus('saving')
+    try {
+      await teachRecipe(sig, teachPromptOp)
+      setTeachStatus('saved')
+      void qc.invalidateQueries({ queryKey: ['learned-recipes'] })
+    } catch {
+      // Silently swallow — teaching failure is not critical; the operator can
+      // try again from the failure-kind detail pane.
+      setTeachStatus('idle')
+    }
+    setTeachPromptOp(null)
+  }
 
   // Gate Investigate out for empty stale worktrees — there is nothing to analyse.
   const visibleActions =
@@ -265,6 +302,92 @@ export const ActionBar = ({ item }: ActionBarProps) => {
       {errorMsg ? (
         <p className="mt-2 font-mono text-[10px] text-error">{errorMsg}</p>
       ) : null}
+      {teachPromptOp && item.failureReasonCode ? (
+        <div
+          className="mt-3 border border-iron/30 bg-surface px-3 py-2"
+          data-testid="teach-prompt"
+        >
+          <p className="font-mono text-[11px] text-fg">
+            Apply <span className="uppercase">{teachPromptOp}</span> automatically next time?
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              disabled={teachStatus === 'saving'}
+              onClick={() => { void handleTeachYes() }}
+              data-testid="teach-yes"
+              className="border border-iron/40 px-3 py-1 font-mono text-[10px] uppercase text-fg transition hover:bg-iron/20 disabled:opacity-50"
+            >
+              {teachStatus === 'saving' ? 'Saving…' : 'Yes'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setTeachPromptOp(null)}
+              data-testid="teach-dismiss"
+              className="font-mono text-[10px] uppercase text-muted transition hover:text-fg"
+            >
+              No thanks
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {teachStatus === 'saved' && !teachPromptOp ? (
+        <p
+          className="mt-2 font-mono text-[10px] text-fg"
+          data-testid="teach-saved"
+        >
+          ✓ Mars will auto-apply this next time.
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+// ---- Learned-recipe un-teach affordance ----
+
+/**
+ * Shown on `failed-task` detail panes when a failure signature is present.
+ * Fetches the stored learned recipe for the signature and lets the operator
+ * un-teach it (remove the auto-run rule) with one click.
+ */
+const LearnedRecipeSection = ({ failureSignature }: { failureSignature: string }) => {
+  const qc = useQueryClient()
+  const { data: recipes } = useQuery({
+    queryKey: ['learned-recipes'],
+    queryFn: fetchLearnedRecipes,
+    staleTime: 30_000,
+  })
+
+  const stored = recipes?.find((r) => r.failureSignature === failureSignature) ?? null
+
+  const unlearnMutation = useMutation({
+    mutationFn: () => unlearnRecipe(failureSignature),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['learned-recipes'] })
+    },
+  })
+
+  if (!stored) return null
+
+  return (
+    <div data-testid="learned-recipe-section">
+      <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+        Auto-run rule
+      </dt>
+      <dd className="flex items-center gap-3">
+        <span className="font-mono text-[11px] text-fg">
+          Mars will auto-<span className="uppercase">{stored.actionOp}</span> on next occurrence
+        </span>
+        <button
+          type="button"
+          disabled={unlearnMutation.isPending}
+          onClick={() => unlearnMutation.mutate()}
+          data-testid="unlearn-recipe"
+          className="border border-iron/40 px-2 py-0.5 font-mono text-[10px] uppercase text-muted transition hover:border-error/50 hover:text-error disabled:opacity-50"
+        >
+          {unlearnMutation.isPending ? 'Removing…' : 'Un-teach'}
+        </button>
+      </dd>
     </div>
   )
 }
@@ -571,6 +694,11 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             /* Decisions — shown only for live (open) rows. */
             <ActionBar item={item} />
           )}
+          {/* Un-teach affordance: shown for failed-task rows with a failure signature
+              that has a learned recipe. Lets the operator remove the auto-run rule. */}
+          {item.kind === 'failed-task' && item.failureReasonCode ? (
+            <LearnedRecipeSection failureSignature={item.failureReasonCode} />
+          ) : null}
           {item.kind === 'stale-worktree' && (
             <>
               <div>

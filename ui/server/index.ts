@@ -8,6 +8,7 @@ import {
   type KpiSeries,
   type DaemonActionResult,
   proxyAction,
+  proxyDelete,
   proxyGet as realProxyGet,
   proxyPost,
   proxyStream,
@@ -367,6 +368,55 @@ export const startServer = async (
 
         if (path === '/api/skills' && req.method === 'GET') {
           const r = await proxyGet(ctx.stateDir, '/view/skills')
+          return jsonResponse(r.status, r.body)
+        }
+
+        // GET /api/failure-kinds/learned-recipes — list all operator-taught
+        // auto-run rules from the daemon. Used by the detail pane's un-teach
+        // affordance and the WYWA panel.
+        if (path === '/api/failure-kinds/learned-recipes' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/failure-kinds/learned-recipes')
+          return jsonResponse(r.status, r.body)
+        }
+
+        // POST /api/failure-kinds/:signature/recipe — teach an auto-run op.
+        // Body: { op: string }. Idempotent: re-posting replaces the existing op.
+        {
+          const teachMatch = path.match(/^\/api\/failure-kinds\/([^/?]+)\/recipe$/)
+          if (teachMatch && teachMatch[1] && req.method === 'POST') {
+            const signature = decodeURIComponent(teachMatch[1])
+            const body = await req.json().catch(() => null)
+            if (body === null || typeof (body as Record<string, unknown>).op !== 'string') {
+              return jsonResponse(400, { error: 'op is required and must be a non-empty string' })
+            }
+            const r = await proxyPost(
+              ctx.stateDir,
+              `/failure-kinds/${encodeURIComponent(signature)}/recipe`,
+              body,
+            )
+            return jsonResponse(r.status, r.body)
+          }
+        }
+
+        // DELETE /api/failure-kinds/:signature/recipe — un-teach the stored
+        // auto-run rule for a failure signature. No-op when no rule is stored.
+        {
+          const unlearnMatch = path.match(/^\/api\/failure-kinds\/([^/?]+)\/recipe$/)
+          if (unlearnMatch && unlearnMatch[1] && req.method === 'DELETE') {
+            const signature = decodeURIComponent(unlearnMatch[1])
+            const r = await proxyDelete(
+              ctx.stateDir,
+              `/failure-kinds/${encodeURIComponent(signature)}/recipe`,
+            )
+            return jsonResponse(r.status, r.body)
+          }
+        }
+
+        // GET /api/auto-recipe-runs?since=<ISO>&limit=<n> — recent auto-run
+        // log entries from the daemon, newest-first. Used by the WYWA delta panel.
+        if (path === '/api/auto-recipe-runs' && req.method === 'GET') {
+          const qs = url.search
+          const r = await proxyGet(ctx.stateDir, `/view/auto-recipe-runs${qs}`)
           return jsonResponse(r.status, r.body)
         }
 

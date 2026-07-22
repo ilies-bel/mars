@@ -13,10 +13,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   QueueThreadDetail,
   PROCESS_LEVEL_OPS,
+  TEACHABLE_OPS,
   actionErrorMessage,
 } from './QueueThreadDetail'
 import { ApiError } from '@/shared/api'
-import type { ActionQueueItem, EventsResponse } from '@/shared/schemas'
+import type { ActionQueueItem, EventsResponse, LearnedRecipe } from '@/shared/schemas'
 
 const EMPTY_EVENTS: EventsResponse = { events: [], nextCursor: null }
 
@@ -38,7 +39,10 @@ const BASE_ITEM: ActionQueueItem = {
 const makeItem = (overrides: Record<string, unknown>): ActionQueueItem =>
   ({ ...BASE_ITEM, ...overrides } as ActionQueueItem)
 
-const renderDetail = (item: ActionQueueItem): string => {
+const renderDetail = (
+  item: ActionQueueItem,
+  learnedRecipes: LearnedRecipe[] = [],
+): string => {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
   })
@@ -46,6 +50,7 @@ const renderDetail = (item: ActionQueueItem): string => {
   qc.setQueryData(['origins', null, item.entityId], {
     node: { id: item.entityId, kind: 'task', title: 'lone task', status: 'failed', children: [] },
   })
+  qc.setQueryData(['learned-recipes'], learnedRecipes)
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <QueueThreadDetail item={item} />
@@ -237,6 +242,62 @@ describe('QueueThreadDetail – section heading border treatment', () => {
     const dtMatch = html.match(/<dt[^>]*>[^<]*Traces[^<]*<\/dt>/)
     expect(dtMatch).not.toBeNull()
     expect(dtMatch![0]).toContain('border-b')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// TEACHABLE_OPS — ops the daemon can auto-run when taught a recipe
+// ---------------------------------------------------------------------------
+
+describe('TEACHABLE_OPS', () => {
+  it('contains restart and purge', () => {
+    expect(TEACHABLE_OPS.has('restart')).toBe(true)
+    expect(TEACHABLE_OPS.has('purge')).toBe(true)
+  })
+
+  it('does NOT contain non-auto-runnable ops', () => {
+    expect(TEACHABLE_OPS.has('investigate')).toBe(false)
+    expect(TEACHABLE_OPS.has('diagnose-failure')).toBe(false)
+    expect(TEACHABLE_OPS.has('restart-daemon')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Learned-recipe un-teach affordance
+// ---------------------------------------------------------------------------
+
+describe('QueueThreadDetail – learned-recipe un-teach affordance', () => {
+  it('shows un-teach button when a learned recipe exists for the failure signature', () => {
+    const recipe: LearnedRecipe = {
+      failureSignature: 'verify:typecheck',
+      actionOp: 'restart',
+      learnedAt: '2026-01-01T00:00:00.000Z',
+    }
+    const html = renderDetail(BASE_ITEM, [recipe])
+    expect(html).toContain('data-testid="learned-recipe-section"')
+    expect(html).toContain('data-testid="unlearn-recipe"')
+    expect(html).toContain('Auto-run rule')
+  })
+
+  it('does NOT show un-teach affordance when no recipe is stored', () => {
+    const html = renderDetail(BASE_ITEM, [])
+    expect(html).not.toContain('data-testid="learned-recipe-section"')
+  })
+
+  it('does NOT show un-teach affordance when item has no failureReasonCode', () => {
+    const itemNoCode = makeItem({ failureReasonCode: null })
+    const recipe: LearnedRecipe = {
+      failureSignature: 'verify:typecheck',
+      actionOp: 'restart',
+      learnedAt: '2026-01-01T00:00:00.000Z',
+    }
+    const html = renderDetail(itemNoCode, [recipe])
+    expect(html).not.toContain('data-testid="learned-recipe-section"')
+  })
+
+  it('does NOT show the teach prompt in the initial render (prompt only shows after mutation)', () => {
+    const html = renderDetail(BASE_ITEM, [])
+    expect(html).not.toContain('data-testid="teach-prompt"')
   })
 })
 

@@ -169,6 +169,31 @@ function taskBlockedActionQueueRaiser(client: DbClient): Subscriber {
         // Fix task not found in DB → raise (anomaly; conservative default).
       }
 
+      // Learned-recipe auto-run: if the operator has taught a recovery op for
+      // this failure signature, execute it automatically instead of raising a
+      // card. On success, log the auto-run for the WYWA delta. On error, fall
+      // through and raise the card as normal so the operator can intervene.
+      if (p.failureSignature) {
+        const { getLearnedRecipe, executeLearnedOp, logAutoRecipeRun } =
+          await import('../../core/lib/learned-recipes.js');
+        const learned = await getLearnedRecipe(p.failureSignature);
+        if (learned !== null) {
+          try {
+            await executeLearnedOp(p.taskId, learned.actionOp);
+            await logAutoRecipeRun({
+              signature: p.failureSignature,
+              actionOp: learned.actionOp,
+              taskId: p.taskId,
+            });
+            // Auto-run succeeded — do NOT raise a card.
+            return;
+          } catch {
+            // Auto-run failed (e.g. unsupported op, wrong status): fall through
+            // and raise the standard card so the operator can act manually.
+          }
+        }
+      }
+
       // Route through the single raise path (ADR-0051).
       // raiseActionQueueItem calls resolveOriginIdForTask(originTaskId) internally
       // so fix/descendant tasks collapse onto their arc root. We pass originTaskId

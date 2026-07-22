@@ -659,6 +659,71 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /failure-kinds/learned-recipes — list all operator-taught auto-run
+    // rules (signature → op). Used by the UI's un-teach affordance and the
+    // WYWA delta. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/failure-kinds/learned-recipes') {
+      import('../lib/learned-recipes.js')
+        .then((m) => m.listLearnedRecipes())
+        .then((recipes) => sendJson(res, 200, { ok: true, learnedRecipes: recipes }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /failure-kinds/:signature/recipe — teach an auto-run op for a
+    // failure signature. Body: { op: string }. The op is stored globally; the
+    // next occurrence of the same signature auto-runs it instead of raising a
+    // card. Idempotent: re-posting replaces the existing op.
+    {
+      const teachMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/failure-kinds\/([^/?]+)\/recipe$/)
+          : null
+      if (teachMatch && teachMatch[1]) {
+        const signature = decodeURIComponent(teachMatch[1])
+        let rawBody = ''
+        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+        req.on('end', () => {
+          let body: unknown
+          try {
+            body = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { error: 'invalid JSON body' })
+            return
+          }
+          const parsed = z.object({ op: z.string().min(1) }).safeParse(body)
+          if (!parsed.success) {
+            sendJson(res, 400, { error: 'op is required and must be a non-empty string' })
+            return
+          }
+          import('../lib/learned-recipes.js')
+            .then((m) => m.teachRecipe(signature, parsed.data.op))
+            .then(() => sendJson(res, 200, { ok: true }))
+            .catch((err: unknown) => sendError(res, err))
+        })
+        req.on('error', (err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // DELETE /failure-kinds/:signature/recipe — remove the taught auto-run rule
+    // for a failure signature (un-teach). No-op when no rule is stored. Used
+    // by the detail-pane un-teach affordance.
+    {
+      const unlearnMatch =
+        req.method === 'DELETE' && req.url
+          ? req.url.match(/^\/failure-kinds\/([^/?]+)\/recipe$/)
+          : null
+      if (unlearnMatch && unlearnMatch[1]) {
+        const signature = decodeURIComponent(unlearnMatch[1])
+        import('../lib/learned-recipes.js')
+          .then((m) => m.unlearnRecipe(signature))
+          .then(() => sendJson(res, 200, { ok: true }))
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
     // GET /recipes — the resolved recovery-recipe catalog. Same lifecycle
     // as /failure-reasons: loaded once at boot from
     // `src/core/recipes/built-in/*.md` plus `.mars/recipes/*.md`
@@ -1205,6 +1270,26 @@ export const startHttpServer = async (
       deps.appServices
         .viewReleaseNotes()
         .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/auto-recipe-runs?since=<ISO>&limit=<n> — recent auto-executed
+    // learned recipe runs, newest-first. Used by the WYWA delta panel to surface
+    // actions the orchestrator took automatically while the operator was away.
+    // `since` is an ISO-8601 lower bound (exclusive). `limit` defaults to 50.
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/auto-recipe-runs')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const since = parsed.searchParams.get('since') ?? undefined
+      const limitRaw = parsed.searchParams.get('limit')
+      const limit =
+        limitRaw !== null && Number.isFinite(Number.parseInt(limitRaw, 10))
+          ? Math.min(Math.max(1, Number.parseInt(limitRaw, 10)), 200)
+          : 50
+      import('../lib/learned-recipes.js')
+        .then((m) => m.listAutoRecipeRuns({ since, limit }))
+        .then((runs) => sendJson(res, 200, { ok: true, autoRecipeRuns: runs }))
         .catch((err: unknown) => sendError(res, err))
       return
     }

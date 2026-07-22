@@ -1002,3 +1002,36 @@ export const skillsResponseSchema = z.object({
 
 export type Skill = z.infer<typeof skillSchema>
 export type SkillsResponse = z.infer<typeof skillsResponseSchema>
+
+// ---------------------------------------------------------------------------
+// Learned recipes
+// ---------------------------------------------------------------------------
+
+/** One operator-taught auto-run rule (failure signature → op). */
+export const learnedRecipeSchema = z.object({
+  failureSignature: z.string(),
+  actionOp: z.string(),
+  learnedAt: z.string(),
+})
+
+export const learnedRecipesResponseSchema = z.object({
+  ok: z.boolean(),
+  learnedRecipes: z.array(learnedRecipeSchema),
+})
+
+/** One logged auto-run entry from the `auto_recipe_runs` table. */
+export const autoRecipeRunSchema = z.object({
+  id: z.string(),
+  signature: z.string(),
+  actionOp: z.string(),
+  taskId: z.string().nullable(),
+  ranAt: z.string(),
+})
+
+export const autoRecipeRunsResponseSchema = z.object({
+  ok: z.boolean(),
+  autoRecipeRuns: z.array(autoRecipeRunSchema),
+})
+
+export type LearnedRecipe = z.infer<typeof learnedRecipeSchema>
+export type AutoRecipeRun = z.infer<typeof autoRecipeRunSchema>
