@@ -10,7 +10,9 @@ import {
   computeEmphasisMap,
   dataSignature,
   dominant,
+  FANOUT_BUNDLE_THRESHOLD,
   rollupByProposal,
+  type FanoutBundleNodeData,
   type Rollup,
   structuralSignature,
 } from './topologyFlowModel'
@@ -257,6 +259,130 @@ describe('buildTopology', () => {
     const props = [proposal('p1')]
     const a = buildTopology(tasks, props, null)
     const b = buildTopology(tasks, props, null)
+    expect(a.nodes.map((n) => ({ id: n.id, ...n.position }))).toEqual(
+      b.nodes.map((n) => ({ id: n.id, ...n.position })),
+    )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Fan-out bundle tests
+// ---------------------------------------------------------------------------
+
+describe('fanout bundling', () => {
+  const hub = () => task({ id: 'h1', cluster: 'Failed' })
+  const makeLeaves = (n: number, blockedBy = ['h1']) =>
+    Array.from({ length: n }, (_, i) => task({ id: `l${i + 1}`, cluster: 'Queued', blockedBy }))
+
+  it(`bundles leaf neighbours over FANOUT_BUNDLE_THRESHOLD (${FANOUT_BUNDLE_THRESHOLD}) into one fanoutBundle node with correct count`, () => {
+    const leaves = makeLeaves(FANOUT_BUNDLE_THRESHOLD + 1)
+    const { nodes, edges } = buildTopology([hub(), ...leaves], [], null)
+
+    const bundle = nodes.find((n) => n.data.kind === 'fanoutBundle')
+    expect(bundle).toBeDefined()
+    expect((bundle!.data as FanoutBundleNodeData).count).toBe(FANOUT_BUNDLE_THRESHOLD + 1)
+    expect((bundle!.data as FanoutBundleNodeData).memberIds).toHaveLength(FANOUT_BUNDLE_THRESHOLD + 1)
+
+    // Individual leaf nodes must be absent
+    const leafNodes = nodes.filter((n) => n.data.kind === 'task' && n.id !== 'h1')
+    expect(leafNodes).toHaveLength(0)
+
+    // Exactly one hub→bundle edge
+    expect(edges).toHaveLength(1)
+    expect(edges[0]!.source).toBe('h1')
+    expect(edges[0]!.target).toBe(bundle!.id)
+  })
+
+  it('does NOT bundle when leaf count is at or below the threshold', () => {
+    const leaves = makeLeaves(FANOUT_BUNDLE_THRESHOLD)
+    const { nodes } = buildTopology([hub(), ...leaves], [], null)
+    expect(nodes.find((n) => n.data.kind === 'fanoutBundle')).toBeUndefined()
+    // All tasks (hub + leaves) rendered individually
+    expect(nodes.filter((n) => n.data.kind === 'task')).toHaveLength(FANOUT_BUNDLE_THRESHOLD + 1)
+  })
+
+  it('excludes a non-pure-leaf neighbour (degree > 1) from bundling even when hub is over threshold', () => {
+    // We need FANOUT_BUNDLE_THRESHOLD + 2 leaves so that even after l1 gains
+    // degree 2 (because 'extra' is also blocked by l1), the remaining
+    // FANOUT_BUNDLE_THRESHOLD + 1 pure leaves still exceed the threshold.
+    const leaves = makeLeaves(FANOUT_BUNDLE_THRESHOLD + 2)
+    // l1 now has two edges: h1→l1 and l1→extra, so its degree = 2 (not a pure leaf).
+    const l1 = leaves[0]!
+    // 'extra' is blocked by h1 AND l1 → degree-2 node, not a pure leaf.
+    const extra = task({ id: 'extra', cluster: 'Queued', blockedBy: ['h1', l1.id] })
+    const { nodes } = buildTopology([hub(), ...leaves, extra], [], null)
+
+    // A bundle should still form (hub still has FANOUT_BUNDLE_THRESHOLD + 1 pure leaves)
+    const bundle = nodes.find((n) => n.data.kind === 'fanoutBundle')
+    expect(bundle).toBeDefined()
+    // 'extra' is rendered individually — it was not bundled
+    expect(nodes.find((n) => n.id === 'extra')).toBeDefined()
+    // l1 is rendered individually — it was not bundled (degree 2)
+    expect(nodes.find((n) => n.id === 'l1')).toBeDefined()
+    // Neither 'extra' nor 'l1' appear in memberIds
+    expect((bundle!.data as FanoutBundleNodeData).memberIds).not.toContain('extra')
+    expect((bundle!.data as FanoutBundleNodeData).memberIds).not.toContain('l1')
+  })
+
+  it('emits individual leaf nodes + edges when bundleKey is in expandedBundles', () => {
+    const leaves = makeLeaves(FANOUT_BUNDLE_THRESHOLD + 1)
+    // First: collapsed
+    const { nodes: collapsed } = buildTopology([hub(), ...leaves], [], null)
+    const bundle = collapsed.find((n) => n.data.kind === 'fanoutBundle')!
+    const bundleKey = (bundle.data as FanoutBundleNodeData).bundleKey
+
+    // Now: expanded
+    const { nodes: expanded, edges: expandedEdges } = buildTopology(
+      [hub(), ...leaves],
+      [],
+      null,
+      new Set([bundleKey]),
+    )
+    expect(expanded.find((n) => n.data.kind === 'fanoutBundle')).toBeUndefined()
+    // All leaf task nodes are visible
+    expect(expanded.filter((n) => n.id.startsWith('l'))).toHaveLength(FANOUT_BUNDLE_THRESHOLD + 1)
+    // Individual hub→leaf edges are restored
+    expect(expandedEdges).toHaveLength(FANOUT_BUNDLE_THRESHOLD + 1)
+  })
+
+  it('keeps in-direction and out-direction bundles separate with correct edge orientation', () => {
+    // Blockers arrive INTO hub (direction 'in'); dependents flow OUT from hub (direction 'out').
+    const N = FANOUT_BUNDLE_THRESHOLD + 1
+    const blockers = Array.from({ length: N }, (_, i) => task({ id: `b${i + 1}`, cluster: 'Queued' }))
+    const dependents = Array.from({ length: N }, (_, i) =>
+      task({ id: `d${i + 1}`, cluster: 'Queued', blockedBy: ['h1'] }),
+    )
+    const hubWithBlockers = task({ id: 'h1', cluster: 'In progress', blockedBy: blockers.map((b) => b.id) })
+
+    const { nodes, edges } = buildTopology([...blockers, hubWithBlockers, ...dependents], [], null)
+
+    const bundles = nodes.filter((n) => n.data.kind === 'fanoutBundle') as typeof nodes & {
+      data: FanoutBundleNodeData
+    }[]
+    expect(bundles).toHaveLength(2)
+
+    const inBundle = bundles.find((n) => (n.data as FanoutBundleNodeData).direction === 'in')
+    const outBundle = bundles.find((n) => (n.data as FanoutBundleNodeData).direction === 'out')
+    expect(inBundle).toBeDefined()
+    expect(outBundle).toBeDefined()
+    expect((inBundle!.data as FanoutBundleNodeData).count).toBe(N)
+    expect((outBundle!.data as FanoutBundleNodeData).count).toBe(N)
+
+    // 'in' bundle: blockers flow into hub → bundle→hub edge
+    const inEdge = edges.find((e) => e.target === 'h1')
+    expect(inEdge).toBeDefined()
+    expect(inEdge!.source).toBe(inBundle!.id)
+
+    // 'out' bundle: hub flows out to dependents → hub→bundle edge
+    const outEdge = edges.find((e) => e.source === 'h1')
+    expect(outEdge).toBeDefined()
+    expect(outEdge!.target).toBe(outBundle!.id)
+  })
+
+  it('produces deterministic positions for identical input containing a bundle', () => {
+    const leaves = makeLeaves(FANOUT_BUNDLE_THRESHOLD + 1)
+    const a = buildTopology([hub(), ...leaves], [], null)
+    const b = buildTopology([hub(), ...leaves], [], null)
     expect(a.nodes.map((n) => ({ id: n.id, ...n.position }))).toEqual(
       b.nodes.map((n) => ({ id: n.id, ...n.position })),
     )

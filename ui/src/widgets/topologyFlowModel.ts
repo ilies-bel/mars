@@ -210,7 +210,19 @@ export interface ArcGroupNodeData extends Record<string, unknown> {
   emphasis: Emphasis
 }
 
-export type TopoNodeData = TaskNodeData | ArcCardNodeData | ArcGroupNodeData
+export interface FanoutBundleNodeData extends Record<string, unknown> {
+  kind: 'fanoutBundle'
+  hubId: string
+  direction: 'in' | 'out'
+  /** stable key = `${hubId}|${direction}` — used as the expand-toggle id */
+  bundleKey: string
+  count: number
+  /** ids of the collapsed leaf top-level nodes, for filtering/emphasis */
+  memberIds: string[]
+  emphasis: Emphasis
+}
+
+export type TopoNodeData = TaskNodeData | ArcCardNodeData | ArcGroupNodeData | FanoutBundleNodeData
 
 export type EdgeKind = 'blocker' | 'recovery'
 
@@ -238,6 +250,16 @@ export const TASK_H = 48
 /** Collapsed arc card dimensions (px) — must match the ArcCardNode CSS. */
 export const CARD_W = 232
 export const CARD_H = 64
+
+/** Bundle pill dimensions (px). */
+export const BUNDLE_W = 200
+export const BUNDLE_H = 40
+
+/**
+ * A hub node with MORE than this many bundleable degree-1 leaf neighbours on
+ * one side collapses them into a single `fanoutBundle` pill.
+ */
+export const FANOUT_BUNDLE_THRESHOLD = 8
 
 /** Expanded arc group padding: sides / bottom, and the header strip on top. */
 export const GROUP_PAD = 20
@@ -366,6 +388,7 @@ export const buildTopology = (
   tasks: ReadonlyArray<ProgressTask>,
   proposals: ReadonlyArray<ProgressProposalNode>,
   openArcKey: string | null,
+  expandedBundles: ReadonlySet<string> = new Set(),
 ): TopologyGraph => {
   const proposalMap = new Map(proposals.map((p) => [p.id, p]))
 
@@ -440,28 +463,103 @@ export const buildTopology = (
     }
   }
 
-  // Lifted top-level edges (deduped).
-  const topEdgeSet = new Set<string>()
+  // Lifted top-level edges (deduped). Also track per-edge kinds/keys for
+  // bundle computation (which needs to know what raw edges underlie each
+  // lifted top-level edge).
+  interface TopEdgeInfo { kinds: EdgeKind[]; rawKeys: string[] }
+  const topEdgeInfo = new Map<string, TopEdgeInfo>()
   const topEdges: LayoutEdge[] = []
   for (const e of rawEdges) {
     const s = topElementOf(e.source)
     const t = topElementOf(e.target)
     if (s === t) continue
     const dedupe = `${s}->${t}`
-    if (topEdgeSet.has(dedupe)) continue
-    topEdgeSet.add(dedupe)
-    topEdges.push({ source: s, target: t })
+    if (!topEdgeInfo.has(dedupe)) {
+      topEdgeInfo.set(dedupe, { kinds: [], rawKeys: [] })
+      topEdges.push({ source: s, target: t })
+    }
+    const info = topEdgeInfo.get(dedupe)!
+    info.kinds.push(e.kind)
+    info.rawKeys.push(e.key)
   }
 
-  // --- Connected components over top-level items -----------------------------
-  const adj = new Map<string, string[]>(topItems.map((it) => [it.id, []]))
+  // --- Fan-out bundle computation -------------------------------------------
+  // Identify degree-1 leaf nodes (nodes with exactly one top-level edge) and
+  // group them per (hubId, direction). Groups larger than FANOUT_BUNDLE_THRESHOLD
+  // that are not in `expandedBundles` are collapsed into a single pill node.
+
+  const topDegree = new Map<string, number>()
+  for (const it of topItems) topDegree.set(it.id, 0)
   for (const e of topEdges) {
+    topDegree.set(e.source, (topDegree.get(e.source) ?? 0) + 1)
+    topDegree.set(e.target, (topDegree.get(e.target) ?? 0) + 1)
+  }
+
+  interface BundleGroup {
+    hubId: string
+    direction: 'in' | 'out'
+    leafItemIds: string[]
+    rawKeys: string[]
+    edgeKinds: EdgeKind[]
+  }
+  const bundleGroupMap = new Map<string, BundleGroup>()
+  for (const it of topItems) {
+    if ((topDegree.get(it.id) ?? 0) !== 1) continue
+    const solo = topEdges.find((e) => e.source === it.id || e.target === it.id)
+    if (!solo) continue
+    const isSource = solo.source === it.id
+    const hubId = isSource ? solo.target : solo.source
+    // direction from hub's perspective: 'out' = H→N, 'in' = N→H
+    const direction: 'in' | 'out' = isSource ? 'in' : 'out'
+    const bundleKey = `${hubId}|${direction}`
+    if (!bundleGroupMap.has(bundleKey)) {
+      bundleGroupMap.set(bundleKey, { hubId, direction, leafItemIds: [], rawKeys: [], edgeKinds: [] })
+    }
+    const group = bundleGroupMap.get(bundleKey)!
+    group.leafItemIds.push(it.id)
+    const dedupeKey = isSource ? `${it.id}->${hubId}` : `${hubId}->${it.id}`
+    const edgeInfo = topEdgeInfo.get(dedupeKey)
+    if (edgeInfo) {
+      for (const k of edgeInfo.rawKeys) group.rawKeys.push(k)
+      for (const k of edgeInfo.kinds) group.edgeKinds.push(k)
+    }
+  }
+
+  // Determine which groups to actually collapse.
+  const activeBundles = new Map<string, BundleGroup>()
+  // leafToBundle: topNodeId → bundleKey, for the edge-emission step below
+  const leafToBundle = new Map<string, string>()
+  for (const [bundleKey, group] of bundleGroupMap) {
+    if (group.leafItemIds.length <= FANOUT_BUNDLE_THRESHOLD) continue
+    if (expandedBundles.has(bundleKey)) continue
+    activeBundles.set(bundleKey, group)
+    for (const id of group.leafItemIds) leafToBundle.set(id, bundleKey)
+  }
+
+  // Build layout items/edges with bundled leaves replaced by bundle pills.
+  const bundledLeafSet = new Set(leafToBundle.keys())
+  const layoutTopItems: LayoutItem[] = topItems.filter((it) => !bundledLeafSet.has(it.id))
+  const layoutTopEdges: LayoutEdge[] = topEdges.filter(
+    (e) => !bundledLeafSet.has(e.source) && !bundledLeafSet.has(e.target),
+  )
+  for (const [bundleKey, group] of activeBundles) {
+    layoutTopItems.push({ id: bundleKey, w: BUNDLE_W, h: BUNDLE_H })
+    if (group.direction === 'out') {
+      layoutTopEdges.push({ source: group.hubId, target: bundleKey })
+    } else {
+      layoutTopEdges.push({ source: bundleKey, target: group.hubId })
+    }
+  }
+
+  // --- Connected components over layout items (post-bundle substitution) ----
+  const adj = new Map<string, string[]>(layoutTopItems.map((it) => [it.id, []]))
+  for (const e of layoutTopEdges) {
     adj.get(e.source)?.push(e.target)
     adj.get(e.target)?.push(e.source)
   }
   const componentOf = new Map<string, number>()
   let componentCount = 0
-  for (const it of topItems) {
+  for (const it of layoutTopItems) {
     if (componentOf.has(it.id)) continue
     const stack = [it.id]
     componentOf.set(it.id, componentCount)
@@ -478,9 +576,9 @@ export const buildTopology = (
   }
 
   const componentItems: LayoutItem[][] = Array.from({ length: componentCount }, () => [])
-  for (const it of topItems) componentItems[componentOf.get(it.id)!]!.push(it)
+  for (const it of layoutTopItems) componentItems[componentOf.get(it.id)!]!.push(it)
   const componentEdges: LayoutEdge[][] = Array.from({ length: componentCount }, () => [])
-  for (const e of topEdges) componentEdges[componentOf.get(e.source)!]!.push(e)
+  for (const e of layoutTopEdges) componentEdges[componentOf.get(e.source)!]!.push(e)
 
   const componentLayouts = componentItems.map((items, i) =>
     dagreLayout(items, componentEdges[i]!, { nodesep: 36, ranksep: 110 }),
@@ -508,6 +606,8 @@ export const buildTopology = (
 
     if (!isMulti(key)) {
       const t = group[0]!
+      // Skip: this single-task node was collapsed into a bundle pill.
+      if (leafToBundle.has(t.id)) continue
       const pos = topPosition.get(t.id)!
       nodes.push({
         id: t.id,
@@ -521,6 +621,8 @@ export const buildTopology = (
     }
 
     const arcId = arcNodeId(key)
+    // Skip: this arc card was collapsed into a bundle pill.
+    if (leafToBundle.has(arcId)) continue
     const pos = topPosition.get(arcId)!
     if (key === openArcKey && innerPositions && groupSize) {
       nodes.push({
@@ -556,12 +658,41 @@ export const buildTopology = (
     }
   }
 
+  // --- Emit bundle pill nodes ------------------------------------------------
+  for (const [bundleKey, group] of activeBundles) {
+    const pos = topPosition.get(bundleKey)!
+    nodes.push({
+      id: bundleKey,
+      type: 'fanoutBundle',
+      position: { x: pos.x, y: pos.y },
+      width: BUNDLE_W,
+      height: BUNDLE_H,
+      data: {
+        kind: 'fanoutBundle',
+        hubId: group.hubId,
+        direction: group.direction,
+        bundleKey,
+        count: group.leafItemIds.length,
+        memberIds: group.leafItemIds,
+        emphasis: 'rest',
+      },
+    })
+  }
+
   // --- Emit React Flow edges (visible endpoints, lifted + deduped) ----------
+  // `visibleElementOf` maps task IDs to their top-level element (task node or
+  // arc card). The `leafToBundle` lookup then redirects bundled leaves to their
+  // bundle pill ID. Edges whose lifted endpoints hit a bundle node are skipped
+  // here and emitted separately below (so we control kind + key aggregation).
   const edgeByVisible = new Map<string, TopoEdge>()
   for (const e of rawEdges) {
-    const s = visibleElementOf(e.source)
-    const t = visibleElementOf(e.target)
-    if (s === t) continue // fully inside one collapsed arc
+    const s0 = visibleElementOf(e.source)
+    const s = leafToBundle.get(s0) ?? s0
+    const t0 = visibleElementOf(e.target)
+    const t = leafToBundle.get(t0) ?? t0
+    if (s === t) continue // fully inside one collapsed arc (or same bundle)
+    // Skip raw edges that map to a bundle node endpoint — emitted separately.
+    if (activeBundles.has(s) || activeBundles.has(t)) continue
     const id = `${e.kind}|${s}->${t}`
     const existing = edgeByVisible.get(id)
     if (existing) {
@@ -574,6 +705,22 @@ export const buildTopology = (
       target: t,
       type: 'default',
       data: { kind: e.kind, keys: [e.key], emphasis: 'rest' },
+    })
+  }
+
+  // Emit one aggregated edge per active bundle (hub↔bundle direction).
+  for (const [bundleKey, group] of activeBundles) {
+    // Use 'recovery' only when ALL underlying edges are recovery; else 'blocker'.
+    const kind: EdgeKind = group.edgeKinds.every((k) => k === 'recovery') ? 'recovery' : 'blocker'
+    const [src, tgt] =
+      group.direction === 'out' ? [group.hubId, bundleKey] : [bundleKey, group.hubId]
+    const id = `${kind}|${src}->${tgt}`
+    edgeByVisible.set(id, {
+      id,
+      source: src,
+      target: tgt,
+      type: 'default',
+      data: { kind, keys: [...group.rawKeys], emphasis: 'rest' },
     })
   }
 
@@ -615,8 +762,12 @@ export const computeEmphasisMap = (
   const filteredIds = new Map<string, boolean>()
   const nodeFiltered = (n: TopoNode): boolean => {
     if (search == null) return false
-    const key = n.data.kind === 'task' ? n.id : n.data.arcKey
-    return !search.has(key)
+    if (n.data.kind === 'task') return !search.has(n.id)
+    if (n.data.kind === 'fanoutBundle') {
+      // A bundle is filtered only when ALL its member leaves are filtered.
+      return n.data.memberIds.every((id) => !search.has(arcKeyFromNodeId(id)))
+    }
+    return !search.has(n.data.arcKey)
   }
   const resolve = (litMember: boolean, filtered: boolean): Emphasis =>
     lit ? (litMember && !filtered ? 'lit' : 'dim') : filtered ? 'dim' : 'rest'
@@ -627,7 +778,13 @@ export const computeEmphasisMap = (
     const litMember =
       n.data.kind === 'task'
         ? (lit?.nodes.has(n.id) ?? false)
-        : (lit?.proposals.has(n.data.arcKey) ?? false)
+        : n.data.kind === 'fanoutBundle'
+          ? n.data.memberIds.some((id) =>
+              id.startsWith('arc:')
+                ? (lit?.proposals.has(arcKeyFromNodeId(id)) ?? false)
+                : (lit?.nodes.has(id) ?? false),
+            )
+          : (lit?.proposals.has(n.data.arcKey) ?? false)
     map.set(n.id, resolve(litMember, filtered))
   }
   for (const e of edges) {

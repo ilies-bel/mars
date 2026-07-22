@@ -59,6 +59,8 @@ import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import {
   buildClusterStyleFromVars,
   buildTopology,
+  BUNDLE_H,
+  BUNDLE_W,
   CLUSTER_CSS,
   computeEmphasisMap,
   dataSignature,
@@ -69,6 +71,7 @@ import {
   type ArcCardNodeData,
   type ArcGroupNodeData,
   type Emphasis,
+  type FanoutBundleNodeData,
   type TaskNodeData,
   type TopoEdge,
   type TopoNode,
@@ -192,7 +195,32 @@ const ArcGroupNode = memo(({ data, width, height }: NodeProps<Node<ArcGroupNodeD
 })
 ArcGroupNode.displayName = 'ArcGroupNode'
 
-const NODE_TYPES: NodeTypes = { task: TaskNode, arcCard: ArcCardNode, arcGroup: ArcGroupNode }
+const FanoutBundleNode = memo(({ data }: NodeProps<Node<FanoutBundleNodeData>>) => (
+  <div
+    className={`topo-node relative flex cursor-pointer items-center justify-between rounded-full border border-dashed px-3 ${emphasisClass(data.emphasis)}`}
+    style={{
+      width: BUNDLE_W,
+      height: BUNDLE_H,
+      background: 'var(--color-surface-dark)',
+      borderColor: 'var(--color-dag-queued-stroke)',
+    }}
+    aria-label={`${data.count} linked tasks · click to expand`}
+  >
+    <FlowHandles />
+    <span className="font-mono text-[10.5px] text-muted-dark">
+      {data.count} linked tasks
+    </span>
+    <span className="text-[10px] text-muted-dark opacity-60">▸</span>
+  </div>
+))
+FanoutBundleNode.displayName = 'FanoutBundleNode'
+
+const NODE_TYPES: NodeTypes = {
+  task: TaskNode,
+  arcCard: ArcCardNode,
+  arcGroup: ArcGroupNode,
+  fanoutBundle: FanoutBundleNode,
+}
 
 // ---------------------------------------------------------------------------
 // Edge styling
@@ -224,6 +252,7 @@ const TopologyViewInner = ({
   const { fitView } = useReactFlow()
 
   const [openArcKey, setOpenArcKey] = useState<string | null>(null)
+  const [expandedBundles, setExpandedBundles] = useState<Set<string>>(new Set())
   const [lit, setLit] = useState<ChainResult | null>(null)
   const [hintText, setHintText] = useState<string | null>(null)
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -242,9 +271,9 @@ const TopologyViewInner = ({
   // Deterministic rebuild: cluster flips rebuild colours but keep positions,
   // so the camera never jumps except on true structural change (fitView gate).
   const { nodes: baseNodes, edges: baseEdges } = useMemo(
-    () => buildTopology(tasks, proposals, openArcKey),
+    () => buildTopology(tasks, proposals, openArcKey, expandedBundles),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- dataSig covers tasks/proposals
-    [dataSig, openArcKey],
+    [dataSig, openArcKey, expandedBundles],
   )
 
   // Drop drill-in state if the open arc disappeared from the data.
@@ -278,8 +307,8 @@ const TopologyViewInner = ({
     return { nodes, edges }
   }, [baseNodes, baseEdges, searchMatchIds, lit])
 
-  // Fit the viewport on structural changes and drill-in toggles only.
-  const fitKey = `${structSig}|${openArcKey ?? ''}`
+  // Fit the viewport on structural changes, drill-in toggles, and bundle toggles.
+  const fitKey = `${structSig}|${openArcKey ?? ''}|${[...expandedBundles].sort().join(',')}`
   const lastFitKeyRef = useRef<string | null>(null)
   useEffect(() => {
     if (empty || lastFitKeyRef.current === fitKey) return
@@ -367,6 +396,14 @@ const TopologyViewInner = ({
         window.location.hash = `#/task/${encodeURIComponent(node.id)}`
       } else if (node.data.kind === 'arcCard') {
         toggleArc(node.data.arcKey)
+      } else if (node.data.kind === 'fanoutBundle') {
+        const key = node.data.bundleKey
+        setExpandedBundles((prev) => {
+          const next = new Set(prev)
+          if (next.has(key)) next.delete(key)
+          else next.add(key)
+          return next
+        })
       }
     },
     [toggleArc],
@@ -415,7 +452,12 @@ const TopologyViewInner = ({
       getComputedStyle(document.documentElement).getPropertyValue(name),
     )
     const data = node.data as TopoNode['data']
-    const cluster: Cluster = data.kind === 'task' ? data.cluster : data.dom
+    const cluster: Cluster =
+      data.kind === 'task'
+        ? data.cluster
+        : data.kind === 'fanoutBundle'
+          ? 'Queued'
+          : data.dom
     return styles[cluster]?.stroke || '#9ca3af'
   }, [])
 
