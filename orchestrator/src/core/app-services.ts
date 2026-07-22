@@ -67,7 +67,6 @@ import {
 import { listLoopLedger, type LoopLedgerEntry } from './lib/loop-ledger'
 import { resolveStateClient } from './store/state-client'
 import { readKpiSeries, type KpiSeries } from './lib/kpi-snapshots'
-import { computeBudgetStatus, type BudgetStatus } from './lib/spend-meter'
 import {
   listKpis as defaultListKpis,
   listKpiArcs as defaultListKpiArcs,
@@ -171,8 +170,6 @@ export interface AppServices {
   listKpis: () => Promise<KpiRecord[]>
   listKpisSeries: (limit: number) => Promise<KpiSeries>
   listKpiArcs: (key: KpiKey) => Promise<KpiArcsResult>
-  // ── spend meter (observe-and-warn; explicitly NOT a fifth KPI) ─────────────
-  budgetStatus: () => Promise<BudgetStatus>
   // ── task / progress / proposals views ───────────────────────────────────────
   viewTasks: () => Promise<{ tasks: unknown[] }>
   viewTask: (id: string) => Promise<{ task: unknown } | null>
@@ -1156,9 +1153,6 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
 
   const listKpiArcs: AppServices['listKpiArcs'] = (key) => defaultListKpiArcs(key)
 
-  const budgetStatus: AppServices['budgetStatus'] = () =>
-    computeBudgetStatus(getDefaultDomainTaskStore())
-
   const viewGlossary: AppServices['viewGlossary'] = async () => {
     const doc = await readGlossaryFile(resolvePath(getRepoRoot(), 'CONTEXT.md'))
     return {
@@ -1213,7 +1207,6 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     listKpis,
     listKpisSeries,
     listKpiArcs,
-    budgetStatus,
     viewTasks,
     viewTask,
     viewProgress,

@@ -3920,41 +3920,6 @@ export const startDaemon = async (
   const kpiSnapshotSweep = setInterval(runKpiSnapshot, KPI_SNAPSHOT_MS)
   kpiSnapshotSweep.unref()
 
-  // ── Spend-meter sweep ─────────────────────────────────────────────────────
-  // Observe-and-warn token-budget evaluation (lib/spend-meter.ts): each tick
-  // re-reads the `budget` key in .mars/daemon.json (absent = disabled; no
-  // restart needed after `mars budget set`), measures the rolling-window burn
-  // and per-live-arc lifetime spend, and reconciles the level-triggered
-  // 'budget-window' / 'budget-arc:<arcId>' action-queue rows — the sweep is
-  // both raiser and resolver (ADR-0048). It NEVER pauses dispatch and NEVER
-  // suppresses recoveries. Default: 30 s; override via MARS_SPEND_SWEEP_MS.
-  // .unref() so the timer never holds the daemon process alive.
-  const SPEND_SWEEP_MS = Number(process.env.MARS_SPEND_SWEEP_MS ?? 30_000)
-  let spendSweepState: import('../lib/spend-meter.js').SpendSweepState | null = null
-  const runSpendSweepTick = (): void => {
-    void (async () => {
-      try {
-        const { runSpendSweep, createSpendSweepState } = await import('../lib/spend-meter.js')
-        spendSweepState ??= createSpendSweepState()
-        const report = await runSpendSweep({
-          surface: getDefaultDomainTaskStore(),
-          state: spendSweepState,
-        })
-        if (report.raised.length > 0 || report.resolved.length > 0) {
-          log(
-            `[spend-meter] raised=${report.raised.length} resolved=${report.resolved.length} windowSpend=${report.windowSpendTokens ?? 'n/a'}`,
-          )
-          viewStreamHub.broadcast('action-queue')
-        }
-      } catch (err) {
-        log(`[spend-meter] sweep errored: ${(err as Error).message}`)
-      }
-    })()
-  }
-  runSpendSweepTick()
-  const spendSweep = setInterval(runSpendSweepTick, SPEND_SWEEP_MS)
-  spendSweep.unref()
-
   // ── Alert-dismisser drain ─────────────────────────────────────────────────
   // Polls the outbox for status-transition events and clears the implicated
   // task's action-queue alert(s). This keeps the "status change clears
@@ -4067,7 +4032,6 @@ export const startDaemon = async (
     clearInterval(phantomWatchdog)
     clearInterval(observabilitySweep)
     clearInterval(kpiSnapshotSweep)
-    clearInterval(spendSweep)
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)

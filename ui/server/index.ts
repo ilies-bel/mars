@@ -382,13 +382,6 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
-        // GET /api/budget — spend-meter status (observe-and-warn token-budget
-        // alerting; NOT a fifth KPI). Proxied to the daemon's GET /budget so
-        // the daemon stays the single reader of its own database.
-        if (path === '/api/budget' && req.method === 'GET') {
-          const r = await proxyGet(ctx.stateDir, '/budget')
-          return jsonResponse(r.status, r.body)
-        }
 
         // GET /api/scorer-trend?workflow=<kind>&window=N — per-workflow scorer
         // score trend (median + p90 over a trailing window). Proxied to the

@@ -3,7 +3,6 @@ import { DAEMON_ERROR } from './daemonErrors'
 import {
   actionQueueHistoryResponseSchema,
   actionQueueResponseSchema,
-  budgetStatusSchema,
   chatThreadDetailSchema,
   chatThreadsResponseSchema,
   eventsResponseSchema,
@@ -24,7 +23,6 @@ import {
   workerSessionsResponseSchema,
   type ActionQueueHistoryResponse,
   type ActionQueueItem,
-  type BudgetStatus,
   type ChatThread,
   type ChatThreadDetail,
   type EventsResponse,
@@ -264,15 +262,6 @@ export const fetchKpis = async (projectId?: string): Promise<Kpi[]> => {
   const json = await fetchJson(appendProject('/api/kpis', projectId), kpisResponseSchema)
   return json.kpis
 }
-
-/**
- * Fetch the spend-meter status (observe-and-warn token-budget alerting).
- * `configured: false` means the operator has not set thresholds via
- * `mars budget set` — the tile renders a quiet "not configured" state,
- * never a fake zero.
- */
-export const fetchBudgetStatus = async (projectId?: string): Promise<BudgetStatus> =>
-  fetchJson(appendProject('/api/budget', projectId), budgetStatusSchema)
 
 /**
  * Fetch the per-arc breakdown for a single KPI key.
