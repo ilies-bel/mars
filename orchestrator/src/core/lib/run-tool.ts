@@ -51,6 +51,10 @@ export interface RunToolInput {
    *  not `error`. Used for probes like `git status` where non-zero is
    *  meaningful but not a crisis. Default false. */
   expectsFailure?: boolean
+  /** When aborted, the child is SIGTERM'd then SIGKILL'd after a 2s grace,
+   *  mirroring the `timeoutMs` kill path. If already aborted at spawn time the
+   *  child is signalled immediately. */
+  signal?: AbortSignal
 }
 
 export interface RunToolResult {
@@ -104,6 +108,7 @@ export const runTool = async (
   let timedOut = false
   let sigkillHandle: ReturnType<typeof setTimeout> | null = null
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+  const abortSignal = input.signal
 
   child.stdout?.setEncoding('utf8')
   child.stderr?.setEncoding('utf8')
@@ -120,6 +125,27 @@ export const runTool = async (
     spawnError?: NodeJS.ErrnoException
   }>((resolveFn) => {
     let settled = false
+    // Escalate SIGTERM → SIGKILL after the grace window. Shared by the
+    // timeout and the abort-signal paths so both kill semantics are identical.
+    const killWithGrace = (): void => {
+      try {
+        child.kill('SIGTERM')
+      } catch {
+        // process already gone
+      }
+      if (!sigkillHandle) {
+        sigkillHandle = setTimeout(() => {
+          try {
+            child.kill('SIGKILL')
+          } catch {
+            // process already gone
+          }
+        }, SIGKILL_GRACE_MS)
+      }
+    }
+    const onAbort = (): void => {
+      killWithGrace()
+    }
     const settle = (
       code: number | null,
       signal: NodeJS.Signals | null,
@@ -129,6 +155,7 @@ export const runTool = async (
       settled = true
       if (timeoutHandle) clearTimeout(timeoutHandle)
       if (sigkillHandle) clearTimeout(sigkillHandle)
+      if (abortSignal) abortSignal.removeEventListener('abort', onAbort)
       resolveFn({ code, signal, spawnError })
     }
     child.on('error', (err: NodeJS.ErrnoException) => {
@@ -138,6 +165,16 @@ export const runTool = async (
       settle(code, signal)
     })
 
+    // Abort path: kill the child on caller abort (immediately if already
+    // aborted at spawn time), mirroring the timeout kill escalation.
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        onAbort()
+      } else {
+        abortSignal.addEventListener('abort', onAbort)
+      }
+    }
+
     if (
       input.timeoutMs !== undefined &&
       input.timeoutMs > 0 &&
@@ -146,18 +183,7 @@ export const runTool = async (
       const ms = input.timeoutMs
       timeoutHandle = setTimeout(() => {
         timedOut = true
-        try {
-          child.kill('SIGTERM')
-        } catch {
-          // process already gone
-        }
-        sigkillHandle = setTimeout(() => {
-          try {
-            child.kill('SIGKILL')
-          } catch {
-            // process already gone
-          }
-        }, SIGKILL_GRACE_MS)
+        killWithGrace()
       }, ms)
     }
   })

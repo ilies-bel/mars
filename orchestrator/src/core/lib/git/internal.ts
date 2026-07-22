@@ -22,6 +22,11 @@ interface ExecOpts {
   expectsFailure?: boolean
   tool?: string
   traceCtx?: TraceCtx
+  /**
+   * When aborted, the spawned child is SIGTERM'd then SIGKILL'd after a 2s
+   * grace (see `runTool`). Forwarded verbatim to the underlying child process.
+   */
+  signal?: AbortSignal
 }
 
 interface ExecError extends Error {
@@ -46,6 +51,7 @@ const runShell = async (
       originId: ctx?.originId ?? null,
       phase: ctx?.phase ?? null,
       expectsFailure: opts.expectsFailure,
+      signal: opts.signal,
     },
     ctx?.store ?? nullTraceStore,
   )
@@ -66,7 +72,7 @@ const runShell = async (
 export const exec = async (
   cmd: string,
   args: readonly string[],
-  opts: { cwd: string; timeout?: number; maxBuffer?: number },
+  opts: { cwd: string; timeout?: number; maxBuffer?: number; signal?: AbortSignal },
   traceCtx?: TraceCtx,
 ): Promise<{ stdout: string; stderr: string }> => {
   // `maxBuffer` is intentionally ignored — `runTool` caches the full output
@@ -76,6 +82,7 @@ export const exec = async (
   return runShell(cmd, args, {
     cwd: opts.cwd,
     timeoutMs: opts.timeout,
+    signal: opts.signal,
     traceCtx,
   })
 }
@@ -86,12 +93,13 @@ export const exec = async (
 export const execProbe = async (
   cmd: string,
   args: readonly string[],
-  opts: { cwd: string; timeout?: number },
+  opts: { cwd: string; timeout?: number; signal?: AbortSignal },
   traceCtx?: TraceCtx,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
   runShell(cmd, args, {
     cwd: opts.cwd,
     timeoutMs: opts.timeout,
+    signal: opts.signal,
     expectsFailure: true,
     traceCtx,
   })

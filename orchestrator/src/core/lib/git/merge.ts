@@ -143,6 +143,19 @@ export interface MergeArgs {
   worktreePath: string
   integrationBranch: string
   lockTimeoutMs: number
+  /**
+   * Caller-supplied cancellation signal. When it aborts, the in-flight git
+   * child is killed, best-effort rebase/merge cleanup runs, the merge lock is
+   * released, and `mergeBranch` rejects with a {@link MergeAbortedError} whose
+   * `reason` is `'external'`. Optional — omit to rely solely on the watchdog.
+   */
+  signal?: AbortSignal
+  /**
+   * Watchdog budget in milliseconds. An internal timer aborts the merge after
+   * this elapsed wall-clock time, rejecting with a {@link MergeAbortedError}
+   * whose `reason` is `'watchdog'`. Defaults to 5 minutes.
+   */
+  watchdogMs?: number
   /** Optional trace context. Default phase is `merge` when omitted. */
   traceCtx?: TraceCtx
   onSupervisorEvent?: (event: ClaudeEvent) => void | Promise<void>
@@ -336,19 +349,20 @@ const isDirectory = async (p: string): Promise<boolean> => {
 const isRebaseInProgress = async (
   cwd: string,
   traceCtx?: TraceCtx,
+  signal?: AbortSignal,
 ): Promise<boolean> => {
   try {
     const { stdout } = await exec(
       resolveGitBin(),
       ['rev-parse', '--git-path', 'rebase-merge'],
-      { cwd },
+      { cwd, signal },
       traceCtx,
     )
     const mergePath = stdout.trim()
     const { stdout: applyStdout } = await exec(
       resolveGitBin(),
       ['rev-parse', '--git-path', 'rebase-apply'],
-      { cwd },
+      { cwd, signal },
       traceCtx,
     )
     const applyPath = applyStdout.trim()
@@ -372,11 +386,71 @@ const isRebaseInProgress = async (
 // — matches the repo's no-retry-knob ethos.
 const MAX_MERGE_ATTEMPTS = 3 // 1 initial attempt + 2 retries
 
+/** Default watchdog budget: a merge may hold the lock for at most 5 minutes. */
+const DEFAULT_WATCHDOG_MS = 300_000
+
+/**
+ * Short, self-contained timeout for the abort-cleanup git calls. These run
+ * AFTER the merge has already been aborted, so they must never inherit the
+ * (already-aborted) merge signal — they get their own bound so a wedged git
+ * cannot hang the cleanup path.
+ */
+const ABORT_CLEANUP_TIMEOUT_MS = 10_000
+
+/**
+ * Thrown by {@link mergeBranch} when the merge is cancelled — either by the
+ * internal watchdog timer (`reason: 'watchdog'`) or by the caller's
+ * `AbortSignal` (`reason: 'external'`). `elapsedMs` is the wall-clock time from
+ * lock-acquisition attempt to abort; `lastStep` names the merge phase in flight
+ * when the abort landed.
+ */
+export class MergeAbortedError extends Error {
+  readonly reason: 'watchdog' | 'external'
+  readonly elapsedMs: number
+  readonly lastStep: string
+
+  constructor(reason: 'watchdog' | 'external', elapsedMs: number, lastStep: string) {
+    super(
+      `mergeBranch aborted (${reason}) after ${elapsedMs}ms during step '${lastStep}'`,
+    )
+    this.name = 'MergeAbortedError'
+    this.reason = reason
+    this.elapsedMs = elapsedMs
+    this.lastStep = lastStep
+  }
+}
+
+/**
+ * Best-effort teardown of any in-progress rebase/merge left behind by an
+ * aborted merge. Both calls are bounded by their own short timeout (NOT the
+ * already-aborted merge signal) and swallow every error — a wedged worktree
+ * must never keep the abort path from completing.
+ */
+const bestEffortAbortCleanup = async (
+  worktreePath: string,
+  traceCtx?: TraceCtx,
+): Promise<void> => {
+  await execProbe(
+    resolveGitBin(),
+    ['rebase', '--abort'],
+    { cwd: worktreePath, timeout: ABORT_CLEANUP_TIMEOUT_MS },
+    traceCtx,
+  ).catch(() => {})
+  await execProbe(
+    resolveGitBin(),
+    ['merge', '--abort'],
+    { cwd: worktreePath, timeout: ABORT_CLEANUP_TIMEOUT_MS },
+    traceCtx,
+  ).catch(() => {})
+}
+
 export const mergeBranch = async ({
   branch,
   worktreePath,
   integrationBranch,
   lockTimeoutMs,
+  signal,
+  watchdogMs = DEFAULT_WATCHDOG_MS,
   onSupervisorEvent,
   onVegaStart,
   onBeforeFastForward,
@@ -386,11 +460,41 @@ export const mergeBranch = async ({
   const mergeCtx: TraceCtx | undefined = traceCtx
     ? { ...traceCtx, phase: traceCtx.phase ?? 'merge' }
     : undefined
-  const release = await acquireLock(
-    resolve(getStateDir(), '.merge.lock'),
-    lockTimeoutMs,
-  )
+
+  // Watchdog: an internal timer aborts the merge after `watchdogMs`, combined
+  // with the caller's signal (if any) via AbortSignal.any. Every git spawn
+  // below forwards `combinedSignal`, so a wedged primitive is killed rather
+  // than hanging the merge lock forever.
+  const startedAt = Date.now()
+  let lastStep = 'init'
+  const watchdogController = new AbortController()
+  const watchdogTimer = setTimeout(() => {
+    watchdogController.abort()
+  }, watchdogMs)
+  const combinedSignal: AbortSignal = signal
+    ? AbortSignal.any([watchdogController.signal, signal])
+    : watchdogController.signal
+
+  // Thin wrappers that thread `combinedSignal` (and the trace ctx) into every
+  // git spawn without repeating the boilerplate at each call site.
+  const gexec = (
+    args: readonly string[],
+    cwd: string,
+  ): Promise<{ stdout: string; stderr: string }> =>
+    exec(resolveGitBin(), args, { cwd, signal: combinedSignal }, mergeCtx)
+  const gprobe = (
+    args: readonly string[],
+    cwd: string,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+    execProbe(resolveGitBin(), args, { cwd, signal: combinedSignal }, mergeCtx)
+
   try {
+    lastStep = 'acquire-lock'
+    const release = await acquireLock(
+      resolve(getStateDir(), '.merge.lock'),
+      lockTimeoutMs,
+    )
+    try {
     let output = ''
     let conflictResolved = false
     let vegaSessionId: string | null = null
@@ -407,8 +511,9 @@ export const mergeBranch = async ({
       // Capture the integration tip BEFORE rebasing so we can later distinguish
       // a retryable forward advance from a non-retryable divergent state when
       // the ancestry check or CAS indicates integration has moved.
+      lastStep = 'read-integration-tip'
       const rebaseBaseSha = (
-        await exec(resolveGitBin(), ['rev-parse', integrationBranch], { cwd: repoRoot() }, mergeCtx)
+        await gexec(['rev-parse', integrationBranch], repoRoot())
       ).stdout.trim()
 
       // Step 1: ensure the task branch is up-to-date with integration via rebase
@@ -420,12 +525,8 @@ export const mergeBranch = async ({
       // replays the already-committed (including any Vega-reconciled) work onto
       // the new integration tip cleanly. Vega is NOT re-invoked unless a
       // genuinely NEW conflict appears in this iteration's rebase.
-      const rebaseResult = await execProbe(
-        resolveGitBin(),
-        ['rebase', integrationBranch],
-        { cwd: worktreePath },
-        mergeCtx,
-      )
+      lastStep = 'rebase'
+      const rebaseResult = await gprobe(['rebase', integrationBranch], worktreePath)
       output += rebaseResult.stdout + rebaseResult.stderr
       if (rebaseResult.exitCode !== 0) {
         // Guard: only dispatch Vega when git left a real rebase-in-progress
@@ -439,7 +540,7 @@ export const mergeBranch = async ({
         // no classifier rule → merge:vcs-supervisor-aborted/unclassified →
         // first-principles recovery that inherits the same un-reconcilable
         // state and idles until the phantom-task watchdog kills it.
-        const rebaseInProgress = await isRebaseInProgress(worktreePath, mergeCtx)
+        const rebaseInProgress = await isRebaseInProgress(worktreePath, mergeCtx, combinedSignal)
         if (!rebaseInProgress) {
           return {
             merged: false,
@@ -459,9 +560,10 @@ export const mergeBranch = async ({
         await onVegaStart?.()
 
         const preSha = (
-          await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
+          await gexec(['rev-parse', branch], repoRoot())
         ).stdout.trim()
 
+        lastStep = 'vega-supervisor'
         const supervisorTimeoutMs = 30 * 60 * 1000
         const sup = await invokeVcsSupervisor(
           branch,
@@ -473,36 +575,22 @@ export const mergeBranch = async ({
         supervisorConversation.push(...sup.conversation)
         output += sup.stdout + sup.stderr
 
-        const stillInProgress = await isRebaseInProgress(worktreePath, mergeCtx)
+        lastStep = 'vega-verify'
+        const stillInProgress = await isRebaseInProgress(worktreePath, mergeCtx, combinedSignal)
         const postSha = (
-          await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
+          await gexec(['rev-parse', branch], repoRoot())
         ).stdout.trim()
         const advanced = postSha !== preSha
         const treeClean = await (async () => {
           // `git diff --quiet` is a probe: exit 0 = clean, exit 1 = dirty.
-          const a = await execProbe(
-            resolveGitBin(),
-            ['diff', '--quiet'],
-            { cwd: worktreePath },
-            mergeCtx,
-          )
+          const a = await gprobe(['diff', '--quiet'], worktreePath)
           if (a.exitCode !== 0) return false
-          const b = await execProbe(
-            resolveGitBin(),
-            ['diff', '--cached', '--quiet'],
-            { cwd: worktreePath },
-            mergeCtx,
-          )
+          const b = await gprobe(['diff', '--cached', '--quiet'], worktreePath)
           return b.exitCode === 0
         })()
 
         if (stillInProgress || !advanced || !treeClean) {
-          await execProbe(
-            resolveGitBin(),
-            ['rebase', '--abort'],
-            { cwd: worktreePath },
-            mergeCtx,
-          ).catch(() => {})
+          await gprobe(['rebase', '--abort'], worktreePath).catch(() => {})
           return {
             merged: false,
             conflictResolved: false,
@@ -522,20 +610,19 @@ export const mergeBranch = async ({
       // `git update-ref` never touches any working tree, so it succeeds even when
       // the main working tree has uncommitted tracked changes or is checked out on
       // a different branch.
+      lastStep = 'fast-forward-ancestry'
       const taskSha = (
-        await exec(resolveGitBin(), ['rev-parse', branch], { cwd: repoRoot() }, mergeCtx)
+        await gexec(['rev-parse', branch], repoRoot())
       ).stdout.trim()
       const integrationSha = (
-        await exec(resolveGitBin(), ['rev-parse', integrationBranch], { cwd: repoRoot() }, mergeCtx)
+        await gexec(['rev-parse', integrationBranch], repoRoot())
       ).stdout.trim()
 
       // Confirm fast-forward is valid: integrationSha must be an ancestor of taskSha.
       // `git merge-base --is-ancestor` exits 0 when true, 1 when false.
-      const ancestryProbe = await execProbe(
-        resolveGitBin(),
+      const ancestryProbe = await gprobe(
         ['merge-base', '--is-ancestor', integrationSha, taskSha],
-        { cwd: repoRoot() },
-        mergeCtx,
+        repoRoot(),
       )
       const ancestryOk = ancestryProbe.exitCode === 0
 
@@ -546,11 +633,9 @@ export const mergeBranch = async ({
         // warrants an immediate abort without burning the retry budget.
         const forwardAdvanceProbe =
           attempt < MAX_MERGE_ATTEMPTS
-            ? await execProbe(
-                resolveGitBin(),
+            ? await gprobe(
                 ['merge-base', '--is-ancestor', rebaseBaseSha, integrationSha],
-                { cwd: repoRoot() },
-                mergeCtx,
+                repoRoot(),
               )
             : { exitCode: 1 }
         const isForwardAdvance = forwardAdvanceProbe.exitCode === 0
@@ -582,12 +667,11 @@ export const mergeBranch = async ({
       // The CAS form `update-ref <ref> <new> <old>` is atomic and rejects if
       // integrationBranch has been advanced concurrently (providing the same
       // race-safety as the file lock, with an additional CAS layer).
+      lastStep = 'fast-forward-update-ref'
       try {
-        await exec(
-          resolveGitBin(),
+        await gexec(
           ['update-ref', `refs/heads/${integrationBranch}`, taskSha, integrationSha],
-          { cwd: repoRoot() },
-          mergeCtx,
+          repoRoot(),
         )
       } catch (casError: unknown) {
         const e = casError as { stdout?: string; stderr?: string; message?: string }
@@ -598,13 +682,11 @@ export const mergeBranch = async ({
         // In normal operation CAS rejections represent forward advances; the
         // divergent guard is a correctness belt-and-suspenders.
         const currentIntegrationSha = (
-          await exec(resolveGitBin(), ['rev-parse', integrationBranch], { cwd: repoRoot() }, mergeCtx)
+          await gexec(['rev-parse', integrationBranch], repoRoot())
         ).stdout.trim()
-        const casForwardProbe = await execProbe(
-          resolveGitBin(),
+        const casForwardProbe = await gprobe(
           ['merge-base', '--is-ancestor', rebaseBaseSha, currentIntegrationSha],
-          { cwd: repoRoot() },
-          mergeCtx,
+          repoRoot(),
         )
         const isCasForwardAdvance = casForwardProbe.exitCode === 0
 
@@ -671,33 +753,22 @@ export const mergeBranch = async ({
     // clobber them — rare for the daemon's own checkout, and a dirty tree is
     // recoverable where lost edits are not. Failure here is non-fatal: the
     // merge already landed via the ref update; log and continue.
+    lastStep = 'resync-working-tree'
     let didResyncWorkingTree = false
     try {
       const headBranch = (
-        await exec(
-          resolveGitBin(),
-          ['rev-parse', '--abbrev-ref', 'HEAD'],
-          { cwd: repoRoot() },
-          mergeCtx,
-        )
+        await gexec(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot())
       ).stdout.trim()
       if (headBranch === integrationBranch) {
         // `git diff --quiet <sha>` exits 0 when the working tree + index match
         // <sha> exactly (no genuine local work), non-zero otherwise. Probe form.
-        const diffProbe = await execProbe(
-          resolveGitBin(),
+        const diffProbe = await gprobe(
           ['diff', '--quiet', finalIntegrationSha],
-          { cwd: repoRoot() },
-          mergeCtx,
+          repoRoot(),
         )
         const cleanVsOldHead = diffProbe.exitCode === 0
         if (cleanVsOldHead) {
-          const reset = await exec(
-            resolveGitBin(),
-            ['reset', '--hard', finalTaskSha],
-            { cwd: repoRoot() },
-            mergeCtx,
-          )
+          const reset = await gexec(['reset', '--hard', finalTaskSha], repoRoot())
           output += reset.stdout + reset.stderr
           didResyncWorkingTree = true
         } else {
@@ -713,17 +784,16 @@ export const mergeBranch = async ({
     // full test suite executes at a time. On failure the fast-forward is
     // reverted so the integration branch is left clean at the pre-merge SHA.
     if (onAfterFastForward) {
+      lastStep = 'integration-gate'
       try {
         await onAfterFastForward({ finalTaskSha, finalIntegrationSha })
       } catch (gateErr: unknown) {
         const gateOutput = gateErr instanceof Error ? gateErr.message : String(gateErr)
         // Revert the fast-forward: roll integration branch back to pre-merge SHA.
         try {
-          await exec(
-            resolveGitBin(),
+          await gexec(
             ['update-ref', `refs/heads/${integrationBranch}`, finalIntegrationSha, finalTaskSha],
-            { cwd: repoRoot() },
-            mergeCtx,
+            repoRoot(),
           )
         } catch (revertRefErr: unknown) {
           const m = revertRefErr instanceof Error ? revertRefErr.message : String(revertRefErr)
@@ -733,12 +803,7 @@ export const mergeBranch = async ({
         // tree matches the reverted integration branch.
         if (didResyncWorkingTree) {
           try {
-            await exec(
-              resolveGitBin(),
-              ['reset', '--hard', finalIntegrationSha],
-              { cwd: repoRoot() },
-              mergeCtx,
-            )
+            await gexec(['reset', '--hard', finalIntegrationSha], repoRoot())
           } catch (resetBackErr: unknown) {
             const m = resetBackErr instanceof Error ? resetBackErr.message : String(resetBackErr)
             output += `\n[merge:integration-gate] working-tree reset-back failed: ${m.slice(0, 300)}`
@@ -776,33 +841,22 @@ export const mergeBranch = async ({
     //      just materialises what the ref already points at).
     //   2. Fail the step with reason `'merge-left-dirty-tree'` so the normal
     //      failure path handles it. Never report step success over a dirty tree.
+    lastStep = 'post-merge-assert'
     try {
       const headBranchPost = (
-        await exec(
-          resolveGitBin(),
-          ['rev-parse', '--abbrev-ref', 'HEAD'],
-          { cwd: repoRoot() },
-          mergeCtx,
-        )
+        await gexec(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot())
       ).stdout.trim()
       if (headBranchPost === integrationBranch) {
-        const postStatus = await execProbe(
-          resolveGitBin(),
+        const postStatus = await gprobe(
           ['status', '--porcelain', '--untracked-files=no'],
-          { cwd: repoRoot() },
-          mergeCtx,
+          repoRoot(),
         )
         if (postStatus.stdout.trim() !== '') {
           output += `\n[mergeBranch] post-merge dirty-tree detected on integration checkout (status:\n${postStatus.stdout.slice(0, 500)}\n)`
           // Attempt to restore the integration checkout to the current HEAD
           // (which is finalTaskSha — the merge already landed via update-ref).
           try {
-            const restored = await exec(
-              resolveGitBin(),
-              ['reset', '--hard', 'HEAD'],
-              { cwd: repoRoot() },
-              mergeCtx,
-            )
+            const restored = await gexec(['reset', '--hard', 'HEAD'], repoRoot())
             output += `\n[mergeBranch] restored integration checkout to HEAD: ${restored.stdout.trim().slice(0, 200)}`
           } catch (restoreErr: unknown) {
             const m = restoreErr instanceof Error ? restoreErr.message : String(restoreErr)
@@ -836,8 +890,26 @@ export const mergeBranch = async ({
       vegaSessionId,
       retriesAttempted,
     }
+    } finally {
+      // Release the merge lock via the existing lock/release path regardless of
+      // how the merge body exits — success, early return, or abort.
+      await release()
+    }
+  } catch (err: unknown) {
+    // Convert an abort (watchdog OR caller signal) into a MergeAbortedError.
+    // Any other error is a genuine merge failure and propagates unchanged.
+    if (combinedSignal.aborted) {
+      const reason: 'watchdog' | 'external' = watchdogController.signal.aborted
+        ? 'watchdog'
+        : 'external'
+      // Best-effort teardown of any in-progress rebase/merge in the worktree.
+      // Bounded by its own short timeout — never threads the aborted signal.
+      await bestEffortAbortCleanup(worktreePath, mergeCtx)
+      throw new MergeAbortedError(reason, Date.now() - startedAt, lastStep)
+    }
+    throw err
   } finally {
-    await release()
+    clearTimeout(watchdogTimer)
   }
 }
 
