@@ -250,6 +250,18 @@ export const proxyStream = async (
   })
 
 /**
+ * Process-level action ops that have no entity scope.
+ *
+ * These ops target the daemon process itself rather than a specific task or
+ * worktree, so the entity-id segment MUST be omitted from the path even if a
+ * caller accidentally provides one. Belt-and-suspenders guard: the canonical
+ * fix lives in ChatPage's `onRestart` wiring (which now uses the `restart-daemon`
+ * verb instead of the legacy `restart` action), but `proxyAction` strips the id
+ * here too so a stale caller can never produce a 404-inducing entity path.
+ */
+const PROCESS_LEVEL_ACTION_OPS = new Set(['restart-daemon', 'restart-all-daemon-killed'])
+
+/**
  * Forward a recovery action to the daemon. `op` is the verb from the registry;
  * `entityId` is the task/worktree id (omitted for process-level ops like
  * `restart-daemon`). Returns the daemon's status + parsed body so the route can
@@ -261,10 +273,13 @@ export const proxyAction = async (
   entityId?: string,
 ): Promise<DaemonActionResult> =>
   withDaemon(stateDir, async (port) => {
+    // Process-level ops carry no entity scope — strip entityId unconditionally
+    // to prevent the wrong /actions/<op>/<id> path from being built.
+    const effectiveEntityId = PROCESS_LEVEL_ACTION_OPS.has(op) ? undefined : entityId
     const path =
-      entityId === undefined
+      effectiveEntityId === undefined
         ? `/actions/${op}`
-        : `/actions/${op}/${encodeURIComponent(entityId)}`
+        : `/actions/${op}/${encodeURIComponent(effectiveEntityId)}`
     const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST' })
     const body = await res.json().catch(() => ({}))
     return { status: res.status, body }

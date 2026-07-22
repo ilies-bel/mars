@@ -1898,12 +1898,25 @@ export const ThreadSidebar = ({
               else onSelectQueueItem?.(item.id)
             }}
             onRestart={
-              item.actions.some((a) => a.op === 'restart')
-                ? () => {
-                    const restart = item.actions.find((a) => a.op === 'restart')
-                    if (restart) onQueueAction?.(restart, item)
+              (() => {
+                // Prefer restart-daemon verb (process-level op, no entityId) over the
+                // legacy per-entity restart action so daemon-code-drift rows hit
+                // POST /actions/restart-daemon instead of the 404-producing
+                // POST /actions/restart/daemon-code-drift path.
+                const daemonVerb = item.verbs?.find((v) => v.op === 'restart-daemon')
+                if (daemonVerb) {
+                  const action: ActionDescriptor = {
+                    id: 'restart-daemon',
+                    label: daemonVerb.label,
+                    op: 'restart-daemon',
                   }
-                : null
+                  return () => onQueueAction?.(action, item)
+                }
+                const restartAction = item.actions.find((a) => a.op === 'restart')
+                return restartAction != null
+                  ? () => onQueueAction?.(restartAction, item)
+                  : null
+              })()
             }
             restartPending={false}
             restartError={null}

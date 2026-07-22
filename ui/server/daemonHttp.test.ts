@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:net'
 import { DAEMON_ERROR } from '../src/shared/daemonErrors.ts'
-import { proxyGet } from './daemonHttp.ts'
+import { proxyGet, proxyAction } from './daemonHttp.ts'
 
 /** Bind a TCP server to an OS-assigned port, then close it so the port is stale. */
 const getStalePort = (): Promise<number> =>
@@ -92,5 +92,83 @@ describe('proxyGet — transport error classification', () => {
 
     expect(result.status).toBe(502)
     expect((result.body as { errorCode: string }).errorCode).toBe(DAEMON_ERROR.PROXY_FAILED)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// proxyAction — process-level op routing
+// ---------------------------------------------------------------------------
+
+describe('proxyAction — process-level op routing', () => {
+  let stateDir: string
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), 'mars-proxyaction-test-'))
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    rmSync(stateDir, { recursive: true, force: true })
+  })
+
+  it('restart-daemon with entityId targets /actions/restart-daemon (entity stripped)', async () => {
+    // This is the daemon-code-drift bug scenario: the caller accidentally passes
+    // the signature string as entityId. proxyAction must strip it for process-level ops.
+    const capturedPaths: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        capturedPaths.push(new URL(url).pathname)
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        )
+      }),
+    )
+    writeFileSync(join(stateDir, 'http.port'), '19999')
+
+    await proxyAction(stateDir, 'restart-daemon', 'daemon-code-drift')
+
+    expect(capturedPaths).toHaveLength(1)
+    expect(capturedPaths[0]).toBe('/actions/restart-daemon')
+  })
+
+  it('restart-daemon without entityId targets /actions/restart-daemon', async () => {
+    const capturedPaths: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        capturedPaths.push(new URL(url).pathname)
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        )
+      }),
+    )
+    writeFileSync(join(stateDir, 'http.port'), '19999')
+
+    await proxyAction(stateDir, 'restart-daemon')
+
+    expect(capturedPaths).toHaveLength(1)
+    expect(capturedPaths[0]).toBe('/actions/restart-daemon')
+  })
+
+  it('per-entity restart op targets /actions/restart/<taskId> (regression)', async () => {
+    // A normal failed-task restart must still include the task id in the path.
+    const capturedPaths: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((url: string) => {
+        capturedPaths.push(new URL(url).pathname)
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        )
+      }),
+    )
+    writeFileSync(join(stateDir, 'http.port'), '19999')
+
+    await proxyAction(stateDir, 'restart', 'mars-xxxx')
+
+    expect(capturedPaths).toHaveLength(1)
+    expect(capturedPaths[0]).toBe('/actions/restart/mars-xxxx')
   })
 })
