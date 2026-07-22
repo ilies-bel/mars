@@ -828,9 +828,18 @@ const ChatConversation = ({
     [sendMessage, qc],
   )
 
+  // Stopping a run settles the transport (via the abort signal's onAbort handler,
+  // which sends a finish chunk and calls stopChatThread on the daemon) and then
+  // invalidates the persisted-history query so the reconciliation effect can
+  // replace the partial streamed content in useChat with the daemon-persisted
+  // reply once the refetch lands. This is the equivalent of clearLiveBuffer in
+  // the old SSE-buffer architecture: it unblocks the reconciliation path so the
+  // stale streaming state does not persist across the next send or window focus.
   const handleStop = useCallback(() => {
     void stop()
-  }, [stop])
+    void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
+    void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+  }, [stop, qc, threadId])
 
   const showWelcome = !isLoading && messages.length === 0
 
