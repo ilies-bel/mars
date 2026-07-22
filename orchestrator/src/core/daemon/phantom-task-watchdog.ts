@@ -60,7 +60,7 @@
  * resolves the lease explicitly (release → re-queue, or drop).
  */
 
-import { listTasks, updateTask } from '../queue'
+import { getTask, listTasks, updateTask } from '../queue'
 import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
 import type { DispatchKind, InFlightEntry } from './task-flight-tracker'
 
@@ -126,14 +126,16 @@ const FAILED_PHASE_FOR_STATUS: Record<(typeof PHANTOM_STATUSES)[number], 'code' 
  * @param isAlive          PID liveness predicate (default: `isProcessAlive` from
  *                         `./paths`). Pass a stub in tests.
  * @param nowMs            Current timestamp override for testing.
- * @returns                IDs of every task that was auto-failed.
+ * @returns                IDs of every task that was auto-failed, and IDs of
+ *                         every orphaned 'running' task that was re-queued as a
+ *                         safety net (no in-flight entry from this daemon).
  */
 export const sweepPhantomTasks = async (
   inFlightEntries: readonly InFlightEntry[],
   reclaimSlot: (taskId: string, kind: DispatchKind) => void,
   isAlive?: (pid: number) => boolean,
   nowMs?: number,
-): Promise<{ failed: string[] }> => {
+): Promise<{ failed: string[]; requeued: string[] }> => {
   const { isProcessAlive } = await import('./paths')
   const alive = isAlive ?? isProcessAlive
   const now = nowMs ?? Date.now()
@@ -145,6 +147,7 @@ export const sweepPhantomTasks = async (
   )
 
   const failed: string[] = []
+  const requeued: string[] = []
 
   for (const status of PHANTOM_STATUSES) {
     const tasks = await listTasks(status)
@@ -168,9 +171,39 @@ export const sweepPhantomTasks = async (
             phantomReason = 'ceiling'
           }
         }
+      } else if (entry !== undefined) {
+        // In-flight entry exists but PID not yet recorded — rely on the
+        // wall-clock ceiling against updatedAt (bare-ceiling backstop).
+        const updatedMs = Date.parse(task.updatedAt)
+        if (!Number.isFinite(updatedMs) || now - updatedMs <= ceiling) continue
+        phantomReason = 'ceiling'
+      } else if (status === 'running') {
+        // No in-flight entry AND task is 'running': this task is orphaned from
+        // a prior daemon. The startup reconcile (requeue-stale-running) should
+        // have re-queued it on boot, but either missed it (race) or the
+        // updateTask call silently failed. Re-queue as a safety net rather than
+        // phantom-failing — the task has not been worked on by this daemon at all.
+        const updatedMs = Date.parse(task.updatedAt)
+        if (!Number.isFinite(updatedMs) || now - updatedMs <= ceiling) continue
+        // Attempt the re-queue. If the DB write fails, leave the task as-is;
+        // the next sweep will retry.
+        await updateTask(task.id, {
+          status: 'queued',
+          branch: null,
+          worktreePath: null,
+          claudeSessionId: null,
+          error: null,
+          failedPhase: null,
+          failureSignature: null,
+          failureReasonCode: null,
+        }).catch(() => {})
+        const recheckd = await getTask(task.id).catch(() => null)
+        if (recheckd?.status === 'queued') requeued.push(task.id)
+        continue
       } else {
-        // No PID available — rely solely on the wall-clock ceiling against
-        // updatedAt. This is the bare-ceiling backstop for orphaned rows.
+        // 'verifying' (or any future status) with no in-flight entry: fall back
+        // to the wall-clock ceiling backstop. The startup reconcile's
+        // verifying-recovery step handles this case; this is the safety net.
         const updatedMs = Date.parse(task.updatedAt)
         if (!Number.isFinite(updatedMs) || now - updatedMs <= ceiling) continue
         phantomReason = 'ceiling'
@@ -195,7 +228,6 @@ export const sweepPhantomTasks = async (
       })
 
       // Verify the write landed before reclaiming.
-      const { getTask } = await import('../queue')
       const updated = await getTask(task.id).catch(() => null)
       if (updated?.status !== 'failed') continue
 
@@ -237,7 +269,7 @@ export const sweepPhantomTasks = async (
     }
   }
 
-  return { failed }
+  return { failed, requeued }
 }
 
 /**

@@ -62,7 +62,9 @@ describe('sweepPhantomTasks — wall-clock ceiling', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('auto-fails a running task whose updatedAt exceeds the ceiling', async () => {
+  it('re-queues an orphaned running task (no in-flight entry) whose updatedAt exceeds the ceiling', async () => {
+    // A 'running' task with NO in-flight entry is definitely from a prior daemon.
+    // The phantom-task watchdog must RE-QUEUE it (not fail it) so the work resumes.
     const { q, actionQueue, watchdog } = await loadModules(repo)
     const nowMs = Date.now()
     const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
@@ -73,13 +75,51 @@ describe('sweepPhantomTasks — wall-clock ceiling', () => {
     })
 
     const reclaimSlot = vi.fn()
-    const { failed } = await watchdog.sweepPhantomTasks([], reclaimSlot, undefined, nowMs)
+    // Pass empty inFlight — no entry for this task in the current daemon.
+    const { failed, requeued } = await watchdog.sweepPhantomTasks([], reclaimSlot, undefined, nowMs)
+
+    expect(failed).not.toContain(task.id)
+    expect(requeued).toContain(task.id)
+
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('queued')
+    // Branch/worktree/session fields cleared so the next dispatch starts fresh.
+    expect(reloaded?.branch).toBeNull()
+    expect(reloaded?.worktreePath).toBeNull()
+
+    // reclaimSlot must NOT be called — there is no in-flight slot to reclaim.
+    expect(reclaimSlot).not.toHaveBeenCalled()
+
+    // No action-queue item: re-queue is a transparent recovery, not an alert.
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(0)
+  })
+
+  it('still fails a running task that has an in-flight entry but no PID and exceeds the ceiling', async () => {
+    // A task WITH an in-flight entry (this daemon dispatched it) but no PID
+    // recorded should still be phantom-failed after the ceiling.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
+      args: [OLD_UPDATED_AT(nowMs), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // Provide an in-flight entry WITHOUT a pid.
+    const inFlightEntries = [{ taskId: task.id, kind: 'implement' as const, startedAt: nowMs - 35 * 60_000 }]
+    const { failed, requeued } = await watchdog.sweepPhantomTasks(inFlightEntries, reclaimSlot, undefined, nowMs)
 
     expect(failed).toContain(task.id)
+    expect(requeued).not.toContain(task.id)
 
     const reloaded = await q.getTask(task.id)
     expect(reloaded?.status).toBe('failed')
     expect(reloaded?.failedPhase).toBe('code')
+
+    expect(reclaimSlot).toHaveBeenCalledWith(task.id, 'implement')
 
     const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(1)
@@ -191,7 +231,42 @@ describe('sweepPhantomTasks — wall-clock ceiling', () => {
     expect(reclaimSlot).not.toHaveBeenCalled()
   })
 
-  it('re-detecting a phantom bumps the existing action-queue item (no retry storm)', async () => {
+  it('re-detecting a phantom bumps the existing action-queue item (no retry storm) — in-flight entry path', async () => {
+    // This test uses an in-flight entry WITH no PID so the fail path fires,
+    // verifying that re-detecting a phantom doesn't spawn duplicate AQ items.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
+      args: [OLD_UPDATED_AT(nowMs), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    // Provide an in-flight entry so the fail path fires (not the re-queue path).
+    const inFlightEntries = [{ taskId: task.id, kind: 'implement' as const, startedAt: nowMs - 35 * 60_000 }]
+
+    // First sweep: marks the task failed and raises one item.
+    const first = await watchdog.sweepPhantomTasks(inFlightEntries, reclaimSlot, undefined, nowMs)
+    expect(first.failed).toHaveLength(1)
+
+    const itemsBefore = await actionQueue.listActionQueueItems('open')
+    expect(itemsBefore).toHaveLength(1)
+    const firstItemId = itemsBefore[0].id
+
+    // Second sweep: the task is now 'failed' — watchdog should not produce a new item.
+    const second = await watchdog.sweepPhantomTasks(inFlightEntries, reclaimSlot, undefined, nowMs)
+    expect(second.failed).toHaveLength(0)
+
+    const itemsAfter = await actionQueue.listActionQueueItems('open')
+    expect(itemsAfter).toHaveLength(1)
+    expect(itemsAfter[0].id).toBe(firstItemId)
+  })
+
+  it('re-queuing is idempotent: a second sweep finds the task queued (not running) and skips it', async () => {
+    // After the first sweep re-queues an orphaned running task, a second sweep
+    // must not touch it (it is no longer in a phantom status).
     const { q, actionQueue, watchdog } = await loadModules(repo)
     const nowMs = Date.now()
     const task = await q.enqueueTask('some work', undefined, { skipTriage: true })
@@ -203,24 +278,22 @@ describe('sweepPhantomTasks — wall-clock ceiling', () => {
 
     const reclaimSlot = vi.fn()
 
-    // First sweep: marks the task failed and raises one item.
+    // First sweep: re-queues the orphaned task.
     const first = await watchdog.sweepPhantomTasks([], reclaimSlot, undefined, nowMs)
-    expect(first.failed).toHaveLength(1)
+    expect(first.requeued).toContain(task.id)
+    expect(first.failed).toHaveLength(0)
 
-    const itemsBefore = await actionQueue.listActionQueueItems('open')
-    expect(itemsBefore).toHaveLength(1)
-    const firstItemId = itemsBefore[0].id
-
-    // Second sweep: the task is now 'failed' — watchdog should not produce a new item.
+    // Second sweep: task is now 'queued' — not in a scanned status, untouched.
     const second = await watchdog.sweepPhantomTasks([], reclaimSlot, undefined, nowMs)
+    expect(second.requeued).toHaveLength(0)
     expect(second.failed).toHaveLength(0)
 
-    const itemsAfter = await actionQueue.listActionQueueItems('open')
-    expect(itemsAfter).toHaveLength(1)
-    expect(itemsAfter[0].id).toBe(firstItemId)
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(0)
   })
 
-  it('handles multiple phantom tasks in one sweep, raising one item each', async () => {
+  it('handles multiple orphaned running tasks in one sweep, re-queuing each', async () => {
+    // With no in-flight entries, both stale running tasks are re-queued, not failed.
     const { q, actionQueue, watchdog } = await loadModules(repo)
     const nowMs = Date.now()
 
@@ -235,14 +308,15 @@ describe('sweepPhantomTasks — wall-clock ceiling', () => {
     }
 
     const reclaimSlot = vi.fn()
-    const { failed } = await watchdog.sweepPhantomTasks([], reclaimSlot, undefined, nowMs)
+    const { failed, requeued } = await watchdog.sweepPhantomTasks([], reclaimSlot, undefined, nowMs)
 
-    expect(failed).toHaveLength(2)
-    expect(failed).toContain(t1.id)
-    expect(failed).toContain(t2.id)
+    expect(failed).toHaveLength(0)
+    expect(requeued).toHaveLength(2)
+    expect(requeued).toContain(t1.id)
+    expect(requeued).toContain(t2.id)
 
     const items = await actionQueue.listActionQueueItems('open')
-    expect(items).toHaveLength(2)
+    expect(items).toHaveLength(0)
   })
 
   it('returns empty list when no tasks are running', async () => {

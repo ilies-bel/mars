@@ -347,15 +347,27 @@ export const recoverPhase = async (
     const hasBlockers = await hasIncompleteBlockers(t.id).catch(() => false)
     if (hasBlockers) {
       if (!silent) log(policy.blockedLog(t))
-      await updateTask(t.id, { status: 'blocked', ...patch }).catch(() => {})
-      result.blocked++
+      try {
+        await updateTask(t.id, { status: 'blocked', ...patch })
+        result.blocked++
+      } catch {
+        // DB write failed — task stays in its current status.
+        // The phantom-task watchdog or a future reconcile pass will retry.
+        log(`[reconcile] failed to update task ${t.id} to blocked; skipping`)
+      }
       continue
     }
 
     if (!silent) log(policy.requeueLog(t))
-    await updateTask(t.id, { status: 'queued', ...patch }).catch(() => {})
-    if (policy.emitOnRequeue) bus.emit('task.queued', { taskId: t.id })
-    result.requeued.push(t.id)
+    try {
+      await updateTask(t.id, { status: 'queued', ...patch })
+      if (policy.emitOnRequeue) bus.emit('task.queued', { taskId: t.id })
+      result.requeued.push(t.id)
+    } catch {
+      // DB write failed — task stays in its current status.
+      // The phantom-task watchdog or a future reconcile pass will retry.
+      log(`[reconcile] failed to update task ${t.id} to queued; skipping`)
+    }
   }
 
   return result

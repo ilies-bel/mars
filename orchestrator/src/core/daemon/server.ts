@@ -3915,7 +3915,7 @@ export const startDaemon = async (
   const phantomWatchdog = setInterval(() => {
     void (async () => {
       try {
-        const { failed } = await sweepPhantomTasks(
+        const { failed, requeued } = await sweepPhantomTasks(
           tracker.inFlightSnapshot(),
           (id, _kind) => {
             // Mirror handleDrop(force=true): force-clear ONLY the tracker entry
@@ -3939,6 +3939,16 @@ export const startDaemon = async (
             `[phantom-watchdog] auto-failed ${failed.length} phantom in-flight task(s): ${failed.join(', ')}`,
           )
           viewStreamHub.broadcast('action-queue')
+          viewStreamHub.broadcast('tasks')
+          void drain()
+        }
+        if (requeued.length > 0) {
+          log(
+            `[phantom-watchdog] re-queued ${requeued.length} orphaned running task(s) with no in-flight entry: ${requeued.join(', ')}`,
+          )
+          for (const taskId of requeued) {
+            bus.emit('task.queued', { taskId })
+          }
           viewStreamHub.broadcast('tasks')
           void drain()
         }

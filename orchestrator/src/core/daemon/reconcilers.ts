@@ -180,26 +180,13 @@ const recoveryDonePropagation: Reconciler = {
 }
 
 /**
- * 5. Reseed dispatch — emit task.added / task.queued for all draft/queued rows
- *    so the dispatch loop picks them up. Pure bus side-effect; no summary
- *    contribution.
- */
-const reseedDispatch: Reconciler = {
-  name: 'reseed-dispatch',
-  async run({ bus }) {
-    const drafts = await listTasks('draft')
-    for (const t of drafts) bus.emit('task.added', { taskId: t.id })
-
-    const queued = await listTasks('queued')
-    for (const t of queued) bus.emit('task.queued', { taskId: t.id })
-
-    return {}
-  },
-}
-
-/**
- * 6. Requeue stale-running — tasks that were `running` when the prior daemon
- *    died are re-queued from setup (no retry budget burn).
+ * 5. Requeue stale-running — tasks that were `running` when the prior daemon
+ *    died are re-queued from setup (no retry budget burn). Must run BEFORE
+ *    reseed-dispatch so that orphaned 'running' rows are converted to 'queued'
+ *    before the dispatch loop re-seeds from all 'queued' rows. Running this
+ *    after reseed-dispatch risks the dispatch loop picking up a row that is
+ *    still tagged 'running' in the DB, skipping it (drain guards `t.status !==
+ *    'queued'`), and leaving it stranded until the phantom-task watchdog fires.
  */
 const requeueStaleRunning: Reconciler = {
   name: 'requeue-stale-running',
@@ -212,6 +199,26 @@ const requeueStaleRunning: Reconciler = {
       bus.emit('task.queued', { taskId })
     }
     return { runningRequeued: requeued.length }
+  },
+}
+
+/**
+ * 6. Reseed dispatch — emit task.added / task.queued for all draft/queued rows
+ *    so the dispatch loop picks them up. Pure bus side-effect; no summary
+ *    contribution. Must run AFTER requeue-stale-running (step 5) so that any
+ *    prior-daemon 'running' rows have already been converted to 'queued' before
+ *    this step seeds the dispatch queue.
+ */
+const reseedDispatch: Reconciler = {
+  name: 'reseed-dispatch',
+  async run({ bus }) {
+    const drafts = await listTasks('draft')
+    for (const t of drafts) bus.emit('task.added', { taskId: t.id })
+
+    const queued = await listTasks('queued')
+    for (const t of queued) bus.emit('task.queued', { taskId: t.id })
+
+    return {}
   },
 }
 
@@ -453,8 +460,8 @@ export const RECONCILERS: readonly Reconciler[] = [
   blockerDriftRepair,
   orphanedBlockedScan,
   recoveryDonePropagation,
-  reseedDispatch,
   requeueStaleRunning,
+  reseedDispatch,
   orphanSpanSweep,
   verifyingRecovery,
   mergingRecovery,
