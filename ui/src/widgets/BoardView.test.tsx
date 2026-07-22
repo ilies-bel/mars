@@ -447,3 +447,132 @@ describe('BoardView – column lane styling (no card-in-card nesting)', () => {
     expect(html).toMatch(/<header[^>]*class="[^"]*\bborder-b\b/)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Arc lifecycle: force-purge compensation and orphaned-origin states
+// ---------------------------------------------------------------------------
+
+describe('buildArcsByCluster — arc lifecycle states', () => {
+  it('sets hasOrphanedOrigin=true when the recovery task has no origin in the board', () => {
+    // Origin was force-purged (deleted from DB); only the recovery remains.
+    const recovery = task({
+      id: 'fix-orphan',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-deleted',  // references a deleted origin
+      fixForTaskId: 'origin-deleted',
+      kind: 'fix',
+    })
+
+    const arcs = buildArcsByCluster([recovery])
+
+    expect(arcs['In progress']).toHaveLength(1)
+    expect(arcs['In progress'][0]?.hasOrphanedOrigin).toBe(true)
+  })
+
+  it('sets hasOrphanedOrigin=false when origin is present alongside recovery', () => {
+    const origin = task({ id: 'origin-1', cluster: 'Failed', status: 'failed', originId: 'origin-1' })
+    const recovery = task({
+      id: 'fix-1',
+      cluster: 'Queued',
+      status: 'queued',
+      originId: 'origin-1',
+      fixForTaskId: 'origin-1',
+      kind: 'fix',
+    })
+
+    const arcs = buildArcsByCluster([origin, recovery])
+    const allArcs = [...arcs.Queued, ...arcs.Failed, ...arcs['In progress'], ...arcs.Blocked]
+
+    expect(allArcs).toHaveLength(1)
+    expect(allArcs[0]?.hasOrphanedOrigin).toBe(false)
+  })
+
+  it('uses "Abandoned arc <id>" as title for orphaned arcs, not the recovery prompt', () => {
+    const recovery = task({
+      id: 'fix-orphan',
+      prompt: 'Fix failing step: verify — something technical',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-deleted',
+      kind: 'fix',
+    })
+
+    const arcs = buildArcsByCluster([recovery])
+    const arc = arcs['In progress'][0]!
+
+    expect(arc.title).toBe('Abandoned arc origin-deleted')
+    expect(arc.title).not.toContain('Fix failing step')
+  })
+
+  it('propagates compensatesArcId from a compensation task to the arc', () => {
+    const compensationTask = task({
+      id: 'comp-1',
+      cluster: 'Queued',
+      status: 'queued',
+      originId: 'comp-1',
+      compensatesArcId: 'origin-purged',
+    })
+
+    const arcs = buildArcsByCluster([compensationTask])
+
+    expect(arcs.Queued).toHaveLength(1)
+    expect(arcs.Queued[0]?.compensatesArcId).toBe('origin-purged')
+  })
+})
+
+describe('BoardView — arc lifecycle rendering', () => {
+  it('renders orphaned-origin arc with data-arc-state="orphaned-origin"', () => {
+    // Only the recovery task is on the board (origin force-purged).
+    const recovery = task({
+      id: 'fix-orphan',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-deleted',
+      kind: 'fix',
+    })
+    const byCluster = { ...emptyByCluster(), 'In progress': [recovery] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('data-arc-state="orphaned-origin"')
+    expect(html).toContain('Abandoned arc origin-deleted')
+    expect(html).toContain('origin force-purged')
+    // Must NOT use line-through (recovery is active, not abandoned).
+    expect(html).not.toContain('line-through')
+  })
+
+  it('renders compensation arc with data-arc-state="cleanup-required" and badge', () => {
+    const compensation = task({
+      id: 'comp-1',
+      cluster: 'Queued',
+      status: 'queued',
+      originId: 'comp-1',
+      compensatesArcId: 'origin-purged',
+    })
+    const byCluster = { ...emptyByCluster(), Queued: [compensation] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('data-arc-state="cleanup-required"')
+    expect(html).toContain('↩ compensates arc origin-purged')
+    expect(html).toContain('data-compensates-arc="origin-purged"')
+  })
+
+  it('renders normal active arc with data-arc-state="active"', () => {
+    const origin = task({ id: 'origin-1', cluster: 'Queued', status: 'queued', originId: 'origin-1' })
+    const byCluster = { ...emptyByCluster(), Queued: [origin] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('data-arc-state="active"')
+    expect(html).not.toContain('data-arc-state="orphaned-origin"')
+    expect(html).not.toContain('data-arc-state="cleanup-required"')
+  })
+})
