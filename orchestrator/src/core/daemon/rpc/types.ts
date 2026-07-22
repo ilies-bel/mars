@@ -121,7 +121,7 @@ export interface DaemonDeps {
   setTaskPriority(id: string, priority: number): Promise<Task>
   handleUpdate(id: string, patch: DaemonUpdatePatch): Promise<void>
   handleContinue(id: string): Promise<ContinueResult>
-  handleRestart(id: string): Promise<void>
+  handleRestart(id: string, force?: boolean): Promise<void>
   handlePurge(id: string, force: boolean): Promise<void>
   handleArcPurge(
     id: string,

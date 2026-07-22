@@ -251,20 +251,47 @@ export const recoverPhase = async (
     // the step checkpoints so the next dispatch re-runs setup from scratch —
     // a stale "setup: completed" checkpoint against a missing worktree is the
     // root cause of the 2026-07-02 re-queue loop (see mars-c11be862 post-mortem).
+    //
+    // Exception: if the worktree is on disk but the workflow run is terminal
+    // failed, the step checkpoints are stale (e.g. setup and code completed but
+    // verify failed with "working directory no longer exists"). Treating the
+    // worktree as if it were gone forces a checkpoint-clear and fresh setup,
+    // breaking the re-queue loop for stale verifier tasks after a daemon restart.
     const branch = t.branch ?? `task/${t.id}`
-    const worktreeOnDisk = t.worktreePath != null && exists(t.worktreePath)
+    // Whether the worktree is physically on disk (not just stored in DB).
+    const worktreePhysicallyPresent = t.worktreePath != null && exists(t.worktreePath)
+    let worktreeOnDisk = worktreePhysicallyPresent
 
     if (worktreeOnDisk) {
-      // Worktree survived the daemon restart — keep it and its branch intact.
+      // Worktree survived the daemon restart — check if the durable workflow
+      // run is terminal failed. If so the step checkpoints are stale and
+      // checkpoint-resume would re-enter at the failed step (e.g. verify)
+      // against a bad environment. Treat as worktree-gone so setup runs fresh.
+      const { createQueueWorkflowStore } = await import(
+        '../../workflows/queue-workflow-store'
+      )
+      const run = await createQueueWorkflowStore().getRun(t.id).catch(() => undefined)
+      if (run?.status === 'failed') {
+        worktreeOnDisk = false
+      }
+    }
+
+    if (worktreeOnDisk) {
+      // Worktree survived and run is resumable — keep it and its branch intact.
       // Only clear transient fields (session id, error, failedPhase) so the
       // next run picks up from the right step with a fresh Claude session.
     } else {
-      // Worktree is gone — the completed setup checkpoint now points at a
-      // missing path. Delete the branch artifact (if safe) and the step
-      // checkpoints so the next dispatch re-runs setup and creates a fresh
-      // worktree.
+      // Worktree is gone (or physically present but its run is terminal failed
+      // so we treat it as gone). Delete the directory if it is on disk, then
+      // let the commits-ahead guard below own the branch lifecycle — we pass
+      // keepBranch=true so removeWorktree only removes the directory and does
+      // not race the guard by also deleting the branch ref.
       if (t.worktreePath) {
-        await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
+        await removeWorktree(
+          { path: t.worktreePath, branch },
+          true,
+          worktreePhysicallyPresent, // keepBranch=true only when dir exists
+        ).catch(() => {})
       }
       // Guard: only delete the branch if it has no unmerged commits. A branch
       // whose tip is ahead of the integration branch holds work product —

@@ -21,6 +21,39 @@ export class RestartTaskError extends Error {
 }
 
 /**
+ * Options for {@link coreRestartTask}.
+ *
+ * `force`: when `true`, allow restarting a task that is nominally in an
+ * in-flight status (`running`, `verifying`, `merging`, `vega-reconciling`)
+ * provided its latest durable workflow run is terminal `'failed'`. This
+ * handles the stale-verifier scenario: the daemon restarted while a task was
+ * verifying, the workflow run recorded a failure (e.g. "working directory no
+ * longer exists"), but the task row is stuck in `verifying` because it is not
+ * in `allowedStatuses`. Without `--force`, the operator has no supported path
+ * to restart the task; with it, the stale run journal is cleared and setup
+ * creates a fresh worktree.
+ *
+ * `force` is NOT a bypass for tasks whose workflow run is still active — if
+ * `getRun` returns `status='running'` or no run exists at all, the request
+ * is refused with `WRONG_STATUS` so active worktrees are never torn down.
+ */
+export interface RestartOptions {
+  /** Allow restart of in-flight tasks whose latest workflow run is failed. */
+  force?: boolean
+}
+
+/**
+ * In-flight statuses that the `force` override covers. These are the states
+ * a prior-daemon task can be stranded in with a terminal-failed run record.
+ */
+const FORCE_ELIGIBLE_STATUSES = new Set([
+  'running',
+  'verifying',
+  'merging',
+  'vega-reconciling',
+])
+
+/**
  * Core restart mechanics shared by both the UDS RPC handler (`mars restart`)
  * and the HTTP endpoint. Validates the task exists and is in an allowed
  * status, then wipes the worktree/branch, clears the workflow run journal,
@@ -28,6 +61,8 @@ export class RestartTaskError extends Error {
  *
  * The `workflowStore` is used to delete the prior run's checkpoint records
  * so the next dispatch starts from step 0 rather than resuming a stale run.
+ * When `options.force` is `true`, it is also used to check whether the latest
+ * run is terminal failed before allowing the override.
  *
  * Intentionally has no dependency on the daemon's event bus — the caller
  * is responsible for emitting `task.queued` after this resolves so either
@@ -35,13 +70,16 @@ export class RestartTaskError extends Error {
  *
  * @throws {RestartTaskError} with code `'NOT_FOUND'` if the task does not exist
  * @throws {RestartTaskError} with code `'WRONG_STATUS'` if the task's status is
- *   not in `allowedStatuses`
+ *   not in `allowedStatuses` (or, with `force`, if the workflow run is not
+ *   terminal failed)
  */
 export const coreRestartTask = async (
   id: string,
   allowedStatuses: ReadonlySet<string>,
   workflowStore: WorkflowStore,
+  options?: RestartOptions,
 ): Promise<void> => {
+  const { force = false } = options ?? {}
   const task = await getTask(id)
   if (!task) {
     // Resolve any orphaned action-queue row before surfacing the 404 so the
@@ -50,11 +88,30 @@ export const coreRestartTask = async (
     throw new RestartTaskError(`task ${id} not found`, 'NOT_FOUND')
   }
   if (!allowedStatuses.has(task.status)) {
-    const allowed = [...allowedStatuses].join('/')
-    throw new RestartTaskError(
-      `task ${id} is ${task.status}; only ${allowed} tasks can be restarted`,
-      'WRONG_STATUS',
-    )
+    // force=true: allow restart of in-flight tasks whose latest workflow run
+    // is terminal failed. This is the recovery path for stale verifier tasks
+    // stranded after a daemon restart (e.g. status=verifying, run failed with
+    // "working directory no longer exists"). Without this override the operator
+    // has no supported path to restart them via `mars restart`.
+    if (force && FORCE_ELIGIBLE_STATUSES.has(task.status)) {
+      const run = await workflowStore.getRun(id)
+      if (run?.status !== 'failed') {
+        // Run is still active or no durable run exists — refuse to tear down.
+        const runStatus = run?.status ?? 'no-run'
+        throw new RestartTaskError(
+          `task ${id} is ${task.status} with a non-failed workflow run (status=${runStatus}); ` +
+            `--force only applies when the latest workflow run is terminal failed`,
+          'WRONG_STATUS',
+        )
+      }
+      // Run is terminal failed — the force override is permitted; proceed.
+    } else {
+      const allowed = [...allowedStatuses].join('/')
+      throw new RestartTaskError(
+        `task ${id} is ${task.status}; only ${allowed} tasks can be restarted`,
+        'WRONG_STATUS',
+      )
+    }
   }
 
   // Guard: refuse if an in-flight recovery (fix-task) is currently active for

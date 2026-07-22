@@ -76,7 +76,7 @@ const continueHandler = handler('continue', async (req, deps) => {
 })
 
 const restartHandler = handler('restart', async (req, deps) => {
-  await deps.handleRestart(req.id)
+  await deps.handleRestart(req.id, req.force)
   return { ok: true }
 })
 

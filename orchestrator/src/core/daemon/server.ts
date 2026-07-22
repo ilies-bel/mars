@@ -2087,10 +2087,10 @@ export const startDaemon = async (
   // pipeline from setup. The restart mechanics live in coreRestartTask so
   // the HTTP endpoint (slice 2 of the retry-button PRD) shares the exact
   // same code path — see daemon/restart-task.ts.
-  const handleRestart = async (id: string): Promise<void> => {
+  const handleRestart = async (id: string, force?: boolean): Promise<void> => {
     const { coreRestartTask } = await import('./restart-task')
     const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
-    await coreRestartTask(id, new Set(['failed', 'done']), createQueueWorkflowStore())
+    await coreRestartTask(id, new Set(['failed', 'done']), createQueueWorkflowStore(), { force })
     bus.emit('task.queued', { taskId: id })
   }
 

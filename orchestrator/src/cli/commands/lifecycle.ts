@@ -109,17 +109,30 @@ const makeContinueRestart = (verb: 'continue' | 'restart'): Command => ({
     verb === 'continue'
       ? 'resume failed tasks from their last checkpoint'
       : 'wipe and re-run failed tasks from setup',
-  usage: `usage: mars ${verb} <id> [<id> ...]`,
+  usage:
+    verb === 'continue'
+      ? `usage: mars ${verb} <id> [<id> ...]`
+      : `usage: mars ${verb} <id> [<id> ...] [--force]`,
   run: async (args, deps) => {
+    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
     const ids = args.positional.filter((a) => !a.startsWith('--'))
     if (ids.length === 0) {
-      deps.err(`usage: mars ${verb} <id> [<id> ...]`)
+      deps.err(
+        verb === 'continue'
+          ? `usage: mars ${verb} <id> [<id> ...]`
+          : `usage: mars ${verb} <id> [<id> ...] [--force]`,
+      )
       return { code: 2 }
     }
+    const forceRestart = verb === 'restart' && flagSet.has('--force')
     for (const id of ids) {
       let res: unknown
       try {
-        res = await deps.daemon.sendRequest({ op: verb, id })
+        res = await deps.daemon.sendRequest(
+          verb === 'restart'
+            ? { op: 'restart', id, force: forceRestart || undefined }
+            : { op: 'continue', id },
+        )
       } catch (err) {
         deps.err(`${id}: ${errorMessage(err)}`)
         return { code: 1 }
