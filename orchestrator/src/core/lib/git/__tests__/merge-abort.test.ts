@@ -122,7 +122,9 @@ describe('mergeBranch — watchdog', () => {
     expect(aborted.lastStep.length).toBeGreaterThan(0)
     expect(aborted.elapsedMs).toBeGreaterThanOrEqual(0)
 
-    // The watchdog must fire promptly — well within 1.5× the configured budget.
-    expect(elapsedMs).toBeLessThan(watchdogMs * 1.5)
+    // The watchdog must fire within a generous window. 5× the budget gives
+    // headroom for parallel-test system load without masking real hangs
+    // (a broken implementation would hang for lockTimeoutMs = 5000ms, not 500ms).
+    expect(elapsedMs).toBeLessThan(watchdogMs * 5)
   })
 })

@@ -317,7 +317,16 @@ function toResultSetPg(result: pg.QueryResult): DbResultSet {
 
 function makeEmbeddedBackend(dsn: string): BackendOps {
   installPgTypeParsers()
-  const pool = new pg.Pool({ connectionString: dsn })
+  const pool = new pg.Pool({
+    connectionString: dsn,
+    // Bound query execution time so a reset TCP connection (pg LOG: "unexpected
+    // EOF on client connection with an open transaction") causes the awaited
+    // query to reject rather than hang forever. Merge-step DB calls
+    // (onVegaStart, onAfterFastForward) route through this pool; without a
+    // timeout a dead connection silently wedges the merge body and holds
+    // .merge.lock indefinitely.
+    query_timeout: 60_000,
+  })
   // An idle client dropping (e.g. server restart) emits 'error' on the pool;
   // without a listener that crashes the process. The next checkout surfaces
   // the failure to the caller instead.

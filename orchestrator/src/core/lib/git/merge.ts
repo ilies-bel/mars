@@ -494,7 +494,26 @@ export const mergeBranch = async ({
       resolve(getStateDir(), '.merge.lock'),
       lockTimeoutMs,
     )
+    // Race the merge body against an abort-signal rejection so the lock is
+    // guaranteed to be released even when a callback (e.g. the DB call inside
+    // onVegaStart / onAfterFastForward) hangs after a connection reset.
+    // Without this race, combinedSignal.aborted becomes true and git
+    // subprocesses get killed (via their forwarded signal), but a hanging
+    // callback Promise never settles — the inner finally never runs and the
+    // lock is held indefinitely.
+    const abortPromise = new Promise<never>((_, reject) => {
+      const onAbort = (): void => {
+        reject(Object.assign(new Error('merge body interrupted by abort signal'), { name: 'AbortError' }))
+      }
+      if (combinedSignal.aborted) {
+        onAbort()
+      } else {
+        combinedSignal.addEventListener('abort', onAbort, { once: true })
+      }
+    })
     try {
+    return await Promise.race([
+    (async (): Promise<MergeResult> => {
     let output = ''
     let conflictResolved = false
     let vegaSessionId: string | null = null
@@ -935,6 +954,9 @@ export const mergeBranch = async ({
       vegaSessionId,
       retriesAttempted,
     }
+    })(),
+    abortPromise,
+    ])
     } finally {
       // Release the merge lock via the existing lock/release path regardless of
       // how the merge body exits — success, early return, or abort.

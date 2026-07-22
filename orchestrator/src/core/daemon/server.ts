@@ -3707,6 +3707,59 @@ export const startDaemon = async (
   }, STALE_SWEEP_MS)
   staleSweep.unref()
 
+  // ── Stale-merging sweep ───────────────────────────────────────────────────
+  // Defense-in-depth: periodically re-queues any task whose status is still
+  // 'merging' but whose updated_at exceeds the stale threshold. This handles
+  // the residual window where mergeBranch threw (releasing the lock) but the
+  // calling workflow failed before it could flip the task out of 'merging'
+  // status, leaving it stranded until the next daemon restart.
+  //
+  // The threshold (15 min) is deliberately conservative: the maximum possible
+  // time for a legitimate in-flight merge is lockTimeoutMs (5 min) + watchdogMs
+  // (5 min default) = 10 min. Any 'merging' row older than 15 min is therefore
+  // guaranteed to be stale and safe to recover.
+  //
+  // IMPORTANT: only tasks exceeding the threshold are recovered. This prevents
+  // racing a legitimately in-progress merge that was set to 'merging' recently.
+  // .unref() so the interval never prevents a clean shutdown.
+  const STALE_MERGING_THRESHOLD_MS = 15 * 60_000
+  const STALE_MERGING_SWEEP_MS = 5 * 60_000
+  const staleMergingSweep = setInterval(() => {
+    void (async () => {
+      try {
+        const { listTasks: listTasksForSweep } = await import('../queue')
+        const mergingTasks = await listTasksForSweep('merging')
+        const now = Date.now()
+        const staleTasks = mergingTasks.filter((t) => {
+          const ageMs = now - new Date(t.updatedAt).getTime()
+          return ageMs > STALE_MERGING_THRESHOLD_MS
+        })
+        if (staleTasks.length === 0) return
+        log(
+          `[stale-merging-sweep] found ${staleTasks.length} stale merging task(s) (>15 min); recovering`,
+        )
+        const { recoverPhase } = await import('./phase-recovery')
+        const { getRepoRoot } = await import('../context')
+        const r = await recoverPhase('merging', { log, bus, repoRoot: getRepoRoot() })
+        if (r.requeued.length > 0) {
+          log(
+            `[stale-merging-sweep] requeued ${r.requeued.length} task(s) from stale merging state`,
+          )
+          viewStreamHub.broadcast('tasks')
+        }
+        if (r.finalized > 0) {
+          log(
+            `[stale-merging-sweep] finalized ${r.finalized} task(s) whose FF already landed`,
+          )
+          viewStreamHub.broadcast('tasks')
+        }
+      } catch (err) {
+        log(`[stale-merging-sweep] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, STALE_MERGING_SWEEP_MS)
+  staleMergingSweep.unref()
+
   // ── Reflect-recommended detector sweep ───────────────────────────────────
   // Periodically evaluates reflect-worthiness (KPI drift, failure clusters,
   // token spikes) and raises / clears the level-triggered reflect-recommended
@@ -4036,6 +4089,7 @@ export const startDaemon = async (
     clearInterval(githubUpdatePoll)
     clearInterval(devStalenessCheck)
     clearInterval(staleSweep)
+    clearInterval(staleMergingSweep)
     clearInterval(observabilityWatchdog)
     clearInterval(phantomWatchdog)
     clearInterval(observabilitySweep)
