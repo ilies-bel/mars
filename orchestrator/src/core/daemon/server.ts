@@ -3634,10 +3634,11 @@ export const startDaemon = async (
   // operation it is a no-op. .unref() so it never keeps the process alive.
   //
   // Re-queue loop defence (mars-c11be862 post-mortem, 2026-07-02): before
-  // re-seeding any queued task, we check its step attempt counts. A task
-  // whose step has been attempted REQUEUE_STEP_CEILING times without the run
-  // completing is stuck in an infinite re-queue loop. It is escalated to
-  // 'failed' + an operator action-queue item rather than re-seeded.
+  // re-seeding any queued task, we check its retry duration. A task retrying
+  // longer than MARS_REQUEUE_MAX_RETRY_MS (default 2 h) without completing is
+  // escalated to 'failed' + an operator action-queue item rather than re-seeded.
+  // Retry count and elapsed time are logged for any task that has been attempted
+  // at least once so the state is visible before the bound is reached.
   // See orchestrator/src/core/daemon/requeue-ceiling.ts for the ceiling logic.
   const POLL_FALLBACK_MS = Number(process.env.MARS_DRAIN_POLL_MS ?? 30_000)
   const pollFallback = setInterval(() => {
