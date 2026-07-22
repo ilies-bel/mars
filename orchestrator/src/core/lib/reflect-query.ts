@@ -1,6 +1,8 @@
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store'
 import type { TaskSignalRow } from './reflect-signals'
 import { cacheWeightedTokens } from './kpi-compute.js'
+import { isReflectDisabled } from './reflect-signals'
+import type { ChatFeedbackEntry } from './chat-feedback-query'
 
 export interface ReflectCorpusEntry {
   taskId: string
@@ -87,7 +89,22 @@ export interface ReflectCostSummary {
 export interface ReflectCorpus {
   entries: ReflectCorpusEntry[]
   costSummary: ReflectCostSummary
+  /**
+   * Rated chat exchanges loaded from `chat_feedback`. Populated by
+   * `loadRecentTaskCorpus` when reflection is enabled and the chat tables
+   * exist; empty array otherwise. Used by `buildPrompt` to include a chat
+   * system-prompt tuning section.
+   */
+  chatFeedback?: readonly ChatFeedbackEntry[]
+  /**
+   * The resolved chat system prompt at corpus-load time. Included when
+   * `chatFeedback` is non-empty so `buildPrompt` can show the current prompt
+   * alongside the rated exchanges. Undefined when there is no chat feedback.
+   */
+  chatSystemPrompt?: string
 }
+
+export type { ChatFeedbackEntry }
 
 export interface LoadCorpusOptions {
   sinceIso?: string
@@ -98,6 +115,11 @@ export interface LoadCorpusOptions {
    * keep working; tests inject an in-memory store.
    */
   store?: TaskStore
+  /**
+   * Repo root used to resolve the chat system prompt (`resolveChatSystemPrompt`).
+   * Defaults to `getRepoRoot()` when omitted. Primarily used in tests.
+   */
+  repoRoot?: string
 }
 
 const PROMPT_PREFIX_BYTES = 200
@@ -254,6 +276,7 @@ export const loadRecentTaskCorpus = async (
   const sinceIso = options.sinceIso ?? null
 
   const queue = options.store ?? (await getDefaultTaskStore())
+  const repoRoot = options.repoRoot
 
   // Include blocked and dropped in addition to done/failed so the reflector
   // can see stalled-task patterns (verify:completeness loops, dropped scope).
@@ -281,7 +304,7 @@ export const loadRecentTaskCorpus = async (
       })
 
   if (taskRows.rows.length === 0) {
-    return { entries: [], costSummary: buildCostSummary([], 0) }
+    return { entries: [], costSummary: buildCostSummary([], 0), chatFeedback: [] }
   }
 
   const taskIds = taskRows.rows.map((r) => (r as unknown as { id: string }).id)
@@ -464,5 +487,34 @@ export const loadRecentTaskCorpus = async (
   // model sees arcs, not isolated rows.
   const grouped = groupByArc(entries)
 
-  return { entries: grouped, costSummary: buildCostSummary(grouped, rateLimitRejections) }
+  // Populate chat feedback when reflection is enabled and the chat tables exist.
+  // Wrapped in try/catch so a missing chat schema (test stores, fresh installs
+  // without chat) never breaks the main corpus load.
+  let chatFeedback: readonly ChatFeedbackEntry[] = []
+  let chatSystemPrompt: string | undefined
+
+  if (!isReflectDisabled()) {
+    try {
+      const { loadChatFeedback } = await import('./chat-feedback-query.js')
+      chatFeedback = await loadChatFeedback({
+        sinceIso: sinceIso ?? undefined,
+        limit: 50,
+      })
+      if (chatFeedback.length > 0) {
+        const { resolveChatSystemPrompt } = await import('../daemon/chat-system-prompt.js')
+        const { getRepoRoot } = await import('../context.js')
+        const root = repoRoot ?? getRepoRoot()
+        chatSystemPrompt = await resolveChatSystemPrompt(root)
+      }
+    } catch {
+      // chat tables absent (test store, fresh install) — skip gracefully
+    }
+  }
+
+  return {
+    entries: grouped,
+    costSummary: buildCostSummary(grouped, rateLimitRejections),
+    chatFeedback,
+    chatSystemPrompt,
+  }
 }

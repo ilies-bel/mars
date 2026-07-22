@@ -34,6 +34,7 @@ import { toolPromotionCommands } from './tool-promotion'
 import { memoryCommands } from './memory'
 import { visionCommands } from './vision'
 import { operatorCommands } from './operator'
+import { chatFeedbackCommands } from './chat-feedback'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -63,6 +64,7 @@ export const allCommands: readonly Command[] = [
   ...memoryCommands,
   ...visionCommands,
   ...operatorCommands,
+  ...chatFeedbackCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)

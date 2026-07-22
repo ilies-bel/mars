@@ -216,16 +216,75 @@ setup-phase failures; saves ~N weighted tokens per affected task by
 avoiding retry cycles." Do not emit a suggestion prompt that omits both
 KPI impacts.`
 
+const CHAT_FEEDBACK_INSTRUCTIONS = `
+
+--- Chat Feedback (operator-rated exchanges) ---
+
+The operator has rated the following chat replies. When thumbs-down entries
+are present, propose targeted edits to the chat system prompt that address
+the specific behaviour rated negatively. Each chat-feedback suggestion must:
+
+- Name the concrete behaviour that was rated down (e.g. "replied with a
+  wall of prose when a single-line answer was expected").
+- Propose concrete replacement or additional wording for the chat system
+  prompt — quote the suggested text.
+- NOT propose vague changes like "be more concise" without specifying what
+  the prompt text should say instead.
+
+Use category "chat" for these suggestions. The \`prompt\` field should
+describe what to change in .mars/chat-system-prompt.md and include the
+suggested wording so the operator can apply it directly with a text editor.
+End the prompt with "Save your work."
+
+Current chat system prompt:
+<CURRENT_SYSTEM_PROMPT>
+
+Rated exchanges (newest first):
+<EXCHANGES>
+--- End Chat Feedback ---`
+
+const formatChatFeedbackSection = (
+  chatFeedback: readonly import('./chat-feedback-query').ChatFeedbackEntry[],
+  chatSystemPrompt: string,
+): string => {
+  const exchanges = chatFeedback
+    .map((e) => {
+      const lines: string[] = [
+        `[${e.rating.toUpperCase()}] ${e.createdAt.slice(0, 10)} | thread:${e.threadId.slice(0, 8)} | note:${e.note ?? '(none)'}`,
+        `  user: ${e.userPrompt || '(no preceding user message)'}`,
+        `  assistant: ${e.assistantReply}`,
+      ]
+      if (e.toolsUsed.length > 0) {
+        lines.push(`  tools: ${e.toolsUsed.join(', ')}`)
+      }
+      return lines.join('\n')
+    })
+    .join('\n\n')
+
+  return CHAT_FEEDBACK_INSTRUCTIONS
+    .replace('<CURRENT_SYSTEM_PROMPT>', chatSystemPrompt)
+    .replace('<EXCHANGES>', exchanges)
+}
+
 export const buildPrompt = (corpus: ReflectCorpus): string => {
   const summaryJson = JSON.stringify(corpus.costSummary, null, 2)
   const entriesJson = JSON.stringify(corpus.entries, null, 2)
-  return `${SYNTHESIS_INSTRUCTIONS}
+
+  const base = `${SYNTHESIS_INSTRUCTIONS}
 
 Token summary (precomputed — trust these numbers, do not recompute):
 ${summaryJson}
 
 Recent task corpus (newest first):
 ${entriesJson}`
+
+  const feedback = corpus.chatFeedback
+  if (!feedback || feedback.length === 0) {
+    return base
+  }
+
+  const systemPrompt = corpus.chatSystemPrompt ?? ''
+  return `${base}${formatChatFeedbackSection(feedback, systemPrompt)}`
 }
 
 interface ParsedDocument {

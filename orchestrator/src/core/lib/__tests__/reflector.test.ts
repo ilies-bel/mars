@@ -282,6 +282,106 @@ describe('aggregation and frequency-floor in SYNTHESIS_INSTRUCTIONS', () => {
   })
 })
 
+// ── Chat feedback in buildPrompt ──────────────────────────────────────────────
+
+const emptyChatCorpus: ReflectCorpus = {
+  ...fixtureCorpus,
+}
+
+describe('buildPrompt with chatFeedback', () => {
+  it('output is byte-identical when chatFeedback is absent', () => {
+    const withoutFeedback = buildPrompt(fixtureCorpus)
+    const withEmptyFeedback = buildPrompt({ ...fixtureCorpus, chatFeedback: [] })
+    expect(withEmptyFeedback).toBe(withoutFeedback)
+  })
+
+  it('output is byte-identical when chatFeedback is undefined', () => {
+    const base = buildPrompt(fixtureCorpus)
+    const withUndefined = buildPrompt({ ...fixtureCorpus, chatFeedback: undefined })
+    expect(withUndefined).toBe(base)
+  })
+
+  it('includes a chat feedback section when chatFeedback is non-empty', () => {
+    const feedback: import('../chat-feedback-query').ChatFeedbackEntry[] = [
+      {
+        messageId: 'msg-1',
+        threadId: 'thread-aabb',
+        rating: 'down',
+        note: 'too verbose',
+        createdAt: '2026-07-01T12:00:00Z',
+        userPrompt: 'how do I restart the daemon?',
+        assistantReply:
+          'To restart the daemon you must first stop it, then start it again...',
+        toolsUsed: [],
+      },
+    ]
+    const prompt = buildPrompt({
+      ...fixtureCorpus,
+      chatFeedback: feedback,
+      chatSystemPrompt: 'You are Mars. Be terse.',
+    })
+
+    expect(prompt).toContain('Chat Feedback')
+    expect(prompt).toContain('You are Mars. Be terse.')
+    expect(prompt).toContain('how do I restart the daemon?')
+    expect(prompt).toContain('too verbose')
+    expect(prompt).toContain('DOWN')
+  })
+
+  it('includes the current chat system prompt when chatFeedback is present', () => {
+    const customPrompt = 'Custom system prompt for this test run.'
+    const prompt = buildPrompt({
+      ...fixtureCorpus,
+      chatFeedback: [
+        {
+          messageId: 'msg-2',
+          threadId: 'thread-ccdd',
+          rating: 'up',
+          note: null,
+          createdAt: '2026-07-02T08:00:00Z',
+          userPrompt: 'what tasks are running?',
+          assistantReply: '2 tasks running: mars-abc and mars-def.',
+          toolsUsed: ['Bash'],
+        },
+      ],
+      chatSystemPrompt: customPrompt,
+    })
+
+    expect(prompt).toContain(customPrompt)
+    expect(prompt).toContain('UP')
+    expect(prompt).toContain('Bash')
+  })
+
+  it('instructs the reflector to propose concrete edits to the chat system prompt', () => {
+    const prompt = buildPrompt({
+      ...fixtureCorpus,
+      chatFeedback: [
+        {
+          messageId: 'msg-3',
+          threadId: 'thread-eeff',
+          rating: 'down',
+          note: null,
+          createdAt: '2026-07-03T10:00:00Z',
+          userPrompt: 'status?',
+          assistantReply: 'I have checked all tasks and here is a detailed report...',
+          toolsUsed: [],
+        },
+      ],
+      chatSystemPrompt: 'You are Mars.',
+    })
+
+    // The prompt must tell the reflector to propose concrete replacement wording.
+    expect(prompt).toMatch(/concrete|replacement|wording/i)
+    expect(prompt).toMatch(/chat.*system.*prompt|system.*prompt.*chat/i)
+  })
+
+  it('does not include chat feedback section in the base prompt (regression guard)', () => {
+    const base = buildPrompt(emptyChatCorpus)
+    expect(base).not.toContain('Chat Feedback')
+    expect(base).not.toContain('chat-system-prompt')
+  })
+})
+
 describe('suggestion parsing includes new fields', () => {
   it('parses rootCauseKey, affectedTaskIds, and frequency from LLM output', () => {
     const fixtureJson = JSON.stringify({

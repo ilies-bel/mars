@@ -87,6 +87,8 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--text',
   '--salience',
   '--min-salience',
+  // mars chat-feedback list — filter by rating ('up' or 'down')
+  '--rating',
   '--origin-arc',
 ])
 

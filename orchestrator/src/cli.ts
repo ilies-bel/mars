@@ -314,6 +314,12 @@ Commands:
   enrich retire "<signature>"   stop running a check; the signature stays
                                 claimed so no candidate is regenerated
   enrich reopen "<signature>"   explicit operator verb: retired -> candidate
+  chat-feedback list [--rating up|down] [--limit N] [--since <iso>]
+                                list rated chat feedback entries (thumbs-up/down
+                                on assistant replies). Read surface for steering
+                                .mars/chat-system-prompt.md. Newest-first;
+                                default limit 50. --rating filters to 'up' or
+                                'down' only.
   reflect [--since <iso>] [--limit <n>]
                                 synthesize draft proposals (source='reflection') from
                                 recent completed tasks. Reads token + scorer
@@ -1157,6 +1163,19 @@ Output:
   Draft proposals viewable with 'mars proposal list --source reflection'.
 
 Disabled by MARS_REFLECT_DISABLED=1.`,
+  'chat-feedback list': `mars chat-feedback list [--rating up|down] [--limit N] [--since <iso>]
+
+List rated chat feedback entries (thumbs-up or thumbs-down on assistant
+replies). The read surface for steering .mars/chat-system-prompt.md before
+and after running 'mars reflect'. Results are shown newest-first.
+
+Flags:
+  --rating up|down   filter to thumbs-up or thumbs-down entries only
+  --limit N          max entries to show (default 50)
+  --since <iso>      only show entries created after this ISO timestamp
+
+Output columns: date, rating, thread (8-char prefix), note, truncated
+user prompt that preceded the rated reply.`,
   reflect: `mars reflect [--since <iso>] [--limit <n>]
 
 Synthesize draft task suggestions from recent completed tasks. Reads
