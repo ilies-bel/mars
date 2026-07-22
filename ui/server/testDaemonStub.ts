@@ -420,7 +420,7 @@ const makeAggregateReader = (client: Client): AggregateReader => ({
           (SELECT COUNT(*) FROM tasks WHERE status = 'done'
              AND updated_at >= datetime('now', '-1 day')) AS done_today,
           (SELECT COUNT(*) FROM tasks WHERE status = 'done') AS done_total,
-          (SELECT COUNT(*) FROM tasks WHERE status = 'failed') AS failed_open
+          (SELECT COUNT(*) FROM tasks WHERE status = 'failed' AND fix_for_task_id IS NULL) AS failed_open
       `)
       const row = r.rows[0] as unknown as Record<string, unknown>
       return {

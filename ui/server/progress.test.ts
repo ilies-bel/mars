@@ -429,3 +429,115 @@ describe('GET /api/progress — all failed tasks are always in scope', () => {
     expect(counts.Failed).toBe(2)
   })
 })
+
+// ---------------------------------------------------------------------------
+// failedOpen aggregate counts per-origin — recovery tasks (fix_for_task_id IS
+// NOT NULL) must not inflate the FAILED stat
+// ---------------------------------------------------------------------------
+
+interface ProgressBodyWithAggregates extends ProgressBody {
+  aggregates: { doneToday: number; doneTotal: number; failedOpen: number }
+}
+
+describe('GET /api/progress — failedOpen aggregate excludes recovery tasks', () => {
+  let repo: string
+  let server: ReturnType<typeof Bun.serve> | null = null
+  let baseUrl: string
+  let queueDbPath: string
+
+  const createSchemaWithFixForTaskId = async (path: string): Promise<Client> => {
+    const c = createClient({ url: `file:${path}` })
+    await c.execute(`CREATE TABLE tasks (
+      id TEXT PRIMARY KEY,
+      prompt TEXT NOT NULL,
+      status TEXT NOT NULL,
+      plan_functional TEXT,
+      plan_technical TEXT,
+      branch TEXT,
+      worktree_path TEXT,
+      error TEXT,
+      drop_reason TEXT,
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      fix_for_task_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`)
+    return c
+  }
+
+  beforeEach(async () => {
+    repo = setupRepo()
+    queueDbPath = resolve(repo, '.mars/mars.db')
+    const qc = await createSchemaWithFixForTaskId(queueDbPath)
+    const sc = await createStateSchema(resolve(repo, '.mars/mars.db'))
+    qc.close()
+    sc.close()
+
+    server = await startServer(
+      { repo, port: 0, host: '127.0.0.1' },
+      { proxyGet: makeDaemonStub(repo) },
+    )
+    baseUrl = `http://${server.hostname}:${server.port}`
+  })
+
+  afterEach(() => {
+    if (server) server.stop(true)
+    server = null
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('counts only origin failures — a failed recovery does not add to failedOpen', async () => {
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    // Origin task: failed, fix_for_task_id IS NULL
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, retry_count, created_at, updated_at)
+            VALUES (?, ?, 'failed', NULL, 0, ?, ?)`,
+      args: ['origin-1', 'origin task', new Date().toISOString(), new Date().toISOString()],
+    })
+    // Recovery task: failed, fix_for_task_id IS NOT NULL
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, retry_count, created_at, updated_at)
+            VALUES (?, ?, 'failed', ?, 0, ?, ?)`,
+      args: ['fix-1', 'recovery task', 'origin-1', new Date().toISOString(), new Date().toISOString()],
+    })
+    qc.close()
+
+    const res = await fetch(`${baseUrl}/api/progress`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as ProgressBodyWithAggregates
+
+    // Both tasks appear in the Failed cluster (the task list is unfiltered)
+    const counts = countBy(body.tasks)
+    expect(counts.Failed).toBe(2)
+
+    // But the aggregate only counts the origin — failedOpen must be 1, not 2
+    expect(body.aggregates.failedOpen).toBe(1)
+  })
+
+  it('counts each distinct origin separately when multiple origins fail', async () => {
+    const qc = createClient({ url: `file:${queueDbPath}` })
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, retry_count, created_at, updated_at)
+            VALUES (?, ?, 'failed', NULL, 0, ?, ?)`,
+      args: ['origin-a', 'task a', new Date().toISOString(), new Date().toISOString()],
+    })
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, retry_count, created_at, updated_at)
+            VALUES (?, ?, 'failed', NULL, 0, ?, ?)`,
+      args: ['origin-b', 'task b', new Date().toISOString(), new Date().toISOString()],
+    })
+    // Recovery for origin-a
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, retry_count, created_at, updated_at)
+            VALUES (?, ?, 'failed', ?, 0, ?, ?)`,
+      args: ['fix-a', 'fix for a', 'origin-a', new Date().toISOString(), new Date().toISOString()],
+    })
+    qc.close()
+
+    const res = await fetch(`${baseUrl}/api/progress`)
+    const body = (await res.json()) as ProgressBodyWithAggregates
+
+    // 3 rows in the cluster but only 2 are origins
+    expect(body.aggregates.failedOpen).toBe(2)
+  })
+})

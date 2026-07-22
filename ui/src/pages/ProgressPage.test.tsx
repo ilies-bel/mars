@@ -224,6 +224,31 @@ describe('ProgressPage – header stats', () => {
     }
   })
 
+  it('FAILED stat counts per-origin — a failed recovery does not inflate the count', () => {
+    // One origin failure (fix_for_task_id IS NULL) + one failed recovery
+    // (fix_for_task_id IS NOT NULL) => the aggregate reader returns failedOpen: 1.
+    // The UI renders whatever failedOpen says; this test pins that the FAILED
+    // stat shows the per-origin count, not the raw total across origin+recovery.
+    const originTask = makeTask('origin-1', 'failed')
+    const recoveryTask = makeTask('fix-1', 'failed')
+    mockUseProgress.mockImplementation(() => ({
+      ...baseState([]),
+      tasks: [originTask, recoveryTask],
+      byCluster: { ...emptyByCluster(), Failed: [originTask, recoveryTask] },
+      // The query filters AND fix_for_task_id IS NULL, so only 1 is counted.
+      aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 1 },
+    }))
+    try {
+      const html = renderToStaticMarkup(<ProgressPage />)
+      const failedSection = from(html, 'stat-failed')
+      // One origin failure — the failed recovery must not inflate the count to 2.
+      expect(failedSection).toContain('>1<')
+      expect(failedSection).not.toContain('>2<')
+    } finally {
+      mockUseProgress.mockImplementation(() => baseState([]))
+    }
+  })
+
   it('with zero done tasks and zero failed tasks both stats show 0', () => {
     mockUseProgress.mockImplementation(() => ({
       ...baseState([]),
