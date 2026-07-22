@@ -158,6 +158,13 @@ export interface RunOptions {
    * Worker returns exitCode 138.
    */
   readonly externalAbort?: AbortSignal
+  /**
+   * Optional callback invoked immediately after the child subprocess is
+   * spawned. The dispatch path wires this to
+   * `tracker.recordPid(taskId, pid)` so the phantom-task watchdog uses
+   * PID liveness instead of the bare wall-clock ceiling on `task.updatedAt`.
+   */
+  readonly onPid?: (pid: number) => void
 }
 
 export interface Worker {
@@ -412,6 +419,7 @@ const buildWorker = (config: WorkerConfig): Worker => {
             maxContextTokens: config.maxContextTokens,
             mcpServers: config.mcpConfig,
             externalAbort: options.externalAbort,
+            onPid: options.onPid,
           }),
   }
 }

@@ -910,6 +910,13 @@ export const startDaemon = async (
           services: {
             store: taskStore,
             traceStore,
+            // Wire the spawn-time PID callback so the phantom-task watchdog can
+            // use PID liveness (case b/c) instead of the bare wall-clock ceiling
+            // on task.updatedAt (case a). Fixes the failure storm observed on
+            // 2026-07-20 where 30-min+ coder runs were ceiling-killed while still
+            // healthy because recordPid was defined but never called from the
+            // dispatch path.
+            onPid: (pid: number) => tracker.recordPid(task.id, pid),
             // Promise-based manual step park/resume hook (ADR-0052 write funnel).
             // Called by runAgent/verify when mode === 'manual'; parks the task and
             // suspends the workflow until handleStepDone resolves the promise.

@@ -172,6 +172,18 @@ export interface MarsServices {
     stepName: string
     guide: string | null
   }) => Promise<void>
+  /**
+   * Optional callback invoked immediately after the coder/fixer child subprocess
+   * is spawned, with the child's OS PID. The daemon registers this to call
+   * `tracker.recordPid(taskId, pid)` so the phantom-task watchdog can use
+   * PID liveness to protect legitimately long runs (case b/c) instead of
+   * always falling back to the bare wall-clock ceiling on `task.updatedAt`.
+   *
+   * When absent the watchdog falls back to the no-PID ceiling path (case a),
+   * which is the pre-fix behaviour. Scaffolded and test workflows that do not
+   * inject a tracker can safely omit this field.
+   */
+  onPid?: (pid: number) => void
 }
 
 /**
@@ -934,6 +946,11 @@ export const runAgent = async (
       onEvent: async (event) => {
         emit?.(event)
       },
+      // Wire the spawn-time PID callback so the phantom-task watchdog can
+      // switch from the bare wall-clock ceiling (no-PID path, case a) to the
+      // alive-PID + heartbeat path (case b/c), preventing false ceiling kills
+      // of legitimately long-running coders.
+      onPid: ctx.services.onPid,
     },
     traceStore: spanStore(trace),
     stepName: 'run-claude-code',

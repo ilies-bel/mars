@@ -1,23 +1,21 @@
 /**
- * Regression test: killing a spawned worker reaps the entire process-group
- * subtree, not just the direct child PID.
+ * Regression tests for subprocess spawning in runSubprocessStreaming:
  *
- * Before the fix, `onAbort` and `killAllChildren` signalled only the direct
- * child PID.  Descendants (npm → vitest → fork children) were reparented to
- * launchd / init and kept running.  This was observed live as 41 orphaned
- * vitest forks that survived a daemon restart, pinning the host at high load.
+ * 1. process-group kill: killing a spawned worker reaps the entire process-group
+ *    subtree, not just the direct child PID.
  *
- * After the fix:
- *   - The child is spawned with `detached: true` so it leads a new process
- *     group.
- *   - `onAbort` calls `process.kill(-child.pid, 'SIGKILL')` — negative pid
- *     targets the process group.
- *   - `killAllChildren` does the same for every tracked pid.
+ *    Before the fix, `onAbort` and `killAllChildren` signalled only the direct
+ *    child PID.  Descendants (npm → vitest → fork children) were reparented to
+ *    launchd / init and kept running.  This was observed live as 41 orphaned
+ *    vitest forks that survived a daemon restart, pinning the host at high load.
  *
- * Each test here spawns a stub shell script that itself spawns a long-lived
- * `sleep 30` grandchild and prints its PID to stdout.  After the kill path
- * fires we assert that `process.kill(grandchildPid, 0)` throws ESRCH,
- * proving the whole subtree — not just the direct child — was reaped.
+ * 2. onSpawn PID notification: `runSubprocessStreaming` invokes the optional
+ *    `onSpawn` callback with the child's OS PID immediately after spawn.
+ *    The dispatch path (`dispatchImplement` in server.ts) wires this callback to
+ *    `tracker.recordPid(taskId, pid)` so the phantom-task watchdog can use PID
+ *    liveness (dead-pid detection and heartbeat-guarded ceiling) instead of
+ *    falling back to the bare wall-clock ceiling on `task.updatedAt`, which was
+ *    the root cause of the 2026-07-20 failure storm.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -25,6 +23,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { killAllChildren, runSubprocessStreaming } from '../git/claude'
+import { createTaskFlightTracker } from '../../daemon/task-flight-tracker'
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -147,4 +146,72 @@ describe('process-group kill reaps grandchildren', () => {
 
     expect(isGone(grandchildPid)).toBe(true)
   }, 15_000)
+})
+
+// ── onSpawn PID notification (phantom-watchdog fix) ──────────────────────────
+//
+// Regression tests for the fix that wires tracker.recordPid() into the
+// dispatch path so the phantom-task watchdog can use PID liveness instead of
+// the bare wall-clock ceiling. Root cause of the 2026-07-20 failure storm.
+
+describe('runSubprocessStreaming — onSpawn PID callback', () => {
+  it('calls onSpawn with the spawned child PID immediately after process start', async () => {
+    const spawnedPids: number[] = []
+
+    await runSubprocessStreaming(
+      process.execPath,
+      ['-e', 'process.exit(0)'],
+      process.cwd(),
+      undefined,
+      undefined,
+      undefined,
+      (pid) => spawnedPids.push(pid),
+    )
+
+    // onSpawn must have been called exactly once with a positive integer PID.
+    expect(spawnedPids).toHaveLength(1)
+    expect(typeof spawnedPids[0]).toBe('number')
+    expect(spawnedPids[0]).toBeGreaterThan(0)
+  })
+
+  it('wires into tracker.recordPid so inFlightSnapshot carries the spawned PID', async () => {
+    // This test proves the dispatch-path contract: the onSpawn callback
+    // (called by runSubprocessStreaming) can be wired to tracker.recordPid()
+    // so the resulting inFlightSnapshot entry carries a real OS PID.
+    const tracker = createTaskFlightTracker()
+    tracker.commitInFlight('task-xyz', 'implement')
+
+    await runSubprocessStreaming(
+      process.execPath,
+      ['-e', 'process.exit(0)'],
+      process.cwd(),
+      undefined,
+      undefined,
+      undefined,
+      (pid) => tracker.recordPid('task-xyz', pid),
+    )
+
+    const entry = tracker.inFlightSnapshot().find((e) => e.taskId === 'task-xyz')
+    expect(entry).toBeDefined()
+    expect(typeof entry?.pid).toBe('number')
+    expect((entry?.pid ?? 0)).toBeGreaterThan(0)
+  })
+
+  it('does NOT call onSpawn when spawn fails (ENOENT binary)', async () => {
+    const spawnedPids: number[] = []
+
+    // Spawn a non-existent binary — the 'error' event fires instead of
+    // the process starting, so onSpawn must not be called.
+    await runSubprocessStreaming(
+      '/absolutely/nonexistent/binary',
+      [],
+      process.cwd(),
+      undefined,
+      undefined,
+      undefined,
+      (pid) => spawnedPids.push(pid),
+    )
+
+    expect(spawnedPids).toHaveLength(0)
+  })
 })

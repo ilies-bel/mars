@@ -51,6 +51,7 @@ export const runSubprocessStreaming = (
   onLine?: (event: SubprocessLine) => void | Promise<void>,
   signal?: AbortSignal,
   env?: NodeJS.ProcessEnv,
+  onSpawn?: (pid: number) => void,
 ): Promise<RunSubprocessResult> =>
   new Promise((resolveFn) => {
     const child = spawn(cmd, args, {
@@ -64,7 +65,12 @@ export const runSubprocessStreaming = (
       // and await the 'close' event.
       detached: true,
     })
-    if (typeof child.pid === 'number') liveChildPids.add(child.pid)
+    if (typeof child.pid === 'number') {
+      liveChildPids.add(child.pid)
+      // Notify the caller immediately so the dispatch path can record the PID
+      // on the in-flight tracker entry before the first watchdog sweep fires.
+      onSpawn?.(child.pid)
+    }
     let stdout = ''
     let stderr = ''
     const buffers: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' }
@@ -197,6 +203,18 @@ export interface RunClaudeArgs {
    * side can trigger termination.
    */
   externalAbort?: AbortSignal
+  /**
+   * Optional callback invoked immediately after the child subprocess is
+   * spawned, with the child's OS PID. The dispatch path uses this to call
+   * `tracker.recordPid(taskId, pid)` so the phantom-task watchdog can use
+   * PID liveness to protect legitimately long runs instead of falling back
+   * to the bare wall-clock ceiling on `task.updatedAt`.
+   *
+   * Called at most once per `runClaudeCode` invocation (the subprocess is
+   * spawned exactly once). Not called when the spawn fails (ENOENT / EACCES)
+   * because no PID is assigned before the 'error' event fires.
+   */
+  onPid?: (pid: number) => void
 }
 
 export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -572,6 +590,7 @@ export const runClaudeCode = async ({
   maxContextTokens,
   mcpServers,
   externalAbort,
+  onPid,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
   const conversation: ClaudeEvent[] = []
   const budget = resolveContextTokenBudget(maxContextTokens)
@@ -715,6 +734,7 @@ export const runClaudeCode = async ({
     },
     abort.signal,
     buildWorkerEnv(),
+    onPid,
   )
   clearTimeout(timeoutHandle)
   const detectedSessionId =

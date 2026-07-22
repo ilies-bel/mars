@@ -36,6 +36,12 @@ export type HeadlessRunOpts = Readonly<{
   maxContextTokens?: number
   mcpServers?: Readonly<Record<string, unknown>>
   externalAbort?: AbortSignal
+  /**
+   * Optional callback invoked immediately after the child subprocess is
+   * spawned. Forwarded verbatim to {@link runClaudeCode} so the dispatch
+   * path can record the PID on the in-flight tracker entry.
+   */
+  onPid?: (pid: number) => void
 }>
 
 // Adapter for headless (non-interactive subprocess) dispatch of a Provider's
