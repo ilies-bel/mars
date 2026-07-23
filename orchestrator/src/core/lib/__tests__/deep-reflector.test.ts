@@ -502,6 +502,21 @@ describe('buildArcPrompt — prompt size cap and elision markers', () => {
     expect(prompt).toContain('"environmentalFailure":true')
     expect(prompt).toContain('rate_limit_event')
   })
+
+  it('does not set environmentalFailure when rate_limit_event has status=allowed', () => {
+    // An 'allowed' rate_limit_event is informational — the task ran fine.
+    // It must not cause environmentalFailure:true in the embedded digest.
+    const conversation: ClaudeEvent[] = [
+      { type: 'rate_limit_event', rate_limit_info: { status: 'allowed', overageStatus: 'allowed' } } as unknown as ClaudeEvent,
+      readCallEvent('r1'),
+      largeResultEvent('r1', 500),
+    ]
+    const arc = makeArc([makeTaskEntry('task-1', conversation)])
+    const prompt = buildArcPrompt(arc)
+
+    expect(prompt).toContain('"environmentalFailure":false')
+    expect(prompt).not.toContain('"environmentalFailure":true')
+  })
 })
 
 describe('buildArcPrompt — step timeline with tool errors', () => {
