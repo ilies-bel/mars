@@ -226,6 +226,59 @@ export const createQueueWorkflowStore = (
 }
 
 /**
+ * Delete the durable checkpoint for `stepName` and every downstream step in
+ * the run identified by `runId`. "Downstream" is defined by insertion order
+ * (`seq ASC`): all rows with `seq >= seq(stepName)` are removed so the engine
+ * re-executes them from scratch on the next dispatch.
+ *
+ * Returns the ordered list of step names whose checkpoints were deleted, or
+ * `null` when `stepName` has no recorded checkpoint for this run (the step
+ * either never ran or the name is incorrect). The caller must distinguish
+ * `null` (step not found) from `[]` (impossible — the target step is always
+ * included in the result when found).
+ *
+ * The workflow_runs row is NOT touched: the engine resets it to `'running'`
+ * automatically on re-entry (see `runWorkflow`, line "existing.status !== 'running'").
+ *
+ * @param runId     The workflow run id (equals the task id in the orchestrator).
+ * @param stepName  The name of the step to rewind to.
+ * @param client    DB client; defaults to the composition-root client.
+ */
+export const clearStepsFromCheckpoint = async (
+  runId: string,
+  stepName: string,
+  client: DbClient = getCompositionRootClient(),
+): Promise<string[] | null> => {
+  // Locate the target step's insertion-order position.
+  const targetResult = await client.execute({
+    sql: 'SELECT seq FROM workflow_step_runs WHERE run_id = ? AND step_name = ?',
+    args: [runId, stepName],
+  })
+  if (targetResult.rows.length === 0) return null
+
+  const targetSeq = Number(
+    (targetResult.rows[0] as unknown as { seq: number }).seq,
+  )
+
+  // Collect the names of every step being cleared (for the caller's audit log).
+  const toDelete = await client.execute({
+    sql: 'SELECT step_name FROM workflow_step_runs WHERE run_id = ? AND seq >= ? ORDER BY seq ASC',
+    args: [runId, targetSeq],
+  })
+  const cleared = (toDelete.rows as unknown as { step_name: string }[]).map(
+    (r) => r.step_name,
+  )
+
+  // Delete the target step and all downstream checkpoints in one statement.
+  await client.execute({
+    sql: 'DELETE FROM workflow_step_runs WHERE run_id = ? AND seq >= ?',
+    args: [runId, targetSeq],
+  })
+
+  return cleared
+}
+
+/**
  * Repo-relative directory the user-owned workflow modules live in. Mirrors
  * `WORKFLOWS_DEST_REL` in `src/init/scaffold-workflows.ts` — `mars init`
  * scaffolds the official templates here as plain JS the consumer is expected

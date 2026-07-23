@@ -71,6 +71,11 @@ export type DaemonRequest =
   // Complete the current manual step: re-queue for pipeline continuation but
   // KEEP the lease identity so the next manual park re-leases the same owner.
   | { op: 'step-done'; id: string }
+  // Rewind a stuck task to an earlier named workflow step: clears the durable
+  // checkpoint for `stepName` and every downstream step, clears stale failure
+  // metadata, and re-queues (or restores blocked status) so the next dispatch
+  // begins at `stepName`. Requires an idle, unleased task.
+  | { op: 'step-reset'; id: string; stepName: string }
   | { op: 'pause' }
   | { op: 'resume' }
   | { op: 'task.note'; id: string; body: string; author?: string }

@@ -217,6 +217,7 @@ describe('proposal.take RPC handler', () => {
       handleAttach: notImpl('handleAttach') as DaemonDeps['handleAttach'],
       handleReleaseLease: notImpl('handleReleaseLease') as DaemonDeps['handleReleaseLease'],
       handleStepDone: notImpl('handleStepDone') as DaemonDeps['handleStepDone'],
+      handleStepReset: notImpl('handleStepReset') as DaemonDeps['handleStepReset'],
       appendProgress: notImpl('appendProgress') as DaemonDeps['appendProgress'],
       ...overrides,
     }

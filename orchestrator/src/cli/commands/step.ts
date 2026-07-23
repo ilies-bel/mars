@@ -1,12 +1,20 @@
 /**
- * Manual-step subcommands: `mars step done [<task-id>]`.
+ * Manual-step subcommands: `mars step done [<task-id>]` and
+ * `mars step reset <task-id> <step-name>`.
  *
- * The operator calls `mars step done` from inside their attached worktree to
- * signal that the current manual step is complete. The command resolves the
+ * `mars step done` — operator calls this from inside their attached worktree
+ * to signal that the current manual step is complete. The command resolves the
  * awaiting promise in the workflow engine and lets the pipeline proceed to the
  * next step (auto or manual). The lease follows the operator: if the pipeline
  * parks at another manual step it is re-granted to the same owner without
  * requiring another `mars attach`.
+ *
+ * `mars step reset` — operator command to rewind a stuck task to an earlier
+ * named workflow step. Clears the durable checkpoint for the named step and
+ * every downstream step, clears stale failure metadata, and re-queues (or
+ * restores blocked status) so the next dispatch begins at the requested step.
+ * Requires an idle, unleased task (failed, blocked, queued, or awaiting-human
+ * without an active lease).
  */
 
 import { spawnSync } from 'node:child_process'
@@ -98,14 +106,82 @@ const stepDone: Command = {
   },
 }
 
+/** Statuses that the CLI can safely refuse before contacting the daemon. */
+const STEP_RESET_ALLOWED_STATUSES = new Set([
+  'failed',
+  'blocked',
+  'queued',
+  'awaiting-human',
+])
+
+const stepReset: Command = {
+  path: 'step reset',
+  summary:
+    'rewind a task to an earlier named workflow step, preserving committed work',
+  usage: 'usage: mars step reset <task-id> <step-name>',
+  run: async (args, deps) => {
+    const positionals = args.positional.filter((a) => !a.startsWith('--'))
+    const id = positionals[0]
+    const stepName = positionals[1]
+
+    if (!id || !stepName) {
+      deps.err('usage: mars step reset <task-id> <step-name>')
+      deps.err('  <step-name> is the exact name of the workflow step to rewind to')
+      return { code: 1 }
+    }
+
+    const task = await deps.store.getTask(id)
+    if (!task) {
+      deps.err(`task ${id} not found`)
+      return { code: 1 }
+    }
+
+    if (!STEP_RESET_ALLOWED_STATUSES.has(task.status)) {
+      deps.err(
+        `task ${id} is ${task.status}; 'mars step reset' requires a task in ` +
+          `failed, blocked, queued, or awaiting-human status`,
+      )
+      return { code: 1 }
+    }
+    if (task.leaseOwner !== null) {
+      deps.err(
+        `task ${id} is leased by '${task.leaseOwner}'; ` +
+          `release the lease first with 'mars release --abort ${id}'`,
+      )
+      return { code: 1 }
+    }
+
+    let result: { nextStep: string; queued: boolean; cleared: string[] }
+    try {
+      result = (await deps.daemon.sendRequest({ op: 'step-reset', id, stepName })) as {
+        nextStep: string
+        queued: boolean
+        cleared: string[]
+      }
+    } catch (err) {
+      deps.err(`${id}: ${errorMessage(err)}`)
+      return { code: 1 }
+    }
+
+    const statusWord = result.queued ? 'queued for dispatch' : 'blocked (incomplete blockers remain)'
+    deps.out(`${id}: reset to step '${result.nextStep}' — task is now ${statusWord}`)
+    if (result.cleared.length > 1) {
+      deps.out(
+        `  cleared ${result.cleared.length} step checkpoints: ${result.cleared.join(', ')}`,
+      )
+    }
+    return { code: 0 }
+  },
+}
+
 const stepGroup: Command = {
   path: 'step',
   summary: 'manual-step subcommands',
-  usage: 'usage: mars step <done> [<task-id>]',
+  usage: 'usage: mars step <done|reset> [<task-id>] [<step-name>]',
   run: (_args, deps) => {
-    deps.err('usage: mars step <done> [<task-id>]')
+    deps.err('usage: mars step <done|reset> [<task-id>] [<step-name>]')
     return { code: 1 }
   },
 }
 
-export const stepCommands: readonly Command[] = [stepGroup, stepDone]
+export const stepCommands: readonly Command[] = [stepGroup, stepDone, stepReset]

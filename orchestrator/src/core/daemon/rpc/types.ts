@@ -189,6 +189,20 @@ export interface DaemonDeps {
   handleReleaseLease(id: string, abort: boolean): Promise<void>
   /** Complete the current manual step: re-queue but keep the lease identity. */
   handleStepDone(id: string): Promise<void>
+  /**
+   * Rewind a task to an earlier named step. Clears the durable checkpoint for
+   * `stepName` and every downstream step, clears stale failure metadata, and
+   * re-queues or restores blocked status according to current blocker rules.
+   * Refuses active or leased tasks. Throws if `stepName` has no recorded
+   * checkpoint for this task.
+   *
+   * Returns the name of the step the next dispatch will begin at, the names of
+   * all cleared checkpoints, and whether the task was queued or left blocked.
+   */
+  handleStepReset(
+    id: string,
+    stepName: string,
+  ): Promise<{ nextStep: string; queued: boolean; cleared: string[] }>
   appendProgress(params: AppendProgressParams): Promise<ProgressEntry>
 }
 

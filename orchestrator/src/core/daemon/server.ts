@@ -2958,6 +2958,72 @@ export const startDaemon = async (
     bus.emit('task.queued', { taskId: id })
   }
 
+  // `mars step reset <task-id> <step-name>`: rewind a stuck task to an earlier
+  // named workflow step. Clears checkpoints for the selected step and all
+  // downstream steps so the next dispatch re-executes them from scratch;
+  // preserves committed work (branch/worktreePath are not touched). Refuses
+  // active (in-flight) tasks and tasks with an active operator lease.
+  const STEP_RESET_ALLOWED_STATUSES = new Set<Task['status']>([
+    'failed',
+    'blocked',
+    'queued',
+    'awaiting-human',
+  ])
+
+  const handleStepReset = async (
+    id: string,
+    stepName: string,
+  ): Promise<{ nextStep: string; queued: boolean; cleared: string[] }> => {
+    const task = await getTask(id)
+    if (!task) throw new Error(`task ${id} not found`)
+
+    if (!STEP_RESET_ALLOWED_STATUSES.has(task.status)) {
+      throw new Error(
+        `task ${id} is ${task.status}; 'mars step reset' requires a task in ` +
+          `failed, blocked, queued, or awaiting-human status`,
+      )
+    }
+    if (task.leaseOwner !== null) {
+      throw new Error(
+        `task ${id} is leased by '${task.leaseOwner}'; ` +
+          `release the lease first with 'mars release --abort ${id}'`,
+      )
+    }
+
+    const { clearStepsFromCheckpoint } = await import(
+      '../../workflows/queue-workflow-store'
+    )
+    const cleared = await clearStepsFromCheckpoint(id, stepName)
+    if (cleared === null) {
+      throw new Error(
+        `step '${stepName}' has no recorded checkpoint for task ${id} — ` +
+          `the task may not have reached this step yet or the name is incorrect`,
+      )
+    }
+
+    // Check whether the task still has incomplete blockers so we can restore
+    // it to 'blocked' rather than 'queued' (same invariant as coreRestartTask).
+    const hasBlockers = await hasIncompleteBlockers(id)
+
+    // Clear stale failure markers so a re-queued task is never mistakenly
+    // tagged as failed or daemon-killed (matches coreRestartTask clean-up).
+    await updateTask(id, {
+      status: hasBlockers ? 'blocked' : 'queued',
+      error: null,
+      failedPhase: null,
+      failureSignature: null,
+      failureReasonCode: null,
+      currentStepName: null,
+      currentStepGuide: null,
+    })
+
+    if (!hasBlockers) {
+      bus.emit('task.queued', { taskId: id })
+    }
+
+    return { nextStep: stepName, queued: !hasBlockers, cleared }
+  }
+
   // `mars task note <id> "<text>"` / `mars task check <id> <n> [--uncheck]`:
   // append a journal entry to the progress journal (Foreground-session discipline).
   const appendProgress = (params: Parameters<typeof Arc.appendProgress>[0]) =>
@@ -3023,6 +3089,7 @@ export const startDaemon = async (
     handleAttach,
     handleReleaseLease,
     handleStepDone,
+    handleStepReset,
     appendProgress,
   })
 
