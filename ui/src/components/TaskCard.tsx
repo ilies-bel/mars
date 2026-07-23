@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import type { UITask } from '@/shared/types'
 import { relativeTime } from '@/shared/time'
+import { isLiveStatus, substepLabel } from '@/shared/substep'
 import { RoleTag } from './RoleTag'
 import { StatusChip } from './StatusChip'
 
@@ -21,11 +22,10 @@ export const TaskCard = memo(({ task, index }: Props) => {
         : ''
   // Live-activity indicator: visually signals the task is actively running.
   // Pulse is scoped to a small status dot so text stays legible throughout.
-  const isLive =
-    task.status === 'running' ||
-    task.status === 'merging' ||
-    task.status === 'verifying' ||
-    task.status === 'vega-reconciling'
+  const isLive = isLiveStatus(task.status)
+  // Fine-grained substep the card is on ("coding", "merging", …), shown beside
+  // the live dot so the user reads WHAT step it is on, not just that it's alive.
+  const substep = isLive ? substepLabel(task.status) : null
   const showChip =
     task.status === 'blocked' ||
     task.status === 'dropped' ||
@@ -46,7 +46,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
     <article
       data-task-index={index}
       data-task-status={task.status}
-      className={`relative flex flex-col gap-2 rounded-md border border-border bg-surface p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-panel active:scale-[0.99] motion-reduce:transform-none has-[button:focus-visible]:outline-none has-[button:focus-visible]:ring-2 has-[button:focus-visible]:ring-flame ${accent}`.trimEnd()}
+      className={`mars-card relative flex flex-col gap-2 rounded-lg bg-surface p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-panel active:scale-[0.99] motion-reduce:transform-none has-[button:focus-visible]:outline-none has-[button:focus-visible]:ring-2 has-[button:focus-visible]:ring-flame${isLive ? ' mars-card-live' : ''} ${accent}`.trimEnd()}
     >
       {/* Row 1: id link + status badges — raised above the stretched button via z-10
           so the anchor receives its own pointer events independently. */}
@@ -59,10 +59,13 @@ export const TaskCard = memo(({ task, index }: Props) => {
         </a>
         <div className="flex shrink-0 items-center gap-1.5">
           {isLive ? (
-            <span
-              aria-hidden="true"
-              className="inline-block h-1.5 w-1.5 rounded-full bg-flame motion-safe:animate-mars-pulse"
-            />
+            <span className="inline-flex items-center gap-1 font-mono text-micro font-semibold uppercase tracking-wide text-flame">
+              <span
+                aria-hidden="true"
+                className="inline-block h-1.5 w-1.5 rounded-full bg-flame motion-safe:animate-mars-pulse"
+              />
+              {substep}
+            </span>
           ) : null}
           {task.retryCount > 0 ? (
             <span

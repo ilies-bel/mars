@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { DraftFeature, ProgressTask } from '@/shared/schemas'
+import type { ProgressTask } from '@/shared/schemas'
 import { BoardView, buildArcsByCluster } from './BoardView'
 
 const task = (
@@ -23,19 +23,6 @@ const task = (
   cluster: overrides.cluster,
   parentProposalId: overrides.parentProposalId ?? null,
   ...overrides,
-})
-
-const draft = (id: string, title = `Draft ${id}`): DraftFeature => ({
-  id,
-  title,
-  problem: 'problem',
-  solution: 'solution',
-  status: 'draft',
-  source: 'human',
-  createdAt: 0,
-  updatedAt: 0,
-  acceptanceCount: 0,
-  userStories: [],
 })
 
 const emptyByCluster = () => ({
@@ -101,7 +88,7 @@ describe('BoardView – Arc summaries', () => {
     const byCluster = { ...emptyByCluster(), Failed: [origin], Queued: [recovery] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     expect(html.match(/data-arc-id="origin-1"/g)).toHaveLength(1)
@@ -127,10 +114,89 @@ describe('BoardView – Arc summaries', () => {
     const byCluster = { ...emptyByCluster(), Queued: [origin, followUp] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toMatch(/data-tab="Queued"[^>]*>Queued<span[^>]*>1<\/span>/)
+  })
+})
+
+describe('BoardView – substep label on in-progress arcs', () => {
+  it('renders the arc’s live substep ("merging") derived from its executing task', () => {
+    const merging = task({
+      id: 'origin-live',
+      prompt: 'Ship the widget',
+      cluster: 'In progress',
+      status: 'merging',
+      originId: 'origin-live',
+    })
+    const byCluster = { ...emptyByCluster(), 'In progress': [merging] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+    )
+
+    // The specific substep label appears (the column already says "In progress").
+    expect(html).toContain('merging')
+    expect(html).toContain('text-flame')
+  })
+
+  it('maps status running to the "coding" substep', () => {
+    const running = task({
+      id: 'origin-run',
+      prompt: 'Build the thing',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-run',
+    })
+    const byCluster = { ...emptyByCluster(), 'In progress': [running] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('coding')
+  })
+
+  it('does not render a substep line for a queued arc', () => {
+    const queued = task({ id: 'q1', prompt: 'Later work', cluster: 'Queued' })
+    const byCluster = { ...emptyByCluster(), Queued: [queued] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+    )
+
+    // No flame-coloured substep chip on a non-live arc.
+    expect(html).not.toContain('uppercase tracking-wide text-flame')
+  })
+})
+
+describe('BoardView – in-progress card animation', () => {
+  it('applies the subtle live-breathe class to an in-progress arc', () => {
+    const running = task({
+      id: 'origin-run',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-run',
+    })
+    const byCluster = { ...emptyByCluster(), 'In progress': [running] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('mars-card-live')
+  })
+
+  it('does not apply the live-breathe class to a queued arc', () => {
+    const queued = task({ id: 'q1', cluster: 'Queued' })
+    const byCluster = { ...emptyByCluster(), Queued: [queued] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).not.toContain('mars-card-live')
   })
 })
 
@@ -141,7 +207,7 @@ describe('BoardView – proposal filter on cluster columns', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1, t2] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId="p1" />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId="p1" />,
     )
 
     expect(html).toContain('task-from-p1')
@@ -154,7 +220,7 @@ describe('BoardView – proposal filter on cluster columns', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1, t2] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('task-from-p1')
@@ -183,7 +249,7 @@ describe('BoardView – proposal filter on cluster columns', () => {
     }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId="p1" />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId="p1" />,
     )
 
     expect(html).toContain('p1-queued')
@@ -198,7 +264,7 @@ describe('BoardView – proposal filter on cluster columns', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1, t2] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId="p1" />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId="p1" />,
     )
 
     expect(html).toContain('p1-task')
@@ -211,7 +277,7 @@ describe('BoardView – proposal filter on cluster columns', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1, t2] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('no-parent')
@@ -228,7 +294,6 @@ describe('BoardView – search filter on cluster columns', () => {
     const html = renderToStaticMarkup(
       <BoardView
         byCluster={byCluster}
-        drafts={[]}
         error={null}
         selectedProposalId={null}
         searchMatchIds={new Set(['task-a'])}
@@ -249,7 +314,6 @@ describe('BoardView – search filter on cluster columns', () => {
     const html = renderToStaticMarkup(
       <BoardView
         byCluster={byCluster}
-        drafts={[]}
         error={null}
         selectedProposalId={null}
         searchMatchIds={new Set(['match-q', 'match-ip'])}
@@ -270,7 +334,6 @@ describe('BoardView – search filter on cluster columns', () => {
     const html = renderToStaticMarkup(
       <BoardView
         byCluster={byCluster}
-        drafts={[]}
         error={null}
         selectedProposalId={null}
         searchMatchIds={null}
@@ -285,7 +348,7 @@ describe('BoardView – search filter on cluster columns', () => {
 describe('BoardView – mobile responsive tab strip (single-column below breakpoint)', () => {
   it('renders a tab strip with a button for each cluster status', () => {
     const html = renderToStaticMarkup(
-      <BoardView byCluster={emptyByCluster()} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={emptyByCluster()} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('data-testid="board-tab-strip"')
@@ -295,21 +358,13 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
     expect(html).toContain('data-tab="Failed"')
   })
 
-  it('omits the Proposals tab when there are no visible drafts', () => {
+  it('never renders a Proposals tab (proposals are not part of the board)', () => {
     const html = renderToStaticMarkup(
-      <BoardView byCluster={emptyByCluster()} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={emptyByCluster()} error={null} selectedProposalId={null} />,
     )
 
     expect(html).not.toContain('data-tab="Proposals"')
-  })
-
-  it('includes the Proposals tab when drafts are present', () => {
-    const d1 = draft('p1', 'Feature Alpha')
-    const html = renderToStaticMarkup(
-      <BoardView byCluster={emptyByCluster()} drafts={[d1]} error={null} selectedProposalId={null} />,
-    )
-
-    expect(html).toContain('data-tab="Proposals"')
+    expect(html).not.toContain('data-cluster="Proposals"')
   })
 
   it('defaults the active tab to Failed when failed tasks are present', () => {
@@ -317,7 +372,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
     const byCluster = { ...emptyByCluster(), Failed: [t] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     // The Failed tab button carries aria-selected=true; Queued does not
@@ -330,7 +385,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
     const byCluster = { ...emptyByCluster(), 'In progress': [t] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toMatch(/data-tab="In progress"[^>]*aria-selected="true"/)
@@ -339,7 +394,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
 
   it('defaults to Queued when board is empty (no failed, no in-progress)', () => {
     const html = renderToStaticMarkup(
-      <BoardView byCluster={emptyByCluster()} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={emptyByCluster()} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toMatch(/data-tab="Queued"[^>]*aria-selected="true"/)
@@ -350,7 +405,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
     const byCluster = { ...emptyByCluster(), Failed: [t] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     // Active column wrapper (Failed) should NOT start with hidden
@@ -366,47 +421,11 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
     const byCluster = { ...emptyByCluster(), Failed: [t] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     // Count "1" should appear near the Failed tab
     expect(html).toContain('>1<')
-  })
-})
-
-describe('BoardView – proposal filter on Proposals column', () => {
-  it('shows only the selected proposal draft when a filter is active', () => {
-    const d1 = draft('p1', 'Feature Alpha')
-    const d2 = draft('p2', 'Feature Beta')
-
-    const html = renderToStaticMarkup(
-      <BoardView
-        byCluster={emptyByCluster()}
-        drafts={[d1, d2]}
-        error={null}
-        selectedProposalId="p1"
-      />,
-    )
-
-    expect(html).toContain('Feature Alpha')
-    expect(html).not.toContain('Feature Beta')
-  })
-
-  it('shows all proposal drafts when no filter is active', () => {
-    const d1 = draft('p1', 'Feature Alpha')
-    const d2 = draft('p2', 'Feature Beta')
-
-    const html = renderToStaticMarkup(
-      <BoardView
-        byCluster={emptyByCluster()}
-        drafts={[d1, d2]}
-        error={null}
-        selectedProposalId={null}
-      />,
-    )
-
-    expect(html).toContain('Feature Alpha')
-    expect(html).toContain('Feature Beta')
   })
 })
 
@@ -416,21 +435,11 @@ describe('BoardView – column lane styling (no card-in-card nesting)', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
-    // Column lane wrappers must not add a card-level border around already-bordered TaskCards.
+    // Column lane wrappers must not add a card-level border around already-carded TaskCards.
     // The combination "border border-border bg-panel" is the column card anti-pattern.
-    expect(html).not.toContain('border border-border bg-panel')
-  })
-
-  it('Proposals column is also styled as a borderless lane', () => {
-    const d1 = draft('p1', 'Feature Alpha')
-
-    const html = renderToStaticMarkup(
-      <BoardView byCluster={emptyByCluster()} drafts={[d1]} error={null} selectedProposalId={null} />,
-    )
-
     expect(html).not.toContain('border border-border bg-panel')
   })
 
@@ -439,7 +448,7 @@ describe('BoardView – column lane styling (no card-in-card nesting)', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     // The column <header> element (not the tab strip) must carry a border-b underline
@@ -534,7 +543,7 @@ describe('BoardView — arc lifecycle rendering', () => {
     const byCluster = { ...emptyByCluster(), 'In progress': [recovery] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('data-arc-state="orphaned-origin"')
@@ -555,7 +564,7 @@ describe('BoardView — arc lifecycle rendering', () => {
     const byCluster = { ...emptyByCluster(), Queued: [compensation] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('data-arc-state="cleanup-required"')
@@ -568,7 +577,7 @@ describe('BoardView — arc lifecycle rendering', () => {
     const byCluster = { ...emptyByCluster(), Queued: [origin] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} drafts={[]} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('data-arc-state="active"')

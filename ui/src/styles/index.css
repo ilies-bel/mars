@@ -216,6 +216,60 @@ html, body, #root {
   .animate-mars-pulse { animation: none; }
 }
 
+/* ── Board card surface ─────────────────────────────────────────────────────
+ * A refined, elevated card treatment for arc summaries and task cards. Replaces
+ * the old flat `border border-border` hairline (which read cheap on white) with
+ * a low-opacity warm hairline PLUS a soft, warm-tinted drop shadow so the card
+ * sits *above* its lane rather than being boxed in by a line. Applied to both
+ * the arc <details> and the inner TaskCard so they share one visual language.
+ * ---------------------------------------------------------------------------*/
+.mars-card {
+  border: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+  box-shadow:
+    0 1px 2px rgba(26, 15, 10, 0.05),
+    0 2px 5px rgba(26, 15, 10, 0.035);
+  transition:
+    box-shadow 180ms ease-out,
+    border-color 180ms ease-out,
+    background-color 160ms ease-out,
+    transform 160ms ease-out;
+}
+.mars-card:hover {
+  border-color: color-mix(in srgb, var(--color-border) 80%, transparent);
+  box-shadow:
+    0 4px 12px rgba(26, 15, 10, 0.09),
+    0 2px 5px rgba(26, 15, 10, 0.04);
+}
+.dark .mars-card {
+  border-color: color-mix(in srgb, var(--color-border-dark) 70%, transparent);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+/* ── In-progress card breathe ───────────────────────────────────────────────
+ * A subtle, slow flame ring that gently breathes on cards doing live work.
+ * Animates only the box-shadow ring (never opacity or transform) so the card's
+ * text stays fully legible throughout. Layered over the base .mars-card shadow.
+ * ---------------------------------------------------------------------------*/
+@keyframes card-live-breathe {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--color-flame) 42%, transparent),
+      0 2px 6px rgba(26, 15, 10, 0.06);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--color-flame) 10%, transparent),
+      0 2px 6px rgba(26, 15, 10, 0.05);
+  }
+}
+.mars-card-live { animation: card-live-breathe 2s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mars-card-live { animation: none; }
+}
+
 /* ── Topology (React Flow) node emphasis ────────────────────────────────────
  * Three states resolved by computeEmphasisMap (topologyFlowModel.ts):
  *   rest — no class; lit — hover-trace member; dim — filtered / outside trace.

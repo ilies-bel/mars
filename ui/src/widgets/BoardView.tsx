@@ -1,6 +1,5 @@
 import { useState } from 'react'
-import { ProposalCard } from '@/components/ProposalCard'
-import type { Cluster, DraftFeature, ProgressTask } from '@/shared/schemas'
+import type { Cluster, ProgressTask } from '@/shared/schemas'
 import type { Role, UITask } from '@/shared/types'
 import { titleFromPrompt } from '@/shared/promptTitle'
 import { ArcColumn, type BoardArc } from '@/widgets/Column'
@@ -9,14 +8,12 @@ import { ArcColumn, type BoardArc } from '@/widgets/Column'
 // Types and constants
 // ---------------------------------------------------------------------------
 
-type ActiveTab = Cluster | 'Proposals'
-
 // Display order in the tab strip (mirrors column order — attention-first)
-const ALL_TABS: readonly ActiveTab[] = ['Failed', 'Blocked', 'In progress', 'Queued', 'Proposals']
+const ALL_TABS: readonly Cluster[] = ['Failed', 'Blocked', 'In progress', 'Queued']
 
 // Priority for the default tab: leftmost non-empty of Failed, Blocked, In progress, Queued.
 // Same story as ALL_TABS and CLUSTERS — the "what needs me right now" column wins.
-const DEFAULT_TAB_PRIORITY: readonly ActiveTab[] = ['Failed', 'Blocked', 'In progress', 'Queued']
+const DEFAULT_TAB_PRIORITY: readonly Cluster[] = ['Failed', 'Blocked', 'In progress', 'Queued']
 
 const roleFromStatus = (status: ProgressTask['status']): Role => {
   switch (status) {
@@ -136,7 +133,6 @@ export const buildArcsByCluster = (
 
 export interface BoardViewProps {
   byCluster: Record<Cluster, ProgressTask[]>
-  drafts: DraftFeature[]
   error: Error | null
   selectedProposalId: string | null
   /**
@@ -153,18 +149,11 @@ export interface BoardViewProps {
 
 export const BoardView = ({
   byCluster,
-  drafts,
   error,
   selectedProposalId,
   searchMatchIds,
   searchQuery,
 }: BoardViewProps) => {
-  // Filter drafts for the Proposals column
-  const visibleDrafts =
-    selectedProposalId !== null
-      ? drafts.filter((d) => d.id === selectedProposalId)
-      : drafts
-
   // Filter before grouping so an Arc spanning a failure and its recovery is
   // represented exactly once, in the status that describes its current work.
   const visibleTasks = CLUSTERS.flatMap((cluster) => byCluster[cluster]).filter((task) => {
@@ -178,22 +167,20 @@ export const BoardView = ({
   const totalMatchedTasks = visibleTasks.length
 
   // Arc count per tab (for the mobile strip badges)
-  const tabCounts: Record<ActiveTab, number> = {
+  const tabCounts: Record<Cluster, number> = {
     Queued: arcsByCluster.Queued.length,
     'In progress': arcsByCluster['In progress'].length,
     Blocked: arcsByCluster.Blocked.length,
     Failed: arcsByCluster.Failed.length,
-    Proposals: visibleDrafts.length,
   }
 
   // Default to the leftmost non-empty of Failed → Blocked → In progress → Queued; else Queued
   const defaultTab = DEFAULT_TAB_PRIORITY.find((t) => tabCounts[t] > 0) ?? 'Queued'
 
   // Active tab controls which single column is visible on mobile
-  const [activeTab, setActiveTab] = useState<ActiveTab>(defaultTab)
+  const [activeTab, setActiveTab] = useState<Cluster>(defaultTab)
 
-  // Tabs to show in the strip (Proposals only when there are visible drafts)
-  const visibleTabs = visibleDrafts.length > 0 ? ALL_TABS : (ALL_TABS.slice(0, 4) as readonly ActiveTab[])
+  const visibleTabs = ALL_TABS
 
   return (
     <>
@@ -270,28 +257,6 @@ export const BoardView = ({
             </div>
           )
         })}
-        {visibleDrafts.length > 0 ? (
-          <div
-            data-cluster="Proposals"
-            className={`${activeTab === 'Proposals' ? 'flex' : 'hidden'} flex-col flex-1 min-h-0 md:flex lg:flex-1 lg:basis-0`}
-          >
-            <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-2 bg-panel p-3">
-              <header className="flex items-center justify-between border-b border-border/50 px-1 pb-2">
-                <span className="font-sans text-[11px] font-semibold tracking-[0.1em] text-muted">
-                  Proposals
-                </span>
-                <span className="font-mono text-[11px] font-semibold text-muted">
-                  {visibleDrafts.length}
-                </span>
-              </header>
-              <div className="flex flex-1 flex-col gap-2 overflow-y-auto">
-                {visibleDrafts.map((proposal) => (
-                  <ProposalCard key={proposal.id} proposal={proposal} />
-                ))}
-              </div>
-            </section>
-          </div>
-        ) : null}
       </main>
       {error ? (
         <div className="border-t border-iron/40 bg-iron/10 px-6 py-1.5 font-mono text-[11px] text-iron">

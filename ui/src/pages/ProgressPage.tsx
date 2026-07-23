@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { FallbackSurface } from '@/components/FallbackSurface'
-import { useProposals } from '@/entities/proposals/useProposals'
 import { useProgress } from '@/hooks/useProgress'
 import {
   readExplicitViewFromUrl,
@@ -22,7 +21,6 @@ export const ProgressPage = () => {
   const [initialUrlState] = useState(() => readProgressStateFromUrl())
 
   const { byCluster, tasks, proposals, aggregates, error, connected } = useProgress()
-  const { proposals: drafts } = useProposals()
 
   // Resolve the initial active tab with the following precedence:
   //   1. Explicit ?view= param in the URL (shareable links are always honoured)
@@ -157,7 +155,6 @@ export const ProgressPage = () => {
         ) : (
           <BoardView
             byCluster={byCluster}
-            drafts={drafts}
             error={error}
             selectedProposalId={selectedProposalId}
             searchMatchIds={searchMatchIds}

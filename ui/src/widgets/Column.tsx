@@ -1,5 +1,6 @@
 import type { UITask } from '@/shared/types'
 import { TaskCard } from '@/components/TaskCard'
+import { isLiveStatus, substepLabel } from '@/shared/substep'
 import type { Cluster } from '@/shared/schemas'
 
 export interface BoardArc {
@@ -72,6 +73,13 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
             taskIndex += arc.tasks.length
             const taskLabel = arc.tasks.length === 1 ? 'task' : 'tasks'
             const isLive = arc.cluster === 'In progress'
+            // The fine-grained substep the live work is on ("merging", "verifying", …),
+            // read off the arc's actively-executing task. Only meaningful for
+            // In-progress arcs; other clusters are already labelled by their column.
+            const liveTask = isLive
+              ? arc.tasks.find((task) => isLiveStatus(task.status))
+              : undefined
+            const substep = liveTask ? substepLabel(liveTask.status) : null
             const isCompensation = Boolean(arc.compensatesArcId)
             const isOrphaned = Boolean(arc.hasOrphanedOrigin)
 
@@ -93,7 +101,7 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
                 data-arc-state={arcState}
                 data-compensates-arc={arc.compensatesArcId ?? undefined}
                 open={expandAll || undefined}
-                className="group rounded-md border border-border bg-surface transition-colors duration-150 hover:bg-panel"
+                className={`mars-card group rounded-lg bg-surface hover:bg-panel${isLive ? ' mars-card-live' : ''}`}
               >
                 <summary
                   aria-label={`Arc ${arc.id}: ${arc.cluster}, ${arc.tasks.length} ${taskLabel}${isCompensation ? `, compensating arc ${arc.compensatesArcId}` : ''}`}
@@ -114,6 +122,11 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
                     <span className="mt-1 block font-mono text-meta text-muted">
                       arc {arc.id}
                     </span>
+                    {substep ? (
+                      <span className="mt-1 block font-mono text-micro font-semibold uppercase tracking-wide text-flame">
+                        {substep}
+                      </span>
+                    ) : null}
                     {isCompensation ? (
                       <span className="mt-1 block font-mono text-[10px] text-ochre">
                         ↩ compensates arc {arc.compensatesArcId}
