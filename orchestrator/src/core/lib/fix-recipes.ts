@@ -39,6 +39,14 @@ export interface FixRecipeContext {
    * no prompt recorded.
    */
   originalPrompt: string
+  /**
+   * The failure signature that triggered this recovery (e.g.
+   * `'verify:typecheck/unclassified'`, `'code:step/unclassified'`).
+   * Injected by `arc.ts:spawnRecovery` so the generic recipe can branch on
+   * gate failures (`verify:` prefix) vs work failures without a heuristic.
+   * Optional — older call sites that pre-date this field leave it absent.
+   */
+  failureSignature?: string
 }
 
 /**
@@ -1103,6 +1111,45 @@ export const genericRecoveryRecipe: FixRecipe = {
       ctx.originalPrompt && ctx.originalPrompt.trim().length > 0
         ? ctx.originalPrompt
         : '(no original prompt recorded)'
+    const integration = ctx.integrationBranch ?? 'main'
+    // Gate failures (verify: prefix) mean the coder's work succeeded — the
+    // code is already committed and tests/typecheck were green until an
+    // unregistered verify gate rejected it. Re-reading the worktree state
+    // is wasted tokens; jump straight to the gate failure output.
+    const isGateFailure = ctx.failureSignature?.startsWith('verify:') ?? false
+
+    if (isGateFailure) {
+      return [
+        `# Recovery run — first-principles (no matching recipe)`,
+        '',
+        `This is a standard recovery, not an emergency. A previous run of this task failed at the verify gate (signature: ${ctx.failureSignature}), and the failure does not match any of the orchestrator's purpose-built recovery recipes — so instead of dead-ending the task, the orchestrator handed it to you to fix the gate failure.`,
+        '',
+        `Your job: fix what the verify gate rejected. The prior run's committed work is already in this worktree on branch \`${ctx.targetBranch}\` — continue from where it stopped, do NOT start over. You succeed when the original goal is met AND the worktree verifies clean and is ready to merge.`,
+        '',
+        ...renderReproSection(ctx.reproCommand),
+        `STEP 1 — Know why the gate failed. The failure summary captured at failure time:`,
+        '```',
+        status,
+        '```',
+        '',
+        `STEP 2 — Know the original goal (for context). The task being recovered was asked to do:`,
+        '```',
+        original,
+        '```',
+        '',
+        `STEP 3 — Fix the gate failure. Based on the failure summary above, repair the defect that caused the verify gate to reject. Stay within the original scope; surface genuinely new architectural work as a follow-up task rather than expanding scope here.`,
+        '',
+        `STEP 4 — Verify before you exit. Run the task's verification command(s) if the original goal named any; otherwise run the project's standard typecheck/test. Do not declare success without a green run — the orchestrator re-verifies and will bounce an unverified worktree right back.`,
+        '',
+        `If you genuinely cannot make progress (hard blocker, ambiguous scope, a decision only a human can make), do NOT bail silently and do NOT leave a half-done tree: emit a high-priority action-queue item via \`mars action-queue raise --from -\` describing exactly what blocks you, then exit.`,
+        '',
+        `Worktree path: ${ctx.targetPath}`,
+        `Branch: ${ctx.targetBranch}`,
+        '',
+        `Save your work — the orchestrator does NOT commit on your behalf. An uncommitted recovery counts as no recovery at all.`,
+      ].join('\n')
+    }
+
     return [
       `# Recovery run — first-principles (no matching recipe)`,
       '',
@@ -1111,7 +1158,12 @@ export const genericRecoveryRecipe: FixRecipe = {
       `Your job: take the original task to completion. The previous run's work is already in this worktree on branch \`${ctx.targetBranch}\` — continue from where it stopped, do NOT start over. You succeed when the original goal is met AND the worktree verifies clean and is ready to merge. Until then the original task stays blocked on you.`,
       '',
       ...renderReproSection(ctx.reproCommand),
-      `STEP 1 — Read what's already here. The prior run left commits and/or uncommitted changes in this worktree. Run \`git -C ${ctx.targetPath} log --oneline\`, \`git -C ${ctx.targetPath} status\`, and \`git -C ${ctx.targetPath} diff\` to see how far it got before touching anything.`,
+      `STEP 1 — Read what's already here. The prior run left commits and/or uncommitted changes in this worktree. Run each command separately to see how far it got before touching anything:`,
+      '```',
+      `git -C ${ctx.targetPath} log --oneline ${integration}..HEAD --max-count 30`,
+      `git -C ${ctx.targetPath} status`,
+      `git -C ${ctx.targetPath} diff`,
+      '```',
       '',
       `STEP 2 — Know the original goal. The task being recovered was asked to do:`,
       '```',

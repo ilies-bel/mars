@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { getRecipe, getRecipeOrGeneric, hasRecipe, recipes } from '../fix-recipes'
+import { genericRecoveryRecipe, getRecipe, getRecipeOrGeneric, hasRecipe, recipes } from '../fix-recipes'
 
 describe('fix-recipes', () => {
   describe('merge:preflight/uncommitted-changes recipe', () => {
@@ -1096,6 +1096,157 @@ describe('fix-recipes', () => {
       expect(hasRecipe('merge:vcs-supervisor-aborted/index-lock-contention')).toBe(false)
     })
 
+  })
+})
+
+describe('genericRecoveryRecipe (first-principles fallback)', () => {
+  const baseCtx = {
+    targetPath: '/tmp/worktrees/task-abc',
+    statusOutput: 'process exited with code 1\nsome unknown error',
+    targetBranch: 'task/abc',
+    integrationBranch: 'main',
+    originalPrompt: 'add the nudge link in src/components/NudgePanel.tsx',
+  }
+
+  describe('Problem 1 — git log scoped + capped + split (work-failure path)', () => {
+    it('scopes git log to the integration branch and caps at 30 commits', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt(baseCtx)
+      expect(prompt).toContain(
+        `git -C ${baseCtx.targetPath} log --oneline ${baseCtx.integrationBranch}..HEAD --max-count 30`,
+      )
+    })
+
+    it('does NOT use the unbounded, unscoped git log that swallows status and diff', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt(baseCtx)
+      // The old chained form "log --oneline`, `...status`, and `...diff`"
+      // had no branch scope and no --max-count, causing long logs to swallow
+      // the subsequent status and diff output.
+      expect(prompt).not.toMatch(/log --oneline[^`\n]*`,\s*`[^`\n]*status/)
+      expect(prompt).not.toContain('log --oneline` , `')
+      // No unbounded log (missing --max-count)
+      const logLine = prompt
+        .split('\n')
+        .find((l) => l.includes('log --oneline') && l.includes(baseCtx.targetPath))
+      expect(logLine).toBeDefined()
+      expect(logLine).toContain('--max-count')
+    })
+
+    it('emits git status as a separate command line, not chained with git log', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt(baseCtx)
+      const lines = prompt.split('\n')
+      const logLineIdx = lines.findIndex(
+        (l) => l.includes('log --oneline') && l.includes(baseCtx.targetPath),
+      )
+      const statusLineIdx = lines.findIndex(
+        (l) => l.includes(`git -C ${baseCtx.targetPath} status`),
+      )
+      expect(logLineIdx).toBeGreaterThan(-1)
+      expect(statusLineIdx).toBeGreaterThan(-1)
+      // They must be on different lines (not crammed into one instruction)
+      expect(statusLineIdx).not.toBe(logLineIdx)
+    })
+
+    it('emits git diff as a separate command line, not chained with git log', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt(baseCtx)
+      const lines = prompt.split('\n')
+      const logLineIdx = lines.findIndex(
+        (l) => l.includes('log --oneline') && l.includes(baseCtx.targetPath),
+      )
+      const diffLineIdx = lines.findIndex(
+        (l) => l.includes(`git -C ${baseCtx.targetPath} diff`),
+      )
+      expect(logLineIdx).toBeGreaterThan(-1)
+      expect(diffLineIdx).toBeGreaterThan(-1)
+      expect(diffLineIdx).not.toBe(logLineIdx)
+    })
+
+    it('falls back to `main` when integrationBranch is absent from the context', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        targetPath: baseCtx.targetPath,
+        statusOutput: baseCtx.statusOutput,
+        targetBranch: baseCtx.targetBranch,
+        originalPrompt: '',
+      })
+      expect(prompt).toContain(
+        `git -C ${baseCtx.targetPath} log --oneline main..HEAD --max-count 30`,
+      )
+    })
+
+    it('uses a custom integrationBranch when provided', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        ...baseCtx,
+        integrationBranch: 'develop',
+      })
+      expect(prompt).toContain(
+        `git -C ${baseCtx.targetPath} log --oneline develop..HEAD --max-count 30`,
+      )
+    })
+  })
+
+  describe('Problem 2 — gate failure vs work failure branching', () => {
+    it('work-failure path (no failureSignature) includes re-analysis steps 1–2', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt(baseCtx)
+      expect(prompt).toContain('STEP 1')
+      expect(prompt).toContain('STEP 2')
+      // Step 1 reads what's already here (log/status/diff)
+      expect(prompt).toContain(
+        `git -C ${baseCtx.targetPath} log --oneline main..HEAD --max-count 30`,
+      )
+      // Step 2 shows the original goal
+      expect(prompt).toContain(baseCtx.originalPrompt)
+    })
+
+    it('work-failure path (code: signature) includes re-analysis steps', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        ...baseCtx,
+        failureSignature: 'code:some-unknown-step/unclassified',
+      })
+      expect(prompt).toContain('STEP 1')
+      expect(prompt).toContain(
+        `git -C ${baseCtx.targetPath} log --oneline main..HEAD --max-count 30`,
+      )
+    })
+
+    it('gate-failure path (verify: signature) skips re-analysis steps and goes straight to the gate failure', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        ...baseCtx,
+        failureSignature: 'verify:some-unknown-gate/unclassified',
+      })
+      // The prompt must mention the gate failure summary immediately
+      expect(prompt).toContain(baseCtx.statusOutput)
+      // No read-what-is-here step: the log/status/diff analysis commands
+      // are wasted tokens when the coder's work succeeded
+      expect(prompt).not.toContain(
+        `git -C ${baseCtx.targetPath} log --oneline`,
+      )
+    })
+
+    it('gate-failure path still includes worktree path and save reminder', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        ...baseCtx,
+        failureSignature: 'verify:some-unknown-gate/unclassified',
+      })
+      expect(prompt).toContain(baseCtx.targetPath)
+      expect(prompt).toContain(baseCtx.targetBranch)
+      expect(prompt).toContain('Save your work')
+    })
+
+    it('gate-failure path names the failure signature in the intro', () => {
+      const sig = 'verify:some-unknown-gate/unclassified'
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        ...baseCtx,
+        failureSignature: sig,
+      })
+      expect(prompt).toContain(sig)
+    })
+
+    it('gate-failure path still inlines the original goal so fixer has context', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        ...baseCtx,
+        failureSignature: 'verify:some-gate/unclassified',
+      })
+      expect(prompt).toContain(baseCtx.originalPrompt)
+    })
   })
 })
 

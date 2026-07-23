@@ -1116,6 +1116,10 @@ export class Arc {
     const incomingPrompt = input.recipeContext.originalPrompt
     const recipeContextWithSource: FixRecipeContext = {
       ...input.recipeContext,
+      // Thread the failure signature into the context so the generic recipe
+      // can branch on gate failures (verify: prefix) vs work failures without
+      // resorting to statusOutput heuristics.
+      failureSignature: input.failureSignature,
       originalPrompt:
         incomingPrompt && incomingPrompt.trim().length > 0
           ? incomingPrompt
