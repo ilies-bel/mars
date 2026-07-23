@@ -485,20 +485,29 @@ const backendOf = new WeakMap<DbClient, BackendOps>()
 // applying the canonical schema before its first user operation.  The schema
 // bootstrap itself executes through the same client, so the guard suppresses
 // re-entry while `ensureSchema` is issuing its DDL.
+//
+// schemaApplyingByClient is set only AFTER the dynamic import resolves (not
+// synchronously before it).  This is intentional: two callers that race on
+// the very first execute() call — e.g. the two legs of a Promise.all — both
+// arrive before any await has run, so both see schemaApplyingByClient = false
+// and fall through to `await ready`.  Re-entrant callers from within
+// ensureSchema's own DDL loop arrive after the import and see the flag set,
+// which short-circuits them safely (awaiting `ready` there would deadlock).
 const schemaReadyByClient = new WeakMap<DbClient, Promise<void>>()
-const schemaBootstrapping = new WeakSet<DbClient>()
+const schemaApplyingByClient = new WeakSet<DbClient>()
 
 async function ensureClientSchema(client: DbClient): Promise<void> {
-  if (schemaBootstrapping.has(client)) return
+  // Re-entrant call from within ensureSchema's DDL loop — skip to avoid deadlock.
+  if (schemaApplyingByClient.has(client)) return
   let ready = schemaReadyByClient.get(client)
   if (!ready) {
     ready = (async () => {
-      schemaBootstrapping.add(client)
+      const { ensureSchema } = await import('./pg-schema.js')
+      schemaApplyingByClient.add(client)
       try {
-        const { ensureSchema } = await import('./pg-schema.js')
         await ensureSchema(client)
       } finally {
-        schemaBootstrapping.delete(client)
+        schemaApplyingByClient.delete(client)
       }
     })()
     schemaReadyByClient.set(client, ready)
