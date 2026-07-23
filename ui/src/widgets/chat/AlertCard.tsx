@@ -74,9 +74,9 @@ const verbButtonClass = (style: AlertVerb['style']): string => {
   const base =
     'rounded px-3 py-1 font-mono text-[11px] border transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
   if (style === 'primary')
-    return `${base} border-accent/60 bg-accent/20 text-accent hover:bg-accent/30`
+    return `${base} border-flame/60 bg-flame/10 text-flame hover:bg-flame/20`
   if (style === 'destructive')
-    return `${base} border-red-400/40 bg-red-900/10 text-red-400 hover:bg-red-900/20`
+    return `${base} border-error/40 bg-error/10 text-error hover:bg-error/20`
   if (style === 'snooze')
     return `${base} border-iron/30 text-iron/70 hover:bg-iron/20`
   return `${base} border-iron/30 text-iron hover:bg-iron/20`

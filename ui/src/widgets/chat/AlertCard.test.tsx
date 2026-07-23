@@ -341,3 +341,43 @@ describe('ActionQueueRow – recipe rendering', () => {
     expect(html).toContain('data-testid="alert-detail-toggle"')
   })
 })
+
+// ---------------------------------------------------------------------------
+// ActionQueueRow – verb visual hierarchy
+// Verifies that the legacy-action fallback assigns the correct visual weight
+// to each op kind: purge → danger (error), restart → primary (flame),
+// investigate → ghost (default).
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – verb visual hierarchy', () => {
+  it('renders restart action with primary (flame) styling in legacy fallback', () => {
+    const item = {
+      ...BASE_ITEM,
+      verbs: [] as AlertVerb[],
+      actions: [{ id: 'r', label: 'RESTART', op: 'restart' }],
+    } as unknown as ActionQueueItem
+    const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
+    expect(html).toContain('text-flame')
+  })
+
+  it('renders purge action with error (danger) styling in legacy fallback', () => {
+    const item = {
+      ...BASE_ITEM,
+      verbs: [] as AlertVerb[],
+      actions: [{ id: 'p', label: 'DROP PERMANENTLY', op: 'purge' }],
+    } as unknown as ActionQueueItem
+    const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
+    expect(html).toContain('text-error')
+  })
+
+  it('renders investigate action with default (ghost) styling in legacy fallback', () => {
+    const item = {
+      ...BASE_ITEM,
+      verbs: [] as AlertVerb[],
+      actions: [{ id: 'i', label: 'INVESTIGATE', op: 'investigate' }],
+    } as unknown as ActionQueueItem
+    const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
+    expect(html).not.toContain('text-flame')
+    expect(html).not.toContain('text-error')
+  })
+})

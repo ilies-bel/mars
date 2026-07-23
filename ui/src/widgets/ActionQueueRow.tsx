@@ -26,6 +26,8 @@ export const ActionQueueRow = ({ item }: ActionQueueRowProps) => {
           // Destructive ops get destructive style; everything else default.
           style: (['purge', 'dismiss', 'reject'] as string[]).includes(a.op)
             ? 'destructive'
+            : (['restart', 'retry'] as string[]).includes(a.op)
+            ? 'primary'
             : 'default',
         }))
 
