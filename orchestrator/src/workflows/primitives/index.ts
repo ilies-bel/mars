@@ -60,7 +60,7 @@ import {
   appendEnrichmentScopes,
   recordEnrichmentShadowRuns,
 } from '../../core/lib/gate-enrichment'
-import { mergeBranch, checkMergeTargetStatus } from '../../core/lib/git/merge'
+import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch } from '../../core/lib/git/merge'
 import { acquireLock } from '../../core/lib/git/lock'
 import {
   createWorker,
@@ -2000,6 +2000,25 @@ export const merge = async (
           { status: 'merging', failedPhase: null },
           store,
         )
+
+        // Short-circuit: if the task branch has zero commits ahead of the
+        // integration branch the fast-forward would be a no-op. Skip the merge
+        // lock entirely — acquiring it for a no-op wastes serialisation budget
+        // and can stall concurrent merges for nothing.
+        const { repoRoot: mergeRepoRoot } = resolveContext()
+        if (await isZeroCommitBranch(branch, mergeRepoRoot, buildPhaseCtx(trace, taskId, 'merge'))) {
+          console.log(
+            `[merge] task ${taskId}: branch ${branch} has zero commits ahead of ${integrationBranch} — skipping merge lock (no-op)`,
+          )
+          await removeWorktree(
+            { path: worktreePath, branch },
+            true,
+            false,
+            buildPhaseCtx(trace, taskId, 'merge'),
+          )
+          await updateTask(taskId, { status: 'done', failedPhase: null }, store)
+          return { taskId, success: true, message: 'zero-commit branch — no merge needed' }
+        }
 
         const targetStatus = await checkMergeTargetStatus({
           integrationBranch,
