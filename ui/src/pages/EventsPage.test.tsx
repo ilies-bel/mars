@@ -991,6 +991,25 @@ describe('EventsPage — consecutive identical event grouping', () => {
     expect(html).toContain('data-testid="event-row-ev-diff-2"')
     expect(html).not.toContain('×2')
   })
+
+  it('shows the summarized text of the first event inside the collapsed group row', () => {
+    // The collapsed GroupedRow renders summarizeTraceEvent(first) as its label.
+    // This test verifies that the human-readable summary is present in the DOM
+    // so users can identify what the collapsed group represents at a glance.
+    const payload = { failureReasonCode: 'verify:typecheck' }
+    const events = [
+      makeEvent({ id: 'grp-sum-a', kind: 'task_failed', severity: 'error', payload }),
+      makeEvent({ id: 'grp-sum-b', kind: 'task_failed', severity: 'error', payload }),
+    ]
+    const qc = makeClient(makeResponse(events))
+    const html = renderPage(qc)
+    // Group row exists
+    expect(html).toContain('data-testid="group-row-grp-sum-a"')
+    // summarizeTraceEvent for task_failed with verify:typecheck → "typecheck (verify step)"
+    expect(html).toContain('typecheck (verify step)')
+    // Count badge
+    expect(html).toContain('×2')
+  })
 })
 
 // ---------------------------------------------------------------------------
