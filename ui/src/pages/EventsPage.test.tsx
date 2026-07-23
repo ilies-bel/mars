@@ -842,6 +842,29 @@ describe('groupConsecutiveEvents', () => {
     expect(groupConsecutiveEvents([])).toEqual([])
   })
 
+  it('treats a run of exactly one event as a single row, never a group', () => {
+    const events = [makeEvent({ id: 'only', payload: { msg: 'solo' } })]
+    const rows = groupConsecutiveEvents(events)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toEqual({ type: 'single', event: events[0] })
+  })
+
+  it('collapses exactly two consecutive identical-payload events into one group (minimum group size)', () => {
+    const payload = { msg: 'statusline' }
+    const events = [
+      makeEvent({ id: 'pair-a', payload }),
+      makeEvent({ id: 'pair-b', payload }),
+    ]
+    const rows = groupConsecutiveEvents(events)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].type).toBe('group')
+    if (rows[0].type === 'group') {
+      expect(rows[0].events).toHaveLength(2)
+      expect(rows[0].events[0].id).toBe('pair-a')
+      expect(rows[0].events[1].id).toBe('pair-b')
+    }
+  })
+
   it('wraps each non-duplicate event as a single row when all payloads differ', () => {
     const events = [
       makeEvent({ id: 'a', payload: { x: 1 } }),
