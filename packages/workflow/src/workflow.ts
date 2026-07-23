@@ -255,7 +255,7 @@ export async function runWorkflow<I, O, Services = unknown>(
         time: Date.now(),
       };
       runLogger.info({ event, payload }, `event:${event}`);
-      options.onEvent?.(evt);
+      fireEvent(options.onEvent, evt);
     },
     step<T>(name: string, fn: StepFn<T>, stepOptions?: StepOptions): Promise<T> {
       return runStep<T>({
@@ -290,6 +290,24 @@ export async function runWorkflow<I, O, Services = unknown>(
     await store.setRunStatus(runId, 'failed', Date.now());
     runLogger.error({ event: 'run.failed', err: err.message }, 'run.failed');
     return { runId, status: 'failed', error: err };
+  }
+}
+
+/**
+ * Deliver an event to the caller's `onEvent` sink without letting a throwing
+ * subscriber propagate into the engine. A misbehaving subscriber must not fail
+ * the run or mask the original step error.
+ */
+function fireEvent(
+  sink: ((event: WorkflowEvent) => void) | undefined,
+  event: WorkflowEvent,
+): void {
+  if (!sink) return;
+  try {
+    sink(event);
+  } catch {
+    // Subscriber errors are intentionally swallowed: the engine must not fail
+    // because a progress listener threw.
   }
 }
 
@@ -331,7 +349,7 @@ async function runStep<T>(args: RunStepArgs<T>): Promise<T> {
   const prior = await store.getStep(runId, name);
   if (prior && prior.status === 'completed') {
     stepLogger.info({ event: 'step.skipped', attempt: prior.attempt }, 'step.skipped');
-    args.onEvent?.({
+    fireEvent(args.onEvent, {
       runId,
       workflowId,
       step: name,
@@ -381,7 +399,7 @@ async function runStep<T>(args: RunStepArgs<T>): Promise<T> {
     resultJson: null,
   });
   stepLogger.info({ event: 'step.started', attempt }, 'step.started');
-  args.onEvent?.({
+  fireEvent(args.onEvent, {
     runId,
     workflowId,
     step: name,
@@ -416,7 +434,7 @@ async function runStep<T>(args: RunStepArgs<T>): Promise<T> {
       { event: 'step.completed', attempt, durationMs: finishedAt - startedAt },
       'step.completed',
     );
-    args.onEvent?.({
+    fireEvent(args.onEvent, {
       runId,
       workflowId,
       step: name,
@@ -442,7 +460,7 @@ async function runStep<T>(args: RunStepArgs<T>): Promise<T> {
       resultJson: null,
     });
     stepLogger.error({ event: 'step.failed', attempt, err: err.message }, 'step.failed');
-    args.onEvent?.({
+    fireEvent(args.onEvent, {
       runId,
       workflowId,
       step: name,

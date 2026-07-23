@@ -121,4 +121,25 @@ describe('onEvent lifecycle events', () => {
     expect(secondEventNames).not.toContain('step.started');
     expect(secondEventNames).not.toContain('step.completed');
   });
+
+  it('a throwing onEvent subscriber does not fail the run', async () => {
+    const store = new InMemoryStore();
+
+    async function pipeline(ctx: WorkflowCtx): Promise<string> {
+      return ctx.step('work', () => 'done');
+    }
+
+    const result = await runWorkflow(pipeline, undefined, {
+      store,
+      onEvent: () => {
+        throw new Error('subscriber blew up');
+      },
+    });
+
+    // The run must succeed even though every subscriber call throws.
+    expect(result.status).toBe('completed');
+    if (result.status === 'completed') {
+      expect(result.output).toBe('done');
+    }
+  });
 });
