@@ -5,6 +5,8 @@ import type { FrameworkUpdate } from '@/shared/schemas'
 interface State {
   update: FrameworkUpdate | null
   error: string | null
+  /** True while the initial fetch is in flight (no data yet). */
+  isPending: boolean
 }
 
 /**
@@ -23,5 +25,6 @@ export const useFrameworkUpdate = (): State => {
   return {
     update: query.data ?? null,
     error: query.error ? (query.error as Error).message : null,
+    isPending: query.isPending,
   }
 }

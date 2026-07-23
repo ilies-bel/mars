@@ -110,7 +110,7 @@ export const FrameworkUpdateBannerInner = ({
  *   where `selfUpdatable` is false.
  */
 export const FrameworkUpdateBanner = () => {
-  const { update } = useFrameworkUpdate()
+  const { update, isPending } = useFrameworkUpdate()
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(() => {
     try {
       return typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null
@@ -121,6 +121,14 @@ export const FrameworkUpdateBanner = () => {
 
   const mutation = useMutation({ mutationFn: triggerSelfUpdate })
 
+  // While the query is in flight, reserve the banner slot so NavBar and
+  // Breadcrumbs don't shift when data arrives. h-9 matches the banner's
+  // natural height (py-2 padding + text-sm line height ≈ 36px).
+  if (isPending) {
+    return <div className="h-9 shrink-0" aria-hidden="true" />
+  }
+
+  // Query has settled — collapse entirely when no update is available.
   if (!update || !shouldShowBanner(update.available, update.latest, dismissedVersion)) {
     return null
   }

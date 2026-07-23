@@ -385,14 +385,30 @@ describe('ProjectSelector – Restart control in dropdown', () => {
 // ---------------------------------------------------------------------------
 
 describe('ProjectSelector – empty state', () => {
-  it('renders nothing when the project list is empty', () => {
+  it('renders nothing when the project list is empty and query has settled', () => {
     mockUseFocusedProject.mockReturnValueOnce({
       projects: [],
       focusedProjectId: null,
       setFocusedProjectId,
+      projectsSettled: true,
     })
     const html = renderToStaticMarkup(<ProjectSelector />)
     expect(html).toBe('')
+  })
+
+  it('renders a fixed-width placeholder while projects are loading (not yet settled)', () => {
+    mockUseFocusedProject.mockReturnValueOnce({
+      projects: [],
+      focusedProjectId: null,
+      setFocusedProjectId,
+      projectsSettled: false,
+    })
+    const html = renderToStaticMarkup(<ProjectSelector />)
+    // A width-preserving placeholder prevents the nav links from shifting
+    // horizontally when projects arrive (CLS fix).
+    expect(html).toContain('w-[140px]')
+    // The placeholder must not expose any interactive controls
+    expect(html).not.toContain('data-testid="project-selector-trigger"')
   })
 })
 

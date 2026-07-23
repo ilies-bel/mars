@@ -12,6 +12,7 @@ import { useEffect } from 'react'
 import { useStudio } from '@/entities/studio/useStudio'
 import { StudioView } from '@/widgets/StudioView'
 import { FallbackSurface } from '@/components/FallbackSurface'
+import { SkeletonBlock } from '@/components/Skeleton'
 import { setOpenTaskId } from '@/shared/openTaskId'
 import { taskHash } from '@/shared/routing'
 
@@ -57,9 +58,9 @@ export const StudioPage = ({ taskId, fetchImpl }: StudioPageProps) => {
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         {isLoading ? (
           <div aria-busy="true" aria-label="Loading run timeline" className="flex flex-col gap-3">
-            <div className="h-4 w-1/3 animate-pulse rounded bg-iron/20" />
-            <div className="h-16 w-full animate-pulse rounded bg-iron/20" />
-            <div className="h-16 w-full animate-pulse rounded bg-iron/20" />
+            <SkeletonBlock className="h-4 w-1/3" />
+            <SkeletonBlock className="h-16 w-full" />
+            <SkeletonBlock className="h-16 w-full" />
           </div>
         ) : error !== null ? (
           <FallbackSurface error={error} of="the run timeline" variant="pane" />

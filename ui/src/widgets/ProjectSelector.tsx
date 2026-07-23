@@ -226,7 +226,7 @@ export const ProjectSelectorInner = ({
  * are registered.
  */
 export const ProjectSelector = () => {
-  const { projects, focusedProjectId, setFocusedProjectId } = useFocusedProject()
+  const { projects, focusedProjectId, setFocusedProjectId, projectsSettled } = useFocusedProject()
   const refreshProjects = useRefreshProjects()
   const [starting, setStarting] = useState<string | null>(null)
   const [restarting, setRestarting] = useState<string | null>(null)
@@ -277,7 +277,16 @@ export const ProjectSelector = () => {
     return () => document.removeEventListener('keydown', handler)
   }, [open])
 
-  if (projects.length === 0) return null
+  if (projects.length === 0) {
+    // While the initial fetch is in flight, hold the trigger's width so nav
+    // links don't shift horizontally when projects arrive. w-[140px] matches
+    // the resting trigger width (font-mono text-[11px] name + glyphs + px-2).
+    // Once settled with no projects, collapse entirely.
+    if (!projectsSettled) {
+      return <div className="w-[140px] shrink-0" aria-hidden="true" />
+    }
+    return null
+  }
 
   // Opening sets activeIndex to the currently focused project; closing resets
   // it (handled in the useEffect above).

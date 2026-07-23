@@ -25,7 +25,7 @@ export const TopStripe = ({ inProgress, failed, doneToday, connected }: Props) =
     <div className="flex items-center gap-4">
       <div className="flex items-center gap-3 font-mono tracking-wide">
         <div data-testid="stat-in-progress" className="flex items-center gap-1">
-          <span className="text-[14px] font-bold text-flame">{inProgress}</span>
+          <span className="tabular-nums text-[14px] font-bold text-flame">{inProgress}</span>
           <span className="text-[10px] text-muted">IN PROGRESS</span>
         </div>
         <span className="text-muted">·</span>
@@ -38,12 +38,12 @@ export const TopStripe = ({ inProgress, failed, doneToday, connected }: Props) =
           }}
           className="flex cursor-pointer items-center gap-1 hover:opacity-80"
         >
-          <span className="text-[14px] font-bold text-success">{doneToday}</span>
+          <span className="tabular-nums text-[14px] font-bold text-success">{doneToday}</span>
           <span className="text-[10px] text-muted">DONE TODAY</span>
         </button>
         <span className="text-muted">·</span>
         <div data-testid="stat-failed" className="flex items-center gap-1">
-          <span className="text-[14px] font-bold text-error">{failed}</span>
+          <span className="tabular-nums text-[14px] font-bold text-error">{failed}</span>
           <span className="text-[10px] text-muted">FAILED</span>
         </div>
       </div>

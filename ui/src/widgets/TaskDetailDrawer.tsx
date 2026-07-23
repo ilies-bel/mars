@@ -29,6 +29,7 @@ import { studioHash } from '@/shared/routing'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { CopyButton } from '@/components/CopyButton'
+import { SkeletonBlock } from '@/components/Skeleton'
 import { OriginTree } from './OriginTree'
 
 /** A single step execution span — one step_started event paired with its step_ended (if any). */
@@ -1794,9 +1795,9 @@ export const TaskDetailDrawer = ({
           aria-busy="true"
           aria-label="Loading task details"
         >
-          <div className="mb-3 h-4 w-3/4 animate-pulse rounded bg-iron/20" />
-          <div className="mb-3 h-4 w-1/2 animate-pulse rounded bg-iron/20" />
-          <div className="mb-3 h-4 w-2/3 animate-pulse rounded bg-iron/20" />
+          <SkeletonBlock className="mb-3 h-4 w-3/4" />
+          <SkeletonBlock className="mb-3 h-4 w-1/2" />
+          <SkeletonBlock className="mb-3 h-4 w-2/3" />
         </div>
       ) : null}
 
