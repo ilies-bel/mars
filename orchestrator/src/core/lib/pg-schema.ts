@@ -473,6 +473,18 @@ const DDL: readonly string[] = [
     verdict    text PRIMARY KEY,
     tripped_at text NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS verify_gates (
+    id         text PRIMARY KEY,
+    scope      text NOT NULL DEFAULT '.',
+    name       text NOT NULL,
+    cmd        text NOT NULL,
+    args_json  text NOT NULL DEFAULT '[]',
+    required   INTEGER NOT NULL DEFAULT 1,
+    tier       text NOT NULL DEFAULT 'task',
+    source     text NOT NULL DEFAULT 'human',
+    created_at text NOT NULL,
+    UNIQUE(scope, name)
+  )`,
 
   // ── KPIs / scoring / promotion ────────────────────────────────────────────
   `CREATE TABLE IF NOT EXISTS kpi_snapshots (
@@ -677,6 +689,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'gate_burn_in',
   'gate_verdict_monitor',
   'gate_suppressed_verdicts',
+  'verify_gates',
   'kpi_snapshots',
   'promotion_ledger',
   'scorers',
