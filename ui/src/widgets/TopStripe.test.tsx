@@ -71,6 +71,32 @@ describe('TopStripe – stat labels match their values', () => {
   })
 })
 
+describe('TopStripe – digit jitter prevention', () => {
+  it('IN PROGRESS count span carries tabular-nums so width stays stable across values', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={9} doneToday={0} failed={0} connected={true} />,
+    )
+    const section = between(html, 'stat-in-progress', 'stat-done')
+    expect(section).toContain('tabular-nums')
+  })
+
+  it('DONE TODAY count span carries tabular-nums', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={0} doneToday={9} failed={0} connected={true} />,
+    )
+    const section = between(html, 'stat-done', 'stat-failed')
+    expect(section).toContain('tabular-nums')
+  })
+
+  it('FAILED count span carries tabular-nums', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={0} doneToday={0} failed={9} connected={true} />,
+    )
+    const section = from(html, 'stat-failed')
+    expect(section).toContain('tabular-nums')
+  })
+})
+
 describe('TopStripe – connection indicator', () => {
   it('shows "live" when connected', () => {
     const html = renderToStaticMarkup(
