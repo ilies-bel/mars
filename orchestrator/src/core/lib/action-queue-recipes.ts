@@ -402,7 +402,7 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
 
   'phantom-task': {
     humanSummary: () =>
-      'A task was marked as running but the background process no longer exists — Mars auto-failed it and the slot is free again.',
+      'A task stalled with no active worker — Mars stopped it automatically. Restart or drop it.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,

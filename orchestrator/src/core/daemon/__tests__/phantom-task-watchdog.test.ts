@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -767,5 +767,146 @@ describe('sweepExpiredLeases', () => {
     // Still only ONE action-queue item (dedup by signature).
     const items = await actionQueue.listActionQueueItems('open')
     expect(items.filter((i) => i.kind === 'awaiting-human')).toHaveLength(1)
+  })
+})
+
+// ── buildPhantomBody — plain-language human strings ──────────────────────────
+//
+// buildPhantomBody is a pure string function — no DB needed.
+// Load modules once for the whole block to avoid exhausting the PGlite WASM
+// instance limit that each loadModules() call incurs.
+
+describe('buildPhantomBody — plain-language output', () => {
+  let repo: string
+  let watchdog: WatchdogModule
+
+  beforeAll(async () => {
+    repo = setupRepo()
+    ;({ watchdog } = await loadModules(repo))
+  })
+
+  afterAll(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('uses the first line of prompt as the task goal (trimmed, ≤60 chars)', () => {
+    const body = watchdog.buildPhantomBody(
+      'mars-abc123',
+      'running',
+      'ceiling',
+      33,
+      'Add pagination to the user list endpoint\nSome extra context here.',
+    )
+    expect(body).toContain('Add pagination to the user list endpoint')
+    expect(body).not.toContain('pinned to status')
+    expect(body).not.toContain('in-flight slot')
+    expect(body).not.toContain('subprocess PID')
+    expect(body).not.toContain('phantom')
+    expect(body).toContain('33 min')
+    expect(body).toMatch(/[Rr]estart/)
+    expect(body).toMatch(/drop/)
+  })
+
+  it('truncates a very long first line at 60 chars', () => {
+    const longPrompt = 'A'.repeat(100)
+    const body = watchdog.buildPhantomBody('mars-abc123', 'running', 'ceiling', 5, longPrompt)
+    // The goal embedded in the body should be at most 60 chars
+    const match = body.match(/"([^"]+)"/)
+    expect(match).not.toBeNull()
+    expect(match![1].length).toBeLessThanOrEqual(60)
+  })
+
+  it('falls back to task id in the goal when prompt is absent', () => {
+    const body = watchdog.buildPhantomBody('mars-abc123', 'running', 'ceiling', 10)
+    expect(body).toContain('mars-abc123')
+    expect(body).not.toContain('pinned to status')
+  })
+
+  it('uses plain language for dead-pid reason', () => {
+    const body = watchdog.buildPhantomBody('mars-abc123', 'running', 'dead-pid', 5, 'Fix auth bug')
+    expect(body).toContain('Fix auth bug')
+    expect(body).toContain('exited unexpectedly')
+    expect(body).not.toContain('recorded subprocess PID')
+  })
+
+  it('uses plain language for zero-events reason', () => {
+    const body = watchdog.buildPhantomBody(
+      'mars-abc123',
+      'running',
+      'zero-events',
+      4,
+      'Run database migration',
+    )
+    expect(body).toContain('Run database migration')
+    expect(body).toContain('output')
+    expect(body).not.toContain('trace events')
+    expect(body).not.toContain('phantom')
+  })
+})
+
+// ── action-queue title format ─────────────────────────────────────────────────
+
+describe('sweepPhantomTasks — action-queue title format', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_PHANTOM_WATCHDOG_CEILING_MS
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('title starts with "Stuck N min:" and includes a short task goal, not the task id', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask(
+      'Migrate users table to new schema',
+      undefined,
+      { skipTriage: true },
+    )
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
+      args: [OLD_UPDATED_AT(nowMs), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    const inFlightEntries = [{ taskId: task.id, kind: 'implement' as const, startedAt: nowMs - 35 * 60_000 }]
+    await watchdog.sweepPhantomTasks(inFlightEntries, reclaimSlot, undefined, nowMs)
+
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(1)
+    const title = items[0].title
+    // Must start with "Stuck N min:" pattern
+    expect(title).toMatch(/^Stuck \d+ min:/)
+    // Must include the task goal
+    expect(title).toContain('Migrate users table to new schema')
+    // Must NOT lead with the task id or the word "Phantom"
+    expect(title).not.toMatch(/^Phantom/)
+    expect(title).not.toMatch(new RegExp(`^${task.id}`))
+  })
+
+  it('falls back to task id in title when prompt is empty', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
+      args: [OLD_UPDATED_AT(nowMs), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    const inFlightEntries = [{ taskId: task.id, kind: 'implement' as const, startedAt: nowMs - 35 * 60_000 }]
+    await watchdog.sweepPhantomTasks(inFlightEntries, reclaimSlot, undefined, nowMs)
+
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(1)
+    expect(items[0].title).toMatch(/^Stuck \d+ min:/)
+    expect(items[0].title).toContain(task.id)
   })
 })

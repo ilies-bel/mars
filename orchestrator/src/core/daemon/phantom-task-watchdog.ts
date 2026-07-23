@@ -100,23 +100,33 @@ const resolvedLeaseExpiryMs = (): number => {
 /**
  * Build the human-readable action-queue item body for a phantom detection.
  * Exported for test assertions.
+ *
+ * @param taskId     Task identifier (used as fallback goal when prompt is absent).
+ * @param status     The status the task was stuck in (kept for internal context;
+ *                   not surfaced in the human-facing text).
+ * @param reason     Detection mechanism ('dead-pid' | 'ceiling' | 'zero-events').
+ * @param ageMinutes How long the task has been stuck, in minutes.
+ * @param prompt     The task's prompt text; first line / first 60 chars used as
+ *                   a plain-language goal summary.
  */
 export const buildPhantomBody = (
   taskId: string,
   status: string,
   reason: 'dead-pid' | 'ceiling' | 'zero-events',
   ageMinutes: number,
+  prompt?: string,
 ): string => {
-  const detail =
+  const goal =
+    prompt?.split('\n')[0]?.trim().replace(/[.,:;!?]+$/, '').slice(0, 60) || `task ${taskId}`
+  const reasonDetail =
     reason === 'dead-pid'
-      ? `its recorded subprocess PID is no longer alive`
+      ? `its worker process exited unexpectedly`
       : reason === 'zero-events'
-        ? `its subprocess has been alive for ${ageMinutes} min but produced zero trace events (grace window: ${Math.round(ZERO_EVENTS_GRACE_MS / 60_000)} min)`
-        : `its last-updated timestamp is ${ageMinutes} min old (ceiling: ${Math.round(resolvedCeilingMs() / 60_000)} min)`
+        ? `the worker started ${ageMinutes} min ago without producing any output (grace: ${Math.round(ZERO_EVENTS_GRACE_MS / 60_000)} min)`
+        : `the worker made no progress for ${ageMinutes} min (ceiling: ${Math.round(resolvedCeilingMs() / 60_000)} min)`
   return (
-    `Task ${taskId} was pinned to status '${status}' with no live subprocess: ${detail}. ` +
-    `The daemon auto-failed the task and freed its in-flight slot. ` +
-    `Inspect the task output, then restart or drop as appropriate.`
+    `"${goal}" stalled — ${reasonDetail}, so Mars stopped it. ` +
+    `Restart to try again, or drop it if the work is no longer needed.`
   )
 }
 
@@ -255,12 +265,14 @@ export const sweepPhantomTasks = async (
 
       // Raise exactly one action-queue item per phantom; dedup by taskId so
       // re-detections bump seen_count rather than spawning siblings.
+      const shortGoal =
+        task.prompt?.split('\n')[0]?.trim().replace(/[.,:;!?]+$/, '').slice(0, 60) || task.id
       await raiseActionQueueItem({
         kind: PHANTOM_TASK_KIND,
         category: 'daemon',
         priority: 'high',
-        title: `Phantom task auto-failed: ${task.id} (${status}, ${ageMinutes} min old)`,
-        body: buildPhantomBody(task.id, status, phantomReason, ageMinutes),
+        title: `Stuck ${ageMinutes} min: ${shortGoal}`,
+        body: buildPhantomBody(task.id, status, phantomReason, ageMinutes, task.prompt),
         payload: {
           taskId: task.id,
           previousStatus: status,
