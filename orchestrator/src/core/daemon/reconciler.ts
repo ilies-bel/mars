@@ -120,6 +120,12 @@ export interface ReconcileSummary {
    * ghost row left over from a renamed or removed subscriber.
    */
   ghostSubscribersSwept: number
+  /**
+   * Chat threads whose status was 'running' at daemon start (orphaned by a
+   * prior crash/restart) and were flipped to 'idle' with an interrupted-run
+   * assistant message so the user sees why their turn produced no reply.
+   */
+  orphanedChatRunsRecovered: number
 }
 
 /**
@@ -161,4 +167,5 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   staleActionQueueItemsResolved: 0,
   codeDriftAlertsCleared: 0,
   ghostSubscribersSwept: 0,
+  orphanedChatRunsRecovered: 0,
 })

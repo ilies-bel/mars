@@ -72,6 +72,32 @@ const daemonDiedSweep: Reconciler = {
 }
 
 /**
+ * 2b. Orphaned-chat-run sweep — flip any `chat_threads` row still at
+ *     `status='running'` to `'idle'` and append an interrupted-run assistant
+ *     message. On daemon start the in-memory run map is empty, so any
+ *     `'running'` row is by definition an orphan from a prior crash/restart and
+ *     can never finish on its own.
+ */
+const orphanedChatRunSweep: Reconciler = {
+  name: 'orphaned-chat-run-sweep',
+  async run({ log }) {
+    try {
+      const { recoverOrphanedChatRuns } = await import('../lib/chat-store')
+      const recovered = await recoverOrphanedChatRuns()
+      if (recovered > 0) {
+        log(
+          `[reconcile] flipped ${recovered} orphaned chat thread(s) from 'running' to 'idle' (daemon restart)`,
+        )
+      }
+      return { orphanedChatRunsRecovered: recovered }
+    } catch (err) {
+      log(`[reconcile] orphaned-chat-run-sweep failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * 3. Blocker-drift repair — demote any `queued` task that still has incomplete
  *    blockers back to `blocked` BEFORE we re-seed the dispatch queue.
  */
@@ -571,6 +597,7 @@ const ghostSubscriberSweep: Reconciler = {
 export const RECONCILERS: readonly Reconciler[] = [
   daemonKilledSweep,
   daemonDiedSweep,
+  orphanedChatRunSweep,
   blockerDriftRepair,
   orphanedBlockedScan,
   recoveryDonePropagation,

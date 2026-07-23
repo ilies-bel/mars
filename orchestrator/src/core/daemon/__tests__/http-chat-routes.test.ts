@@ -428,6 +428,75 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
     expect(body.ok).toBe(true)
     expect(body.stopped).toBe(true)
   })
+
+  it('reconciles a stale running row to idle when no live run exists', async () => {
+    // Simulate a thread whose DB row is stuck at 'running' from a prior
+    // daemon crash, with no in-memory run registered.
+    const { getThread: mockGetThread, setThreadStatus: mockSetThreadStatus } =
+      await import('../../lib/chat-store')
+    const getThreadMock = mockGetThread as ReturnType<typeof vi.fn>
+    const setThreadStatusMock = mockSetThreadStatus as ReturnType<typeof vi.fn>
+
+    getThreadMock.mockResolvedValueOnce({
+      thread: {
+        id: 't1',
+        session_id: null,
+        title: '',
+        status: 'running',
+        created_at: '',
+        updated_at: '',
+        origin: null,
+        alert_item_id: null,
+        alert_resolved: false,
+        context_seeded: false,
+        evaporated_at: null,
+      },
+      messages: [],
+      feedbacks: new Map(),
+    })
+
+    const { startHttpServer } = await import('../http-server')
+    const chatRunner = new ChatRunner()
+
+    server = await startHttpServer({
+      chatRunner,
+      restartTask: async () => {},
+      unblockTask: async () => {},
+      purgeTask: async () => {},
+      pruneWorktree: async () => {},
+      dismissProposal: async () => {},
+      validateTask: async () => {},
+      rejectTask: async () => {},
+      investigateWorktree: async () => ({ explanation: '' }),
+      diagnoseFailure: async () => ({ diagnosis: '' }),
+      restartDaemon: async () => {},
+      restartAllDaemonKilled: async () => [],
+      isAcceptingWork: () => true,
+      inFlightCount: () => 0,
+      selfUpdate: async () => {},
+      runReflect: async () => ({ proposalsRaised: 0 }),
+      enableAutoReflect: async () => {},
+      stepDone: async () => ({ next: null as string | null }),
+      snoozeItem: async () => {},
+      recipeCatalog: nullRecipeCatalog,
+      traceStore: nullTraceStore,
+      appServices: stubAppServices(),
+    })
+
+    // No active run — chatRunner.stop returns false.
+    const stopRes = await fetch(
+      `http://127.0.0.1:${server.port}/chat/threads/t1/stop`,
+      { method: 'POST' },
+    )
+
+    expect(stopRes.status).toBe(200)
+    const body = (await stopRes.json()) as { ok: boolean; stopped: boolean }
+    expect(body.ok).toBe(true)
+    expect(body.stopped).toBe(false)
+
+    // The route should have reconciled the stale row to 'idle'.
+    expect(setThreadStatusMock).toHaveBeenCalledWith('t1', 'idle')
+  })
 })
 
 // ---------------------------------------------------------------------------

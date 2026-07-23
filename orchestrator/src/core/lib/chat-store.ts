@@ -369,6 +369,33 @@ export const deleteThread = async (id: string): Promise<void> => {
   await c.execute({ sql: `DELETE FROM chat_threads WHERE id = ?`, args: [id] })
 }
 
+/**
+ * Startup sweep: find every thread whose status is still `'running'` (orphaned
+ * by a daemon crash/restart, since the in-memory run map starts empty), flip
+ * each to `'idle'`, and append a short assistant message so the user sees why
+ * their turn produced no reply. Returns the number of threads recovered.
+ */
+export const recoverOrphanedChatRuns = async (): Promise<number> => {
+  const c = stateClient()
+  const result = await c.execute({
+    sql: `SELECT id FROM chat_threads WHERE status = 'running'`,
+    args: [],
+  })
+  const threadIds = (result.rows as unknown as Array<{ id: string }>).map((r) => r.id)
+  for (const threadId of threadIds) {
+    await c.execute({
+      sql: `UPDATE chat_threads SET status = 'idle', updated_at = ? WHERE id = ?`,
+      args: [now(), threadId],
+    })
+    await appendMessage(
+      threadId,
+      'assistant',
+      'This chat run was interrupted when the daemon restarted. Please resend your message to continue.',
+    )
+  }
+  return threadIds.length
+}
+
 /** Transition a thread between `'idle'` and `'running'` states. */
 export const setThreadStatus = async (id: string, status: ThreadStatus): Promise<void> => {
   const c = stateClient()

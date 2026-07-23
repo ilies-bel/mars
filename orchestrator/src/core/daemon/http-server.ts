@@ -35,6 +35,8 @@ import {
   deleteThread,
   setMessageFeedback,
   clearMessageFeedback,
+  getThread,
+  setThreadStatus,
 } from '../lib/chat-store'
 import type { ChatRunner, AttachmentInfo } from './chat-runner'
 import type { ChatStreamHub, SeqChunk } from './chat-stream-hub'
@@ -1870,6 +1872,9 @@ export const startHttpServer = async (
 
     // POST /chat/threads/:id/stop — kill the active run for the thread and
     // finalise the partial assistant message with what streamed so far.
+    // When no live run exists but the row still says 'running' (stale orphan
+    // from a prior daemon crash), reconcile the row to 'idle' so the UI's
+    // Stop button is a real escape hatch rather than a dead end.
     {
       const chatStopMatch =
         req.method === 'POST' && req.url
@@ -1878,7 +1883,16 @@ export const startHttpServer = async (
       if (chatStopMatch && chatStopMatch[1]) {
         const id = decodeURIComponent(chatStopMatch[1])
         const stopped = deps.chatRunner.stop(id)
-        sendJson(res, 200, { ok: true, stopped })
+        const reconcileStale = async (): Promise<void> => {
+          if (stopped) return
+          const td = await getThread(id)
+          if (td?.thread.status === 'running') {
+            await setThreadStatus(id, 'idle')
+          }
+        }
+        reconcileStale()
+          .then(() => sendJson(res, 200, { ok: true, stopped }))
+          .catch((err: unknown) => sendError(res, err))
         return
       }
     }
