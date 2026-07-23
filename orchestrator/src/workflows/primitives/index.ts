@@ -2152,7 +2152,12 @@ export const merge = async (
           branch,
           worktreePath,
           integrationBranch,
+          // The integration gate runs two full repository suites under this
+          // same merge watchdog. Five minutes is enough for Git operations,
+          // but not for a serialized full-suite run; it was aborting healthy
+          // merges before a gate could return a real result.
           lockTimeoutMs: 5 * 60 * 1000,
+          watchdogMs: 15 * 60 * 1000,
           traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
           onVegaStart: async () => {
             await updateTask(taskId, { status: 'vega-reconciling' }, store)
