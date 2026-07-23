@@ -815,7 +815,7 @@ const ChatConversation = ({
 
   // Reconcile persisted history into useChat when a refetch actually changed it,
   // but never mid-stream — useChat owns the transcript while a reply streams.
-  const appliedSigRef = useRef<string>(' ')
+  const appliedSigRef = useRef<string>(' ')
   useEffect(() => {
     if (status === 'streaming' || status === 'submitted') return
     const sig = transcriptSignature(threadDetail?.messages ?? [])
