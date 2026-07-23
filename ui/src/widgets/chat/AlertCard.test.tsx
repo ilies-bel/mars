@@ -381,3 +381,43 @@ describe('ActionQueueRow – verb visual hierarchy', () => {
     expect(html).not.toContain('text-error')
   })
 })
+
+// ---------------------------------------------------------------------------
+// ActionQueueRow – recipe verb visual hierarchy
+// Even when the backend sends style:'default' for all recipe verbs, the
+// frontend must derive the correct visual weight from the op code so that
+// DROP PERMANENTLY looks dangerous and RESTART looks primary.
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – recipe verb visual hierarchy', () => {
+  it('renders purge recipe verb with error (danger) styling even when backend sends default', () => {
+    const item = {
+      ...BASE_ITEM,
+      humanSummary: 'Task failed',
+      verbs: [{ op: 'purge', label: 'DROP PERMANENTLY', style: 'default' as const }],
+    } as ActionQueueItem
+    const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
+    expect(html).toContain('text-error')
+  })
+
+  it('renders restart recipe verb with primary (flame) styling even when backend sends default', () => {
+    const item = {
+      ...BASE_ITEM,
+      humanSummary: 'Task failed',
+      verbs: [{ op: 'restart', label: 'RESTART', style: 'default' as const }],
+    } as ActionQueueItem
+    const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
+    expect(html).toContain('text-flame')
+  })
+
+  it('renders investigate recipe verb with ghost (default) styling', () => {
+    const item = {
+      ...BASE_ITEM,
+      humanSummary: 'Task failed',
+      verbs: [{ op: 'investigate', label: 'INVESTIGATE', style: 'default' as const }],
+    } as ActionQueueItem
+    const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
+    expect(html).not.toContain('text-flame')
+    expect(html).not.toContain('text-error')
+  })
+})
