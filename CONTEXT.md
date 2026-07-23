@@ -494,3 +494,7 @@ _Avoid_: ai operator, operator agent, self-optimizer, tuner, auto-tuner
 **Vision**:
 The product's enduring north-star — what it is, who it's for, and what success looks like — captured once during onboarding and persisted for the life of the project, surfaced to the chat agent in every session.
 _Avoid_: mission, goals, north star, prd, charter
+
+**Surface form**:
+A stored spelling variant of a glossary term (its plural, lowercased, or otherwise inflected form) that the chat highlighter matches against, so a term lights up regardless of case or inflection.
+_Avoid_: hit list, match form, highlight form, variant
