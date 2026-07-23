@@ -3,59 +3,58 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openLibsql, withTransaction } from '../libsql'
-import type { Client } from '@libsql/client'
+import type { DbClient } from '../db'
 
 describe('openLibsql', () => {
   let tmpDir: string
-  let client: Client
+  let client: DbClient
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'mars-libsql-test-'))
   })
 
-  afterEach(() => {
-    client.close()
+  afterEach(async () => {
+    await client.close()
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('enables foreign_keys pragma on the opened connection', async () => {
+  it('returns a working DbClient that can execute basic SQL', async () => {
+    // openLibsql is now a compatibility shim over openDb (PostgreSQL/PGlite).
+    // SQLite PRAGMA statements no longer apply; verify the returned client
+    // actually executes queries on the PostgreSQL layer.
     client = openLibsql({ url: `file:${join(tmpDir, 'test.db')}` })
-    // @libsql/client serialises all execute() calls on a file: URL's single
-    // connection — querying the pragma here is guaranteed to run AFTER the
-    // foreign_keys=ON pragma was applied.
-    const result = await client.execute('PRAGMA foreign_keys')
-    expect(result.rows[0]['foreign_keys']).toBe(1)
+    const result = await client.execute('SELECT 1 AS n')
+    expect(result.rows[0]?.['n']).toBe(1)
   })
 
-  it('enables WAL journal mode', async () => {
+  it('the returned client can run DDL and DML', async () => {
     client = openLibsql({ url: `file:${join(tmpDir, 'test.db')}` })
-    // The journal_mode=WAL pragma is queued synchronously before openLibsql
-    // returns, so this check runs after it has been applied.
-    const result = await client.execute('PRAGMA journal_mode')
-    expect(result.rows[0]['journal_mode']).toBe('wal')
+    await client.execute('CREATE TABLE _smoke (v TEXT NOT NULL)')
+    await client.execute({ sql: 'INSERT INTO _smoke VALUES (?)', args: ['hello'] })
+    const result = await client.execute('SELECT v FROM _smoke')
+    expect(result.rows[0]?.['v']).toBe('hello')
   })
 
-  it('applies a 5000 ms busy timeout', async () => {
+  it('the returned client normalises int8 columns to JS numbers (migration 0002 compat)', async () => {
+    // Columns typed as int8/bigint come back as JS numbers, not BigInt strings,
+    // because the PGlite parser is configured with a numeric coercion.
     client = openLibsql({ url: `file:${join(tmpDir, 'test.db')}` })
-    // Likewise for busy_timeout: queued before return, so the value is set
-    // by the time this query runs.
-    const result = await client.execute('PRAGMA busy_timeout')
-    // @libsql/client returns the timeout under the 'timeout' column
-    expect(result.rows[0]['timeout']).toBe(5000)
+    const result = await client.execute('SELECT 42::int8 AS n')
+    expect(result.rows[0]?.['n']).toBe(42)
   })
 })
 
 describe('withTransaction', () => {
   let tmpDir: string
-  let client: Client
+  let client: DbClient
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'mars-libsql-tx-test-'))
     client = openLibsql({ url: `file:${join(tmpDir, 'test.db')}` })
   })
 
-  afterEach(() => {
-    client.close()
+  afterEach(async () => {
+    await client.close()
     rmSync(tmpDir, { recursive: true, force: true })
   })
 

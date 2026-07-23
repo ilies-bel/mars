@@ -15,7 +15,7 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { dirname, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findExistingMarsDb, resolveContext, resolveDbTarget } from '../context'
-import { openDb, type DbClient } from '../lib/db'
+import { openDb, recycleDbPool, type DbClient } from '../lib/db'
 import { ensureSchema } from '../lib/pg-schema'
 import { startEmbeddedPg, type EmbeddedPgHandle } from '../lib/pg-server'
 import { importLegacySqlite } from '../../init/import-sqlite'
@@ -3945,6 +3945,53 @@ export const startDaemon = async (
   }, OBSERVABILITY_WATCHDOG_MS)
   observabilityWatchdog.unref()
 
+  // ── DB busy-storm watchdog ────────────────────────────────────────────────
+  // Detects when the database layer is saturated with persistent errors
+  // (deadlock-retry budget exhausted) and escalates in three stages:
+  //   1. Log loudly (STORM DETECTED in watch.log).
+  //   2. Attempt a connection-pool recycle.
+  //   3. Trigger a daemon self-restart (safe since mars-c11be862 landed).
+  // Each stage fires on a separate watchdog tick (default 30 s).
+  // Override cadence via MARS_DB_BUSY_WATCHDOG_MS.
+  // Disable self-restart via MARS_DB_BUSY_STORM_RESTART=false.
+  // .unref() so the interval never prevents a clean shutdown.
+  const MARS_DB_BUSY_WATCHDOG_MS = Number(
+    process.env.MARS_DB_BUSY_WATCHDOG_MS ?? 30_000,
+  )
+  const { checkAndEscalateDbBusyStorm } = await import('./db-busy-watchdog')
+  let dbBusyStage: import('./db-busy-watchdog').BusyEscalationStage | null = null
+  const dbBusyWatchdog = setInterval(() => {
+    void (async () => {
+      try {
+        const result = await checkAndEscalateDbBusyStorm(
+          resolveDbTarget(),
+          log,
+          recycleDbPool,
+          () => {
+            // Mirror the restartDaemon RPC handler: spawn a replacement, then
+            // gracefully shut down this process after a brief flush delay.
+            void import('node:child_process').then(({ spawn }) =>
+              import('./paths').then(({ resolveLaunchCommand }) => {
+                const { command, baseArgs } = resolveLaunchCommand()
+                const child = spawn(command, [...baseArgs, 'daemon', 'start'], {
+                  detached: true,
+                  stdio: 'ignore',
+                })
+                child.unref()
+                setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
+              }),
+            )
+          },
+          dbBusyStage,
+        )
+        dbBusyStage = result.nextStage
+      } catch (err) {
+        log(`[db-busy-watchdog] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, MARS_DB_BUSY_WATCHDOG_MS)
+  dbBusyWatchdog.unref()
+
   // ── Outbox sweeper ────────────────────────────────────────────────────────
   // Periodically prunes aged events from the outbox and raises a dedup'd
   // action-queue item for any subscriber whose cursor lag exceeds the
@@ -4232,6 +4279,7 @@ export const startDaemon = async (
     clearInterval(staleSweep)
     clearInterval(staleMergingSweep)
     clearInterval(observabilityWatchdog)
+    clearInterval(dbBusyWatchdog)
     clearInterval(phantomWatchdog)
     clearInterval(observabilitySweep)
     clearInterval(kpiSnapshotSweep)

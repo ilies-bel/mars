@@ -35,6 +35,7 @@
 
 import pg from 'pg'
 import { PGlite } from '@electric-sql/pglite'
+import { recordDbBusyError } from './db-busy-watchdog.js'
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -330,7 +331,15 @@ export async function withDeadlockRetry<T>(op: () => Promise<T>): Promise<T> {
     try {
       return await op()
     } catch (err: unknown) {
-      if (!isDeadlockError(err) || attempt >= DEADLOCK_MAX_RETRIES) throw err
+      if (!isDeadlockError(err) || attempt >= DEADLOCK_MAX_RETRIES) {
+        // Record deadlock-exhaustion events for the busy-storm watchdog. Only
+        // count deadlock errors that exhausted all retries — a single deadlock
+        // that succeeds on the second attempt is normal concurrency, not a storm.
+        if (isDeadlockError(err) && attempt >= DEADLOCK_MAX_RETRIES) {
+          recordDbBusyError('deadlock:exhausted')
+        }
+        throw err
+      }
       // Jittered backoff so simultaneously-deadlocked passes don't re-collide
       // in lockstep on the next attempt.
       const backoffMs = 20 * (attempt + 1) + Math.floor(Math.random() * 40)
@@ -617,4 +626,40 @@ export async function __resetDbRegistryForTests(): Promise<void> {
   const entries = [...registry.values()]
   registry.clear()
   await Promise.allSettled(entries.map((e) => e.backend.end()))
+}
+
+/**
+ * Best-effort connection-pool recycle for the busy-storm watchdog.
+ *
+ * Removes the registry entry for `target` and tears down the underlying
+ * pool / PGlite instance so the next `openDb(target)` call creates a fresh
+ * backend. Existing `DbClient` handles that were opened against the old entry
+ * will receive errors on their next `execute` / `batch` call — callers with
+ * `try/catch` around DB operations (all daemon subsystems) will surface those
+ * errors through their normal error paths and log them.
+ *
+ * The `end()` call is raced against a 5-second timeout so a wedged pool does
+ * not block the caller indefinitely (the registry entry has already been
+ * removed, so the next `openDb` will succeed regardless of whether `end()`
+ * drains cleanly).
+ *
+ * @param target The DSN or PGlite identity key passed to `openDb`.
+ */
+export async function recycleDbPool(target: string): Promise<void> {
+  const kind = resolveBackendKind()
+  const normalizedTarget =
+    kind === 'pglite' && target.startsWith('file:')
+      ? target.slice('file:'.length)
+      : target
+  const key = `${kind}:${normalizedTarget}`
+  const entry = registry.get(key)
+  if (!entry) return
+  // Remove from the registry FIRST so that concurrent `openDb` callers create
+  // a fresh entry immediately, even if `end()` takes time to drain.
+  registry.delete(key)
+  schemaReadyByClient.delete(entry.client)
+  await Promise.race([
+    entry.backend.end().catch(() => {}),
+    new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+  ])
 }
