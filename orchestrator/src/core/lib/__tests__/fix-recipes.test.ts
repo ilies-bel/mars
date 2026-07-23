@@ -1221,6 +1221,19 @@ describe('genericRecoveryRecipe (first-principles fallback)', () => {
       )
     })
 
+    it('gate-failure path excludes git status and git diff commands in addition to git log (full no-analysis guard)', () => {
+      // Regression guard: an earlier version excluded only git log. Ensure all
+      // three read-what-is-here commands are absent so nothing about the
+      // re-analysis block can creep back in.
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        ...baseCtx,
+        failureSignature: 'verify:some-unknown-gate/unclassified',
+      })
+      expect(prompt).not.toContain(`git -C ${baseCtx.targetPath} status`)
+      expect(prompt).not.toContain(`git -C ${baseCtx.targetPath} diff`)
+      expect(prompt).not.toContain(`git -C ${baseCtx.targetPath} log`)
+    })
+
     it('gate-failure path still includes worktree path and save reminder', () => {
       const prompt = genericRecoveryRecipe.buildPrompt({
         ...baseCtx,
