@@ -180,6 +180,101 @@ const recoveryDonePropagation: Reconciler = {
 }
 
 /**
+ * 5b. Failed-committer dependent release — replay the on-failure fan-out for
+ *     `main-commiter` recoveries whose in-line `updateTaskWithEvents` handler
+ *     was interrupted (a crash, or a DB deadlock whose error was swallowed by
+ *     the handler's try/catch) so its dependents were never released.
+ *
+ *     Symmetric to `recovery-done-propagation` but for the FAILED committer
+ *     case: for every failed `main-commiter` fix task that STILL has `blocked`
+ *     dependents, refresh the aggregated action-queue row and call
+ *     `releaseMainCommitterDependents` — which keeps dependents blocked while
+ *     the integration branch is dirty and only re-queues them once it is clean.
+ *
+ *     Why this gap exists: the on-spawn rescue
+ *     (`reparentStrandedDependentsOntoNewCommitter`) only fires when a NEW
+ *     committer spawns, which never happens once main goes clean (no task hits
+ *     dirty-main). So a committer that failed mid-fan-out over a since-cleaned
+ *     main strands its dependents permanently with no path forward. Incident
+ *     2026-07-23: a deadlock storm swallowed the on-failure release and left 18
+ *     tasks blocked on a dead committer.
+ *
+ *     Idempotent: both helpers no-op when there is nothing to do (no blocked
+ *     dependents / dirty main / already-raised row). Swallows its own errors
+ *     (like steps 1–5) so a transient DB hiccup does not abort the rest of the
+ *     pass. Must run BEFORE reseed-dispatch so freshly re-queued dependents are
+ *     picked up by the same boot's dispatch reseed.
+ */
+const failedCommitterDependentRelease: Reconciler = {
+  name: 'failed-committer-dependent-release',
+  async run({ log }) {
+    try {
+      const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
+        '../lib/main-dirty'
+      )
+      const { releaseMainCommitterDependents, raiseAggregatedMainCommiterFailureRow } =
+        await import('./main-dirty-action-queue')
+      const { getRepoRoot } = await import('../context')
+      const store = getDefaultDomainTaskStore()
+
+      // Failed fix tasks that still have at least one `blocked` dependent.
+      // The main-commiter filter is applied per-row below (recovery_payload is
+      // the only reliable committer marker).
+      const r = await store.query({
+        sql: `SELECT DISTINCT t.id AS id, t.recovery_payload AS recovery_payload
+                FROM tasks t
+                JOIN task_blockers tb ON tb.blocker_task_id = t.id
+                JOIN tasks dep ON dep.id = tb.task_id
+               WHERE t.kind = 'fix'
+                 AND t.status = 'failed'
+                 AND dep.status = 'blocked'`,
+      })
+
+      let processed = 0
+      for (const row of r.rows as unknown as Array<{
+        id: string
+        recovery_payload: string | null
+      }>) {
+        if (
+          parseMainCommiterPayload(row.recovery_payload)?.recipe !==
+          MAIN_COMMITER_RECIPE
+        ) {
+          continue
+        }
+        // Replay the interrupted on-failure fan-out. Both calls are idempotent
+        // and independently guarded, so a failure in one must not skip the other.
+        try {
+          await raiseAggregatedMainCommiterFailureRow(row.id, log)
+        } catch (rowErr) {
+          log(
+            `[reconcile] failed-committer ${row.id}: aggregated action-queue refresh errored: ${(rowErr as Error).message}`,
+          )
+        }
+        try {
+          await releaseMainCommitterDependents(row.id, log, getRepoRoot())
+        } catch (rowErr) {
+          log(
+            `[reconcile] failed-committer ${row.id}: dependent release errored: ${(rowErr as Error).message}`,
+          )
+        }
+        processed++
+      }
+      if (processed > 0) {
+        log(
+          `[reconcile] failed-committer-dependent-release: processed ${processed} failed main-commiter(s) with blocked dependents`,
+        )
+      }
+      return {}
+    } catch (err) {
+      log(
+        `[reconcile] failed-committer-dependent-release failed: ${(err as Error).message}`,
+      )
+      return {}
+    }
+  },
+}
+
+/**
  * 5. Requeue stale-running — tasks that were `running` when the prior daemon
  *    died are re-queued from setup (no retry budget burn). Must run BEFORE
  *    reseed-dispatch so that orphaned 'running' rows are converted to 'queued'
@@ -460,6 +555,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   blockerDriftRepair,
   orphanedBlockedScan,
   recoveryDonePropagation,
+  failedCommitterDependentRelease,
   requeueStaleRunning,
   reseedDispatch,
   orphanSpanSweep,

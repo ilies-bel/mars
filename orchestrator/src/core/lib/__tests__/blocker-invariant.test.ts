@@ -308,4 +308,42 @@ describe('ADR-0040 recovery-leaf guard', () => {
     expect(violations[0].blockerIsRecovery).toBe(true)
     expect(violations[0].taskIsRecovery).toBe(false)
   })
+
+  it('scanRecoveryBlockerEdges does NOT flag shared main-commiter cohort edges', async () => {
+    // A `main-commiter` recovery is a branch-keyed SHARED recovery that
+    // legitimately blocks its whole cohort of dependents (the ADR-0040 exemption
+    // via attachToExistingFixTask). Its fix_for_task_id points at only ONE of
+    // them, so the OTHER cohort edges — which look like a fix_for mismatch — must
+    // NOT be reported as violations.
+    const { q, inv } = await loadModules(repo)
+    const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+    const sibling = await q.enqueueTask('sibling', undefined, { skipTriage: true })
+    const now = new Date().toISOString()
+    const committerId = `fix-${Math.random().toString(36).slice(2, 10)}`
+    // A main-commiter fix row: kind='fix', fix_for_task_id=origin, and a
+    // recovery_payload carrying the main-commiter recipe (the committer marker).
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, origin_id, priority, recovery_payload, created_at, updated_at) VALUES (?, ?, 'queued', 'fix', ?, ?, 0, ?, ?, ?)`,
+      args: [
+        committerId,
+        'main committer',
+        origin.id,
+        origin.id,
+        JSON.stringify({ recipe: 'main-commiter', integrationBranch: 'main' }),
+        now,
+        now,
+      ],
+    })
+    // Both origin AND sibling attached to the one shared committer.
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+      args: [origin.id, committerId, now],
+    })
+    await q.resolveQueueClient().execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+      args: [sibling.id, committerId, now],
+    })
+    const violations = await inv.scanRecoveryBlockerEdges()
+    expect(violations).toEqual([])
+  })
 })

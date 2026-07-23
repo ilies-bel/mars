@@ -231,23 +231,37 @@ export interface RecoveryEdgeViolation {
 
 /**
  * Read-only scan of `task_blockers` for rows that violate ADR-0040, EXCLUDING
- * the legitimate origin→recovery edge written by `upsertFixTask` (where the
- * blocker is a fix task whose `fix_for_task_id` equals the dependent
- * `task_id`). Returns the remaining offending edges so the daemon startup hook
- * can log a one-shot warning for the operator. Never mutates the DB — cleanup
- * is operator-driven via `mars unblock <id>`.
+ * two legitimate classes of recovery-blocker edge:
+ *
+ *  1. The origin→recovery edge written by `upsertFixTask` (where the blocker is
+ *     a fix task whose `fix_for_task_id` equals the dependent `task_id`).
+ *  2. Shared `main-commiter` edges: a `main-commiter` recovery is a branch-keyed
+ *     SHARED recovery that legitimately blocks its whole cohort of dependents
+ *     (via `attachToExistingFixTask`, the documented ADR-0040 exemption), so
+ *     `blocker_fix_for` only points at ONE of them. Flagging the rest as
+ *     violations is a false positive — they are correct while the committer is
+ *     active, and are cleaned up by `releaseMainCommitterDependents` /
+ *     `reparentStrandedDependentsOntoNewCommitter` when it terminates.
+ *
+ * Returns the remaining offending edges so the daemon startup hook can log a
+ * one-shot warning for the operator. Never mutates the DB — cleanup is
+ * operator-driven via `mars unblock <id>`.
  */
 export const scanRecoveryBlockerEdges = async (
   opts: BlockerInvariantOptions = {},
 ): Promise<RecoveryEdgeViolation[]> => {
   const c = opts.client ?? (await getDefaultTaskStore())
+  const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
+    './main-dirty.js'
+  )
   const r = await c.execute({
     sql: `SELECT b.task_id AS task_id,
                  b.blocker_task_id AS blocker_task_id,
                  t.kind AS task_kind,
                  t.fix_for_task_id AS task_fix_for,
                  bk.kind AS blocker_kind,
-                 bk.fix_for_task_id AS blocker_fix_for
+                 bk.fix_for_task_id AS blocker_fix_for,
+                 bk.recovery_payload AS blocker_recovery_payload
             FROM task_blockers b
             LEFT JOIN tasks t  ON t.id  = b.task_id
             LEFT JOIN tasks bk ON bk.id = b.blocker_task_id`,
@@ -261,6 +275,7 @@ export const scanRecoveryBlockerEdges = async (
     task_fix_for: string | null
     blocker_kind: string | null
     blocker_fix_for: string | null
+    blocker_recovery_payload: string | null
   }>) {
     const taskIsRecovery = isRecoveryTask({
       kind: row.task_kind,
@@ -275,7 +290,18 @@ export const scanRecoveryBlockerEdges = async (
       !taskIsRecovery &&
       row.blocker_fix_for != null &&
       row.blocker_fix_for === row.task_id
-    if ((taskIsRecovery || blockerIsRecovery) && !isLegitOriginToRecovery) {
+    // A shared main-commiter recovery legitimately blocks its whole cohort;
+    // every such edge is valid, not just the single origin edge.
+    const isLegitSharedCommitterEdge =
+      blockerIsRecovery &&
+      !taskIsRecovery &&
+      parseMainCommiterPayload(row.blocker_recovery_payload)?.recipe ===
+        MAIN_COMMITER_RECIPE
+    if (
+      (taskIsRecovery || blockerIsRecovery) &&
+      !isLegitOriginToRecovery &&
+      !isLegitSharedCommitterEdge
+    ) {
       violations.push({
         taskId: row.task_id,
         blockerTaskId: row.blocker_task_id,

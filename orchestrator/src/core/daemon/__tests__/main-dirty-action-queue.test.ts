@@ -276,10 +276,13 @@ describe('releaseMainCommitterDependents', () => {
     // Create an initial commit with a .gitignore so `git status --porcelain`
     // returns clean output by default. The releaseMainCommitterDependents guard
     // checks git status before deciding whether to release dependents; tests
-    // that want a "clean" main rely on this baseline.
+    // that want a "clean" main rely on this baseline. Ignore every `.mars*`
+    // path — the PGlite test backend materialises a `.mars.pglite/` data dir
+    // beside `.mars/`, and a bare `.mars/` pattern would leave it untracked,
+    // making the guard read main as dirty and skip the release.
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
-    writeFileSync(resolve(repo, '.gitignore'), '.mars/\n')
+    writeFileSync(resolve(repo, '.gitignore'), '.mars*\n')
     execFileSync('git', ['add', '.gitignore'], { cwd: repo })
     execFileSync('git', ['commit', '-m', 'init'], { cwd: repo })
     process.env.MARS_REPO = repo
