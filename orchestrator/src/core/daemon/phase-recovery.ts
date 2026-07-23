@@ -29,8 +29,8 @@
 import type { EventEmitter } from 'node:events'
 import { hasIncompleteBlockers, listTasks, updateTask, type Task } from '../queue'
 
-/** The three in-flight statuses that a prior daemon can strand a task in. */
-export type RecoverablePhase = 'verifying' | 'merging' | 'running'
+/** The in-flight statuses that a prior daemon can strand a task in. */
+export type RecoverablePhase = 'verifying' | 'merging' | 'running' | 'vega-reconciling'
 
 /**
  * What {@link recoverPhase} did in one pass. Counts feed the reconciler
@@ -69,6 +69,14 @@ interface PhasePolicy {
   requeueLog: (t: Task) => string
   /** Log line for the restore-to-blocked path. */
   blockedLog: (t: Task) => string
+  /**
+   * When true, the recover path always removes the worktree and clears git
+   * pointers, even if the worktree still exists on disk. Use for phases
+   * (such as `vega-reconciling`) where the worktree may be in a transient
+   * mid-operation state (e.g. a partially-applied interactive rebase) that
+   * cannot safely be handed to the checkpoint-resume engine.
+   */
+  forceCleanWorktree?: boolean
 }
 
 /** Probe helpers handed to a policy's `classify`, lazily imported once per pass. */
@@ -115,6 +123,28 @@ const PHASE_POLICY: Record<RecoverablePhase, PhasePolicy> = {
     emitOnRequeue: false,
     requeueLog: () => '',
     blockedLog: () => '',
+  },
+  'vega-reconciling': {
+    status: 'vega-reconciling',
+    // Like `merging`, check whether the branch already landed before the daemon
+    // died. If it did, finalize to done; if not, requeue from setup.
+    // The vcs-supervisor (Vega) subprocess dies with the daemon, leaving the
+    // worktree in an unknown state — possibly mid-interactive-rebase. We NEVER
+    // try to preserve or resume from that worktree: forceCleanWorktree ensures
+    // the phase-recovery loop treats the worktree as gone regardless of whether
+    // it is physically on disk, so the next dispatch starts a clean setup step
+    // rather than re-entering a corrupt rebase environment.
+    classify: async (t, { isBranchMergedIntoMain, repoRoot }) => {
+      const branch = t.branch ?? `task/${t.id}`
+      const landed = await isBranchMergedIntoMain(branch, repoRoot).catch(() => false)
+      return landed ? 'finalize' : 'recover'
+    },
+    forceCleanWorktree: true,
+    emitOnRequeue: true,
+    requeueLog: (t) =>
+      `[reconcile] task ${t.id} was vega-reconciling; Vega session dead, requeued from setup`,
+    blockedLog: (t) =>
+      `[reconcile] task ${t.id} was vega-reconciling; Vega session dead, has incomplete blockers, restored to blocked`,
   },
 }
 
@@ -262,7 +292,11 @@ export const recoverPhase = async (
     const worktreePhysicallyPresent = t.worktreePath != null && exists(t.worktreePath)
     let worktreeOnDisk = worktreePhysicallyPresent
 
-    if (worktreeOnDisk) {
+    if (policy.forceCleanWorktree) {
+      // Phase policy demands we always discard the worktree (e.g. vega-reconciling,
+      // where the worktree may be in a mid-rebase state that is unsafe to resume).
+      worktreeOnDisk = false
+    } else if (worktreeOnDisk) {
       // Worktree survived the daemon restart — check if the durable workflow
       // run is terminal failed. If so the step checkpoints are stale and
       // checkpoint-resume would re-enter at the failed step (e.g. verify)

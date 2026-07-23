@@ -369,6 +369,25 @@ const mergingRecovery: Reconciler = {
 }
 
 /**
+ * 9b. Vega-reconciling recovery — tasks that were running the vcs-supervisor
+ *     (Vega) when the prior daemon died. Vega's subprocess is dead; the
+ *     worktree may be in an unknown state (partial rebase, mid-conflict). The
+ *     recovery always discards the worktree and requeues from setup, unless
+ *     the branch already landed in the integration branch (finalize to done).
+ *     Must run AFTER merging-recovery (same lifecycle phase) and BEFORE
+ *     reseed-dispatch so freshly-requeued tasks are included in the boot seed.
+ */
+const vegaReconcilingRecovery: Reconciler = {
+  name: 'vega-reconciling-recovery',
+  async run({ log, bus }) {
+    const { recoverPhase } = await import('./phase-recovery')
+    const { getRepoRoot } = await import('../context')
+    const r = await recoverPhase('vega-reconciling', { log, bus, repoRoot: getRepoRoot() })
+    return { vegaReconcilingRequeued: r.requeued.length, vegaReconcilingFinalized: r.finalized }
+  },
+}
+
+/**
  * 10. Stalled-proposal slice — pick up prd-ready proposals promoted while the
  *    daemon was offline. With a `handleProposalSlice` callback (daemon path),
  *    slice them; when null (standalone path), just report them.
@@ -561,6 +580,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   orphanSpanSweep,
   verifyingRecovery,
   mergingRecovery,
+  vegaReconcilingRecovery,
   stalledProposalSlice,
   staleActionQueueSweep,
   codeDriftClearSweep,

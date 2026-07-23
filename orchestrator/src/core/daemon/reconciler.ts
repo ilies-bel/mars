@@ -77,6 +77,16 @@ export interface ReconcileSummary {
   verifyingFailed: number
   mergingFinalized: number
   mergingRequeued: number
+  /**
+   * Tasks in `vega-reconciling` status whose Vega (vcs-supervisor) session died
+   * with the daemon and that were requeued from setup at startup.
+   */
+  vegaReconcilingRequeued: number
+  /**
+   * Tasks in `vega-reconciling` status whose fast-forward had already landed
+   * before the daemon died; finalized to `done` at startup.
+   */
+  vegaReconcilingFinalized: number
   stalledProposalsSliced: number
   /**
    * Origins flipped to 'done' by replaying a completed recovery's propagation
@@ -143,6 +153,8 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   verifyingFailed: 0,
   mergingFinalized: 0,
   mergingRequeued: 0,
+  vegaReconcilingRequeued: 0,
+  vegaReconcilingFinalized: 0,
   stalledProposalsSliced: 0,
   recoveryPropagated: 0,
   recoveryDependentsRequeued: 0,

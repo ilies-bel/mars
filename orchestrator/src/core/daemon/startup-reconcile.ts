@@ -62,6 +62,10 @@ export type { ReconcileSummary } from './reconciler'
  *     mark failed.
  *  9. Merging recovery — if the FF already landed, finalize to done; else
  *     clear worktree and re-queue.
+ * 9b. Vega-reconciling recovery — tasks stranded while the vcs-supervisor
+ *     was running. Vega's subprocess died with the daemon; the worktree may
+ *     be in a partial rebase state. Always discard it and requeue from setup
+ *     (or finalize to done if the branch already landed).
  * 10. Stalled-proposal slice — pick up prd-ready proposals that were
  *     promoted while the daemon was offline.
  *

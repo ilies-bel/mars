@@ -837,6 +837,23 @@ export const startDaemon = async (
           )
         }
       }
+      // Eagerly persist 'running' so the DB count matches the in-flight tracker
+      // before the setup-worktree step executes. Without this, there is a window
+      // between commitInFlight (which makes the task visible in 'mars daemon
+      // status' inFlight counts) and the first updateTask({status:'running'})
+      // inside the setup-worktree step during which the DB still shows 'queued'.
+      // That window causes the UI (which reads from the DB) to under-report
+      // in-progress work and the post-restart reconcile to see the task as queued.
+      // The setup-worktree step's own updateTask is still present — on a
+      // checkpoint resume where setup is already done it is the only place the
+      // status is set to 'running', so both writes are load-bearing.
+      await updateTask(task.id, { status: 'running' }).catch((err) => {
+        log(
+          `[implement] ${task.id} eager-running update failed (non-fatal): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+      })
       const { runWorkflow } = await import('@mars/workflow')
       const { createQueueWorkflowStore, loadWorkflowByName } = await import(
         '../../workflows/queue-workflow-store'
