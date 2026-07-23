@@ -510,7 +510,7 @@ const TopologyViewInner = ({
             zoomable
             nodeColor={minimapNodeColor}
             nodeStrokeWidth={3}
-            position="top-right"
+            position="bottom-right"
             className="topo-minimap"
             style={{ width: 180, height: 120 }}
           />
