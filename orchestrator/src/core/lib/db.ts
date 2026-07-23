@@ -294,6 +294,51 @@ async function runInTx<T>(
   }
 }
 
+// ── Deadlock retry (embedded backend) ───────────────────────────────────────
+
+/** PostgreSQL SQLSTATE for a deadlock victim (`deadlock detected`). */
+const DEADLOCK_SQLSTATE = '40P01'
+/**
+ * Bounded so a genuine, persistent lock-ordering bug still surfaces instead of
+ * spinning forever. Eight jittered retries span ~1s of wall time — ample for
+ * the daemon's concurrent reconcile/dispatch/watchdog passes to serialize out.
+ */
+const DEADLOCK_MAX_RETRIES = 8
+
+function isDeadlockError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === DEADLOCK_SQLSTATE
+  )
+}
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * Runs `op`, retrying on a PostgreSQL deadlock (SQLSTATE 40P01) with jittered
+ * backoff. Deadlocks are the expected outcome when the daemon's many
+ * concurrent reconcile / dispatch-poll-fallback / phantom-watchdog passes touch
+ * `tasks` and `task_blockers` in different lock orders: Postgres kills one side
+ * and rolls it FULLY back, so re-running the operation from a clean state is
+ * safe. A single autocommit statement re-executes as itself; a transaction
+ * re-runs its whole body from a fresh BEGIN. Exported for unit coverage.
+ */
+export async function withDeadlockRetry<T>(op: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await op()
+    } catch (err: unknown) {
+      if (!isDeadlockError(err) || attempt >= DEADLOCK_MAX_RETRIES) throw err
+      // Jittered backoff so simultaneously-deadlocked passes don't re-collide
+      // in lockstep on the next attempt.
+      const backoffMs = 20 * (attempt + 1) + Math.floor(Math.random() * 40)
+      await sleep(backoffMs)
+    }
+  }
+}
+
 // ── embedded backend (pg.Pool over the daemon-provisioned server) ───────────
 
 let pgTypeParsersInstalled = false
@@ -332,26 +377,34 @@ function makeEmbeddedBackend(dsn: string): BackendOps {
   // the failure to the caller instead.
   pool.on('error', () => {})
   return {
-    query: async (sql, params) =>
-      toResultSetPg(await pool.query({ text: sql, values: params })),
-    transaction: async (fn) => {
-      const conn = await pool.connect()
-      let broken = false
-      try {
-        return await runInTx(async (sql, params) => {
-          try {
-            return toResultSetPg(await conn.query({ text: sql, values: params }))
-          } catch (err: unknown) {
-            // COMMIT/ROLLBACK failures can leave the session in an unknown
-            // state; destroy the connection instead of pooling it again.
-            if (sql === 'COMMIT' || sql === 'ROLLBACK') broken = true
-            throw err
-          }
-        }, fn)
-      } finally {
-        conn.release(broken ? new Error('db: transaction connection discarded') : undefined)
-      }
-    },
+    // A single autocommit statement: on a deadlock it rolled back on its own,
+    // so re-executing the same statement is safe.
+    query: (sql, params) =>
+      withDeadlockRetry(async () =>
+        toResultSetPg(await pool.query({ text: sql, values: params })),
+      ),
+    // A multi-statement transaction: on a deadlock Postgres aborts the whole
+    // transaction, so retry re-checks-out a connection and re-runs `fn` from a
+    // fresh BEGIN. Each attempt gets its own connection + `broken` flag.
+    transaction: (fn) =>
+      withDeadlockRetry(async () => {
+        const conn = await pool.connect()
+        let broken = false
+        try {
+          return await runInTx(async (sql, params) => {
+            try {
+              return toResultSetPg(await conn.query({ text: sql, values: params }))
+            } catch (err: unknown) {
+              // COMMIT/ROLLBACK failures can leave the session in an unknown
+              // state; destroy the connection instead of pooling it again.
+              if (sql === 'COMMIT' || sql === 'ROLLBACK') broken = true
+              throw err
+            }
+          }, fn)
+        } finally {
+          conn.release(broken ? new Error('db: transaction connection discarded') : undefined)
+        }
+      }),
     end: () => pool.end(),
   }
 }
