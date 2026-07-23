@@ -665,3 +665,125 @@ describe('runStartupReconcile — ghost-subscriber-sweep', () => {
     expect(summary.ghostSubscribersSwept).toBe(1)
   })
 })
+
+describe('runStartupReconcile — vega-reconciling-recovery integration', () => {
+  /**
+   * Integration regression for the bug where tasks stranded in
+   * `vega-reconciling` after a daemon restart were never recovered.
+   *
+   * These tests verify the wiring from `runStartupReconcile` →
+   * `vegaReconcilingRecovery` reconciler → `recoverPhase('vega-reconciling')`.
+   * The per-function unit tests live in phase-recovery-vega-reconciling.test.ts;
+   * these verify the reconciler is registered and plumbed correctly and that
+   * the `vegaReconcilingRequeued` summary counter is accumulated end-to-end.
+   */
+
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('requeues a vega-reconciling task and emits task.queued on the bus', async () => {
+    // Regression: a task stuck in vega-reconciling (Vega/vcs-supervisor was
+    // running when the daemon died) must be re-queued from setup, not left
+    // stranded indefinitely.
+    const { q, reconcile } = await loadModules(repo)
+    const taskQueuedEvents: string[] = []
+    const bus = new EventEmitter()
+    bus.on('task.queued', (e: { taskId: string }) => taskQueuedEvents.push(e.taskId))
+
+    // Simulate: a task was in vega-reconciling when the prior daemon died.
+    // branch and worktree_path are null (cleared or never set in this simulation).
+    const task = await q.enqueueTask('vega-reconciling work', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'vega-reconciling', branch = NULL, worktree_path = NULL WHERE id = ?`,
+      args: [task.id],
+    })
+
+    const summary = await reconcile.runStartupReconcile({
+      log: () => {},
+      bus,
+      traceStore: null,
+      handleProposalSlice: null,
+    })
+
+    // Task must be re-queued from setup — never left in vega-reconciling.
+    const updated = await q.getTask(task.id)
+    expect(updated?.status).toBe('queued')
+
+    // In-flight fields must be cleared so the next dispatch starts clean.
+    expect(updated?.branch).toBeNull()
+    expect(updated?.worktreePath).toBeNull()
+    expect(updated?.claudeSessionId).toBeNull()
+    expect(updated?.error).toBeNull()
+
+    // Summary counter must reflect the re-queue.
+    expect(summary.vegaReconcilingRequeued).toBe(1)
+    expect(summary.vegaReconcilingFinalized).toBe(0)
+
+    // Bus must emit task.queued so the dispatch loop picks it up.
+    // Both vega-reconciling-recovery and reseed-dispatch emit for the task —
+    // at minimum one event must be present.
+    expect(taskQueuedEvents).toContain(task.id)
+  })
+
+  it('restores a vega-reconciling task to blocked when it has incomplete blockers', async () => {
+    // A vega-reconciling task with a live (non-done) blocker must be
+    // restored to blocked, not queued — its dependency is still outstanding.
+    const { q, reconcile } = await loadModules(repo)
+
+    const blocker = await q.enqueueTask('incomplete blocker', undefined, { skipTriage: true })
+    const task = await q.enqueueTask('vega-reconciling with active blocker', undefined, {
+      skipTriage: true,
+    })
+    await q.addBlockers(task.id, [blocker.id])
+
+    // Force the task to vega-reconciling.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'vega-reconciling' WHERE id = ?`,
+      args: [task.id],
+    })
+
+    const summary = await reconcile.runStartupReconcile({
+      log: () => {},
+      bus: new EventEmitter(),
+      traceStore: null,
+      handleProposalSlice: null,
+    })
+
+    // Task must be restored to blocked (not queued) — the blocker is still
+    // outstanding and the task must not be dispatched without it.
+    const updated = await q.getTask(task.id)
+    expect(updated?.status).toBe('blocked')
+
+    // A task restored to blocked is NOT counted in vegaReconcilingRequeued.
+    expect(summary.vegaReconcilingRequeued).toBe(0)
+    expect(summary.vegaReconcilingFinalized).toBe(0)
+  })
+
+  it('is a no-op when there are no vega-reconciling tasks', async () => {
+    // Belt-and-suspenders: a daemon restart with no stuck Vega sessions must
+    // not touch any tasks or emit spurious events.
+    const { q, reconcile } = await loadModules(repo)
+
+    // Seed a normal queued task (not vega-reconciling) to ensure the step
+    // does not disturb unrelated rows.
+    await q.enqueueTask('normal queued work', undefined, { skipTriage: true })
+
+    const summary = await reconcile.runStartupReconcile({
+      log: () => {},
+      bus: new EventEmitter(),
+      traceStore: null,
+      handleProposalSlice: null,
+    })
+
+    expect(summary.vegaReconcilingRequeued).toBe(0)
+    expect(summary.vegaReconcilingFinalized).toBe(0)
+  })
+})
