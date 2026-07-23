@@ -381,6 +381,14 @@ async function runStep<T>(args: RunStepArgs<T>): Promise<T> {
     resultJson: null,
   });
   stepLogger.info({ event: 'step.started', attempt }, 'step.started');
+  args.onEvent?.({
+    runId,
+    workflowId,
+    step: name,
+    event: 'step.started',
+    payload: { attempt },
+    time: Date.now(),
+  });
 
   // Publish the live handle onto the run ctx so primitives invoked inside this
   // step can reach it (sha / transcript key / summary) without it being passed
@@ -408,6 +416,14 @@ async function runStep<T>(args: RunStepArgs<T>): Promise<T> {
       { event: 'step.completed', attempt, durationMs: finishedAt - startedAt },
       'step.completed',
     );
+    args.onEvent?.({
+      runId,
+      workflowId,
+      step: name,
+      event: 'step.completed',
+      payload: { attempt, durationMs: finishedAt - startedAt, summary },
+      time: Date.now(),
+    });
     return result;
   } catch (error: unknown) {
     const err = toError(error);
@@ -426,6 +442,14 @@ async function runStep<T>(args: RunStepArgs<T>): Promise<T> {
       resultJson: null,
     });
     stepLogger.error({ event: 'step.failed', attempt, err: err.message }, 'step.failed');
+    args.onEvent?.({
+      runId,
+      workflowId,
+      step: name,
+      event: 'step.failed',
+      payload: { attempt, durationMs: finishedAt - startedAt, error: err.message },
+      time: Date.now(),
+    });
     throw err;
   } finally {
     // Clear the published handle: no step is in flight once this one settles.
