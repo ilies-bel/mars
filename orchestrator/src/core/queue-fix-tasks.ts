@@ -600,6 +600,34 @@ export const handleTaskFailureWithFixTask = async (
     return { outcome: 'requeued', retryCount: nextRetryCount, failureSignature }
   }
 
+  // ── API-unreachable re-queue ──────────────────────────────────────────────
+  // When the coder failed because Claude's API was unreachable (network/DNS),
+  // spawning a recovery fix-task is wasteful: the fix task would fail
+  // immediately for the same reason, burning the one recovery slot on an
+  // error that has nothing to do with the code. Re-queue the origin from
+  // setup instead. retryCount++ consumes the slot so the budget-exhaustion
+  // guard above still catches a persistent outage after one re-queue cycle.
+  if (failureSignature.endsWith('/api-unreachable')) {
+    const nextRetryCount = task.retryCount + 1
+    await updateTask(
+      input.taskId,
+      {
+        status: 'queued',
+        error: null,
+        failedPhase: null,
+        failureSignature: null,
+        failureReasonCode: null,
+        retryCount: nextRetryCount,
+      },
+      s,
+    )
+    // eslint-disable-next-line no-console
+    console.log(
+      `[failure-handler] task ${input.taskId}: api-unreachable — re-queuing instead of spawning recovery fix-task`,
+    )
+    return { outcome: 'requeued', retryCount: nextRetryCount, failureSignature }
+  }
+
   // Fix-fail-loop cap. Count every historical fix-task row for this
   // (sourceTaskId, failureSignature) pair regardless of status. When
   // the cap is hit, stop inserting new fix tasks and escalate to the

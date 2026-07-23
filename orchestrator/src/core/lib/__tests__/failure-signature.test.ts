@@ -447,6 +447,59 @@ describe('causeForSignature', () => {
       ),
     ).toBeNull()
   })
+
+  it('renders an environmental cause for the api-unreachable signature naming connectivity and restart', () => {
+    const cause = causeForSignature(
+      'code:coder-exit-nonzero/api-unreachable',
+      'mars-1234abcd',
+    )
+    expect(cause).not.toBeNull()
+    // Must mention the API (not the code being at fault)
+    expect(cause!.toLowerCase()).toMatch(/api|connect/)
+    // Must tell the operator to retry
+    expect(cause).toContain('mars restart mars-1234abcd')
+  })
+})
+
+describe('api-unreachable classification', () => {
+  it('classifies the exact error text from the real symptom as api-unreachable', () => {
+    // This is the exact `last stream text` line from the failing task transcript.
+    expect(
+      classifyError('API Error: Unable to connect to API (ConnectionRefused)'),
+    ).toBe('api-unreachable')
+  })
+
+  it('computeFailureSignature produces code:coder-exit-nonzero/api-unreachable for the real coder error format', () => {
+    // The coder-exit-nonzero path in primitives/index.ts builds the errorOutput as:
+    // "coder process exited 1. worktree was clean at exit (no uncommitted work found).
+    //  stderr empty; last stream text:\nAPI Error: Unable to connect to API (ConnectionRefused)"
+    const errorOutput = [
+      'coder process exited 1. worktree was clean at exit (no uncommitted work found).',
+      'stderr empty; last stream text:',
+      'API Error: Unable to connect to API (ConnectionRefused)',
+    ].join('\n')
+    expect(
+      computeFailureSignature('code:coder-exit-nonzero', errorOutput),
+    ).toBe('code:coder-exit-nonzero/api-unreachable')
+  })
+
+  it('classifies bare "Unable to connect to API" (without the ConnectionRefused parenthetical) as api-unreachable', () => {
+    expect(
+      classifyError('Unable to connect to API'),
+    ).toBe('api-unreachable')
+  })
+
+  it('does NOT classify a PostgreSQL ECONNREFUSED test failure as api-unreachable', () => {
+    // The test-pg-connection-refused rule must still claim ECONNREFUSED
+    // from a test failure context. The api-unreachable pattern requires
+    // "Unable to connect to API" or an "API Error:…ECONNREFUSED" form.
+    const pgError = [
+      ' FAIL  src/core/store/__tests__/task-store.test.ts > opens the store',
+      'Error: connect ECONNREFUSED 127.0.0.1:54321',
+    ].join('\n')
+    expect(classifyError(pgError)).toBe('test-pg-connection-refused')
+    expect(classifyError(pgError)).not.toBe('api-unreachable')
+  })
 })
 
 describe('firstNonBlankLine', () => {

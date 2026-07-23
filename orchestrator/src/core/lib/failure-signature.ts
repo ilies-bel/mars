@@ -294,6 +294,19 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /42P01|relation "[^"]+" does not exist/,
   },
   {
+    // code:coder-exit-nonzero/api-unreachable fires when the claude CLI dies
+    // because the Claude API was unreachable — network partition, DNS failure,
+    // or a transient outage. The CLI exits non-zero and emits text like:
+    //   "API Error: Unable to connect to API (ConnectionRefused)"
+    // Nothing was wrong with the code; the task should be re-queued, not
+    // sent to a recovery fixer that would fail for the same reason.
+    // Must come BEFORE test-pg-connection-refused so the API-level signal
+    // "Unable to connect to API" is claimed before the broader ECONNREFUSED
+    // matchFull picks it up as a test-PG failure.
+    errorClass: 'api-unreachable',
+    matchFull: /Unable to connect to API|API Error[^:]*:.*(?:ConnectionRefused|ECONNREFUSED)/i,
+  },
+  {
     // verify:test/test-pg-connection-refused fires when a test cannot reach
     // the PostgreSQL server: 57P03 (cannot_connect_now — server starting up
     // or shutting down) or a plain TCP ECONNREFUSED (server absent, stale
@@ -413,6 +426,9 @@ const causeSentencesBySignature: Readonly<Record<string, CauseRenderer>> = {
   // criterion contradicted on the live surface; a recovery Chore was spawned.
   'behaviour-verify:dod-unmet/dod-unmet': () =>
     `behaviour verification contradicted a Definition-of-Done criterion on the live surface — the recovery Chore closes the gap on the origin worktree`,
+  // Environmental: Claude's API was unreachable — nothing wrong with the code.
+  'code:coder-exit-nonzero/api-unreachable': (taskId) =>
+    `the coder couldn't reach Claude's API — nothing was wrong with the code. Retry once connectivity is back: mars restart ${taskId}`,
 }
 
 /**

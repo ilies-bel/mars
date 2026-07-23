@@ -292,6 +292,25 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
 
+      // ── code:coder-exit-nonzero ──────────────────────────────────────────
+      // The coder process exited non-zero without doing any of its work.
+      // The api-unreachable sub-class is the only named entry: when Claude's
+      // API is unreachable at the network level the coder exits immediately
+      // with no code changes and the cause is environmental, not a code
+      // defect. handleTaskFailureWithFixTask re-queues (never spawns recovery)
+      // for this signature so the slot is not burned on a doomed fix task.
+      {
+        signature: 'code:coder-exit-nonzero/api-unreachable',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: "The coder couldn't reach Claude's API",
+        verboseReason:
+          "The code step failed because the coder process could not connect to Claude's API (network or DNS error) — the task code was not at fault. The task has been re-queued and will retry once connectivity is restored.",
+        actions: [
+          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      },
+
       // ── code:no-edits-made ───────────────────────────────────────────────
       {
         signature: 'code:no-edits-made/unclassified',
