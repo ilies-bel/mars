@@ -25,6 +25,7 @@ import {
   AttachmentDisplay,
   resolveMediaKind,
   fileMediaKind,
+  ThinkingIndicator,
 } from './ChatPage'
 import { chatMessageToUIMessage } from '@/shared/chatMessageMapping'
 import { chatThreadDetailSchema } from '@/shared/schemas'
@@ -642,5 +643,74 @@ describe('MessageView – attachment segment rendering', () => {
     ]))
     expect(html).toContain('data-testid="attachment-video"')
     expect(html).toContain('<video')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ThinkingIndicator — pending/streaming gap placeholder
+// ---------------------------------------------------------------------------
+
+describe('ThinkingIndicator', () => {
+  it('renders "Thinking…" text visible to the user', () => {
+    const html = renderToStaticMarkup(createElement(ThinkingIndicator))
+    expect(html).toContain('Thinking')
+  })
+
+  it('has role="status" so screen readers announce it', () => {
+    const html = renderToStaticMarkup(createElement(ThinkingIndicator))
+    expect(html).toContain('role="status"')
+  })
+
+  it('has aria-live="polite" on the wrapper', () => {
+    const html = renderToStaticMarkup(createElement(ThinkingIndicator))
+    expect(html).toContain('aria-live="polite"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ThinkingIndicator — showThinking condition (thread.status logic)
+//
+// ChatConversation derives `showThinking` as:
+//   status === 'submitted' || (serverRunning && !isBusy)
+// where isBusy = status === 'streaming' || status === 'submitted'.
+//
+// These tests exercise the condition logic that controls when the indicator
+// renders, expressed through the ThinkingIndicator component itself.
+// ---------------------------------------------------------------------------
+
+describe('ThinkingIndicator – visibility condition', () => {
+  /** Simulate the ChatConversation showThinking derivation. */
+  function showThinking(status: string, serverRunning: boolean): boolean {
+    const isBusy = status === 'streaming' || status === 'submitted'
+    return status === 'submitted' || (serverRunning && !isBusy)
+  }
+
+  function renderConditional(visible: boolean): string {
+    return renderToStaticMarkup(
+      visible ? createElement(ThinkingIndicator) : createElement('span', null, ''),
+    )
+  }
+
+  it('shows indicator when thread is running and no stream has started yet', () => {
+    // Simulates thread.status === 'running', useMarsChat status === 'ready'
+    const html = renderConditional(showThinking('ready', true))
+    expect(html).toContain('Thinking')
+  })
+
+  it('shows indicator immediately after the user submits a message', () => {
+    // Client-initiated: useMarsChat status flips to 'submitted' on send
+    const html = renderConditional(showThinking('submitted', false))
+    expect(html).toContain('Thinking')
+  })
+
+  it('hides indicator once streaming begins (live buffer exists)', () => {
+    // First SSE token received → status becomes 'streaming'; no indicator
+    const html = renderConditional(showThinking('streaming', true))
+    expect(html).not.toContain('Thinking')
+  })
+
+  it('hides indicator when thread is idle and no client send pending', () => {
+    const html = renderConditional(showThinking('ready', false))
+    expect(html).not.toContain('Thinking')
   })
 })

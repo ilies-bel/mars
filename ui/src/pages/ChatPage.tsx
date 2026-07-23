@@ -53,7 +53,7 @@ import { Message, MessageContent } from '@/components/ai-elements/message'
 import { Response } from '@/components/ai-elements/response'
 import { Reasoning, ReasoningTrigger, ReasoningContent } from '@/components/ai-elements/reasoning'
 import { Tool, ToolHeader, ToolContent, ToolInput, ToolOutput } from '@/components/ai-elements/tool'
-import { Loader } from '@/components/ai-elements/loader'
+// Loader removed — ThinkingIndicator replaces it in ChatConversation
 import { Suggestions, Suggestion } from '@/components/ai-elements/suggestion'
 import {
   PromptInputTextarea,
@@ -775,6 +775,20 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
 // Conversation — AI-Elements transcript driven by useChat
 // ---------------------------------------------------------------------------
 
+/**
+ * Pulsing "Thinking…" indicator shown while a reply is in-flight but before
+ * the first streaming token arrives.  Covers two cases:
+ *   - client-initiated send: status === 'submitted'
+ *   - daemon-initiated run: serverRunning && !isBusy (thread.status === 'running'
+ *     but the SSE stream has not yet started)
+ */
+export const ThinkingIndicator = () => (
+  <div role="status" aria-live="polite" className="flex items-center gap-2 px-4 py-2">
+    <span className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-iron/60" aria-hidden="true" />
+    <span className="font-mono text-[11px] text-iron/50">Thinking…</span>
+  </div>
+)
+
 interface ChatConversationProps {
   threadId: string
   projectId?: string
@@ -834,6 +848,10 @@ const ChatConversation = ({
 
   const isBusy = status === 'streaming' || status === 'submitted'
   const serverRunning = threadDetail?.thread.status === 'running'
+  // Pending indicator: show from the moment a send lands until the first stream
+  // token arrives (submitted), and also whenever the daemon has an active run
+  // that the client hasn't started streaming yet (server-initiated run, idle).
+  const showThinking = status === 'submitted' || (serverRunning && !isBusy)
 
   // Attach live to a daemon-initiated run the client did NOT start (an
   // alert-origin thread whose run began server-side). `resumeStream` opens the
@@ -878,7 +896,10 @@ const ChatConversation = ({
     void qc.invalidateQueries({ queryKey: ['chat-threads'] })
   }, [stop, qc, threadId])
 
-  const showWelcome = !isLoading && messages.length === 0
+  // Suppress welcome chips while we're waiting for a reply — a brand-new
+  // thread with a running/submitted state should show ThinkingIndicator, not
+  // the empty-state chips.
+  const showWelcome = !isLoading && messages.length === 0 && !showThinking
 
   return (
     <>
@@ -907,11 +928,7 @@ const ChatConversation = ({
                   onFeedbackChange={handleFeedbackChange}
                 />
               ))}
-              {status === 'submitted' && (
-                <div className="px-4 py-2">
-                  <Loader />
-                </div>
-              )}
+              {showThinking && <ThinkingIndicator />}
               {error && (
                 <ChatResponseError
                   onTryAgain={() => onInsertPrompt('Please retry my last request.')}
