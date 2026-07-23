@@ -517,6 +517,26 @@ describe('buildArcPrompt — prompt size cap and elision markers', () => {
     expect(prompt).toContain('"environmentalFailure":false')
     expect(prompt).not.toContain('"environmentalFailure":true')
   })
+
+  it('sets environmentalFailure in digest for secondary 429 result signal (no rate_limit_event)', () => {
+    // Secondary path: a result event with is_error=true and api_error_status=429
+    // must also trigger environmentalFailure:true even when no rate_limit_event is present.
+    const conversation: ClaudeEvent[] = [
+      readCallEvent('r1'),
+      largeResultEvent('r1', 100),
+      {
+        type: 'result',
+        is_error: true,
+        api_error_status: 429,
+        subtype: 'error',
+      } as unknown as ClaudeEvent,
+    ]
+    const arc = makeArc([makeTaskEntry('task-1', conversation)])
+    const prompt = buildArcPrompt(arc)
+
+    expect(prompt).toContain('"environmentalFailure":true')
+    expect(prompt).toContain('rate_limit_event')
+  })
 })
 
 describe('buildArcPrompt — step timeline with tool errors', () => {
