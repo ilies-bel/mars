@@ -553,6 +553,23 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
+        // GET /api/agent-tool-calls?taskId=<id>&sessionId=<id> — the Coder's
+        // own tool invocations for a specific Claude session, extracted from
+        // stored transcript chunks. Proxied to the daemon's
+        // GET /view/agent-tool-calls.
+        if (path === '/api/agent-tool-calls' && req.method === 'GET') {
+          const taskId = url.searchParams.get('taskId')
+          const sessionId = url.searchParams.get('sessionId')
+          if (!taskId || !sessionId) {
+            return jsonResponse(400, {
+              error: 'taskId and sessionId query parameters are required',
+            })
+          }
+          const qs = `taskId=${encodeURIComponent(taskId)}&sessionId=${encodeURIComponent(sessionId)}`
+          const r = await proxyGet(ctx.stateDir, `/view/agent-tool-calls?${qs}`)
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/step-prompt?workflowInstanceId=<id>&stepName=<name> — the
         // composed prompt sent to one step's worker. Proxied to the daemon's
         // GET /view/step-prompt; fetched lazily by Studio's Input/Show-trace

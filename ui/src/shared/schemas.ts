@@ -511,6 +511,26 @@ export const eventsResponseSchema = z.object({
 })
 
 // ----------------------------------------------------------------------------
+// Agent tool calls (daemon `/view/agent-tool-calls` → proxied as
+// `/api/agent-tool-calls`). Each record is one Claude Code tool invocation
+// extracted from the session's `task_transcripts` chunks.
+// ----------------------------------------------------------------------------
+
+export const agentToolCallSchema = z.object({
+  toolUseId: z.string(),
+  toolName: z.string(),
+  input: z.unknown(),
+  resultContent: z.unknown(),
+  isError: z.boolean(),
+})
+
+export type AgentToolCall = z.infer<typeof agentToolCallSchema>
+
+export const agentToolCallsResponseSchema = z.object({
+  calls: z.array(agentToolCallSchema),
+})
+
+// ----------------------------------------------------------------------------
 // Origin tree (daemon `/origins/:taskId` → proxied as `/api/origins/:taskId`).
 // The tree is recursive, so the schema declares the leaf shape and patches
 // `children` via z.lazy. We use an explicit ZodType type annotation so the

@@ -2014,3 +2014,229 @@ describe('TaskDetailDrawer – SSE live-update via React Query', () => {
     expect(html).not.toContain('data-testid="step-card-list"')
   })
 })
+
+// ── Agent tool calls in step cards ──────────────────────────────────────────
+
+/**
+ * Agent (Claude Code) tool calls are surfaced inside the step card of the
+ * LLM-backed run step that has the matching claudeSessionId.
+ *
+ * When `agentToolCallsBySession` is provided (keyed by claudeSessionId), the
+ * matching step card renders one AgentToolCallRow per call instead of showing
+ * nothing. When the session has no calls the existing silent empty state is
+ * preserved — no "No tool invocations recorded" message.
+ *
+ * The `agentToolCallsBySession` prop skips the live fetch so tests run
+ * synchronously under renderToStaticMarkup.
+ */
+describe('TaskDetailDrawer – agent tool calls in step cards', () => {
+  const SESSION_ID = 'session-abc12345'
+
+  const makeAgentCall = (
+    overrides: Partial<import('@/shared/schemas').AgentToolCall> & { toolUseId: string },
+  ): import('@/shared/schemas').AgentToolCall => ({
+    toolUseId: overrides.toolUseId,
+    toolName: overrides.toolName ?? 'Read',
+    input: overrides.input ?? { file_path: '/src/foo.ts' },
+    resultContent: overrides.resultContent ?? 'file contents',
+    isError: overrides.isError ?? false,
+  })
+
+  it('renders agent tool rows when the step has a claudeSessionId and agent tool calls are provided', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({ stepName: 'run-claude-code', claudeSessionId: SESSION_ID }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        runTimeline={timeline}
+        agentToolCallsBySession={{
+          [SESSION_ID]: [makeAgentCall({ toolUseId: 'tu-1', toolName: 'Read' })],
+        }}
+      />,
+    )
+    expect(html).toContain('data-testid="agent-tool-row"')
+    expect(html).toContain('data-testid="agent-tool-name"')
+    expect(html).toContain('Read')
+  })
+
+  it('renders multiple agent tool rows when the session has multiple calls', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({ stepName: 'run-claude-code', claudeSessionId: SESSION_ID }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        runTimeline={timeline}
+        agentToolCallsBySession={{
+          [SESSION_ID]: [
+            makeAgentCall({ toolUseId: 'tu-1', toolName: 'Read' }),
+            makeAgentCall({ toolUseId: 'tu-2', toolName: 'Edit' }),
+            makeAgentCall({ toolUseId: 'tu-3', toolName: 'Bash' }),
+          ],
+        }}
+      />,
+    )
+    const rowCount = (html.match(/data-testid="agent-tool-row"/g) ?? []).length
+    expect(rowCount).toBe(3)
+  })
+
+  it('marks an errored agent tool call with isError=true styling (error badge)', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({ stepName: 'run-claude-code', claudeSessionId: SESSION_ID }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        runTimeline={timeline}
+        agentToolCallsBySession={{
+          [SESSION_ID]: [
+            makeAgentCall({ toolUseId: 'tu-err', toolName: 'Bash', isError: true }),
+          ],
+        }}
+      />,
+    )
+    // Error badge uses text-error tokens
+    expect(html).toContain('text-error')
+    expect(html).toContain('✗')
+  })
+
+  it('renders no agent tool rows and no "No tool invocations recorded" message when claudeSessionId is present but has zero agent calls', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({ stepName: 'run-claude-code', claudeSessionId: SESSION_ID }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        runTimeline={timeline}
+        agentToolCallsBySession={{ [SESSION_ID]: [] }}
+      />,
+    )
+    // No agent tool rows
+    expect(html).not.toContain('data-testid="agent-tool-row"')
+    // No false claim that nothing was recorded — the session exists; tools are
+    // just not loaded yet (or the session had none). The UI stays silent.
+    expect(html).not.toContain('No tool invocations recorded')
+  })
+
+  it('still shows "No tool invocations recorded" for a step with no claudeSessionId and no tool events', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            // No claudeSessionId — this is a non-LLM step (e.g. setup / merge)
+            makeRTStep({ stepName: 'setup', claudeSessionId: null }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        runTimeline={timeline}
+      />,
+    )
+    expect(html).toContain('No tool invocations recorded')
+  })
+
+  it('scopes agent tool calls to the correct step by claudeSessionId', () => {
+    const SESSION_A = 'sess-aaa'
+    const SESSION_B = 'sess-bbb'
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({ stepName: 'run-claude-code', claudeSessionId: SESSION_A }),
+            makeRTStep({ stepName: 'recover', claudeSessionId: SESSION_B }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        runTimeline={timeline}
+        agentToolCallsBySession={{
+          [SESSION_A]: [makeAgentCall({ toolUseId: 'tu-a', toolName: 'Read' })],
+          [SESSION_B]: [makeAgentCall({ toolUseId: 'tu-b', toolName: 'Edit' })],
+        }}
+      />,
+    )
+    // Both tool names appear; each is scoped to its respective step card
+    expect(html).toContain('Read')
+    expect(html).toContain('Edit')
+    const rowCount = (html.match(/data-testid="agent-tool-row"/g) ?? []).length
+    expect(rowCount).toBe(2)
+  })
+
+  it('viewPrimitives observed-shell-tools list is unchanged: only tool_invoked trace events count', () => {
+    // Verify that agent tool call rows (data-testid="agent-tool-row") are NOT
+    // the same as orchestrator shell tool rows (data-testid="step-tool-row").
+    // The two row types have different testids so they can never be confused.
+    const spans = [
+      span({ stepName: 'setup', workflowInstanceId: 'wf-1' }),
+    ]
+    const toolInvocations: TraceEvent[] = [
+      {
+        id: 'ev-shell',
+        timestamp: '2026-01-01T10:00:00.500Z',
+        kind: 'tool_invoked',
+        severity: 'info',
+        taskId: 'task-t1',
+        originId: 'task-t1',
+        phase: null,
+        payload: {
+          tool: 'git',
+          argv: ['status'],
+          exitCode: 0,
+          durationMs: 10,
+          stdout: '',
+          stderr: '',
+          expectsFailure: false,
+        },
+      },
+    ]
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        stepSpans={spans}
+        toolInvocations={toolInvocations}
+      />,
+    )
+    // Shell tool row rendered with the orchestrator's testid
+    expect(html).toContain('data-testid="step-tool-row"')
+    // No agent tool row — no agent calls provided
+    expect(html).not.toContain('data-testid="agent-tool-row"')
+  })
+})

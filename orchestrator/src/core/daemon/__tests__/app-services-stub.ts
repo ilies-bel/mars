@@ -53,6 +53,7 @@ export const stubAppServices = (
     prompt: null,
     source: null,
   }),
+  viewAgentToolCalls: async () => ({ calls: [] }),
   viewPrimitives: async () => ({ primitives: [] }),
   viewPrimitive: async () => null,
   viewSessions: async () => ({ sessions: [] }),

@@ -1008,6 +1008,30 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/agent-tool-calls?taskId=<id>&sessionId=<id> — the Coder's own
+    // tool invocations for a specific Claude session, extracted from the stored
+    // task_transcripts chunks. Used by the Studio step card to surface agent
+    // tool activity alongside the orchestrator's shell invocations. Pure read;
+    // no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/agent-tool-calls')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const taskId = parsed.searchParams.get('taskId')
+      const sessionId = parsed.searchParams.get('sessionId')
+      if (!taskId) {
+        sendJson(res, 400, { error: 'taskId query parameter is required' })
+        return
+      }
+      if (!sessionId) {
+        sendJson(res, 400, { error: 'sessionId query parameter is required' })
+        return
+      }
+      deps.appServices
+        .viewAgentToolCalls(taskId, sessionId)
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/primitives — the fixed catalog of workflow primitives
     // (setupWorktree, runAgent, verify, behaviourVerify, merge, awaitHuman):
     // name, one-line description, trace phase, and executor. Pure read; no

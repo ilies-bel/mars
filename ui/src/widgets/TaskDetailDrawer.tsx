@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import type { ProgressProposalNode, ProgressTask, Task, TraceEvent } from '@/shared/schemas'
+import type { AgentToolCall, ProgressProposalNode, ProgressTask, Task, TraceEvent } from '@/shared/schemas'
 import { taskSchema } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
@@ -197,6 +197,13 @@ interface TaskDetailDrawerProps {
    * Omit in production; pass in tests or static rendering.
    */
   toolInvocations?: TraceEvent[]
+  /**
+   * Pre-loaded agent tool calls keyed by claudeSessionId. When provided the
+   * step cards render agent tool rows immediately without fetching
+   * /api/agent-tool-calls. Omit in production; pass in tests or static
+   * rendering to control agent tool content directly.
+   */
+  agentToolCallsBySession?: Record<string, AgentToolCall[]>
   /**
    * Overrides the query-derived load state. Test-only seam: production callers
    * omit it and the state is derived from the `['task', currentId]` React Query
@@ -837,6 +844,56 @@ export const StepStatusIcon = ({ outcome }: { outcome: StepCardEntry['outcome'] 
 }
 
 /**
+ * One agent (Claude Code) tool call row inside an expanded step card.
+ * Renders the tool name, a success/error badge, and a truncated preview of
+ * the tool input. Distinct from ToolInvocationRow (no exit code, no argv, no
+ * stdout/stderr — agent calls have a different shape from shell invocations).
+ */
+const AgentToolCallRow = ({ call }: { call: AgentToolCall }) => {
+  const inputPreview =
+    call.input === null || call.input === undefined
+      ? ''
+      : typeof call.input === 'string'
+        ? call.input
+        : JSON.stringify(call.input)
+
+  return (
+    <div
+      data-testid="agent-tool-row"
+      className="border-t border-iron/10 py-1.5"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Success / error badge */}
+        <span
+          className={`shrink-0 rounded border px-1 py-0.5 font-mono text-[10px] ${
+            call.isError
+              ? 'border-error/40 bg-error/10 text-error'
+              : 'border-done/30 bg-done/5 text-done'
+          }`}
+        >
+          {call.isError ? '✗' : '✓'}
+        </span>
+
+        {/* Tool name */}
+        <code
+          data-testid="agent-tool-name"
+          className="shrink-0 font-mono text-[11px] text-fg"
+        >
+          {call.toolName}
+        </code>
+
+        {/* Truncated input preview */}
+        {inputPreview ? (
+          <span className="min-w-0 truncate font-mono text-[10px] text-muted">
+            {inputPreview.slice(0, 120)}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+/**
  * One tool invocation row inside an expanded step card.
  * Renders the humanized command line (basename + argv), an exit-code badge
  * (green ✓ for 0; red for unexpected non-zero; amber for expectsFailure), the
@@ -942,10 +999,12 @@ const ToolInvocationRow = ({ event }: { event: TraceEvent }) => {
 const StepCard = ({
   entry,
   toolEvents,
+  agentToolCalls,
   isActive,
 }: {
   entry: StepCardEntry
   toolEvents: TraceEvent[]
+  agentToolCalls: AgentToolCall[]
   isActive: boolean
 }) => {
   const summary =
@@ -1041,14 +1100,23 @@ const StepCard = ({
           </p>
         ) : null}
 
-        {/* Tool invocations */}
+        {/* Orchestrator shell tool invocations */}
         {toolEvents.length > 0 ? (
           <div className="mt-2">
             {toolEvents.map((t) => (
               <ToolInvocationRow key={t.id} event={t} />
             ))}
           </div>
-        ) : entry.claudeSessionId == null ? (
+        ) : null}
+
+        {/* Agent (Claude Code) tool calls extracted from transcript chunks */}
+        {agentToolCalls.length > 0 ? (
+          <div className={toolEvents.length > 0 ? 'mt-1' : 'mt-2'}>
+            {agentToolCalls.map((c) => (
+              <AgentToolCallRow key={c.toolUseId} call={c} />
+            ))}
+          </div>
+        ) : toolEvents.length === 0 && entry.claudeSessionId == null ? (
           <p className="pt-2 font-mono text-[11px] text-muted/60">
             No tool invocations recorded
           </p>
@@ -1105,11 +1173,18 @@ const StepCard = ({
 const StepCardList = ({
   cards,
   toolEvents,
+  agentToolCallsBySession,
   activeStepName,
   studioHref,
 }: {
   cards: StepCardEntry[]
   toolEvents: TraceEvent[]
+  /**
+   * Agent (Claude Code) tool calls keyed by claudeSessionId. Each step card
+   * looks up its own session's calls so agent tool activity is scoped to the
+   * correct step.
+   */
+  agentToolCallsBySession?: Map<string, AgentToolCall[]>
   activeStepName?: string
   /**
    * When set, an "Open in Studio →" link renders beside the section header,
@@ -1147,11 +1222,16 @@ const StepCardList = ({
               e.timestamp >= card.startedAt &&
               (card.endedAt == null || e.timestamp <= card.endedAt),
           )
+          const cardAgentCalls =
+            card.claudeSessionId != null
+              ? (agentToolCallsBySession?.get(card.claudeSessionId) ?? [])
+              : []
           return (
             <div key={card.key}>
               <StepCard
                 entry={card}
                 toolEvents={cardTools}
+                agentToolCalls={cardAgentCalls}
                 isActive={activeStepName != null && card.stepName === activeStepName}
               />
               {i < cards.length - 1 ? (
@@ -1322,6 +1402,7 @@ export const TaskDetailDrawer = ({
   activeStepName,
   initialState,
   toolInvocations,
+  agentToolCallsBySession: agentToolCallsBySessionProp,
 }: TaskDetailDrawerProps) => {
   const drawerRef = useRef<HTMLElement>(null)
   const [closing, setClosing] = useState(false)
@@ -1588,6 +1669,53 @@ export const TaskDetailDrawer = ({
   const resolvedToolEvents: TraceEvent[] =
     toolInvocations !== undefined ? toolInvocations : (toolEventsQuery.data ?? [])
 
+  // Collect unique claudeSessionIds from the run timeline so we can fetch
+  // agent tool calls per session. Only populated once run data is available.
+  const sessionIds = useMemo(() => {
+    const ids = new Set<string>()
+    const timeline = resolvedRunTimeline
+    if (timeline != null) {
+      for (const run of timeline.runs) {
+        for (const step of run.steps) {
+          if (step.claudeSessionId != null) ids.add(step.claudeSessionId)
+        }
+      }
+    }
+    return [...ids]
+  }, [resolvedRunTimeline])
+
+  // Agent tool calls — fetched per-session from /api/agent-tool-calls and merged
+  // into a Map<sessionId, AgentToolCall[]> so each step card can look up its
+  // own session's calls. The prop path (agentToolCallsBySessionProp) skips the
+  // fetch for tests and static rendering.
+  const agentToolCallsQuery = useQuery<Map<string, AgentToolCall[]>>({
+    queryKey: ['task', currentId, 'agent-tool-calls', sessionIds.join(',')],
+    queryFn: async () => {
+      const f = fetchImpl ?? fetch
+      const results = new Map<string, AgentToolCall[]>()
+      await Promise.all(
+        sessionIds.map(async (sid) => {
+          const res = await f(
+            `/api/agent-tool-calls?taskId=${encodeURIComponent(currentId)}&sessionId=${encodeURIComponent(sid)}`,
+          )
+          if (!res.ok) return
+          const data = (await res.json()) as { calls: AgentToolCall[] }
+          results.set(sid, data.calls ?? [])
+        }),
+      )
+      return results
+    },
+    enabled: sessionIds.length > 0 && agentToolCallsBySessionProp === undefined,
+    retry: false,
+  })
+
+  const resolvedAgentToolCallsBySession: Map<string, AgentToolCall[]> = useMemo(() => {
+    if (agentToolCallsBySessionProp !== undefined) {
+      return new Map(Object.entries(agentToolCallsBySessionProp))
+    }
+    return agentToolCallsQuery.data ?? new Map()
+  }, [agentToolCallsBySessionProp, agentToolCallsQuery.data])
+
   // Build a lookup of eval results keyed by `${workflowInstanceId}:${stepName}`
   // so StepCardList can fold eval chips from StepSpan data into run timeline cards.
   const spanEvalMap = useMemo(() => {
@@ -1772,6 +1900,7 @@ export const TaskDetailDrawer = ({
             ),
           )}
           toolEvents={resolvedToolEvents}
+          agentToolCallsBySession={resolvedAgentToolCallsBySession}
           activeStepName={activeStepName}
           studioHref={isProposal ? undefined : studioHash(currentId)}
         />
@@ -1782,6 +1911,7 @@ export const TaskDetailDrawer = ({
           <StepCardList
             cards={resolvedSpans.map(spanToCard)}
             toolEvents={resolvedToolEvents}
+            agentToolCallsBySession={resolvedAgentToolCallsBySession}
             activeStepName={activeStepName}
             studioHref={studioHash(currentId)}
           />

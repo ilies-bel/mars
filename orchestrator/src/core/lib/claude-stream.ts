@@ -134,6 +134,99 @@ export const extractQuotaRejected = (
   return null
 }
 
+/** A single tool call made by a Claude Code agent, extracted from session transcript chunks. */
+export interface AgentToolCall {
+  toolUseId: string
+  toolName: string
+  /** Tool input — may be truncated by {@link trimEvent} at store time for large payloads. */
+  input: unknown
+  /** Tool result content — may be truncated by {@link trimEvent} at store time. */
+  resultContent: unknown
+  /** True when the tool_result carried `is_error: true`. */
+  isError: boolean
+}
+
+/**
+ * Extract paired tool_use / tool_result records from a flat sequence of raw
+ * Claude CLI stream events as stored in `task_transcripts` chunks.
+ *
+ * Handles both the "conversation message" shape:
+ *   - `{ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } }`
+ *   - `{ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id, content, is_error }] } }`
+ *
+ * and the "top-level event" shape:
+ *   - `{ type: 'tool_use', id, name, input }`
+ *   - `{ type: 'tool_result', tool_use_id, content, is_error }`
+ *
+ * Returns one {@link AgentToolCall} per `tool_use` block encountered. When no
+ * matching `tool_result` exists (e.g. partial transcript), `resultContent` is
+ * `null` and `isError` defaults to `false`.
+ */
+export const extractAgentToolCalls = (events: readonly unknown[]): AgentToolCall[] => {
+  const toolUseMap = new Map<string, { toolName: string; input: unknown }>()
+  const resultMap = new Map<string, { content: unknown; isError: boolean }>()
+
+  for (const event of events) {
+    if (!isObject(event)) continue
+    const type = event.type
+
+    if (type === 'assistant') {
+      const message = event.message
+      if (!isObject(message)) continue
+      const content = message.content
+      if (!Array.isArray(content)) continue
+      for (const block of content) {
+        if (!isObject(block)) continue
+        if (
+          block.type === 'tool_use' &&
+          typeof block.id === 'string' &&
+          typeof block.name === 'string'
+        ) {
+          toolUseMap.set(block.id, { toolName: block.name, input: block.input })
+        }
+      }
+    } else if (type === 'user') {
+      const message = event.message
+      if (!isObject(message)) continue
+      const content = message.content
+      if (!Array.isArray(content)) continue
+      for (const block of content) {
+        if (!isObject(block)) continue
+        if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
+          resultMap.set(block.tool_use_id, {
+            content: block.content,
+            isError: Boolean(block.is_error),
+          })
+        }
+      }
+    } else if (
+      type === 'tool_use' &&
+      typeof event.id === 'string' &&
+      typeof event.name === 'string'
+    ) {
+      toolUseMap.set(event.id, { toolName: event.name, input: event.input })
+    } else if (type === 'tool_result' && typeof event.tool_use_id === 'string') {
+      resultMap.set(event.tool_use_id, {
+        content: event.content,
+        isError: Boolean(event.is_error),
+      })
+    }
+  }
+
+  const calls: AgentToolCall[] = []
+  for (const [toolUseId, { toolName, input }] of toolUseMap) {
+    const result = resultMap.get(toolUseId)
+    calls.push({
+      toolUseId,
+      toolName,
+      input,
+      resultContent: result?.content ?? null,
+      isError: result?.isError ?? false,
+    })
+  }
+  return calls
+}
+
 /**
  * Extract the last human-readable text from a Claude event stream.
  *

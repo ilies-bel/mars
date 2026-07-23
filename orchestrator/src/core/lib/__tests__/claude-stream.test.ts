@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseClaudeStreamLine, extractLastStreamText } from '../claude-stream'
+import { parseClaudeStreamLine, extractLastStreamText, extractAgentToolCalls } from '../claude-stream'
 
 describe('parseClaudeStreamLine', () => {
   it('returns null for blank lines', () => {
@@ -225,5 +225,131 @@ describe('extractLastStreamText', () => {
       },
     ]
     expect(extractLastStreamText(conversation)).toBe('The answer is 42.')
+  })
+})
+
+describe('extractAgentToolCalls', () => {
+  it('returns an empty array for an empty event sequence', () => {
+    expect(extractAgentToolCalls([])).toEqual([])
+  })
+
+  it('returns an empty array when there are no tool_use blocks', () => {
+    const events = [
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'Hello' }] } },
+      { type: 'result', result: 'done', session_id: 'abc' },
+    ]
+    expect(extractAgentToolCalls(events)).toEqual([])
+  })
+
+  it('extracts one record from a tool_use + tool_result pair (assistant/user message shape)', () => {
+    const events = [
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tu-1', name: 'Read', input: { file_path: '/foo.ts' } },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'tu-1', content: 'file contents', is_error: false },
+          ],
+        },
+      },
+    ]
+    const calls = extractAgentToolCalls(events)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].toolUseId).toBe('tu-1')
+    expect(calls[0].toolName).toBe('Read')
+    expect(calls[0].input).toEqual({ file_path: '/foo.ts' })
+    expect(calls[0].resultContent).toBe('file contents')
+    expect(calls[0].isError).toBe(false)
+  })
+
+  it('sets isError=true when tool_result carries is_error: true', () => {
+    const events = [
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', id: 'tu-err', name: 'Bash', input: { command: 'bad' } }],
+        },
+      },
+      {
+        type: 'user',
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'tu-err', content: 'command not found', is_error: true },
+          ],
+        },
+      },
+    ]
+    const calls = extractAgentToolCalls(events)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].toolName).toBe('Bash')
+    expect(calls[0].isError).toBe(true)
+  })
+
+  it('extracts one record from a top-level tool_use + tool_result pair', () => {
+    const events = [
+      { type: 'tool_use', id: 'tu-2', name: 'Edit', input: { path: '/a.ts', content: 'x' } },
+      { type: 'tool_result', tool_use_id: 'tu-2', content: 'ok', is_error: false },
+    ]
+    const calls = extractAgentToolCalls(events)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].toolName).toBe('Edit')
+    expect(calls[0].isError).toBe(false)
+  })
+
+  it('handles a tool_use with no matching tool_result (partial transcript)', () => {
+    const events = [
+      {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', id: 'tu-orphan', name: 'Glob', input: { pattern: '**/*.ts' } }],
+        },
+      },
+    ]
+    const calls = extractAgentToolCalls(events)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].toolName).toBe('Glob')
+    expect(calls[0].resultContent).toBeNull()
+    expect(calls[0].isError).toBe(false)
+  })
+
+  it('extracts multiple tool calls from a multi-turn conversation', () => {
+    const events = [
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tu-a', name: 'Read', input: { file_path: '/a.ts' } },
+            { type: 'tool_use', id: 'tu-b', name: 'Read', input: { file_path: '/b.ts' } },
+          ],
+        },
+      },
+      {
+        type: 'user',
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'tu-a', content: 'content a', is_error: false },
+            { type: 'tool_result', tool_use_id: 'tu-b', content: 'content b', is_error: false },
+          ],
+        },
+      },
+    ]
+    const calls = extractAgentToolCalls(events)
+    expect(calls).toHaveLength(2)
+    const byId = Object.fromEntries(calls.map((c) => [c.toolUseId, c]))
+    expect(byId['tu-a'].resultContent).toBe('content a')
+    expect(byId['tu-b'].resultContent).toBe('content b')
+  })
+
+  it('ignores non-object events without crashing', () => {
+    const events = [null, undefined, 'string', 42, { type: 'result', result: 'done' }]
+    expect(() => extractAgentToolCalls(events)).not.toThrow()
+    expect(extractAgentToolCalls(events)).toEqual([])
   })
 })

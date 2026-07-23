@@ -108,6 +108,9 @@ import {
   extractFirstUserMessageText,
   recoverPromptFromDiskTranscript,
 } from './lib/step-prompt-recovery'
+import { extractAgentToolCalls, type AgentToolCall } from './lib/claude-stream'
+
+export type { AgentToolCall }
 
 /**
  * The daemon-runtime collaborators AppServices needs injected. These are the
@@ -180,6 +183,13 @@ export interface AppServices {
   viewStepSpans: (params: { originId?: string; taskId?: string }) => Promise<{ spans: StepSpan[] }>
   viewRunTimeline: (taskId: string) => Promise<RunTimeline>
   viewStepPrompt: (params: { workflowInstanceId: string; stepName: string }) => Promise<StepPromptView>
+  /**
+   * The Coder's own tool invocations for a specific Claude session, extracted
+   * from `task_transcripts` chunks. Returns an empty list when no transcript
+   * chunks are stored for the given (taskId, sessionId) pair — pre-existing
+   * runs stay empty.
+   */
+  viewAgentToolCalls: (taskId: string, sessionId: string) => Promise<{ calls: AgentToolCall[] }>
   // ── primitives (facet of the Studio surface) ───────────────────────────────
   viewPrimitives: () => Promise<{ primitives: PrimitiveSummary[] }>
   viewPrimitive: (params: { name: string; limit?: number }) => Promise<PrimitiveDetail | null>
@@ -599,6 +609,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     }
 
     return miss
+  }
+
+  const viewAgentToolCalls: AppServices['viewAgentToolCalls'] = async (taskId, sessionId) => {
+    const events = (await traceStore.readTranscriptChunks?.(taskId, sessionId)) ?? []
+    return { calls: extractAgentToolCalls(events) }
   }
 
   // ── primitives — the per-primitive facet of the Studio surface ─────────────
@@ -1215,6 +1230,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewStepSpans,
     viewRunTimeline,
     viewStepPrompt,
+    viewAgentToolCalls,
     viewPrimitives,
     viewPrimitive,
     viewSessions,
