@@ -1,21 +1,31 @@
 /**
  * Tests for isDaemonReachable — the HTTP-port-based daemon liveness probe.
  * Tests for waitForProcessExit — the bounded process-exit poller.
+ * Tests for daemonPaths — lockFile field contract.
+ * Tests for isProcessAlive — edge-case pid inputs.
  *
  * These tests exercise the observable contracts:
  *   isDaemonReachable: absent/malformed port file → false; stale port (no
  *     listener) → false; live TCP listener → true.
  *   waitForProcessExit: dead pid → true immediately; process exits within
  *     timeout → true; process still alive at deadline → false.
+ *   daemonPaths: returns lockFile property (split-brain guard contract).
+ *   isProcessAlive: invalid pid inputs → false; live pid → true.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { spawn } from 'node:child_process'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { createServer, type Server } from 'node:net'
-import { isDaemonReachable, waitForProcessExit } from './paths'
+import { daemonPaths, isDaemonReachable, isProcessAlive, waitForProcessExit } from './paths'
 
 let stateDir: string
 
@@ -143,5 +153,72 @@ describe('waitForProcessExit', () => {
       // Clean up: kill the child so it doesn't linger
       try { process.kill(pid, 'SIGKILL') } catch { /* already gone */ }
     }
+  })
+})
+
+// ── daemonPaths: lockFile contract ───────────────────────────────────────────
+//
+// The split-brain guard depends on `daemonPaths()` returning a `lockFile`
+// path. Pin this as a contract test so a refactor cannot accidentally drop
+// the field or change the file name.
+
+describe('daemonPaths — lockFile contract', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-paths-lock-'))
+    execFileSync('git', ['init', '-q'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+    process.env.MARS_REPO = repo
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns a lockFile path inside the .mars state directory', () => {
+    const paths = daemonPaths()
+    expect(paths.lockFile).toBeTruthy()
+    expect(paths.lockFile).toMatch(/daemon\.lock$/)
+    // Must be inside the repo's .mars state dir.
+    expect(paths.lockFile.startsWith(resolve(repo, '.mars'))).toBe(true)
+  })
+
+  it('lockFile path does not exist initially (clean state)', () => {
+    const paths = daemonPaths()
+    expect(existsSync(paths.lockFile)).toBe(false)
+  })
+
+  it('lockFile is distinct from pidFile and socket paths', () => {
+    const paths = daemonPaths()
+    // All three paths must be different so a write to one cannot clobber the other.
+    expect(paths.lockFile).not.toBe(paths.pidFile)
+    expect(paths.lockFile).not.toBe(paths.socket)
+  })
+})
+
+// ── isProcessAlive: edge-case inputs ─────────────────────────────────────────
+
+describe('isProcessAlive — edge-case pid inputs', () => {
+  it('returns false for pid 0', () => {
+    expect(isProcessAlive(0)).toBe(false)
+  })
+
+  it('returns false for a negative pid', () => {
+    expect(isProcessAlive(-1)).toBe(false)
+  })
+
+  it('returns false for a non-integer pid', () => {
+    expect(isProcessAlive(1.5)).toBe(false)
+  })
+
+  it('returns false for a virtually-impossible-to-exist pid', () => {
+    // pid 2147483647 (INT_MAX) is virtually certain not to be a live process.
+    expect(isProcessAlive(2147483647)).toBe(false)
+  })
+
+  it('returns true for the current process pid', () => {
+    expect(isProcessAlive(process.pid)).toBe(true)
   })
 })
