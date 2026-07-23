@@ -443,3 +443,54 @@ describe('loadRecentTaskCorpus', () => {
     expect(Math.abs(idxOrigin - idxRecovery)).toBe(1)
   })
 })
+
+// ── chatFeedback field ─────────────────────────────────────────────────────
+// These tests verify the contract for the `chatFeedback` field on ReflectCorpus:
+// - Always an array (never undefined or null) regardless of chat table presence
+// - Empty when MARS_REFLECT_DISABLED=1 (the isReflectDisabled() gate is respected)
+
+describe('loadRecentTaskCorpus — chatFeedback field', () => {
+  afterEach(() => {
+    delete process.env.MARS_REFLECT_DISABLED
+  })
+
+  it('returns chatFeedback as an empty array when chat tables are absent (graceful fallback)', async () => {
+    // The test store uses libsql and does not have chat tables.
+    // loadChatFeedback() throws, the try/catch catches it, and chatFeedback
+    // stays as the initialised [].
+    const store = await makeStore()
+    await insertTask(store, { id: 'task-cf-1', status: 'done' })
+
+    const corpus = await loadRecentTaskCorpus({ store })
+
+    expect(Array.isArray(corpus.chatFeedback)).toBe(true)
+    expect(corpus.chatFeedback).toEqual([])
+  })
+
+  it('returns chatFeedback as an empty array even when no tasks exist', async () => {
+    // The early-return path (no tasks) must also produce chatFeedback: []
+    const store = await makeStore()
+
+    const corpus = await loadRecentTaskCorpus({ store })
+
+    expect(corpus.entries).toHaveLength(0)
+    expect(Array.isArray(corpus.chatFeedback)).toBe(true)
+    expect(corpus.chatFeedback).toEqual([])
+  })
+
+  it('returns chatFeedback as an empty array when MARS_REFLECT_DISABLED=1', async () => {
+    // When reflection is disabled, the chatFeedback loading block is skipped
+    // entirely — the corpus still surfaces chatFeedback: [] so callers do not
+    // need to guard against undefined.
+    const store = await makeStore()
+    await insertTask(store, { id: 'task-cf-2', status: 'done' })
+    process.env.MARS_REFLECT_DISABLED = '1'
+
+    const corpus = await loadRecentTaskCorpus({ store })
+
+    expect(Array.isArray(corpus.chatFeedback)).toBe(true)
+    expect(corpus.chatFeedback).toEqual([])
+    // chatSystemPrompt is absent because no feedback was loaded
+    expect(corpus.chatSystemPrompt).toBeUndefined()
+  })
+})
