@@ -3,6 +3,7 @@
  * Tests for waitForProcessExit — the bounded process-exit poller.
  * Tests for daemonPaths — lockFile field contract.
  * Tests for isProcessAlive — edge-case pid inputs.
+ * Tests for readDaemonPid — pid-file reader (used by lock guard and kill-and-wait).
  *
  * These tests exercise the observable contracts:
  *   isDaemonReachable: absent/malformed port file → false; stale port (no
@@ -11,6 +12,9 @@
  *     timeout → true; process still alive at deadline → false.
  *   daemonPaths: returns lockFile property (split-brain guard contract).
  *   isProcessAlive: invalid pid inputs → false; live pid → true.
+ *   readDaemonPid: absent file → null; malformed content → null; valid
+ *     pid → number. This is the core read primitive for both the exclusive
+ *     lockfile guard and the kill-and-wait path in startDaemon.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -25,7 +29,7 @@ import { execFileSync, spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { createServer, type Server } from 'node:net'
-import { daemonPaths, isDaemonReachable, isProcessAlive, waitForProcessExit } from './paths'
+import { daemonPaths, isDaemonReachable, isProcessAlive, readDaemonPid, waitForProcessExit } from './paths'
 
 let stateDir: string
 
@@ -220,5 +224,72 @@ describe('isProcessAlive — edge-case pid inputs', () => {
 
   it('returns true for the current process pid', () => {
     expect(isProcessAlive(process.pid)).toBe(true)
+  })
+})
+
+// ── readDaemonPid: pid-file reader contract ───────────────────────────────────
+//
+// readDaemonPid is the read primitive shared by two startup guards in
+// startDaemon: the exclusive lockfile check (daemon.lock) and the
+// kill-and-wait path (watch.pid). Pinning its contract here ensures a
+// refactor cannot silently change how invalid files are handled and break
+// either guard.
+
+describe('readDaemonPid', () => {
+  let pidFile: string
+
+  beforeEach(() => {
+    pidFile = resolve(stateDir, 'test.pid')
+  })
+
+  // ── Tracer bullet ─────────────────────────────────────────────────────────
+
+  it('returns null when the file does not exist', () => {
+    // No file written — absent pid file must return null so the guard is skipped.
+    expect(readDaemonPid(pidFile)).toBeNull()
+  })
+
+  // ── Valid content ─────────────────────────────────────────────────────────
+
+  it('returns the pid as a number for a file containing a positive integer', () => {
+    writeFileSync(pidFile, '12345', 'utf8')
+    expect(readDaemonPid(pidFile)).toBe(12345)
+  })
+
+  it('trims surrounding whitespace before parsing', () => {
+    // The daemon writes the pid with no padding, but defensive trimming matters
+    // so manual edits or OS-level appended newlines do not cause a null return.
+    writeFileSync(pidFile, '  99 \n', 'utf8')
+    expect(readDaemonPid(pidFile)).toBe(99)
+  })
+
+  // ── Invalid content → null (guard is not triggered) ──────────────────────
+
+  it('returns null for non-numeric content', () => {
+    writeFileSync(pidFile, 'not-a-pid', 'utf8')
+    expect(readDaemonPid(pidFile)).toBeNull()
+  })
+
+  it('returns null for pid 0 (not a valid process identifier)', () => {
+    writeFileSync(pidFile, '0', 'utf8')
+    expect(readDaemonPid(pidFile)).toBeNull()
+  })
+
+  it('returns null for a negative pid', () => {
+    writeFileSync(pidFile, '-1', 'utf8')
+    expect(readDaemonPid(pidFile)).toBeNull()
+  })
+
+  it('truncates a decimal string (e.g. "1.5") to its integer part via parseInt', () => {
+    // parseInt('1.5', 10) === 1 — a valid positive integer — so readDaemonPid
+    // returns 1, not null. Daemon pid files are always written as plain integers
+    // by the daemon itself; this case can only arise from manual edits.
+    writeFileSync(pidFile, '1.5', 'utf8')
+    expect(readDaemonPid(pidFile)).toBe(1)
+  })
+
+  it('returns null for an empty file', () => {
+    writeFileSync(pidFile, '', 'utf8')
+    expect(readDaemonPid(pidFile)).toBeNull()
   })
 })
