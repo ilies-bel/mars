@@ -57,5 +57,9 @@ export default defineConfig({
     // Turn ON the Arc-invariant debug-assert seam for the whole suite (ADR-0052)
     // so every arc-mutating test exercises Arc.assertArcInvariant after commit.
     setupFiles: ['./test/setup-env.ts'],
+    // Reclaim the PGlite test clusters the suites leak into $TMPDIR. Runs once,
+    // after all workers exit, so the DB files are unlocked. See the file header
+    // for why this is necessary (per-task `verify` accumulated ~400 GB).
+    globalSetup: ['./test/global-teardown.ts'],
   },
 })
