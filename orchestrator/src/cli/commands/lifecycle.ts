@@ -155,6 +155,19 @@ const makeContinueRestart = (verb: 'continue' | 'restart'): Command => ({
         (res as { codePhaseResume?: boolean }).codePhaseResume === true
       ) {
         note = `queued ${id} to continue from code phase — prior work in worktree preserved (run 'git log' in the worktree to review)`
+      } else if (
+        verb === 'restart' &&
+        res !== null &&
+        typeof res === 'object' &&
+        (res as { status?: string }).status === 'blocked'
+      ) {
+        // The restart completed but the task landed in 'blocked' because
+        // it still has live incomplete blocker edges. Report honestly rather
+        // than printing "queued", which would mislead the operator into
+        // thinking the task is about to dispatch.
+        note =
+          `blocked ${id} — task has incomplete blockers and will not dispatch until they are done.\n` +
+          `Run 'mars list ${id}' to see the blocking tasks, or 'mars unblock ${id} <blocker-id>' to remove a specific edge.`
       } else {
         note =
           verb === 'continue'

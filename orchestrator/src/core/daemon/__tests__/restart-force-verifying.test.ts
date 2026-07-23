@@ -99,14 +99,13 @@ describe('coreRestartTask force restart — verifying/failed-run mismatch', () =
     )
 
     // With force=true, the restart is permitted because the workflow run is failed.
-    await expect(
-      restart.coreRestartTask(
-        task.id,
-        new Set(['failed', 'done']),
-        store,
-        { force: true },
-      ),
-    ).resolves.toBeUndefined()
+    const result = await restart.coreRestartTask(
+      task.id,
+      new Set(['failed', 'done']),
+      store,
+      { force: true },
+    )
+    expect(result.status).toBe('queued')
 
     const updated = await q.getTask(task.id)
     expect(updated?.status).toBe('queued')
@@ -313,9 +312,8 @@ describe('coreRestartTask force restart — verifying/failed-run mismatch', () =
     const store = new InMemoryStore()
 
     // force=false (default) on a failed task — no change to current behaviour.
-    await expect(
-      restart.coreRestartTask(task.id, new Set(['failed', 'done']), store),
-    ).resolves.toBeUndefined()
+    const result = await restart.coreRestartTask(task.id, new Set(['failed', 'done']), store)
+    expect(result.status).toBe('queued')
 
     expect((await q.getTask(task.id))?.status).toBe('queued')
   })

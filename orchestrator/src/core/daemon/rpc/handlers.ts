@@ -76,8 +76,8 @@ const continueHandler = handler('continue', async (req, deps) => {
 })
 
 const restartHandler = handler('restart', async (req, deps) => {
-  await deps.handleRestart(req.id, req.force)
-  return { ok: true }
+  const result = await deps.handleRestart(req.id, req.force)
+  return { ok: true, data: result }
 })
 
 const purgeHandler = handler('purge', async (req, deps) => {

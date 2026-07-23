@@ -2147,11 +2147,27 @@ export const startDaemon = async (
   // pipeline from setup. The restart mechanics live in coreRestartTask so
   // the HTTP endpoint (slice 2 of the retry-button PRD) shares the exact
   // same code path — see daemon/restart-task.ts.
-  const handleRestart = async (id: string, force?: boolean): Promise<void> => {
+  const handleRestart = async (
+    id: string,
+    force?: boolean,
+  ): Promise<{ status: 'queued' | 'blocked' }> => {
     const { coreRestartTask } = await import('./restart-task')
     const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
-    await coreRestartTask(id, new Set(['failed', 'done']), createQueueWorkflowStore(), { force })
-    bus.emit('task.queued', { taskId: id })
+    const result = await coreRestartTask(
+      id,
+      new Set(['failed', 'done']),
+      createQueueWorkflowStore(),
+      { force },
+    )
+    // Only emit task.queued when the task actually reached 'queued'. A task
+    // that landed in 'blocked' (incomplete live blockers remain) must NOT be
+    // dispatched — emitting task.queued for a blocked task would violate the
+    // blocker invariant and could cause the dispatcher to start work on a task
+    // whose prerequisite is not done.
+    if (result.status === 'queued') {
+      bus.emit('task.queued', { taskId: id })
+    }
+    return result
   }
 
   // 'mars continue <id>' resumes a failed task on its existing branch+
@@ -3357,8 +3373,10 @@ export const startDaemon = async (
     chatRunner,
     chatStreamHub,
     restartTask: async (id) => {
-      await coreRestart(id, new Set(['failed']), makeWorkflowStore())
-      bus.emit('task.queued', { taskId: id })
+      const result = await coreRestart(id, new Set(['failed']), makeWorkflowStore())
+      if (result.status === 'queued') {
+        bus.emit('task.queued', { taskId: id })
+      }
     },
     unblockTask: async (id) => {
       await handleUnblock(id)
@@ -3443,8 +3461,10 @@ export const startDaemon = async (
       const restarted: string[] = []
       for (const task of killed) {
         try {
-          await coreRestart(task.id, new Set(['failed']), makeWorkflowStore())
-          bus.emit('task.queued', { taskId: task.id })
+          const result = await coreRestart(task.id, new Set(['failed']), makeWorkflowStore())
+          if (result.status === 'queued') {
+            bus.emit('task.queued', { taskId: task.id })
+          }
           restarted.push(task.id)
         } catch {
           // Skip tasks that can't be restarted (e.g. raced to a different

@@ -189,7 +189,7 @@ describe('HTTP action endpoint', () => {
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        restartTask: (id) => restartTask.coreRestartTask(id, new Set(['failed']), new InMemoryStore()),
+        restartTask: async (id) => { await restartTask.coreRestartTask(id, new Set(['failed']), new InMemoryStore()) },
       }),
     )
 
@@ -357,7 +357,7 @@ describe('HTTP action endpoint', () => {
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        restartTask: (id) => restartTask.coreRestartTask(id, new Set(['failed']), new InMemoryStore()),
+        restartTask: async (id) => { await restartTask.coreRestartTask(id, new Set(['failed']), new InMemoryStore()) },
       }),
     )
 
@@ -386,7 +386,7 @@ describe('HTTP action endpoint', () => {
 
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
-        restartTask: (id) => restartTask.coreRestartTask(id, new Set(['failed']), new InMemoryStore()),
+        restartTask: async (id) => { await restartTask.coreRestartTask(id, new Set(['failed']), new InMemoryStore()) },
       }),
     )
 

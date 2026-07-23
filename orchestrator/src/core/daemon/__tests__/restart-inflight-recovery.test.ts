@@ -121,13 +121,12 @@ describe('coreRestartTask in-flight recovery guard', () => {
     })
 
     // Should NOT throw — the recovery is already complete
-    await expect(
-      restart.coreRestartTask(
-        origin.id,
-        new Set(['failed']),
-        new InMemoryStore(),
-      ),
-    ).resolves.toBeUndefined()
+    const result = await restart.coreRestartTask(
+      origin.id,
+      new Set(['failed']),
+      new InMemoryStore(),
+    )
+    expect(result.status).toBe('queued')
 
     const reloaded = await q.getTask(origin.id)
     expect(reloaded?.status).toBe('queued')
@@ -154,13 +153,12 @@ describe('coreRestartTask in-flight recovery guard', () => {
     })
 
     // A failed recovery is no longer in-flight; restart is safe
-    await expect(
-      restart.coreRestartTask(
-        origin.id,
-        new Set(['failed']),
-        new InMemoryStore(),
-      ),
-    ).resolves.toBeUndefined()
+    const result = await restart.coreRestartTask(
+      origin.id,
+      new Set(['failed']),
+      new InMemoryStore(),
+    )
+    expect(result.status).toBe('queued')
   })
 
   it('allows restart when there are no fix tasks at all', async () => {
@@ -175,13 +173,12 @@ describe('coreRestartTask in-flight recovery guard', () => {
       args: [origin.id],
     })
 
-    await expect(
-      restart.coreRestartTask(
-        origin.id,
-        new Set(['failed']),
-        new InMemoryStore(),
-      ),
-    ).resolves.toBeUndefined()
+    const result = await restart.coreRestartTask(
+      origin.id,
+      new Set(['failed']),
+      new InMemoryStore(),
+    )
+    expect(result.status).toBe('queued')
   })
 
   it('error message names the in-flight recovery task id', async () => {

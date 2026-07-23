@@ -1,9 +1,20 @@
 import type { WorkflowStore } from '@mars/workflow'
-import { getTask, hasIncompleteBlockers, updateTask } from '../queue'
+import { getTask, hasIncompleteBlockers, removeBlocker, updateTask } from '../queue'
 import { supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
 import { getDefaultTaskStore } from '../store/task-store'
 
 export type RestartErrorCode = 'NOT_FOUND' | 'WRONG_STATUS'
+
+/**
+ * The result returned by {@link coreRestartTask}. `status` is the actual
+ * status the task landed in after the restart write. Callers that emit
+ * `task.queued` events must check this value — only `'queued'` tasks should
+ * trigger dispatch.
+ */
+export interface RestartResult {
+  /** The status the task was written to: either `'queued'` or `'blocked'`. */
+  status: 'queued' | 'blocked'
+}
 
 /**
  * Typed error thrown by {@link coreRestartTask} when the task is not found
@@ -78,7 +89,7 @@ export const coreRestartTask = async (
   allowedStatuses: ReadonlySet<string>,
   workflowStore: WorkflowStore,
   options?: RestartOptions,
-): Promise<void> => {
+): Promise<RestartResult> => {
   const { force = false } = options ?? {}
   const task = await getTask(id)
   if (!task) {
@@ -197,18 +208,41 @@ export const coreRestartTask = async (
   // because the worktree no longer exists.
   await workflowStore.deleteRun(id)
 
+  // Clear blocker edges that point at failed recovery tasks — these are
+  // permanently unsatisfiable. Recovery tasks (kind='fix', fix_for_task_id IS
+  // NOT NULL) are non-recoverable leaf nodes by design (ADR-0040/ADR-0060):
+  // once they reach 'failed' they can never reach 'done'. A blocker edge on a
+  // failed recovery task would strand the origin in 'blocked' forever. Clearing
+  // these dead edges before the blocker check lets the origin reach 'queued'
+  // without requiring an extra manual `mars unblock` command.
+  const deadEdgeRows = await taskStore.query({
+    sql: `SELECT b.blocker_task_id
+            FROM task_blockers b
+            JOIN tasks t ON t.id = b.blocker_task_id
+           WHERE b.task_id = ?
+             AND t.fix_for_task_id IS NOT NULL
+             AND t.status = 'failed'
+             AND b.state IN ('confirmed', 'pending-review')`,
+    args: [id],
+  })
+  for (const row of deadEdgeRows.rows) {
+    const blockerId = (row as unknown as { blocker_task_id: string }).blocker_task_id
+    await removeBlocker(id, blockerId)
+  }
+
   // Guard: if the task still has incomplete blockers, restore it to blocked
   // rather than queued. An operator may restart a failed task whose blockers
   // are themselves not yet done; queuing it would violate the blocker
   // invariant (status='queued' requires ALL blockers to be 'done').
   const hasBlockers = await hasIncompleteBlockers(id)
+  const resultStatus: 'queued' | 'blocked' = hasBlockers ? 'blocked' : 'queued'
   // Clear all failure markers so a requeued task is never mistakenly tagged as
   // daemon-killed (or any other failure). A non-terminal task (queued/blocked)
   // must not carry a non-empty failureSignature — the daemon-killed sweep keys
   // off that field and would re-raise an orphaned action-queue row on the next
   // daemon start if this stale value were left behind.
   await updateTask(id, {
-    status: hasBlockers ? 'blocked' : 'queued',
+    status: resultStatus,
     branch: null,
     worktreePath: null,
     claudeSessionId: null,
@@ -217,4 +251,5 @@ export const coreRestartTask = async (
     failureSignature: null,
     failureReasonCode: null,
   })
+  return { status: resultStatus }
 }
