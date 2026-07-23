@@ -69,6 +69,17 @@ export const PHANTOM_TASK_KIND: ActionQueueKind = 'phantom-task'
 /** Default wall-clock ceiling: 30 minutes. */
 export const DEFAULT_CEILING_MS = 30 * 60_000
 
+/**
+ * Grace window for zero-event detection: 3 minutes.
+ *
+ * A dispatched task whose subprocess is alive but has produced ZERO trace
+ * events is killed after this window.  Three minutes is conservative enough
+ * to absorb normal process startup latency and first-token delay on a slow
+ * model, while still providing a fast-kill that beats the full 30-minute
+ * ceiling by an order of magnitude.
+ */
+export const ZERO_EVENTS_GRACE_MS = 3 * 60_000
+
 const resolvedCeilingMs = (): number => {
   const raw = process.env.MARS_PHANTOM_WATCHDOG_CEILING_MS
   if (!raw) return DEFAULT_CEILING_MS
@@ -93,13 +104,15 @@ const resolvedLeaseExpiryMs = (): number => {
 export const buildPhantomBody = (
   taskId: string,
   status: string,
-  reason: 'dead-pid' | 'ceiling',
+  reason: 'dead-pid' | 'ceiling' | 'zero-events',
   ageMinutes: number,
 ): string => {
   const detail =
     reason === 'dead-pid'
       ? `its recorded subprocess PID is no longer alive`
-      : `its last-updated timestamp is ${ageMinutes} min old (ceiling: ${Math.round(resolvedCeilingMs() / 60_000)} min)`
+      : reason === 'zero-events'
+        ? `its subprocess has been alive for ${ageMinutes} min but produced zero trace events (grace window: ${Math.round(ZERO_EVENTS_GRACE_MS / 60_000)} min)`
+        : `its last-updated timestamp is ${ageMinutes} min old (ceiling: ${Math.round(resolvedCeilingMs() / 60_000)} min)`
   return (
     `Task ${taskId} was pinned to status '${status}' with no live subprocess: ${detail}. ` +
     `The daemon auto-failed the task and freed its in-flight slot. ` +
@@ -154,7 +167,7 @@ export const sweepPhantomTasks = async (
     for (const task of tasks) {
       const entry = inFlightByTask.get(task.id)
 
-      let phantomReason: 'dead-pid' | 'ceiling' | null = null
+      let phantomReason: 'dead-pid' | 'ceiling' | 'zero-events' | null = null
 
       if (entry?.pid !== undefined) {
         // Belt: PID is known — check liveness. Dead PID ⟹ phantom immediately.
@@ -164,11 +177,16 @@ export const sweepPhantomTasks = async (
         // Alive PID: never ceiling-kill based on updatedAt staleness alone.
         // Use the activity heartbeat (lastActivityMs) instead — a coder
         // streaming output keeps this fresh, so long runs are never killed.
-        // If no heartbeat data yet (process just started), skip the ceiling
-        // check entirely; only the dead-PID path applies.
+        // If no heartbeat data yet (process just started), check the zero-events
+        // fast-kill path: a process that is alive but has emitted NO events at all
+        // after the grace window has elapsed is almost certainly stuck at startup.
         if (phantomReason === null && entry.lastActivityMs !== undefined) {
           if (now - entry.lastActivityMs > ceiling) {
             phantomReason = 'ceiling'
+          }
+        } else if (phantomReason === null && entry.lastActivityMs === undefined) {
+          if (now - entry.startedAt > ZERO_EVENTS_GRACE_MS) {
+            phantomReason = 'zero-events'
           }
         }
       } else if (entry !== undefined) {
