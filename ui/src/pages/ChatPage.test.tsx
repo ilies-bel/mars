@@ -444,6 +444,22 @@ describe('MessageView – role + content', () => {
     // Alert-only messages are not wrapped in the AI-Elements Message bubble.
     expect(html).not.toContain('is-assistant')
   })
+
+  it('assistant text message renders inside a bordered card with surface background', () => {
+    const html = renderMessage(makeMsg([{ type: 'text', text: 'hello' }], 'assistant'))
+    // Card chrome: bordered message box with a surface background and padding
+    expect(html).toContain('border')
+    expect(html).toContain('bg-surface')
+    expect(html).toContain('px-3')
+  })
+
+  it('pure-alert assistant message does not gain a redundant outer border', () => {
+    const html = renderMessage(makeMsg([makeAlertSeg()], 'assistant'))
+    // AlertCard owns its own card chrome — no is-assistant wrapper should add another border
+    expect(html).not.toContain('is-assistant')
+    // AlertCard itself still renders its own styled card
+    expect(html).toContain('Task failed')
+  })
 })
 
 describe('MessageView – feedback controls presence', () => {
@@ -662,6 +678,15 @@ describe('ThinkingIndicator', () => {
   it('has aria-live="polite" on the wrapper', () => {
     const html = renderToStaticMarkup(createElement(ThinkingIndicator))
     expect(html).toContain('aria-live="polite"')
+  })
+
+  it('shows three animated bouncing dots, not a single static pulse', () => {
+    const html = renderToStaticMarkup(createElement(ThinkingIndicator))
+    // Three staggered bounce dots with staggered animation delays
+    const bounceCount = (html.match(/animate-bounce/g) ?? []).length
+    expect(bounceCount).toBe(3)
+    // Must not fall back to the old single-pulse approach
+    expect(html).not.toContain('animate-pulse')
   })
 })
 

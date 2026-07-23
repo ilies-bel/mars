@@ -639,7 +639,12 @@ export const MessageView = ({
 
   return (
     <Message from={message.role} data-message-role={message.role}>
-      <MessageContent variant={isUser ? 'contained' : 'flat'}>
+      {/* Assistant messages sit inside a subtle bordered card; user messages use
+          the default contained pill from MessageContent variant='contained'. */}
+      <MessageContent
+        variant={isUser ? 'contained' : 'flat'}
+        className={!isUser ? 'border border-iron/20 bg-surface px-3 py-2' : undefined}
+      >
         {parts.map((p, i) => renderPart(p, i, onDiscuss))}
         <ResultFooter usage={usage} />
         {!isUser && (
@@ -756,7 +761,12 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
  */
 export const ThinkingIndicator = () => (
   <div role="status" aria-live="polite" className="flex items-center gap-2 px-4 py-2">
-    <span className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-iron/60" aria-hidden="true" />
+    {/* Three staggered bouncing dots — livelier than a single static pulse */}
+    <span className="flex items-center gap-[3px]" aria-hidden="true">
+      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:0ms]" />
+      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:150ms]" />
+      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:300ms]" />
+    </span>
     <span className="font-mono text-[11px] text-iron/50">Thinking…</span>
   </div>
 )
