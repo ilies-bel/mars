@@ -100,7 +100,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (query.isPending) {
     return (
       <div>
-        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+        <dt className="mb-2 border-b border-iron/20 pb-1 text-[10px] uppercase tracking-wider text-iron">
           Origins
         </dt>
         <dd className="text-muted">Loading…</dd>
@@ -110,7 +110,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (query.isError || !query.data) {
     return (
       <div>
-        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+        <dt className="mb-2 border-b border-iron/20 pb-1 text-[10px] uppercase tracking-wider text-iron">
           Origins
         </dt>
         <FallbackSurface error={query.error} of="origin tasks" variant="inline" />
@@ -123,7 +123,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (root.children.length === 0 && root.id === taskId) {
     return (
       <div>
-        <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+        <dt className="mb-2 border-b border-iron/20 pb-1 text-[10px] uppercase tracking-wider text-iron">
           Origins
         </dt>
         <dd className="text-muted">No origin recorded for this task.</dd>
@@ -133,7 +133,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
 
   return (
     <div>
-      <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+      <dt className="mb-2 border-b border-iron/20 pb-1 text-[10px] uppercase tracking-wider text-iron">
         Origins
       </dt>
       <dd data-testid="origin-tree">

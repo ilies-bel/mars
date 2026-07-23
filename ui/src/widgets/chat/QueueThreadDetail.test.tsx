@@ -218,6 +218,29 @@ describe('PROCESS_LEVEL_OPS – entityId elision', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Section heading visual treatment
+// ---------------------------------------------------------------------------
+
+describe('QueueThreadDetail – section heading border treatment', () => {
+  it('Move forward heading carries a border-b divider class', () => {
+    const html = renderDetail(BASE_ITEM)
+    // The dt element that labels the "Move forward" section must have border-b
+    // so it visually separates from its content.
+    const dtMatch = html.match(/<dt[^>]*>[^<]*Move forward[^<]*<\/dt>/)
+    expect(dtMatch).not.toBeNull()
+    expect(dtMatch![0]).toContain('border-b')
+  })
+
+  it('Traces heading carries a border-b divider class', () => {
+    const html = renderDetail(BASE_ITEM)
+    // Traces renders as empty-state (no events seeded) but the dt is still present.
+    const dtMatch = html.match(/<dt[^>]*>[^<]*Traces[^<]*<\/dt>/)
+    expect(dtMatch).not.toBeNull()
+    expect(dtMatch![0]).toContain('border-b')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // actionErrorMessage — daemon-down error mapping
 // ---------------------------------------------------------------------------
 
