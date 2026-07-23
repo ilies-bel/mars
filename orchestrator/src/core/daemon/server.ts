@@ -3007,8 +3007,10 @@ export const startDaemon = async (
 
     // Clear stale failure markers so a re-queued task is never mistakenly
     // tagged as failed or daemon-killed (matches coreRestartTask clean-up).
+    // Also clear claudeSessionId so the next dispatch gets a fresh session.
     await updateTask(id, {
       status: hasBlockers ? 'blocked' : 'queued',
+      claudeSessionId: null,
       error: null,
       failedPhase: null,
       failureSignature: null,
@@ -3017,7 +3019,9 @@ export const startDaemon = async (
       currentStepGuide: null,
     })
 
-    if (!hasBlockers) {
+    if (hasBlockers) {
+      bus.emit('task.blocked', { taskId: id })
+    } else {
       bus.emit('task.queued', { taskId: id })
     }
 
