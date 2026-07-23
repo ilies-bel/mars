@@ -390,8 +390,13 @@ const DDL: readonly string[] = [
     role       text NOT NULL,
     content    text NOT NULL,
     segments   text,
-    created_at text NOT NULL
+    created_at text NOT NULL,
+    seq        bigint GENERATED ALWAYS AS IDENTITY
   )`,
+  // Backfill `seq` for databases created before this column was added.
+  // IF NOT EXISTS makes this idempotent on fresh databases (where seq already
+  // exists from the CREATE TABLE above).
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS seq bigint GENERATED ALWAYS AS IDENTITY`,
   `CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_id
      ON chat_messages(thread_id)`,
   `CREATE TABLE IF NOT EXISTS chat_feedback (

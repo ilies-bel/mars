@@ -100,9 +100,8 @@ export const loadChatFeedback = async (
                FROM chat_messages um
               WHERE um.thread_id = cf.thread_id
                 AND um.role = 'user'
-                AND (um.created_at < am.created_at
-                     OR (um.created_at = am.created_at AND um.id < am.id))
-              ORDER BY um.created_at DESC, um.id DESC
+                AND um.seq < am.seq
+              ORDER BY um.seq DESC
               LIMIT 1)  AS user_prompt
           FROM chat_feedback cf
           JOIN chat_messages am ON am.id = cf.message_id

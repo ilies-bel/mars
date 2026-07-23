@@ -208,6 +208,12 @@ describe('loadRecentTaskCorpus', () => {
 
   it('entry carries failure_signature, failure_reason_code, failed_phase, kind, fixForTaskId, originId', async () => {
     const store = await makeStore()
+    // Insert the origin task first to satisfy the FK constraint on fix_for_task_id.
+    // 'queued' status is excluded from the corpus, so toHaveLength(1) still holds.
+    await insertTask(store, {
+      id: 'task-origin',
+      status: 'queued',
+    })
     await insertTask(store, {
       id: 'task-sig',
       status: 'failed',
