@@ -91,6 +91,7 @@ const insertEnded = async (
     cacheReadTokens?: number
     sessionId?: string
     failureReason?: string
+    summary?: string
     phase?: 'setup' | 'code' | 'verify' | 'merge'
   },
 ): Promise<void> => {
@@ -113,6 +114,7 @@ const insertEnded = async (
   }
   if (opts.sessionId !== undefined) payload.sessionId = opts.sessionId
   if (opts.failureReason !== undefined) payload.failureReason = opts.failureReason
+  if (opts.summary !== undefined) payload.summary = opts.summary
 
   const severity = deriveSeverity('step_ended', payload)
   await client.execute({
@@ -343,6 +345,40 @@ describe('viewRunTimeline — step fields', () => {
     const step = result.runs[0].steps[0]
 
     expect(step.status).toBe('killed')
+  })
+
+  it('surfaces summary from the step_ended payload (reflect steps)', async () => {
+    const taskId = 'task-reflect-sum'
+    const runId = 'wf-reflect-sum'
+
+    await insertStarted(client, { taskId, workflowInstanceId: runId, stepName: 'analyze-token-economy', timestamp: '2025-01-01T10:00:00.000Z', phase: 'verify' })
+    await insertEnded(client, {
+      taskId,
+      workflowInstanceId: runId,
+      stepName: 'analyze-token-economy',
+      timestamp: '2025-01-01T10:00:00.200Z',
+      durationMs: 200,
+      phase: 'verify',
+      summary: '12 repeated reads, 10 failed calls, ~66300 tokens wasted',
+    })
+
+    const result = await svc.viewRunTimeline(taskId)
+    const step = result.runs[0].steps[0]
+
+    expect(step.summary).toBe('12 repeated reads, 10 failed calls, ~66300 tokens wasted')
+  })
+
+  it('returns null summary when no summary in the step_ended payload', async () => {
+    const taskId = 'task-no-sum'
+    const runId = 'wf-no-sum'
+
+    await insertStarted(client, { taskId, workflowInstanceId: runId, stepName: 'setup-worktree', timestamp: '2025-01-01T10:00:00.000Z', phase: 'setup' })
+    await insertEnded(client, { taskId, workflowInstanceId: runId, stepName: 'setup-worktree', timestamp: '2025-01-01T10:00:00.100Z', durationMs: 100, phase: 'setup' })
+
+    const result = await svc.viewRunTimeline(taskId)
+    const step = result.runs[0].steps[0]
+
+    expect(step.summary).toBeNull()
   })
 })
 
