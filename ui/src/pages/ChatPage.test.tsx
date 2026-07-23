@@ -20,13 +20,11 @@ import { createElement } from 'react'
 import {
   MessageView,
   FeedbackControls,
-  pickTopAlert,
   HeroSuggestions,
   AttachmentDisplay,
-  resolveMediaKind,
-  fileMediaKind,
   ThinkingIndicator,
 } from './ChatPage'
+import { pickTopAlert, resolveMediaKind, fileMediaKind } from './chatPageUtils'
 import { chatMessageToUIMessage } from '@/shared/chatMessageMapping'
 import { chatThreadDetailSchema } from '@/shared/schemas'
 import type { ChatMessage, ActionQueueItem, ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment } from '@/shared/schemas'
