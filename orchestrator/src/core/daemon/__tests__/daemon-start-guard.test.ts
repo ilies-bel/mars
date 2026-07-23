@@ -1,7 +1,7 @@
 /**
  * Tests for the daemon startup guard (ADR-0XXX: split-brain prevention).
  *
- * Two observable behaviors are tested:
+ * Three observable behaviors are tested:
  *
  * 1. **Lockfile guard** — `startDaemon` exits nonzero when daemon.lock holds a
  *    live PID, naming the holder in the log. This prevents a second concurrent
@@ -12,7 +12,12 @@
  *    full startup. This closes the race where `daemon restart` spawns a new
  *    daemon while the old one is still holding DB connections mid-shutdown.
  *
- * Both tests use a real tmpdir + git repo so `resolveContext()` / `daemonPaths()`
+ * 3. **Stale lockFile is not a blocker** — `startDaemon` proceeds past the
+ *    lockFile check when the lock holds a dead PID (crashed/rebooted daemon).
+ *    Guards against a regression where the liveness check is accidentally
+ *    removed from the guard condition.
+ *
+ * All tests use a real tmpdir + git repo so `resolveContext()` / `daemonPaths()`
  * resolve correctly. They isolate module state via `vi.resetModules()` so
  * successive tests don't share cached singletons.
  */
@@ -77,6 +82,53 @@ describe('daemon startup guard', () => {
     // The log must name the incumbent pid so the operator knows which process
     // holds the lock.
     expect(logLines.some((l) => l.includes(String(process.pid)))).toBe(true)
+  })
+
+  // ── Stale lockFile: dead pid in lock does not block startup ──────────────
+  //
+  // If a daemon crashed without cleaning up daemon.lock, the next start must
+  // not treat the stale lock as a live holder.  The guard condition is
+  // `lockPid !== null && isProcessAlive(lockPid)` — removing the liveness
+  // check would turn every crash into a permanent "stuck lock" that requires
+  // manual operator intervention.  This test pins that contract.
+
+  it('proceeds past the lockFile check when the lock holds a dead pid (stale lock)', async () => {
+    const lockFile = resolve(repo, '.mars', 'daemon.lock')
+    // INT_MAX: virtually guaranteed not to be a live process on any OS.
+    writeFileSync(lockFile, '2147483647', 'utf8')
+
+    const logLines: string[] = []
+
+    // Silence process.exit so the test runner doesn't terminate.  The lock-
+    // guard calls exit(1); other startup paths may call exit(0).  We make
+    // both no-ops and check the log instead (the guard always logs before
+    // calling exit).
+    vi.spyOn(process, 'exit').mockImplementation(
+      (_code?: string | number | null) => undefined as never,
+    )
+
+    vi.resetModules()
+    process.env.MARS_REPO = repo
+    process.env.MARS_DISABLE_DUCKDB = '1'
+
+    type ServerModule = typeof import('../server')
+    type DaemonHandle = Awaited<ReturnType<ServerModule['startDaemon']>>
+    let handle: DaemonHandle | null = null
+    try {
+      const { startDaemon } = (await import('../server')) as ServerModule
+      handle = await startDaemon({ log: (line) => logLines.push(line) })
+    } catch {
+      // Startup may fail for reasons unrelated to the lockFile check
+      // (e.g. embedded PG, UDS socket) — the assertion that matters is that
+      // the lock guard did NOT fire.
+    } finally {
+      if (handle !== null) {
+        await handle.stop(true)
+      }
+    }
+
+    // The lock-guard log message must never appear for a dead pid.
+    expect(logLines.some((l) => l.includes('holds the exclusive startup lock'))).toBe(false)
   })
 
   // ── Kill-and-wait: live prior process is terminated before startup ─────────
