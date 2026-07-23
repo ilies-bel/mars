@@ -304,4 +304,23 @@ describe('new catalog entries for previously-unmatched signatures', () => {
     expect(entry!.warmTitle).not.toBe('The coder did not produce any changes')
     expect(entry!.verboseReason).not.toContain('The coder may have encountered an error')
   })
+
+  it('code:coder-exit-nonzero/api-unreachable is registered with an environmental human explanation', () => {
+    // Verifies the "recipe lookup" produces a human sentence rather than falling
+    // through to an unknownFailureKind / generic "no recipe" fallback.
+    const entry = lookupFailureKind('code:coder-exit-nonzero/api-unreachable')
+    expect(entry).not.toBeNull()
+    // warmTitle must mention the API — not a generic "stopped" or "crash" label
+    expect(entry!.warmTitle.toLowerCase()).toMatch(/api/)
+    // verboseReason must explain the cause is network/DNS, not a code defect
+    expect(entry!.verboseReason.toLowerCase()).toMatch(/api|connect/)
+    expect(entry!.verboseReason.toLowerCase()).toContain('not at fault')
+    // staticEncodable must be environmental (not a gate-encodable command check)
+    expect(entry!.staticEncodable).toEqual({ encodable: false, reason: 'environmental' })
+    // Actions must not include "Investigate" — there is nothing to diagnose
+    expect(entry!.actions.every((a) => a.op !== 'diagnose-failure')).toBe(true)
+    // Must have restart and purge actions
+    expect(entry!.actions.some((a) => a.op === 'restart')).toBe(true)
+    expect(entry!.actions.some((a) => a.op === 'purge')).toBe(true)
+  })
 })
