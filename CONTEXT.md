@@ -498,3 +498,7 @@ _Avoid_: mission, goals, north star, prd, charter
 **Surface form**:
 A stored spelling variant of a glossary term (its plural, lowercased, or otherwise inflected form) that the chat highlighter matches against, so a term lights up regardless of case or inflection.
 _Avoid_: hit list, match form, highlight form, variant
+
+**Mechanical verification**:
+The deterministic verify step: it runs configured shell checks such as typecheck, lint, targeted tests, and commit/diff assertions in a task worktree. It is authoritative for mechanical correctness and is serialized by the global verify lock; it does not assess human-facing behaviour.
+_Avoid_: agent verification, agent verify, shell verification
