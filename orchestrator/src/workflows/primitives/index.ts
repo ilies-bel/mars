@@ -51,7 +51,6 @@ import {
 import {
   cleanWorktreeIfNoCommitsAhead,
   verifyChanges,
-  loadVerifyScopes,
   selectVerifySteps,
   getChangedFiles,
   isInfraFailureOutput,
@@ -1501,10 +1500,11 @@ export const verify = async (
       // subproject happens to be selected by the legacy repro heuristic.
       const verifyCwd = worktreePath
       const verifyCtx = resolveContext()
-      const recipeScopes = await loadVerifyScopes(verifyCtx.supervisorsManifest)
+      const { loadVerifyGates } = await import('../../core/verify-gates')
+      const recipeScopes = await loadVerifyGates(store)
       // Gate-enrichment merge (PRD 745f33e0): human-approved shadow/enforcing
       // checks from the signature-keyed registry are appended BEHIND
-      // loadVerifyScopes and flow through unchanged ADR-0018 selection below
+      // loadVerifyGates and flow through unchanged ADR-0018 selection below
       // (path containment + always-on root floor) — no recipe schema change,
       // and the seam survives the manifest.json→verify.json migration.
       // `appendEnrichmentScopes` never throws (registry failure → recipe
@@ -1978,8 +1978,8 @@ export const merge = async (
     finalTaskSha: string
     finalIntegrationSha: string
   }): Promise<void> => {
-    const gateCtx = resolveContext()
-    const gateScopes = await loadVerifyScopes(gateCtx.supervisorsManifest)
+    const { loadVerifyGates } = await import('../../core/verify-gates')
+    const gateScopes = await loadVerifyGates(store)
 
     // Collect ALL integration-tier steps from ALL scopes: integration tests
     // verify the full merged tree, not just the files this task touched.

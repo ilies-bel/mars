@@ -10,7 +10,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { resolveStateClient } from './store/state-client.js'
-import type { DbClient } from './lib/db.js'
+import type { DbTx } from './lib/db.js'
 import type { VerifyScope, VerifyStepSpec } from './lib/git/verify.js'
 
 // The specific DDL for this table — kept here so callers can ensure just this
@@ -29,7 +29,7 @@ const VERIFY_GATES_DDL = `CREATE TABLE IF NOT EXISTS verify_gates (
 )`
 
 /** Idempotent CREATE TABLE for the verify_gates table. */
-export const ensureVerifyGatesSchema = async (client: DbClient): Promise<void> => {
+export const ensureVerifyGatesSchema = async (client: DbTx): Promise<void> => {
   await client.execute(VERIFY_GATES_DDL)
 }
 
@@ -156,7 +156,7 @@ export const listVerifyGates = async (): Promise<VerifyGate[]> => {
  * Each returned step has `dir` set to its scope so the verify runner knows
  * which subdirectory to execute it from.
  */
-export const loadVerifyGates = async (client: DbClient): Promise<VerifyScope[]> => {
+export const loadVerifyGates = async (client: DbTx): Promise<VerifyScope[]> => {
   const r = await client.execute(
     `SELECT id, scope, name, cmd, args_json, required, tier, source, created_at
      FROM verify_gates ORDER BY scope, created_at`,
