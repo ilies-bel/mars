@@ -719,3 +719,136 @@ describe('api-outage coalescing — circuit-breaker-open failures', () => {
     expect((r.rows[0] as unknown as { state: string }).state).toBe('resolved');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Learned-recipe auto-run: task.blocked fires → recipe executes, no card raised
+// ---------------------------------------------------------------------------
+
+describe('learned-recipe auto-run via task.blocked subscriber', () => {
+  let tmpDir: string;
+  let client: DbClient;
+  let buildActionQueueRaiserSubscribers: typeof import('./action-queue-raisers.js').buildActionQueueRaiserSubscribers;
+
+  // Spies shared across all tests; reset+reconfigure in beforeEach.
+  // No type parameters on vi.fn() — we rely on mockResolvedValue for inference.
+  const mockGetLearnedRecipe = vi.fn();
+  const mockExecuteLearnedOp = vi.fn();
+  const mockLogAutoRecipeRun = vi.fn();
+
+  beforeEach(async () => {
+    tmpDir = setupRepo();
+    process.env.MARS_REPO = tmpDir;
+    vi.resetModules();
+
+    // Default implementations: no recipe stored, auto-run succeeds.
+    mockGetLearnedRecipe.mockReset().mockResolvedValue(null);
+    mockExecuteLearnedOp.mockReset().mockResolvedValue(undefined);
+    mockLogAutoRecipeRun.mockReset().mockResolvedValue(undefined);
+
+    // Mock the entire learned-recipes module. The action-queue-raiser handler
+    // does a dynamic `import('...learned-recipes.js')` at runtime; vi.doMock
+    // registers a factory that is picked up by that import (same resolved path).
+    vi.doMock('../../core/lib/learned-recipes.js', () => ({
+      getLearnedRecipe: mockGetLearnedRecipe,
+      executeLearnedOp: mockExecuteLearnedOp,
+      logAutoRecipeRun: mockLogAutoRecipeRun,
+    }));
+
+    client = await makeClient(tmpDir);
+    const mod = await import('./action-queue-raisers.js');
+    buildActionQueueRaiserSubscribers = mod.buildActionQueueRaiserSubscribers;
+  });
+
+  afterEach(async () => {
+    vi.doUnmock('../../core/lib/learned-recipes.js');
+    await client.close();
+    delete process.env.MARS_REPO;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('auto-runs the stored op and raises no action-queue card when a recipe exists', async () => {
+    mockGetLearnedRecipe.mockResolvedValue({
+      failureSignature: 'verify:typecheck/type-mismatch',
+      actionOp: 'restart',
+      learnedAt: new Date().toISOString(),
+    });
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(
+      blockedEvent(1001, 'task-recipe-alpha', {
+        failureSignature: 'verify:typecheck/type-mismatch',
+      }),
+    );
+
+    // Auto-run was invoked with the right task id and op.
+    expect(mockExecuteLearnedOp).toHaveBeenCalledWith('task-recipe-alpha', 'restart');
+    // Auto-run was logged for the WYWA delta.
+    expect(mockLogAutoRecipeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signature: 'verify:typecheck/type-mismatch',
+        actionOp: 'restart',
+        taskId: 'task-recipe-alpha',
+      }),
+    );
+    // No human action required — card must NOT be raised.
+    expect(await openRowCount(client)).toBe(0);
+  });
+
+  it('raises a card normally when no recipe is stored for the failure signature', async () => {
+    // mockGetLearnedRecipe already returns null by default.
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(
+      blockedEvent(1002, 'task-recipe-beta', {
+        failureSignature: 'verify:typecheck/type-mismatch',
+      }),
+    );
+
+    // No auto-run attempted — op was not supported.
+    expect(mockExecuteLearnedOp).not.toHaveBeenCalled();
+    // Card was raised so the operator can act.
+    expect(await openRowCount(client)).toBe(1);
+  });
+
+  it('falls back to raising a card when executeLearnedOp throws', async () => {
+    mockGetLearnedRecipe.mockResolvedValue({
+      failureSignature: 'verify:typecheck/type-mismatch',
+      actionOp: 'restart',
+      learnedAt: new Date().toISOString(),
+    });
+    mockExecuteLearnedOp.mockRejectedValue(new Error('task not in failed status'));
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(
+      blockedEvent(1003, 'task-recipe-gamma', {
+        failureSignature: 'verify:typecheck/type-mismatch',
+      }),
+    );
+
+    // Fallback: card raised so the operator can intervene.
+    expect(await openRowCount(client)).toBe(1);
+    // Log was NOT called because execution failed before it could run.
+    expect(mockLogAutoRecipeRun).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-run when failureSignature is absent from the event payload', async () => {
+    // Some legacy events may arrive without a failureSignature. In that case
+    // the auto-run gate should be skipped entirely and a card raised normally.
+    const eventNoSig: BusEvent = {
+      id: 1004,
+      type: 'task.blocked',
+      payload: {
+        taskId: 'task-recipe-delta',
+        fixTaskId: null,
+        failureSignature: '',
+        failingStep: 'verify',
+      },
+      ts: 1_000,
+    };
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(eventNoSig);
+
+    expect(mockGetLearnedRecipe).not.toHaveBeenCalled();
+    expect(await openRowCount(client)).toBe(1);
+  });
+});
