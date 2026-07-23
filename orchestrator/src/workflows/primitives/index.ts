@@ -1036,6 +1036,64 @@ export const runAgent = async (
               ? `stderr empty; last stream text:\n${streamText.slice(-500)}`
               : `stderr empty; no stream text captured`
           })()
+
+    // Before reporting failure, detect whether the coder did real work before
+    // it was killed. A watchdog kill, timeout, or quota death can leave
+    // completed but uncommitted changes in the worktree — work that would be
+    // silently lost if the fixer starts from a clean tree. Preserve those
+    // changes as a wip(checkpoint) commit so the recovery fixer inherits a
+    // reviewable, rebuildable baseline. The marker is intentionally
+    // unambiguous so the fixer can distinguish checkpointed WIP from
+    // deliberate commits and knows not to merge as-is.
+    let checkpointFiles: string[] | null = null
+    try {
+      const postState = await detectPostCoderState({
+        worktreePath,
+        integrationBranch,
+        traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+      })
+      if (postState.kind === 'dirty-no-commits') {
+        const addR = await runTool(
+          {
+            tool: 'git',
+            argv: ['add', '-A'],
+            cwd: worktreePath,
+            taskId,
+            originId,
+            phase: 'code',
+          },
+          trace.traceStore,
+        )
+        if (addR.exitCode === 0) {
+          const commitMsg = `wip(checkpoint): coder killed (exit ${r.exitCode}) with ${postState.dirtyFiles.length} uncommitted path(s) — do not merge as-is`
+          const commitR = await runTool(
+            {
+              tool: 'git',
+              argv: ['commit', '-m', commitMsg],
+              cwd: worktreePath,
+              taskId,
+              originId,
+              phase: 'code',
+            },
+            trace.traceStore,
+          )
+          if (commitR.exitCode === 0) {
+            checkpointFiles = postState.dirtyFiles
+            console.log(
+              `[code] task ${taskId}: checkpointed ${postState.dirtyFiles.length} uncommitted path(s) as wip(checkpoint) commit (exit ${r.exitCode})`,
+            )
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[code] task ${taskId}: checkpoint attempt failed, continuing:`, err)
+    }
+
+    const worktreeNote =
+      checkpointFiles !== null
+        ? `worktree had ${checkpointFiles.length} uncommitted path(s); preserved as wip(checkpoint) commit on branch ${branch}`
+        : 'worktree was clean at exit (no uncommitted work found)'
+
     await updateTask(
       taskId,
       {
@@ -1050,12 +1108,15 @@ export const runAgent = async (
     await handleTaskFailureWithFixTask({
       taskId,
       failingStep: 'code:coder-exit-nonzero',
-      errorOutput: `coder process exited ${r.exitCode} without producing work. ${diagText}`,
+      errorOutput: `coder process exited ${r.exitCode}. ${worktreeNote}. ${diagText}`,
       branch,
       store,
       recipeContext: {
         targetPath: worktreePath,
-        statusOutput: `The coder exited ${r.exitCode} before doing any work (the worktree may be empty). Investigate the exit cause from the diagnostic text before retrying.`,
+        statusOutput:
+          checkpointFiles !== null
+            ? `The coder exited ${r.exitCode} mid-run. The worktree had ${checkpointFiles.length} uncommitted path(s) which have been preserved as a wip(checkpoint) commit on branch ${branch}. Review the checkpoint (\`git -C ${worktreePath} log -p -1\`) and continue from there — do NOT redo work that is already in the checkpoint commit.`
+            : `The coder exited ${r.exitCode} and the worktree was clean at exit (no uncommitted work found). Investigate the exit cause from the diagnostic text before retrying.`,
         targetBranch: branch,
         originalPrompt: '',
       },
