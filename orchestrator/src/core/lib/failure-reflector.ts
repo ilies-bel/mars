@@ -1,0 +1,193 @@
+import { runClaudeCode } from './git/claude'
+import { getRepoRoot } from '../context'
+import { createHash } from 'node:crypto'
+import {
+  createProposal,
+  findOpenReflectionDraftByFingerprint,
+  appendProposalNotes,
+} from '../proposals'
+import { getDefaultTaskStore } from '../store/task-store'
+import { loadImprovementRecipes, formatRecipeCatalog } from './improvement-recipes'
+import { collectAssistantText, extractFirstJsonDocument } from './reflector'
+
+const SYSTEM_PROMPT_TEMPLATE = `You are a harness improvement advisor for the Mars orchestrator.
+A task failed and recovery was exhausted — the fix-task loop could not
+resolve the issue. Your job is NOT to fix the code but to improve the
+harness so this class of failure is prevented or automatically handled.
+
+Review the arc: the origin task, what it tried, each recovery attempt,
+and why each failed. Then:
+1. Check the improvement recipe catalog for applicable recipes.
+2. Suggest which recipes to apply (cite the recipe name).
+3. If no recipe fits, propose a novel improvement.
+
+Output a JSON object:
+{
+  "suggestions": [
+    {
+      "recipe": "add-typecheck" | null,
+      "title": "short title",
+      "rationale": "why this would help",
+      "action": "concrete mars verify add command or other action"
+    }
+  ]
+}
+
+Improvement recipes:
+{catalog}
+
+Arc context:
+{arcContext}`
+
+export interface SpawnFailureReflectorOpts {
+  taskId: string
+  lastStep: string
+  lastErrorSignature: string
+  retryCount: number
+  worktreePath: string | null
+  branch: string | null
+}
+
+interface FailureReflectorSuggestion {
+  recipe: string | null
+  title: string
+  rationale: string
+  action: string
+}
+
+const buildArcContext = async (opts: SpawnFailureReflectorOpts): Promise<string> => {
+  let taskPrompt = '(not found)'
+  const fixTaskLines: string[] = []
+
+  try {
+    const store = await getDefaultTaskStore()
+
+    try {
+      const task = await store.getTask(opts.taskId)
+      if (task?.prompt) {
+        taskPrompt = task.prompt.slice(0, 500)
+      }
+    } catch {
+      // best-effort: proceed without task prompt
+    }
+
+    try {
+      const fixTasksResult = await store.query({
+        sql: `SELECT id, failure_reason, status FROM tasks WHERE fix_for_task_id = ? ORDER BY created_at ASC`,
+        args: [opts.taskId],
+      })
+      for (const row of fixTasksResult.rows) {
+        const r = row as Record<string, unknown>
+        fixTaskLines.push(
+          `  - Fix task ${r.id}: status=${r.status}, failure=${r.failure_reason ?? 'none'}`,
+        )
+      }
+    } catch {
+      // best-effort: proceed without fix task list
+    }
+  } catch {
+    // best-effort: proceed without DB context
+  }
+
+  return [
+    `Task ID: ${opts.taskId}`,
+    `Prompt: ${taskPrompt}`,
+    `Last failing step: ${opts.lastStep}`,
+    `Failure signature: ${opts.lastErrorSignature}`,
+    `Retry count: ${opts.retryCount}`,
+    opts.branch ? `Branch: ${opts.branch}` : null,
+    opts.worktreePath ? `Worktree: ${opts.worktreePath}` : null,
+    '',
+    'Fix task attempts:',
+    fixTaskLines.length > 0 ? fixTaskLines.join('\n') : '  (none)',
+  ]
+    .filter((l): l is string => l !== null)
+    .join('\n')
+}
+
+const parseSuggestions = (text: string): FailureReflectorSuggestion[] => {
+  const parsed = extractFirstJsonDocument(text) as { suggestions?: unknown } | null
+  if (!parsed || !Array.isArray(parsed.suggestions)) return []
+
+  const results: FailureReflectorSuggestion[] = []
+  for (const raw of parsed.suggestions) {
+    if (!raw || typeof raw !== 'object') continue
+    const obj = raw as Record<string, unknown>
+    const title = typeof obj.title === 'string' ? obj.title.trim() : ''
+    const rationale = typeof obj.rationale === 'string' ? obj.rationale.trim() : ''
+    const action = typeof obj.action === 'string' ? obj.action.trim() : ''
+    const recipe = typeof obj.recipe === 'string' ? obj.recipe : null
+    if (!title || !action) continue
+    results.push({ recipe, title, rationale, action })
+  }
+  return results
+}
+
+const persistSuggestion = async (s: FailureReflectorSuggestion): Promise<void> => {
+  const fingerprint = createHash('sha256')
+    .update(`failure-reflector:${s.title}:`)
+    .digest('hex')
+    .slice(0, 32)
+
+  const existing = await findOpenReflectionDraftByFingerprint(fingerprint, 'failure-reflector')
+  if (existing) {
+    if (s.rationale) {
+      await appendProposalNotes(existing.id, s.rationale)
+    }
+    return
+  }
+
+  const notes = [s.rationale, s.recipe ? `Recipe: ${s.recipe}` : null]
+    .filter(Boolean)
+    .join('\n')
+
+  await createProposal(s.title, {
+    source: 'failure-reflector',
+    author: { kind: 'agent', name: 'failure-reflector' },
+    solution: s.action,
+    notes,
+    fingerprint,
+  })
+}
+
+/**
+ * Spawn a harness-improvement analysis for an exhausted failure arc.
+ *
+ * Fire-and-forget: the call site does NOT await this. All errors are caught
+ * and logged; nothing is ever thrown. The function runs Claude Code with a
+ * harness-improvement system prompt (NOT a code-fix prompt), then persists
+ * each suggestion as a draft proposal with source='failure-reflector'.
+ *
+ * Deduplication: repeated suggestions for the same title are collapsed into
+ * the existing open draft (notes appended, no new proposal row created).
+ */
+export const spawnFailureReflector = async (
+  opts: SpawnFailureReflectorOpts,
+): Promise<void> => {
+  try {
+    const recipes = loadImprovementRecipes()
+    const catalog = formatRecipeCatalog(recipes)
+    const arcContext = await buildArcContext(opts)
+
+    const prompt = SYSTEM_PROMPT_TEMPLATE.replace('{catalog}', catalog).replace(
+      '{arcContext}',
+      arcContext,
+    )
+
+    const r = await runClaudeCode({
+      cwd: getRepoRoot(),
+      prompt,
+      model: 'sonnet',
+    })
+
+    const text = collectAssistantText(r.conversation) || r.stdout
+    const suggestions = parseSuggestions(text)
+
+    for (const s of suggestions) {
+      await persistSuggestion(s)
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[failure-reflector] error (non-fatal):', err)
+  }
+}

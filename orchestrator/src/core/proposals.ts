@@ -6,7 +6,7 @@ import { withTransaction, type DbClient } from './lib/db.js'
 import { ensureSchema } from './lib/pg-schema.js'
 import type { EventName, EventPayload } from '../bus/events.js'
 
-export type ProposalSource = 'reflection' | 'human' | 'planner' | 'skill-forge'
+export type ProposalSource = 'reflection' | 'human' | 'planner' | 'skill-forge' | 'failure-reflector'
 
 export interface Proposal {
   id: string
@@ -93,10 +93,15 @@ const VALID_SOURCES: readonly ProposalSource[] = [
   'human',
   'planner',
   'skill-forge',
+  'failure-reflector',
 ]
 
 const isValidSource = (raw: unknown): raw is ProposalSource =>
-  raw === 'reflection' || raw === 'planner' || raw === 'human' || raw === 'skill-forge'
+  raw === 'reflection' ||
+  raw === 'planner' ||
+  raw === 'human' ||
+  raw === 'skill-forge' ||
+  raw === 'failure-reflector'
 
 const normaliseSource = (raw: unknown): ProposalSource => {
   if (isValidSource(raw)) return raw
@@ -822,17 +827,18 @@ export const findOpenReflectionDraftForKpi = async (
  */
 export const findOpenReflectionDraftByFingerprint = async (
   fingerprint: string,
+  source: ProposalSource = 'reflection',
 ): Promise<{ id: string; notes: string } | null> => {
   await initProposals()
   const c = stateClient()
   const r = await c.execute({
     sql: `SELECT id, notes FROM proposals
-           WHERE source = 'reflection'
+           WHERE source = ?
              AND status = 'draft'
              AND fingerprint = ?
            ORDER BY created_at DESC
            LIMIT 1`,
-    args: [fingerprint],
+    args: [source, fingerprint],
   })
   if (r.rows.length === 0) return null
   const row = r.rows[0] as unknown as { id: string; notes: string }

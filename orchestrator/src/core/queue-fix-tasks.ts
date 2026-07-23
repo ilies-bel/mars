@@ -537,6 +537,19 @@ export const handleTaskFailureWithFixTask = async (
       branch,
       worktreePath: task.worktreePath,
     })
+    import('./lib/failure-reflector').then(({ spawnFailureReflector }) =>
+      spawnFailureReflector({
+        taskId: input.taskId,
+        lastStep: input.failingStep,
+        lastErrorSignature: failureSignature,
+        retryCount: task.retryCount,
+        worktreePath: task.worktreePath,
+        branch,
+      }).catch((err) =>
+        // eslint-disable-next-line no-console
+        console.warn('[failure-reflector] spawn failed (non-fatal):', err),
+      ),
+    )
     return {
       outcome: 'failed',
       failureSignature,
@@ -697,6 +710,20 @@ export const handleTaskFailureWithFixTask = async (
         attempts: priorAttempts,
       },
     })
+
+    import('./lib/failure-reflector').then(({ spawnFailureReflector }) =>
+      spawnFailureReflector({
+        taskId: input.taskId,
+        lastStep: input.failingStep,
+        lastErrorSignature: failureSignature,
+        retryCount: task.retryCount,
+        worktreePath: task.worktreePath,
+        branch,
+      }).catch((err) =>
+        // eslint-disable-next-line no-console
+        console.warn('[failure-reflector] spawn failed (non-fatal):', err),
+      ),
+    )
 
     internalBus().emit('task.blocked', {
       taskId: input.taskId,

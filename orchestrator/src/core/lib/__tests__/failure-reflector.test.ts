@@ -1,0 +1,261 @@
+/**
+ * Integration tests for spawnFailureReflector.
+ *
+ * Observable behaviour under test:
+ *  1. Claude output is persisted as proposals with source='failure-reflector'
+ *  2. Repeated suggestions for the same title are deduplicated (notes appended)
+ *  3. Non-blocking: errors from Claude are swallowed, never thrown
+ *
+ * runClaudeCode is mocked (subprocess boundary). Proposals are verified via
+ * listProposals from the proposals module (the same PGlite instance the
+ * reflector writes to).
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
+
+// Mock runClaudeCode at the system boundary (subprocess call).
+vi.mock('../git/claude', () => ({
+  runClaudeCode: vi.fn(),
+}))
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const setupRepo = (): string => {
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-failure-reflector-test-'))
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  return repo
+}
+
+/** Craft a minimal RunClaudeResult with controlled suggestion output. */
+const makeClaudeResult = (suggestions: unknown[]) => ({
+  stdout: JSON.stringify({ suggestions }),
+  stderr: '',
+  conversation: [] as Array<{ type: string; [k: string]: unknown }>,
+  exitCode: 0,
+  sessionId: null as string | null,
+  quotaRejected: null as { resetsAt: number } | null,
+})
+
+const baseOpts = {
+  taskId: 'test-task-abc',
+  lastStep: 'verify:test-failed',
+  lastErrorSignature: 'verify:test-failed:typecheck',
+  retryCount: 1,
+  worktreePath: null,
+  branch: null,
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+describe('spawnFailureReflector', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('creates a proposal when Claude returns a valid suggestion', async () => {
+    const { runClaudeCode } = await import('../git/claude')
+    vi.mocked(runClaudeCode).mockResolvedValueOnce(
+      makeClaudeResult([
+        {
+          recipe: 'add-typecheck',
+          title: 'Add TypeScript typecheck gate',
+          rationale:
+            'Task failed with TS errors that a typecheck gate would have caught earlier.',
+          action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
+        },
+      ]),
+    )
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { initProposals, listProposals } = await import('../../proposals')
+    await initProposals()
+
+    await spawnFailureReflector(baseOpts)
+
+    const proposals = await listProposals({ source: 'failure-reflector' })
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0].title).toBe('Add TypeScript typecheck gate')
+    expect(proposals[0].source).toBe('failure-reflector')
+  })
+
+  it('persists the action as the proposal solution', async () => {
+    const { runClaudeCode } = await import('../git/claude')
+    vi.mocked(runClaudeCode).mockResolvedValueOnce(
+      makeClaudeResult([
+        {
+          recipe: null,
+          title: 'Add lint gate to catch style issues early',
+          rationale: 'Tasks failed on lint issues repeatedly.',
+          action: 'mars verify add lint --cmd npx --args "eslint ."',
+        },
+      ]),
+    )
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { initProposals, listProposals } = await import('../../proposals')
+    await initProposals()
+
+    await spawnFailureReflector(baseOpts)
+
+    const proposals = await listProposals({ source: 'failure-reflector' })
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0].solution).toBe('mars verify add lint --cmd npx --args "eslint ."')
+  })
+
+  it('deduplicates proposals with the same title on repeated calls', async () => {
+    const { runClaudeCode } = await import('../git/claude')
+    vi.mocked(runClaudeCode)
+      .mockResolvedValueOnce(
+        makeClaudeResult([
+          {
+            recipe: 'add-typecheck',
+            title: 'Add TypeScript typecheck gate',
+            rationale: 'First observation.',
+            action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        makeClaudeResult([
+          {
+            recipe: 'add-typecheck',
+            title: 'Add TypeScript typecheck gate',
+            rationale: 'Second observation — same pattern recurred.',
+            action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
+          },
+        ]),
+      )
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { initProposals, listProposals } = await import('../../proposals')
+    await initProposals()
+
+    await spawnFailureReflector(baseOpts)
+    await spawnFailureReflector(baseOpts)
+
+    // Same title → same fingerprint → deduped to one proposal
+    const proposals = await listProposals({ source: 'failure-reflector' })
+    expect(proposals).toHaveLength(1)
+  })
+
+  it('appends rationale from second call to existing proposal notes', async () => {
+    const { runClaudeCode } = await import('../git/claude')
+    vi.mocked(runClaudeCode)
+      .mockResolvedValueOnce(
+        makeClaudeResult([
+          {
+            recipe: 'add-typecheck',
+            title: 'Add TypeScript typecheck gate',
+            rationale: 'First observation.',
+            action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        makeClaudeResult([
+          {
+            recipe: 'add-typecheck',
+            title: 'Add TypeScript typecheck gate',
+            rationale: 'Second observation — same pattern recurred.',
+            action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
+          },
+        ]),
+      )
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { initProposals, listProposals } = await import('../../proposals')
+    await initProposals()
+
+    await spawnFailureReflector(baseOpts)
+    await spawnFailureReflector(baseOpts)
+
+    const proposals = await listProposals({ source: 'failure-reflector' })
+    expect(proposals[0].notes).toMatch(/Second observation/)
+  })
+
+  it('creates separate proposals for suggestions with different titles', async () => {
+    const { runClaudeCode } = await import('../git/claude')
+    vi.mocked(runClaudeCode).mockResolvedValueOnce(
+      makeClaudeResult([
+        {
+          recipe: 'add-typecheck',
+          title: 'Add TypeScript typecheck gate',
+          rationale: 'Would catch type errors.',
+          action: 'mars verify add typecheck --cmd npx --args "tsc --noEmit"',
+        },
+        {
+          recipe: 'add-unit-tests',
+          title: 'Add unit test gate',
+          rationale: 'Would catch regressions.',
+          action: 'mars verify add test --cmd npm --args "test"',
+        },
+      ]),
+    )
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { initProposals, listProposals } = await import('../../proposals')
+    await initProposals()
+
+    await spawnFailureReflector(baseOpts)
+
+    const proposals = await listProposals({ source: 'failure-reflector' })
+    expect(proposals).toHaveLength(2)
+  })
+
+  it('does not throw when Claude errors — fire-and-forget is non-blocking', async () => {
+    const { runClaudeCode } = await import('../git/claude')
+    vi.mocked(runClaudeCode).mockRejectedValueOnce(new Error('Claude unavailable'))
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+
+    // Must resolve (not reject) even when Claude fails
+    await expect(spawnFailureReflector(baseOpts)).resolves.toBeUndefined()
+  })
+
+  it('does not create any proposals when Claude returns empty suggestions', async () => {
+    const { runClaudeCode } = await import('../git/claude')
+    vi.mocked(runClaudeCode).mockResolvedValueOnce(makeClaudeResult([]))
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { initProposals, listProposals } = await import('../../proposals')
+    await initProposals()
+
+    await spawnFailureReflector(baseOpts)
+
+    const proposals = await listProposals({ source: 'failure-reflector' })
+    expect(proposals).toHaveLength(0)
+  })
+
+  it('does not create proposals for malformed suggestions missing title or action', async () => {
+    const { runClaudeCode } = await import('../git/claude')
+    vi.mocked(runClaudeCode).mockResolvedValueOnce(
+      makeClaudeResult([
+        { recipe: null, title: '', rationale: 'no title', action: 'do something' },
+        { recipe: null, title: 'has title', rationale: 'no action', action: '' },
+        { recipe: null /* not even title or action */ },
+      ]),
+    )
+
+    const { spawnFailureReflector } = await import('../failure-reflector')
+    const { initProposals, listProposals } = await import('../../proposals')
+    await initProposals()
+
+    await spawnFailureReflector(baseOpts)
+
+    const proposals = await listProposals({ source: 'failure-reflector' })
+    expect(proposals).toHaveLength(0)
+  })
+})
