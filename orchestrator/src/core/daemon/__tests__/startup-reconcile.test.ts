@@ -370,6 +370,148 @@ describe('runStartupReconcile — blocker-drift repair precedes orphan scan', ()
   })
 })
 
+describe('runStartupReconcile — requeue-stale-running (prior-daemon running tasks)', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('converts a prior-daemon running task to queued and emits task.queued on the bus', async () => {
+    // Regression: tasks left in status='running' when the prior daemon died must
+    // be converted to 'queued' by the requeue-stale-running reconciler before
+    // reseed-dispatch fires, so they are dispatched on the new daemon. Without
+    // this fix they stayed 'running' with no worker until the phantom-task
+    // watchdog fired 30 min later and failed them.
+    const { q, reconcile } = await loadModules(repo)
+    const taskQueuedEvents: string[] = []
+    const bus = new EventEmitter()
+    bus.on('task.queued', (e: { taskId: string }) => taskQueuedEvents.push(e.taskId))
+
+    // Simulate: task was running when the prior daemon died.
+    const task = await q.enqueueTask('in-flight work from prior daemon', undefined, {
+      skipTriage: true,
+    })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', branch = NULL, worktree_path = NULL WHERE id = ?`,
+      args: [task.id],
+    })
+
+    const summary = await reconcile.runStartupReconcile({
+      log: () => {},
+      bus,
+      traceStore: null,
+      handleProposalSlice: null,
+    })
+
+    // Task must be converted to 'queued' — never left as 'running' with no worker.
+    const updated = await q.getTask(task.id)
+    expect(updated?.status).toBe('queued')
+
+    // In-flight fields must be cleared so the next dispatch starts a clean setup.
+    expect(updated?.branch).toBeNull()
+    expect(updated?.worktreePath).toBeNull()
+    expect(updated?.claudeSessionId).toBeNull()
+    expect(updated?.error).toBeNull()
+
+    // Summary must record the re-queue.
+    expect(summary.runningRequeued).toBe(1)
+
+    // Bus must have received task.queued so the dispatch loop picks it up.
+    // Both requeue-stale-running and reseed-dispatch emit for this task —
+    // at minimum one event must be present.
+    expect(taskQueuedEvents).toContain(task.id)
+  })
+
+  it('ordering contract: a running task converted by requeue-stale-running is then picked up by reseed-dispatch', async () => {
+    // Regression for the ordering bug: when reseed-dispatch ran BEFORE
+    // requeue-stale-running, the bus emitted task.queued for all 'queued' rows
+    // BEFORE prior-daemon 'running' rows were converted to 'queued'. The
+    // converted tasks' bus events only came from requeue-stale-running (one
+    // shot). Fixing the order means reseed-dispatch fires AFTER conversion so
+    // it also emits for the newly-queued tasks — guaranteeing at least two
+    // task.queued events per converted task (one from each step).
+    const { q, reconcile } = await loadModules(repo)
+    const taskQueuedEvents: string[] = []
+    const bus = new EventEmitter()
+    bus.on('task.queued', (e: { taskId: string }) => taskQueuedEvents.push(e.taskId))
+
+    const task = await q.enqueueTask('ordering-regression work', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running' WHERE id = ?`,
+      args: [task.id],
+    })
+
+    await reconcile.runStartupReconcile({
+      log: () => {},
+      bus,
+      traceStore: null,
+      handleProposalSlice: null,
+    })
+
+    // With the correct order (requeue before reseed), both steps emit task.queued:
+    // requeue-stale-running emits once when it converts the task, then
+    // reseed-dispatch emits again because the task is now 'queued'.
+    const eventCount = taskQueuedEvents.filter((id) => id === task.id).length
+    expect(eventCount).toBeGreaterThanOrEqual(2)
+  })
+
+  it('does not affect tasks already in queued status', async () => {
+    // A task that was already 'queued' (e.g. never dispatched) must not be
+    // touched by requeue-stale-running — it is already in the right state.
+    const { q, reconcile } = await loadModules(repo)
+
+    const task = await q.enqueueTask('normal queued work', undefined, { skipTriage: true })
+    // task is already 'queued'
+
+    const summary = await reconcile.runStartupReconcile({
+      log: () => {},
+      bus: new EventEmitter(),
+      traceStore: null,
+      handleProposalSlice: null,
+    })
+
+    const updated = await q.getTask(task.id)
+    expect(updated?.status).toBe('queued') // unchanged
+    expect(summary.runningRequeued).toBe(0) // not touched by requeue-stale-running
+  })
+
+  it('a running task restored to blocked (incomplete blockers) is not counted as requeued', async () => {
+    // If the running task still has incomplete blockers it must be restored to
+    // blocked, not queued — and must not appear in the runningRequeued count.
+    const { q, reconcile } = await loadModules(repo)
+
+    const blocker = await q.enqueueTask('incomplete blocker', undefined, { skipTriage: true })
+    const task = await q.enqueueTask('task with blocker', undefined, { skipTriage: true })
+    await q.addBlockers(task.id, [blocker.id])
+
+    // Force the task to 'running' (simulating prior-daemon dispatch)
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running' WHERE id = ?`,
+      args: [task.id],
+    })
+
+    const summary = await reconcile.runStartupReconcile({
+      log: () => {},
+      bus: new EventEmitter(),
+      traceStore: null,
+      handleProposalSlice: null,
+    })
+
+    // Task must be restored to blocked (not queued), since it has an incomplete blocker.
+    const updated = await q.getTask(task.id)
+    expect(updated?.status).toBe('blocked')
+
+    // runningRequeued counts only tasks promoted to 'queued', not to 'blocked'.
+    expect(summary.runningRequeued).toBe(0)
+  })
+})
+
 describe('runStartupReconcile — ghost-subscriber-sweep', () => {
   let repo: string
 
