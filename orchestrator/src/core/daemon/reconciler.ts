@@ -126,6 +126,11 @@ export interface ReconcileSummary {
    * assistant message so the user sees why their turn produced no reply.
    */
   orphanedChatRunsRecovered: number
+  /**
+   * Idle chat threads with no user messages that were evaporated by the
+   * dead-thread eviction sweep at daemon start.
+   */
+  deadThreadsEvaporated: number
 }
 
 /**
@@ -168,4 +173,5 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   codeDriftAlertsCleared: 0,
   ghostSubscribersSwept: 0,
   orphanedChatRunsRecovered: 0,
+  deadThreadsEvaporated: 0,
 })

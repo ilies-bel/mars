@@ -350,6 +350,41 @@ describe('parseTaskSpec — unbalanced quote guard', () => {
 })
 
 // ---------------------------------------------------------------------------
+// --files greedy multi-path (foot-gun fix, mars-3891672f)
+// ---------------------------------------------------------------------------
+
+describe('task add --files greedy multi-path', () => {
+  it('--prompt-file + --files a b c does not error with "multiple prompt sources"', async () => {
+    const filePath = join(repo, 'prompt.txt')
+    writeFileSync(filePath, 'task prompt text\n')
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-gp', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--prompt-file', filePath, '--files', 'a', 'b', 'c'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(r.err.join('\n')).not.toContain('multiple prompt sources')
+    // all three file paths are captured in the spec
+    const req = fake.calls[0] as { spec?: { files?: string[] } }
+    expect(req?.spec?.files).toEqual(['a', 'b', 'c'])
+  })
+
+  it('--files a b c with inline prompt captures all files and does not bleed into positional', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-gp2', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'the actual prompt', '--files', 'x', 'y', 'z'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    const req = fake.calls[0] as { prompt?: string; spec?: { files?: string[] } }
+    expect(req?.prompt).toBe('the actual prompt')
+    expect(req?.spec?.files).toEqual(['x', 'y', 'z'])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Output verb matches landing status
 // ---------------------------------------------------------------------------
 
@@ -368,8 +403,11 @@ describe('task add output verb matches landing status', () => {
   it('prints "blocked" when daemon returns status=blocked (--blocked-by with unfinished blocker)', async () => {
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-blk', status: 'blocked' }))
     const { store, ctx } = await loadStoreAndCtx()
+    // NOTE: prompt must come BEFORE --blocked-by because greedy parsing
+    // consumes all non-flag tokens after a REPEATABLE_FLAG as values for
+    // that flag (a trailing inline prompt after a greedy flag is unsupported).
     const r = await runCommandInProcess(
-      ['task', 'add', '--blocked-by', 'mars-4da0cfba', 'some prompt'],
+      ['task', 'add', 'some prompt', '--blocked-by', 'mars-4da0cfba'],
       { store, ctx, daemon: fake },
     )
     expect(r.code).toBe(0)

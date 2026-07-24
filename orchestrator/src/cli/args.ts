@@ -168,6 +168,19 @@ export const parseArgs = (argv: readonly string[]): ParsedArgs => {
       if (REPEATABLE_FLAGS.has(key)) {
         const list = multiFlags[key] ?? []
         list.push(value)
+        // Greedy: when the first value was NOT inlined (i.e. space-separated
+        // `--files a b c`), keep consuming tokens that are not flags.
+        // Stop at the first token starting with `-` (covers `--flag` and
+        // the lone `-` stdin sentinel). The inline `--flag=val` form binds
+        // exactly one value, so greedy only applies to the space form.
+        if (inlineValue === undefined) {
+          while (i + 1 < argv.length) {
+            const next = argv[i + 1]
+            if (next === undefined || next.startsWith('-')) break
+            list.push(next)
+            i++
+          }
+        }
         multiFlags[key] = list
       } else {
         flags[key] = value

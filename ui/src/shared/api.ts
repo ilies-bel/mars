@@ -805,6 +805,41 @@ export const clearMessageFeedback = async (messageId: string): Promise<void> => 
   if (!r.ok) await throwMutationError(path, r)
 }
 
+/**
+ * Fetch the evaporated (history) chat threads.
+ */
+export const fetchChatHistory = async (projectId?: string): Promise<ChatThread[]> => {
+  const json = await fetchJson(appendProject('/api/chat/history', projectId), chatThreadsResponseSchema)
+  return json.threads
+}
+
+/**
+ * Fetch the global Codex auth state (whether any thread is stalled due to
+ * an auth failure).
+ */
+export const fetchCodexAuthState = async (
+  projectId?: string,
+): Promise<{ needsAuth: boolean }> => {
+  const r = await fetch(`${BASE}${appendProject('/api/codex-auth', projectId)}`)
+  if (!r.ok) return { needsAuth: false }
+  const data = await r.json() as { needsAuth: boolean }
+  return { needsAuth: Boolean(data.needsAuth) }
+}
+
+/**
+ * Notify the daemon that the user has re-authenticated with Codex so all
+ * throttled threads can resume.
+ */
+export const refreshCodexAuth = async (projectId?: string): Promise<void> => {
+  const path = appendProject('/api/codex-auth/refresh', projectId)
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
 // ---------------------------------------------------------------------------
 // Context rail data — glossary terms and skills
 // ---------------------------------------------------------------------------

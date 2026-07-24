@@ -699,6 +699,21 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        if (path === '/api/chat/history' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/chat/history')
+          return jsonResponse(r.status, r.body)
+        }
+
+        if (path === '/api/codex-auth' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/codex-auth')
+          return jsonResponse(r.status, r.body)
+        }
+
+        if (path === '/api/codex-auth/refresh' && req.method === 'POST') {
+          const result = await proxyPost(ctx.stateDir, '/codex-auth/refresh', {})
+          return jsonResponse(result.status, result.body)
+        }
+
         if (path === '/api/chat/threads' && req.method === 'POST') {
           let body: unknown = {}
           try { body = await req.json() } catch { /* empty body fine */ }

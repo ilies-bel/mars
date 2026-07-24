@@ -7,6 +7,13 @@
  * get a 409 response from the HTTP route. A 10-minute wall-clock timeout
  * finalises the run with an `error` segment. `killAll()` is called by the
  * daemon shutdown path to SIGKILL all live children.
+ *
+ * Error-kind handling (inlined in _run to avoid single-caller helpers):
+ *   not-found (exit 127) → terminal error (no Codex binary)
+ *   auth                 → global flag + throttle with backoff; clears on re-auth
+ *   rate-limit           → throttle with backoff; auto-retries up to 3 times
+ *   session-expired      → resetThreadSession + one silent auto-retry
+ *   generic              → terminal error (user-safe message, no provider details)
  */
 
 import {
@@ -18,6 +25,7 @@ import {
   appendMessage,
   getThread,
   markContextSeeded,
+  resetThreadSession,
   setThreadSession,
   setThreadStatus,
   updateThreadTitle,
@@ -162,13 +170,8 @@ const buildChatArgs = (
 
 const resolveCodexBin = (): string => process.env.MARS_CODEX_BIN?.trim() || 'codex'
 
-const safeCodexError = (result: RunSubprocessResult): string => {
-  if (result.exitCode === 127) return 'Codex is not available on this machine. Install or make the Codex CLI available, then try again.'
-  const detail = result.stderr.toLowerCase()
-  if (/(auth|login|credential|sign in)/.test(detail)) return 'Codex could not authenticate. Sign in with Codex, then try again.'
-  if (/(rate limit|usage limit|quota|spend limit)/.test(detail)) return 'Codex is temporarily unavailable because the account has reached its usage limit. Try again later.'
-  return 'Codex could not complete this response. Try again; if it continues, check the local Codex setup.'
-}
+/** Exponential backoff delays for throttled retries (ms). */
+const THROTTLE_BACKOFF_MS = [30_000, 60_000, 120_000]
 
 // ── Runner ────────────────────────────────────────────────────────────────────
 
@@ -189,12 +192,62 @@ export class ChatRunner {
   private activeRuns = new Map<string, AbortController>()
 
   /**
+   * Per-thread retry state for throttled runs.
+   * `retryCount` tracks how many backoff retries have fired so far;
+   * `timer` is the pending timeout handle so `stop()` can cancel it.
+   */
+  private throttledRetries = new Map<string, { retryCount: number; timer: ReturnType<typeof setTimeout> }>()
+
+  /**
+   * True when the most recent auth failure was observed. A single global flag
+   * because one OAuth token backs all threads.
+   */
+  private codexAuthFailed = false
+
+  /** Listeners notified when the auth-failure state changes. */
+  private authListeners: Array<(failed: boolean) => void> = []
+
+  /**
    * @param chatStreamHub Optional per-thread `UIMessageChunk` source backing the
    *   `GET /chat/threads/:id/ui-stream` route. When present, the runner mirrors
    *   every streamed segment into it (mapped + buffered for resume); when absent
    *   (e.g. a bare `new ChatRunner()` in a unit test), streaming is a no-op.
    */
   constructor(private readonly chatStreamHub?: ChatStreamHub) {}
+
+  /** Returns true when all threads are stalled due to a Codex auth failure. */
+  isAuthFailed(): boolean {
+    return this.codexAuthFailed
+  }
+
+  /**
+   * Clear the global auth-failure flag and re-queue all throttled threads.
+   * Call this after the user has re-authenticated so stalled threads resume.
+   */
+  clearAuthFailure(repoRoot: string, hub: ViewStreamHub | undefined): void {
+    if (!this.codexAuthFailed) return
+    this.codexAuthFailed = false
+    for (const listener of this.authListeners) listener(false)
+
+    // Re-queue every throttled thread immediately.
+    for (const [threadId, retry] of this.throttledRetries) {
+      clearTimeout(retry.timer)
+      this.throttledRetries.delete(threadId)
+      const abort = new AbortController()
+      this.activeRuns.set(threadId, abort)
+      this._run(threadId, '', repoRoot, hub, abort, undefined, 0).catch(() => {
+        this.activeRuns.delete(threadId)
+      })
+    }
+  }
+
+  /** Subscribe to auth-failure state changes. */
+  onAuthStateChange(listener: (failed: boolean) => void): () => void {
+    this.authListeners.push(listener)
+    return () => {
+      this.authListeners = this.authListeners.filter((l) => l !== listener)
+    }
+  }
 
   /**
    * Start a Codex run for `threadId`. Returns `{ alreadyRunning: true }`
@@ -214,12 +267,19 @@ export class ChatRunner {
     attachments?: AttachmentInfo[],
   ): Promise<{ alreadyRunning: boolean }> {
     if (this.activeRuns.has(threadId)) return { alreadyRunning: true }
+    // If there's a pending throttle timer for this thread, cancel it and
+    // treat the new sendMessage as an immediate re-run instead.
+    const pending = this.throttledRetries.get(threadId)
+    if (pending) {
+      clearTimeout(pending.timer)
+      this.throttledRetries.delete(threadId)
+    }
 
     const abort = new AbortController()
     this.activeRuns.set(threadId, abort)
 
     // Fire-and-forget: HTTP responds immediately; segments arrive via SSE.
-    this._run(threadId, content, repoRoot, hub, abort, attachments).catch(() => {
+    this._run(threadId, content, repoRoot, hub, abort, attachments, 0).catch(() => {
       // Ensure the map entry is removed even if _run throws unexpectedly.
       this.activeRuns.delete(threadId)
     })
@@ -228,10 +288,18 @@ export class ChatRunner {
   }
 
   /**
-   * Kill the active run for `threadId`. Returns `true` when a run was found
-   * and aborted, `false` when the thread was already idle.
+   * Kill the active run for `threadId`. Returns `true` when a run or pending
+   * throttle retry was found and cancelled, `false` when the thread was idle.
    */
   stop(threadId: string): boolean {
+    const retry = this.throttledRetries.get(threadId)
+    if (retry) {
+      clearTimeout(retry.timer)
+      this.throttledRetries.delete(threadId)
+      // Flip the DB status back to idle.
+      setThreadStatus(threadId, 'idle').catch(() => {})
+      return true
+    }
     const ctrl = this.activeRuns.get(threadId)
     if (!ctrl) return false
     ctrl.abort()
@@ -248,9 +316,56 @@ export class ChatRunner {
     for (const ctrl of this.activeRuns.values()) {
       ctrl.abort()
     }
+    for (const retry of this.throttledRetries.values()) {
+      clearTimeout(retry.timer)
+    }
+    this.throttledRetries.clear()
   }
 
   // ── Internal run orchestration ─────────────────────────────────────────────
+
+  /**
+   * Park a thread in `'throttled'` status and schedule a retry after the
+   * appropriate backoff interval. After `THROTTLE_BACKOFF_MS.length` retries
+   * the thread is finalised with an error segment so it does not retry forever.
+   */
+  private async _scheduleThrottle(
+    threadId: string,
+    content: string,
+    repoRoot: string,
+    hub: ViewStreamHub | undefined,
+    attachments: AttachmentInfo[] | undefined,
+    retryCount: number,
+  ): Promise<void> {
+    this.activeRuns.delete(threadId)
+
+    if (retryCount >= THROTTLE_BACKOFF_MS.length) {
+      // Exhausted retries — surface a terminal error.
+      await setThreadStatus(threadId, 'idle')
+      await appendMessage(
+        threadId,
+        'assistant',
+        'Codex is temporarily unavailable. Please try again later.',
+        [{ type: 'error', message: 'Codex is temporarily unavailable (rate/usage limit). Retries exhausted.' }],
+      )
+      hub?.broadcast('chat')
+      return
+    }
+
+    await setThreadStatus(threadId, 'throttled')
+    hub?.broadcast('chat')
+
+    const delay = THROTTLE_BACKOFF_MS[retryCount]
+    const timer = setTimeout(() => {
+      this.throttledRetries.delete(threadId)
+      const abort = new AbortController()
+      this.activeRuns.set(threadId, abort)
+      this._run(threadId, content, repoRoot, hub, abort, attachments, retryCount + 1).catch(() => {
+        this.activeRuns.delete(threadId)
+      })
+    }, delay)
+    this.throttledRetries.set(threadId, { retryCount, timer })
+  }
 
   private async _run(
     threadId: string,
@@ -258,7 +373,8 @@ export class ChatRunner {
     repoRoot: string,
     hub: ViewStreamHub | undefined,
     abort: AbortController,
-    attachments?: AttachmentInfo[],
+    attachments: AttachmentInfo[] | undefined,
+    retryCount: number,
   ): Promise<void> {
     const accumulatedSegments: ChatSegment[] = []
     let detectedSessionId: string | null = null
@@ -432,7 +548,11 @@ export class ChatRunner {
       }
 
       // Persist the user message with typed segments so the UI can render it.
-      await appendMessage(threadId, 'user', content, userSegments)
+      // On throttle retries (retryCount > 0), the user message was already
+      // persisted on the first attempt — skip to avoid duplicates.
+      if (retryCount === 0 && content.length > 0) {
+        await appendMessage(threadId, 'user', content, userSegments)
+      }
 
       // Auto-title: set the thread title to the first user message (≤60 chars)
       // when the thread has no title and no prior messages.
@@ -488,7 +608,50 @@ export class ChatRunner {
       }
 
       if (subprocessResult.exitCode !== 0) {
-        await finalize({ type: 'error', message: safeCodexError(subprocessResult) })
+        const detail = (subprocessResult.stderr + ' ' + subprocessResult.stdout).toLowerCase()
+
+        // ── Session expired: clear the saved session and auto-retry once.
+        //    resetThreadSession sets session_id=NULL and context_seeded=0 so
+        //    the next _run picks up a fresh session and re-seeds the transcript
+        //    as context preamble — no user-visible error on the first failure. ─
+        if (/(session.*not found|session.*expired|invalid session|no such session)/.test(detail)) {
+          await resetThreadSession(threadId)
+          if (retryCount === 0) {
+            // Silently retry with a fresh session.  The recursive _run will
+            // re-fetch the thread (session_id now NULL) and re-inject the
+            // transcript preamble (context_seeded now 0).
+            const freshAbort = new AbortController()
+            this.activeRuns.set(threadId, freshAbort)
+            await this._run(threadId, content, repoRoot, hub, freshAbort, attachments, retryCount + 1)
+            return
+          }
+          // Still failing after one retry — surface an error so the user knows.
+          await finalize({ type: 'error', message: 'The Codex session expired and could not be resumed. Please try again.' })
+          return
+        }
+
+        // ── Auth failure: surface a single global banner, set throttled. ────────
+        if (subprocessResult.exitCode !== 127 && /(auth|login|credential|sign in)/.test(detail)) {
+          if (!this.codexAuthFailed) {
+            this.codexAuthFailed = true
+            for (const listener of this.authListeners) listener(true)
+          }
+          await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount)
+          return
+        }
+
+        // ── Rate/usage limit: throttle + auto-retry with backoff. ────────────────
+        if (/(rate limit|usage limit|quota|spend limit)/.test(detail)) {
+          await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount)
+          return
+        }
+
+        // ── Generic / not-found: terminal error (user-safe, no provider details). ─
+        const safeMessage =
+          subprocessResult.exitCode === 127
+            ? 'Codex is not available on this machine. Install or make the Codex CLI available, then try again.'
+            : 'Codex could not complete this response. Try again; if it continues, check the local Codex setup.'
+        await finalize({ type: 'error', message: safeMessage })
         return
       }
 

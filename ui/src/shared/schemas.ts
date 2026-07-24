@@ -959,8 +959,16 @@ export const chatMessageSchema = z.object({
 export const chatThreadSchema = z.object({
   id: z.string(),
   title: z.string().nullable(),
-  /** 'running' while a response is being streamed; 'idle' otherwise. */
-  status: z.enum(['idle', 'running']),
+  /** 'running' while a response is being streamed; 'throttled' during backoff; 'idle' otherwise. */
+  status: z.enum(['idle', 'running', 'throttled']),
+  /**
+   * Derived attention state for sidebar sorting and badging.
+   * generating → assistant is actively responding (or retrying)
+   * ready      → assistant replied; user hasn't acted yet
+   * drafting   → user sent a message but run hasn't started
+   * idle       → no pending action
+   */
+  attentionStatus: z.enum(['generating', 'ready', 'drafting', 'idle']).optional().default('idle'),
   createdAt: z.string(),
   updatedAt: z.string(),
   messageCount: z.number().optional().default(0),

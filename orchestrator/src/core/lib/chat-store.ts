@@ -22,7 +22,8 @@ export const initChatStore = async (): Promise<void> => {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export type ThreadStatus = 'idle' | 'running'
+export type ThreadStatus = 'idle' | 'running' | 'throttled'
+export type AttentionStatus = 'generating' | 'ready' | 'drafting' | 'idle'
 export type MessageRole = 'user' | 'assistant'
 export type FeedbackRating = 'up' | 'down'
 
@@ -74,6 +75,8 @@ export interface ChatMessage {
 export interface ThreadPreview extends ChatThread {
   /** Text of the most recent message, or null when the thread has no messages. */
   last_message: string | null
+  /** Role of the most recent message, or null when the thread has no messages. */
+  last_message_role: string | null
 }
 
 export interface ThreadWithMessages {
@@ -88,6 +91,7 @@ export interface ChatThreadApiView {
   id: string
   title: string
   status: ThreadStatus
+  attentionStatus: AttentionStatus
   createdAt: string
   updatedAt: string
   /** 'alert' for proactive threads; null for user-created threads. */
@@ -108,11 +112,34 @@ export interface ChatMessageApiView {
   feedback: { rating: FeedbackRating; note: string | null } | null
 }
 
+/**
+ * Compute the attention status for a thread given its run status and the role
+ * of the most recent message. This is a pure function — no side effects.
+ *
+ * - generating: the thread is actively running or waiting to retry (throttled).
+ * - ready:      idle + last message is from the assistant (unread response).
+ * - drafting:   idle + last message is from the user (response expected but not yet started).
+ * - idle:       idle + no messages yet.
+ */
+export const computeAttentionStatus = (
+  status: ThreadStatus,
+  lastMessageRole: string | null | undefined,
+): AttentionStatus => {
+  if (status === 'running' || status === 'throttled') return 'generating'
+  if (status === 'idle' && lastMessageRole === 'assistant') return 'ready'
+  if (status === 'idle' && lastMessageRole === 'user') return 'drafting'
+  return 'idle'
+}
+
 /** Convert a stored thread to its API view shape. */
-export const toThreadApiView = (t: ChatThread): ChatThreadApiView => ({
+export const toThreadApiView = (
+  t: ChatThread,
+  lastMessageRole?: string | null,
+): ChatThreadApiView => ({
   id: t.id,
   title: t.title,
   status: t.status,
+  attentionStatus: computeAttentionStatus(t.status, lastMessageRole),
   createdAt: t.created_at,
   updatedAt: t.updated_at,
   origin: t.origin,
@@ -262,8 +289,8 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
 }
 
 /**
- * List all threads newest-first. Each thread is augmented with the text of its
- * most recent message.
+ * List all active (non-evaporated) threads newest-first. Each thread is
+ * augmented with the text and role of its most recent message.
  */
 export const listThreads = async (): Promise<ThreadPreview[]> => {
   const c = stateClient()
@@ -273,13 +300,49 @@ export const listThreads = async (): Promise<ThreadPreview[]> => {
               FROM chat_messages m
              WHERE m.thread_id = t.id
              ORDER BY m.created_at DESC, m.id DESC
-             LIMIT 1) AS last_message
+             LIMIT 1) AS last_message,
+           (SELECT role
+              FROM chat_messages m
+             WHERE m.thread_id = t.id
+             ORDER BY m.created_at DESC, m.id DESC
+             LIMIT 1) AS last_message_role
       FROM chat_threads t
+     WHERE t.evaporated_at IS NULL
      ORDER BY t.created_at DESC, t.id DESC
   `)
   return (result.rows as unknown as Record<string, unknown>[]).map((row) => ({
     ...rowToThread(row),
     last_message: (row.last_message as string | null) ?? null,
+    last_message_role: (row.last_message_role as string | null) ?? null,
+  }))
+}
+
+/**
+ * List all evaporated threads newest-first. Used to populate the History
+ * section in the chat sidebar.
+ */
+export const listEvaporatedThreads = async (): Promise<ThreadPreview[]> => {
+  const c = stateClient()
+  const result = await c.execute(`
+    SELECT t.*,
+           (SELECT content
+              FROM chat_messages m
+             WHERE m.thread_id = t.id
+             ORDER BY m.created_at DESC, m.id DESC
+             LIMIT 1) AS last_message,
+           (SELECT role
+              FROM chat_messages m
+             WHERE m.thread_id = t.id
+             ORDER BY m.created_at DESC, m.id DESC
+             LIMIT 1) AS last_message_role
+      FROM chat_threads t
+     WHERE t.evaporated_at IS NOT NULL
+     ORDER BY t.evaporated_at DESC, t.id DESC
+  `)
+  return (result.rows as unknown as Record<string, unknown>[]).map((row) => ({
+    ...rowToThread(row),
+    last_message: (row.last_message as string | null) ?? null,
+    last_message_role: (row.last_message_role as string | null) ?? null,
   }))
 }
 
@@ -442,6 +505,43 @@ export const markThreadEvaporated = async (id: string): Promise<void> => {
     sql: `UPDATE chat_threads SET evaporated_at = ?, updated_at = ? WHERE id = ? AND evaporated_at IS NULL`,
     args: [ts, ts, id],
   })
+}
+
+/**
+ * Reset the session binding on a thread so the next run re-seeds the context
+ * from the transcript. Used by the chat runner on session-expired errors.
+ */
+export const resetThreadSession = async (id: string): Promise<void> => {
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE chat_threads SET session_id = NULL, context_seeded = 0, updated_at = ? WHERE id = ?`,
+    args: [now(), id],
+  })
+}
+
+/**
+ * Evaporate idle threads that have never received a user message (i.e. they
+ * were created but never used). Returns the number of threads evaporated.
+ */
+export const evaporateUnengagedThreads = async (): Promise<number> => {
+  const c = stateClient()
+  const result = await c.execute(`
+    SELECT id FROM chat_threads
+     WHERE status = 'idle'
+       AND evaporated_at IS NULL
+       AND id NOT IN (
+         SELECT DISTINCT thread_id FROM chat_messages WHERE role = 'user'
+       )
+  `)
+  const threadIds = (result.rows as unknown as Array<{ id: string }>).map((r) => r.id)
+  const ts = now()
+  for (const id of threadIds) {
+    await c.execute({
+      sql: `UPDATE chat_threads SET evaporated_at = ?, updated_at = ? WHERE id = ? AND evaporated_at IS NULL`,
+      args: [ts, ts, id],
+    })
+  }
+  return threadIds.length
 }
 
 // ── Feedback API ──────────────────────────────────────────────────────────────

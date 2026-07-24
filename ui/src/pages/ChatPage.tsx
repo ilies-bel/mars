@@ -36,6 +36,9 @@ import {
   deleteChatThread,
   setMessageFeedback,
   clearMessageFeedback,
+  fetchChatHistory,
+  fetchCodexAuthState,
+  refreshCodexAuth,
   ApiError,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
@@ -101,6 +104,24 @@ const SLASH_COMMANDS = [
   { cmd: '/action-queue', prompt: 'Groom the action queue' },
   { cmd: '/unblock', prompt: 'Help unblock task ' },
 ] as const
+
+// ---------------------------------------------------------------------------
+// Attention-status sidebar sort
+// ---------------------------------------------------------------------------
+
+const ATTENTION_SORT: Record<string, number> = {
+  ready: 0,
+  generating: 1,
+  drafting: 2,
+  idle: 3,
+}
+
+const sortByAttentionStatus = (threads: ChatThread[]): ChatThread[] =>
+  [...threads].sort(
+    (a, b) =>
+      (ATTENTION_SORT[a.attentionStatus ?? 'idle'] ?? 3) -
+      (ATTENTION_SORT[b.attentionStatus ?? 'idle'] ?? 3),
+  )
 
 // ---------------------------------------------------------------------------
 // Hero empty state — top-alert prioritization and suggestion chips
@@ -798,8 +819,18 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
             </span>
           )}
           <span className="flex-1 truncate font-mono text-[11px]">{title}</span>
-          {thread.status === 'running' && (
-            <span className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-iron/60" />
+          {thread.attentionStatus === 'ready' && (
+            <span
+              data-testid="ready-badge"
+              className="h-1.5 w-1.5 flex-none rounded-full bg-green-500"
+              title="New response"
+            />
+          )}
+          {(thread.attentionStatus === 'generating' || thread.status === 'running') && thread.attentionStatus !== 'ready' && (
+            <span
+              className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-iron/60"
+              title={thread.status === 'throttled' ? 'Retrying…' : undefined}
+            />
           )}
           <button
             type="button"
@@ -1964,11 +1995,18 @@ export const ThreadSidebar = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const { data: historyData } = useQuery({
+    queryKey: ['chat-history', projectId],
+    queryFn: () => fetchChatHistory(projectId),
+  })
+
   // Visible chat threads (delete-pending rows stay hidden), title-searched.
   // The chat sidebar is a plain list of conversation threads — alerts live on
   // the top-bar Bell, not here.
   const visibleThreads = (data ?? []).filter((t) => !hiddenIds.includes(t.id))
-  const threads = filterThreadsByTitle(visibleThreads, query)
+  const sortedThreads = sortByAttentionStatus(filterThreadsByTitle(visibleThreads, query))
+  const threads = sortedThreads
+  const historyThreads = historyData ?? []
 
   return (
     <aside className="flex w-64 flex-shrink-0 flex-col border-r border-iron/30 bg-bg">
@@ -2006,6 +2044,26 @@ export const ThreadSidebar = ({
             onDelete={() => startDelete(t)}
           />
         ))}
+
+        {historyThreads.length > 0 && (
+          <details data-testid="chat-history-section" className="mt-2">
+            <summary className="cursor-pointer px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-iron/40 hover:text-iron/60">
+              History
+            </summary>
+            <div className="space-y-0.5 pt-0.5">
+              {historyThreads.map((t) => (
+                <ThreadItem
+                  key={t.id}
+                  thread={t}
+                  isSelected={t.id === selectedId}
+                  onSelect={() => onSelect(t.id)}
+                  onRename={(title) => rename({ id: t.id, title })}
+                  onDelete={() => startDelete(t)}
+                />
+              ))}
+            </div>
+          </details>
+        )}
       </div>
 
       {/* Delete toast — the row is already gone on screen; the request is not sent
@@ -2208,8 +2266,36 @@ export const ChatPage = () => {
   const queueSelectionResolved =
     selectedQueueItem === null && isResolvedSelection(selectedQueueItemId, queueItems)
 
+  // Global Codex auth state — one banner covers all throttled threads.
+  const { data: codexAuthState } = useQuery({
+    queryKey: ['codex-auth', projectId],
+    queryFn: () => fetchCodexAuthState(projectId),
+    refetchInterval: 30_000,
+  })
+  const { mutate: retryCodexAuth } = useMutation({
+    mutationFn: () => refreshCodexAuth(projectId),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['codex-auth'] }),
+  })
+
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* Global Codex auth banner — one banner for all throttled threads */}
+      {codexAuthState?.needsAuth && (
+        <div
+          data-testid="codex-auth-banner"
+          className="flex items-center gap-3 border-b border-amber-600/40 bg-amber-950/30 px-4 py-2 font-mono text-[11px] text-amber-400"
+        >
+          <span>Codex sign-in required — all threads are paused.</span>
+          <button
+            type="button"
+            className="ml-auto border border-amber-600/40 px-2 py-0.5 text-[10px] uppercase hover:bg-amber-900/30 active:scale-[0.97]"
+            onClick={() => retryCodexAuth()}
+          >
+            Re-authenticate
+          </button>
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
       {/* Thread sidebar — in-flow on md+, hidden on mobile with overlay sheet */}
       {isMdScreen && (
         <ThreadSidebar

@@ -234,6 +234,7 @@ export interface AppServices {
   // ── chat threads + messages ───────────────────────────────────────────────
   viewChatThreads: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
   viewChatThread: (id: string) => Promise<{ thread: import('./lib/chat-store').ChatThreadApiView; messages: import('./lib/chat-store').ChatMessageApiView[] } | null>
+  viewChatHistory: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
 }
 
 /**
@@ -1233,19 +1234,27 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const viewChatThreads: AppServices['viewChatThreads'] = async () => {
     const { listThreads, toThreadApiView } = await import('./lib/chat-store')
     const threads = await listThreads()
-    return { threads: threads.map(toThreadApiView) }
+    return { threads: threads.map((t) => toThreadApiView(t, t.last_message_role)) }
   }
 
   const viewChatThread: AppServices['viewChatThread'] = async (id) => {
     const { getThread, toThreadApiView, toMessageApiView } = await import('./lib/chat-store')
     const result = await getThread(id)
     if (!result) return null
+    const lastMsg = result.messages.at(-1)
+    const lastRole = lastMsg?.role ?? null
     return {
-      thread: toThreadApiView(result.thread),
+      thread: toThreadApiView(result.thread, lastRole),
       messages: result.messages.map((m) =>
         toMessageApiView(m, result.feedbacks.get(m.id) ?? null),
       ),
     }
+  }
+
+  const viewChatHistory: AppServices['viewChatHistory'] = async () => {
+    const { listEvaporatedThreads, toThreadApiView } = await import('./lib/chat-store')
+    const threads = await listEvaporatedThreads()
+    return { threads: threads.map((t) => toThreadApiView(t, t.last_message_role)) }
   }
 
   const listKpis: AppServices['listKpis'] = () => defaultListKpis()
@@ -1339,5 +1348,6 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewSkills,
     viewChatThreads,
     viewChatThread,
+    viewChatHistory,
   }
 }

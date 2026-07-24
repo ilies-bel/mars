@@ -242,6 +242,7 @@ vi.mock('../../lib/chat-store', () => ({
   setThreadSession: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
   markContextSeeded: vi.fn().mockResolvedValue(undefined),
+  resetThreadSession: vi.fn().mockResolvedValue(undefined),
 }))
 
 // Dynamically import the mocked modules AFTER vi.mock declarations.
@@ -480,7 +481,31 @@ describe('ChatRunner state machine', () => {
     expect((errSeg as { message: string }).message).toContain('Codex is not available')
   })
 
-  it('redacts provider diagnostics from a persisted authentication error', async () => {
+  // ── Throttle / auth failure (slice 5) ─────────────────────────────────────
+
+  it('sets thread status to throttled on rate-limit exit and schedules a retry', async () => {
+    vi.useFakeTimers()
+    mockRunSubprocessStreaming.mockResolvedValue({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'rate limit exceeded — try again later',
+    })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => process.nextTick(r))
+
+    const statusCalls = vi.mocked(chatStore.setThreadStatus).mock.calls
+    const throttledCall = statusCalls.find((c) => c[1] === 'throttled')
+    expect(throttledCall).toBeDefined()
+    vi.useRealTimers()
+  })
+
+  it('throttles (not errors) on authentication failure and does not expose private tokens', async () => {
+    // Auth failures are throttled + retried instead of immediately surfacing an
+    // error segment. This prevents noisy per-thread error messages when a single
+    // OAuth token backs all threads.
+    vi.useFakeTimers()
     mockRunSubprocessStreaming.mockResolvedValue({
       exitCode: 1,
       stdout: '',
@@ -489,13 +514,131 @@ describe('ChatRunner state machine', () => {
 
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    // Let the async _run complete
+    await new Promise((r) => process.nextTick(r))
+    await new Promise((r) => process.nextTick(r))
+
+    // Auth failure → global flag set, throttled status (not an immediate error).
+    expect(runner.isAuthFailed()).toBe(true)
+    const statusCalls = vi.mocked(chatStore.setThreadStatus).mock.calls
+    expect(statusCalls.some((c) => c[1] === 'throttled')).toBe(true)
+    // No assistant message with a private token is emitted on first throttle.
+    const assistantCalls = vi.mocked(chatStore.appendMessage).mock.calls.filter((c) => c[1] === 'assistant')
+    for (const call of assistantCalls) {
+      expect(String(call[2])).not.toContain('sk-private-value')
+    }
+    vi.useRealTimers()
+  })
+
+  it('sets codexAuthFailed=true when auth error is detected', async () => {
+    mockRunSubprocessStreaming.mockResolvedValue({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'authentication required — please sign in',
+    })
+
+    const runner = new ChatRunner()
+    expect(runner.isAuthFailed()).toBe(false)
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => process.nextTick(r))
+    await new Promise((r) => process.nextTick(r))
+
+    expect(runner.isAuthFailed()).toBe(true)
+  })
+
+  it('notifies auth listeners when auth failure is detected', async () => {
+    mockRunSubprocessStreaming.mockResolvedValue({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'credential error: not authenticated',
+    })
+
+    const runner = new ChatRunner()
+    const events: boolean[] = []
+    runner.onAuthStateChange((failed) => events.push(failed))
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => process.nextTick(r))
+    await new Promise((r) => process.nextTick(r))
+
+    expect(events).toContain(true)
+  })
+
+  it('calls resetThreadSession and surfaces error segment when session is expired on both attempts', async () => {
+    // Both attempts return session-expired — the runner surfaces an error
+    // only after exhausting the single auto-retry.
+    mockRunSubprocessStreaming.mockResolvedValue({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'session not found — session has expired',
+    })
+    vi.mocked(chatStore.getThread).mockResolvedValue({
+      thread: { id: 't1', session_id: 'old-sess', title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: true, evaporated_at: null },
+      messages: [],
+      feedbacks: new Map(),
+    })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    // Give async _run chain time to complete (two subprocess calls in sequence).
     await new Promise((r) => setTimeout(r, 20))
 
-    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
-    const segments = assistantCall![3] as unknown[]
-    const errSeg = (segments ?? []).find((s) => (s as { type?: string }).type === 'error') as { message: string }
-    expect(errSeg.message).toBe('Codex could not authenticate. Sign in with Codex, then try again.')
-    expect(errSeg.message).not.toContain('sk-private-value')
+    expect(vi.mocked(chatStore.resetThreadSession)).toHaveBeenCalledWith('t1')
+    // After the auto-retry also fails, an error segment is surfaced.
+    const assistantCalls = vi.mocked(chatStore.appendMessage).mock.calls.filter((c) => c[1] === 'assistant')
+    const lastCall = assistantCalls.at(-1)
+    const segments = (lastCall?.[3] ?? []) as Array<{ type: string; message?: string }>
+    const errSeg = segments.find((s) => s.type === 'error')
+    expect(errSeg).toBeDefined()
+    expect(errSeg!.message).toMatch(/session expired/i)
+  })
+
+  it('auto-retries silently when session expires and succeeds on second attempt', async () => {
+    // First attempt: session expired — runner resets session and retries.
+    mockRunSubprocessStreaming.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'session not found — session has expired',
+    })
+    // Second attempt: Codex responds normally.
+    mockRunSubprocessStreaming.mockImplementationOnce(
+      async (
+        _cmd: string,
+        _args: readonly string[],
+        _cwd: string,
+        onLine: ((l: SubprocessLine) => void) | undefined,
+      ) => {
+        if (onLine) {
+          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Retried OK' } }) })
+        }
+        return { exitCode: 0, stdout: '', stderr: '' }
+      },
+    )
+    // First getThread call: thread with expired session.
+    vi.mocked(chatStore.getThread).mockResolvedValueOnce({
+      thread: { id: 't1', session_id: 'old-sess', title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: true, evaporated_at: null },
+      messages: [],
+      feedbacks: new Map(),
+    })
+    // Second getThread call (auto-retry): fresh session after resetThreadSession.
+    vi.mocked(chatStore.getThread).mockResolvedValueOnce({
+      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
+      messages: [{ id: 'm0', thread_id: 't1', role: 'user' as const, content: 'hi', segments: null, created_at: '' }],
+      feedbacks: new Map(),
+    })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    // Session was cleared.
+    expect(vi.mocked(chatStore.resetThreadSession)).toHaveBeenCalledWith('t1')
+    // The retry succeeded — the final assistant message has text content,
+    // not an error segment.
+    const assistantCalls = vi.mocked(chatStore.appendMessage).mock.calls.filter((c) => c[1] === 'assistant')
+    const lastCall = assistantCalls.at(-1)
+    expect(lastCall?.[2]).toBe('Retried OK')
+    const segments = (lastCall?.[3] ?? []) as Array<{ type: string }>
+    expect(segments.some((s) => s.type === 'error')).toBe(false)
   })
 
   it('saves detected session_id from stream to the thread', async () => {

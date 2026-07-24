@@ -1526,6 +1526,22 @@ export const startHttpServer = async (
         .catch((err: unknown) => sendError(res, err))
       return
     }
+    if (req.method === 'GET' && req.url === '/view/chat/history') {
+      deps.appServices
+        .viewChatHistory()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+    if (req.method === 'GET' && req.url === '/view/codex-auth') {
+      sendJson(res, 200, { needsAuth: deps.chatRunner.isAuthFailed() })
+      return
+    }
+    if (req.method === 'POST' && req.url === '/codex-auth/refresh') {
+      deps.chatRunner.clearAuthFailure(getRepoRoot(), deps.viewStreamHub)
+      sendJson(res, 200, { ok: true })
+      return
+    }
     {
       const threadViewMatch =
         req.method === 'GET' && req.url
