@@ -24,7 +24,7 @@ import type { Command, CommandDeps, CommandResult } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
 
 const TASK_ADD_USAGE =
-  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--preview "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [--workflow <name>] [--live] [plan flags]'
+  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--preview "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [--workflow <name>] [--live] [--supersede <task-id>] [plan flags]'
 
 interface EnqueueParams {
   prompt: string
@@ -36,6 +36,12 @@ interface EnqueueParams {
   spec?: TaskSpec
   /** Pipeline selection: `.mars/workflows/<workflow>-workflow.js`. */
   workflow?: string
+  /**
+   * Task id this new task supersedes. Only set after CLI validation confirms
+   * the referenced task exists and is in status 'failed'.
+   * TODO(supersede-execution): consumed by slice N of PRD 94e2a82a.
+   */
+  supersedes?: string
 }
 
 /**
@@ -89,6 +95,7 @@ const enqueueViaDaemon = async (
       ...(params.intent !== undefined ? { intent: params.intent } : {}),
       ...(originSessionId !== null ? { originSessionId } : {}),
       ...(params.workflow !== undefined ? { workflow: params.workflow } : {}),
+      ...(params.supersedes !== undefined ? { supersedes: params.supersedes } : {}),
     },
     { onSpawnNotice: spawnNoticeErr(deps.err) },
   )) as { id: string; status: string }
@@ -147,6 +154,25 @@ export const taskAdd: Command = {
     const intent = intentFlag
       ? intentFlag.slice(0, 200)
       : (prompt.match(/^(.+?[.!?])(\s|$)/)?.[1] ?? prompt).slice(0, 200)
+
+    // --supersede <task-id>: validate the referenced task exists and is failed.
+    const supersedesRaw = args.flags['--supersede']?.trim()
+    let supersedes: string | undefined
+    if (supersedesRaw !== undefined) {
+      const supersedesTask = await deps.store.getTask(supersedesRaw)
+      if (supersedesTask === null) {
+        deps.err(`error: --supersede ${supersedesRaw}: task not found`)
+        return { code: 1 }
+      }
+      if (supersedesTask.status !== 'failed') {
+        deps.err(
+          `error: --supersede ${supersedesRaw}: task must be in status 'failed' (was '${supersedesTask.status}')`,
+        )
+        return { code: 1 }
+      }
+      supersedes = supersedesRaw
+    }
+
     return enqueueViaDaemon(deps, args.flags, {
       prompt,
       skipTriage: true,
@@ -156,6 +182,7 @@ export const taskAdd: Command = {
       tags: parseTags(args),
       spec: specResult.value,
       ...(workflow !== undefined ? { workflow } : {}),
+      ...(supersedes !== undefined ? { supersedes } : {}),
     })
   },
 }

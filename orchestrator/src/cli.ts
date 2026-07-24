@@ -1440,6 +1440,9 @@ Other flags:
                            exclusive with --live unless --workflow live
   --live                   sugar for --workflow live; enqueue on the live
                            pipeline whose code step parks awaiting human input
+  --supersede <task-id>    declare this new task as an operator-authored
+                           continuation of the given failed task; the referenced
+                           task must be in status 'failed'
 
 Plan flags:
   --functional <text|@file>   functional plan text

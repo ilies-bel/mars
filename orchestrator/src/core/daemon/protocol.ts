@@ -19,6 +19,15 @@ export type DaemonRequest =
       originSessionId?: string | null
       /** Pipeline selection: `.mars/workflows/<workflow>-workflow.js`. */
       workflow?: string | null
+      /**
+       * Task id this new task supersedes. When present the new task is an
+       * operator-authored continuation of a failed arc whose automatic recovery
+       * exhausted all options. Validated by the CLI (task must exist and be in
+       * status 'failed'); execution of the supersede sequence is a no-op stub
+       * until a later slice wires it up.
+       * TODO(supersede-execution): consumed by slice N of PRD 94e2a82a.
+       */
+      supersedes?: string
     }
   | { op: 'task.priority'; id: string; priority: number }
   | {

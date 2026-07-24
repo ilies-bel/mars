@@ -414,3 +414,76 @@ describe('task add output verb matches landing status', () => {
     expect(r.out[0]).toMatch(/^blocked mars-task-blk/)
   })
 })
+
+// ---------------------------------------------------------------------------
+// --supersede flag validation
+// ---------------------------------------------------------------------------
+
+describe('task add --supersede', () => {
+  it('--help lists --supersede', () => {
+    const r = runCli(['task', 'add', '--help'])
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('--supersede')
+  })
+
+  it('exits 1 with clear message when referenced task does not exist', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-new', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--supersede', 'mars-nonexistent-xyz', 'do the thing'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('mars-nonexistent-xyz')
+    // Daemon must not have been called.
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('exits 1 with status message when referenced task is not in failed status', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    // Enqueue a task so it exists in the DB (it lands in 'draft' status by default).
+    const { enqueueTask } = await import('../../core/queue')
+    const existingTask = await enqueueTask('an existing non-failed task for supersede test')
+
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-new', status: 'queued' }))
+    const r = await runCommandInProcess(
+      ['task', 'add', '--supersede', existingTask.id, 'do the thing'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    const errText = r.err.join('\n')
+    expect(errText).toContain("'failed'")
+    expect(errText).toContain(existingTask.status)
+    // Daemon must not have been called.
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('forwards supersedes field to daemon when validation passes (task is failed)', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    // Enqueue a task and transition it to failed.
+    const { enqueueTask, updateTask } = await import('../../core/queue')
+    const failedTask = await enqueueTask('a task that failed for supersede test')
+    await updateTask(failedTask.id, { status: 'failed' })
+
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-superseder', status: 'queued' }))
+    const r = await runCommandInProcess(
+      ['task', 'add', '--supersede', failedTask.id, 'continuation of failed arc'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]).toMatchObject({ op: 'add', supersedes: failedTask.id })
+  })
+
+  it('existing task add calls without --supersede are unchanged', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-plain', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'plain task with no supersede flag'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    const req = fake.calls[0] as Record<string, unknown>
+    expect(req).not.toHaveProperty('supersedes')
+  })
+})
