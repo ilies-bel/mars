@@ -857,6 +857,11 @@ export const chatSegmentAlertSchema = z.object({
   actions: z.array(chatSegmentAlertActionSchema).optional().default([]),
   /** True once the underlying action-queue item has been superseded/resolved. */
   resolved: z.boolean().optional().default(false),
+  /**
+   * The arc's main goal — "what it was trying to achieve". Present for
+   * arc-failed items; absent for other kinds.
+   */
+  goal: z.string().optional(),
 })
 
 /**

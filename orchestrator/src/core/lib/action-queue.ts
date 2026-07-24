@@ -567,6 +567,10 @@ const buildAlertSegment = (
     })
   }
 
+  // Derive goal from the payload for items that carry it (e.g. arc-failed items
+  // store the origin task's intent in payload.goal). Undefined for all other kinds.
+  const goal = typeof item.payload.goal === 'string' ? item.payload.goal : undefined
+
   return {
     type: 'alert',
     kind: item.kind,
@@ -577,6 +581,7 @@ const buildAlertSegment = (
     actions,
     resolved: false,
     humanSummary,
+    goal,
   }
 }
 

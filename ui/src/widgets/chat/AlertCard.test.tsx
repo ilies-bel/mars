@@ -258,6 +258,68 @@ describe('AlertCard – snooze menu', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Goal line
+// ---------------------------------------------------------------------------
+
+describe('AlertCard – goal line', () => {
+  it('renders the goal line with label when goal is provided', () => {
+    const html = render({ goal: 'Add rate limiting to the API gateway' })
+    expect(html).toContain('data-testid="alert-card-goal"')
+    expect(html).toContain('Add rate limiting to the API gateway')
+    expect(html).toContain('Goal')
+  })
+
+  it('does not render the goal line when goal is absent', () => {
+    const html = render({ goal: undefined })
+    expect(html).not.toContain('data-testid="alert-card-goal"')
+    expect(html).not.toContain('Goal')
+  })
+
+  it('goal is additive — summary is still rendered alongside goal', () => {
+    const html = render({
+      summary: 'Arc exhausted all retry attempts',
+      goal: 'Implement the caching layer',
+    })
+    expect(html).toContain('Arc exhausted all retry attempts')
+    expect(html).toContain('Implement the caching layer')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Entity id navigation
+// ---------------------------------------------------------------------------
+
+describe('AlertCard – entity id navigation', () => {
+  it('renders entity id as an anchor element (not inert text)', () => {
+    const html = render({ entityId: 't-999' })
+    // Must be an <a> tag containing the testid
+    expect(html).toContain('<a')
+    expect(html).toContain('data-testid="alert-card-entity-id"')
+  })
+
+  it('entity id link points to task hash for task-like kinds (failed-task)', () => {
+    const html = render({ entityId: 't-123', kind: 'failed-task' })
+    expect(html).toContain('href="#/task/t-123?from=chat"')
+  })
+
+  it('entity id link points to task hash for arc-failed kind', () => {
+    const html = render({ entityId: 'origin-42', kind: 'arc-failed' })
+    expect(html).toContain('href="#/task/origin-42?from=chat"')
+  })
+
+  it('entity id link points to proposal hash for draft-proposal kind', () => {
+    const html = render({ entityId: 'p-456', kind: 'draft-proposal' })
+    expect(html).toContain('href="#/proposal/p-456?from=chat"')
+  })
+
+  it('entity id link is keyboard-accessible (has aria-label)', () => {
+    const html = render({ entityId: 't-999' })
+    expect(html).toContain('aria-label=')
+    expect(html).toContain('t-999')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // ActionQueueRow integration — verifies the adapter renders correctly
 // ---------------------------------------------------------------------------
 

@@ -230,6 +230,7 @@ const AlertCardFromSegment = ({ alert }: { alert: ChatSegmentAlert }) => {
       entityId={alert.entityId}
       kind={alert.kind}
       summary={alert.humanSummary || alert.title}
+      goal={alert.goal}
       detail={alert.humanDetail}
       verbs={verbs}
       resolved={alert.resolved}

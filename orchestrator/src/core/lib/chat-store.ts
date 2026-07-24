@@ -192,6 +192,12 @@ export interface AlertSegment {
    * once both land.
    */
   humanSummary?: string
+  /**
+   * The arc's main goal — "what it was trying to achieve". Populated for
+   * arc-failed items from the origin task's intent/prompt. Absent for other
+   * kinds where a goal is not meaningful.
+   */
+  goal?: string
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

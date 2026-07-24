@@ -17,6 +17,7 @@ import { useState } from 'react'
 import { Response } from '@/components/ai-elements/response'
 import { invokeAction, snoozeActionQueueItem, restoreSnoozedItem } from '@/shared/api'
 import type { AlertHumanDetail, AlertVerb } from '@/shared/schemas'
+import { taskHash, proposalHash } from '@/shared/routing'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -107,6 +108,12 @@ export interface AlertCardProps {
   resolved?: boolean
   /** ISO timestamp of snooze expiry — when set the card starts in snoozed state. */
   snoozeUntil?: string
+  /**
+   * The arc's main goal — "what it was trying to achieve". Shown as a
+   * distinct labeled line below the summary when present. Only set for
+   * arc-failed alerts; absent for other kinds.
+   */
+  goal?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -233,6 +240,7 @@ export const AlertCard = ({
   entityId,
   kind,
   summary,
+  goal,
   detail,
   verbs,
   resolved = false,
@@ -303,6 +311,11 @@ export const AlertCard = ({
 
   const accentClass = KIND_ACCENT[kind] ?? 'border-l-iron'
 
+  const entityHash =
+    kind === 'draft-proposal'
+      ? proposalHash(entityId, 'chat')
+      : taskHash(entityId, 'chat')
+
   if (isSnoozed) {
     return (
       <div
@@ -358,13 +371,23 @@ export const AlertCard = ({
         )}
       </div>
 
-      {/* Entity id — monospace identifier */}
-      <p
-        className="mb-1 font-mono text-[10px] text-iron/50 truncate"
+      {/* Entity id — clickable monospace identifier opening the entity detail view */}
+      <a
+        href={entityHash}
+        className="mb-1 block font-mono text-[10px] text-iron/50 truncate hover:text-iron/80 hover:underline transition-colors"
         data-testid="alert-card-entity-id"
+        aria-label={`Open details for ${entityId}`}
       >
         {entityId}
-      </p>
+      </a>
+
+      {/* Goal line — the arc's main intent, shown when present */}
+      {goal && (
+        <p className="mb-1 font-mono text-[10px] text-iron/70" data-testid="alert-card-goal">
+          <span className="uppercase text-[9px] text-iron/40 mr-1">Goal</span>
+          {goal}
+        </p>
+      )}
 
       {/* Resolution success message */}
       {resolvedOp !== null && (
