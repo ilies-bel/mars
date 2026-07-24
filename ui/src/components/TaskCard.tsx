@@ -5,6 +5,16 @@ import { isLiveStatus, substepLabel } from '@/shared/substep'
 import { RoleTag } from './RoleTag'
 import { StatusChip } from './StatusChip'
 
+/** Maps raw activityDetail phase strings to friendly single-line labels. */
+const ACTIVITY_DETAIL_LABEL: Record<string, string> = {
+  'merge:acquire-lock': 'merging · waiting for lock',
+  'merge:rebase': 'merging · rebasing',
+  'merge:fast-forward': 'merging · fast-forward',
+  'merge:integration-gate': 'merging · integration tests',
+  'merge:vega': 'merging · resolving conflicts',
+  verify: 'verifying',
+}
+
 interface Props {
   task: UITask
   index: number
@@ -25,7 +35,13 @@ export const TaskCard = memo(({ task, index }: Props) => {
   const isLive = isLiveStatus(task.status)
   // Fine-grained substep the card is on ("coding", "merging", …), shown beside
   // the live dot so the user reads WHAT step it is on, not just that it's alive.
-  const substep = isLive ? substepLabel(task.status) : null
+  // When activityDetail is set, use a friendly label derived from it so the
+  // operator can see e.g. "merging · fast-forward" instead of just "merging".
+  const substep = isLive
+    ? task.activityDetail != null
+      ? (ACTIVITY_DETAIL_LABEL[task.activityDetail] ?? task.activityDetail)
+      : substepLabel(task.status)
+    : null
   const showChip =
     task.status === 'blocked' ||
     task.status === 'dropped' ||

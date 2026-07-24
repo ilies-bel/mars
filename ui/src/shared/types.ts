@@ -38,6 +38,11 @@ export interface UITask {
    * The value is the `origin_id` of the abandoned arc. Null/absent for regular tasks.
    */
   compensatesArcId?: string | null
+  /**
+   * Short-lived sub-phase label for an in-flight task (e.g. 'merge:fast-forward').
+   * Null/absent for queued/done/failed tasks and tasks without activity tracking.
+   */
+  activityDetail?: string | null
   createdAt: string
   updatedAt: string
 }

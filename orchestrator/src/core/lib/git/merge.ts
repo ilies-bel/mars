@@ -196,6 +196,13 @@ export interface MergeArgs {
     finalTaskSha: string
     finalIntegrationSha: string
   }) => Promise<void>
+  /**
+   * Best-effort callback fired at key sub-phase transitions within the merge:
+   * `acquire-lock`, `rebase`, `vega`, `fast-forward`, `integration-gate`.
+   * A reporting failure (throw or rejected promise) is silently swallowed —
+   * it must never abort or slow a merge.
+   */
+  onPhase?: (phase: string) => void | Promise<void>
 }
 
 export interface MergeResult {
@@ -455,6 +462,7 @@ export const mergeBranch = async ({
   onVegaStart,
   onBeforeFastForward,
   onAfterFastForward,
+  onPhase,
   traceCtx,
 }: MergeArgs): Promise<MergeResult> => {
   const mergeCtx: TraceCtx | undefined = traceCtx
@@ -475,6 +483,18 @@ export const mergeBranch = async ({
     ? AbortSignal.any([watchdogController.signal, signal])
     : watchdogController.signal
 
+  // Best-effort phase reporter: fires onPhase and swallows all errors so a
+  // reporting failure can never abort or slow a merge.
+  const firePhase = (phase: string): void => {
+    if (!onPhase) return
+    try {
+      const result = onPhase(phase)
+      if (result instanceof Promise) result.catch(() => {})
+    } catch {
+      // intentionally swallowed — reporting must never abort a merge
+    }
+  }
+
   // Thin wrappers that thread `combinedSignal` (and the trace ctx) into every
   // git spawn without repeating the boilerplate at each call site.
   const gexec = (
@@ -490,6 +510,7 @@ export const mergeBranch = async ({
 
   try {
     lastStep = 'acquire-lock'
+    firePhase('acquire-lock')
     const release = await acquireLock(
       resolve(getStateDir(), '.merge.lock'),
       lockTimeoutMs,
@@ -590,6 +611,7 @@ export const mergeBranch = async ({
       // the new integration tip cleanly. Vega is NOT re-invoked unless a
       // genuinely NEW conflict appears in this iteration's rebase.
       lastStep = 'rebase'
+      firePhase('rebase')
       const rebaseResult = await gprobe(['rebase', integrationBranch], worktreePath)
       output += rebaseResult.stdout + rebaseResult.stderr
       if (rebaseResult.exitCode !== 0) {
@@ -621,6 +643,7 @@ export const mergeBranch = async ({
         // Signal the transition out of the idempotent `merging` phase before
         // spawning, so the task shows as `vega-reconciling` for the full
         // duration of the session.
+        firePhase('vega')
         await onVegaStart?.()
 
         const preSha = (
@@ -732,6 +755,7 @@ export const mergeBranch = async ({
       // integrationBranch has been advanced concurrently (providing the same
       // race-safety as the file lock, with an additional CAS layer).
       lastStep = 'fast-forward-update-ref'
+      firePhase('fast-forward')
       try {
         await gexec(
           ['update-ref', `refs/heads/${integrationBranch}`, taskSha, integrationSha],
@@ -849,6 +873,7 @@ export const mergeBranch = async ({
     // reverted so the integration branch is left clean at the pre-merge SHA.
     if (onAfterFastForward) {
       lastStep = 'integration-gate'
+      firePhase('integration-gate')
       try {
         await onAfterFastForward({ finalTaskSha, finalIntegrationSha })
       } catch (gateErr: unknown) {

@@ -1485,7 +1485,7 @@ export const verify = async (
 
       await updateTask(
         taskId,
-        { status: 'verifying', failedPhase: null },
+        { status: 'verifying', failedPhase: null, activityDetail: 'verify' },
         store,
       )
       // Wrap the verify body: any unexpected throw (e.g. verifyChanges rejects,
@@ -2239,6 +2239,9 @@ export const merge = async (
           lockTimeoutMs: 5 * 60 * 1000,
           watchdogMs: 15 * 60 * 1000,
           traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
+          onPhase: async (phase) => {
+            await updateTask(taskId, { activityDetail: `merge:${phase}` }, store)
+          },
           onVegaStart: async () => {
             await updateTask(taskId, { status: 'vega-reconciling' }, store)
           },

@@ -115,6 +115,11 @@ export const taskSchema = z.object({
    * Used by the board to show the arc lifecycle (compensation badge/indicator).
    */
   compensatesArcId: z.string().nullable().optional(),
+  /**
+   * Short-lived sub-phase label for an in-flight task (e.g. `merge:fast-forward`).
+   * Null/absent for queued/done/failed tasks.
+   */
+  activityDetail: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })

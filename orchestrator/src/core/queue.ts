@@ -413,6 +413,14 @@ export interface Task {
    */
   currentStepGuide: string | null
   /**
+   * Short-lived sub-phase label for an in-flight task (e.g. `merge:fast-forward`).
+   * Written by the merge and verify primitives to surface the current sub-step on
+   * the board card. `null` for queued/done/failed tasks and for tasks that predate
+   * this column. Cleared automatically when the task transitions out of in-flight
+   * status. Optional for backwards compat with test fixtures that predate this field.
+   */
+  activityDetail?: string | null
+  /**
    * When set, this is a compensation/cleanup task for a force-purged arc. The
    * value is the `origin_id` of the abandoned arc. `null` for all other tasks.
    * Compensation tasks are regular tasks (not recovery/fix tasks) — they have
@@ -672,6 +680,7 @@ SELECT
   t.lease_owner, t.leased_at, t.lease_note,
   t.origin_session_id, t.workflow,
   t.current_step_name, t.current_step_guide,
+  t.activity_detail,
   t.compensates_arc_id,
   t.created_at, t.updated_at
 FROM tasks t`
@@ -745,6 +754,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     workflow: (row.workflow as string | null) ?? null,
     currentStepName: (row.current_step_name as string | null) ?? null,
     currentStepGuide: (row.current_step_guide as string | null) ?? null,
+    activityDetail: (row.activity_detail as string | null) ?? null,
     compensatesArcId: (row.compensates_arc_id as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
@@ -920,6 +930,7 @@ export const updateTask = async (
       | 'leaseNote'
       | 'currentStepName'
       | 'currentStepGuide'
+      | 'activityDetail'
       | 'retryCount'
     > & {
       /**
@@ -1031,6 +1042,20 @@ export const updateTask = async (
     patch = { ...patch, failureReason: null, failureSignature: null, failureReasonCode: null }
   }
 
+  // Auto-clear activity_detail when leaving in-flight statuses.
+  // activity_detail is a short-lived label for the current merge/verify sub-phase;
+  // it must not linger once the task is done, failed, parked, or any other
+  // non-in-flight state. Callers may still set activityDetail explicitly to null
+  // (clearing is idempotent).
+  const IN_FLIGHT_STATUSES = new Set(['running', 'verifying', 'merging', 'vega-reconciling'])
+  if (
+    patch.status !== undefined &&
+    !IN_FLIGHT_STATUSES.has(patch.status) &&
+    patch.activityDetail === undefined
+  ) {
+    patch = { ...patch, activityDetail: null }
+  }
+
   if (patch.status !== undefined) {
     fields.push('status = ?')
     args.push(patch.status)
@@ -1100,6 +1125,10 @@ export const updateTask = async (
   if (patch.currentStepGuide !== undefined) {
     fields.push('current_step_guide = ?')
     args.push(patch.currentStepGuide)
+  }
+  if (patch.activityDetail !== undefined) {
+    fields.push('activity_detail = ?')
+    args.push(patch.activityDetail)
   }
   if (patch.failureReason !== undefined) {
     fields.push('failure_reason = ?')

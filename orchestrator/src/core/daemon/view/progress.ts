@@ -78,6 +78,8 @@ export interface ProgressTask {
    * Optional for backwards compat with callers that predated this field.
    */
   compensatesArcId?: string | null
+  /** Short-lived sub-phase label written by merge/verify primitives. Null/absent when not in-flight. */
+  activityDetail?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -108,6 +110,8 @@ export interface ProgressTaskRow {
   fixForTaskId: string | null
   kind: string | null
   compensatesArcId?: string | null
+  /** Short-lived sub-phase label written by merge/verify primitives. Null/absent when not in-flight. */
+  activityDetail?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -230,6 +234,7 @@ export const buildProgressView = async (
       fixForTaskId: row.fixForTaskId,
       kind: row.kind,
       compensatesArcId: row.compensatesArcId,
+      activityDetail: row.activityDetail,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     })
@@ -274,6 +279,7 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
              t.task_type,
              t.origin_id, t.fix_for_task_id, t.kind,
              t.compensates_arc_id,
+             t.activity_detail,
              t.created_at, t.updated_at,
              (SELECT b.blocker_task_id FROM task_blockers b
                WHERE b.task_id = t.id ORDER BY b.created_at ASC LIMIT 1) AS blocker_task_id,
@@ -308,6 +314,7 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
         fixForTaskId: (ro.fix_for_task_id as string | null) ?? null,
         kind: (ro.kind as string | null) ?? null,
         compensatesArcId: (ro.compensates_arc_id as string | null) ?? null,
+        activityDetail: (ro.activity_detail as string | null) ?? null,
         createdAt: ro.created_at as string,
         updatedAt: ro.updated_at as string,
       }

@@ -149,6 +149,80 @@ describe('TaskCard – focus-visible ring', () => {
   })
 })
 
+describe('TaskCard – activity detail label', () => {
+  it('shows friendly fast-forward label when activityDetail is merge:fast-forward', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard
+        task={minTask('t-ff', { status: 'merging', activityDetail: 'merge:fast-forward' })}
+        index={0}
+      />,
+    )
+    expect(html).toContain('merging · fast-forward')
+  })
+
+  it('shows friendly acquire-lock label when activityDetail is merge:acquire-lock', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard
+        task={minTask('t-lock', { status: 'merging', activityDetail: 'merge:acquire-lock' })}
+        index={0}
+      />,
+    )
+    expect(html).toContain('merging · waiting for lock')
+  })
+
+  it('shows friendly integration-gate label when activityDetail is merge:integration-gate', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard
+        task={minTask('t-gate', { status: 'merging', activityDetail: 'merge:integration-gate' })}
+        index={0}
+      />,
+    )
+    expect(html).toContain('merging · integration tests')
+  })
+
+  it('shows friendly vega label when activityDetail is merge:vega', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard
+        task={minTask('t-vega', { status: 'vega-reconciling', activityDetail: 'merge:vega' })}
+        index={0}
+      />,
+    )
+    expect(html).toContain('merging · resolving conflicts')
+  })
+
+  it('falls back to the raw activityDetail string when unmapped', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard
+        task={minTask('t-raw', { status: 'merging', activityDetail: 'merge:unknown-phase' })}
+        index={0}
+      />,
+    )
+    expect(html).toContain('merge:unknown-phase')
+  })
+
+  it('falls back to coarse status label when activityDetail is null', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard
+        task={minTask('t-coarse', { status: 'merging', activityDetail: null })}
+        index={0}
+      />,
+    )
+    // coarse label from substepLabel('merging')
+    expect(html).toContain('merging')
+    expect(html).not.toContain('·')
+  })
+
+  it('still shows the pulse dot when activityDetail is set', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard
+        task={minTask('t-pulse', { status: 'merging', activityDetail: 'merge:fast-forward' })}
+        index={0}
+      />,
+    )
+    expect(html).toContain('animate-mars-pulse')
+  })
+})
+
 describe('TaskCard – type scale', () => {
   it('uses text-body scale class for the task title', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('t-scale-1')} index={0} />)
