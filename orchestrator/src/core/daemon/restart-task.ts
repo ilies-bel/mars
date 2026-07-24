@@ -35,14 +35,17 @@ export class RestartTaskError extends Error {
  * Options for {@link coreRestartTask}.
  *
  * `force`: when `true`, allow restarting a task that is nominally in an
- * in-flight status (`running`, `verifying`, `merging`, `vega-reconciling`)
- * provided its latest durable workflow run is terminal `'failed'`. This
- * handles the stale-verifier scenario: the daemon restarted while a task was
- * verifying, the workflow run recorded a failure (e.g. "working directory no
- * longer exists"), but the task row is stuck in `verifying` because it is not
- * in `allowedStatuses`. Without `--force`, the operator has no supported path
- * to restart the task; with it, the stale run journal is cleared and setup
- * creates a fresh worktree.
+ * in-flight status (`running`, `verifying`) provided its latest durable
+ * workflow run is terminal `'failed'`. This handles the stale-verifier
+ * scenario: the daemon restarted while a task was verifying, the workflow run
+ * recorded a failure (e.g. "working directory no longer exists"), but the task
+ * row is stuck in `verifying` because it is not in `allowedStatuses`. Without
+ * `--force`, the operator has no supported path to restart the task; with it,
+ * the stale run journal is cleared and setup creates a fresh worktree.
+ *
+ * Note: `merging` and `vega-reconciling` are now included in the normal
+ * `allowedStatuses` set by the caller (server.ts `handleRestart` and the
+ * HTTP endpoint), so `--force` is not required for those statuses any more.
  *
  * `force` is NOT a bypass for tasks whose workflow run is still active — if
  * `getRun` returns `status='running'` or no run exists at all, the request

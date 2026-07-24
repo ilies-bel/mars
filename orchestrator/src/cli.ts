@@ -178,9 +178,9 @@ Commands:
                                 failed_phase, failed in the 'code' phase, or
                                 lost its worktree on disk — use 'mars restart'
                                 instead. Stops on the first error.
-  restart <id> [<id> ...]       wipe worktree+branch and re-queue failed/done
-                                task(s) from setup (full pipeline re-run).
-                                Stops on the first error.
+  restart <id> [<id> ...]       wipe worktree+branch and re-queue failed/done/
+                                merging/vega-reconciling task(s) from setup
+                                (full pipeline re-run). Stops on first error.
   purge <id> [<id> ...] [--force] delete failed/done task(s) entirely
                                 (worktree+branch+row). Refuses if the branch
                                 has unique commits ahead of the integration
@@ -804,9 +804,9 @@ Refuses (non-zero exit) when:
 In those cases reach for 'mars restart <id>' to start over from setup.`,
   restart: `mars restart <id> [<id> ...]
 
-Re-queue failed/done task(s) from setup. Removes each existing worktree
-and branch first, then runs the full pipeline (setup -> code -> verify
--> merge) on a fresh worktree.
+Re-queue failed, done, merging, or vega-reconciling task(s) from setup.
+Removes each existing worktree and branch first, then runs the full
+pipeline (setup -> code -> verify -> merge) on a fresh worktree.
 
 Accepts one or more ids; processes them in order and stops on the first
 error.`,

@@ -2155,7 +2155,7 @@ export const startDaemon = async (
     const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
     const result = await coreRestartTask(
       id,
-      new Set(['failed', 'done']),
+      new Set(['failed', 'done', 'vega-reconciling', 'merging']),
       createQueueWorkflowStore(),
       { force },
     )
@@ -3373,7 +3373,7 @@ export const startDaemon = async (
     chatRunner,
     chatStreamHub,
     restartTask: async (id) => {
-      const result = await coreRestart(id, new Set(['failed']), makeWorkflowStore())
+      const result = await coreRestart(id, new Set(['failed', 'vega-reconciling', 'merging']), makeWorkflowStore())
       if (result.status === 'queued') {
         bus.emit('task.queued', { taskId: id })
       }
