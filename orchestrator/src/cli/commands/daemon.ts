@@ -31,8 +31,35 @@ const spawnDetached = (deps: CommandDeps): void => {
     },
   )
   child.unref()
+}
+
+/**
+ * Poll `isDaemonAlive()` at 100ms intervals until the daemon's socket is
+ * connectable or the 10s deadline is exceeded.
+ *
+ * On success: prints the canonical `[mars] daemon detached (pid …)` message
+ * and returns `{ code: 0 }`.  On timeout: prints an error pointing at the
+ * watch.log boot log and returns `{ code: 1 }`.
+ *
+ * Called by both `daemonStart` (after the first spawn) and `daemonRestart`
+ * (after stop + respawn), so the poll loop lives here rather than inlined.
+ */
+const waitForDaemonReady = async (deps: CommandDeps): Promise<{ code: number }> => {
   const { logFile } = daemonPaths()
-  deps.out(`[mars] daemon detached (pid ${child.pid}, log: ${logFile})`)
+  const POLL_INTERVAL_MS = 100
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS))
+    const check = await isDaemonAlive()
+    if (check.alive) {
+      deps.out(`[mars] daemon detached (pid ${check.pid}, log: ${logFile})`)
+      return { code: 0 }
+    }
+  }
+  deps.err(
+    `[mars] daemon did not become ready within 10s; check ${logFile}`,
+  )
+  return { code: 1 }
 }
 
 const daemonStop: Command = {
@@ -295,7 +322,11 @@ const daemonStart: Command = {
       return { code: 0 }
     }
     spawnDetached(deps)
-    return { code: 0 }
+    // Block until the daemon's socket is connectable. This closes the TOCTOU
+    // race: a second `daemon start` racing within the boot window will call
+    // isDaemonAlive(), find a live socket, and take the idempotent branch
+    // above instead of spawning a second child.
+    return waitForDaemonReady(deps)
   },
 }
 
@@ -322,7 +353,7 @@ const daemonRestart: Command = {
       }
     }
     spawnDetached(deps)
-    return { code: 0 }
+    return waitForDaemonReady(deps)
   },
 }
 
