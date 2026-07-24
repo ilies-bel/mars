@@ -2,11 +2,14 @@
  * Tests for requeue-diagnostics helpers.
  *
  * computeStepWindow and computeAttemptDensity are pure functions and are
- * tested with synthetic StepRecord / StepWindow values.
+ * tested with synthetic StepRecord / StepWindow values — no DB needed,
+ * imported statically so no PGlite instance is created for those suites.
  *
  * computeBlockedWaitMs reads the outbox events table; its tests use a real
  * PGlite-backed queue DB (same pattern as requeue-ceiling.test.ts) with
- * controlled event timestamps inserted via raw SQL.
+ * controlled event timestamps inserted via raw SQL.  Each test explicitly
+ * closes the PGlite instance before deleting the temp dir to prevent WASM
+ * state leakage across tests.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -15,37 +18,21 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { StepRecord } from '@mars/workflow'
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Module-isolation helpers
-// ──────────────────────────────────────────────────────────────────────────────
+// Pure functions: import statically — no DB or module isolation required.
+import {
+  computeStepWindow,
+  computeAttemptDensity,
+} from '../requeue-diagnostics'
+import type { StepWindow } from '../requeue-diagnostics'
 
-interface QueueModule {
-  enqueueTask: typeof import('../../queue').enqueueTask
-  resolveQueueClient: typeof import('../../queue').resolveQueueClient
-  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
-}
-
-interface DiagnosticsModule {
-  computeStepWindow: (steps: StepRecord[]) => import('../requeue-diagnostics').StepWindow | null
-  computeAttemptDensity: (w: import('../requeue-diagnostics').StepWindow) => number
-  computeBlockedWaitMs: (taskId: string, nowMs: number) => Promise<number>
-}
+// ──────────────────────────────────────────────────────────────────────────────
+// Helpers shared across suites
+// ──────────────────────────────────────────────────────────────────────────────
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-diag-'))
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
   return repo
-}
-
-const loadModules = async (
-  repo: string,
-): Promise<{ q: QueueModule; diag: DiagnosticsModule }> => {
-  vi.resetModules()
-  process.env.MARS_REPO = repo
-  const q = (await import('../../queue')) as unknown as QueueModule
-  await q.migrateQueueSchema()
-  const diag = (await import('../requeue-diagnostics')) as unknown as DiagnosticsModule
-  return { q, diag }
 }
 
 // Build a minimal StepRecord for tests that don't need all fields.
@@ -69,25 +56,56 @@ const makeStep = (
 })
 
 // ──────────────────────────────────────────────────────────────────────────────
-// computeStepWindow
+// Module-isolation helpers for DB-backed tests only
+// ──────────────────────────────────────────────────────────────────────────────
+
+interface QueueModule {
+  enqueueTask: typeof import('../../queue').enqueueTask
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+}
+
+interface DbModule {
+  __resetDbRegistryForTests: () => Promise<void>
+}
+
+// Holds the cleanup fn for the current test's PGlite instance so afterEach
+// can close it before deleting the temp directory.
+let cleanupDb: (() => Promise<void>) | null = null
+
+/**
+ * Load queue + requeue-diagnostics with a fresh module scope.  Captures a
+ * reference to `__resetDbRegistryForTests` so the caller can close PGlite
+ * before wiping the data directory.
+ */
+const loadBlockedWaitModules = async (
+  repo: string,
+): Promise<{
+  q: QueueModule
+  computeBlockedWaitMs: (taskId: string, nowMs: number) => Promise<number>
+}> => {
+  // Close the previous PGlite instance before resetting the module cache.
+  if (cleanupDb) {
+    await cleanupDb().catch(() => {})
+    cleanupDb = null
+  }
+  vi.resetModules()
+  process.env.MARS_REPO = repo
+  const q = (await import('../../queue')) as unknown as QueueModule
+  await q.migrateQueueSchema()
+  const dbMod = (await import('../../lib/db')) as unknown as DbModule
+  cleanupDb = dbMod.__resetDbRegistryForTests
+  const diag = await import('../requeue-diagnostics')
+  return { q, computeBlockedWaitMs: diag.computeBlockedWaitMs }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// computeStepWindow — pure function, no DB setup needed
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe('computeStepWindow', () => {
-  let repo: string
-  let diag: DiagnosticsModule
-
-  beforeEach(async () => {
-    repo = setupRepo()
-    ;({ diag } = await loadModules(repo))
-  })
-
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
   it('returns null for an empty steps array (0 attempts)', () => {
-    expect(diag.computeStepWindow([])).toBeNull()
+    expect(computeStepWindow([])).toBeNull()
   })
 
   it('returns null when all steps have attempt = 0', () => {
@@ -95,13 +113,13 @@ describe('computeStepWindow', () => {
       makeStep('setup-worktree', 0),
       makeStep('code', 0),
     ]
-    expect(diag.computeStepWindow(steps)).toBeNull()
+    expect(computeStepWindow(steps)).toBeNull()
   })
 
   it('returns a window for a single step with attempt = 1 and no timestamp', () => {
     // startedAt = 0 means no valid timestamp; spanMs should be 0, counts preserved.
     const steps = [makeStep('setup-worktree', 1, 0)]
-    const w = diag.computeStepWindow(steps)
+    const w = computeStepWindow(steps)
 
     expect(w).not.toBeNull()
     expect(w!.attemptCount).toBe(1)
@@ -116,7 +134,7 @@ describe('computeStepWindow', () => {
       makeStep('setup-worktree', 1, now - 10_000),
       makeStep('code', 5, now - 5_000),   // ← this is the failing step
     ]
-    const w = diag.computeStepWindow(steps)!
+    const w = computeStepWindow(steps)!
 
     expect(w.attemptCount).toBe(5)
     expect(w.firstAttemptStartedAt).toBe(now - 5_000)
@@ -134,7 +152,7 @@ describe('computeStepWindow', () => {
       makeStep('setup-worktree', 3, t1, 'run-2'), // middle
       makeStep('setup-worktree', 3, t2, 'run-3'), // latest
     ]
-    const w = diag.computeStepWindow(steps)!
+    const w = computeStepWindow(steps)!
 
     expect(w.firstAttemptStartedAt).toBe(t0)
     expect(w.lastAttemptStartedAt).toBe(t2)
@@ -150,7 +168,7 @@ describe('computeStepWindow', () => {
       makeStep('setup-worktree', 5, t1, 'run-b'),
       makeStep('setup-worktree', 5, t2, 'run-c'),
     ]
-    const w = diag.computeStepWindow(steps)!
+    const w = computeStepWindow(steps)!
 
     expect(w.firstAttemptStartedAt).toBe(t1)
     expect(w.lastAttemptStartedAt).toBe(t2)
@@ -159,53 +177,40 @@ describe('computeStepWindow', () => {
 })
 
 // ──────────────────────────────────────────────────────────────────────────────
-// computeAttemptDensity
+// computeAttemptDensity — pure function, no DB setup needed
 // ──────────────────────────────────────────────────────────────────────────────
 
 describe('computeAttemptDensity', () => {
-  let repo: string
-  let diag: DiagnosticsModule
-
-  beforeEach(async () => {
-    repo = setupRepo()
-    ;({ diag } = await loadModules(repo))
-  })
-
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
   it('returns attemptCount / 1 when spanMs = 0 (denominator clamps to 1 minute)', () => {
     // 10 attempts in a zero-span window → density = 10 attempts/minute.
-    const w = { firstAttemptStartedAt: 0, lastAttemptStartedAt: 0, spanMs: 0, attemptCount: 10 }
-    expect(diag.computeAttemptDensity(w)).toBe(10)
+    const w: StepWindow = { firstAttemptStartedAt: 0, lastAttemptStartedAt: 0, spanMs: 0, attemptCount: 10 }
+    expect(computeAttemptDensity(w)).toBe(10)
   })
 
   it('returns 1 for 1 attempt with zero span', () => {
-    const w = { firstAttemptStartedAt: 0, lastAttemptStartedAt: 0, spanMs: 0, attemptCount: 1 }
-    expect(diag.computeAttemptDensity(w)).toBe(1)
+    const w: StepWindow = { firstAttemptStartedAt: 0, lastAttemptStartedAt: 0, spanMs: 0, attemptCount: 1 }
+    expect(computeAttemptDensity(w)).toBe(1)
   })
 
   it('dense loop: many attempts in a short window → high density', () => {
     // 60 attempts over 1 minute → 60 attempts/minute.
     const spanMs = 60_000
-    const w = { firstAttemptStartedAt: 0, lastAttemptStartedAt: spanMs, spanMs, attemptCount: 60 }
-    expect(diag.computeAttemptDensity(w)).toBeCloseTo(60)
+    const w: StepWindow = { firstAttemptStartedAt: 0, lastAttemptStartedAt: spanMs, spanMs, attemptCount: 60 }
+    expect(computeAttemptDensity(w)).toBeCloseTo(60)
   })
 
   it('sparse gaps: few attempts over a long window → low density', () => {
     // 2 attempts over 2 hours → 1 attempt/minute denominator = 2/120 ≈ 0.017.
     const spanMs = 2 * 60 * 60 * 1_000 // 2 hours in ms
-    const w = { firstAttemptStartedAt: 0, lastAttemptStartedAt: spanMs, spanMs, attemptCount: 2 }
-    expect(diag.computeAttemptDensity(w)).toBeCloseTo(2 / 120)
+    const w: StepWindow = { firstAttemptStartedAt: 0, lastAttemptStartedAt: spanMs, spanMs, attemptCount: 2 }
+    expect(computeAttemptDensity(w)).toBeCloseTo(2 / 120)
   })
 
   it('exactly one minute span: density = attemptCount / 1', () => {
     // 7 attempts over exactly 1 minute → 7 attempts/minute.
     const spanMs = 60_000
-    const w = { firstAttemptStartedAt: 0, lastAttemptStartedAt: spanMs, spanMs, attemptCount: 7 }
-    expect(diag.computeAttemptDensity(w)).toBeCloseTo(7)
+    const w: StepWindow = { firstAttemptStartedAt: 0, lastAttemptStartedAt: spanMs, spanMs, attemptCount: 7 }
+    expect(computeAttemptDensity(w)).toBeCloseTo(7)
   })
 })
 
@@ -238,33 +243,39 @@ describe('computeBlockedWaitMs', () => {
     repo = setupRepo()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Close PGlite BEFORE deleting its data directory to prevent WASM state
+    // leakage into subsequent tests.
+    if (cleanupDb) {
+      await cleanupDb().catch(() => {})
+      cleanupDb = null
+    }
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
 
   it('returns 0 when the task has never been blocked', async () => {
-    const { q, diag } = await loadModules(repo)
+    const { q, computeBlockedWaitMs } = await loadBlockedWaitModules(repo)
     const t = await q.enqueueTask('never-blocked task', undefined, { skipTriage: true })
 
-    const result = await diag.computeBlockedWaitMs(t.id, Date.now())
+    const result = await computeBlockedWaitMs(t.id, Date.now())
     expect(result).toBe(0)
   })
 
   it('sums a single block/unblock interval', async () => {
-    const { q, diag } = await loadModules(repo)
+    const { q, computeBlockedWaitMs } = await loadBlockedWaitModules(repo)
     const t = await q.enqueueTask('blocked-once task', undefined, { skipTriage: true })
 
     // Blocked at second 1000, unblocked at second 1060 → 60 seconds = 60,000 ms.
     await insertEvent(q, 'task.blocked', t.id, 1_000)
     await insertEvent(q, 'task.queued', t.id, 1_060)
 
-    const result = await diag.computeBlockedWaitMs(t.id, Date.now())
+    const result = await computeBlockedWaitMs(t.id, Date.now())
     expect(result).toBe(60_000)
   })
 
   it('sums multiple block/unblock cycles', async () => {
-    const { q, diag } = await loadModules(repo)
+    const { q, computeBlockedWaitMs } = await loadBlockedWaitModules(repo)
     const t = await q.enqueueTask('blocked-twice task', undefined, { skipTriage: true })
 
     // First interval: 1000 → 1060 = 60 s
@@ -274,13 +285,13 @@ describe('computeBlockedWaitMs', () => {
     await insertEvent(q, 'task.blocked', t.id, 2_000)
     await insertEvent(q, 'task.queued',  t.id, 2_030)
 
-    const result = await diag.computeBlockedWaitMs(t.id, Date.now())
+    const result = await computeBlockedWaitMs(t.id, Date.now())
     // 60,000 + 30,000 = 90,000 ms
     expect(result).toBe(90_000)
   })
 
   it('counts to nowMs for a task still in the blocked state (open interval)', async () => {
-    const { q, diag } = await loadModules(repo)
+    const { q, computeBlockedWaitMs } = await loadBlockedWaitModules(repo)
     const t = await q.enqueueTask('still-blocked task', undefined, { skipTriage: true })
 
     const blockedTsSec = 5_000
@@ -289,12 +300,12 @@ describe('computeBlockedWaitMs', () => {
     // nowMs = blocked start + 45 seconds in ms
     const nowMs = blockedTsSec * 1_000 + 45_000
 
-    const result = await diag.computeBlockedWaitMs(t.id, nowMs)
+    const result = await computeBlockedWaitMs(t.id, nowMs)
     expect(result).toBe(45_000)
   })
 
   it('ignores events for unrelated tasks', async () => {
-    const { q, diag } = await loadModules(repo)
+    const { q, computeBlockedWaitMs } = await loadBlockedWaitModules(repo)
     const t = await q.enqueueTask('target task', undefined, { skipTriage: true })
     const other = await q.enqueueTask('unrelated task', undefined, { skipTriage: true })
 
@@ -302,12 +313,12 @@ describe('computeBlockedWaitMs', () => {
     await insertEvent(q, 'task.blocked', other.id, 1_000)
     await insertEvent(q, 'task.queued',  other.id, 1_120)
 
-    const result = await diag.computeBlockedWaitMs(t.id, Date.now())
+    const result = await computeBlockedWaitMs(t.id, Date.now())
     expect(result).toBe(0)
   })
 
   it('handles combined closed and open intervals', async () => {
-    const { q, diag } = await loadModules(repo)
+    const { q, computeBlockedWaitMs } = await loadBlockedWaitModules(repo)
     const t = await q.enqueueTask('partial task', undefined, { skipTriage: true })
 
     // Closed interval: 100 → 200 = 100 s
@@ -319,7 +330,7 @@ describe('computeBlockedWaitMs', () => {
     // nowMs = second 350 × 1000 → open interval = 50 s
     const nowMs = 350 * 1_000
 
-    const result = await diag.computeBlockedWaitMs(t.id, nowMs)
+    const result = await computeBlockedWaitMs(t.id, nowMs)
     // 100_000 (closed) + 50_000 (open) = 150_000 ms
     expect(result).toBe(150_000)
   })
