@@ -1539,11 +1539,8 @@ export const verify = async (
         steps,
         branch,
         integrationBranch,
-        // Pass changedFiles for non-main-committer tasks so verifyChanges can
-        // enforce the zero-gate guard: a task that changed files but has no
-        // configured task-tier steps must not silently pass (verify:no-gates-configured).
-        // The main-committer recipe omits changedFiles because it intentionally
-        // bypasses all task-tier steps.
+        // changedFiles is informational for tracing only — verify gates are
+        // optional, so a task with zero configured task-tier steps passes.
         changedFiles: isMainCommitter ? undefined : changedFiles,
         traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
       }).finally(() => releaseVerifyLock())
@@ -1638,8 +1635,8 @@ export const verify = async (
       // Note: `has-diff` is included in r.steps when it passes (it is a real
       // gate that ran). A non-empty gateOutcomes means at least one gate ran;
       // an empty array only appears when neither has-diff nor any task steps ran
-      // (should not happen in practice — the zero-gate guard catches the case
-      // where changedFiles is non-empty and steps is empty).
+      // (e.g. a task with no configured gates and no branch/integration diff to
+      // check — gates are optional, so this passes).
       const gateOutcomes = r.steps.map((s) => ({
         name: s.name,
         tier: s.tier ?? 'task',

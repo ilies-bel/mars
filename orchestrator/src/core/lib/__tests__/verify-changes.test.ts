@@ -642,11 +642,10 @@ describe('main-commiter recovery — verify step exemption', () => {
     expect(steps.map((s) => s.name)).toEqual(['test', 'typecheck', 'lint'])
   })
 
-  it('verifyChanges with zero steps and no changedFiles (main-committer recipe) passes without triggering the zero-gate guard', async () => {
-    // The primitive omits changedFiles for main-committer tasks so the
-    // zero-gate guard does not fire. This regression pin ensures that
-    // behaviour holds — the recipe must remain exempt even if the task
-    // changed files.
+  it('verifyChanges with zero steps and no changedFiles (main-committer recipe) passes', async () => {
+    // Zero configured steps pass — verify gates are optional. This regression
+    // pin ensures the main-committer recipe (which selects no steps) verifies
+    // cleanly.
     const r = await verifyChanges({
       cwd: process.cwd(),
       steps: [],
@@ -755,37 +754,24 @@ describe('typecheck step — no-tsc-toolchain skip guard', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Zero-gate guard (verify:no-gates-configured)
+// No zero-gate guard — verify gates are optional
 // ---------------------------------------------------------------------------
-// A task that changed files but has no task-tier steps configured in the
-// supervisor manifest must not silently pass. The verify step should fail with
-// verify:no-gates-configured so the operator knows to regenerate the manifest.
-//
-// Deliberate exceptions that must still pass with zero steps:
-//   1. changedFiles not provided — the main-committer recipe and other callers
-//      that legitimately bypass task-tier steps leave changedFiles unset.
-//   2. changedFiles is empty — the task made no changes (genuine no-op).
+// Verify gates are opt-in. A task with zero configured task-tier steps passes
+// the verify phase (running only the built-in gates), whether or not it changed
+// files. There is intentionally no "you must configure gates" guard.
 // ---------------------------------------------------------------------------
-describe('zero-gate guard — verify:no-gates-configured', () => {
-  it('fails with no-gates-configured when changedFiles is non-empty and no task-tier steps are configured', async () => {
+describe('no zero-gate guard — gates are optional', () => {
+  it('passes with zero steps even when changedFiles is non-empty', async () => {
     const r = await verifyChanges({
       cwd: process.cwd(),
       steps: [],
       changedFiles: ['src/foo.ts', 'src/bar.ts'],
     })
-    expect(r.passed).toBe(false)
-    expect(r.steps).toHaveLength(1)
-    expect(r.steps[0].name).toBe('no-gates-configured')
-    expect(r.steps[0].passed).toBe(false)
-    expect(r.steps[0].tier).toBe('task')
-    expect(r.steps[0].output).toContain('verify:no-gates-configured')
-    expect(r.steps[0].output).toContain('src/foo.ts')
-    expect(r.steps[0].output).toContain('mars init')
+    expect(r.passed).toBe(true)
+    expect(r.steps).toEqual([])
   })
 
-  it('passes when changedFiles is empty even with no task-tier steps (genuine no-op)', async () => {
-    // An empty changedFiles means the task made no file changes — no-op is
-    // legitimate and the guard must not fire.
+  it('passes when changedFiles is empty and no task-tier steps (genuine no-op)', async () => {
     const r = await verifyChanges({
       cwd: process.cwd(),
       steps: [],
@@ -795,9 +781,7 @@ describe('zero-gate guard — verify:no-gates-configured', () => {
     expect(r.steps).toEqual([])
   })
 
-  it('passes when changedFiles is not provided even with no task-tier steps (main-committer / backward-compat path)', async () => {
-    // The main-committer recipe intentionally selects zero steps and omits
-    // changedFiles — the guard must not fire in this case.
+  it('passes when changedFiles is not provided and no task-tier steps (main-committer path)', async () => {
     const r = await verifyChanges({
       cwd: process.cwd(),
       steps: [],
@@ -805,25 +789,6 @@ describe('zero-gate guard — verify:no-gates-configured', () => {
     })
     expect(r.passed).toBe(true)
     expect(r.steps).toEqual([])
-  })
-
-  it('no-gates-configured step carries a tier:task label so it appears in gate outcomes', async () => {
-    const r = await verifyChanges({
-      cwd: process.cwd(),
-      steps: [],
-      changedFiles: ['orchestrator/src/core/lib/git/verify.ts'],
-    })
-    const step = r.steps.find((s) => s.name === 'no-gates-configured')
-    expect(step?.tier).toBe('task')
-  })
-
-  it('no-gates-configured output names the mars init command to fix the issue', async () => {
-    const r = await verifyChanges({
-      cwd: process.cwd(),
-      steps: [],
-      changedFiles: ['some/deeply/nested/file.ts'],
-    })
-    expect(r.steps[0].output).toContain('mars init')
   })
 })
 
@@ -875,7 +840,6 @@ describe('has-diff appears in gate outcomes when it passes', () => {
 
   it('has-diff is the sole step in results for a no-op branch with no task steps', async () => {
     // A no-op task with an empty step list still shows has-diff in gate outcomes.
-    // changedFiles is omitted so the zero-gate guard does not fire.
     const r = await verifyChanges({
       cwd: repo,
       branch: 'task/noop',

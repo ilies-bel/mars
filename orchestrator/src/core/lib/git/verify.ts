@@ -472,31 +472,10 @@ export const verifyChanges = async (
     results.push(diffStep)
   }
 
-  // Zero-gate guard: when the caller supplies changed files but zero task-tier
-  // steps are configured, the supervisor manifest has no verify scopes for the
-  // changed paths. Silently passing would mask a misconfiguration that lets
-  // broken code merge undetected — fail with a named signature instead.
-  if (
-    args.changedFiles !== undefined &&
-    args.changedFiles.length > 0 &&
-    args.steps.length === 0
-  ) {
-    const changedList =
-      args.changedFiles.slice(0, 10).join(', ') +
-      (args.changedFiles.length > 10 ? ` … and ${args.changedFiles.length - 10} more` : '')
-    const output =
-      `verify:no-gates-configured — no task-tier verify steps are configured for this task.\n` +
-      `Changed files (${args.changedFiles.length}): ${changedList}\n` +
-      `The supervisor manifest declares no verify scopes that cover the changed paths.\n` +
-      `Regenerate the manifest with: mars init`
-    results.push({
-      name: 'no-gates-configured',
-      passed: false,
-      tier: 'task',
-      output,
-    })
-    return { passed: false, steps: results }
-  }
+  // Verify gates are optional. When zero task-tier steps are configured for a
+  // task, the verify phase runs only the built-in gates (has-diff) and passes —
+  // there is intentionally no "you must configure gates" guard. Gate coverage,
+  // if desired, is opt-in via the verify_gates registry.
 
   let stoppedOnRequired = false
   for (const spec of args.steps) {
