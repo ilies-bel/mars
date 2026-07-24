@@ -1666,7 +1666,7 @@ export const Composer = ({
               <div
                 key={a.localId}
                 data-testid="attachment-chip"
-                className="group relative flex items-center gap-2 rounded-md border bg-muted/50 py-1 pr-1 pl-2 text-xs"
+                className="group relative flex items-center gap-2 rounded-md border bg-accent/50 py-1 pr-1 pl-2 text-xs"
               >
                 {a.previewUrl ? (
                   <img
