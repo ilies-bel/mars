@@ -3938,20 +3938,25 @@ export const startDaemon = async (
   }, STALE_SWEEP_MS)
   staleSweep.unref()
 
-  // ── Stale-merging sweep ───────────────────────────────────────────────────
+  // ── Stale-merge sweep (merging + vega-reconciling) ───────────────────────
   // Defense-in-depth: periodically re-queues any task whose status is still
-  // 'merging' but whose updated_at exceeds the stale threshold. This handles
-  // the residual window where mergeBranch threw (releasing the lock) but the
-  // calling workflow failed before it could flip the task out of 'merging'
-  // status, leaving it stranded until the next daemon restart.
+  // 'merging' or 'vega-reconciling' but whose updated_at exceeds the stale
+  // threshold. This handles two residual windows:
+  //   - 'merging': mergeBranch threw (releasing the lock) but the calling
+  //     workflow failed before flipping the task out of 'merging', leaving it
+  //     stranded until the next daemon restart.
+  //   - 'vega-reconciling': the vcs-supervisor (Vega) subprocess was killed or
+  //     crashed without advancing the task status; unlike the boot reconcile
+  //     that catches daemon-restart stranding, this sweep catches a live daemon
+  //     whose Vega session died mid-conflict-resolution without a restart.
   //
   // The threshold (15 min) is deliberately conservative: the maximum possible
   // time for a legitimate in-flight merge is lockTimeoutMs (5 min) + watchdogMs
-  // (5 min default) = 10 min. Any 'merging' row older than 15 min is therefore
-  // guaranteed to be stale and safe to recover.
+  // (5 min default) = 10 min. Any 'merging' or 'vega-reconciling' row older
+  // than 15 min is therefore guaranteed to be stale and safe to recover.
   //
   // IMPORTANT: only tasks exceeding the threshold are recovered. This prevents
-  // racing a legitimately in-progress merge that was set to 'merging' recently.
+  // racing a legitimately in-progress merge or Vega session set recently.
   // .unref() so the interval never prevents a clean shutdown.
   const STALE_MERGING_THRESHOLD_MS = 15 * 60_000
   const STALE_MERGING_SWEEP_MS = 5 * 60_000
@@ -3959,30 +3964,57 @@ export const startDaemon = async (
     void (async () => {
       try {
         const { listTasks: listTasksForSweep } = await import('../queue')
-        const mergingTasks = await listTasksForSweep('merging')
         const now = Date.now()
-        const staleTasks = mergingTasks.filter((t) => {
-          const ageMs = now - new Date(t.updatedAt).getTime()
-          return ageMs > STALE_MERGING_THRESHOLD_MS
-        })
-        if (staleTasks.length === 0) return
-        log(
-          `[stale-merging-sweep] found ${staleTasks.length} stale merging task(s) (>15 min); recovering`,
+        const mergingTasks = await listTasksForSweep('merging')
+        const vegaTasks = await listTasksForSweep('vega-reconciling')
+        const staleMerging = mergingTasks.filter(
+          (t) => now - new Date(t.updatedAt).getTime() > STALE_MERGING_THRESHOLD_MS,
         )
+        const staleVega = vegaTasks.filter(
+          (t) => now - new Date(t.updatedAt).getTime() > STALE_MERGING_THRESHOLD_MS,
+        )
+        if (staleMerging.length === 0 && staleVega.length === 0) return
+
         const { recoverPhase } = await import('./phase-recovery')
         const { getRepoRoot } = await import('../context')
-        const r = await recoverPhase('merging', { log, bus, repoRoot: getRepoRoot() })
-        if (r.requeued.length > 0) {
+        const repoRoot = getRepoRoot()
+
+        if (staleMerging.length > 0) {
           log(
-            `[stale-merging-sweep] requeued ${r.requeued.length} task(s) from stale merging state`,
+            `[stale-merging-sweep] found ${staleMerging.length} stale merging task(s) (>15 min); recovering`,
           )
-          viewStreamHub.broadcast('tasks')
+          const r = await recoverPhase('merging', { log, bus, repoRoot })
+          if (r.requeued.length > 0) {
+            log(
+              `[stale-merging-sweep] requeued ${r.requeued.length} task(s) from stale merging state`,
+            )
+            viewStreamHub.broadcast('tasks')
+          }
+          if (r.finalized > 0) {
+            log(
+              `[stale-merging-sweep] finalized ${r.finalized} task(s) whose FF already landed`,
+            )
+            viewStreamHub.broadcast('tasks')
+          }
         }
-        if (r.finalized > 0) {
+
+        if (staleVega.length > 0) {
           log(
-            `[stale-merging-sweep] finalized ${r.finalized} task(s) whose FF already landed`,
+            `[stale-merging-sweep] found ${staleVega.length} stale vega-reconciling task(s) (>15 min); recovering`,
           )
-          viewStreamHub.broadcast('tasks')
+          const rv = await recoverPhase('vega-reconciling', { log, bus, repoRoot })
+          if (rv.requeued.length > 0) {
+            log(
+              `[stale-merging-sweep] requeued ${rv.requeued.length} vega-reconciling task(s) from stale state`,
+            )
+            viewStreamHub.broadcast('tasks')
+          }
+          if (rv.finalized > 0) {
+            log(
+              `[stale-merging-sweep] finalized ${rv.finalized} vega-reconciling task(s) whose FF already landed`,
+            )
+            viewStreamHub.broadcast('tasks')
+          }
         }
       } catch (err) {
         log(`[stale-merging-sweep] errored: ${(err as Error).message}`)
