@@ -95,6 +95,22 @@ export interface VerifyStep {
    * integration-tier steps and for the built-in `has-diff` gate.
    */
   duration?: number
+  /**
+   * Raw exit code from the subprocess. `null` when the abort signal killed
+   * the process before it could exit normally. Absent on deferred
+   * integration-tier steps and built-in gates that do not shell out.
+   */
+  exitCode?: number | null
+  /**
+   * Raw stdout from the subprocess, without any prefix added by the verify
+   * layer. Absent on deferred integration-tier steps and built-in gates.
+   */
+  stdout?: string
+  /**
+   * Raw stderr from the subprocess, without any prefix added by the verify
+   * layer. Absent on deferred integration-tier steps and built-in gates.
+   */
+  stderr?: string
 }
 
 export interface VerifyStepSpec {
@@ -189,6 +205,9 @@ const runVerifyStep = async (
       name,
       passed: true,
       output: r.stdout + r.stderr,
+      exitCode: r.exitCode,
+      stdout: r.stdout,
+      stderr: r.stderr,
       cmd,
       args,
       stepDir: cwd,
@@ -197,6 +216,7 @@ const runVerifyStep = async (
   // When the abort signal fired and killed the subprocess, prefix the output
   // with a clear marker so post-mortems can distinguish a timeout-kill from a
   // genuine test failure (the subprocess output alone may be empty or partial).
+  // Raw stdout/stderr are kept unprefixed so callers can inspect them directly.
   const rawOutput = r.stdout + r.stderr
   const output =
     signal?.aborted
@@ -206,6 +226,9 @@ const runVerifyStep = async (
     name,
     passed: false,
     output,
+    exitCode: signal?.aborted ? null : r.exitCode,
+    stdout: r.stdout,
+    stderr: r.stderr,
     cmd,
     args,
     stepDir: cwd,
