@@ -66,7 +66,7 @@ const insertTask = async (
   store: TaskStore,
   opts: {
     id: string
-    prompt?: string | null
+    prompt?: string
     status: string
     origin_id?: string | null
     fix_for_task_id?: string | null
@@ -74,13 +74,14 @@ const insertTask = async (
   },
 ): Promise<void> => {
   await store.execute({
-    sql: 'INSERT INTO tasks (id, prompt, status, origin_id, fix_for_task_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    sql: 'INSERT INTO tasks (id, prompt, status, origin_id, fix_for_task_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     args: [
       opts.id,
-      opts.prompt ?? null,
+      opts.prompt ?? 'test task',
       opts.status,
       opts.origin_id ?? null,
       opts.fix_for_task_id ?? null,
+      opts.updated_at ?? '2026-01-04T12:00:00Z',
       opts.updated_at ?? '2026-01-04T12:00:00Z',
     ],
   })
@@ -641,8 +642,8 @@ describe('computeAutonomousCompletionRate — fixture cases', () => {
       status: 'done',
     })
     await store.execute({
-      sql: `INSERT INTO action_queue_items (id, kind, origin_task_id)
-            VALUES (?, 'task-blocked', ?)`,
+      sql: `INSERT INTO action_queue_items (id, kind, category, priority, title, raised_by, raised_at, origin_task_id)
+            VALUES (?, 'task-blocked', 'orchestrator', 'high', 'blocked', 'test', '2026-01-04T12:00:00Z', ?)`,
       args: ['aq-item-1', 'blocked-arc'],
     })
 
@@ -670,8 +671,8 @@ describe('computeAutonomousCompletionRate — fixture cases', () => {
     // Arc C: done but has task-blocked item → NOT autonomous
     await insertTask(store, { id: 'arc-c', status: 'done' })
     await store.execute({
-      sql: `INSERT INTO action_queue_items (id, kind, origin_task_id)
-            VALUES (?, 'task-blocked', ?)`,
+      sql: `INSERT INTO action_queue_items (id, kind, category, priority, title, raised_by, raised_at, origin_task_id)
+            VALUES (?, 'task-blocked', 'orchestrator', 'high', 'blocked', 'test', '2026-01-04T12:00:00Z', ?)`,
       args: ['aq-item-2', 'arc-c'],
     })
 
