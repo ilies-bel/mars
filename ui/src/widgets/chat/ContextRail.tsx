@@ -19,7 +19,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchGlossary, fetchSkills } from '@/shared/api'
 import { useProgress } from '@/hooks/useProgress'
-import { taskHash } from '@/shared/routing'
+
 import type { GlossaryTerm, Skill } from '@/shared/schemas'
 import type { ProgressTask } from '@/shared/schemas'
 
@@ -69,6 +69,7 @@ interface LiveTasksPanelProps {
 
 const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
   const { tasks, error } = useProgress()
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   if (error) {
     return (
@@ -99,23 +100,24 @@ const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
       {tasks.map((task: ProgressTask) => {
         const isNew = Date.parse(task.createdAt) >= sessionStartedAt
         const chip = statusChip(task.status)
-        const oneLinePrompt =
-          task.prompt.length > 60 ? task.prompt.slice(0, 57) + '…' : task.prompt
+        const isExpanded = expandedId === task.id
 
         return (
           <li key={task.id}>
-            <button
-              type="button"
-              className={`group flex w-full flex-col gap-0.5 rounded px-2 py-1.5 text-left transition-colors hover:bg-iron/10 ${isNew ? 'border-l-2 border-flame/60 pl-[6px]' : ''}`}
-              onClick={() => {
-                window.location.hash = taskHash(task.id, 'chat')
-              }}
-              title={task.prompt}
+            <div
+              className={`group flex w-full flex-col gap-0.5 rounded px-2 py-1.5 transition-colors hover:bg-iron/10 ${isNew ? 'border-l-2 border-flame/60 pl-[6px]' : ''}`}
             >
               <span className="flex items-baseline justify-between gap-1 min-w-0">
-                <span className={`shrink-0 font-mono text-[10px] uppercase ${chip.className}`}>
+                {/* Status chip: link to Progress page filtered by this status */}
+                <a
+                  href={`#/progress?q=${encodeURIComponent(chip.label)}`}
+                  className={`shrink-0 font-mono text-[10px] uppercase ${chip.className} hover:underline`}
+                  title={`Filter progress by ${chip.label}`}
+                  aria-label={`Filter tasks by status: ${chip.label}`}
+                  data-testid="context-rail-status-link"
+                >
                   {chip.label}
-                </span>
+                </a>
                 {isNew && (
                   <span className="shrink-0 font-mono text-[9px] uppercase text-flame/70">
                     new
@@ -125,10 +127,18 @@ const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
                   {relativeAge(task.createdAt)}
                 </span>
               </span>
-              <span className="min-w-0 break-words font-mono text-[10px] text-fg/80 leading-snug">
-                {oneLinePrompt}
-              </span>
-            </button>
+              {/* Description: click to expand/collapse; title reveals full text on hover */}
+              <button
+                type="button"
+                className={`min-w-0 w-full break-words font-mono text-[10px] text-fg/80 leading-snug text-left ${isExpanded ? '' : 'line-clamp-2'}`}
+                onClick={() => setExpandedId(isExpanded ? null : task.id)}
+                title={task.prompt}
+                data-testid="context-rail-description"
+                aria-expanded={isExpanded}
+              >
+                {task.prompt}
+              </button>
+            </div>
           </li>
         )
       })}
