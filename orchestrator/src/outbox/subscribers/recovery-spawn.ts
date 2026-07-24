@@ -45,6 +45,22 @@ export async function ensureRecoverySpawner(client: DbClient): Promise<void> {
 }
 
 /**
+ * Callback invoked by {@link drainRecoverySpawner} when the
+ * signature-storm circuit breaker trips for the first time in an episode.
+ * The daemon passes a closure that calls `setIsPaused(true)` and spawns
+ * the steward (`investigateWorktree`).
+ *
+ * `alreadyTripped=false` is guaranteed when this callback fires — it is
+ * only called on the first trip, not on subsequent observations of the
+ * same tripped episode.
+ */
+export type SignatureStormTripCallback = (opts: {
+  signature: string
+  streak: number
+  lastTaskId: string
+}) => void
+
+/**
  * Process every pending `task.failed` event the recovery-spawner has not yet
  * acknowledged. For each event, looks up the failing task and delegates to
  * `handleTaskFailureWithFixTask` which decides whether to:
@@ -57,13 +73,19 @@ export async function ensureRecoverySpawner(client: DbClient): Promise<void> {
  * leaves the dedup row in place — the next drain reads `alreadyProcessed` and
  * skips without re-spawning.
  *
- * @param client The DB client carrying the outbox + subscriber tables.
- * @param log    Optional logger for per-event failures and stall notices.
- * @returns      The count of `task.failed` events whose side effect ran.
+ * @param client          The DB client carrying the outbox + subscriber tables.
+ * @param log             Optional logger for per-event failures and stall notices.
+ * @param onStormTripped  Optional daemon-side callback: called (exactly once per
+ *                        storm episode) when the signature-storm circuit breaker
+ *                        first trips. The callback should pause dispatch and
+ *                        spawn the steward. Idempotency is guaranteed by the
+ *                        persistent `tripped` flag in `failure_signature_streak`.
+ * @returns               The count of `task.failed` events whose side effect ran.
  */
 export async function drainRecoverySpawner(
   client: DbClient,
   log?: (msg: string) => void,
+  onStormTripped?: SignatureStormTripCallback,
 ): Promise<{ processed: number }> {
   return drainWithStall({
     client,
@@ -103,14 +125,27 @@ export async function drainRecoverySpawner(
       // used for a recipe lookup, so the exact value is safe for that path too.
       const failingStep = task.failureReason ?? task.failedPhase ?? ''
 
-      // Gate meta-monitor suppression lives INSIDE handleTaskFailureWithFixTask
-      // (the shared chokepoint) so it applies to the inline verify dispatch too,
-      // which fires before this subscriber does — see the module docblock.
-      await handleTaskFailureWithFixTask({
+      // Gate meta-monitor suppression AND signature-storm circuit breaker both
+      // live INSIDE handleTaskFailureWithFixTask (the shared chokepoint) so they
+      // apply to the inline verify dispatch too, which fires before this
+      // subscriber does — see the module docblock.
+      const result = await handleTaskFailureWithFixTask({
         taskId,
         failingStep,
         errorOutput: error,
       })
+
+      // When the signature-storm circuit breaker first trips, signal the
+      // daemon-side caller so it can pause dispatch and spawn the steward.
+      // The `alreadyTripped` guard inside handleTaskFailureWithFixTask ensures
+      // this outcome fires exactly once per storm episode, even across drains.
+      if (result.outcome === 'signature-storm-tripped' && onStormTripped) {
+        onStormTripped({
+          signature: result.failureSignature ?? failingStep,
+          streak: result.stormStreak ?? 0,
+          lastTaskId: taskId,
+        })
+      }
 
       return true
     },

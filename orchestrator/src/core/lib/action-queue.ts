@@ -202,6 +202,18 @@ export const ACTION_QUEUE_KINDS = [
   // Never auto-spawns fix tasks. Raised by the arc-verifier after merge; cleared
   // manually by the operator.
   'arc-verification-failed',
+  // The all-gate consecutive-failure-signature circuit breaker tripped: the
+  // same failure signature appeared on SIGNATURE_STORM_TRIP_THRESHOLD
+  // consecutive DIFFERENT tasks (across any gate — setup/code/verify/merge/…).
+  // This is the signature of a systemic / environmental failure (e.g. disk
+  // full, network partition, broken CI infra). The dispatch queue has been
+  // PAUSED and a steward has been dispatched to diagnose the root cause.
+  // Level-triggered (ADR-0048): exactly one row per storm episode, keyed on
+  // the signature; idempotent raises bump seen_count. Cleared when the
+  // operator fixes the environment and runs `mars daemon resume`.
+  // Resume is MANUAL — the streak resets on the first successful task
+  // completion but the queue stays paused until the operator acts.
+  'signature-storm',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

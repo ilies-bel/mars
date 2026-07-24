@@ -485,6 +485,25 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
     verbs: [],
   },
 
+  'signature-storm': {
+    humanSummary: (ctx) => {
+      const signature = str(ctx.payload['signature'])
+      const streak = ctx.payload['streak']
+      return signature
+        ? `The same failure ("${signature}") hit ${streak} tasks in a row — the environment may be broken. Queue is PAUSED.`
+        : 'The same failure hit multiple tasks in a row — the environment may be broken. Queue is PAUSED.'
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      signature: str(ctx.payload['signature']),
+      streak: ctx.payload['streak'],
+    }),
+    verbs: [
+      { op: 'resume', label: 'Resume queue', style: 'primary' },
+    ],
+  },
+
   'gate-enrichment': {
     humanSummary: () =>
       "A new failure pattern was spotted — review the proposed gate check and approve it or retire the pattern.",

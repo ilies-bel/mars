@@ -29,6 +29,7 @@ export type DerivedRowKind =
   | 'reflect-recommended'
   | 'workflow-draft-pending'
   | 'scorer-suggested'
+  | 'signature-storm'
 
 /**
  * Resolve the recovery menu for a non-failure derived row kind. Returns an
@@ -133,6 +134,19 @@ export const derivedRowActions = (rowKind: string, entityId?: string): ActionDes
         op: 'copy',
         hint: entityId ? `mars scorer dismiss ${entityId}` : 'mars scorer dismiss',
         needsConfirm: true,
+      },
+    ]
+  }
+  if (rowKind === 'signature-storm') {
+    // Signature storm: queue is paused; operator must fix the environment
+    // and manually resume dispatch. Copy-action hands the operator the
+    // resume command rather than adding a server-side close op.
+    return [
+      {
+        id: 'resume',
+        label: 'Resume queue',
+        op: 'copy',
+        hint: 'mars daemon resume',
       },
     ]
   }

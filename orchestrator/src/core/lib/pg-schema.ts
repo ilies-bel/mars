@@ -489,6 +489,19 @@ const DDL: readonly string[] = [
     verdict    text PRIMARY KEY,
     tripped_at text NOT NULL
   )`,
+  // Signature-storm circuit breaker: singleton streak row that counts
+  // consecutive identical failure signatures across DIFFERENT origin tasks.
+  // When the streak reaches the threshold, `tripped` is set to true and
+  // the daemon pauses dispatch + spawns a steward. Reset by any successful
+  // task completion (streak_count=0, tripped=false). Singleton via CHECK(id=1).
+  `CREATE TABLE IF NOT EXISTS failure_signature_streak (
+    id                  bigint PRIMARY KEY CHECK (id = 1),
+    current_signature   text,
+    streak_count        bigint  NOT NULL DEFAULT 0,
+    last_task_id        text,
+    tripped             boolean NOT NULL DEFAULT false,
+    updated_at          text    NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS verify_gates (
     id         text PRIMARY KEY,
     scope      text NOT NULL DEFAULT '.',
@@ -705,6 +718,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'gate_burn_in',
   'gate_verdict_monitor',
   'gate_suppressed_verdicts',
+  'failure_signature_streak',
   'verify_gates',
   'kpi_snapshots',
   'promotion_ledger',

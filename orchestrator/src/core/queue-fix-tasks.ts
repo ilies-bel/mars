@@ -242,11 +242,14 @@ export interface HandleTaskFailureViaTaskResult {
     | 'gate-suppressed'
     | 'noop'
     | 'requeued'
+    | 'signature-storm-tripped'
   fixTaskId?: string
   failureSignature?: string
   retryCount?: number
   actionQueueItemId?: string
   attempts?: number
+  /** Streak count when the signature-storm circuit breaker first trips. */
+  stormStreak?: number
 }
 
 /**
@@ -514,6 +517,58 @@ export const handleTaskFailureWithFixTask = async (
     console.error(
       `[gate-enrichment] task ${input.taskId} enrichment observation errored (non-fatal):`,
       enrichErr,
+    )
+  }
+
+  // Signature-storm circuit breaker (all gates). Counts consecutive identical
+  // failure signatures across DIFFERENT origin tasks (any gate — setup, code,
+  // verify, merge, …). When SIGNATURE_STORM_TRIP_THRESHOLD consecutive tasks
+  // fail with the same signature, the daemon pauses dispatch and spawns a
+  // steward to diagnose/fix the systemic cause (e.g. disk full). Triggered
+  // only for non-recovery, non-cancelled, non-diagnose origin tasks (the
+  // guards above already returned for those cases).
+  // Best-effort: a DB hiccup must never break the real recovery path.
+  try {
+    const { recordFailureSignature } = await import('./lib/signature-storm-monitor')
+    const stormResult = await recordFailureSignature(s, input.taskId, failureSignature)
+    if (stormResult.tripped && !stormResult.alreadyTripped) {
+      // First trip: action-queue row was raised inside recordFailureSignature.
+      // Mark the task failed (restartable) and signal the daemon-side caller
+      // to pause dispatch and spawn the steward. No recovery fix-task is
+      // spawned — the storm indicates a systemic failure, not a per-task bug.
+      const stepPrefix = input.failingStep.includes(':')
+        ? input.failingStep.split(':')[0]
+        : input.failingStep
+      // FailedPhase is 'code' | 'verify' | 'merge' — map step prefix to it
+      // or leave null for gates not in the union (e.g. setup).
+      const failedPhase =
+        stepPrefix === 'code' || stepPrefix === 'verify' || stepPrefix === 'merge'
+          ? (stepPrefix as 'code' | 'verify' | 'merge')
+          : null
+      await updateTask(
+        input.taskId,
+        {
+          status: 'failed',
+          error: truncatedError,
+          failedPhase,
+          failureReason: `signature-storm:${failureSignature}`,
+          failureSignature,
+          failureReasonCode: failureSignature,
+        },
+        s,
+      )
+      return {
+        outcome: 'signature-storm-tripped',
+        failureSignature,
+        retryCount: task.retryCount,
+        stormStreak: stormResult.streak,
+      }
+    }
+  } catch (stormErr) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[signature-storm] task ${input.taskId} streak tracking errored (non-fatal):`,
+      stormErr,
     )
   }
 

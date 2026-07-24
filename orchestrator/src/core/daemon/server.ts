@@ -1643,6 +1643,50 @@ export const startDaemon = async (
     }
   }
 
+  // ── Signature-storm circuit breaker ──────────────────────────────────────
+  // Called by the recovery-spawner when the all-gate consecutive-failure-
+  // signature circuit breaker first trips. Mirrors handleQuotaRejection:
+  //  - Sets isPaused=true so drain() is a no-op until the operator resumes.
+  //  - Spawns the steward (investigateWorktree) exactly once on the last
+  //    failing task's worktree to diagnose/fix the systemic root cause.
+  //  - Broadcasts the action-queue view so the UI reflects the new row
+  //    (the row itself was already raised inside recordFailureSignature).
+  //  - Best-effort only — a hiccup here must not crash the daemon.
+  //
+  // Idempotency: the persistent `tripped` flag in `failure_signature_streak`
+  // ensures `handleTaskFailureWithFixTask` returns `signature-storm-tripped`
+  // exactly once per episode; subsequent calls return `alreadyTripped=true`
+  // so the subscriber never calls this handler again for the same storm.
+  // The `isPaused` guard provides a secondary in-process safety net.
+  const handleSignatureStorm = ({
+    signature,
+    streak,
+    lastTaskId,
+  }: {
+    signature: string
+    streak: number
+    lastTaskId: string
+  }): void => {
+    if (isPaused) {
+      // Already paused (e.g. concurrent storm or quota rejection). The
+      // action-queue row is already up; no duplicate side-effects needed.
+      log(
+        `[signature-storm] already paused — storm for "${signature}" x${streak} noted (no-op)`,
+      )
+      return
+    }
+    isPaused = true
+    log(
+      `[signature-storm] dispatch paused — "${signature}" failed ${streak} consecutive tasks; steward dispatched for ${lastTaskId}`,
+    )
+    // Spawn the steward fire-and-forget. investigateWorktree is a one-active-
+    // investigation-per-id guard; a second call for the same id returns
+    // immediately with "(investigation already in progress)".
+    void investigateWorktree(lastTaskId)
+    viewStreamHub.broadcast('action-queue')
+    viewStreamHub.broadcast('tasks')
+  }
+
   bus.on('task.added', (e: { taskId: string }) => {
     if (!acceptingWork) return
     if (tracker.isInFlight(e.taskId)) return
@@ -1672,6 +1716,26 @@ export const startDaemon = async (
   bus.on('task.failed', () => { viewStreamHub.broadcast('tasks'); viewStreamHub.broadcast('progress') })
   bus.on('task.blocked', () => { viewStreamHub.broadcast('tasks') })
   bus.on('task.unblocked', () => { viewStreamHub.broadcast('tasks') })
+
+  // Signature-storm streak reset: a successful task completion clears the
+  // consecutive-failure streak so a future storm (same or different signature)
+  // can trip independently. Does NOT resume the queue — resume is manual.
+  // Best-effort: a DB hiccup must not affect the dispatch path.
+  bus.on('task.completed', (e: { taskId: string; status?: string }) => {
+    if (e.status !== 'done') return
+    void (async () => {
+      try {
+        const { resetFailureSignatureStreak } = await import('../lib/signature-storm-monitor')
+        const storeForReset = await getDefaultTaskStore()
+        await resetFailureSignatureStreak(storeForReset)
+        log(`[signature-storm] streak reset after successful task ${e.taskId}`)
+      } catch (err) {
+        log(
+          `[signature-storm] streak reset failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    })()
+  })
 
   // Proposal lifecycle events update the Progress-tab DAG in place.
   bus.on('proposal.added',     () => { viewStreamHub.broadcast('progress') })
@@ -3759,7 +3823,11 @@ export const startDaemon = async (
   void (async () => {
     try {
       await ensureRecoverySpawner(getCompositionRootClient())
-      const { processed } = await drainRecoverySpawner(getCompositionRootClient(), log)
+      const { processed } = await drainRecoverySpawner(
+        getCompositionRootClient(),
+        log,
+        handleSignatureStorm,
+      )
       if (processed > 0)
         log(`[recovery-spawner] spawned fix tasks for ${processed} failure(s) on boot`)
     } catch (err) {
@@ -4371,7 +4439,7 @@ export const startDaemon = async (
   const recoverySpawnerDrain = setInterval(() => {
     void (async () => {
       try {
-        await drainRecoverySpawner(getCompositionRootClient(), log)
+        await drainRecoverySpawner(getCompositionRootClient(), log, handleSignatureStorm)
       } catch (err) {
         log(`[recovery-spawner] drain errored: ${(err as Error).message}`)
       }
