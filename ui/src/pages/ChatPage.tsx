@@ -34,13 +34,12 @@ import {
   uploadAttachment,
   renameChatThread,
   deleteChatThread,
-  invokeAction,
   setMessageFeedback,
   clearMessageFeedback,
   ApiError,
 } from '@/shared/api'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ActionDescriptor, ChatFeedback } from '@/shared/schemas'
+import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import { useMarsChat } from '@/shared/useMarsChat'
 import { chatMessageToUIMessage, transcriptSignature } from '@/shared/chatMessageMapping'
@@ -68,21 +67,18 @@ import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { WhileYouWereAwayPanel } from '@/widgets/WhileYouWereAwayPanel'
 import { WhatHappenedTodayView } from '@/widgets/chat/WhatHappenedTodayView'
-import { FallbackSurface } from '@/components/FallbackSurface'
-import { QueueThreadRow, priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
-import { QueueThreadDetail, PROCESS_LEVEL_OPS } from '@/widgets/chat/QueueThreadDetail'
+import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
+import { QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
 import {
-  mergeSidebarEntries,
+  filterThreadsByTitle,
   isResolvedSelection,
-  type KindFilter,
 } from '@/widgets/chat/queueThreads'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
-import { historyLabel } from '@/pages/ActionQueuePageFilters'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
-import { formatDuration, relativeTime } from '@/shared/time'
+import { formatDuration } from '@/shared/time'
 import { resolveMediaKind, fileMediaKind } from './chatPageUtils'
 
 // ---------------------------------------------------------------------------
@@ -1792,42 +1788,12 @@ export const Composer = ({
 // Thread sidebar
 // ---------------------------------------------------------------------------
 
-/** History pagination state passed down from the ChatPage root. */
-interface SidebarHistory {
-  items: ActionQueueItem[]
-  nextCursor: string | null
-  isLoadingMore: boolean
-  loadMore: () => void
-}
-
-const EMPTY_HISTORY: SidebarHistory = {
-  items: [],
-  nextCursor: null,
-  isLoadingMore: false,
-  loadMore: () => {},
-}
-
 interface ThreadSidebarProps {
   selectedId: string | null
   projectId?: string
   onSelect: (id: string) => void
-  /** Selected projection Thread (action-queue item id), if any. */
-  selectedQueueItemId?: string | null
-  onSelectQueueItem?: (id: string) => void
-  /** Open action-queue rows rendered as projection Threads. */
-  queueItems?: ActionQueueItem[]
-  /** Resolved-rows archive for the History accordion. */
-  history?: SidebarHistory
   query?: string
   onQueryChange?: (q: string) => void
-  kindFilter?: KindFilter
-  onKindFilterChange?: (k: KindFilter) => void
-  /** Fires a Decision from the quick pills (optimistic removal + rollback upstream). */
-  onQueueAction?: (action: ActionDescriptor, item: ActionQueueItem) => void
-  /** First non-null error from the action-queue / projects queries. */
-  queueError?: Error | null
-  /** True when GET /api/projects succeeded but returned zero projects. */
-  projectsEmpty?: boolean
 }
 
 /** How long a deleted thread stays undoable before the delete is sent. */
@@ -1853,20 +1819,10 @@ export const ThreadSidebar = ({
   selectedId,
   projectId,
   onSelect,
-  selectedQueueItemId = null,
-  onSelectQueueItem,
-  queueItems = [],
-  history = EMPTY_HISTORY,
   query = '',
   onQueryChange,
-  kindFilter = 'all',
-  onKindFilterChange,
-  onQueueAction,
-  queueError = null,
-  projectsEmpty = false,
 }: ThreadSidebarProps) => {
   const qc = useQueryClient()
-  const [historyOpen, setHistoryOpen] = useState(false)
 
   const { data } = useQuery({
     queryKey: ['chat-threads', projectId],
@@ -1983,20 +1939,11 @@ export const ThreadSidebar = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Visible chat threads (delete-pending rows stay hidden).
+  // Visible chat threads (delete-pending rows stay hidden), title-searched.
+  // The chat sidebar is a plain list of conversation threads — alerts live on
+  // the top-bar Bell, not here.
   const visibleThreads = (data ?? []).filter((t) => !hiddenIds.includes(t.id))
-
-  // Merge live queue rows and chat threads: projection Threads float above
-  // regular threads; alert-origin threads backed by a live row merge into a
-  // single projection entry. Resolved alert threads are removed from `regular`
-  // when no search query is active and returned in `resolvedAlertThreads` for
-  // the History accordion. Search / kind filter apply inside the merge.
-  const { projections, regular, resolvedAlertThreads } = mergeSidebarEntries(
-    queueItems,
-    visibleThreads,
-    query,
-    kindFilter,
-  )
+  const threads = filterThreadsByTitle(visibleThreads, query)
 
   return (
     <aside className="flex w-64 flex-shrink-0 flex-col border-r border-iron/30 bg-bg">
@@ -2008,108 +1955,23 @@ export const ThreadSidebar = ({
         >
           + New thread
         </button>
-        <div
-          role="group"
-          aria-label="Filter action queue by kind"
-          className="mt-2 flex border border-iron/30"
-        >
-          {(['all', 'alerts', 'drafts'] as const).map((f) => (
-            <button
-              key={f}
-              type="button"
-              aria-pressed={kindFilter === f}
-              data-testid={`action-queue-filter-${f}`}
-              onClick={() => onKindFilterChange?.(f)}
-              className={[
-                'flex-1 border-r border-iron/30 px-2 py-0.5 font-mono text-[10px] last:border-r-0 focus:outline-none focus:ring-1 focus:ring-iron/50',
-                kindFilter === f ? 'bg-iron/20 text-fg' : 'bg-bg text-iron',
-              ].join(' ')}
-            >
-              {f === 'all' ? 'All' : f === 'alerts' ? 'Alerts' : 'Drafts'}
-            </button>
-          ))}
-        </div>
         <input
           type="search"
           value={query}
           onChange={(e) => onQueryChange?.(e.target.value)}
           placeholder="Search…"
-          aria-label="Search threads and action queue"
-          data-testid="action-queue-search"
+          aria-label="Search threads"
+          data-testid="thread-search"
           className="mt-2 w-full border border-iron/30 bg-bg px-2 py-1 font-mono text-[12px] text-fg placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-iron/50"
         />
       </div>
       <div className="flex-1 overflow-y-auto px-1 py-1 space-y-0.5">
-        {/* Projection Threads — open queue rows; no delete affordance, they
-            evaporate only when the backing row leaves the queue. */}
-        {projections.map(({ item, thread }) => (
-          <QueueThreadRow
-            key={item.id}
-            item={item}
-            hasConversation={thread !== null}
-            active={
-              thread !== null
-                ? thread.id === selectedId
-                : item.id === selectedQueueItemId
-            }
-            onSelect={() => {
-              if (thread !== null) onSelect(thread.id)
-              else onSelectQueueItem?.(item.id)
-            }}
-            onRestart={
-              (() => {
-                // Prefer restart-daemon verb (process-level op, no entityId) over the
-                // legacy per-entity restart action so daemon-code-drift rows hit
-                // POST /actions/restart-daemon instead of the 404-producing
-                // POST /actions/restart/daemon-code-drift path.
-                const daemonVerb = item.verbs?.find((v) => v.op === 'restart-daemon')
-                if (daemonVerb) {
-                  const action: ActionDescriptor = {
-                    id: 'restart-daemon',
-                    label: daemonVerb.label,
-                    op: 'restart-daemon',
-                  }
-                  return () => onQueueAction?.(action, item)
-                }
-                const restartAction = item.actions.find((a) => a.op === 'restart')
-                return restartAction != null
-                  ? () => onQueueAction?.(restartAction, item)
-                  : null
-              })()
-            }
-            restartPending={false}
-            restartError={null}
-            onAction={(action, actionItem) => onQueueAction?.(action, actionItem)}
-          />
-        ))}
-        {/* Queue status surfaces — errors and empty-registry guidance, kept in
-            the sidebar where the projection Threads live. */}
-        {queueError ? (
-          <FallbackSurface error={queueError} of="action queue" variant="pane" />
-        ) : projectsEmpty && queueItems.length === 0 ? (
-          <div
-            className="px-2 py-3 font-mono text-[11px] text-iron"
-            data-testid="no-projects-registered"
-          >
-            <p className="text-fg">No projects registered.</p>
-            <p className="mt-1">
-              Run <code className="rounded bg-iron/20 px-1">mars init</code> inside
-              your repo — it registers the project automatically.
-            </p>
-            <p className="mt-1 text-muted">
-              Or register an existing repo:{' '}
-              <code className="rounded bg-iron/20 px-1">mars project add &lt;repo&gt;</code>
-            </p>
-          </div>
-        ) : queueItems.length === 0 && !query.trim() ? (
-          <p className="px-2 py-1 font-mono text-[10px] text-iron/40">No items.</p>
-        ) : null}
-        {regular.length === 0 && projections.length === 0 && (
+        {threads.length === 0 && (
           <p className="px-2 py-3 font-mono text-[10px] text-iron/40">
             {query.trim() ? 'No matches' : 'No threads yet'}
           </p>
         )}
-        {regular.map((t) => (
+        {threads.map((t) => (
           <ThreadItem
             key={t.id}
             thread={t}
@@ -2119,114 +1981,6 @@ export const ThreadSidebar = ({
             onDelete={() => startDelete(t)}
           />
         ))}
-      </div>
-
-      {/* History accordion — the resolved-rows archive, collapsed by default. */}
-      <div data-testid="history-accordion">
-        <button
-          type="button"
-          aria-expanded={historyOpen}
-          aria-controls="section-body-history"
-          onClick={() => setHistoryOpen((v) => !v)}
-          className="flex w-full items-center justify-between border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide text-muted hover:bg-iron/5"
-        >
-          <span>{historyLabel(history.items.length + resolvedAlertThreads.length, history.nextCursor !== null)}</span>
-          <span aria-hidden="true">{historyOpen ? '▾' : '▸'}</span>
-        </button>
-        {historyOpen && (
-          <div id="section-body-history" className="max-h-56 overflow-y-auto">
-            {history.items.length === 0 && resolvedAlertThreads.length === 0 ? (
-              <p className="px-3 py-2 font-mono text-[11px] text-muted">
-                No resolved items.
-              </p>
-            ) : (
-              <>
-                {history.items.map((item) => (
-                  <div
-                    key={item.id}
-                    data-testid="history-row"
-                    role="button"
-                    tabIndex={0}
-                    aria-current={item.id === selectedQueueItemId ? 'true' : undefined}
-                    className={[
-                      'cursor-pointer px-3 py-2 transition-colors',
-                      item.id === selectedQueueItemId ? 'bg-iron/20' : 'hover:bg-iron/10',
-                    ].join(' ')}
-                    onClick={() => onSelectQueueItem?.(item.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        onSelectQueueItem?.(item.id)
-                      }
-                    }}
-                  >
-                    <div className="flex items-baseline gap-2">
-                      {item.kind !== 'failed-task' && (
-                        <span className="shrink-0 font-mono text-[9px] uppercase text-muted">
-                          {kindBadgeLabel(item.kind)}
-                        </span>
-                      )}
-                      <span className="break-all font-mono text-[10px] text-muted">
-                        {item.entityId}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 break-words font-mono text-[11px] text-muted">
-                      {(item.resolution?.resolution ?? item.title) || '(no title)'}
-                    </div>
-                    <div className="mt-0.5 font-mono text-[10px] text-muted">
-                      {item.resolution
-                        ? relativeTime(item.resolution.resolvedAt)
-                        : relativeTime(item.at)}
-                    </div>
-                  </div>
-                ))}
-                {resolvedAlertThreads.map((thread) => (
-                  <div
-                    key={thread.id}
-                    data-testid="history-thread-row"
-                    role="button"
-                    tabIndex={0}
-                    aria-current={thread.id === selectedId ? 'true' : undefined}
-                    className={[
-                      'cursor-pointer px-3 py-2 transition-colors',
-                      thread.id === selectedId ? 'bg-iron/20' : 'hover:bg-iron/10',
-                    ].join(' ')}
-                    onClick={() => onSelect(thread.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        onSelect(thread.id)
-                      }
-                    }}
-                  >
-                    <div className="flex items-baseline gap-2">
-                      <span className="shrink-0 font-mono text-[9px] uppercase text-muted">
-                        🔔 Alert
-                      </span>
-                    </div>
-                    <div className="mt-0.5 break-words font-mono text-[11px] text-muted">
-                      {thread.title || '(no title)'}
-                    </div>
-                    <div className="mt-0.5 font-mono text-[10px] text-muted">
-                      {relativeTime(thread.updatedAt)}
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-            {history.nextCursor !== null ? (
-              <button
-                type="button"
-                data-testid="history-load-more"
-                disabled={history.isLoadingMore}
-                onClick={history.loadMore}
-                className="w-full border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase text-muted hover:bg-iron/5 disabled:opacity-50"
-              >
-                {history.isLoadingMore ? 'Loading…' : 'Load more'}
-              </button>
-            ) : null}
-          </div>
-        )}
       </div>
 
       {/* Delete toast — the row is already gone on screen; the request is not sent
@@ -2282,7 +2036,6 @@ export const ChatPage = () => {
     () => readAqStateFromUrl().item,
   )
   const [query, setQuery] = useState<string>(() => readAqStateFromUrl().q)
-  const [kindFilter, setKindFilter] = useState<KindFilter>(() => readAqStateFromUrl().kind)
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
   // Client-only "What happened today?" release-notes stream. Shown in place of
   // the hero empty state; cleared when the user navigates to any thread/item.
@@ -2318,19 +2071,11 @@ export const ChatPage = () => {
   const sessionStartedAt = useRef(Date.now()).current
   const qc = useQueryClient()
 
-  // Live queue rows + resolved-rows archive for the sidebar and detail pane.
-  const {
-    items: queueItems,
-    error: queueError,
-    projectsError,
-    projectsEmpty,
-  } = useActionQueue()
-  const {
-    items: historyItems,
-    nextCursor: historyNextCursor,
-    isLoadingMore: historyLoadingMore,
-    loadMore: loadMoreHistory,
-  } = useActionQueueHistory()
+  // Live queue rows + resolved-rows archive back the main-pane detail / resolved
+  // views (still reachable from the hero's alert preview). The chat sidebar no
+  // longer surfaces the action queue.
+  const { items: queueItems } = useActionQueue()
+  const { items: historyItems } = useActionQueueHistory()
 
   // Threads at the root so a deep-linked queue item can resolve to its merged
   // alert-origin conversation. React Query dedupes this against the sidebar's
@@ -2347,12 +2092,12 @@ export const ChatPage = () => {
   useEffect(() => {
     if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
     urlWriteTimerRef.current = setTimeout(() => {
-      writeAqStateToUrl({ item: selectedQueueItemId, kind: kindFilter, q: query, thread: selectedThreadId })
+      writeAqStateToUrl({ item: selectedQueueItemId, kind: 'all', q: query, thread: selectedThreadId })
     }, 300)
     return () => {
       if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
     }
-  }, [selectedQueueItemId, kindFilter, query, selectedThreadId])
+  }, [selectedQueueItemId, query, selectedThreadId])
 
   // Selection is exclusive: a conversation or a projection Thread, never both.
   const handleSelectThread = useCallback((id: string) => {
@@ -2379,36 +2124,6 @@ export const ChatPage = () => {
       setSelectedQueueItemId(null)
     }
   }, [selectedQueueItemId, threadsData])
-
-  /**
-   * Fires a Decision from the sidebar quick pills: optimistic removal of the
-   * row from the cache, rollback on error, reconcile on settle — the inline
-   * resolver semantics (no two-step confirm; the detail ActionBar covers that).
-   */
-  const handleQueueAction = useCallback(
-    async (action: ActionDescriptor, actionItem: ActionQueueItem) => {
-      await qc.cancelQueries({ queryKey: ['action-queue'] })
-      const snapshot = qc.getQueryData<ActionQueueItem[]>(['action-queue', rawProjectId])
-      if (snapshot) {
-        qc.setQueryData(
-          ['action-queue', rawProjectId],
-          snapshot.filter((i) => i.id !== actionItem.id),
-        )
-      }
-      try {
-        const entityId = PROCESS_LEVEL_OPS.has(action.op) ? undefined : actionItem.entityId
-        await invokeAction(action.op, entityId)
-      } catch {
-        if (snapshot) {
-          qc.setQueryData(['action-queue', rawProjectId], snapshot)
-        }
-      } finally {
-        void qc.invalidateQueries({ queryKey: ['action-queue'] })
-        void qc.invalidateQueries({ queryKey: ['progress'] })
-      }
-    },
-    [qc, rawProjectId],
-  )
 
   // Create a new thread and post the first message in one gesture — used by
   // the hero composer so the user never has to click "+ New thread" separately.
@@ -2457,22 +2172,8 @@ export const ChatPage = () => {
           selectedId={selectedThreadId}
           projectId={projectId}
           onSelect={handleSelectThread}
-          selectedQueueItemId={selectedQueueItemId}
-          onSelectQueueItem={handleSelectQueueItem}
-          queueItems={queueItems}
-          history={{
-            items: historyItems,
-            nextCursor: historyNextCursor,
-            isLoadingMore: historyLoadingMore,
-            loadMore: loadMoreHistory,
-          }}
           query={query}
           onQueryChange={setQuery}
-          kindFilter={kindFilter}
-          onKindFilterChange={setKindFilter}
-          onQueueAction={handleQueueAction}
-          queueError={queueError ?? projectsError}
-          projectsEmpty={projectsEmpty}
         />
       )}
 
@@ -2494,25 +2195,8 @@ export const ChatPage = () => {
                 handleSelectThread(id)
                 setSidebarOpen(false)
               }}
-              selectedQueueItemId={selectedQueueItemId}
-              onSelectQueueItem={(id) => {
-                handleSelectQueueItem(id)
-                setSidebarOpen(false)
-              }}
-              queueItems={queueItems}
-              history={{
-                items: historyItems,
-                nextCursor: historyNextCursor,
-                isLoadingMore: historyLoadingMore,
-                loadMore: loadMoreHistory,
-              }}
               query={query}
               onQueryChange={setQuery}
-              kindFilter={kindFilter}
-              onKindFilterChange={setKindFilter}
-              onQueueAction={handleQueueAction}
-              queueError={queueError ?? projectsError}
-              projectsEmpty={projectsEmpty}
             />
           </div>
         </>

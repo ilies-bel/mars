@@ -80,7 +80,6 @@ import { Arc, type ProgressEntry } from '../arc'
 import { WorkflowTerminalError } from '../lib/workflow-terminal-error'
 import {
   raiseActionQueueItem,
-  setOnChatThreadChanged,
   supersedeActionQueueItemsBySignature,
   supersedeObsoletePreflightDirtyMainRows,
   supersedeOrphanedHitlActionQueueRows,
@@ -1682,10 +1681,6 @@ export const startDaemon = async (
   bus.on('proposal.sliced',    () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.approved',  () => { viewStreamHub.broadcast('progress') })
   bus.on('proposal.deleted',   () => { viewStreamHub.broadcast('progress') })
-
-  // Alert-origin chat threads: broadcast 'chat' SSE so the sidebar surfaces
-  // the new thread immediately when an action-queue item is raised or resolved.
-  setOnChatThreadChanged(() => { viewStreamHub.broadcast('chat') })
 
   // Durable transcript append (deep-reflect durability). On every
   // task.completed, persist the resolved Claude transcript for the task into

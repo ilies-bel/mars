@@ -1,7 +1,8 @@
 /**
- * DOM-level tests for the chat sidebar's absorbed action queue: projection
- * Threads float above regular chat threads, the kind toggle and search input
- * render, and the history accordion sits at the bottom, collapsed.
+ * DOM-level tests for the chat sidebar: it is a plain list of conversation
+ * threads with a title search. Alerts live on the top-bar Bell (slices 1-2),
+ * so the sidebar no longer renders action-queue projection rows, the
+ * All|Alerts|Drafts kind toggle, or the resolved-rows History accordion.
  *
  * Uses renderToStaticMarkup with a pre-warmed QueryClient — effects never run,
  * so the URL write-back and SSE plumbing are inert.
@@ -38,15 +39,6 @@ const PLAIN_THREAD: ChatThread = {
   alertResolved: false,
 } as unknown as ChatThread
 
-const ALERT_THREAD: ChatThread = {
-  id: 'th-alert',
-  title: 'alert conversation title',
-  status: 'idle',
-  origin: 'alert',
-  alertItemId: 'failed-task:t-1',
-  alertResolved: false,
-} as unknown as ChatThread
-
 const renderPage = (
   items: ActionQueueItem[],
   threads: ChatThread[],
@@ -64,68 +56,36 @@ const renderPage = (
   )
 }
 
-describe('ChatPage sidebar – projection Threads float above chat threads', () => {
-  it('renders projection rows before regular chat threads', () => {
-    const html = renderPage([QUEUE_ITEM], [PLAIN_THREAD])
-    const projectionPos = html.indexOf('projection thread title')
-    const threadPos = html.indexOf('regular conversation title')
-    expect(projectionPos).toBeGreaterThan(-1)
-    expect(threadPos).toBeGreaterThan(-1)
-    expect(projectionPos).toBeLessThan(threadPos)
-  })
-
-  it('merges an alert-origin thread with its live row into one entry', () => {
-    const html = renderPage([QUEUE_ITEM], [ALERT_THREAD, PLAIN_THREAD])
-    // The merged entry renders the queue row (not a second ThreadItem for the
-    // alert thread) plus the conversation marker.
-    expect(html).toContain('data-testid="projection-has-conversation"')
-    expect(html).not.toContain('alert conversation title')
-    // The plain thread remains a regular entry.
+describe('ChatPage sidebar – conversation threads only', () => {
+  it('renders conversation threads in the sidebar', () => {
+    const html = renderPage([], [PLAIN_THREAD])
     expect(html).toContain('regular conversation title')
   })
 
-  it('projection rows carry the quick Decision pills', () => {
+  it('renders the thread search input', () => {
+    expect(renderPage([], [])).toContain('data-testid="thread-search"')
+  })
+
+  it('does NOT render action-queue projection rows even when queue rows exist', () => {
+    const html = renderPage([QUEUE_ITEM], [PLAIN_THREAD])
+    // No projection row is rendered for the queue item: the projection-merge
+    // marker and the row's quick Decision pills are absent from the sidebar.
+    // (The queue item may still surface in the out-of-scope hero alert preview.)
+    expect(html).not.toContain('data-testid="projection-has-conversation"')
+    expect(html).not.toContain('>Purge<')
+    // The conversation thread is still present.
+    expect(html).toContain('regular conversation title')
+  })
+
+  it('does NOT render the All | Alerts | Drafts kind toggle', () => {
     const html = renderPage([QUEUE_ITEM], [])
-    expect(html).toContain('Purge')
-    expect(html).toContain('>Restart<')
+    expect(html).not.toContain('data-testid="action-queue-filter-all"')
+    expect(html).not.toContain('data-testid="action-queue-filter-alerts"')
+    expect(html).not.toContain('data-testid="action-queue-filter-drafts"')
   })
 
-  it('projection rows have no delete affordance', () => {
-    const html = renderPage([QUEUE_ITEM], [])
-    expect(html).not.toContain('aria-label="Delete thread"')
-  })
-})
-
-describe('ChatPage sidebar – migrated search and kind filter', () => {
-  it('renders the All | Alerts | Drafts kind toggle with data-testids', () => {
-    const html = renderPage([QUEUE_ITEM], [])
-    expect(html).toContain('data-testid="action-queue-filter-all"')
-    expect(html).toContain('data-testid="action-queue-filter-alerts"')
-    expect(html).toContain('data-testid="action-queue-filter-drafts"')
-  })
-
-  it('"All" is pressed by default', () => {
-    const html = renderPage([QUEUE_ITEM], [])
-    const allBtnIdx = html.indexOf('data-testid="action-queue-filter-all"')
-    const snippet = html.slice(Math.max(0, allBtnIdx - 120), allBtnIdx + 150)
-    expect(snippet).toContain('aria-pressed="true"')
-    expect((html.match(/aria-pressed="true"/g) ?? []).length).toBe(1)
-  })
-
-  it('renders the search input', () => {
-    expect(renderPage([], [])).toContain('data-testid="action-queue-search"')
-  })
-})
-
-describe('ChatPage sidebar – history accordion', () => {
-  it('renders the accordion collapsed by default at the bottom of the sidebar', () => {
-    const html = renderPage([], [])
-    expect(html).toContain('data-testid="history-accordion"')
-    const accordionStart = html.indexOf('data-testid="history-accordion"')
-    const snippet = html.slice(accordionStart, accordionStart + 500)
-    expect(snippet).toContain('aria-expanded="false"')
-    // Collapsed → the section body (and Load more) is not rendered.
-    expect(html).not.toContain('id="section-body-history"')
-    expect(html).not.toContain('data-testid="history-load-more"')
+  it('does NOT render the resolved-rows History accordion', () => {
+    const html = renderPage([], [PLAIN_THREAD])
+    expect(html).not.toContain('data-testid="history-accordion"')
   })
 })

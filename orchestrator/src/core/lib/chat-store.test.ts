@@ -16,9 +16,6 @@ interface ChatStoreModule {
   setThreadSession: typeof import('./chat-store').setThreadSession
   markContextSeeded: typeof import('./chat-store').markContextSeeded
   markThreadEvaporated: typeof import('./chat-store').markThreadEvaporated
-  createAlertThread: typeof import('./chat-store').createAlertThread
-  findAlertThreadByItemId: typeof import('./chat-store').findAlertThreadByItemId
-  resolveAlertThread: typeof import('./chat-store').resolveAlertThread
   toMessageApiView: typeof import('./chat-store').toMessageApiView
   setMessageFeedback: typeof import('./chat-store').setMessageFeedback
   clearMessageFeedback: typeof import('./chat-store').clearMessageFeedback
@@ -36,28 +33,6 @@ const loadModule = async (repo: string): Promise<ChatStoreModule> => {
   process.env.MARS_REPO = repo
   return (await import('./chat-store')) as unknown as ChatStoreModule
 }
-
-const makeAlertSegment = (overrides: Partial<{
-  kind: string
-  entityId: string
-  priority: string
-  title: string
-  whyNow: string
-  actions: Array<{ op: string; label: string; style: 'primary' | 'destructive' | 'default' }>
-}> = {}) => ({
-  type: 'alert' as const,
-  kind: 'failed',
-  entityId: 'task-abc',
-  priority: 'high',
-  title: 'Task failed',
-  whyNow: 'The coder exceeded its retry budget.',
-  actions: [
-    { op: 'restart', label: 'Restart', style: 'primary' as const },
-    { op: 'dismiss', label: 'Dismiss', style: 'default' as const },
-  ],
-  resolved: false,
-  ...overrides,
-})
 
 describe('chat-store', () => {
   let repo: string
@@ -299,13 +274,6 @@ describe('chat-store', () => {
     expect(second).toBe(first)
   })
 
-  it('createAlertThread leaves evaporated_at null', async () => {
-    const m = await loadModule(repo)
-    const seg = makeAlertSegment()
-    const thread = await m.createAlertThread('item-evap-1', 'Alert evap', seg)
-    expect(thread.evaporated_at).toBeNull()
-  })
-
   // ── idempotent init ─────────────────────────────────────────────────────────
 
   it('initChatStore is a no-op when called a second time', async () => {
@@ -315,98 +283,6 @@ describe('chat-store', () => {
     await m.initChatStore()
     const thread = await m.createThread('after double init')
     expect(thread.title).toBe('after double init')
-  })
-
-  // ── alert thread API ────────────────────────────────────────────────────────
-
-  it('createAlertThread stores origin=alert, alert_item_id, and an initial assistant message', async () => {
-    const m = await loadModule(repo)
-    const seg = makeAlertSegment()
-    const thread = await m.createAlertThread('item-1', 'Task failed', seg)
-
-    expect(thread.origin).toBe('alert')
-    expect(thread.alert_item_id).toBe('item-1')
-    expect(thread.alert_resolved).toBe(false)
-    expect(thread.title).toBe('Task failed')
-
-    const detail = await m.getThread(thread.id)
-    expect(detail).not.toBeNull()
-    expect(detail!.messages).toHaveLength(1)
-    const msg = detail!.messages[0]
-    expect(msg.role).toBe('assistant')
-    const segments = msg.segments as Array<{ type: string }>
-    expect(segments).toHaveLength(1)
-    expect(segments[0].type).toBe('alert')
-  })
-
-  it('findAlertThreadByItemId returns the thread for a known item id', async () => {
-    const m = await loadModule(repo)
-    const seg = makeAlertSegment()
-    const created = await m.createAlertThread('item-2', 'Alert two', seg)
-
-    const found = await m.findAlertThreadByItemId('item-2')
-    expect(found).not.toBeNull()
-    expect(found!.id).toBe(created.id)
-    expect(found!.alert_item_id).toBe('item-2')
-  })
-
-  it('findAlertThreadByItemId returns null when no thread exists for the item id', async () => {
-    const m = await loadModule(repo)
-    const result = await m.findAlertThreadByItemId('no-such-item')
-    expect(result).toBeNull()
-  })
-
-  it('resolveAlertThread marks the thread resolved and patches the alert segment', async () => {
-    const m = await loadModule(repo)
-    const seg = makeAlertSegment()
-    const thread = await m.createAlertThread('item-3', 'To be resolved', seg)
-
-    const wasResolved = await m.resolveAlertThread('item-3')
-    expect(wasResolved).toBe(true)
-
-    const detail = await m.getThread(thread.id)
-    expect(detail!.thread.alert_resolved).toBe(true)
-
-    const segments = detail!.messages[0].segments as Array<{ type: string; resolved: boolean }>
-    expect(segments[0].resolved).toBe(true)
-  })
-
-  it('resolveAlertThread returns false when no unresolved thread exists for the item id', async () => {
-    const m = await loadModule(repo)
-    const result = await m.resolveAlertThread('ghost-item')
-    expect(result).toBe(false)
-  })
-
-  it('resolveAlertThread is idempotent: second call returns false', async () => {
-    const m = await loadModule(repo)
-    const seg = makeAlertSegment()
-    await m.createAlertThread('item-4', 'Once', seg)
-    expect(await m.resolveAlertThread('item-4')).toBe(true)
-    expect(await m.resolveAlertThread('item-4')).toBe(false)
-  })
-
-  it('listThreads places unresolved alert-origin threads before regular threads', async () => {
-    const m = await loadModule(repo)
-    const reg = await m.createThread('regular')
-    const seg = makeAlertSegment()
-    const alertThread = await m.createAlertThread('item-5', 'Alert', seg)
-
-    const threads = await m.listThreads()
-    const ids = threads.map((t) => t.id)
-    expect(ids.indexOf(alertThread.id)).toBeLessThan(ids.indexOf(reg.id))
-  })
-
-  it('listThreads demotes resolved alert threads below regular threads', async () => {
-    const m = await loadModule(repo)
-    const seg = makeAlertSegment()
-    const alertThread = await m.createAlertThread('item-6', 'Resolved alert', seg)
-    await m.resolveAlertThread('item-6')
-    const reg = await m.createThread('fresh regular')
-
-    const threads = await m.listThreads()
-    const ids = threads.map((t) => t.id)
-    // The resolved alert thread should sort after the regular thread (regular sorts by rowid desc)
-    expect(ids.indexOf(reg.id)).toBeLessThan(ids.indexOf(alertThread.id))
   })
 })
 

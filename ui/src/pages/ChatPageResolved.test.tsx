@@ -53,17 +53,6 @@ const renderPage = (items: ActionQueueItem[], threads: ChatThread[] = []): strin
   )
 }
 
-const RESOLVED_ALERT_THREAD: ChatThread = {
-  id: 'th-resolved-alert',
-  title: 'Resolved alert conversation',
-  status: 'idle',
-  origin: 'alert',
-  alertItemId: 'failed-task:gone-item',
-  alertResolved: true,
-  createdAt: '2026-01-01T00:00:00Z',
-  updatedAt: '2026-01-01T00:00:00Z',
-} as unknown as ChatThread
-
 describe('ChatPage — resolved pane for vanished projection Threads', () => {
   it('shows the resolved pane when the pinned row is no longer in the queue', () => {
     const html = renderPage([LIVE_ITEM])
@@ -92,50 +81,5 @@ describe('ChatPage — resolved pane for vanished projection Threads', () => {
     const html = renderPage([LIVE_ITEM])
     expect(html).toContain('View task')
     expect(html).toContain('Back to chat')
-  })
-})
-
-describe('ChatPage sidebar — resolved alert-origin threads', () => {
-  it('resolved alert thread does NOT appear in the main thread list by default', () => {
-    const html = renderPage([LIVE_ITEM], [RESOLVED_ALERT_THREAD])
-    // The thread title must not be in a ThreadItem in the main list.
-    // It may appear in the History accordion label count but not as a row.
-    // We verify there is no ThreadItem with aria-label="Delete thread" for it —
-    // ThreadItems (regular rows) have a delete button; history-thread-rows do not.
-    // More directly: the title only appears if the history body is expanded (it's
-    // not by default), so the title must not appear in the collapsed static render.
-    expect(html).not.toContain('Resolved alert conversation')
-  })
-
-  it('History accordion label count includes the resolved alert thread', () => {
-    const html = renderPage([LIVE_ITEM], [RESOLVED_ALERT_THREAD])
-    // With no queue history rows and 1 resolved alert thread the label is "History · 1".
-    expect(html).toContain('History · 1')
-  })
-
-  it('History accordion label shows count of both queue history rows and resolved threads', () => {
-    // Pre-seed one queue history row by using action-queue-history.
-    // We do this by wrapping our own renderPage variant inline.
-    const qc = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
-    })
-    const historyItem: ActionQueueItem = {
-      ...LIVE_ITEM,
-      id: 'failed-task:archived',
-      entityId: 'archived',
-    } as unknown as ActionQueueItem
-    qc.setQueryData(['action-queue', null], [LIVE_ITEM])
-    qc.setQueryData(['action-queue-history', null], {
-      rows: [historyItem],
-      nextCursor: null,
-    })
-    qc.setQueryData(['chat-threads', undefined], [RESOLVED_ALERT_THREAD])
-    const html = renderToStaticMarkup(
-      <QueryClientProvider client={qc}>
-        <ChatPage />
-      </QueryClientProvider>,
-    )
-    // 1 queue history row + 1 resolved alert thread = 2
-    expect(html).toContain('History · 2')
   })
 })

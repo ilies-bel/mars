@@ -262,8 +262,8 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
 }
 
 /**
- * List all threads, alert-origin unresolved threads first, then newest-first.
- * Each thread is augmented with the text of its most recent message.
+ * List all threads newest-first. Each thread is augmented with the text of its
+ * most recent message.
  */
 export const listThreads = async (): Promise<ThreadPreview[]> => {
   const c = stateClient()
@@ -275,10 +275,7 @@ export const listThreads = async (): Promise<ThreadPreview[]> => {
              ORDER BY m.created_at DESC, m.id DESC
              LIMIT 1) AS last_message
       FROM chat_threads t
-     ORDER BY
-       -- Alert threads that are not yet resolved sort first.
-       CASE WHEN t.origin = 'alert' AND (t.alert_resolved = 0 OR t.alert_resolved IS NULL) THEN 0 ELSE 1 END ASC,
-       t.created_at DESC, t.id DESC
+     ORDER BY t.created_at DESC, t.id DESC
   `)
   return (result.rows as unknown as Record<string, unknown>[]).map((row) => ({
     ...rowToThread(row),
@@ -511,117 +508,4 @@ export const clearMessageFeedback = async (messageId: string): Promise<boolean> 
     args: [messageId],
   })
   return ((result as unknown as { rowsAffected?: number }).rowsAffected ?? 0) > 0
-}
-
-// ── Alert thread API ──────────────────────────────────────────────────────────
-
-/**
- * Find the alert-origin thread for a given action-queue item id.
- * Returns null when no such thread exists (not yet created or different item).
- */
-export const findAlertThreadByItemId = async (
-  alertItemId: string,
-): Promise<ChatThread | null> => {
-  const c = stateClient()
-  const result = await c.execute({
-    sql: `SELECT * FROM chat_threads WHERE alert_item_id = ? LIMIT 1`,
-    args: [alertItemId],
-  })
-  if (result.rows.length === 0) return null
-  return rowToThread(result.rows[0] as unknown as Record<string, unknown>)
-}
-
-/**
- * Create a proactive alert-origin thread for the given action-queue item.
- * Inserts one assistant message containing the alert segment. Idempotent via
- * `findAlertThreadByItemId` — callers should check before calling.
- */
-export const createAlertThread = async (
-  alertItemId: string,
-  title: string,
-  segment: AlertSegment,
-): Promise<ChatThread> => {
-  const c = stateClient()
-  const threadId = randomUUID()
-  const msgId = randomUUID()
-  const ts = now()
-  await c.execute({
-    sql: `INSERT INTO chat_threads
-            (id, title, session_id, status, created_at, updated_at, origin, alert_item_id, alert_resolved)
-          VALUES (?, ?, NULL, 'idle', ?, ?, 'alert', ?, 0)`,
-    args: [threadId, title, ts, ts, alertItemId],
-  })
-  // Persist one assistant message with the alert segment.
-  await c.execute({
-    sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at)
-          VALUES (?, ?, 'assistant', ?, ?, ?)`,
-    args: [msgId, threadId, title, JSON.stringify([segment]), ts],
-  })
-  return {
-    id: threadId,
-    title,
-    session_id: null,
-    status: 'idle',
-    created_at: ts,
-    updated_at: ts,
-    origin: 'alert',
-    alert_item_id: alertItemId,
-    alert_resolved: false,
-    context_seeded: false,
-    evaporated_at: null,
-  }
-}
-
-/**
- * Mark the alert thread associated with `alertItemId` as resolved.
- * Updates the alert segment's `resolved` flag in-place.
- * Returns `true` if a thread was found and updated, `false` if none exists.
- */
-export const resolveAlertThread = async (alertItemId: string): Promise<boolean> => {
-  const c = stateClient()
-  const ts = now()
-  // Find the thread
-  const found = await c.execute({
-    sql: `SELECT id FROM chat_threads WHERE alert_item_id = ? AND alert_resolved = 0 LIMIT 1`,
-    args: [alertItemId],
-  })
-  if (found.rows.length === 0) return false
-  const threadId = (found.rows[0] as unknown as { id: string }).id
-  // Mark the thread as resolved
-  await c.execute({
-    sql: `UPDATE chat_threads SET alert_resolved = 1, updated_at = ? WHERE id = ?`,
-    args: [ts, threadId],
-  })
-  // Update the alert segment's `resolved` field inside the persisted message
-  const msgResult = await c.execute({
-    sql: `SELECT id, segments FROM chat_messages
-           WHERE thread_id = ? AND role = 'assistant'
-           ORDER BY created_at ASC, id ASC LIMIT 1`,
-    args: [threadId],
-  })
-  if (msgResult.rows.length > 0) {
-    const msgRow = msgResult.rows[0] as unknown as { id: string; segments: string | null }
-    if (msgRow.segments) {
-      try {
-        const segs = JSON.parse(msgRow.segments) as unknown[]
-        const updated = segs.map((s) => {
-          if (
-            s !== null &&
-            typeof s === 'object' &&
-            (s as Record<string, unknown>).type === 'alert'
-          ) {
-            return { ...(s as Record<string, unknown>), resolved: true }
-          }
-          return s
-        })
-        await c.execute({
-          sql: `UPDATE chat_messages SET segments = ? WHERE id = ?`,
-          args: [JSON.stringify(updated), msgRow.id],
-        })
-      } catch {
-        // Non-fatal: the thread is still marked resolved.
-      }
-    }
-  }
-  return true
 }

@@ -1,14 +1,12 @@
 /**
- * Unit tests for the projection-Thread helpers: kind filter, search filter,
- * sidebar merge ordering, and resolved-selection detection.
+ * Unit tests for the chat sidebar thread helpers: draft-row headline,
+ * thread title search, and resolved-selection detection.
  */
 import { describe, expect, it } from 'bun:test'
 import {
   draftRowHeadline,
-  filterQueueItems,
+  filterThreadsByTitle,
   isResolvedSelection,
-  matchesKindFilter,
-  mergeSidebarEntries,
 } from './queueThreads'
 import type { ActionQueueItem, ChatThread } from '@/shared/schemas'
 
@@ -30,9 +28,6 @@ const BASE_ITEM: ActionQueueItem = {
   diagnosis: null,
 } as unknown as ActionQueueItem
 
-const makeItem = (overrides: Record<string, unknown>): ActionQueueItem =>
-  ({ ...BASE_ITEM, ...overrides } as ActionQueueItem)
-
 const makeThread = (overrides: Partial<ChatThread>): ChatThread =>
   ({
     id: 'th-1',
@@ -45,88 +40,6 @@ const makeThread = (overrides: Partial<ChatThread>): ChatThread =>
     updatedAt: '2026-01-01T00:00:00Z',
     ...overrides,
   } as unknown as ChatThread)
-
-const staleItem = makeItem({
-  id: 'stale:s-1',
-  kind: 'stale-worktree',
-  entityId: 's-1',
-  errorKind: 'stale-worktree',
-})
-const draftItem = makeItem({
-  id: 'draft-proposal:d-1',
-  kind: 'draft-proposal',
-  entityId: 'd-1',
-  errorKind: 'draft-proposal',
-  title: 'A draft proposal about search',
-})
-
-// ---------------------------------------------------------------------------
-// matchesKindFilter — all combinations
-// ---------------------------------------------------------------------------
-
-describe('matchesKindFilter', () => {
-  it('"all" passes every kind', () => {
-    expect(matchesKindFilter(BASE_ITEM, 'all')).toBe(true)
-    expect(matchesKindFilter(staleItem, 'all')).toBe(true)
-    expect(matchesKindFilter(draftItem, 'all')).toBe(true)
-  })
-
-  it('"alerts" passes failed-task and stale-worktree, rejects drafts', () => {
-    expect(matchesKindFilter(BASE_ITEM, 'alerts')).toBe(true)
-    expect(matchesKindFilter(staleItem, 'alerts')).toBe(true)
-    expect(matchesKindFilter(draftItem, 'alerts')).toBe(false)
-  })
-
-  it('"alerts" passes awaiting-validation', () => {
-    const awaiting = makeItem({ kind: 'awaiting-validation', errorKind: 'awaiting-validation' })
-    expect(matchesKindFilter(awaiting, 'alerts')).toBe(true)
-  })
-
-  it('"drafts" passes only draft-proposal', () => {
-    expect(matchesKindFilter(BASE_ITEM, 'drafts')).toBe(false)
-    expect(matchesKindFilter(staleItem, 'drafts')).toBe(false)
-    expect(matchesKindFilter(draftItem, 'drafts')).toBe(true)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// filterQueueItems — search over id / title / body / kind / entityId
-// ---------------------------------------------------------------------------
-
-describe('filterQueueItems', () => {
-  const items = [BASE_ITEM, staleItem, draftItem]
-
-  it('empty query returns everything under "all"', () => {
-    expect(filterQueueItems(items, '', 'all')).toHaveLength(3)
-  })
-
-  it('matches by entityId, case-insensitively', () => {
-    const result = filterQueueItems(items, 'T-1', 'all')
-    expect(result.map((i) => i.id)).toEqual(['failed-task:t-1'])
-  })
-
-  it('matches by title substring', () => {
-    expect(filterQueueItems(items, 'draft proposal about', 'all')).toHaveLength(1)
-  })
-
-  it('matches by body substring', () => {
-    expect(filterQueueItems(items, 'because of x', 'all')).toHaveLength(3)
-    // BASE_ITEM's body is shared by fixtures; narrow it
-    const only = filterQueueItems([BASE_ITEM, draftItem], 'because of x', 'drafts')
-    expect(only).toHaveLength(1)
-    expect(only[0].kind).toBe('draft-proposal')
-  })
-
-  it('matches by kind string', () => {
-    expect(filterQueueItems(items, 'stale-worktree', 'all')).toHaveLength(1)
-  })
-
-  it('combines search with the kind filter', () => {
-    // 'stale-worktree' matches the stale item's kind, but the drafts filter
-    // rejects it — the two dimensions AND together.
-    expect(filterQueueItems(items, 'stale-worktree', 'drafts')).toHaveLength(0)
-  })
-})
 
 // ---------------------------------------------------------------------------
 // draftRowHeadline
@@ -153,143 +66,34 @@ describe('draftRowHeadline', () => {
 })
 
 // ---------------------------------------------------------------------------
-// mergeSidebarEntries — projection Threads float above regular chat threads
+// filterThreadsByTitle — the chat sidebar is a plain list of threads
 // ---------------------------------------------------------------------------
 
-describe('mergeSidebarEntries', () => {
-  it('puts every open queue row into projections, in server order', () => {
-    const { projections } = mergeSidebarEntries([BASE_ITEM, draftItem], [], '', 'all')
-    expect(projections.map((p) => p.item.id)).toEqual([
-      'failed-task:t-1',
-      'draft-proposal:d-1',
-    ])
+describe('filterThreadsByTitle', () => {
+  const threads = [
+    makeThread({ id: 'a', title: 'Deploy fix' }),
+    makeThread({ id: 'b', title: 'Unrelated chat' }),
+    makeThread({ id: 'c', title: '' }),
+  ]
+
+  it('empty query returns every thread', () => {
+    expect(filterThreadsByTitle(threads, '').map((t) => t.id)).toEqual(['a', 'b', 'c'])
   })
 
-  it('merges an alert-origin thread with a matching live row into ONE entry', () => {
-    const alertThread = makeThread({
-      id: 'th-alert',
-      origin: 'alert',
-      alertItemId: 'failed-task:t-1',
-    })
-    const plainThread = makeThread({ id: 'th-plain', title: 'Plain talk' })
-    const { projections, regular } = mergeSidebarEntries(
-      [BASE_ITEM],
-      [alertThread, plainThread],
-      '',
-      'all',
-    )
-    expect(projections).toHaveLength(1)
-    expect(projections[0].thread?.id).toBe('th-alert')
-    // The merged thread is NOT duplicated in the regular list.
-    expect(regular.map((t) => t.id)).toEqual(['th-plain'])
+  it('whitespace-only query returns every thread', () => {
+    expect(filterThreadsByTitle(threads, '   ').map((t) => t.id)).toEqual(['a', 'b', 'c'])
   })
 
-  it('an alert thread whose row left the queue falls back to a regular entry', () => {
-    const orphanAlertThread = makeThread({
-      id: 'th-orphan',
-      origin: 'alert',
-      alertItemId: 'failed-task:gone',
-    })
-    const { projections, regular } = mergeSidebarEntries([], [orphanAlertThread], '', 'all')
-    expect(projections).toHaveLength(0)
-    expect(regular.map((t) => t.id)).toEqual(['th-orphan'])
+  it('matches by title substring, case-insensitively', () => {
+    expect(filterThreadsByTitle(threads, 'DEPLOY').map((t) => t.id)).toEqual(['a'])
   })
 
-  it('search filters regular chat threads by title', () => {
-    const a = makeThread({ id: 'a', title: 'Deploy fix' })
-    const b = makeThread({ id: 'b', title: 'Unrelated' })
-    const { regular } = mergeSidebarEntries([], [a, b], 'deploy', 'all')
-    expect(regular.map((t) => t.id)).toEqual(['a'])
+  it('untitled threads match the "New thread" placeholder', () => {
+    expect(filterThreadsByTitle(threads, 'new').map((t) => t.id)).toEqual(['c'])
   })
 
-  it('non-"all" kind filters hide regular chat threads and scope projections', () => {
-    const t = makeThread({ id: 'a', title: 'Talk' })
-    const { projections, regular } = mergeSidebarEntries(
-      [BASE_ITEM, draftItem],
-      [t],
-      '',
-      'drafts',
-    )
-    expect(projections.map((p) => p.item.kind)).toEqual(['draft-proposal'])
-    expect(regular).toHaveLength(0)
-  })
-
-  it('search applies to projections via the queue-row haystack', () => {
-    const { projections } = mergeSidebarEntries([BASE_ITEM, draftItem], [], 't-1', 'all')
-    expect(projections.map((p) => p.item.id)).toEqual(['failed-task:t-1'])
-  })
-
-  it('resolved alert thread is excluded from regular when query is empty', () => {
-    const resolved = makeThread({
-      id: 'th-resolved',
-      origin: 'alert',
-      alertItemId: 'failed-task:gone',
-      alertResolved: true,
-    })
-    const plain = makeThread({ id: 'th-plain', title: 'Plain talk' })
-    const { regular } = mergeSidebarEntries([], [resolved, plain], '', 'all')
-    expect(regular.map((t) => t.id)).toEqual(['th-plain'])
-  })
-
-  it('resolved alert thread appears in regular when query matches its title', () => {
-    const resolved = makeThread({
-      id: 'th-resolved',
-      title: 'Alert for deploy',
-      origin: 'alert',
-      alertItemId: 'failed-task:gone',
-      alertResolved: true,
-    })
-    const { regular } = mergeSidebarEntries([], [resolved], 'deploy', 'all')
-    expect(regular.map((t) => t.id)).toEqual(['th-resolved'])
-  })
-
-  it('resolved alert thread is always returned in resolvedAlertThreads regardless of query', () => {
-    const resolved = makeThread({
-      id: 'th-resolved',
-      title: 'Alert for deploy',
-      origin: 'alert',
-      alertItemId: 'failed-task:gone',
-      alertResolved: true,
-    })
-    const noQuery = mergeSidebarEntries([], [resolved], '', 'all')
-    expect(noQuery.resolvedAlertThreads.map((t) => t.id)).toEqual(['th-resolved'])
-
-    const withQuery = mergeSidebarEntries([], [resolved], 'deploy', 'all')
-    expect(withQuery.resolvedAlertThreads.map((t) => t.id)).toEqual(['th-resolved'])
-
-    const noMatch = mergeSidebarEntries([], [resolved], 'nomatch', 'all')
-    expect(noMatch.resolvedAlertThreads.map((t) => t.id)).toEqual(['th-resolved'])
-  })
-
-  it('unresolved alert thread that lost its backing row stays in regular', () => {
-    const orphan = makeThread({
-      id: 'th-orphan',
-      origin: 'alert',
-      alertItemId: 'failed-task:gone',
-      alertResolved: false,
-    })
-    const { regular, resolvedAlertThreads } = mergeSidebarEntries([], [orphan], '', 'all')
-    expect(regular.map((t) => t.id)).toEqual(['th-orphan'])
-    expect(resolvedAlertThreads).toHaveLength(0)
-  })
-
-  it('resolved alert thread merged with a live row does not appear in resolvedAlertThreads', () => {
-    // If somehow alertResolved is true but the item is still in the live queue,
-    // the thread is absorbed into the projection (not in resolvedAlertThreads).
-    const resolved = makeThread({
-      id: 'th-resolved-live',
-      origin: 'alert',
-      alertItemId: 'failed-task:t-1',
-      alertResolved: true,
-    })
-    const { projections, resolvedAlertThreads } = mergeSidebarEntries(
-      [BASE_ITEM],
-      [resolved],
-      '',
-      'all',
-    )
-    expect(projections[0]?.thread?.id).toBe('th-resolved-live')
-    expect(resolvedAlertThreads).toHaveLength(0)
+  it('returns an empty list when nothing matches', () => {
+    expect(filterThreadsByTitle(threads, 'nomatch')).toHaveLength(0)
   })
 })
 

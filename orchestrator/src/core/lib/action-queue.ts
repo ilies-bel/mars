@@ -8,25 +8,6 @@ import { derivedRowActions } from './derived-row-actions'
 import { lookupRecipe, getRecipeVerbs } from './action-queue-recipes'
 import { classifyMarsVerb } from './chat-mars-verbs'
 
-// ── Alert-thread notification callback ────────────────────────────────────────
-
-/**
- * Optional callback invoked after an alert thread is created or resolved.
- * The daemon registers this to broadcast 'chat' SSE so the sidebar updates
- * immediately. Falls back to a no-op when not set.
- */
-let _onChatThreadChanged: (() => void) | null = null
-
-/**
- * Register a callback that fires whenever an alert chat thread is created or
- * its resolved state changes. Call from the daemon after the SSE hub is ready:
- *
- *   setOnChatThreadChanged(() => viewStreamHub.broadcast('chat'))
- */
-export const setOnChatThreadChanged = (fn: () => void): void => {
-  _onChatThreadChanged = fn
-}
-
 /** Idempotent PostgreSQL schema bootstrap retained for existing callers. */
 export const initActionQueue = async (): Promise<void> => {
   const { ensureSchema } = await import('./pg-schema.js')
@@ -593,46 +574,6 @@ export const buildAlertSegment = (
   }
 }
 
-/**
- * Create (or skip if already exists) the alert chat thread for a newly-inserted
- * action-queue item. Non-fatal: errors are swallowed so the queue raise still
- * succeeds even if the chat DB is unavailable.
- */
-const maybeCreateAlertThread = async (
-  item: RaiseActionQueueItem,
-  itemId: string,
-): Promise<void> => {
-  try {
-    const { findAlertThreadByItemId, createAlertThread } = await import('./chat-store')
-    const existing = await findAlertThreadByItemId(itemId)
-    if (existing) return
-    const segment = buildAlertSegment(item, itemId)
-    await createAlertThread(itemId, item.title, segment)
-    _onChatThreadChanged?.()
-  } catch {
-    // Non-fatal: the action-queue item was already committed.
-  }
-}
-
-/**
- * Resolve the alert chat threads for a set of superseded action-queue item ids.
- * Non-fatal: errors are swallowed.
- */
-const maybeResolveAlertThreads = async (ids: string[]): Promise<void> => {
-  if (ids.length === 0) return
-  try {
-    const { resolveAlertThread } = await import('./chat-store')
-    let changed = false
-    for (const id of ids) {
-      const resolved = await resolveAlertThread(id)
-      if (resolved) changed = true
-    }
-    if (changed) _onChatThreadChanged?.()
-  } catch {
-    // Non-fatal.
-  }
-}
-
 export const raiseActionQueueItem = async (
   item: RaiseActionQueueItem,
 ): Promise<string> => {
@@ -721,9 +662,6 @@ export const raiseActionQueueItem = async (
     priority: item.priority,
     signature: item.signature,
   })
-  // Create a proactive alert chat thread for this new action-queue item.
-  // Fire-and-forget — errors are swallowed inside maybeCreateAlertThread.
-  void maybeCreateAlertThread(item, id)
   return id
 }
 
@@ -1012,8 +950,6 @@ export const setActionQueueState = async (
       toState: state,
       by: opts?.by ?? '',
     })
-    // Resolve any proactive alert chat thread tracking this item.
-    void maybeResolveAlertThreads([resolvedId])
   }
 }
 
