@@ -1658,8 +1658,57 @@ export const verify = async (
           .map((s) => `${s.name}:\n${failureExcerpt(s.output)}`)
           .join('\n\n')
         const firstFailedName = failed[0]?.name ?? 'verify'
-        const firstFailedOutput = failed[0]
-          ? failureExcerpt(failed[0].output)
+        // Build a structured diagnostics block for each failed gate so
+        // post-mortems and recovery prompts can see the actual command, cwd,
+        // exit code, stdout, and stderr rather than just the merged output.
+        // Synthetic steps (integration-clean, has-diff) lack cmd/stepDir —
+        // fall back to the step's combined output for those.
+        const gateFailureDiags = failed
+          .map((s) => {
+            if (s.cmd !== undefined && s.stepDir !== undefined) {
+              const cmdPart = `${s.cmd}${s.args?.length ? ' ' + s.args.join(' ') : ''}`
+              const stdoutPart = s.stdout ? `\nstdout:\n${failureExcerpt(s.stdout)}` : ''
+              const stderrPart = s.stderr ? `\nstderr:\n${failureExcerpt(s.stderr)}` : ''
+              return (
+                `--- diagnostics: ${s.name} ---\n` +
+                `cmd: ${cmdPart}\n` +
+                `cwd: ${s.stepDir}\n` +
+                `exitCode: ${s.exitCode ?? 'null'}` +
+                stdoutPart +
+                stderrPart
+              )
+            }
+            return `--- diagnostics: ${s.name} ---\n${failureExcerpt(s.output)}`
+          })
+          .join('\n\n')
+        // Re-assign capturedVerifyOutput to include the diagnostics block
+        // BEFORE the gate-outcomes JSON so the run-timeline view and recovery
+        // prompts both see the structured failure detail.
+        capturedVerifyOutput =
+          verifyOutput +
+          '\n\n=== gate failure diagnostics ===\n' +
+          gateFailureDiags +
+          '\n\n=== gate outcomes ===\n' +
+          gateOutcomesBlock
+        // Build firstFailedOutput with the gate identity, exit code, and
+        // stderr excerpt so the Fixer prompt shows the real failure context.
+        const firstFailed = failed[0]
+        const firstFailedOutput = firstFailed
+          ? firstFailed.cmd !== undefined
+            ? failureExcerpt(
+                [
+                  firstFailed.name,
+                  `cmd: ${firstFailed.cmd}${firstFailed.args?.length ? ' ' + firstFailed.args.join(' ') : ''}`,
+                  `cwd: ${firstFailed.stepDir ?? ''}  exitCode: ${firstFailed.exitCode ?? 'null'}`,
+                  ...(firstFailed.stderr
+                    ? [`stderr:\n${failureExcerpt(firstFailed.stderr)}`]
+                    : []),
+                  ...(firstFailed.stdout
+                    ? [`stdout:\n${failureExcerpt(firstFailed.stdout)}`]
+                    : []),
+                ].join('\n'),
+              )
+            : failureExcerpt(firstFailed.output)
           : summary
         const ranVerifySteps: RanVerifyStep[] = r.steps
           .filter(
@@ -1729,6 +1778,13 @@ export const verify = async (
         // if the status write itself throws, swallow it so the original error
         // propagates unchanged.
         if (!_verifyFailedRecorded) {
+          // Populate capturedVerifyOutput so getCommandOutput returns non-empty
+          // for the step_ended trace event, and persist it on the task record
+          // so structural crashes don't surface as 'none recorded'.
+          capturedVerifyOutput =
+            capturedVerifyOutput ??
+            'verify:step-threw\n' +
+              (err instanceof Error ? (err.stack ?? err.message) : String(err))
           await updateTask(
             taskId,
             {
@@ -1736,6 +1792,7 @@ export const verify = async (
               failedPhase: 'verify',
               failureReason: err instanceof Error ? err.message : String(err),
               failureReasonCode: 'verify:step-threw',
+              verifyOutput: capturedVerifyOutput,
             },
             store,
           ).catch(() => {})

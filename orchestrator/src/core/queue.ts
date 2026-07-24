@@ -945,6 +945,13 @@ export const updateTask = async (
        * `{ recipe, integrationBranch }` here for `main-commiter` recoveries.
        */
       recoveryPayload?: string | null
+      /**
+       * The full verify step output (per-gate headers + diagnostics + gate
+       * outcomes JSON). When provided, persisted to the task's transcript record
+       * via {@link upsertTranscript} so structural crashes (outer catch path) are
+       * visible in the run-timeline view rather than showing 'none recorded'.
+       */
+      verifyOutput?: string | null
     }
   >,
   store?: TaskStore,
@@ -1236,6 +1243,15 @@ export const updateTask = async (
     appendSessionId,
     sessionIdStmt,
   })
+
+  // Persist verifyOutput when the caller provides it (e.g. the outer catch
+  // path in the verify primitive records a structural crash). Best-effort:
+  // a transcript write failure must never mask the task status failure.
+  if (patch.verifyOutput !== undefined && patch.verifyOutput !== null) {
+    await upsertTranscript({ taskId: id, verifyOutput: patch.verifyOutput }, store).catch(
+      () => {},
+    )
+  }
 
   // NOTE: Action-queue clearing on status change is NOT done inline here.
   // The Invalidator (alert-dismisser) subscribes to the task lifecycle

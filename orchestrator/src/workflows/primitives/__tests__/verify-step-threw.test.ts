@@ -205,3 +205,68 @@ describe('verify — normal r.passed=false failure sets status=failed exactly on
     expect(code).not.toBe('verify:step-threw')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Criterion 2: firstFailedOutput includes exit code + stderr excerpt
+// ---------------------------------------------------------------------------
+
+describe('verify — firstFailedOutput includes exit code and stderr when step has cmd metadata', () => {
+  it('errorOutput passed to handleTaskFailureWithFixTask includes exitCode and stderr', async () => {
+    mockVerifyChanges.mockResolvedValue({
+      passed: false,
+      steps: [
+        {
+          name: 'typecheck',
+          passed: false,
+          output: 'TS2345: type mismatch\nTS2554: error',
+          tier: 'task' as const,
+          cmd: 'npx',
+          args: ['tsc', '--noEmit'],
+          stepDir: '/tmp/wt-diag01',
+          exitCode: 1,
+          stdout: '',
+          stderr: 'TS2345: type mismatch\nTS2554: error',
+        },
+      ],
+    })
+
+    const taskId = 'mars-diag01'
+    await expect(
+      verify(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
+    ).rejects.toThrow()
+
+    expect(mockHandleTaskFailureWithFixTask).toHaveBeenCalledTimes(1)
+    const failureInput = mockHandleTaskFailureWithFixTask.mock.calls[0][0] as Record<string, unknown>
+    const errorOutput = failureInput.errorOutput as string
+    // Must include the exit code so recovery prompts show the real gate context.
+    expect(errorOutput).toContain('exitCode: 1')
+    // Must include the stderr content.
+    expect(errorOutput).toContain('TS2345: type mismatch')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Criterion 3: outer catch path populates capturedVerifyOutput and persists it
+// ---------------------------------------------------------------------------
+
+describe('verify — outer catch path sets verifyOutput on the updateTask call', () => {
+  it('updateTask is called with verifyOutput containing the error when verifyChanges throws', async () => {
+    mockVerifyChanges.mockRejectedValue(new Error('ENOENT: lock file missing'))
+
+    const taskId = 'mars-diag02'
+    await expect(
+      verify(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
+    ).rejects.toThrow('ENOENT: lock file missing')
+
+    const failedCalls = mockUpdateTask.mock.calls.filter(
+      (c) => (c[1] as Record<string, unknown>)?.status === 'failed',
+    )
+    expect(failedCalls).toHaveLength(1)
+    const payload = failedCalls[0][1] as Record<string, unknown>
+    expect(payload.failureReasonCode).toBe('verify:step-threw')
+    // The verifyOutput field must be a non-empty string containing the error.
+    expect(typeof payload.verifyOutput).toBe('string')
+    expect(payload.verifyOutput as string).toContain('verify:step-threw')
+    expect(payload.verifyOutput as string).toContain('ENOENT: lock file missing')
+  })
+})
