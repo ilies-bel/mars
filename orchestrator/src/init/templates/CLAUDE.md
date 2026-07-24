@@ -187,10 +187,6 @@ Each task prompt must stand alone. Include:
 - a closing **"Save your work"** line — the orchestrator does not
   commit on the agent's behalf.
 
-**Closing ritual:** at natural stopping points, suggest the operator
-run `mars arc reflect <originId>` in a separate terminal to surface
-patterns from the session and land draft proposals.
-
 ## Conventions
 
 - Never commit `.env` or `.mars/`.

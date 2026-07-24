@@ -326,7 +326,3 @@ Each task prompt must stand alone. Include:
 The `mars task add "..."` outer call is a CLI invocation; any `git`/`rm`
 strings inside the heredoc'd prompt are passed verbatim to the dispatched
 agent and don't trip the outer shell's hooks.
-
-**Closing ritual:** at natural stopping points, suggest the operator
-run `mars arc reflect <originId>` in a separate terminal to surface
-patterns from the session and land draft proposals.
