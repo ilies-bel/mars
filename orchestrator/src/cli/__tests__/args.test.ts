@@ -80,4 +80,14 @@ describe('parseArgs — REPEATABLE_FLAGS greedy consumption', () => {
     expect(result.multiFlags['--files']).toEqual(['only-one.ts'])
     expect(result.positional).toEqual([])
   })
+
+  it('two greedy repeatable flags in sequence each consume their own non-flag tokens', () => {
+    // --files a b --blocked-by id1 id2: `--blocked-by` starts with `-` so it
+    // terminates --files greedy consumption; then --blocked-by's own greedy
+    // loop picks up id1 and id2.
+    const result = parseArgs(['--files', 'a', 'b', '--blocked-by', 'id1', 'id2'])
+    expect(result.multiFlags['--files']).toEqual(['a', 'b'])
+    expect(result.multiFlags['--blocked-by']).toEqual(['id1', 'id2'])
+    expect(result.positional).toEqual([])
+  })
 })
