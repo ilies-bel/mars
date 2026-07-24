@@ -402,12 +402,55 @@ const arcFailedItemSchema = actionQueueBaseSchema.extend({
   chain: z.array(alertChainNodeSchema),
 })
 
+/**
+ * Lease state carried on awaiting-human rows.
+ * The UI renders the owner, timestamp, and optional note so the operator
+ * can see who holds the worktree and why.
+ */
+const leaseStateSchema = z.object({
+  leaseOwner: z.string(),
+  leasedAt: z.string(),
+  leaseNote: z.string().nullable(),
+})
+
+/**
+ * A task is parked awaiting foreground human input (manual pipeline step).
+ * Carries optional lease state indicating who holds the worktree.
+ */
+const awaitingHumanItemSchema = actionQueueBaseSchema.extend({
+  kind: z.literal('awaiting-human'),
+  /**
+   * Current lease holder — present when a Foreground session owns the
+   * worktree; null/absent when no session has been attached.
+   */
+  leaseState: leaseStateSchema.nullable().optional(),
+})
+
+/**
+ * The reflect subsystem has suggested one or more proposals to review.
+ * No extra fields beyond the base schema.
+ */
+const reflectRecommendedItemSchema = actionQueueBaseSchema.extend({
+  kind: z.literal('reflect-recommended'),
+})
+
+/**
+ * The scorer has surfaced a suggestion that requires human review.
+ * No extra fields beyond the base schema.
+ */
+const scorerSuggestedItemSchema = actionQueueBaseSchema.extend({
+  kind: z.literal('scorer-suggested'),
+})
+
 export const actionQueueItemSchema = z.discriminatedUnion('kind', [
   failedTaskItemSchema,
   staleWorktreeItemSchema,
   draftProposalItemSchema,
   awaitingValidationItemSchema,
   arcFailedItemSchema,
+  awaitingHumanItemSchema,
+  reflectRecommendedItemSchema,
+  scorerSuggestedItemSchema,
 ])
 
 // Element-level catch: when a row has an unrecognised 'kind' value (e.g. a stale

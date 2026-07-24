@@ -35,6 +35,9 @@ const KIND_ICON: Record<ActionQueueItem['kind'], string> = {
   'stale-worktree': '◌',
   'awaiting-validation': '⌁',
   'draft-proposal': '✦',
+  'awaiting-human': '⏳',
+  'reflect-recommended': '💡',
+  'scorer-suggested': '★',
 }
 
 /** Ops that receive destructive button styling in the inline resolver. */
