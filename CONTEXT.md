@@ -502,3 +502,7 @@ _Avoid_: hit list, match form, highlight form, variant
 **Mechanical verification**:
 The deterministic verify step: it runs configured shell checks such as typecheck, lint, targeted tests, and commit/diff assertions in a task worktree. It is authoritative for mechanical correctness and is serialized by the global verify lock; it does not assess human-facing behaviour.
 _Avoid_: agent verification, agent verify, shell verification
+
+**Notice**:
+A bell message stating a fact the operator should know (e.g. the Steward raised the concurrency limit) that has no backing entity, so it clears only when the operator acknowledges it — unlike an Alert, which clears solely by entity mutation.
+_Avoid_: alert, notification, toast, info-alert, banner
