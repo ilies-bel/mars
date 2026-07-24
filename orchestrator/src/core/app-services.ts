@@ -291,13 +291,21 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       traceStore.query({ originId, taskId, kind: ['step_ended'], limit: 1000 }),
     ])
 
-    // Map (workflowInstanceId, stepName) → ended event for O(n) pairing.
-    const endedMap = new Map<string, (typeof ended)[0]>()
+    // Map (workflowInstanceId, stepName) → ended events for O(n) pairing.
+    // A step name can repeat within the same workflowInstanceId (e.g. two
+    // run-claude-code steps), so we collect an array per key and shift from
+    // it for each matching step_started to preserve 1:1 ordering.
+    // Both arrays arrive in DESC order (newest first) from the trace store;
+    // shifting pairs each start with its positionally-matching end.
+    const endedMap = new Map<string, Array<(typeof ended)[0]>>()
     for (const e of ended) {
       const wfId = e.payload.workflowInstanceId
       const stepName = e.payload.stepName
       if (typeof wfId === 'string' && typeof stepName === 'string') {
-        endedMap.set(`${wfId}\0${stepName}`, e)
+        const key = `${wfId}\0${stepName}`
+        let arr = endedMap.get(key)
+        if (!arr) { arr = []; endedMap.set(key, arr) }
+        arr.push(e)
       }
     }
 
@@ -309,7 +317,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           typeof wfId === 'string' && typeof stepName === 'string'
             ? `${wfId}\0${stepName}`
             : null
-        const endEvent = key ? endedMap.get(key) : undefined
+        const endEvent = key ? endedMap.get(key)?.shift() : undefined
 
         return {
           stepName: typeof stepName === 'string' ? stepName : '',
@@ -349,13 +357,19 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       traceStore.query({ taskId, kind: ['step_ended'], limit: 1000 }),
     ])
 
-    // Map (workflowInstanceId, stepName) → ended event for O(n) pairing.
-    const endedMap = new Map<string, (typeof ended)[0]>()
+    // Map (workflowInstanceId, stepName) → ended events for O(n) pairing.
+    // A step name can repeat within the same workflowInstanceId (e.g. two
+    // run-claude-code steps), so we collect an array per key and shift from
+    // it for each matching step_started to preserve 1:1 ordering.
+    const endedMap = new Map<string, Array<(typeof ended)[0]>>()
     for (const e of ended) {
       const wfId = e.payload.workflowInstanceId
       const stepName = e.payload.stepName
       if (typeof wfId === 'string' && typeof stepName === 'string') {
-        endedMap.set(`${wfId}\0${stepName}`, e)
+        const key = `${wfId}\0${stepName}`
+        let arr = endedMap.get(key)
+        if (!arr) { arr = []; endedMap.set(key, arr) }
+        arr.push(e)
       }
     }
 
@@ -374,7 +388,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       }
 
       const key = `${wfId}\0${stepName}`
-      const endEvent = endedMap.get(key)
+      const endEvent = endedMap.get(key)?.shift()
 
       const outcome = endEvent
         ? typeof endEvent.payload.outcome === 'string'
@@ -698,12 +712,15 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         traceStore.query({ kind: ['step_ended'], phase: [entry.phase], limit: fetchLimit }),
       ])
 
-      const endedMap = new Map<string, (typeof ended)[0]>()
+      const endedMap = new Map<string, Array<(typeof ended)[0]>>()
       for (const e of ended) {
         const wfId = e.payload.workflowInstanceId
         const stepName = e.payload.stepName
         if (typeof wfId === 'string' && typeof stepName === 'string') {
-          endedMap.set(`${wfId}\0${stepName}`, e)
+          const key = `${wfId}\0${stepName}`
+          let arr = endedMap.get(key)
+          if (!arr) { arr = []; endedMap.set(key, arr) }
+          arr.push(e)
         }
       }
 
@@ -721,7 +738,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
             typeof s.payload.workflowInstanceId === 'string'
               ? s.payload.workflowInstanceId
               : ''
-          const endEvent = wfId ? endedMap.get(`${wfId}\0${stepName}`) : undefined
+          const endEvent = wfId ? endedMap.get(`${wfId}\0${stepName}`)?.shift() : undefined
           return {
             stepName,
             workflowInstanceId: wfId,
