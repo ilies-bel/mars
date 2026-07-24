@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { BellIcon } from 'lucide-react'
-import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { useAlerts } from '@/entities/alerts'
 import { useNotices } from '@/entities/notices'
 
 /**
  * Top-bar Bell surface (ADR-0080 foundation).
  *
  * A single bell that folds together two kinds of "needs a look" state:
- *  - Alerts — entity-backed rows from the action queue (title only, read-only
- *    for now; the arc-rooted `viewAlerts()` source lands in slice 2).
+ *  - Alerts — the arc-rooted read aggregate (ADR-0054): each shows its goal
+ *    (what the arc was trying to do) over the plain-English reason it failed.
+ *    Read-only — an Alert clears only when the underlying entity mutates
+ *    (ADR-0048), so there is no ack.
  *  - Notices — entity-less bell messages (ADR-0079) the operator clears by
  *    acknowledging.
  *
@@ -17,7 +19,7 @@ import { useNotices } from '@/entities/notices'
  * tokens (bg-bg / border-iron/30 / text-fg / text-iron).
  */
 export const BellMenu = () => {
-  const { items: alerts } = useActionQueue()
+  const { alerts } = useAlerts()
   const { notices, ack } = useNotices()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -73,8 +75,9 @@ export const BellMenu = () => {
             ) : (
               <ul>
                 {alerts.map((alert) => (
-                  <li key={alert.id} className="px-1 py-1 text-fg">
-                    {alert.title}
+                  <li key={alert.arcId} className="px-1 py-1">
+                    <p className="text-fg">{alert.goal}</p>
+                    <p className="text-iron">{alert.reason}</p>
                   </li>
                 ))}
               </ul>

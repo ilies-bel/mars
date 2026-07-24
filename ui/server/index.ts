@@ -928,6 +928,14 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/alerts — proxy the daemon's arc-rooted Alert list (ADR-0054).
+        // The daemon derives these fresh on read (failed arcs + stale worktrees);
+        // they are read-only and clear only by entity mutation (ADR-0048).
+        if (path === '/api/alerts' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/alerts')
+          return jsonResponse(r.status, r.body)
+        }
+
         // Unknown API path (or /events was already handled above).
         return jsonResponse(404, { error: `no route for ${path}` })
       }

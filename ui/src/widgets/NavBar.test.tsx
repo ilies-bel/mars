@@ -58,8 +58,8 @@ mock.module('@/widgets/ProjectSelector', () => ({
 
 // BellMenu's data hooks — mocked so NavBar renders provider-free (no
 // QueryClientProvider). Empty lists keep the bell badge absent in these tests.
-mock.module('@/entities/actionQueue/useActionQueue', () => ({
-  useActionQueue: () => ({ items: [], error: null, projectsError: null, projectsEmpty: false }),
+mock.module('@/entities/alerts', () => ({
+  useAlerts: () => ({ alerts: [], error: null }),
 }))
 
 mock.module('@/entities/notices', () => ({
