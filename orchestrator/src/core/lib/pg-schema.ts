@@ -243,7 +243,7 @@ const DDL: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS idx_questions_task ON questions(task_id)`,
   `CREATE TABLE IF NOT EXISTS task_progress (
     id              text   PRIMARY KEY,
-    task_id         text   NOT NULL REFERENCES tasks(id),
+    task_id         text   NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     created_at      text   NOT NULL,
     author          text   NOT NULL,
     kind            text   NOT NULL CHECK (kind IN ('note','check','uncheck')),

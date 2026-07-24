@@ -1890,6 +1890,13 @@ export class Arc {
         sql: `DELETE FROM task_done_criteria WHERE task_id = ?`,
         args: [id],
       })
+      // task_progress has a FK on task_id → tasks(id) without ON DELETE CASCADE
+      // on older schemas (CREATE TABLE IF NOT EXISTS never rebuilds an existing
+      // table). Explicit delete guards against FK violations on pre-migration DBs.
+      await scope.execute({
+        sql: `DELETE FROM task_progress WHERE task_id = ?`,
+        args: [id],
+      })
 
       // Cascade-delete each fix/recovery task that pointed at the origin.
       // For each: release any tasks that were blocked on the fix task (e.g.
@@ -1962,6 +1969,11 @@ export class Arc {
         })
         await scope.execute({
           sql: `DELETE FROM task_done_criteria WHERE task_id = ?`,
+          args: [fixId],
+        })
+        // task_progress FK guard — mirrors the origin cleanup above.
+        await scope.execute({
+          sql: `DELETE FROM task_progress WHERE task_id = ?`,
           args: [fixId],
         })
         // self_heal_attempts.fix_task_id has ON DELETE CASCADE (post-migration)
