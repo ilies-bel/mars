@@ -1,10 +1,10 @@
 /**
- * Tests for `mars vision` and `mars operator name` CLI commands.
+ * Tests for `mars vision` and `mars operator` CLI commands.
  *
  * Covers the acceptance criteria for slice 1 of PRD f122a60b:
  *   1. `vision set "<prose>"` — exits 0, persists to app_settings
  *   2. `vision show`          — prints stored value; exits 1 with clear message when absent
- *   3. `operator name set "<name>"` and `operator name show` mirror the same pattern
+ *   3. `operator name-set "<name>"` and `operator name-show` mirror the same pattern
  *
  * Isolation: `vi.resetModules()` + a fresh temp-dir git repo per test group so
  * every test gets a private module-cache and DB, matching the pattern used by
@@ -153,15 +153,15 @@ describe('mars vision show', () => {
 })
 
 // ---------------------------------------------------------------------------
-// operator name set
+// operator name-set
 // ---------------------------------------------------------------------------
 
-describe('mars operator name set', () => {
+describe('mars operator name-set', () => {
   it('exits 0 when a name is provided', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
 
-    const r = await run(['operator', 'name', 'set', 'Alex'], { ...deps, daemon: fake })
+    const r = await run(['operator', 'name-set', 'Alex'], { ...deps, daemon: fake })
 
     expect(r.code).toBe(0)
     expect(r.err).toHaveLength(0)
@@ -171,7 +171,7 @@ describe('mars operator name set', () => {
     const deps = await loadDeps()
     const fake = await makeFake()
 
-    const r = await run(['operator', 'name', 'set'], { ...deps, daemon: fake })
+    const r = await run(['operator', 'name-set'], { ...deps, daemon: fake })
 
     expect(r.code).toBe(2)
     const combined = [...r.out, ...r.err].join('\n')
@@ -180,16 +180,16 @@ describe('mars operator name set', () => {
 })
 
 // ---------------------------------------------------------------------------
-// operator name show
+// operator name-show
 // ---------------------------------------------------------------------------
 
-describe('mars operator name show', () => {
-  it('prints the stored operator name after "operator name set"', async () => {
+describe('mars operator name-show', () => {
+  it('prints the stored operator name after "operator name-set"', async () => {
     const deps = await loadDeps()
     const fake = await makeFake()
 
-    await run(['operator', 'name', 'set', 'Alex'], { ...deps, daemon: fake })
-    const r = await run(['operator', 'name', 'show'], { ...deps, daemon: fake })
+    await run(['operator', 'name-set', 'Alex'], { ...deps, daemon: fake })
+    const r = await run(['operator', 'name-show'], { ...deps, daemon: fake })
 
     expect(r.code).toBe(0)
     expect(r.out.join('\n')).toContain('Alex')
@@ -199,7 +199,7 @@ describe('mars operator name show', () => {
     const deps = await loadDeps()
     const fake = await makeFake()
 
-    const r = await run(['operator', 'name', 'show'], { ...deps, daemon: fake })
+    const r = await run(['operator', 'name-show'], { ...deps, daemon: fake })
 
     expect(r.code).toBe(1)
     const combined = [...r.out, ...r.err].join('\n')
@@ -211,10 +211,10 @@ describe('mars operator name show', () => {
     const fake = await makeFake()
 
     await run(['vision', 'set', 'north star'], { ...deps, daemon: fake })
-    await run(['operator', 'name', 'set', 'Alex'], { ...deps, daemon: fake })
+    await run(['operator', 'name-set', 'Alex'], { ...deps, daemon: fake })
 
     const vr = await run(['vision', 'show'], { ...deps, daemon: fake })
-    const or = await run(['operator', 'name', 'show'], { ...deps, daemon: fake })
+    const or = await run(['operator', 'name-show'], { ...deps, daemon: fake })
 
     expect(vr.out.join('\n')).toContain('north star')
     expect(or.out.join('\n')).toContain('Alex')

@@ -1,5 +1,5 @@
 /**
- * `operator` command group: `name set` and `name show`.
+ * `operator` command group: `name-set` and `name-show`.
  * Persists the operator's name in `app_settings` via the existing
  * getSetting/setSetting helpers and the ONBOARDING_OPERATOR_NAME_KEY constant.
  *
@@ -7,21 +7,21 @@
  * Dynamic imports ensure the module-cache matches the test's vi.resetModules()
  * isolation, following the same pattern as `notifications.ts`.
  *
- * These commands use 3-token paths ('operator name set', 'operator name show'),
- * which required extending the router in registry.ts to try 3-token prefixes
- * before falling back to 2-token and 1-token.
+ * Commands use 2-token paths ('operator name-set', 'operator name-show'),
+ * consistent with ADR-0023: CLI command seam is leaf-granular, flat, path-keyed,
+ * with real CLI depth fixed at 2.
  */
 
 import type { Command } from '../command'
 
 const operatorNameSet: Command = {
-  path: 'operator name set',
+  path: 'operator name-set',
   summary: 'set the operator name',
-  usage: 'usage: mars operator name set "<name>"',
+  usage: 'usage: mars operator name-set "<name>"',
   run: async (args, deps) => {
     const name = args.positional[0]
     if (!name) {
-      deps.err('usage: mars operator name set "<name>"')
+      deps.err('usage: mars operator name-set "<name>"')
       return { code: 2 }
     }
     const { migrateStateSchema } = await import('../../core/store/state-store')
@@ -31,15 +31,15 @@ const operatorNameSet: Command = {
     )
     await migrateStateSchema()
     await setSetting(resolveStateClient(), ONBOARDING_OPERATOR_NAME_KEY, name)
-    deps.out('operator name set')
+    deps.out('operator name saved')
     return { code: 0 }
   },
 }
 
 const operatorNameShow: Command = {
-  path: 'operator name show',
+  path: 'operator name-show',
   summary: 'show the stored operator name',
-  usage: 'usage: mars operator name show',
+  usage: 'usage: mars operator name-show',
   run: async (_args, deps) => {
     const { migrateStateSchema } = await import('../../core/store/state-store')
     const { resolveStateClient } = await import('../../core/store/state-client')
@@ -57,22 +57,12 @@ const operatorNameShow: Command = {
   },
 }
 
-const operatorNameGroup: Command = {
-  path: 'operator name',
-  summary: 'operator name subcommands (set|show)',
-  usage: 'usage: mars operator name <set|show>',
-  run: (_args, deps) => {
-    deps.err('usage: mars operator name <set|show>')
-    return { code: 2 }
-  },
-}
-
 const operatorGroup: Command = {
   path: 'operator',
   summary: 'operator subcommands',
-  usage: 'usage: mars operator <name> ...',
+  usage: 'usage: mars operator <name-set|name-show>',
   run: (_args, deps) => {
-    deps.err('usage: mars operator <name> ...')
+    deps.err('usage: mars operator <name-set|name-show>')
     return { code: 2 }
   },
 }
@@ -80,6 +70,5 @@ const operatorGroup: Command = {
 export const operatorCommands: readonly Command[] = [
   operatorNameSet,
   operatorNameShow,
-  operatorNameGroup,
   operatorGroup,
 ]

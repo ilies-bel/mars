@@ -6,10 +6,9 @@
  * `path[0]` for help/discovery — it is not an object and not a registry key.
  *
  * The router (`route`) is a pure prefix match with zero bypass branches: it
- * tries the 3-token path ('operator name set') first, then the 2-token path
- * ('task add'), then the 1-token path ('where'). The matched {@link Command}
- * plus the remaining positionals are returned; dispatch and exit-mapping live
- * in the adapters.
+ * tries the 2-token path ('task add') first, then the 1-token path ('where').
+ * The matched {@link Command} plus the remaining positionals are returned;
+ * dispatch and exit-mapping live in the adapters.
  */
 
 import type { Command } from './command'
@@ -40,25 +39,16 @@ export interface RouteMatch {
 /**
  * Resolve the positionals to a {@link Command} via pure prefix matching.
  *
- * Tries the 3-token path ('operator name set') first, then the 2-token path
- * ('task add'), then the 1-token path ('where'). Returns `null` when nothing
- * matches — the adapter decides how to report an unknown command (top-level vs
- * subcommand usage).
+ * Tries the 2-token path ('task add') first, then the 1-token path ('where').
+ * Returns `null` when nothing matches — the adapter decides how to report an
+ * unknown command (top-level vs subcommand usage).
  */
 export const route = (
   registry: CommandRegistry,
   positional: readonly string[],
 ): RouteMatch | null => {
-  const [first, second, third] = positional
+  const [first, second] = positional
   if (first === undefined) return null
-
-  if (second !== undefined && third !== undefined) {
-    const threeTokenPath = `${first} ${second} ${third}`
-    const threeTokenCmd = registry.get(threeTokenPath)
-    if (threeTokenCmd) {
-      return { command: threeTokenCmd, rest: positional.slice(3) }
-    }
-  }
 
   if (second !== undefined) {
     const twoTokenPath = `${first} ${second}`
