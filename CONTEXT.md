@@ -506,3 +506,7 @@ _Avoid_: agent verification, agent verify, shell verification
 **Notice**:
 A bell message stating a fact the operator should know (e.g. the Steward raised the concurrency limit) that has no backing entity, so it clears only when the operator acknowledges it — unlike an Alert, which clears solely by entity mutation.
 _Avoid_: alert, notification, toast, info-alert, banner
+
+**Verify gate**:
+An opt-in, per-verify-scope check the orchestrator runs during the verify phase, held in the gate registry and created by the operator at onboarding.
+_Avoid_: gate, check, verify step, verify_gate
