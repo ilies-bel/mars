@@ -218,6 +218,79 @@ describe('mergeSidebarEntries', () => {
     const { projections } = mergeSidebarEntries([BASE_ITEM, draftItem], [], 't-1', 'all')
     expect(projections.map((p) => p.item.id)).toEqual(['failed-task:t-1'])
   })
+
+  it('resolved alert thread is excluded from regular when query is empty', () => {
+    const resolved = makeThread({
+      id: 'th-resolved',
+      origin: 'alert',
+      alertItemId: 'failed-task:gone',
+      alertResolved: true,
+    })
+    const plain = makeThread({ id: 'th-plain', title: 'Plain talk' })
+    const { regular } = mergeSidebarEntries([], [resolved, plain], '', 'all')
+    expect(regular.map((t) => t.id)).toEqual(['th-plain'])
+  })
+
+  it('resolved alert thread appears in regular when query matches its title', () => {
+    const resolved = makeThread({
+      id: 'th-resolved',
+      title: 'Alert for deploy',
+      origin: 'alert',
+      alertItemId: 'failed-task:gone',
+      alertResolved: true,
+    })
+    const { regular } = mergeSidebarEntries([], [resolved], 'deploy', 'all')
+    expect(regular.map((t) => t.id)).toEqual(['th-resolved'])
+  })
+
+  it('resolved alert thread is always returned in resolvedAlertThreads regardless of query', () => {
+    const resolved = makeThread({
+      id: 'th-resolved',
+      title: 'Alert for deploy',
+      origin: 'alert',
+      alertItemId: 'failed-task:gone',
+      alertResolved: true,
+    })
+    const noQuery = mergeSidebarEntries([], [resolved], '', 'all')
+    expect(noQuery.resolvedAlertThreads.map((t) => t.id)).toEqual(['th-resolved'])
+
+    const withQuery = mergeSidebarEntries([], [resolved], 'deploy', 'all')
+    expect(withQuery.resolvedAlertThreads.map((t) => t.id)).toEqual(['th-resolved'])
+
+    const noMatch = mergeSidebarEntries([], [resolved], 'nomatch', 'all')
+    expect(noMatch.resolvedAlertThreads.map((t) => t.id)).toEqual(['th-resolved'])
+  })
+
+  it('unresolved alert thread that lost its backing row stays in regular', () => {
+    const orphan = makeThread({
+      id: 'th-orphan',
+      origin: 'alert',
+      alertItemId: 'failed-task:gone',
+      alertResolved: false,
+    })
+    const { regular, resolvedAlertThreads } = mergeSidebarEntries([], [orphan], '', 'all')
+    expect(regular.map((t) => t.id)).toEqual(['th-orphan'])
+    expect(resolvedAlertThreads).toHaveLength(0)
+  })
+
+  it('resolved alert thread merged with a live row does not appear in resolvedAlertThreads', () => {
+    // If somehow alertResolved is true but the item is still in the live queue,
+    // the thread is absorbed into the projection (not in resolvedAlertThreads).
+    const resolved = makeThread({
+      id: 'th-resolved-live',
+      origin: 'alert',
+      alertItemId: 'failed-task:t-1',
+      alertResolved: true,
+    })
+    const { projections, resolvedAlertThreads } = mergeSidebarEntries(
+      [BASE_ITEM],
+      [resolved],
+      '',
+      'all',
+    )
+    expect(projections[0]?.thread?.id).toBe('th-resolved-live')
+    expect(resolvedAlertThreads).toHaveLength(0)
+  })
 })
 
 // ---------------------------------------------------------------------------

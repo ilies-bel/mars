@@ -85,6 +85,13 @@ export interface SidebarMerge {
   projections: ProjectionEntry[]
   /** Remaining chat threads (server order preserved). */
   regular: ChatThread[]
+  /**
+   * Alert-origin threads whose backing queue row has been resolved.
+   * Hidden from the default `regular` list when no search query is active;
+   * surfaced under the History accordion and included in `regular` when a
+   * search query matches so search can find them.
+   */
+  resolvedAlertThreads: ChatThread[]
 }
 
 /**
@@ -94,8 +101,12 @@ export interface SidebarMerge {
  *   order, floating above regular chat threads.
  * - A chat thread with origin='alert' whose alertItemId matches a live row is
  *   absorbed into that row's projection entry (one entry, selection opens the
- *   conversation). Alert threads whose row has left the queue fall back to
- *   regular entries.
+ *   conversation).
+ * - Alert threads marked resolved (`alertResolved === true`) that have no live
+ *   backing row are removed from `regular` when no search query is active and
+ *   returned in the separate `resolvedAlertThreads` bucket so the sidebar can
+ *   render them under the History accordion. When a query IS active they also
+ *   appear in `regular` so search can surface them.
  * - Regular chat threads are filtered by title when a query is set, and are
  *   only shown under the 'all' kind filter — the Alerts/Drafts toggles scope
  *   the list to projection Threads.
@@ -128,16 +139,28 @@ export function mergeSidebarEntries(
   }))
 
   const q = query.trim().toLowerCase()
+
+  // Resolved alert threads are always surfaced under History.  When a search
+  // query is active they additionally appear in `regular` so users can find
+  // them by title.
+  const resolvedAlertThreads: ChatThread[] = threads.filter(
+    (t) => !mergedThreadIds.has(t.id) && t.origin === 'alert' && t.alertResolved === true,
+  )
+  const resolvedAlertIds = new Set(resolvedAlertThreads.map((t) => t.id))
+
   const regular =
     filter === 'all'
       ? threads.filter(
           (t) =>
             !mergedThreadIds.has(t.id) &&
+            // When no query: hide resolved alert threads from the main list.
+            // When a query is active, they fall through to the title filter.
+            (q !== '' || !resolvedAlertIds.has(t.id)) &&
             (!q || (t.title || 'New thread').toLowerCase().includes(q)),
         )
       : []
 
-  return { projections, regular }
+  return { projections, regular, resolvedAlertThreads }
 }
 
 /**

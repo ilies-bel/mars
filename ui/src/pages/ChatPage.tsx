@@ -1814,21 +1814,15 @@ export const ThreadSidebar = ({
 
   // Merge live queue rows and chat threads: projection Threads float above
   // regular threads; alert-origin threads backed by a live row merge into a
-  // single projection entry. Search / kind filter apply inside the merge.
-  const { projections, regular } = mergeSidebarEntries(
+  // single projection entry. Resolved alert threads are removed from `regular`
+  // when no search query is active and returned in `resolvedAlertThreads` for
+  // the History accordion. Search / kind filter apply inside the merge.
+  const { projections, regular, resolvedAlertThreads } = mergeSidebarEntries(
     queueItems,
     visibleThreads,
     query,
     kindFilter,
   )
-
-  // Alert-origin unresolved threads sort to the top of the regular list;
-  // everything else retains server order (updated_at desc from the backend).
-  const threads = [...regular].sort((a, b) => {
-    const aAlert = a.origin === 'alert' && !a.alertResolved ? 0 : 1
-    const bAlert = b.origin === 'alert' && !b.alertResolved ? 0 : 1
-    return aAlert - bAlert
-  })
 
   return (
     <aside className="flex w-64 flex-shrink-0 flex-col border-r border-iron/30 bg-bg">
@@ -1936,12 +1930,12 @@ export const ThreadSidebar = ({
         ) : queueItems.length === 0 && !query.trim() ? (
           <p className="px-2 py-1 font-mono text-[10px] text-iron/40">No items.</p>
         ) : null}
-        {threads.length === 0 && projections.length === 0 && (
+        {regular.length === 0 && projections.length === 0 && (
           <p className="px-2 py-3 font-mono text-[10px] text-iron/40">
             {query.trim() ? 'No matches' : 'No threads yet'}
           </p>
         )}
-        {threads.map((t) => (
+        {regular.map((t) => (
           <ThreadItem
             key={t.id}
             thread={t}
@@ -1962,55 +1956,89 @@ export const ThreadSidebar = ({
           onClick={() => setHistoryOpen((v) => !v)}
           className="flex w-full items-center justify-between border-t border-iron/20 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide text-muted hover:bg-iron/5"
         >
-          <span>{historyLabel(history.items.length, history.nextCursor !== null)}</span>
+          <span>{historyLabel(history.items.length + resolvedAlertThreads.length, history.nextCursor !== null)}</span>
           <span aria-hidden="true">{historyOpen ? '▾' : '▸'}</span>
         </button>
         {historyOpen && (
           <div id="section-body-history" className="max-h-56 overflow-y-auto">
-            {history.items.length === 0 ? (
+            {history.items.length === 0 && resolvedAlertThreads.length === 0 ? (
               <p className="px-3 py-2 font-mono text-[11px] text-muted">
                 No resolved items.
               </p>
             ) : (
-              history.items.map((item) => (
-                <div
-                  key={item.id}
-                  data-testid="history-row"
-                  role="button"
-                  tabIndex={0}
-                  aria-current={item.id === selectedQueueItemId ? 'true' : undefined}
-                  className={[
-                    'cursor-pointer px-3 py-2 transition-colors',
-                    item.id === selectedQueueItemId ? 'bg-iron/20' : 'hover:bg-iron/10',
-                  ].join(' ')}
-                  onClick={() => onSelectQueueItem?.(item.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      onSelectQueueItem?.(item.id)
-                    }
-                  }}
-                >
-                  <div className="flex items-baseline gap-2">
-                    {item.kind !== 'failed-task' && (
-                      <span className="shrink-0 font-mono text-[9px] uppercase text-muted">
-                        {kindBadgeLabel(item.kind)}
+              <>
+                {history.items.map((item) => (
+                  <div
+                    key={item.id}
+                    data-testid="history-row"
+                    role="button"
+                    tabIndex={0}
+                    aria-current={item.id === selectedQueueItemId ? 'true' : undefined}
+                    className={[
+                      'cursor-pointer px-3 py-2 transition-colors',
+                      item.id === selectedQueueItemId ? 'bg-iron/20' : 'hover:bg-iron/10',
+                    ].join(' ')}
+                    onClick={() => onSelectQueueItem?.(item.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onSelectQueueItem?.(item.id)
+                      }
+                    }}
+                  >
+                    <div className="flex items-baseline gap-2">
+                      {item.kind !== 'failed-task' && (
+                        <span className="shrink-0 font-mono text-[9px] uppercase text-muted">
+                          {kindBadgeLabel(item.kind)}
+                        </span>
+                      )}
+                      <span className="break-all font-mono text-[10px] text-muted">
+                        {item.entityId}
                       </span>
-                    )}
-                    <span className="break-all font-mono text-[10px] text-muted">
-                      {item.entityId}
-                    </span>
+                    </div>
+                    <div className="mt-0.5 break-words font-mono text-[11px] text-muted">
+                      {(item.resolution?.resolution ?? item.title) || '(no title)'}
+                    </div>
+                    <div className="mt-0.5 font-mono text-[10px] text-muted">
+                      {item.resolution
+                        ? relativeTime(item.resolution.resolvedAt)
+                        : relativeTime(item.at)}
+                    </div>
                   </div>
-                  <div className="mt-0.5 break-words font-mono text-[11px] text-muted">
-                    {(item.resolution?.resolution ?? item.title) || '(no title)'}
+                ))}
+                {resolvedAlertThreads.map((thread) => (
+                  <div
+                    key={thread.id}
+                    data-testid="history-thread-row"
+                    role="button"
+                    tabIndex={0}
+                    aria-current={thread.id === selectedId ? 'true' : undefined}
+                    className={[
+                      'cursor-pointer px-3 py-2 transition-colors',
+                      thread.id === selectedId ? 'bg-iron/20' : 'hover:bg-iron/10',
+                    ].join(' ')}
+                    onClick={() => onSelect(thread.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        onSelect(thread.id)
+                      }
+                    }}
+                  >
+                    <div className="flex items-baseline gap-2">
+                      <span className="shrink-0 font-mono text-[9px] uppercase text-muted">
+                        🔔 Alert
+                      </span>
+                    </div>
+                    <div className="mt-0.5 break-words font-mono text-[11px] text-muted">
+                      {thread.title || '(no title)'}
+                    </div>
+                    <div className="mt-0.5 font-mono text-[10px] text-muted">
+                      {relativeTime(thread.updatedAt)}
+                    </div>
                   </div>
-                  <div className="mt-0.5 font-mono text-[10px] text-muted">
-                    {item.resolution
-                      ? relativeTime(item.resolution.resolvedAt)
-                      : relativeTime(item.at)}
-                  </div>
-                </div>
-              ))
+                ))}
+              </>
             )}
             {history.nextCursor !== null ? (
               <button
