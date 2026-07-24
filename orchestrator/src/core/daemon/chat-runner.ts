@@ -158,12 +158,23 @@ const buildChatArgs = (
   if (sessionId) {
     return [
       'exec', 'resume', '--json', '--model', 'gpt-5.5',
-      '-c', 'model_reasoning_effort="high"', sessionId, content,
+      '-c', 'model_reasoning_effort="high"',
+      // Keep loopback reachable on resume turns too — see the network_access
+      // note on the first-turn branch below.
+      '-c', 'sandbox_workspace_write.network_access=true',
+      sessionId, content,
     ]
   }
   return [
     'exec', '--json', '--model', 'gpt-5.5',
     '-c', 'model_reasoning_effort="high"', '--sandbox', 'workspace-write',
+    // The chat agent's whole job is orchestration work — running `mars`
+    // commands and querying the daemon/Postgres over loopback. Codex's
+    // workspace-write sandbox denies network by default, which also blocks
+    // the mars CLI's Unix-socket IPC bind, leaving the agent unable to reach
+    // the DB at all (connect/listen EPERM on 127.0.0.1). Allow network so the
+    // agent can actually do its job; writes stay confined to the workspace.
+    '-c', 'sandbox_workspace_write.network_access=true',
     `${'<system_instructions>'}\n${systemPrompt}\n</system_instructions>\n\n${content}`,
   ]
 }
