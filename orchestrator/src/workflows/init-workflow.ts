@@ -32,6 +32,7 @@ import { writeSlimInit, writePerFolderClaudeMds, purgeStaleSupervisorMds, type V
 import { writeDetectionReport } from '../init/write-detection-report'
 import { readInitManifest, writeInitManifest } from '../init/init-manifest'
 import { writeRecipesSeed } from '../init/recipes-seed'
+import { seedVerifyGatesFromManifest } from '../init/seed-verify-gates.js'
 import { activatePlugin, realDeps, type ClaudePluginDeps } from '../commands/claude-plugin.js'
 import { ensureProjectRegistered } from '../registry/projects.js'
 
@@ -456,12 +457,13 @@ interface InitWorkflowOutput {
 
 // Linear steps, threaded by native control flow. The step NAMES
 // ('detect-stack', 'render-supervisors', 'write-slim-init', 'scaffold-claude',
-// 'scaffold-workflows', 'init-databases', 'seed-recipes', 'activate-plugin')
-// are load-bearing trace-view labels. Disk side effects (per-folder + root
-// CLAUDE.md, the .mars/workflows/*.js scaffold, the init manifest, and the
-// recipe override seeds) and DB side effects (schema + legacy import) are preserved
-// verbatim. Failures THROW; the engine records the step failed. 'activate-plugin'
-// is best-effort: it never throws regardless of outcome.
+// 'scaffold-workflows', 'init-databases', 'seed-verify-gates', 'seed-recipes',
+// 'activate-plugin') are load-bearing trace-view labels. Disk side effects
+// (per-folder + root CLAUDE.md, the .mars/workflows/*.js scaffold, the init
+// manifest, and the recipe override seeds) and DB side effects (schema + legacy
+// import + verify-gate seeding) are preserved verbatim. Failures THROW; the
+// engine records the step failed. 'activate-plugin' is best-effort: it never
+// throws regardless of outcome.
 export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   id: 'init',
   inputSchema: initInputSchema,
@@ -487,6 +489,18 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
     })
     const w2c = await ctx.step('scaffold-workflows', () => runScaffoldWorkflows(w2d))
     const w3 = await ctx.step('init-databases', () => runInitDatabases(w2c))
+    await ctx.step('seed-verify-gates', async () => {
+      const appCtx = resolveContext()
+      const reachable =
+        process.env.MARS_DB_BACKEND === 'pglite' ||
+        existsSync(resolve(appCtx.stateDir, 'pg.dsn'))
+      if (reachable) {
+        const counts = await seedVerifyGatesFromManifest(appCtx.supervisorsManifest)
+        process.stdout.write(
+          `[mars init] verify-gates seeded: ${counts.inserted} inserted, ${counts.skipped} skipped\n`,
+        )
+      }
+    })
     const written = await ctx.step('seed-recipes', () => runSeedRecipes(w3))
     await ctx.step('activate-plugin', runActivatePlugin)
     return { written }
