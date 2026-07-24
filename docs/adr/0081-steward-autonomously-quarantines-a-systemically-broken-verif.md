@@ -1,0 +1,3 @@
+# Steward autonomously quarantines a systemically-broken verify gate; re-writing it is operator-validated
+
+When the same verify gate fails with the same failure signature across N unrelated origins (a cross-task gate-health signal, distinct from a single task's per-task gate FAIL which stays the existing recovery arc), the Steward treats the gate as systemically broken. Per ADR-0077's reversibility test, it quarantines the gate autonomously — the gate stops blocking and its changed-path coverage degrades to CAN'T-VERIFY (ADR-0070: fingerprint-deduped alert, merge proceeds) — but the actual remedy (correcting the gate's command/config) is submitted as an operator-validated diff, never applied silently. Autonomous mitigation to stop the storm; operator-validated cure.
