@@ -39,6 +39,7 @@ import {
   retireEnrichment,
   setEnrichmentDraftStep,
   recordEnrichmentShadowRuns,
+  signatureFromEnrichStepName,
   type EnrichmentSideEffects,
   type ObserveFailureForEnrichmentInput,
 } from './gate-enrichment'
@@ -437,5 +438,256 @@ describe('gate-enrichment: family-(a) draft derivation', () => {
     expect(outcome.record.stepSpec!.args).toEqual(['tsc', '--noEmit'])
     expect(outcome.record.stepSpec!.dir).toBe('orchestrator')
     expect(outcome.record.stepSpec!.name).toBe(enrichStepName(ENCODABLE_SIG))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Focused unit tests for the individual public functions
+// ---------------------------------------------------------------------------
+
+describe('gate-enrichment: signatureFromEnrichStepName', () => {
+  it('round-trips with enrichStepName: strips the enrich: prefix', () => {
+    expect(signatureFromEnrichStepName(enrichStepName(ENCODABLE_SIG))).toBe(ENCODABLE_SIG)
+    expect(signatureFromEnrichStepName(enrichStepName(NON_ENCODABLE_SIG))).toBe(NON_ENCODABLE_SIG)
+  })
+
+  it('returns null for non-enrichment step names', () => {
+    expect(signatureFromEnrichStepName('typecheck')).toBeNull()
+    expect(signatureFromEnrichStepName('verify:test/test-assertion-error')).toBeNull()
+    expect(signatureFromEnrichStepName('')).toBeNull()
+  })
+})
+
+describe('gate-enrichment: observeFailureSignature (direct)', () => {
+  it('first observation of an encodable signature claims it as candidate with seenCount=1', async () => {
+    const db = await makeDb()
+    const outcome = await observeFailureSignature(db, {
+      signature: ENCODABLE_SIG,
+      originTaskId: 'task-direct-1',
+    })
+    expect(outcome.kind).toBe('claimed-candidate')
+    expect(outcome.record.status).toBe('candidate')
+    expect(outcome.record.seenCount).toBe(1)
+    expect(outcome.record.originTaskId).toBe('task-direct-1')
+    expect(outcome.record.stepSpec).toBeNull() // no draftStep provided
+    expect(outcome.record.encodableFamily).toBe('command')
+    expect(outcome.record.nonEncodableReason).toBeNull()
+  })
+
+  it('first observation of a non-encodable signature records it without a check', async () => {
+    const db = await makeDb()
+    const outcome = await observeFailureSignature(db, {
+      signature: NON_ENCODABLE_SIG,
+      originTaskId: 'task-direct-2',
+    })
+    expect(outcome.kind).toBe('recorded-non-encodable')
+    expect(outcome.record.status).toBe('non-encodable')
+    expect(outcome.record.stepSpec).toBeNull()
+    expect(outcome.record.nonEncodableReason).toBe('environmental')
+    expect(outcome.record.encodableFamily).toBeNull()
+  })
+
+  it('second observation returns seen and bumps seen_count, preserving the first origin', async () => {
+    const db = await makeDb()
+    await observeFailureSignature(db, { signature: ENCODABLE_SIG, originTaskId: 'first-owner' })
+    const second = await observeFailureSignature(db, {
+      signature: ENCODABLE_SIG,
+      originTaskId: 'late-observer',
+    })
+    expect(second.kind).toBe('seen')
+    expect(second.record.seenCount).toBe(2)
+    expect(second.record.status).toBe('candidate')
+    // Origin stays the first claimant
+    expect(second.record.originTaskId).toBe('first-owner')
+  })
+
+  it('stores a draftStep on the new candidate row when provided', async () => {
+    const db = await makeDb()
+    const outcome = await observeFailureSignature(db, {
+      signature: ENCODABLE_SIG,
+      originTaskId: 'task-with-draft',
+      draftStep: {
+        name: enrichStepName(ENCODABLE_SIG),
+        cmd: 'npx',
+        args: ['tsc', '--noEmit'],
+        required: true,
+        dir: 'orchestrator',
+      },
+    })
+    expect(outcome.kind).toBe('claimed-candidate')
+    expect(outcome.record.stepSpec).not.toBeNull()
+    expect(outcome.record.stepSpec!.cmd).toBe('npx')
+    expect(outcome.record.stepSpec!.args).toEqual(['tsc', '--noEmit'])
+    expect(outcome.record.stepSpec!.dir).toBe('orchestrator')
+  })
+})
+
+describe('gate-enrichment: appendEnrichmentScopes', () => {
+  it('empty registry: returns recipe scopes unchanged', async () => {
+    const db = await makeDb()
+    const recipeScopes = [
+      { scope: '.', steps: [{ name: 'typecheck', cmd: 'npx', args: ['tsc'], required: true }] },
+    ]
+    const merged = await appendEnrichmentScopes(db, recipeScopes)
+    expect(merged).toHaveLength(1)
+    expect(merged[0].steps).toHaveLength(1)
+    expect(merged[0].steps[0].name).toBe('typecheck')
+  })
+
+  it('shadow-only steps: appended with required=false so they cannot fail verify', async () => {
+    const db = await makeDb()
+    await observeFailureSignature(db, {
+      signature: ENCODABLE_SIG,
+      originTaskId: 't1',
+      draftStep: {
+        name: enrichStepName(ENCODABLE_SIG),
+        cmd: 'npx',
+        args: ['tsc'],
+        required: true,
+        dir: '.',
+      },
+    })
+    await approveEnrichment(db, ENCODABLE_SIG, 'tester')
+
+    const merged = await appendEnrichmentScopes(db, [])
+    expect(merged).toHaveLength(1)
+    expect(merged[0].steps[0].required).toBe(false)
+    expect(merged[0].steps[0].name).toBe(enrichStepName(ENCODABLE_SIG))
+  })
+
+  it('name collision with recipe scope: enrichment step is skipped (deduplication)', async () => {
+    const db = await makeDb()
+    await observeFailureSignature(db, {
+      signature: ENCODABLE_SIG,
+      originTaskId: 't1',
+      draftStep: {
+        name: enrichStepName(ENCODABLE_SIG),
+        cmd: 'true',
+        args: [],
+        required: true,
+        dir: '.',
+      },
+    })
+    await approveEnrichment(db, ENCODABLE_SIG, 'tester')
+
+    const recipeScopes = [
+      {
+        scope: '.',
+        steps: [{ name: enrichStepName(ENCODABLE_SIG), cmd: 'echo', args: ['already-there'], required: true }],
+      },
+    ]
+    const merged = await appendEnrichmentScopes(db, recipeScopes)
+    const allNames = merged.flatMap((s) => s.steps.map((st) => st.name))
+    // The enrichment step must appear exactly once (recipe's copy wins, no duplicate).
+    expect(allNames.filter((n) => n === enrichStepName(ENCODABLE_SIG))).toHaveLength(1)
+  })
+
+  it('mixed shadow+enforcing: shadow step required=false, enforcing step required=true', async () => {
+    const db = await makeDb()
+    const SIG_SHADOW = ENCODABLE_SIG
+    const SIG_ENFORCING = 'verify:test/test-assertion-error'
+
+    // SIG_SHADOW: approve → stays in shadow (burn-in not complete)
+    await observeFailureSignature(db, {
+      signature: SIG_SHADOW,
+      originTaskId: 't-shadow',
+      draftStep: {
+        name: enrichStepName(SIG_SHADOW),
+        cmd: 'npx',
+        args: ['tsc'],
+        required: true,
+        dir: '.',
+      },
+    })
+    await approveEnrichment(db, SIG_SHADOW, 'tester')
+
+    // SIG_ENFORCING: approve then complete burn-in to promote → enforcing
+    await observeFailureSignature(db, {
+      signature: SIG_ENFORCING,
+      originTaskId: 't-enforce',
+      draftStep: {
+        name: enrichStepName(SIG_ENFORCING),
+        cmd: 'true',
+        args: [],
+        required: true,
+        dir: '.',
+      },
+    })
+    await approveEnrichment(db, SIG_ENFORCING, 'tester')
+    for (let i = 0; i < SHADOW_BURN_IN_COUNT; i++) {
+      await recordEnrichmentShadowRuns(db, [
+        { name: enrichStepName(SIG_ENFORCING), passed: true, output: 'ok' },
+      ])
+    }
+
+    const merged = await appendEnrichmentScopes(db, [])
+    const allSteps = merged.flatMap((s) => s.steps)
+    const shadowStep = allSteps.find((s) => s.name === enrichStepName(SIG_SHADOW))
+    const enforcingStep = allSteps.find((s) => s.name === enrichStepName(SIG_ENFORCING))
+    expect(shadowStep).toBeDefined()
+    expect(shadowStep!.required).toBe(false)
+    expect(enforcingStep).toBeDefined()
+    expect(enforcingStep!.required).toBe(true)
+  })
+})
+
+describe('gate-enrichment: recordEnrichmentShadowRuns', () => {
+  it('non-enrichment step names are silently ignored (no error, no DB write)', async () => {
+    const db = await makeDb()
+    await expect(
+      recordEnrichmentShadowRuns(db, [
+        { name: 'typecheck', passed: false, output: 'TS2304 error' },
+        { name: 'test', passed: true, output: '' },
+      ]),
+    ).resolves.toBeUndefined()
+    // Nothing was written to the enrichment registry
+    expect(await listEnrichments(db)).toHaveLength(0)
+  })
+
+  it('a shadow enrichment step with non-empty output advances the burn-in counter', async () => {
+    const db = await makeDb()
+    await observeFailureSignature(db, {
+      signature: ENCODABLE_SIG,
+      originTaskId: 't1',
+      draftStep: {
+        name: enrichStepName(ENCODABLE_SIG),
+        cmd: 'echo',
+        args: ['hi'],
+        required: true,
+        dir: '.',
+      },
+    })
+    await approveEnrichment(db, ENCODABLE_SIG, 'tester')
+
+    await recordEnrichmentShadowRuns(db, [
+      { name: enrichStepName(ENCODABLE_SIG), passed: false, output: 'some error output' },
+    ])
+    const listed = await listEnrichments(db)
+    expect(listed[0].burnInParseCount).toBe(1)
+    // Still shadow: one parse is not enough to promote
+    expect(listed[0].status).toBe('shadow')
+  })
+
+  it('a shadow step with blank output (starvation) does not advance the burn-in counter', async () => {
+    const db = await makeDb()
+    await observeFailureSignature(db, {
+      signature: ENCODABLE_SIG,
+      originTaskId: 't1',
+      draftStep: {
+        name: enrichStepName(ENCODABLE_SIG),
+        cmd: 'sh',
+        args: ['-c', 'exit 1'],
+        required: true,
+        dir: '.',
+      },
+    })
+    await approveEnrichment(db, ENCODABLE_SIG, 'tester')
+
+    await recordEnrichmentShadowRuns(db, [
+      { name: enrichStepName(ENCODABLE_SIG), passed: false, output: '   ' },
+    ])
+    const listed = await listEnrichments(db)
+    expect(listed[0].burnInParseCount).toBe(0) // starvation — no clean parse
+    expect(listed[0].status).toBe('shadow')
   })
 })
