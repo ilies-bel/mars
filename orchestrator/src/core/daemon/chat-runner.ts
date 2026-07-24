@@ -149,8 +149,10 @@ export const parseEventToSegments = (event: unknown): ChatSegment[] => {
 /**
  * Build a Codex CLI invocation for a chat turn. The first turn stores the
  * session automatically; later turns use `codex exec resume` with that ID.
+ *
+ * Exported for unit testing.
  */
-const buildChatArgs = (
+export const buildChatArgs = (
   content: string,
   sessionId: string | null,
   systemPrompt: string,

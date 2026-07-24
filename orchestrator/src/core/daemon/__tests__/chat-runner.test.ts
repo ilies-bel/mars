@@ -18,7 +18,7 @@ import {
   vi,
   type MockInstance,
 } from 'vitest'
-import { parseEventToSegments, ChatRunner } from '../chat-runner'
+import { parseEventToSegments, ChatRunner, buildChatArgs } from '../chat-runner'
 import { ChatStreamHub } from '../chat-stream-hub'
 import type { UiMessageChunk } from '../ui-message-chunks'
 import type { SubprocessLine, RunSubprocessResult } from '../../lib/git/claude'
@@ -814,6 +814,32 @@ describe('ChatRunner state machine', () => {
     expect(prompt).toContain('[assistant] hi there')
     expect(prompt).toContain('how are you?')
     expect(vi.mocked(chatStore.markContextSeeded)).toHaveBeenCalledWith('t1')
+  })
+
+  // ── Network-access override tests ─────────────────────────────────────────
+  //
+  // The chat agent runs `mars` commands and queries the daemon/Postgres over
+  // loopback. Codex's workspace-write sandbox denies loopback by default, so
+  // we must pass `-c sandbox_workspace_write.network_access=true` on every
+  // turn — both the first exec and resume branches.
+
+  it('first-turn args include the network_access=true config override', () => {
+    const args = buildChatArgs('hello', null, 'SYS_PROMPT')
+    const idx = args.indexOf('-c')
+    // There must be at least one `-c` flag followed by the network_access override.
+    const networkAccessIdx = args.findIndex(
+      (a, i) => i > 0 && args[i - 1] === '-c' && a === 'sandbox_workspace_write.network_access=true',
+    )
+    expect(idx).toBeGreaterThan(-1)
+    expect(networkAccessIdx).toBeGreaterThan(-1)
+  })
+
+  it('resume-turn args include the network_access=true config override', () => {
+    const args = buildChatArgs('follow-up', 'sess-abc', 'SYS_PROMPT')
+    const networkAccessIdx = args.findIndex(
+      (a, i) => i > 0 && args[i - 1] === '-c' && a === 'sandbox_workspace_write.network_access=true',
+    )
+    expect(networkAccessIdx).toBeGreaterThan(-1)
   })
 
   // ── Attachment tests ───────────────────────────────────────────────────────
