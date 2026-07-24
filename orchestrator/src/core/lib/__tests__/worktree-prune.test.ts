@@ -49,35 +49,78 @@ const wt = (id = 'mars-test'): DiscoveredWorktree => ({
   taskId: id,
 })
 
-// Fixed timestamps for stale-rule tests — arbitrary values, never wall-clock.
-const FIXED_MIDNIGHT_MS = 1_000_000
-const BEFORE_MIDNIGHT_MS = FIXED_MIDNIGHT_MS - 1
-const AFTER_MIDNIGHT_MS = FIXED_MIDNIGHT_MS + 1
+/** Shared injectable deps that never hit real git. Tests override what they need. */
+const fakeDeps = {
+  repoRoot: '/fake-repo',
+  isBranchMergedIntoMain: async () => true,
+}
 
 describe('classifyWorktreeForPrune', () => {
-  it('removes done worktrees', async () => {
+  // ── Removal cases ──────────────────────────────────────────────────────────
+
+  it('(d) removes done worktrees whose branch is merged into main', async () => {
     const result = await classifyWorktreeForPrune(wt(), {
+      ...fakeDeps,
       getTask: async () => baseTask({ status: 'done' }),
+      isBranchMergedIntoMain: async () => true,
     })
     expect(result.verdict).toBe('remove-done')
   })
 
-  it('removes dropped worktrees', async () => {
+  it('(f) removes dropped worktrees', async () => {
     const result = await classifyWorktreeForPrune(wt(), {
+      ...fakeDeps,
       getTask: async () => baseTask({ status: 'dropped' }),
     })
     expect(result.verdict).toBe('remove-dropped')
   })
 
-  it('removes orphan worktrees (no task row)', async () => {
+  it('(e) removes orphan worktrees (no task row)', async () => {
     const result = await classifyWorktreeForPrune(wt(), {
+      ...fakeDeps,
       getTask: async () => null,
     })
     expect(result.verdict).toBe('remove-orphan')
   })
 
+  // ── Keep cases ─────────────────────────────────────────────────────────────
+
+  it('(a) keeps done worktrees whose branch is NOT merged into main (desync)', async () => {
+    const result = await classifyWorktreeForPrune(wt(), {
+      ...fakeDeps,
+      getTask: async () => baseTask({ status: 'done' }),
+      isBranchMergedIntoMain: async () => false,
+    })
+    expect(result.verdict).toBe('skip-desync')
+  })
+
+  it('(b) keeps awaiting-human worktrees regardless of directory age', async () => {
+    const result = await classifyWorktreeForPrune(wt(), {
+      ...fakeDeps,
+      getTask: async () => baseTask({ status: 'awaiting-human' }),
+    })
+    expect(result.verdict).toBe('skip-other')
+  })
+
+  it('(c) keeps blocked worktrees regardless of directory age', async () => {
+    const result = await classifyWorktreeForPrune(wt(), {
+      ...fakeDeps,
+      getTask: async () => baseTask({ status: 'blocked' }),
+    })
+    expect(result.verdict).toBe('skip-other')
+  })
+
+  it('(c) keeps draft worktrees regardless of directory age', async () => {
+    const result = await classifyWorktreeForPrune(wt(), {
+      ...fakeDeps,
+      getTask: async () => baseTask({ status: 'draft' }),
+    })
+    expect(result.verdict).toBe('skip-other')
+  })
+
   it('keeps failed worktrees', async () => {
     const result = await classifyWorktreeForPrune(wt(), {
+      ...fakeDeps,
       getTask: async () => baseTask({ status: 'failed' }),
     })
     expect(result.verdict).toBe('skip-failed')
@@ -93,29 +136,60 @@ describe('classifyWorktreeForPrune', () => {
   for (const status of inFlightStatuses) {
     it(`keeps in-flight worktrees (${status})`, async () => {
       const result = await classifyWorktreeForPrune(wt(), {
+        ...fakeDeps,
         getTask: async () => baseTask({ status }),
       })
       expect(result.verdict).toBe('skip-in-flight')
     })
   }
 
-  it('classifies a mixed set of directories spanning done, dropped, failed, in-flight, and orphan', async () => {
-    const tasksByDir: Record<string, Task | null> = {
-      'done-task': baseTask({ id: 'done-task', status: 'done' }),
-      'dropped-task': baseTask({ id: 'dropped-task', status: 'dropped' }),
-      'failed-task': baseTask({ id: 'failed-task', status: 'failed' }),
-      'queued-task': baseTask({ id: 'queued-task', status: 'queued' }),
-      'running-task': baseTask({ id: 'running-task', status: 'running' }),
-      'verifying-task': baseTask({ id: 'verifying-task', status: 'verifying' }),
-      'merging-task': baseTask({ id: 'merging-task', status: 'merging' }),
-      'orphan-task': null,
+  // ── desync: isBranchMergedIntoMain is called with the right branch/root ───
+
+  it('passes branch and repoRoot to isBranchMergedIntoMain', async () => {
+    const calls: Array<{ branch: string; repoRoot: string }> = []
+    await classifyWorktreeForPrune(wt('mars-abc'), {
+      getTask: async () => baseTask({ status: 'done' }),
+      repoRoot: '/my-repo',
+      isBranchMergedIntoMain: async (branch, repoRoot) => {
+        calls.push({ branch, repoRoot })
+        return true
+      },
+    })
+    expect(calls).toEqual([{ branch: 'task/mars-abc', repoRoot: '/my-repo' }])
+  })
+
+  // ── Mixed-set integration test ─────────────────────────────────────────────
+
+  it('classifies a mixed set spanning done-merged, done-unmerged, dropped, failed, in-flight, orphan, and live statuses', async () => {
+    type Entry = { status: TaskStatus | null; merged?: boolean }
+    const entries: Record<string, Entry> = {
+      'done-merged': { status: 'done', merged: true },
+      'done-unmerged': { status: 'done', merged: false },
+      'dropped-task': { status: 'dropped' },
+      'failed-task': { status: 'failed' },
+      'queued-task': { status: 'queued' },
+      'running-task': { status: 'running' },
+      'verifying-task': { status: 'verifying' },
+      'merging-task': { status: 'merging' },
+      'awaiting-human-task': { status: 'awaiting-human' },
+      'blocked-task': { status: 'blocked' },
+      'draft-task': { status: 'draft' },
+      'orphan-task': { status: null },
     }
 
-    const dirs = Object.keys(tasksByDir).map(wt)
+    const dirs = Object.keys(entries).map(wt)
     const results = await Promise.all(
       dirs.map((d) =>
         classifyWorktreeForPrune(d, {
-          getTask: async (id) => tasksByDir[id] ?? null,
+          getTask: async (id) => {
+            const entry = entries[id]
+            return entry?.status ? baseTask({ id, status: entry.status }) : null
+          },
+          repoRoot: '/fake-repo',
+          isBranchMergedIntoMain: async (branch) => {
+            const id = branch.replace('task/', '')
+            return entries[id]?.merged ?? true
+          },
         }),
       ),
     )
@@ -124,131 +198,26 @@ describe('classifyWorktreeForPrune', () => {
       results.map((r) => [r.worktree.taskId, r.verdict]),
     )
 
-    // Removed: done, dropped, orphan
-    expect(verdictById['done-task']).toBe('remove-done')
+    // Removed:
+    expect(verdictById['done-merged']).toBe('remove-done')
     expect(verdictById['dropped-task']).toBe('remove-dropped')
     expect(verdictById['orphan-task']).toBe('remove-orphan')
 
-    // Kept: failed
+    // Kept — desync (done but unmerged):
+    expect(verdictById['done-unmerged']).toBe('skip-desync')
+
+    // Kept — failed:
     expect(verdictById['failed-task']).toBe('skip-failed')
 
-    // Kept: all in-flight statuses
+    // Kept — all in-flight statuses:
     expect(verdictById['queued-task']).toBe('skip-in-flight')
     expect(verdictById['running-task']).toBe('skip-in-flight')
     expect(verdictById['verifying-task']).toBe('skip-in-flight')
     expect(verdictById['merging-task']).toBe('skip-in-flight')
-  })
 
-  // ── Stale-rule tests ────────────────────────────────────────────────────────
-
-  it('removes an other-status worktree whose directory mtime is before today midnight', async () => {
-    const result = await classifyWorktreeForPrune(wt(), {
-      getTask: async () => baseTask({ status: 'blocked' }),
-      todayMidnightMs: FIXED_MIDNIGHT_MS,
-      getDirMtimeMs: () => BEFORE_MIDNIGHT_MS,
-    })
-    expect(result.verdict).toBe('remove-stale')
-  })
-
-  it('keeps an other-status worktree whose directory mtime is on or after today midnight', async () => {
-    const result = await classifyWorktreeForPrune(wt(), {
-      getTask: async () => baseTask({ status: 'blocked' }),
-      todayMidnightMs: FIXED_MIDNIGHT_MS,
-      getDirMtimeMs: () => AFTER_MIDNIGHT_MS,
-    })
-    expect(result.verdict).toBe('skip-other')
-  })
-
-  it('keeps an in-flight worktree even when its directory mtime is before today midnight', async () => {
-    const result = await classifyWorktreeForPrune(wt(), {
-      getTask: async () => baseTask({ status: 'running' }),
-      todayMidnightMs: FIXED_MIDNIGHT_MS,
-      getDirMtimeMs: () => BEFORE_MIDNIGHT_MS,
-    })
-    expect(result.verdict).toBe('skip-in-flight')
-  })
-
-  it('keeps a failed worktree even when its directory mtime is before today midnight', async () => {
-    const result = await classifyWorktreeForPrune(wt(), {
-      getTask: async () => baseTask({ status: 'failed' }),
-      todayMidnightMs: FIXED_MIDNIGHT_MS,
-      getDirMtimeMs: () => BEFORE_MIDNIGHT_MS,
-    })
-    expect(result.verdict).toBe('skip-failed')
-  })
-
-  it('uses the injected todayMidnightMs as the cutoff (stale cutoff is caller-supplied)', async () => {
-    // mtime is exactly at midnight — not before it — so NOT stale
-    const atMidnight = await classifyWorktreeForPrune(wt('at'), {
-      getTask: async () => baseTask({ id: 'at', status: 'draft' }),
-      todayMidnightMs: FIXED_MIDNIGHT_MS,
-      getDirMtimeMs: () => FIXED_MIDNIGHT_MS,
-    })
-    expect(atMidnight.verdict).toBe('skip-other')
-
-    // mtime is 1ms before midnight — stale
-    const justBefore = await classifyWorktreeForPrune(wt('before'), {
-      getTask: async () => baseTask({ id: 'before', status: 'draft' }),
-      todayMidnightMs: FIXED_MIDNIGHT_MS,
-      getDirMtimeMs: () => FIXED_MIDNIGHT_MS - 1,
-    })
-    expect(justBefore.verdict).toBe('remove-stale')
-  })
-
-  it('stale rule: mixed set spanning in-flight, failed, prior-day, and today dirs', async () => {
-    type TaskEntry = { status: TaskStatus | null; mtime: number }
-    const entries: Record<string, TaskEntry> = {
-      // Prior-day dirs
-      'stale-blocked': { status: 'blocked', mtime: BEFORE_MIDNIGHT_MS },
-      'stale-draft': { status: 'draft', mtime: BEFORE_MIDNIGHT_MS },
-      // Prior-day dir but in-flight — protected
-      'inflight-old': { status: 'running', mtime: BEFORE_MIDNIGHT_MS },
-      // Prior-day dir but failed — protected
-      'failed-old': { status: 'failed', mtime: BEFORE_MIDNIGHT_MS },
-      // Terminal tasks already removed regardless of mtime
-      'done-old': { status: 'done', mtime: BEFORE_MIDNIGHT_MS },
-      'dropped-old': { status: 'dropped', mtime: BEFORE_MIDNIGHT_MS },
-      // Today's dirs — skip-other regardless
-      'blocked-today': { status: 'blocked', mtime: AFTER_MIDNIGHT_MS },
-      'inflight-today': { status: 'queued', mtime: AFTER_MIDNIGHT_MS },
-      'failed-today': { status: 'failed', mtime: AFTER_MIDNIGHT_MS },
-    }
-
-    const results = await Promise.all(
-      Object.entries(entries).map(([id, { status, mtime }]) =>
-        classifyWorktreeForPrune(wt(id), {
-          getTask: async () => (status ? baseTask({ id, status }) : null),
-          todayMidnightMs: FIXED_MIDNIGHT_MS,
-          getDirMtimeMs: () => mtime,
-        }),
-      ),
-    )
-
-    const verdictById = Object.fromEntries(
-      results.map((r) => [r.worktree.taskId, r.verdict]),
-    )
-
-    // Stale prior-day other-status → removed
-    expect(verdictById['stale-blocked']).toBe('remove-stale')
-    expect(verdictById['stale-draft']).toBe('remove-stale')
-
-    // Prior-day in-flight → protected
-    expect(verdictById['inflight-old']).toBe('skip-in-flight')
-
-    // Prior-day failed → protected
-    expect(verdictById['failed-old']).toBe('skip-failed')
-
-    // Terminal (already removed regardless of mtime)
-    expect(verdictById['done-old']).toBe('remove-done')
-    expect(verdictById['dropped-old']).toBe('remove-dropped')
-
-    // Today's dirs — other-status kept
-    expect(verdictById['blocked-today']).toBe('skip-other')
-
-    // Today's dirs — in-flight always kept
-    expect(verdictById['inflight-today']).toBe('skip-in-flight')
-
-    // Today's dirs — failed always kept
-    expect(verdictById['failed-today']).toBe('skip-failed')
+    // Kept — live non-terminal statuses (never removed regardless of age):
+    expect(verdictById['awaiting-human-task']).toBe('skip-other')
+    expect(verdictById['blocked-task']).toBe('skip-other')
+    expect(verdictById['draft-task']).toBe('skip-other')
   })
 })
