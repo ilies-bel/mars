@@ -2580,3 +2580,49 @@ export const awaitHuman = async (
   //    no double-notify, even after a daemon restart.
   throw new WorkflowTerminalError('await-human', AWAIT_HUMAN_MESSAGE(taskId, stepName), { stepName })
 }
+
+// ---------------------------------------------------------------------------
+// finalizeReport — read-only task completion (no merge, no verify)
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for {@link finalizeReport}. All fields are optional; the primitive
+ * resolves defaults from `ctx.input` exactly like the other four primitives.
+ */
+export interface FinalizeReportOpts {
+  /** Override the task id (defaults to `ctx.input.taskId ?? ctx.runId`). */
+  taskId?: string
+  /** Override the resolved worktree ref (useful in tests). */
+  worktree?: WorktreeRef
+}
+
+/**
+ * Finalise a read-only / report task without merging.
+ *
+ * This primitive:
+ *   1. Removes the task's worktree directory and deletes the `task/<id>` branch.
+ *   2. Transitions the task row to `status='done'`, `failedPhase=null`.
+ *   3. Returns `{ taskId, success: true, message }`.
+ *
+ * It NEVER touches the integration branch, NEVER runs verify, and NEVER
+ * invokes vcs-supervisor. Use it as the last step of a report-style workflow.
+ */
+export const finalizeReport = async (
+  ctx: MarsCtx,
+  opts: FinalizeReportOpts = {},
+): Promise<{ taskId: string; success: true; message: string }> => {
+  const taskId = resolveTaskId(ctx, opts.taskId)
+  const store: TaskStore = ctx.services.store
+  const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
+  const trace = await resolveTrace(ctx, taskId)
+
+  await removeWorktree(
+    { path: worktree.path, branch: worktree.branch },
+    true,
+    false,
+    buildPhaseCtx(trace, taskId, 'merge'),
+  )
+  await updateTask(taskId, { status: 'done', failedPhase: null }, store)
+
+  return { taskId, success: true, message: 'report complete' }
+}

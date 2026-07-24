@@ -50,6 +50,7 @@ export {
   verify,
   merge,
   awaitHuman,
+  finalizeReport,
 } from './primitives'
 export { behaviourVerify } from './primitives/behaviour-verify'
 export type {
@@ -59,5 +60,6 @@ export type {
   VerifyOpts,
   MergeOpts,
   AwaitHumanOpts,
+  FinalizeReportOpts,
 } from './primitives'
 export type { BehaviourVerifyOpts } from './primitives/behaviour-verify'
