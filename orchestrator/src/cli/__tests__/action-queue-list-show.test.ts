@@ -179,6 +179,66 @@ describe('action-queue list', () => {
     expect(r.out).toHaveLength(0)
   })
 
+  it('--kind filters rows to the specified kinds and omits others', async () => {
+    const rows: ActionQueueRow[] = [
+      makeRow({ id: 'aq-f1', kind: 'failed-task', title: 'Failed 1' }),
+      makeRow({ id: 'aq-s1', kind: 'stale-worktree', title: 'Stale 1' }),
+      makeRow({ id: 'aq-d1', kind: 'draft-proposal', title: 'Draft 1' }),
+      makeRow({ id: 'aq-f2', kind: 'failed-task', title: 'Failed 2' }),
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => rows,
+    }))
+    writeDaemonPort(repo, FAKE_PORT)
+    const opts = await loadOpts(repo)
+
+    const r = await runCommandInProcess(['action-queue', 'list', 'open', '--kind', 'failed-task,stale-worktree'], opts)
+
+    expect(r.code).toBe(0)
+    const combined = r.out.join('\n')
+    expect(combined).toContain('aq-f1\t')
+    expect(combined).toContain('aq-s1\t')
+    expect(combined).toContain('aq-f2\t')
+    expect(combined).not.toContain('aq-d1')
+  })
+
+  it('--kind with a value that matches nothing prints the empty-queue line', async () => {
+    const rows: ActionQueueRow[] = [
+      makeRow({ id: 'aq-d1', kind: 'draft-proposal', title: 'Draft 1' }),
+      makeRow({ id: 'aq-d2', kind: 'draft-proposal', title: 'Draft 2' }),
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => rows,
+    }))
+    writeDaemonPort(repo, FAKE_PORT)
+    const opts = await loadOpts(repo)
+
+    const r = await runCommandInProcess(['action-queue', 'list', 'open', '--kind', 'failed-task'], opts)
+
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toContain('action queue empty')
+  })
+
+  it('--kind composes with open|all filter (passes filter to daemon, then filters client-side)', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        makeRow({ id: 'aq-f1', kind: 'failed-task', title: 'Failed 1' }),
+      ],
+    })
+    vi.stubGlobal('fetch', mockFetch)
+    writeDaemonPort(repo, FAKE_PORT)
+    const opts = await loadOpts(repo)
+
+    const r = await runCommandInProcess(['action-queue', 'list', 'all', '--kind', 'failed-task'], opts)
+
+    expect(r.code).toBe(0)
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('filter=all'))
+    expect(r.out.join('\n')).toContain('aq-f1')
+  })
+
   it('--lean prints summary line and first 3 rows', async () => {
     const rows: ActionQueueRow[] = [
       makeRow({ id: 'aq-1', kind: 'failed-task', title: 'T1' }),

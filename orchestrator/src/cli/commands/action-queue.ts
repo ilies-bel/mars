@@ -84,17 +84,21 @@ export const renderActionQueueDetail = (deps: CommandDeps, row: ActionQueueRow):
 
 const actionQueueList: Command = {
   path: 'action-queue list',
-  summary: 'list action queue items [open|all] [--lean]',
-  usage: 'usage: mars action-queue list [open|all] [--lean]',
+  summary: 'list action queue items [open|all] [--lean] [--kind <csv>]',
+  usage: 'usage: mars action-queue list [open|all] [--lean] [--kind <csv>]',
   run: async (args, deps) => {
     const lean = args.positional.includes('--lean')
     const rest = args.positional.filter((a) => a !== '--lean')
     const filter = rest[0] ?? 'open'
     const allowed = new Set(['open', 'all'])
     if (!allowed.has(filter)) {
-      deps.err('usage: mars action-queue list [open|all] [--lean]')
+      deps.err('usage: mars action-queue list [open|all] [--lean] [--kind <csv>]')
       return { code: 2 }
     }
+    const kindRaw = args.flags['--kind']
+    const kindSet: Set<string> = kindRaw
+      ? new Set(kindRaw.split(',').map((k) => k.trim()).filter(Boolean))
+      : new Set()
     const port = await readDaemonPort(deps.ctx.stateDir)
     if (port === null) {
       deps.err(NO_DAEMON_MSG)
@@ -106,6 +110,9 @@ const actionQueueList: Command = {
     } catch {
       deps.err(NO_DAEMON_MSG)
       return { code: 1 }
+    }
+    if (kindSet.size > 0) {
+      rows = rows.filter((row) => kindSet.has(row.kind))
     }
     if (rows.length === 0) {
       deps.out('action queue empty')
@@ -136,7 +143,7 @@ const actionQueueList: Command = {
 const actionQueueDefault: Command = {
   path: 'action-queue',
   summary: 'list open action queue items (alias for `list open`)',
-  usage: 'usage: mars action-queue [list [open|all]] [--lean] | ...',
+  usage: 'usage: mars action-queue [list [open|all]] [--lean] [--kind <csv>] | ...',
   run: (args, deps) => actionQueueList.run(args, deps),
 }
 

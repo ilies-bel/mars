@@ -37,23 +37,19 @@ entity id, or an entity-id prefix):
 
 ## 1b — Argument is a filter (`open`, `all`)
 
-Run `mars action-queue list <filter>` and present the result per Step 2.
+Run `mars action-queue list <filter> --kind failed-task,stale-worktree` and present the result per Step 2.
 Default when no argument is given is `open`.
 
 ## 1c — No argument: show open alerts
 
-Run `mars action-queue list open` and present the result per Step 2.
+Run `mars action-queue list open --kind failed-task,stale-worktree` and present the result per Step 2.
 
 # Step 2 — Present the list
 
 Run the listing command from 1b/1c. The CLI returns tab-separated lines with
-five columns: `id  state  priority  kind  title`.
+four columns: `id  priority  kind  title`.
 
-**Filter immediately:** keep only rows whose `kind` column (column 4) is
-exactly `failed` or `stale-worktree`. Discard every other row, including
-`draft-proposal` and any other kind that is not one of those two.
-
-If the filtered list is **empty**, print exactly this line and stop:
+If the list is **empty**, print exactly this line and stop:
 
 > `No alerts. Run /mars:proposals for draft proposals, or /mars:action-queue for everything.`
 
