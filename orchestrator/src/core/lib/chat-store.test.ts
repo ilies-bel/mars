@@ -3,11 +3,13 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { computeAttentionStatus } from './chat-store'
 
 interface ChatStoreModule {
   initChatStore: typeof import('./chat-store').initChatStore
   createThread: typeof import('./chat-store').createThread
   listThreads: typeof import('./chat-store').listThreads
+  listEvaporatedThreads: typeof import('./chat-store').listEvaporatedThreads
   getThread: typeof import('./chat-store').getThread
   appendMessage: typeof import('./chat-store').appendMessage
   updateThreadTitle: typeof import('./chat-store').updateThreadTitle
@@ -16,7 +18,11 @@ interface ChatStoreModule {
   setThreadSession: typeof import('./chat-store').setThreadSession
   markContextSeeded: typeof import('./chat-store').markContextSeeded
   markThreadEvaporated: typeof import('./chat-store').markThreadEvaporated
+  resetThreadSession: typeof import('./chat-store').resetThreadSession
+  evaporateUnengagedThreads: typeof import('./chat-store').evaporateUnengagedThreads
   toMessageApiView: typeof import('./chat-store').toMessageApiView
+  toThreadApiView: typeof import('./chat-store').toThreadApiView
+  computeAttentionStatus: typeof import('./chat-store').computeAttentionStatus
   setMessageFeedback: typeof import('./chat-store').setMessageFeedback
   clearMessageFeedback: typeof import('./chat-store').clearMessageFeedback
   startThreadFromAlert: typeof import('./chat-store').startThreadFromAlert
@@ -479,5 +485,141 @@ describe('toMessageApiView — segment shape contract', () => {
     const msg = await m.appendMessage(thread.id, 'assistant', 'hello')
     const cleared = await m.clearMessageFeedback(msg.id)
     expect(cleared).toBe(false)
+  })
+})
+
+// ── computeAttentionStatus (pure, no DB) ──────────────────────────────────────
+
+describe('computeAttentionStatus', () => {
+  it('returns generating when status is running', () => {
+    expect(computeAttentionStatus('running', 'user')).toBe('generating')
+    expect(computeAttentionStatus('running', 'assistant')).toBe('generating')
+    expect(computeAttentionStatus('running', null)).toBe('generating')
+  })
+
+  it('returns generating when status is throttled', () => {
+    expect(computeAttentionStatus('throttled', null)).toBe('generating')
+  })
+
+  it('returns ready when idle and last message is from assistant', () => {
+    expect(computeAttentionStatus('idle', 'assistant')).toBe('ready')
+  })
+
+  it('returns drafting when idle and last message is from user', () => {
+    expect(computeAttentionStatus('idle', 'user')).toBe('drafting')
+  })
+
+  it('returns idle when idle and no messages', () => {
+    expect(computeAttentionStatus('idle', null)).toBe('idle')
+    expect(computeAttentionStatus('idle', undefined)).toBe('idle')
+  })
+})
+
+// ── listThreads — evaporated filter + attentionStatus ────────────────────────
+
+describe('listThreads — evaporated filter + attentionStatus', () => {
+  let repo2: string
+  beforeEach(() => { repo2 = setupRepo() })
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo2, { recursive: true, force: true })
+  })
+
+  it('excludes evaporated threads from listThreads', async () => {
+    const m = await loadModule(repo2)
+    const active = await m.createThread('active')
+    const dead = await m.createThread('dead')
+    await m.markThreadEvaporated(dead.id)
+    const threads = await m.listThreads()
+    expect(threads.map((t) => t.id)).toContain(active.id)
+    expect(threads.map((t) => t.id)).not.toContain(dead.id)
+  })
+
+  it('includes evaporated threads in listEvaporatedThreads', async () => {
+    const m = await loadModule(repo2)
+    const dead = await m.createThread('dead')
+    await m.markThreadEvaporated(dead.id)
+    const history = await m.listEvaporatedThreads()
+    expect(history.map((t) => t.id)).toContain(dead.id)
+  })
+
+  it('toThreadApiView includes attentionStatus computed from lastMessageRole', async () => {
+    const m = await loadModule(repo2)
+    const thread = await m.createThread('t')
+    await m.appendMessage(thread.id, 'assistant', 'hi')
+    const threads = await m.listThreads()
+    const t = threads.find((x) => x.id === thread.id)
+    expect(t).toBeDefined()
+    expect(t!.last_message_role).toBe('assistant')
+  })
+
+  it('listThreads includes last_message_role as user after a user message', async () => {
+    const m = await loadModule(repo2)
+    const thread = await m.createThread('t')
+    await m.appendMessage(thread.id, 'user', 'hello')
+    const threads = await m.listThreads()
+    const t = threads.find((x) => x.id === thread.id)
+    expect(t).toBeDefined()
+    expect(t!.last_message_role).toBe('user')
+  })
+})
+
+// ── resetThreadSession ────────────────────────────────────────────────────────
+
+describe('resetThreadSession', () => {
+  let repo3: string
+  beforeEach(() => { repo3 = setupRepo() })
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo3, { recursive: true, force: true })
+  })
+
+  it('clears session_id and context_seeded', async () => {
+    const m = await loadModule(repo3)
+    const thread = await m.createThread()
+    await m.setThreadSession(thread.id, 'sess-1')
+    await m.markContextSeeded(thread.id)
+    await m.resetThreadSession(thread.id)
+    const result = await m.getThread(thread.id)
+    expect(result!.thread.session_id).toBeNull()
+    expect(result!.thread.context_seeded).toBe(false)
+  })
+})
+
+// ── evaporateUnengagedThreads ─────────────────────────────────────────────────
+
+describe('evaporateUnengagedThreads', () => {
+  let repo4: string
+  beforeEach(() => { repo4 = setupRepo() })
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo4, { recursive: true, force: true })
+  })
+
+  it('evaporates idle threads with no user messages', async () => {
+    const m = await loadModule(repo4)
+    const unused = await m.createThread('unused')
+    const count = await m.evaporateUnengagedThreads()
+    expect(count).toBe(1)
+    const result = await m.getThread(unused.id)
+    expect(result!.thread.evaporated_at).not.toBeNull()
+  })
+
+  it('does NOT evaporate threads that have a user message', async () => {
+    const m = await loadModule(repo4)
+    const engaged = await m.createThread('engaged')
+    await m.appendMessage(engaged.id, 'user', 'hello')
+    const count = await m.evaporateUnengagedThreads()
+    expect(count).toBe(0)
+    const result = await m.getThread(engaged.id)
+    expect(result!.thread.evaporated_at).toBeNull()
+  })
+
+  it('does NOT evaporate threads that are already evaporated', async () => {
+    const m = await loadModule(repo4)
+    const already = await m.createThread('already')
+    await m.markThreadEvaporated(already.id)
+    const count = await m.evaporateUnengagedThreads()
+    expect(count).toBe(0)
   })
 })

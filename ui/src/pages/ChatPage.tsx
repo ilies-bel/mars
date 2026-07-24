@@ -2440,6 +2440,7 @@ export const ChatPage = () => {
         collapsed={railCollapsed}
         onToggleCollapse={() => setRailCollapsed((v) => !v)}
       />
+      </div>
     </div>
   )
 }
