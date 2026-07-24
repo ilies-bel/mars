@@ -52,6 +52,11 @@ export class SqliteStore implements WorkflowStore {
    *   ephemeral in-process database.
    */
   constructor(path: string) {
+    if (typeof path !== 'string' || path.length === 0) {
+      throw new TypeError(
+        `SqliteStore: path must be a non-empty string, received ${path === '' ? "''" : String(path)}`,
+      );
+    }
     const { DatabaseSync } = loadSqlite();
     this.db = new DatabaseSync(path);
     this.db.exec(`

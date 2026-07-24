@@ -10,4 +10,11 @@ import { openDb, type DbClient, type DbTx } from '../core/lib/db.js'
 export type Client = DbClient
 export type Transaction = DbTx
 
-export const createClient = ({ url }: { url: string }): Client => openDb(url)
+export const createClient = ({ url }: { url: string }): Client => {
+  if (typeof url !== 'string' || url.length === 0) {
+    throw new TypeError(
+      `createClient: url must be a non-empty string, received ${url === '' ? "''" : String(url)}`,
+    )
+  }
+  return openDb(url)
+}
