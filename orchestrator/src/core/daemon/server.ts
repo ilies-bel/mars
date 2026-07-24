@@ -187,6 +187,54 @@ export interface DaemonOptions {
 }
 
 /**
+ * A pending implement candidate captured during the first phase of
+ * {@link pickNextImplement}. Exported so the pure comparator can be unit-tested
+ * without mounting a live daemon.
+ */
+export interface PickCandidate {
+  id: string
+  priority: number
+  createdAt: string
+  /** Arc root id (task.originId). Null is treated as "not started". */
+  originId: string | null
+}
+
+/**
+ * Pure comparator used by {@link pickNextImplement} — exported for unit tests.
+ *
+ * Selection order (earlier rule wins):
+ * 1. Higher `priority` wins.
+ * 2. At equal priority, a candidate whose `originId` is in `startedOriginIds`
+ *    beats one that is not (prefer in-flight arcs over fresh ones).
+ * 3. At equal priority and equal started-flag, older `createdAt` wins (FIFO).
+ *
+ * A null `originId` is never considered started.
+ */
+export function selectBestCandidate(
+  candidates: PickCandidate[],
+  startedOriginIds: Set<string>,
+): PickCandidate | null {
+  let best: PickCandidate | null = null
+  for (const c of candidates) {
+    if (best === null) {
+      best = c
+      continue
+    }
+    // Rule 1: higher priority always wins.
+    if (c.priority > best.priority) { best = c; continue }
+    if (c.priority < best.priority) continue
+    // Rule 2: at equal priority, started-origin beats non-started.
+    const cStarted = c.originId !== null && startedOriginIds.has(c.originId)
+    const bStarted = best.originId !== null && startedOriginIds.has(best.originId)
+    if (cStarted && !bStarted) { best = c; continue }
+    if (!cStarted && bStarted) continue
+    // Rule 3: older createdAt wins (FIFO fallback).
+    if (c.createdAt < best.createdAt) best = c
+  }
+  return best
+}
+
+/**
  * Adapt the daemon's `log(line)` sink into the pino-shaped `Logger` the
  * @mars/workflow engine expects. The engine calls `info/warn/error` with
  * either `(msg)` or `(fields, msg)` and chains `child(bindings)`; we fold the
@@ -1391,11 +1439,13 @@ export const startDaemon = async (
     }
   }
 
-  // Pick the highest-priority pending task. Ties broken by oldest createdAt
-  // so equal-priority work stays FIFO. Returns null if no pending row resolves
+  // Pick the highest-priority pending task. Ties broken first by whether the
+  // task's arc has already started (a sibling in running/verifying/merging/done),
+  // then by oldest createdAt (FIFO). Returns null if no pending row resolves
   // to a real task (drained while we looked).
   const pickNextImplement = async (): Promise<string | null> => {
-    let best: { id: string; priority: number; createdAt: string } | null = null
+    // Phase 1: collect all eligible candidates.
+    const candidates: PickCandidate[] = []
     for (const id of tracker.drainPending('implement')) {
       // Skip ids already claimed by an in-flight (or about-to-be-in-flight)
       // dispatch — without this the same id can be picked by parallel
@@ -1403,15 +1453,38 @@ export const startDaemon = async (
       if (tracker.isClaimed(id, 'implement') || tracker.isInFlight(id)) continue
       const t = await getTask(id)
       if (!t) continue
-      if (
-        best === null ||
-        t.priority > best.priority ||
-        (t.priority === best.priority && t.createdAt < best.createdAt)
-      ) {
-        best = { id, priority: t.priority, createdAt: t.createdAt }
-      }
+      candidates.push({ id, priority: t.priority, createdAt: t.createdAt, originId: t.originId ?? null })
     }
-    return best?.id ?? null
+    if (candidates.length === 0) return null
+
+    // Phase 2: determine which origins already have started siblings.
+    // An origin is STARTED iff any task with origin_id = <that id> has a
+    // status in ('running','verifying','merging','done').
+    // Guard the empty-candidate case so we never send an empty IN ().
+    const distinctOriginIds = [
+      ...new Set(
+        candidates
+          .map((c) => c.originId)
+          .filter((o): o is string => o !== null),
+      ),
+    ]
+    let startedOriginIds = new Set<string>()
+    if (distinctOriginIds.length > 0) {
+      const placeholders = distinctOriginIds.map(() => '?').join(', ')
+      const { rows: startedRows } = await getCompositionRootClient().execute({
+        sql: `SELECT DISTINCT origin_id
+                FROM tasks
+               WHERE origin_id IN (${placeholders})
+                 AND status IN ('running', 'verifying', 'merging', 'done')`,
+        args: distinctOriginIds,
+      })
+      startedOriginIds = new Set(
+        startedRows.map((r) => r['origin_id'] as string),
+      )
+    }
+
+    // Phase 3: pick the best candidate by the three-level comparator.
+    return selectBestCandidate(candidates, startedOriginIds)?.id ?? null
   }
 
   // Drain pulls from the pending sets as semaphore slots free. Bus handlers
