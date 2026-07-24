@@ -75,7 +75,7 @@ export const taskSchema = z.object({
   error: z.string().nullable(),
   dropReason: z.string().nullable(),
   retryCount: z.number(),
-  blockerTaskId: z.string().nullable(),
+  blockerTaskId: z.string().nullable().optional(),
   /**
    * Machine-readable failure signature stamped at failure time (e.g.
    * `'daemon-killed'`). The server already computes and serialises this; the
@@ -149,7 +149,7 @@ const staleWorktreeSchema = z.object({
   prompt: z.string(),
   error: z.string().nullable(),
   branch: z.string().nullable(),
-  blockerTaskId: z.string().nullable(),
+  blockerTaskId: z.string().nullable().optional(),
 })
 
 export const tasksResponseSchema = z.object({

@@ -148,4 +148,26 @@ describe('relativeTime – footer elapsed format', () => {
     const iso = new Date(NOW - 24 * 60 * 60 * 1_000).toISOString()
     expect(relativeTime(iso, NOW)).toBe('1d ago')
   })
+
+  it('returns "1w ago" for a timestamp 7 days in the past', () => {
+    const iso = new Date(NOW - 7 * DAY).toISOString()
+    expect(relativeTime(iso, NOW)).toBe('1w ago')
+  })
+
+  it('returns "2mo ago" for a timestamp 60 days in the past', () => {
+    const iso = new Date(NOW - 60 * DAY).toISOString()
+    expect(relativeTime(iso, NOW)).toBe('2mo ago')
+  })
+
+  it('returns "1y ago" for a timestamp 365 days in the past', () => {
+    const iso = new Date(NOW - YEAR).toISOString()
+    expect(relativeTime(iso, NOW)).toBe('1y ago')
+  })
+
+  it('returns "56y ago" instead of "20658d ago" for a very old timestamp', () => {
+    const iso = new Date(NOW - 20_658 * DAY).toISOString()
+    const result = relativeTime(iso, NOW)
+    expect(result).not.toMatch(/\d{4,}d ago/)
+    expect(result).toMatch(/y ago$/)
+  })
 })

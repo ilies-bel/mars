@@ -7,8 +7,7 @@ export const relativeTime = (iso: string, now = Date.now()): string => {
   if (m < 60) return `${m}m ago`
   const h = Math.round(m / 60)
   if (h < 24) return `${h}h ago`
-  const d = Math.round(h / 24)
-  return `${d}d ago`
+  return `${formatRelativeAge(now - t)} ago`
 }
 
 const MS_PER_MIN = 60_000
