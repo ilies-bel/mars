@@ -499,6 +499,7 @@ describe('GET /view/action-queue via HTTP server', () => {
       purgeTask: async () => {},
       pruneWorktree: async () => {},
   dismissProposal: async () => {},
+  promoteProposal: async () => {},
   validateTask: async () => {},
   rejectTask: async () => {},
       investigateWorktree: async () => ({ explanation: '' }),

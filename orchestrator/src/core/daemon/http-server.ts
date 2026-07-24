@@ -322,6 +322,14 @@ export interface HttpServerDeps {
    */
   dismissProposal: (id: string) => Promise<void>
   /**
+   * Promote a fully-shaped draft proposal: flip its status from `draft` →
+   * `queued` and enqueue it as a task. Throws when the proposal is not fully
+   * shaped (missing title/problem/solution/user-stories) or not in `draft`
+   * status — let the error propagate to the existing `sendError` path so the
+   * UI surfaces it.
+   */
+  promoteProposal: (id: string) => Promise<void>
+  /**
    * Validate a task parked at the preview gate (status 'awaiting-validation'):
    * kill its dev server, mark it validated, and re-queue so the merge
    * continuation runs. Throws when the task is not awaiting validation.
@@ -511,6 +519,7 @@ type EntityOp =
   | 'purge'
   | 'prune-worktree'
   | 'dismiss'
+  | 'promote'
   | 'validate'
   | 'reject'
 
@@ -636,6 +645,7 @@ export const startHttpServer = async (
     purge: deps.purgeTask,
     'prune-worktree': deps.pruneWorktree,
     dismiss: deps.dismissProposal,
+    promote: deps.promoteProposal,
     validate: deps.validateTask,
     reject: deps.rejectTask,
   }

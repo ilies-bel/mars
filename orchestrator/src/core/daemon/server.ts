@@ -3489,6 +3489,9 @@ export const startDaemon = async (
       const { rejectProposal } = await import('../proposals')
       await rejectProposal(id)
     },
+    promoteProposal: async (id) => {
+      await promoteProposal(id)
+    },
     validateTask: async (id) => {
       const { coreValidateTask } = await import('./validate-task')
       await coreValidateTask(id)
