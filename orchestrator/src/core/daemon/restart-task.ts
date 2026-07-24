@@ -253,6 +253,12 @@ export const coreRestartTask = async (
     failedPhase: null,
     failureSignature: null,
     failureReasonCode: null,
+    // When remerge set workflow to 'remerge' for routing purposes, a
+    // subsequent restart must clear it so the next dispatch runs the full
+    // pipeline (setup → code → verify → merge) rather than the remerge
+    // shortcut. User-set custom workflow names (non-'remerge') are preserved
+    // so live/custom tasks continue to use their intended pipeline.
+    ...(task.workflow === 'remerge' ? { workflow: null } : {}),
   })
   return { status: resultStatus }
 }

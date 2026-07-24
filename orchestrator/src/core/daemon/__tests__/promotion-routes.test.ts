@@ -51,6 +51,7 @@ const makeDeps = (
   appServicesOverrides: Partial<AppServices> = {},
 ): HttpServerDeps => ({
   restartTask: async () => {},
+  remergeTask: async () => {},
   unblockTask: async () => {},
   purgeTask: async () => {},
   pruneWorktree: async () => {},

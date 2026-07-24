@@ -180,6 +180,29 @@ const makeContinueRestart = (verb: 'continue' | 'restart'): Command => ({
   },
 })
 
+const remerge: Command = {
+  path: 'remerge',
+  summary: 're-verify and merge an existing branch without re-running the coder',
+  usage: 'usage: mars remerge <id> [<id> ...]',
+  run: async (args, deps) => {
+    const ids = args.positional.filter((a) => !a.startsWith('--'))
+    if (ids.length === 0) {
+      deps.err('usage: mars remerge <id> [<id> ...]')
+      return { code: 2 }
+    }
+    for (const id of ids) {
+      try {
+        await deps.daemon.sendRequest({ op: 'remerge', id })
+      } catch (err) {
+        deps.err(`${id}: ${errorMessage(err)}`)
+        return { code: 1 }
+      }
+      deps.out(`queued ${id} to re-verify and merge the existing branch (no re-code)`)
+    }
+    return { code: 0 }
+  },
+}
+
 const purge: Command = {
   path: 'purge',
   summary: 'purge tasks (worktree + branch + row)',
@@ -774,6 +797,7 @@ export const lifecycleCommands: readonly Command[] = [
   makeSetPlan('technical'),
   makeContinueRestart('continue'),
   makeContinueRestart('restart'),
+  remerge,
   purge,
   unblock,
   recover,

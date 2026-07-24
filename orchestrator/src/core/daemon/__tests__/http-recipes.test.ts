@@ -32,6 +32,7 @@ const makeDeps = (
   recipeCatalogOverride?: Awaited<ReturnType<typeof loadRecipeCatalog>>,
 ): HttpServerDeps => ({
   restartTask: async () => {},
+  remergeTask: async () => {},
   unblockTask: async () => {},
   purgeTask: async () => {},
   pruneWorktree: async () => {},

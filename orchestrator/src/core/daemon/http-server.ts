@@ -308,6 +308,12 @@ export interface StaleWorktreeAlert {
 export interface HttpServerDeps {
   /** Tear down + re-queue a task from setup (the `restart`/`requeue` verb). */
   restartTask: (id: string) => Promise<void>
+  /**
+   * Re-verify and merge a task's existing branch without re-running the coder.
+   * The branch must exist and be ahead of the integration branch; otherwise
+   * throws {@link RemergeTaskError}.
+   */
+  remergeTask: (id: string) => Promise<void>
   /** Phantom-recover a blocked task: clear edges and flip it to failed. */
   unblockTask: (id: string) => Promise<void>
   /** Drop a task and its worktree permanently. */
@@ -515,6 +521,7 @@ const sendError = (
  */
 type EntityOp =
   | 'restart'
+  | 'remerge'
   | 'unblock'
   | 'purge'
   | 'prune-worktree'
@@ -641,6 +648,7 @@ export const startHttpServer = async (
 ): Promise<HttpServerHandle> => {
   const entityHandlers: Record<EntityOp, (id: string) => Promise<void>> = {
     restart: deps.restartTask,
+    remerge: deps.remergeTask,
     unblock: deps.unblockTask,
     purge: deps.purgeTask,
     'prune-worktree': deps.pruneWorktree,

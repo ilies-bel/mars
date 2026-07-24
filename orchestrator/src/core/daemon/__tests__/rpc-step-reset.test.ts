@@ -56,6 +56,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): DaemonDeps => ({
   handleUpdate: notImpl('handleUpdate') as DaemonDeps['handleUpdate'],
   handleContinue: notImpl('handleContinue') as DaemonDeps['handleContinue'],
   handleRestart: notImpl('handleRestart') as DaemonDeps['handleRestart'],
+  handleRemerge: notImpl('handleRemerge') as DaemonDeps['handleRemerge'],
   handlePurge: notImpl('handlePurge') as DaemonDeps['handlePurge'],
   handleArcPurge: notImpl('handleArcPurge') as DaemonDeps['handleArcPurge'],
   handleDrop: notImpl('handleDrop') as DaemonDeps['handleDrop'],

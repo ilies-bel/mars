@@ -932,6 +932,7 @@ export const updateTask = async (
       | 'currentStepGuide'
       | 'activityDetail'
       | 'retryCount'
+      | 'workflow'
     > & {
       /**
        * Typed catalog code for the failure (e.g. `verify:main-dirty`).
@@ -1152,6 +1153,10 @@ export const updateTask = async (
   if (patch.recoveryPayload !== undefined) {
     fields.push('recovery_payload = ?')
     args.push(patch.recoveryPayload)
+  }
+  if (patch.workflow !== undefined) {
+    fields.push('workflow = ?')
+    args.push(patch.workflow)
   }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())

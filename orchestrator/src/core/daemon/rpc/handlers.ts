@@ -80,6 +80,11 @@ const restartHandler = handler('restart', async (req, deps) => {
   return { ok: true, data: result }
 })
 
+const remergeHandler = handler('remerge', async (req, deps) => {
+  const result = await deps.handleRemerge(req.id)
+  return { ok: true, data: result }
+})
+
 const purgeHandler = handler('purge', async (req, deps) => {
   await deps.handlePurge(req.id, req.force ?? false)
   return { ok: true }
@@ -515,6 +520,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   updateHandler,
   continueHandler,
   restartHandler,
+  remergeHandler,
   purgeHandler,
   arcPurgeHandler,
   dropHandler,

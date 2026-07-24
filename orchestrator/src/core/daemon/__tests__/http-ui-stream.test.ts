@@ -25,6 +25,7 @@ beforeAll(async () => {
 
 const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartTask: async () => {},
+  remergeTask: async () => {},
   unblockTask: async () => {},
   purgeTask: async () => {},
   pruneWorktree: async () => {},

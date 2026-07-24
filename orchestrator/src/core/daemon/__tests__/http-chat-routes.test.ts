@@ -117,6 +117,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+  remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
       pruneWorktree: async () => {},
@@ -177,6 +178,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+  remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
       pruneWorktree: async () => {},
@@ -238,6 +240,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+  remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
       pruneWorktree: async () => {},
@@ -279,6 +282,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+  remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
       pruneWorktree: async () => {},
@@ -327,6 +331,7 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+  remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
       pruneWorktree: async () => {},
@@ -385,6 +390,7 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+  remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
       pruneWorktree: async () => {},
@@ -467,6 +473,7 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
     server = await startHttpServer({
       chatRunner,
       restartTask: async () => {},
+  remergeTask: async () => {},
       unblockTask: async () => {},
       purgeTask: async () => {},
       pruneWorktree: async () => {},
@@ -516,6 +523,7 @@ const startFeedbackServer = async () => {
   return startHttpServer({
     chatRunner: new ChatRunner(),
     restartTask: async () => {},
+  remergeTask: async () => {},
     unblockTask: async () => {},
     snoozeItem: async () => {},
     purgeTask: async () => {},

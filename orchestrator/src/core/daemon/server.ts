@@ -2302,6 +2302,21 @@ export const startDaemon = async (
     return result
   }
 
+  // 'mars remerge <id>' re-enters the pipeline at verify on the task's
+  // EXISTING branch, skipping setup + code. The branch must exist and be
+  // ahead of the integration branch. See daemon/remerge-task.ts.
+  const handleRemerge = async (id: string): Promise<{ status: 'queued' }> => {
+    const { coreRemergeTask } = await import('./remerge-task')
+    const { createQueueWorkflowStore } = await import('../../workflows/queue-workflow-store')
+    const result = await coreRemergeTask(
+      id,
+      new Set(['failed', 'done', 'vega-reconciling', 'merging', 'verifying']),
+      createQueueWorkflowStore(),
+    )
+    bus.emit('task.queued', { taskId: id })
+    return result
+  }
+
   // 'mars continue <id>' resumes a failed task on its existing branch+
   // worktree, skipping into the failed phase. When the failure occurred
   // upstream of worktree creation (pre-setup), it degrades silently to
@@ -3235,6 +3250,7 @@ export const startDaemon = async (
     handleUpdate,
     handleContinue,
     handleRestart,
+    handleRemerge,
     handlePurge,
     handleArcPurge,
     handleDrop,
@@ -3315,6 +3331,7 @@ export const startDaemon = async (
   // registry (ADR-0042).
   const { startHttpServer } = await import('./http-server')
   const { coreRestartTask: coreRestart } = await import('./restart-task')
+  const { coreRemergeTask: coreRemerge } = await import('./remerge-task')
   const { createQueueWorkflowStore: makeWorkflowStore } = await import('../../workflows/queue-workflow-store')
   // Same lifecycle as the Failure-kind registry: built-in seed under
   // `src/core/recipes/built-in/*.md` merged with `.mars/recipes/*.md`
@@ -3509,6 +3526,10 @@ export const startDaemon = async (
       if (result.status === 'queued') {
         bus.emit('task.queued', { taskId: id })
       }
+    },
+    remergeTask: async (id) => {
+      await coreRemerge(id, new Set(['failed', 'done', 'vega-reconciling', 'merging', 'verifying']), makeWorkflowStore())
+      bus.emit('task.queued', { taskId: id })
     },
     unblockTask: async (id) => {
       await handleUnblock(id)

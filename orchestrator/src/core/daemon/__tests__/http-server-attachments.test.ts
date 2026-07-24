@@ -99,6 +99,7 @@ const makeDeps = (
   overrides: Partial<HttpServerDeps> = {},
 ): HttpServerDeps => ({
   restartTask: async () => {},
+  remergeTask: async () => {},
   unblockTask: async () => {},
   snoozeItem: async () => {},
   purgeTask: async () => {},
