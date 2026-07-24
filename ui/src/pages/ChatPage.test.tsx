@@ -23,7 +23,9 @@ import {
   HeroSuggestions,
   AttachmentDisplay,
   ThinkingIndicator,
+  LiveAssistantBubble,
 } from './ChatPage'
+import { emptyLiveBuffer, applyLiveEvent } from '@/shared/chatBuffer'
 import { pickTopAlert, resolveMediaKind, fileMediaKind } from './chatPageUtils'
 import { chatMessageToUIMessage } from '@/shared/chatMessageMapping'
 import { chatThreadDetailSchema } from '@/shared/schemas'
@@ -735,5 +737,98 @@ describe('ThinkingIndicator – visibility condition', () => {
   it('hides indicator when thread is idle and no client send pending', () => {
     const html = renderConditional(showThinking('ready', false))
     expect(html).not.toContain('Thinking')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// LiveAssistantBubble — tool-call status synchronization regression
+//
+// Guards that the live stream preserves the full AI-SDK tool state set instead
+// of collapsing all in-flight calls to "Pending" (input-streaming).
+// ---------------------------------------------------------------------------
+
+describe('LiveAssistantBubble — tool state synchronization', () => {
+  const renderBubble = (buf: ReturnType<typeof emptyLiveBuffer>) =>
+    renderToStaticMarkup(createElement(LiveAssistantBubble, { buffer: buf }))
+
+  it('renders a freshly-started tool call as Pending (input-streaming)', () => {
+    const buf = applyLiveEvent(emptyLiveBuffer(), {
+      type: 'tool_use', toolUseId: 'id1', toolName: 'Bash', input: { cmd: 'ls' },
+    })
+    const html = renderBubble(buf)
+    expect(html).toContain('Bash')
+    expect(html).toContain('Pending')
+    expect(html).not.toContain('Running')
+    expect(html).not.toContain('Completed')
+  })
+
+  it('renders a tool with available input as Running (input-available)', () => {
+    const buf = [
+      { type: 'tool_use' as const, toolUseId: 'id1', toolName: 'Bash', input: { cmd: 'ls' } },
+      { type: 'tool_input_available' as const, toolUseId: 'id1' },
+    ].reduce(applyLiveEvent, emptyLiveBuffer())
+    const html = renderBubble(buf)
+    expect(html).toContain('Bash')
+    expect(html).toContain('Running')
+    expect(html).not.toContain('Pending')
+    expect(html).not.toContain('Completed')
+  })
+
+  it('renders a completed tool as Completed (output-available)', () => {
+    const buf = [
+      { type: 'tool_use' as const, toolUseId: 'id1', toolName: 'Read', input: {} },
+      { type: 'tool_result' as const, toolUseId: 'id1', output: 'file contents' },
+    ].reduce(applyLiveEvent, emptyLiveBuffer())
+    const html = renderBubble(buf)
+    expect(html).toContain('Completed')
+    expect(html).not.toContain('Pending')
+    expect(html).not.toContain('Running')
+  })
+
+  it('renders a failed tool as Error (output-error)', () => {
+    const buf = [
+      { type: 'tool_use' as const, toolUseId: 'id1', toolName: 'Bash', input: { cmd: 'bad' } },
+      { type: 'tool_result' as const, toolUseId: 'id1', errorText: 'Permission denied' },
+    ].reduce(applyLiveEvent, emptyLiveBuffer())
+    const html = renderBubble(buf)
+    expect(html).toContain('Error')
+    expect(html).not.toContain('Pending')
+  })
+
+  it('shows distinct states for two parallel tools in the same group', () => {
+    const buf = [
+      { type: 'tool_use' as const, toolUseId: 'a', toolName: 'Read', input: {} },
+      { type: 'tool_use' as const, toolUseId: 'b', toolName: 'Bash', input: {} },
+      // Only advance tool 'a' to input-available; 'b' stays input-streaming
+      { type: 'tool_input_available' as const, toolUseId: 'a' },
+    ].reduce(applyLiveEvent, emptyLiveBuffer())
+    const html = renderBubble(buf)
+    // 'a' is Running, 'b' is still Pending — both labels should appear
+    expect(html).toContain('Running')
+    expect(html).toContain('Pending')
+  })
+
+  it('live and persisted paths agree on status labels for output-available tools', () => {
+    // Live path: build via chatBuffer reducer
+    const liveBuffer = [
+      { type: 'tool_use' as const, toolUseId: 'tu', toolName: 'Bash', input: { cmd: 'echo hi' } },
+      { type: 'tool_result' as const, toolUseId: 'tu', output: 'hi' },
+    ].reduce(applyLiveEvent, emptyLiveBuffer())
+    const liveHtml = renderBubble(liveBuffer)
+
+    // Persisted path: chatMessageToUIMessage maps tool_result to output-available
+    const persistedMsg = chatMessageToUIMessage(makeMsg([
+      { type: 'tool_use', id: 'tu', toolName: 'Bash', input: { cmd: 'echo hi' }, status: 'complete', isError: false },
+      { type: 'tool_result', tool_use_id: 'tu', content: 'hi', isError: false },
+    ]))
+    const persistedHtml = renderToStaticMarkup(
+      createElement(MessageView, { message: persistedMsg, onDiscuss: () => {} }),
+    )
+
+    // Both should show "Completed" — neither should show "Pending"
+    expect(liveHtml).toContain('Completed')
+    expect(persistedHtml).toContain('Completed')
+    expect(liveHtml).not.toContain('Pending')
+    expect(persistedHtml).not.toContain('Pending')
   })
 })

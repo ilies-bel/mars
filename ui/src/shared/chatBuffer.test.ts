@@ -115,12 +115,12 @@ describe('applyLiveEvent — thinking', () => {
 // ---------------------------------------------------------------------------
 
 describe('applyLiveEvent — tool_use', () => {
-  it('creates a ToolGroupSegment with a pending ToolEntry', () => {
+  it('creates a ToolGroupSegment with an input-streaming ToolEntry', () => {
     const buf = applyAll([{ type: 'tool_use', toolUseId: 'id1', toolName: 'Bash', input: { cmd: 'ls' } }])
     expect(buf.segments).toHaveLength(1)
     expect(buf.segments[0]).toMatchObject({
       type: 'tool_group',
-      tools: [{ toolUseId: 'id1', toolName: 'Bash', state: 'pending', input: { cmd: 'ls' } }],
+      tools: [{ toolUseId: 'id1', toolName: 'Bash', state: 'input-streaming', input: { cmd: 'ls' } }],
     })
   })
 
@@ -152,23 +152,23 @@ describe('applyLiveEvent — tool_use', () => {
 // ---------------------------------------------------------------------------
 
 describe('applyLiveEvent — tool_result', () => {
-  it('attaches a result to the matching tool by toolUseId', () => {
+  it('attaches a result to the matching tool by toolUseId (output-available)', () => {
     const buf = applyAll([
       { type: 'tool_use', toolUseId: 'id1', toolName: 'Bash', input: {} },
       { type: 'tool_result', toolUseId: 'id1', output: 'file.ts' },
     ])
     const group = buf.segments[0] as ToolGroupSegment
-    expect(group.tools[0]!.state).toBe('done')
+    expect(group.tools[0]!.state).toBe('output-available')
     expect(group.tools[0]!.output).toBe('file.ts')
   })
 
-  it('marks the tool as error when errorText is provided', () => {
+  it('marks the tool as output-error when errorText is provided', () => {
     const buf = applyAll([
       { type: 'tool_use', toolUseId: 'id1', toolName: 'Bash', input: {} },
       { type: 'tool_result', toolUseId: 'id1', errorText: 'Permission denied' },
     ])
     const group = buf.segments[0] as ToolGroupSegment
-    expect(group.tools[0]!.state).toBe('error')
+    expect(group.tools[0]!.state).toBe('output-error')
     expect(group.tools[0]!.errorText).toBe('Permission denied')
   })
 
@@ -189,6 +189,50 @@ describe('applyLiveEvent — tool_result', () => {
       { type: 'tool_result', toolUseId: 'unknown', output: 'x' },
     ])
     expect(buf.segments).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// tool_input_available events — input-streaming → input-available transition
+// ---------------------------------------------------------------------------
+
+describe('applyLiveEvent — tool_input_available', () => {
+  it('transitions a tool from input-streaming to input-available', () => {
+    const buf = applyAll([
+      { type: 'tool_use', toolUseId: 'id1', toolName: 'Bash', input: { cmd: 'ls' } },
+      { type: 'tool_input_available', toolUseId: 'id1' },
+    ])
+    const group = buf.segments[0] as ToolGroupSegment
+    expect(group.tools[0]!.state).toBe('input-available')
+  })
+
+  it('only advances the matching tool; other tools in the group remain unchanged', () => {
+    const buf = applyAll([
+      { type: 'tool_use', toolUseId: 'a', toolName: 'Read', input: {} },
+      { type: 'tool_use', toolUseId: 'b', toolName: 'Bash', input: {} },
+      { type: 'tool_input_available', toolUseId: 'a' },
+    ])
+    const group = buf.segments[0] as ToolGroupSegment
+    expect(group.tools[0]!.state).toBe('input-available')
+    expect(group.tools[1]!.state).toBe('input-streaming')
+  })
+
+  it('leaves an unmatched tool_input_available as a no-op (no crash)', () => {
+    const buf = applyAll([
+      { type: 'tool_input_available', toolUseId: 'unknown' },
+    ])
+    expect(buf.segments).toHaveLength(0)
+  })
+
+  it('full lifecycle: input-streaming → input-available → output-available', () => {
+    const buf = applyAll([
+      { type: 'tool_use', toolUseId: 'id1', toolName: 'Bash', input: { cmd: 'pwd' } },
+      { type: 'tool_input_available', toolUseId: 'id1' },
+      { type: 'tool_result', toolUseId: 'id1', output: '/home' },
+    ])
+    const group = buf.segments[0] as ToolGroupSegment
+    expect(group.tools[0]!.state).toBe('output-available')
+    expect(group.tools[0]!.output).toBe('/home')
   })
 })
 

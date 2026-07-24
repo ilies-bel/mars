@@ -28,8 +28,15 @@ export type ToolEntry = {
   toolUseId: string
   toolName: string
   input: unknown
-  /** pending → waiting for result; done → output available; error → call failed */
-  state: 'pending' | 'done' | 'error'
+  /**
+   * Mirrors the AI SDK ToolUIPart state so live and persisted rendering
+   * use the same status labels:
+   *   input-streaming  — tool call started, input is being streamed
+   *   input-available  — input complete, tool is executing
+   *   output-available — tool completed successfully
+   *   output-error     — tool call failed
+   */
+  state: 'input-streaming' | 'input-available' | 'output-available' | 'output-error'
   output?: unknown
   errorText?: string
 }
@@ -60,6 +67,7 @@ export type LiveEvent =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
   | { type: 'tool_use'; toolUseId: string; toolName: string; input: unknown }
+  | { type: 'tool_input_available'; toolUseId: string }
   | { type: 'tool_result'; toolUseId: string; output?: unknown; errorText?: string }
   | { type: 'done' }
   | { type: 'error'; message: string }
@@ -82,9 +90,12 @@ export const emptyLiveBuffer = (): LiveBuffer => ({ segments: [], done: false })
  *   a new ThinkingSegment.
  * - `tool_use`: extend the trailing ToolGroupSegment when the last segment is
  *   a tool group (parallel / consecutive calls share one group); otherwise
- *   push a new ToolGroupSegment.
+ *   push a new ToolGroupSegment. New tool enters `input-streaming` state.
+ * - `tool_input_available`: walk backwards to find the matching tool and
+ *   advance its state from `input-streaming` to `input-available`.
  * - `tool_result`: walk backwards to find the last ToolGroupSegment that
- *   contains a matching toolUseId and update that entry in place.
+ *   contains a matching toolUseId and update that entry to `output-available`
+ *   or `output-error` in place.
  */
 export function applyLiveEvent(buf: LiveBuffer, event: LiveEvent): LiveBuffer {
   const segs = buf.segments as LiveSegment[]
@@ -116,7 +127,7 @@ export function applyLiveEvent(buf: LiveBuffer, event: LiveEvent): LiveBuffer {
       toolUseId: event.toolUseId,
       toolName: event.toolName,
       input: event.input,
-      state: 'pending',
+      state: 'input-streaming',
     }
     const last = segs[segs.length - 1]
     if (last?.type === 'tool_group') {
@@ -131,6 +142,25 @@ export function applyLiveEvent(buf: LiveBuffer, event: LiveEvent): LiveBuffer {
     return { ...buf, segments: [...segs, { type: 'tool_group', tools: [newTool] }] }
   }
 
+  if (event.type === 'tool_input_available') {
+    for (let i = segs.length - 1; i >= 0; i--) {
+      const seg = segs[i]
+      if (seg?.type !== 'tool_group') continue
+      const toolIdx = seg.tools.findIndex((t) => t.toolUseId === event.toolUseId)
+      if (toolIdx === -1) continue
+      const updated: ToolEntry = { ...seg.tools[toolIdx]!, state: 'input-available' }
+      return {
+        ...buf,
+        segments: [
+          ...segs.slice(0, i),
+          { type: 'tool_group', tools: seg.tools.map((t, j) => (j === toolIdx ? updated : t)) },
+          ...segs.slice(i + 1),
+        ],
+      }
+    }
+    return buf
+  }
+
   if (event.type === 'tool_result') {
     for (let i = segs.length - 1; i >= 0; i--) {
       const seg = segs[i]
@@ -138,8 +168,8 @@ export function applyLiveEvent(buf: LiveBuffer, event: LiveEvent): LiveBuffer {
       const toolIdx = seg.tools.findIndex((t) => t.toolUseId === event.toolUseId)
       if (toolIdx === -1) continue
       const updated: ToolEntry = event.errorText != null
-        ? { ...seg.tools[toolIdx]!, state: 'error', errorText: event.errorText }
-        : { ...seg.tools[toolIdx]!, state: 'done', output: event.output }
+        ? { ...seg.tools[toolIdx]!, state: 'output-error', errorText: event.errorText }
+        : { ...seg.tools[toolIdx]!, state: 'output-available', output: event.output }
       return {
         ...buf,
         segments: [

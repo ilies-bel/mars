@@ -906,13 +906,9 @@ export const LiveAssistantBubble = ({ buffer }: { buffer: LiveBuffer }): ReactNo
                   toolUseId: t.toolUseId,
                   toolName: t.toolName,
                   input: t.input,
-                  toolState: (
-                    t.state === 'done' ? 'output-available'
-                    : t.state === 'error' ? 'output-error'
-                    : 'input-streaming'
-                  ) as ToolUIPart['state'],
-                  output: t.state === 'done' ? <ToolResultBox value={t.output} /> : undefined,
-                  errorText: t.state === 'error' ? t.errorText : undefined,
+                  toolState: t.state as ToolUIPart['state'],
+                  output: t.state === 'output-available' ? <ToolResultBox value={t.output} /> : undefined,
+                  errorText: t.state === 'output-error' ? t.errorText : undefined,
                 }))}
               />
             )
@@ -1064,7 +1060,9 @@ const ChatConversation = ({
           toolName,
           input: part.input,
         })
-        if (part.state === 'output-available') {
+        if (part.state === 'input-available') {
+          b = applyLiveEvent(b, { type: 'tool_input_available', toolUseId: part.toolCallId })
+        } else if (part.state === 'output-available') {
           b = applyLiveEvent(b, { type: 'tool_result', toolUseId: part.toolCallId, output: part.output })
         } else if (part.state === 'output-error') {
           b = applyLiveEvent(b, { type: 'tool_result', toolUseId: part.toolCallId, errorText: part.errorText })
