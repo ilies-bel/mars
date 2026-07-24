@@ -610,6 +610,27 @@ export const mergeBranch = async ({
       // replays the already-committed (including any Vega-reconciled) work onto
       // the new integration tip cleanly. Vega is NOT re-invoked unless a
       // genuinely NEW conflict appears in this iteration's rebase.
+      // Guard: abort immediately when the worktree is dirty BEFORE the rebase
+      // starts. A dirty worktree (uncommitted tracked changes or untracked
+      // files) causes `git rebase` to exit non-zero without creating a
+      // rebase-in-progress state on disk, which would otherwise fall through
+      // to the "rebase-no-in-progress-state" path and surface a misleading
+      // error. By detecting this condition upfront, we return a specific
+      // sentinel that routes to the `rebase-dirty-worktree` failure signature
+      // and a restart-first action menu rather than a code-fix recovery.
+      const statusResult = await gprobe(['status', '--porcelain'], worktreePath)
+      if (statusResult.stdout.trim().length > 0) {
+        return {
+          merged: false,
+          conflictResolved: false,
+          aborted: true,
+          output: `worktree dirty before rebase: cannot start rebase with uncommitted/untracked files\n${statusResult.stdout}${output}`,
+          supervisorConversation,
+          vegaSessionId: null,
+          retriesAttempted,
+        }
+      }
+
       lastStep = 'rebase'
       firePhase('rebase')
       const rebaseResult = await gprobe(['rebase', integrationBranch], worktreePath)

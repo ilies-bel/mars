@@ -249,6 +249,18 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /rebase produced no in-progress state/i,
   },
   {
+    // merge:vcs-supervisor-aborted/rebase-dirty-worktree fires when the
+    // pre-rebase hygiene check in mergeBranch detects that the task worktree
+    // has uncommitted or untracked files BEFORE git rebase runs. mergeBranch
+    // returns aborted:true with this sentinel as its first line so the failure
+    // routes to the named slug rather than /unclassified or
+    // /rebase-no-in-progress-state. The correct resolution is to restart the
+    // task (re-provisions the worktree from scratch), not to spawn a code-fix
+    // recovery.
+    errorClass: 'rebase-dirty-worktree',
+    match: /worktree dirty before rebase/i,
+  },
+  {
     // merge:crashed when git cannot acquire the index lock because another
     // git process is running (or crashed and left a stale .git/index.lock).
     // The distinguishing signal is on the second line of the error, not the

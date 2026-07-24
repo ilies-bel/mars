@@ -386,6 +386,33 @@ describe('matchFull rules are checked against full output', () => {
     ).toBe('merge:vcs-supervisor-aborted/rebase-no-in-progress-state')
   })
 
+  it('computeFailureSignature produces merge:vcs-supervisor-aborted/rebase-dirty-worktree for the pre-rebase dirty-worktree sentinel', () => {
+    // mergeBranch pre-rebase check: git status --porcelain returned non-empty
+    // output, so the dirty-worktree guard fires before git rebase runs and
+    // returns aborted:true with this specific first-line. The sentinel string
+    // is distinct from the post-rebase "rebase produced no in-progress state"
+    // output so the two failure classes stay separate.
+    const errorOutput = [
+      'worktree dirty before rebase: cannot start rebase with uncommitted/untracked files',
+      ' M src/core/lib/git/merge.ts',
+      '?? scratch.ts',
+    ].join('\n')
+    expect(
+      computeFailureSignature('merge:vcs-supervisor-aborted', errorOutput),
+    ).toBe('merge:vcs-supervisor-aborted/rebase-dirty-worktree')
+  })
+
+  it('classifyError returns rebase-dirty-worktree only when the sentinel string is present', () => {
+    // Confirm the rule is first-line anchored: a generic "dirty" string without
+    // the sentinel does not trigger the new class.
+    expect(
+      classifyError('worktree dirty before rebase: cannot start rebase with uncommitted/untracked files'),
+    ).toBe('rebase-dirty-worktree')
+    expect(
+      classifyError('generic dirty worktree message'),
+    ).not.toBe('rebase-dirty-worktree')
+  })
+
 })
 
 describe('errorClassRules registry', () => {

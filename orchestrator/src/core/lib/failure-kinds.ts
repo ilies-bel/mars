@@ -467,6 +467,17 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
       {
+        signature: 'merge:vcs-supervisor-aborted/rebase-dirty-worktree',
+        staticEncodable: notEncodable('orchestration'),
+        warmTitle: 'The task worktree had uncommitted changes when the rebase started',
+        verboseReason:
+          'The merge step was aborted because the task worktree contained uncommitted or untracked files that prevented the rebase from starting. This is a worktree hygiene condition, not a code defect; restarting re-provisions the worktree from scratch.',
+        actions: [
+          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      },
+      {
         signature: 'merge:vcs-supervisor-aborted/unclassified',
         staticEncodable: notEncodable('orchestration'),
         warmTitle: 'The changes clashed with main and were too hard to merge',

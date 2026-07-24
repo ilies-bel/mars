@@ -127,9 +127,13 @@ describe('warmTitle values match the PRD-agreed copy', () => {
     }
   })
 
-  it('merge:vcs-supervisor-aborted/* → "The changes clashed with main and were too hard to merge"', () => {
-    const entries = FAILURE_KINDS.filter((k) =>
-      k.signature.startsWith('merge:vcs-supervisor-aborted/'),
+  it('merge:vcs-supervisor-aborted/* conflict entries → "The changes clashed with main and were too hard to merge"', () => {
+    // The dirty-worktree entry has a distinct warmTitle (worktree hygiene, not a
+    // conflict), so this assertion is scoped to the conflict-resolution sub-class.
+    const entries = FAILURE_KINDS.filter(
+      (k) =>
+        k.signature.startsWith('merge:vcs-supervisor-aborted/') &&
+        k.signature !== 'merge:vcs-supervisor-aborted/rebase-dirty-worktree',
     )
     expect(entries.length).toBeGreaterThan(0)
     for (const e of entries) {
@@ -320,6 +324,30 @@ describe('new catalog entries for previously-unmatched signatures', () => {
     // Actions must not include "Investigate" — there is nothing to diagnose
     expect(entry!.actions.every((a) => a.op !== 'diagnose-failure')).toBe(true)
     // Must have restart and purge actions
+    expect(entry!.actions.some((a) => a.op === 'restart')).toBe(true)
+    expect(entry!.actions.some((a) => a.op === 'purge')).toBe(true)
+  })
+
+  it('merge:vcs-supervisor-aborted/rebase-dirty-worktree is registered with restart-first actions and no diagnose-failure', () => {
+    // This failure is a worktree hygiene condition, not a code defect: the
+    // task worktree had uncommitted changes when the rebase attempted to start.
+    // The correct resolution is to restart the task (which re-provisions the
+    // worktree from scratch), not to spawn an Investigator that would chase a
+    // phantom code bug.
+    const entry = lookupFailureKind('merge:vcs-supervisor-aborted/rebase-dirty-worktree')
+    expect(entry).not.toBeNull()
+    expect(entry!.signature).toBe('merge:vcs-supervisor-aborted/rebase-dirty-worktree')
+    // warmTitle must name the dirty-worktree cause, not a generic merge failure
+    expect(entry!.warmTitle).toBe('The task worktree had uncommitted changes when the rebase started')
+    // verboseReason must explain the worktree hygiene cause
+    expect(entry!.verboseReason.toLowerCase()).toMatch(/worktree|uncommitted|dirty/)
+    // recipe must be null — this is a state failure, not a code defect with a recipe
+    expect(entry!.recipe).toBeNull()
+    // staticEncodable must be orchestration (infrastructure condition)
+    expect(entry!.staticEncodable).toEqual({ encodable: false, reason: 'orchestration' })
+    // Actions must NOT include diagnose-failure — there is nothing to diagnose
+    expect(entry!.actions.every((a) => a.op !== 'diagnose-failure')).toBe(true)
+    // Must have restart (to re-provision the worktree) and purge
     expect(entry!.actions.some((a) => a.op === 'restart')).toBe(true)
     expect(entry!.actions.some((a) => a.op === 'purge')).toBe(true)
   })
