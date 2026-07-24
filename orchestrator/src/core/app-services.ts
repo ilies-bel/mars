@@ -169,6 +169,9 @@ export interface AppServices {
   // ── alerts (arc-rooted read aggregate, ADR-0054) ───────────────────────────
   viewAlerts: () => Promise<Alert[]>
   viewAlert: (arcId: string) => Promise<Alert | null>
+  // ── notices (entity-less, ack-cleared bell messages, ADR-0079) ─────────────
+  listNotices: () => Promise<import('./lib/notice-store').Notice[]>
+  ackNotice: (id: string) => Promise<boolean>
   // ── kpis ───────────────────────────────────────────────────────────────────
   listKpis: () => Promise<KpiRecord[]>
   listKpisSeries: (limit: number) => Promise<KpiSeries>
@@ -790,6 +793,16 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const viewAlert: AppServices['viewAlert'] = async (arcId) =>
     showAlert(arcId, await buildAlertSources())
 
+  const listNotices: AppServices['listNotices'] = async () => {
+    const { listOpenNotices } = await import('./lib/notice-store')
+    return listOpenNotices()
+  }
+
+  const ackNotice: AppServices['ackNotice'] = async (id) => {
+    const { ackNotice: ack } = await import('./lib/notice-store')
+    return ack(id)
+  }
+
   const viewActionQueue: AppServices['viewActionQueue'] = async (filter) => {
     const { buildActionQueueView } = await import('./daemon/view/action-queue')
     const { listActionQueueItems } = await import('./lib/action-queue')
@@ -1236,6 +1249,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewActionQueueHistory,
     viewAlerts,
     viewAlert,
+    listNotices,
+    ackNotice,
     listKpis,
     listKpisSeries,
     listKpiArcs,

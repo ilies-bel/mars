@@ -900,6 +900,34 @@ export const startServer = async (
           return jsonResponse(result.status, result.body)
         }
 
+        // POST /api/notices/:id/ack — proxy the daemon's Notice-ack endpoint
+        // (ADR-0079). Checked before the bare GET /api/notices so the ack route
+        // matches first. The daemon is the sole writer (ADR-0035).
+        if (
+          path.startsWith('/api/notices/') &&
+          path.endsWith('/ack') &&
+          req.method === 'POST'
+        ) {
+          const id = decodeURIComponent(
+            path.slice('/api/notices/'.length, -'/ack'.length),
+          )
+          if (!id) {
+            return jsonResponse(400, { error: 'notice id is required' })
+          }
+          const result = await proxyPost(
+            ctx.stateDir,
+            `/notices/${encodeURIComponent(id)}/ack`,
+            {},
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
+        // GET /api/notices — proxy the daemon's open-Notice list.
+        if (path === '/api/notices' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/notices')
+          return jsonResponse(r.status, r.body)
+        }
+
         // Unknown API path (or /events was already handled above).
         return jsonResponse(404, { error: `no route for ${path}` })
       }

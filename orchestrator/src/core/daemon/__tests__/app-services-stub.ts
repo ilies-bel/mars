@@ -28,6 +28,8 @@ export const stubAppServices = (
   viewActionQueueHistory: async () => ({ rows: [], nextCursor: null }),
   viewAlerts: async () => [],
   viewAlert: async () => null,
+  listNotices: async () => [],
+  ackNotice: async () => false,
   listKpis: async () => [],
   listKpisSeries: async () => ({
     failure_rate: [],

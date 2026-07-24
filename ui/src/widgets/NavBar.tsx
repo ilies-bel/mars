@@ -3,6 +3,7 @@ import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
 import { detectRoute, actionQueueCount } from '@/shared/routing'
 import { useNotificationsPreference } from '@/entities/notifications'
 import { ProjectSelector } from './ProjectSelector'
+import { BellMenu } from './BellMenu'
 
 interface NavBarProps {
   hash: string
@@ -91,6 +92,7 @@ export const NavBar = ({ hash }: NavBarProps) => {
       <span className="ml-auto">
         <NotificationsToggle />
       </span>
+      <BellMenu />
     </nav>
   )
 }

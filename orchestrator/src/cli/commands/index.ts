@@ -16,6 +16,7 @@ import { adrCommands } from './adr'
 import { daemonCommands } from './daemon'
 import { actionQueueCommands } from './action-queue'
 import { alertCommands } from './alert'
+import { noticeCommands } from './notice'
 import { diagnoseCommands } from './diagnose'
 import { miscCommands } from './misc'
 import { reflectCommands } from './reflect'
@@ -47,6 +48,7 @@ export const allCommands: readonly Command[] = [
   ...daemonCommands,
   ...actionQueueCommands,
   ...alertCommands,
+  ...noticeCommands,
   ...diagnoseCommands,
   ...miscCommands,
   ...reflectCommands,

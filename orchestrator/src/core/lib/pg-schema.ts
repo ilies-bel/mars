@@ -413,6 +413,20 @@ const DDL: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS idx_chat_feedback_thread_id
      ON chat_feedback(thread_id)`,
 
+  // ── notices ───────────────────────────────────────────────────────────────
+  // Entity-less informational bell messages (ADR-0079). Unlike an Alert (which
+  // derives from arc state and clears when its entity resolves), a Notice has
+  // no backing entity, so it clears only when the operator acknowledges it —
+  // `acknowledged_at` stamps that gesture.
+  `CREATE TABLE IF NOT EXISTS notices (
+    id              text PRIMARY KEY,
+    body            text NOT NULL,
+    source          text,
+    created_at      text NOT NULL,
+    acknowledged_at text
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_notices_acknowledged_at ON notices(acknowledged_at)`,
+
   // ── settings / preferences ────────────────────────────────────────────────
   `CREATE TABLE IF NOT EXISTS app_settings (
     key        text PRIMARY KEY,
