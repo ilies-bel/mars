@@ -1188,7 +1188,10 @@ function sendErrorMessage(err: unknown): string {
 // ---------------------------------------------------------------------------
 
 interface HeroComposerProps {
-  onSend: (text: string, clearText: () => void) => void
+  /** Called with text, the raw File objects, and a clearState callback the
+   *  caller must invoke on success (files are uploaded AFTER thread creation,
+   *  so the hero passes Files rather than attachment ids). */
+  onSend: (text: string, files: File[], clearState: () => void) => void
   isPending: boolean
   prefill?: string
   onPrefillConsumed: () => void
@@ -1196,7 +1199,19 @@ interface HeroComposerProps {
 
 const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: HeroComposerProps) => {
   const [text, setText] = useState('')
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  /** True while the mic is recording / dictating. */
+  const [micActive, setMicActive] = useState(false)
+  /** Voice-note blob recorded via MediaRecorder (null until recording stops). */
+  const [voiceBlob, setVoiceBlob] = useState<Blob | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+
+  const speechAvailable = typeof window !== 'undefined' &&
+    ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
 
   useEffect(() => {
     if (prefill !== undefined) {
@@ -1206,16 +1221,188 @@ const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: HeroCom
     }
   }, [prefill, onPrefillConsumed])
 
+  // Revoke object URLs on unmount to avoid memory leaks.
+  useEffect(() => {
+    return () => {
+      for (const a of attachments) {
+        if (a.previewUrl) URL.revokeObjectURL(a.previewUrl)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const arr = Array.from(files).filter(
+      (f) => f.type.startsWith('image/') || f.type.startsWith('audio/') || f.type.startsWith('video/'),
+    )
+    setAttachments((prev) => [
+      ...prev,
+      ...arr.map((file) => ({
+        localId: `${Date.now()}-${Math.random()}`,
+        file,
+        previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+      })),
+    ])
+  }, [])
+
+  const removeAttachment = useCallback((localId: string) => {
+    setAttachments((prev) => {
+      const removed = prev.find((a) => a.localId === localId)
+      if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl)
+      return prev.filter((a) => a.localId !== localId)
+    })
+  }, [])
+
+  const handleAttachVoiceNote = useCallback(() => {
+    if (!voiceBlob) return
+    const file = new File([voiceBlob], `voice-note-${Date.now()}.webm`, { type: 'audio/webm' })
+    addFiles([file])
+    setVoiceBlob(null)
+  }, [voiceBlob, addFiles])
+
+  const handleMicToggle = useCallback(async () => {
+    if (micActive) {
+      recognitionRef.current?.stop()
+      recognitionRef.current = null
+      recorderRef.current?.stop()
+      recorderRef.current = null
+      setMicActive(false)
+      return
+    }
+    setMicActive(true)
+    setVoiceBlob(null)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const chunks: BlobPart[] = []
+      const recorder = new MediaRecorder(stream)
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'audio/webm' })
+        setVoiceBlob(blob)
+        for (const track of stream.getTracks()) track.stop()
+      }
+      recorder.start()
+      recorderRef.current = recorder
+    } catch {
+      // Microphone permission denied or not available — fall back to recognition-only.
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition: any = new SR()
+    recognition.continuous = true
+    recognition.interimResults = true
+    recognition.lang = navigator.language || 'en-US'
+    let committed = ''
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
+      let interim = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = event.results[i] as any
+        if (result.isFinal) {
+          committed += result[0].transcript
+        } else {
+          interim += result[0].transcript
+        }
+      }
+      setText(committed + interim)
+    }
+    recognition.onend = () => {
+      setMicActive(false)
+      recognitionRef.current = null
+    }
+    recognition.start()
+    recognitionRef.current = recognition
+  }, [micActive])
+
   const handleSend = useCallback(() => {
     const trimmed = text.trim()
-    if (!trimmed || isPending) return
-    onSend(trimmed, () => setText(''))
-  }, [text, isPending, onSend])
+    // Allow sending with just attachments (empty text) or just text.
+    if ((!trimmed && attachments.length === 0) || isPending) return
+    onSend(trimmed, attachments.map((a) => a.file), () => {
+      setText('')
+      setAttachments([])
+      setVoiceBlob(null)
+    })
+  }, [text, attachments, isPending, onSend])
 
   return (
     <div className="w-full max-w-2xl">
-      {/* AI-Elements PromptInput shell (HeroComposer owns its own text state). */}
+      {/* Voice-note CTA — shown after mic stops */}
+      {voiceBlob && !micActive && (
+        <div className="mb-2 flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground">Voice note recorded</span>
+          <PromptInputButton
+            size="sm"
+            variant="outline"
+            className="h-7 text-[10px]"
+            onClick={handleAttachVoiceNote}
+          >
+            Send as voice note
+          </PromptInputButton>
+          <button
+            type="button"
+            className="text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+            onClick={() => setVoiceBlob(null)}
+          >
+            Discard
+          </button>
+        </div>
+      )}
+      {/* AI-Elements PromptInput shell. */}
       <div className="w-full divide-y divide-border overflow-hidden rounded-2xl border bg-background shadow-sm">
+        {/* Hidden file input — wired to addFiles. */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,audio/*,video/*"
+          multiple
+          className="hidden"
+          aria-hidden="true"
+          onChange={(e) => {
+            if (e.target.files) addFiles(e.target.files)
+            e.target.value = ''
+          }}
+        />
+
+        {/* Attachment preview chips */}
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 p-3" data-testid="attachment-chips">
+            {attachments.map((a) => (
+              <div
+                key={a.localId}
+                data-testid="attachment-chip"
+                className="group relative flex items-center gap-2 rounded-md border bg-accent/50 py-1 pr-1 pl-2 text-xs"
+              >
+                {a.previewUrl ? (
+                  <img
+                    src={a.previewUrl}
+                    alt={a.file.name}
+                    className="size-8 rounded object-cover"
+                  />
+                ) : (
+                  <span className="text-sm">
+                    {fileMediaKind(a.file) === 'audio' ? '🎵' : '🎬'}
+                  </span>
+                )}
+                <span className="max-w-[120px] truncate text-muted-foreground">
+                  {a.file.name}
+                </span>
+                <button
+                  type="button"
+                  data-testid="remove-attachment"
+                  aria-label={`Remove ${a.file.name}`}
+                  className="ml-0.5 rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-destructive"
+                  onClick={() => removeAttachment(a.localId)}
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <PromptInputTextarea
           ref={textareaRef}
           data-testid="hero-composer"
@@ -1232,12 +1419,36 @@ const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: HeroCom
           disabled={isPending}
         />
         <PromptInputToolbar>
-          <PromptInputTools />
+          <PromptInputTools>
+            {/* Attach button */}
+            <PromptInputButton
+              data-testid="attach-btn"
+              aria-label="Attach file"
+              title="Attach image, audio or video"
+              disabled={isPending}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <PaperclipIcon className="size-4" />
+            </PromptInputButton>
+
+            {/* Mic button — hidden when Web Speech API is unavailable */}
+            {speechAvailable && (
+              <PromptInputButton
+                data-testid="mic-btn"
+                aria-label={micActive ? 'Stop dictation' : 'Start dictation'}
+                title={micActive ? 'Click to stop dictation' : 'Dictate into the composer'}
+                className={micActive ? 'text-destructive hover:text-destructive' : undefined}
+                onClick={() => void handleMicToggle()}
+              >
+                {micActive ? <SquareIcon className="size-4" /> : <MicIcon className="size-4" />}
+              </PromptInputButton>
+            )}
+          </PromptInputTools>
           <PromptInputSubmit
             type="button"
             data-testid="hero-send"
             status={isPending ? 'submitted' : undefined}
-            disabled={isPending || text.trim().length === 0}
+            disabled={isPending || (text.trim().length === 0 && attachments.length === 0)}
             onClick={handleSend}
           />
         </PromptInputToolbar>
@@ -1253,7 +1464,11 @@ const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: HeroCom
 export interface HeroEmptyStateProps {
   projectId?: string
   onSelectThread: (id: string) => void
-  onCreateAndSend: (message: string, clearText: () => void) => void
+  /** Called with the typed text, raw File objects (uploaded AFTER the thread is
+   *  created, so ids are not yet known), and a clearState callback the caller
+   *  must invoke on success. Leave clearState un-called on failure to preserve
+   *  the composer's text and pending attachments. */
+  onCreateAndSend: (message: string, files: File[], clearState: () => void) => void
   isPending: boolean
   /** Non-null when the last send attempt failed; renders an error banner. */
   sendError?: string | null
@@ -2225,13 +2440,23 @@ export const ChatPage = () => {
     }
   }, [selectedQueueItemId, threadsData])
 
-  // Create a new thread and post the first message in one gesture — used by
-  // the hero composer so the user never has to click "+ New thread" separately.
+  // Create a new thread, upload any selected attachments, and post the first
+  // message in one gesture — used by the hero composer and projection Threads.
+  // Files are uploaded AFTER thread creation (the id is required for the upload
+  // endpoint). On failure nothing is cleared; the caller's clearState callback
+  // is only invoked on success.
   const [sendError, setSendError] = useState<string | null>(null)
   const { mutate: createAndSend, isPending: isCreatingThread } = useMutation({
-    mutationFn: async (message: string) => {
+    mutationFn: async ({ message, files }: { message: string; files: File[] }) => {
       const thread = await createChatThread(projectId)
-      await postChatMessage(thread.id, message, projectId)
+      let attachmentIds: string[] | undefined
+      if (files.length > 0) {
+        const results = await Promise.all(
+          files.map((f) => uploadAttachment(thread.id, f, projectId)),
+        )
+        attachmentIds = results.map((r) => r.id)
+      }
+      await postChatMessage(thread.id, message, projectId, attachmentIds)
       return thread
     },
     onMutate: () => setSendError(null),
@@ -2410,7 +2635,7 @@ export const ChatPage = () => {
                 disabled={false}
                 initialText={prefill}
                 onInitialTextConsumed={() => setPrefill(undefined)}
-                onSendOverride={(msg, clearText) => createAndSend(msg, { onSuccess: () => clearText() })}
+                onSendOverride={(msg, clearText) => createAndSend({ message: msg, files: [] }, { onSuccess: () => clearText() })}
                 sendPending={isCreatingThread}
                 sendError={sendError}
               />
@@ -2422,7 +2647,9 @@ export const ChatPage = () => {
           <HeroEmptyState
             projectId={projectId}
             onSelectThread={handleSelectThread}
-            onCreateAndSend={(msg, clearText) => createAndSend(msg, { onSuccess: () => clearText() })}
+            onCreateAndSend={(msg, files, clearState) =>
+              createAndSend({ message: msg, files }, { onSuccess: () => clearState() })
+            }
             isPending={isCreatingThread}
             sendError={sendError}
             onOpenQueueItem={handleSelectQueueItem}

@@ -4,7 +4,11 @@
  *
  * Covers:
  * 1. Hero renders "What should Mars build?" headline when no thread is selected.
- * 2. Hero composer calls onCreateAndSend when the user types and submits.
+ * 2. Hero composer shows file/voice attachment controls.
+ * 3. Hero composer calls onCreateAndSend with text, files, and a clearState
+ *    callback when the user submits.
+ * 4. Attachment-only first messages are allowed (empty text + file).
+ * 5. Failed sends preserve text and pending attachments.
  *
  * Uses the happy-dom environment for DOM APIs and vi.mock to prevent network
  * requests from the useQuery calls inside HeroEmptyState.
@@ -39,6 +43,7 @@ vi.mock('@/shared/api', () => ({
     messageCount: 0,
   }),
   postChatMessage: vi.fn().mockResolvedValue(undefined),
+  uploadAttachment: vi.fn().mockResolvedValue({ id: 'upload-1', path: '/uploads/1', mimeType: 'image/png', name: 'photo.png' }),
   renameChatThread: vi.fn().mockResolvedValue(undefined),
   deleteChatThread: vi.fn().mockResolvedValue(undefined),
   stopChatThread: vi.fn().mockResolvedValue(undefined),
@@ -56,7 +61,7 @@ const makeQc = () =>
 const renderHeroStatic = (
   opts: {
     onSelectThread?: (id: string) => void
-    onCreateAndSend?: (msg: string, clearText: () => void) => void
+    onCreateAndSend?: (msg: string, files: File[], clearState: () => void) => void
     isPending?: boolean
     sendError?: string | null
   } = {},
@@ -93,6 +98,11 @@ describe('HeroEmptyState – renders when no thread is selected', () => {
     const html = renderHeroStatic()
     expect(html).toContain('hero-composer')
   })
+
+  it('renders an attach button in the hero composer', () => {
+    const html = renderHeroStatic()
+    expect(html).toContain('attach-btn')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -114,6 +124,30 @@ const setTextareaValue = (textarea: HTMLTextAreaElement, value: string) => {
   )?.set
   nativeSetter?.call(textarea, value)
   textarea.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
+/**
+ * Simulates adding a file to the hidden file input by:
+ *  1. Setting `files` on the input element (DataTransfer trick)
+ *  2. Dispatching a native 'change' event (React picks it up via delegation)
+ */
+async function addFileViaInput(container: HTMLElement, file: File): Promise<void> {
+  const fileInput = container.querySelector(
+    'input[type="file"]',
+  ) as HTMLInputElement | null
+  if (!fileInput) throw new Error('file input not found')
+
+  const dt = new DataTransfer()
+  dt.items.add(file)
+  Object.defineProperty(fileInput, 'files', {
+    value: dt.files,
+    configurable: true,
+    writable: false,
+  })
+
+  await act(() => {
+    fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+  })
 }
 
 describe('HeroEmptyState – composer creates and sends', () => {
@@ -152,7 +186,11 @@ describe('HeroEmptyState – composer creates and sends', () => {
       )
     })
 
-    expect(onCreateAndSend).toHaveBeenCalledWith('Build me a feature', expect.any(Function))
+    expect(onCreateAndSend).toHaveBeenCalledWith(
+      'Build me a feature',
+      expect.any(Array),
+      expect.any(Function),
+    )
 
     await act(async () => { root.unmount() })
     document.body.removeChild(container)
@@ -191,13 +229,17 @@ describe('HeroEmptyState – composer creates and sends', () => {
       sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
 
-    expect(onCreateAndSend).toHaveBeenCalledWith('Enqueue a task', expect.any(Function))
+    expect(onCreateAndSend).toHaveBeenCalledWith(
+      'Enqueue a task',
+      expect.any(Array),
+      expect.any(Function),
+    )
 
     await act(async () => { root.unmount() })
     document.body.removeChild(container)
   })
 
-  it('does not call onCreateAndSend when the input is empty', async () => {
+  it('does not call onCreateAndSend when the input is empty and no files are attached', async () => {
     const onCreateAndSend = vi.fn()
     const container = document.createElement('div')
     document.body.appendChild(container)
@@ -234,9 +276,9 @@ describe('HeroEmptyState – composer creates and sends', () => {
     document.body.removeChild(container)
   })
 
-  it('preserves typed text when onCreateAndSend does not invoke the clearText callback (failure path)', async () => {
-    // Simulate a rejected send: onCreateAndSend is called but never invokes clearText.
-    const onCreateAndSend = vi.fn() // does not call clearText
+  it('preserves typed text and attachments when clearState is not called (failure path)', async () => {
+    // Simulate a rejected send: onCreateAndSend is called but never invokes clearState.
+    const onCreateAndSend = vi.fn() // does not call clearState
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
@@ -259,6 +301,9 @@ describe('HeroEmptyState – composer creates and sends', () => {
       '[data-testid="hero-composer"]',
     ) as HTMLTextAreaElement
 
+    // Add a file attachment
+    await addFileViaInput(container, new File(['data'], 'photo.png', { type: 'image/png' }))
+
     await act(async () => {
       setTextareaValue(textarea, 'Build something great')
     })
@@ -269,16 +314,19 @@ describe('HeroEmptyState – composer creates and sends', () => {
       )
     })
 
-    // clearText was never called, so the text should still be present.
+    // clearState was never called — text and chip must still be present.
     expect(textarea.value).toBe('Build something great')
+    expect(container.querySelectorAll('[data-testid="attachment-chip"]')).toHaveLength(1)
 
     await act(async () => { root.unmount() })
     document.body.removeChild(container)
   })
 
-  it('clears typed text when onCreateAndSend invokes the clearText callback (success path)', async () => {
-    // Simulate a successful send: onCreateAndSend calls clearText immediately.
-    const onCreateAndSend = vi.fn((_msg: string, clearText: () => void) => clearText())
+  it('clears typed text and attachments when clearState is invoked (success path)', async () => {
+    // Simulate a successful send: onCreateAndSend calls clearState immediately.
+    const onCreateAndSend = vi.fn(
+      (_msg: string, _files: File[], clearState: () => void) => clearState(),
+    )
     const container = document.createElement('div')
     document.body.appendChild(container)
     const root = createRoot(container)
@@ -301,6 +349,9 @@ describe('HeroEmptyState – composer creates and sends', () => {
       '[data-testid="hero-composer"]',
     ) as HTMLTextAreaElement
 
+    // Add a file and type some text
+    await addFileViaInput(container, new File(['data'], 'photo.png', { type: 'image/png' }))
+
     await act(async () => {
       setTextareaValue(textarea, 'Build something great')
     })
@@ -311,8 +362,185 @@ describe('HeroEmptyState – composer creates and sends', () => {
       )
     })
 
-    // clearText was invoked, so the textarea should be empty.
+    // clearState was invoked — textarea and chips should be cleared.
     expect(textarea.value).toBe('')
+    expect(container.querySelectorAll('[data-testid="attachment-chip"]')).toHaveLength(0)
+
+    await act(async () => { root.unmount() })
+    document.body.removeChild(container)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Hero attachment support
+// ---------------------------------------------------------------------------
+
+describe('HeroEmptyState – attachment controls', () => {
+  it('shows no attachment chips before any file is added', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <HeroEmptyState
+            projectId={undefined}
+            onSelectThread={() => {}}
+            onWhatHappened={() => {}}
+            onCreateAndSend={() => {}}
+            isPending={false}
+          />
+        </QueryClientProvider>,
+      )
+    })
+
+    expect(container.querySelector('[data-testid="attachment-chips"]')).toBeNull()
+
+    await act(async () => { root.unmount() })
+    document.body.removeChild(container)
+  })
+
+  it('shows a chip after adding an image file via the file input', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <HeroEmptyState
+            projectId={undefined}
+            onSelectThread={() => {}}
+            onWhatHappened={() => {}}
+            onCreateAndSend={() => {}}
+            isPending={false}
+          />
+        </QueryClientProvider>,
+      )
+    })
+
+    await addFileViaInput(container, new File(['data'], 'photo.png', { type: 'image/png' }))
+
+    expect(container.querySelector('[data-testid="attachment-chips"]')).not.toBeNull()
+    expect(container.querySelectorAll('[data-testid="attachment-chip"]')).toHaveLength(1)
+
+    await act(async () => { root.unmount() })
+    document.body.removeChild(container)
+  })
+
+  it('allows an attachment-only send (no text, attachment present)', async () => {
+    const onCreateAndSend = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <HeroEmptyState
+            projectId={undefined}
+            onSelectThread={() => {}}
+            onWhatHappened={() => {}}
+            onCreateAndSend={onCreateAndSend}
+            isPending={false}
+          />
+        </QueryClientProvider>,
+      )
+    })
+
+    // Add a file but type no text
+    await addFileViaInput(container, new File(['data'], 'photo.png', { type: 'image/png' }))
+
+    const sendBtn = container.querySelector('[data-testid="hero-send"]') as HTMLButtonElement
+    expect(sendBtn).not.toBeNull()
+
+    await act(async () => {
+      sendBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    // Should be called with empty text and the file
+    expect(onCreateAndSend).toHaveBeenCalledTimes(1)
+    const [calledText, calledFiles] = onCreateAndSend.mock.calls[0] as [string, File[], () => void]
+    expect(calledText).toBe('')
+    expect(calledFiles).toHaveLength(1)
+    expect(calledFiles[0].name).toBe('photo.png')
+
+    await act(async () => { root.unmount() })
+    document.body.removeChild(container)
+  })
+
+  it('passes the selected files to onCreateAndSend when sending with text', async () => {
+    const onCreateAndSend = vi.fn()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <HeroEmptyState
+            projectId={undefined}
+            onSelectThread={() => {}}
+            onWhatHappened={() => {}}
+            onCreateAndSend={onCreateAndSend}
+            isPending={false}
+          />
+        </QueryClientProvider>,
+      )
+    })
+
+    await addFileViaInput(container, new File(['data'], 'audio.mp3', { type: 'audio/mpeg' }))
+
+    const textarea = container.querySelector('[data-testid="hero-composer"]') as HTMLTextAreaElement
+    await act(async () => {
+      setTextareaValue(textarea, 'Here is the audio')
+    })
+
+    await act(async () => {
+      textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+
+    expect(onCreateAndSend).toHaveBeenCalledTimes(1)
+    const [calledText, calledFiles] = onCreateAndSend.mock.calls[0] as [string, File[], () => void]
+    expect(calledText).toBe('Here is the audio')
+    expect(calledFiles).toHaveLength(1)
+    expect(calledFiles[0].name).toBe('audio.mp3')
+
+    await act(async () => { root.unmount() })
+    document.body.removeChild(container)
+  })
+
+  it('removes a chip when its remove button is clicked', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <HeroEmptyState
+            projectId={undefined}
+            onSelectThread={() => {}}
+            onWhatHappened={() => {}}
+            onCreateAndSend={() => {}}
+            isPending={false}
+          />
+        </QueryClientProvider>,
+      )
+    })
+
+    await addFileViaInput(container, new File(['data'], 'photo.png', { type: 'image/png' }))
+    expect(container.querySelectorAll('[data-testid="attachment-chip"]')).toHaveLength(1)
+
+    const removeBtn = container.querySelector('[data-testid="remove-attachment"]') as HTMLButtonElement
+    expect(removeBtn).not.toBeNull()
+
+    await act(async () => {
+      removeBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(container.querySelectorAll('[data-testid="attachment-chip"]')).toHaveLength(0)
 
     await act(async () => { root.unmount() })
     document.body.removeChild(container)
