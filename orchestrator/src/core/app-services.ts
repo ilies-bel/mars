@@ -47,6 +47,7 @@ import { getProposal } from './proposals'
 import { MARS_VERSION } from '../version'
 import { classifyInstallRoute } from './daemon/install-route'
 import { listAlerts, showAlert, type Alert, type AlertSources } from './lib/alert'
+import type { RaiseActionQueueItem } from './lib/action-queue'
 import { loadRecentTaskCorpus, type ReflectCorpus, type LoadCorpusOptions } from './lib/reflect-query'
 import { listDeepReflectArcCandidates, type ArcCandidate } from './lib/deep-reflect-query'
 import {
@@ -169,6 +170,18 @@ export interface AppServices {
   // ── alerts (arc-rooted read aggregate, ADR-0054) ───────────────────────────
   viewAlerts: () => Promise<Alert[]>
   viewAlert: (arcId: string) => Promise<Alert | null>
+  /**
+   * Pull an Alert into a chat thread (human-triggered, ADR-0048). Loads the
+   * Alert for `arcId`, builds its card segment, and creates (or reuses) an
+   * alert-origin thread. Returns `{ threadId }`, or `null` when no Alert
+   * applies to the arc. Picking an Alert does NOT clear it from the Bell.
+   */
+  startThreadFromAlert: (arcId: string) => Promise<{ threadId: string } | null>
+  /**
+   * The top Alert the hero "next action" shortcut grabs, or `null` when none.
+   * The steerable default for "what should I look at next".
+   */
+  nextActionAlert: () => Promise<Alert | null>
   // ── notices (entity-less, ack-cleared bell messages, ADR-0079) ─────────────
   listNotices: () => Promise<import('./lib/notice-store').Notice[]>
   ackNotice: (id: string) => Promise<boolean>
@@ -793,6 +806,50 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const viewAlert: AppServices['viewAlert'] = async (arcId) =>
     showAlert(arcId, await buildAlertSources())
 
+  const startThreadFromAlert: AppServices['startThreadFromAlert'] = async (arcId) => {
+    const alert = await showAlert(arcId, await buildAlertSources())
+    if (alert === null) return null
+
+    const { buildAlertSegment } = await import('./lib/action-queue')
+    const { startThreadFromAlert: storeStartThreadFromAlert } = await import('./lib/chat-store')
+
+    // Reconstruct the raise-item shape `buildAlertSegment` consumes from the
+    // Alert so the seed card reuses the same recipe-driven copy and verbs the
+    // Bell/alert path uses. `arc-failed` maps to the registered `failed` kind;
+    // `stale-worktree` passes through. The arc id is the entity/origin id, and
+    // the arc's intent rides in `payload.goal`.
+    const item: RaiseActionQueueItem = {
+      kind: alert.kind === 'stale-worktree' ? 'stale-worktree' : 'failed',
+      category: 'orchestrator',
+      priority: 'high',
+      title: alert.reason,
+      body: alert.technical || alert.reason,
+      payload: { taskId: alert.arcId, goal: alert.goal },
+      context: {},
+      raisedBy: 'operator',
+      signature: alert.arcId,
+      originTaskId: alert.arcId,
+    }
+    const segment = buildAlertSegment(item, alert.arcId)
+    const thread = await storeStartThreadFromAlert(
+      alert.arcId,
+      alert.goal || alert.reason,
+      segment,
+    )
+    return { threadId: thread.id }
+  }
+
+  const nextActionAlert: AppServices['nextActionAlert'] = async () => {
+    // `viewAlerts()` (→ `listAlerts`) carries no per-Alert priority field to
+    // sort by — an Alert is a pure derivation with no `priority`. Rather than
+    // join every Alert back to its action-queue row just to pick one, we return
+    // the first Alert in the derivation's stable order, which lists arc failures
+    // (the actionable family) ahead of stale-worktree housekeeping. That is the
+    // steerable "higher-priority-first" default without the extra coupling.
+    const alerts = await viewAlerts()
+    return alerts[0] ?? null
+  }
+
   const listNotices: AppServices['listNotices'] = async () => {
     const { listOpenNotices } = await import('./lib/notice-store')
     return listOpenNotices()
@@ -1249,6 +1306,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewActionQueueHistory,
     viewAlerts,
     viewAlert,
+    startThreadFromAlert,
+    nextActionAlert,
     listNotices,
     ackNotice,
     listKpis,

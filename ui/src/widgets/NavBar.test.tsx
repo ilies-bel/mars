@@ -60,6 +60,7 @@ mock.module('@/widgets/ProjectSelector', () => ({
 // QueryClientProvider). Empty lists keep the bell badge absent in these tests.
 mock.module('@/entities/alerts', () => ({
   useAlerts: () => ({ alerts: [], error: null }),
+  useStartThreadFromAlert: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 mock.module('@/entities/notices', () => ({

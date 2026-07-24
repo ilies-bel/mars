@@ -19,6 +19,7 @@ mock.module('@/entities/alerts', () => ({
     ],
     error: null,
   }),
+  useStartThreadFromAlert: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 mock.module('@/entities/notices', () => ({

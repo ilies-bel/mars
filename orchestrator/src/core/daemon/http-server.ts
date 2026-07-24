@@ -609,7 +609,9 @@ const handleEventsRequest = async (
  *   GET  /events?...             → unified trace events (taskId, kind, etc.)
  *   GET  /origins/:taskId        → the origin tree for a task
  *   GET  /alerts                 → the arc-rooted Alert list (read aggregate)
+ *   GET  /alerts/next            → the top Alert for the hero next-action shortcut
  *   GET  /alerts/:arcId          → the single arc-rooted Alert (or 404)
+ *   POST /alerts/:arcId/thread   → pull an Alert into a chat thread ({ threadId })
  *   POST /actions/restart/:id    → re-queue a failed/daemon-killed task
  *   POST /actions/unblock/:id    → phantom-recover a blocked task
  *   POST /actions/purge/:id      → drop a task + worktree
@@ -1354,6 +1356,45 @@ export const startHttpServer = async (
         .then((rows) => sendJson(res, 200, rows))
         .catch((err: unknown) => sendError(res, err))
       return
+    }
+
+    // GET /alerts/next — the single top Alert the hero "next action" shortcut
+    // grabs, or `{}` when none. Checked BEFORE the `/alerts/:arcId` param route
+    // so the literal `next` segment is not captured as an arc id.
+    if (req.method === 'GET' && req.url && req.url.match(/^\/alerts\/next(?:\?.*)?$/)) {
+      deps.appServices
+        .nextActionAlert()
+        .then((alert) => sendJson(res, 200, alert ?? {}))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /alerts/:arcId/thread — pull an Alert into a chat thread (slice 4,
+    // ADR-0048). Human-triggered: the operator clicked the Alert in the Bell or
+    // the hero next-action shortcut. Dedups by arc (a re-click reuses the same
+    // thread). Picking an Alert does NOT clear it from the Bell. Placed before
+    // the POST-only guard / draining gate so it behaves like the notice ack — an
+    // operator gesture on the read aggregate, not orchestrator work. Returns
+    // `{ threadId }`, or 404 `{ threadId: null }` when the arc has no Alert.
+    {
+      const threadMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/alerts\/([^/?]+)\/thread(?:\?.*)?$/)
+          : null
+      if (threadMatch && threadMatch[1]) {
+        const arcId = decodeURIComponent(threadMatch[1])
+        deps.appServices
+          .startThreadFromAlert(arcId)
+          .then((result) => {
+            if (result === null) {
+              sendJson(res, 404, { threadId: null })
+              return
+            }
+            sendJson(res, 200, result)
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
     }
 
     // GET /alerts/:arcId — the single arc-rooted Alert for one arc, or 404 when

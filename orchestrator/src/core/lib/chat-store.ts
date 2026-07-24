@@ -509,3 +509,76 @@ export const clearMessageFeedback = async (messageId: string): Promise<boolean> 
   })
   return ((result as unknown as { rowsAffected?: number }).rowsAffected ?? 0) > 0
 }
+
+// ── Alert-pull thread API (human-triggered, slice 4) ──────────────────────────
+
+/**
+ * Find the existing alert-origin thread that tracks `arcId`, or null. A lean
+ * lookup scoped to {@link startThreadFromAlert}'s dedup: matches on
+ * `origin='alert' AND alert_item_id = arcId` so re-clicking the same Alert
+ * reuses its thread instead of spawning a duplicate.
+ */
+const findThreadByArc = async (arcId: string): Promise<ChatThread | null> => {
+  const c = stateClient()
+  const result = await c.execute({
+    sql: `SELECT * FROM chat_threads WHERE origin = 'alert' AND alert_item_id = ? LIMIT 1`,
+    args: [arcId],
+  })
+  if (result.rows.length === 0) return null
+  return rowToThread(result.rows[0] as unknown as Record<string, unknown>)
+}
+
+/**
+ * Human-pull path (ADR-0048): turn an Alert into a chat thread when the operator
+ * clicks it in the Bell or the hero "next action" shortcut. Unlike the removed
+ * proactive `createAlertThread`, nothing mints these on raise — they exist only
+ * once a human pulls the Alert in.
+ *
+ * Dedup: if a thread already tracks this arc (`origin='alert'`,
+ * `alert_item_id = arcId`), it is returned unchanged so a second click reuses
+ * the same conversation. Otherwise a fresh alert-origin thread is inserted with
+ * one assistant message carrying the alert `segment`, which re-activates the
+ * chat runner's `origin === 'alert'` seeding branch so the thread opens
+ * pre-seeded with the alert card.
+ *
+ * Picking an Alert into a thread does NOT clear it from the Bell — an Alert
+ * clears only when its arc resolves (ADR-0048).
+ */
+export const startThreadFromAlert = async (
+  arcId: string,
+  title: string,
+  segment: AlertSegment,
+): Promise<ChatThread> => {
+  const existing = await findThreadByArc(arcId)
+  if (existing) return existing
+
+  const c = stateClient()
+  const threadId = randomUUID()
+  const msgId = randomUUID()
+  const ts = now()
+  await c.execute({
+    sql: `INSERT INTO chat_threads
+            (id, title, session_id, status, created_at, updated_at, origin, alert_item_id, alert_resolved)
+          VALUES (?, ?, NULL, 'idle', ?, ?, 'alert', ?, 0)`,
+    args: [threadId, title, ts, ts, arcId],
+  })
+  // Persist one assistant message with the alert segment (the seed card).
+  await c.execute({
+    sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at)
+          VALUES (?, ?, 'assistant', ?, ?, ?)`,
+    args: [msgId, threadId, title, JSON.stringify([segment]), ts],
+  })
+  return {
+    id: threadId,
+    title,
+    session_id: null,
+    status: 'idle',
+    created_at: ts,
+    updated_at: ts,
+    origin: 'alert',
+    alert_item_id: arcId,
+    alert_resolved: false,
+    context_seeded: false,
+    evaporated_at: null,
+  }
+}

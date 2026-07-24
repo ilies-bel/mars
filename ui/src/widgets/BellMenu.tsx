@@ -1,7 +1,18 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BellIcon } from 'lucide-react'
-import { useAlerts } from '@/entities/alerts'
+import { useAlerts, useStartThreadFromAlert } from '@/entities/alerts'
 import { useNotices } from '@/entities/notices'
+
+/**
+ * Navigate to a chat thread by writing the `#/chat?thread=<id>` hash. Setting
+ * `window.location.hash` fires a native `hashchange`, which the app router (and
+ * ChatPage's hashchange sync) pick up to render the thread. Used after pulling
+ * an Alert into a conversation.
+ */
+const navigateToThread = (threadId: string): void => {
+  if (typeof window === 'undefined') return
+  window.location.hash = `#/chat?thread=${encodeURIComponent(threadId)}`
+}
 
 /**
  * Top-bar Bell surface (ADR-0080 foundation).
@@ -21,8 +32,24 @@ import { useNotices } from '@/entities/notices'
 export const BellMenu = () => {
   const { alerts } = useAlerts()
   const { notices, ack } = useNotices()
+  const { mutate: startThread, isPending } = useStartThreadFromAlert()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+
+  // Pull an Alert into a conversation, navigate to it, and close the popover.
+  // Picking an Alert does NOT clear it from the Bell (ADR-0048) — it clears only
+  // when its arc resolves, so the alert list is left untouched here.
+  const discussAlert = useCallback(
+    (arcId: string) => {
+      startThread(arcId, {
+        onSuccess: ({ threadId }) => {
+          navigateToThread(threadId)
+          setOpen(false)
+        },
+      })
+    },
+    [startThread],
+  )
 
   const total = alerts.length + notices.length
   const badge = total === 0 ? null : total > 9 ? '9+' : String(total)
@@ -75,9 +102,17 @@ export const BellMenu = () => {
             ) : (
               <ul>
                 {alerts.map((alert) => (
-                  <li key={alert.arcId} className="px-1 py-1">
-                    <p className="text-fg">{alert.goal}</p>
-                    <p className="text-iron">{alert.reason}</p>
+                  <li key={alert.arcId}>
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => discussAlert(alert.arcId)}
+                      aria-label={`Discuss: ${alert.goal}`}
+                      className="block w-full rounded px-1 py-1 text-left hover:bg-iron/10 disabled:opacity-50"
+                    >
+                      <p className="text-fg">{alert.goal}</p>
+                      <p className="text-iron">{alert.reason}</p>
+                    </button>
                   </li>
                 ))}
               </ul>

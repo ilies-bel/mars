@@ -19,7 +19,19 @@ interface ChatStoreModule {
   toMessageApiView: typeof import('./chat-store').toMessageApiView
   setMessageFeedback: typeof import('./chat-store').setMessageFeedback
   clearMessageFeedback: typeof import('./chat-store').clearMessageFeedback
+  startThreadFromAlert: typeof import('./chat-store').startThreadFromAlert
 }
+
+const makeSegment = (title: string): import('./chat-store').AlertSegment => ({
+  type: 'alert',
+  kind: 'failed',
+  entityId: 'arc-1',
+  priority: 'high',
+  title,
+  whyNow: 'a verify step failed',
+  actions: [{ op: 'restart', label: 'Restart', style: 'primary' }],
+  resolved: false,
+})
 
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-chat-store-test-'))
@@ -272,6 +284,35 @@ describe('chat-store', () => {
     const second = (await m.getThread(thread.id))!.thread.evaporated_at
 
     expect(second).toBe(first)
+  })
+
+  // ── startThreadFromAlert (human-pull, slice 4) ───────────────────────────────
+
+  it('startThreadFromAlert seeds an alert-origin thread with the segment', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.startThreadFromAlert('arc-1', 'ship the login page', makeSegment('login broke'))
+    expect(thread.origin).toBe('alert')
+    expect(thread.alert_item_id).toBe('arc-1')
+    expect(thread.title).toBe('ship the login page')
+    // The opening assistant message carries the alert segment.
+    const result = await m.getThread(thread.id)
+    expect(result!.messages).toHaveLength(1)
+    expect(result!.messages[0].role).toBe('assistant')
+    const seg = (result!.messages[0].segments as Array<{ type: string; title: string }>)[0]
+    expect(seg.type).toBe('alert')
+    expect(seg.title).toBe('login broke')
+  })
+
+  it('startThreadFromAlert dedups by arc — a second call reuses the same thread', async () => {
+    const m = await loadModule(repo)
+    const first = await m.startThreadFromAlert('arc-1', 'first', makeSegment('first'))
+    const second = await m.startThreadFromAlert('arc-1', 'second', makeSegment('second'))
+    expect(second.id).toBe(first.id)
+    // No duplicate thread, and the original message is preserved (not re-seeded).
+    const threads = await m.listThreads()
+    expect(threads.filter((t) => t.alert_item_id === 'arc-1')).toHaveLength(1)
+    const result = await m.getThread(first.id)
+    expect(result!.messages).toHaveLength(1)
   })
 
   // ── idempotent init ─────────────────────────────────────────────────────────

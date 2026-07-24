@@ -15,7 +15,7 @@
  *   - `technical` — the raw signal for an operator who wants the detail.
  */
 
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -75,4 +75,29 @@ export function useAlerts(): AlertsState {
     alerts: query.data ?? [],
     error: (query.error as Error | null) ?? null,
   }
+}
+
+const startThreadResponseSchema = z.object({ threadId: z.string() })
+
+/**
+ * Pull an Alert into a chat thread (slice 4, ADR-0048). Human-triggered — the
+ * operator clicked the Alert in the Bell or the hero "next action" shortcut. The
+ * daemon dedups by arc (a re-click reuses the thread) and does NOT clear the
+ * Alert from the Bell. Returns the thread id the caller navigates to.
+ */
+export async function startThreadFromAlert(arcId: string): Promise<{ threadId: string }> {
+  const r = await fetch(`${BASE}/api/alerts/${encodeURIComponent(arcId)}/thread`, {
+    method: 'POST',
+  })
+  if (!r.ok) throw new Error(`POST /api/alerts/${arcId}/thread → ${r.status}`)
+  return startThreadResponseSchema.parse(await r.json())
+}
+
+/**
+ * Mutation hook wrapping {@link startThreadFromAlert}. The caller navigates to
+ * the returned thread on success; nothing else needs invalidating (picking an
+ * Alert leaves the Bell list unchanged — an Alert clears only on arc resolution).
+ */
+export function useStartThreadFromAlert() {
+  return useMutation({ mutationFn: startThreadFromAlert })
 }

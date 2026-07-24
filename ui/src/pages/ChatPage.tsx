@@ -75,6 +75,7 @@ import {
 } from '@/widgets/chat/queueThreads'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
+import { useAlerts, useStartThreadFromAlert } from '@/entities/alerts'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
@@ -1253,6 +1254,14 @@ export const HeroEmptyState = ({
 }: HeroEmptyStateProps) => {
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
 
+  // Arc-rooted Alerts (ADR-0054) back the subtle "Next action" shortcut: it
+  // grabs the top Alert and pulls it into a thread. `alerts[0]` mirrors the
+  // daemon's `nextActionAlert` default (the derivation lists arc failures ahead
+  // of stale-worktree housekeeping). Hidden when there are no alerts.
+  const { alerts } = useAlerts()
+  const topAlert = alerts[0] ?? null
+  const { mutate: pullAlert, isPending: pullPending } = useStartThreadFromAlert()
+
   const { data: alertItems } = useQuery({
     queryKey: ['action-queue', projectId],
     queryFn: () => fetchActionQueue(projectId),
@@ -1296,6 +1305,22 @@ export const HeroEmptyState = ({
           Start a conversation or pick a suggestion below.
         </p>
       </div>
+      {topAlert && (
+        <button
+          type="button"
+          data-testid="hero-next-action"
+          disabled={pullPending}
+          onClick={() =>
+            pullAlert(topAlert.arcId, {
+              onSuccess: ({ threadId }) => onSelectThread(threadId),
+            })
+          }
+          title={topAlert.reason}
+          className="max-w-2xl truncate border border-iron/30 px-3 py-1.5 font-mono text-[11px] text-iron transition-colors hover:border-iron/60 hover:bg-iron/10 hover:text-fg active:scale-[0.98] disabled:opacity-50"
+        >
+          Next: {topAlert.goal}
+        </button>
+      )}
       <HeroComposer
         onSend={onCreateAndSend}
         isPending={isPending}
@@ -2098,6 +2123,25 @@ export const ChatPage = () => {
       if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
     }
   }, [selectedQueueItemId, query, selectedThreadId])
+
+  // Sync thread selection from the URL on `hashchange` so a cross-page
+  // navigation (e.g. pulling an Alert into a thread from the Bell, which sets
+  // `#/chat?thread=<id>`) selects the thread even when ChatPage is already
+  // mounted. Own selection writes use replaceState (no event), so this never
+  // loops; guarding on a present thread id keeps the existing "click Chat nav"
+  // behaviour unchanged.
+  useEffect(() => {
+    const onHashChange = () => {
+      const { thread } = readAqStateFromUrl()
+      if (thread) {
+        setSelectedThreadId(thread)
+        setSelectedQueueItemId(null)
+        setWhatHappenedActive(false)
+      }
+    }
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
 
   // Selection is exclusive: a conversation or a projection Thread, never both.
   const handleSelectThread = useCallback((id: string) => {

@@ -928,6 +928,36 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // POST /api/alerts/:arcId/thread — pull an Alert into a chat thread
+        // (slice 4, ADR-0048). Checked before the bare GET /api/alerts so the
+        // thread route matches first. The daemon is the sole writer (ADR-0035);
+        // dedups by arc and does NOT clear the Alert from the Bell.
+        if (
+          path.startsWith('/api/alerts/') &&
+          path.endsWith('/thread') &&
+          req.method === 'POST'
+        ) {
+          const arcId = decodeURIComponent(
+            path.slice('/api/alerts/'.length, -'/thread'.length),
+          )
+          if (!arcId) {
+            return jsonResponse(400, { error: 'arc id is required' })
+          }
+          const result = await proxyPost(
+            ctx.stateDir,
+            `/alerts/${encodeURIComponent(arcId)}/thread`,
+            {},
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
+        // GET /api/alerts/next — proxy the daemon's hero next-action shortcut
+        // target (the top Alert, or {} when none).
+        if (path === '/api/alerts/next' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/alerts/next')
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/alerts — proxy the daemon's arc-rooted Alert list (ADR-0054).
         // The daemon derives these fresh on read (failed arcs + stale worktrees);
         // they are read-only and clear only by entity mutation (ADR-0048).
