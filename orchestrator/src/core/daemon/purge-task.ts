@@ -47,7 +47,7 @@ export class PurgeAheadError extends Error {
  * queue row via `dropTask` (which clears blocker edges atomically).
  *
  * @throws {Error} with message "task <id> not found" if the task does not exist
- * @throws {Error} if the task is not in a terminal status (failed/done)
+ * @throws {Error} if the task is not in a terminal status (failed/done/dropped)
  * @throws {PurgeAheadError} if `force=false` and the branch has unique commits
  */
 export const corePurgeTask = async (
@@ -69,7 +69,7 @@ export const corePurgeTask = async (
       cascadedFixTaskIds: [],
     }
   }
-  if (task.status !== 'failed' && task.status !== 'done') {
+  if (task.status !== 'failed' && task.status !== 'done' && task.status !== 'dropped') {
     throw new Error(
       `task ${id} is ${task.status}; refuse to purge in-flight tasks`,
     )

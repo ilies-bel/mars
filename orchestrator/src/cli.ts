@@ -181,7 +181,7 @@ Commands:
   restart <id> [<id> ...]       wipe worktree+branch and re-queue failed/done/
                                 merging/vega-reconciling task(s) from setup
                                 (full pipeline re-run). Stops on first error.
-  purge <id> [<id> ...] [--force] delete failed/done task(s) entirely
+  purge <id> [<id> ...] [--force] delete failed/done/dropped task(s) entirely
                                 (worktree+branch+row). Refuses if the branch
                                 has unique commits ahead of the integration
                                 branch unless --force is passed. Stops on
@@ -812,7 +812,7 @@ Accepts one or more ids; processes them in order and stops on the first
 error.`,
   purge: `mars purge <id> [<id> ...] [--force]
 
-Delete failed/done task(s) entirely (worktree + branch + row). Refuses
+Delete failed/done/dropped task(s) entirely (worktree + branch + row). Refuses
 in-flight tasks.
 
 Without --force, refuses if the task branch has commits ahead of the

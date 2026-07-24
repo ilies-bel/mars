@@ -216,4 +216,5 @@ describe('corePurgeTask — force flag', () => {
 
     expect(await q.getTask(task.id)).toBeNull()
   })
+
 })
