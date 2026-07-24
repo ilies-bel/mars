@@ -336,6 +336,81 @@ describe('HTTP action endpoint', () => {
     }
   })
 
+  // ── Cancellation guard on restart-all-daemon-killed ──────────────────────
+
+  it('restart-all-daemon-killed skips tasks that were user-cancelled (failureReason=cancelled)', async () => {
+    // Scenario: a task that carries BOTH failureSignature='daemon-killed' AND
+    // failureReason='cancelled' must NOT be resurrected by the bulk restart —
+    // the user explicitly stopped that work and the restart action must not
+    // override their intent.
+    const { queue, httpServer } = await loadModules(repo)
+
+    const daemonKilledTask = await queue.enqueueTask('daemon-killed task', undefined, {
+      skipTriage: true,
+    })
+    const cancelledTask = await queue.enqueueTask('user-cancelled task', undefined, {
+      skipTriage: true,
+    })
+    await queue.updateTask(daemonKilledTask.id, {
+      status: 'failed',
+      failureSignature: 'daemon-killed',
+    })
+    // Simulate a task that was user-cancelled AND also carried the daemon-killed
+    // signature (e.g. killed mid-cancellation-transition).
+    await queue.updateTask(cancelledTask.id, {
+      status: 'failed',
+      failureSignature: 'daemon-killed',
+      failureReason: 'cancelled',
+    })
+
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({
+        restartAllDaemonKilled: async () => {
+          // Mirror the server.ts production implementation with the cancellation
+          // guard so this test exercises the correct filter logic.
+          const all = await queue.listTasks('failed')
+          const killed = all.filter(
+            (t) =>
+              t.failureSignature === 'daemon-killed' && t.failureReason !== 'cancelled',
+          )
+          const restarted: string[] = []
+          for (const task of killed) {
+            const { coreRestartTask } = await import('../restart-task')
+            await coreRestartTask(task.id, new Set(['failed']), new InMemoryStore())
+            restarted.push(task.id)
+          }
+          return restarted
+        },
+      }),
+    )
+
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/actions/restart-all-daemon-killed`,
+        { method: 'POST' },
+      )
+
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { ok: boolean; restarted: string[] }
+      expect(body.ok).toBe(true)
+
+      // The ordinarily daemon-killed task must be restarted.
+      expect(body.restarted).toContain(daemonKilledTask.id)
+      // The user-cancelled task must NOT be restarted.
+      expect(body.restarted).not.toContain(cancelledTask.id)
+
+      // DB state: daemon-killed task is queued; cancelled task remains failed.
+      const daemonKilledRow = await queue.getTask(daemonKilledTask.id)
+      const cancelledRow = await queue.getTask(cancelledTask.id)
+      expect(daemonKilledRow?.status).toBe('queued')
+      expect(cancelledRow?.status).toBe('failed')
+      // The cancelled task's failureReason must not be altered.
+      expect(cancelledRow?.failureReason).toBe('cancelled')
+    } finally {
+      await close()
+    }
+  })
+
   it('returns 404 for an unknown action op', async () => {
     const { httpServer } = await loadModules(repo)
     const { port, close } = await httpServer.startHttpServer(makeDeps())

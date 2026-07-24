@@ -264,6 +264,81 @@ describe('requeueRunningTasksFromPriorDaemon', () => {
     expect(requeued).toHaveLength(0)
   })
 
+  // ── Cancellation guard ────────────────────────────────────────────────────
+
+  it('does NOT re-queue a running task that carries failureReason=cancelled (user-cancelled)', async () => {
+    // Scenario: stop-task sets failureReason='cancelled' on a running task as a
+    // pre-kill marker but the daemon exits before the status transitions to
+    // 'failed'. On restart the task must land in 'failed' (preserving the user's
+    // intent) rather than being resurrected in 'queued'.
+    const { q, rr } = await loadModules(repo)
+    const t = await q.enqueueTask('work the user stopped', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', failure_reason = 'cancelled' WHERE id = ?`,
+      args: [t.id],
+    })
+
+    const requeued = await rr.requeueRunningTasksFromPriorDaemon(repo)
+
+    // The cancelled task must NOT appear in the requeued list.
+    expect(requeued).not.toContain(t.id)
+
+    // It must be 'failed', not 'queued' or 'running'.
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('failed')
+
+    // The cancellation reason must be preserved.
+    expect(reloaded?.failureReason).toBe('cancelled')
+  })
+
+  it('re-queues a running task that has no failureReason (normal daemon-restart path)', async () => {
+    // Baseline: an ordinary interrupted running task (no cancellation marker)
+    // must still be re-queued on daemon restart.
+    const { q, rr } = await loadModules(repo)
+    const t = await q.enqueueTask('interrupted work', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', worktree_path = ? WHERE id = ?`,
+      args: [`/tmp/nonexistent-wt-${t.id}`, t.id],
+    })
+
+    const requeued = await rr.requeueRunningTasksFromPriorDaemon(repo)
+
+    expect(requeued).toContain(t.id)
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('queued')
+  })
+
+  it('handles a mix of cancelled and normal running tasks correctly', async () => {
+    // When both a cancelled and a legitimately-interrupted running task exist,
+    // only the legitimately-interrupted one is re-queued.
+    const { q, rr } = await loadModules(repo)
+    const cancelled = await q.enqueueTask('user-cancelled work', undefined, { skipTriage: true })
+    const interrupted = await q.enqueueTask('interrupted work', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', failure_reason = 'cancelled' WHERE id = ?`,
+      args: [cancelled.id],
+    })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', worktree_path = ? WHERE id = ?`,
+      args: [`/tmp/nonexistent-wt-${interrupted.id}`, interrupted.id],
+    })
+
+    const requeued = await rr.requeueRunningTasksFromPriorDaemon(repo)
+
+    // Only the legitimately interrupted task is re-queued.
+    expect(requeued).toContain(interrupted.id)
+    expect(requeued).not.toContain(cancelled.id)
+
+    const cancelledRow = await q.getTask(cancelled.id)
+    const interruptedRow = await q.getTask(interrupted.id)
+    expect(cancelledRow?.status).toBe('failed')
+    expect(cancelledRow?.failureReason).toBe('cancelled')
+    expect(interruptedRow?.status).toBe('queued')
+  })
+
   it('handles multiple running tasks in one pass', async () => {
     const { q, rr } = await loadModules(repo)
     const t1 = await q.enqueueTask('work 1', undefined, { skipTriage: true })

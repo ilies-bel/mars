@@ -3454,9 +3454,16 @@ export const startDaemon = async (
       // re-queue each one. Partial failures are tolerated: tasks that fail to
       // restart (e.g. wrong status race) are skipped; only successfully
       // restarted ids are returned.
+      //
+      // Cancellation guard: skip tasks with failureReason='cancelled' — the user
+      // explicitly stopped that work and a bulk restart must not override that
+      // intent. The user can still explicitly re-queue a cancelled task via the
+      // per-task 'restart' action if they change their mind.
       const failed = await listTasks('failed')
       const killed = failed.filter(
-        (t) => t.failureSignature === DAEMON_KILLED_SIGNATURE,
+        (t) =>
+          t.failureSignature === DAEMON_KILLED_SIGNATURE &&
+          t.failureReason !== CANCELLED_FAILURE_REASON,
       )
       const restarted: string[] = []
       for (const task of killed) {

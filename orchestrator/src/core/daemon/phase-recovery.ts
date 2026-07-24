@@ -28,6 +28,7 @@
 
 import type { EventEmitter } from 'node:events'
 import { hasIncompleteBlockers, listTasks, updateTask, type Task } from '../queue'
+import { CANCELLED_FAILURE_REASON } from '../blocker-resolution'
 
 /** The in-flight statuses that a prior daemon can strand a task in. */
 export type RecoverablePhase = 'verifying' | 'merging' | 'running' | 'vega-reconciling'
@@ -287,6 +288,46 @@ export const recoverPhase = async (
     // verify failed with "working directory no longer exists"). Treating the
     // worktree as if it were gone forces a checkpoint-clear and fresh setup,
     // breaking the re-queue loop for stale verifier tasks after a daemon restart.
+
+    // Cancellation guard (running phase only): a task that carried an explicit
+    // user-cancellation marker (failureReason='cancelled') before the daemon died
+    // must NOT be re-queued on restart — doing so would resurrect work the user
+    // explicitly stopped. This can occur when the stop-task RPC sets
+    // failureReason='cancelled' on a running task as a pre-kill marker but the
+    // daemon exits before the status transitions to 'failed'. Clean up the stale
+    // worktree/branch and land the task in 'failed' with the cancellation intent
+    // preserved so no automatic recovery or dispatch picks it up.
+    if (policy.status === 'running' && t.failureReason === CANCELLED_FAILURE_REASON) {
+      if (!silent)
+        log(
+          `[reconcile] task ${t.id} was running but user-cancelled; skipping re-queue, marking failed`,
+        )
+      const cancelledBranch = t.branch ?? `task/${t.id}`
+      if (t.worktreePath) {
+        await removeWorktree(
+          { path: t.worktreePath, branch: cancelledBranch },
+          true,
+          true,
+        ).catch(() => {})
+      }
+      await exec('git', ['branch', '-D', cancelledBranch], { cwd: repoRoot }).catch(() => {})
+      const { createQueueWorkflowStore: cancelledWorkflowStore } = await import(
+        '../../workflows/queue-workflow-store'
+      )
+      await cancelledWorkflowStore().deleteRun(t.id).catch(() => {})
+      await updateTask(t.id, {
+        status: 'failed',
+        branch: null,
+        worktreePath: null,
+        claudeSessionId: null,
+        error: null,
+        failedPhase: null,
+        failureReason: CANCELLED_FAILURE_REASON,
+      }).catch(() => {})
+      result.failed++
+      continue
+    }
+
     const branch = t.branch ?? `task/${t.id}`
     // Whether the worktree is physically on disk (not just stored in DB).
     const worktreePhysicallyPresent = t.worktreePath != null && exists(t.worktreePath)
