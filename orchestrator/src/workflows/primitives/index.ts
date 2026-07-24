@@ -1772,6 +1772,16 @@ export interface MergeOutput {
 }
 
 /**
+ * Per-run budget for the integration gate. Must be well under the 300s merge
+ * watchdog (DEFAULT_WATCHDOG_MS in git/merge.ts) so a hung gate command fails
+ * fast and releases the merge lock in ~2 min instead of occupying it for the
+ * full watchdog budget. Override via MARS_INTEGRATION_GATE_TIMEOUT_MS.
+ */
+const INTEGRATION_GATE_TIMEOUT_MS = Number(
+  process.env.MARS_INTEGRATION_GATE_TIMEOUT_MS ?? 120_000,
+)
+
+/**
  * Fast-forward (+ Vega conflict reconciliation) of the task branch into the
  * integration branch. Mirrors the former `merge` step body:
  *
@@ -1998,6 +2008,13 @@ export const merge = async (
       `[merge:integration-gate] task ${taskId}: running ${integrationSteps.length} integration-tier gate(s) under merge lock (pre-merge: ${info.finalIntegrationSha.slice(0, 9)}, post-merge: ${info.finalTaskSha.slice(0, 9)})`,
     )
 
+    // Bound the gate with its own timeout so a hung integration command (e.g. a
+    // test suite with no global testTimeout) fails fast and releases the merge
+    // lock in ~2 min instead of occupying it for the full 300s merge watchdog.
+    // AbortSignal.timeout() is available on Node >= 17.3; this project requires
+    // >= 22.13.0, so it is always safe to call here.
+    const gateSignal = AbortSignal.timeout(INTEGRATION_GATE_TIMEOUT_MS)
+
     // Run gates via verifyChanges, remapping tier to 'task' so the function
     // actually executes them (verifyChanges defers integration-tier steps to
     // this boundary).
@@ -2006,6 +2023,7 @@ export const merge = async (
       steps: integrationSteps.map((s) => ({ ...s, tier: 'task' as const })),
       // No branch/integrationBranch — skip the has-diff gate for this run.
       traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
+      signal: gateSignal,
     })
 
     // Build the formatted output and structured gate-outcomes block, recorded
@@ -2033,6 +2051,15 @@ export const merge = async (
 
     if (!gateResult.passed) {
       const failed = gateResult.steps.filter((s) => !s.passed)
+      // If the gate timed out, name the timed-out step so the failure is
+      // actionable ("step X timed out after 120000ms") rather than the opaque
+      // "mergeBranch aborted (watchdog) during step 'integration-gate'".
+      if (gateSignal.aborted) {
+        const timedOutStep = failed[0]
+        throw new Error(
+          `merge:integration-gate task ${taskId}: integration gate step "${timedOutStep?.name ?? 'unknown'}" timed out after ${INTEGRATION_GATE_TIMEOUT_MS}ms\n\n${gateOutputFormatted}`,
+        )
+      }
       const summary = failed.map((s) => `${s.name}:\n${failureExcerpt(s.output)}`).join('\n\n')
       throw new Error(
         `merge:integration-gate task ${taskId} failed (${failed.length} gate(s)):\n${summary}\n\n${gateOutputFormatted}`,

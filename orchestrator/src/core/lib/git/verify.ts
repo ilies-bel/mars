@@ -158,6 +158,18 @@ export interface VerifyArgs {
    * recipe and genuine no-diff no-ops leave this unset.
    */
   changedFiles?: ReadonlyArray<string>
+  /**
+   * Optional cancellation signal. When the signal fires, any in-flight step
+   * subprocess is SIGTERM'd (then SIGKILL'd after a 2s grace), the step is
+   * recorded as `passed: false` with a "killed by abort signal" marker, and
+   * subsequent steps are skipped immediately rather than started.
+   *
+   * Used by `integrationGateRunner` (primitives/index.ts) to bound the gate's
+   * hold on the merge lock: an `AbortController` fires at
+   * `INTEGRATION_GATE_TIMEOUT_MS` (~120s) so a hung test suite fails the gate
+   * fast instead of occupying `.merge.lock` for the full 300s merge watchdog.
+   */
+  signal?: AbortSignal
 }
 
 const runVerifyStep = async (
@@ -166,11 +178,12 @@ const runVerifyStep = async (
   args: readonly string[],
   cwd: string,
   traceCtx?: TraceCtx,
+  signal?: AbortSignal,
 ): Promise<VerifyStep> => {
   const verifyCtx: TraceCtx | undefined = traceCtx
     ? { ...traceCtx, phase: traceCtx.phase ?? 'verify' }
     : undefined
-  const r = await execProbe(cmd, [...args], { cwd }, verifyCtx)
+  const r = await execProbe(cmd, [...args], { cwd, signal }, verifyCtx)
   if (r.exitCode === 0) {
     return {
       name,
@@ -181,10 +194,18 @@ const runVerifyStep = async (
       stepDir: cwd,
     }
   }
+  // When the abort signal fired and killed the subprocess, prefix the output
+  // with a clear marker so post-mortems can distinguish a timeout-kill from a
+  // genuine test failure (the subprocess output alone may be empty or partial).
+  const rawOutput = r.stdout + r.stderr
+  const output =
+    signal?.aborted
+      ? `step killed by abort signal\n${rawOutput}`
+      : rawOutput
   return {
     name,
     passed: false,
-    output: r.stdout + r.stderr,
+    output,
     cmd,
     args,
     stepDir: cwd,
@@ -499,6 +520,23 @@ export const verifyChanges = async (
     const stepCwd =
       spec.dir && spec.dir !== '.' ? resolve(args.cwd, spec.dir) : args.cwd
 
+    // Abort-signal short-circuit: if the signal has already fired before this
+    // step starts, record it as failed immediately without spawning a subprocess.
+    // This happens for steps queued after a step that was killed mid-run.
+    if (args.signal?.aborted) {
+      results.push({
+        name: spec.name,
+        tier: 'task',
+        passed: false,
+        output: 'step not started: abort signal already fired',
+        cmd: spec.cmd,
+        args: [...spec.args],
+        stepDir: stepCwd,
+      })
+      if (spec.required) stoppedOnRequired = true
+      continue
+    }
+
     // Pre-flight tsc-presence guard: skip `npx tsc` steps when no real
     // TypeScript toolchain is detected in the step directory. A real
     // toolchain requires both a tsconfig.json (the project is configured
@@ -534,6 +572,7 @@ export const verifyChanges = async (
       spec.args,
       stepCwd,
       verifyCtx,
+      args.signal,
     )
     const duration = Math.round(performance.now() - stepStart)
 
