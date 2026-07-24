@@ -16,6 +16,7 @@
 import { useState } from 'react'
 import { Response } from '@/components/ai-elements/response'
 import { invokeAction, snoozeActionQueueItem, restoreSnoozedItem } from '@/shared/api'
+import { PROCESS_LEVEL_OPS } from './QueueThreadDetail'
 import type { AlertHumanDetail, AlertVerb } from '@/shared/schemas'
 import { taskHash, proposalHash } from '@/shared/routing'
 
@@ -261,7 +262,7 @@ export const AlertCard = ({
     setPendingOp(op)
     setActionError(null)
     try {
-      await invokeAction(op, entityId)
+      await invokeAction(op, PROCESS_LEVEL_OPS.has(op) ? undefined : entityId)
       setResolvedOp(op)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))

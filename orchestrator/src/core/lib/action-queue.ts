@@ -5,7 +5,7 @@ import { buildEventInsert } from './outbox'
 import type { EventName, EventPayload } from './outbox'
 import { resolveOriginIdForTask } from './origin'
 import { derivedRowActions } from './derived-row-actions'
-import { lookupRecipe } from './action-queue-recipes'
+import { lookupRecipe, getRecipeVerbs } from './action-queue-recipes'
 import { classifyMarsVerb } from './chat-mars-verbs'
 
 // ── Alert-thread notification callback ────────────────────────────────────────
@@ -524,39 +524,26 @@ const toErrorKind = (kind: string): string => (kind === 'failed' ? 'failed-task'
 
 /**
  * Build the alert segment for a newly-raised action-queue item.
- * For failure kinds (failed, cancelled-blocker-cascade, etc.) we use a generic
- * restart/dismiss pair because the task's failure signature is not yet available
- * at raise time. Non-failure kinds use the same derivedRowActions registry as
- * the action-queue view.
+ * For registered kinds the action buttons come from the recipe registry so
+ * that each kind expresses its own verbs (e.g. daemon-died → restart-daemon).
+ * For unregistered kinds (legacy / unknown) the non-failure derivedRowActions
+ * registry is tried first, falling back to a generic restart/dismiss pair.
  */
-const buildAlertSegment = (
+export const buildAlertSegment = (
   item: RaiseActionQueueItem,
   itemId: string,
 ): import('./chat-store').AlertSegment => {
   const entityId = deriveEntityId(item, itemId)
-  const errorKind = toErrorKind(item.kind)
-  const rawActions = derivedRowActions(errorKind, entityId)
-
-  // derivedRowActions returns [] for unknown / failure kinds — fall back to generic.
-  const actions =
-    rawActions.length > 0
-      ? rawActions.map((a) => ({
-          op: a.op,
-          label: a.label,
-          style: alertActionStyle(a.op),
-        }))
-      : [
-          { op: 'restart', label: 'Restart', style: 'primary' as const },
-          { op: 'dismiss', label: 'Dismiss', style: 'default' as const },
-        ]
-
   const priority = item.priority === 'urgent' || item.priority === 'high' ? 'high' : item.priority
 
-  // Derive humanSummary from the recipe registry when the kind is registered.
+  let actions: import('./chat-store').AlertSegmentAction[]
   let humanSummary: string | undefined
+
   if (isActionQueueKind(item.kind)) {
+    // Registered kind: derive both humanSummary and actions from the recipe.
+    // RecipeVerb.style uses 'danger' where AlertSegmentAction uses 'destructive'.
     const recipe = lookupRecipe(item.kind)
-    humanSummary = recipe.humanSummary({
+    const ctx = {
       kind: item.kind,
       entityId,
       payload: item.payload,
@@ -564,7 +551,28 @@ const buildAlertSegment = (
       title: item.title,
       body: item.body,
       raisedAt: new Date().toISOString(),
-    })
+    }
+    humanSummary = recipe.humanSummary(ctx)
+    actions = getRecipeVerbs(recipe, ctx).map((v) => ({
+      op: v.op,
+      label: v.label,
+      style: (v.style === 'danger' ? 'destructive' : v.style) as 'primary' | 'destructive' | 'default',
+    }))
+  } else {
+    // Unregistered kind: fall back to derivedRowActions or generic restart/dismiss.
+    const errorKind = toErrorKind(item.kind)
+    const rawActions = derivedRowActions(errorKind, entityId)
+    actions =
+      rawActions.length > 0
+        ? rawActions.map((a) => ({
+            op: a.op,
+            label: a.label,
+            style: alertActionStyle(a.op),
+          }))
+        : [
+            { op: 'restart', label: 'Restart', style: 'primary' as const },
+            { op: 'dismiss', label: 'Dismiss', style: 'default' as const },
+          ]
   }
 
   // Derive goal from the payload for items that carry it (e.g. arc-failed items

@@ -188,4 +188,37 @@ describe('AlertCard – verb button invocation', () => {
     expect(resolvedState).not.toBeNull()
     expect(resolvedState!.textContent).toContain('restart')
   })
+
+  it('process-level op restart-daemon calls invokeAction with op and undefined entityId', async () => {
+    const { container } = renderCard({
+      entityId: 'daemon-died',
+      kind: 'daemon-died',
+      summary: 'The background engine crashed unexpectedly.',
+      verbs: [
+        { op: 'restart-daemon', label: 'Restart engine', style: 'primary' },
+        { op: 'dismiss', label: 'Dismiss', style: 'default' },
+      ],
+    })
+
+    const btn = container.querySelector('[data-testid="alert-card-verb-restart-daemon"]')!
+    expect(btn).not.toBeNull()
+
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(mockInvokeAction).toHaveBeenCalledTimes(1)
+    expect(mockInvokeAction).toHaveBeenCalledWith('restart-daemon', undefined)
+  })
+
+  it('non-process-level op restart still passes entityId', async () => {
+    const { container } = renderCard()
+
+    const restartBtn = container.querySelector('[data-testid="alert-card-verb-restart"]')!
+    await act(async () => {
+      restartBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(mockInvokeAction).toHaveBeenCalledWith('restart', 't-1')
+  })
 })

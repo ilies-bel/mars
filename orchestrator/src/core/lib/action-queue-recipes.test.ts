@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { ACTION_QUEUE_KINDS } from './action-queue'
+import { ACTION_QUEUE_KINDS, buildAlertSegment, type RaiseActionQueueItem } from './action-queue'
 import {
   lookupRecipe,
   getRecipeVerbs,
@@ -309,5 +309,68 @@ describe('compound verb mapping', () => {
       payload: { workflowName: 'implement' },
     })
     expect(recipe.humanSummary(ctx)).toContain('implement')
+  })
+})
+
+// ── Suite 4: buildAlertSegment ────────────────────────────────────────────────
+
+const makeDaemonDiedItem = (overrides: Partial<RaiseActionQueueItem> = {}): RaiseActionQueueItem => ({
+  kind: 'daemon-died',
+  category: 'daemon',
+  priority: 'urgent',
+  title: 'Background engine crashed',
+  body: 'The daemon exited unexpectedly.',
+  payload: {},
+  context: {},
+  raisedBy: 'daemon',
+  signature: 'daemon-died:test',
+  ...overrides,
+})
+
+describe('buildAlertSegment — registered kinds use recipe verbs', () => {
+  it('daemon-died alert segment first action is restart-daemon with primary style', () => {
+    const segment = buildAlertSegment(makeDaemonDiedItem(), 'test-item-id')
+    expect(segment.actions[0]).toMatchObject({
+      op: 'restart-daemon',
+      label: 'Restart engine',
+      style: 'primary',
+    })
+  })
+
+  it('daemon-died alert segment has Dismiss appended after restart-daemon', () => {
+    const segment = buildAlertSegment(makeDaemonDiedItem(), 'test-item-id')
+    const dismissAction = segment.actions.find((a) => a.op === 'dismiss')
+    expect(dismissAction).toBeDefined()
+    expect(dismissAction).toMatchObject({ op: 'dismiss', label: 'Dismiss', style: 'default' })
+  })
+
+  it('daemon-died alert segment has Snooze appended last', () => {
+    const segment = buildAlertSegment(makeDaemonDiedItem(), 'test-item-id')
+    const last = segment.actions[segment.actions.length - 1]
+    expect(last).toMatchObject({ op: 'snooze', label: 'Snooze', style: 'default' })
+  })
+
+  it('awaiting-validation reject verb (danger in recipe) maps to destructive style in segment', () => {
+    const item: RaiseActionQueueItem = {
+      kind: 'awaiting-validation',
+      category: 'orchestrator',
+      priority: 'high',
+      title: 'Validation needed',
+      body: 'Please review.',
+      payload: {},
+      context: {},
+      raisedBy: 'orchestrator',
+      signature: 'awaiting-validation:test',
+    }
+    const segment = buildAlertSegment(item, 'test-item-id')
+    const reject = segment.actions.find((a) => a.op === 'reject')
+    expect(reject).toBeDefined()
+    expect(reject?.style).toBe('destructive')
+  })
+
+  it('daemon-died humanSummary is populated from the recipe', () => {
+    const segment = buildAlertSegment(makeDaemonDiedItem(), 'test-item-id')
+    expect(segment.humanSummary).toBeDefined()
+    expect(segment.humanSummary!.length).toBeGreaterThan(10)
   })
 })
