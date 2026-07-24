@@ -10,7 +10,7 @@ import {
   proxyAction,
   proxyDelete,
   proxyGet as realProxyGet,
-  proxyPost,
+  proxyPost as realProxyPost,
   proxyStream,
   readDaemonHttpPort,
 } from './daemonHttp.ts'
@@ -37,6 +37,7 @@ interface CliArgs {
  */
 export interface ServerDeps {
   proxyGet?: (stateDir: string, path: string) => Promise<DaemonActionResult>
+  proxyPost?: (stateDir: string, path: string, body: unknown, method?: 'POST' | 'PUT') => Promise<DaemonActionResult>
   /** SSE heartbeat interval in ms. Defaults to 15 000. Override in tests to avoid slow polls. */
   sseHeartbeatMs?: number
 }
@@ -120,6 +121,7 @@ export const startServer = async (
   deps: ServerDeps = {},
 ): Promise<ReturnType<typeof Bun.serve>> => {
   const proxyGet = deps.proxyGet ?? realProxyGet
+  const proxyPost = deps.proxyPost ?? realProxyPost
   const sseHeartbeatMs = deps.sseHeartbeatMs ?? 15_000
   // Resolve the default context once for startup logging and healthz.
   const defaultCtx = resolveRepo(args.repo)
@@ -831,6 +833,51 @@ export const startServer = async (
           const result = await proxyPost(
             ctx.stateDir,
             `/chat/threads/${encodeURIComponent(threadId)}/${action}`,
+            body,
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
+        // POST /api/chat/messages/:id/feedback/clear — must be checked before
+        // /feedback because the longer suffix also contains '/feedback'.
+        if (
+          path.startsWith('/api/chat/messages/') &&
+          path.endsWith('/feedback/clear') &&
+          req.method === 'POST'
+        ) {
+          const id = decodeURIComponent(
+            path.slice('/api/chat/messages/'.length, -'/feedback/clear'.length),
+          )
+          if (!id) {
+            return jsonResponse(400, { error: 'message id is required' })
+          }
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* empty body fine */ }
+          const result = await proxyPost(
+            ctx.stateDir,
+            `/chat/messages/${encodeURIComponent(id)}/feedback/clear`,
+            body,
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
+        // POST /api/chat/messages/:id/feedback
+        if (
+          path.startsWith('/api/chat/messages/') &&
+          path.endsWith('/feedback') &&
+          req.method === 'POST'
+        ) {
+          const id = decodeURIComponent(
+            path.slice('/api/chat/messages/'.length, -'/feedback'.length),
+          )
+          if (!id) {
+            return jsonResponse(400, { error: 'message id is required' })
+          }
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* empty body fine */ }
+          const result = await proxyPost(
+            ctx.stateDir,
+            `/chat/messages/${encodeURIComponent(id)}/feedback`,
             body,
           )
           return jsonResponse(result.status, result.body)
