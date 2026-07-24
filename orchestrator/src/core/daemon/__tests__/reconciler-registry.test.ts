@@ -26,6 +26,7 @@ describe('RECONCILERS registry', () => {
     expect(names).toEqual([
       'daemon-killed-sweep',
       'daemon-died-sweep',
+      'orphaned-chat-run-sweep',
       'blocker-drift-repair',
       'orphaned-blocked-scan',
       'recovery-done-propagation',
