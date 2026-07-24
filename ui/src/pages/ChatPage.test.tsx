@@ -309,7 +309,7 @@ describe('pickTopAlert', () => {
 describe('HeroSuggestions – no alert', () => {
   it('renders only quick-action chips when no alert is open', () => {
     const html = renderToStaticMarkup(
-      createElement(HeroSuggestions, { alerts: [], onAlertClick: () => {}, onChipClick: () => {} }),
+      createElement(HeroSuggestions, { alerts: [], onAlertClick: () => {}, onChipClick: () => {}, onWhatHappened: () => {} }),
     )
     expect(html).not.toContain('hero-alert-preview')
     expect(html).toContain('Groom the action queue')
@@ -322,7 +322,7 @@ describe('HeroSuggestions – with alert', () => {
   it('renders the top alert as a conversation preview before quick actions', () => {
     const alert = makeAlert({ title: 'Deploy is broken', body: 'Failed with exit code 1' })
     const html = renderToStaticMarkup(
-      createElement(HeroSuggestions, { alerts: [alert], onAlertClick: () => {}, onChipClick: () => {} }),
+      createElement(HeroSuggestions, { alerts: [alert], onAlertClick: () => {}, onChipClick: () => {}, onWhatHappened: () => {} }),
     )
     expect(html).toContain('Deploy is broken')
     expect(html).toContain('Open conversation')
@@ -334,7 +334,7 @@ describe('HeroSuggestions – with alert', () => {
   it('shows the kind icon for a failed-task alert', () => {
     const alert = makeAlert({ kind: 'failed-task' })
     const html = renderToStaticMarkup(
-      createElement(HeroSuggestions, { alerts: [alert], onAlertClick: () => {}, onChipClick: () => {} }),
+      createElement(HeroSuggestions, { alerts: [alert], onAlertClick: () => {}, onChipClick: () => {}, onWhatHappened: () => {} }),
     )
     expect(html).toContain('⚠️')
   })
@@ -342,7 +342,7 @@ describe('HeroSuggestions – with alert', () => {
   it('shows the kind icon for a draft-proposal alert', () => {
     const alert = makeAlert({ kind: 'draft-proposal' })
     const html = renderToStaticMarkup(
-      createElement(HeroSuggestions, { alerts: [alert], onAlertClick: () => {}, onChipClick: () => {} }),
+      createElement(HeroSuggestions, { alerts: [alert], onAlertClick: () => {}, onChipClick: () => {}, onWhatHappened: () => {} }),
     )
     expect(html).toContain('💡')
   })
@@ -351,7 +351,7 @@ describe('HeroSuggestions – with alert', () => {
     const first = makeAlert({ id: 'first', title: 'First alert', priority: 'high' })
     const second = makeAlert({ id: 'second', title: 'Second alert', priority: 'normal' })
     const html = renderToStaticMarkup(
-      createElement(HeroSuggestions, { alerts: [first, second], onAlertClick: () => {}, onChipClick: () => {} }),
+      createElement(HeroSuggestions, { alerts: [first, second], onAlertClick: () => {}, onChipClick: () => {}, onWhatHappened: () => {} }),
     )
     expect(html).toContain('First alert')
     expect(html).toContain('Second alert')

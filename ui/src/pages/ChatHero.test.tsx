@@ -66,6 +66,7 @@ const renderHeroStatic = (
       <HeroEmptyState
         projectId={undefined}
         onSelectThread={opts.onSelectThread ?? (() => {})}
+          onWhatHappened={() => {}}
         onCreateAndSend={opts.onCreateAndSend ?? (() => {})}
         isPending={opts.isPending ?? false}
         sendError={opts.sendError}
@@ -128,6 +129,7 @@ describe('HeroEmptyState – composer creates and sends', () => {
           <HeroEmptyState
             projectId={undefined}
             onSelectThread={() => {}}
+          onWhatHappened={() => {}}
             onCreateAndSend={onCreateAndSend}
             isPending={false}
           />
@@ -168,6 +170,7 @@ describe('HeroEmptyState – composer creates and sends', () => {
           <HeroEmptyState
             projectId={undefined}
             onSelectThread={() => {}}
+          onWhatHappened={() => {}}
             onCreateAndSend={onCreateAndSend}
             isPending={false}
           />
@@ -206,6 +209,7 @@ describe('HeroEmptyState – composer creates and sends', () => {
           <HeroEmptyState
             projectId={undefined}
             onSelectThread={() => {}}
+          onWhatHappened={() => {}}
             onCreateAndSend={onCreateAndSend}
             isPending={false}
           />
@@ -243,6 +247,7 @@ describe('HeroEmptyState – composer creates and sends', () => {
           <HeroEmptyState
             projectId={undefined}
             onSelectThread={() => {}}
+          onWhatHappened={() => {}}
             onCreateAndSend={onCreateAndSend}
             isPending={false}
           />
@@ -284,6 +289,7 @@ describe('HeroEmptyState – composer creates and sends', () => {
           <HeroEmptyState
             projectId={undefined}
             onSelectThread={() => {}}
+          onWhatHappened={() => {}}
             onCreateAndSend={onCreateAndSend}
             isPending={false}
           />

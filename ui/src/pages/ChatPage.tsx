@@ -67,6 +67,7 @@ import { PaperclipIcon, MicIcon, SquareIcon, XIcon } from 'lucide-react'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { WhileYouWereAwayPanel } from '@/widgets/WhileYouWereAwayPanel'
+import { WhatHappenedTodayView } from '@/widgets/chat/WhatHappenedTodayView'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { QueueThreadRow, priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { QueueThreadDetail, PROCESS_LEVEL_OPS } from '@/widgets/chat/QueueThreadDetail'
@@ -92,7 +93,9 @@ const WELCOME_CHIPS = [
   { label: 'Groom the action queue', prompt: 'Groom the action queue' },
   { label: 'Grill an idea', prompt: 'Grill this idea into a PRD: ' },
   { label: 'Enqueue a task', prompt: 'Enqueue a task: ' },
-  { label: "What happened today?", prompt: 'What happened today?' },
+  // 'What happened today?' streams a canned release-notes reply client-side
+  // (see WhatHappenedTodayView) instead of prefilling the composer.
+  { label: "What happened today?", prompt: 'What happened today?', action: 'what-happened' },
 ] as const
 
 const SLASH_COMMANDS = [
@@ -127,6 +130,8 @@ export interface HeroSuggestionsProps {
   onAlertClick: (alert: ActionQueueItem) => void
   /** Called when the user clicks a quick-action chip; receives the prefill prompt. */
   onChipClick: (prompt: string) => void
+  /** Called when the user clicks the "What happened today?" chip — streams a canned release-notes reply. */
+  onWhatHappened: () => void
 }
 
 /**
@@ -135,7 +140,7 @@ export interface HeroSuggestionsProps {
  * The most important alert becomes the opening card in the hero; the next few
  * actionable conversations remain one click away before the normal shortcuts.
  */
-export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick }: HeroSuggestionsProps) => {
+export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappened }: HeroSuggestionsProps) => {
   const [topAlert, ...otherAlerts] = alerts
 
   return (
@@ -187,14 +192,18 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick }: HeroSugge
       )}
 
       <div className="flex flex-wrap justify-center gap-2">
-        {WELCOME_CHIPS.map(({ label, prompt }) => (
+        {WELCOME_CHIPS.map((chip) => (
           <button
-            key={label}
+            key={chip.label}
             type="button"
             className="border border-iron/40 px-3 py-1.5 font-mono text-[11px] text-iron transition-colors hover:border-iron/70 hover:bg-iron/15 hover:text-fg active:scale-[0.98]"
-            onClick={() => onChipClick(prompt)}
+            onClick={() =>
+              'action' in chip && chip.action === 'what-happened'
+                ? onWhatHappened()
+                : onChipClick(chip.prompt)
+            }
           >
-            {label}
+            {chip.label}
           </button>
         ))}
       </div>
@@ -1224,6 +1233,8 @@ export interface HeroEmptyStateProps {
   sendError?: string | null
   /** Opens the projection Thread for an action-queue item id in the sidebar/detail. */
   onOpenQueueItem?: (id: string) => void
+  /** Opens the client-side "What happened today?" streamed release-notes view. */
+  onWhatHappened: () => void
 }
 
 /**
@@ -1242,6 +1253,7 @@ export const HeroEmptyState = ({
   isPending,
   sendError,
   onOpenQueueItem,
+  onWhatHappened,
 }: HeroEmptyStateProps) => {
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
 
@@ -1307,6 +1319,7 @@ export const HeroEmptyState = ({
         alerts={rankedAlerts}
         onAlertClick={handleAlertClick}
         onChipClick={setPrefill}
+        onWhatHappened={onWhatHappened}
       />
     </div>
   )
@@ -2271,6 +2284,9 @@ export const ChatPage = () => {
   const [query, setQuery] = useState<string>(() => readAqStateFromUrl().q)
   const [kindFilter, setKindFilter] = useState<KindFilter>(() => readAqStateFromUrl().kind)
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
+  // Client-only "What happened today?" release-notes stream. Shown in place of
+  // the hero empty state; cleared when the user navigates to any thread/item.
+  const [whatHappenedActive, setWhatHappenedActive] = useState(false)
 
   // ---------------------------------------------------------------------------
   // Responsive breakpoints
@@ -2342,11 +2358,13 @@ export const ChatPage = () => {
   const handleSelectThread = useCallback((id: string) => {
     setSelectedThreadId(id || null)
     setSelectedQueueItemId(null)
+    setWhatHappenedActive(false)
   }, [])
 
   const handleSelectQueueItem = useCallback((id: string) => {
     setSelectedQueueItemId(id)
     setSelectedThreadId(null)
+    setWhatHappenedActive(false)
   }, [])
 
   // Deep link: when the selected queue item is backed by an alert-origin
@@ -2586,6 +2604,8 @@ export const ChatPage = () => {
               />
             )}
           </>
+        ) : whatHappenedActive ? (
+          <WhatHappenedTodayView onBack={() => setWhatHappenedActive(false)} />
         ) : (
           <HeroEmptyState
             projectId={projectId}
@@ -2594,6 +2614,7 @@ export const ChatPage = () => {
             isPending={isCreatingThread}
             sendError={sendError}
             onOpenQueueItem={handleSelectQueueItem}
+            onWhatHappened={() => setWhatHappenedActive(true)}
           />
         )}
       </div>
