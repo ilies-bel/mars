@@ -55,7 +55,7 @@ import {
 import { Message, MessageContent } from '@/components/ai-elements/message'
 import { Response } from '@/components/ai-elements/response'
 import { Reasoning, ReasoningTrigger, ReasoningContent } from '@/components/ai-elements/reasoning'
-import { Tool, ToolHeader, ToolContent, ToolInput, ToolOutput } from '@/components/ai-elements/tool'
+import { ToolGroup, type ToolGroupEntryData } from '@/components/ai-elements/tool'
 // Loader removed — ThinkingIndicator replaces it in ChatConversation
 import { Suggestions, Suggestion } from '@/components/ai-elements/suggestion'
 import {
@@ -614,29 +614,25 @@ type ToolActivityEntry = {
 }
 
 /**
- * Renders one or more tool calls as a vertical stack of AI-Elements Tool
- * blocks. Multiple tools can live in a single group when they arrived
- * consecutively in the stream (parallel tool calls).
+ * Renders one or more tool calls as a compact, collapsible unit.
+ * Single tool: a direct Tool block. Multiple tools: one summary header that
+ * collapses to reveal individual rows (each independently collapsible).
  */
 export const ToolActivityGroup = ({
   tools,
 }: {
   tools: ToolActivityEntry[]
 }): ReactNode => (
-  <>
-    {tools.map((tool) => (
-      <Tool key={tool.toolUseId}>
-        <ToolHeader
-          type={`tool-${tool.toolName}` as ToolUIPart['type']}
-          state={tool.toolState}
-        />
-        <ToolContent>
-          <ToolInput input={tool.input} />
-          <ToolOutput output={tool.output} errorText={tool.errorText} />
-        </ToolContent>
-      </Tool>
-    ))}
-  </>
+  <ToolGroup
+    tools={tools.map((t): ToolGroupEntryData => ({
+      id: t.toolUseId,
+      toolType: `tool-${t.toolName}` as ToolUIPart['type'],
+      state: t.toolState,
+      input: t.input,
+      output: t.output,
+      errorText: t.errorText,
+    }))}
+  />
 )
 
 /** Render one `UIMessage` part as its AI Element. Returns null for inert parts. */
