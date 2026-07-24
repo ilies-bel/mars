@@ -90,6 +90,10 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // mars chat-feedback list — filter by rating ('up' or 'down')
   '--rating',
   '--origin-arc',
+  // mars verify-gate — verify gate registry management
+  '--scope',
+  '--cmd',
+  '--tier',
   // mars task add --supersede <task-id>: declare this task as a manual
   // operator-authored continuation of a failed arc whose recovery exhausted
   // automatic options (slice 2 of PRD 94e2a82a-recovery-operator).
@@ -132,6 +136,9 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '-h',
   '--version',
   '-v',
+  // mars verify-gate add — gate required/optional toggle
+  '--required',
+  '--optional',
 ])
 
 // Short aliases for value-bearing flags, normalised to their long form before
