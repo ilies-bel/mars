@@ -84,14 +84,18 @@ export const buildArcsByCluster = (
     'In progress': [],
     Blocked: [],
     Failed: [],
+    Done: [], // arcs never resolve to Done; present for type completeness
   }
 
   for (const [id, arcTasks] of grouped) {
     // A queued/running/blocked descendant supersedes a prior failed attempt in
     // the same Arc. Among live states, attention still wins over activity.
-    const cluster = ARC_CLUSTER_PRIORITY.find((candidate) =>
-      arcTasks.some((task) => task.cluster === candidate),
-    ) ?? 'Failed'
+    // An arc whose tasks are all Done is skipped — the board shows active work.
+    const cluster =
+      ARC_CLUSTER_PRIORITY.find((candidate) =>
+        arcTasks.some((task) => task.cluster === candidate),
+      ) ?? (arcTasks.some((task) => task.cluster === 'Failed') ? 'Failed' : null)
+    if (cluster === null) continue // all-Done arc: not shown on the board
     const orderedTasks = [...arcTasks].sort((a, b) => {
       if (a.id === id) return -1
       if (b.id === id) return 1
@@ -154,17 +158,24 @@ export const BoardView = ({
   searchMatchIds,
   searchQuery,
 }: BoardViewProps) => {
-  // Filter before grouping so an Arc spanning a failure and its recovery is
-  // represented exactly once, in the status that describes its current work.
-  const visibleTasks = CLUSTERS.flatMap((cluster) => byCluster[cluster]).filter((task) => {
+  // Filter active (non-Done) tasks by proposal + search before grouping so an
+  // Arc spanning a failure and its recovery is represented exactly once, in the
+  // status that describes its current work.
+  const activeTasks = CLUSTERS.flatMap((cluster) => byCluster[cluster]).filter((task) => {
     if (selectedProposalId !== null && task.parentProposalId !== selectedProposalId) return false
     return searchMatchIds == null || searchMatchIds.has(task.id)
   })
-  const arcsByCluster = buildArcsByCluster(visibleTasks)
+  // Done tasks are arc metadata — they are always passed to arc grouping so a
+  // completed origin can provide its prompt as the arc title and prevent a false
+  // "Abandoned arc / origin force-purged" display. They bypass search and
+  // proposal filtering because they are not visible items on the board.
+  const doneTasks = byCluster['Done'] ?? []
+  const arcsByCluster = buildArcsByCluster([...activeTasks, ...doneTasks])
 
-  // Total tasks visible across all clusters after proposal + search filtering.
+  // Total active tasks visible after proposal + search filtering.
   // Used to detect the search zero-state (active query that matches nothing).
-  const totalMatchedTasks = visibleTasks.length
+  // Done tasks are excluded since they are not rendered on the board.
+  const totalMatchedTasks = activeTasks.length
 
   // Arc count per tab (for the mobile strip badges)
   const tabCounts: Record<Cluster, number> = {
@@ -172,6 +183,7 @@ export const BoardView = ({
     'In progress': arcsByCluster['In progress'].length,
     Blocked: arcsByCluster.Blocked.length,
     Failed: arcsByCluster.Failed.length,
+    Done: 0, // arcs never resolve to Done; tab does not appear in ALL_TABS
   }
 
   // Default to the leftmost non-empty of Failed → Blocked → In progress → Queued; else Queued

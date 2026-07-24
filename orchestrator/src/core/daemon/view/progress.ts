@@ -10,7 +10,7 @@
 
 import type { DbClient } from '../../lib/db.js'
 
-export type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed'
+export type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed' | 'Done'
 export type ProposalSource = 'reflection' | 'human' | 'planner'
 
 /**
@@ -146,6 +146,8 @@ export const clusterFor = (status: string): Cluster | null => {
       return 'Blocked'
     case 'failed':
       return 'Failed'
+    case 'done':
+      return 'Done'
     default:
       return null
   }

@@ -17,7 +17,7 @@ export type TaskStatus =
  * this — it is the single source of truth for how a live or recently-broken
  * task should be grouped on screen.
  */
-export type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed'
+export type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed' | 'Done'
 
 export interface ProgressTask extends Task {
   cluster: Cluster
@@ -217,8 +217,9 @@ const clusterFor = (task: Task): Cluster | null => {
       return 'Blocked'
     case 'failed':
       return 'Failed'
-    case 'draft':
     case 'done':
+      return 'Done'
+    case 'draft':
     case 'dropped':
       return null
   }

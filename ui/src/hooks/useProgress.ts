@@ -25,6 +25,7 @@ const emptyByCluster = (): Record<Cluster, ProgressTask[]> => ({
   'In progress': [],
   Blocked: [],
   Failed: [],
+  Done: [],
 })
 
 export const useProgress = (): State => {

@@ -38,6 +38,7 @@ const STATUS_CLASS: Record<Cluster, string> = {
   Blocked: 'bg-amber/15 text-ochre',
   'In progress': 'bg-flame/10 text-flame',
   Queued: 'bg-basalt/10 text-basalt',
+  Done: 'bg-basalt/10 text-basalt', // never rendered on board; present for type completeness
 }
 
 /**

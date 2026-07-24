@@ -49,6 +49,13 @@ const CSS_VAR_NAMES = {
     stroke: '--color-dag-failed-stroke',
     text:   '--color-dag-failed-text',
   },
+  // Done tasks are arc metadata and never rendered as topology nodes;
+  // these CSS vars are fallbacks kept for type completeness only.
+  Done: {
+    fill:   '--color-dag-queued-fill',
+    stroke: '--color-dag-queued-stroke',
+    text:   '--color-dag-queued-text',
+  },
 } as const satisfies Record<Cluster, { fill: string; stroke: string; text: string }>
 
 /**
@@ -108,6 +115,7 @@ const SEVERITY: Record<Cluster, number> = {
   'In progress': 3,
   Blocked: 2,
   Queued: 1,
+  Done: 0, // completed origins are lowest severity in rollup tally
 }
 
 /** Per-proposal cluster tally. */
@@ -121,6 +129,7 @@ const emptyCounts = (): Record<Cluster, number> => ({
   'In progress': 0,
   Blocked: 0,
   Failed: 0,
+  Done: 0,
 })
 
 /**

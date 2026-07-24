@@ -110,8 +110,8 @@ describe('clusterFor', () => {
       expect(clusterFor('draft')).toBeNull()
     })
 
-    it('returns null for done', () => {
-      expect(clusterFor('done')).toBeNull()
+    it('returns Done for done (completed origin remains visible for arc grouping)', () => {
+      expect(clusterFor('done')).toBe('Done')
     })
 
     it('returns null for dropped', () => {

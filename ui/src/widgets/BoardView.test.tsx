@@ -30,6 +30,7 @@ const emptyByCluster = () => ({
   'In progress': [] as ProgressTask[],
   Blocked: [] as ProgressTask[],
   Failed: [] as ProgressTask[],
+  Done: [] as ProgressTask[],
 })
 
 describe('buildArcsByCluster', () => {
@@ -583,5 +584,179 @@ describe('BoardView — arc lifecycle rendering', () => {
     expect(html).toContain('data-arc-state="active"')
     expect(html).not.toContain('data-arc-state="orphaned-origin"')
     expect(html).not.toContain('data-arc-state="cleanup-required"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: done origin must not produce "Abandoned arc" (mars-bf869037)
+// ---------------------------------------------------------------------------
+
+describe('buildArcsByCluster — done origin regression', () => {
+  it('sets hasOrphanedOrigin=false when the origin is Done (completed, not purged)', () => {
+    // Arc: done origin + running sibling + blocked sibling — all sharing the same originId.
+    // This mirrors the mars-bf869037 scenario exactly.
+    const doneOrigin = task({
+      id: 'origin-done',
+      prompt: 'Implement the feature',
+      cluster: 'Done',
+      status: 'done',
+      originId: 'origin-done',
+    })
+    const runningSlice = task({
+      id: 'slice-running',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-done',
+    })
+    const blockedSlice = task({
+      id: 'slice-blocked',
+      cluster: 'Blocked',
+      status: 'blocked',
+      originId: 'origin-done',
+    })
+
+    const arcs = buildArcsByCluster([doneOrigin, runningSlice, blockedSlice])
+
+    // Arc is placed in Blocked (higher attention priority than In progress)
+    expect(arcs.Blocked).toHaveLength(1)
+    const arc = arcs.Blocked[0]!
+    expect(arc.id).toBe('origin-done')
+    expect(arc.hasOrphanedOrigin).toBe(false)
+    expect(arc.title).toBe('Implement the feature')
+    expect(arc.title).not.toMatch(/Abandoned arc/)
+  })
+
+  it('places the arc in Blocked column when that is the highest-attention active cluster', () => {
+    const doneOrigin = task({
+      id: 'O',
+      prompt: 'Ship widget',
+      cluster: 'Done',
+      status: 'done',
+      originId: 'O',
+    })
+    const blockedSlice = task({
+      id: 'S1',
+      cluster: 'Blocked',
+      status: 'blocked',
+      originId: 'O',
+    })
+
+    const arcs = buildArcsByCluster([doneOrigin, blockedSlice])
+
+    expect(arcs.Blocked).toHaveLength(1)
+    expect(arcs['In progress']).toHaveLength(0)
+    expect(arcs.Failed).toHaveLength(0)
+    expect(arcs.Blocked[0]!.hasOrphanedOrigin).toBe(false)
+  })
+
+  it('skips an arc whose tasks are all Done — not rendered in any column', () => {
+    const doneOrigin = task({
+      id: 'origin-all-done',
+      cluster: 'Done',
+      status: 'done',
+      originId: 'origin-all-done',
+    })
+    const doneSlice = task({
+      id: 'slice-done',
+      cluster: 'Done',
+      status: 'done',
+      originId: 'origin-all-done',
+    })
+
+    const arcs = buildArcsByCluster([doneOrigin, doneSlice])
+
+    const allArcs = [
+      ...arcs.Blocked,
+      ...arcs['In progress'],
+      ...arcs.Queued,
+      ...arcs.Failed,
+    ]
+    expect(allArcs).toHaveLength(0)
+  })
+
+  it('still sets hasOrphanedOrigin=true when origin is genuinely absent (force-purged)', () => {
+    // No origin row in the input — only the recovery task. This is the
+    // legitimate "Abandoned arc" case and must keep working.
+    const recovery = task({
+      id: 'fix-orphan',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-deleted',
+      fixForTaskId: 'origin-deleted',
+      kind: 'fix',
+    })
+
+    const arcs = buildArcsByCluster([recovery])
+
+    expect(arcs['In progress']).toHaveLength(1)
+    expect(arcs['In progress'][0]!.hasOrphanedOrigin).toBe(true)
+    expect(arcs['In progress'][0]!.title).toBe('Abandoned arc origin-deleted')
+  })
+})
+
+describe('BoardView — done origin regression rendering', () => {
+  it('renders arc in Blocked column with no "origin force-purged" when origin is Done', () => {
+    const doneOrigin = task({
+      id: 'origin-done',
+      prompt: 'Ship the widget feature',
+      cluster: 'Done',
+      status: 'done',
+      originId: 'origin-done',
+    })
+    const runningSlice = task({
+      id: 'slice-running',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-done',
+    })
+    const blockedSlice = task({
+      id: 'slice-blocked',
+      cluster: 'Blocked',
+      status: 'blocked',
+      originId: 'origin-done',
+    })
+    // Done tasks arrive in byCluster['Done']; active siblings in their own buckets
+    const byCluster = {
+      ...emptyByCluster(),
+      Done: [doneOrigin],
+      'In progress': [runningSlice],
+      Blocked: [blockedSlice],
+    }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+    )
+
+    // Arc must be rendered in Blocked column
+    expect(html).toContain('data-arc-status="Blocked"')
+    // hasOrphanedOrigin=false → no "origin force-purged" subtitle
+    expect(html).not.toContain('origin force-purged')
+    // Title comes from origin prompt, not "Abandoned arc …"
+    expect(html).toContain('Ship the widget feature')
+    expect(html).not.toContain('Abandoned arc origin-done')
+    // arc-state is active (not orphaned)
+    expect(html).not.toContain('data-arc-state="orphaned-origin"')
+    // No line-through (recovery/sibling is active)
+    expect(html).not.toContain('line-through')
+  })
+
+  it('does not render any column card for an all-Done arc', () => {
+    const doneOrigin = task({
+      id: 'fully-done',
+      prompt: 'Already completed work',
+      cluster: 'Done',
+      status: 'done',
+      originId: 'fully-done',
+    })
+    const byCluster = { ...emptyByCluster(), Done: [doneOrigin] }
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+    )
+
+    // Arc must not appear anywhere on the board
+    expect(html).not.toContain('data-arc-id="fully-done"')
+    // No arc cards at all
+    expect(html).not.toContain('Already completed work')
   })
 })
