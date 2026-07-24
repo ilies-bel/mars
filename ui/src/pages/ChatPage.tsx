@@ -23,7 +23,8 @@ import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } fro
 import { useQueryClient } from '@tanstack/react-query'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { isStaticToolUIPart } from 'ai'
+import { isStaticToolUIPart, type ToolUIPart } from 'ai'
+import { applyLiveEvent, emptyLiveBuffer, type LiveBuffer } from '@/shared/chatBuffer'
 import {
   fetchChatThreads,
   fetchChatThread,
@@ -548,6 +549,68 @@ const ResultFooter = ({ usage }: { usage: NonNullable<MarsUIMessage['metadata']>
   return <div className="mt-2 font-mono text-[10px] text-muted-foreground">{parts.join(' · ')}</div>
 }
 
+// ---------------------------------------------------------------------------
+// Shared segment renderers — used by both renderPart (persisted) and
+// LiveAssistantBubble (live stream) so the two paths look identical.
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders a thinking / chain-of-thought section using the AI-Elements
+ * Reasoning collapsible. `isStreaming` keeps the block open and animating
+ * while the model is still writing its chain-of-thought.
+ */
+export const ThinkingBlock = ({
+  text,
+  isStreaming = false,
+}: {
+  text: string
+  isStreaming?: boolean
+}): ReactNode => (
+  <Reasoning isStreaming={isStreaming}>
+    <ReasoningTrigger />
+    <ReasoningContent>{text}</ReasoningContent>
+  </Reasoning>
+)
+
+/** Shape of a single tool entry passed to ToolActivityGroup. */
+type ToolActivityEntry = {
+  toolUseId: string
+  /** Tool name without the `tool-` prefix, e.g. `"Bash"`. */
+  toolName: string
+  input: unknown
+  /** AI-SDK state string that controls the badge/icon in ToolHeader. */
+  toolState: ToolUIPart['state']
+  /** Pre-rendered output node (shown only when state is output-available). */
+  output?: ReactNode
+  errorText?: string
+}
+
+/**
+ * Renders one or more tool calls as a vertical stack of AI-Elements Tool
+ * blocks. Multiple tools can live in a single group when they arrived
+ * consecutively in the stream (parallel tool calls).
+ */
+export const ToolActivityGroup = ({
+  tools,
+}: {
+  tools: ToolActivityEntry[]
+}): ReactNode => (
+  <>
+    {tools.map((tool) => (
+      <Tool key={tool.toolUseId}>
+        <ToolHeader
+          type={`tool-${tool.toolName}` as ToolUIPart['type']}
+          state={tool.toolState}
+        />
+        <ToolContent>
+          <ToolInput input={tool.input} />
+          <ToolOutput output={tool.output} errorText={tool.errorText} />
+        </ToolContent>
+      </Tool>
+    ))}
+  </>
+)
+
 /** Render one `UIMessage` part as its AI Element. Returns null for inert parts. */
 const renderPart = (
   part: UIPart,
@@ -559,25 +622,22 @@ const renderPart = (
   }
   if (part.type === 'reasoning') {
     return (
-      <Reasoning key={key} isStreaming={part.state === 'streaming'}>
-        <ReasoningTrigger />
-        <ReasoningContent>{part.text}</ReasoningContent>
-      </Reasoning>
+      <ThinkingBlock key={key} text={part.text} isStreaming={part.state === 'streaming'} />
     )
   }
   if (isStaticToolUIPart(part)) {
-    let output: ReactNode
-    let errorText: string | undefined
-    if (part.state === 'output-available') output = <ToolResultBox value={part.output} />
-    else if (part.state === 'output-error') errorText = part.errorText
     return (
-      <Tool key={key}>
-        <ToolHeader type={part.type} state={part.state} />
-        <ToolContent>
-          <ToolInput input={part.input} />
-          <ToolOutput output={output} errorText={errorText} />
-        </ToolContent>
-      </Tool>
+      <ToolActivityGroup
+        key={key}
+        tools={[{
+          toolUseId: part.toolCallId,
+          toolName: part.type.replace(/^tool-/, ''),
+          input: part.input,
+          toolState: part.state,
+          output: part.state === 'output-available' ? <ToolResultBox value={part.output} /> : undefined,
+          errorText: part.state === 'output-error' ? part.errorText : undefined,
+        }]}
+      />
     )
   }
   if (part.type === 'data-alert') {
@@ -771,6 +831,67 @@ export const ThinkingIndicator = () => (
   </div>
 )
 
+// ---------------------------------------------------------------------------
+// LiveAssistantBubble — ordered-segment rendering of the streaming reply
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders a live assistant message from a `LiveBuffer` so the streaming layout
+ * matches the persisted layout produced by `chatMessageToUIMessage` + `MessageView`.
+ *
+ * Segments are rendered in arrival order:
+ *   - TextSegment     → Response (Streamdown markdown)
+ *   - ThinkingSegment → ThinkingBlock (collapsible reasoning)
+ *   - ToolGroupSegment → ToolActivityGroup (one Tool block per call)
+ *
+ * A blinking cursor is appended at the bottom while the buffer is not yet done.
+ */
+export const LiveAssistantBubble = ({ buffer }: { buffer: LiveBuffer }): ReactNode => (
+  <Message from="assistant" data-message-role="assistant">
+    <MessageContent variant="flat" className="border border-iron/20 bg-surface px-3 py-2">
+      {buffer.segments.length === 0 && !buffer.done ? (
+        // No segments yet — show the bouncing-dot placeholder (same as ThinkingIndicator).
+        <ThinkingIndicator />
+      ) : (
+        buffer.segments.map((seg, i) => {
+          if (seg.type === 'text') {
+            return <Response key={i}>{seg.text}</Response>
+          }
+          if (seg.type === 'thinking') {
+            return <ThinkingBlock key={i} text={seg.text} isStreaming={!buffer.done} />
+          }
+          if (seg.type === 'tool_group') {
+            return (
+              <ToolActivityGroup
+                key={i}
+                tools={seg.tools.map((t) => ({
+                  toolUseId: t.toolUseId,
+                  toolName: t.toolName,
+                  input: t.input,
+                  toolState: (
+                    t.state === 'done' ? 'output-available'
+                    : t.state === 'error' ? 'output-error'
+                    : 'input-streaming'
+                  ) as ToolUIPart['state'],
+                  output: t.state === 'done' ? <ToolResultBox value={t.output} /> : undefined,
+                  errorText: t.state === 'error' ? t.errorText : undefined,
+                }))}
+              />
+            )
+          }
+          return null
+        })
+      )}
+      {!buffer.done && buffer.segments.length > 0 && (
+        <span
+          className="ml-0.5 inline-block h-3 w-0.5 animate-pulse rounded-sm bg-fg/60"
+          aria-hidden="true"
+        />
+      )}
+    </MessageContent>
+  </Message>
+)
+
 interface ChatConversationProps {
   threadId: string
   projectId?: string
@@ -883,6 +1004,41 @@ const ChatConversation = ({
   // the empty-state chips.
   const showWelcome = !isLoading && messages.length === 0 && !showThinking
 
+  // Build a LiveBuffer from the AI SDK's streaming parts so LiveAssistantBubble
+  // can render them in arrival order (text ↔ tool ↔ text interleaving).
+  // Only computed while actively streaming; null otherwise.
+  const liveBuffer = useMemo((): LiveBuffer | null => {
+    if (status !== 'streaming') return null
+    const last = messages[messages.length - 1]
+    if (!last || last.role !== 'assistant') return null
+    return last.parts.reduce<LiveBuffer>((buf, part) => {
+      if (part.type === 'text') {
+        return applyLiveEvent(buf, { type: 'text', text: part.text })
+      }
+      if (part.type === 'reasoning') {
+        return applyLiveEvent(buf, { type: 'thinking', text: part.text })
+      }
+      if (isStaticToolUIPart(part)) {
+        const toolName = part.type.replace(/^tool-/, '')
+        let b = applyLiveEvent(buf, {
+          type: 'tool_use',
+          toolUseId: part.toolCallId,
+          toolName,
+          input: part.input,
+        })
+        if (part.state === 'output-available') {
+          b = applyLiveEvent(b, { type: 'tool_result', toolUseId: part.toolCallId, output: part.output })
+        } else if (part.state === 'output-error') {
+          b = applyLiveEvent(b, { type: 'tool_result', toolUseId: part.toolCallId, errorText: part.errorText })
+        }
+        return b
+      }
+      return buf
+    }, emptyLiveBuffer())
+  }, [messages, status])
+
+  const liveMessageId = liveBuffer != null ? messages[messages.length - 1]?.id : null
+
   return (
     <>
       <Conversation className="flex-1">
@@ -902,14 +1058,18 @@ const ChatConversation = ({
             </ConversationEmptyState>
           ) : (
             <>
-              {messages.map((m) => (
-                <MessageView
-                  key={m.id}
-                  message={m}
-                  onDiscuss={onInsertPrompt}
-                  onFeedbackChange={handleFeedbackChange}
-                />
-              ))}
+              {messages.map((m) =>
+                m.id === liveMessageId && liveBuffer != null ? (
+                  <LiveAssistantBubble key={m.id} buffer={liveBuffer} />
+                ) : (
+                  <MessageView
+                    key={m.id}
+                    message={m}
+                    onDiscuss={onInsertPrompt}
+                    onFeedbackChange={handleFeedbackChange}
+                  />
+                )
+              )}
               {showThinking && <ThinkingIndicator />}
               {error && (
                 <ChatResponseError
