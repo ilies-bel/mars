@@ -55,10 +55,13 @@ export interface WywaDeltaInput {
 export const DEFAULT_WYWA_LIMIT = 30
 export const MAX_WYWA_LIMIT = 100
 
-/** Clamp a raw limit value into [1, MAX_WYWA_LIMIT]. */
+/**
+ * Clamp a raw limit value into [1, MAX_WYWA_LIMIT].
+ * Null or non-finite → DEFAULT_WYWA_LIMIT; valid number → Math.min(Math.max(1, raw), MAX_WYWA_LIMIT).
+ */
 export const clampWywaDeltaLimit = (raw: number | null): number => {
-  if (raw === null || !Number.isFinite(raw) || raw < 1) return DEFAULT_WYWA_LIMIT
-  return Math.min(raw, MAX_WYWA_LIMIT)
+  if (raw === null || !Number.isFinite(raw)) return DEFAULT_WYWA_LIMIT
+  return Math.min(Math.max(1, raw), MAX_WYWA_LIMIT)
 }
 
 const after = (at: string, since: string | null): boolean =>
