@@ -189,7 +189,7 @@ const THROTTLE_BACKOFF_MS = [30_000, 60_000, 120_000]
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 /** 10-minute wall-clock timeout per chat run. */
-const CHAT_TIMEOUT_MS = 10 * 60 * 1000
+export const CHAT_TIMEOUT_MS = 10 * 60 * 1000
 
 /**
  * ChatRunner manages in-flight Codex CLI runs for chat threads.
@@ -221,6 +221,19 @@ export class ChatRunner {
   private authListeners: Array<(failed: boolean) => void> = []
 
   /**
+   * Tracks the in-flight `_run` promise for each thread so `shutdownDrain`
+   * can wait for them to finalise before the daemon exits.
+   */
+  private _activeRunPromises = new Map<string, Promise<void>>()
+
+  /**
+   * When set, an aborted run that has accumulated no text segments will use
+   * this value as its assistant reply instead of the default `[no output]`.
+   * Set by `shutdownDrain` before aborting subprocesses.
+   */
+  private _shutdownMessage: string | null = null
+
+  /**
    * @param chatStreamHub Optional per-thread `UIMessageChunk` source backing the
    *   `GET /chat/threads/:id/ui-stream` route. When present, the runner mirrors
    *   every streamed segment into it (mapped + buffered for resume); when absent
@@ -248,9 +261,10 @@ export class ChatRunner {
       this.throttledRetries.delete(threadId)
       const abort = new AbortController()
       this.activeRuns.set(threadId, abort)
-      this._run(threadId, '', repoRoot, hub, abort, undefined, 0).catch(() => {
-        this.activeRuns.delete(threadId)
-      })
+      const runPromise = this._run(threadId, '', repoRoot, hub, abort, undefined, 0)
+        .catch(() => { this.activeRuns.delete(threadId) })
+        .finally(() => { this._activeRunPromises.delete(threadId) })
+      this._activeRunPromises.set(threadId, runPromise)
     }
   }
 
@@ -292,10 +306,16 @@ export class ChatRunner {
     this.activeRuns.set(threadId, abort)
 
     // Fire-and-forget: HTTP responds immediately; segments arrive via SSE.
-    this._run(threadId, content, repoRoot, hub, abort, attachments, 0).catch(() => {
-      // Ensure the map entry is removed even if _run throws unexpectedly.
-      this.activeRuns.delete(threadId)
-    })
+    // Track the promise so shutdownDrain() can await completion before exit.
+    const runPromise = this._run(threadId, content, repoRoot, hub, abort, attachments, 0)
+      .catch(() => {
+        // Ensure the map entry is removed even if _run throws unexpectedly.
+        this.activeRuns.delete(threadId)
+      })
+      .finally(() => {
+        this._activeRunPromises.delete(threadId)
+      })
+    this._activeRunPromises.set(threadId, runPromise)
 
     return { alreadyRunning: false }
   }
@@ -333,6 +353,37 @@ export class ChatRunner {
       clearTimeout(retry.timer)
     }
     this.throttledRetries.clear()
+  }
+
+  /**
+   * Gracefully drain all active chat runs before daemon shutdown.
+   *
+   * For each in-flight run:
+   * - Cancels pending throttle timers (their retries won't happen post-shutdown).
+   * - Aborts each subprocess so `_run` can reach its abort path and call
+   *   `finalize()` with whatever segments it has accumulated.
+   * - If a run has accumulated no text segments, `message` is written as the
+   *   assistant reply so the thread does not end with the default `[no output]`.
+   *
+   * Waits up to `timeoutMs` for all runs to finalise (bounded by the same
+   * wall-clock cap individual runs carry). After the timeout, `killAll()`
+   * should be called as a safety net for any runs that did not settle.
+   */
+  async shutdownDrain(message: string, timeoutMs: number): Promise<void> {
+    if (this.activeRuns.size === 0 && this.throttledRetries.size === 0) return
+    this._shutdownMessage = message
+    // Clear throttle timers — their retries will not run after shutdown.
+    for (const retry of this.throttledRetries.values()) clearTimeout(retry.timer)
+    this.throttledRetries.clear()
+    // Abort all active subprocesses so their _run calls reach finalize().
+    for (const ctrl of this.activeRuns.values()) ctrl.abort()
+    // Wait for all tracked _run promises to settle, bounded by timeoutMs.
+    const promises = Array.from(this._activeRunPromises.values())
+    if (promises.length === 0) return
+    await Promise.race([
+      Promise.allSettled(promises),
+      new Promise<void>((r) => setTimeout(r, timeoutMs)),
+    ])
   }
 
   // ── Internal run orchestration ─────────────────────────────────────────────
@@ -373,9 +424,10 @@ export class ChatRunner {
       this.throttledRetries.delete(threadId)
       const abort = new AbortController()
       this.activeRuns.set(threadId, abort)
-      this._run(threadId, content, repoRoot, hub, abort, attachments, retryCount + 1).catch(() => {
-        this.activeRuns.delete(threadId)
-      })
+      const runPromise = this._run(threadId, content, repoRoot, hub, abort, attachments, retryCount + 1)
+        .catch(() => { this.activeRuns.delete(threadId) })
+        .finally(() => { this._activeRunPromises.delete(threadId) })
+      this._activeRunPromises.set(threadId, runPromise)
     }, delay)
     this.throttledRetries.set(threadId, { retryCount, timer })
   }
@@ -615,8 +667,14 @@ export class ChatRunner {
       }
 
       if (abort.signal.aborted) {
-        // Manual stop — finalise with what we have, no extra error segment.
-        await finalize()
+        // When the daemon is shutting down and no text was produced yet, surface
+        // the shutdown notice so the thread doesn't end with "[no output]".
+        const shutdownMsg = this._shutdownMessage
+        if (shutdownMsg && !accumulatedSegments.some((s) => s.type === 'text')) {
+          await finalize({ type: 'text', text: shutdownMsg })
+        } else {
+          await finalize()
+        }
         return
       }
 

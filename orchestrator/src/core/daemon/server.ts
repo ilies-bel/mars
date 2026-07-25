@@ -119,7 +119,7 @@ import { rpcRegistry, dispatchRpc } from './rpc/registry'
 import type { DaemonDeps } from './rpc/types'
 import { createAppServices } from '../app-services'
 import { startApiEndpointProbe } from '../lib/api-endpoint-probe'
-import { ChatRunner } from './chat-runner'
+import { ChatRunner, CHAT_TIMEOUT_MS } from './chat-runner'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -4516,6 +4516,15 @@ export const startDaemon = async (
       }
     }
 
+    // Drain in-flight chat runs before closing servers. If a run has not yet
+    // produced any text (e.g. it triggered the restart itself), the shutdown
+    // message is written as its assistant reply so the thread does not end
+    // with the default "[no output]" placeholder. Bounded by CHAT_TIMEOUT_MS;
+    // killAll() below is the safety net for any run that outlives the window.
+    await chatRunner.shutdownDrain(
+      'Daemon is restarting — this reply did not complete. Please reconnect and try again.',
+      CHAT_TIMEOUT_MS,
+    )
     chatRunner.killAll()
     await Promise.all([
       new Promise<void>((resolve) => server.close(() => resolve())),

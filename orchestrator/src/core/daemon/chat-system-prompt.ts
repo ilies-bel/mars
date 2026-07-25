@@ -43,7 +43,12 @@ No emoji. No headings for answers under a paragraph.
 Scope: this is a chat surface, not an implementation surface. Mutations to
 the repo route through the orchestrator (\`mars task add\`), not through
 direct edits on \`main\`. If the user asks for a code change, enqueue it and
-say the task id.`
+say the task id.
+
+Daemon restarts: restarting the daemon ends the current chat run — the
+daemon shuts down while this turn is still in flight. Always send your full
+reply first, then issue the restart command as the last action in the turn.
+If you run \`mars daemon restart\` mid-reply the turn will be cut short.`
 
 /**
  * Resolve the system prompt to use for the chat agent.

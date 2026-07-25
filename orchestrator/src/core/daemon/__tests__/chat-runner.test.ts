@@ -18,7 +18,7 @@ import {
   vi,
   type MockInstance,
 } from 'vitest'
-import { parseEventToSegments, ChatRunner, buildChatArgs } from '../chat-runner'
+import { parseEventToSegments, ChatRunner, buildChatArgs, CHAT_TIMEOUT_MS } from '../chat-runner'
 import { ChatStreamHub } from '../chat-stream-hub'
 import type { UiMessageChunk } from '../ui-message-chunks'
 import type { SubprocessLine, RunSubprocessResult } from '../../lib/git/claude'
@@ -909,5 +909,96 @@ describe('ChatRunner state machine', () => {
     expect(attSeg).toBeDefined()
     expect((attSeg as { path: string; kindHint: string }).path).toBe('/abs/path/screen.png')
     expect((attSeg as { path: string; kindHint: string }).kindHint).toBe('image')
+  })
+
+  // ── shutdownDrain tests ───────────────────────────────────────────────────
+  //
+  // Verify that a restart requested while a chat run is active does not leave
+  // the thread with "[no output]", and that the drain awaits finalisation
+  // before returning.
+
+  it('CHAT_TIMEOUT_MS is exported and equals 10 minutes', () => {
+    expect(CHAT_TIMEOUT_MS).toBe(10 * 60 * 1000)
+  })
+
+  it('shutdownDrain finalises an active run with the shutdown message when no text was accumulated', async () => {
+    // Subprocess hangs until the abort signal fires.
+    mockRunSubprocessStreaming.mockImplementation(
+      async (
+        _cmd: string,
+        _args: readonly string[],
+        _cwd: string,
+        _onLine: ((l: SubprocessLine) => void) | undefined,
+        signal: AbortSignal | undefined,
+      ) => {
+        return new Promise<RunSubprocessResult>((resolve) => {
+          signal?.addEventListener('abort', () =>
+            resolve({ exitCode: 1, stdout: '', stderr: '' }),
+          )
+        })
+      },
+    )
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'restart the daemon', '/repo', undefined)
+    // Let _run advance past setup and block on the subprocess.
+    await new Promise((r) => setImmediate(r))
+    await new Promise((r) => setImmediate(r))
+
+    // shutdownDrain aborts the subprocess and waits for finalize.
+    await runner.shutdownDrain('Daemon is restarting.', CHAT_TIMEOUT_MS)
+
+    // The thread must have been finalised with the shutdown message — NOT '[no output]'.
+    const assistantCalls = vi.mocked(chatStore.appendMessage).mock.calls.filter((c) => c[1] === 'assistant')
+    expect(assistantCalls.length).toBeGreaterThan(0)
+    const lastCall = assistantCalls.at(-1)
+    expect(lastCall?.[2]).toBe('Daemon is restarting.')
+    expect(lastCall?.[2]).not.toBe('[no output]')
+  })
+
+  it('shutdownDrain preserves already-accumulated text and does not inject the message', async () => {
+    // Subprocess emits a text segment first, then hangs until aborted.
+    let capturedOnLine: ((l: SubprocessLine) => void) | undefined
+    mockRunSubprocessStreaming.mockImplementation(
+      async (
+        _cmd: string,
+        _args: readonly string[],
+        _cwd: string,
+        onLine: ((l: SubprocessLine) => void) | undefined,
+        signal: AbortSignal | undefined,
+      ) => {
+        capturedOnLine = onLine
+        return new Promise<RunSubprocessResult>((resolve) => {
+          signal?.addEventListener('abort', () =>
+            resolve({ exitCode: 1, stdout: '', stderr: '' }),
+          )
+        })
+      },
+    )
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'restart', '/repo', undefined)
+    // Let _run advance past setup and block on the subprocess.
+    await new Promise((r) => setImmediate(r))
+    await new Promise((r) => setImmediate(r))
+
+    // Emit a text segment before the daemon shuts down.
+    capturedOnLine?.({
+      stream: 'stdout',
+      line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Restarting the daemon now.' } }),
+    })
+
+    await runner.shutdownDrain('Daemon is restarting.', CHAT_TIMEOUT_MS)
+
+    const assistantCalls = vi.mocked(chatStore.appendMessage).mock.calls.filter((c) => c[1] === 'assistant')
+    const lastCall = assistantCalls.at(-1)
+    // The already-accumulated text must be preserved; shutdown message must not be injected.
+    expect(lastCall?.[2]).toBe('Restarting the daemon now.')
+  })
+
+  it('shutdownDrain is a no-op when no runs are active', async () => {
+    const runner = new ChatRunner()
+    // No sendMessage call — nothing to drain.
+    await expect(runner.shutdownDrain('msg', 1000)).resolves.toBeUndefined()
   })
 })
