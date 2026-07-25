@@ -73,8 +73,6 @@ const makeCtx = (): OrchestratorContext => ({
   queueDbPath: join(repoRoot, '.mars', 'mars.db'),
   observabilityDbPath: join(repoRoot, '.mars', 'observability.duckdb'),
   stateDbPath: join(repoRoot, '.mars', 'mars.db'),
-  supervisorsDir: join(repoRoot, '.mars', 'supervisors'),
-  supervisorsManifest: join(repoRoot, '.mars', 'supervisors', 'manifest.json'),
 })
 
 /**

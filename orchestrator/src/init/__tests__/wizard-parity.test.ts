@@ -3,9 +3,7 @@
  * single source of truth for what `mars init` asks. This suite FAILS the build
  * if any prompt is not fully reachable non-interactively:
  *   - its `flag` must be a declared flag in cli/args.ts (BOOLEAN_FLAGS for
- *     boolean prompts, FLAGS_WITH_VALUES for string/enum prompts), and
- *   - its `configKey` must be accepted by loadInitConfig (i.e. present in
- *     WIZARD_CONFIG_KEYS).
+ *     boolean prompts, FLAGS_WITH_VALUES for string/enum prompts).
  *
  * It also exercises the controller with a mocked readline + injected isTTY so
  * the suite never blocks on real stdin.
@@ -13,7 +11,6 @@
 
 import { describe, expect, it } from 'vitest'
 import { BOOLEAN_FLAGS, FLAGS_WITH_VALUES } from '../../cli/args'
-import { WIZARD_CONFIG_KEYS } from '../init-config'
 import { WIZARD_DEFAULTS, WIZARD_PROMPTS, type WizardPrompt } from '../wizard'
 import { runWizard, type LineReader } from '../wizard-controller'
 
@@ -52,13 +49,6 @@ describe('ADR-0058 — wizard / non-interactive parity', () => {
     expect(undeclared).toEqual([])
   })
 
-  it("every prompt's configKey is accepted by the init config schema", () => {
-    const missing = WIZARD_PROMPTS.filter(
-      (p) => !WIZARD_CONFIG_KEYS.has(p.configKey),
-    ).map((p) => `${p.id}: ${p.configKey}`)
-    expect(missing).toEqual([])
-  })
-
   it('enum prompts declare their choices and default is among them', () => {
     for (const p of WIZARD_PROMPTS) {
       if (p.type !== 'enum') continue
@@ -67,10 +57,8 @@ describe('ADR-0058 — wizard / non-interactive parity', () => {
     }
   })
 
-  // A synthetic prompt with a bogus flag/configKey must be caught by the same
-  // checks the guard applies to the shipped table — proving the guard fails
-  // the build for an unwired prompt rather than silently passing.
-  it('the parity check would FAIL for an unwired prompt', () => {
+  // A synthetic prompt with a bogus flag must be caught by the flag guard.
+  it('the flag parity check would FAIL for an unwired prompt', () => {
     const bogus: WizardPrompt = {
       id: 'supervisors',
       question: 'bogus',
@@ -81,9 +69,7 @@ describe('ADR-0058 — wizard / non-interactive parity', () => {
     }
     const flagDeclared =
       FLAGS_WITH_VALUES.has(bogus.flag) || BOOLEAN_FLAGS.has(bogus.flag)
-    const keyDeclared = WIZARD_CONFIG_KEYS.has(bogus.configKey)
     expect(flagDeclared).toBe(false)
-    expect(keyDeclared).toBe(false)
   })
 })
 

@@ -63,8 +63,6 @@ const fakeCtx: OrchestratorContext = {
   queueDbPath: '/fake/repo/.mars/queue.db',
   observabilityDbPath: '/fake/repo/.mars/obs.db',
   stateDbPath: '/fake/repo/.mars/state.db',
-  supervisorsDir: '/fake/repo/.mars/supervisors',
-  supervisorsManifest: '/fake/repo/.mars/supervisors.json',
 }
 
 // A minimal DomainTaskStore that satisfies the type without a DB.

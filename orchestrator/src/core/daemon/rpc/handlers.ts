@@ -186,37 +186,8 @@ const adrAddHandler = handler('adr-add', async (req, deps) => {
 })
 
 const initHandler = handler('init', async (req, deps) => {
-  try {
-    const result = await deps.handleInit(req.opts)
-    return { ok: true, data: result }
-  } catch (err) {
-    const { NestedTechError, WalkAccessError } = await import(
-      '../../../init/walk-manifests'
-    )
-    const { InitConfigError } = await import('../../../init/init-config')
-    if (err instanceof InitConfigError) {
-      return {
-        ok: false,
-        error: err.message,
-        errorCode: `init-config:${err.configPath}`,
-      }
-    }
-    if (err instanceof NestedTechError) {
-      return {
-        ok: false,
-        error: err.message,
-        errorCode: `nested-tech:${err.outerPath}::${err.innerPath}`,
-      }
-    }
-    if (err instanceof WalkAccessError) {
-      return {
-        ok: false,
-        error: err.message,
-        errorCode: `walk-access:${err.path}`,
-      }
-    }
-    throw err
-  }
+  const result = await deps.handleInit(req.opts)
+  return { ok: true, data: result }
 })
 
 const statusHandler = handler('status', async (_req, deps) => {

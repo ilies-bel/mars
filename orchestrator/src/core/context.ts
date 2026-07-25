@@ -8,8 +8,6 @@ export interface OrchestratorContext {
   queueDbPath: string
   observabilityDbPath: string
   stateDbPath: string
-  supervisorsDir: string
-  supervisorsManifest: string
 }
 
 /**
@@ -90,8 +88,6 @@ export const resolveContext = (override?: string): OrchestratorContext => {
   const stateDir = resolve(repoRoot, '.mars')
   mkdirSync(stateDir, { recursive: true })
 
-  const supervisorsDir = resolve(stateDir, 'supervisors')
-
   cached = {
     repoRoot,
     stateDir,
@@ -103,8 +99,6 @@ export const resolveContext = (override?: string): OrchestratorContext => {
     queueDbPath: resolve(stateDir, 'mars.db'),
     observabilityDbPath: resolve(stateDir, 'observability.duckdb'),
     stateDbPath: resolve(stateDir, 'mars.db'),
-    supervisorsDir,
-    supervisorsManifest: resolve(supervisorsDir, 'manifest.json'),
   }
   return cached
 }

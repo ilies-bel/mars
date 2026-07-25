@@ -94,8 +94,6 @@ const fakeCtx: OrchestratorContext = {
   queueDbPath: '/tmp/mars-unit-repo/.mars/mars.db',
   observabilityDbPath: '/tmp/mars-unit-repo/.mars/observability.db',
   stateDbPath: '/tmp/mars-unit-repo/.mars/state.db',
-  supervisorsDir: '/tmp/mars-unit-repo/.mars/supervisors',
-  supervisorsManifest: '/tmp/mars-unit-repo/.mars/supervisors/manifest.json',
 }
 
 // ─── shared setup ─────────────────────────────────────────────────────────────

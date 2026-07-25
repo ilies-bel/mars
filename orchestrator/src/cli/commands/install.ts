@@ -248,7 +248,6 @@ const init: Command = {
     }
 
     const { runInitWizard } = await import('../../init/wizard-controller')
-    const { loadInitWizardConfig } = await import('../../init/init-config')
 
     // Surface the value-bearing wizard flags to the controller. Boolean wizard
     // prompts read their flag from `args.positional` (the shared parser routes
@@ -257,57 +256,27 @@ const init: Command = {
     for (const [k, v] of Object.entries(args.flags)) wizardFlags[k] = v
     if (boolFlags.has('--register-project')) wizardFlags['--register-project'] = true
 
-    const wizardConfig = configPath
-      ? loadInitWizardConfig(configPath, deps.ctx.repoRoot)
-      : undefined
-
     // In quickstart mode the confirm was already done above, so wizard runs
     // non-interactively (flags/config/defaults only, no stdin hang).
     const wizardChoices = await runInitWizard({
       isTTY: runWizardPath && isTTY,
       flags: wizardFlags,
-      ...(wizardConfig ? { config: wizardConfig } : {}),
       force,
     })
 
-    let result: Awaited<
-      ReturnType<typeof import('../../workflows/init-workflow').runInit>
-    >
-    try {
-      result = (await deps.daemon.sendRequest(
-        {
-          op: 'init',
-          opts: {
-            force,
-            dryRun,
-            verbose,
-            ...(configPath ? { configPath } : {}),
-            wizardChoices,
-          },
+    const result = (await deps.daemon.sendRequest(
+      {
+        op: 'init',
+        opts: {
+          force,
+          dryRun,
+          verbose,
+          ...(configPath ? { configPath } : {}),
+          wizardChoices,
         },
-        { autoSpawn: true },
-      )) as typeof result
-    } catch (err: unknown) {
-      const e = err as Error & { code?: string }
-      if (e.code?.startsWith('init-config:')) {
-        deps.err(`error: ${e.message}`)
-        deps.err(`  config: ${e.code.slice('init-config:'.length)}`)
-        return { code: 1 }
-      }
-      if (e.code?.startsWith('nested-tech:')) {
-        const [outer, inner] = e.code.slice('nested-tech:'.length).split('::')
-        deps.err(`error: ${e.message}`)
-        deps.err(`  outer: ${outer}`)
-        deps.err(`  inner: ${inner}`)
-        return { code: 1 }
-      }
-      if (e.code?.startsWith('walk-access:')) {
-        deps.err(`error: ${e.message}`)
-        deps.err(`  path:  ${e.code.slice('walk-access:'.length)}`)
-        return { code: 1 }
-      }
-      throw err
-    }
+      },
+      { autoSpawn: true },
+    )) as Awaited<ReturnType<typeof import('../../workflows/init-workflow').runInit>>
 
     if (result.status === 'dry-run') {
       deps.out('dry run: no files written')

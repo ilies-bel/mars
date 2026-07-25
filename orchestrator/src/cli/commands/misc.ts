@@ -31,7 +31,6 @@ const where: Command = {
     deps.out(`repo:           ${deps.ctx.repoRoot}`)
     deps.out(`stateDir:       ${deps.ctx.stateDir}`)
     deps.out(`db:             ${dbLine}`)
-    deps.out(`supervisorsDir: ${deps.ctx.supervisorsDir}`)
     return { code: 0 }
   },
 }
