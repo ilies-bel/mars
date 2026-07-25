@@ -40,8 +40,10 @@ import {
   setEnrichmentDraftStep,
   recordEnrichmentShadowRuns,
   signatureFromEnrichStepName,
+  ENFORCING_STALE_THRESHOLD,
   type EnrichmentSideEffects,
   type ObserveFailureForEnrichmentInput,
+  type ShadowRunEffects,
 } from './gate-enrichment'
 import {
   SHADOW_BURN_IN_COUNT,
@@ -689,5 +691,164 @@ describe('gate-enrichment: recordEnrichmentShadowRuns', () => {
     const listed = await listEnrichments(db)
     expect(listed[0].burnInParseCount).toBe(0) // starvation — no clean parse
     expect(listed[0].status).toBe('shadow')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Enforcing-check staleness tracking
+// ---------------------------------------------------------------------------
+
+/** Helper: approve + burn-in a check all the way to enforcing status. */
+const promoteToEnforcing = async (db: DbClient, signature: string): Promise<void> => {
+  await observeFailureSignature(db, {
+    signature,
+    originTaskId: 'promote-helper',
+    draftStep: {
+      name: enrichStepName(signature),
+      cmd: 'true',
+      args: [],
+      required: true,
+      dir: '.',
+    },
+  })
+  await approveEnrichment(db, signature, 'tester')
+  for (let i = 0; i < SHADOW_BURN_IN_COUNT; i++) {
+    await recordEnrichmentShadowRuns(db, [
+      { name: enrichStepName(signature), passed: true, output: 'ok' },
+    ])
+  }
+}
+
+/** A minimal stub for ShadowRunEffects stale-row injection. */
+const makeStaleEffects = (): ShadowRunEffects & {
+  calls: Array<{ signature: string; passCount: number }>
+} => {
+  const state = {
+    calls: [] as Array<{ signature: string; passCount: number }>,
+    raiseStaleRow: async (signature: string, passCount: number) => {
+      state.calls.push({ signature, passCount })
+    },
+  }
+  return state
+}
+
+describe('gate-enrichment: recordEnrichmentShadowRuns — enforcing staleness', () => {
+  it(`${ENFORCING_STALE_THRESHOLD} consecutive clean passes on an enforcing check raise the stale row once`, async () => {
+    const db = await makeDb()
+    await promoteToEnforcing(db, ENCODABLE_SIG)
+
+    const effects = makeStaleEffects()
+    const passingRun = { name: enrichStepName(ENCODABLE_SIG), passed: true, output: 'ok' }
+
+    // ENFORCING_STALE_THRESHOLD - 1 passes: no stale row yet
+    for (let i = 0; i < ENFORCING_STALE_THRESHOLD - 1; i++) {
+      await recordEnrichmentShadowRuns(db, [passingRun], effects)
+    }
+    expect(effects.calls).toHaveLength(0)
+
+    // The Nth pass: stale row is raised exactly once
+    await recordEnrichmentShadowRuns(db, [passingRun], effects)
+    expect(effects.calls).toHaveLength(1)
+    expect(effects.calls[0].signature).toBe(ENCODABLE_SIG)
+    expect(effects.calls[0].passCount).toBe(ENFORCING_STALE_THRESHOLD)
+  })
+
+  it('a failing run on an enforcing check resets the consecutive-pass counter', async () => {
+    const db = await makeDb()
+    await promoteToEnforcing(db, ENCODABLE_SIG)
+
+    const effects = makeStaleEffects()
+    const passingRun = { name: enrichStepName(ENCODABLE_SIG), passed: true, output: 'ok' }
+    const failingRun = { name: enrichStepName(ENCODABLE_SIG), passed: false, output: 'regression' }
+
+    // Accumulate passes up to threshold - 1
+    for (let i = 0; i < ENFORCING_STALE_THRESHOLD - 1; i++) {
+      await recordEnrichmentShadowRuns(db, [passingRun], effects)
+    }
+    expect(effects.calls).toHaveLength(0)
+
+    // A failure resets the counter
+    await recordEnrichmentShadowRuns(db, [failingRun], effects)
+    expect(effects.calls).toHaveLength(0)
+
+    // Re-accumulate ENFORCING_STALE_THRESHOLD passes from zero — stale row raised again
+    for (let i = 0; i < ENFORCING_STALE_THRESHOLD; i++) {
+      await recordEnrichmentShadowRuns(db, [passingRun], effects)
+    }
+    expect(effects.calls).toHaveLength(1)
+  })
+
+  it('the stale row is raised exactly once per consecutive-pass window (no duplicates beyond the first)', async () => {
+    const db = await makeDb()
+    await promoteToEnforcing(db, ENCODABLE_SIG)
+
+    const effects = makeStaleEffects()
+    const passingRun = { name: enrichStepName(ENCODABLE_SIG), passed: true, output: 'ok' }
+
+    // Run well past the threshold
+    for (let i = 0; i < ENFORCING_STALE_THRESHOLD * 2; i++) {
+      await recordEnrichmentShadowRuns(db, [passingRun], effects)
+    }
+    // Raised exactly once — subsequent passes in the same window don't re-raise
+    expect(effects.calls).toHaveLength(1)
+  })
+
+  it('enforcing check: failing runs below the threshold never raise a stale row', async () => {
+    const db = await makeDb()
+    await promoteToEnforcing(db, ENCODABLE_SIG)
+
+    const effects = makeStaleEffects()
+    const failingRun = { name: enrichStepName(ENCODABLE_SIG), passed: false, output: 'regression' }
+
+    for (let i = 0; i < ENFORCING_STALE_THRESHOLD * 2; i++) {
+      await recordEnrichmentShadowRuns(db, [failingRun], effects)
+    }
+    expect(effects.calls).toHaveLength(0)
+  })
+
+  it('non-enforcing checks (shadow, candidate, retired) do not trigger staleness tracking', async () => {
+    const db = await makeDb()
+    // Observe but don't approve → stays candidate
+    await observeFailureSignature(db, {
+      signature: ENCODABLE_SIG,
+      originTaskId: 't1',
+      draftStep: { name: enrichStepName(ENCODABLE_SIG), cmd: 'true', args: [], required: true, dir: '.' },
+    })
+
+    const effects = makeStaleEffects()
+    const passingRun = { name: enrichStepName(ENCODABLE_SIG), passed: true, output: 'ok' }
+
+    for (let i = 0; i < ENFORCING_STALE_THRESHOLD * 2; i++) {
+      await recordEnrichmentShadowRuns(db, [passingRun], effects)
+    }
+    // Candidate is not shadow or enforcing: staleness not tracked
+    expect(effects.calls).toHaveLength(0)
+    // And the record is still a candidate (no mutation)
+    const rec = await getEnrichment(db, ENCODABLE_SIG)
+    expect(rec!.status).toBe('candidate')
+  })
+
+  it('a failure after the stale row was raised resets the window so a new stale row can be raised', async () => {
+    const db = await makeDb()
+    await promoteToEnforcing(db, ENCODABLE_SIG)
+
+    const effects = makeStaleEffects()
+    const passingRun = { name: enrichStepName(ENCODABLE_SIG), passed: true, output: 'ok' }
+    const failingRun = { name: enrichStepName(ENCODABLE_SIG), passed: false, output: 'regression' }
+
+    // First window: raise the stale row
+    for (let i = 0; i < ENFORCING_STALE_THRESHOLD; i++) {
+      await recordEnrichmentShadowRuns(db, [passingRun], effects)
+    }
+    expect(effects.calls).toHaveLength(1)
+
+    // A failure resets the window
+    await recordEnrichmentShadowRuns(db, [failingRun], effects)
+
+    // Second window: stale row raised again
+    for (let i = 0; i < ENFORCING_STALE_THRESHOLD; i++) {
+      await recordEnrichmentShadowRuns(db, [passingRun], effects)
+    }
+    expect(effects.calls).toHaveLength(2)
   })
 })

@@ -57,6 +57,19 @@ import type { RanVerifyStep } from './derive-repro-command'
 /** Name prefix for every enrichment-registry verify step. */
 export const ENRICH_STEP_PREFIX = 'enrich:'
 
+/**
+ * Number of consecutive clean verify-run passes on an ENFORCING enrichment
+ * check that triggers the gate-enrichment-stale action-queue row.
+ *
+ * "Consecutive" means any verify run where the enforcing check FAILS
+ * (the failure pattern reappears) resets the counter to zero — only
+ * uninterrupted streaks count. Deliberately NOT configurable.
+ */
+export const ENFORCING_STALE_THRESHOLD = 20
+
+/** Action-queue kind for the "enforcing check may be stale" row. */
+export const GATE_ENRICHMENT_STALE_KIND = 'gate-enrichment-stale' as const
+
 /** The verify-step name for an enrichment record: `enrich:<signature>`. */
 export const enrichStepName = (signature: string): string =>
   `${ENRICH_STEP_PREFIX}${signature}`
@@ -620,43 +633,185 @@ export const appendEnrichmentScopes = async (
 }
 
 /**
- * Post-verify shadow burn-in accounting. For every enrichment step that ran
- * in SHADOW status, record one clean parse against the per-check
- * `gate_burn_in` row (keyed `enrich:<signature>` — the generalisation of the
- * machinery built for the completeness gate). On the parse that crosses
- * {@link import('./gate-burn-in').SHADOW_BURN_IN_COUNT}, the record
- * auto-promotes `shadow` → `enforcing`.
+ * Side-effect seam for {@link recordEnrichmentShadowRuns}: injectable so
+ * tests can assert the stale-row raise happened without a live action queue.
+ */
+export interface ShadowRunEffects {
+  /**
+   * Raise the `gate-enrichment-stale` action-queue row. Called at most once
+   * per signature per consecutive-pass window (level-triggered, idempotent).
+   *
+   * @param signature - the enrichment record's signature
+   * @param passCount - the consecutive-clean-pass count that tripped the threshold
+   */
+  raiseStaleRow: (signature: string, passCount: number) => Promise<void>
+}
+
+/**
+ * Default (production) stale-row raiser — calls `raiseActionQueueItem`
+ * directly. Wrapped in a best-effort try-catch inside `recordEnrichmentShadowRuns`
+ * so a DB hiccup raising the row never breaks the verify path.
+ */
+const defaultRaiseStaleRow = async (
+  signature: string,
+  passCount: number,
+): Promise<void> => {
+  await raiseActionQueueItem({
+    kind: GATE_ENRICHMENT_STALE_KIND,
+    category: 'orchestrator',
+    priority: 'low',
+    title: `Enforcing check enrich:${signature} may be stale — ${passCount} consecutive clean verify runs`,
+    body: [
+      `The enforcing enrichment check \`enrich:${signature}\` has run on ${passCount} consecutive ` +
+        `verify passes without the original failure pattern appearing in any task.`,
+      `This may mean the regression it was encoding has been permanently resolved.`,
+      '',
+      'No automatic action has been taken. Operator options:',
+      `- Retire the check: \`mars enrich retire '${signature}'\` (if the regression is resolved).`,
+      '- Keep it running: dismiss this row — the check continues enforcing as-is.',
+      '',
+      'The check is NOT automatically retired — operator action only, matching the approval model.',
+    ].join('\n'),
+    payload: { signature, passCount },
+    context: {},
+    raisedBy: 'daemon:gate-enrichment',
+    signature: `gate-enrichment-stale:${signature}`,
+  })
+}
+
+/**
+ * Key prefix used in `gate_burn_in` for tracking consecutive enforcing-check
+ * clean passes. Distinct from the shadow burn-in prefix `enrich:` so the two
+ * counters never collide.
+ */
+const ENFORCING_STALE_KEY_PREFIX = 'enforcing-stale:'
+
+const enforcingStaleKey = (signature: string): string =>
+  `${ENFORCING_STALE_KEY_PREFIX}${signature}`
+
+/**
+ * Track one enforcing-check verify run for staleness. If the check passed
+ * (failure pattern absent), increment the consecutive-pass counter; once it
+ * reaches {@link ENFORCING_STALE_THRESHOLD}, call `effects.raiseStaleRow`.
+ * If the check failed, reset the counter to zero — the regression is still
+ * occurring and the staleness clock starts over.
  *
- * Clean-parse rule: the check demonstrably SAW its input — it ran and
- * produced a verdict with output, or passed. A shadow step that fails with
- * EMPTY output is the starvation signature (a command whose input pipeline
- * is absent, the completeness-gate failure mode) and never advances the
- * counter, so a starved check can never promote.
+ * Counter persistence: `gate_burn_in` rows keyed `enforcing-stale:<signature>`.
+ * `parse_count` = consecutive passing runs. `promoted_at` = ISO timestamp
+ * written when the stale row was first raised (prevents re-raising within the
+ * same consecutive-pass window).
+ */
+const trackEnforcingStaleness = async (
+  client: MonitorDb,
+  signature: string,
+  passed: boolean,
+  raiseStaleRow: (sig: string, count: number) => Promise<void>,
+): Promise<void> => {
+  const key = enforcingStaleKey(signature)
+
+  if (!passed) {
+    // Failure proves the check is still catching the regression; reset the
+    // consecutive-pass counter. Clear promoted_at so the next window can
+    // raise a fresh stale row.
+    await client.execute({
+      sql: `INSERT INTO gate_burn_in (gate_name, parse_count, promoted_at)
+            VALUES (?, 0, NULL)
+            ON CONFLICT(gate_name) DO UPDATE SET
+              parse_count = 0,
+              promoted_at = NULL`,
+      args: [key],
+    })
+    return
+  }
+
+  // Clean pass: increment, but freeze the counter once the stale row has
+  // been raised (promoted_at set) so the seen_count bump in raiseActionQueueItem
+  // handles subsequent windows rather than re-triggering from here.
+  await client.execute({
+    sql: `INSERT INTO gate_burn_in (gate_name, parse_count)
+          VALUES (?, 1)
+          ON CONFLICT(gate_name) DO UPDATE SET
+            parse_count = CASE
+              WHEN gate_burn_in.promoted_at IS NOT NULL THEN gate_burn_in.parse_count
+              ELSE gate_burn_in.parse_count + 1
+            END`,
+    args: [key],
+  })
+
+  const r = await client.execute({
+    sql: `SELECT parse_count, promoted_at FROM gate_burn_in WHERE gate_name = ?`,
+    args: [key],
+  })
+  if (r.rows.length === 0) return
+  const row = r.rows[0] as unknown as {
+    parse_count: number
+    promoted_at: string | null
+  }
+  // Already raised in this window; raiseActionQueueItem's seen_count bump handles it.
+  if (row.promoted_at !== null) return
+
+  if (row.parse_count >= ENFORCING_STALE_THRESHOLD) {
+    // Mark raised before calling the side-effect so a concurrent verify run
+    // that reads this row after the UPDATE but before the raise exits without
+    // double-raising.
+    await client.execute({
+      sql: `UPDATE gate_burn_in SET promoted_at = ? WHERE gate_name = ?`,
+      args: [new Date().toISOString(), key],
+    })
+    await raiseStaleRow(signature, row.parse_count)
+  }
+}
+
+/**
+ * Post-verify shadow burn-in accounting AND enforcing-check staleness tracking.
  *
- * Best-effort per step: a burn-in DB hiccup never breaks verify.
+ * For every enrichment step that ran:
+ *
+ * - **Shadow status**: record one clean parse against the per-check
+ *   `gate_burn_in` row (keyed `enrich:<signature>`). On the parse that crosses
+ *   {@link import('./gate-burn-in').SHADOW_BURN_IN_COUNT}, the record
+ *   auto-promotes `shadow` → `enforcing`. Clean-parse rule: the check
+ *   demonstrably SAW its input (passed OR non-empty output). A step that
+ *   fails with EMPTY output is the starvation signature and never advances the
+ *   counter, so a starved check can never promote.
+ *
+ * - **Enforcing status**: track consecutive clean passes in a `gate_burn_in`
+ *   row keyed `enforcing-stale:<signature>`. Any failing run (the failure
+ *   pattern reappears) resets the counter. Once the counter reaches
+ *   {@link ENFORCING_STALE_THRESHOLD} the check is flagged stale via
+ *   `effects.raiseStaleRow`. No automatic retirement — operator-only.
+ *
+ * Best-effort per step: any DB or side-effect hiccup never breaks verify.
  */
 export const recordEnrichmentShadowRuns = async (
   client: MonitorDb,
   steps: ReadonlyArray<VerifyStep>,
+  effects?: Partial<ShadowRunEffects>,
 ): Promise<void> => {
+  const raiseStale = effects?.raiseStaleRow ?? defaultRaiseStaleRow
   for (const step of steps) {
     const signature = signatureFromEnrichStepName(step.name)
     if (signature === null) continue
     try {
       const rec = await getEnrichment(client, signature)
-      if (rec === null || rec.status !== 'shadow') continue
-      const cleanParse = step.passed || step.output.trim().length > 0
-      if (!cleanParse) continue
-      const result = await recordGateParse(client, step.name)
-      if (result.promoted) {
-        // Re-read to avoid double-flipping on concurrent verify runs.
-        const fresh = await getEnrichment(client, signature)
-        if (fresh !== null && fresh.status === 'shadow') {
-          await setStatus(client, signature, { status: 'enforcing' })
+      if (rec === null) continue
+
+      if (rec.status === 'shadow') {
+        const cleanParse = step.passed || step.output.trim().length > 0
+        if (!cleanParse) continue
+        const result = await recordGateParse(client, step.name)
+        if (result.promoted) {
+          // Re-read to avoid double-flipping on concurrent verify runs.
+          const fresh = await getEnrichment(client, signature)
+          if (fresh !== null && fresh.status === 'shadow') {
+            await setStatus(client, signature, { status: 'enforcing' })
+          }
         }
+      } else if (rec.status === 'enforcing') {
+        await trackEnforcingStaleness(client, signature, step.passed, raiseStale)
       }
     } catch {
-      // Best-effort: shadow accounting must never fail the verify step.
+      // Best-effort: shadow/stale accounting must never fail the verify step.
     }
   }
 }

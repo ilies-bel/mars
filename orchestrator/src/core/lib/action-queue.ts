@@ -221,6 +221,15 @@ export const ACTION_QUEUE_KINDS = [
   // Resume is MANUAL — the streak resets on the first successful task
   // completion but the queue stays paused until the operator acts.
   'signature-storm',
+  // An enforcing enrichment check has produced ENFORCING_STALE_THRESHOLD
+  // consecutive clean-pass verify runs without the original failure class
+  // appearing. This suggests the regression the check encodes has been
+  // permanently resolved. Level-triggered (ADR-0048): exactly one row per
+  // signature, keyed `gate-enrichment-stale:<signature>`; subsequent
+  // stale-pass windows bump seen_count. No automatic retirement — the
+  // operator decides via `mars enrich retire` (keep the claim forever) or
+  // dismisses the row to let the check keep enforcing.
+  'gate-enrichment-stale',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

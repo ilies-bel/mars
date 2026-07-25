@@ -537,6 +537,25 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
     ],
   },
 
+  'gate-enrichment-stale': {
+    humanSummary: (ctx) => {
+      const sig = str(ctx.payload['signature'])
+      const count = ctx.payload['passCount']
+      return sig
+        ? `Enforcing check enrich:${sig} passed ${count} verify runs in a row — consider retiring it if the regression is resolved.`
+        : `An enforcing enrichment check has run clean for many consecutive verify runs — it may be stale.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      signature: str(ctx.payload['signature']),
+      passCount: ctx.payload['passCount'],
+    }),
+    verbs: [
+      { op: 'enrich-retire', label: 'Retire check', style: 'default' },
+    ],
+  },
+
   // ── Budget ────────────────────────────────────────────────────────────────
 
   'budget-window': {
