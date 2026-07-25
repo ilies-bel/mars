@@ -176,6 +176,44 @@ describe('chatMessageToUIMessage', () => {
 })
 
 // ---------------------------------------------------------------------------
+// ChatResponseError — error banner message rendering via MessageView
+// ---------------------------------------------------------------------------
+
+describe('ChatResponseError – message rendering', () => {
+  it('renders the specific error message from data-chatError part', () => {
+    const msg = chatMessageToUIMessage(makeMsg([
+      { type: 'error', message: 'Codex could not authenticate. Sign in and try again.' },
+    ]))
+    const html = renderToStaticMarkup(
+      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
+    )
+    expect(html).toContain('Codex could not authenticate. Sign in and try again.')
+    expect(html).not.toContain('Codex could not finish this reply.')
+  })
+
+  it('renders the generic fallback when error message is empty', () => {
+    const msg = chatMessageToUIMessage(makeMsg([
+      { type: 'error', message: '' },
+    ]))
+    const html = renderToStaticMarkup(
+      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
+    )
+    expect(html).toContain('Codex could not finish this reply. Send another message to try again.')
+  })
+
+  it('keeps the "Response interrupted" heading and "Try again" button regardless of message', () => {
+    const msg = chatMessageToUIMessage(makeMsg([
+      { type: 'error', message: 'Provider quota exceeded.' },
+    ]))
+    const html = renderToStaticMarkup(
+      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
+    )
+    expect(html).toContain('Response interrupted')
+    expect(html).toContain('Try again')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Schema round-trip + mapping regression — real captured fixture
 //
 // The fixture is an assistant reply:
@@ -482,16 +520,15 @@ describe('MessageView – feedback controls presence', () => {
     expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="helpful"|aria-label="helpful"[^>]*aria-pressed="true"/)
   })
 
-  it('renders an interrupted response as a safe, redacted recovery message', () => {
+  it('renders an interrupted response with the persisted error message from the segment', () => {
     const html = renderMessage(makeMsg([
-      { type: 'error', message: 'stderr: credentials=secret; monthly account limit reached' },
+      { type: 'error', message: 'Monthly account limit reached.' },
     ], 'assistant'))
     expect(html).toContain('role="alert"')
     expect(html).toContain('Response interrupted')
-    expect(html).toContain('Send another message to try again.')
+    expect(html).toContain('Monthly account limit reached.')
     expect(html).toContain('Try again')
-    expect(html).not.toContain('credentials=secret')
-    expect(html).not.toContain('monthly account limit')
+    expect(html).not.toContain('Codex could not finish this reply.')
   })
 })
 

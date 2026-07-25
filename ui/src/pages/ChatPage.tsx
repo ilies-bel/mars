@@ -539,7 +539,7 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
 }
 
 /** A safe, compact recovery surface for an interrupted assistant response. */
-const ChatResponseError = ({ onTryAgain }: { onTryAgain: () => void }) => (
+const ChatResponseError = ({ onTryAgain, message }: { onTryAgain: () => void; message?: string }) => (
   <div
     role="alert"
     className="my-2 flex items-start gap-3 rounded-md border border-error/25 bg-error/5 px-3 py-2.5 text-[13px] text-fg"
@@ -552,7 +552,7 @@ const ChatResponseError = ({ onTryAgain }: { onTryAgain: () => void }) => (
     </span>
     <div className="min-w-0 leading-relaxed">
       <p className="font-medium">Response interrupted</p>
-      <p className="text-muted">Codex could not finish this reply. Send another message to try again.</p>
+      <p className="text-muted">{message || 'Codex could not finish this reply. Send another message to try again.'}</p>
       <button
         type="button"
         className="mt-1.5 text-[12px] font-medium text-error underline decoration-error/40 underline-offset-2 transition-colors hover:text-fg"
@@ -673,7 +673,7 @@ const renderPart = (
   }
   if (part.type === 'data-chatError') {
     return (
-      <ChatResponseError key={key} onTryAgain={() => onDiscuss('Please retry my last request.')} />
+      <ChatResponseError key={key} onTryAgain={() => onDiscuss('Please retry my last request.')} message={part.data.message} />
     )
   }
   return null
