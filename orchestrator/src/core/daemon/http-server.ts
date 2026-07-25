@@ -38,6 +38,10 @@ import {
   getThread,
   setThreadStatus,
 } from '../lib/chat-store'
+import {
+  assembleDelta,
+  clampWywaDeltaLimit,
+} from './view/wywa-delta'
 import type { ChatRunner, AttachmentInfo } from './chat-runner'
 import type { ChatStreamHub, SeqChunk } from './chat-stream-hub'
 import { getRepoRoot } from '../context'
@@ -1336,6 +1340,60 @@ export const startHttpServer = async (
       import('../lib/learned-recipes.js')
         .then((m) => m.listAutoRecipeRuns({ since, limit }))
         .then((runs) => sendJson(res, 200, { ok: true, autoRecipeRuns: runs }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/wywa-delta?since=<ISO>&limit=<n> — unified "while you were away"
+    // delta assembled from five existing stores: merged arcs (release notes),
+    // recovery_spawned trace events, auto-recipe runs, throttled chat threads, and
+    // evaporated chat threads. Newest-first, capped at `limit` (default 30, max 100)
+    // with `andMore` count. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/wywa-delta')) {
+      const parsedUrl = new URL(req.url, 'http://localhost')
+      const since = parsedUrl.searchParams.get('since') ?? null
+      const limitRaw = parsedUrl.searchParams.get('limit')
+      const limit = clampWywaDeltaLimit(
+        limitRaw !== null ? Number.parseInt(limitRaw, 10) : null,
+      )
+      Promise.all([
+        deps.appServices.viewReleaseNotes(),
+        deps.traceStore.query({
+          kind: ['recovery_spawned'],
+          ...(since !== null ? { sinceIso: since } : {}),
+          limit: 200,
+        }),
+        import('../lib/learned-recipes.js').then((m) =>
+          m.listAutoRecipeRuns({ since: since ?? undefined, limit: 200 }),
+        ),
+        import('../lib/chat-store.js').then((m) =>
+          Promise.all([m.listEvaporatedThreads(), m.listThreads()]),
+        ),
+      ])
+        .then(([releaseNotes, recoveryEvents, autoRuns, [evaporatedRaw, allThreads]]) => {
+          const throttledThreads = allThreads
+            .filter((t) => t.status === 'throttled')
+            .map((t) => ({ id: t.id, updatedAt: t.updated_at }))
+
+          const evaporatedThreads = evaporatedRaw
+            .filter((t): t is typeof t & { evaporated_at: string } => t.evaporated_at !== null)
+            .map((t) => ({ id: t.id, evaporatedAt: t.evaporated_at }))
+
+          const delta = assembleDelta({
+            releaseNotes: releaseNotes.entries,
+            recoveryEvents: recoveryEvents.map((ev) => ({
+              timestamp: ev.timestamp,
+              taskId: ev.taskId,
+              originId: ev.originId,
+            })),
+            autoRuns,
+            throttledThreads,
+            evaporatedThreads,
+            since,
+            limit,
+          })
+          sendJson(res, 200, { ok: true, ...delta })
+        })
         .catch((err: unknown) => sendError(res, err))
       return
     }

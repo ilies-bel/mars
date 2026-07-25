@@ -4,6 +4,7 @@ import {
   actionQueueHistoryResponseSchema,
   actionQueueResponseSchema,
   autoRecipeRunsResponseSchema,
+  wywaDeltaResponseSchema,
   chatThreadDetailSchema,
   chatThreadsResponseSchema,
   eventsResponseSchema,
@@ -26,6 +27,7 @@ import {
   type ActionQueueHistoryResponse,
   type ActionQueueItem,
   type AutoRecipeRun,
+  type WywaDeltaResponse,
   type ChatThread,
   type ChatThreadDetail,
   type EventsResponse,
@@ -930,6 +932,22 @@ export const fetchAutoRecipeRuns = async (opts?: { since?: string; limit?: numbe
   return json.autoRecipeRuns
 }
 
+/**
+ * Fetch the unified "while you were away" delta from the daemon — merges,
+ * recoveries, auto-recipes, throttle events, and evaporated threads — all
+ * since the given cursor, newest first and capped at `limit` (default 30).
+ */
+export const fetchWywaDelta = async (opts?: {
+  since?: string
+  limit?: number
+}): Promise<WywaDeltaResponse> => {
+  const params: string[] = []
+  if (opts?.since) params.push(`since=${encodeURIComponent(opts.since)}`)
+  if (opts?.limit !== undefined) params.push(`limit=${opts.limit}`)
+  const qs = params.length > 0 ? `?${params.join('&')}` : ''
+  return fetchJson(`/api/wywa-delta${qs}`, wywaDeltaResponseSchema)
+}
+
 export type {
   ActionQueueHistoryResponse,
   ActionQueueItem,
@@ -960,4 +978,6 @@ export type {
   StaleWorktreesPayload,
   TraceEvent,
   WorkerSession,
+  WywaDeltaResponse,
+  WywaEvent,
 } from './schemas'

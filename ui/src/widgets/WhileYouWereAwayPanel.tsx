@@ -1,33 +1,33 @@
 /**
- * "While you were away" — the chat hero summary of release notes and
- * auto-executed learned recipes that fired since the user's last visit.
+ * "While you were away" — the chat hero summary of activity since the user's
+ * last visit. Fetches a unified delta from the daemon covering: merges landed,
+ * tasks failed and recovered, auto-applied recipes, throttle/rate-limit events,
+ * and evaporated idle threads. Each item renders as a plain-English one-liner.
  *
- * Rendering this panel is the act of viewing: the backing hook
- * (`useUnseenReleaseNotes`) POSTs the view cursor when a non-empty unseen set
- * is first observed, so the next visit with no delta shows nothing. The
- * ReleaseNotesModal remains available manually via its hash route — the small
- * "Release notes" link here points at it.
+ * The backing hook (`useUnseenReleaseNotes`) POSTs the view cursor when a
+ * non-empty unseen set is first observed so the next visit shows nothing. The
+ * ReleaseNotesModal is still reachable via the "Release notes" link in the
+ * header.
+ *
+ * A session-level snapshot ensures events keep appearing even after the cursor
+ * is refreshed by the backing hook's POST — without it the delta would re-fetch
+ * with `since=now` and immediately return empty.
  */
 
+import { useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import type { AutoRecipeRun, ReleaseNoteEntry } from '@/shared/schemas'
-import { fetchAutoRecipeRuns, getReleaseNotesCursor } from '@/shared/api'
+import type { ReleaseNoteEntry, WywaDeltaResponse } from '@/shared/schemas'
+import { fetchWywaDelta, getReleaseNotesCursor } from '@/shared/api'
 import { useUnseenReleaseNotes } from '@/shared/useUnseenReleaseNotes'
 import { releaseNotesHash } from '@/shared/routing'
 
-/** Maximum entries listed before collapsing into "and N more". */
+/** Maximum delta events listed before collapsing into "and N more". */
 export const MAX_VISIBLE_ENTRIES = 8
 
-/** First line of the arc prompt, trimmed to a one-liner. */
+/** First line of the arc prompt, trimmed to a one-liner (kept for callers). */
 export const entryOneLiner = (entry: ReleaseNoteEntry): string => {
   const firstLine = entry.detail.prompt.split('\n', 1)[0]?.trim() ?? ''
   return firstLine.length > 140 ? `${firstLine.slice(0, 137)}…` : firstLine
-}
-
-/** Short human-readable description of an auto-recipe run. */
-export const autoRunLabel = (run: AutoRecipeRun): string => {
-  const task = run.taskId ? ` on ${run.taskId}` : ''
-  return `Auto-${run.actionOp}${task} (${run.signature})`
 }
 
 export interface WhileYouWereAwayPanelProps {
@@ -35,10 +35,12 @@ export interface WhileYouWereAwayPanelProps {
 }
 
 export const WhileYouWereAwayPanel = ({ projectId }: WhileYouWereAwayPanelProps) => {
+  // Side effect: POSTs the cursor when unseen release notes are detected. This
+  // hooks the panel into the "mark as viewed" lifecycle without duplicating it.
   const { unseenEntries } = useUnseenReleaseNotes(projectId)
 
-  // Fetch the release-notes cursor so we know the "since" timestamp for
-  // auto-recipe runs. The cursor marks when the user last viewed the panel.
+  // Fetch the release-notes cursor to derive the `since` lower bound for the
+  // delta query. The cursor is the ISO-8601 timestamp of the last panel view.
   const { data: cursor } = useQuery({
     queryKey: ['release-notes-cursor', projectId],
     queryFn: () => getReleaseNotesCursor(projectId ?? undefined),
@@ -46,22 +48,34 @@ export const WhileYouWereAwayPanel = ({ projectId }: WhileYouWereAwayPanelProps)
     staleTime: 30_000,
   })
 
-  // Auto-recipe runs since the last-viewed cursor.
-  const { data: autoRuns = [] } = useQuery({
-    queryKey: ['auto-recipe-runs', cursor?.lastViewedAt],
+  // Unified delta: all activity since the cursor.
+  const { data: freshDelta } = useQuery({
+    queryKey: ['wywa-delta', projectId, cursor?.lastViewedAt],
     queryFn: () =>
-      fetchAutoRecipeRuns({
+      fetchWywaDelta({
         since: cursor?.lastViewedAt ?? undefined,
-        limit: 20,
+        limit: MAX_VISIBLE_ENTRIES + 1, // fetch one extra to detect overflow
       }),
-    enabled: projectId !== null,
+    enabled: projectId !== null && cursor !== undefined,
     staleTime: 30_000,
   })
 
-  if (unseenEntries.length === 0 && autoRuns.length === 0) return null
+  // Session-level snapshot: once we have non-empty events, keep showing them
+  // even after the cursor is refreshed to "now" by the hook's POST. Without
+  // this, the delta re-fetches with since=now → empty, causing a flicker.
+  const snapshotRef = useRef<WywaDeltaResponse | null>(null)
+  if (snapshotRef.current === null && (freshDelta?.events.length ?? 0) > 0) {
+    snapshotRef.current = freshDelta!
+  }
+  const delta = snapshotRef.current ?? freshDelta
 
-  const visible = unseenEntries.slice(0, MAX_VISIBLE_ENTRIES)
-  const overflow = unseenEntries.length - visible.length
+  const events = delta?.events ?? []
+  const andMore = delta?.andMore ?? 0
+
+  if (unseenEntries.length === 0 && events.length === 0) return null
+
+  const visible = events.slice(0, MAX_VISIBLE_ENTRIES)
+  const overflow = andMore + Math.max(0, events.length - visible.length)
 
   return (
     <section
@@ -81,15 +95,14 @@ export const WhileYouWereAwayPanel = ({ projectId }: WhileYouWereAwayPanelProps)
         </a>
       </div>
       {visible.length > 0 && (
-        <ul className="mt-3 flex flex-col gap-2">
-          {visible.map((entry) => (
-            <li key={entry.originId} data-testid="wywa-entry">
-              <span className="font-mono text-[13px] font-semibold text-fg">{entry.title}</span>
-              {entryOneLiner(entry) !== '' && (
-                <span className="ml-2 font-mono text-[12px] text-iron/60">
-                  {entryOneLiner(entry)}
-                </span>
-              )}
+        <ul className="mt-3 flex flex-col gap-1">
+          {visible.map((event, i) => (
+            <li
+              key={`${event.kind}-${event.at}-${i}`}
+              data-testid="wywa-event"
+              className="font-mono text-[12px] text-fg/80"
+            >
+              {event.summary}
             </li>
           ))}
         </ul>
@@ -98,20 +111,6 @@ export const WhileYouWereAwayPanel = ({ projectId }: WhileYouWereAwayPanelProps)
         <p data-testid="wywa-overflow" className="mt-2 font-mono text-[12px] text-iron/50">
           and {overflow} more
         </p>
-      )}
-      {autoRuns.length > 0 && (
-        <div className="mt-4" data-testid="wywa-auto-runs">
-          <p className="font-mono text-[10px] uppercase tracking-wider text-iron">
-            Auto-applied
-          </p>
-          <ul className="mt-2 flex flex-col gap-1">
-            {autoRuns.map((run) => (
-              <li key={run.id} data-testid="wywa-auto-run" className="font-mono text-[12px] text-fg/80">
-                {autoRunLabel(run)}
-              </li>
-            ))}
-          </ul>
-        </div>
       )}
     </section>
   )

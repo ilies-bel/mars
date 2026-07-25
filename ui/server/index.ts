@@ -422,6 +422,14 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/wywa-delta?since=<ISO>&limit=<n> — unified "while you were away"
+        // delta (merges, recoveries, auto-recipes, throttle events, evaporated threads).
+        if (path === '/api/wywa-delta' && req.method === 'GET') {
+          const qs = url.search
+          const r = await proxyGet(ctx.stateDir, `/view/wywa-delta${qs}`)
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/release-notes-cursor — proxy the daemon's last-viewed
         // release-notes timestamp. POST marks it as viewed (server-clock now).
         if (path === '/api/release-notes-cursor' && req.method === 'GET') {
