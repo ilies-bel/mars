@@ -84,6 +84,15 @@ Commands:
                                 the task's note log; useful during live steps)
   task check <id> <criterion>   mark a done-criterion as complete on a task
                                 with a structured spec (--done flags)
+  task ask <task-id> "<question>"
+                                raise a question to the operator from within a
+                                task run. Writes a task.question event to the
+                                outbox; the question-raise subscriber converts
+                                it to a coder-question action-queue item.
+                                Workers call this via Bash(mars task ask ...).
+                                Read-only workers (Planner, Slicer, Triager,
+                                BehaviourVerifier, Scorer) have this pattern
+                                in their disallowedTools and cannot use it.
   memory list --domain <d> [--min-salience <n>] [--limit <n>]
                                 list active memory packets for a domain; default
                                 min-salience 0.7, default limit 20. Prints a

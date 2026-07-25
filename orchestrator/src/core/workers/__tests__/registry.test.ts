@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { claudeStreamArgs } from '../../lib/git/claude'
 import {
+  ASK_USER_DENIED_TOOL,
   CODER_MODEL,
   FIXER_BACKLOG_DENIED_TOOLS,
   READ_ONLY_DENIED_TOOLS,
@@ -519,5 +520,53 @@ describe('Fixer denial set — backlog-mutation guard', () => {
     expect(WORKER_CONFIGS.Fixer.disallowedTools).toContain('Bash(mars task add*)')
     expect(WORKER_CONFIGS.Fixer.disallowedTools).toContain('Bash(mars proposal*)')
     expect(WORKER_CONFIGS.Fixer.disallowedTools).toContain('Bash(mars draft*)')
+  })
+})
+
+describe('ask-user tool policy — worker access control', () => {
+  // Coder and Fixer may surface questions to the operator via
+  // `mars task ask <taskId> "<question>"`. Read-only workers must not be
+  // able to stall on operator input — their role is to read and emit text.
+
+  it('ASK_USER_DENIED_TOOL is the bash pattern for mars task ask', () => {
+    expect(ASK_USER_DENIED_TOOL).toBe('Bash(mars task ask*)')
+  })
+
+  it('ASK_USER_DENIED_TOOL is included in READ_ONLY_DENIED_TOOLS', () => {
+    expect(READ_ONLY_DENIED_TOOLS).toContain(ASK_USER_DENIED_TOOL)
+  })
+
+  it('read-only workers (Planner, Slicer, Triager, BehaviourVerifier, Scorer) deny the ask-user path', () => {
+    const readOnlyRoles: WorkerName[] = ['Planner', 'Slicer', 'Triager', 'BehaviourVerifier', 'Scorer']
+    for (const name of readOnlyRoles) {
+      expect(
+        WORKER_CONFIGS[name].disallowedTools,
+        `${name} must deny the ask-user path`,
+      ).toContain(ASK_USER_DENIED_TOOL)
+    }
+  })
+
+  it('Coder does NOT deny the ask-user path — it may surface blockers to the operator', () => {
+    expect(WORKER_CONFIGS.Coder.disallowedTools).not.toContain(ASK_USER_DENIED_TOOL)
+  })
+
+  it('Fixer does NOT deny the ask-user path — recovery workers may also need operator input', () => {
+    expect(WORKER_CONFIGS.Fixer.disallowedTools).not.toContain(ASK_USER_DENIED_TOOL)
+  })
+
+  it('the ask-user denial appears in read-only argv via claudeStreamArgs', () => {
+    // Verify the denial propagates end-to-end through the argv builder so
+    // the running claude subprocess actually has it in its disallowedTools list.
+    for (const name of ['Planner', 'Slicer', 'Triager', 'BehaviourVerifier', 'Scorer'] as WorkerName[]) {
+      const denied = (valueAfter(argvFor(name), '--disallowedTools') ?? '').split(',')
+      expect(denied, `${name} argv must deny ask-user`).toContain(ASK_USER_DENIED_TOOL)
+    }
+  })
+
+  it('the ask-user path is NOT in Coder or Fixer argv', () => {
+    for (const name of ['Coder', 'Fixer'] as WorkerName[]) {
+      const denied = (valueAfter(argvFor(name), '--disallowedTools') ?? '').split(',')
+      expect(denied, `${name} must NOT deny ask-user`).not.toContain(ASK_USER_DENIED_TOOL)
+    }
   })
 })

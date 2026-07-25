@@ -6,8 +6,16 @@
 //
 // The agent-to-user denial (AskUserQuestion + SendUserMessage) is enforced at
 // the runClaudeCode wrapper layer (see ../lib/git/claude.ts:AGENT_TO_USER_DENIED_TOOLS).
-// Any extra Worker-level `disallowedTools` here are unioned on top — they
-// cannot remove the agent-to-user denial.
+// Those built-in Claude tools are permanently banned. The supported ask-user
+// path for Coder/Fixer workers is `Bash(mars task ask <taskId> "<question>")`,
+// which emits a `task.question` event that the question-raise outbox subscriber
+// converts to a `coder-question` action-queue item the operator resolves.
+// Read-only workers carry ASK_USER_DENIED_TOOL in their disallowedTools so they
+// cannot raise questions — their role is to read and emit text, never stall on
+// operator input.
+//
+// Any extra Worker-level `disallowedTools` here are unioned on top of the
+// wrapper-layer denial — they cannot remove the agent-to-user denial.
 //
 // See PRD 948691d0-stop-dispatched-implement-workers-from-c.
 
@@ -21,13 +29,22 @@ import type { ProviderName } from './providers'
 import { PROVIDERS } from './providers'
 import { runPtySession } from './run-pty-session'
 
-// Mutation tools denied for read-only Workers (Planner, Slicer, Triager).
-// A confused agent dispatched into one of those stages cannot silently mutate
-// the worktree — its sole job is to read and emit text.
+// The bash pattern that invokes the ask-user path. Coder and Fixer workers
+// may call `mars task ask <taskId> "<question>"` to surface a question to the
+// operator via the action queue (kind='coder-question'). Read-only workers
+// carry this in their disallowedTools so they cannot stall on operator input.
+export const ASK_USER_DENIED_TOOL = 'Bash(mars task ask*)' as const
+
+// Mutation tools denied for read-only Workers (Planner, Slicer, Triager,
+// BehaviourVerifier, Scorer). A confused agent dispatched into one of those
+// stages cannot silently mutate the worktree — its sole job is to read and
+// emit text. The ask-user denial is included here so read-only workers cannot
+// block on operator input either.
 export const READ_ONLY_DENIED_TOOLS: readonly string[] = [
   'Edit',
   'Write',
   'NotebookEdit',
+  ASK_USER_DENIED_TOOL,
 ] as const
 
 // Backlog-mutation denial set for Fixer: a fix-task Session that cannot

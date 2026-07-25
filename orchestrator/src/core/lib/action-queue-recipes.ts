@@ -136,6 +136,22 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
     verbs: [{ op: 'investigate', label: 'Investigate', style: 'primary' }],
   },
 
+  // ── Worker questions ──────────────────────────────────────────────────────
+
+  'coder-question': {
+    humanSummary: (ctx) => {
+      const taskId = str(ctx.payload['taskId']) || ctx.entityId
+      return `A running task (${taskId}) hit a decision it cannot resolve alone — answer the question so it can continue.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      taskId: str(ctx.payload['taskId']),
+      question: ctx.body,
+    }),
+    verbs: [],
+  },
+
   'daemon-killed': {
     humanSummary: () =>
       'The background engine was stopped while tasks were running — those tasks need to be restarted.',

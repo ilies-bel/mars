@@ -447,19 +447,56 @@ export const taskCheck: Command = {
   },
 }
 
+/**
+ * `task ask` — raise a question to the operator from within a worker task run.
+ *
+ * Workers (Coder/Fixer) call this via `Bash(mars task ask <taskId> "<question>")`.
+ * The command emits a `task.question` event to the outbox; the question-raise
+ * subscriber converts it to a `coder-question` action-queue item the operator
+ * resolves. Read-only workers (Planner, Slicer, Triager, BehaviourVerifier,
+ * Scorer) have this Bash pattern in their disallowedTools and cannot use it.
+ */
+export const taskAsk: Command = {
+  path: 'task ask',
+  summary: 'raise a question to the operator from within a task run',
+  usage: 'usage: mars task ask <task-id> "<question>"',
+  run: async (args, deps) => {
+    const taskId = args.positional[0]
+    const question = args.positional[1]
+    if (!taskId || !question) {
+      deps.err('usage: mars task ask <task-id> "<question>"')
+      return { code: 1 }
+    }
+    try {
+      const { resolveStateClient } = await import('../../core/store/state-client')
+      const { buildEventInsert, withWriteTx } = await import('../../core/lib/outbox')
+      const client = resolveStateClient()
+      await withWriteTx(client, async (tx) => {
+        await tx.execute(buildEventInsert('task.question', { taskId, question }))
+      })
+      deps.out(`[mars] question raised for task ${taskId} — visible in action queue`)
+    } catch (error: unknown) {
+      deps.err(errorMessage(error))
+      return { code: 1 }
+    }
+    return { code: 0 }
+  },
+}
+
 /** `task` with no/unknown subcommand. */
 export const taskGroup: Command = {
   path: 'task',
   summary: 'task subcommands',
-  usage: 'usage: mars task <add|show|priority|note|check> ...',
+  usage: 'usage: mars task <add|ask|show|priority|note|check> ...',
   run: (_args, deps) => {
-    deps.err('usage: mars task <add|show|priority|note|check> ...')
+    deps.err('usage: mars task <add|ask|show|priority|note|check> ...')
     return { code: 2 }
   },
 }
 
 export const taskCommands: readonly Command[] = [
   taskAdd,
+  taskAsk,
   taskShow,
   taskPriority,
   taskNote,

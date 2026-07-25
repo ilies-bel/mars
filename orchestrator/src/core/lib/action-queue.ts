@@ -46,6 +46,13 @@ export const ACTION_QUEUE_KINDS = [
   'cancelled-blocker-cascade',
   'diagnose-inconclusive',
   'daemon-killed',
+  // A coder or fixer worker raised a question to the operator during task
+  // execution via `mars task ask <taskId> "<question>"`. Raised by the
+  // question-raise outbox subscriber when it processes a `task.question` event.
+  // Each question event produces its own row (no origin-fingerprint collapse —
+  // questions are independent operator tasks). The operator answers the question
+  // and resolves the row so the task can continue.
+  'coder-question',
   // The daemon exited without a clean shutdown (unhandled exception, OOM,
   // SIGKILL, or any exit that bypassed the shutdown() cleanup path). Raised
   // on the next daemon start when a stale running marker is found. Level-

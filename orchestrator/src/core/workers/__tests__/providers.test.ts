@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { PROVIDERS } from '../providers'
-import { WORKER_CONFIGS, READ_ONLY_DENIED_TOOLS, FIXER_BACKLOG_DENIED_TOOLS } from '../index'
+import { ASK_USER_DENIED_TOOL, WORKER_CONFIGS, READ_ONLY_DENIED_TOOLS, FIXER_BACKLOG_DENIED_TOOLS } from '../index'
 
 describe('PROVIDERS registry', () => {
   it("contains the 'claude' entry", () => {
@@ -332,5 +332,45 @@ describe('pty Worker spawnArgv — security posture (integration with WORKER_CON
     for (const t of FIXER_BACKLOG_DENIED_TOOLS) expect(tools).toContain(t)
     expect(tools).toContain('AskUserQuestion')
     expect(tools).toContain('SendUserMessage')
+  })
+})
+
+describe("ask-user tool policy — spawnArgv propagation", () => {
+  // The ASK_USER_DENIED_TOOL bash pattern must reach the running claude subprocess
+  // via --disallowedTools for read-only workers, and must NOT appear for Coder/Fixer.
+
+  it('Planner-like spawnArgv includes ASK_USER_DENIED_TOOL in --disallowedTools', () => {
+    const cfg = WORKER_CONFIGS.Planner
+    const argv = PROVIDERS.claude.spawnArgv({
+      model: cfg.model,
+      permissionMode: cfg.permissionMode,
+      effort: cfg.effort,
+      disallowedTools: cfg.disallowedTools,
+    })
+    expect(argv).toContain('--disallowedTools')
+    const idx = (argv as readonly string[]).indexOf('--disallowedTools')
+    const tools = (argv[idx + 1] ?? '').split(',')
+    expect(tools).toContain(ASK_USER_DENIED_TOOL)
+  })
+
+  it('Coder-like spawnArgv does NOT include ASK_USER_DENIED_TOOL in --disallowedTools', () => {
+    const cfg = WORKER_CONFIGS.Coder
+    const argv = PROVIDERS.claude.spawnArgv({
+      model: cfg.model,
+      permissionMode: cfg.permissionMode,
+      effort: cfg.effort,
+      disallowedTools: cfg.disallowedTools,
+    })
+    expect(argv).toContain('--disallowedTools')
+    const idx = (argv as readonly string[]).indexOf('--disallowedTools')
+    const tools = (argv[idx + 1] ?? '').split(',')
+    expect(tools).not.toContain(ASK_USER_DENIED_TOOL)
+  })
+
+  it('READ_ONLY_DENIED_TOOLS contains ASK_USER_DENIED_TOOL so all read-only workers inherit the denial', () => {
+    // This is the structural guarantee: adding ASK_USER_DENIED_TOOL to
+    // READ_ONLY_DENIED_TOOLS means every worker that references that constant
+    // in its disallowedTools config automatically gets the denial.
+    expect(READ_ONLY_DENIED_TOOLS).toContain(ASK_USER_DENIED_TOOL)
   })
 })
