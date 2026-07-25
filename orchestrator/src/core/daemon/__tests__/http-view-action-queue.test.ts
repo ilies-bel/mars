@@ -480,6 +480,70 @@ describe('buildActionQueueView — daemon-killed-batch', () => {
   })
 })
 
+// ── arcGoal derivation ───────────────────────────────────────────────────────
+
+describe('buildActionQueueView — arcGoal derivation', () => {
+  it('sets arcGoal to the origin task prompt for a non-recovery failed-task row', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([makeTask({ prompt: 'Implement the caching layer' })]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+    expect(rows[0]!.arcGoal).toBe('Implement the caching layer')
+  })
+
+  it('sets arcGoal from the origin task prompt when the row is a recovery/fix task', async () => {
+    const originTask = makeTask({
+      id: 'origin-1',
+      prompt: 'Add rate limiting to the API gateway',
+      status: 'failed',
+    })
+    const fixTask = makeTask({
+      id: 'fix-1',
+      fixForTaskId: 'origin-1',
+      prompt: 'Fix: retry the integration gate step',
+    })
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeRow({ payload: { taskId: 'fix-1' } })]),
+      taskStore: makeTaskStore([originTask, fixTask]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+    expect(rows[0]!.arcGoal).toBe('Add rate limiting to the API gateway')
+  })
+
+  it('truncates long prompts in arcGoal to at most 80 characters', async () => {
+    const longPrompt = 'Implement '.repeat(20)
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([makeTask({ prompt: longPrompt })]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+    const goal = rows[0]!.arcGoal!
+    expect(goal.length).toBeLessThanOrEqual(80)
+    expect(goal.endsWith('…')).toBe(true)
+  })
+
+  it('sets arcGoal to null for a draft-proposal row (non-task-backed)', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({
+          id: 'row-dp',
+          kind: 'draft-proposal',
+          payload: { proposalId: 'prop-42' },
+          context: {},
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+    expect(rows[0]!.arcGoal).toBeNull()
+  })
+})
+
 // ── HTTP route: GET /view/action-queue ──────────────────────────────────────────────
 
 describe('GET /view/action-queue via HTTP server', () => {

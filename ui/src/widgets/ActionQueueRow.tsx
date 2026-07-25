@@ -31,6 +31,8 @@ export const ActionQueueRow = ({ item }: ActionQueueRowProps) => {
       ? 'destructive'
       : (['restart', 'retry'] as string[]).includes(v.op)
       ? 'primary'
+      : v.op === 'snooze'
+      ? 'snooze'
       : 'default',
   }))
 
@@ -42,6 +44,7 @@ export const ActionQueueRow = ({ item }: ActionQueueRowProps) => {
       entityId={item.entityId}
       kind={item.kind}
       summary={summary}
+      goal={item.arcGoal ?? undefined}
       detail={item.humanDetail}
       verbs={verbs}
       resolved={item.resolution != null}

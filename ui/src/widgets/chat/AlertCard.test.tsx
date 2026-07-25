@@ -402,6 +402,39 @@ describe('ActionQueueRow – recipe rendering', () => {
     const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
     expect(html).toContain('data-testid="alert-detail-toggle"')
   })
+
+  it('renders the arc goal line when arcGoal is present', () => {
+    const item = {
+      ...BASE_ITEM,
+      humanSummary: 'Arc exhausted retries',
+      arcGoal: 'Add rate limiting to the API gateway',
+      verbs: [] as AlertVerb[],
+    } as ActionQueueItem
+    const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
+    expect(html).toContain('data-testid="alert-card-goal"')
+    expect(html).toContain('Add rate limiting to the API gateway')
+  })
+
+  it('does not render the arc goal line when arcGoal is absent', () => {
+    const item = {
+      ...BASE_ITEM,
+      humanSummary: 'Arc exhausted retries',
+      verbs: [] as AlertVerb[],
+    } as ActionQueueItem
+    const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
+    expect(html).not.toContain('data-testid="alert-card-goal"')
+  })
+
+  it('renders snooze preset trigger when recipe sends a snooze verb', () => {
+    const item = {
+      ...BASE_ITEM,
+      humanSummary: 'Arc exhausted retries',
+      verbs: [{ op: 'snooze', label: 'Snooze', style: 'default' as const }],
+    } as ActionQueueItem
+    const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
+    // The snooze op must map to 'snooze' style so AlertCard renders the preset trigger.
+    expect(html).toContain('data-testid="alert-card-snooze-trigger"')
+  })
 })
 
 // ---------------------------------------------------------------------------

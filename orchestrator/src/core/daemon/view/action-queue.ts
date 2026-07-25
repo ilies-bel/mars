@@ -141,6 +141,15 @@ export interface ActionQueueRow {
    * field — the UI task will perform the hard cut.
    */
   verbs: RecipeVerb[]
+  /**
+   * The main intent of the arc that raised this action-queue item. For origin
+   * failed-task rows, this is the task's own prompt (truncated to 80 chars).
+   * For recovery/fix task rows, this is the origin task's prompt so the
+   * operator sees what was being attempted, not just that recovery failed.
+   * Null on non-task-backed rows (stale-worktree, draft-proposal, etc.) and
+   * when the referenced task cannot be found.
+   */
+  arcGoal?: string | null
 }
 
 /** Raw actionQueue row shape as persisted in `action_queue_items`. */
@@ -372,16 +381,19 @@ export const buildActionQueueView = async ({
   const toErrorKind = (k: string): string =>
     k === 'failed' ? 'failed-task' : k
 
+  // Truncates a task prompt to a single line of at most 80 characters.
+  // Used both by toNode (DAG summaries) and arcGoal derivation.
+  const summarizePrompt = (prompt: string): string => {
+    const oneLine = prompt.replace(/\s+/g, ' ').trim()
+    return oneLine.length <= 80 ? oneLine : `${oneLine.slice(0, 79)}…`
+  }
+
   const toNode = (id: string) => {
     const t = taskById.get(id)
-    const summarize = (prompt: string): string => {
-      const oneLine = prompt.replace(/\s+/g, ' ').trim()
-      return oneLine.length <= 80 ? oneLine : `${oneLine.slice(0, 79)}…`
-    }
     return {
       id,
       status: (t?.status ?? 'dropped') as string,
-      summary: t ? summarize(t.prompt) : '(unknown task)',
+      summary: t ? summarizePrompt(t.prompt) : '(unknown task)',
     }
   }
 
@@ -615,6 +627,20 @@ export const buildActionQueueView = async ({
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 
+    // Derive the arc goal from the origin task's prompt. For recovery/fix tasks,
+    // follow fixForTaskId to the origin task; for origin tasks, use their own prompt.
+    // This lets the operator see what was being attempted, not just that recovery failed.
+    let arcGoal: string | null = null
+    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+      const task = taskById.get(entityId)
+      if (task) {
+        const originTask = task.fixForTaskId
+          ? (taskById.get(task.fixForTaskId) ?? task)
+          : task
+        arcGoal = summarizePrompt(originTask.prompt)
+      }
+    }
+
     // Surface the live preview URL for awaiting-validation rows. The merge
     // primitive stamps it into the row payload at raise time (and persists the
     // same value on the task row), so the payload is the authoritative,
@@ -690,6 +716,7 @@ export const buildActionQueueView = async ({
       diagnosis,
       failureReasonCode,
       fixForTaskId,
+      arcGoal,
       toolPromotionDetail,
       humanSummary: recipeFields.humanSummary,
       humanDetail: recipeFields.humanDetail,
@@ -857,16 +884,17 @@ export const buildActionQueueHistoryView = async ({
   const toErrorKind = (k: string): string =>
     k === 'failed' ? 'failed-task' : k
 
+  const summarizePrompt = (prompt: string): string => {
+    const oneLine = prompt.replace(/\s+/g, ' ').trim()
+    return oneLine.length <= 80 ? oneLine : `${oneLine.slice(0, 79)}…`
+  }
+
   const toNode = (id: string) => {
     const t = taskById.get(id)
-    const summarize = (prompt: string): string => {
-      const oneLine = prompt.replace(/\s+/g, ' ').trim()
-      return oneLine.length <= 80 ? oneLine : `${oneLine.slice(0, 79)}…`
-    }
     return {
       id,
       status: (t?.status ?? 'dropped') as string,
-      summary: t ? summarize(t.prompt) : '(unknown task)',
+      summary: t ? summarizePrompt(t.prompt) : '(unknown task)',
     }
   }
 
@@ -1049,6 +1077,18 @@ export const buildActionQueueHistoryView = async ({
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 
+    // Derive the arc goal from the origin task's prompt (same logic as the live view).
+    let arcGoal: string | null = null
+    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+      const task = taskById.get(entityId)
+      if (task) {
+        const originTask = task.fixForTaskId
+          ? (taskById.get(task.fixForTaskId) ?? task)
+          : task
+        arcGoal = summarizePrompt(originTask.prompt)
+      }
+    }
+
     // Build resolution metadata from the resolved row fields.
     const resolution: ActionQueueResolutionMeta | null =
       row.resolvedAt
@@ -1083,6 +1123,7 @@ export const buildActionQueueHistoryView = async ({
       diagnosis,
       failureReasonCode,
       fixForTaskId,
+      arcGoal,
       resolution,
       humanSummary: historyRecipeFields.humanSummary,
       humanDetail: historyRecipeFields.humanDetail,

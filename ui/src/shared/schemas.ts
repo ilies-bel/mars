@@ -298,6 +298,14 @@ const actionQueueBaseSchema = z.object({
    */
   fixForTaskId: z.string().nullable().optional(),
   /**
+   * The main intent of the arc. For origin failed-task rows this is the task's
+   * own prompt (truncated). For recovery/fix rows this is the ORIGIN task's
+   * prompt so the operator sees what was being attempted, not just that
+   * recovery failed. Absent on non-task-backed rows and daemon versions that
+   * predate this field.
+   */
+  arcGoal: z.string().nullable().optional(),
+  /**
    * Resolution metadata — non-null on history rows, absent/null on live open rows.
    * The UI uses this to render the Resolution block and suppress action buttons.
    */
