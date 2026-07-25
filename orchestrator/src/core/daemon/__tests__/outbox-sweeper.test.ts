@@ -5,13 +5,18 @@
  * observable side-effects (action_queue_items rows). Module caches are reset
  * before each test so the `stateClient()` singleton (used by
  * `raiseActionQueueItem`) opens the fresh test DB every time.
+ *
+ * dbPath must match resolveDbTarget() — both are stateDir (tmpDir/.mars) so
+ * lag detection, pruning, and raiseActionQueueItem all hit the same PGlite
+ * instance. The client is imported dynamically AFTER vi.resetModules() so the
+ * test and sweeper share the same db.ts module (and thus the same registry).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { createClient, type Client } from '@libsql/client'
+import type { DbClient } from '../../lib/db.js'
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -24,79 +29,8 @@ function setupRepo(): string {
   return repo
 }
 
-/**
- * Create all tables the sweeper and its collaborators need:
- *  - `events` and `subscribers` (lag detection + pruning)
- *  - `action_queue_items` and `action_queue_history` (raised items)
- *
- * Creating them here before the dynamic import means `initActionQueue()`
- * (called by `raiseActionQueueItem`) will find them already in place and
- * skip the ALTER TABLE migrations that would otherwise conflict.
- */
-async function makeClient(dbPath: string): Promise<Client> {
-  const client = createClient({ url: `file:${dbPath}` })
-
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS events (
-      id      INTEGER PRIMARY KEY,
-      type    TEXT    NOT NULL DEFAULT 'test',
-      payload TEXT    NOT NULL DEFAULT '{}',
-      ts      INTEGER NOT NULL DEFAULT 0
-    )
-  `)
-
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS subscribers (
-      name   TEXT    PRIMARY KEY,
-      cursor INTEGER NOT NULL DEFAULT 0
-    )
-  `)
-
-  // Pre-create action-queue tables with all columns so initActionQueue()
-  // skips the ALTER TABLE steps (which would fail if columns already exist).
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS action_queue_items (
-      id              TEXT    PRIMARY KEY,
-      kind            TEXT    NOT NULL,
-      category        TEXT    NOT NULL,
-      priority        TEXT    NOT NULL,
-      state           TEXT    NOT NULL DEFAULT 'open',
-      title           TEXT    NOT NULL,
-      body            TEXT    NOT NULL DEFAULT '',
-      payload         TEXT    NOT NULL DEFAULT '{}',
-      context         TEXT    NOT NULL DEFAULT '{}',
-      raised_by       TEXT    NOT NULL,
-      raised_at       TEXT    NOT NULL,
-      resolved_at     TEXT,
-      resolution      TEXT,
-      resolution_note TEXT,
-      root_cause      TEXT,
-      fingerprint     TEXT,
-      signature       TEXT,
-      seen_count      INTEGER NOT NULL DEFAULT 1,
-      last_seen_at    TEXT,
-      resolved_by     TEXT,
-      origin_task_id  TEXT
-    )
-  `)
-
-  await client.execute(`
-    CREATE TABLE IF NOT EXISTS action_queue_history (
-      id         TEXT PRIMARY KEY,
-      item_id    TEXT NOT NULL,
-      at         TEXT NOT NULL,
-      from_state TEXT,
-      to_state   TEXT NOT NULL,
-      by         TEXT,
-      note       TEXT
-    )
-  `)
-
-  return client
-}
-
 /** Count open action-queue rows. */
-async function openRowCount(client: Client): Promise<number> {
+async function openRowCount(client: DbClient): Promise<number> {
   const r = await client.execute(
     `SELECT COUNT(*) AS n FROM action_queue_items WHERE state = 'open'`,
   )
@@ -110,12 +44,15 @@ async function openRowCount(client: Client): Promise<number> {
 describe('sweepOutbox', () => {
   let tmpDir: string
   let dbPath: string
-  let client: Client
+  let client: DbClient
   let sweepOutbox: (dbPath: string) => Promise<void>
 
   beforeEach(async () => {
     tmpDir = setupRepo()
-    dbPath = resolve(tmpDir, '.mars', 'mars.db')
+    // dbPath must match resolveDbTarget() so lag-detection and raiseActionQueueItem
+    // both open the same PGlite instance. resolveDbTarget() returns stateDir
+    // (tmpDir/.mars) when MARS_DB_BACKEND=pglite.
+    dbPath = resolve(tmpDir, '.mars')
 
     // Set MARS_REPO before resetting modules so resolveStateClient()
     // (used by raiseActionQueueItem) opens the correct test DB.
@@ -125,17 +62,20 @@ describe('sweepOutbox', () => {
     // so each test gets a clean environment pointed at the fresh tmpDir.
     vi.resetModules()
 
-    // Create tables before the dynamic import so initActionQueue() finds
-    // action_queue_items already fully-migrated.
-    client = await makeClient(dbPath)
+    // Import db module AFTER resetModules so the client and sweeper share
+    // the same db.ts module instance (and thus the same PGlite registry).
+    // ensureClientSchema runs automatically on first execute().
+    const { openDb } = await import('../../lib/db.js')
+    client = openDb(dbPath)
 
-    // Dynamic import AFTER resetModules and DB setup.
+    // Dynamic import AFTER resetModules so the sweeper and raiseActionQueueItem
+    // also resolve through the same fresh db.ts module.
     const mod = await import('../outbox-sweeper.js')
     sweepOutbox = mod.sweepOutbox
   })
 
-  afterEach(() => {
-    client.close()
+  afterEach(async () => {
+    await client.close()
     delete process.env.MARS_REPO
     delete process.env.MARS_OUTBOX_LAG_WARN_THRESHOLD
     rmSync(tmpDir, { recursive: true, force: true })
@@ -145,9 +85,10 @@ describe('sweepOutbox', () => {
 
   it('raises no action-queue item when lag is below the default threshold', async () => {
     // MAX(events.id)=50001, MIN(subscribers.cursor)=1 → lag=50000 < 100000
+    // OVERRIDING SYSTEM VALUE is required because events.id is GENERATED ALWAYS AS IDENTITY.
     await client.execute({
-      sql: 'INSERT INTO events (id, ts) VALUES (?, ?)',
-      args: [50001, 0],
+      sql: 'INSERT INTO events (id, type, payload, ts) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?, ?)',
+      args: [50001, 'test', '{}', 0],
     })
     await client.execute({
       sql: 'INSERT INTO subscribers (name, cursor) VALUES (?, ?)',
@@ -163,9 +104,10 @@ describe('sweepOutbox', () => {
 
   it('raises exactly one action-queue row across two sweeps for a wedged subscriber', async () => {
     // MAX(events.id)=150001, MIN(subscribers.cursor)=1 → lag=150000 > 100000
+    // OVERRIDING SYSTEM VALUE is required because events.id is GENERATED ALWAYS AS IDENTITY.
     await client.execute({
-      sql: 'INSERT INTO events (id, ts) VALUES (?, ?)',
-      args: [150001, 0],
+      sql: 'INSERT INTO events (id, type, payload, ts) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?, ?)',
+      args: [150001, 'test', '{}', 0],
     })
     await client.execute({
       sql: 'INSERT INTO subscribers (name, cursor) VALUES (?, ?)',
@@ -196,9 +138,10 @@ describe('sweepOutbox', () => {
     process.env.MARS_OUTBOX_LAG_WARN_THRESHOLD = '10'
 
     // MAX(events.id)=21, MIN(subscribers.cursor)=1 → lag=20 > 10
+    // OVERRIDING SYSTEM VALUE is required because events.id is GENERATED ALWAYS AS IDENTITY.
     await client.execute({
-      sql: 'INSERT INTO events (id, ts) VALUES (?, ?)',
-      args: [21, 0],
+      sql: 'INSERT INTO events (id, type, payload, ts) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?, ?)',
+      args: [21, 'test', '{}', 0],
     })
     await client.execute({
       sql: 'INSERT INTO subscribers (name, cursor) VALUES (?, ?)',

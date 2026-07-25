@@ -67,7 +67,7 @@ describe('sweepObservability', () => {
     const result = await client2.execute('SELECT id FROM trace_events')
     client2.close()
 
-    const ids = result.rows.map((r) => r[0] as string)
+    const ids = result.rows.map((r) => (r as unknown as { id: string }).id)
     expect(ids).toHaveLength(1)
     expect(ids).toContain('recent-1')
   })

@@ -97,9 +97,9 @@ describe('buildProgressView — arc topology fields', () => {
     expect(tasks[0].kind).toBeNull()
   })
 
-  it('excludes out-of-scope tasks (done/dropped) while retaining arc fields for in-scope tasks', async () => {
+  it('excludes out-of-scope tasks (dropped) while retaining arc fields for in-scope tasks', async () => {
     const inScope = makeRow({ id: 'in-1', status: 'failed', originId: 'origin-1', kind: 'task' })
-    const outOfScope = makeRow({ id: 'out-1', status: 'done', originId: 'origin-1', kind: 'task' })
+    const outOfScope = makeRow({ id: 'out-1', status: 'dropped', originId: 'origin-1', kind: 'task' })
     const { tasks } = await buildProgressView(makeStore([inScope, outOfScope]), noProposals, zeroAggregates)
     expect(tasks).toHaveLength(1)
     expect(tasks[0].id).toBe('in-1')

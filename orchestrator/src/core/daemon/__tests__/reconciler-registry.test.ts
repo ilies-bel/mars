@@ -27,6 +27,7 @@ describe('RECONCILERS registry', () => {
       'daemon-killed-sweep',
       'daemon-died-sweep',
       'orphaned-chat-run-sweep',
+      'dead-thread-eviction',
       'blocker-drift-repair',
       'orphaned-blocked-scan',
       'recovery-done-propagation',
