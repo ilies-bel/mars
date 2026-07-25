@@ -4,26 +4,31 @@
  * correctly routes chat requests through the ChatRunner that is now a
  * required field of HttpServerDeps.
  *
- * Tests drive the behaviour through the real HTTP routes: the subprocess
- * is mocked at the boundary (runSubprocessStreaming) so no real `claude`
- * binary is needed, but the full route → ChatRunner → response path is
- * exercised.
+ * Tests drive the behaviour through the real HTTP routes: the chat provider is
+ * mocked at the boundary (runCodexOAuthTurn) so no network call is made, but the
+ * full route → ChatRunner → response path is exercised.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { ChatRunner } from '../chat-runner'
 import type { HttpServerHandle } from '../http-server'
-import type { SubprocessLine, RunSubprocessResult } from '../../lib/git/claude'
+import type { CodexOAuthResult, CodexOAuthTurnOptions } from '../codex-oauth'
 import { stubAppServices } from './app-services-stub'
 import type { RecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
-// Mock the subprocess layer so no real `claude` binary is needed.
+// Mock the worker subprocess layer so no real `claude` binary is needed by the
+// non-chat routes that resolve it.
 vi.mock('../../lib/git/claude', () => ({
   resolveClaudeBin: vi.fn(() => '/usr/bin/claude'),
   buildWorkerEnv: vi.fn(() => ({})),
   toClaudeSessionId: vi.fn((id: string) => id),
   runSubprocessStreaming: vi.fn(),
+}))
+
+// Mock the chat provider so no request reaches the ChatGPT/Codex backend.
+vi.mock('../codex-oauth', () => ({
+  runCodexOAuthTurn: vi.fn(),
 }))
 
 // Mock the chat store so no real SQLite database is created.
@@ -67,17 +72,15 @@ vi.mock('../../lib/chat-store', () => ({
   clearMessageFeedback: vi.fn().mockResolvedValue(true),
 }))
 
-const { runSubprocessStreaming } = await import('../../lib/git/claude')
-const mockRunSubprocessStreaming = runSubprocessStreaming as unknown as MockInstance<
-  (
-    cmd: string,
-    args: readonly string[],
-    cwd: string,
-    onLine?: (line: SubprocessLine) => void,
-    signal?: AbortSignal,
-    env?: NodeJS.ProcessEnv,
-  ) => Promise<RunSubprocessResult>
+const { runCodexOAuthTurn } = await import('../codex-oauth')
+const mockTurn = runCodexOAuthTurn as unknown as MockInstance<
+  (options: CodexOAuthTurnOptions) => Promise<CodexOAuthResult>
 >
+
+const TURN_OK: CodexOAuthResult = {
+  ok: true,
+  usage: { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0 },
+}
 
 const { setMessageFeedback: mockSetMessageFeedback, clearMessageFeedback: mockClearMessageFeedback } =
   await import('../../lib/chat-store')
@@ -91,8 +94,11 @@ let server: HttpServerHandle | null = null
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // Default: subprocess completes immediately.
-  mockRunSubprocessStreaming.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
+  // Default: the provider turn completes immediately with a short reply.
+  mockTurn.mockImplementation(async (options) => {
+    options.onSegment({ type: 'text', text: 'ok' })
+    return TURN_OK
+  })
 })
 
 afterEach(async () => {
@@ -106,10 +112,10 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     const { startHttpServer } = await import('../http-server')
     const chatRunner = new ChatRunner()
 
-    // Make subprocess hang so we can inspect in-flight state.
-    let resolveRun: (r: RunSubprocessResult) => void = () => {}
-    mockRunSubprocessStreaming.mockReturnValue(
-      new Promise<RunSubprocessResult>((r) => {
+    // Make the provider turn hang so we can inspect in-flight state.
+    let resolveRun: (r: CodexOAuthResult) => void = () => {}
+    mockTurn.mockReturnValue(
+      new Promise<CodexOAuthResult>((r) => {
         resolveRun = r
       }),
     )
@@ -153,23 +159,23 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     const body = (await res.json()) as { ok: boolean }
     expect(body.ok).toBe(true)
 
-    // Verify the subprocess was invoked — confirming ChatRunner was called.
+    // Verify the provider was invoked — confirming ChatRunner was called.
     // (The run is still in-flight; give microtasks a tick to start.)
     await new Promise((r) => setImmediate(r))
-    expect(mockRunSubprocessStreaming).toHaveBeenCalled()
+    expect(mockTurn).toHaveBeenCalled()
 
     // Clean up.
-    resolveRun({ exitCode: 0, stdout: '', stderr: '' })
+    resolveRun(TURN_OK)
   })
 
   it('returns 409 when a run is already active on the thread', async () => {
     const { startHttpServer } = await import('../http-server')
     const chatRunner = new ChatRunner()
 
-    // Hang the first subprocess.
-    let resolveFirst: (r: RunSubprocessResult) => void = () => {}
-    mockRunSubprocessStreaming.mockReturnValue(
-      new Promise<RunSubprocessResult>((r) => {
+    // Hang the first provider turn.
+    let resolveFirst: (r: CodexOAuthResult) => void = () => {}
+    mockTurn.mockReturnValue(
+      new Promise<CodexOAuthResult>((r) => {
         resolveFirst = r
       }),
     )
@@ -228,7 +234,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     const body = (await second.json()) as { errorCode: string }
     expect(body.errorCode).toBe('ALREADY_RUNNING')
 
-    resolveFirst({ exitCode: 0, stdout: '', stderr: '' })
+    resolveFirst(TURN_OK)
   })
 
   it('returns 400 when the message body is missing content', async () => {
@@ -365,21 +371,12 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
     const { startHttpServer } = await import('../http-server')
     const chatRunner = new ChatRunner()
 
-    // Subprocess waits for abort signal.
-    mockRunSubprocessStreaming.mockImplementation(
-      async (
-        _cmd: string,
-        _args: readonly string[],
-        _cwd: string,
-        _onLine: ((l: SubprocessLine) => void) | undefined,
-        signal: AbortSignal | undefined,
-      ) => {
-        return new Promise<RunSubprocessResult>((resolve) => {
-          signal?.addEventListener('abort', () =>
-            resolve({ exitCode: 1, stdout: '', stderr: '' }),
-          )
-        })
-      },
+    // The provider turn waits for the abort signal.
+    mockTurn.mockImplementation(
+      (options) =>
+        new Promise<CodexOAuthResult>((resolve) => {
+          options.signal.addEventListener('abort', () => resolve(TURN_OK))
+        }),
     )
 
     server = await startHttpServer({
