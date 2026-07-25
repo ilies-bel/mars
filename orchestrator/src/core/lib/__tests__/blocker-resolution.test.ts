@@ -1232,4 +1232,160 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(reloaded?.status).toBe('done')
     })
   })
+
+  // -----------------------------------------------------------------------
+  // landTask — operator gesture to land worktree-ahead commits
+  // -----------------------------------------------------------------------
+  describe('landTask — operator gesture to land worktree-ahead commits', () => {
+    /**
+     * Shared load helper for landTask tests.  Resets modules each time so the
+     * DB client picks up the MARS_REPO override, matching the pattern used by
+     * the rest of this file.
+     */
+    const loadLandModules = async (repoPath: string) => {
+      vi.resetModules()
+      process.env.MARS_REPO = repoPath
+      const q = (await import('../../queue')) as unknown as QueueModule
+      await q.migrateQueueSchema()
+      const actionQueue = (await import('../action-queue')) as unknown as ActionQueueModule
+      const { landTask } = await import('../../land-task')
+      return { q, actionQueue, landTask }
+    }
+
+    /**
+     * Create a task whose worktree branch has one commit ahead of main, and
+     * set the task row to 'failed' with the correct worktreePath/branch.
+     * Returns the task id, worktree path, and the commit sha.
+     */
+    const seedWorktreeAheadTask = async (
+      q: QueueModule,
+      repoPath: string,
+    ): Promise<{ taskId: string; worktreePath: string; commitSha: string }> => {
+      const task = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+      const { worktreePath } = setupTaskWorktree(repoPath, task.id)
+      // Add a commit on the task branch so it is ahead of main.
+      writeFileSync(resolve(worktreePath, 'work.txt'), 'completed work\n')
+      execFileSync('git', ['add', 'work.txt'], { cwd: worktreePath })
+      execFileSync('git', ['commit', '-q', '-m', 'task work'], { cwd: worktreePath })
+      const commitSha = headSha(worktreePath)
+      // Set the task to 'failed' with worktreePath + branch (mimicking the
+      // worktree-ahead scenario that prompted the land gesture).
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks
+                 SET status = 'failed',
+                     worktree_path = ?,
+                     branch = ?
+               WHERE id = ?`,
+        args: [worktreePath, `task/${task.id}`, task.id],
+      })
+      return { taskId: task.id, worktreePath, commitSha }
+    }
+
+    it('clean land: lands commits onto integration, marks task done, resolves action-queue item', async () => {
+      const { q, actionQueue, landTask } = await loadLandModules(repo)
+      const { taskId, worktreePath, commitSha } = await seedWorktreeAheadTask(q, repo)
+
+      // Raise a worktree-ahead action-queue item (as the daemon would have).
+      await actionQueue.raiseActionQueueItem({
+        kind: 'worktree-ahead',
+        category: 'orchestrator',
+        priority: 'normal',
+        title: `Task ${taskId} worktree is ahead`,
+        body: 'worktree ahead',
+        payload: { taskId, worktreePath, aheadCount: 1, integrationBranch: 'main' },
+        context: {},
+        raisedBy: 'test',
+        signature: `${taskId}:worktree-ahead`,
+        originTaskId: taskId,
+      })
+
+      const result = await landTask(taskId)
+
+      // Observable outcome: landed successfully.
+      expect(result.outcome).toBe('landed')
+      expect(result.aheadCount).toBe(1)
+
+      // Task must be done.
+      const reloaded = await q.getTask(taskId)
+      expect(reloaded?.status).toBe('done')
+
+      // Integration branch (main) must now point at the task commit.
+      const mainSha = execFileSync('git', ['rev-parse', 'main'], { cwd: repo }).toString().trim()
+      expect(mainSha).toBe(commitSha)
+
+      // Action-queue rows for this task must be resolved.
+      const open = await actionQueue.listActionQueueItems('open')
+      const ahead = open.find((i) => i.kind === 'worktree-ahead' && i.payload.taskId === taskId)
+      expect(ahead).toBeUndefined()
+    })
+
+    it('verify failure: refuses non-destructively and leaves branch intact', async () => {
+      const { q, landTask } = await loadLandModules(repo)
+      const { taskId, worktreePath } = await seedWorktreeAheadTask(q, repo)
+
+      // Seed a verify gate that always fails (node is always available in the
+      // test environment since we are already running under Node.js).
+      await q.resolveQueueClient().execute({
+        sql: `INSERT INTO verify_gates (id, scope, name, cmd, args_json, required, tier, source, created_at)
+              VALUES (?, '.', 'always-fail', 'node', ?, 1, 'task', 'test', ?)`,
+        args: ['gate-always-fail', JSON.stringify(['-e', 'process.exit(1)']), new Date().toISOString()],
+      })
+
+      const branchAheadBefore = Number(
+        execFileSync('git', ['rev-list', '--count', 'main..HEAD'], { cwd: worktreePath })
+          .toString().trim(),
+      )
+      expect(branchAheadBefore).toBe(1)
+
+      const result = await landTask(taskId)
+
+      // Must refuse.
+      expect(result.outcome).toBe('verify-failed')
+
+      // Task must NOT be done — left at failed.
+      const reloaded = await q.getTask(taskId)
+      expect(reloaded?.status).toBe('failed')
+
+      // Branch must remain ahead of main (work is intact).
+      const branchAheadAfter = Number(
+        execFileSync('git', ['rev-list', '--count', 'main..HEAD'], { cwd: worktreePath })
+          .toString().trim(),
+      )
+      expect(branchAheadAfter).toBe(1)
+
+      // main must NOT have advanced.
+      const mainSha = execFileSync('git', ['rev-parse', 'main'], { cwd: repo }).toString().trim()
+      const branchBase = execFileSync('git', ['merge-base', `task/${taskId}`, 'main'], { cwd: repo })
+        .toString().trim()
+      expect(mainSha).toBe(branchBase)
+    })
+
+    it('conflict: refuses non-destructively when histories have diverged, branch intact', async () => {
+      const { q, landTask } = await loadLandModules(repo)
+      const { taskId, worktreePath } = await seedWorktreeAheadTask(q, repo)
+
+      // Advance main with an independent commit so the histories diverge:
+      // main = A → B,  task/xxx = A → D  (D's parent is A, not B).
+      writeFileSync(resolve(repo, 'unrelated.txt'), 'unrelated advance\n')
+      execFileSync('git', ['add', 'unrelated.txt'], { cwd: repo })
+      execFileSync('git', ['commit', '-q', '-m', 'unrelated main advance'], { cwd: repo })
+
+      const mainShaBeforeLand = execFileSync('git', ['rev-parse', 'main'], { cwd: repo })
+        .toString().trim()
+      const taskSha = headSha(worktreePath)
+
+      const result = await landTask(taskId)
+
+      // Must refuse with conflict.
+      expect(result.outcome).toBe('conflict')
+
+      // main must NOT have advanced.
+      const mainShaAfter = execFileSync('git', ['rev-parse', 'main'], { cwd: repo })
+        .toString().trim()
+      expect(mainShaAfter).toBe(mainShaBeforeLand)
+
+      // Task branch must still point at the original commit (work is intact).
+      expect(headSha(worktreePath)).toBe(taskSha)
+    })
+  })
 })

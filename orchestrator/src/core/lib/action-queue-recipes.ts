@@ -212,6 +212,7 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
       commitsAhead: ctx.payload['commitsAhead'],
     }),
     verbs: [
+      { op: 'land', label: 'Land commits onto integration branch', style: 'primary' },
       { op: 'prune-worktree', label: 'Discard unmerged work', style: 'danger' },
     ],
   },

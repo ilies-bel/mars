@@ -726,6 +726,60 @@ const attach: Command = {
   },
 }
 
+const land: Command = {
+  path: 'land',
+  summary: "land a worktree-ahead task's commits onto the integration branch",
+  usage: 'usage: mars land <task-id>',
+  run: async (args, deps) => {
+    const id = args.positional[0]
+    if (!id) {
+      deps.err('usage: mars land <task-id>')
+      return { code: 2 }
+    }
+
+    deps.out(`landing task ${id}…`)
+
+    const { migrateQueueSchema } = await import('../../core/queue')
+    await migrateQueueSchema()
+
+    const { landTask } = await import('../../core/land-task')
+    const result = await landTask(id)
+
+    switch (result.outcome) {
+      case 'landed':
+        deps.out(`✓ ${result.message}`)
+        return { code: 0 }
+
+      case 'verify-failed':
+        deps.err(`verify gate failed — branch left intact`)
+        if (result.verifyOutput) deps.err(result.verifyOutput)
+        return { code: 1 }
+
+      case 'conflict':
+        deps.err(result.message)
+        return { code: 1 }
+
+      case 'not-ahead':
+        deps.err(result.message)
+        return { code: 1 }
+
+      case 'task-not-found':
+        deps.err(result.message)
+        return { code: 1 }
+
+      case 'no-worktree':
+        deps.err(result.message)
+        return { code: 1 }
+
+      default: {
+        const _exhaustive: never = result.outcome
+        deps.err(`unexpected outcome: ${String(_exhaustive)}`)
+        return { code: 1 }
+      }
+    }
+  },
+}
+
 const release: Command = {
   path: 'release',
   summary: 'release the lease on an awaiting-human task and resume the pipeline',
@@ -798,6 +852,7 @@ export const lifecycleCommands: readonly Command[] = [
   makeContinueRestart('continue'),
   makeContinueRestart('restart'),
   remerge,
+  land,
   purge,
   unblock,
   recover,
