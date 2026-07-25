@@ -82,6 +82,7 @@ import { useAlerts, useStartThreadFromAlert } from '@/entities/alerts'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
+import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
 import { resolveMediaKind, fileMediaKind } from './chatPageUtils'
 
@@ -642,7 +643,7 @@ const renderPart = (
   onDiscuss: (prompt: string) => void,
 ): ReactNode => {
   if (part.type === 'text') {
-    return <Response key={key}>{part.text}</Response>
+    return <Response key={key}>{linkifyTaskIds(part.text)}</Response>
   }
   if (part.type === 'reasoning') {
     return (
@@ -889,7 +890,7 @@ export const LiveAssistantBubble = ({ buffer }: { buffer: LiveBuffer }): ReactNo
       ) : (
         buffer.segments.map((seg, i) => {
           if (seg.type === 'text') {
-            return <Response key={i}>{seg.text}</Response>
+            return <Response key={i}>{linkifyTaskIds(seg.text)}</Response>
           }
           if (seg.type === 'thinking') {
             return <ThinkingBlock key={i} text={seg.text} isStreaming={!buffer.done} />
