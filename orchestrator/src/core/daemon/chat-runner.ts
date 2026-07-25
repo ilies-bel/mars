@@ -1,39 +1,47 @@
 /**
- * Chat runner — spawns a Codex CLI process for a given thread, streams
- * typed segments over the `chat` SSE channel, and persists the assistant
- * reply to `chat_messages` when the run finishes.
+ * Chat runner — drives a chat turn against the Codex Responses API directly
+ * (see codex-api.ts), streams typed segments over the `chat` SSE channel, and
+ * persists the assistant reply to `chat_messages` when the run finishes.
+ *
+ * The daemon owns the whole agent loop: it replays the thread transcript as
+ * Responses input items on every turn (`store: false` — no server-side session,
+ * nothing in the context window the daemon didn't put there), exposes one
+ * `shell` function tool, executes tool calls itself, and feeds the outputs
+ * back until the model produces a final message.
  *
  * One run per thread at a time (in-memory guard); concurrent POST requests
  * get a 409 response from the HTTP route. A 10-minute wall-clock timeout
  * finalises the run with an `error` segment. `killAll()` is called by the
- * daemon shutdown path to SIGKILL all live children.
+ * daemon shutdown path to abort all live runs.
  *
  * Error-kind handling (inlined in _run to avoid single-caller helpers):
- *   not-found (exit 127) → terminal error (no Codex binary)
- *   auth                 → global flag + throttle with backoff; clears on re-auth
- *   rate-limit           → throttle with backoff; auto-retries up to 3 times
- *   session-expired      → resetThreadSession + one silent auto-retry
- *   generic              → terminal error (user-safe message, no provider details)
+ *   auth       → one silent token refresh, then global flag + throttle with
+ *                backoff; clears on re-auth
+ *   rate-limit → throttle with backoff; auto-retries up to 3 times
+ *   http/network → terminal error (user-safe message, no provider details)
  */
 
-import {
-  buildWorkerEnv,
-  runSubprocessStreaming,
-  type RunSubprocessResult,
-} from '../lib/git/claude'
+import { buildWorkerEnv, runSubprocessStreaming } from '../lib/git/claude'
 import {
   appendMessage,
   getThread,
-  markContextSeeded,
-  resetThreadSession,
-  setThreadSession,
   setThreadStatus,
   updateThreadTitle,
   type AlertSegment,
+  type ChatMessage,
 } from '../lib/chat-store'
 import type { ViewStreamHub } from './view/stream-hub'
 import type { ChatStreamHub } from './chat-stream-hub'
 import { resolveChatSystemPrompt } from './chat-system-prompt'
+import {
+  CodexApiError,
+  loadCodexAuth,
+  refreshCodexAuth,
+  streamCodexResponse,
+  type CodexAuth,
+  type FunctionToolDef,
+  type ResponseInputItem,
+} from './codex-api'
 
 // ── Attachment info ───────────────────────────────────────────────────────────
 
@@ -53,13 +61,13 @@ export interface AttachmentInfo {
 // ── Segment types ─────────────────────────────────────────────────────────────
 
 /**
- * A single typed segment produced by the stream-json parser. Each segment
- * maps to one recognisable unit in the Codex output: a text block, a
- * tool call, its result, the final usage summary, or an error.
+ * A single typed segment produced from the Codex Responses SSE stream. Each
+ * segment maps to one recognisable unit of the run: a text block, a reasoning
+ * summary, a tool call, its result, the final usage summary, or an error.
  *
  * The `attachment` variant is produced by the HTTP route when the user
  * message carries file attachments. It is persisted on the user message and
- * rendered by the UI; it is NOT emitted by the Codex stream parser.
+ * rendered by the UI; it is NOT emitted by the stream parser.
  */
 export type ChatSegment =
   | { type: 'text'; text: string }
@@ -91,52 +99,58 @@ const deriveCommandName = (command: string): string => {
 }
 
 /**
- * Convert a single Codex JSONL event into zero or more `ChatSegment`
+ * Convert a single Codex Responses SSE event into zero or more `ChatSegment`
  * values. The function is pure (no I/O) and exported for unit testing.
  *
  * Recognised event → segment mappings:
- * - `item.completed(agent_message)`          → `text`
- * - `item.completed(command_execution)`      → `tool_use`
- * - `item.completed(command_execution_output)` → `tool_result`
- * - `turn.completed`                         → `result` (usage)
+ * - `response.output_item.done(message)`       → `text`
+ * - `response.output_item.done(function_call)` → `tool_use`
+ * - `response.output_item.done(reasoning)`     → `thinking` (summary text)
+ * - `response.completed`                       → `result` (usage)
  * All other event types produce no segments.
  */
 export const parseEventToSegments = (event: unknown): ChatSegment[] => {
   const segs: ChatSegment[] = []
   if (!isObject(event)) return segs
 
-  if (event.type === 'item.completed' && isObject(event.item)) {
+  if (event.type === 'response.output_item.done' && isObject(event.item)) {
     const item = event.item
-    if (item.type === 'agent_message' && typeof item.text === 'string') {
-      segs.push({ type: 'text', text: item.text })
-    } else if (item.type === 'command_execution' && typeof item.command === 'string') {
+    if (item.type === 'message' && Array.isArray(item.content)) {
+      const text = item.content
+        .filter((p): p is { type: string; text: string } =>
+          isObject(p) && p.type === 'output_text' && typeof p.text === 'string')
+        .map((p) => p.text)
+        .join('')
+      if (text.length > 0) segs.push({ type: 'text', text })
+    } else if (item.type === 'function_call' && typeof item.call_id === 'string' && typeof item.arguments === 'string') {
+      let args: unknown
+      try { args = JSON.parse(item.arguments) } catch { args = { raw: item.arguments } }
+      const command = isObject(args) && typeof args.command === 'string' ? args.command : null
       segs.push({
         type: 'tool_use',
-        id: typeof item.id === 'string' ? item.id : String(item.id ?? ''),
-        name: deriveCommandName(item.command),
-        input: { command: item.command, cwd: typeof item.cwd === 'string' ? item.cwd : undefined },
+        id: item.call_id,
+        name: command !== null
+          ? deriveCommandName(command)
+          : typeof item.name === 'string' ? item.name : 'tool',
+        input: args,
       })
-    } else if (item.type === 'command_execution_output' && typeof item.tool_use_id === 'string') {
-      const exitCode = typeof item.exit_code === 'number' ? item.exit_code : 0
-      segs.push({
-        type: 'tool_result',
-        tool_use_id: item.tool_use_id,
-        content: {
-          stdout: typeof item.stdout === 'string' ? item.stdout : '',
-          stderr: typeof item.stderr === 'string' ? item.stderr : '',
-          exitCode,
-        },
-        isError: exitCode !== 0,
-      })
+    } else if (item.type === 'reasoning' && Array.isArray(item.summary)) {
+      const thinking = item.summary
+        .filter((p): p is { type: string; text: string } =>
+          isObject(p) && p.type === 'summary_text' && typeof p.text === 'string')
+        .map((p) => p.text)
+        .join('\n\n')
+      if (thinking.length > 0) segs.push({ type: 'thinking', thinking })
     }
-  } else if (event.type === 'turn.completed') {
-    const usage = event.usage
+  } else if (event.type === 'response.completed') {
+    const usage = isObject(event.response) ? event.response.usage : undefined
+    const details = isObject(usage) ? usage.input_tokens_details : undefined
     segs.push({
       type: 'result',
       durationMs: null,
       inputTokens: isObject(usage) && typeof usage.input_tokens === 'number' ? usage.input_tokens : null,
       outputTokens: isObject(usage) && typeof usage.output_tokens === 'number' ? usage.output_tokens : null,
-      cacheReadTokens: isObject(usage) && typeof usage.cached_input_tokens === 'number' ? usage.cached_input_tokens : null,
+      cacheReadTokens: isObject(details) && typeof details.cached_tokens === 'number' ? details.cached_tokens : null,
       cost: null,
     })
   }
@@ -144,44 +158,106 @@ export const parseEventToSegments = (event: unknown): ChatSegment[] => {
   return segs
 }
 
-// ── Args builder ──────────────────────────────────────────────────────────────
+// ── Transcript → Responses input ──────────────────────────────────────────────
 
-/**
- * Build a Codex CLI invocation for a chat turn. The first turn stores the
- * session automatically; later turns use `codex exec resume` with that ID.
- *
- * Exported for unit testing.
- */
-export const buildChatArgs = (
-  content: string,
-  sessionId: string | null,
-  systemPrompt: string,
-): readonly string[] => {
-  if (sessionId) {
-    return [
-      'exec', 'resume', '--json', '--model', 'gpt-5.5',
-      '-c', 'model_reasoning_effort="high"',
-      // Keep loopback reachable on resume turns too — see the network_access
-      // note on the first-turn branch below.
-      '-c', 'sandbox_workspace_write.network_access=true',
-      sessionId, content,
-    ]
-  }
-  return [
-    'exec', '--json', '--model', 'gpt-5.5',
-    '-c', 'model_reasoning_effort="high"', '--sandbox', 'workspace-write',
-    // The chat agent's whole job is orchestration work — running `mars`
-    // commands and querying the daemon/Postgres over loopback. Codex's
-    // workspace-write sandbox denies network by default, which also blocks
-    // the mars CLI's Unix-socket IPC bind, leaving the agent unable to reach
-    // the DB at all (connect/listen EPERM on 127.0.0.1). Allow network so the
-    // agent can actually do its job; writes stay confined to the workspace.
-    '-c', 'sandbox_workspace_write.network_access=true',
-    `${'<system_instructions>'}\n${systemPrompt}\n</system_instructions>\n\n${content}`,
-  ]
+/** The single function tool the chat agent gets. */
+const SHELL_TOOL: FunctionToolDef = {
+  type: 'function',
+  name: 'shell',
+  description:
+    'Run a shell command from the repository root and return its stdout, stderr, and exit code. ' +
+    'Use it for mars CLI commands, git, file inspection, and daemon HTTP queries.',
+  strict: false,
+  parameters: {
+    type: 'object',
+    properties: {
+      command: { type: 'string', description: 'The shell command to run (passed to bash -lc).' },
+    },
+    required: ['command'],
+    additionalProperties: false,
+  },
 }
 
-const resolveCodexBin = (): string => process.env.MARS_CODEX_BIN?.trim() || 'codex'
+const CHAT_MODEL = 'gpt-5.5'
+/** Upper bound on model↔tool round-trips within one chat turn. */
+const MAX_TOOL_TURNS = 40
+/** Per-call cap on stdout/stderr fed back to the model and persisted. */
+const TOOL_OUTPUT_CHAR_CAP = 10_000
+/** Rough cap on the serialized replayed transcript; oldest messages drop first. */
+const MAX_TRANSCRIPT_CHARS = 120_000
+
+const truncate = (s: string, cap: number): string =>
+  s.length > cap ? `${s.slice(0, cap)}…[truncated]` : s
+
+const renderAlertText = (seg: AlertSegment): string => {
+  const lines = [`[Alert: ${seg.kind}] ${seg.title}`, `Why now: ${seg.whyNow}`]
+  const actionLabels = seg.actions.map((a) => a.label).join(', ')
+  if (actionLabels) lines.push(`Available actions: ${actionLabels}`)
+  return lines.join('\n')
+}
+
+/** Convert one persisted chat message into its Responses input items. */
+const messageToItems = (msg: ChatMessage): ResponseInputItem[] => {
+  const role: 'user' | 'assistant' = msg.role
+  const segs = Array.isArray(msg.segments) ? (msg.segments as unknown[]) : []
+  if (segs.length === 0) {
+    if (msg.content.trim().length === 0) return []
+    return [{ type: 'message', role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text: msg.content }] }]
+  }
+
+  // Pair each tool_use with its tool_result so the API never sees a
+  // function_call without a matching function_call_output.
+  const resultsById = new Map<string, { content: unknown }>()
+  for (const seg of segs) {
+    if (isObject(seg) && seg.type === 'tool_result' && typeof seg.tool_use_id === 'string') {
+      resultsById.set(seg.tool_use_id, { content: seg.content })
+    }
+  }
+
+  const items: ResponseInputItem[] = []
+  const textParts: string[] = []
+  for (const seg of segs) {
+    if (!isObject(seg)) continue
+    if (seg.type === 'text' && typeof seg.text === 'string') {
+      textParts.push(seg.text)
+    } else if (seg.type === 'alert') {
+      textParts.push(renderAlertText(seg as unknown as AlertSegment))
+    } else if (seg.type === 'attachment' && typeof seg.path === 'string') {
+      textParts.push(`[attachment: ${seg.path} (${String(seg.mimeType)})]`)
+    } else if (seg.type === 'tool_use' && typeof seg.id === 'string') {
+      const result = resultsById.get(seg.id)
+      if (!result) continue
+      items.push({ type: 'function_call', name: 'shell', arguments: JSON.stringify(seg.input ?? {}), call_id: seg.id })
+      items.push({ type: 'function_call_output', call_id: seg.id, output: truncate(JSON.stringify(result.content ?? ''), TOOL_OUTPUT_CHAR_CAP) })
+    }
+    // thinking / result / error / tool_result → not replayed
+  }
+  const text = textParts.join('\n')
+  if (text.trim().length > 0) {
+    items.push({ type: 'message', role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text }] })
+  }
+  return items
+}
+
+/**
+ * Build the replayed conversation input from the persisted transcript. The
+ * newest messages always survive; older ones drop wholesale (never splitting
+ * a message, so function_call/output pairs stay intact) once the serialized
+ * transcript exceeds `MAX_TRANSCRIPT_CHARS`. Exported for unit testing.
+ */
+export const buildApiInput = (messages: readonly ChatMessage[]): ResponseInputItem[] => {
+  const perMessage = messages.map(messageToItems)
+  const kept: ResponseInputItem[][] = []
+  let chars = 0
+  for (let i = perMessage.length - 1; i >= 0; i--) {
+    const items = perMessage[i]
+    const size = JSON.stringify(items).length
+    if (kept.length > 0 && chars + size > MAX_TRANSCRIPT_CHARS) break
+    kept.unshift(items)
+    chars += size
+  }
+  return kept.flat()
+}
 
 /** Exponential backoff delays for throttled retries (ms). */
 const THROTTLE_BACKOFF_MS = [30_000, 60_000, 120_000]
@@ -192,13 +268,13 @@ const THROTTLE_BACKOFF_MS = [30_000, 60_000, 120_000]
 export const CHAT_TIMEOUT_MS = 10 * 60 * 1000
 
 /**
- * ChatRunner manages in-flight Codex CLI runs for chat threads.
+ * ChatRunner manages in-flight Codex API runs for chat threads.
  *
  * Call `sendMessage` to start a run. The run is fire-and-forget from the
  * HTTP handler's perspective: segments are pushed live over SSE and the
  * assistant message is persisted when the run completes. Call `stop` to
  * abort a run in progress. Call `killAll` from the daemon shutdown hook to
- * abort every active run so their child processes are killed.
+ * abort every active run.
  */
 export class ChatRunner {
   /** Map from threadId to the AbortController that can kill the active run. */
@@ -229,7 +305,7 @@ export class ChatRunner {
   /**
    * When set, an aborted run that has accumulated no text segments will use
    * this value as its assistant reply instead of the default `[no output]`.
-   * Set by `shutdownDrain` before aborting subprocesses.
+   * Set by `shutdownDrain` before aborting runs.
    */
   private _shutdownMessage: string | null = null
 
@@ -278,7 +354,7 @@ export class ChatRunner {
 
   /**
    * Start a Codex run for `threadId`. Returns `{ alreadyRunning: true }`
-   * without spawning if there is already an active run for that thread
+   * without starting if there is already an active run for that thread
    * (the HTTP layer should respond 409). Otherwise starts the run
    * asynchronously and returns `{ alreadyRunning: false }`.
    *
@@ -341,9 +417,8 @@ export class ChatRunner {
 
   /**
    * Abort every active run. Called by the daemon shutdown hook to ensure all
-   * child processes are killed before the daemon exits. The subprocess PIDs
-   * are also tracked by `liveChildPids` in `git/claude.ts`, which the daemon
-   * kill path uses as a second-level safety net.
+   * in-flight requests and tool subprocesses are killed before the daemon
+   * exits.
    */
   killAll(): void {
     for (const ctrl of this.activeRuns.values()) {
@@ -360,7 +435,7 @@ export class ChatRunner {
    *
    * For each in-flight run:
    * - Cancels pending throttle timers (their retries won't happen post-shutdown).
-   * - Aborts each subprocess so `_run` can reach its abort path and call
+   * - Aborts each run so `_run` can reach its abort path and call
    *   `finalize()` with whatever segments it has accumulated.
    * - If a run has accumulated no text segments, `message` is written as the
    *   assistant reply so the thread does not end with the default `[no output]`.
@@ -375,7 +450,7 @@ export class ChatRunner {
     // Clear throttle timers — their retries will not run after shutdown.
     for (const retry of this.throttledRetries.values()) clearTimeout(retry.timer)
     this.throttledRetries.clear()
-    // Abort all active subprocesses so their _run calls reach finalize().
+    // Abort all active runs so their _run calls reach finalize().
     for (const ctrl of this.activeRuns.values()) ctrl.abort()
     // Wait for all tracked _run promises to settle, bounded by timeoutMs.
     const promises = Array.from(this._activeRunPromises.values())
@@ -442,7 +517,6 @@ export class ChatRunner {
     retryCount: number,
   ): Promise<void> {
     const accumulatedSegments: ChatSegment[] = []
-    let detectedSessionId: string | null = null
     const broadcastSegment = (seg: ChatSegment): void => {
       if (seg.type === 'text' && seg.text.length === 0) return
       accumulatedSegments.push(seg)
@@ -473,22 +547,19 @@ export class ChatRunner {
         textContent.length > 0 ? textContent : '[no output]',
         accumulatedSegments,
       )
-      if (detectedSessionId) {
-        await setThreadSession(threadId, detectedSessionId)
-      }
       await setThreadStatus(threadId, 'idle')
       // Invalidation ping so the sidebar re-fetches the thread list.
       hub?.broadcast('chat')
     }
 
     // Open the UIMessage-chunk buffer up-front so EVERY exit path (including an
-    // early error before the subprocess) streams into a live run that connected
-    // clients can settle on. The POST that triggered this run already returned
-    // 202, so the ui-stream is the client's only channel for run outcomes.
+    // early error before the first request) streams into a live run that
+    // connected clients can settle on. The POST that triggered this run already
+    // returned 202, so the ui-stream is the client's only channel for outcomes.
     this.chatStreamHub?.startRun(threadId)
 
     try {
-      // Fetch thread for session_id and existence check.
+      // Fetch thread for transcript and existence check.
       const threadData = await getThread(threadId)
       if (!threadData) {
         this.activeRuns.delete(threadId)
@@ -496,7 +567,6 @@ export class ChatRunner {
         return
       }
 
-      const existingSessionId = threadData.thread.session_id
       const hasMessages = threadData.messages.length > 0
 
       // Build user segments: always start with a text segment, then append one
@@ -514,7 +584,7 @@ export class ChatRunner {
               : 'video'
           userSegments.push({ type: 'attachment', path: att.path, mimeType: att.mimeType, name: att.name, size: att.size, kindHint })
           if (kindHint === 'image') {
-            promptLines.push(`The user attached image ${att.path} — read it with the Read tool.`)
+            promptLines.push(`The user attached image ${att.path} — read it with the shell tool.`)
           } else {
             promptLines.push(
               `The user attached ${kindHint} file ${att.path} (${att.mimeType}) — the agent may use local tools (e.g. ffmpeg) to inspect or transcode it; the model cannot natively hear or watch it.`,
@@ -522,94 +592,6 @@ export class ChatRunner {
           }
         }
         promptContent = `${content}\n\n---\n${promptLines.join('\n')}\n---`
-      }
-
-      // Build context preamble for the first run of this thread so the agent
-      // has the alert card and conversation history when no Codex session
-      // exists yet (or when a previous session was lost after a daemon restart).
-      if (!threadData.thread.context_seeded) {
-        const preambleParts: string[] = []
-
-        // (a) Alert block when this is an alert-origin thread — render the
-        //     alert segment as structured text so the agent knows the context.
-        if (threadData.thread.origin === 'alert') {
-          for (const msg of threadData.messages) {
-            if (msg.role !== 'assistant' || !Array.isArray(msg.segments)) continue
-            const alertSeg = (msg.segments as unknown[]).find(
-              (s): s is AlertSegment =>
-                typeof s === 'object' &&
-                s !== null &&
-                (s as Record<string, unknown>).type === 'alert',
-            )
-            if (alertSeg) {
-              const actionLabels = alertSeg.actions.map((a) => a.label).join(', ')
-              const alertLines = [
-                `[Alert: ${alertSeg.kind}] ${alertSeg.title}`,
-                `Why now: ${alertSeg.whyNow}`,
-              ]
-              if (actionLabels) alertLines.push(`Available actions: ${actionLabels}`)
-              preambleParts.push(alertLines.join('\n'))
-              break
-            }
-          }
-        }
-
-        // (b) Prior persisted messages — role-tagged, tool segments summarized,
-        //     capped at the last 20 messages and ~8 k chars total.
-        const cappedMsgs = threadData.messages.slice(-20)
-        const msgLines: string[] = []
-        let charCount = 0
-        const CHAR_CAP = 8000
-        for (const msg of cappedMsgs) {
-          if (charCount >= CHAR_CAP) break
-          const segs = Array.isArray(msg.segments) ? (msg.segments as unknown[]) : []
-          let msgText: string
-          if (segs.length > 0) {
-            const parts: string[] = []
-            for (const seg of segs) {
-              if (typeof seg !== 'object' || seg === null) continue
-              const s = seg as Record<string, unknown>
-              if (s.type === 'text' && typeof s.text === 'string') {
-                parts.push(s.text)
-              } else if (s.type === 'tool_use') {
-                const toolName =
-                  typeof s.name === 'string'
-                    ? s.name
-                    : typeof s.toolName === 'string'
-                      ? s.toolName
-                      : 'unknown'
-                parts.push(`used tool ${toolName}`)
-              } else if (s.type === 'alert') {
-                const a = s as unknown as AlertSegment
-                parts.push(`[Alert: ${a.kind}] ${a.title}`)
-              }
-              // thinking, tool_result, result → skip; too noisy / not useful as history
-            }
-            msgText = parts.join(' ')
-          } else {
-            msgText = msg.content
-          }
-          if (!msgText.trim()) continue
-          const remaining = CHAR_CAP - charCount
-          if (msgText.length > remaining) msgText = `${msgText.slice(0, remaining)}…`
-          const line = `[${msg.role}] ${msgText}`
-          msgLines.push(line)
-          charCount += line.length + 1
-        }
-
-        if (msgLines.length > 0) {
-          preambleParts.push(`Prior conversation:\n${msgLines.join('\n')}`)
-        }
-
-        if (preambleParts.length > 0) {
-          // Wrap the attachment-augmented prompt, not the raw content, so the
-          // attachment block survives context seeding on a thread's first run.
-          promptContent = `<thread_context>\n${preambleParts.join('\n\n')}\n</thread_context>\n\n${promptContent}`
-        }
-
-        // Mark seeded before the subprocess call so a failed run does not
-        // re-inject the preamble on a subsequent retry.
-        await markContextSeeded(threadId)
       }
 
       // Persist the user message with typed segments so the UI can render it.
@@ -631,6 +613,19 @@ export class ChatRunner {
       await setThreadStatus(threadId, 'running')
       hub?.broadcast('chat')
 
+      // Replay the persisted transcript as conversation input. On a throttle
+      // retry the current user message is already persisted — drop it from the
+      // replay so the attachment-augmented prompt below isn't duplicated.
+      let transcript: readonly ChatMessage[] = threadData.messages
+      if (retryCount > 0 && content.length > 0) {
+        const last = transcript.at(-1)
+        if (last && last.role === 'user') transcript = transcript.slice(0, -1)
+      }
+      const input: ResponseInputItem[] = buildApiInput(transcript)
+      if (content.length > 0) {
+        input.push({ type: 'message', role: 'user', content: [{ type: 'input_text', text: promptContent }] })
+      }
+
       // Arm the wall-clock timeout.
       let isTimeout = false
       const timer = setTimeout(() => {
@@ -638,28 +633,135 @@ export class ChatRunner {
         abort.abort()
       }, CHAT_TIMEOUT_MS)
 
-      const systemPrompt = await resolveChatSystemPrompt(repoRoot)
-
-      let subprocessResult: RunSubprocessResult
       try {
-        subprocessResult = await runSubprocessStreaming(
-          resolveCodexBin(),
-          buildChatArgs(promptContent, existingSessionId, systemPrompt),
-          repoRoot,
-          ({ stream, line }) => {
-            if (stream !== 'stdout') return
-            let event: unknown
-            try { event = JSON.parse(line) } catch { return }
-            if (isObject(event) && event.type === 'thread.started' && typeof event.thread_id === 'string') detectedSessionId = event.thread_id
-            const segs = parseEventToSegments(event)
-            for (const seg of segs) broadcastSegment(seg)
-          },
-          abort.signal,
-          buildWorkerEnv(),
-        )
-      } finally {
+        const instructions = await resolveChatSystemPrompt(repoRoot)
+        let auth: CodexAuth = await loadCodexAuth()
+        let authRetried = false
+
+        // Aggregate usage across all tool-loop round-trips into one result segment.
+        let sawUsage = false
+        const usageTotals = { input: 0, output: 0, cached: 0 }
+
+        for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+          const pendingCalls: Array<{ callId: string; input: unknown }> = []
+
+          for (;;) {
+            pendingCalls.length = 0
+            try {
+              await streamCodexResponse({
+                auth,
+                model: CHAT_MODEL,
+                instructions,
+                input,
+                tools: [SHELL_TOOL],
+                signal: abort.signal,
+                onEvent: (event) => {
+                  for (const seg of parseEventToSegments(event)) {
+                    if (seg.type === 'result') {
+                      sawUsage = true
+                      usageTotals.input += seg.inputTokens ?? 0
+                      usageTotals.output += seg.outputTokens ?? 0
+                      usageTotals.cached += seg.cacheReadTokens ?? 0
+                      continue
+                    }
+                    broadcastSegment(seg)
+                    if (seg.type === 'tool_use') pendingCalls.push({ callId: seg.id, input: seg.input })
+                  }
+                },
+              })
+              break
+            } catch (err) {
+              // One silent token refresh per run before surfacing the auth banner.
+              if (err instanceof CodexApiError && err.kind === 'auth' && !authRetried) {
+                authRetried = true
+                auth = await refreshCodexAuth(auth)
+                continue
+              }
+              throw err
+            }
+          }
+
+          if (abort.signal.aborted || pendingCalls.length === 0) break
+
+          for (const call of pendingCalls) {
+            const args = isObject(call.input) ? call.input : {}
+            const command = typeof args.command === 'string' ? args.command : null
+            let output: { stdout: string; stderr: string; exitCode: number }
+            if (command === null) {
+              output = { stdout: '', stderr: 'invalid shell arguments: missing "command"', exitCode: 1 }
+            } else {
+              const r = await runSubprocessStreaming(
+                'bash', ['-lc', command], repoRoot, undefined, abort.signal, buildWorkerEnv(),
+              )
+              output = {
+                stdout: truncate(r.stdout, TOOL_OUTPUT_CHAR_CAP),
+                stderr: truncate(r.stderr, TOOL_OUTPUT_CHAR_CAP),
+                exitCode: r.exitCode,
+              }
+            }
+            broadcastSegment({ type: 'tool_result', tool_use_id: call.callId, content: output, isError: output.exitCode !== 0 })
+            input.push({ type: 'function_call', name: 'shell', arguments: JSON.stringify(args), call_id: call.callId })
+            input.push({ type: 'function_call_output', call_id: call.callId, output: JSON.stringify(output) })
+            if (abort.signal.aborted) break
+          }
+          if (abort.signal.aborted) break
+        }
+
+        if (!abort.signal.aborted && sawUsage) {
+          broadcastSegment({
+            type: 'result',
+            durationMs: null,
+            inputTokens: usageTotals.input,
+            outputTokens: usageTotals.output,
+            cacheReadTokens: usageTotals.cached,
+            cost: null,
+          })
+        }
+      } catch (err) {
         clearTimeout(timer)
+
+        if (isTimeout) {
+          await finalize({ type: 'error', message: 'Run timed out after 10 minutes' })
+          return
+        }
+        if (abort.signal.aborted) {
+          // When the daemon is shutting down and no text was produced yet,
+          // surface the shutdown notice so the thread doesn't end with
+          // "[no output]".
+          const shutdownMsg = this._shutdownMessage
+          if (shutdownMsg && !accumulatedSegments.some((s) => s.type === 'text')) {
+            await finalize({ type: 'text', text: shutdownMsg })
+          } else {
+            await finalize()
+          }
+          return
+        }
+
+        if (err instanceof CodexApiError) {
+          // ── Auth failure: surface a single global banner, set throttled. ────
+          if (err.kind === 'auth') {
+            if (!this.codexAuthFailed) {
+              this.codexAuthFailed = true
+              for (const listener of this.authListeners) listener(true)
+            }
+            await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount)
+            return
+          }
+          // ── Rate/usage limit: throttle + auto-retry with backoff. ───────────
+          if (err.kind === 'rate-limit') {
+            await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount)
+            return
+          }
+          // ── http/network: terminal error (user-safe, no provider details). ──
+          await finalize({
+            type: 'error',
+            message: 'Codex could not complete this response. Try again; if it continues, check the local Codex auth and network.',
+          })
+          return
+        }
+        throw err
       }
+      clearTimeout(timer)
 
       if (isTimeout) {
         await finalize({ type: 'error', message: 'Run timed out after 10 minutes' })
@@ -667,62 +769,12 @@ export class ChatRunner {
       }
 
       if (abort.signal.aborted) {
-        // When the daemon is shutting down and no text was produced yet, surface
-        // the shutdown notice so the thread doesn't end with "[no output]".
         const shutdownMsg = this._shutdownMessage
         if (shutdownMsg && !accumulatedSegments.some((s) => s.type === 'text')) {
           await finalize({ type: 'text', text: shutdownMsg })
         } else {
           await finalize()
         }
-        return
-      }
-
-      if (subprocessResult.exitCode !== 0) {
-        const detail = (subprocessResult.stderr + ' ' + subprocessResult.stdout).toLowerCase()
-
-        // ── Session expired: clear the saved session and auto-retry once.
-        //    resetThreadSession sets session_id=NULL and context_seeded=0 so
-        //    the next _run picks up a fresh session and re-seeds the transcript
-        //    as context preamble — no user-visible error on the first failure. ─
-        if (/(session.*not found|session.*expired|invalid session|no such session)/.test(detail)) {
-          await resetThreadSession(threadId)
-          if (retryCount === 0) {
-            // Silently retry with a fresh session.  The recursive _run will
-            // re-fetch the thread (session_id now NULL) and re-inject the
-            // transcript preamble (context_seeded now 0).
-            const freshAbort = new AbortController()
-            this.activeRuns.set(threadId, freshAbort)
-            await this._run(threadId, content, repoRoot, hub, freshAbort, attachments, retryCount + 1)
-            return
-          }
-          // Still failing after one retry — surface an error so the user knows.
-          await finalize({ type: 'error', message: 'The Codex session expired and could not be resumed. Please try again.' })
-          return
-        }
-
-        // ── Auth failure: surface a single global banner, set throttled. ────────
-        if (subprocessResult.exitCode !== 127 && /(auth|login|credential|sign in)/.test(detail)) {
-          if (!this.codexAuthFailed) {
-            this.codexAuthFailed = true
-            for (const listener of this.authListeners) listener(true)
-          }
-          await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount)
-          return
-        }
-
-        // ── Rate/usage limit: throttle + auto-retry with backoff. ────────────────
-        if (/(rate limit|usage limit|quota|spend limit)/.test(detail)) {
-          await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount)
-          return
-        }
-
-        // ── Generic / not-found: terminal error (user-safe, no provider details). ─
-        const safeMessage =
-          subprocessResult.exitCode === 127
-            ? 'Codex is not available on this machine. Install or make the Codex CLI available, then try again.'
-            : 'Codex could not complete this response. Try again; if it continues, check the local Codex setup.'
-        await finalize({ type: 'error', message: safeMessage })
         return
       }
 

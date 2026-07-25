@@ -15,10 +15,7 @@ interface ChatStoreModule {
   updateThreadTitle: typeof import('./chat-store').updateThreadTitle
   deleteThread: typeof import('./chat-store').deleteThread
   setThreadStatus: typeof import('./chat-store').setThreadStatus
-  setThreadSession: typeof import('./chat-store').setThreadSession
-  markContextSeeded: typeof import('./chat-store').markContextSeeded
   markThreadEvaporated: typeof import('./chat-store').markThreadEvaporated
-  resetThreadSession: typeof import('./chat-store').resetThreadSession
   evaporateUnengagedThreads: typeof import('./chat-store').evaporateUnengagedThreads
   toMessageApiView: typeof import('./chat-store').toMessageApiView
   toThreadApiView: typeof import('./chat-store').toThreadApiView
@@ -72,7 +69,6 @@ describe('chat-store', () => {
     expect(thread.id).toBeTruthy()
     expect(thread.title).toBe('hello world')
     expect(thread.status).toBe('idle')
-    expect(thread.session_id).toBeNull()
     expect(thread.created_at).toBeTruthy()
     expect(thread.updated_at).toBeTruthy()
   })
@@ -228,36 +224,6 @@ describe('chat-store', () => {
     await m.setThreadStatus(thread.id, 'idle')
     const result = await m.getThread(thread.id)
     expect(result!.thread.status).toBe('idle')
-  })
-
-  // ── setThreadSession ────────────────────────────────────────────────────────
-
-  it('binds a session id to a thread', async () => {
-    const m = await loadModule(repo)
-    const thread = await m.createThread()
-    await m.setThreadSession(thread.id, 'sess-abc')
-    const result = await m.getThread(thread.id)
-    expect(result!.thread.session_id).toBe('sess-abc')
-  })
-
-  it('unbinds a session id (sets to null)', async () => {
-    const m = await loadModule(repo)
-    const thread = await m.createThread()
-    await m.setThreadSession(thread.id, 'sess-abc')
-    await m.setThreadSession(thread.id, null)
-    const result = await m.getThread(thread.id)
-    expect(result!.thread.session_id).toBeNull()
-  })
-
-  // ── markContextSeeded ───────────────────────────────────────────────────────
-
-  it('markContextSeeded flips context_seeded from false to true', async () => {
-    const m = await loadModule(repo)
-    const thread = await m.createThread('seeding test')
-    expect(thread.context_seeded).toBe(false)
-    await m.markContextSeeded(thread.id)
-    const result = await m.getThread(thread.id)
-    expect(result!.thread.context_seeded).toBe(true)
   })
 
   // ── markThreadEvaporated ────────────────────────────────────────────────────
@@ -561,28 +527,6 @@ describe('listThreads — evaporated filter + attentionStatus', () => {
     const t = threads.find((x) => x.id === thread.id)
     expect(t).toBeDefined()
     expect(t!.last_message_role).toBe('user')
-  })
-})
-
-// ── resetThreadSession ────────────────────────────────────────────────────────
-
-describe('resetThreadSession', () => {
-  let repo3: string
-  beforeEach(() => { repo3 = setupRepo() })
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo3, { recursive: true, force: true })
-  })
-
-  it('clears session_id and context_seeded', async () => {
-    const m = await loadModule(repo3)
-    const thread = await m.createThread()
-    await m.setThreadSession(thread.id, 'sess-1')
-    await m.markContextSeeded(thread.id)
-    await m.resetThreadSession(thread.id)
-    const result = await m.getThread(thread.id)
-    expect(result!.thread.session_id).toBeNull()
-    expect(result!.thread.context_seeded).toBe(false)
   })
 })
 

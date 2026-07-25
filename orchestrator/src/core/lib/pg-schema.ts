@@ -369,12 +369,10 @@ const DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS chat_threads (
     id             text   PRIMARY KEY,
     title          text   NOT NULL DEFAULT '',
-    session_id     text,
     status         text   NOT NULL DEFAULT 'idle',
     origin         text,
     alert_item_id  text,
     alert_resolved bigint NOT NULL DEFAULT 0,
-    context_seeded bigint NOT NULL DEFAULT 0,
     evaporated_at  text,
     created_at     text   NOT NULL,
     updated_at     text   NOT NULL
@@ -384,6 +382,10 @@ const DDL: readonly string[] = [
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS activity_detail text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS env_restart_count bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
+  // Chat runs on the Codex Responses API with full transcript replay — the
+  // CLI-session binding and one-shot context seeding are gone.
+  `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS session_id`,
+  `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS context_seeded`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id
      ON chat_threads(alert_item_id)`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_evaporated_at

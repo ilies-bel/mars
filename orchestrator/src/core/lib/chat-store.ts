@@ -39,7 +39,6 @@ export interface ChatFeedback {
 export interface ChatThread {
   id: string
   title: string
-  session_id: string | null
   status: ThreadStatus
   created_at: string
   updated_at: string
@@ -49,12 +48,6 @@ export interface ChatThread {
   alert_item_id: string | null
   /** True when the underlying action-queue item has been resolved. */
   alert_resolved: boolean
-  /**
-   * True once the chat runner has injected the thread-context preamble into
-   * the first claude prompt for this thread. Prevents the preamble from being
-   * prepended on every subsequent turn.
-   */
-  context_seeded: boolean
   /**
    * ISO-8601 timestamp set when the thread is marked as evaporated (i.e. its
    * purpose has been fulfilled and it is eligible for retention-window purge).
@@ -234,14 +227,12 @@ const now = (): string => new Date().toISOString()
 const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   id: row.id as string,
   title: row.title as string,
-  session_id: (row.session_id as string | null) ?? null,
   status: row.status as ThreadStatus,
   created_at: row.created_at as string,
   updated_at: row.updated_at as string,
   origin: (row.origin as string | null) ?? null,
   alert_item_id: (row.alert_item_id as string | null) ?? null,
   alert_resolved: Boolean(row.alert_resolved),
-  context_seeded: Boolean(row.context_seeded),
   evaporated_at: (row.evaporated_at as string | null) ?? null,
 })
 
@@ -269,21 +260,19 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
   const ts = now()
   const threadTitle = title ?? ''
   await c.execute({
-    sql: `INSERT INTO chat_threads (id, title, session_id, status, created_at, updated_at)
-          VALUES (?, ?, NULL, 'idle', ?, ?)`,
+    sql: `INSERT INTO chat_threads (id, title, status, created_at, updated_at)
+          VALUES (?, ?, 'idle', ?, ?)`,
     args: [id, threadTitle, ts, ts],
   })
   return {
     id,
     title: threadTitle,
-    session_id: null,
     status: 'idle',
     created_at: ts,
     updated_at: ts,
     origin: null,
     alert_item_id: null,
     alert_resolved: false,
-    context_seeded: false,
     evaporated_at: null,
   }
 }
@@ -471,28 +460,6 @@ export const setThreadStatus = async (id: string, status: ThreadStatus): Promise
   })
 }
 
-/** Bind (or unbind) a Claude session ID to a thread. */
-export const setThreadSession = async (id: string, sessionId: string | null): Promise<void> => {
-  const c = stateClient()
-  await c.execute({
-    sql: `UPDATE chat_threads SET session_id = ?, updated_at = ? WHERE id = ?`,
-    args: [sessionId, now(), id],
-  })
-}
-
-/**
- * Mark the thread's context as seeded. Called by the chat runner after it has
- * injected the thread-context preamble into the first claude prompt so that
- * subsequent turns do not receive a duplicate preamble.
- */
-export const markContextSeeded = async (id: string): Promise<void> => {
-  const c = stateClient()
-  await c.execute({
-    sql: `UPDATE chat_threads SET context_seeded = 1, updated_at = ? WHERE id = ?`,
-    args: [now(), id],
-  })
-}
-
 /**
  * Mark a thread as evaporated by stamping `evaporated_at` with the current
  * ISO-8601 timestamp. Idempotent: if the thread is already evaporated, the
@@ -504,18 +471,6 @@ export const markThreadEvaporated = async (id: string): Promise<void> => {
   await c.execute({
     sql: `UPDATE chat_threads SET evaporated_at = ?, updated_at = ? WHERE id = ? AND evaporated_at IS NULL`,
     args: [ts, ts, id],
-  })
-}
-
-/**
- * Reset the session binding on a thread so the next run re-seeds the context
- * from the transcript. Used by the chat runner on session-expired errors.
- */
-export const resetThreadSession = async (id: string): Promise<void> => {
-  const c = stateClient()
-  await c.execute({
-    sql: `UPDATE chat_threads SET session_id = NULL, context_seeded = 0, updated_at = ? WHERE id = ?`,
-    args: [now(), id],
   })
 }
 
@@ -637,9 +592,9 @@ const findThreadByArc = async (arcId: string): Promise<ChatThread | null> => {
  * Dedup: if a thread already tracks this arc (`origin='alert'`,
  * `alert_item_id = arcId`), it is returned unchanged so a second click reuses
  * the same conversation. Otherwise a fresh alert-origin thread is inserted with
- * one assistant message carrying the alert `segment`, which re-activates the
- * chat runner's `origin === 'alert'` seeding branch so the thread opens
- * pre-seeded with the alert card.
+ * one assistant message carrying the alert `segment`; the chat runner replays
+ * that message (rendered as alert text) as part of the transcript, so the
+ * agent sees the alert card on every turn.
  *
  * Picking an Alert into a thread does NOT clear it from the Bell — an Alert
  * clears only when its arc resolves (ADR-0048).
@@ -658,8 +613,8 @@ export const startThreadFromAlert = async (
   const ts = now()
   await c.execute({
     sql: `INSERT INTO chat_threads
-            (id, title, session_id, status, created_at, updated_at, origin, alert_item_id, alert_resolved)
-          VALUES (?, ?, NULL, 'idle', ?, ?, 'alert', ?, 0)`,
+            (id, title, status, created_at, updated_at, origin, alert_item_id, alert_resolved)
+          VALUES (?, ?, 'idle', ?, ?, 'alert', ?, 0)`,
     args: [threadId, title, ts, ts, arcId],
   })
   // Persist one assistant message with the alert segment (the seed card).
@@ -671,14 +626,12 @@ export const startThreadFromAlert = async (
   return {
     id: threadId,
     title,
-    session_id: null,
     status: 'idle',
     created_at: ts,
     updated_at: ts,
     origin: 'alert',
     alert_item_id: arcId,
     alert_resolved: false,
-    context_seeded: false,
     evaporated_at: null,
   }
 }

@@ -4,29 +4,40 @@
  * correctly routes chat requests through the ChatRunner that is now a
  * required field of HttpServerDeps.
  *
- * Tests drive the behaviour through the real HTTP routes: the subprocess
- * is mocked at the boundary (runSubprocessStreaming) so no real `claude`
- * binary is needed, but the full route → ChatRunner → response path is
- * exercised.
+ * Tests drive the behaviour through the real HTTP routes: the Codex API
+ * is mocked at the boundary (streamCodexResponse) so no network or stored
+ * credentials are needed, but the full route → ChatRunner → response path
+ * is exercised.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { ChatRunner } from '../chat-runner'
 import type { HttpServerHandle } from '../http-server'
-import type { SubprocessLine, RunSubprocessResult } from '../../lib/git/claude'
+import type { StreamCodexResponseOpts } from '../codex-api'
 import { stubAppServices } from './app-services-stub'
 import type { RecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 
-// Mock the subprocess layer so no real `claude` binary is needed.
+// Mock the Codex API layer so no network or stored credentials are needed.
+vi.mock('../codex-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../codex-api')>()
+  return {
+    ...actual,
+    loadCodexAuth: vi.fn(),
+    refreshCodexAuth: vi.fn(),
+    streamCodexResponse: vi.fn(),
+  }
+})
+
+// Mock the shell-tool executor so no real subprocess is spawned.
 vi.mock('../../lib/git/claude', () => ({
   resolveClaudeBin: vi.fn(() => '/usr/bin/claude'),
   buildWorkerEnv: vi.fn(() => ({})),
   toClaudeSessionId: vi.fn((id: string) => id),
-  runSubprocessStreaming: vi.fn(),
+  runSubprocessStreaming: vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' }),
 }))
 
-// Mock the chat store so no real SQLite database is created.
+// Mock the chat store so no real database is created.
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({
     id: 'msg-1',
@@ -39,7 +50,6 @@ vi.mock('../../lib/chat-store', () => ({
   getThread: vi.fn().mockResolvedValue({
     thread: {
       id: 't1',
-      session_id: null,
       title: '',
       status: 'idle',
       created_at: '',
@@ -47,15 +57,13 @@ vi.mock('../../lib/chat-store', () => ({
       origin: null,
       alert_item_id: null,
       alert_resolved: false,
-      context_seeded: false,
+      evaporated_at: null,
     },
     messages: [],
     feedbacks: new Map(),
   }),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
-  setThreadSession: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
-  markContextSeeded: vi.fn().mockResolvedValue(undefined),
   setMessageFeedback: vi.fn().mockResolvedValue({
     message_id: 'msg-1',
     thread_id: 't1',
@@ -67,17 +75,16 @@ vi.mock('../../lib/chat-store', () => ({
   clearMessageFeedback: vi.fn().mockResolvedValue(true),
 }))
 
-const { runSubprocessStreaming } = await import('../../lib/git/claude')
-const mockRunSubprocessStreaming = runSubprocessStreaming as unknown as MockInstance<
-  (
-    cmd: string,
-    args: readonly string[],
-    cwd: string,
-    onLine?: (line: SubprocessLine) => void,
-    signal?: AbortSignal,
-    env?: NodeJS.ProcessEnv,
-  ) => Promise<RunSubprocessResult>
+const codexApi = await import('../codex-api')
+const mockStream = codexApi.streamCodexResponse as unknown as MockInstance<
+  (opts: StreamCodexResponseOpts) => Promise<void>
 >
+const mockLoadAuth = codexApi.loadCodexAuth as unknown as MockInstance<() => Promise<unknown>>
+
+const messageEvent = (text: string): unknown => ({
+  type: 'response.output_item.done',
+  item: { type: 'message', content: [{ type: 'output_text', text }] },
+})
 
 const { setMessageFeedback: mockSetMessageFeedback, clearMessageFeedback: mockClearMessageFeedback } =
   await import('../../lib/chat-store')
@@ -91,8 +98,11 @@ let server: HttpServerHandle | null = null
 
 beforeEach(() => {
   vi.clearAllMocks()
-  // Default: subprocess completes immediately.
-  mockRunSubprocessStreaming.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
+  mockLoadAuth.mockResolvedValue({ accessToken: 'tok', accountId: 'acc', refreshToken: 'ref' })
+  // Default: the API run completes immediately with one message.
+  mockStream.mockImplementation(async (opts) => {
+    opts.onEvent(messageEvent('ok'))
+  })
 })
 
 afterEach(async () => {
@@ -106,11 +116,11 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     const { startHttpServer } = await import('../http-server')
     const chatRunner = new ChatRunner()
 
-    // Make subprocess hang so we can inspect in-flight state.
-    let resolveRun: (r: RunSubprocessResult) => void = () => {}
-    mockRunSubprocessStreaming.mockReturnValue(
-      new Promise<RunSubprocessResult>((r) => {
-        resolveRun = r
+    // Make the API run hang so we can inspect in-flight state.
+    let resolveRun: () => void = () => {}
+    mockStream.mockReturnValue(
+      new Promise<void>((r) => {
+        resolveRun = () => r()
       }),
     )
 
@@ -154,24 +164,24 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     const body = (await res.json()) as { ok: boolean }
     expect(body.ok).toBe(true)
 
-    // Verify the subprocess was invoked — confirming ChatRunner was called.
+    // Verify the API layer was invoked — confirming ChatRunner was called.
     // (The run is still in-flight; give microtasks a tick to start.)
     await new Promise((r) => setImmediate(r))
-    expect(mockRunSubprocessStreaming).toHaveBeenCalled()
+    expect(mockStream).toHaveBeenCalled()
 
     // Clean up.
-    resolveRun({ exitCode: 0, stdout: '', stderr: '' })
+    resolveRun()
   })
 
   it('returns 409 when a run is already active on the thread', async () => {
     const { startHttpServer } = await import('../http-server')
     const chatRunner = new ChatRunner()
 
-    // Hang the first subprocess.
-    let resolveFirst: (r: RunSubprocessResult) => void = () => {}
-    mockRunSubprocessStreaming.mockReturnValue(
-      new Promise<RunSubprocessResult>((r) => {
-        resolveFirst = r
+    // Hang the first API run.
+    let resolveFirst: () => void = () => {}
+    mockStream.mockReturnValue(
+      new Promise<void>((r) => {
+        resolveFirst = () => r()
       }),
     )
 
@@ -230,7 +240,7 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     const body = (await second.json()) as { errorCode: string }
     expect(body.errorCode).toBe('ALREADY_RUNNING')
 
-    resolveFirst({ exitCode: 0, stdout: '', stderr: '' })
+    resolveFirst()
   })
 
   it('returns 400 when the message body is missing content', async () => {
@@ -370,21 +380,14 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
     const { startHttpServer } = await import('../http-server')
     const chatRunner = new ChatRunner()
 
-    // Subprocess waits for abort signal.
-    mockRunSubprocessStreaming.mockImplementation(
-      async (
-        _cmd: string,
-        _args: readonly string[],
-        _cwd: string,
-        _onLine: ((l: SubprocessLine) => void) | undefined,
-        signal: AbortSignal | undefined,
-      ) => {
-        return new Promise<RunSubprocessResult>((resolve) => {
-          signal?.addEventListener('abort', () =>
-            resolve({ exitCode: 1, stdout: '', stderr: '' }),
+    // The API run waits for the abort signal.
+    mockStream.mockImplementation(
+      (opts) =>
+        new Promise<void>((_, reject) => {
+          opts.signal.addEventListener('abort', () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
           )
-        })
-      },
+        }),
     )
 
     server = await startHttpServer({
@@ -452,7 +455,6 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
     getThreadMock.mockResolvedValueOnce({
       thread: {
         id: 't1',
-        session_id: null,
         title: '',
         status: 'running',
         created_at: '',
@@ -460,7 +462,6 @@ describe('POST /chat/threads/:id/stop — HTTP route wiring', () => {
         origin: null,
         alert_item_id: null,
         alert_resolved: false,
-        context_seeded: false,
         evaporated_at: null,
       },
       messages: [],

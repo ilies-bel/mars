@@ -5,8 +5,9 @@
  * per-repo by writing `.mars/chat-system-prompt.md` — it is read on every
  * run so edits take effect on the next message with no daemon restart.
  *
- * Pass the resolved prompt to `buildChatArgs` via `--append-system-prompt`
- * so the Claude Code base prompt and its tool instructions are preserved.
+ * The resolved prompt is sent as the `instructions` field of the Codex
+ * Responses API request — it is the entire system prompt; nothing else is
+ * injected ahead of it.
  */
 
 import { readFile } from 'node:fs/promises'
