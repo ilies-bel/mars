@@ -21,16 +21,13 @@ import { writeRecipesSeed } from '../init/recipes-seed'
 import { activatePlugin, realDeps, type ClaudePluginDeps } from '../commands/claude-plugin.js'
 import { ensureProjectRegistered } from '../registry/projects.js'
 
-// Mirrors WizardChoices exactly (supervisors is readonly there) so a resolved
-// WizardChoices feeds the workflow input without a structural-type mismatch.
+// Mirrors WizardChoices exactly so a resolved WizardChoices feeds the
+// workflow input without a structural-type mismatch.
 const wizardChoicesSchema = z.object({
-  supervisors: z.array(z.string()).readonly(),
   registerProject: z.boolean(),
-  scaffoldMode: z.enum(['full', 'minimal']),
 })
 
 const initInputSchema = z.object({
-  configPath: z.string().optional(),
   wizardChoices: wizardChoicesSchema.optional(),
 })
 
@@ -38,16 +35,6 @@ type InitInput = z.infer<typeof initInputSchema>
 
 interface InitWorkflowOutput {
   written: string[]
-}
-
-const runWriteSlimInit = async (): Promise<string[]> => {
-  const ctx = resolveContext()
-  const slimResult = writeSlimInit({
-    repoRoot: ctx.repoRoot,
-    contextPath: resolve(ctx.repoRoot, 'CONTEXT.md'),
-    adrDir: resolve(ctx.repoRoot, 'docs', 'adr'),
-  })
-  return slimResult.written
 }
 
 /**
@@ -220,7 +207,7 @@ const runActivatePlugin = (): void => {
 }
 
 // Linear steps, threaded by native control flow. The step NAMES
-// ('write-slim-init', 'scaffold-claude', 'merge-mcp-json', 'merge-gitignore',
+// ('slim-init', 'scaffold-claude', 'merge-mcp-json', 'merge-gitignore',
 // 'scaffold-workflows', 'init-databases', 'seed-recipes', 'activate-plugin')
 // are load-bearing trace-view labels. Disk side effects (root CLAUDE.md, the
 // .mars/workflows/*.js scaffold, the init manifest, and the recipe override
@@ -231,7 +218,15 @@ export const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   id: 'init',
   inputSchema: initInputSchema,
   fn: async (ctx: WorkflowCtx, _input: InitInput): Promise<InitWorkflowOutput> => {
-    const w1 = await ctx.step('write-slim-init', () => runWriteSlimInit())
+    const w1 = await ctx.step('slim-init', () => {
+      const appCtx = resolveContext()
+      const slimResult = writeSlimInit({
+        repoRoot: appCtx.repoRoot,
+        contextPath: resolve(appCtx.repoRoot, 'CONTEXT.md'),
+        adrDir: resolve(appCtx.repoRoot, 'docs', 'adr'),
+      })
+      return slimResult.written
+    })
     const w2 = await ctx.step('scaffold-claude', () => runScaffoldClaude(w1))
     const w2b = await ctx.step('merge-mcp-json', () => {
       const appCtx = resolveContext()
@@ -256,19 +251,8 @@ export interface RunInitOptions {
   dryRun: boolean
   verbose?: boolean
   /**
-   * Path to a declarative TOML init config (`mars init -f <path>`). When set,
-   * the stack is read from the config instead of being auto-detected by
-   * walking the repo — the escape hatch for layouts the walker rejects (e.g.
-   * a root packaging manifest nesting over per-package manifests).
-   *
-   * NOTE: Stack detection is removed in Slice 4. This field is preserved for
-   * API compatibility; the configPath is passed to the workflow input for
-   * future use in Slice 5+.
-   */
-  configPath?: string
-  /**
    * Resolved wizard answers (ADR-0058). Produced by the wizard controller from
-   * the TTY wizard OR fully non-interactively from flags + config + defaults.
+   * the TTY wizard OR fully non-interactively from flags + defaults.
    * When omitted, {@link WIZARD_DEFAULTS} apply, so an old caller that does not
    * pass this gets exactly today's behaviour. Used for `registerProject` gating.
    * Plugin activation is intentionally NOT a wizard choice — it stays automatic.
@@ -309,10 +293,7 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
   const wizard = opts.wizardChoices ?? WIZARD_DEFAULTS
   const result = await runWorkflow(
     initWorkflow,
-    {
-      ...(opts.configPath ? { configPath: opts.configPath } : {}),
-      wizardChoices: wizard,
-    },
+    { wizardChoices: wizard },
     { store: createQueueWorkflowStore() },
   )
 

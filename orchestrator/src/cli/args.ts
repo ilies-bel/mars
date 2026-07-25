@@ -59,7 +59,6 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--max-messages',
   '--name',
   '--path',
-  '--config',
   '--intent',
   '--prompt-file',
   // Pipeline selection axis: which user-owned workflow file runs the task
@@ -72,11 +71,6 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--window',
   '--window-tokens',
   '--arc-tokens',
-  // mars init wizard non-interactive parity (ADR-0058). One value flag per
-  // string/enum WizardPrompt in src/init/wizard.ts; the parity build-guard
-  // (init/__tests__/wizard-parity.test.ts) fails if a prompt lacks its flag.
-  '--supervisors',
-  '--scaffold-mode',
   // mars init provider selection — choose the default agent CLI for live/PTY
   // runs: claude (default), gemini, or codex. Persisted to .mars/daemon.json
   // as `defaultProvider`. Headless (stream-json) runs always use Claude.
@@ -142,10 +136,8 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
 ])
 
 // Short aliases for value-bearing flags, normalised to their long form before
-// the FLAGS_WITH_VALUES lookup. `-f` is `mars init`'s declarative-config flag.
-export const SHORT_FLAG_ALIASES: Readonly<Record<string, string>> = {
-  '-f': '--config',
-}
+// the FLAGS_WITH_VALUES lookup.
+export const SHORT_FLAG_ALIASES: Readonly<Record<string, string>> = {}
 
 export const REPEATABLE_FLAGS: ReadonlySet<string> = new Set([
   '--blocked-by',

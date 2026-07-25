@@ -195,9 +195,7 @@ export const runWizard = async (
   }
 
   return {
-    supervisors: resolved.supervisors as readonly string[],
     registerProject: resolved.registerProject as boolean,
-    scaffoldMode: resolved.scaffoldMode as 'full' | 'minimal',
   }
 }
 

@@ -114,9 +114,9 @@ export const checkAlreadyInitialized = (
 
 const init: Command = {
   path: 'init',
-  summary: 'detect tech stack and generate supervisors',
+  summary: 'scaffold CLAUDE.md, .claude/ config, workflow templates, and databases',
   usage:
-    'usage: mars init [--force] [--dry-run] [--verbose] [--yes] [--start] [--wizard] [--wizard-off] [-f|--config <path>] [--skip-doctor] [--provider claude|gemini|codex]',
+    'usage: mars init [--force] [--dry-run] [--verbose] [--yes] [--start] [--wizard] [--wizard-off] [--skip-doctor] [--provider claude|gemini|codex]',
   run: async (args, deps) => {
     const { existsSync } = await import('node:fs')
 
@@ -129,7 +129,6 @@ const init: Command = {
     const wizardForced = boolFlags.has('--wizard')
     const wizardOff = boolFlags.has('--wizard-off')
     const skipDoctor = boolFlags.has('--skip-doctor')
-    const configPath = args.flags['--config']
 
     // ── Provider selection ────────────────────────────────────────────────
     // --provider <name> selects the default agent CLI for live/PTY runs.
@@ -208,13 +207,12 @@ const init: Command = {
     const isTTY = Boolean(process.stdin.isTTY)
     const runWizardPath = wizardForced
     const runQuickstartPath =
-      isTTY && !yes && !wizardForced && !wizardOff && configPath === undefined
+      isTTY && !yes && !wizardForced && !wizardOff
 
     if (runQuickstartPath) {
       deps.out('')
       deps.out('Mars quickstart — ready to initialize with sensible defaults:')
       deps.out('  Scaffold mode: full  (CLAUDE.md, .mcp.json, workflow templates)')
-      deps.out('  Supervisors:   auto-detected from your tech stack')
       deps.out('  Register:      yes')
       deps.out('')
 
@@ -271,7 +269,6 @@ const init: Command = {
           force,
           dryRun,
           verbose,
-          ...(configPath ? { configPath } : {}),
           wizardChoices,
         },
       },

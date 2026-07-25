@@ -3,16 +3,16 @@
  * AND its non-interactive parity surface (ADR-0058).
  *
  * `mars init` has exactly ONE entry point. On a TTY it runs a short wizard;
- * with `--yes`, `-f <config>`, or no TTY it runs fully non-interactively from
- * flags + config + defaults. Parity between the two paths is not aspirational
- * — it is enforced by a build-guard test (`__tests__/wizard-parity.test.ts`)
- * that iterates this very table.
+ * with `--yes` or no TTY it runs fully non-interactively from flags + defaults.
+ * Parity between the two paths is not aspirational — it is enforced by a
+ * build-guard test (`__tests__/wizard-parity.test.ts`) that iterates this
+ * very table.
  *
  * The invariant (ADR-0011 precedent): every wizard prompt MUST be reachable
  * non-interactively. Concretely, each {@link WizardPrompt} carries BOTH:
  *   - a `flag` declared in cli/args.ts (`BOOLEAN_FLAGS` for boolean prompts,
  *     `FLAGS_WITH_VALUES` for string/enum prompts), and
- *   - a `configKey` accepted by `loadInitConfig` in init-config.ts.
+ *   - a `configKey` (kept for schema compatibility).
  *
  * A choice with no non-interactive path is therefore EXCLUDED from the wizard
  * (e.g. plugin activation, which stays automatic and is not a prompt). If you
@@ -51,22 +51,13 @@ export interface WizardPrompt {
  * `undefined`): the controller always applies a default.
  */
 export interface WizardChoices {
-  /**
-   * Subset of detected supervisor names to keep. Empty array = keep all
-   * detected supervisors (the default, full auto-detect behaviour).
-   */
-  supervisors: readonly string[]
   /** Register this repo in the global project registry (~/.mars/projects.json). */
   registerProject: boolean
-  /** How much of the workflow contract to scaffold into each supervisor. */
-  scaffoldMode: 'full' | 'minimal'
 }
 
 /** Resolved-everywhere defaults; also the non-TTY / error fallback. */
 export const WIZARD_DEFAULTS: WizardChoices = {
-  supervisors: [],
   registerProject: true,
-  scaffoldMode: 'full',
 }
 
 /**
@@ -75,15 +66,6 @@ export const WIZARD_DEFAULTS: WizardChoices = {
  */
 export const WIZARD_PROMPTS: readonly WizardPrompt[] = [
   {
-    id: 'supervisors',
-    question:
-      'Which detected supervisors should be scaffolded? (comma-separated names; empty = all)',
-    flag: '--supervisors',
-    configKey: 'supervisors',
-    type: 'string',
-    default: '',
-  },
-  {
     id: 'registerProject',
     question:
       'Register this repo in the global Mars project registry so the UI lists it?',
@@ -91,14 +73,5 @@ export const WIZARD_PROMPTS: readonly WizardPrompt[] = [
     configKey: 'registerProject',
     type: 'boolean',
     default: true,
-  },
-  {
-    id: 'scaffoldMode',
-    question: 'Workflow scaffold mode for supervisors?',
-    flag: '--scaffold-mode',
-    configKey: 'scaffoldMode',
-    type: 'enum',
-    choices: ['full', 'minimal'],
-    default: 'full',
   },
 ]

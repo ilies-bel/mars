@@ -15,9 +15,7 @@ is `>=22.13.0`.
 
 **Mastra is gone.** The orchestrator no longer depends on `@mastra/*`; do
 not reintroduce it. The `mastra` skill and Mastra docs are not relevant to
-this codebase any more (the only `@mastra` string that remains is a
-tech-detection literal in `src/init/detect-stack.ts`, which detects whether
-a *target* repo uses Mastra). See `docs/implement-pipeline.md` for the
+this codebase any more. See `docs/implement-pipeline.md` for the
 workflow-authoring pattern and `docs/migrations/0001-mastra-to-workflow-engine.md`
 for the migration record.
 
@@ -40,7 +38,7 @@ npm run typecheck
 | `src/core/daemon` | The long-lived daemon: dispatch loop, per-kind semaphores, socket protocol.  |
 | `src/core/lib`    | Non-AI side-effect helpers (git, verify, claude-stream, task-store).         |
 | `src/core/store`  | Domain task store.                                                           |
-| `src/init`          | `mars init`: stack detection, supervisor render, scaffolding, DB init.       |
+| `src/init`          | `mars init`: scaffolding (CONTEXT.md, .claude/, workflows), DB init.         |
 
 ### Top-level files
 
@@ -84,23 +82,6 @@ the host. Caps default to triage=8, implement=12, refine=6,
 structured-write=1; see README "Daemon worker pool" for the env vars.
 Tune them at runtime with `mars daemon reload` (re-reads `MARS_MAX_*`
 without restarting the daemon).
-
-### `mars init` recursion
-
-The `init` command walks the target repo and merges every manifest into a
-single supervisor set:
-
-- Recurses by default; depth cap of 6 below the repo root.
-- Hardcoded skip set: `.git`, `node_modules`, `.mars`, `.worktrees`, `dist`,
-  `build`, `.next`, `target`, `out`.
-- Respects `.gitignore` at every level. Skips git submodules and other git
-  worktrees.
-- Layout contract: tech-bearing folders must be siblings, not nested — with
-  one exception: the repo root may have a manifest (e.g. a monorepo workspace
-  root `package.json`) and still contain nested per-package manifests. A
-  manifest under a non-root subtree that another manifest already claims is a
-  hard error.
-- `--verbose` lists discovered manifests on stderr.
 
 ### Never do
 

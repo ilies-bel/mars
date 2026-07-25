@@ -521,7 +521,7 @@ const list: Command = {
 const update: Command = {
   path: 'update',
   summary: 'refresh framework files; diff (never clobber) user-owned workflows',
-  usage: 'usage: mars update [--yes | --accept-all] [--verbose] [-f|--config <path>]',
+  usage: 'usage: mars update [--yes | --accept-all] [--verbose]',
   run: async (args, deps) => {
     const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
     const yes =
@@ -530,7 +530,6 @@ const update: Command = {
       boolFlags.has('--no-edit')
     const acceptAll = boolFlags.has('--accept-all')
     const verbose = boolFlags.has('--verbose')
-    const configPath = args.flags['--config']
 
     if (yes && acceptAll) {
       deps.err(
@@ -539,42 +538,19 @@ const update: Command = {
       return { code: 2 }
     }
 
-    // Phase 1: refresh the framework-owned files (CLAUDE.md, supervisors, …)
-    // via the daemon-routed init workflow with force overwrite. Its
-    // scaffold-workflows step never clobbers user-owned workflows (it runs
-    // force:false) — those are reconciled in phase 2. Running init through the
-    // daemon preserves the single-writer guard so the manifest is never
-    // corrupted by a concurrent write.
+    // Phase 1: refresh the framework-owned files (CLAUDE.md, …) via the
+    // daemon-routed init workflow with force overwrite. Its scaffold-workflows
+    // step never clobbers user-owned workflows (it runs force:false) — those
+    // are reconciled in phase 2. Running init through the daemon preserves the
+    // single-writer guard so the manifest is never corrupted by a concurrent
+    // write.
     type InitResult = Awaited<
       ReturnType<typeof import('../../workflows/init-workflow').runInit>
     >
-    let initResult: InitResult
-    try {
-      initResult = (await deps.daemon.sendRequest({
-        op: 'init',
-        opts: { force: true, dryRun: false, verbose, ...(configPath ? { configPath } : {}) },
-      })) as InitResult
-    } catch (err: unknown) {
-      const e = err as Error & { code?: string }
-      if (e.code?.startsWith('init-config:')) {
-        deps.err(`error: ${e.message}`)
-        deps.err(`  config: ${e.code.slice('init-config:'.length)}`)
-        return { code: 1 }
-      }
-      if (e.code?.startsWith('nested-tech:')) {
-        const [outer, inner] = e.code.slice('nested-tech:'.length).split('::')
-        deps.err(`error: ${e.message}`)
-        deps.err(`  outer: ${outer}`)
-        deps.err(`  inner: ${inner}`)
-        return { code: 1 }
-      }
-      if (e.code?.startsWith('walk-access:')) {
-        deps.err(`error: ${e.message}`)
-        deps.err(`  path:  ${e.code.slice('walk-access:'.length)}`)
-        return { code: 1 }
-      }
-      throw err
-    }
+    const initResult = (await deps.daemon.sendRequest({
+      op: 'init',
+      opts: { force: true, dryRun: false, verbose },
+    })) as InitResult
 
     if (
       initResult.status === 'aborted-existing' ||

@@ -35,25 +35,15 @@ Usage:
   mars [--repo <path>] <command> [args]
 
 Commands:
-  init [--force] [--dry-run] [--verbose] [--yes] [--wizard] [--wizard-off] [-f|--config <path>] [--skip-doctor]
-                                detect tech stack and generate specialized supervisors
-                                in .mars/supervisors/ (skeleton + workflow contract).
-                                Recurses into subdirectories (depth cap 6) to merge
-                                manifests from monorepo layouts; honors .gitignore
-                                and skips .git, node_modules, .mars, .worktrees,
-                                dist, build, .next, target, out, plus git submodules.
-                                Nested tech-bearing manifests (e.g. frontend/ AND
-                                frontend/admin/ both with package.json) are rejected
-                                — pass -f/--config <path> to declare the stack in a
-                                TOML file and skip auto-detection entirely.
-                                --verbose lists each discovered manifest on stderr.
+  init [--force] [--dry-run] [--verbose] [--yes] [--wizard] [--wizard-off] [--skip-doctor]
+                                scaffold CONTEXT.md, docs/adr/, .claude/ config,
+                                .mcp.json, workflow templates, and databases.
                                 On success, prints 'mars ui --repo <root>' to launch
                                 the read-only Kanban + trace dashboard.
-  update [--yes] [--verbose] [-f|--config <path>]
+  update [--yes] [--verbose]
                                 refresh the framework-owned files an existing
-                                repo received from 'mars init' (CLAUDE.md,
-                                supervisors) and reconcile the
-                                user-owned workflow scaffolds in
+                                repo received from 'mars init' (CLAUDE.md) and
+                                reconcile the user-owned workflow scaffolds in
                                 .mars/workflows/. Workflow files are NEVER
                                 silently overwritten (ADR-0057): an identical
                                 file is refreshed quietly, a diverged
@@ -586,53 +576,28 @@ Other env:
 const HELP_FLAGS = new Set(['--help', '-h', 'help'])
 
 const COMMAND_HELP: Record<string, string> = {
-  init: `mars init [--force] [--dry-run] [--verbose] [--yes] [--wizard] [--wizard-off] [-f|--config <path>]
+  init: `mars init [--force] [--dry-run] [--verbose] [--yes] [--wizard] [--wizard-off]
 
-Detect tech stack and generate specialized supervisors in
-.mars/supervisors/ (skeleton + workflow contract). Also activates the Mars
-Claude Code plugin so mars:* skills, agents, and hooks are available in
-Claude Code immediately — idempotent, so re-running is safe. If plugin
-activation fails (exotic install layout, unwritable settings file), mars
-prints a warning and continues; run \`mars plugin activate <dir>\` manually
-to fix it.
+Scaffold CONTEXT.md, docs/adr/, .claude/ config, .mcp.json, workflow
+templates, and databases. Also activates the Mars Claude Code plugin so
+mars:* skills, agents, and hooks are available in Claude Code immediately —
+idempotent, so re-running is safe. If plugin activation fails (exotic
+install layout, unwritable settings file), mars prints a warning and
+continues; run \`mars plugin activate <dir>\` manually to fix it.
 
 Single entry, two paths, full parity. \`mars init\` is ONE command. On an
-interactive terminal it runs a short wizard (which supervisors to scaffold,
-project registration, workflow scaffold mode). Off a terminal — or with
---yes, --wizard-off, or -f/--config — it runs fully non-interactively from
-flags + config + built-in defaults, asking nothing. Every wizard question
-has a matching flag AND a TOML config key, so the non-interactive path can
-answer everything the wizard can; this parity is enforced by a build-guard
-test. Plugin activation is automatic and is NOT a wizard question.
+interactive terminal it runs a short wizard (project registration). Off a
+terminal — or with --yes or --wizard-off — it runs fully non-interactively
+from flags + built-in defaults, asking nothing. Every wizard question has a
+matching flag so the non-interactive path can answer everything the wizard
+can; this parity is enforced by a build-guard test. Plugin activation is
+automatic and is NOT a wizard question.
 
-  --yes / -y         skip the wizard; take defaults (+ any flags/config)
+  --yes / -y         skip the wizard; take defaults (+ any flags)
   --wizard           force the wizard even when not on a terminal (it still
                      falls back to defaults if stdin cannot be read)
   --wizard-off       skip the wizard on a terminal; non-interactive resolve
-  --supervisors <a,b>   wizard: comma-separated supervisor names to keep
-                        (empty = all detected)
   --register-project    wizard: register this repo in the project registry
-  --scaffold-mode <full|minimal>   wizard: workflow scaffold depth
-
-Recurses into subdirectories (depth cap 6) to merge manifests from
-monorepo layouts; honors .gitignore and skips .git, node_modules, .mars,
-.worktrees, dist, build, .next, target, out, plus git submodules.
-
-Pass -f/--config <path> to skip auto-detection entirely and read the stack
-from a declarative TOML file instead — the escape hatch for layouts the
-walker rejects (e.g. a root packaging package.json nesting over per-package
-manifests). The file lists one [[stack]] table per tech-bearing folder:
-
-  [[stack]]
-  path = "gateway"      # repo-relative dir; "." means the repo root
-  tech = "node-backend"
-
-  [[stack]]
-  path = "dashboard"
-  tech = "react"
-
-Known tech values: react, nextjs, vue, nuxt, svelte, angular, node-backend,
-python-backend, go, rust, jvm-backend, flutter, ios, android, infra, web3, ml.
 
 After a successful init, mars prints the exact command to launch the
 read-only Kanban + trace dashboard:
@@ -642,22 +607,20 @@ read-only Kanban + trace dashboard:
 If the UI package is not yet built, init prints instructions to build it.
 
 Flags:
-  --force            overwrite existing supervisors
-  --dry-run          show detected stack and proposed supervisors only
-  --verbose          list discovered manifests on stderr
+  --force            overwrite existing config files
+  --dry-run          no-op; report what would be written
+  --verbose          verbose output
   --yes, -y          non-interactive: skip the wizard, take defaults
   --wizard           force the wizard (even off a terminal)
   --wizard-off       skip the wizard on a terminal
-  -f, --config <p>   read stack from a declarative TOML config (skips detection
-                     and the wizard; a [wizard] table supplies wizard answers)
   --skip-doctor      bypass the automatic preflight check (claude/git/Node).
                      Use in CI or when the environment is already validated.`,
-  update: `mars update [--yes] [--verbose] [-f|--config <path>]
+  update: `mars update [--yes] [--verbose]
 
 Re-run init in update-mode on an existing repo. Refreshes the
-framework-owned files (root + per-folder CLAUDE.md, supervisors) by force,
-then reconciles the user-owned workflow scaffolds
-under .mars/workflows/ WITHOUT clobbering them (ADR-0057).
+framework-owned files (root CLAUDE.md) by force, then reconciles the
+user-owned workflow scaffolds under .mars/workflows/ WITHOUT clobbering
+them (ADR-0057).
 
 Workflow reconciliation, per file:
   - missing on disk           → scaffolded fresh from the bundled template
@@ -675,8 +638,7 @@ Flags:
   --yes, -y          non-interactive (CI): never prompt. Diverged owned
                      workflows default to skip-on-conflict — your version
                      is kept. (--no-edit is an accepted alias.)
-  --verbose          list discovered manifests on stderr
-  -f, --config <p>   read stack from a declarative TOML config`,
+  --verbose          verbose output`,
   add: `mars add "<prompt>" [plan flags] [--author kind:name]
 
 (deprecated) Draft a task. Lands in 'draft' state; triage promotes it to

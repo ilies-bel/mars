@@ -15,11 +15,15 @@ import { WIZARD_DEFAULTS, WIZARD_PROMPTS, type WizardPrompt } from '../wizard'
 import { runWizard, type LineReader } from '../wizard-controller'
 
 describe('ADR-0058 — wizard / non-interactive parity', () => {
-  it('ships at least the three required prompts', () => {
+  it('ships the required registerProject prompt', () => {
     const ids = WIZARD_PROMPTS.map((p) => p.id)
-    expect(ids).toEqual(
-      expect.arrayContaining(['supervisors', 'registerProject', 'scaffoldMode']),
-    )
+    expect(ids).toContain('registerProject')
+  })
+
+  it('does not ship supervisor-only prompts', () => {
+    const ids = WIZARD_PROMPTS.map((p) => p.id)
+    expect(ids).not.toContain('supervisors')
+    expect(ids).not.toContain('scaffoldMode')
   })
 
   it('every prompt has a non-empty flag AND configKey (no flag-less prompts)', () => {
@@ -60,12 +64,12 @@ describe('ADR-0058 — wizard / non-interactive parity', () => {
   // A synthetic prompt with a bogus flag must be caught by the flag guard.
   it('the flag parity check would FAIL for an unwired prompt', () => {
     const bogus: WizardPrompt = {
-      id: 'supervisors',
+      id: 'registerProject',
       question: 'bogus',
       flag: '--definitely-not-a-real-flag',
       configKey: 'definitelyNotARealKey',
-      type: 'string',
-      default: '',
+      type: 'boolean',
+      default: true,
     }
     const flagDeclared =
       FLAGS_WITH_VALUES.has(bogus.flag) || BOOLEAN_FLAGS.has(bogus.flag)
@@ -94,17 +98,13 @@ describe('wizard-controller — non-interactive resolution (no stdin hang)', () 
     const choices = await runWizard(WIZARD_PROMPTS, {
       isTTY: false,
       flags: {
-        '--supervisors': 'react-supervisor, node-backend-supervisor',
         '--register-project': false,
-        '--scaffold-mode': 'minimal',
       },
       force: false,
       readLine: neverRead,
     })
     expect(choices).toEqual({
-      supervisors: ['react-supervisor', 'node-backend-supervisor'],
       registerProject: false,
-      scaffoldMode: 'minimal',
     })
   })
 
@@ -113,37 +113,32 @@ describe('wizard-controller — non-interactive resolution (no stdin hang)', () 
       isTTY: false,
       flags: {},
       config: {
-        supervisors: ['go-supervisor'],
         registerProject: false,
-        scaffoldMode: 'minimal',
       },
       force: false,
       readLine: neverRead,
     })
     expect(choices).toEqual({
-      supervisors: ['go-supervisor'],
       registerProject: false,
-      scaffoldMode: 'minimal',
     })
   })
 
   it('flag beats config for the same prompt', async () => {
     const choices = await runWizard(WIZARD_PROMPTS, {
       isTTY: false,
-      flags: { '--scaffold-mode': 'full' },
-      config: { scaffoldMode: 'minimal' },
+      flags: { '--register-project': true },
+      config: { registerProject: false },
       force: false,
       readLine: neverRead,
     })
-    expect(choices.scaffoldMode).toBe('full')
+    expect(choices.registerProject).toBe(true)
   })
 })
 
 describe('wizard-controller — interactive (mocked readline)', () => {
   it('reads answers via the injected reader and parses them', async () => {
-    // Prompts are asked in WIZARD_PROMPTS order: supervisors, registerProject,
-    // scaffoldMode. A queue-backed reader avoids brittle label matching.
-    const queue = ['react-supervisor', 'n', 'minimal']
+    // Prompts are asked in WIZARD_PROMPTS order: registerProject.
+    const queue = ['n']
     const asked: string[] = []
     const readLine: LineReader = (question) => {
       asked.push(question)
@@ -157,9 +152,7 @@ describe('wizard-controller — interactive (mocked readline)', () => {
     })
     expect(asked).toHaveLength(WIZARD_PROMPTS.length)
     expect(choices).toEqual({
-      supervisors: ['react-supervisor'],
       registerProject: false,
-      scaffoldMode: 'minimal',
     })
   })
 
