@@ -24,6 +24,16 @@ import {
   type UpsertFixTaskResult,
   type AttachToExistingFixTaskInput,
 } from './arc'
+import { isEnvironmentalSignature } from './lib/failure-kinds'
+
+/**
+ * Maximum number of times a task can be auto-restarted for an environmental
+ * failure signature (worktree pruned, timeout, etc.) before the failure falls
+ * through to the normal terminal/recovery path. Kept small so a genuinely
+ * broken environment doesn't loop forever — three attempts is enough to
+ * survive a daemon restart that catches tasks mid-flight.
+ */
+export const MAX_ENV_RESTART_ATTEMPTS = 3
 
 // Recovery-spawn types live on the Arc aggregate (ADR-0052); re-exported here
 // so existing callers and tests keep importing them from queue-fix-tasks.
@@ -440,6 +450,48 @@ export const handleTaskFailureWithFixTask = async (
     }
   }
 
+  // Environmental auto-restart (ADR-0080). Reached only for NON-recovery origin
+  // tasks (the fixForTaskId branch above returned). When the failure signature is
+  // classified as environmental in the failure-kinds registry
+  // (`staticEncodable.reason === 'environmental'`), the failure is an
+  // infrastructure condition (worktree pruned, timeout, API transient), NOT a
+  // code regression. Spawning a recovery fix-task would burn the origin's one
+  // recovery slot on a doomed repair. Instead, requeue the origin from setup.
+  //
+  // The `envRestartCount` counter gates an infinite-restart loop: once it
+  // reaches MAX_ENV_RESTART_ATTEMPTS, fall through to the normal terminal path
+  // so the origin eventually gets a human-visible action-queue item.
+  // `retryCount` is intentionally NOT incremented so the origin's recovery
+  // budget is fully intact if a genuine failure follows.
+  if (isEnvironmentalSignature(failureSignature)) {
+    if (task.envRestartCount < MAX_ENV_RESTART_ATTEMPTS) {
+      const nextEnvRestartCount = task.envRestartCount + 1
+      await updateTask(
+        input.taskId,
+        {
+          status: 'queued',
+          error: null,
+          failedPhase: null,
+          failureReason: null,
+          failureSignature: null,
+          failureReasonCode: null,
+          envRestartCount: nextEnvRestartCount,
+        },
+        s,
+      )
+      // eslint-disable-next-line no-console
+      console.log(
+        `[failure-handler] task ${input.taskId}: environmental restart #${nextEnvRestartCount}/${MAX_ENV_RESTART_ATTEMPTS} (${failureSignature})`,
+      )
+      return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
+    }
+    // Cap reached: fall through to the normal terminal path so the operator
+    // gets an action-queue item. The storm circuit breaker is still skipped
+    // below — N tasks each cycling through their env-restart cap is one
+    // infrastructure incident, not N gate failures. A low-priority notice is
+    // raised in place of a storm trip.
+  }
+
   // Verify-gate meta-monitor (draft proposal acd01d23). Reached only for a
   // NON-recovery origin task (the recovery branch above returned). A verify-gate
   // failure is one whose failing step begins with `verify:` — the shape the
@@ -454,7 +506,10 @@ export const handleTaskFailureWithFixTask = async (
   // one-recovery-per-origin invariant (ADR-0040/0061) is untouched: this is
   // failure classification, not a retry knob. Recording is best-effort — a
   // monitor DB hiccup must never break the real recovery path.
-  if (isVerifyGateFailingStep(input.failingStep)) {
+  //
+  // Environmental verify-gate failures are excluded: worktree-missing and
+  // similar conditions are infrastructure incidents, not broken-gate evidence.
+  if (isVerifyGateFailingStep(input.failingStep) && !isEnvironmentalSignature(failureSignature)) {
     try {
       await recordGateVerdict(s, input.taskId, failureSignature)
       if (await isVerdictSuppressed(s, failureSignature)) {
@@ -527,49 +582,91 @@ export const handleTaskFailureWithFixTask = async (
   // steward to diagnose/fix the systemic cause (e.g. disk full). Triggered
   // only for non-recovery, non-cancelled, non-diagnose origin tasks (the
   // guards above already returned for those cases).
+  //
+  // Environmental signatures are EXCLUDED from the circuit breaker. A gate is
+  // not "broken" when the environment moved underneath it — N tasks hitting a
+  // daemon restart is one infrastructure incident, not N gate failures. The
+  // queue must not be paused for a condition the operator declared restartable.
+  // Trade-off: a genuinely broken gate that happens to emit an environmental-
+  // classified signature won't pause the queue. The env-incident notice raised
+  // here keeps that gap visible without halting dispatch.
+  //
   // Best-effort: a DB hiccup must never break the real recovery path.
-  try {
-    const { recordFailureSignature } = await import('./lib/signature-storm-monitor')
-    const stormResult = await recordFailureSignature(s, input.taskId, failureSignature)
-    if (stormResult.tripped && !stormResult.alreadyTripped) {
-      // First trip: action-queue row was raised inside recordFailureSignature.
-      // Mark the task failed (restartable) and signal the daemon-side caller
-      // to pause dispatch and spawn the steward. No recovery fix-task is
-      // spawned — the storm indicates a systemic failure, not a per-task bug.
-      const stepPrefix = input.failingStep.includes(':')
-        ? input.failingStep.split(':')[0]
-        : input.failingStep
-      // FailedPhase is 'code' | 'verify' | 'merge' — map step prefix to it
-      // or leave null for gates not in the union (e.g. setup).
-      const failedPhase =
-        stepPrefix === 'code' || stepPrefix === 'verify' || stepPrefix === 'merge'
-          ? (stepPrefix as 'code' | 'verify' | 'merge')
-          : null
-      await updateTask(
-        input.taskId,
-        {
-          status: 'failed',
-          error: truncatedError,
-          failedPhase,
-          failureReason: `signature-storm:${failureSignature}`,
+  if (isEnvironmentalSignature(failureSignature)) {
+    // Raise a single low-priority operational notice so the operator is aware
+    // that environmental failures are occurring without triggering a pause.
+    // The stable signature deduplicates across multiple tasks hitting the same
+    // environmental condition, bumping seen_count on the existing row.
+    try {
+      await raiseActionQueueItem({
+        kind: 'env-incident',
+        category: 'daemon',
+        priority: 'low',
+        title: `Environmental failure cap reached: ${failureSignature}`,
+        body:
+          `Task ${input.taskId} exceeded its environmental auto-restart cap (${MAX_ENV_RESTART_ATTEMPTS}) ` +
+          `for signature '${failureSignature}'. This is an infrastructure condition ` +
+          `(e.g. worktree pruned, timeout, transient outage) — the queue is NOT paused. ` +
+          `\n\nRestart the task once the environment is healthy: \`mars restart ${input.taskId}\`.`,
+        payload: { taskId: input.taskId, signature: failureSignature, envRestartCount: task.envRestartCount },
+        context: { repoRoot: process.env.MARS_REPO ?? null },
+        raisedBy: 'daemon:failure-handler',
+        // Stable per failure-signature so repeat tasks from the SAME env incident
+        // bump seen_count on one row rather than creating per-task siblings.
+        signature: `env-incident:${failureSignature}`,
+        occurrence: {
+          at: new Date().toISOString(),
+          taskId: input.taskId,
           failureSignature,
-          failureReasonCode: failureSignature,
         },
-        s,
-      )
-      return {
-        outcome: 'signature-storm-tripped',
-        failureSignature,
-        retryCount: task.retryCount,
-        stormStreak: stormResult.streak,
-      }
+      })
+    } catch {
+      // Non-fatal: notice failure must not break the recovery path.
     }
-  } catch (stormErr) {
-    // eslint-disable-next-line no-console
-    console.error(
-      `[signature-storm] task ${input.taskId} streak tracking errored (non-fatal):`,
-      stormErr,
-    )
+  } else {
+    try {
+      const { recordFailureSignature } = await import('./lib/signature-storm-monitor')
+      const stormResult = await recordFailureSignature(s, input.taskId, failureSignature)
+      if (stormResult.tripped && !stormResult.alreadyTripped) {
+        // First trip: action-queue row was raised inside recordFailureSignature.
+        // Mark the task failed (restartable) and signal the daemon-side caller
+        // to pause dispatch and spawn the steward. No recovery fix-task is
+        // spawned — the storm indicates a systemic failure, not a per-task bug.
+        const stepPrefix = input.failingStep.includes(':')
+          ? input.failingStep.split(':')[0]
+          : input.failingStep
+        // FailedPhase is 'code' | 'verify' | 'merge' — map step prefix to it
+        // or leave null for gates not in the union (e.g. setup).
+        const failedPhase =
+          stepPrefix === 'code' || stepPrefix === 'verify' || stepPrefix === 'merge'
+            ? (stepPrefix as 'code' | 'verify' | 'merge')
+            : null
+        await updateTask(
+          input.taskId,
+          {
+            status: 'failed',
+            error: truncatedError,
+            failedPhase,
+            failureReason: `signature-storm:${failureSignature}`,
+            failureSignature,
+            failureReasonCode: failureSignature,
+          },
+          s,
+        )
+        return {
+          outcome: 'signature-storm-tripped',
+          failureSignature,
+          retryCount: task.retryCount,
+          stormStreak: stormResult.streak,
+        }
+      }
+    } catch (stormErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[signature-storm] task ${input.taskId} streak tracking errored (non-fatal):`,
+        stormErr,
+      )
+    }
   }
 
   const budget = getRetryBudget()

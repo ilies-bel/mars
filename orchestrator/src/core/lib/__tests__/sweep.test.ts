@@ -24,6 +24,7 @@ const baseTask = (overrides: Partial<Task>): Task => ({
   failureReason: null,
   failureReasonCode: null,
   retryCount: 0,
+  envRestartCount: 0,
   fixForTaskId: null,
   failureSignature: null,
   originId: overrides.id ?? 'mars-known',

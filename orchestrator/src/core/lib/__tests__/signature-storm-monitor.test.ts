@@ -435,3 +435,177 @@ describe('signature-storm — integration via recovery-spawn subscriber', () => 
     expect(await countStormRows(aq)).toBe(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Environmental-failure policy: no storm trip, no recovery budget consumed
+// ---------------------------------------------------------------------------
+
+/**
+ * Tests that validate the two core guarantees from ADR-0080:
+ *  1. N consecutive environmental failures (staticEncodable.reason='environmental')
+ *     MUST NOT trip the signature-storm circuit breaker or pause the queue.
+ *  2. Environmental failures below MAX_ENV_RESTART_ATTEMPTS MUST NOT consume
+ *     the origin task's one recovery slot (no fix-task spawned).
+ *  3. N consecutive NON-environmental failures MUST still trip the breaker.
+ *
+ * The environmental signature under test is `verify:has-diff/worktree-missing`:
+ * the worktree was pruned before verify could run (daemon restart incident).
+ * Its failure-kinds registry entry carries `staticEncodable: notEncodable('environmental')`.
+ */
+
+interface QueueFixTasksModule {
+  MAX_ENV_RESTART_ATTEMPTS: typeof import('../../queue-fix-tasks').MAX_ENV_RESTART_ATTEMPTS
+}
+
+describe('environmental-failure policy — no storm, no recovery-budget consumption', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_SIGNATURE_STORM_THRESHOLD
+    delete process.env.MARS_FIX_RETRY_BUDGET
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  // The error string that produces the 'worktree-missing' error class.
+  const ENV_FAILING_STEP = 'verify:has-diff'
+  const ENV_ERROR = 'worktree path /tmp/mars-abc123 no longer exists (daemon restarted mid-flight)'
+  // This is the full signature computeFailureSignature produces for the above inputs.
+  const ENV_SIGNATURE = 'verify:has-diff/worktree-missing'
+
+  /**
+   * Fail a fresh origin task with the environmental signature and drain.
+   * Returns the task id.
+   */
+  const failEnvTask = async (
+    loaded: Loaded,
+    index: number,
+    stormCb?: Parameters<typeof loaded.rs.drainRecoverySpawner>[2],
+  ): Promise<string> => {
+    const { q, rs, client } = loaded
+    const t = await q.enqueueTask(`env task ${index}`, undefined, { skipTriage: true })
+    await q.updateTask(t.id, {
+      status: 'failed',
+      failedPhase: null,
+      failureReason: ENV_FAILING_STEP,
+      error: ENV_ERROR,
+    })
+    await rs.drainRecoverySpawner(client, undefined, stormCb)
+    return t.id
+  }
+
+  it('N consecutive environmental failures do NOT trip the signature-storm circuit breaker', async () => {
+    const loaded = await loadModules(repo)
+    const { sm, rs, aq, client } = loaded
+    const K = sm.SIGNATURE_STORM_TRIP_THRESHOLD
+
+    await rs.ensureRecoverySpawner(client)
+
+    const trips: unknown[] = []
+    const stormCb = (): void => { trips.push(1) }
+
+    // Run K+2 environmental failures — well above the threshold.
+    for (let i = 0; i < K + 2; i++) {
+      await failEnvTask(loaded, i, stormCb)
+    }
+
+    // The circuit breaker must NOT have tripped.
+    expect(trips).toHaveLength(0)
+    expect(await countStormRows(aq)).toBe(0)
+  })
+
+  it('environmental failures below the cap requeue the task without spawning a fix-task', async () => {
+    const loaded = await loadModules(repo)
+    const { q, rs, client } = loaded
+    const qft = (await import('../../queue-fix-tasks')) as unknown as QueueFixTasksModule
+    const cap = qft.MAX_ENV_RESTART_ATTEMPTS
+
+    await rs.ensureRecoverySpawner(client)
+
+    // Fail a task below the cap and confirm it gets requeued, not blocked.
+    const taskId = await failEnvTask(loaded, 0)
+    const reloaded = await q.getTask(taskId)
+    // The first failure (envRestartCount 0 → 1) should requeue, not spawn recovery.
+    expect(reloaded?.status).toBe('queued')
+
+    // No fix task should have been spawned.
+    const fixRows = await client.execute({
+      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+      args: [taskId],
+    })
+    expect(fixRows.rows).toHaveLength(0)
+
+    // Confirm cap is at least 1 so the test assertion makes sense.
+    expect(cap).toBeGreaterThan(0)
+    void ENV_SIGNATURE // referenced in assertion above implicitly via computeFailureSignature
+  })
+
+  it('N consecutive environmental failures do NOT consume the origin recovery budget (retryCount unchanged)', async () => {
+    const loaded = await loadModules(repo)
+    const { q, rs, client } = loaded
+    const sm_mod = loaded.sm
+    const K = sm_mod.SIGNATURE_STORM_TRIP_THRESHOLD
+
+    await rs.ensureRecoverySpawner(client)
+
+    // Fail K+1 tasks — each below its own per-task cap, so all get requeued.
+    const ids: string[] = []
+    for (let i = 0; i < K + 1; i++) {
+      ids.push(await failEnvTask(loaded, i))
+    }
+
+    // Each task should be requeued with retryCount still 0 (budget intact).
+    for (const id of ids) {
+      const t = await q.getTask(id)
+      expect(t?.retryCount).toBe(0)
+    }
+
+    // No fix tasks spawned for any of the origins.
+    for (const id of ids) {
+      const rows = await client.execute({
+        sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+        args: [id],
+      })
+      expect(rows.rows).toHaveLength(0)
+    }
+  })
+
+  it('N consecutive NON-environmental failures still trip the circuit breaker', async () => {
+    const loaded = await loadModules(repo)
+    const { q, rs, aq, client } = loaded
+    const K = loaded.sm.SIGNATURE_STORM_TRIP_THRESHOLD
+
+    await rs.ensureRecoverySpawner(client)
+
+    const trips: unknown[] = []
+    const stormCb = (): void => { trips.push(1) }
+
+    // 'setup/unclassified' has no environmental classification in failure-kinds.ts.
+    // The ENOSPC error below produces this signature via computeFailureSignature.
+    const NON_ENV_STEP = 'setup'
+    const NON_ENV_ERROR = 'ENOSPC: no space left on device — install failed'
+    const failNonEnvTask = async (index: number): Promise<void> => {
+      const t = await q.enqueueTask(`non-env task ${index}`, undefined, { skipTriage: true })
+      await q.updateTask(t.id, {
+        status: 'failed',
+        failedPhase: null,
+        failureReason: NON_ENV_STEP,
+        error: NON_ENV_ERROR,
+      })
+      await rs.drainRecoverySpawner(client, undefined, stormCb)
+    }
+
+    // Run K failures — at the threshold, the breaker should trip.
+    for (let i = 0; i < K; i++) {
+      await failNonEnvTask(i)
+    }
+
+    // The breaker must have tripped exactly once.
+    expect(trips).toHaveLength(1)
+    expect(await countStormRows(aq)).toBe(1)
+  })
+})

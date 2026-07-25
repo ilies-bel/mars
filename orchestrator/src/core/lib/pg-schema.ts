@@ -147,6 +147,7 @@ const DDL: readonly string[] = [
     current_step_name    text,
     current_step_guide   text,
     activity_detail      text,
+    env_restart_count    bigint NOT NULL DEFAULT 0,
     created_at           text   NOT NULL,
     updated_at           text   NOT NULL
   )`,
@@ -381,6 +382,7 @@ const DDL: readonly string[] = [
   // Idempotent column migrations for already-provisioned databases.
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS compensates_arc_id text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS activity_detail text`,
+  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS env_restart_count bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id
      ON chat_threads(alert_item_id)`,

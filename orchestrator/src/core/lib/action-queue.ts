@@ -230,6 +230,14 @@ export const ACTION_QUEUE_KINDS = [
   // operator decides via `mars enrich retire` (keep the claim forever) or
   // dismisses the row to let the check keep enforcing.
   'gate-enrichment-stale',
+  // An environmental failure signature (staticEncodable.reason='environmental'
+  // in the failure-kinds registry) was observed on multiple tasks. Unlike a
+  // signature-storm, the queue is NOT paused — environmental failures are
+  // auto-restarted up to MAX_ENV_RESTART_ATTEMPTS per task. This row is raised
+  // once per environmental incident (deduped on the failure signature) so the
+  // operator is aware without queue disruption. Level-triggered (ADR-0048):
+  // idempotent raises bump seen_count. Cleared when the operator acknowledges.
+  'env-incident',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

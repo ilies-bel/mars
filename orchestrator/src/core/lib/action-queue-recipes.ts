@@ -666,6 +666,26 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
       { op: 'reject-tool', label: 'Reject helper', style: 'danger' },
     ],
   },
+
+  'env-incident': {
+    humanSummary: (ctx) => {
+      const sig = str(ctx.payload['signature'])
+      const taskId = str(ctx.payload['taskId']) || ctx.entityId
+      return sig
+        ? `Environmental failure on task ${taskId} (${sig}) — queue NOT paused; restart once environment is healthy.`
+        : `Environmental failure on task ${taskId} — infrastructure condition, not a code regression.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      failureSignature: str(ctx.payload['signature']),
+      taskId: str(ctx.payload['taskId']),
+      envRestartCount: ctx.payload['envRestartCount'],
+    }),
+    verbs: [
+      { op: 'restart', label: 'Restart task', style: 'primary' },
+    ],
+  },
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

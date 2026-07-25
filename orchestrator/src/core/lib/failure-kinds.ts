@@ -519,6 +519,22 @@ export const lookupFailureKind = (signature: string): FailureKind | null =>
   _INDEX.get(signature) ?? null
 
 /**
+ * Returns `true` when `signature` is registered in the failure-kinds registry
+ * with `staticEncodable: notEncodable('environmental')`.
+ *
+ * Use this as the single source of truth for "is this failure an
+ * infrastructure condition?" — never maintain a parallel list of signatures.
+ * Unregistered signatures return `false` (treated as non-environmental so
+ * unexpected failures still flow through the normal recovery path).
+ */
+export const isEnvironmentalSignature = (signature: string): boolean => {
+  const kind = lookupFailureKind(signature)
+  if (!kind) return false
+  const enc = kind.staticEncodable
+  return !enc.encodable && enc.reason === 'environmental'
+}
+
+/**
  * Extract the failing step from a `<failingStep>/<error-class>` signature.
  * Returns `'unknown'` when `sig` is null.
  *

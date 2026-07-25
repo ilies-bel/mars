@@ -298,6 +298,15 @@ export interface Task {
    */
   failureReasonCode: string | null
   retryCount: number
+  /**
+   * Number of times this task has been auto-restarted due to an environmental
+   * failure signature (worktree pruned, timeout, etc.). Incremented by the
+   * environmental-restart path in `handleTaskFailureWithFixTask`; never resets
+   * between attempts so the cap (MAX_ENV_RESTART_ATTEMPTS) is per task-lifetime,
+   * not per episode. Zero on legacy rows or tasks that have never hit an
+   * environmental failure.
+   */
+  envRestartCount: number
   fixForTaskId: string | null
   failureSignature: string | null
   /**
@@ -730,6 +739,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     failureReason: (row.failure_reason as string | null) ?? null,
     failureReasonCode: (row.failure_reason_code as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
+    envRestartCount: Number(row.env_restart_count ?? 0),
     fixForTaskId,
     failureSignature: (row.failure_signature as string | null) ?? null,
     kind,
@@ -932,6 +942,7 @@ export const updateTask = async (
       | 'currentStepGuide'
       | 'activityDetail'
       | 'retryCount'
+      | 'envRestartCount'
       | 'workflow'
     > & {
       /**
@@ -1089,6 +1100,10 @@ export const updateTask = async (
   if (patch.retryCount !== undefined) {
     fields.push('retry_count = ?')
     args.push(patch.retryCount)
+  }
+  if (patch.envRestartCount !== undefined) {
+    fields.push('env_restart_count = ?')
+    args.push(patch.envRestartCount)
   }
   if (patch.error !== undefined) {
     fields.push('error = ?')
