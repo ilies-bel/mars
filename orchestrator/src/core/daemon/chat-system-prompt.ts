@@ -5,8 +5,12 @@
  * per-repo by writing `.mars/chat-system-prompt.md` — it is read on every
  * run so edits take effect on the next message with no daemon restart.
  *
- * Pass the resolved prompt to `buildChatArgs` via `--append-system-prompt`
- * so the Claude Code base prompt and its tool instructions are preserved.
+ * The resolved prompt becomes the request's `instructions` field — the one part
+ * of the request that is identical turn after turn, and therefore the only part
+ * a prefix cache could ever reuse. Nothing volatile (run ids, timestamps, thread
+ * state) may be interpolated into it. At ~400 tokens this prompt is currently
+ * below the provider's ~1024-token caching minimum, so no hits are expected
+ * today; see the caching note in codex-oauth.ts before changing its size.
  */
 
 import { readFile } from 'node:fs/promises'

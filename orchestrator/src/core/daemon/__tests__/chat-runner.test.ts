@@ -1,12 +1,12 @@
 /**
- * Tests for chat-runner.ts — stream-json parser and run state machine.
+ * Tests for chat-runner.ts — the run state machine and the contract it hands to
+ * the provider.
  *
- * Parser tests: pure unit tests over `parseEventToSegments` fed with
- * synthetic Codex JSONL fixtures.
- *
- * State machine tests: drive the `ChatRunner` class with a mocked
- * subprocess layer to assert 409 on concurrent runs, stop finalisation,
- * and timeout finalisation.
+ * The provider itself (`runCodexOAuthTurn`) is mocked here: its own SSE parsing,
+ * tool loop and credential handling are covered in codex-oauth.test.ts, and
+ * history construction in chat-history.test.ts. What matters at this level is
+ * that the runner streams whatever the provider emits, persists it, and maps
+ * each failure kind onto the right recovery branch.
  */
 
 import {
@@ -18,662 +18,192 @@ import {
   vi,
   type MockInstance,
 } from 'vitest'
-import { parseEventToSegments, ChatRunner, buildChatArgs } from '../chat-runner'
+import { ChatRunner } from '../chat-runner'
 import { ChatStreamHub } from '../chat-stream-hub'
 import type { UiMessageChunk } from '../ui-message-chunks'
-import type { SubprocessLine, RunSubprocessResult } from '../../lib/git/claude'
+import type { ChatSegment } from '../chat-runner'
+import type { CodexOAuthResult, CodexOAuthTurnOptions } from '../codex-oauth'
 
-// ── Parser tests ──────────────────────────────────────────────────────────────
-
-describe('parseEventToSegments', () => {
-  it('produces no segments for an unrecognised event type', () => {
-    expect(parseEventToSegments({ type: 'turn.started' })).toEqual([])
-  })
-
-  it('extracts a text segment from a completed Codex agent message', () => {
-    const event = { type: 'item.completed', item: { type: 'agent_message', text: 'Hello!' } }
-    expect(parseEventToSegments(event)).toEqual([{ type: 'text', text: 'Hello!' }])
-  })
-
-  it('extracts a result segment from Codex turn usage', () => {
-    const event = { type: 'turn.completed', usage: { input_tokens: 100, output_tokens: 50, cached_input_tokens: 10 } }
-    expect(parseEventToSegments(event)).toEqual([
-      {
-        type: 'result',
-        durationMs: null,
-        cost: null,
-        inputTokens: 100,
-        outputTokens: 50,
-        cacheReadTokens: 10,
-      },
-    ])
-  })
-
-  it('tolerates missing usage in a completed turn', () => {
-    const event = { type: 'turn.completed' }
-    const [seg] = parseEventToSegments(event)
-    expect(seg).toMatchObject({
-      type: 'result',
-      durationMs: null,
-      cost: null,
-      inputTokens: null,
-      outputTokens: null,
-      cacheReadTokens: null,
-    })
-  })
-
-  it('emits tool_use for a command_execution item', () => {
-    const event = { type: 'item.completed', item: { type: 'command_execution', id: 'cmd-1', command: 'ls -la', cwd: '/repo' } }
-    const segs = parseEventToSegments(event)
-    expect(segs).toHaveLength(1)
-    expect(segs[0]).toMatchObject({
-      type: 'tool_use',
-      id: 'cmd-1',
-      name: 'ls',
-      input: { command: 'ls -la', cwd: '/repo' },
-    })
-  })
-
-  it('emits tool_result with isError=false for command_execution_output with exit_code 0', () => {
-    const event = {
-      type: 'item.completed',
-      item: { type: 'command_execution_output', tool_use_id: 'cmd-1', stdout: 'file.txt\n', stderr: '', exit_code: 0 },
-    }
-    const segs = parseEventToSegments(event)
-    expect(segs).toHaveLength(1)
-    expect(segs[0]).toMatchObject({
-      type: 'tool_result',
-      tool_use_id: 'cmd-1',
-      content: { stdout: 'file.txt\n', stderr: '', exitCode: 0 },
-      isError: false,
-    })
-  })
-
-  it('emits tool_result with isError=true for non-zero exit code in command_execution_output', () => {
-    const event = {
-      type: 'item.completed',
-      item: { type: 'command_execution_output', tool_use_id: 'cmd-2', stdout: '', stderr: 'not found', exit_code: 127 },
-    }
-    const segs = parseEventToSegments(event)
-    expect(segs).toHaveLength(1)
-    expect(segs[0]).toMatchObject({
-      type: 'tool_result',
-      tool_use_id: 'cmd-2',
-      content: { stdout: '', stderr: 'not found', exitCode: 127 },
-      isError: true,
-    })
-  })
-})
-
-// ── UIMessage-chunk streaming integration tests ─────────────────────────────
-//
-// These tests drive ChatRunner with Codex JSONL events and assert that the
-// injected ChatStreamHub receives the mapped UIMessageChunks (the daemon-native
-// replacement for the old client-side `chat-delta` mapping). A subscriber
-// attached before the run receives every chunk live (start → text-delta … →
-// finish).
-
-describe('ChatRunner UIMessage-chunk streaming', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
-      messages: [],
-      feedbacks: new Map(),
-    })
-  })
-
-  it('streams each completed Codex agent message as a text-delta chunk', async () => {
-    const hub = new ChatStreamHub()
-    const chunks: UiMessageChunk[] = []
-    hub.subscribe('t1', { onChunk: (sc) => chunks.push(sc.chunk), onEnd: () => {} })
-
-    mockRunSubprocessStreaming.mockImplementation(
-      async (
-        _cmd: string,
-        _args: readonly string[],
-        _cwd: string,
-        onLine: ((l: SubprocessLine) => void) | undefined,
-      ) => {
-        if (onLine) {
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Hello' } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: ' world' } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: '!' } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 5, output_tokens: 3, cached_input_tokens: 0 } }) })
-        }
-        return { exitCode: 0, stdout: '', stderr: '' }
-      },
-    )
-
-    const runner = new ChatRunner(hub)
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    // Opening chunks, then a text-delta per agent message, then a terminal finish.
-    expect(chunks[0]).toEqual({ type: 'start' })
-    expect(chunks[1]).toEqual({ type: 'start-step' })
-    const textDeltas = chunks
-      .filter((c): c is Extract<UiMessageChunk, { type: 'text-delta' }> => c.type === 'text-delta')
-      .map((c) => c.delta)
-    expect(textDeltas).toEqual(['Hello', ' world', '!'])
-    expect(chunks.at(-1)).toMatchObject({ type: 'finish', finishReason: 'stop' })
-  })
-
-  it('streams a single text-delta when the CLI sends one final assistant message', async () => {
-    const hub = new ChatStreamHub()
-    const chunks: UiMessageChunk[] = []
-    hub.subscribe('t1', { onChunk: (sc) => chunks.push(sc.chunk), onEnd: () => {} })
-
-    mockRunSubprocessStreaming.mockImplementation(
-      async (
-        _cmd: string,
-        _args: readonly string[],
-        _cwd: string,
-        onLine: ((l: SubprocessLine) => void) | undefined,
-      ) => {
-        if (onLine) {
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Complete response.' } }) })
-        }
-        return { exitCode: 0, stdout: '', stderr: '' }
-      },
-    )
-
-    const runner = new ChatRunner(hub)
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    const textDeltas = chunks
-      .filter((c): c is Extract<UiMessageChunk, { type: 'text-delta' }> => c.type === 'text-delta')
-      .map((c) => c.delta)
-    expect(textDeltas).toEqual(['Complete response.'])
-  })
-
-  it('accumulated Codex messages join correctly for DB persistence', async () => {
-    mockRunSubprocessStreaming.mockImplementation(
-      async (
-        _cmd: string,
-        _args: readonly string[],
-        _cwd: string,
-        onLine: ((l: SubprocessLine) => void) | undefined,
-      ) => {
-        if (onLine) {
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'A' } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'B' } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'C' } }) })
-        }
-        return { exitCode: 0, stdout: '', stderr: '' }
-      },
-    )
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    const calls = vi.mocked(chatStore.appendMessage).mock.calls
-    const assistantCall = calls.find((c) => c[1] === 'assistant')
-    expect(assistantCall![2]).toBe('ABC')
-  })
-})
-
-// ── State-machine tests ───────────────────────────────────────────────────────
-//
-// These tests mock the subprocess layer (runSubprocessStreaming) and the
-// chat-store so the runner logic can be exercised without a real Codex CLI
-// binary or SQLite database.
-
-// We need to hoist mock declarations before imports so vi.mock hoisting works.
 vi.mock('../chat-system-prompt', () => ({
   resolveChatSystemPrompt: vi.fn().mockResolvedValue('TEST_SYSTEM_PROMPT'),
 }))
 
-vi.mock('../../lib/git/claude', () => ({
-  buildWorkerEnv: vi.fn(() => ({})),
-  runSubprocessStreaming: vi.fn(),
+vi.mock('../codex-oauth', () => ({
+  runCodexOAuthTurn: vi.fn(),
 }))
 
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: '' }),
-  getThread: vi.fn().mockResolvedValue({
-    thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
-    messages: [],
-    feedbacks: new Map(),
-  }),
+  getThread: vi.fn(),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
-  setThreadSession: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
-  markContextSeeded: vi.fn().mockResolvedValue(undefined),
-  resetThreadSession: vi.fn().mockResolvedValue(undefined),
 }))
 
-// Dynamically import the mocked modules AFTER vi.mock declarations.
-// Because vitest hoists vi.mock, these will receive the mocked implementations.
-const { runSubprocessStreaming } = await import('../../lib/git/claude')
+const { runCodexOAuthTurn } = await import('../codex-oauth')
 const chatStore = await import('../../lib/chat-store')
 
-const mockRunSubprocessStreaming = runSubprocessStreaming as unknown as MockInstance<
-  (
-    cmd: string,
-    args: readonly string[],
-    cwd: string,
-    onLine?: (line: SubprocessLine) => void,
-    signal?: AbortSignal,
-    env?: NodeJS.ProcessEnv,
-  ) => Promise<RunSubprocessResult>
+const mockTurn = runCodexOAuthTurn as unknown as MockInstance<
+  (options: CodexOAuthTurnOptions) => Promise<CodexOAuthResult>
 >
 
-describe('ChatRunner state machine', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    // Default: subprocess completes immediately.
-    mockRunSubprocessStreaming.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
+const OK: CodexOAuthResult = {
+  ok: true,
+  usage: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 80 },
+}
+
+/** A thread row with no history, for the common case. */
+const thread = (overrides: Record<string, unknown> = {}) => ({
+  thread: {
+    id: 't1', session_id: null, title: '', status: 'idle' as const,
+    created_at: '', updated_at: '', origin: null,
+    alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null,
+    ...overrides,
+  },
+  messages: [] as never[],
+  feedbacks: new Map(),
+})
+
+/** Resolve the provider having streamed `segments`, then succeeded. */
+const respondWith = (...segments: ChatSegment[]): void => {
+  mockTurn.mockImplementation(async (options) => {
+    for (const seg of segments) options.onSegment(seg)
+    return OK
+  })
+}
+
+const tick = (ms = 20): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+const assistantCalls = () =>
+  vi.mocked(chatStore.appendMessage).mock.calls.filter((c) => c[1] === 'assistant')
+
+const errorSegmentOf = (call: unknown[] | undefined): { type: string; message: string } | undefined => {
+  const segments = (call?.[3] ?? []) as Array<{ type: string; message: string }>
+  return segments.find((s) => s.type === 'error')
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(chatStore.getThread).mockResolvedValue(thread())
+  respondWith({ type: 'text', text: 'ok' })
+})
+
+afterEach(() => {
+  vi.clearAllTimers()
+})
+
+// ── Streaming ─────────────────────────────────────────────────────────────────
+
+describe('ChatRunner UIMessage-chunk streaming', () => {
+  it('streams provider text deltas as text-delta chunks in one text block', async () => {
+    const hub = new ChatStreamHub()
+    const chunks: UiMessageChunk[] = []
+    hub.subscribe('t1', { onChunk: (sc) => chunks.push(sc.chunk), onEnd: () => {} })
+
+    respondWith(
+      { type: 'text', text: 'Hel' },
+      { type: 'text', text: 'lo' },
+    )
+
+    const runner = new ChatRunner(hub)
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await tick()
+
+    const deltas = chunks.filter((c) => c.type === 'text-delta')
+    expect(deltas.map((d) => (d as { delta: string }).delta)).toEqual(['Hel', 'lo'])
+    // A single text block, so the UI renders one paragraph rather than two.
+    const starts = chunks.filter((c) => c.type === 'text-start')
+    expect(starts).toHaveLength(1)
+  })
+
+  it('streams tool_use and tool_result through to tool chunks', async () => {
+    const hub = new ChatStreamHub()
+    const chunks: UiMessageChunk[] = []
+    hub.subscribe('t1', { onChunk: (sc) => chunks.push(sc.chunk), onEnd: () => {} })
+
+    respondWith(
+      { type: 'tool_use', id: 'call-1', name: 'mars task', input: { command: 'mars task list', cwd: '/repo' } },
+      { type: 'tool_result', tool_use_id: 'call-1', content: { stdout: 'none', stderr: '', exitCode: 0 }, isError: false },
+      { type: 'text', text: 'No tasks.' },
+    )
+
+    const runner = new ChatRunner(hub)
+    await runner.sendMessage('t1', 'any tasks?', '/repo', undefined)
+    await tick()
+
+    expect(chunks.some((c) => c.type === 'tool-input-available')).toBe(true)
+    expect(chunks.some((c) => c.type === 'tool-output-available')).toBe(true)
+  })
+
+  it('joins streamed text deltas for DB persistence', async () => {
+    respondWith(
+      { type: 'text', text: 'A' },
+      { type: 'text', text: 'B' },
+      { type: 'text', text: 'C' },
+    )
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await tick()
+
+    expect(assistantCalls().find((c) => c[1] === 'assistant')![2]).toBe('ABC')
+  })
+
+  it('emits a terminal result segment carrying provider usage', async () => {
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await tick()
+
+    const segments = (assistantCalls().at(-1)?.[3] ?? []) as Array<Record<string, unknown>>
+    const result = segments.find((s) => s.type === 'result')
+    expect(result).toMatchObject({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 80, cost: null })
+    expect(typeof result!.durationMs).toBe('number')
+  })
+})
+
+// ── Provider contract ─────────────────────────────────────────────────────────
+
+describe('ChatRunner provider contract', () => {
+  it('passes the resolved system prompt through unmodified as the cache prefix', async () => {
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await tick()
+
+    // Verbatim: prepending anything per-run here would miss the prefix cache.
+    expect(mockTurn.mock.calls[0]![0].systemPrompt).toBe('TEST_SYSTEM_PROMPT')
+  })
+
+  it('sends the user message as the prompt and the repo root as the tool cwd', async () => {
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'how many tasks?', '/repo', undefined)
+    await tick()
+
+    const options = mockTurn.mock.calls[0]![0]
+    expect(options.prompt).toBe('how many tasks?')
+    expect(options.cwd).toBe('/repo')
+  })
+
+  it('replays prior turns as structured history, excluding the current prompt', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
-      messages: [],
-      feedbacks: new Map(),
-    })
-  })
-
-  afterEach(() => {
-    vi.clearAllTimers()
-  })
-
-  it('returns alreadyRunning=false when the thread is idle', async () => {
-    // Make subprocess hang indefinitely so we can inspect the running state.
-    let resolveRun: (r: RunSubprocessResult) => void = () => {}
-    mockRunSubprocessStreaming.mockReturnValue(
-      new Promise<RunSubprocessResult>((r) => { resolveRun = r }),
-    )
-    const runner = new ChatRunner()
-    const result = await runner.sendMessage('t1', 'hello', '/repo', undefined)
-    expect(result.alreadyRunning).toBe(false)
-    // Resolve the subprocess so the runner can clean up.
-    resolveRun({ exitCode: 0, stdout: '', stderr: '' })
-  })
-
-  it('returns alreadyRunning=true (409 signal) when a run is already active', async () => {
-    // Make first subprocess hang.
-    let resolveFirst: (r: RunSubprocessResult) => void = () => {}
-    mockRunSubprocessStreaming.mockReturnValueOnce(
-      new Promise<RunSubprocessResult>((r) => { resolveFirst = r }),
-    )
-
-    const runner = new ChatRunner()
-    // First call starts an active run.
-    const r1 = await runner.sendMessage('t1', 'first', '/repo', undefined)
-    expect(r1.alreadyRunning).toBe(false)
-
-    // Second call while first is still running.
-    const r2 = await runner.sendMessage('t1', 'second', '/repo', undefined)
-    expect(r2.alreadyRunning).toBe(true)
-
-    // Clean up.
-    resolveFirst({ exitCode: 0, stdout: '', stderr: '' })
-  })
-
-  it('allows a new run after a previous run completes', async () => {
-    // First run resolves immediately.
-    mockRunSubprocessStreaming.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'first', '/repo', undefined)
-    // Drain microtasks so _run has a chance to call appendMessage etc. and finish.
-    await new Promise((r) => setTimeout(r, 10))
-
-    // Second run should be accepted.
-    let resolveSecond: (r: RunSubprocessResult) => void = () => {}
-    mockRunSubprocessStreaming.mockReturnValueOnce(
-      new Promise<RunSubprocessResult>((r) => { resolveSecond = r }),
-    )
-    const r2 = await runner.sendMessage('t1', 'second', '/repo', undefined)
-    expect(r2.alreadyRunning).toBe(false)
-    resolveSecond({ exitCode: 0, stdout: '', stderr: '' })
-  })
-
-  it('stop() returns false when there is no active run', () => {
-    const runner = new ChatRunner()
-    expect(runner.stop('t1')).toBe(false)
-  })
-
-  it('stop() aborts the active run and returns true', async () => {
-    let aborted = false
-    mockRunSubprocessStreaming.mockImplementation(
-      async (
-        _cmd: string,
-        _args: readonly string[],
-        _cwd: string,
-        _onLine: ((l: SubprocessLine) => void) | undefined,
-        signal: AbortSignal | undefined,
-      ) => {
-        return new Promise<RunSubprocessResult>((resolve) => {
-          signal?.addEventListener('abort', () => {
-            aborted = true
-            resolve({ exitCode: 1, stdout: '', stderr: '' })
-          })
-        })
-      },
-    )
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    // Let _run reach runSubprocessStreaming (drain a few microtask ticks).
-    await new Promise((r) => setImmediate(r))
-    await new Promise((r) => setImmediate(r))
-
-    const stopped = runner.stop('t1')
-    expect(stopped).toBe(true)
-    // Give _run time to process the abort and call finalize.
-    await new Promise((r) => setTimeout(r, 10))
-    expect(aborted).toBe(true)
-  })
-
-  it('finalises with an error segment when the timeout fires', async () => {
-    vi.useFakeTimers()
-
-    // Subprocess hangs until aborted.
-    mockRunSubprocessStreaming.mockImplementation(
-      async (
-        _cmd: string,
-        _args: readonly string[],
-        _cwd: string,
-        _onLine: ((l: SubprocessLine) => void) | undefined,
-        signal: AbortSignal | undefined,
-      ) => {
-        return new Promise<RunSubprocessResult>((resolve) => {
-          signal?.addEventListener('abort', () =>
-            resolve({ exitCode: 1, stdout: '', stderr: '' }),
-          )
-        })
-      },
-    )
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'timeout test', '/repo', undefined)
-
-    // Advance past the 10-minute timeout.
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 100)
-
-    vi.useRealTimers()
-
-    // Give finalise a tick to persist the message.
-    await new Promise((r) => setImmediate(r))
-    await new Promise((r) => setImmediate(r))
-
-    // appendMessage should have been called with an error segment.
-    const calls = vi.mocked(chatStore.appendMessage).mock.calls
-    // User message + assistant finalise message
-    const assistantCall = calls.find((c) => c[1] === 'assistant')
-    expect(assistantCall).toBeDefined()
-    const segments = assistantCall![3] as unknown[]
-    const hasError = (segments ?? []).some(
-      (s) => (s as { type?: string }).type === 'error',
-    )
-    expect(hasError).toBe(true)
-  })
-
-  it('persists assistant message with accumulated text on success', async () => {
-    // Simulate Codex emitting two completed agent messages.
-    mockRunSubprocessStreaming.mockImplementation(
-      async (
-        _cmd: string,
-        _args: readonly string[],
-        _cwd: string,
-        onLine: ((l: SubprocessLine) => void) | undefined,
-      ) => {
-        if (onLine) {
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Hello ' } }) })
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'world!' } }) })
-        }
-        return { exitCode: 0, stdout: '', stderr: '' }
-      },
-    )
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    const calls = vi.mocked(chatStore.appendMessage).mock.calls
-    const assistantCall = calls.find((c) => c[1] === 'assistant')
-    expect(assistantCall![2]).toBe('Hello world!')
-  })
-
-  it('auto-titles the thread from the first message when title is empty', async () => {
-    vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
-      messages: [],
-      feedbacks: new Map(),
+      ...thread({ title: 'Chat' }),
+      messages: [
+        { id: 'm0', thread_id: 't1', role: 'user' as const, content: 'hello', segments: [{ type: 'text', text: 'hello' }], created_at: '' },
+        { id: 'm1', thread_id: 't1', role: 'assistant' as const, content: 'hi there', segments: [{ type: 'text', text: 'hi there' }], created_at: '' },
+      ],
     })
 
     const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'A long message that should be truncated at sixty chars exactly', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
+    await runner.sendMessage('t1', 'how are you?', '/repo', undefined)
+    await tick()
 
-    expect(vi.mocked(chatStore.updateThreadTitle)).toHaveBeenCalledWith(
-      't1',
-      'A long message that should be truncated at sixty chars exact',
-    )
+    const { history, prompt } = mockTurn.mock.calls[0]![0]
+    expect(history).toEqual([
+      { role: 'user', content: [{ type: 'input_text', text: 'hello' }] },
+      { role: 'assistant', content: [{ type: 'output_text', text: 'hi there' }] },
+    ])
+    expect(prompt).toBe('how are you?')
   })
 
-  it('does not auto-title when thread already has messages', async () => {
-    vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
-      messages: [{ id: 'm1', thread_id: 't1', role: 'user', content: 'prior', segments: null, created_at: '' }],
-      feedbacks: new Map(),
-    })
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'follow-up', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    expect(vi.mocked(chatStore.updateThreadTitle)).not.toHaveBeenCalled()
-  })
-
-  it('finalises with error segment on non-zero exit code', async () => {
-    mockRunSubprocessStreaming.mockResolvedValue({ exitCode: 127, stdout: '', stderr: 'command not found: codex' })
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    const calls = vi.mocked(chatStore.appendMessage).mock.calls
-    const assistantCall = calls.find((c) => c[1] === 'assistant')
-    const segments = assistantCall![3] as unknown[]
-    const errSeg = (segments ?? []).find((s) => (s as { type?: string }).type === 'error')
-    expect(errSeg).toBeDefined()
-    expect((errSeg as { message: string }).message).toContain('Codex is not available')
-  })
-
-  // ── Throttle / auth failure (slice 5) ─────────────────────────────────────
-
-  it('sets thread status to throttled on rate-limit exit and schedules a retry', async () => {
-    vi.useFakeTimers()
-    mockRunSubprocessStreaming.mockResolvedValue({
-      exitCode: 1,
-      stdout: '',
-      stderr: 'rate limit exceeded — try again later',
-    })
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => process.nextTick(r))
-
-    const statusCalls = vi.mocked(chatStore.setThreadStatus).mock.calls
-    const throttledCall = statusCalls.find((c) => c[1] === 'throttled')
-    expect(throttledCall).toBeDefined()
-    vi.useRealTimers()
-  })
-
-  it('throttles (not errors) on authentication failure and does not expose private tokens', async () => {
-    // Auth failures are throttled + retried instead of immediately surfacing an
-    // error segment. This prevents noisy per-thread error messages when a single
-    // OAuth token backs all threads.
-    vi.useFakeTimers()
-    mockRunSubprocessStreaming.mockResolvedValue({
-      exitCode: 1,
-      stdout: '',
-      stderr: 'authentication failed for token sk-private-value',
-    })
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    // Let the async _run complete
-    await new Promise((r) => process.nextTick(r))
-    await new Promise((r) => process.nextTick(r))
-
-    // Auth failure → global flag set, throttled status (not an immediate error).
-    expect(runner.isAuthFailed()).toBe(true)
-    const statusCalls = vi.mocked(chatStore.setThreadStatus).mock.calls
-    expect(statusCalls.some((c) => c[1] === 'throttled')).toBe(true)
-    // No assistant message with a private token is emitted on first throttle.
-    const assistantCalls = vi.mocked(chatStore.appendMessage).mock.calls.filter((c) => c[1] === 'assistant')
-    for (const call of assistantCalls) {
-      expect(String(call[2])).not.toContain('sk-private-value')
-    }
-    vi.useRealTimers()
-  })
-
-  it('sets codexAuthFailed=true when auth error is detected', async () => {
-    mockRunSubprocessStreaming.mockResolvedValue({
-      exitCode: 1,
-      stdout: '',
-      stderr: 'authentication required — please sign in',
-    })
-
-    const runner = new ChatRunner()
-    expect(runner.isAuthFailed()).toBe(false)
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => process.nextTick(r))
-    await new Promise((r) => process.nextTick(r))
-
-    expect(runner.isAuthFailed()).toBe(true)
-  })
-
-  it('notifies auth listeners when auth failure is detected', async () => {
-    mockRunSubprocessStreaming.mockResolvedValue({
-      exitCode: 1,
-      stdout: '',
-      stderr: 'credential error: not authenticated',
-    })
-
-    const runner = new ChatRunner()
-    const events: boolean[] = []
-    runner.onAuthStateChange((failed) => events.push(failed))
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => process.nextTick(r))
-    await new Promise((r) => process.nextTick(r))
-
-    expect(events).toContain(true)
-  })
-
-  it('calls resetThreadSession and surfaces error segment when session is expired on both attempts', async () => {
-    // Both attempts return session-expired — the runner surfaces an error
-    // only after exhausting the single auto-retry.
-    mockRunSubprocessStreaming.mockResolvedValue({
-      exitCode: 1,
-      stdout: '',
-      stderr: 'session not found — session has expired',
-    })
-    vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: { id: 't1', session_id: 'old-sess', title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: true, evaporated_at: null },
-      messages: [],
-      feedbacks: new Map(),
-    })
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    // Give async _run chain time to complete (two subprocess calls in sequence).
-    await new Promise((r) => setTimeout(r, 20))
-
-    expect(vi.mocked(chatStore.resetThreadSession)).toHaveBeenCalledWith('t1')
-    // After the auto-retry also fails, an error segment is surfaced.
-    const assistantCalls = vi.mocked(chatStore.appendMessage).mock.calls.filter((c) => c[1] === 'assistant')
-    const lastCall = assistantCalls.at(-1)
-    const segments = (lastCall?.[3] ?? []) as Array<{ type: string; message?: string }>
-    const errSeg = segments.find((s) => s.type === 'error')
-    expect(errSeg).toBeDefined()
-    expect(errSeg!.message).toMatch(/session expired/i)
-  })
-
-  it('auto-retries silently when session expires and succeeds on second attempt', async () => {
-    // First attempt: session expired — runner resets session and retries.
-    mockRunSubprocessStreaming.mockResolvedValueOnce({
-      exitCode: 1,
-      stdout: '',
-      stderr: 'session not found — session has expired',
-    })
-    // Second attempt: Codex responds normally.
-    mockRunSubprocessStreaming.mockImplementationOnce(
-      async (
-        _cmd: string,
-        _args: readonly string[],
-        _cwd: string,
-        onLine: ((l: SubprocessLine) => void) | undefined,
-      ) => {
-        if (onLine) {
-          onLine({ stream: 'stdout', line: JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Retried OK' } }) })
-        }
-        return { exitCode: 0, stdout: '', stderr: '' }
-      },
-    )
-    // First getThread call: thread with expired session.
-    vi.mocked(chatStore.getThread).mockResolvedValueOnce({
-      thread: { id: 't1', session_id: 'old-sess', title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: true, evaporated_at: null },
-      messages: [],
-      feedbacks: new Map(),
-    })
-    // Second getThread call (auto-retry): fresh session after resetThreadSession.
-    vi.mocked(chatStore.getThread).mockResolvedValueOnce({
-      thread: { id: 't1', session_id: null, title: '', status: 'idle', created_at: '', updated_at: '', origin: null, alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null },
-      messages: [{ id: 'm0', thread_id: 't1', role: 'user' as const, content: 'hi', segments: null, created_at: '' }],
-      feedbacks: new Map(),
-    })
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    // Session was cleared.
-    expect(vi.mocked(chatStore.resetThreadSession)).toHaveBeenCalledWith('t1')
-    // The retry succeeded — the final assistant message has text content,
-    // not an error segment.
-    const assistantCalls = vi.mocked(chatStore.appendMessage).mock.calls.filter((c) => c[1] === 'assistant')
-    const lastCall = assistantCalls.at(-1)
-    expect(lastCall?.[2]).toBe('Retried OK')
-    const segments = (lastCall?.[3] ?? []) as Array<{ type: string }>
-    expect(segments.some((s) => s.type === 'error')).toBe(false)
-  })
-
-  it('saves detected session_id from stream to the thread', async () => {
-    // Codex emits its durable session id as thread.started.
-    mockRunSubprocessStreaming.mockImplementation(
-      async (
-        _cmd: string,
-        _args: readonly string[],
-        _cwd: string,
-        onLine: ((l: SubprocessLine) => void) | undefined,
-      ) => {
-        if (onLine) {
-          onLine({
-            stream: 'stdout',
-            line: JSON.stringify({ type: 'thread.started', thread_id: 'sess-abc-123' }),
-          })
-        }
-        return { exitCode: 0, stdout: '', stderr: '' }
-      },
-    )
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    expect(vi.mocked(chatStore.setThreadSession)).toHaveBeenCalledWith('t1', 'sess-abc-123')
-  })
-
-  // ── Context preamble tests ─────────────────────────────────────────────────
-  //
-  // Verify that the runner injects a <thread_context> block on the first run
-  // of a thread (context_seeded=false) and skips it on subsequent turns
-  // (context_seeded=true).
-
-  it('prepends alert context preamble on the first run of an alert thread', async () => {
+  it('carries alert context through history on an alert-origin thread', async () => {
     const alertSeg = {
       type: 'alert',
       kind: 'daemon-code-drift',
@@ -685,229 +215,299 @@ describe('ChatRunner state machine', () => {
       resolved: false,
     }
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: {
-        id: 't1', session_id: null, title: 'Alert', status: 'idle',
-        created_at: '', updated_at: '', origin: 'alert',
-        alert_item_id: 'item-1', alert_resolved: false, context_seeded: false, evaporated_at: null,
-      },
+      ...thread({ title: 'Alert', origin: 'alert', alert_item_id: 'item-1' }),
       messages: [
-        {
-          id: 'm0', thread_id: 't1', role: 'assistant' as const,
-          content: 'Daemon running stale code',
-          segments: [alertSeg], created_at: '',
-        },
+        { id: 'm0', thread_id: 't1', role: 'assistant' as const, content: 'Daemon running stale code', segments: [alertSeg], created_at: '' },
       ],
-      feedbacks: new Map(),
     })
 
     const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'explain this one, i dont understand', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
+    await runner.sendMessage('t1', 'explain this one', '/repo', undefined)
+    await tick()
 
-    const subArgs = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
-    const prompt = subArgs.at(-1)!
-    expect(prompt).toContain('<thread_context>')
-    expect(prompt).toContain('Daemon running stale code')
-    expect(prompt).toContain('The running binary is 3 commits behind HEAD')
-    expect(prompt).toContain('mars daemon restart')
-    expect(prompt).toContain('explain this one, i dont understand')
-    expect(prompt).toContain('</thread_context>')
-    expect(vi.mocked(chatStore.markContextSeeded)).toHaveBeenCalledWith('t1')
+    const replayed = mockTurn.mock.calls[0]![0].history
+      .flatMap((item) => item.content.map((c) => c.text))
+      .join('\n')
+    expect(replayed).toContain('Daemon running stale code')
+    expect(replayed).toContain('The running binary is 3 commits behind HEAD')
+    expect(replayed).toContain('mars daemon restart')
   })
 
-  it('does not prepend preamble on a subsequent turn (context_seeded=true)', async () => {
+  it('does not replay a trailing user turn twice on a retry', async () => {
+    // A throttle retry re-reads the thread, which by then contains the user
+    // message persisted on the first attempt.
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: {
-        id: 't1', session_id: 'sess-existing', title: 'Alert', status: 'idle',
-        created_at: '', updated_at: '', origin: 'alert',
-        alert_item_id: 'item-1', alert_resolved: false, context_seeded: true, evaporated_at: null,
-      },
+      ...thread(),
       messages: [
-        {
-          id: 'm0', thread_id: 't1', role: 'assistant' as const,
-          content: 'prior', segments: [], created_at: '',
-        },
+        { id: 'm0', thread_id: 't1', role: 'user' as const, content: 'hi', segments: [{ type: 'text', text: 'hi' }], created_at: '' },
       ],
-      feedbacks: new Map(),
     })
 
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'follow-up question', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    const subArgs = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
-    const prompt = subArgs.at(-1)!
-    expect(prompt).not.toContain('<thread_context>')
-    expect(prompt).toBe('follow-up question')
-    expect(vi.mocked(chatStore.markContextSeeded)).not.toHaveBeenCalled()
-  })
-
-  // ── System-prompt tests ────────────────────────────────────────────────────
-
-  it('pins gpt-5.5 and high effort, embedding system instructions on a fresh run', async () => {
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
+    await tick()
 
-    const args = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
-    expect(args).toContain('exec')
-    expect(args).toContain('--json')
-    expect(args).toContain('gpt-5.5')
-    expect(args).toContain('model_reasoning_effort="high"')
-    expect(args).toContain('--sandbox')
-    expect(args.at(-1)).toContain('<system_instructions>\nTEST_SYSTEM_PROMPT')
+    const { history, prompt } = mockTurn.mock.calls[0]![0]
+    expect(history).toEqual([])
+    expect(prompt).toBe('hi')
   })
 
-  it('resumes the persisted Codex session without repeating system instructions', async () => {
+  it('falls back to the trailing user turn when re-queued with no prompt', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: {
-        id: 't1', session_id: 'existing-sess', title: 'title', status: 'idle',
-        created_at: '', updated_at: '', origin: null,
-        alert_item_id: null, alert_resolved: false, context_seeded: true, evaporated_at: null,
-      },
-      messages: [],
-      feedbacks: new Map(),
+      ...thread(),
+      messages: [
+        { id: 'm0', thread_id: 't1', role: 'user' as const, content: 'original question', segments: [{ type: 'text', text: 'original question' }], created_at: '' },
+      ],
+    })
+
+    // clearAuthFailure re-queues parked threads with an empty content string.
+    const runner = new ChatRunner()
+    mockTurn.mockResolvedValue({ ok: false, kind: 'auth', message: 'unauthorized' })
+    await runner.sendMessage('t1', '', '/repo', undefined)
+    await tick()
+    respondWith({ type: 'text', text: 'answer' })
+    runner.clearAuthFailure('/repo', undefined)
+    await tick()
+
+    expect(mockTurn.mock.calls.at(-1)![0].prompt).toBe('original question')
+  })
+})
+
+// ── State machine ─────────────────────────────────────────────────────────────
+
+describe('ChatRunner state machine', () => {
+  it('returns alreadyRunning=false when the thread is idle', async () => {
+    let resolveRun: (r: CodexOAuthResult) => void = () => {}
+    mockTurn.mockReturnValue(new Promise<CodexOAuthResult>((r) => { resolveRun = r }))
+
+    const runner = new ChatRunner()
+    expect((await runner.sendMessage('t1', 'hello', '/repo', undefined)).alreadyRunning).toBe(false)
+    resolveRun(OK)
+  })
+
+  it('returns alreadyRunning=true (409 signal) when a run is already active', async () => {
+    let resolveFirst: (r: CodexOAuthResult) => void = () => {}
+    mockTurn.mockReturnValueOnce(new Promise<CodexOAuthResult>((r) => { resolveFirst = r }))
+
+    const runner = new ChatRunner()
+    expect((await runner.sendMessage('t1', 'first', '/repo', undefined)).alreadyRunning).toBe(false)
+    expect((await runner.sendMessage('t1', 'second', '/repo', undefined)).alreadyRunning).toBe(true)
+    resolveFirst(OK)
+  })
+
+  it('allows a new run after a previous run completes', async () => {
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'first', '/repo', undefined)
+    await tick(10)
+
+    expect((await runner.sendMessage('t1', 'second', '/repo', undefined)).alreadyRunning).toBe(false)
+    await tick(10)
+  })
+
+  it('stop() returns false when there is no active run', () => {
+    expect(new ChatRunner().stop('t1')).toBe(false)
+  })
+
+  it('stop() aborts the active run and returns true', async () => {
+    let aborted = false
+    mockTurn.mockImplementation(
+      (options) =>
+        new Promise<CodexOAuthResult>((resolve) => {
+          options.signal.addEventListener('abort', () => {
+            aborted = true
+            resolve(OK)
+          })
+        }),
+    )
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => setImmediate(r))
+    await new Promise((r) => setImmediate(r))
+
+    expect(runner.stop('t1')).toBe(true)
+    await tick(10)
+    expect(aborted).toBe(true)
+  })
+
+  it('finalises with an error segment when the timeout fires', async () => {
+    vi.useFakeTimers()
+    mockTurn.mockImplementation(
+      (options) =>
+        new Promise<CodexOAuthResult>((resolve) => {
+          options.signal.addEventListener('abort', () => resolve(OK))
+        }),
+    )
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'timeout test', '/repo', undefined)
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 100)
+    vi.useRealTimers()
+    await new Promise((r) => setImmediate(r))
+    await new Promise((r) => setImmediate(r))
+
+    expect(errorSegmentOf(assistantCalls().at(-1))).toBeDefined()
+  })
+
+  it('auto-titles the thread from the first message when title is empty', async () => {
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'A long message that should be truncated at sixty chars exactly', '/repo', undefined)
+    await tick()
+
+    expect(vi.mocked(chatStore.updateThreadTitle)).toHaveBeenCalledWith(
+      't1',
+      'A long message that should be truncated at sixty chars exact',
+    )
+  })
+
+  it('does not auto-title when thread already has messages', async () => {
+    vi.mocked(chatStore.getThread).mockResolvedValue({
+      ...thread(),
+      messages: [{ id: 'm1', thread_id: 't1', role: 'user' as const, content: 'prior', segments: null, created_at: '' }],
     })
 
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'follow-up', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
+    await tick()
 
-    const args = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
-    expect(args.slice(0, 3)).toEqual(['exec', 'resume', '--json'])
-    expect(args).toContain('existing-sess')
-    expect(args.at(-1)).toBe('follow-up')
-    expect(args.at(-1)).not.toContain('system_instructions')
+    expect(vi.mocked(chatStore.updateThreadTitle)).not.toHaveBeenCalled()
   })
 
-  it('includes prior messages but no alert block on first run of a non-alert thread', async () => {
-    vi.mocked(chatStore.getThread).mockResolvedValue({
-      thread: {
-        id: 't1', session_id: null, title: 'Chat', status: 'idle',
-        created_at: '', updated_at: '', origin: null,
-        alert_item_id: null, alert_resolved: false, context_seeded: false, evaporated_at: null,
-      },
-      messages: [
-        {
-          id: 'm0', thread_id: 't1', role: 'user' as const,
-          content: 'hello',
-          segments: [{ type: 'text', text: 'hello' }], created_at: '',
-        },
-        {
-          id: 'm1', thread_id: 't1', role: 'assistant' as const,
-          content: 'hi there',
-          segments: [{ type: 'text', text: 'hi there' }], created_at: '',
-        },
-      ],
-      feedbacks: new Map(),
+  it('finalises with an error segment when the provider reports no text', async () => {
+    respondWith() // succeeds but streams nothing
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await tick()
+
+    expect(errorSegmentOf(assistantCalls().at(-1))?.message).toMatch(/without a chat response/i)
+  })
+})
+
+// ── Failure-kind mapping ──────────────────────────────────────────────────────
+
+describe('ChatRunner failure-kind mapping', () => {
+  it('throttles and schedules a retry on rate-limit', async () => {
+    vi.useFakeTimers()
+    mockTurn.mockResolvedValue({ ok: false, kind: 'rate-limit', message: 'usage limit reached' })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => process.nextTick(r))
+
+    expect(vi.mocked(chatStore.setThreadStatus).mock.calls.some((c) => c[1] === 'throttled')).toBe(true)
+    vi.useRealTimers()
+  })
+
+  it('throttles on auth failure and never leaks the provider message', async () => {
+    vi.useFakeTimers()
+    mockTurn.mockResolvedValue({
+      ok: false,
+      kind: 'auth',
+      message: 'authentication failed for token sk-private-value',
     })
 
     const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'how are you?', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => process.nextTick(r))
+    await new Promise((r) => process.nextTick(r))
 
-    const subArgs = mockRunSubprocessStreaming.mock.calls[0][1] as string[]
-    const prompt = subArgs.at(-1)!
-    expect(prompt).toContain('<thread_context>')
-    expect(prompt).not.toContain('[Alert:')
-    expect(prompt).toContain('[user] hello')
-    expect(prompt).toContain('[assistant] hi there')
-    expect(prompt).toContain('how are you?')
-    expect(vi.mocked(chatStore.markContextSeeded)).toHaveBeenCalledWith('t1')
+    expect(runner.isAuthFailed()).toBe(true)
+    expect(vi.mocked(chatStore.setThreadStatus).mock.calls.some((c) => c[1] === 'throttled')).toBe(true)
+    for (const call of assistantCalls()) {
+      expect(String(call[2])).not.toContain('sk-private-value')
+      expect(JSON.stringify(call[3])).not.toContain('sk-private-value')
+    }
+    vi.useRealTimers()
   })
 
-  // ── Network-access override tests ─────────────────────────────────────────
-  //
-  // The chat agent runs `mars` commands and queries the daemon/Postgres over
-  // loopback. Codex's workspace-write sandbox denies loopback by default, so
-  // we must pass `-c sandbox_workspace_write.network_access=true` on every
-  // turn — both the first exec and resume branches.
+  it('treats missing credentials as an auth failure so the re-auth banner shows', async () => {
+    vi.useFakeTimers()
+    mockTurn.mockResolvedValue({ ok: false, kind: 'no-token', message: 'No Codex credentials found.' })
 
-  it('first-turn args include the network_access=true config override', () => {
-    const args = buildChatArgs('hello', null, 'SYS_PROMPT')
-    const idx = args.indexOf('-c')
-    // There must be at least one `-c` flag followed by the network_access override.
-    const networkAccessIdx = args.findIndex(
-      (a, i) => i > 0 && args[i - 1] === '-c' && a === 'sandbox_workspace_write.network_access=true',
-    )
-    expect(idx).toBeGreaterThan(-1)
-    expect(networkAccessIdx).toBeGreaterThan(-1)
+    const runner = new ChatRunner()
+    expect(runner.isAuthFailed()).toBe(false)
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => process.nextTick(r))
+    await new Promise((r) => process.nextTick(r))
+
+    expect(runner.isAuthFailed()).toBe(true)
+    vi.useRealTimers()
   })
 
-  it('resume-turn args include the network_access=true config override', () => {
-    const args = buildChatArgs('follow-up', 'sess-abc', 'SYS_PROMPT')
-    const networkAccessIdx = args.findIndex(
-      (a, i) => i > 0 && args[i - 1] === '-c' && a === 'sandbox_workspace_write.network_access=true',
-    )
-    expect(networkAccessIdx).toBeGreaterThan(-1)
+  it('notifies auth listeners when auth failure is detected', async () => {
+    vi.useFakeTimers()
+    mockTurn.mockResolvedValue({ ok: false, kind: 'auth', message: 'unauthorized' })
+
+    const runner = new ChatRunner()
+    const events: boolean[] = []
+    runner.onAuthStateChange((failed) => events.push(failed))
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => process.nextTick(r))
+    await new Promise((r) => process.nextTick(r))
+
+    expect(events).toContain(true)
+    vi.useRealTimers()
   })
 
-  // ── Attachment tests ───────────────────────────────────────────────────────
+  it('surfaces a fixed user-safe message on a generic provider failure', async () => {
+    mockTurn.mockResolvedValue({
+      ok: false,
+      kind: 'generic',
+      message: 'internal detail mentioning account d65d55b1 and the prompt text',
+    })
 
-  it('injects image attachment path into the prompt passed to Codex', async () => {
-    let capturedArgs: readonly string[] = []
-    mockRunSubprocessStreaming.mockImplementation(
-      async (
-        _cmd: string,
-        args: readonly string[],
-      ) => {
-        capturedArgs = args
-        return { exitCode: 0, stdout: '', stderr: '' }
-      },
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await tick()
+
+    const err = errorSegmentOf(assistantCalls().at(-1))
+    expect(err?.message).toBe(
+      'Codex could not complete this response. Try again; if it continues, check the local Codex setup.',
     )
+    expect(err?.message).not.toContain('d65d55b1')
+  })
+})
 
+// ── Attachments ───────────────────────────────────────────────────────────────
+
+describe('ChatRunner attachments', () => {
+  it('injects image attachment guidance into the prompt', async () => {
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'describe this', '/repo', undefined, [
       { id: 'att-1', path: '/abs/path/photo.png', mimeType: 'image/png', name: 'photo.png', size: 1024 },
     ])
-    await new Promise((r) => setTimeout(r, 20))
+    await tick()
 
-    const prompt = capturedArgs.at(-1) as string
+    const prompt = mockTurn.mock.calls[0]![0].prompt
     expect(prompt).toContain('describe this')
-    expect(prompt).toContain('---')
-    expect(prompt).toContain('The user attached image /abs/path/photo.png — read it with the Read tool.')
+    expect(prompt).toContain('The user attached image /abs/path/photo.png')
   })
 
-  it('injects audio attachment path into the prompt with ffmpeg guidance', async () => {
-    let capturedArgs: readonly string[] = []
-    mockRunSubprocessStreaming.mockImplementation(
-      async (
-        _cmd: string,
-        args: readonly string[],
-      ) => {
-        capturedArgs = args
-        return { exitCode: 0, stdout: '', stderr: '' }
-      },
-    )
-
+  it('injects audio attachment guidance with ffmpeg hint', async () => {
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'transcribe this', '/repo', undefined, [
       { id: 'att-2', path: '/abs/path/clip.mp3', mimeType: 'audio/mpeg', name: 'clip.mp3', size: 2048 },
     ])
-    await new Promise((r) => setTimeout(r, 20))
+    await tick()
 
-    const prompt = capturedArgs.at(-1) as string
-    expect(prompt).toContain('transcribe this')
+    const prompt = mockTurn.mock.calls[0]![0].prompt
     expect(prompt).toContain('audio file /abs/path/clip.mp3')
     expect(prompt).toContain('ffmpeg')
   })
 
   it('persists attachment segments on the user message', async () => {
-    mockRunSubprocessStreaming.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
-
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'show me', '/repo', undefined, [
       { id: 'att-3', path: '/abs/path/screen.png', mimeType: 'image/png', name: 'screen.png', size: 512 },
     ])
-    await new Promise((r) => setTimeout(r, 20))
+    await tick()
 
-    const calls = vi.mocked(chatStore.appendMessage).mock.calls
-    const userCall = calls.find((c) => c[1] === 'user')
-    expect(userCall).toBeDefined()
-    const segments = userCall![3] as unknown[]
-    const attSeg = (segments ?? []).find((s) => (s as { type?: string }).type === 'attachment')
-    expect(attSeg).toBeDefined()
-    expect((attSeg as { path: string; kindHint: string }).path).toBe('/abs/path/screen.png')
-    expect((attSeg as { path: string; kindHint: string }).kindHint).toBe('image')
+    const userCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'user')
+    const segments = (userCall![3] ?? []) as Array<Record<string, unknown>>
+    expect(segments.find((s) => s.type === 'attachment')).toMatchObject({
+      path: '/abs/path/screen.png',
+      kindHint: 'image',
+    })
   })
 })
