@@ -92,10 +92,16 @@ const PHASE_POLICY: Record<RecoverablePhase, PhasePolicy> = {
     status: 'verifying',
     // The prior daemon ran this task but the engine run has no checkpoint
     // rows to resume from. If the worktree survives, clear it and re-run from
-    // setup (mirroring the merging not-landed path); if it is gone there is
-    // nothing to resume, so the task fails.
-    classify: async (t, { exists }) =>
-      t.branch && t.worktreePath && exists(t.worktreePath) ? 'recover' : 'fail',
+    // setup (mirroring the merging not-landed path). If the worktree is gone,
+    // probe whether the branch already landed before declaring failure: a
+    // missing worktree is frequently evidence the merge succeeded and cleaned
+    // up, not evidence of loss (mirrors the merging / vega-reconciling policy).
+    classify: async (t, { exists, isBranchMergedIntoMain, repoRoot }) => {
+      if (t.branch && t.worktreePath && exists(t.worktreePath)) return 'recover'
+      const branch = t.branch ?? `task/${t.id}`
+      const landed = await isBranchMergedIntoMain(branch, repoRoot).catch(() => false)
+      return landed ? 'finalize' : 'fail'
+    },
     emitOnRequeue: true,
     requeueLog: (t) =>
       `[reconcile] task ${t.id} was verifying; clearing worktree and re-queuing from setup`,
@@ -261,9 +267,10 @@ export const recoverPhase = async (
     }
 
     if (verdict === 'finalize') {
-      // merging: the FF already landed — finalize to done, drop the worktree.
+      // merging / vega-reconciling / verifying: the branch already landed —
+      // finalize to done, drop the worktree if it is still on disk.
       const branch = t.branch ?? `task/${t.id}`
-      log(`[reconcile] task ${t.id} was merging; FF already landed, finalized to done`)
+      log(`[reconcile] task ${t.id} was ${phase}; branch already merged into integration, finalized to done`)
       if (t.worktreePath && exists(t.worktreePath)) {
         await removeWorktree({ path: t.worktreePath, branch }, true).catch(() => {})
       }

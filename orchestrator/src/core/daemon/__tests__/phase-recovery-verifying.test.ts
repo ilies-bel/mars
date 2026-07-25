@@ -16,10 +16,22 @@
  * clear branch/worktreePath so the next dispatch reruns from setup with a
  * fresh worktree.
  *
+ * Bug (mars-0207f3b1): after a daemon restart, tasks that were in `verifying`
+ * but whose branch had ALREADY been fast-forwarded into main were incorrectly
+ * marked `failed`. The prior classify only checked for a surviving worktree
+ * directory; a gone worktree was always treated as "nothing to resume", even
+ * when the work was already on main (the common post-merge cleanup case).
+ *
+ * Fix: when the worktree is absent, probe `isBranchMergedIntoMain` before
+ * declaring failure. If the branch already landed, finalize to `done` (same
+ * path as `merging` and `vega-reconciling`).
+ *
  * These tests cover:
  *   ✓ Verifying task: on-disk worktree + failed run → checkpoints cleared, task queued from setup
  *   ✓ Verifying task: no worktree on disk → task marked failed (existing behaviour)
  *   ✓ Verifying task: on-disk worktree + no failed run → worktree preserved (existing behaviour)
+ *   ✓ Verifying task: worktree absent + branch already merged → finalized to done (new)
+ *   ✓ Verifying task: worktree absent + branch absent in git → still failed (new)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
@@ -253,5 +265,112 @@ describe('recoverPhase("verifying") — stale checkpoint detection', () => {
     expect(updated?.worktreePath).toBe(fakeWorktreePath)
 
     rmSync(fakeWorktreePath, { recursive: true, force: true })
+  })
+})
+
+// ── Git environment for branch/commit operations ─────────────────────────────
+const GIT_ENV = {
+  ...process.env,
+  GIT_AUTHOR_NAME: 'test',
+  GIT_AUTHOR_EMAIL: 'test@example.com',
+  GIT_COMMITTER_NAME: 'test',
+  GIT_COMMITTER_EMAIL: 'test@example.com',
+}
+
+/**
+ * Create a repo with an initial commit on `main` so `isBranchMergedIntoMain`
+ * has a valid integration ref to probe against.
+ */
+const setupRepoWithMain = (): string => {
+  const r = mkdtempSync(resolve(tmpdir(), 'mars-phase-recovery-verifying-main-'))
+  execFileSync('git', ['init', '-q', '--initial-branch=main'], { cwd: r, env: GIT_ENV })
+  execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: r, env: GIT_ENV })
+  mkdirSync(resolve(r, '.mars'), { recursive: true })
+  return r
+}
+
+// ── Regression: verifying + absent worktree + branch merged/absent ────────────
+
+describe('recoverPhase("verifying") — merged-branch finalize detection', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepoWithMain()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('finalizes to done when the worktree is absent but the branch is already merged into main', async () => {
+    // Simulate: the verify step ran, the merge succeeded and cleaned up the
+    // worktree, but the daemon died before the task could be finalized.
+    // The branch should be detected as merged and the task finalized to done.
+    const branch = 'task/already-merged-verify'
+
+    execFileSync('git', ['checkout', '-b', branch], { cwd: repo, env: GIT_ENV })
+    execFileSync('git', ['commit', '--allow-empty', '-m', 'task work'], {
+      cwd: repo,
+      env: GIT_ENV,
+    })
+    execFileSync('git', ['checkout', 'main'], { cwd: repo, env: GIT_ENV })
+    execFileSync('git', ['merge', '--ff-only', branch], { cwd: repo, env: GIT_ENV })
+
+    const { q, recovery } = await loadModules(repo)
+    const task = await q.enqueueTask('already merged verifying task', undefined, {
+      skipTriage: true,
+    })
+
+    // Strand the task in verifying: branch is the merged one, no worktree.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying', branch = ?, worktree_path = NULL WHERE id = ?`,
+      args: [branch, task.id],
+    })
+
+    const bus = makeBus()
+    const result = await recovery.recoverPhase('verifying', {
+      log: nullLog,
+      bus,
+      repoRoot: repo,
+    })
+
+    // Must be finalized to done, not failed.
+    const updated = await q.getTask(task.id)
+    expect(updated?.status).toBe('done')
+
+    expect(result.finalized).toBe(1)
+    expect(result.failed).toBe(0)
+    expect(result.requeued).not.toContain(task.id)
+    // No task.queued event — we finalized, not requeued.
+    expect(bus.events.filter(([e]) => e === 'task.queued')).toHaveLength(0)
+  })
+
+  it('marks failed when the worktree is absent and the branch does not exist in git', async () => {
+    // No task branch was ever created in this repo — the git ref is absent.
+    // The reconciler must still declare the task failed (not finalize it).
+    const { q, recovery } = await loadModules(repo)
+    const task = await q.enqueueTask('ghost branch verifying task', undefined, {
+      skipTriage: true,
+    })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'verifying', branch = ?, worktree_path = NULL WHERE id = ?`,
+      args: [`task/${task.id}`, task.id],
+    })
+
+    const bus = makeBus()
+    const result = await recovery.recoverPhase('verifying', {
+      log: nullLog,
+      bus,
+      repoRoot: repo,
+    })
+
+    const updated = await q.getTask(task.id)
+    expect(updated?.status).toBe('failed')
+    expect(result.failed).toBe(1)
+    expect(result.finalized).toBe(0)
+    expect(result.requeued).not.toContain(task.id)
   })
 })
