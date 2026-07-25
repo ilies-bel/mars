@@ -1184,7 +1184,7 @@ function sendErrorMessage(err: unknown): string {
 // Hero composer (used in the no-thread hero state)
 // ---------------------------------------------------------------------------
 
-interface HeroComposerProps {
+export interface HeroComposerProps {
   /** Called with text, the raw File objects, and a clearState callback the
    *  caller must invoke on success (files are uploaded AFTER thread creation,
    *  so the hero passes Files rather than attachment ids). */
@@ -1194,7 +1194,7 @@ interface HeroComposerProps {
   onPrefillConsumed: () => void
 }
 
-const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: HeroComposerProps) => {
+export const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: HeroComposerProps) => {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
