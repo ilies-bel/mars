@@ -9,12 +9,12 @@ import { ArcColumn, type BoardArc } from '@/widgets/Column'
 // Types and constants
 // ---------------------------------------------------------------------------
 
-// Display order in the tab strip (mirrors column order — attention-first)
-const ALL_TABS: readonly Cluster[] = ['Failed', 'Blocked', 'In progress', 'Queued']
+// Display order in the tab strip (mirrors column order — lifecycle-first: blocked → queued → in progress → failed)
+const ALL_TABS: readonly Cluster[] = ['Blocked', 'Queued', 'In progress', 'Failed']
 
-// Priority for the default tab: leftmost non-empty of Failed, Blocked, In progress, Queued.
-// Same story as ALL_TABS and CLUSTERS — the "what needs me right now" column wins.
-const DEFAULT_TAB_PRIORITY: readonly Cluster[] = ['Failed', 'Blocked', 'In progress', 'Queued']
+// Priority for the default tab: leftmost non-empty of Blocked, Queued, In progress, Failed.
+// Same story as ALL_TABS and CLUSTERS — the lifecycle order determines which column is shown first.
+const DEFAULT_TAB_PRIORITY: readonly Cluster[] = ['Blocked', 'Queued', 'In progress', 'Failed']
 
 const roleFromStatus = (status: ProgressTask['status']): Role => {
   switch (status) {
@@ -53,10 +53,10 @@ const toUI = (t: ProgressTask): UITask => ({
   updatedAt: t.updatedAt,
 })
 
-// Column order — attention-first (Failed / Blocked leftmost) so the "what needs me
-// right now" columns land in the first scan positions. Matches DEFAULT_TAB_PRIORITY
+// Column order — lifecycle-first (Blocked / Queued leftmost) so the pipeline flows
+// left-to-right from waiting → active → terminal. Matches DEFAULT_TAB_PRIORITY
 // and ALL_TABS so desktop and mobile tell the same story.
-const CLUSTERS: readonly Cluster[] = ['Failed', 'Blocked', 'In progress', 'Queued']
+const CLUSTERS: readonly Cluster[] = ['Blocked', 'Queued', 'In progress', 'Failed']
 
 const ARC_CLUSTER_PRIORITY: readonly Cluster[] = ['Blocked', 'In progress', 'Queued']
 
@@ -195,7 +195,7 @@ export const BoardView = ({
     Done: 0, // arcs never resolve to Done; tab does not appear in ALL_TABS
   }
 
-  // Default to the leftmost non-empty of Failed → Blocked → In progress → Queued; else Queued
+  // Default to the leftmost non-empty of Blocked → Queued → In progress → Failed; else Queued
   const defaultTab = DEFAULT_TAB_PRIORITY.find((t) => tabCounts[t] > 0) ?? 'Queued'
 
   // Active tab controls which single column is visible on mobile
