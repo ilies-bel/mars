@@ -110,12 +110,110 @@ describe('round-trip encode/decode for thread field', () => {
 })
 
 // ---------------------------------------------------------------------------
-// defaultAqUrlState includes thread: null
+// project field — encode
+// ---------------------------------------------------------------------------
+
+describe('encodeAqState — project field', () => {
+  it('omits project param when project is null (clean default URL)', () => {
+    const result = encodeAqState(defaultAqUrlState())
+    expect(result).toBe('')
+    expect(result).not.toContain('project')
+  })
+
+  it('emits project=<encoded-id> when project is set', () => {
+    const result = encodeAqState({ ...defaultAqUrlState(), project: 'proj-abc' })
+    expect(result).toContain('project=proj-abc')
+  })
+
+  it('percent-encodes project ids that require escaping', () => {
+    const result = encodeAqState({ ...defaultAqUrlState(), project: 'my project/id' })
+    expect(result).toContain('project=my%20project%2Fid')
+  })
+
+  it('begins with ? when project is the only non-default field', () => {
+    const result = encodeAqState({ ...defaultAqUrlState(), project: 'p-1' })
+    expect(result).toBe('?project=p-1')
+  })
+
+  it('includes project alongside thread and other non-default fields', () => {
+    const result = encodeAqState({
+      ...defaultAqUrlState(),
+      project: 'p-1',
+      thread: 't-xyz',
+    })
+    expect(result).toContain('project=p-1')
+    expect(result).toContain('thread=t-xyz')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// project field — decode
+// ---------------------------------------------------------------------------
+
+describe('decodeAqState — project field', () => {
+  it('returns project null when no project param is present', () => {
+    expect(decodeAqState('#/chat').project).toBeNull()
+    expect(decodeAqState('#/chat?thread=t-1').project).toBeNull()
+  })
+
+  it('decodes a bare project id from ?project=p-123', () => {
+    expect(decodeAqState('#/chat?project=p-123').project).toBe('p-123')
+  })
+
+  it('decodes a percent-encoded project id', () => {
+    expect(decodeAqState('#/chat?project=my%20project%2Fid').project).toBe('my project/id')
+  })
+
+  it('returns project null when project param is an empty string', () => {
+    expect(decodeAqState('#/chat?project=').project).toBeNull()
+  })
+
+  it('decodes project alongside thread param', () => {
+    const state = decodeAqState('#/chat?project=p-1&thread=t-456')
+    expect(state.project).toBe('p-1')
+    expect(state.thread).toBe('t-456')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// project round-trip: encode → decode
+// ---------------------------------------------------------------------------
+
+describe('round-trip encode/decode for project field', () => {
+  it('project set round-trips through encode then decode', () => {
+    const original = { ...defaultAqUrlState(), project: 'proj-abc' }
+    const encoded = encodeAqState(original)
+    const decoded = decodeAqState(`#/chat${encoded}`)
+    expect(decoded.project).toBe('proj-abc')
+  })
+
+  it('project null round-trips (omitted in encode, null in decode)', () => {
+    const original = defaultAqUrlState()
+    const encoded = encodeAqState(original)
+    const decoded = decodeAqState(`#/chat${encoded}`)
+    expect(decoded.project).toBeNull()
+  })
+
+  it('project and thread together round-trip correctly', () => {
+    const original = { ...defaultAqUrlState(), project: 'p-1', thread: 't-999' }
+    const encoded = encodeAqState(original)
+    const decoded = decodeAqState(`#/chat${encoded}`)
+    expect(decoded.project).toBe('p-1')
+    expect(decoded.thread).toBe('t-999')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// defaultAqUrlState includes thread: null and project: null
 // ---------------------------------------------------------------------------
 
 describe('defaultAqUrlState', () => {
   it('includes thread: null', () => {
     expect(defaultAqUrlState().thread).toBeNull()
+  })
+
+  it('includes project: null', () => {
+    expect(defaultAqUrlState().project).toBeNull()
   })
 
   it('returns a new object each call', () => {

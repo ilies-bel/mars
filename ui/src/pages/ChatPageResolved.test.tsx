@@ -14,11 +14,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ActionQueueItem, ChatThread } from '@/shared/schemas'
 
 mock.module('@/shared/actionQueueUrlState', () => ({
-  readAqStateFromUrl: () => ({ item: 'failed-task:gone-item', kind: 'all', q: '' }),
+  readAqStateFromUrl: () => ({ item: 'failed-task:gone-item', kind: 'all', q: '', thread: null, project: null }),
   writeAqStateToUrl: () => {},
-  defaultAqUrlState: () => ({ item: null, kind: 'all', q: '' }),
+  defaultAqUrlState: () => ({ item: null, kind: 'all', q: '', thread: null, project: null }),
   encodeAqState: () => '',
-  decodeAqState: () => ({ item: null, kind: 'all', q: '' }),
+  decodeAqState: () => ({ item: null, kind: 'all', q: '', thread: null, project: null }),
 }))
 
 // Dynamic import AFTER the mock is declared.

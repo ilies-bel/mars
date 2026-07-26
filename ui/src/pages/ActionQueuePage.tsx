@@ -245,7 +245,7 @@ export const ActionQueuePage = () => {
   useEffect(() => {
     if (timerRef.current !== null) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(() => {
-      writeAqStateToUrl({ item: selectedKey, kind: kindFilter, q: query, thread: null })
+      writeAqStateToUrl({ item: selectedKey, kind: kindFilter, q: query, thread: null, project: null })
     }, 300)
     return () => {
       if (timerRef.current !== null) clearTimeout(timerRef.current)

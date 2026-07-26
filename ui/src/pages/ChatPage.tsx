@@ -41,7 +41,7 @@ import {
   refreshCodexAuth,
   ApiError,
 } from '@/shared/api'
-import { useFocusedProjectId } from '@/shared/useFocusedProject'
+import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
 import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import { useMarsChat } from '@/shared/useMarsChat'
@@ -2358,6 +2358,7 @@ export const ThreadSidebar = ({
 export const ChatPage = () => {
   const rawProjectId = useFocusedProjectId()
   const projectId = rawProjectId ?? undefined
+  const { projects, setFocusedProjectId } = useFocusedProject()
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(() => readAqStateFromUrl().thread)
   // Projection-Thread selection (an action-queue item id) plus the sidebar
   // filter state — all three restore from the chat URL hash on F5.
@@ -2421,7 +2422,7 @@ export const ChatPage = () => {
   useEffect(() => {
     if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
     urlWriteTimerRef.current = setTimeout(() => {
-      writeAqStateToUrl({ item: selectedQueueItemId, kind: 'all', q: query, thread: selectedThreadId })
+      writeAqStateToUrl({ item: selectedQueueItemId, kind: 'all', q: query, thread: selectedThreadId, project: projectId ?? null })
     }, 300)
     return () => {
       if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
@@ -2446,6 +2447,19 @@ export const ChatPage = () => {
     window.addEventListener('hashchange', onHashChange)
     return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
+
+  // Hydrate focused project from the URL's ?project= param once the project
+  // list has loaded. This makes shareable links (/#/chat?project=<id>&thread=<id>)
+  // land on the right project context even if localStorage has a different one.
+  const urlProjectApplied = useRef(false)
+  useEffect(() => {
+    if (urlProjectApplied.current || projects.length === 0) return
+    urlProjectApplied.current = true
+    const { project } = readAqStateFromUrl()
+    if (project && projects.some((p) => p.projectId === project)) {
+      setFocusedProjectId(project)
+    }
+  }, [projects, setFocusedProjectId])
 
   // Selection is exclusive: a conversation or a projection Thread, never both.
   const handleSelectThread = useCallback((id: string) => {

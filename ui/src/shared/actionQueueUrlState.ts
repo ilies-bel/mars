@@ -29,6 +29,8 @@ export type AqUrlState = {
   kind: KindFilter
   q: string
   thread: string | null
+  /** Project identifier included in shareable links so recipients land on the right project. */
+  project: string | null
 }
 
 /** Returns a fresh default state (new object per call — not a shared reference). */
@@ -37,6 +39,7 @@ export const defaultAqUrlState = (): AqUrlState => ({
   kind: 'all',
   q: '',
   thread: null,
+  project: null,
 })
 
 /**
@@ -57,6 +60,9 @@ export const encodeAqState = (state: AqUrlState): string => {
   }
   if (state.thread !== null) {
     parts.push(`thread=${encodeURIComponent(state.thread)}`)
+  }
+  if (state.project !== null) {
+    parts.push(`project=${encodeURIComponent(state.project)}`)
   }
 
   return parts.length > 0 ? `?${parts.join('&')}` : ''
@@ -92,7 +98,10 @@ export const decodeAqState = (hash: string): AqUrlState => {
   const rawThread = params.get('thread')
   const thread = rawThread !== undefined && rawThread.length > 0 ? rawThread : null
 
-  return { item, kind, q, thread }
+  const rawProject = params.get('project')
+  const project = rawProject !== undefined && rawProject.length > 0 ? rawProject : null
+
+  return { item, kind, q, thread, project }
 }
 
 /** Hash prefixes that carry projection-Thread filter state. */
