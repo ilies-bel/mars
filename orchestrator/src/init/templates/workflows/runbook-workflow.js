@@ -9,10 +9,9 @@
 // Shape: setup (auto) → code (auto) → qa (MANUAL) → verify (auto) → merge (auto).
 //
 // The `qa` step parks the task 'awaiting-human' and renders its Step guide
-// in the action queue and on `mars attach`. You review the diff, run any
-// manual smoke tests, tick done-criteria with `mars task check`, then signal
-// completion with `mars step done <id>`. The automated verify and merge gates
-// run immediately after.
+// in the action queue. You review the diff, run any manual smoke tests, tick
+// done-criteria with `mars task check`, then signal completion with
+// `mars step done <id>`. The automated verify and merge gates run immediately.
 //
 // Route a task here with `mars task add --workflow runbook "<prompt>"`.
 // Check the declared runbook at any time: `mars workflow validate runbook`
@@ -40,7 +39,7 @@ export default defineWorkflow({
     await ctx.step('code', () => runAgent(ctx, { mode: 'auto' }))
 
     // qa → MANUAL: you review the diff and run smoke tests before automated
-    // verify. The Step guide is shown in the action queue and on mars attach.
+    // verify. The Step guide is shown in the action queue.
     // Tick criteria with `mars task check <id> <criterion>`, then signal
     // completion with `mars step done <id>`.
     await ctx.step('qa', () =>

@@ -1,6 +1,6 @@
 ---
 name: live
-description: "Drive a manual-step (awaiting-human) task: list parked tasks or attach to one and work through the step-done loop. Use when the user says 'live', 'take over', 'work on a task', 'pick up', or invokes `/mars:live [id]`."
+description: "Drive a manual-step (awaiting-human) task: list parked tasks or work on one through the step-done loop. Use when the user says 'live', 'take over', 'work on a task', 'pick up', or invokes `/mars:live [id]`."
 ---
 
 # Mars: live — manual-step driver
@@ -8,7 +8,7 @@ description: "Drive a manual-step (awaiting-human) task: list parked tasks or at
 You drive the human side of a Mars manual-step task.  Two modes:
 
 - **No argument** — list `awaiting-human` action-queue rows and let the user pick one.
-- **With `<id>`** — attach to the task, restate the Handoff and current Step guide, then guide the loop until the step is complete.
+- **With `<id>`** — orient to the task and guide the loop until the step is complete.
 
 ---
 
@@ -28,15 +28,15 @@ If one or more are found, present them as a numbered list and ask the user which
 
 ---
 
-## Mode B — Attach and drive the loop
+## Mode B — Orient and drive the loop
 
-### Step 1 — Attach
+### Step 1 — Read task details
 
 ```bash
-mars attach $ARGUMENTS 2>&1
+mars show $ARGUMENTS 2>&1
 ```
 
-Print the full output verbatim so the user sees the Handoff: task title, worktree path, branch, done-criteria checklist, commits ahead, completion report (if any), and journal tail.
+Print the full output verbatim so the user sees the task: title, worktree path, branch, done-criteria checklist, and recent progress.
 
 Also run:
 
@@ -63,7 +63,7 @@ State in one sentence what this step is asking the operator to do, derived from:
 
 ### Step 3 — Drive the loop
 
-Work inside the worktree (`data.worktreePath` from the attach output).  Follow these rules throughout:
+Work inside the worktree (the `worktreePath` from `mars show` output).  Follow these rules throughout:
 
 **Journal at milestones** — after each meaningful action, run:
 ```bash

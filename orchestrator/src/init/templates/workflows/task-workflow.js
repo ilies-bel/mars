@@ -51,10 +51,9 @@ export default defineWorkflow({
     // ── Manual steps (optional) ──────────────────────────────────────────
     // Every step declares WHO executes it: auto (an agent — the default) or
     // manual (you, in your own session). A manual step parks the task
-    // 'awaiting-human' with its Step guide; `mars attach <id>` takes the
-    // lease, `mars step done <id>` completes the step and the pipeline
-    // continues (re-parking at the next manual step re-leases you
-    // automatically).
+    // 'awaiting-human' with its Step guide in the action queue;
+    // `mars step done <id>` completes the step and the pipeline continues
+    // (re-parking at the next manual step re-leases you automatically).
     //
     // Example manual QA gate — uncomment and insert before merge:
     //

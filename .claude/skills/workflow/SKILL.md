@@ -111,8 +111,7 @@ import {
 | "use opus for coding" | `runAgent(ctx, { model: 'claude-opus-4-7' })` |
 | "add a sign-off step" | Add `await ctx.step('sign-off', () => awaitHuman(ctx, { note: '...' }))` at the relevant position |
 
-**Guide strings** are what the user sees in the action queue and when they run
-`mars attach <id>`. Make them clear and actionable — tell the user exactly what
+**Guide strings** are what the user sees in the action queue. Make them clear and actionable — tell the user exactly what
 to do and how to hand off (e.g. `"QA your changes in the worktree. When done, run \`mars step done\`"`).
 
 **After editing**, update the `id` field inside `defineWorkflow({ id: '...' })`

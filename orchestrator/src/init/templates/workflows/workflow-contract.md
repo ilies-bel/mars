@@ -74,8 +74,8 @@ export default defineWorkflow({
 - **Per-step Execution mode** — `runAgent` and `verify` accept `mode: 'auto' |
   'manual'` and an optional `guide: string`. `'auto'` (default) runs the
   primitive headlessly. `'manual'` parks the task `awaiting-human` with the
-  Step guide visible in the action queue and on `mars attach`; `mars step done
-  <id>` signals completion and the pipeline continues. Example manual gate:
+  Step guide visible in the action queue; `mars step done <id>` signals
+  completion and the pipeline continues. Example manual gate:
   ```js
   await ctx.step('qa', () =>
     runAgent(ctx, {

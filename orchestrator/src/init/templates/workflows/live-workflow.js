@@ -11,14 +11,12 @@
 //
 //   1. setup runs auto — the daemon provisions the worktree on task/<id>.
 //   2. The task parks 'awaiting-human' at the MANUAL code step. The action
-//      queue shows the Step guide; `mars attach <id>` takes the lease and
-//      prints the worktree, done criteria, and the Handoff (completion
-//      report + commits + journal tail when a Worker already touched the arc).
-//   3. Work in the worktree: journal decisions with `mars task note`, tick
-//      criteria with `mars task check`, commit as you go.
+//      queue shows the Step guide. Work in the worktree.
+//   3. Journal decisions with `mars task note`, tick criteria with
+//      `mars task check`, commit as you go.
 //   4. `mars step done <id>` completes the step. verify and merge then gate
 //      your work exactly as they gate an agent's. If the pipeline parks at
-//      another manual step later, the lease comes back to you automatically.
+//      another manual step later, the same lease is re-granted automatically.
 //      `mars release <id> --abort` bails to the failure path at any point.
 //
 // Iterating on this file: edits go live on the NEXT dispatch — no daemon
@@ -50,7 +48,7 @@ export default defineWorkflow({
     await ctx.step('setup', () => setupWorktree(ctx))
 
     // code → MANUAL: a Foreground session implements this step. The guide is
-    // what the action queue, `mars attach`, and the session hooks show you.
+    // what the action queue and the session hooks show you.
     await ctx.step('code', () =>
       runAgent(ctx, {
         mode: 'manual',
