@@ -1140,6 +1140,20 @@ export const adrsResponseSchema = z.object({
 export type AdrEntry = z.infer<typeof adrEntrySchema>
 
 // ---------------------------------------------------------------------------
+// Vision
+// ---------------------------------------------------------------------------
+
+/**
+ * Response for GET /api/vision — returns the raw markdown content of VISION.md
+ * for the focused project. `content` is null when VISION.md does not exist.
+ */
+export const visionResponseSchema = z.object({
+  content: z.string().nullable(),
+})
+
+export type VisionResponse = z.infer<typeof visionResponseSchema>
+
+// ---------------------------------------------------------------------------
 // Learned recipes
 // ---------------------------------------------------------------------------
 

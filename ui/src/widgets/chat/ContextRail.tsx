@@ -1,68 +1,32 @@
 /**
  * ContextRail — collapsible right-hand panel on ChatPage.
  *
- * Three stacked panels:
- *   - Live tasks  : non-done tasks from the existing progress view; rows
- *                   that appeared after `sessionStartedAt` get a "new" accent.
- *                   Click → `#/task/<id>?from=chat` drawer overlay.
- *   - Glossary    : searchable term list from /api/glossary; definition +
- *                   avoid-aliases on expand.
- *   - Skills      : list from /api/skills; clicking a skill inserts its slash
- *                   prompt into the composer via `onInsertPrompt`.
+ * Stacked panels:
+ *   - Focus           : the active thread's title and status chip.
+ *   - Session context: artifacts/cards created during the current chat session
+ *                      (files, created task chips) plus the project vision from
+ *                      VISION.md. This is the primary panel, open by default.
+ *   - Glossary        : searchable term list from /api/glossary; definition +
+ *                       avoid-aliases on expand.
+ *   - Skills          : list from /api/skills; clicking a skill inserts its slash
+ *                       prompt into the composer via `onInsertPrompt`.
  *
  * The rail is responsive via a controlled `collapsed` prop: callers render an
  * icon strip at narrow widths and restore the full rail at wider ones.
  * Panels lazy-load and degrade gracefully when the daemon is unreachable.
  */
 
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchGlossary, fetchSkills, fetchAdrs, fetchChatThread } from '@/shared/api'
-import { useProgress } from '@/hooks/useProgress'
+import { fetchGlossary, fetchSkills, fetchAdrs, fetchChatThread, fetchVision } from '@/shared/api'
 import { SkeletonList } from '@/components/Skeleton'
 import { parseCreatedTaskIds } from './parseCreatedTaskIds'
 
 import type { GlossaryTerm, Skill, ChatSegmentAttachment, AdrEntry, ChatThreadDetail } from '@/shared/schemas'
-import type { ProgressTask } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Status chip
 // ---------------------------------------------------------------------------
-
-/** 24-hour window for retaining "done" rows in the LIVE TASKS panel. */
-const DONE_WINDOW_MS = 24 * 60 * 60 * 1000
-
-/**
- * Sort priority for the LIVE TASKS panel — lower number surfaces first.
- * Active statuses lead; stale "done"/"dropped" rows trail.
- */
-const STATUS_PRIORITY: Record<string, number> = {
-  running: 0,
-  verifying: 1,
-  merging: 2,
-  'vega-reconciling': 3,
-  queued: 4,
-  draft: 5,
-  blocked: 6,
-  under_investigation: 7,
-  failed: 8,
-  done: 9,
-  dropped: 10,
-}
-
-/**
- * Relative age string — keeps rows compact (e.g. "2m", "1h", "3d").
- */
-const relativeAge = (isoString: string): string => {
-  const diffMs = Date.now() - Date.parse(isoString)
-  const diffSec = Math.floor(diffMs / 1000)
-  if (diffSec < 60) return `${diffSec}s`
-  const diffMin = Math.floor(diffSec / 60)
-  if (diffMin < 60) return `${diffMin}m`
-  const diffHrs = Math.floor(diffMin / 60)
-  if (diffHrs < 24) return `${diffHrs}h`
-  return `${Math.floor(diffHrs / 24)}d`
-}
 
 /**
  * Status chip label and colour.
@@ -125,113 +89,88 @@ const FocusPanel = ({ threadDetail, isStreaming }: FocusPanelProps) => {
 }
 
 // ---------------------------------------------------------------------------
-// Live tasks panel
+// Project vision panel
 // ---------------------------------------------------------------------------
 
-interface LiveTasksPanelProps {
-  sessionStartedAt: number
+/** Lines from VISION.md to surface as "next conversation subjects" when the
+ * vision is absent or very short. Generic prompts that help the user bootstrap
+ * a project vision conversation with the operator. */
+const NEXT_SUBJECT_SUGGESTIONS = [
+  'What is the long-term goal of this project?',
+  'What are the non-goals and explicit constraints?',
+  'Which open questions need a human decision before the next milestone?',
+]
+
+interface ProjectVisionPanelProps {
+  projectId?: string
 }
 
-const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
-  const { tasks, error } = useProgress()
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+export const ProjectVisionPanel = ({ projectId }: ProjectVisionPanelProps) => {
+  const [expanded, setExpanded] = useState(false)
 
-  /**
-   * Filtered + sorted task list for this panel:
-   * - Drop "done"/"dropped" rows whose `updatedAt` is older than 24 h.
-   * - Sort by status priority (running first), then by `updatedAt` desc
-   *   within the same priority group.
-   */
-  const liveTasks = useMemo((): ProgressTask[] | null => {
-    if (tasks === null) return null
-    const cutoff = Date.now() - DONE_WINDOW_MS
-    return tasks
-      .filter(
-        (t) =>
-          t.cluster !== 'Done' || Date.parse(t.updatedAt) >= cutoff,
-      )
-      .sort((a, b) => {
-        const pa = STATUS_PRIORITY[a.status] ?? 99
-        const pb = STATUS_PRIORITY[b.status] ?? 99
-        if (pa !== pb) return pa - pb
-        return b.updatedAt.localeCompare(a.updatedAt)
-      })
-  }, [tasks])
+  const { data: content, isLoading, isError } = useQuery({
+    queryKey: ['vision', projectId ?? ''],
+    queryFn: () => fetchVision(projectId),
+    staleTime: 120_000,
+  })
 
-  if (error) {
-    return (
-      <p className="px-3 py-2 font-mono text-[10px] text-error/70">
-        Tasks unavailable
-      </p>
-    )
-  }
-
-  if (liveTasks === null) {
+  if (isLoading) {
     return (
       <SkeletonList
         rows={2}
-        rowClassName="mx-3 h-11 mb-0.5"
-        label="Loading tasks"
+        rowClassName="mx-3 h-4 mb-1"
+        label="Loading vision"
       />
     )
   }
 
-  if (liveTasks.length === 0) {
+  // Error or unavailable: surface the first next-subject suggestion so the
+  // panel stays useful even without a VISION.md.
+  if (isError || content === null || content === undefined || content.trim() === '') {
     return (
-      <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground/60">
-        No active tasks
-      </p>
+      <div className="px-3 py-2">
+        <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60 mb-1">
+          Next conversation subject
+        </p>
+        <ul className="flex flex-col gap-1">
+          {NEXT_SUBJECT_SUGGESTIONS.map((s) => (
+            <li
+              key={s}
+              className="font-mono text-[10px] leading-snug text-foreground/70"
+              data-testid="vision-next-subject"
+            >
+              → {s}
+            </li>
+          ))}
+        </ul>
+      </div>
     )
   }
 
-  return (
-    <ul className="flex flex-col gap-0.5 py-1">
-      {liveTasks.map((task: ProgressTask) => {
-        const isNew = Date.parse(task.createdAt) >= sessionStartedAt
-        const chip = statusChip(task.status)
-        const isExpanded = expandedId === task.id
+  // Vision available: show a trimmed excerpt with expand/collapse.
+  const PREVIEW_LENGTH = 300
+  const isLong = content.length > PREVIEW_LENGTH
+  const displayed = expanded || !isLong ? content : content.slice(0, PREVIEW_LENGTH).trimEnd() + '…'
 
-        return (
-          <li key={task.id}>
-            <div
-              className={`group flex w-full flex-col gap-0.5 rounded px-2 py-1.5 transition-colors hover:bg-primary/10 ${isNew ? 'border-l-2 border-highlight/60 pl-[6px]' : ''}`}
-            >
-              <span className="flex items-baseline justify-between gap-1 min-w-0">
-                {/* Status chip: link to Progress page filtered by this status */}
-                <a
-                  href={`#/progress?q=${encodeURIComponent(chip.label)}`}
-                  className={`shrink-0 font-mono text-[10px] uppercase ${chip.className} hover:underline`}
-                  title={`Filter progress by ${chip.label}`}
-                  aria-label={`Filter tasks by status: ${chip.label}`}
-                  data-testid="context-rail-status-link"
-                >
-                  {chip.label}
-                </a>
-                {isNew && (
-                  <span className="shrink-0 font-mono text-[9px] uppercase text-highlight/70">
-                    new
-                  </span>
-                )}
-                <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground/60">
-                  {relativeAge(task.createdAt)}
-                </span>
-              </span>
-              {/* Description: click to expand/collapse; title reveals full text on hover */}
-              <button
-                type="button"
-                className={`min-w-0 w-full break-words font-mono text-[10px] text-foreground/80 leading-snug text-left ${isExpanded ? '' : 'line-clamp-2'}`}
-                onClick={() => setExpandedId(isExpanded ? null : task.id)}
-                title={task.prompt}
-                data-testid="context-rail-description"
-                aria-expanded={isExpanded}
-              >
-                {task.prompt}
-              </button>
-            </div>
-          </li>
-        )
-      })}
-    </ul>
+  return (
+    <div className="px-3 py-2">
+      <pre
+        className="whitespace-pre-wrap font-mono text-[10px] leading-snug text-foreground/80 break-words"
+        data-testid="vision-content"
+      >
+        {displayed}
+      </pre>
+      {isLong && (
+        <button
+          type="button"
+          className="mt-1 font-mono text-[9px] text-muted-foreground hover:text-foreground transition-colors"
+          onClick={() => setExpanded((v) => !v)}
+          data-testid="vision-expand-toggle"
+        >
+          {expanded ? 'show less' : 'show all'}
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -561,7 +500,8 @@ export interface ContextRailProps {
   threadDetail?: ChatThreadDetail | null
   /** True when the client is actively streaming a reply for the active thread. */
   isStreaming?: boolean
-  /** Epoch ms when the current chat session started (for "new task" highlight). */
+  /** Epoch ms when the current chat session started (unused after removing Live
+   * tasks panel; kept in props for API stability while callers adapt). */
   sessionStartedAt: number
   /** Called when a skill row is clicked; inserts the prompt into the composer. */
   onInsertPrompt: (prompt: string) => void
@@ -577,7 +517,6 @@ export const ContextRail = ({
   activeThreadId,
   threadDetail,
   isStreaming,
-  sessionStartedAt,
   onInsertPrompt,
   collapsed = false,
   onToggleCollapse,
@@ -628,12 +567,12 @@ export const ContextRail = ({
         />
       </PanelSection>
 
-      <PanelSection title="Session artifacts" defaultOpen={false}>
+      <PanelSection title="Session artifacts" defaultOpen={true}>
         <SessionArtifactsPanel threadId={threadId} projectId={projectId} />
       </PanelSection>
 
-      <PanelSection title="Live tasks" defaultOpen={true}>
-        <LiveTasksPanel sessionStartedAt={sessionStartedAt} />
+      <PanelSection title="Project vision" defaultOpen={true}>
+        <ProjectVisionPanel projectId={projectId} />
       </PanelSection>
 
       <PanelSection title="Glossary" defaultOpen={false}>

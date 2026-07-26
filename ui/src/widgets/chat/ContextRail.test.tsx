@@ -2,22 +2,24 @@
  * ContextRail component tests.
  *
  * Covers observable behaviour through the public interface:
- *   - Task description has a title attribute (hover tooltip) with the full prompt
- *   - Status chip renders as an <a> link to the Progress page filtered by status
- *   - Description button starts collapsed (aria-expanded=false)
- *   - Different statuses produce correct href values on the status chip
- *   - Session artifacts panel: renders with 3 sections (files, tasks, ADRs)
+ *   - The "Live tasks" panel is absent from the rail (replaced by session context).
+ *   - The "Session artifacts" panel is present and open by default.
+ *   - The "Project vision" panel is present.
+ *   - ProjectVisionPanel renders vision content when VISION.md is available.
+ *   - ProjectVisionPanel renders next-conversation-subject prompts when VISION.md
+ *     is absent or unavailable.
+ *   - SessionArtifactsPanel: files, created tasks, ADRs sections render.
+ *   - Focus panel: renders the active thread title + status chip, or a
+ *     "No active thread" placeholder when no thread is active.
  *
  * Uses renderToStaticMarkup for pure-HTML assertions (no interactive state).
- * Interactive expand/collapse is client-side state; the collapsed default is
- * the observable server-side behaviour we can assert.
  */
 
 import { describe, it, expect } from 'bun:test'
 import { vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ContextRail, SessionArtifactsPanel } from './ContextRail'
-import type { ProgressTask, ChatThreadDetail } from '@/shared/schemas'
+import { ContextRail, ProjectVisionPanel, SessionArtifactsPanel } from './ContextRail'
+import type { ChatThreadDetail } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -25,16 +27,10 @@ import type { ProgressTask, ChatThreadDetail } from '@/shared/schemas'
 
 // vi.hoisted ensures the state object is initialised before vi.mock factories run.
 const mockState = vi.hoisted(() => ({
-  tasks: null as ProgressTask[] | null,
-  error: null as Error | null,
   queryOverride: null as ((opts: { queryKey: unknown[] }) => unknown) | null,
 }))
 
-vi.mock('@/hooks/useProgress', () => ({
-  useProgress: () => ({ tasks: mockState.tasks, error: mockState.error }),
-}))
-
-// GlossaryPanel, SkillsPanel, and SessionArtifactsPanel all call useQuery.
+// All panels (Glossary, Skills, SessionArtifacts, Vision) call useQuery.
 // The default returns isLoading=true (a safe "Loading…" state for most tests).
 // Tests that need specific data can set mockState.queryOverride.
 vi.mock('@tanstack/react-query', () => ({
@@ -45,239 +41,137 @@ vi.mock('@tanstack/react-query', () => ({
 }))
 
 // ---------------------------------------------------------------------------
-// Fixture
+// Helpers
 // ---------------------------------------------------------------------------
 
-const LONG_PROMPT =
-  'drag-drop, paste, mic input handling for the composer widget — needs end-to-end test coverage'
-
-const TASK: ProgressTask = {
-  id: 't-1',
-  prompt: LONG_PROMPT,
-  status: 'queued',
-  createdAt: new Date(0).toISOString(),
-} as ProgressTask
-
-const render = (tasks: ProgressTask[] | null = [TASK], error: Error | null = null) => {
-  mockState.tasks = tasks
-  mockState.error = error
+const renderRail = () => {
+  mockState.queryOverride = null
   return renderToStaticMarkup(
     <ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />,
   )
 }
 
 // ---------------------------------------------------------------------------
-// Tooltip (title attribute)
+// Absence of Live tasks panel
 // ---------------------------------------------------------------------------
 
-describe('ContextRail – description tooltip', () => {
-  it('description button has a title attribute containing the full prompt', () => {
-    const html = render()
-    expect(html).toContain(`title="${LONG_PROMPT}"`)
+describe('ContextRail – Live tasks panel is absent', () => {
+  it('does not render a "Live tasks" section header', () => {
+    const html = renderRail()
+    // Case-insensitive check: the section title must not appear anywhere.
+    expect(html.toLowerCase()).not.toContain('live tasks')
   })
 
-  it('description has the correct data-testid', () => {
-    const html = render()
-    expect(html).toContain('data-testid="context-rail-description"')
+  it('does not render a status chip link to the Progress page', () => {
+    const html = renderRail()
+    // The Live tasks panel rendered status chips as links to #/progress?q=...
+    expect(html).not.toContain('#/progress?q=')
   })
 
-  it('full prompt text appears in the rendered output', () => {
-    const html = render()
-    expect(html).toContain(LONG_PROMPT)
+  it('does not render the context-rail-description test id', () => {
+    const html = renderRail()
+    // That test id was specific to Live tasks rows.
+    expect(html).not.toContain('data-testid="context-rail-description"')
+  })
+
+  it('does not render the context-rail-status-link test id', () => {
+    const html = renderRail()
+    expect(html).not.toContain('data-testid="context-rail-status-link"')
   })
 })
 
 // ---------------------------------------------------------------------------
-// Status chip link
+// Presence of session context panels
 // ---------------------------------------------------------------------------
 
-describe('ContextRail – status chip link', () => {
-  it('status chip renders as an <a> element (not a span)', () => {
-    const html = render()
-    // The data-testid must be on an <a> tag
-    expect(html).toMatch(/<a[^>]*data-testid="context-rail-status-link"/)
+describe('ContextRail – session context panels are present', () => {
+  it('renders the "Session artifacts" section header', () => {
+    const html = renderRail()
+    expect(html).toContain('Session artifacts')
   })
 
-  it('status chip href links to progress page with status as query', () => {
-    const html = render()
-    expect(html).toContain('href="#/progress?q=queued"')
+  it('renders the "Project vision" section header', () => {
+    const html = renderRail()
+    expect(html).toContain('Project vision')
   })
 
-  it('failed status chip links to progress filtered by "failed"', () => {
-    const html = render([{ ...TASK, status: 'failed' } as ProgressTask])
-    expect(html).toContain('href="#/progress?q=failed"')
+  it('renders the Glossary section header', () => {
+    const html = renderRail()
+    expect(html).toContain('Glossary')
   })
 
-  it('blocked status chip links to progress filtered by "blocked"', () => {
-    const html = render([{ ...TASK, status: 'blocked' } as ProgressTask])
-    expect(html).toContain('href="#/progress?q=blocked"')
-  })
-
-  it('running status chip links to progress filtered by "running"', () => {
-    const html = render([{ ...TASK, status: 'running' } as ProgressTask])
-    expect(html).toContain('href="#/progress?q=running"')
-  })
-
-  it('status chip has an aria-label for screen readers', () => {
-    const html = render()
-    expect(html).toContain('aria-label="Filter tasks by status: queued"')
+  it('renders the Skills section header', () => {
+    const html = renderRail()
+    expect(html).toContain('Skills')
   })
 })
 
 // ---------------------------------------------------------------------------
-// Expand / collapse initial state
+// ProjectVisionPanel — vision content
 // ---------------------------------------------------------------------------
 
-describe('ContextRail – description collapse default', () => {
-  it('description button starts collapsed (aria-expanded=false)', () => {
-    const html = render()
-    expect(html).toContain('aria-expanded="false"')
+const renderVision = (visionData: string | null | undefined, isError = false) => {
+  mockState.queryOverride = () => ({
+    data: visionData,
+    isLoading: false,
+    isError,
+  })
+  const html = renderToStaticMarkup(<ProjectVisionPanel />)
+  mockState.queryOverride = null
+  return html
+}
+
+describe('ContextRail – ProjectVisionPanel with vision content', () => {
+  it('renders vision content when VISION.md is available', () => {
+    const html = renderVision('# Vision\nMars is a personal AI coding orchestrator.')
+    expect(html).toContain('Mars is a personal AI coding orchestrator.')
+    expect(html).toContain('data-testid="vision-content"')
   })
 
-  it('collapsed description has line-clamp class', () => {
-    const html = render()
-    expect(html).toContain('line-clamp-2')
+  it('does not render next-subject prompts when vision content is present', () => {
+    const html = renderVision('# Vision\nSome vision content here.')
+    expect(html).not.toContain('data-testid="vision-next-subject"')
+  })
+
+  it('truncates long vision content and shows an expand toggle', () => {
+    const longContent = 'A'.repeat(400)
+    const html = renderVision(longContent)
+    expect(html).toContain('data-testid="vision-expand-toggle"')
+    expect(html).toContain('show all')
+  })
+
+  it('does not show an expand toggle for short vision content', () => {
+    const shortContent = 'Short vision.'
+    const html = renderVision(shortContent)
+    expect(html).not.toContain('data-testid="vision-expand-toggle"')
   })
 })
 
-// ---------------------------------------------------------------------------
-// Sorting and filtering
-// ---------------------------------------------------------------------------
-
-describe('ContextRail – live tasks panel sort and filter', () => {
-  it('excludes done tasks whose updatedAt is older than 24 hours', () => {
-    const oldDoneTask: ProgressTask = {
-      ...TASK,
-      id: 'done-old',
-      prompt: 'old done task',
-      status: 'done',
-      cluster: 'Done',
-      updatedAt: new Date(0).toISOString(), // epoch — clearly > 24h ago
-    } as ProgressTask
-    const html = render([oldDoneTask])
-    expect(html).not.toContain('old done task')
-    // Panel has no active rows left, falls back to empty state
-    expect(html).toContain('No active tasks')
+describe('ContextRail – ProjectVisionPanel empty/unavailable states', () => {
+  it('renders next-subject suggestions when vision content is null', () => {
+    const html = renderVision(null)
+    expect(html).toContain('data-testid="vision-next-subject"')
   })
 
-  it('includes done tasks whose updatedAt is within the last 24 hours', () => {
-    const recentDoneTask: ProgressTask = {
-      ...TASK,
-      id: 'done-recent',
-      prompt: 'recent done task',
-      status: 'done',
-      cluster: 'Done',
-      updatedAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(), // 30 min ago
-    } as ProgressTask
-    const html = render([recentDoneTask])
-    expect(html).toContain('recent done task')
+  it('renders next-subject suggestions when VISION.md content is empty string', () => {
+    const html = renderVision('')
+    expect(html).toContain('data-testid="vision-next-subject"')
   })
 
-  it('sorts running tasks before queued tasks regardless of updatedAt', () => {
-    // Queued task has a more recent updatedAt — without priority sort it would appear first.
-    const queuedTask: ProgressTask = {
-      ...TASK,
-      id: 'q-1',
-      prompt: 'queued task',
-      status: 'queued',
-      cluster: 'Queued',
-      updatedAt: new Date(Date.now() - 1000).toISOString(), // 1 s ago (newer)
-    } as ProgressTask
-    const runningTask: ProgressTask = {
-      ...TASK,
-      id: 'r-1',
-      prompt: 'running task',
-      status: 'running',
-      cluster: 'In progress',
-      updatedAt: new Date(Date.now() - 3600 * 1000).toISOString(), // 1 h ago (older)
-    } as ProgressTask
-    const html = render([queuedTask, runningTask])
-    // Running task must appear earlier in the HTML than the queued task
-    expect(html.indexOf('running task')).toBeLessThan(html.indexOf('queued task'))
+  it('renders next-subject suggestions when query errors', () => {
+    const html = renderVision(undefined, true)
+    expect(html).toContain('data-testid="vision-next-subject"')
   })
 
-  it('sorts verifying tasks before queued tasks', () => {
-    const queuedTask: ProgressTask = {
-      ...TASK,
-      id: 'q-2',
-      prompt: 'another queued',
-      status: 'queued',
-      cluster: 'Queued',
-      updatedAt: new Date(Date.now() - 500).toISOString(),
-    } as ProgressTask
-    const verifyingTask: ProgressTask = {
-      ...TASK,
-      id: 'v-1',
-      prompt: 'verifying task',
-      status: 'verifying',
-      cluster: 'In progress',
-      updatedAt: new Date(Date.now() - 7200 * 1000).toISOString(), // 2 h ago
-    } as ProgressTask
-    const html = render([queuedTask, verifyingTask])
-    expect(html.indexOf('verifying task')).toBeLessThan(html.indexOf('another queued'))
+  it('next-subject suggestions mention the project vision concept', () => {
+    const html = renderVision(null)
+    // The suggestions should guide the user toward a vision conversation.
+    expect(html.toLowerCase()).toMatch(/vision|goal|question/)
   })
 
-  it('sorts queued tasks before blocked tasks', () => {
-    const blockedTask: ProgressTask = {
-      ...TASK,
-      id: 'b-1',
-      prompt: 'blocked task',
-      status: 'blocked',
-      cluster: 'Blocked',
-      updatedAt: new Date(Date.now() - 100).toISOString(),
-    } as ProgressTask
-    const queuedTask: ProgressTask = {
-      ...TASK,
-      id: 'q-3',
-      prompt: 'third queued',
-      status: 'queued',
-      cluster: 'Queued',
-      updatedAt: new Date(Date.now() - 7200 * 1000).toISOString(),
-    } as ProgressTask
-    const html = render([blockedTask, queuedTask])
-    expect(html.indexOf('third queued')).toBeLessThan(html.indexOf('blocked task'))
-  })
-
-  it('within same status, sorts by updatedAt descending (most recently updated first)', () => {
-    const olderQueued: ProgressTask = {
-      ...TASK,
-      id: 'q-old',
-      prompt: 'older queued',
-      status: 'queued',
-      cluster: 'Queued',
-      updatedAt: new Date(Date.now() - 3600 * 1000).toISOString(), // 1 h ago
-    } as ProgressTask
-    const newerQueued: ProgressTask = {
-      ...TASK,
-      id: 'q-new',
-      prompt: 'newer queued',
-      status: 'queued',
-      cluster: 'Queued',
-      updatedAt: new Date(Date.now() - 60 * 1000).toISOString(), // 1 min ago
-    } as ProgressTask
-    const html = render([olderQueued, newerQueued])
-    expect(html.indexOf('newer queued')).toBeLessThan(html.indexOf('older queued'))
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Error / empty states
-// ---------------------------------------------------------------------------
-
-describe('ContextRail – live tasks panel states', () => {
-  it('shows "Tasks unavailable" when useProgress returns an error', () => {
-    const html = render(null, new Error('daemon unreachable'))
-    expect(html).toContain('Tasks unavailable')
-  })
-
-  it('shows "Loading…" when tasks is null (loading state)', () => {
-    const html = render(null)
-    expect(html).toContain('Loading')
-  })
-
-  it('shows "No active tasks" when the task list is empty', () => {
-    const html = render([])
-    expect(html).toContain('No active tasks')
+  it('does not render vision content element when VISION.md is unavailable', () => {
+    const html = renderVision(null)
+    expect(html).not.toContain('data-testid="vision-content"')
   })
 })
 
@@ -297,18 +191,13 @@ const renderArtifacts = (threadId?: string) => {
 
 describe('ContextRail – Focus panel', () => {
   it('renders "No active thread" when no activeThreadId is supplied', () => {
-    mockState.tasks = []
-    mockState.error = null
-    const html = renderToStaticMarkup(
-      <ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />,
-    )
+    const html = renderRail()
     expect(html).toContain('Focus')
     expect(html).toContain('No active thread')
   })
 
   it('shows the thread title and status chip when activeThreadId + threadDetail are supplied', () => {
-    mockState.tasks = []
-    mockState.error = null
+    mockState.queryOverride = null
     const threadDetail: ChatThreadDetail = {
       thread: {
         id: 'thread-focus-1',
@@ -339,8 +228,7 @@ describe('ContextRail – Focus panel', () => {
   })
 
   it('shows "New thread" when threadDetail has a null title', () => {
-    mockState.tasks = []
-    mockState.error = null
+    mockState.queryOverride = null
     const threadDetail: ChatThreadDetail = {
       thread: {
         id: 'thread-focus-2',
@@ -370,16 +258,6 @@ describe('ContextRail – Focus panel', () => {
   })
 })
 
-describe('ContextRail – session artifacts panel header in rail', () => {
-  it('renders the "Session artifacts" section header inside ContextRail', () => {
-    mockState.tasks = []
-    mockState.error = null
-    const html = renderToStaticMarkup(
-      <ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />,
-    )
-    expect(html).toContain('Session artifacts')
-  })
-})
 
 describe('ContextRail – SessionArtifactsPanel structure', () => {
   it('renders all three sub-section labels', () => {

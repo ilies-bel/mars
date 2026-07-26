@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { resolveUploadPath } from './chatUploadPath.ts'
 import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
@@ -376,6 +376,17 @@ export const startServer = async (
         if (path === '/api/adrs' && req.method === 'GET') {
           const r = await proxyGet(ctx.stateDir, '/view/adrs')
           return jsonResponse(r.status, r.body)
+        }
+
+        // GET /api/vision — return raw VISION.md content for the focused project.
+        // Reads directly from repoRoot (no daemon proxy needed — it is a plain file).
+        // Returns { content: null } when VISION.md does not exist.
+        if (path === '/api/vision' && req.method === 'GET') {
+          const visionPath = join(ctx.repoRoot, 'VISION.md')
+          const content = existsSync(visionPath)
+            ? readFileSync(visionPath, 'utf8')
+            : null
+          return jsonResponse(200, { content })
         }
 
         // GET /api/failure-kinds/learned-recipes — list all operator-taught

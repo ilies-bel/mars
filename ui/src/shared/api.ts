@@ -25,6 +25,7 @@ import {
   skillsResponseSchema,
   staleWorktreesResponseSchema,
   tasksResponseSchema,
+  visionResponseSchema,
   workerSessionsResponseSchema,
   type ActionQueueHistoryResponse,
   type ActionQueueItem,
@@ -899,6 +900,16 @@ export const fetchSkills = async (): Promise<Skill[]> => {
 export const fetchAdrs = async (projectId?: string): Promise<AdrEntry[]> => {
   const json = await fetchJson(appendProject('/api/adrs', projectId), adrsResponseSchema)
   return json.adrs
+}
+
+/**
+ * Fetch the project vision from VISION.md (via the UI server).
+ * Returns `null` when VISION.md does not exist in the project repo.
+ * Never throws — errors degrade gracefully to null in the caller.
+ */
+export const fetchVision = async (projectId?: string): Promise<string | null> => {
+  const json = await fetchJson(appendProject('/api/vision', projectId), visionResponseSchema)
+  return json.content
 }
 
 // ---------------------------------------------------------------------------
