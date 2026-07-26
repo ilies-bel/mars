@@ -113,4 +113,61 @@ describe('TopStripe – connection indicator', () => {
     expect(html).toContain('>offline<')
     expect(html).not.toContain('>live<')
   })
+
+  it('live indicator dot pulses when connected', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={0} doneToday={0} failed={0} connected={true} />,
+    )
+    expect(html).toContain('animate-mars-pulse')
+  })
+
+  it('live indicator dot does not pulse when disconnected', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={0} doneToday={0} failed={0} connected={false} />,
+    )
+    expect(html).not.toContain('animate-mars-pulse')
+  })
+})
+
+describe('TopStripe – visual hierarchy (numbers pop from labels)', () => {
+  it('IN PROGRESS count uses flame color to signal active work', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={3} doneToday={0} failed={0} connected={true} />,
+    )
+    const section = between(html, 'stat-in-progress', 'stat-done')
+    expect(section).toContain('text-flame')
+  })
+
+  it('DONE TODAY count uses success color', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={0} doneToday={5} failed={0} connected={true} />,
+    )
+    const section = between(html, 'stat-done', 'stat-failed')
+    expect(section).toContain('text-success')
+  })
+
+  it('FAILED count uses error color to draw attention', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={0} doneToday={0} failed={2} connected={true} />,
+    )
+    const section = from(html, 'stat-failed')
+    expect(section).toContain('text-error')
+  })
+
+  it('IN PROGRESS label is muted so the number stands out', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={3} doneToday={0} failed={0} connected={true} />,
+    )
+    const section = between(html, 'stat-in-progress', 'stat-done')
+    // The label span should carry text-muted (not the number span which carries text-flame)
+    expect(section).toContain('text-muted')
+  })
+
+  it('FAILED label is muted so the number stands out', () => {
+    const html = renderToStaticMarkup(
+      <TopStripe inProgress={0} doneToday={0} failed={2} connected={true} />,
+    )
+    const section = from(html, 'stat-failed')
+    expect(section).toContain('text-muted')
+  })
 })
