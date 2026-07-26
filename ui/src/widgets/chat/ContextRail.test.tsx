@@ -141,6 +141,126 @@ describe('ContextRail – description collapse default', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Sorting and filtering
+// ---------------------------------------------------------------------------
+
+describe('ContextRail – live tasks panel sort and filter', () => {
+  it('excludes done tasks whose updatedAt is older than 24 hours', () => {
+    const oldDoneTask: ProgressTask = {
+      ...TASK,
+      id: 'done-old',
+      prompt: 'old done task',
+      status: 'done',
+      cluster: 'Done',
+      updatedAt: new Date(0).toISOString(), // epoch — clearly > 24h ago
+    } as ProgressTask
+    const html = render([oldDoneTask])
+    expect(html).not.toContain('old done task')
+    // Panel has no active rows left, falls back to empty state
+    expect(html).toContain('No active tasks')
+  })
+
+  it('includes done tasks whose updatedAt is within the last 24 hours', () => {
+    const recentDoneTask: ProgressTask = {
+      ...TASK,
+      id: 'done-recent',
+      prompt: 'recent done task',
+      status: 'done',
+      cluster: 'Done',
+      updatedAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(), // 30 min ago
+    } as ProgressTask
+    const html = render([recentDoneTask])
+    expect(html).toContain('recent done task')
+  })
+
+  it('sorts running tasks before queued tasks regardless of updatedAt', () => {
+    // Queued task has a more recent updatedAt — without priority sort it would appear first.
+    const queuedTask: ProgressTask = {
+      ...TASK,
+      id: 'q-1',
+      prompt: 'queued task',
+      status: 'queued',
+      cluster: 'Queued',
+      updatedAt: new Date(Date.now() - 1000).toISOString(), // 1 s ago (newer)
+    } as ProgressTask
+    const runningTask: ProgressTask = {
+      ...TASK,
+      id: 'r-1',
+      prompt: 'running task',
+      status: 'running',
+      cluster: 'In progress',
+      updatedAt: new Date(Date.now() - 3600 * 1000).toISOString(), // 1 h ago (older)
+    } as ProgressTask
+    const html = render([queuedTask, runningTask])
+    // Running task must appear earlier in the HTML than the queued task
+    expect(html.indexOf('running task')).toBeLessThan(html.indexOf('queued task'))
+  })
+
+  it('sorts verifying tasks before queued tasks', () => {
+    const queuedTask: ProgressTask = {
+      ...TASK,
+      id: 'q-2',
+      prompt: 'another queued',
+      status: 'queued',
+      cluster: 'Queued',
+      updatedAt: new Date(Date.now() - 500).toISOString(),
+    } as ProgressTask
+    const verifyingTask: ProgressTask = {
+      ...TASK,
+      id: 'v-1',
+      prompt: 'verifying task',
+      status: 'verifying',
+      cluster: 'In progress',
+      updatedAt: new Date(Date.now() - 7200 * 1000).toISOString(), // 2 h ago
+    } as ProgressTask
+    const html = render([queuedTask, verifyingTask])
+    expect(html.indexOf('verifying task')).toBeLessThan(html.indexOf('another queued'))
+  })
+
+  it('sorts queued tasks before blocked tasks', () => {
+    const blockedTask: ProgressTask = {
+      ...TASK,
+      id: 'b-1',
+      prompt: 'blocked task',
+      status: 'blocked',
+      cluster: 'Blocked',
+      updatedAt: new Date(Date.now() - 100).toISOString(),
+    } as ProgressTask
+    const queuedTask: ProgressTask = {
+      ...TASK,
+      id: 'q-3',
+      prompt: 'third queued',
+      status: 'queued',
+      cluster: 'Queued',
+      updatedAt: new Date(Date.now() - 7200 * 1000).toISOString(),
+    } as ProgressTask
+    const html = render([blockedTask, queuedTask])
+    expect(html.indexOf('third queued')).toBeLessThan(html.indexOf('blocked task'))
+  })
+
+  it('within same status, sorts by updatedAt descending (most recently updated first)', () => {
+    const olderQueued: ProgressTask = {
+      ...TASK,
+      id: 'q-old',
+      prompt: 'older queued',
+      status: 'queued',
+      cluster: 'Queued',
+      updatedAt: new Date(Date.now() - 3600 * 1000).toISOString(), // 1 h ago
+    } as ProgressTask
+    const newerQueued: ProgressTask = {
+      ...TASK,
+      id: 'q-new',
+      prompt: 'newer queued',
+      status: 'queued',
+      cluster: 'Queued',
+      updatedAt: new Date(Date.now() - 60 * 1000).toISOString(), // 1 min ago
+    } as ProgressTask
+    const html = render([olderQueued, newerQueued])
+    expect(html.indexOf('newer queued')).toBeLessThan(html.indexOf('older queued'))
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Error / empty states
 // ---------------------------------------------------------------------------
 

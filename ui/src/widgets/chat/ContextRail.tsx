@@ -15,7 +15,7 @@
  * Panels lazy-load and degrade gracefully when the daemon is unreachable.
  */
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchGlossary, fetchSkills, fetchAdrs, fetchChatThread } from '@/shared/api'
 import { useProgress } from '@/hooks/useProgress'
@@ -28,6 +28,27 @@ import type { ProgressTask } from '@/shared/schemas'
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** 24-hour window for retaining "done" rows in the LIVE TASKS panel. */
+const DONE_WINDOW_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Sort priority for the LIVE TASKS panel — lower number surfaces first.
+ * Active statuses lead; stale "done"/"dropped" rows trail.
+ */
+const STATUS_PRIORITY: Record<string, number> = {
+  running: 0,
+  verifying: 1,
+  merging: 2,
+  'vega-reconciling': 3,
+  queued: 4,
+  draft: 5,
+  blocked: 6,
+  under_investigation: 7,
+  failed: 8,
+  done: 9,
+  dropped: 10,
+}
 
 /**
  * Relative age string — keeps rows compact (e.g. "2m", "1h", "3d").
@@ -73,6 +94,28 @@ const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
   const { tasks, error } = useProgress()
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
+  /**
+   * Filtered + sorted task list for this panel:
+   * - Drop "done"/"dropped" rows whose `updatedAt` is older than 24 h.
+   * - Sort by status priority (running first), then by `updatedAt` desc
+   *   within the same priority group.
+   */
+  const liveTasks = useMemo((): ProgressTask[] | null => {
+    if (tasks === null) return null
+    const cutoff = Date.now() - DONE_WINDOW_MS
+    return tasks
+      .filter(
+        (t) =>
+          t.cluster !== 'Done' || Date.parse(t.updatedAt) >= cutoff,
+      )
+      .sort((a, b) => {
+        const pa = STATUS_PRIORITY[a.status] ?? 99
+        const pb = STATUS_PRIORITY[b.status] ?? 99
+        if (pa !== pb) return pa - pb
+        return b.updatedAt.localeCompare(a.updatedAt)
+      })
+  }, [tasks])
+
   if (error) {
     return (
       <p className="px-3 py-2 font-mono text-[10px] text-error/70">
@@ -81,7 +124,7 @@ const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
     )
   }
 
-  if (tasks === null) {
+  if (liveTasks === null) {
     return (
       <SkeletonList
         rows={2}
@@ -91,7 +134,7 @@ const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
     )
   }
 
-  if (tasks.length === 0) {
+  if (liveTasks.length === 0) {
     return (
       <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground/60">
         No active tasks
@@ -101,7 +144,7 @@ const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
 
   return (
     <ul className="flex flex-col gap-0.5 py-1">
-      {tasks.map((task: ProgressTask) => {
+      {liveTasks.map((task: ProgressTask) => {
         const isNew = Date.parse(task.createdAt) >= sessionStartedAt
         const chip = statusChip(task.status)
         const isExpanded = expandedId === task.id
