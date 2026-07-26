@@ -97,6 +97,10 @@ export type DaemonRequest =
   | { op: 'preview.spawn'; taskId: string; cmd: string; cwd: string }
   | { op: 'preview.status'; taskId: string }
   | { op: 'preview.teardown'; taskId: string }
+  // Cancel an active merge job by id: marks it canceled in the DB and, if
+  // the merge worker is currently processing it, aborts the per-job signal
+  // so the merge operation is interrupted (slice-3 abort path).
+  | { op: 'merge.cancel'; jobId: string }
 
 export type DaemonResponse =
   | { ok: true; data?: unknown }

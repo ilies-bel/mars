@@ -106,6 +106,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     handlePreviewSpawn: notImpl('handlePreviewSpawn') as DaemonDeps['handlePreviewSpawn'],
     handlePreviewStatus: notImpl('handlePreviewStatus') as DaemonDeps['handlePreviewStatus'],
     handlePreviewTeardown: notImpl('handlePreviewTeardown') as DaemonDeps['handlePreviewTeardown'],
+    handleCancelMergeJob: notImpl('handleCancelMergeJob') as DaemonDeps['handleCancelMergeJob'],
     ...overrides,
   }
   return { deps, state }
@@ -115,9 +116,9 @@ describe('RPC registry', () => {
   it('registers exactly one leaf per protocol op, no duplicates', () => {
     // Every handler op is unique (buildRpcRegistry throws on dup).
     expect(() => buildRpcRegistry(allRpcHandlers)).not.toThrow()
-    // Spot-check the count matches the 41-op protocol surface
-    // (38 + preview.spawn + preview.status + preview.teardown).
-    expect(rpcRegistry.size).toBe(41)
+    // Spot-check the count matches the 42-op protocol surface
+    // (38 + preview.spawn + preview.status + preview.teardown + merge.cancel).
+    expect(rpcRegistry.size).toBe(42)
   })
 
   it('rejects duplicate ops', () => {

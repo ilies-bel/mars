@@ -65,6 +65,14 @@ export interface MergeWorkerDeps {
 
 export interface MergeWorkerHandle {
   stop(): Promise<void>
+  /**
+   * Cancel the in-flight merge job for the given job id, if one is currently
+   * running. Aborts the per-job AbortController so `mergeBranch` is interrupted.
+   * Returns `true` if the matching job was found and its abort was signalled;
+   * `false` if no in-flight job matched the id (it may have already finished or
+   * not yet been claimed).
+   */
+  cancelJob(jobId: string): boolean
 }
 
 // ── Promise-based park / resume (mirrors awaitManualDone pattern) ─────────────
@@ -252,6 +260,10 @@ export function startMergeWorker({
 
   // Serialisation guard: non-null while a job is being processed.
   let inFlight: Promise<void> | null = null
+  // Tracks the currently-running job id and its per-job AbortController so
+  // `cancelJob` can interrupt it by id.
+  let currentJobId: string | null = null
+  let currentJobAc: AbortController | null = null
 
   const loop = async (): Promise<void> => {
     while (!ac.signal.aborted) {
@@ -285,6 +297,8 @@ export function startMergeWorker({
       inFlight = new Promise<void>((res) => {
         resolveInFlight = res
       })
+      currentJobId = job.id
+      currentJobAc = jobAc
 
       try {
         await store.markRunning(job.id)
@@ -300,6 +314,8 @@ export function startMergeWorker({
         // (i.e., markRunning threw before runMergeJob was called).
         resolveMergeJob(job.taskId, { status: 'failed', error: msg, errorCode: 'crash' })
       } finally {
+        currentJobId = null
+        currentJobAc = null
         inFlight = null
         resolveInFlight()
       }
@@ -314,6 +330,13 @@ export function startMergeWorker({
     stop: async (): Promise<void> => {
       ac.abort()
       await loopPromise
+    },
+    cancelJob(jobId: string): boolean {
+      if (currentJobId === jobId && currentJobAc !== null) {
+        currentJobAc.abort()
+        return true
+      }
+      return false
     },
   }
 }

@@ -200,6 +200,15 @@ export interface DaemonDeps {
   ): Promise<{ pid: number; logPath: string; url?: string }>
   handlePreviewStatus(taskId: string): { pid: number; logPath: string; url?: string } | null
   handlePreviewTeardown(taskId: string): Promise<void>
+
+  /**
+   * Cancel an active merge job by id: marks it canceled in the DB and, if the
+   * merge worker is currently processing it, aborts the per-job abort controller
+   * so the merge operation is interrupted. Returns whether the in-flight job was
+   * actually aborted (false when the job was not claimed/running yet, or already
+   * finished).
+   */
+  handleCancelMergeJob(jobId: string): Promise<{ canceled: boolean; workerAborted: boolean }>
 }
 
 /** The `patch` shape carried by the `update` op (matches protocol). */

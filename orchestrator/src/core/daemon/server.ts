@@ -3303,6 +3303,16 @@ export const startDaemon = async (
     handlePreviewSpawn: (taskId, cmd, cwd) => previewRegistry.spawn(taskId, cmd, cwd),
     handlePreviewStatus: (taskId) => previewRegistry.status(taskId),
     handlePreviewTeardown: (taskId) => previewRegistry.teardown(taskId),
+    handleCancelMergeJob: async (jobId: string) => {
+      const { getDefaultMergeJobStore: getMergeJobStore } = await import(
+        '../store/merge-job-store'
+      )
+      const updated = await getMergeJobStore().markCanceled(jobId, 'canceled by operator')
+      const workerAborted = mergeWorkerHandle !== null
+        ? mergeWorkerHandle.cancelJob(jobId)
+        : false
+      return { canceled: updated !== null, workerAborted }
+    },
   })
 
   const handleRequest = async (req: DaemonRequest): Promise<DaemonResponse> => {

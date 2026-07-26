@@ -453,6 +453,11 @@ const previewTeardownHandler = handler('preview.teardown', async (req, deps) => 
   return { ok: true }
 })
 
+const mergeCancelHandler = handler('merge.cancel', async (req, deps) => {
+  const result = await deps.handleCancelMergeJob(req.jobId)
+  return { ok: true, data: result }
+})
+
 const taskNoteHandler = handler('task.note', async (req, deps) => {
   const entry = await deps.appendProgress({
     taskId: req.id,
@@ -538,4 +543,5 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   previewSpawnHandler,
   previewStatusHandler,
   previewTeardownHandler,
+  mergeCancelHandler,
 ]

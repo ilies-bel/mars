@@ -164,6 +164,17 @@ const makeFakeStore = (
     async listByStatus(status) {
       return [...jobs.values()].filter((j) => j.status === status)
     },
+
+    async getActiveMergeJob(taskId: string) {
+      const found = [...jobs.values()].find(
+        (j) =>
+          j.taskId === taskId &&
+          (['queued', 'claimed', 'running'] as const).includes(
+            j.status as 'queued' | 'claimed' | 'running',
+          ),
+      )
+      return found ?? null
+    },
   }
 
   return { store, calls, jobs, enqueueJob }

@@ -8,6 +8,7 @@ import {
   type DropTaskResult,
 } from '../queue'
 import { getDefaultDomainTaskStore } from '../store/task-store'
+import { getDefaultMergeJobStore } from '../store/merge-job-store'
 import {
   listUniqueCommitsAhead,
   type OrphanCommit,
@@ -114,6 +115,17 @@ export const corePurgeTask = async (
     if (commits.length > 0) {
       throw new PurgeAheadError(id, branch, commits)
     }
+  }
+
+  // Guard: refuse if an active merge job (queued/claimed/running) exists for
+  // this task. Purging would wipe the worktree under an in-flight merge,
+  // corrupting the merge operation and leaving the branch in an unknown state.
+  // Cancel the merge job first with `mars merge cancel <jobId>`.
+  const activeMergeJob = await getDefaultMergeJobStore().getActiveMergeJob(id)
+  if (activeMergeJob !== null) {
+    throw new Error(
+      `task ${id} has an active merge job ${activeMergeJob.id}; cancel it with mars merge cancel ${activeMergeJob.id} first`,
+    )
   }
 
   const { removeWorktree } = await import('../lib/git/worktree')

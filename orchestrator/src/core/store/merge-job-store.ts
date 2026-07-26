@@ -178,6 +178,13 @@ export interface MergeJobStore {
    * List all merge jobs with the given status, oldest first.
    */
   listByStatus(status: MergeJobStatus): Promise<MergeJob[]>
+
+  /**
+   * Return the active (queued/claimed/running) merge job for a given task_id,
+   * or `null` if none exists. Used by restart/purge guards to refuse operations
+   * that would tear down a worktree under an in-flight merge.
+   */
+  getActiveMergeJob(taskId: string): Promise<MergeJob | null>
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -313,6 +320,19 @@ export const createMergeJobStore = (client: DbClient): MergeJobStore => {
         args: [status],
       })
       return rs.rows.map(rowToMergeJob)
+    },
+
+    async getActiveMergeJob(taskId) {
+      const rs = await client.execute({
+        sql: `SELECT * FROM merge_jobs
+              WHERE  task_id = ?
+                AND  status IN ('queued', 'claimed', 'running')
+              ORDER  BY created_at DESC
+              LIMIT  1`,
+        args: [taskId],
+      })
+      if (rs.rows.length === 0) return null
+      return rowToMergeJob(rs.rows[0])
     },
   }
 

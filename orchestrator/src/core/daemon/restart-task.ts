@@ -2,6 +2,7 @@ import type { WorkflowStore } from '@mars/workflow'
 import { getTask, hasIncompleteBlockers, removeBlocker, updateTask } from '../queue'
 import { supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
 import { getDefaultTaskStore } from '../store/task-store'
+import { getDefaultMergeJobStore } from '../store/merge-job-store'
 
 export type RestartErrorCode = 'NOT_FOUND' | 'WRONG_STATUS'
 
@@ -147,6 +148,18 @@ export const coreRestartTask = async (
     const recoveryId = (inflightRows.rows[0] as unknown as { id: string }).id
     throw new RestartTaskError(
       `task ${id} has an in-flight recovery task ${recoveryId}; wait for the recovery to complete before restarting (or use 'mars continue' to resume once it finishes)`,
+      'WRONG_STATUS',
+    )
+  }
+
+  // Guard: refuse if an active merge job (queued/claimed/running) exists for
+  // this task. Restarting would wipe the worktree that the merge worker is
+  // operating on, corrupting the merge and leaving the branch in an unknown
+  // state. Cancel the merge job first with `mars merge cancel <jobId>`.
+  const activeMergeJob = await getDefaultMergeJobStore().getActiveMergeJob(id)
+  if (activeMergeJob !== null) {
+    throw new RestartTaskError(
+      `task ${id} has an active merge job ${activeMergeJob.id}; cancel it with mars merge cancel ${activeMergeJob.id} first`,
       'WRONG_STATUS',
     )
   }

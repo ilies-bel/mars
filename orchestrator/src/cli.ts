@@ -180,6 +180,11 @@ Commands:
                                 failed_phase, failed in the 'code' phase, or
                                 lost its worktree on disk — use 'mars restart'
                                 instead. Stops on the first error.
+  merge cancel <jobId>          cancel an active merge job by id. Marks the job
+                                canceled in the database and, if the merge worker
+                                is currently processing it, aborts the in-flight
+                                merge operation. Required before restarting or
+                                purging a task that has an active merge job.
   restart <id> [<id> ...]       wipe worktree+branch and re-queue failed/done/
                                 merging/vega-reconciling task(s) from setup
                                 (full pipeline re-run). Stops on first error.

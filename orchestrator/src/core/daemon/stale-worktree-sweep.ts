@@ -17,6 +17,7 @@ import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { listTasks } from '../queue'
 import { type ActionQueueKind, raiseActionQueueItem } from '../lib/action-queue'
+import { getDefaultMergeJobStore } from '../store/merge-job-store'
 
 export const STALE_WORKTREE_KIND: ActionQueueKind = 'stale-worktree'
 
@@ -68,6 +69,14 @@ export const detectAndRaiseStaleWorktrees = async (
     const updatedMs = Date.parse(task.updatedAt)
     if (!Number.isFinite(updatedMs)) continue
     if (now - updatedMs < thresholdMs) continue
+
+    // Skip tasks whose merge is actively in progress — wiping the worktree
+    // while a merge job is running would corrupt the merge operation.
+    const activeMergeJob = await getDefaultMergeJobStore().getActiveMergeJob(task.id)
+    if (activeMergeJob !== null) {
+      console.log(`[stale-worktree] skipping ${task.id}: active merge job ${activeMergeJob.id}`)
+      continue
+    }
 
     const worktreePath =
       task.worktreePath ?? join(repoRoot, '.mars', 'worktrees', task.id)
