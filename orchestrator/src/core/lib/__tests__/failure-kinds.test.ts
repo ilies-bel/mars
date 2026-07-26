@@ -128,12 +128,14 @@ describe('warmTitle values match the PRD-agreed copy', () => {
   })
 
   it('merge:vcs-supervisor-aborted/* conflict entries → "The changes clashed with main and were too hard to merge"', () => {
-    // The dirty-worktree entry has a distinct warmTitle (worktree hygiene, not a
-    // conflict), so this assertion is scoped to the conflict-resolution sub-class.
+    // The dirty-worktree and rebase-no-in-progress-state entries have distinct
+    // warmTitles (worktree/rebase-state conditions, not conflicts), so this
+    // assertion is scoped to the conflict-resolution sub-classes only.
     const entries = FAILURE_KINDS.filter(
       (k) =>
         k.signature.startsWith('merge:vcs-supervisor-aborted/') &&
-        k.signature !== 'merge:vcs-supervisor-aborted/rebase-dirty-worktree',
+        k.signature !== 'merge:vcs-supervisor-aborted/rebase-dirty-worktree' &&
+        k.signature !== 'merge:vcs-supervisor-aborted/rebase-no-in-progress-state',
     )
     expect(entries.length).toBeGreaterThan(0)
     for (const e of entries) {
@@ -344,6 +346,30 @@ describe('new catalog entries for previously-unmatched signatures', () => {
     // recipe must be null — this is a state failure, not a code defect with a recipe
     expect(entry!.recipe).toBeNull()
     // staticEncodable must be orchestration (infrastructure condition)
+    expect(entry!.staticEncodable).toEqual({ encodable: false, reason: 'orchestration' })
+    // Actions must NOT include diagnose-failure — there is nothing to diagnose
+    expect(entry!.actions.every((a) => a.op !== 'diagnose-failure')).toBe(true)
+    // Must have restart (to re-provision the worktree) and purge
+    expect(entry!.actions.some((a) => a.op === 'restart')).toBe(true)
+    expect(entry!.actions.some((a) => a.op === 'purge')).toBe(true)
+  })
+
+  it('merge:vcs-supervisor-aborted/rebase-no-in-progress-state is registered with restart/purge actions and no diagnose-failure', () => {
+    // This failure is a git worktree/rebase-state condition: git rebase exited
+    // non-zero without leaving a rebase state directory, meaning the rebase could
+    // not start (e.g. uncommitted changes, invalid upstream ref). The correct
+    // resolution is to restart the task, not to spawn an Investigator that would
+    // chase a phantom code bug.
+    const entry = lookupFailureKind('merge:vcs-supervisor-aborted/rebase-no-in-progress-state')
+    expect(entry).not.toBeNull()
+    expect(entry!.signature).toBe('merge:vcs-supervisor-aborted/rebase-no-in-progress-state')
+    // warmTitle must name the rebase-state cause, not a generic merge-conflict failure
+    expect(entry!.warmTitle).toBe('The rebase could not start (no in-progress state)')
+    // verboseReason must explain the rebase-state / worktree condition
+    expect(entry!.verboseReason.toLowerCase()).toMatch(/rebase|worktree/)
+    // recipe must be null — this is a state failure, not a code defect with a recipe
+    expect(entry!.recipe).toBeNull()
+    // staticEncodable must be orchestration (not a gate-encodable check)
     expect(entry!.staticEncodable).toEqual({ encodable: false, reason: 'orchestration' })
     // Actions must NOT include diagnose-failure — there is nothing to diagnose
     expect(entry!.actions.every((a) => a.op !== 'diagnose-failure')).toBe(true)

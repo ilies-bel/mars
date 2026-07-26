@@ -478,6 +478,25 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         ],
       },
       {
+        // merge:vcs-supervisor-aborted/rebase-no-in-progress-state fires when
+        // mergeBranch's guard detects that git rebase exited non-zero WITHOUT
+        // leaving a rebase-merge/ or rebase-apply/ state directory on disk.
+        // This means git aborted the rebase before it could conflict (e.g.
+        // uncommitted changes in the worktree blocked the rebase, an invalid
+        // upstream ref, or an empty-commit stop). This is a git
+        // worktree/rebase-state condition, not a code defect; restarting
+        // re-provisions the worktree from scratch.
+        signature: 'merge:vcs-supervisor-aborted/rebase-no-in-progress-state',
+        staticEncodable: notEncodable('orchestration'),
+        warmTitle: 'The rebase could not start (no in-progress state)',
+        verboseReason:
+          'The merge step was aborted because git rebase exited non-zero without leaving a rebase state directory on disk — the worktree or ref state prevented the rebase from starting. This is a git worktree/rebase-state condition, not a code defect; restarting re-provisions the worktree from scratch.',
+        actions: [
+          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      },
+      {
         signature: 'merge:vcs-supervisor-aborted/unclassified',
         staticEncodable: notEncodable('orchestration'),
         warmTitle: 'The changes clashed with main and were too hard to merge',
