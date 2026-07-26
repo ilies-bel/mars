@@ -60,7 +60,7 @@ const OriginNodeRow = ({
           <button
             type="button"
             onClick={() => onNavigate(node.id)}
-            className="flex w-full items-baseline gap-2 rounded text-left hover:bg-primary/10"
+            className="flex w-full cursor-pointer items-baseline gap-2 rounded text-left hover:bg-primary/10"
           >
             <OriginNodeContent node={node} />
           </button>
