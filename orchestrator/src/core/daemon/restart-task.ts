@@ -166,8 +166,19 @@ export const coreRestartTask = async (
 
   // Worktree directory may be removed — it can be recreated. But the branch
   // ref must survive if it carries unmerged committed work.
+  // keepBranch=true: do NOT let removeWorktree delete the branch — the guard
+  // below is the sole decision-maker on whether the ref is preserved or removed.
+  // Before this fix, keepBranch defaulted to false, so removeWorktree would run
+  // `git branch -D` unconditionally; by the time the commits-ahead guard ran the
+  // branch was already gone and the guard's preservation path was dead code.
   if (task.worktreePath && exists(task.worktreePath)) {
-    await removeWorktree({ path: task.worktreePath, branch }, true).catch(() => {})
+    await removeWorktree({ path: task.worktreePath, branch }, true, true).catch(
+      (err: unknown) => {
+        console.warn(
+          `[restart-cleanup] worktree remove failed for task ${id} at ${task.worktreePath}: ${String(err)}`,
+        )
+      },
+    )
   }
 
   // Guard: refuse to delete a branch whose tip is not an ancestor of the

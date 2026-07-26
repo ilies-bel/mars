@@ -11,6 +11,16 @@
  * The invariant: NO cleanup path may delete a task branch whose tip is not an
  * ancestor of the integration branch. Delete the worktree if needed, but the
  * ref must survive.
+ *
+ * The deeper root cause (2026-07-27): even when `worktreePath` is set and the
+ * worktree directory exists on disk, the guard was dead code. `removeWorktree`
+ * was called WITHOUT `keepBranch=true`, so it ran `git branch -D` before the
+ * commits-ahead guard had a chance to run. By the time the guard queried the
+ * branch, it was already gone — `listUniqueCommitsAhead` returned empty and
+ * control fell into the delete-else arm (a no-op). The fix: pass `keepBranch=true`
+ * so the guard is the sole decision-maker on whether the ref is preserved or
+ * removed. The regression tests below exercise the worktree-on-disk path that
+ * previously caused silent data loss.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -140,6 +150,86 @@ describe('coreRestartTask — commits-ahead guard', () => {
     await restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore())
 
     // No unmerged work — the branch should be cleaned up
+    expect(branchExists(repo, branch)).toBe(false)
+  })
+
+  // ── Regression: worktree directory exists on disk ─────────────────────────
+  // These tests exercise the code path that was broken: `task.worktreePath`
+  // is set AND the directory is a live registered git worktree. Without the
+  // fix, `removeWorktree` deleted the branch (keepBranch defaulted to false)
+  // before the commits-ahead guard could see it, making the guard dead code.
+
+  it('preserves a branch and raises worktree-ahead item when worktree exists on disk and branch is ahead', async () => {
+    const { q, restart } = await loadModules(repo)
+
+    const task = await q.enqueueTask('task with live worktree', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+
+    // Create the branch with a commit ahead of main
+    execFileSync('git', ['checkout', '-b', branch], { cwd: repo })
+    writeFileSync(resolve(repo, 'live-work.txt'), 'live work product')
+    execFileSync('git', ['add', 'live-work.txt'], { cwd: repo })
+    execFileSync('git', ['commit', '-m', 'live work — must survive restart via worktree path'], {
+      cwd: repo,
+    })
+    execFileSync('git', ['checkout', 'main'], { cwd: repo })
+
+    // Register a real git worktree at a path inside the test repo
+    // (so it's cleaned up automatically when the repo tmpdir is removed)
+    const wtDir = resolve(repo, '.mars', 'worktrees')
+    mkdirSync(wtDir, { recursive: true })
+    const wtPath = resolve(wtDir, task.id)
+    execFileSync('git', ['worktree', 'add', wtPath, branch], { cwd: repo })
+
+    // Set worktreePath on the task — this is what triggers the removeWorktree call
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed', branch = ?, worktree_path = ? WHERE id = ?`,
+      args: [branch, wtPath, task.id],
+    })
+
+    await restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore())
+
+    // Branch must survive — the worktree directory existed, removeWorktree ran,
+    // but keepBranch=true means git branch -D was NOT called inside it.
+    // The commits-ahead guard then finds the branch, sees work ahead, and
+    // preserves it while raising a worktree-ahead action-queue item.
+    expect(branchExists(repo, branch)).toBe(true)
+
+    // The action-queue item must be raised so the operator can decide what to do
+    const rows = await q.resolveQueueClient().execute({
+      sql: `SELECT kind, signature FROM action_queue_items
+             WHERE signature = ? AND state = 'open'`,
+      args: [`restart-ahead:${task.id}`],
+    })
+    expect(rows.rows.length).toBe(1)
+    expect((rows.rows[0] as { kind: string }).kind).toBe('worktree-ahead')
+  })
+
+  it('deletes a branch when worktree exists on disk but branch has no commits ahead', async () => {
+    const { q, restart } = await loadModules(repo)
+
+    const task = await q.enqueueTask('task at tip with live worktree', undefined, {
+      skipTriage: true,
+    })
+    const branch = `task/${task.id}`
+
+    // Branch at the same commit as main — zero unique commits ahead
+    execFileSync('git', ['branch', branch], { cwd: repo })
+
+    // Register a real git worktree at a path inside the test repo
+    const wtDir = resolve(repo, '.mars', 'worktrees')
+    mkdirSync(wtDir, { recursive: true })
+    const wtPath = resolve(wtDir, task.id)
+    execFileSync('git', ['worktree', 'add', wtPath, branch], { cwd: repo })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed', branch = ?, worktree_path = ? WHERE id = ?`,
+      args: [branch, wtPath, task.id],
+    })
+
+    await restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore())
+
+    // Zero commits ahead — the branch carries no work product and must be deleted
     expect(branchExists(repo, branch)).toBe(false)
   })
 })
