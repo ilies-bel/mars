@@ -24,7 +24,13 @@ function TabsList({
     <TabsPrimitive.List
       data-slot="tabs-list"
       className={cn(
-        "bg-muted text-muted-foreground inline-flex h-9 w-fit items-center justify-center rounded-lg p-[3px]",
+        // bg-background resolves to --color-bg (#F5EDE4), which is the value
+        // shadcn's "muted surface" convention expects. The alternative Tailwind
+        // utility that shadcn uses by default is intentionally avoided here:
+        // --color-muted in this project is Mars's dark-brown text colour
+        // (#705F50), NOT a surface, so applying it to the track would produce
+        // a near-invisible dark slab.
+        "bg-background text-muted-foreground inline-flex h-9 w-fit items-center justify-center rounded-lg p-[3px]",
         className
       )}
       {...props}
