@@ -1,21 +1,7 @@
-/**
- * System prompt for the Mars chat agent.
- *
- * `CHAT_SYSTEM_PROMPT` is the built-in default. Operators can override it
- * per-repo by writing `.mars/chat-system-prompt.md` — it is read on every
- * run so edits take effect on the next message with no daemon restart.
- *
- * The resolved prompt is sent as the `instructions` field of the Codex
- * Responses API request — it is the entire system prompt; nothing else is
- * injected ahead of it.
- */
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
-
-import { DESTRUCTIVE_MARS_VERBS, SAFE_MARS_VERBS } from '../lib/chat-mars-verbs'
-
-export const CHAT_SYSTEM_PROMPT = `You are Mars. Not a chat assistant sitting next to Mars — you ARE the
+exports[`CHAT_SYSTEM_PROMPT content > matches snapshot 1`] = `
+"You are Mars. Not a chat assistant sitting next to Mars — you ARE the
 framework: the orchestrator, the queue, the workers, the worktrees. When
 Mars did something, you did it.
 
@@ -44,9 +30,9 @@ is genuinely tabular or a list. Code fences only for code and commands.
 No emoji. No headings for answers under a paragraph.
 
 Scope: you act on tasks directly. For safe operations
-(${SAFE_MARS_VERBS.join(', ')}), run the \`mars\` command immediately
+(list, show, diagnose, restart, unblock, validate, task-add, run-reflect, enable-auto-reflect, attach), run the \`mars\` command immediately
 without asking permission. For destructive operations
-(${DESTRUCTIVE_MARS_VERBS.join(', ')}), run \`mars propose <verb> <args>\`
+(dismiss, purge, reject, prune-worktree), run \`mars propose <verb> <args>\`
 first and wait for the operator's next message before executing the real
 command. Code changes route through \`mars task add\`; never edit files on
 \`main\` directly.
@@ -54,23 +40,5 @@ command. Code changes route through \`mars task add\`; never edit files on
 Daemon restarts: restarting the daemon ends the current chat run — the
 daemon shuts down while this turn is still in flight. Always send your full
 reply first, then issue the restart command as the last action in the turn.
-If you run \`mars daemon restart\` mid-reply the turn will be cut short.`
-
-/**
- * Resolve the system prompt to use for the chat agent.
- *
- * Reads `<repoRoot>/.mars/chat-system-prompt.md`; if that file exists and
- * is non-empty (after trimming), its contents replace `CHAT_SYSTEM_PROMPT`.
- * Any read error or a missing / whitespace-only file falls back to the
- * built-in constant. Never cached — read per run.
- */
-export const resolveChatSystemPrompt = async (repoRoot: string): Promise<string> => {
-  try {
-    const content = await readFile(join(repoRoot, '.mars', 'chat-system-prompt.md'), 'utf8')
-    const trimmed = content.trim()
-    if (trimmed.length > 0) return trimmed
-  } catch {
-    // Missing file or unreadable → fall back to the built-in prompt.
-  }
-  return CHAT_SYSTEM_PROMPT
-}
+If you run \`mars daemon restart\` mid-reply the turn will be cut short."
+`;

@@ -1,5 +1,6 @@
 /**
- * Tests for chat-system-prompt.ts — resolveChatSystemPrompt behaviour.
+ * Tests for chat-system-prompt.ts — resolveChatSystemPrompt behaviour
+ * and CHAT_SYSTEM_PROMPT content contract.
  *
  * Uses real temp directories so file-system semantics are proven against
  * the actual `fs/promises` APIs rather than mocks.
@@ -10,6 +11,7 @@ import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { CHAT_SYSTEM_PROMPT, resolveChatSystemPrompt } from '../chat-system-prompt'
+import { DESTRUCTIVE_MARS_VERBS, SAFE_MARS_VERBS } from '../../lib/chat-mars-verbs'
 
 describe('resolveChatSystemPrompt', () => {
   let repoRoot: string
@@ -57,5 +59,49 @@ describe('resolveChatSystemPrompt', () => {
 
     const result = await resolveChatSystemPrompt(repoRoot)
     expect(result).toBe(CHAT_SYSTEM_PROMPT)
+  })
+})
+
+describe('CHAT_SYSTEM_PROMPT content', () => {
+  it('matches snapshot', () => {
+    expect(CHAT_SYSTEM_PROMPT).toMatchSnapshot()
+  })
+
+  it('does not contain the old "chat surface, not an implementation surface" language', () => {
+    expect(CHAT_SYSTEM_PROMPT).not.toContain(
+      'this is a chat surface, not an implementation surface',
+    )
+  })
+
+  it('lists every safe verb in the Scope paragraph', () => {
+    const scopeStart = CHAT_SYSTEM_PROMPT.indexOf('Scope:')
+    const scopeEnd = CHAT_SYSTEM_PROMPT.indexOf('\n\n', scopeStart)
+    const scopeParagraph = CHAT_SYSTEM_PROMPT.slice(
+      scopeStart,
+      scopeEnd === -1 ? undefined : scopeEnd,
+    )
+    for (const verb of SAFE_MARS_VERBS) {
+      expect(scopeParagraph).toContain(verb)
+    }
+  })
+
+  it('lists every destructive verb in the Scope paragraph', () => {
+    const scopeStart = CHAT_SYSTEM_PROMPT.indexOf('Scope:')
+    const scopeEnd = CHAT_SYSTEM_PROMPT.indexOf('\n\n', scopeStart)
+    const scopeParagraph = CHAT_SYSTEM_PROMPT.slice(
+      scopeStart,
+      scopeEnd === -1 ? undefined : scopeEnd,
+    )
+    for (const verb of DESTRUCTIVE_MARS_VERBS) {
+      expect(scopeParagraph).toContain(verb)
+    }
+  })
+
+  it('instructs the destructive-propose protocol with mars propose', () => {
+    expect(CHAT_SYSTEM_PROMPT).toContain('mars propose')
+  })
+
+  it('still routes code changes through mars task add', () => {
+    expect(CHAT_SYSTEM_PROMPT).toContain('mars task add')
   })
 })
