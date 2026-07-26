@@ -38,6 +38,8 @@ import { operatorCommands } from './operator'
 import { chatFeedbackCommands } from './chat-feedback'
 import { releaseNotesCommands } from './release-notes'
 import { verifyGateCommands } from './verify-gate'
+import { verifyCommands } from './verify'
+import { credentialsCommands } from './credentials'
 import { proposeCommands } from './propose'
 import { mergeCommands } from './merge'
 
@@ -73,6 +75,8 @@ export const allCommands: readonly Command[] = [
   ...chatFeedbackCommands,
   ...releaseNotesCommands,
   ...verifyGateCommands,
+  ...verifyCommands,
+  ...credentialsCommands,
   ...proposeCommands,
   ...mergeCommands,
 ]

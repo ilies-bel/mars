@@ -83,11 +83,15 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // mars chat-feedback list — filter by rating ('up' or 'down')
   '--rating',
   '--origin-arc',
-  // mars verify-gate — verify gate registry management
+  // mars verify-gate / mars verify — verify gate registry management
   '--scope',
   '--cmd',
   '--tier',
   '--manifest',
+  // mars verify add — repeated gate args (--args tsc --args --noEmit)
+  '--args',
+  // mars credentials set — human-readable description of the credential
+  '--description',
   // mars task add --supersede <task-id>: declare this task as a manual
   // operator-authored continuation of a failed arc whose recovery exhausted
   // automatic options (slice 2 of PRD 94e2a82a-recovery-operator).
@@ -156,6 +160,7 @@ export const REPEATABLE_FLAGS: ReadonlySet<string> = new Set([
   '--files',
   '--done',
   '--tag',
+  '--args',
 ])
 
 export const parseArgs = (argv: readonly string[]): ParsedArgs => {
