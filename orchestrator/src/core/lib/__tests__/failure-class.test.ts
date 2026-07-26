@@ -1,0 +1,127 @@
+import { describe, expect, it } from 'vitest'
+import {
+  classifyFailure,
+  isNonCodeFailure,
+  type FailureCategory,
+} from '../failure-class'
+
+describe('classifyFailure — connectivity', () => {
+  it('classifies /api-unreachable as connectivity', () => {
+    expect(classifyFailure('code:coder-exit-nonzero/api-unreachable')).toBe<FailureCategory>(
+      'connectivity',
+    )
+  })
+
+  it('classifies /test-pg-connection-refused as connectivity', () => {
+    expect(classifyFailure('verify:test/test-pg-connection-refused')).toBe<FailureCategory>(
+      'connectivity',
+    )
+  })
+
+  it('requires the suffix to be at end — mid-string does not match', () => {
+    expect(
+      classifyFailure('verify:test/api-unreachable/extra'),
+    ).toBe<FailureCategory>('code')
+  })
+})
+
+describe('classifyFailure — orchestration', () => {
+  it('classifies /rebase-no-in-progress-state as orchestration', () => {
+    expect(
+      classifyFailure('merge:vcs-supervisor-aborted/rebase-no-in-progress-state'),
+    ).toBe<FailureCategory>('orchestration')
+  })
+
+  it('classifies /worktree-missing as orchestration', () => {
+    expect(classifyFailure('verify:has-diff/worktree-missing')).toBe<FailureCategory>(
+      'orchestration',
+    )
+  })
+
+  it('classifies /not-fast-forward as orchestration', () => {
+    expect(classifyFailure('merge:preflight/not-fast-forward')).toBe<FailureCategory>(
+      'orchestration',
+    )
+  })
+
+  it('classifies /index-lock-contention as orchestration', () => {
+    expect(classifyFailure('merge:crashed/index-lock-contention')).toBe<FailureCategory>(
+      'orchestration',
+    )
+  })
+})
+
+describe('classifyFailure — infra', () => {
+  it('classifies phantom-task watchdog: prefix as infra', () => {
+    expect(
+      classifyFailure('phantom-task watchdog: task mars-abc123 exceeded time limit'),
+    ).toBe<FailureCategory>('infra')
+  })
+
+  it('classifies /install-timeout as infra', () => {
+    expect(classifyFailure('setup:install-failed/install-timeout')).toBe<FailureCategory>(
+      'infra',
+    )
+  })
+
+  it('phantom-task watchdog prefix beats other rules', () => {
+    // Even if it happened to end with an orchestration slug, the prefix wins
+    expect(
+      classifyFailure('phantom-task watchdog: not-fast-forward'),
+    ).toBe<FailureCategory>('infra')
+  })
+})
+
+describe('classifyFailure — code (default)', () => {
+  it('classifies unclassified signatures as code', () => {
+    expect(classifyFailure('verify:typecheck/unclassified')).toBe<FailureCategory>('code')
+  })
+
+  it('classifies known code-level typecheck errors as code', () => {
+    expect(
+      classifyFailure('verify:typecheck/typecheck-cannot-find-name'),
+    ).toBe<FailureCategory>('code')
+  })
+
+  it('classifies test-assertion-error as code', () => {
+    expect(classifyFailure('verify:test/test-assertion-error')).toBe<FailureCategory>('code')
+  })
+
+  it('classifies merge-conflict-unresolved as code', () => {
+    expect(
+      classifyFailure('merge:vcs-supervisor-aborted/merge-conflict-unresolved'),
+    ).toBe<FailureCategory>('code')
+  })
+
+  it('classifies an empty signature as code', () => {
+    expect(classifyFailure('')).toBe<FailureCategory>('code')
+  })
+
+  it('classifies a bare "unclassified" string as code', () => {
+    expect(classifyFailure('unclassified')).toBe<FailureCategory>('code')
+  })
+})
+
+describe('isNonCodeFailure', () => {
+  it('returns true for connectivity signatures', () => {
+    expect(isNonCodeFailure('code:coder-exit-nonzero/api-unreachable')).toBe(true)
+    expect(isNonCodeFailure('verify:test/test-pg-connection-refused')).toBe(true)
+  })
+
+  it('returns true for orchestration signatures', () => {
+    expect(isNonCodeFailure('verify:has-diff/worktree-missing')).toBe(true)
+    expect(isNonCodeFailure('merge:preflight/not-fast-forward')).toBe(true)
+  })
+
+  it('returns true for infra signatures', () => {
+    expect(isNonCodeFailure('setup:install-failed/install-timeout')).toBe(true)
+    expect(
+      isNonCodeFailure('phantom-task watchdog: exceeded wall-clock limit'),
+    ).toBe(true)
+  })
+
+  it('returns false for code signatures', () => {
+    expect(isNonCodeFailure('verify:typecheck/unclassified')).toBe(false)
+    expect(isNonCodeFailure('verify:test/test-assertion-error')).toBe(false)
+  })
+})
