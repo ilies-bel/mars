@@ -128,7 +128,7 @@ export const raiseAggregatedMainCommiterFailureRow = async (
   })
   // Resolve the committer row to extract payload + origin for context.
   const fixRow = await s.query({
-    sql: `SELECT origin_id, recovery_payload, error FROM tasks WHERE id = ?`,
+    sql: `SELECT origin_id, recovery_payload, error, worktree_path FROM tasks WHERE id = ?`,
     args: [recoveryTaskId],
   })
   if (fixRow.rows.length === 0) {
@@ -139,6 +139,7 @@ export const raiseAggregatedMainCommiterFailureRow = async (
     origin_id: string
     recovery_payload: string | null
     error: string | null
+    worktree_path: string | null
   }
   const dependents = cohort.rows as unknown as Array<{
     id: string
@@ -169,6 +170,30 @@ export const raiseAggregatedMainCommiterFailureRow = async (
     ...cohortLines,
     '',
     fix.error ? `Last committer error (truncated):\n\`\`\`\n${fix.error}\n\`\`\`` : null,
+    // Without this the operator has no way to find their own work. Spawning a
+    // committer MOVES the integration branch's uncommitted changes into the
+    // committer's worktree (stash push on the repo root -> stash pop in the
+    // worktree). When the committer then fails — which the recipe is SUPPOSED
+    // to do whenever the diff is ambiguous, e.g. edits spanning unrelated
+    // subsystems — those changes stay behind in a hidden `.mars/worktrees/`
+    // path. `git status` on the integration branch is clean and the edits look
+    // deleted.
+    fix.worktree_path
+      ? [
+          '',
+          "Your uncommitted changes are NOT lost — they were moved off the",
+          "integration branch into the committer's worktree:",
+          '',
+          '```',
+          `git -C ${fix.worktree_path} status`,
+          `git -C ${fix.worktree_path} diff`,
+          '```',
+          '',
+          'Review them there, then either commit them from that worktree or copy',
+          'them back to the integration checkout and commit. The queue stays',
+          'parked until the integration branch is clean.',
+        ].join('\n')
+      : null,
   ]
     .filter((line): line is string => line !== null)
     .join('\n')
