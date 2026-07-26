@@ -17,11 +17,12 @@
 
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchGlossary, fetchSkills } from '@/shared/api'
+import { fetchGlossary, fetchSkills, fetchAdrs, fetchChatThread } from '@/shared/api'
 import { useProgress } from '@/hooks/useProgress'
 import { SkeletonList } from '@/components/Skeleton'
+import { parseCreatedTaskIds } from './parseCreatedTaskIds'
 
-import type { GlossaryTerm, Skill } from '@/shared/schemas'
+import type { GlossaryTerm, Skill, ChatSegmentAttachment, AdrEntry } from '@/shared/schemas'
 import type { ProgressTask } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
@@ -305,6 +306,134 @@ const SkillsPanel = ({ onInsertPrompt }: SkillsPanelProps) => {
 }
 
 // ---------------------------------------------------------------------------
+// Session artifacts panel
+// ---------------------------------------------------------------------------
+
+export interface SessionArtifactsPanelProps {
+  threadId?: string
+  projectId?: string
+}
+
+export const SessionArtifactsPanel = ({ threadId, projectId }: SessionArtifactsPanelProps) => {
+  const [showAllAdrs, setShowAllAdrs] = useState(false)
+
+  // Fetch thread data (messages) only when a thread is selected.
+  const { data: threadDetail, isLoading: threadLoading } = useQuery({
+    queryKey: ['chat-thread', threadId ?? ''],
+    queryFn: () => fetchChatThread(threadId!, projectId),
+    enabled: !!threadId,
+    staleTime: 30_000,
+  })
+
+  // ADRs are global — always fetch.
+  const { data: adrsData, isLoading: adrsLoading } = useQuery({
+    queryKey: ['adrs', projectId ?? ''],
+    queryFn: () => fetchAdrs(projectId),
+    staleTime: 60_000,
+  })
+
+  const messages = threadDetail?.messages ?? []
+  const attachments: ChatSegmentAttachment[] = messages.flatMap((m) =>
+    m.segments.filter((s): s is ChatSegmentAttachment => s.type === 'attachment'),
+  )
+  const taskIds = parseCreatedTaskIds(messages)
+  const adrs: AdrEntry[] = adrsData ?? []
+  const visibleAdrs = showAllAdrs ? adrs : adrs.slice(0, 5)
+
+  return (
+    <div className="flex flex-col">
+      {/* --- Files --- */}
+      <div className="px-3 pt-2 pb-1">
+        <p className="font-mono text-[9px] uppercase tracking-widest text-muted/60 mb-1">
+          Files
+        </p>
+        {!threadId ? (
+          <p className="font-mono text-[10px] text-muted/50">No thread selected</p>
+        ) : threadLoading ? (
+          <p className="font-mono text-[10px] text-muted animate-pulse">Loading…</p>
+        ) : attachments.length === 0 ? (
+          <p className="font-mono text-[10px] text-muted/50">No files uploaded</p>
+        ) : (
+          <ul className="flex flex-col gap-0.5">
+            {attachments.map((att, i) => (
+              <li key={`${att.path}-${i}`} className="flex items-center gap-1">
+                <span className="font-mono text-[10px] text-fg/70 truncate" title={att.name}>
+                  {att.name}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* --- Created tasks --- */}
+      <div className="px-3 pt-1 pb-1">
+        <p className="font-mono text-[9px] uppercase tracking-widest text-muted/60 mb-1">
+          Created tasks
+        </p>
+        {!threadId ? (
+          <p className="font-mono text-[10px] text-muted/50">No thread selected</p>
+        ) : threadLoading ? (
+          <p className="font-mono text-[10px] text-muted animate-pulse">Loading…</p>
+        ) : taskIds.length === 0 ? (
+          <p className="font-mono text-[10px] text-muted/50">No tasks created</p>
+        ) : (
+          <ul className="flex flex-wrap gap-1">
+            {taskIds.map((id) => (
+              <li key={id}>
+                <a
+                  href={`#/task/${encodeURIComponent(id)}?from=chat`}
+                  className="inline-block rounded bg-iron/15 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-iron/30 transition-colors"
+                  title={id}
+                  data-testid="session-artifacts-task-chip"
+                >
+                  {id}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {/* --- ADRs --- */}
+      <div className="px-3 pt-1 pb-2">
+        <p className="font-mono text-[9px] uppercase tracking-widest text-muted/60 mb-1">
+          Recent ADRs
+        </p>
+        {adrsLoading ? (
+          <p className="font-mono text-[10px] text-muted animate-pulse">Loading…</p>
+        ) : adrs.length === 0 ? (
+          <p className="font-mono text-[10px] text-muted/50">No ADRs yet</p>
+        ) : (
+          <>
+            <ul className="flex flex-col gap-0.5">
+              {visibleAdrs.map((adr) => (
+                <li key={adr.number} className="font-mono text-[10px] text-fg/80 leading-snug">
+                  <span className="text-muted/60 mr-1">#{adr.number}</span>
+                  <span className="line-clamp-1" title={adr.title}>
+                    {adr.title}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {adrs.length > 5 && (
+              <button
+                type="button"
+                className="mt-1 font-mono text-[9px] text-muted hover:text-fg transition-colors"
+                onClick={() => setShowAllAdrs((v) => !v)}
+                data-testid="session-artifacts-adrs-toggle"
+              >
+                {showAllAdrs ? 'show less' : `show all (${adrs.length})`}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Panel section wrapper
 // ---------------------------------------------------------------------------
 
@@ -339,6 +468,8 @@ const PanelSection = ({ title, defaultOpen = true, children }: PanelSectionProps
 
 export interface ContextRailProps {
   projectId?: string
+  /** The currently selected chat thread. Used to scope session-artifact data. */
+  threadId?: string
   /** Epoch ms when the current chat session started (for "new task" highlight). */
   sessionStartedAt: number
   /** Called when a skill row is clicked; inserts the prompt into the composer. */
@@ -350,7 +481,8 @@ export interface ContextRailProps {
 }
 
 export const ContextRail = ({
-  projectId: _projectId,
+  projectId,
+  threadId,
   sessionStartedAt,
   onInsertPrompt,
   collapsed = false,
@@ -394,6 +526,10 @@ export const ContextRail = ({
           ▸
         </button>
       </div>
+
+      <PanelSection title="Session artifacts" defaultOpen={false}>
+        <SessionArtifactsPanel threadId={threadId} projectId={projectId} />
+      </PanelSection>
 
       <PanelSection title="Live tasks" defaultOpen={true}>
         <LiveTasksPanel sessionStartedAt={sessionStartedAt} />

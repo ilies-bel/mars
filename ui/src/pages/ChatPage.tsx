@@ -2686,6 +2686,7 @@ export const ChatPage = () => {
 
       <ContextRail
         projectId={projectId}
+        threadId={selectedThreadId ?? undefined}
         sessionStartedAt={sessionStartedAt}
         onInsertPrompt={handleInsertPrompt}
         collapsed={railCollapsed}

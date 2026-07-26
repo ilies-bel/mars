@@ -3,6 +3,7 @@ import { DAEMON_ERROR } from './daemonErrors'
 import {
   actionQueueHistoryResponseSchema,
   actionQueueResponseSchema,
+  adrsResponseSchema,
   autoRecipeRunsResponseSchema,
   wywaDeltaResponseSchema,
   chatThreadDetailSchema,
@@ -26,6 +27,7 @@ import {
   workerSessionsResponseSchema,
   type ActionQueueHistoryResponse,
   type ActionQueueItem,
+  type AdrEntry,
   type AutoRecipeRun,
   type WywaDeltaResponse,
   type ChatThread,
@@ -866,6 +868,16 @@ export const fetchSkills = async (): Promise<Skill[]> => {
   return json.skills
 }
 
+/**
+ * Fetch the ADR list from the daemon (via the UI server proxy).
+ * Returns ADRs in descending-number order (newest first).
+ * Returns an empty array when the daemon is unreachable or docs/adr/ does not exist.
+ */
+export const fetchAdrs = async (projectId?: string): Promise<AdrEntry[]> => {
+  const json = await fetchJson(appendProject('/api/adrs', projectId), adrsResponseSchema)
+  return json.adrs
+}
+
 // ---------------------------------------------------------------------------
 // Learned recipes
 // ---------------------------------------------------------------------------
@@ -952,6 +964,7 @@ export type {
   ActionQueueHistoryResponse,
   ActionQueueItem,
   ActionQueueResolution,
+  AdrEntry,
   AutoRecipeRun,
   ChatThread,
   ChatThreadDetail,

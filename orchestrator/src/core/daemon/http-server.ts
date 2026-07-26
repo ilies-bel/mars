@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http'
-import { mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdir, writeFile, rm, readdir, readFile } from 'node:fs/promises'
 import { join, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { FAILURE_KINDS } from '../lib/failure-kinds'
@@ -900,6 +900,37 @@ export const startHttpServer = async (
         .viewSkills()
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/adrs — list docs/adr/*.md as {number,title,slug}, newest first.
+    // Returns { adrs: [] } when docs/adr/ does not exist. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/adrs') {
+      const adrDir = join(getRepoRoot(), 'docs', 'adr')
+      const ADR_FILENAME_RE = /^(\d{4})-([a-z0-9-]+)\.md$/
+      readdir(adrDir)
+        .then(async (entries) => {
+          const adrFiles = entries.filter((n) => ADR_FILENAME_RE.test(n)).sort().reverse()
+          const adrs: Array<{ number: number; title: string; slug: string }> = []
+          for (const name of adrFiles) {
+            const match = ADR_FILENAME_RE.exec(name)
+            if (!match) continue
+            const number = Number.parseInt(match[1], 10)
+            const slug = match[2] ?? name
+            const text = await readFile(join(adrDir, name), 'utf8').catch(() => '')
+            const firstLine = text.split('\n', 1)[0] ?? ''
+            const title = firstLine.replace(/^#\s*/, '').trim() || slug
+            adrs.push({ number, title, slug })
+          }
+          sendJson(res, 200, { adrs })
+        })
+        .catch((err: unknown) => {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+            sendJson(res, 200, { adrs: [] })
+            return
+          }
+          sendError(res, err)
+        })
       return
     }
 

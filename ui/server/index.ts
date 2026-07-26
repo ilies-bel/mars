@@ -373,6 +373,11 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        if (path === '/api/adrs' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/adrs')
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/failure-kinds/learned-recipes — list all operator-taught
         // auto-run rules from the daemon. Used by the detail pane's un-teach
         // affordance and the WYWA panel.

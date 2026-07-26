@@ -6,6 +6,7 @@
  *   - Status chip renders as an <a> link to the Progress page filtered by status
  *   - Description button starts collapsed (aria-expanded=false)
  *   - Different statuses produce correct href values on the status chip
+ *   - Session artifacts panel: renders with 3 sections (files, tasks, ADRs)
  *
  * Uses renderToStaticMarkup for pure-HTML assertions (no interactive state).
  * Interactive expand/collapse is client-side state; the collapsed default is
@@ -15,8 +16,8 @@
 import { describe, it, expect } from 'bun:test'
 import { vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ContextRail } from './ContextRail'
-import type { ProgressTask } from '@/shared/schemas'
+import { ContextRail, SessionArtifactsPanel } from './ContextRail'
+import type { ProgressTask, ChatThreadDetail } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -26,16 +27,21 @@ import type { ProgressTask } from '@/shared/schemas'
 const mockState = vi.hoisted(() => ({
   tasks: null as ProgressTask[] | null,
   error: null as Error | null,
+  queryOverride: null as ((opts: { queryKey: unknown[] }) => unknown) | null,
 }))
 
 vi.mock('@/hooks/useProgress', () => ({
   useProgress: () => ({ tasks: mockState.tasks, error: mockState.error }),
 }))
 
-// GlossaryPanel and SkillsPanel both call useQuery; returning isLoading keeps
-// them in a benign "Loading…" state so they don't interfere with task tests.
+// GlossaryPanel, SkillsPanel, and SessionArtifactsPanel all call useQuery.
+// The default returns isLoading=true (a safe "Loading…" state for most tests).
+// Tests that need specific data can set mockState.queryOverride.
 vi.mock('@tanstack/react-query', () => ({
-  useQuery: () => ({ data: undefined, isLoading: true, isError: false }),
+  useQuery: (opts: { queryKey: unknown[] }) => {
+    if (mockState.queryOverride) return mockState.queryOverride(opts)
+    return { data: undefined, isLoading: true, isError: false }
+  },
 }))
 
 // ---------------------------------------------------------------------------
@@ -152,5 +158,174 @@ describe('ContextRail – live tasks panel states', () => {
   it('shows "No active tasks" when the task list is empty', () => {
     const html = render([])
     expect(html).toContain('No active tasks')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Session artifacts panel
+// ---------------------------------------------------------------------------
+
+/** Render SessionArtifactsPanel directly so we aren't blocked by the collapsed PanelSection. */
+const renderArtifacts = (threadId?: string) => {
+  mockState.queryOverride = null
+  return renderToStaticMarkup(<SessionArtifactsPanel threadId={threadId} />)
+}
+
+describe('ContextRail – session artifacts panel header in rail', () => {
+  it('renders the "Session artifacts" section header inside ContextRail', () => {
+    mockState.tasks = []
+    mockState.error = null
+    const html = renderToStaticMarkup(
+      <ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />,
+    )
+    expect(html).toContain('Session artifacts')
+  })
+})
+
+describe('ContextRail – SessionArtifactsPanel structure', () => {
+  it('renders all three sub-section labels', () => {
+    const html = renderArtifacts()
+    expect(html).toContain('Files')
+    expect(html).toContain('Created tasks')
+    expect(html).toContain('Recent ADRs')
+  })
+
+  it('shows "No thread selected" for files when no threadId is provided', () => {
+    const html = renderArtifacts(undefined)
+    expect(html).toContain('No thread selected')
+  })
+
+  it('shows ADR loading state when no data is fetched yet (isLoading=true)', () => {
+    // The default useQuery mock returns isLoading=true → "Loading…"
+    const html = renderArtifacts(undefined)
+    expect(html).toContain('Loading')
+  })
+})
+
+describe('ContextRail – SessionArtifactsPanel with thread data', () => {
+  it('shows task chips when thread has task-creating tool_use results', () => {
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-1',
+        title: null,
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 1,
+        origin: null,
+        alertItemId: null,
+        alertResolved: false,
+      },
+      messages: [
+        {
+          id: 'msg-1',
+          threadId: 'thread-1',
+          role: 'assistant',
+          segments: [
+            {
+              type: 'tool_use',
+              toolName: 'Bash',
+              input: 'mars task add "implement feature"',
+              result: 'Task queued: mars-aabbccdd\nStatus: queued',
+              isError: false,
+              status: 'complete',
+            },
+          ],
+          createdAt: '2024-01-01T00:00:00.000Z',
+          feedback: null,
+        },
+      ],
+    }
+
+    mockState.queryOverride = (opts: { queryKey: unknown[] }) => {
+      const [key] = opts.queryKey as string[]
+      if (key === 'chat-thread') return { data: threadDetail, isLoading: false, isError: false }
+      return { data: undefined, isLoading: true, isError: false }
+    }
+
+    const html = renderToStaticMarkup(<SessionArtifactsPanel threadId="thread-1" />)
+    mockState.queryOverride = null
+
+    expect(html).toContain('mars-aabbccdd')
+    expect(html).toContain('data-testid="session-artifacts-task-chip"')
+  })
+
+  it('shows uploaded file names from attachment segments', () => {
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-2',
+        title: null,
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 1,
+        origin: null,
+        alertItemId: null,
+        alertResolved: false,
+      },
+      messages: [
+        {
+          id: 'msg-2',
+          threadId: 'thread-2',
+          role: 'user',
+          segments: [
+            {
+              type: 'attachment',
+              path: 'thread-2/uuid.png',
+              mimeType: 'image/png',
+              name: 'screenshot.png',
+            },
+          ],
+          createdAt: '2024-01-01T00:00:00.000Z',
+          feedback: null,
+        },
+      ],
+    }
+
+    mockState.queryOverride = (opts: { queryKey: unknown[] }) => {
+      const [key] = opts.queryKey as string[]
+      if (key === 'chat-thread') return { data: threadDetail, isLoading: false, isError: false }
+      return { data: undefined, isLoading: true, isError: false }
+    }
+
+    const html = renderToStaticMarkup(<SessionArtifactsPanel threadId="thread-2" />)
+    mockState.queryOverride = null
+
+    expect(html).toContain('screenshot.png')
+  })
+
+  it('shows ADRs from the /api/adrs endpoint', () => {
+    mockState.queryOverride = (opts: { queryKey: unknown[] }) => {
+      const [key] = opts.queryKey as string[]
+      if (key === 'adrs') {
+        return {
+          data: [{ number: 42, title: 'My ADR title', slug: 'my-adr-title' }],
+          isLoading: false,
+          isError: false,
+        }
+      }
+      return { data: undefined, isLoading: true, isError: false }
+    }
+
+    const html = renderToStaticMarkup(<SessionArtifactsPanel />)
+    mockState.queryOverride = null
+
+    expect(html).toContain('My ADR title')
+    expect(html).toContain('#42')
+  })
+
+  it('shows "No ADRs yet" when the ADR list is empty', () => {
+    mockState.queryOverride = (opts: { queryKey: unknown[] }) => {
+      const [key] = opts.queryKey as string[]
+      if (key === 'adrs') return { data: [], isLoading: false, isError: false }
+      return { data: undefined, isLoading: true, isError: false }
+    }
+
+    const html = renderToStaticMarkup(<SessionArtifactsPanel />)
+    mockState.queryOverride = null
+
+    expect(html).toContain('No ADRs yet')
   })
 })

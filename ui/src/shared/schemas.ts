@@ -1093,6 +1093,22 @@ export type Skill = z.infer<typeof skillSchema>
 export type SkillsResponse = z.infer<typeof skillsResponseSchema>
 
 // ---------------------------------------------------------------------------
+// ADRs
+// ---------------------------------------------------------------------------
+
+export const adrEntrySchema = z.object({
+  number: z.number(),
+  title: z.string(),
+  slug: z.string(),
+})
+
+export const adrsResponseSchema = z.object({
+  adrs: z.array(adrEntrySchema),
+})
+
+export type AdrEntry = z.infer<typeof adrEntrySchema>
+
+// ---------------------------------------------------------------------------
 // Learned recipes
 // ---------------------------------------------------------------------------
 
