@@ -52,6 +52,7 @@ export type DispatchKind =
   | 'refine'
   | 'glossary-write'
   | 'adr-add'
+  | 'merge'
 
 /** A kind that participates in the claim → commit two-phase lifecycle. */
 export type ClaimableKind = Extract<DispatchKind, 'triage' | 'implement'>

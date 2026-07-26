@@ -87,6 +87,22 @@ const resolvedCeilingMs = (): number => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CEILING_MS
 }
 
+/**
+ * Phantom-watchdog ceiling for tasks parked in `kind='merge'` (i.e. handed off
+ * to the single-consumer merge queue). These tasks legitimately idle for the
+ * duration of the merge operation, so they need a longer stall budget than a
+ * running coder. The ceiling is read from `MARS_MERGE_WATCHDOG_MS` — the same
+ * env var the merge worker uses for its own operation watchdog — defaulting to
+ * twice the standard phantom ceiling (60 min) so the merge worker's own watchdog
+ * always fires and self-heals before the phantom sweep arrives.
+ */
+const resolvedMergeCeilingMs = (): number => {
+  const raw = process.env.MARS_MERGE_WATCHDOG_MS
+  if (!raw) return 2 * DEFAULT_CEILING_MS
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 2 * DEFAULT_CEILING_MS
+}
+
 /** Default lease expiry window: 4 hours. */
 export const DEFAULT_LEASE_EXPIRY_MS = 4 * 60 * 60_000
 
@@ -202,8 +218,13 @@ export const sweepPhantomTasks = async (
       } else if (entry !== undefined) {
         // In-flight entry exists but PID not yet recorded — rely on the
         // wall-clock ceiling against updatedAt (bare-ceiling backstop).
+        // Merge-parked tasks (kind='merge') use a longer ceiling because they
+        // are legitimately idle while the single-consumer merge worker processes
+        // their job; the merge worker's own watchdog self-heals them first.
         const updatedMs = Date.parse(task.updatedAt)
-        if (!Number.isFinite(updatedMs) || now - updatedMs <= ceiling) continue
+        const effectiveCeiling =
+          entry.kind === 'merge' ? resolvedMergeCeilingMs() : ceiling
+        if (!Number.isFinite(updatedMs) || now - updatedMs <= effectiveCeiling) continue
         phantomReason = 'ceiling'
       } else if (status === 'running') {
         // No in-flight entry AND task is 'running': this task is orphaned from

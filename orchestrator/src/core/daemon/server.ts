@@ -792,7 +792,8 @@ export const startDaemon = async (
   // slot would just sit waiting on the lock, so default to 1.
   const initialCaps = loadDaemonConfig().caps
   const structuredWriteSem = makeSem(initialCaps.structuredWrite)
-  const sems: Record<DispatchKind, Semaphore> = {
+  // 'merge' is a tracker-only kind (no per-kind semaphore); excluded here.
+  const sems: Record<Exclude<DispatchKind, 'merge'>, Semaphore> = {
     triage: makeSem(initialCaps.triage),
     implement: makeSem(initialCaps.implement),
     refine: makeSem(initialCaps.refine),
@@ -887,6 +888,11 @@ export const startDaemon = async (
     // commitInFlight records the inFlight entry AND clears the matching claim
     // in one step (claim-clears-after-commit); see dispatchTriage.
     const releaseTracking = tracker.commitInFlight(task.id, 'implement')
+    // Merge-queue handoff bookkeeping (MARS_MERGE_QUEUE=1 only).
+    // `mergeHandedOff` flips to true when the workflow calls enqueueMergeJobAndAwait,
+    // at which point the implement slot has been released and merge tracking started.
+    let releaseMergeTracking: (() => void) | null = null
+    let mergeHandedOff = false
     log(`[implement] ${task.id} dispatching`)
     try {
       // Slice F.2: dispatch-time dirty-main check. Runs BEFORE workflow
@@ -1137,19 +1143,35 @@ export const startDaemon = async (
             // worker instead of calling mergeBranch inline. The hook enqueues
             // a merge_jobs row, wakes the worker, and suspends the workflow
             // until the worker resolves the promise with the outcome.
+            //
+            // Slice 5: At the point of handoff, the implement semaphore slot and
+            // tracker entry are released so other coders can proceed while this
+            // task is parked in the merge queue. Merge tracking (kind='merge')
+            // replaces the implement entry in the inFlight map.
             ...(process.env.MARS_MERGE_QUEUE === '1'
               ? {
-                  enqueueMergeJobAndAwait: (args: {
+                  enqueueMergeJobAndAwait: async (args: {
                     taskId: string
                     branch: string
                     worktreePath: string
                     integrationBranch: string
-                  }) =>
-                    enqueueMergeJobAndAwait({
+                  }) => {
+                    if (!mergeHandedOff) {
+                      mergeHandedOff = true
+                      releaseTracking()
+                      release(sems.implement)
+                      releaseMergeTracking = tracker.commitInFlight(task.id, 'merge')
+                      void drain()
+                    }
+                    const result = await enqueueMergeJobAndAwait({
                       store: getDefaultMergeJobStore(),
                       bus,
                       ...args,
-                    }),
+                    })
+                    releaseMergeTracking?.()
+                    releaseMergeTracking = null
+                    return result
+                  },
                 }
               : {}),
           },
@@ -1337,8 +1359,21 @@ export const startDaemon = async (
       // semaphore slot and inFlight entry are released on every exit path and
       // drain() re-arms the loop. drain() has its own internal catch, so the
       // fire-and-forget `void` here can never leak a rejection.
-      releaseTracking()
-      release(sems.implement)
+      //
+      // When MARS_MERGE_QUEUE=1 and the task was handed off to the merge queue,
+      // the implement slot was already released at handoff. Only clean up merge
+      // tracking here. If the task never reached the merge step (early return,
+      // failure before merge), use the legacy path to release the implement slot.
+      if (process.env.MARS_MERGE_QUEUE === '1' && mergeHandedOff) {
+        // TS CFA inside an async function incorrectly narrows `releaseMergeTracking`
+        // to `null` here (it sees the `= null` assignment in the service closure and
+        // concludes the type at this point is always null). Cast to the declared type.
+        const releaseMerge = releaseMergeTracking as (() => void) | null
+        if (releaseMerge !== null) releaseMerge()
+      } else {
+        releaseTracking()
+        release(sems.implement)
+      }
       void drain()
     }
   }
