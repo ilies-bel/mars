@@ -228,6 +228,7 @@ export const CODING_DISCIPLINE = [
   '- **No single-caller helpers.** Only extract a function when two or more call sites use it. A helper with one caller fails the deletion test — inline it.',
   '- **Test observable behaviour, not internal state.** Never assert on private fields, internal queues, or implementation details. A test that breaks on a safe internal refactor is a bad test.',
   '- **Cross-boundary changes need real-boundary verification.** When you add a cap, limit, or guard on a subprocess or external call, include at least one test (or documented manual step) against the real binary or service — stub-only tests can pass while the real path misbehaves.',
+  '- **Iterate against the narrowest test file first.** Run only the test file(s) directly touched by your change on each iteration; run the full suite once at the end to confirm nothing else broke.',
 ].join('\n')
 
 // Build the Coder Worker's standing Session instructions.
