@@ -36,8 +36,6 @@ export const runAgentDescriptors = {
   taskId: 'Override the task id. Defaults to ctx.runId.',
   worktree: 'Override the worktree. Defaults to the one stashed by setupWorktree.',
   model: 'Override the model for this step. Precedence: opts > MARS_WORKER_MODEL > Worker default.',
-  mode: 'Execution mode — "auto" (default) spawns the agent; "manual" parks awaiting-human for a Foreground session (mars step done resumes).',
-  guide: 'Step guide for a "manual" step — what the Foreground session should accomplish. Shown at park, attach, and by session hooks.',
 } satisfies Record<keyof RunAgentOpts, string>
 
 /** One-line descriptions for every {@link VerifyOpts} field. */

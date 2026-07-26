@@ -755,22 +755,6 @@ export interface RunAgentOpts {
    * so a step can run on a heavier model without editing Worker configs.
    */
   model?: string
-  /**
-   * Execution mode — WHO executes this step (workflow-declared). `'auto'`
-   * (default) spawns the agent. `'manual'` never spawns anything: the task
-   * parks `'awaiting-human'` at this step and a Foreground session does the
-   * work in the leased worktree, guided by {@link guide}; `mars step done`
-   * resumes the pipeline at the next step. The park goes through the
-   * awaitHuman sentinel machinery, so it is idempotent across daemon
-   * restarts and constitutionally cannot be handed to an agent.
-   */
-  mode?: 'auto' | 'manual'
-  /**
-   * Step guide for a `'manual'` step — what the Foreground session should
-   * accomplish here. Surfaced in the action-queue row at park and by the
-   * session hooks. Ignored when mode is `'auto'`.
-   */
-  guide?: string
 }
 
 export interface RunAgentResult {
@@ -805,8 +789,8 @@ export const runAgent = async (
     recorder.record({
       step: ctx.currentStep?.name ?? null,
       primitive: 'runAgent',
-      mode: opts.mode ?? 'auto',
-      guide: opts.guide ?? null,
+      mode: 'auto',
+      guide: null,
     })
     return { sessionId: null }
   }
@@ -828,20 +812,6 @@ export const runAgent = async (
   const resumeFromCodePhase =
     opts.resumeFromCodePhase ?? input(ctx).resumeFromCodePhase ?? false
   const model = opts.model
-  // Manual Execution mode: park for the Foreground session instead of
-  // spawning the agent. When the daemon has registered an onManualPark hook,
-  // use the promise-based park/resume mechanism so the workflow continues
-  // in-process after `mars step done` fires. Without the hook, fall back to
-  // the awaitHuman sentinel-throw so the step is durable across restarts.
-  if ((opts.mode ?? 'auto') === 'manual') {
-    const stepName = ctx.currentStep?.name ?? 'code'
-    const guide = opts.guide ?? `manual code step — implement the task by hand`
-    if (ctx.services.onManualPark) {
-      await ctx.services.onManualPark({ runId: ctx.runId, taskId, stepName, guide })
-      return { sessionId: null }
-    }
-    await awaitHuman(ctx, { taskId, note: guide })
-  }
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
@@ -2501,7 +2471,7 @@ export interface AwaitHumanOpts {
  * Park the task in 'awaiting-human' and durably suspend the pipeline until
  * the operator releases the lease via `mars release <id>`.
  *
- * @deprecated **Prefer `mode: 'manual'` on {@link runAgent} or {@link verify}.**
+ * @deprecated **Prefer `mode: 'manual'` on {@link verify}.**
  * When a step carries `mode === 'manual'`, the primitive uses the
  * promise-based park/resume mechanism (`onManualPark` / `resolveManualStep`)
  * registered by the daemon, which lets the workflow continue in-process after

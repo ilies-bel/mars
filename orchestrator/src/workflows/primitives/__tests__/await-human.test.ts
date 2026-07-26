@@ -190,31 +190,13 @@ describe('awaitHuman primitive', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 2b. Manual Execution mode on runAgent / verify (workflow-declared)
+// 2b. Manual Execution mode on verify (workflow-declared)
 // ---------------------------------------------------------------------------
 
 describe('manual Execution mode on primitives', () => {
   beforeEach(() => {
     mockUpdateTask.mockClear()
     mockRaiseActionQueueItem.mockClear()
-  })
-
-  it('runAgent mode:manual parks with the Step guide and never reaches the agent spawn', async () => {
-    const ctx = makeCtx('code')
-    ;(ctx as { input: unknown }).input = { taskId: 'test-task-id', prompt: 'p' }
-    await expect(
-      runAgent(ctx as never, { mode: 'manual', guide: 'iterate on the hero' }),
-    ).rejects.toSatisfy(
-      (err: unknown) => err instanceof WorkflowTerminalError && err.kind === 'await-human',
-    )
-    expect(mockUpdateTask).toHaveBeenCalledWith(
-      'test-task-id',
-      expect.objectContaining({
-        status: 'awaiting-human',
-        leaseNote: 'iterate on the hero',
-      }),
-      expect.anything(),
-    )
   })
 
   it('verify mode:manual parks with the Step guide instead of running the gates', async () => {
