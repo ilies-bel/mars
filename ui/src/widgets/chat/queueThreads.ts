@@ -8,6 +8,48 @@
 
 import type { ActionQueueItem, ChatThread } from '@/shared/schemas'
 
+// ---------------------------------------------------------------------------
+// Open-thread filter — drops resolved projections
+// ---------------------------------------------------------------------------
+
+/**
+ * Keeps only threads whose backing action-queue item is still open.
+ * User-created threads (no backing alert, alertResolved defaults to false)
+ * are always retained. Alert-origin threads evaporate once their backing item
+ * is resolved (alertResolved === true).
+ */
+export function filterOpen(threads: ChatThread[]): ChatThread[] {
+  return threads.filter((t) => t.alertResolved !== true)
+}
+
+// ---------------------------------------------------------------------------
+// Urgency → age sort
+// ---------------------------------------------------------------------------
+
+/** Urgency rank for sidebar ordering — lower number = higher urgency. */
+const URGENCY_RANK: Record<string, number> = {
+  ready: 0,
+  generating: 1,
+  drafting: 2,
+  idle: 3,
+}
+
+/**
+ * Sorts threads by urgency descending (attention status), then age ascending
+ * (oldest first among equal urgency), with id as final tiebreaker.
+ */
+export function sortByUrgencyThenAge(threads: ChatThread[]): ChatThread[] {
+  return [...threads].sort((a, b) => {
+    const urgencyDiff =
+      (URGENCY_RANK[a.attentionStatus ?? 'idle'] ?? 3) -
+      (URGENCY_RANK[b.attentionStatus ?? 'idle'] ?? 3)
+    if (urgencyDiff !== 0) return urgencyDiff
+    const ageDiff = a.createdAt.localeCompare(b.createdAt)
+    if (ageDiff !== 0) return ageDiff
+    return a.id.localeCompare(b.id)
+  })
+}
+
 /**
  * Kind toggle retained for the action-queue URL state contract
  * (`@/shared/actionQueueUrlState`). The chat sidebar no longer renders the

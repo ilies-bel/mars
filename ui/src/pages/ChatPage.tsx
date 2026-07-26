@@ -75,8 +75,10 @@ import { WhatHappenedTodayView } from '@/widgets/chat/WhatHappenedTodayView'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
 import {
+  filterOpen,
   filterThreadsByTitle,
   isResolvedSelection,
+  sortByUrgencyThenAge,
 } from '@/widgets/chat/queueThreads'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
@@ -107,24 +109,6 @@ const SLASH_COMMANDS = [
   { cmd: '/action-queue', prompt: 'Groom the action queue' },
   { cmd: '/unblock', prompt: 'Help unblock task ' },
 ] as const
-
-// ---------------------------------------------------------------------------
-// Attention-status sidebar sort
-// ---------------------------------------------------------------------------
-
-const ATTENTION_SORT: Record<string, number> = {
-  ready: 0,
-  generating: 1,
-  drafting: 2,
-  idle: 3,
-}
-
-const sortByAttentionStatus = (threads: ChatThread[]): ChatThread[] =>
-  [...threads].sort(
-    (a, b) =>
-      (ATTENTION_SORT[a.attentionStatus ?? 'idle'] ?? 3) -
-      (ATTENTION_SORT[b.attentionStatus ?? 'idle'] ?? 3),
-  )
 
 // ---------------------------------------------------------------------------
 // Hero empty state — top-alert prioritization and suggestion chips
@@ -2302,12 +2286,12 @@ export const ThreadSidebar = ({
     queryFn: () => fetchChatHistory(projectId),
   })
 
-  // Visible chat threads (delete-pending rows stay hidden), title-searched.
-  // The chat sidebar is a plain list of conversation threads — alerts live on
-  // the top-bar Bell, not here.
+  // Visible chat threads (delete-pending rows stay hidden), filtered to open
+  // threads only (resolved projections evaporate), title-searched, then sorted
+  // by urgency → age → id. Alerts live on the top-bar Bell, not here.
   const visibleThreads = (data ?? []).filter((t) => !hiddenIds.includes(t.id))
-  const sortedThreads = sortByAttentionStatus(filterThreadsByTitle(visibleThreads, query))
-  const threads = sortedThreads
+  const openThreads = filterOpen(visibleThreads)
+  const threads = sortByUrgencyThenAge(filterThreadsByTitle(openThreads, query))
   const historyThreads = historyData ?? []
 
   return (
@@ -2332,8 +2316,11 @@ export const ThreadSidebar = ({
       </div>
       <div className="flex-1 overflow-y-auto px-1 py-1 space-y-0.5">
         {threads.length === 0 && (
-          <p className="px-2 py-3 font-mono text-[10px] text-primary/40">
-            {query.trim() ? 'No matches' : 'No threads yet'}
+          <p
+            className="px-2 py-3 font-mono text-[10px] text-primary/40"
+            data-testid="empty-rail"
+          >
+            {query.trim() ? 'No matches' : "You're all clear"}
           </p>
         )}
         {threads.map((t) => (
