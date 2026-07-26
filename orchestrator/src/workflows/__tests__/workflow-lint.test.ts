@@ -14,14 +14,14 @@ import { lintAgentWorkflowBody } from '../workflow-lint'
 import { stampAgentDraft } from '../agent-draft'
 
 const VALID_DEFINE_BODY = [
-  "import { defineWorkflow, setupWorktree, runAgent, verify, merge } from 'mars/workflow'",
+  "import { defineWorkflow, setupWorktree, runAgent, review, merge } from 'mars/workflow'",
   '',
   'export default defineWorkflow({',
   "  id: 'qa-loop',",
   '  async fn(ctx) {',
   "    await ctx.step('setup', () => setupWorktree(ctx))",
   "    await ctx.step('code', () => runAgent(ctx))",
-  "    await ctx.step('verify', () => verify(ctx))",
+  "    await ctx.step('review', () => review(ctx, { reviewType: 'auto' }))",
   "    return ctx.step('merge', () => merge(ctx))",
   '  },',
   '})',

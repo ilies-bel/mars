@@ -64,7 +64,7 @@ vi.mock('../../../core/lib/action-queue', () => ({
 }))
 
 // Import the primitives AFTER the mocks are registered.
-const { awaitHuman, runAgent, verify } = await import('../index')
+const { awaitHuman, runAgent, review } = await import('../index')
 
 /** Minimal TaskStore stub — only `query` (used by updateTask's before-read). */
 const makeStubStore = () => ({
@@ -190,30 +190,15 @@ describe('awaitHuman primitive', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 2b. Manual Execution mode on verify (workflow-declared)
+// 2b. Manual reviewType on review (workflow-declared)
 // ---------------------------------------------------------------------------
 
-describe('manual Execution mode on primitives', () => {
-  beforeEach(() => {
-    mockUpdateTask.mockClear()
-    mockRaiseActionQueueItem.mockClear()
-  })
-
-  it('verify mode:manual parks with the Step guide instead of running the gates', async () => {
-    const ctx = makeCtx('verify')
+describe('manual reviewType on review primitive', () => {
+  it('review reviewType:manual throws "manual review not yet wired"', async () => {
+    const ctx = makeCtx('review')
     await expect(
-      verify(ctx as never, { mode: 'manual', guide: 'QA in the browser' }),
-    ).rejects.toSatisfy(
-      (err: unknown) => err instanceof WorkflowTerminalError && err.kind === 'await-human',
-    )
-    expect(mockUpdateTask).toHaveBeenCalledWith(
-      'test-task-id',
-      expect.objectContaining({
-        status: 'awaiting-human',
-        leaseNote: 'QA in the browser',
-      }),
-      expect.anything(),
-    )
+      review(ctx as never, { reviewType: 'manual', guide: 'QA in the browser' }),
+    ).rejects.toThrow('manual review not yet wired')
   })
 })
 

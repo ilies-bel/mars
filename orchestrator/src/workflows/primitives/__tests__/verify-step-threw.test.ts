@@ -77,7 +77,7 @@ vi.mock('../../../core/queue-fix-tasks', () => ({
 }))
 
 // Import the primitive AFTER vi.mock() calls are hoisted.
-const { verify } = await import('../index')
+const { review } = await import('../index')
 
 // ---------------------------------------------------------------------------
 // Sandbox: point resolveContext at a temp dir so no test touches a real .mars
@@ -151,7 +151,7 @@ describe('verify — throwing verifyChanges transitions task to failed without t
 
     const taskId = 'mars-threw01'
     await expect(
-      verify(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
+      review(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
     ).rejects.toThrow('ENOENT: lock file missing')
 
     // Task must have been set to 'verifying' first — basic sanity check.
@@ -192,7 +192,7 @@ describe('verify — normal r.passed=false failure sets status=failed exactly on
 
     const taskId = 'mars-threw02'
     await expect(
-      verify(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
+      review(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
     ).rejects.toThrow()
 
     const failedCalls = mockUpdateTask.mock.calls.filter(
@@ -232,7 +232,7 @@ describe('verify — firstFailedOutput includes exit code and stderr when step h
 
     const taskId = 'mars-diag01'
     await expect(
-      verify(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
+      review(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
     ).rejects.toThrow()
 
     expect(mockHandleTaskFailureWithFixTask).toHaveBeenCalledTimes(1)
@@ -255,7 +255,7 @@ describe('verify — outer catch path sets verifyOutput on the updateTask call',
 
     const taskId = 'mars-diag02'
     await expect(
-      verify(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
+      review(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
     ).rejects.toThrow('ENOENT: lock file missing')
 
     const failedCalls = mockUpdateTask.mock.calls.filter(

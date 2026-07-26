@@ -10,7 +10,7 @@ import { defineWorkflow, type WorkflowCtx } from '@mars/workflow'
 import {
   setupWorktree,
   runAgent,
-  verify,
+  review,
   merge,
   awaitHuman,
 } from '../primitives'
@@ -25,7 +25,7 @@ describe('dryRunWorkflow', () => {
       async fn(ctx: Ctx) {
         await ctx.step('setup', () => setupWorktree(ctx as never))
         await ctx.step('code', () => runAgent(ctx as never))
-        await ctx.step('verify', () => verify(ctx as never))
+        await ctx.step('review', () => review(ctx as never))
         return ctx.step('merge', () => merge(ctx as never))
       },
     })
@@ -35,7 +35,7 @@ describe('dryRunWorkflow', () => {
     expect(r.steps).toEqual([
       { step: 'setup', primitive: 'setupWorktree', mode: 'auto', guide: null },
       { step: 'code', primitive: 'runAgent', mode: 'auto', guide: null },
-      { step: 'verify', primitive: 'verify', mode: 'auto', guide: null },
+      { step: 'review', primitive: 'review', mode: 'auto', guide: null },
       { step: 'merge', primitive: 'merge', mode: 'auto', guide: null },
     ])
   })

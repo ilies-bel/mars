@@ -13,7 +13,7 @@ import { z } from 'zod'
 import {
   setupWorktree,
   runAgent,
-  verify as verifyPrimitive,
+  review,
   merge as mergePrimitive,
   type MarsServices,
 } from './primitives'
@@ -30,8 +30,8 @@ import {
 // @mars/workflow implement pipeline (was: four Mastra createStep bodies).
 //
 // The pipeline is one imperative async function. `ctx.step(name, fn)` wraps
-// each durable unit; the four step NAMES are load-bearing and unchanged
-// ('setup-worktree', 'run-claude-code', 'verify', 'merge') — they key
+// each durable unit; the four step NAMES are load-bearing
+// ('setup-worktree', 'run-claude-code', 'review', 'merge') — they key
 // checkpoint-resume and the trace-view node label. Each step body is now a
 // thin composition over the corresponding `./primitives` function.
 // ---------------------------------------------------------------------------
@@ -92,8 +92,8 @@ export const implementWorkflow = defineWorkflow<
     // four step NAMES stay load-bearing (checkpoint-resume + trace labels).
     await ctx.step('setup-worktree', () => setupWorktree(ctx))
     await ctx.step('run-claude-code', () => runAgent(ctx))
-    // verify throws on failure, so reaching merge always means verify passed.
-    await ctx.step('verify', () => verifyPrimitive(ctx))
+    // review throws on failure, so reaching merge always means review passed.
+    await ctx.step('review', () => review(ctx, { reviewType: 'auto' }))
     // Behaviour verification (fifth primitive): exercises the task's
     // Definition of Done against a live surface via Playwright MCP. PASS and
     // CAN'T-VERIFY return (CAN'T-VERIFY files a draft proposal + raises a

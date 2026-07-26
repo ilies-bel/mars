@@ -308,7 +308,7 @@ export { input as readWorkflowInput }
 export interface ValidateRecorderEntry {
   /** The ctx.step name the primitive ran under (null outside a step). */
   step: string | null
-  primitive: 'setupWorktree' | 'runAgent' | 'verify' | 'merge' | 'awaitHuman'
+  primitive: 'setupWorktree' | 'runAgent' | 'review' | 'merge' | 'awaitHuman'
   /** Execution mode the workflow declares for this step. */
   mode: 'auto' | 'manual'
   /** Step guide for manual steps; null otherwise. */
@@ -1176,11 +1176,11 @@ export const runAgent = async (
 }
 
 // ---------------------------------------------------------------------------
-// verify
+// review (formerly verify)
 // ---------------------------------------------------------------------------
 
-/** Per-call domain options for {@link verify}. All fields default. */
-export interface VerifyOpts {
+/** Per-call domain options for {@link review}. All fields default. */
+export interface ReviewOpts {
   /** Pipeline kind. Default `'task'`. `'diagnose'` short-circuits. */
   kind?: 'task' | 'fix' | 'diagnose'
   /** Merge target. Default `'main'`. */
@@ -1192,56 +1192,60 @@ export interface VerifyOpts {
   /** Override the worktree (defaults to the one stashed by setupWorktree). */
   worktree?: WorktreeRef
   /**
-   * Execution mode — WHO executes this step (workflow-declared). `'manual'`
-   * parks the task `'awaiting-human'` so a Foreground session performs the
-   * verification (e.g. visual QA) guided by {@link guide}; `mars step done`
-   * resumes the pipeline. `'auto'` (default) runs scope-aware
-   * typecheck/tests/lint as always.
+   * Review type — WHO executes this step (workflow-declared). `'manual'`
+   * is not yet implemented and throws `NotImplementedError`. `'auto'` (default)
+   * runs scope-aware typecheck/tests/lint as always.
    */
-  mode?: 'auto' | 'manual'
-  /** Step guide for a `'manual'` step. Ignored when mode is `'auto'`. */
+  reviewType?: 'auto' | 'manual'
+  /** Step guide for a `'manual'` step. Reserved for future use. */
   guide?: string
 }
 
-export interface VerifyResult {
+export interface ReviewResult {
   verified: true
 }
 
 /**
- * Scope-aware verify of the worktree's committed changes. Mirrors the former
- * `verify` step body:
+ * Scope-aware review of the worktree's committed changes. Formerly named
+ * `verify`. Two review types:
  *
- *   - `kind:'diagnose'` short-circuits (no artefact to verify),
- *   - non-fix tasks run the verify-time dirty-main check and, if the
- *     integration branch is dirty, park behind a `main-commiter` recovery and
- *     throw the `verify:main-dirty` sentinel,
- *   - selects verify steps from the recipe scopes ∩ the files the task changed
- *     (a main-commiter recovery skips all test/typecheck/lint steps),
- *   - runs `verifyChanges` (the has-diff / commits-ahead gate always runs),
- *   - on failure stamps the task, spawns the recovery fix-task through `store`,
- *     and throws.
+ *   - `reviewType:'auto'` (default) — runs scope-aware typecheck/tests/lint:
+ *     - `kind:'diagnose'` short-circuits (no artefact to verify),
+ *     - non-fix tasks run the verify-time dirty-main check and, if the
+ *       integration branch is dirty, park behind a `main-commiter` recovery and
+ *       throw the `verify:main-dirty` sentinel,
+ *     - selects verify steps from the recipe scopes ∩ the files the task changed
+ *       (a main-commiter recovery skips all test/typecheck/lint steps),
+ *     - runs `verifyChanges` (the has-diff / commits-ahead gate always runs),
+ *     - on failure stamps the task, spawns the recovery fix-task through `store`,
+ *       and throws.
+ *   - `reviewType:'manual'` — not yet implemented; throws immediately.
  *
  * Returns `{ verified: true }` on success. The throw model means reaching the
- * caller's merge step always implies verify passed.
+ * caller's merge step always implies review passed.
  *
  * Usage from a scaffolded workflow:
  * ```js
- * await ctx.step('verify', () => verify(ctx, { kind }))
+ * await ctx.step('review', () => review(ctx, { reviewType: 'auto' }))
  * ```
  */
-export const verify = async (
+export const review = async (
   ctx: MarsCtx,
-  opts: VerifyOpts = {},
-): Promise<VerifyResult> => {
+  opts: ReviewOpts = {},
+): Promise<ReviewResult> => {
   const recorder = validationRecorder(ctx)
   if (recorder) {
     recorder.record({
       step: ctx.currentStep?.name ?? null,
-      primitive: 'verify',
-      mode: opts.mode ?? 'auto',
+      primitive: 'review',
+      mode: opts.reviewType ?? 'auto',
       guide: opts.guide ?? null,
     })
     return { verified: true }
+  }
+  // Manual review type: not yet implemented — slice 6 wires this.
+  if ((opts.reviewType ?? 'auto') !== 'auto') {
+    throw new Error('manual review not yet wired')
   }
   // Resolve dispatch facts: explicit opts → ctx.input → hard default.
   const taskId = resolveTaskId(ctx, opts.taskId)
@@ -1250,20 +1254,6 @@ export const verify = async (
     opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
   const recoveryPayload =
     opts.recoveryPayload ?? input(ctx).recoveryPayload ?? null
-  // Manual Execution mode: park for the Foreground session instead of running
-  // the automated gates. When the daemon has registered an onManualPark hook,
-  // use the promise-based park/resume mechanism so the workflow continues
-  // in-process after `mars step done` fires. Without the hook, fall back to
-  // the awaitHuman sentinel-throw so the step is durable across restarts.
-  if ((opts.mode ?? 'auto') === 'manual') {
-    const stepName = ctx.currentStep?.name ?? 'verify'
-    const guide = opts.guide ?? 'manual verify step — QA the work by hand'
-    if (ctx.services.onManualPark) {
-      await ctx.services.onManualPark({ runId: ctx.runId, taskId, stepName, guide })
-      return { verified: true }
-    }
-    await awaitHuman(ctx, { taskId, note: guide })
-  }
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
@@ -1284,7 +1274,7 @@ export const verify = async (
     phase: 'verify',
     traceStore: spanStore(trace),
     getCommandOutput: () => capturedVerifyOutput,
-    fn: async (): Promise<VerifyResult> => {
+    fn: async (): Promise<ReviewResult> => {
       // Verify-time dirty-main check (non-fix only).
       if (kind !== 'fix') {
         try {
@@ -2471,8 +2461,8 @@ export interface AwaitHumanOpts {
  * Park the task in 'awaiting-human' and durably suspend the pipeline until
  * the operator releases the lease via `mars release <id>`.
  *
- * @deprecated **Prefer `mode: 'manual'` on {@link verify}.**
- * When a step carries `mode === 'manual'`, the primitive uses the
+ * @deprecated **Prefer `reviewType: 'manual'` on {@link review} once wired (slice 6).**
+ * When fully implemented, `review` with `reviewType === 'manual'` will use the
  * promise-based park/resume mechanism (`onManualPark` / `resolveManualStep`)
  * registered by the daemon, which lets the workflow continue in-process after
  * `mars step done` without a re-dispatch. `awaitHuman` remains for backward

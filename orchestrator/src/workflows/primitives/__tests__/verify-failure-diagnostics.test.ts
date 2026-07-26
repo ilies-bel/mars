@@ -74,7 +74,7 @@ vi.mock('../../../core/queue-fix-tasks', () => ({
 }))
 
 // Import the primitive AFTER vi.mock() calls are hoisted.
-const { verify } = await import('../index')
+const { review } = await import('../index')
 
 // ---------------------------------------------------------------------------
 // Sandbox: point resolveContext at a temp dir so no test touches a real .mars
@@ -164,7 +164,7 @@ describe('verify — command failure persists stdout+stderr+exitCode+gate identi
 
     const taskId = 'mars-diag-cmd01'
     await expect(
-      verify(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
+      review(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
     ).rejects.toThrow()
 
     expect(mockHandleTaskFailureWithFixTask).toHaveBeenCalledTimes(1)
@@ -197,7 +197,7 @@ describe('verify — structural verify crash persists non-empty verifyOutput', (
 
     const taskId = 'mars-diag-crash01'
     await expect(
-      verify(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
+      review(makeCtx(taskId), { kind: 'fix', worktree: worktree(taskId) }),
     ).rejects.toThrow('BOOM')
 
     const failedCalls = mockUpdateTask.mock.calls.filter(

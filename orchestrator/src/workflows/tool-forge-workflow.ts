@@ -3,7 +3,7 @@ import { z } from 'zod'
 import {
   setupWorktree,
   runAgent,
-  verify as verifyPrimitive,
+  review,
   merge as mergePrimitive,
   type MarsServices,
 } from './primitives'
@@ -127,7 +127,7 @@ export const toolForgeWorkflow = defineWorkflow<
   fn: async (ctx): Promise<ToolForgeOutput> => {
     await ctx.step('setup-worktree', () => setupWorktree(ctx))
     await ctx.step('run-claude-code', () => runAgent(ctx))
-    await ctx.step('verify', () => verifyPrimitive(ctx))
+    await ctx.step('review', () => review(ctx, { reviewType: 'auto' }))
     return await ctx.step('merge', () => mergePrimitive(ctx))
   },
 })

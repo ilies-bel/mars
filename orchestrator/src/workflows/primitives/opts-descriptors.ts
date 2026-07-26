@@ -10,7 +10,7 @@
 import type {
   SetupWorktreeOpts,
   RunAgentOpts,
-  VerifyOpts,
+  ReviewOpts,
   MergeOpts,
   AwaitHumanOpts,
 } from './index'
@@ -38,16 +38,16 @@ export const runAgentDescriptors = {
   model: 'Override the model for this step. Precedence: opts > MARS_WORKER_MODEL > Worker default.',
 } satisfies Record<keyof RunAgentOpts, string>
 
-/** One-line descriptions for every {@link VerifyOpts} field. */
-export const verifyDescriptors = {
+/** One-line descriptions for every {@link ReviewOpts} field. */
+export const reviewDescriptors = {
   kind: 'Pipeline kind — "task" (default), "fix", or "diagnose" (short-circuits verification).',
   integrationBranch: 'Merge target branch. Defaults to "main".',
   recoveryPayload: 'Serialised recovery payload; skips test/typecheck/lint for main-committer recovery.',
   taskId: 'Override the task id. Defaults to ctx.runId.',
   worktree: 'Override the worktree. Defaults to the one stashed by setupWorktree.',
-  mode: 'Execution mode — "auto" (default) runs typecheck/tests/lint; "manual" parks awaiting-human for hand QA (mars step done resumes).',
-  guide: 'Step guide for a "manual" step — what the Foreground session should verify. Shown at park, attach, and by session hooks.',
-} satisfies Record<keyof VerifyOpts, string>
+  reviewType: 'Review type — "auto" (default) runs typecheck/tests/lint; "manual" not yet implemented (throws).',
+  guide: 'Step guide for a "manual" step — reserved for future use when manual review is wired.',
+} satisfies Record<keyof ReviewOpts, string>
 
 /** One-line descriptions for every {@link MergeOpts} field. */
 export const mergeDescriptors = {
@@ -73,7 +73,7 @@ export const PRIMITIVE_DESCRIPTORS: ReadonlyArray<{
 }> = [
   { name: 'setupWorktree', descriptors: setupWorktreeDescriptors },
   { name: 'runAgent', descriptors: runAgentDescriptors },
-  { name: 'verify', descriptors: verifyDescriptors },
+  { name: 'review', descriptors: reviewDescriptors },
   { name: 'merge', descriptors: mergeDescriptors },
   { name: 'awaitHuman', descriptors: awaitHumanDescriptors },
 ]

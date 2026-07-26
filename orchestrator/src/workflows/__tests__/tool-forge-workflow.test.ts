@@ -39,7 +39,7 @@ describe('tool-forge bundled template', () => {
     expect(source).toContain('defineWorkflow')
     expect(source).toContain('setupWorktree')
     expect(source).toContain('runAgent')
-    expect(source).toContain('verify')
+    expect(source).toContain('review')
     expect(source).toContain('merge')
   })
 
@@ -47,7 +47,7 @@ describe('tool-forge bundled template', () => {
     const source = readFileSync(BUNDLED_TEMPLATE_PATH, 'utf8')
     expect(source).toContain("'setup'")
     expect(source).toContain("'code'")
-    expect(source).toContain("'verify'")
+    expect(source).toContain("'review'")
     expect(source).toContain("'merge'")
   })
 

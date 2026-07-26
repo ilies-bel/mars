@@ -25,7 +25,7 @@ import {
   defineWorkflow,
   setupWorktree,
   runAgent,
-  verify,
+  review,
   merge,
 } from 'mars/workflow'
 
@@ -37,11 +37,11 @@ export default defineWorkflow({
     await ctx.step('setup', () => setupWorktree(ctx))
 
     // code → the coder creates the helper module and benchmark file.
-    await ctx.step('code', () => runAgent(ctx, { mode: 'auto' }))
+    await ctx.step('code', () => runAgent(ctx))
 
-    // verify → runs the task's verifyCmd (expected to exercise the benchmark
+    // review → runs the task's verifyCmd (expected to exercise the benchmark
     // with and without the helper to confirm correctness in both configurations).
-    await ctx.step('verify', () => verify(ctx, { mode: 'auto' }))
+    await ctx.step('review', () => review(ctx, { reviewType: 'auto' }))
 
     // merge → serialized fast-forward into the integration branch.
     return await ctx.step('merge', () => merge(ctx))

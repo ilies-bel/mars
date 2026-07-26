@@ -35,7 +35,7 @@ export const ALLOWED_IMPORT_BINDINGS: ReadonlySet<string> = new Set([
   'defineWorkflow',
   'setupWorktree',
   'runAgent',
-  'verify',
+  'review',
   'merge',
   'awaitHuman',
 ])

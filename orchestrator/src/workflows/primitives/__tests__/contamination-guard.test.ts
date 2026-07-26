@@ -97,7 +97,7 @@ vi.mock('../../../core/lib/origin', () => ({
 }))
 
 // Import the primitive AFTER vi.mock() calls are hoisted.
-const { verify } = await import('../index')
+const { review } = await import('../index')
 
 // ---------------------------------------------------------------------------
 // Sandbox
@@ -191,7 +191,7 @@ describe('contamination guard — zero-commit task branch', () => {
     })
 
     const taskId = 'mars-nocommit01'
-    const result = await verify(makeCtx(taskId), { kind: 'task', worktree: worktree(taskId) })
+    const result = await review(makeCtx(taskId), { kind: 'task', worktree: worktree(taskId) })
 
     expect(result).toEqual({ verified: true })
 
@@ -222,7 +222,7 @@ describe('contamination guard — zero-commit task branch', () => {
     })
 
     const taskId = 'mars-nocommit02'
-    await verify(makeCtx(taskId), { kind: 'task', worktree: worktree(taskId) })
+    await review(makeCtx(taskId), { kind: 'task', worktree: worktree(taskId) })
 
     const contamCalls = mockUpdateTask.mock.calls.filter(
       (c) => (c[1] as Record<string, unknown>)?.failureReason === 'verify:branch-contaminated',
@@ -254,7 +254,7 @@ describe('contamination guard — positive-commit contaminated branch', () => {
 
     const taskId = 'mars-contam01'
     await expect(
-      verify(makeCtx(taskId), { kind: 'task', worktree: worktree(taskId) }),
+      review(makeCtx(taskId), { kind: 'task', worktree: worktree(taskId) }),
     ).rejects.toThrow('verify:branch-contaminated')
 
     const contamCalls = mockUpdateTask.mock.calls.filter(
