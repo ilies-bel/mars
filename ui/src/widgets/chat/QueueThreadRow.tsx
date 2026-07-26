@@ -24,9 +24,9 @@ export const formatTime = (iso: string): string => {
 }
 
 export const priorityBadgeClass = (priority: string): string => {
-  if (priority === 'high') return 'text-error'
-  if (priority === 'normal') return 'text-warn'
-  return 'text-muted-foreground'
+  if (priority === 'high') return 'rounded bg-error/10 px-1.5 py-0.5 text-error'
+  if (priority === 'normal') return 'rounded bg-warn/10 px-1.5 py-0.5 text-warn'
+  return 'rounded px-1.5 py-0.5 text-muted-foreground'
 }
 
 const KIND_ICON: Record<ActionQueueItem['kind'], string> = {

@@ -21,8 +21,8 @@ interface CountBadgeProps {
 
 const CountBadge = ({ count }: CountBadgeProps) =>
   count === 0 ? null : (
-    <span aria-hidden="true" className="absolute -top-1 -right-1 rounded-full bg-primary/60 px-1 font-mono text-[9px] leading-none text-foreground">
-      {count}
+    <span aria-hidden="true" className="absolute -top-1 -right-1 rounded-full bg-primary/60 px-1 py-0.5 font-mono text-[9px] leading-none text-foreground">
+      {count > 99 ? '99+' : count}
     </span>
   )
 

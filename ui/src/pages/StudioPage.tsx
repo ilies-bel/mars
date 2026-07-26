@@ -63,7 +63,7 @@ export const StudioPage = ({ taskId, fetchImpl }: StudioPageProps) => {
             <SkeletonBlock className="h-16 w-full" />
           </div>
         ) : error !== null ? (
-          <FallbackSurface error={error} of="the run timeline" variant="pane" />
+          <FallbackSurface error={error} of="run timeline" variant="pane" />
         ) : timeline !== undefined ? (
           <StudioView taskId={taskId} timeline={timeline} fetchImpl={fetchImpl} />
         ) : null}

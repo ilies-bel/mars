@@ -269,7 +269,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               key={action.id}
               text={action.hint ?? action.label}
               label={action.label}
-              className="border border-primary/30 px-3 py-1.5 font-mono text-[11px] text-primary transition hover:bg-primary/10 active:scale-[0.97]"
+              className="rounded-md border border-primary/30 px-3 py-1.5 font-mono text-[11px] text-primary transition hover:bg-primary/10 active:scale-[0.97]"
             />
           ) : (
             <button
@@ -280,7 +280,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               data-testid={action.needsConfirm ? `confirm-step-${action.id}` : undefined}
               data-confirm-pending={pendingConfirmId === action.id ? 'true' : undefined}
               className={[
-                'border px-3 py-1.5 font-mono text-[11px] uppercase transition active:scale-[0.97] disabled:opacity-50',
+                'rounded-md border px-3 py-1.5 font-mono text-[11px] uppercase transition active:scale-[0.97] disabled:opacity-50',
                 pendingConfirmId === action.id
                   ? 'border-error bg-error/10 text-error'
                   : action.needsConfirm
@@ -304,7 +304,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
       ) : null}
       {teachPromptOp && item.failureReasonCode ? (
         <div
-          className="mt-3 border border-primary/30 bg-card px-3 py-2"
+          className="mt-3 rounded-md border border-primary/30 bg-card px-3 py-2"
           data-testid="teach-prompt"
         >
           <p className="font-mono text-[11px] text-foreground">
@@ -316,7 +316,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               disabled={teachStatus === 'saving'}
               onClick={() => { void handleTeachYes() }}
               data-testid="teach-yes"
-              className="border border-primary/40 px-3 py-1 font-mono text-[10px] uppercase text-foreground transition hover:bg-primary/20 disabled:opacity-50"
+              className="rounded-md border border-primary/40 px-3 py-1 font-mono text-[10px] uppercase text-foreground transition hover:bg-primary/20 disabled:opacity-50"
             >
               {teachStatus === 'saving' ? 'Saving…' : 'Yes'}
             </button>
@@ -661,7 +661,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
     <div className="flex h-full min-w-0 flex-col overflow-auto">
       <div className="px-4 pt-4">
         <header
-          className="min-w-0 border border-primary/35 bg-card px-4 py-3"
+          className="min-w-0 rounded-lg border border-primary/25 bg-card px-4 py-3 shadow-sm"
           data-testid="queue-opening-message"
           aria-label="Opening alert message from Mars"
         >

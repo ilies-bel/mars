@@ -9,6 +9,24 @@
 @import "@fontsource/jetbrains-mono/600.css";
 @import "@fontsource/jetbrains-mono/700.css";
 
+/* Tailwind v4 defaults bare `border` utilities to currentColor, which renders
+ * near-black ink hairlines on every element that doesn't name a border color.
+ * Restore the v3-era default: borders fall back to the semantic border token
+ * unless a border-<color> utility overrides them.
+ * NOTE: must reference --border (the shadcn alias), not --color-border — the
+ * @theme inline block redefines --color-border as var(--border), so a
+ * var(--color-border) reference here would be a self-referential cycle and
+ * resolve to nothing (currentColor again). */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--border);
+  }
+}
+
 /*
  * Metric-matched fallback @font-face declarations.
  *
@@ -180,8 +198,12 @@
   --accent-foreground: var(--color-fg);
   --destructive: var(--color-error);         /* #B91C1C */
   --destructive-foreground: #FFFFFF;
-  --border: var(--color-border);             /* #E5D9CB */
-  --input: var(--color-border);
+  /* Break the alias cycle: @theme inline redefines --color-border as
+   * var(--border), so referencing var(--color-border) here would make both
+   * variables self-referential and invalid (borders collapse to currentColor
+   * ink). Source the raw neutral instead — same #E5D9CB value. */
+  --border: var(--color-neutral-200);         /* #E5D9CB */
+  --input: var(--color-neutral-200);
   --ring: var(--color-flame);                /* #9A4F00 — matches :focus-visible */
   --radius: 0.5rem;                          /* rounded-lg */
 }

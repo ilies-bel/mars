@@ -167,7 +167,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
     <div className="w-full max-w-2xl space-y-3">
       {topAlert && (
         <article
-          className="border border-primary/40 bg-card p-4 text-left"
+          className="rounded-lg border border-primary/25 bg-card p-4 text-left shadow-sm"
           data-testid="hero-alert-preview"
           aria-label="Most important conversation"
         >
@@ -185,7 +185,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
             <button
               type="button"
               data-testid="hero-alert-open"
-              className="shrink-0 border border-primary/50 px-3 py-1.5 font-mono text-[10px] uppercase text-foreground transition-colors hover:bg-primary/15 active:scale-[0.98]"
+              className="shrink-0 rounded-md border border-primary/40 px-3 py-1.5 font-mono text-[10px] uppercase text-foreground transition-colors hover:bg-primary/10 active:scale-[0.98]"
               onClick={() => onAlertClick(topAlert)}
             >
               Open conversation
@@ -207,7 +207,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
                 type="button"
                 data-testid="hero-alert-option"
                 title={alert.title}
-                className="flex min-w-0 max-w-full items-center gap-1.5 border border-primary/30 px-2.5 py-1.5 font-mono text-[11px] text-primary transition-colors hover:bg-primary/10 hover:text-foreground active:scale-[0.98]"
+                className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-primary/25 px-3 py-1.5 font-mono text-[11px] text-primary transition-colors hover:bg-primary/10 hover:text-foreground active:scale-[0.98]"
                 onClick={() => onAlertClick(alert)}
               >
                 <span aria-hidden="true">{KIND_ICON[alert.kind] ?? '🔔'}</span>
@@ -223,7 +223,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
           <button
             key={chip.label}
             type="button"
-            className="border border-primary/40 px-3 py-1.5 font-mono text-[11px] text-primary transition-colors hover:border-primary/70 hover:bg-primary/15 hover:text-foreground active:scale-[0.98]"
+            className="rounded-full border border-primary/25 px-3.5 py-1.5 font-mono text-[11px] text-primary transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground active:scale-[0.98]"
             onClick={() =>
               'action' in chip && chip.action === 'what-happened'
                 ? onWhatHappened()
