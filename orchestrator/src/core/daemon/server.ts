@@ -121,6 +121,8 @@ import { PreviewRegistry } from './preview-registry'
 import { createAppServices } from '../app-services'
 import { startApiEndpointProbe } from '../lib/api-endpoint-probe'
 import { ChatRunner, CHAT_TIMEOUT_MS } from './chat-runner'
+import { startMergeWorker, type MergeWorkerHandle } from './merge-worker'
+import { getDefaultMergeJobStore } from '../store/merge-job-store'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -541,6 +543,7 @@ export const startDaemon = async (
   // Under MARS_DB_BACKEND=pglite (tests) the in-process instance needs no
   // server and no published files.
   let pgHandle: EmbeddedPgHandle | null = null
+  let mergeWorkerHandle: MergeWorkerHandle | null = null
   if (process.env.MARS_DB_BACKEND !== 'pglite') {
     try {
       pgHandle = await startEmbeddedPg({
@@ -3827,6 +3830,22 @@ export const startDaemon = async (
     }
   })()
 
+  // ── Merge worker (MARS_MERGE_QUEUE=1) ────────────────────────────────────
+  // Single-consumer loop that claims merge_jobs rows and executes them
+  // serially. Off by default — gated behind MARS_MERGE_QUEUE=1 so this slice
+  // does not change production behaviour. The AbortController is aborted in
+  // shutdown(); stop() then waits for any in-flight job to finish.
+  const mergeWorkerAc = new AbortController()
+  if (process.env.MARS_MERGE_QUEUE === '1') {
+    mergeWorkerHandle = startMergeWorker({
+      store: getDefaultMergeJobStore(),
+      log,
+      bus,
+      signal: mergeWorkerAc.signal,
+    })
+    log('[merge-worker] started (MARS_MERGE_QUEUE=1)')
+  }
+
   // ── GitHub release update poller ─────────────────────────────────────────
   // Fetches https://api.github.com/repos/ilies-bel/mars/releases/latest once
   // on startup and then every UPDATE_POLL_INTERVAL_MS (6 h). Writes the result
@@ -4582,6 +4601,13 @@ export const startDaemon = async (
         }
         await new Promise((r) => setTimeout(r, 250))
       }
+    }
+
+    // Stop the merge worker (if running) before closing the DB so any in-flight
+    // job can complete its markDone / markFailed store call cleanly.
+    mergeWorkerAc.abort()
+    if (mergeWorkerHandle !== null) {
+      await mergeWorkerHandle.stop()
     }
 
     // Drain in-flight chat runs before closing servers. If a run has not yet
