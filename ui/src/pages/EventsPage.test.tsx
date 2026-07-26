@@ -831,10 +831,7 @@ describe('EventsPage error state', () => {
   it('renders the warm fallback headline', () => {
     const html = renderPage(makeErrorClient(new Error('Connection refused')))
     // renderToStaticMarkup HTML-encodes apostrophes; match the encoded form.
-    // The surfaceLabel passed to getFallbackCopy includes "the", so the headline
-    // reads "Couldn't load the the events stream." (double "the" is a pre-existing
-    // quirk in EventsPage — do not fix here, only test what's rendered).
-    expect(html).toContain("Couldn&#x27;t load the the events stream.")
+    expect(html).toContain("Couldn&#x27;t load the events stream.")
   })
 
   // Skipped: vitest always runs with import.meta.env.DEV=true (dev mode), so

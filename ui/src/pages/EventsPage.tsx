@@ -886,7 +886,7 @@ export const EventsPage = () => {
   if (initial.isError && !initial.data) {
     return (
       <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
-        <FallbackSurface error={initial.error} of="the events stream" variant="pane" />
+        <FallbackSurface error={initial.error} of="events stream" variant="pane" />
       </main>
     )
   }

@@ -155,7 +155,7 @@ const AppInner = () => {
       <NavBar hash={hash} />
       <Breadcrumbs hash={hash} />
       <div className="min-h-0 flex-1">
-        <FallbackBoundary of="this view" variant="pane">
+        <FallbackBoundary of="view" variant="pane">
           {route === 'studio' && studioTaskId !== null ? (
             <StudioPage taskId={studioTaskId} />
           ) : route === 'studio' ? (
