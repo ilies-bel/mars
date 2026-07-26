@@ -22,7 +22,7 @@ import { useProgress } from '@/hooks/useProgress'
 import { SkeletonList } from '@/components/Skeleton'
 import { parseCreatedTaskIds } from './parseCreatedTaskIds'
 
-import type { GlossaryTerm, Skill, ChatSegmentAttachment, AdrEntry } from '@/shared/schemas'
+import type { GlossaryTerm, Skill, ChatSegmentAttachment, AdrEntry, ChatThreadDetail } from '@/shared/schemas'
 import type { ProgressTask } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
@@ -77,10 +77,52 @@ const STATUS_CHIP: Record<string, { label: string; className: string }> = {
   blocked: { label: 'blocked', className: 'text-muted-foreground' },
   under_investigation: { label: 'investigating', className: 'text-warn' },
   draft: { label: 'draft', className: 'text-muted-foreground' },
+  idle: { label: 'idle', className: 'text-muted-foreground/60' },
+  throttled: { label: 'throttled', className: 'text-warn' },
 }
 
 const statusChip = (status: string) =>
   STATUS_CHIP[status] ?? { label: status, className: 'text-muted-foreground' }
+
+// ---------------------------------------------------------------------------
+// Focus panel — shows the active thread title and status
+// ---------------------------------------------------------------------------
+
+interface FocusPanelProps {
+  threadDetail?: ChatThreadDetail | null
+  isStreaming?: boolean
+}
+
+const FocusPanel = ({ threadDetail, isStreaming }: FocusPanelProps) => {
+  if (!threadDetail) {
+    return (
+      <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground/60">
+        No active thread
+      </p>
+    )
+  }
+  const title = threadDetail.thread.title ?? 'New thread'
+  // When the client is actively streaming, show 'running' even if the server
+  // hasn't updated the thread status yet.
+  const status: string = isStreaming ? 'running' : threadDetail.thread.status
+  const chip = statusChip(status)
+  return (
+    <div className="flex flex-col gap-1 px-3 py-2">
+      <span
+        className="font-mono text-[10px] leading-snug text-foreground/80"
+        data-testid="focus-panel-title"
+      >
+        {title}
+      </span>
+      <span
+        className={`font-mono text-[10px] uppercase ${chip.className}`}
+        data-testid="focus-panel-status-chip"
+      >
+        {chip.label}
+      </span>
+    </div>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Live tasks panel
@@ -513,6 +555,12 @@ export interface ContextRailProps {
   projectId?: string
   /** The currently selected chat thread. Used to scope session-artifact data. */
   threadId?: string
+  /** The id of the active thread (used to gate Focus panel display). */
+  activeThreadId?: string
+  /** Thread detail for the active thread, including title and status. */
+  threadDetail?: ChatThreadDetail | null
+  /** True when the client is actively streaming a reply for the active thread. */
+  isStreaming?: boolean
   /** Epoch ms when the current chat session started (for "new task" highlight). */
   sessionStartedAt: number
   /** Called when a skill row is clicked; inserts the prompt into the composer. */
@@ -526,6 +574,9 @@ export interface ContextRailProps {
 export const ContextRail = ({
   projectId,
   threadId,
+  activeThreadId,
+  threadDetail,
+  isStreaming,
   sessionStartedAt,
   onInsertPrompt,
   collapsed = false,
@@ -569,6 +620,13 @@ export const ContextRail = ({
           ▸
         </button>
       </div>
+
+      <PanelSection title="Focus" defaultOpen={true}>
+        <FocusPanel
+          threadDetail={activeThreadId ? threadDetail : null}
+          isStreaming={isStreaming}
+        />
+      </PanelSection>
 
       <PanelSection title="Session artifacts" defaultOpen={false}>
         <SessionArtifactsPanel threadId={threadId} projectId={projectId} />

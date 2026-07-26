@@ -43,7 +43,7 @@ import {
   type AttachmentInfo,
 } from '@/shared/api'
 import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback } from '@/shared/schemas'
+import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import { useMarsChat } from '@/shared/useMarsChat'
 import { chatMessageToUIMessage, transcriptSignature } from '@/shared/chatMessageMapping'
@@ -2477,6 +2477,17 @@ export const ChatPage = () => {
     queryFn: () => fetchChatThreads(projectId),
   })
 
+  // Thread detail for the active thread, shared with ContextRail so the Focus
+  // panel can display the title and status. React Query dedupes this against
+  // ChatConversation's identical query — no extra network request.
+  const { data: activeThreadDetail } = useQuery<ChatThreadDetail>({
+    queryKey: ['chat-thread', selectedThreadId, projectId],
+    queryFn: () => fetchChatThread(selectedThreadId!, projectId),
+    enabled: !!selectedThreadId,
+    staleTime: 30_000,
+  })
+  const activeIsStreaming = activeThreadDetail?.thread.status !== 'idle'
+
   // Debounced URL write-back — mirrors selection, kind filter, and search so
   // F5 restores the exact view. Uses replaceState (no hashchange event) to
   // avoid disturbing the app-level hash router.
@@ -2769,6 +2780,9 @@ export const ChatPage = () => {
       <ContextRail
         projectId={projectId}
         threadId={selectedThreadId ?? undefined}
+        activeThreadId={selectedThreadId ?? undefined}
+        threadDetail={activeThreadDetail}
+        isStreaming={activeIsStreaming}
         sessionStartedAt={sessionStartedAt}
         onInsertPrompt={handleInsertPrompt}
         collapsed={railCollapsed}

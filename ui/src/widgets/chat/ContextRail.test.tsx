@@ -291,6 +291,85 @@ const renderArtifacts = (threadId?: string) => {
   return renderToStaticMarkup(<SessionArtifactsPanel threadId={threadId} />)
 }
 
+// ---------------------------------------------------------------------------
+// Focus panel
+// ---------------------------------------------------------------------------
+
+describe('ContextRail – Focus panel', () => {
+  it('renders "No active thread" when no activeThreadId is supplied', () => {
+    mockState.tasks = []
+    mockState.error = null
+    const html = renderToStaticMarkup(
+      <ContextRail sessionStartedAt={0} onInsertPrompt={() => {}} />,
+    )
+    expect(html).toContain('Focus')
+    expect(html).toContain('No active thread')
+  })
+
+  it('shows the thread title and status chip when activeThreadId + threadDetail are supplied', () => {
+    mockState.tasks = []
+    mockState.error = null
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-focus-1',
+        title: 'My important thread',
+        status: 'running',
+        attentionStatus: 'generating',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 3,
+        origin: null,
+        alertItemId: null,
+        alertResolved: false,
+      },
+      messages: [],
+    }
+    const html = renderToStaticMarkup(
+      <ContextRail
+        sessionStartedAt={0}
+        onInsertPrompt={() => {}}
+        activeThreadId="thread-focus-1"
+        threadDetail={threadDetail}
+        isStreaming={true}
+      />,
+    )
+    expect(html).toContain('My important thread')
+    expect(html).toContain('data-testid="focus-panel-status-chip"')
+    expect(html).toContain('running')
+  })
+
+  it('shows "New thread" when threadDetail has a null title', () => {
+    mockState.tasks = []
+    mockState.error = null
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-focus-2',
+        title: null,
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 0,
+        origin: null,
+        alertItemId: null,
+        alertResolved: false,
+      },
+      messages: [],
+    }
+    const html = renderToStaticMarkup(
+      <ContextRail
+        sessionStartedAt={0}
+        onInsertPrompt={() => {}}
+        activeThreadId="thread-focus-2"
+        threadDetail={threadDetail}
+        isStreaming={false}
+      />,
+    )
+    expect(html).toContain('New thread')
+    expect(html).toContain('idle')
+  })
+})
+
 describe('ContextRail – session artifacts panel header in rail', () => {
   it('renders the "Session artifacts" section header inside ContextRail', () => {
     mockState.tasks = []
