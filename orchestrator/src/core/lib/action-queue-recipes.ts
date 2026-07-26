@@ -285,7 +285,7 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
       sliceId: str(ctx.payload['sliceId']),
       instructions: str(ctx.payload['instructions']),
     }),
-    verbs: [{ op: 'attach', label: 'Attach & work', style: 'primary' }],
+    verbs: [],
   },
 
   'plan-approval': {

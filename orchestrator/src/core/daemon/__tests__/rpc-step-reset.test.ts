@@ -77,7 +77,6 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): DaemonDeps => ({
   handleStatus: notImpl('handleStatus') as DaemonDeps['handleStatus'],
   investigateWorktree: notImpl('investigateWorktree') as DaemonDeps['investigateWorktree'],
   diagnoseFailure: notImpl('diagnoseFailure') as DaemonDeps['diagnoseFailure'],
-  handleAttach: notImpl('handleAttach') as DaemonDeps['handleAttach'],
   handleReleaseLease: notImpl('handleReleaseLease') as DaemonDeps['handleReleaseLease'],
   handleStepDone: notImpl('handleStepDone') as DaemonDeps['handleStepDone'],
   handleStepReset: notImpl('handleStepReset') as DaemonDeps['handleStepReset'],

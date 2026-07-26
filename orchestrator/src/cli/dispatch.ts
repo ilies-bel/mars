@@ -79,8 +79,7 @@ export const makeProductionDeps = async (
   // Propagate --repo into MARS_REPO so the store-layer cross-boundary guard
   // recognises this as a deliberate explicit binding and does not refuse to
   // open the database when the process CWD happens to sit inside a worktree
-  // of that same repo (the documented live-session workflow: attach → worktree
-  // CWD → mars --repo <root> show / task note / task check / step done).
+  // of that same repo (e.g. mars --repo <root> show / task note / task check / step done).
   if (repo) process.env.MARS_REPO = resolve(repo)
 
   const { resolveContext } = await import('../core/context')

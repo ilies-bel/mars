@@ -2,12 +2,11 @@
  * Manual-step subcommands: `mars step done [<task-id>]` and
  * `mars step reset <task-id> <step-name>`.
  *
- * `mars step done` — operator calls this from inside their attached worktree
+ * `mars step done` — operator calls this from inside the leased worktree
  * to signal that the current manual step is complete. The command resolves the
  * awaiting promise in the workflow engine and lets the pipeline proceed to the
  * next step (auto or manual). The lease follows the operator: if the pipeline
- * parks at another manual step it is re-granted to the same owner without
- * requiring another `mars attach`.
+ * parks at another manual step it is re-granted to the same owner.
  *
  * `mars step reset` — operator command to rewind a stuck task to an earlier
  * named workflow step. Clears the durable checkpoint for the named step and
@@ -71,7 +70,7 @@ const stepDone: Command = {
       return { code: 1 }
     }
     if (task.leaseOwner === null) {
-      deps.err(`task ${id} has no active lease; use 'mars attach ${id}' first`)
+      deps.err(`task ${id} has no active lease`)
       return { code: 1 }
     }
 

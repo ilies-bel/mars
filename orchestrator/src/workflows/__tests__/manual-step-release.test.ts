@@ -256,8 +256,8 @@ describe('manual-step park + re-lease semantics', () => {
 
     await vi.waitFor(() => expect(parks).toHaveLength(1), { timeout: 1000 })
 
-    // The park sentinel must be AWAIT_HUMAN_SENTINEL so that `mars attach`
-    // can take over without hitting the 'already has an active lease' guard.
+    // The park sentinel must be AWAIT_HUMAN_SENTINEL so the task is
+    // recognisable as a human-awaiting slot.
     expect(parks[0].leaseOwner).toBe(AWAIT_HUMAN_SENTINEL)
     expect(parks[0].leaseOwner).toBe('workflow:await-human')
 
@@ -265,10 +265,10 @@ describe('manual-step park + re-lease semantics', () => {
     await resultPromise
   })
 
-  it('workflow in a single dispatch — no re-attach is needed across manual steps', async () => {
+  it('workflow in a single dispatch — lease is maintained across manual steps', async () => {
     // This test verifies the key property: the promise-based approach runs the
-    // entire workflow in ONE runWorkflow() call. The operator does not need to
-    // call `mars attach` again between two manual steps.
+    // entire workflow in ONE runWorkflow() call. The lease persists across
+    // multiple manual steps without any operator action.
     const taskId = `single-dispatch-${Date.now()}`
     const parks: ParkRecord[] = []
     const services = makeServices(parks)

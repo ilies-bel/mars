@@ -100,9 +100,10 @@ describe('scaffolded CLAUDE.md: ## Routing section', () => {
       2. **Small tweaks / backend work → background task.** \`mars task add
          "..."\` — the orchestrator dispatches, codes, verifies, and merges
          headlessly.
-      3. **Visual or user-present work → live task.** \`mars task add --live\`,
-         then \`mars attach <id>\` to lease the worktree and work the Step
-         guide interactively. The verify + merge gate is the exit condition.
+      3. **Visual or user-present work → live task.** \`mars task add --live\`;
+         the task parks in \`awaiting-human\` with the Step guide in the action
+         queue. Work in the worktree, then \`mars step done <id>\`. The verify +
+         merge gate is the exit condition.
 
       **Direct editing on the integration branch is a last resort, not a
       fourth route.** It is never silent and never implied. The bar is all of:

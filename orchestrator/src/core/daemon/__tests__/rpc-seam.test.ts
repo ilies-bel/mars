@@ -99,7 +99,6 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     handleStatus: notImpl('handleStatus') as DaemonDeps['handleStatus'],
     investigateWorktree: notImpl('investigateWorktree') as DaemonDeps['investigateWorktree'],
     diagnoseFailure: notImpl('diagnoseFailure') as DaemonDeps['diagnoseFailure'],
-    handleAttach: notImpl('handleAttach') as DaemonDeps['handleAttach'],
     handleReleaseLease: notImpl('handleReleaseLease') as DaemonDeps['handleReleaseLease'],
     handleStepDone: notImpl('handleStepDone') as DaemonDeps['handleStepDone'],
     handleStepReset: notImpl('handleStepReset') as DaemonDeps['handleStepReset'],
@@ -113,9 +112,9 @@ describe('RPC registry', () => {
   it('registers exactly one leaf per protocol op, no duplicates', () => {
     // Every handler op is unique (buildRpcRegistry throws on dup).
     expect(() => buildRpcRegistry(allRpcHandlers)).not.toThrow()
-    // Spot-check the count matches the 39-op protocol surface
-    // (33 + task.note + task.check + step-done + proposal.take + step-reset + remerge).
-    expect(rpcRegistry.size).toBe(39)
+    // Spot-check the count matches the 38-op protocol surface
+    // (32 + task.note + task.check + step-done + proposal.take + step-reset + remerge).
+    expect(rpcRegistry.size).toBe(38)
   })
 
   it('rejects duplicate ops', () => {

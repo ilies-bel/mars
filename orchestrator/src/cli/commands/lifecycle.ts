@@ -7,9 +7,6 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { userInfo, hostname } from 'node:os'
-import { resolve as resolvePath } from 'node:path'
 import { resolveProposalId, getProposal } from '../../core/proposals'
 import { readMaybeFile } from '../args'
 import type { TaskStatus } from '../../core/queue'
@@ -629,118 +626,6 @@ const update: Command = {
   },
 }
 
-const attach: Command = {
-  path: 'attach',
-  summary: 'take the lease on a parked awaiting-human task',
-  usage: 'usage: mars attach <task-id>',
-  run: async (args, deps) => {
-    const id = args.positional[0]
-    if (!id) {
-      deps.err('usage: mars attach <task-id>')
-      return { code: 1 }
-    }
-
-    const leaseOwner = `${userInfo().username}@${hostname()}`
-
-    let data: {
-      worktreePath: string
-      branch: string
-      title: string
-      doneCriteria: readonly string[]
-      commitsAhead: readonly string[]
-      checklistState: ReadonlyArray<{ criterion: string; checked: boolean }>
-      progressTail: ReadonlyArray<{
-        id: string
-        taskId: string
-        createdAt: string
-        author: string
-        kind: 'note' | 'check' | 'uncheck'
-        body: string
-        criterionIndex: number | null
-      }>
-    }
-    try {
-      data = (await deps.daemon.sendRequest({ op: 'attach', id, leaseOwner })) as typeof data
-    } catch (err) {
-      deps.err(`${id}: ${errorMessage(err)}`)
-      return { code: 1 }
-    }
-
-    // Build the handoff output lines, tracking long-form sections separately so
-    // we can write a file when there is enough to warrant one.
-    const lines: string[] = []
-    const addLine = (s: string): void => {
-      deps.out(s)
-      lines.push(s)
-    }
-
-    addLine(`task:      ${data.title.replace(/\s+/g, ' ').slice(0, 80)}`)
-    addLine(`worktree:  ${data.worktreePath}`)
-    addLine(`branch:    ${data.branch}`)
-
-    // Done-criteria checklist — uses progress-derived state (checklistState) when
-    // available; falls back to doneCriteria with all unchecked.
-    const checklist =
-      data.checklistState.length > 0
-        ? data.checklistState
-        : data.doneCriteria.map((criterion) => ({ criterion, checked: false }))
-    if (checklist.length > 0) {
-      addLine('')
-      addLine('done criteria:')
-      for (const { criterion, checked } of checklist) {
-        addLine(`  - [${checked ? 'x' : ' '}] ${criterion}`)
-      }
-    }
-
-    // Commits ahead of the integration branch.
-    if (data.commitsAhead.length > 0) {
-      addLine('')
-      addLine(`commits ahead of integration branch:`)
-      for (const commit of data.commitsAhead) {
-        addLine(`  ${commit}`)
-      }
-    }
-
-    // Progress journal tail.
-    if (data.progressTail.length > 0) {
-      addLine('')
-      addLine(`--- journal (last ${data.progressTail.length}) ---`)
-      for (const entry of data.progressTail) {
-        const kindLabel =
-          entry.kind === 'note'
-            ? 'note'
-            : entry.kind === 'check'
-              ? `check #${entry.criterionIndex}`
-              : `uncheck #${entry.criterionIndex}`
-        const bodyPart = entry.body.length > 0 ? `: ${entry.body}` : ''
-        addLine(`${entry.createdAt} [${kindLabel}] ${entry.author}${bodyPart}`)
-      }
-    }
-
-    addLine('')
-    addLine(`hint: cd ${data.worktreePath} && claude`)
-
-    // If there is substantive handoff content, also write it to
-    // .mars/handoffs/<id>.md (outside the worktree — never inside it).
-    const hasHandoffContent =
-      data.commitsAhead.length > 0 ||
-      data.progressTail.length > 0
-    if (hasHandoffContent) {
-      try {
-        const handoffsDir = resolvePath(deps.ctx.stateDir, 'handoffs')
-        mkdirSync(handoffsDir, { recursive: true })
-        const handoffPath = resolvePath(handoffsDir, `${id}.md`)
-        writeFileSync(handoffPath, lines.join('\n') + '\n', 'utf8')
-        deps.out(`handoff:   ${handoffPath}`)
-      } catch {
-        // Non-fatal: if we can't write the file, the stdout output is sufficient.
-      }
-    }
-
-    return { code: 0 }
-  },
-}
-
 const land: Command = {
   path: 'land',
   summary: "land a worktree-ahead task's commits onto the integration branch",
@@ -822,7 +707,7 @@ const release: Command = {
       return { code: 1 }
     }
     if (task.leaseOwner === null) {
-      deps.err(`task ${id} has no active lease; use 'mars attach ${id}' first`)
+      deps.err(`task ${id} has no active lease`)
       return { code: 1 }
     }
 
@@ -876,6 +761,5 @@ export const lifecycleCommands: readonly Command[] = [
   block,
   list,
   update,
-  attach,
   release,
 ]

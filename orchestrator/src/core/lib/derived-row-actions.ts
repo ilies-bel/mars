@@ -72,12 +72,6 @@ export const derivedRowActions = (rowKind: string, entityId?: string): ActionDes
   if (rowKind === 'awaiting-human') {
     return [
       {
-        id: 'attach',
-        label: 'Attach',
-        op: 'copy',
-        hint: entityId ? `mars attach ${entityId}` : 'mars attach <id>',
-      },
-      {
         id: 'release',
         label: 'Release',
         op: 'copy',

@@ -2983,84 +2983,6 @@ export const startDaemon = async (
 
   // ── Network: UDS server ───────────────────────────────────────────────────
 
-  // `mars attach <id>`: take the worktree lease on an 'awaiting-human' task.
-  // Validates that the task is parked and has no existing owner, then stamps
-  // leaseOwner + leasedAt and returns the info the CLI prints to the operator.
-  // The response includes a derived Handoff: the Worker's Completion report,
-  // commits ahead of the integration branch, and the Progress-journal state.
-  const handleAttach = async (
-    id: string,
-    leaseOwner: string,
-  ): Promise<{
-    worktreePath: string
-    branch: string
-    title: string
-    doneCriteria: readonly string[]
-    commitsAhead: readonly string[]
-    checklistState: ReadonlyArray<{ criterion: string; checked: boolean }>
-    progressTail: readonly ProgressEntry[]
-  }> => {
-    const task = await getTask(id)
-    if (!task) throw new Error(`task ${id} not found`)
-    if (task.status !== 'awaiting-human') {
-      throw new Error(
-        `task ${id} is in status '${task.status}'; attach is only valid on 'awaiting-human' tasks`,
-      )
-    }
-    // AWAIT_HUMAN_SENTINEL is the park sentinel written by both the
-    // awaitHuman primitive and the onManualPark hook — the workflow holding
-    // the slot FOR a human. Attach takes it over. Re-attach by the SAME
-    // owner is a no-op refresh (a session that lost track can re-print the
-    // handoff). Only a lease held by a DIFFERENT human refuses.
-    if (
-      task.leaseOwner !== null &&
-      task.leaseOwner !== AWAIT_HUMAN_SENTINEL &&
-      task.leaseOwner !== leaseOwner
-    ) {
-      throw new Error(
-        `task ${id} already has an active lease (owner: ${task.leaseOwner}); release it first`,
-      )
-    }
-    const now = new Date().toISOString()
-    await updateTask(id, { leaseOwner, leasedAt: now })
-    const worktreePath =
-      task.worktreePath ?? resolvePath(resolveContext().stateDir, 'worktrees', id)
-    const doneCriteria = task.spec?.doneCriteria ?? []
-
-    // Commits ahead of the integration branch — bounded to 20.
-    let commitsAhead: string[] = []
-    try {
-      const gitResult = await exec(
-        resolveGitBin(),
-        ['log', '--oneline', `${integrationBranch}..HEAD`],
-        { cwd: worktreePath },
-      )
-      commitsAhead = gitResult.stdout.trim().split('\n').filter(Boolean).slice(0, 20)
-    } catch {
-      // Non-fatal: worktree may not yet exist or branch may not have diverged.
-    }
-
-    // Progress journal: derive checklist state and tail entries.
-    let progressEntries: ProgressEntry[] = []
-    try {
-      progressEntries = await Arc.listProgress(id)
-    } catch {
-      // Non-fatal: table may not exist in older DBs.
-    }
-    const checklistState = Arc.deriveChecklist(progressEntries, doneCriteria)
-    const progressTail = progressEntries.slice(-10)
-
-    return {
-      worktreePath,
-      branch: task.branch ?? `task/${id}`,
-      title: task.prompt,
-      doneCriteria,
-      commitsAhead,
-      checklistState,
-      progressTail,
-    }
-  }
-
   // `mars release <id>` / `mars release --abort <id>`: release the worktree
   // lease on an 'awaiting-human' task. Normal release re-queues the task for
   // pipeline continuation; --abort routes it through the failure path.
@@ -3117,7 +3039,7 @@ export const startDaemon = async (
       )
     }
     if (task.leaseOwner === null) {
-      throw new Error(`task ${id} has no active lease; use 'mars attach ${id}' first`)
+      throw new Error(`task ${id} has no active lease`)
     }
     const stepName = task.currentStepName ?? 'unknown'
     // Close the awaiting-human row for this step. The row uses signature=taskId
@@ -3271,7 +3193,6 @@ export const startDaemon = async (
     handleStatus,
     investigateWorktree,
     diagnoseFailure,
-    handleAttach,
     handleReleaseLease,
     handleStepDone,
     handleStepReset,
@@ -3738,7 +3659,7 @@ export const startDaemon = async (
       }
       if (task.leaseOwner === null) {
         throw Object.assign(
-          new Error(`task ${id} has no active lease; use 'mars attach ${id}' first`),
+          new Error(`task ${id} has no active lease`),
           { code: 'WRONG_STATUS' as const },
         )
       }

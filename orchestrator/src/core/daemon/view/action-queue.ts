@@ -200,8 +200,7 @@ export interface TaskForActionQueue {
   fixForTaskId?: string | null
   /**
    * Live lease owner for an 'awaiting-human' task. Preferred over the
-   * action-queue payload snapshot because `mars attach` updates the task row
-   * without touching the payload — the task row is always current.
+   * action-queue payload snapshot because the task row is always current.
    */
   leaseOwner?: string | null
   /** ISO timestamp when the current lease was acquired. */
@@ -653,8 +652,8 @@ export const buildActionQueueView = async ({
 
     // Surface the lease state for awaiting-human rows.
     // Prefer live task-row values over the action-queue payload snapshot:
-    // the payload is written at park time and is NOT updated by `mars attach`,
-    // while the task row's lease columns reflect the current owner after attach.
+    // the payload is written at park time, while the task row's lease columns
+    // reflect the current owner.
     const leaseState: ActionQueueRow['leaseState'] = (() => {
       if (uiKind !== 'awaiting-human') return null
       const t = taskById.get(entityId)

@@ -19,7 +19,6 @@ export const SAFE_MARS_VERBS: readonly string[] = [
   'task-add',
   'run-reflect',
   'enable-auto-reflect',
-  'attach',
 ]
 
 /**

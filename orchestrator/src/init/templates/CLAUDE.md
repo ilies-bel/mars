@@ -28,9 +28,10 @@ The three lines:
 2. **Small tweaks / backend work → background task.** `mars task add
    "..."` — the orchestrator dispatches, codes, verifies, and merges
    headlessly.
-3. **Visual or user-present work → live task.** `mars task add --live`,
-   then `mars attach <id>` to lease the worktree and work the Step
-   guide interactively. The verify + merge gate is the exit condition.
+3. **Visual or user-present work → live task.** `mars task add --live`;
+   the task parks in `awaiting-human` with the Step guide in the action
+   queue. Work in the worktree, then `mars step done <id>`. The verify +
+   merge gate is the exit condition.
 
 **Direct editing on the integration branch is a last resort, not a
 fourth route.** It is never silent and never implied. The bar is all of:
@@ -89,11 +90,11 @@ terminal restart/purge — the queue is a pure projection, no operator gesture c
 
 ## Live execution
 
-When you attach to a live task (`mars attach <id>`), the worktree is
-leased and the workflow renders its Step guide (the runbook for that
-pipeline).
+When a task parks at a manual step, the worktree is ready and the
+workflow renders its Step guide (the runbook for that pipeline) in the
+action queue.
 
-**Handoff:** on attach, read the Step guide in full before touching
+**Handoff:** read the Step guide in full before touching
 anything. It states what the current step expects, which criteria gate
 `step done`, and what the next auto step will do once you signal
 completion.

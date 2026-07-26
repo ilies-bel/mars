@@ -157,9 +157,6 @@ Commands:
                                 workflow advances to the next step (auto steps
                                 run immediately; the next manual step parks
                                 awaiting input)
-  attach <id>                   lease a worktree for interactive work on a
-                                live task. Renders the Step guide for the
-                                current workflow step.
   release <id>                  release a leased worktree without merging;
                                 the worktree is preserved for inspection.
                                 Use --abort to exit without merging.
@@ -1330,16 +1327,6 @@ Subcommands:
       the next step: auto steps run immediately; the next manual step
       parks awaiting input. If the verify step fails, fix inside the
       worktree and run 'step done' again.`,
-  attach: `mars attach <id>
-
-Lease a worktree for interactive work on a live task. The worktree is
-checked out at .mars/worktrees/<id>/ and the workflow renders its Step
-guide (the runbook for that pipeline). Read the Step guide in full
-before touching anything.
-
-On attach, the current step's expectations and done-criteria are
-printed. Use 'mars task note', 'mars task check', and 'mars step done'
-to progress through the step guide.`,
   release: `mars release <id>
 
 Release a leased worktree. The worktree is preserved for inspection.

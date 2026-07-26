@@ -35,7 +35,6 @@ describe('chat-mars-verbs', () => {
       'task-add',
       'run-reflect',
       'enable-auto-reflect',
-      'attach',
     ])('classifies safe verb %s as "safe"', (verb) => {
       expect(classifyMarsVerb(verb)).toBe('safe')
     })

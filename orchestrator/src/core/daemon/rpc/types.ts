@@ -172,21 +172,6 @@ export interface DaemonDeps {
   handleStatus(): Promise<DaemonStatusPayload>
   investigateWorktree(id: string): Promise<unknown>
   diagnoseFailure(id: string): Promise<unknown>
-  handleAttach(
-    id: string,
-    leaseOwner: string,
-  ): Promise<{
-    worktreePath: string
-    branch: string
-    title: string
-    doneCriteria: readonly string[]
-    /** Git log --oneline lines ahead of the integration branch, bounded to 20. */
-    commitsAhead: readonly string[]
-    /** Per-criterion checked state, derived from the progress journal. */
-    checklistState: ReadonlyArray<{ criterion: string; checked: boolean }>
-    /** Tail of the progress journal (last 10 entries). */
-    progressTail: readonly ProgressEntry[]
-  }>
   handleReleaseLease(id: string, abort: boolean): Promise<void>
   /** Complete the current manual step: re-queue but keep the lease identity. */
   handleStepDone(id: string): Promise<void>

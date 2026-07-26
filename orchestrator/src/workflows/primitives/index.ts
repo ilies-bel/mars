@@ -767,8 +767,8 @@ export interface RunAgentOpts {
   mode?: 'auto' | 'manual'
   /**
    * Step guide for a `'manual'` step — what the Foreground session should
-   * accomplish here. Surfaced in the action-queue row at park, in
-   * `mars attach`, and by the session hooks. Ignored when mode is `'auto'`.
+   * accomplish here. Surfaced in the action-queue row at park and by the
+   * session hooks. Ignored when mode is `'auto'`.
    */
   guide?: string
 }
@@ -2605,7 +2605,7 @@ export const awaitHuman = async (
       (note ? ` Step guide: ${note}.` : '') +
       (released
         ? ` Lease re-granted to ${released} — continue in the worktree, then \`mars step done ${taskId}\`.`
-        : ` Take the lease with \`mars attach ${taskId}\`, work in the worktree, then \`mars step done ${taskId}\` (or \`mars release ${taskId} --abort\` to bail).`),
+        : ` Work in the worktree, then \`mars step done ${taskId}\` (or \`mars release ${taskId} --abort\` to bail).`),
     payload: {
       taskId,
       leaseOwner,
