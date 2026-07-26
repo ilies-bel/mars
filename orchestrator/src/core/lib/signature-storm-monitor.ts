@@ -136,11 +136,41 @@ export interface RecordFailureSignatureResult {
  * Subsequent calls while `tripped=true` return `{ tripped: true, alreadyTripped: true }`
  * without raising another row — idempotent per episode.
  */
+/**
+ * Does `signature` actually name a failure KIND, or is it a placeholder?
+ *
+ * Signatures look like `<step>:<kind>/<class>` (or `<kind>/<class>`). The
+ * breaker's whole premise is "the SAME signature failed N consecutive tasks,
+ * therefore one systemic cause" — which only holds when the signature
+ * identifies a cause. `unknown/unclassified`, `/unclassified` and
+ * `recovery_exhausted:/unclassified/unclassified` all have an EMPTY or
+ * `unknown` kind slot: they record that classification failed. Three unrelated
+ * unclassified failures share nothing, so streaking them together trips the
+ * breaker on noise and pauses dispatch until a human notices.
+ *
+ * That is not hypothetical — a daemon restart emits a burst of reconcile
+ * artifacts (orphaned origins, dirty-main parks) that all classify as
+ * `unknown/unclassified`, so routine restarts silently wedged the queue.
+ *
+ * Signatures with a real kind (`setup:origin-worktree-missing/unclassified`,
+ * `merge:vcs-supervisor-aborted/rebase-dirty-worktree`) still streak normally,
+ * even though their CLASS is unclassified — the kind is the diagnostic part.
+ */
+export const isDiagnosticSignature = (signature: string): boolean => {
+  const afterStep = signature.slice(signature.lastIndexOf(':') + 1)
+  const kind = afterStep.split('/')[0] ?? ''
+  return kind !== '' && kind !== 'unknown'
+}
+
 export const recordFailureSignature = async (
   client: MonitorDb,
   taskId: string,
   signature: string,
 ): Promise<RecordFailureSignatureResult> => {
+  // A placeholder signature groups unrelated failures; never streak on it.
+  if (!isDiagnosticSignature(signature)) {
+    return { streak: 0, tripped: false, alreadyTripped: false }
+  }
   const row = await readStreakRow(client)
 
   // If already tripped for THIS signature, return idempotent result.

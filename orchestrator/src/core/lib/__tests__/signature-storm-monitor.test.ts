@@ -609,3 +609,25 @@ describe('environmental-failure policy — no storm, no recovery-budget consumpt
     expect(await countStormRows(aq)).toBe(1)
   })
 })
+
+describe('isDiagnosticSignature', () => {
+  const load = async () => {
+    const m = await import('../signature-storm-monitor')
+    return m.isDiagnosticSignature
+  }
+
+  it('rejects placeholder signatures that name no failure kind', async () => {
+    // These are what a daemon-restart reconcile burst emits. Streaking them
+    // together trips the breaker on unrelated failures and wedges dispatch.
+    const isDiagnostic = await load()
+    expect(isDiagnostic('unknown/unclassified')).toBe(false)
+    expect(isDiagnostic('/unclassified')).toBe(false)
+    expect(isDiagnostic('recovery_exhausted:/unclassified/unclassified')).toBe(false)
+  })
+
+  it('accepts signatures with a real kind even when the class is unclassified', async () => {
+    const isDiagnostic = await load()
+    expect(isDiagnostic('setup:origin-worktree-missing/unclassified')).toBe(true)
+    expect(isDiagnostic('merge:vcs-supervisor-aborted/rebase-dirty-worktree')).toBe(true)
+  })
+})
