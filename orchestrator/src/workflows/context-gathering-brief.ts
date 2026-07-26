@@ -4,8 +4,10 @@
  *
  * The brief imposes two hard rules for the lifetime of the session:
  *   1. At most one Explore subagent per turn.
- *   2. Do not Read a file that an Explore subagent has already surfaced
- *      unless you are about to Edit that file.
+ *   2. Choose the tool by intent: use Explore for broad discovery; Read
+ *      a known target file directly when you need its full contents to
+ *      implement a change. Do not re-Read a file Explore already surfaced
+ *      unless you are about to Edit it.
  *
  * It also includes a codegraph-first exploration directive (Rule 3) that
  * degrades gracefully: it is conditioned on codegraph being available, so it
@@ -28,9 +30,7 @@ export const CONTEXT_GATHERING_BRIEF = [
   '',
   "**Rule 1 — At most one Explore subagent per turn.** When you need to look something up, combine all surface questions into a single Explore call. Do NOT launch multiple Explore subagents in the same assistant turn. If you have distinct follow-up questions after seeing Explore's answer, sequence them across turns — one Explore call per turn.",
   '',
-  "**Rule 2 — Do not re-Read after Explore.** If Explore has already surfaced a file's contents in its excerpts, do not Read that file again. The only escape hatch is Edit intent: if you are about to Edit the file, Read it immediately before the Edit so you hold the current state. In every other case, work from Explore's excerpts.",
-  '',
-  "**When Explore's excerpts do not answer the question**, ask Explore a sharper follow-up instead of falling back to Read. Give Explore a more precise search target (different symbol, narrower glob, explicit file path) — do not substitute a Read call to paper over a weak Explore prompt.",
+  '**Rule 2 — Choose the tool by intent.** For broad discovery ("where is X defined?", "which files reference Y?") use Explore (or codegraph when available). For a known target file whose full contents you need to write an edit, Read it directly — routing through Explore costs an extra round-trip and returns only excerpts. If Explore has already surfaced a file\'s contents, do not Read it again unless you are about to Edit it.',
   '',
   '**Rule 3 — codegraph-first exploration (when available).** If `codegraph` is on PATH, prefer it over `rg`/grep+Read sweeps when answering "where is X defined?", "what calls Y?", or "how does Z work?" questions. Three invocations cover most needs:',
   '',
