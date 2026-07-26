@@ -400,6 +400,84 @@ describe('HeroSuggestions – with alert', () => {
 })
 
 // ---------------------------------------------------------------------------
+// HeroSuggestions – chip text handling (truncation + de-duplication)
+// ---------------------------------------------------------------------------
+
+describe('HeroSuggestions – chip text handling', () => {
+  /** Renders with topAlert=first and one other-alert chip=second. */
+  const renderWithOtherAlert = (chipTitle: string, extraAlerts: Partial<ActionQueueItem>[] = []) => {
+    const top = makeAlert({ id: 'top', title: 'Top alert' })
+    const other = makeAlert({ id: 'other', title: chipTitle })
+    const rest = extraAlerts.map((o, i) => makeAlert({ id: `extra-${i}`, ...o }))
+    return renderToStaticMarkup(
+      createElement(HeroSuggestions, {
+        alerts: [top, other, ...rest],
+        onAlertClick: () => {},
+        onChipClick: () => {},
+        onWhatHappened: () => {},
+      }),
+    )
+  }
+
+  it('caps chip text at 40 characters with an ellipsis when title is long', () => {
+    const longTitle = 'A pipeline step did not complete because of a very deep error in the subsystem'
+    const html = renderWithOtherAlert(longTitle)
+    // Should not contain the full long title in a chip
+    expect(html).not.toContain(`>${longTitle}<`)
+    // Should contain the first 40 chars followed by an ellipsis
+    const truncated = longTitle.slice(0, 40) + '…'
+    expect(html).toContain(truncated)
+  })
+
+  it('strips the dash separator portion from a long title to avoid duplicated text appearance', () => {
+    // A title like "A pipeline step did not complete — A pipeline step di…" triggers the bug
+    const titleWithDash = 'A pipeline step did not complete — extra context about the failure'
+    const html = renderWithOtherAlert(titleWithDash)
+    // The chip's visible label span must not contain the dash separator.
+    // (The full title with dash is preserved in the `title` attribute for hover.)
+    expect(html).toContain('>A pipeline step did not complete</span>')
+    // The after-dash portion must not appear as visible text inside a span element
+    expect(html).not.toContain('>A pipeline step did not complete — extra context')
+  })
+
+  it('adds a title attribute containing the full alert title for hover tooltip', () => {
+    const title = 'Some alert that needs attention'
+    const html = renderWithOtherAlert(title)
+    // The hero-alert-option chip must expose the full title via the title attribute
+    // so users can hover to see the complete text even when it is truncated.
+    const chipSection = html.slice(html.indexOf('hero-alert-option'))
+    expect(chipSection).toContain(`title="${title}"`)
+  })
+
+  it('adds a title attribute with the full long title even when chip text is truncated', () => {
+    const longTitle = 'A pipeline step did not complete because of a very deep error in the subsystem'
+    const html = renderWithOtherAlert(longTitle)
+    expect(html).toContain(`title="${longTitle}"`)
+  })
+
+  it('shows at most 1 alert-sourced chip regardless of how many other-alerts exist', () => {
+    const html = renderWithOtherAlert('Second alert', [
+      { id: 'extra-1', title: 'Third alert' },
+      { id: 'extra-2', title: 'Fourth alert' },
+    ])
+    // Only one hero-alert-option chip should be present
+    const chipCount = (html.match(/data-testid="hero-alert-option"/g) ?? []).length
+    expect(chipCount).toBe(1)
+    // The shown chip is the first other-alert (second in the list after top)
+    expect(html).toContain('Second alert')
+    expect(html).not.toContain('Third alert')
+    expect(html).not.toContain('Fourth alert')
+  })
+
+  it('shows a short title intact without truncation', () => {
+    const shortTitle = 'Short title'
+    const html = renderWithOtherAlert(shortTitle)
+    expect(html).toContain(shortTitle)
+    expect(html).not.toContain(shortTitle + '…')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Feedback controls — structure and accessibility
 // ---------------------------------------------------------------------------
 

@@ -195,18 +195,25 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
 
       {otherAlerts.length > 0 && (
         <div className="flex flex-wrap gap-2" aria-label="Other conversations needing attention">
-          {otherAlerts.slice(0, 3).map((alert) => (
-            <button
-              key={alert.id}
-              type="button"
-              data-testid="hero-alert-option"
-              className="flex min-w-0 max-w-full items-center gap-1.5 border border-iron/30 px-2.5 py-1.5 font-mono text-[11px] text-iron transition-colors hover:bg-iron/10 hover:text-fg active:scale-[0.98]"
-              onClick={() => onAlertClick(alert)}
-            >
-              <span aria-hidden="true">{KIND_ICON[alert.kind] ?? '🔔'}</span>
-              <span className="max-w-[220px] truncate">{alert.title}</span>
-            </button>
-          ))}
+          {otherAlerts.slice(0, 1).map((alert) => {
+            const base = alert.title.includes(' — ')
+              ? alert.title.slice(0, alert.title.indexOf(' — '))
+              : alert.title
+            const chipLabel = base.length > 40 ? `${base.slice(0, 40)}…` : base
+            return (
+              <button
+                key={alert.id}
+                type="button"
+                data-testid="hero-alert-option"
+                title={alert.title}
+                className="flex min-w-0 max-w-full items-center gap-1.5 border border-iron/30 px-2.5 py-1.5 font-mono text-[11px] text-iron transition-colors hover:bg-iron/10 hover:text-fg active:scale-[0.98]"
+                onClick={() => onAlertClick(alert)}
+              >
+                <span aria-hidden="true">{KIND_ICON[alert.kind] ?? '🔔'}</span>
+                <span className="truncate">{chipLabel}</span>
+              </button>
+            )
+          })}
         </div>
       )}
 
