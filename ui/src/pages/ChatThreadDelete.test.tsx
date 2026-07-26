@@ -232,6 +232,22 @@ describe('thread delete — a second delete commits the first', () => {
   })
 })
 
+describe('thread delete — no layout shift on hover', () => {
+  it('delete button is always present in the DOM so hover causes no reflow', async () => {
+    await mount()
+    const btns = deleteButtons()
+    // Both thread rows must have a delete button in the DOM from the start —
+    // they should never be conditionally mounted (hidden/removed) because that
+    // would insert a new flex item on hover and shift the title text.
+    expect(btns).toHaveLength(2)
+    // Each button is hidden via opacity, NOT via display:none / hidden class.
+    for (const btn of btns) {
+      expect(btn.className).toContain('opacity-0')
+      expect(btn.className).not.toContain('hidden')
+    }
+  })
+})
+
 describe('thread delete — server rejection', () => {
   it('restores the row and shows the error', async () => {
     mockedApi.deleteChatThread.mockRejectedValue(new Error('thread is locked'))
