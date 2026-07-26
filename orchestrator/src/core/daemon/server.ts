@@ -4373,6 +4373,40 @@ export const startDaemon = async (
   const kpiSnapshotSweep = setInterval(runKpiSnapshot, KPI_SNAPSHOT_MS)
   kpiSnapshotSweep.unref()
 
+  // ── Chat archive sweeper ──────────────────────────────────────────────────
+  // Periodically purges evaporated chat threads (and their messages and upload
+  // directories) that are older than the retention window (default 30 days,
+  // override via MARS_CHAT_RETENTION_DAYS). Active threads and threads within
+  // the window remain in the History accordion for the user to review. The
+  // sole permanent artifact of a session is its release-note / hero summary.
+  // .unref() so the timer never holds the process alive after shutdown.
+  const CHAT_ARCHIVE_SWEEP_MS = Number(
+    process.env.MARS_CHAT_ARCHIVE_SWEEP_MS ?? 60 * 60_000,
+  )
+  const { sweepChatArchive } = await import('./chat-archive-sweeper')
+  const chatArchiveSweep = setInterval(() => {
+    void (async () => {
+      try {
+        const { join: joinPath } = await import('node:path')
+        const { getRepoRoot } = await import('../context')
+        const uploadsRoot = joinPath(getRepoRoot(), '.mars', 'chat-uploads')
+        const { deletedThreads, deletedUploadDirs } = await sweepChatArchive(
+          resolveDbTarget(),
+          uploadsRoot,
+        )
+        if (deletedThreads > 0) {
+          log(
+            `[chat-archive-sweep] deleted ${deletedThreads} archived thread(s)` +
+              ` and ${deletedUploadDirs} upload dir(s) past retention window`,
+          )
+        }
+      } catch (err) {
+        log(`[chat-archive-sweep] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, CHAT_ARCHIVE_SWEEP_MS)
+  chatArchiveSweep.unref()
+
   // ── Alert-dismisser drain ─────────────────────────────────────────────────
   // Polls the outbox for status-transition events and clears the implicated
   // task's action-queue alert(s). This keeps the "status change clears
@@ -4487,6 +4521,7 @@ export const startDaemon = async (
     clearInterval(phantomWatchdog)
     clearInterval(observabilitySweep)
     clearInterval(kpiSnapshotSweep)
+    clearInterval(chatArchiveSweep)
     clearInterval(alertDrain)
     clearInterval(actionQueueRepopulatorDrain)
     clearInterval(blockerResolutionDrain)
