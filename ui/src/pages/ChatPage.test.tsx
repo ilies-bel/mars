@@ -728,6 +728,31 @@ describe('MessageView – role + content', () => {
   })
 })
 
+describe('MessageView – usage footer position', () => {
+  it('renders usage metadata outside the bordered message content box', () => {
+    const msg = chatMessageToUIMessage(makeMsg([
+      { type: 'text', text: 'done' },
+      { type: 'result', durationMs: 8400, inputTokens: 100, outputTokens: 284, cacheReadTokens: 0, cost: 0.001 },
+    ]))
+    const html = renderToStaticMarkup(
+      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
+    )
+    // Usage footer content must still render.
+    expect(html).toContain('384 tokens')
+
+    // Structural check: usage footer is OUTSIDE the bordered message box (bg-card).
+    // In the old (inside) layout, usage appeared in the HTML before feedback controls.
+    // In the new (outside) layout, feedback controls are inside the box and appear
+    // before the usage footer, which is a sibling below the box.
+    const feedbackIdx = html.indexOf('aria-label="helpful"')
+    const usageIdx = html.indexOf('384 tokens')
+    expect(feedbackIdx).toBeGreaterThan(-1)
+    expect(usageIdx).toBeGreaterThan(-1)
+    // Feedback (inside box) must appear before usage (outside box).
+    expect(feedbackIdx).toBeLessThan(usageIdx)
+  })
+})
+
 describe('MessageView – feedback controls presence', () => {
   it('assistant messages render feedback controls', () => {
     const html = renderMessage(makeMsg([{ type: 'text', text: 'hi' }], 'assistant'))

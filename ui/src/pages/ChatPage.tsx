@@ -733,21 +733,26 @@ export const MessageView = ({
   return (
     <Message from={message.role} data-message-role={message.role}>
       {/* Assistant messages sit inside a subtle bordered card; user messages use
-          the default contained pill from MessageContent variant='contained'. */}
-      <MessageContent
-        variant={isUser ? 'contained' : 'flat'}
-        className={!isUser ? 'border border-primary/20 bg-card px-3 py-2' : undefined}
-      >
-        {parts.map((p, i) => renderPart(p, i, onRetry))}
+          the default contained pill from MessageContent variant='contained'.
+          The usage footer (ResultFooter) is placed outside the bordered box as a
+          sibling so token/cost/duration metadata is visually associated with the
+          message but not inside its bordered background content area. */}
+      <div className="flex flex-col">
+        <MessageContent
+          variant={isUser ? 'contained' : 'flat'}
+          className={!isUser ? 'border border-primary/20 bg-card px-3 py-2' : undefined}
+        >
+          {parts.map((p, i) => renderPart(p, i, onRetry))}
+          {!isUser && (
+            <FeedbackControls
+              messageId={message.id}
+              feedback={feedback}
+              onFeedbackChange={handleFeedbackChange}
+            />
+          )}
+        </MessageContent>
         <ResultFooter usage={usage} />
-        {!isUser && (
-          <FeedbackControls
-            messageId={message.id}
-            feedback={feedback}
-            onFeedbackChange={handleFeedbackChange}
-          />
-        )}
-      </MessageContent>
+      </div>
     </Message>
   )
 }
