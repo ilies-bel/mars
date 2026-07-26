@@ -473,7 +473,7 @@ const MetaCell = ({ label, value }: { label: string; value: ReactNode }) => (
 /**
  * Renders the STATUS-FIRST tiered detail body for a fully-loaded Task.
  *
- * Section order: Header → Failure/blocker banner → Prompt → Plan → Spec →
+ * Section order: Header → Failure/blocker banner → Prompt → Workflow step →
  * Origins → Meta grid → Diagnostics. Every section after the header is omitted
  * entirely (no empty header) when its backing data is null/empty.
  */
@@ -481,12 +481,19 @@ export const TaskDetailBody = ({
   task,
   onNavigate,
   currentId,
+  currentStep,
 }: {
   task: Task
   /** Drill-in handler threaded into the OriginTree; omit for display-only. */
   onNavigate?: (id: string) => void
   /** Id the OriginTree bolds as "current"; defaults to the task's own id. */
   currentId?: string
+  /**
+   * The current (or last) workflow step the task is on — step name and when
+   * the step started. When provided, a compact one-line step indicator is
+   * shown in place of the old Plan/Spec builder breakdown.
+   */
+  currentStep?: { stepName: string; startedAt: string } | null
 }) => {
   const promptLines = task.prompt.split('\n')
   const firstLine = promptLines[0] ?? task.prompt
@@ -618,83 +625,13 @@ export const TaskDetailBody = ({
         )
       ) : null}
 
-      {/* d. Plan. */}
-      {task.plan != null ? (
-        <div className="flex flex-col gap-2">
-          <SectionLabel>Plan</SectionLabel>
-          {task.plan.functional ? (
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                Functional
-              </p>
-              <p className="mt-0.5 whitespace-pre-wrap break-words text-[11px] text-fg">
-                {task.plan.functional}
-              </p>
-            </div>
-          ) : null}
-          {task.plan.technical ? (
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                Technical
-              </p>
-              <p className="mt-0.5 whitespace-pre-wrap break-words text-[11px] text-fg">
-                {task.plan.technical}
-              </p>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* e. Spec. */}
-      {spec != null ? (
-        <div data-testid="task-detail-spec" className="flex flex-col gap-2">
-          <SectionLabel>Spec</SectionLabel>
-          {spec.files.length > 0 ? (
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                Files
-              </p>
-              <StringList items={spec.files} />
-            </div>
-          ) : null}
-          {spec.readFirst.length > 0 ? (
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                Read first
-              </p>
-              <StringList items={spec.readFirst} />
-            </div>
-          ) : null}
-          {spec.prescriptiveAction != null ? (
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                Action
-              </p>
-              <p className="mt-0.5 whitespace-pre-wrap break-words text-[11px] text-fg">
-                {spec.prescriptiveAction}
-              </p>
-            </div>
-          ) : null}
-          {spec.verifyCmd != null ? (
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                Verify
-              </p>
-              <p className="mt-0.5 break-all font-mono text-[11px] text-fg">
-                {spec.verifyCmd}
-              </p>
-            </div>
-          ) : null}
-          {spec.doneCriteria.length > 0 ? (
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-                Done
-              </p>
-              <StringList items={spec.doneCriteria} />
-            </div>
-          ) : null}
-          <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
-            {spec.taskType}
+      {/* d. Current workflow step — one line: step name · time since step began. */}
+      {currentStep != null ? (
+        <div data-testid="task-detail-current-step">
+          <SectionLabel>Step</SectionLabel>
+          <p className="font-mono text-[11px] text-fg">
+            {currentStep.stepName}
+            <span className="text-muted"> · {relativeTime(currentStep.startedAt)}</span>
           </p>
         </div>
       ) : null}
@@ -1729,6 +1666,22 @@ export const TaskDetailDrawer = ({
     return m.size > 0 ? m : undefined
   }, [resolvedSpans])
 
+  // Derive the current (or last) workflow step from the run timeline or spans.
+  // Prefers a step with status/outcome='running'; falls back to the last step
+  // in the most recent run. Passed into TaskDetailBody for the step indicator.
+  const currentStep = useMemo<{ stepName: string; startedAt: string } | null>(() => {
+    if (resolvedRunTimeline !== null && resolvedRunTimeline.runs.length > 0) {
+      const allSteps = resolvedRunTimeline.runs.flatMap((r) => r.steps)
+      const running = allSteps.filter((s) => s.status === 'running').at(-1)
+      return running ?? allSteps.at(-1) ?? null
+    }
+    if (resolvedSpans !== null && resolvedSpans.length > 0) {
+      const running = resolvedSpans.filter((s) => s.outcome === 'running').at(-1)
+      return running ?? resolvedSpans.at(-1) ?? null
+    }
+    return null
+  }, [resolvedRunTimeline, resolvedSpans])
+
   return (
     <>
       {/* Scrim — sits at z-40 (below the drawer's z-50) so clicks outside dismiss the panel */}
@@ -1953,7 +1906,7 @@ export const TaskDetailDrawer = ({
           data-testid="task-detail-body"
           className="flex-1 overflow-y-auto p-4"
         >
-          <TaskDetailBody task={state.task} onNavigate={navigate} currentId={currentId} />
+          <TaskDetailBody task={state.task} onNavigate={navigate} currentId={currentId} currentStep={currentStep} />
         </div>
       ) : null}
     </aside>

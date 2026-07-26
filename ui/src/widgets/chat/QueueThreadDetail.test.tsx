@@ -18,6 +18,7 @@ import {
 } from './QueueThreadDetail'
 import { ApiError } from '@/shared/api'
 import type { ActionQueueItem, EventsResponse, LearnedRecipe } from '@/shared/schemas'
+import type { RunTimeline } from '@/widgets/TaskDetailDrawer'
 
 const EMPTY_EVENTS: EventsResponse = { events: [], nextCursor: null }
 
@@ -42,6 +43,7 @@ const makeItem = (overrides: Record<string, unknown>): ActionQueueItem =>
 const renderDetail = (
   item: ActionQueueItem,
   learnedRecipes: LearnedRecipe[] = [],
+  runsData?: RunTimeline,
 ): string => {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
@@ -51,6 +53,9 @@ const renderDetail = (
     node: { id: item.entityId, kind: 'task', title: 'lone task', status: 'failed', children: [] },
   })
   qc.setQueryData(['learned-recipes'], learnedRecipes)
+  if (runsData != null) {
+    qc.setQueryData(['task', item.entityId, 'runs'], runsData)
+  }
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <QueueThreadDetail item={item} />
@@ -322,5 +327,62 @@ describe('actionErrorMessage', () => {
     const msg = actionErrorMessage(new Error('generic network error'))
     expect(msg).toContain("Couldn't load the action")
     expect(msg).not.toContain('generic network error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Workflow step indicator
+// ---------------------------------------------------------------------------
+
+/**
+ * For real failed-task items, QueueThreadDetail shows which workflow step
+ * the task was last on (sourced from the run timeline via GET /api/runs/:id).
+ * The section is suppressed when no run data is in the React Query cache.
+ */
+describe('QueueThreadDetail – workflow step indicator', () => {
+  const makeRunTimeline = (stepName: string, status: string): RunTimeline => ({
+    taskId: BASE_ITEM.entityId,
+    runs: [
+      {
+        runId: 'wf-1',
+        startedAt: '2026-01-01T10:00:00Z',
+        endedAt: null,
+        steps: [
+          {
+            stepName,
+            phase: null,
+            workerName: null,
+            status: status as 'running' | 'completed' | 'failed' | 'killed',
+            startedAt: '2026-01-01T10:00:00Z',
+            endedAt: null,
+            durationMs: null,
+            inputTokens: null,
+            outputTokens: null,
+            cacheReadTokens: null,
+            claudeSessionId: null,
+            failureReason: null,
+          },
+        ],
+      },
+    ],
+  })
+
+  it('shows the step name when run timeline is available', () => {
+    const html = renderDetail(BASE_ITEM, [], makeRunTimeline('code', 'running'))
+    expect(html).toContain('data-testid="task-workflow-step"')
+    expect(html).toContain('code')
+  })
+
+  it('shows each standard step name correctly', () => {
+    for (const stepName of ['setup', 'code', 'verify', 'merge']) {
+      const html = renderDetail(BASE_ITEM, [], makeRunTimeline(stepName, 'completed'))
+      expect(html).toContain(stepName)
+    }
+  })
+
+  it('does NOT show the step section when no run timeline is in the cache', () => {
+    // Without seeded runs data, the query stays pending and the section is absent.
+    const html = renderDetail(BASE_ITEM)
+    expect(html).not.toContain('data-testid="task-workflow-step"')
   })
 })

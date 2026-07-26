@@ -580,7 +580,11 @@ const SINGLE_NODE_ORIGINS = (taskId: string): OriginsResponse => ({
   node: { id: taskId, kind: 'task', title: 'lone task', status: 'queued', children: [] },
 })
 
-const renderBody = (t: Task, origins?: OriginsResponse): string => {
+const renderBody = (
+  t: Task,
+  origins?: OriginsResponse,
+  currentStep?: { stepName: string; startedAt: string } | null,
+): string => {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
   })
@@ -588,12 +592,12 @@ const renderBody = (t: Task, origins?: OriginsResponse): string => {
   qc.setQueryData(['origins', null, t.id], origins ?? SINGLE_NODE_ORIGINS(t.id))
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
-      <TaskDetailBody task={t} />
+      <TaskDetailBody task={t} currentStep={currentStep} />
     </QueryClientProvider>,
   )
 }
 
-describe('TaskDetailBody – failed task with error + spec', () => {
+describe('TaskDetailBody – failed task with error', () => {
   const failed = fullTask({
     id: 'task-fail',
     status: 'failed',
@@ -624,16 +628,11 @@ describe('TaskDetailBody – failed task with error + spec', () => {
     expect(html).toContain('daemon-killed')
   })
 
-  it('renders the spec section with files, read-first, verify, and done criteria', () => {
+  it('does NOT render the spec builder breakdown — spec section is removed', () => {
+    // Plan/spec builder breakdown is removed; spec data no longer surfaces as a
+    // dedicated section in the task detail body.
     const html = renderBody(failed)
-    expect(html).toContain('data-testid="task-detail-spec"')
-    expect(html).toContain('src/a.ts')
-    expect(html).toContain('src/b.ts')
-    expect(html).toContain('docs/x.md')
-    expect(html).toContain('Refactor the frobnicator')
-    expect(html).toContain('bun test src')
-    expect(html).toContain('tests pass')
-    expect(html).toContain('lint clean')
+    expect(html).not.toContain('data-testid="task-detail-spec"')
   })
 
   it('mounts the origin tree and the meta + diagnostics sections', () => {
@@ -671,14 +670,9 @@ describe('TaskDetailBody – minimal task omits empty sections', () => {
     expect(html).not.toContain('data-testid="task-detail-error"')
   })
 
-  it('does not render the spec section when spec is null', () => {
+  it('does not render the step section when currentStep is not provided', () => {
     const html = renderBody(minimal)
-    expect(html).not.toContain('data-testid="task-detail-spec"')
-  })
-
-  it('does not render a Plan header when plan is null', () => {
-    const html = renderBody(minimal)
-    expect(html).not.toContain('>Plan<')
+    expect(html).not.toContain('data-testid="task-detail-current-step"')
   })
 
   it('does not render a redundant Prompt block when the prompt fits the header', () => {
@@ -689,6 +683,71 @@ describe('TaskDetailBody – minimal task omits empty sections', () => {
   it('still renders the always-present meta grid', () => {
     const html = renderBody(minimal)
     expect(html).toContain('data-testid="task-detail-meta"')
+  })
+})
+
+// ── Long-prompt collapse ───────────────────────────────────────────────────────
+
+// ── Workflow step indicator ────────────────────────────────────────────────────
+
+/**
+ * The `currentStep` prop drives a compact one-line "Step" section showing
+ * the workflow step name and how long since the step started.  When `currentStep`
+ * is absent or null no section is rendered (the Plan/Spec breakdown that
+ * previously occupied this area has been removed entirely).
+ */
+describe('TaskDetailBody – workflow step indicator', () => {
+  const running = fullTask({ id: 'task-run', status: 'running' })
+
+  it('renders the step section with the step name when currentStep is provided', () => {
+    const html = renderBody(running, undefined, {
+      stepName: 'code',
+      startedAt: '2026-01-01T10:00:00Z',
+    })
+    expect(html).toContain('data-testid="task-detail-current-step"')
+    expect(html).toContain('code')
+  })
+
+  it('renders each of the four standard step names correctly', () => {
+    for (const stepName of ['setup', 'code', 'verify', 'merge'] as const) {
+      const html = renderBody(running, undefined, {
+        stepName,
+        startedAt: '2026-01-01T10:00:00Z',
+      })
+      expect(html).toContain(stepName)
+    }
+  })
+
+  it('omits the step section when currentStep is null', () => {
+    const html = renderBody(running, undefined, null)
+    expect(html).not.toContain('data-testid="task-detail-current-step"')
+  })
+
+  it('omits the step section when currentStep is not passed at all', () => {
+    const html = renderBody(running)
+    expect(html).not.toContain('data-testid="task-detail-current-step"')
+  })
+
+  it('does NOT render Plan or Spec builder sections regardless of task data', () => {
+    // Plan/Spec builder breakdown is fully removed; neither the Plan header
+    // nor the task-detail-spec testid should appear even when the task carries
+    // both plan and spec data.
+    const t = fullTask({
+      id: 'task-with-plan-spec',
+      status: 'queued',
+      plan: { functional: 'fn plan', technical: 'tech plan' },
+      spec: {
+        files: ['src/x.ts'],
+        readFirst: [],
+        prescriptiveAction: null,
+        verifyCmd: null,
+        doneCriteria: [],
+        taskType: 'auto',
+      },
+    })
+    const html = renderBody(t)
+    expect(html).not.toContain('>Plan<')
+    expect(html).not.toContain('data-testid="task-detail-spec"')
   })
 })
 

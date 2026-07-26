@@ -392,6 +392,44 @@ const LearnedRecipeSection = ({ failureSignature }: { failureSignature: string }
   )
 }
 
+// ---- Workflow step section ----
+
+/**
+ * Fetches the run timeline for a task and renders the current (or last)
+ * workflow step as a compact one-liner: step name · how long since it started.
+ * Returns null while data is loading or absent so it doesn't reserve space.
+ */
+const TaskWorkflowStepSection = ({ taskId }: { taskId: string }) => {
+  const { data } = useQuery<import('@/widgets/TaskDetailDrawer').RunTimeline>({
+    queryKey: ['task', taskId, 'runs'],
+    queryFn: async () => {
+      const res = await fetch(`/api/runs/${encodeURIComponent(taskId)}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return (await res.json()) as import('@/widgets/TaskDetailDrawer').RunTimeline
+    },
+    retry: false,
+  })
+
+  if (data == null || data.runs.length === 0) return null
+
+  const allSteps = data.runs.flatMap((r) => r.steps)
+  const running = allSteps.filter((s) => s.status === 'running').at(-1)
+  const step = running ?? allSteps.at(-1)
+  if (step == null) return null
+
+  return (
+    <div>
+      <dt className="mb-2 border-b border-iron/20 pb-1 text-[10px] uppercase tracking-wider text-iron">
+        Step
+      </dt>
+      <dd data-testid="task-workflow-step" className="font-mono text-[11px] text-fg">
+        <span>{step.stepName}</span>
+        <span className="text-muted"> · {relativeTime(step.startedAt)}</span>
+      </dd>
+    </div>
+  )
+}
+
 // ---- Traces section ----
 
 interface TracesProps {
@@ -785,6 +823,10 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 </p>
               </dd>
             </div>
+          ) : null}
+          {/* Workflow step — one-line indicator showing where in the workflow the task is/was. */}
+          {isRealFailedTask ? (
+            <TaskWorkflowStepSection taskId={item.entityId} />
           ) : null}
           {/* Arc chain rail — navigable Proposal-to-Attempt chain for arc-failed alerts. */}
           {item.kind === 'arc-failed' ? (
