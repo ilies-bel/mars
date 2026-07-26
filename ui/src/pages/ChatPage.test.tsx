@@ -1119,6 +1119,26 @@ describe('LiveAssistantBubble — tool state synchronization', () => {
     expect(liveHtml).not.toContain('Pending')
     expect(persistedHtml).not.toContain('Pending')
   })
+
+  it('renders an accessible error card with role="alert" when the stream errors', () => {
+    const buf = applyLiveEvent(emptyLiveBuffer(), { type: 'error', message: 'boom' })
+    const html = renderBubble(buf)
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('Codex could not respond.')
+    expect(html).toContain('boom')
+  })
+
+  it('renders partial output followed by the error card when error arrives after segments', () => {
+    const buf = [
+      { type: 'text' as const, text: 'partial output' },
+      { type: 'error' as const, message: 'quota exceeded' },
+    ].reduce(applyLiveEvent, emptyLiveBuffer())
+    const html = renderBubble(buf)
+    expect(html).toContain('partial output')
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('Codex could not respond.')
+    expect(html).toContain('quota exceeded')
+  })
 })
 
 // ---------------------------------------------------------------------------

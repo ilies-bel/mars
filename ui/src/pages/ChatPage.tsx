@@ -948,6 +948,11 @@ export const LiveAssistantBubble = ({ buffer }: { buffer: LiveBuffer }): ReactNo
           return null
         })
       )}
+      {buffer.error && (
+        <div role="alert" className="my-2 rounded border border-red-400/40 bg-red-950/20 px-3 py-2 font-mono text-[12px] text-red-200">
+          <span className="font-semibold">Codex could not respond.</span>{' '}{buffer.error}
+        </div>
+      )}
       {!buffer.done && buffer.segments.length > 0 && (
         <span
           className="ml-0.5 inline-block h-3 w-0.5 animate-pulse rounded-sm bg-foreground/60"
