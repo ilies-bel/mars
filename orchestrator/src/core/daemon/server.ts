@@ -97,7 +97,7 @@ import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, typ
 import { RETENTION_MAX_ROWS_DEFAULT } from '../lib/retention-prune'
 import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForProcessExit } from './paths'
-import { loadDaemonConfig } from './config'
+import { applyControlLevers, loadDaemonConfig } from './config'
 import { setInstallSemCap } from '../lib/worktree-install'
 import { probeDuckDBLock } from './duckdb-lock'
 import {
@@ -821,7 +821,12 @@ export const startDaemon = async (
   // Per-kind concurrency caps. glossary-write and adr-add share one pool
   // because they both contend on the same merge lock downstream — a second
   // slot would just sit waiting on the lock, so default to 1.
-  const initialCaps = loadDaemonConfig().caps
+  const initialConfig = loadDaemonConfig()
+  // Re-apply persisted operator control levers before dispatch starts so a
+  // hold set before a daemon restart survives it (e.g. recovery='off' holds
+  // across `mars daemon restart`).
+  applyControlLevers(initialConfig.controlLevers)
+  const initialCaps = initialConfig.caps
   const structuredWriteSem = makeSem(initialCaps.structuredWrite)
   // 'merge' is a tracker-only kind (no per-kind semaphore); excluded here.
   const sems: Record<Exclude<DispatchKind, 'merge'>, Semaphore> = {

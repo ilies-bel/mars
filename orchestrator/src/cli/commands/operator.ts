@@ -1,18 +1,75 @@
 /**
- * `operator` command group: `name-set` and `name-show`.
- * Persists the operator's name in `app_settings` via the existing
- * getSetting/setSetting helpers and the ONBOARDING_OPERATOR_NAME_KEY constant.
+ * `operator` command group: `status`, `set`, `name-set`, and `name-show`.
  *
- * Reads and writes are local (direct DB access), not daemon-routed.
- * Dynamic imports ensure the module-cache matches the test's vi.resetModules()
- * isolation, following the same pattern as `notifications.ts`.
+ * `operator status` — print the current value of every control lever, read
+ *   directly from .mars/daemon.json (no daemon required).
+ * `operator set <lever> <on|off>` — persist a lever to daemon.json and, if
+ *   the daemon is up, apply it immediately via the `apply-lever` RPC so
+ *   the running daemon picks up the change without a restart.
  *
- * Commands use 2-token paths ('operator name-set', 'operator name-show'),
- * consistent with ADR-0023: CLI command seam is leaf-granular, flat, path-keyed,
- * with real CLI depth fixed at 2.
+ * `operator name-set` / `operator name-show` persist the operator's name in
+ * `app_settings` via the existing getSetting/setSetting helpers.
+ *
+ * All reads and writes are local (direct file / DB access) except the
+ * best-effort `apply-lever` RPC call in `operator set`. Dynamic imports
+ * follow the same isolation pattern as `notifications.ts`.
+ *
+ * Commands use 2-token paths consistent with ADR-0023.
  */
 
 import type { Command } from '../command'
+import { readControlLevers, writeControlLever } from '../../core/daemon/config'
+import { errorMessage, isDaemonDownError } from './shared'
+
+const operatorStatus: Command = {
+  path: 'operator status',
+  summary: 'print current operator control lever values',
+  usage: 'usage: mars operator status',
+  run: (_args, deps) => {
+    const levers = readControlLevers()
+    deps.out(`recovery: ${levers.recovery}`)
+    return { code: 0 }
+  },
+}
+
+const operatorSet: Command = {
+  path: 'operator set',
+  summary: 'set a control lever and apply it immediately',
+  usage: 'usage: mars operator set <lever> <on|off>',
+  run: async (args, deps) => {
+    const positional = args.positional.filter((a) => !a.startsWith('--'))
+    const lever = positional[0]
+    const value = positional[1]
+    if (!lever || !value) {
+      deps.err('usage: mars operator set <lever> <on|off>')
+      return { code: 2 }
+    }
+    if (lever !== 'recovery') {
+      deps.err(
+        `mars operator set: unknown lever '${lever}'; valid levers: recovery`,
+      )
+      return { code: 2 }
+    }
+    if (value !== 'on' && value !== 'off') {
+      deps.err(`mars operator set: value must be 'on' or 'off'; got '${value}'`)
+      return { code: 2 }
+    }
+    writeControlLever('recovery', value)
+    // Best-effort: apply to a running daemon immediately. Missing daemon is
+    // not an error — the file is the source of truth and will be applied on
+    // next daemon startup.
+    try {
+      await deps.daemon.sendRequest({ op: 'apply-lever', name: 'recovery', value })
+    } catch (err) {
+      const msg = errorMessage(err)
+      if (!isDaemonDownError(msg)) {
+        deps.err(`warning: lever written but live apply failed: ${msg}`)
+      }
+    }
+    deps.out(`recovery: ${value}`)
+    return { code: 0 }
+  },
+}
 
 const operatorNameSet: Command = {
   path: 'operator name-set',
@@ -60,14 +117,16 @@ const operatorNameShow: Command = {
 const operatorGroup: Command = {
   path: 'operator',
   summary: 'operator subcommands',
-  usage: 'usage: mars operator <name-set|name-show>',
+  usage: 'usage: mars operator <status|set|name-set|name-show>',
   run: (_args, deps) => {
-    deps.err('usage: mars operator <name-set|name-show>')
+    deps.err('usage: mars operator <status|set|name-set|name-show>')
     return { code: 2 }
   },
 }
 
 export const operatorCommands: readonly Command[] = [
+  operatorStatus,
+  operatorSet,
   operatorNameSet,
   operatorNameShow,
   operatorGroup,

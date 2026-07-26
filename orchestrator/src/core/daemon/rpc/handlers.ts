@@ -16,7 +16,7 @@
 
 import { existsSync, unlinkSync } from 'node:fs'
 import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget'
-import { loadDaemonConfig } from '../config'
+import { applyControlLevers, loadDaemonConfig } from '../config'
 import { setSemLimit } from '../server'
 import { setInstallSemCap } from '../../lib/worktree-install'
 import { updateTask } from '../../queue'
@@ -290,6 +290,23 @@ const setFlagHandler = handler('set-flag', async (req, deps) => {
 
 const pingHandler = handler('ping', async (_req, _deps) => {
   return { ok: true, data: { pid: process.pid } }
+})
+
+const applyLeverHandler = handler('apply-lever', async (req, deps) => {
+  if (req.name !== 'recovery') {
+    return { ok: false, error: `apply-lever: unknown lever '${req.name}'` }
+  }
+  if (req.value !== 'on' && req.value !== 'off') {
+    return {
+      ok: false,
+      error: `apply-lever: value must be 'on' or 'off'; got '${req.value}'`,
+    }
+  }
+  applyControlLevers({ recovery: req.value })
+  deps.log(
+    `apply-lever: recovery=${req.value} (MARS_RECOVERY_DISABLED=${process.env.MARS_RECOVERY_DISABLED ?? '<unset>'})`,
+  )
+  return { ok: true, data: { name: req.name, value: req.value } }
 })
 
 const investigateHandler = handler('investigate', async (req, deps) => {
@@ -599,4 +616,5 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   mergeCancelHandler,
   spendControlShowHandler,
   spendControlSetHandler,
+  applyLeverHandler,
 ]

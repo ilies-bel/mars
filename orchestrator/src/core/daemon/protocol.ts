@@ -114,6 +114,8 @@ export type DaemonRequest =
         rampBackStepPct?: number
       }
     }
+  /** Apply a persisted control lever to the running daemon process env immediately. */
+  | { op: 'apply-lever'; name: 'recovery'; value: 'on' | 'off' }
 
 export type DaemonResponse =
   | { ok: true; data?: unknown }

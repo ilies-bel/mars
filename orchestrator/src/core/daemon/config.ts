@@ -17,6 +17,12 @@ export const leverSchema = z.object({
 
 export type LeverEntry = z.infer<typeof leverSchema>
 
+export type ControlLeverValue = 'on' | 'off'
+
+export interface ControlLevers {
+  recovery: ControlLeverValue
+}
+
 export interface DaemonCaps {
   implement: number
   triage: number
@@ -77,6 +83,13 @@ export interface DaemonConfig {
    * Default: 'claude'.
    */
   defaultProvider: ProviderName
+  /**
+   * Operator control levers. Written by `mars operator set` and re-applied on
+   * each daemon startup so a hold set before a restart persists across it.
+   * `recovery: 'off'` sets MARS_RECOVERY_DISABLED=1 in the daemon process env;
+   * `recovery: 'on'` (the default) clears it.
+   */
+  controlLevers: ControlLevers
 }
 
 const DEFAULTS: DaemonCaps = {
@@ -102,6 +115,8 @@ const DEFAULT_SCORING: ScoringConfig = {
 const DEFAULT_AUTO_APPROVE_PLANS = false
 
 const DEFAULT_PROVIDER: ProviderName = 'claude'
+
+const DEFAULT_CONTROL_LEVERS: ControlLevers = { recovery: 'on' }
 
 const VALID_PROVIDER_NAMES = new Set<string>(['claude', 'gemini', 'codex'])
 
@@ -249,6 +264,49 @@ export const persistLeverAutonomyLevel = (name: string, level: AutonomyLevel): v
   })
 }
 
+/**
+ * Read the persisted `controlLevers` from daemon.json, returning defaults for
+ * any absent or invalid fields. Does not apply the levers to process.env —
+ * call `applyControlLevers` to do that.
+ */
+export const readControlLevers = (): ControlLevers => {
+  const file = readDaemonConfigFile()
+  const cl = file.controlLevers
+  if (cl !== null && typeof cl === 'object' && !Array.isArray(cl)) {
+    const record = cl as Record<string, unknown>
+    const recovery = record.recovery
+    if (recovery === 'on' || recovery === 'off') {
+      return { recovery }
+    }
+  }
+  return { ...DEFAULT_CONTROL_LEVERS }
+}
+
+/**
+ * Persist a single control lever to daemon.json via `patchDaemonConfigFile`.
+ * Preserves all other control levers and all other daemon.json fields.
+ */
+export const writeControlLever = (name: 'recovery', value: ControlLeverValue): void => {
+  const current = readControlLevers()
+  patchDaemonConfigFile({ controlLevers: { ...current, [name]: value } })
+}
+
+/**
+ * Apply `levers` to `process.env` so the running process reflects the
+ * persisted operator choices. Called at daemon startup (before dispatch starts)
+ * and by the `apply-lever` RPC (for immediate live effect without restart).
+ *
+ *   recovery='off' → process.env.MARS_RECOVERY_DISABLED = '1'
+ *   recovery='on'  → delete process.env.MARS_RECOVERY_DISABLED
+ */
+export const applyControlLevers = (levers: ControlLevers): void => {
+  if (levers.recovery === 'off') {
+    process.env.MARS_RECOVERY_DISABLED = '1'
+  } else {
+    delete process.env.MARS_RECOVERY_DISABLED
+  }
+}
+
 // Resolution order per field: config file > env var > built-in default.
 // The file is optional; a missing/invalid file silently falls back to env+defaults
 // so the daemon never refuses to start because of a malformed config.
@@ -393,5 +451,6 @@ export const loadDaemonConfig = (): DaemonConfig => {
     },
     autoApprovePlans: fileAutoApprovePlans ?? envAutoApprovePlans,
     defaultProvider: fileDefaultProvider ?? DEFAULT_PROVIDER,
+    controlLevers: readControlLevers(),
   }
 }
