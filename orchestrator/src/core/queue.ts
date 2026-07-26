@@ -891,6 +891,23 @@ export interface EnqueueTaskOptions {
    * on the same arc do not produce multiple cleanup tasks.
    */
   followupDedupKey?: string
+  /**
+   * When set, this enqueue supersedes the named existing task. The supersede
+   * sequence (executed by `Arc.createOrigin`):
+   *   1. Loads the superseded task; derives `originId` from it.
+   *   2. Releases the superseded task's worktree (`git worktree remove --force`,
+   *      keepBranch=true) and clears its `worktree_path`.
+   *   3. Marks the superseded task `'dropped'`.
+   *   4. Creates a fresh worktree for the new task on the superseded branch
+   *      (at `.mars/worktrees/<newTaskId>/`).
+   *   5. Proceeds with the normal INSERT, passing `originId` and setting
+   *      `branch`/`worktreePath` to the superseded task's values.
+   *
+   * If step 4 fails after step 2 the superseded task remains `'dropped'`, no
+   * new task row is created, and an error surfaces with the branch name so the
+   * operator can retry.
+   */
+  supersedes?: string
 }
 
 /**

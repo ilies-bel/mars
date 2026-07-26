@@ -14,6 +14,10 @@
  * all persistence routes through the store rather than a raw DB client.
  */
 
+import { execFile } from 'node:child_process'
+import { mkdir } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { type DbStatement } from './lib/db'
 import {
@@ -44,6 +48,8 @@ import {
   getDefaultDomainTaskStore,
   type DomainTaskStore,
 } from './store/task-store'
+import { getStateDir, getRepoRoot } from './context'
+import { removeWorktree } from './lib/git/worktree'
 import { getRecipeOrGeneric, type FixRecipeContext } from './lib/fix-recipes'
 import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
@@ -84,6 +90,8 @@ import {
   type UnblockByTaskResult,
   type UnblockOutcome,
 } from './blocker-resolution'
+
+const execFileP = promisify(execFile)
 
 const truncate = (s: string, max: number): string =>
   s.length <= max ? s : `${s.slice(0, max)}…`
@@ -275,7 +283,73 @@ export class Arc {
     const status: TaskStatus = opts?.skipTriage ? 'queued' : 'draft'
     const authorKind = opts?.author?.kind ?? null
     const authorName = opts?.author?.name ?? null
-    const originId = opts?.originId ?? id
+
+    // ── Supersede preamble ────────────────────────────────────────────────
+    // When opts.supersedes is set: release the superseded task's worktree,
+    // mark it dropped, and inherit its branch + originId for the new task.
+    // Sequence is guarded so a mid-way failure (worktree creation fails)
+    // leaves an explicit, recoverable state: superseded task stays dropped,
+    // no new task row is created, and the error surfaces with the branch
+    // name so the operator can retry with --supersede <oldId>.
+    let inheritedBranch: string | null = null
+    let inheritedWorktreePath: string | null = null
+    let supersedeDerivedOriginId: string | null = null
+
+    if (opts?.supersedes) {
+      const supersededId = opts.supersedes
+      const superseded = await getTask(supersededId)
+      if (!superseded) {
+        throw new Error(`supersede: task ${supersededId} not found`)
+      }
+      // The new task inherits the arc of the superseded task.
+      supersedeDerivedOriginId = superseded.originId
+
+      // Step 1: release the old worktree (keep branch — we reuse it).
+      if (superseded.worktreePath !== null && superseded.branch !== null) {
+        await removeWorktree(
+          { path: superseded.worktreePath, branch: superseded.branch },
+          true,  // force
+          true,  // keepBranch — reuse branch for new task
+        ).catch(() => {
+          // worktree already gone on disk — continue; the git pruning in
+          // createWorktree / git worktree add would surface a real error.
+        })
+      }
+
+      // Step 2: mark superseded task dropped + clear its worktree_path in
+      // one atomic transaction (updateTask → Arc.applyStatusWrite).
+      await updateTask(supersededId, {
+        status: 'dropped',
+        worktreePath: null,
+        failureReason: `superseded by new task ${id}`,
+      })
+
+      // Step 3: create new worktree on superseded branch at new task's path.
+      // If this fails, the superseded task remains dropped, no new row is
+      // created, and the caller gets a descriptive error with the branch name.
+      if (superseded.branch !== null) {
+        const newWorktreePath = resolve(getStateDir(), 'worktrees', id)
+        await mkdir(resolve(newWorktreePath, '..'), { recursive: true })
+        try {
+          await execFileP(
+            'git',
+            ['worktree', 'add', newWorktreePath, superseded.branch],
+            { cwd: getRepoRoot() },
+          )
+          inheritedBranch = superseded.branch
+          inheritedWorktreePath = newWorktreePath
+        } catch (cause) {
+          throw new Error(
+            `supersede: released worktree for ${supersededId} on branch ${superseded.branch} ` +
+              `but failed to create new worktree: ${cause instanceof Error ? cause.message : String(cause)}. ` +
+              `Re-run 'mars task add --supersede ${supersededId}' to retry.`,
+          )
+        }
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
+    let originId = supersedeDerivedOriginId ?? (opts?.originId ?? id)
     const priority = opts?.priority ?? 0
     const parentProposalId = opts?.parentProposalId ?? null
     const sliceIndex = opts?.sliceIndex ?? null
@@ -383,6 +457,15 @@ export class Arc {
           args: [id, taskSpec.doneCriteria[i], i],
         })
       }
+    }
+    // Supersede: if we inherited a branch + worktree from the superseded task,
+    // stamp them onto the new task row so the dispatcher sees a ready worktree.
+    if (inheritedBranch !== null && inheritedWorktreePath !== null) {
+      const updNow = new Date().toISOString()
+      await resolvedStore.execute({
+        sql: `UPDATE tasks SET branch = ?, worktree_path = ?, updated_at = ? WHERE id = ?`,
+        args: [inheritedBranch, inheritedWorktreePath, updNow, id],
+      })
     }
     const r = await resolvedStore.execute({
       sql: `${TASK_SEL} WHERE t.id = ?`,
