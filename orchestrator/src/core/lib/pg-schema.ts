@@ -723,6 +723,19 @@ const DDL: readonly string[] = [
     boot_ts      timestamptz NOT NULL,
     last_beat_ts timestamptz NOT NULL
   )`,
+
+  // ── dispatch spend controller (migration 0003) ────────────────────────────
+  // Single-row operator-set control levers for the dispatch spend controller.
+  // Seeded on first read via the store's loadSpendControl defaults.
+  `CREATE TABLE IF NOT EXISTS dispatch_spend_control (
+    id                  bigint      PRIMARY KEY CHECK (id = 1),
+    per_kind_ceilings   jsonb,
+    pause_threshold_pct integer     NOT NULL DEFAULT 90,
+    resume_threshold_pct integer    NOT NULL DEFAULT 70,
+    suppress_recovery   boolean     NOT NULL DEFAULT false,
+    ramp_back_step_pct  integer     NOT NULL DEFAULT 10,
+    updated_at          timestamptz NOT NULL DEFAULT now()
+  )`,
 ]
 
 /**
@@ -781,6 +794,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'learned_recipes',
   'auto_recipe_runs',
   'merge_jobs',
+  'dispatch_spend_control',
 ]
 
 /**
