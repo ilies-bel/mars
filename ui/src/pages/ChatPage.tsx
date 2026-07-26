@@ -2251,6 +2251,15 @@ export const ThreadSidebar = ({
     if (p !== null) commitDelete(p)
   }, [commitDelete])
 
+  // Visible chat threads (delete-pending rows stay hidden), filtered to open
+  // threads only (resolved projections evaporate), title-searched, then sorted
+  // by urgency → age → id. Alerts live on the top-bar Bell, not here.
+  // Computed above startDelete so the delete handler can advance the selection
+  // to the next thread in this exact sorted order.
+  const visibleThreads = (data ?? []).filter((t) => !hiddenIds.includes(t.id))
+  const openThreads = filterOpen(visibleThreads)
+  const threads = sortByUrgencyThenAge(filterThreadsByTitle(openThreads, query))
+
   const startDelete = useCallback(
     (thread: ChatThread) => {
       flushPending()
@@ -2260,7 +2269,11 @@ export const ThreadSidebar = ({
         wasSelected: selectedId === thread.id,
       }
       setHiddenIds((prev) => [...prev, p.id])
-      if (p.wasSelected) onSelect('')
+      if (p.wasSelected) {
+        const idx = threads.findIndex((t) => t.id === thread.id)
+        const next = threads[idx + 1] ?? threads[idx - 1]
+        onSelect(next?.id ?? '')
+      }
       pendingRef.current = p
       setToast({ kind: 'pending', title: p.title })
       timerRef.current = setTimeout(() => {
@@ -2271,7 +2284,7 @@ export const ThreadSidebar = ({
         if (current !== null) commitDelete(current)
       }, DELETE_UNDO_WINDOW_MS)
     },
-    [flushPending, selectedId, onSelect, commitDelete],
+    [flushPending, selectedId, onSelect, commitDelete, threads],
   )
 
   const undoDelete = useCallback(() => {
@@ -2307,12 +2320,6 @@ export const ThreadSidebar = ({
     queryFn: () => fetchChatHistory(projectId),
   })
 
-  // Visible chat threads (delete-pending rows stay hidden), filtered to open
-  // threads only (resolved projections evaporate), title-searched, then sorted
-  // by urgency → age → id. Alerts live on the top-bar Bell, not here.
-  const visibleThreads = (data ?? []).filter((t) => !hiddenIds.includes(t.id))
-  const openThreads = filterOpen(visibleThreads)
-  const threads = sortByUrgencyThenAge(filterThreadsByTitle(openThreads, query))
   const historyThreads = historyData ?? []
 
   return (

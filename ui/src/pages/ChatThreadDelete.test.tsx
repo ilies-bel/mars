@@ -199,13 +199,57 @@ describe('thread delete — undo', () => {
     await mount(onSelect, 't1')
 
     await click(deleteButtons()[0]!)
-    expect(onSelect).toHaveBeenCalledWith('')
+    // Closing t1 (the first thread) should advance to t2 rather than leaving no thread open.
+    expect(onSelect).toHaveBeenCalledWith('t2')
 
     const undo = [...container.querySelectorAll('button')].find(
       (b) => b.textContent?.trim() === 'Undo',
     )
     await click(undo!)
     expect(onSelect).toHaveBeenLastCalledWith('t1')
+  })
+})
+
+describe('thread delete — auto-advance to next thread on close', () => {
+  it('opens the next thread when the first selected thread is deleted', async () => {
+    const onSelect = vi.fn()
+    await mount(onSelect, 't1')
+
+    await click(deleteButtons()[0]!)
+
+    // t1 was first; t2 is next — should advance to it.
+    expect(onSelect).toHaveBeenCalledWith('t2')
+  })
+
+  it('opens the previous thread when the last selected thread is deleted', async () => {
+    const onSelect = vi.fn()
+    await mount(onSelect, 't2')
+
+    // t2 is the second (and last) thread; its delete button is the second one.
+    await click(deleteButtons()[1]!)
+
+    // t2 was last; fall back to t1.
+    expect(onSelect).toHaveBeenCalledWith('t1')
+  })
+
+  it('falls back to empty selection when the only thread is deleted', async () => {
+    mockedApi.fetchChatThreads.mockResolvedValue([THREADS[0]!])
+    const onSelect = vi.fn()
+    await mount(onSelect, 't1')
+
+    await click(deleteButtons()[0]!)
+
+    expect(onSelect).toHaveBeenCalledWith('')
+  })
+
+  it('does not change selection when a non-selected thread is deleted', async () => {
+    const onSelect = vi.fn()
+    await mount(onSelect, 't2')
+
+    // Delete t1 (first button), which is not selected.
+    await click(deleteButtons()[0]!)
+
+    expect(onSelect).not.toHaveBeenCalled()
   })
 })
 
