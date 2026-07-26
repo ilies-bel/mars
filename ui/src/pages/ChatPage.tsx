@@ -86,7 +86,7 @@ import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlSt
 import { taskHash } from '@/shared/routing'
 import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
-import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
+import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle, PRIORITY_RANK } from './chatPageUtils'
 
 // ---------------------------------------------------------------------------
 // Welcome state: quick-action chips and slash palette
@@ -129,12 +129,6 @@ const sortByAttentionStatus = (threads: ChatThread[]): ChatThread[] =>
 // ---------------------------------------------------------------------------
 // Hero empty state — top-alert prioritization and suggestion chips
 // ---------------------------------------------------------------------------
-
-const PRIORITY_RANK: Record<'high' | 'normal' | 'low', number> = {
-  high: 0,
-  normal: 1,
-  low: 2,
-}
 
 const KIND_ICON: Record<string, string> = {
   'failed-task': '⚠️',

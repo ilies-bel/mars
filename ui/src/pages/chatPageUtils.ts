@@ -59,7 +59,7 @@ export const smartTitle = (title: string | null): string => {
   return title
 }
 
-const PRIORITY_RANK: Record<'high' | 'normal' | 'low', number> = {
+export const PRIORITY_RANK: Record<'high' | 'normal' | 'low', number> = {
   high: 0,
   normal: 1,
   low: 2,
