@@ -87,6 +87,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--scope',
   '--cmd',
   '--tier',
+  '--manifest',
   // mars task add --supersede <task-id>: declare this task as a manual
   // operator-authored continuation of a failed arc whose recovery exhausted
   // automatic options (slice 2 of PRD 94e2a82a-recovery-operator).

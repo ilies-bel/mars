@@ -1,21 +1,24 @@
 /**
  * `verify-gate` command group — operator management of the verify_gates table.
  *
- * Three subcommands:
+ * Four subcommands:
  *   verify-gate list   — print all registered gates
  *   verify-gate add    — insert a new gate (--scope, --name, --cmd, [-- args...])
  *   verify-gate remove — delete a gate by id or by (--scope, --name) pair
+ *   verify-gate check  — detect drift between supervisor manifest and verify_gates table
  *
- * All three call the core verify-gates functions directly (no daemon round-trip)
- * because these are direct DB writes that do not require the daemon's serialised
- * task lifecycle.
+ * All four call the core verify-gates functions directly (no daemon round-trip)
+ * because these are direct DB writes/reads that do not require the daemon's
+ * serialised task lifecycle.
  */
 
+import path from 'node:path'
 import {
   addVerifyGate,
   listVerifyGates,
   removeVerifyGate,
 } from '../../core/verify-gates'
+import { loadVerifyScopes } from '../../core/lib/git/verify'
 import type { Command } from '../command'
 
 /** Detect a PostgreSQL UNIQUE-constraint violation (23505) or its message equivalent. */
@@ -168,12 +171,66 @@ const verifyGateRemove: Command = {
   },
 }
 
+const verifyGateCheck: Command = {
+  path: 'verify-gate check',
+  summary: 'detect drift between supervisor manifest and verify_gates table',
+  usage: 'usage: mars verify-gate check [--manifest <path>]',
+  run: async (args, deps) => {
+    const manifestPath =
+      args.flags['--manifest'] ?? path.join(deps.ctx.repoRoot, 'supervisors.json')
+
+    const [scopes, live] = await Promise.all([loadVerifyScopes(manifestPath), listVerifyGates()])
+
+    // Build a set of all (scope, name) pairs declared in the manifest.
+    const declared = new Set<string>()
+    for (const { scope, steps } of scopes) {
+      for (const step of steps) {
+        declared.add(`${scope}\x00${step.name}`)
+      }
+    }
+
+    // Build a set of (scope, name) pairs present in the live table.
+    const liveKeys = new Set(live.map((g) => `${g.scope}\x00${g.name}`))
+
+    // missing = declared \ live
+    const missing = [...declared].filter((k) => !liveKeys.has(k))
+
+    // orphan = live rows with source='manifest' that are absent from declared
+    const orphan = live
+      .filter((g) => g.source === 'manifest' && !declared.has(`${g.scope}\x00${g.name}`))
+      .map((g) => `${g.scope}\x00${g.name}`)
+
+    if (missing.length === 0 && orphan.length === 0) {
+      deps.out('verify-gates in sync with supervisor manifest')
+      return { code: 0 }
+    }
+
+    if (missing.length > 0) {
+      deps.out('missing from verify_gates:')
+      for (const k of missing) {
+        const sep = k.indexOf('\x00')
+        deps.out(`  ${k.slice(0, sep)}/${k.slice(sep + 1)}`)
+      }
+    }
+
+    if (orphan.length > 0) {
+      deps.out('orphaned in verify_gates (source=manifest):')
+      for (const k of orphan) {
+        const sep = k.indexOf('\x00')
+        deps.out(`  ${k.slice(0, sep)}/${k.slice(sep + 1)}`)
+      }
+    }
+
+    return { code: 1 }
+  },
+}
+
 const verifyGateGroup: Command = {
   path: 'verify-gate',
   summary: 'manage verify gate registrations',
-  usage: 'usage: mars verify-gate <list|add|remove>',
+  usage: 'usage: mars verify-gate <list|add|remove|check>',
   run: (_args, deps) => {
-    deps.err('usage: mars verify-gate <list|add|remove>')
+    deps.err('usage: mars verify-gate <list|add|remove|check>')
     return { code: 2 }
   },
 }
@@ -182,5 +239,6 @@ export const verifyGateCommands: readonly Command[] = [
   verifyGateList,
   verifyGateAdd,
   verifyGateRemove,
+  verifyGateCheck,
   verifyGateGroup,
 ]
