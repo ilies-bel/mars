@@ -1135,7 +1135,7 @@ const ChatConversation = ({
                 )
               )}
               {showThinking && <ThinkingIndicator />}
-              {error && (
+              {error && !messages.at(-1)?.parts?.some(p => p.type === 'data-chatError') && (
                 <ChatResponseError
                   onTryAgain={() => onInsertPrompt('Please retry my last request.')}
                 />
