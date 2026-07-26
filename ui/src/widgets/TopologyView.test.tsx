@@ -199,3 +199,28 @@ describe('TopologyView – navigation hint overlay', () => {
     expect(cls).not.toContain('opacity-70')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Minimap navigation aid — presence and CSS class
+// ---------------------------------------------------------------------------
+
+describe('TopologyView – minimap navigation aid', () => {
+  it('renders the minimap with the topo-minimap class when tasks are present', () => {
+    // The topo-minimap class is what connects the MiniMap component to the CSS
+    // rules that give it a drop shadow and keep it clear of the footer bar and
+    // zoom controls. Without this class the positioning overrides (bottom: 60px,
+    // right: 16px, box-shadow) would not apply and the minimap could overlap
+    // with task cards in a busy graph.
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={[stubTask('t-1')]} proposals={noProposals} />,
+    )
+    expect(html).toContain('topo-minimap')
+  })
+
+  it('does not render the minimap in the empty state', () => {
+    // The empty-state path returns early with a plain <main> — no canvas, no
+    // minimap. The minimap class should therefore be absent.
+    const html = renderToStaticMarkup(<TopologyView tasks={[]} proposals={noProposals} />)
+    expect(html).not.toContain('topo-minimap')
+  })
+})
