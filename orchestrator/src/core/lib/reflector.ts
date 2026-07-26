@@ -11,6 +11,7 @@ import type { ReflectCorpus } from './reflect-query'
 import type { SelfEvolveConfig } from '../daemon/config'
 import { isReflectDisabled } from './reflect-signals'
 import { insertMemoryPacket } from '../store/memory-packet-store'
+import { loadImprovementRecipes, formatRecipeCatalog } from './improvement-recipes'
 
 export interface ReflectionSuggestion {
   title: string
@@ -214,7 +215,25 @@ fraction of tasks reaching 'done') and token cost (total weighted tokens
 per window). Example: "Expected effect: raises completeness by eliminating
 setup-phase failures; saves ~N weighted tokens per affected task by
 avoiding retry cycles." Do not emit a suggestion prompt that omits both
-KPI impacts.`
+KPI impacts.
+
+3. harnessMaturity: assess the current verify-gate configuration.
+   - Count tasks that ran with zero verify gates (look for the
+     "no-gates-configured" step name in gate outcomes / verify output).
+   - If > 50% of tasks have no gates, this is a high-priority suggestion.
+   - Check if any recurring failure signature maps to a missing gate
+     (e.g. typecheck failures in a repo with no typecheck gate).
+   - For each applicable improvement recipe, state whether it should
+     be suggested and include the concrete \`mars verify add ...\` command.
+
+   Include harness maturity suggestions in your suggestions[] array with
+   kind: 'mechanical' and high confidence (0.9+) when gates are clearly
+   missing.
+
+The improvement recipe catalog provided below lists available recipes with
+their trigger patterns and setup steps. Reference these recipes when
+assessing harness maturity and constructing the \`mars verify add ...\`
+commands for any applicable suggestions.`
 
 const CHAT_FEEDBACK_INSTRUCTIONS = `
 
@@ -269,8 +288,12 @@ const formatChatFeedbackSection = (
 export const buildPrompt = (corpus: ReflectCorpus): string => {
   const summaryJson = JSON.stringify(corpus.costSummary, null, 2)
   const entriesJson = JSON.stringify(corpus.entries, null, 2)
+  const recipeCatalog = formatRecipeCatalog(loadImprovementRecipes())
 
   const base = `${SYNTHESIS_INSTRUCTIONS}
+
+Improvement recipe catalog (use these for harness maturity suggestions):
+${recipeCatalog}
 
 Token summary (precomputed — trust these numbers, do not recompute):
 ${summaryJson}

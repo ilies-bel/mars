@@ -416,3 +416,61 @@ describe('suggestion parsing includes new fields', () => {
     expect(s.frequency).toBe(3)
   })
 })
+
+describe('harnessMaturity in SYNTHESIS_INSTRUCTIONS', () => {
+  it('instructs the model to assess verify-gate configuration', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    const instructionPortion = prompt.split('Token summary')[0]
+    expect(instructionPortion).toMatch(/harnessMaturity/i)
+    expect(instructionPortion).toMatch(/verify-gate/i)
+  })
+
+  it('references the "no-gates-configured" step name', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    const instructionPortion = prompt.split('Token summary')[0]
+    expect(instructionPortion).toMatch(/no-gates-configured/i)
+  })
+
+  it('directs the model to emit mars verify add commands in suggestions', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    const instructionPortion = prompt.split('Token summary')[0]
+    expect(instructionPortion).toMatch(/mars verify add/i)
+  })
+
+  it('instructs high-confidence mechanical suggestions when gates are clearly missing', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    const instructionPortion = prompt.split('Token summary')[0]
+    expect(instructionPortion).toMatch(/mechanical/i)
+    expect(instructionPortion).toMatch(/0\.9/i)
+  })
+})
+
+describe('improvement recipe catalog in buildPrompt', () => {
+  it('includes the recipe catalog section in the prompt', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    expect(prompt).toContain('Improvement recipe catalog')
+  })
+
+  it('includes recipe ids from the built-in catalog', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    // The catalog must include at least the typecheck and unit-test recipes
+    expect(prompt).toContain('add-typecheck')
+    expect(prompt).toContain('add-unit-tests')
+  })
+
+  it('includes mars verify add commands from recipe setup steps', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    // Recipe setup steps contain concrete mars verify add commands
+    expect(prompt).toMatch(/mars verify add typecheck/i)
+    expect(prompt).toMatch(/mars verify add test/i)
+  })
+
+  it('places the recipe catalog before the token summary', () => {
+    const prompt = buildPrompt(fixtureCorpus)
+    const catalogPos = prompt.indexOf('Improvement recipe catalog')
+    const summaryPos = prompt.indexOf('Token summary')
+    expect(catalogPos).toBeGreaterThan(-1)
+    expect(summaryPos).toBeGreaterThan(-1)
+    expect(catalogPos).toBeLessThan(summaryPos)
+  })
+})
