@@ -175,6 +175,8 @@ describe('createTaskStore', () => {
       'listTasksForProposal',
       'upsertTranscript',
       'getTranscript',
+      'getArcRescueAttempts',
+      'incrementArcRescueAttempts',
       'query',
       'execute',
       'atomic',
@@ -311,5 +313,95 @@ describe('query, execute, and atomic escape hatches', () => {
     await expect(
       capturedScope.query('SELECT * FROM t'),
     ).rejects.toThrow(/revoked/)
+  })
+})
+
+describe('getArcRescueAttempts and incrementArcRescueAttempts', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('fresh origin task reports 0 rescue attempts', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask('origin task', undefined, {
+      skipTriage: true,
+    })
+
+    const count = await store.getArcRescueAttempts(task.id)
+    expect(count).toBe(0)
+  })
+
+  it('incrementArcRescueAttempts returns 1 then 2 on consecutive calls', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask('origin task', undefined, {
+      skipTriage: true,
+    })
+
+    const first = await store.incrementArcRescueAttempts(task.id)
+    expect(first).toBe(1)
+
+    const second = await store.incrementArcRescueAttempts(task.id)
+    expect(second).toBe(2)
+
+    // getArcRescueAttempts reflects the persisted value
+    const read = await store.getArcRescueAttempts(task.id)
+    expect(read).toBe(2)
+  })
+
+  it('getArcRescueAttempts throws for a fix/recovery task id', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    // Insert an origin task first (FK target for fix_for_task_id)
+    const origin = await store.enqueueTask('origin', undefined, {
+      skipTriage: true,
+    })
+
+    // Insert a fix task directly — only the recovery dispatcher normally does
+    // this, but a direct INSERT lets us test the guard without triggering the
+    // full recovery machinery.
+    const fixId = `mars-fix-${Date.now()}`
+    const now = new Date().toISOString()
+    await store.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, origin_id, created_at, updated_at)
+            VALUES (?, ?, 'queued', 'fix', ?, ?, ?, ?)`,
+      args: [fixId, 'fix task', origin.id, origin.id, now, now],
+    })
+
+    await expect(store.getArcRescueAttempts(fixId)).rejects.toThrow(
+      'arc rescue counter can only be read on an origin task, not a recovery/fix task',
+    )
+  })
+
+  it('incrementArcRescueAttempts throws for a fix/recovery task id', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const origin = await store.enqueueTask('origin', undefined, {
+      skipTriage: true,
+    })
+
+    const fixId = `mars-fix-${Date.now()}-2`
+    const now = new Date().toISOString()
+    await store.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, origin_id, created_at, updated_at)
+            VALUES (?, ?, 'queued', 'fix', ?, ?, ?, ?)`,
+      args: [fixId, 'fix task', origin.id, origin.id, now, now],
+    })
+
+    await expect(store.incrementArcRescueAttempts(fixId)).rejects.toThrow(
+      'arc rescue counter can only be read on an origin task, not a recovery/fix task',
+    )
   })
 })

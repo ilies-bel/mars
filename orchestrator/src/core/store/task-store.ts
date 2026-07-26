@@ -247,6 +247,21 @@ export interface DomainTaskStore {
   upsertTranscript(input: UpsertTranscriptInput): Promise<void>
   getTranscript(taskId: string): Promise<TaskTranscriptRow | null>
 
+  // ── Arc rescue counter ───────────────────────────────────────────────────
+  /**
+   * Return the number of times the rescue operator has run against the arc
+   * whose origin task id is `originId`. Throws when `originId` does not
+   * identify an origin task (i.e. its `fix_for_task_id` is non-null).
+   */
+  getArcRescueAttempts(originId: string): Promise<number>
+
+  /**
+   * Atomically increment `arc_rescue_attempts` on the origin task row for
+   * `originId` and return the new value. Throws when `originId` does not
+   * identify an origin task (i.e. its `fix_for_task_id` is non-null).
+   */
+  incrementArcRescueAttempts(originId: string): Promise<number>
+
   // ── Arc rollup ───────────────────────────────────────────────────────────
   /**
    * Compute the rollup status for the arc of tasks sharing `originId`.
@@ -436,6 +451,37 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     // ── Transcripts ────────────────────────────────────────────────────────
     upsertTranscript: (input) => queueUpsertTranscript(input),
     getTranscript: (taskId) => queueGetTranscript(taskId),
+
+    // ── Arc rescue counter ─────────────────────────────────────────────────
+    getArcRescueAttempts: async (originId) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `SELECT arc_rescue_attempts FROM tasks WHERE id = ? AND fix_for_task_id IS NULL`,
+        args: [originId],
+      })
+      if (r.rows.length === 0) {
+        throw new Error(
+          'arc rescue counter can only be read on an origin task, not a recovery/fix task',
+        )
+      }
+      const row = r.rows[0] as unknown as { arc_rescue_attempts: number | bigint }
+      return Number(row.arc_rescue_attempts)
+    },
+
+    incrementArcRescueAttempts: async (originId) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `UPDATE tasks SET arc_rescue_attempts = arc_rescue_attempts + 1 WHERE id = ? AND fix_for_task_id IS NULL RETURNING arc_rescue_attempts`,
+        args: [originId],
+      })
+      if (r.rows.length === 0) {
+        throw new Error(
+          'arc rescue counter can only be read on an origin task, not a recovery/fix task',
+        )
+      }
+      const row = r.rows[0] as unknown as { arc_rescue_attempts: number | bigint }
+      return Number(row.arc_rescue_attempts)
+    },
 
     // ── Arc rollup ─────────────────────────────────────────────────────────
     arcStatus: async (originId, opts) => {

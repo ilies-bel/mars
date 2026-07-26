@@ -148,6 +148,7 @@ const DDL: readonly string[] = [
     current_step_guide   text,
     activity_detail      text,
     env_restart_count    bigint NOT NULL DEFAULT 0,
+    arc_rescue_attempts  bigint NOT NULL DEFAULT 0,
     created_at           text   NOT NULL,
     updated_at           text   NOT NULL
   )`,
@@ -381,6 +382,7 @@ const DDL: readonly string[] = [
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS compensates_arc_id text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS activity_detail text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS env_restart_count bigint NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS arc_rescue_attempts bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
   // Chat runs on the Codex Responses API with full transcript replay — the
   // CLI-session binding and one-shot context seeding are gone.
