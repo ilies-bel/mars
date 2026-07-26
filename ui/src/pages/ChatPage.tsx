@@ -627,7 +627,7 @@ export const ToolActivityGroup = ({
 const renderPart = (
   part: UIPart,
   key: number,
-  onDiscuss: (prompt: string) => void,
+  onRetry: () => void,
 ): ReactNode => {
   if (part.type === 'text') {
     return <Response key={key}>{linkifyTaskIds(part.text)}</Response>
@@ -679,7 +679,7 @@ const renderPart = (
   }
   if (part.type === 'data-chatError') {
     return (
-      <ChatResponseError key={key} onTryAgain={() => onDiscuss('Please retry my last request.')} message={part.data.message} />
+      <ChatResponseError key={key} onTryAgain={onRetry} message={part.data.message} />
     )
   }
   return null
@@ -692,11 +692,13 @@ const renderPart = (
  */
 export const MessageView = ({
   message,
-  onDiscuss,
+  onRetry,
   onFeedbackChange,
 }: {
   message: MarsUIMessage
-  onDiscuss: (prompt: string) => void
+  /** Called when the user clicks "Try again" on an interrupted response; directly
+   *  retries the last user request without inserting a synthetic prompt. */
+  onRetry: () => void
   /** Called after a feedback write so the parent can invalidate its query cache. */
   onFeedbackChange?: () => void
 }) => {
@@ -716,7 +718,7 @@ export const MessageView = ({
   if (isAlertOnly) {
     return (
       <div className="group flex flex-col gap-2 px-1 py-2" data-message-role={message.role}>
-        {parts.map((p, i) => renderPart(p, i, onDiscuss))}
+        {parts.map((p, i) => renderPart(p, i, onRetry))}
         {!isUser && (
           <FeedbackControls
             messageId={message.id}
@@ -736,7 +738,7 @@ export const MessageView = ({
         variant={isUser ? 'contained' : 'flat'}
         className={!isUser ? 'border border-primary/20 bg-card px-3 py-2' : undefined}
       >
-        {parts.map((p, i) => renderPart(p, i, onDiscuss))}
+        {parts.map((p, i) => renderPart(p, i, onRetry))}
         <ResultFooter usage={usage} />
         {!isUser && (
           <FeedbackControls
@@ -1060,6 +1062,20 @@ const ChatConversation = ({
     void qc.invalidateQueries({ queryKey: ['chat-threads'] })
   }, [stop, qc, threadId])
 
+  // Direct retry: resubmit the last real user message without touching the
+  // composer or inserting any synthetic "Please retry…" prompt into the transcript.
+  const handleRetry = useCallback(() => {
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')
+    if (!lastUserMsg) return
+    const text = lastUserMsg.parts
+      .filter((p) => p.type === 'text')
+      .map((p) => (p as { type: 'text'; text: string }).text)
+      .join('\n')
+      .trim()
+    if (!text) return
+    void handleSend(text)
+  }, [messages, handleSend])
+
   // Suppress welcome chips while we're waiting for a reply — a brand-new
   // thread with a running/submitted state should show ThinkingIndicator, not
   // the empty-state chips.
@@ -1128,7 +1144,7 @@ const ChatConversation = ({
                   <MessageView
                     key={m.id}
                     message={m}
-                    onDiscuss={onInsertPrompt}
+                    onRetry={handleRetry}
                     onFeedbackChange={handleFeedbackChange}
                   />
                 )
@@ -1136,7 +1152,7 @@ const ChatConversation = ({
               {showThinking && <ThinkingIndicator />}
               {error && !messages.at(-1)?.parts?.some(p => p.type === 'data-chatError') && (
                 <ChatResponseError
-                  onTryAgain={() => onInsertPrompt('Please retry my last request.')}
+                  onTryAgain={handleRetry}
                 />
               )}
             </>

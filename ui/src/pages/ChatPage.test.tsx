@@ -285,7 +285,7 @@ describe('ChatResponseError – message rendering', () => {
       { type: 'error', message: 'Codex could not authenticate. Sign in and try again.' },
     ]))
     const html = renderToStaticMarkup(
-      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
+      createElement(MessageView, { message: msg, onRetry: () => undefined }),
     )
     expect(html).toContain('Codex could not authenticate. Sign in and try again.')
     expect(html).not.toContain('Codex could not finish this reply.')
@@ -296,7 +296,7 @@ describe('ChatResponseError – message rendering', () => {
       { type: 'error', message: '' },
     ]))
     const html = renderToStaticMarkup(
-      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
+      createElement(MessageView, { message: msg, onRetry: () => undefined }),
     )
     expect(html).toContain('Codex could not finish this reply. Send another message to try again.')
   })
@@ -306,10 +306,58 @@ describe('ChatResponseError – message rendering', () => {
       { type: 'error', message: 'Provider quota exceeded.' },
     ]))
     const html = renderToStaticMarkup(
-      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
+      createElement(MessageView, { message: msg, onRetry: () => undefined }),
     )
     expect(html).toContain('Response interrupted')
     expect(html).toContain('Try again')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ChatResponseError — direct retry (no synthetic prompt insertion)
+// ---------------------------------------------------------------------------
+
+describe('ChatResponseError – direct retry path', () => {
+  it('Try again button does not insert "Please retry my last request." into the output', () => {
+    // The old code called onDiscuss('Please retry my last request.') which would
+    // fill the composer with a visible synthetic message. The new code calls
+    // onRetry() with no arguments — a direct resubmit of the last user message.
+    const msg = chatMessageToUIMessage(makeMsg([
+      { type: 'error', message: 'Provider quota exceeded.' },
+    ]))
+    const html = renderToStaticMarkup(
+      createElement(MessageView, { message: msg, onRetry: () => undefined }),
+    )
+    // Try again button must still render
+    expect(html).toContain('Try again')
+    // The synthetic retry string must NEVER appear in the rendered output
+    expect(html).not.toContain('Please retry my last request.')
+  })
+
+  it('MessageView accepts onRetry: () => void (zero-argument callback, not string-argument)', () => {
+    // The interface changed from onDiscuss: (prompt: string) => void to
+    // onRetry: () => void. This test documents that contract: if the wrong
+    // signature were expected, TypeScript would reject this at compile time.
+    const msg = chatMessageToUIMessage(makeMsg([
+      { type: 'error', message: 'An error occurred.' },
+    ]))
+    // Providing () => undefined (zero args) must compile and render without error.
+    const html = renderToStaticMarkup(
+      createElement(MessageView, { message: msg, onRetry: () => undefined }),
+    )
+    expect(html).toContain('Response interrupted')
+  })
+
+  it('error message part renders the Try again button once (not duplicated via onRetry wiring)', () => {
+    const msg = chatMessageToUIMessage(makeMsg([
+      { type: 'error', message: 'Something went wrong.' },
+    ]))
+    const html = renderToStaticMarkup(
+      createElement(MessageView, { message: msg, onRetry: () => undefined }),
+    )
+    // Exactly one Try again button — not doubled up from a stale onDiscuss path
+    const count = (html.match(/Try again/g) ?? []).length
+    expect(count).toBe(1)
   })
 })
 
@@ -374,7 +422,7 @@ describe('real fixture regression', () => {
     const parsed = chatThreadDetailSchema.parse(fixture)
     const msg = chatMessageToUIMessage(parsed.messages[1]!)
     const html = renderToStaticMarkup(
-      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
+      createElement(MessageView, { message: msg, onRetry: () => undefined }),
     )
     // Tool panels show the tool name (Bash).
     expect(html).toContain('Bash')
@@ -639,7 +687,7 @@ const makeAlertSeg = (): ChatSegmentAlert => ({
 
 const renderMessage = (msg: ChatMessage) =>
   renderToStaticMarkup(
-    createElement(MessageView, { message: chatMessageToUIMessage(msg), onDiscuss: () => {} }),
+    createElement(MessageView, { message: chatMessageToUIMessage(msg), onRetry: () => {} }),
   )
 
 describe('MessageView – role + content', () => {
@@ -1037,7 +1085,7 @@ describe('LiveAssistantBubble — tool state synchronization', () => {
       { type: 'tool_result', tool_use_id: 'tu', content: 'hi', isError: false },
     ]))
     const persistedHtml = renderToStaticMarkup(
-      createElement(MessageView, { message: persistedMsg, onDiscuss: () => {} }),
+      createElement(MessageView, { message: persistedMsg, onRetry: () => {} }),
     )
 
     // Both should show "Completed" — neither should show "Pending"
