@@ -538,3 +538,7 @@ _Avoid_: topic, segment, conversation, thread segment
 **Active subject**:
 The single Subject currently bound to the composer, whose thread receives the operator's next turn.
 _Avoid_: current thread, selected thread, focused subject, live subject
+
+**Preloaded response**:
+A labelled next move rendered inline in the chat feed whose op resolves either to a zero-token Mars verb or to opening a Subject.
+_Avoid_: quick reply, suggestion chip, action button, canned reply
