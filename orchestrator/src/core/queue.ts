@@ -440,6 +440,27 @@ export interface Task {
    * compensation rows).
    */
   compensatesArcId?: string | null
+  /**
+   * Epoch-millisecond timestamp set by `mars continue` (and cleared by
+   * `mars restart`) to mark the start of the current re-queue episode.
+   *
+   * The poll-fallback's {@link checkAndEscalateRequeueCeiling} uses this as
+   * the elapsed-time anchor when it is non-null, overriding the default
+   * MIN(step.startedAt) anchor. This prevents the ceiling from firing
+   * immediately on a task whose journal contains steps from a previous run
+   * that may be hours or days old — `mars continue` deliberately preserves
+   * the journal to enable checkpoint-resume, but the ceiling must not
+   * penalise the task for that preserved history.
+   *
+   * `mars restart` clears this to null so a restarted task (which also wipes
+   * the journal) falls back to the MIN(step.startedAt) anchor from the fresh
+   * run's journal entries.
+   *
+   * Optional for backwards compatibility with test fixtures that predate this
+   * field; always populated at the persistence boundary (`null` for non-continued
+   * rows and legacy rows created before this column was added).
+   */
+  requeueAnchorMs?: number | null
   createdAt: string
   updatedAt: string
 }
@@ -693,6 +714,7 @@ SELECT
   t.activity_detail,
   t.compensates_arc_id,
   t.qa,
+  t.requeue_anchor_ms,
   t.created_at, t.updated_at
 FROM tasks t`
 
@@ -769,6 +791,10 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     activityDetail: (row.activity_detail as string | null) ?? null,
     compensatesArcId: (row.compensates_arc_id as string | null) ?? null,
     qa: (row.qa as string | null) === 'manual' ? 'manual' : 'auto',
+    requeueAnchorMs:
+      row.requeue_anchor_ms === null || row.requeue_anchor_ms === undefined
+        ? null
+        : Number(row.requeue_anchor_ms),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -966,6 +992,7 @@ export const updateTask = async (
       | 'retryCount'
       | 'envRestartCount'
       | 'workflow'
+      | 'requeueAnchorMs'
     > & {
       /**
        * Typed catalog code for the failure (e.g. `verify:main-dirty`).
@@ -1194,6 +1221,10 @@ export const updateTask = async (
   if (patch.workflow !== undefined) {
     fields.push('workflow = ?')
     args.push(patch.workflow)
+  }
+  if (patch.requeueAnchorMs !== undefined) {
+    fields.push('requeue_anchor_ms = ?')
+    args.push(patch.requeueAnchorMs)
   }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())

@@ -149,9 +149,14 @@ const DDL: readonly string[] = [
     activity_detail      text,
     env_restart_count    bigint NOT NULL DEFAULT 0,
     arc_rescue_attempts  bigint NOT NULL DEFAULT 0,
+    requeue_anchor_ms    bigint,
     created_at           text   NOT NULL,
     updated_at           text   NOT NULL
   )`,
+  // Backfill `requeue_anchor_ms` for databases created before this column was
+  // added. IF NOT EXISTS makes this idempotent on fresh databases (where the
+  // column already exists from the CREATE TABLE above).
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requeue_anchor_ms bigint`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created
      ON tasks(priority DESC, created_at ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for

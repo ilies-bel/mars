@@ -67,14 +67,26 @@ export const checkAndEscalateRequeueCeiling = async (
   // A fresh task with no step records is not stuck in the re-queue cycle.
   if (maxAttempt === 0) return false
 
-  // Compute the retry-start anchor: earliest step startedAt (if any step has
-  // a valid non-zero timestamp), falling back to the task's createdAt field.
-  // Note: the createdAt approximation is documented in the JSDoc above.
+  // Compute the retry-start anchor.
+  //
+  // Preference order:
+  //   1. t.requeueAnchorMs — set by `mars continue` to the moment the operator
+  //      re-queued the task.  Preserving the journal is the entire point of
+  //      `mars continue` (checkpoint-resume), so step timestamps from a prior
+  //      run could be hours or days old; the anchor must reflect the *current*
+  //      episode, not the history.  `mars restart` clears this to null so a
+  //      restarted task falls through to (2).
+  //   2. MIN(step.startedAt) for steps with a positive timestamp — the original
+  //      probe for the hot-loop backstop (mars-c11be862).  Covers poll-fallback
+  //      re-seeds that never call `mars continue`.
+  //   3. task.createdAt — last resort when no step has a positive timestamp.
   const stepTimestamps = steps.map((s) => s.startedAt).filter((ts) => ts > 0)
   const retryStartMs =
-    stepTimestamps.length > 0
-      ? Math.min(...stepTimestamps)
-      : new Date(t.createdAt).getTime()
+    t.requeueAnchorMs !== null && t.requeueAnchorMs !== undefined
+      ? t.requeueAnchorMs
+      : stepTimestamps.length > 0
+        ? Math.min(...stepTimestamps)
+        : new Date(t.createdAt).getTime()
 
   const elapsedMs = nowMs - retryStartMs
   const elapsedMins = Math.round(elapsedMs / 60_000)

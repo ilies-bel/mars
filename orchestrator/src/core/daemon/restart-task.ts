@@ -277,6 +277,12 @@ export const coreRestartTask = async (
     failedPhase: null,
     failureSignature: null,
     failureReasonCode: null,
+    // Clear the continue-set anchor so the ceiling falls back to
+    // MIN(step.startedAt) from the fresh journal entries created by this
+    // restart's first dispatch.  Without this, a stale requeueAnchorMs from
+    // a previous `mars continue` call would anchor the ceiling to the
+    // operator's continue time rather than the current run's start.
+    requeueAnchorMs: null,
     // When remerge set workflow to 'remerge' for routing purposes, a
     // subsequent restart must clear it so the next dispatch runs the full
     // pipeline (setup → code → verify → merge) rather than the remerge

@@ -28,6 +28,7 @@ import type { WorkflowStore, StepRecord } from '@mars/workflow'
 interface QueueModule {
   enqueueTask: typeof import('../../queue').enqueueTask
   getTask: typeof import('../../queue').getTask
+  updateTask: typeof import('../../queue').updateTask
   migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
@@ -299,6 +300,92 @@ describe('checkAndEscalateRequeueCeiling', () => {
     expect(reloaded?.failureReason).toBe('requeue:time-bound-exceeded')
     // The human-readable detail belongs in `error`, not `failureReason`.
     expect(reloaded?.error).toMatch(/time(?: bound| retried)/)
+  })
+
+  // ── requeueAnchorMs: mars continue re-anchor overrides old step timestamps ──
+
+  it('does NOT escalate a task whose journal has 48h-old steps when requeueAnchorMs anchors to now', async () => {
+    // This is the exact failure scenario from the mars-c8a8a02d bug report:
+    // `mars continue` re-queues a task but the journal has steps started 48h ago.
+    // The ceiling MUST use requeueAnchorMs (set by `mars continue`) as the
+    // anchor, not MIN(step.startedAt) — otherwise it fires immediately and
+    // the task is failed before the coder even gets a chance to run.
+    const { q, ws, ceiling } = await loadModules(repo)
+    const t = await q.enqueueTask('old-journal continued task', undefined, { skipTriage: true })
+    const store: WorkflowStore = ws.createQueueWorkflowStore()
+
+    const fortyEightHoursAgoMs = Date.now() - 48 * 60 * 60 * 1_000
+    await store.createRun({
+      id: t.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: 0,
+      updatedAt: 0,
+    })
+    // Steps from 48h ago — these would normally trigger ceiling escalation.
+    await store.putStep(
+      makeStepRecord(t.id, 'setup-worktree', 2, 'failed', fortyEightHoursAgoMs),
+    )
+    await store.putStep(
+      makeStepRecord(t.id, 'run-claude-code', 3, 'failed', fortyEightHoursAgoMs + 5_000),
+    )
+
+    // Simulate `mars continue`: set requeueAnchorMs to now (re-queue episode started just now).
+    const nowMs = Date.now()
+    await q.updateTask(t.id, { status: 'queued', requeueAnchorMs: nowMs })
+    const fresh = await q.getTask(t.id)
+
+    // With default 2h bound, elapsed from requeueAnchorMs ≈ 0 ms — well within the bound.
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      fresh!,
+      store,
+      makeSilentLog(),
+      nowMs + 1_000, // 1 second after the anchor
+    )
+
+    // Must NOT escalate — anchor is the continue time, not the 48h-old step.
+    expect(escalated).toBe(false)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('queued')
+  })
+
+  it('still escalates a continued task that then loops beyond the time bound', async () => {
+    // After `mars continue`, if the resumed task spins in its own hot loop for
+    // longer than REQUEUE_MAX_RETRY_MS, the ceiling must still fire.
+    // MARS_REQUEUE_MAX_RETRY_MS=0 so any elapsed time past requeueAnchorMs fails.
+    const { q, ws, ceiling } = await loadModules(repo, { maxRetryMs: 0 })
+    const t = await q.enqueueTask('continued but stuck task', undefined, { skipTriage: true })
+    const store: WorkflowStore = ws.createQueueWorkflowStore()
+
+    await store.createRun({
+      id: t.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: 0,
+      updatedAt: 0,
+    })
+    await store.putStep(makeStepRecord(t.id, 'setup-worktree', 1, 'failed', Date.now()))
+
+    // Simulate `mars continue`: anchor is set to some past time (e.g., 5 seconds ago).
+    const anchorMs = Date.now() - 5_000
+    await q.updateTask(t.id, { status: 'queued', requeueAnchorMs: anchorMs })
+    const fresh = await q.getTask(t.id)
+
+    // With maxRetryMs=0 any elapsed > 0 exceeds the bound.
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      fresh!,
+      store,
+      makeSilentLog(),
+      anchorMs + 1, // 1 ms after the anchor → elapsed = 1 ms > 0 ms bound
+    )
+
+    expect(escalated).toBe(true)
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failureReasonCode).toBe('requeue-time-bound-exceeded')
   })
 
   // ── Fresh task (no step records) is never escalated ────────────────────────

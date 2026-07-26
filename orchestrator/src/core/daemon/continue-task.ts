@@ -154,15 +154,23 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
       console.error(`[continue] auto-commit failed for ${id}:`, salvageErr)
     }
 
-    await updateTask(id, { status: 'queued', error: null })
+    // Set requeueAnchorMs to now so the poll-fallback ceiling measures elapsed
+    // time from this operator-initiated resume, not from the original run's
+    // first step (which may be hours or days old — the journal is preserved
+    // by design for checkpoint-resume).
+    await updateTask(id, { status: 'queued', error: null, requeueAnchorMs: Date.now() })
     return { degradedToRestart: false, codePhaseResume: true }
   }
 
   // Re-queue as-is. No `resumeFrom`: engine checkpoint-resume (runId=task.id)
   // is the single source of truth for which step the re-dispatch skips into.
+  // Set requeueAnchorMs to now for the same reason as the code-phase path
+  // above: the preserved journal contains step timestamps from the prior run;
+  // the ceiling must not use those as the anchor for the current episode.
   await updateTask(id, {
     status: 'queued',
     error: null,
+    requeueAnchorMs: Date.now(),
   })
   return { degradedToRestart: false }
 }
