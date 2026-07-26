@@ -218,3 +218,64 @@ export const listKpiArcs = async (key: KpiKey, store?: TaskStore): Promise<KpiAr
 
   return { key, window, arcs }
 }
+
+// ---------------------------------------------------------------------------
+// Rescue-operator event counters
+//
+// Two monotonically-increasing counters stored in the `kpi_counters` table:
+//   rescue_attempts_total — incremented each time a rescue-operator task is
+//                           dispatched (in maybeSpawnRescueOperator).
+//   rescue_success_total  — incremented when an arc that had a rescue attempt
+//                           reaches 'arc-done' (in the arc-verifier subscriber).
+//
+// Both are queryable via getRescueCounters. The ratio rescue_success_total /
+// rescue_attempts_total gives the rescue operator's success rate.
+// ---------------------------------------------------------------------------
+
+export interface RescueCounters {
+  rescue_attempts_total: number
+  rescue_success_total: number
+}
+
+/**
+ * Return the current rescue-operator counter pair.
+ * Both default to 0 when no row has been written yet.
+ */
+export const getRescueCounters = async (store: TaskStore): Promise<RescueCounters> => {
+  const result = await store.query({
+    sql: `SELECT key, value FROM kpi_counters WHERE key IN ('rescue_attempts_total', 'rescue_success_total')`,
+    args: [],
+  })
+  let rescue_attempts_total = 0
+  let rescue_success_total = 0
+  for (const row of result.rows) {
+    const r = row as unknown as { key: string; value: number }
+    if (r.key === 'rescue_attempts_total') rescue_attempts_total = r.value
+    if (r.key === 'rescue_success_total') rescue_success_total = r.value
+  }
+  return { rescue_attempts_total, rescue_success_total }
+}
+
+/**
+ * Increment rescue_attempts_total by 1. Creates the counter row if absent.
+ * Call immediately after incrementArcRescueAttempts in maybeSpawnRescueOperator.
+ */
+export const incrementRescueAttempts = async (store: TaskStore): Promise<void> => {
+  await store.execute({
+    sql: `INSERT INTO kpi_counters (key, value) VALUES ('rescue_attempts_total', 1)
+          ON CONFLICT (key) DO UPDATE SET value = kpi_counters.value + 1`,
+    args: [],
+  })
+}
+
+/**
+ * Increment rescue_success_total by 1. Creates the counter row if absent.
+ * Call when an arc that had arc_rescue_attempts > 0 reaches 'arc-done'.
+ */
+export const incrementRescueSuccess = async (store: TaskStore): Promise<void> => {
+  await store.execute({
+    sql: `INSERT INTO kpi_counters (key, value) VALUES ('rescue_success_total', 1)
+          ON CONFLICT (key) DO UPDATE SET value = kpi_counters.value + 1`,
+    args: [],
+  })
+}

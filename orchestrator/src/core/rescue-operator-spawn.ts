@@ -20,6 +20,7 @@ import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/
 import type { Task } from './queue'
 import type { FixRecipeContext } from './lib/fix-recipes'
 import { buildRescueOperatorPrompt } from './workers/rescue-operator'
+import { incrementRescueAttempts } from './daemon/kpi-store.js'
 
 export interface MaybeSpawnRescueOperatorInput {
   failedTask: Task
@@ -66,6 +67,7 @@ export const maybeSpawnRescueOperator = async (
   // Increment before dispatch to prevent a concurrent failure event from
   // spawning a second rescue on the same arc.
   await store.incrementArcRescueAttempts(originId)
+  await incrementRescueAttempts(store)
 
   const prompt = buildRescueOperatorPrompt(failedTask.id, originId, failureSignature)
 

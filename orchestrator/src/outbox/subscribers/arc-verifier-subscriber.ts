@@ -22,6 +22,8 @@ import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { resolveOriginIdForTask } from '../../core/lib/origin.js'
 import { triggerArcVerification } from '../../core/lib/arc-verifier.js'
 import { registerSubscriberName } from '../registry.js'
+import { createTaskStore } from '../../core/store/task-store.js'
+import { incrementRescueSuccess } from '../../core/daemon/kpi-store.js'
 
 export const ARC_VERIFIER_SUBSCRIBER = 'arc-verifier'
 registerSubscriberName(ARC_VERIFIER_SUBSCRIBER)
@@ -61,6 +63,20 @@ export async function drainArcVerifier(
 
       // Resolve the arc origin id from the terminal task.
       const originId = await resolveOriginIdForTask(payload.taskId)
+
+      // Increment rescue_success_total when an arc that had rescue attempts
+      // transitions to arc-done (all tasks terminal, at least one done).
+      // The sequential outbox drain guarantees this fires exactly once per
+      // arc completion: prior events see in-progress; only the last done
+      // event sees arc-done.
+      const store = createTaskStore(client)
+      const arcRescueAttempts = await store.getArcRescueAttempts(originId)
+      if (arcRescueAttempts > 0) {
+        const arcStatusResult = await store.arcStatus(originId)
+        if (arcStatusResult.status === 'arc-done') {
+          await incrementRescueSuccess(store)
+        }
+      }
 
       // triggerArcVerification handles dedup, flag-check, and concurrency.
       // It returns immediately; the actual verification runs asynchronously.

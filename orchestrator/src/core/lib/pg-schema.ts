@@ -543,6 +543,11 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_kpi_snapshots_taken_at
      ON kpi_snapshots(taken_at)`,
+  // Simple key/value counter table for KPI event counters (e.g. rescue_attempts_total).
+  `CREATE TABLE IF NOT EXISTS kpi_counters (
+    key   text PRIMARY KEY,
+    value bigint NOT NULL DEFAULT 0
+  )`,
   `CREATE TABLE IF NOT EXISTS promotion_ledger (
     id                   text   PRIMARY KEY,
     workflow             text   NOT NULL,
@@ -797,6 +802,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'failure_signature_streak',
   'verify_gates',
   'kpi_snapshots',
+  'kpi_counters',
   'promotion_ledger',
   'scorers',
   'scorer_results',
