@@ -277,6 +277,31 @@ html, body, #root {
   .animate-mars-pulse { animation: none; }
 }
 
+/* ── Inline code chip (Streamdown) ──────────────────────────────────────────
+ * Streamdown renders inline `code` as
+ *   <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm"
+ *         data-streamdown="inline-code">
+ * and `bg-muted` resolves against the @theme token --color-muted (#705F50),
+ * which is Mars's muted *text* colour — not a surface. The result is a solid
+ * dark-brown slab per chip, so a paragraph with several inline spans reads as
+ * redacted. The shadcn --muted alias (#F5EDE4) is deliberately NOT mapped into
+ * @theme inline, because doing so would repaint all 305 `text-muted` call
+ * sites to the page background. So the chip is restyled here instead, scoped
+ * to Streamdown's stable data attribute, matching the token chip in
+ * TaskCard.tsx (bg-muted-foreground/10 + text-muted-foreground).
+ * ---------------------------------------------------------------------------*/
+[data-streamdown="inline-code"] {
+  background: color-mix(in srgb, var(--color-muted) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  color: var(--color-fg);
+  border-radius: 4px;
+  /* em-relative so the chip tracks the surrounding paragraph instead of
+   * Streamdown's absolute text-sm */
+  font-size: 0.9em;
+  font-weight: 500;
+  padding: 0.1em 0.35em;
+}
+
 /* ── Board card surface ─────────────────────────────────────────────────────
  * A refined, elevated card treatment for arc summaries and task cards. Replaces
  * the old flat `border border-border` hairline (which read cheap on white) with
