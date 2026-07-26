@@ -11,7 +11,12 @@
 import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { patchDaemonConfigFile, readDaemonConfigFile } from '../../core/daemon/config'
+import {
+  patchDaemonConfigFile,
+  persistLeverAutonomyLevel,
+  readDaemonConfigFile,
+} from '../../core/daemon/config'
+import type { AutonomyLevel } from '../../core/daemon/config'
 import {
   daemonPaths,
   isDaemonAlive,
@@ -426,14 +431,41 @@ const daemonSetCap: Command = {
   },
 }
 
+const VALID_AUTONOMY_LEVELS = new Set<string>(['off', 'ask', 'silent'])
+
+const daemonSetLever: Command = {
+  path: 'daemon set-lever',
+  summary: 'set a lever property (autonomy: off|ask|silent)',
+  usage: 'usage: mars daemon set-lever <name> autonomy <off|ask|silent>',
+  run: async (args, deps) => {
+    const positional = args.positional.filter((a) => !a.startsWith('--'))
+    const name = positional[0]
+    const prop = positional[1]
+    const value = positional[2]
+    if (!name || prop !== 'autonomy' || !value) {
+      deps.err('usage: mars daemon set-lever <name> autonomy <off|ask|silent>')
+      return { code: 2 }
+    }
+    if (!VALID_AUTONOMY_LEVELS.has(value)) {
+      deps.err(
+        `mars daemon set-lever: autonomy must be 'off', 'ask', or 'silent'; got '${value}'`,
+      )
+      return { code: 2 }
+    }
+    persistLeverAutonomyLevel(name, value as AutonomyLevel)
+    deps.out(`lever ${name} autonomy=${value}`)
+    return { code: 0 }
+  },
+}
+
 const daemonGroup: Command = {
   path: 'daemon',
   summary: 'daemon subcommands',
   usage:
-    'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|pause|resume> [flags]',
+    'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume> [flags]',
   run: (_args, deps) => {
     deps.err(
-      'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|pause|resume> [flags]',
+      'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume> [flags]',
     )
     return { code: 2 }
   },
@@ -448,6 +480,7 @@ export const daemonCommands: readonly Command[] = [
   daemonReload,
   daemonSetFlag,
   daemonSetCap,
+  daemonSetLever,
   daemonPause,
   daemonResume,
   daemonGroup,

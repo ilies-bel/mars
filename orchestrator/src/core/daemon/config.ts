@@ -1,7 +1,21 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import { z } from 'zod'
 import { resolveContext } from '../context'
 import type { ProviderName } from '../workers/providers'
+
+/** Three-position autonomy axis for each operator lever. */
+export type AutonomyLevel = 'off' | 'ask' | 'silent'
+
+/**
+ * Zod schema for a single lever entry in daemon.json's `levers` map.
+ * The `autonomy_level` field defaults to `'ask'` when omitted.
+ */
+export const leverSchema = z.object({
+  autonomy_level: z.enum(['off', 'ask', 'silent']).default('ask'),
+})
+
+export type LeverEntry = z.infer<typeof leverSchema>
 
 export interface DaemonCaps {
   implement: number
@@ -192,6 +206,47 @@ export const patchDaemonConfigFile = (
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
   return next
+}
+
+/**
+ * Read the autonomy_level for `name` from daemon.json's `levers` map.
+ * Returns `'ask'` when the lever is absent or the stored value is invalid.
+ */
+export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
+  const raw = readDaemonConfigFile()
+  const levers = raw.levers
+  if (levers === null || typeof levers !== 'object' || Array.isArray(levers)) {
+    return 'ask'
+  }
+  const leverData = (levers as Record<string, unknown>)[name]
+  if (leverData === null || typeof leverData !== 'object' || Array.isArray(leverData)) {
+    return 'ask'
+  }
+  const parsed = leverSchema.safeParse(leverData)
+  return parsed.success ? parsed.data.autonomy_level : 'ask'
+}
+
+/**
+ * Persist an autonomy_level for `name` into daemon.json's `levers` map.
+ * Merge-patches so other lever fields and top-level keys are preserved.
+ */
+export const persistLeverAutonomyLevel = (name: string, level: AutonomyLevel): void => {
+  const current = readDaemonConfigFile()
+  const existingLevers =
+    current.levers !== null &&
+    typeof current.levers === 'object' &&
+    !Array.isArray(current.levers)
+      ? (current.levers as Record<string, unknown>)
+      : {}
+  const existingLever =
+    existingLevers[name] !== null &&
+    typeof existingLevers[name] === 'object' &&
+    !Array.isArray(existingLevers[name])
+      ? (existingLevers[name] as Record<string, unknown>)
+      : {}
+  patchDaemonConfigFile({
+    levers: { ...existingLevers, [name]: { ...existingLever, autonomy_level: level } },
+  })
 }
 
 // Resolution order per field: config file > env var > built-in default.
