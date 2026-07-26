@@ -78,7 +78,7 @@ export type DaemonRequest =
   | { op: 'ping' }
   | { op: 'investigate'; id: string }
   | { op: 'diagnose-failure'; id: string }
-  | { op: 'release-lease'; id: string; abort?: boolean }
+  | { op: 'release-lease'; id: string; abort?: boolean; note?: string }
   // Complete the current manual step: re-queue for pipeline continuation but
   // KEEP the lease identity so the next manual park re-leases the same owner.
   | { op: 'step-done'; id: string }

@@ -173,7 +173,7 @@ export interface DaemonDeps {
   handleStatus(): Promise<DaemonStatusPayload>
   investigateWorktree(id: string): Promise<unknown>
   diagnoseFailure(id: string): Promise<unknown>
-  handleReleaseLease(id: string, abort: boolean): Promise<void>
+  handleReleaseLease(id: string, abort: boolean, note?: string): Promise<void>
   /** Complete the current manual step: re-queue but keep the lease identity. */
   handleStepDone(id: string): Promise<void>
   /**

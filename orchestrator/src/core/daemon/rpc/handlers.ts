@@ -303,7 +303,7 @@ const diagnoseFailureHandler = handler('diagnose-failure', async (req, deps) => 
 })
 
 const releaseLeaseHandler = handler('release-lease', async (req, deps) => {
-  await deps.handleReleaseLease(req.id, req.abort ?? false)
+  await deps.handleReleaseLease(req.id, req.abort ?? false, req.note)
   return { ok: true }
 })
 

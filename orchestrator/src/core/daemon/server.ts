@@ -3079,7 +3079,7 @@ export const startDaemon = async (
   // `mars release <id>` / `mars release --abort <id>`: release the worktree
   // lease on an 'awaiting-human' task. Normal release re-queues the task for
   // pipeline continuation; --abort routes it through the failure path.
-  const handleReleaseLease = async (id: string, abort: boolean): Promise<void> => {
+  const handleReleaseLease = async (id: string, abort: boolean, note?: string): Promise<void> => {
     const task = await getTask(id)
     if (!task) throw new Error(`task ${id} not found`)
     if (task.status !== 'awaiting-human') {
@@ -3102,6 +3102,9 @@ export const startDaemon = async (
       bus.emit('task.failed', {
         taskId: id,
         error: 'operator aborted human work',
+        // Thread the optional QA note into the event so the recovery-spawn
+        // outbox subscriber can attach it to the fix-task prompt.
+        ...(note !== undefined ? { note } : {}),
       })
     } else {
       await Arc.load(id).releaseLease(id)

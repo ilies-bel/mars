@@ -19,6 +19,12 @@ export const EventMap = {
   'task.failed': z.object({
     taskId: z.string(),
     error: z.string(),
+    /**
+     * Optional QA note from `mars release --abort <id> --note '<text>'`.
+     * When present it is threaded into the recovery fix-task prompt under a
+     * `## QA note` heading so the recovery agent sees the operator's feedback.
+     */
+    note: z.string().optional(),
   }),
   'task.blocked': z.object({
     taskId: z.string(),

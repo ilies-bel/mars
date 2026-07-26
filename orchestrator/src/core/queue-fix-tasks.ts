@@ -242,6 +242,13 @@ export interface HandleTaskFailureViaTaskInput {
    * through the store rather than going through the module-singleton client.
    */
   store?: TaskStore
+  /**
+   * Optional QA note from `mars release --abort <id> --note '<text>'`.
+   * When present, it is appended verbatim to the fix-task prompt under a
+   * `## QA note` heading so the recovery agent sees the operator's
+   * feedback without querying the database.
+   */
+  qaNote?: string
 }
 
 export interface HandleTaskFailureViaTaskResult {
@@ -931,6 +938,7 @@ export const handleTaskFailureWithFixTask = async (
     branch,
     recipeContext,
     store: s,
+    qaNote: input.qaNote,
   })
 
   // No registered fix recipe → the Arc has no targeted recovery playbook; spawn

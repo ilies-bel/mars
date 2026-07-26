@@ -683,14 +683,17 @@ const land: Command = {
 const release: Command = {
   path: 'release',
   summary: 'release the lease on an awaiting-human task and resume the pipeline',
-  usage: 'usage: mars release <task-id> [--abort]',
+  usage: 'usage: mars release <task-id> [--abort] [--note <text>]',
   run: async (args, deps) => {
-    const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
-    const id = args.positional.filter((a) => !a.startsWith('--'))[0]
-    const abort = flagSet.has('--abort')
+    // --note is in FLAGS_WITH_VALUES so the arg parser stores it in args.flags,
+    // not args.positional. --abort is a bare flag and appears in positional.
+    const positionals = args.positional
+    const abort = positionals.includes('--abort')
+    const note: string | undefined = args.flags['--note'] ?? undefined
+    const id = positionals.filter((a) => !a.startsWith('--'))[0]
 
     if (!id) {
-      deps.err('usage: mars release <task-id> [--abort]')
+      deps.err('usage: mars release <task-id> [--abort] [--note <text>]')
       return { code: 1 }
     }
 
@@ -729,8 +732,19 @@ const release: Command = {
       }
     }
 
+    // On abort, tear down the preview process before emitting the abort so
+    // the dev server does not linger after the task leaves awaiting-human.
+    // Best-effort: swallow errors — the preview may not be registered.
+    if (abort) {
+      try {
+        await deps.daemon.sendRequest({ op: 'preview.teardown', taskId: id })
+      } catch {
+        // preview may not be registered — that is fine
+      }
+    }
+
     try {
-      await deps.daemon.sendRequest({ op: 'release-lease', id, abort })
+      await deps.daemon.sendRequest({ op: 'release-lease', id, abort, note })
     } catch (err) {
       deps.err(`${id}: ${errorMessage(err)}`)
       return { code: 1 }

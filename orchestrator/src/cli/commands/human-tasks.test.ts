@@ -148,8 +148,10 @@ describe('mars release', () => {
       })
 
       expect(r.code).toBe(0)
-      expect(fake.calls).toHaveLength(1)
-      const req = fake.calls[0] as { op: string; id: string; abort: boolean }
+      // preview.teardown fires first (best-effort), then release-lease.
+      expect(fake.calls).toHaveLength(2)
+      expect((fake.calls[0] as { op: string }).op).toBe('preview.teardown')
+      const req = fake.calls[1] as { op: string; id: string; abort: boolean }
       expect(req.op).toBe('release-lease')
       expect(req.abort).toBe(true)
       expect(r.out.join('\n')).toContain('failure path')

@@ -95,7 +95,7 @@ export async function drainRecoverySpawner(
     handle: async (event: BusEvent<EventName>) => {
       if (event.type !== 'task.failed') return false
 
-      const { taskId, error } = event.payload as { taskId: string; error: string }
+      const { taskId, error, note } = event.payload as { taskId: string; error: string; note?: string }
       const task = await getTask(taskId)
       if (!task) return false
 
@@ -141,6 +141,9 @@ export async function drainRecoverySpawner(
         taskId,
         failingStep,
         errorOutput: error,
+        // Carry the optional QA note from the `task.failed` event through to
+        // the fix-task prompt so the recovery agent sees the operator feedback.
+        qaNote: note,
       })
 
       // When the signature-storm circuit breaker first trips, signal the

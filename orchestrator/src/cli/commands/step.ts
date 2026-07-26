@@ -91,6 +91,17 @@ const stepDone: Command = {
       }
     }
 
+    // When completing a manual-QA review step, tear down the preview process
+    // before resuming the workflow. Swallow errors — the preview may have
+    // already exited or may not be registered for this task.
+    if (task.currentStepName === 'review') {
+      try {
+        await deps.daemon.sendRequest({ op: 'preview.teardown', taskId: id })
+      } catch {
+        // best-effort: preview may not be registered
+      }
+    }
+
     try {
       await deps.daemon.sendRequest({ op: 'step-done', id })
     } catch (err) {

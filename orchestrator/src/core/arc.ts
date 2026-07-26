@@ -160,6 +160,13 @@ export interface UpsertFixTaskInput {
    * falling back to the module-singleton client.
    */
   store?: DomainTaskStore
+  /**
+   * Optional QA note from `mars release --abort <id> --note '<text>'`.
+   * When present, it is appended verbatim to the fix-task prompt under a
+   * `## QA note` heading so the recovery agent sees the operator's
+   * feedback without querying the database.
+   */
+  qaNote?: string
 }
 
 export interface UpsertFixTaskResult {
@@ -1228,7 +1235,14 @@ export class Arc {
           ? incomingPrompt
           : source.prompt ?? '',
     }
-    const prompt = recipe.buildPrompt(recipeContextWithSource)
+    const basePrompt = recipe.buildPrompt(recipeContextWithSource)
+    // Append the optional QA note verbatim under a ## QA note heading so
+    // the recovery agent sees the operator's feedback from `mars release
+    // --abort --note '<text>'` without having to query the database.
+    const prompt =
+      input.qaNote && input.qaNote.trim().length > 0
+        ? `${basePrompt}\n\n## QA note\n\n${input.qaNote}\n`
+        : basePrompt
     const fixTaskId = `fix-${randomUUID().slice(0, 8)}`
     // All recovery tasks run at top priority — recovery resumes already-started
     // work and should preempt fresh queued tasks. Shared recipes additionally
