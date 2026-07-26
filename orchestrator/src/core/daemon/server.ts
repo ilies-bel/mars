@@ -915,7 +915,9 @@ export const startDaemon = async (
           })
           if (dirtyResult.parked) {
             // Source is now `blocked` with an edge to a (new or existing)
-            // main-commiter. Skip dispatching the workflow — its first step
+            // main-commiter, OR the integration branch has unrelated dirt that
+            // the committer cannot resolve (action-queue alert raised instead).
+            // Either way, skip dispatching the workflow — its first step
             // (setup) would just hit the same condition.
             //
             // When a FRESH committer was spawned, emit task.queued for it so
@@ -923,7 +925,7 @@ export const startDaemon = async (
             // committer row sits in `queued` forever unless the daemon restarts
             // (reseed-dispatch re-seeds it at boot). The bus handler pushes the
             // id into pendingImplement and calls drain().
-            if (dirtyResult.spawned) {
+            if ('fixTaskId' in dirtyResult && dirtyResult.spawned) {
               bus.emit('task.queued', { taskId: dirtyResult.fixTaskId })
             }
             return

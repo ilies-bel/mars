@@ -145,7 +145,8 @@ describe('runMainDirtyDispatchCheck', () => {
       // committer was spawned and testTask is blocked behind it.
       expect(result.parked).toBe(true)
       // Caller must know a fresh committer was spawned so it can emit task.queued.
-      if (result.parked) {
+      // Narrow to the committer-scope variant (has fixTaskId/spawned).
+      if (result.parked && 'fixTaskId' in result) {
         expect(result.spawned).toBe(true)
         expect(result.fixTaskId).toBeTruthy()
       }

@@ -1,14 +1,14 @@
 /**
- * Slice F.2: dispatch-time integration with the dirty-main detection helper.
+ * Slice F.2 / Slice 2: dispatch-time integration with the dirty-main detection helper.
  *
  * This module is a thin orchestration shim that the daemon's
  * `dispatchImplement` calls right before invoking `runWorkflow`. It
- * (1) probes the integration branch via `checkIntegrationBranchDirty`,
- * (2) on dirty, looks up the `main-commiter` recipe from the catalog,
- * (3) calls `spawnOrAttachMainCommitter` to either spawn a fresh
- *     recovery or attach the current task to an existing one at the
- *     same diff hash,
- * (4) returns `true` so the caller skips dispatching the workflow.
+ * (1) classifies the integration branch via `classifyIntegrationDirtState`,
+ * (2) on 'clean', returns false (dispatch proceeds normally),
+ * (3) on 'committer-scope', looks up the `main-commiter` recipe and calls
+ *     `spawnOrAttachMainCommitter` to park the task behind a recovery,
+ * (4) on 'unrelated', raises a high-priority action-queue alert and returns
+ *     true without inserting a fix task or task_blockers edge.
  *
  * Stays daemon-side (not workflow-side) because the daemon owns the
  * integration-branch repo root and is the right writer for the
@@ -17,10 +17,12 @@
  */
 import { resolveContext } from '../context'
 import {
-  checkIntegrationBranchDirty,
+  classifyIntegrationDirtState,
   MAIN_COMMITER_RECIPE,
   spawnOrAttachMainCommitter,
+  type IntegrationBranchDirtyResult,
 } from '../lib/main-dirty'
+import { raiseUnrelatedDirtActionQueue } from './main-dirty-action-queue'
 import { resolveOriginIdForTask } from '../lib/origin'
 import type { RecipeCatalog } from '../lib/recipes'
 import type { TraceEventStore } from '../lib/trace-events-store'
@@ -38,6 +40,7 @@ export interface MainDirtyDispatchInput {
 export type MainDirtyDispatchResult =
   | { parked: false }
   | { parked: true; fixTaskId: string; spawned: boolean }
+  | { parked: true; reason: 'unrelated-dirt'; actionQueueItemId: string }
 
 /**
  * Run the dispatch-time dirty-main probe. Returns `{ parked: false }` when:
@@ -50,6 +53,10 @@ export type MainDirtyDispatchResult =
  * caller is responsible for emitting `task.queued` for `fixTaskId` so the
  * dispatch loop picks it up without waiting for the next daemon restart.
  *
+ * Returns `{ parked: true, reason: 'unrelated-dirt', actionQueueItemId }` when
+ * the dirty state cannot be resolved by a committer (ignored entries, conflicts,
+ * submodule changes). An action-queue alert is raised; no fix task is inserted.
+ *
  * Done committers no longer suppress parking (invariant 2): a done committer
  * proves main was clean when it verified, but if main is dirty again a fresh
  * committer must clean it. The source task is parked behind the fresh committer.
@@ -60,7 +67,8 @@ export const runMainDirtyDispatchCheck = async (
   const { task, integrationBranch, traceStore, recipeCatalog, log } = input
   const { repoRoot } = resolveContext()
   const originId = await resolveOriginIdForTask(task.id).catch(() => task.id)
-  const detection = await checkIntegrationBranchDirty({
+
+  const classifyResult = await classifyIntegrationDirtState({
     repoRoot,
     integrationBranch,
     traceCtx: {
@@ -70,8 +78,19 @@ export const runMainDirtyDispatchCheck = async (
       store: traceStore,
     },
   })
-  if (!detection.dirty) return { parked: false }
 
+  if (classifyResult.kind === 'clean') return { parked: false }
+
+  if (classifyResult.kind === 'unrelated') {
+    const actionQueueItemId = await raiseUnrelatedDirtActionQueue(
+      integrationBranch,
+      classifyResult.contaminatedPaths,
+      log,
+    )
+    return { parked: true, reason: 'unrelated-dirt', actionQueueItemId }
+  }
+
+  // kind === 'committer-scope': dirty files a committer can stage and commit.
   const recipe = recipeCatalog.get(MAIN_COMMITER_RECIPE)
   if (!recipe) {
     // Recipe missing means the binary was shipped without its built-in
@@ -87,6 +106,10 @@ export const runMainDirtyDispatchCheck = async (
     return { parked: false }
   }
 
+  const detection: IntegrationBranchDirtyResult = {
+    dirty: true,
+    statusOutput: classifyResult.statusOutput,
+  }
   const resolution = await spawnOrAttachMainCommitter({
     sourceTaskId: task.id,
     detection,

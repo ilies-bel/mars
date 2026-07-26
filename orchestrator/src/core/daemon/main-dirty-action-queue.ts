@@ -234,6 +234,63 @@ export const raiseAggregatedMainCommiterFailureRow = async (
 }
 
 /**
+ * Raise a high-priority action-queue alert when the integration branch has dirt
+ * that a main-committer CANNOT resolve (ignored entries, unmerged conflicts,
+ * submodule gitlink changes, or untracked files inside ignored directories).
+ *
+ * Unlike the committer-scope path, this does NOT insert a fix task or a
+ * task_blockers edge. The operator must manually clean the contaminated paths
+ * before dispatch can resume.
+ *
+ * Idempotent on `integrationBranch` (signature-keyed): repeat detections on
+ * the same branch bump `seen_count` on the existing open row rather than
+ * inserting a new one.
+ */
+export const raiseUnrelatedDirtActionQueue = async (
+  integrationBranch: string,
+  contaminatedPaths: string[],
+  log: (msg: string) => void,
+): Promise<string> => {
+  const pathLines =
+    contaminatedPaths.length > 0
+      ? contaminatedPaths.map((p) => `- \`${p}\``).join('\n')
+      : '(no specific paths identified)'
+
+  const body = [
+    `The integration branch \`${integrationBranch}\` has dirt that a main-committer cannot resolve:`,
+    '',
+    pathLines,
+    '',
+    'These paths are ignored entries, unmerged conflicts, submodule gitlinks, or',
+    'files inside ignored directories. A committer can only stage tracked and',
+    'untracked (non-ignored) files.',
+    '',
+    'To unblock dispatch, either:',
+    '  1. Remove or clean up the contaminated paths listed above, or',
+    '  2. Add them to `.gitignore` if they should always be excluded (note:',
+    '     already-ignored directory entries need to be deleted, not just ignored).',
+    '',
+    'Once the integration branch is clean, dispatch will resume automatically.',
+  ].join('\n')
+
+  const actionQueueItemId = await raiseActionQueueItem({
+    kind: 'failed',
+    category: 'orchestrator',
+    priority: 'high',
+    title: `main-dirty — unrelated dirt on ${integrationBranch}`,
+    body,
+    payload: { integrationBranch, contaminatedPaths },
+    context: { repoRoot: process.env.MARS_REPO ?? null },
+    raisedBy: 'daemon:main-dirty-preflight',
+    signature: `main-dirty:unrelated:${integrationBranch}`,
+  })
+  log(
+    `[main-dirty] unrelated dirt on ${integrationBranch}: raised actionQueue ${actionQueueItemId} (contaminated: ${contaminatedPaths.join(', ')})`,
+  )
+  return actionQueueItemId
+}
+
+/**
  * On committer FAILURE, release every task that is currently blocked solely
  * because of this committer — BUT only when main is actually clean.
  *
