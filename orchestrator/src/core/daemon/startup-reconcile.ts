@@ -26,11 +26,97 @@ import {
   type ReconcileSummary,
 } from './reconciler'
 import { RECONCILERS } from './reconcilers'
+import type { MergeJobStore } from '../store/merge-job-store'
+import type { DomainTaskStore } from '../store/task-store'
 
 // Re-export the deps + summary types under their historical names so existing
 // call sites and tests that import them from this module keep working.
 export type StartupReconcileDeps = ReconcileDeps
 export type { ReconcileSummary } from './reconciler'
+
+/**
+ * Re-hydrate the merge queue from durable task state on daemon startup.
+ *
+ * Two operations:
+ *
+ * 1. **Reset** — any `merge_jobs` row in `claimed` or `running` from a prior
+ *    daemon is reset to `queued` with `attempts` incremented and `claimed_at` /
+ *    `started_at` cleared.  A prior daemon left these rows in-flight when it
+ *    exited; the merge has not finished and must be retried.
+ *
+ * 2. **Rebuild** — any task in `status='merging'` that has no active
+ *    (queued/claimed/running) `merge_jobs` row gets a fresh `queued` row
+ *    inserted.  This covers the gap where the daemon died after setting the
+ *    task status to `merging` but before the merge_jobs row was persisted.
+ *
+ * Called by the `merge-jobs-startup-reconcile` registry step (reconcilers.ts)
+ * and exported separately so tests can call it in isolation with injected deps.
+ */
+export const reconcileMergeJobs = async (deps: {
+  store: MergeJobStore
+  taskStore: DomainTaskStore
+  log: (line: string) => void
+}): Promise<{ resetCount: number; rebuiltCount: number }> => {
+  const { store, taskStore, log } = deps
+
+  // ── 1. Reset stuck claimed/running rows back to queued ──────────────────────
+  //
+  // Read the current stuck rows first (to capture their previous status for
+  // the warning log), then do a single bulk UPDATE.  This is safe at startup
+  // because no other consumer is running yet.
+  const stuckClaimed = await store.listByStatus('claimed')
+  const stuckRunning = await store.listByStatus('running')
+  const stuckJobs = [...stuckClaimed, ...stuckRunning]
+
+  let resetCount = 0
+  if (stuckJobs.length > 0) {
+    await taskStore.execute(
+      `UPDATE merge_jobs
+       SET    status     = 'queued',
+              attempts   = attempts + 1,
+              claimed_at = NULL,
+              started_at = NULL,
+              updated_at = NOW()
+       WHERE  status IN ('claimed', 'running')`,
+    )
+    for (const job of stuckJobs) {
+      log(
+        `[reconcile] merge-jobs-startup: reset ${job.status} job ${job.id} for task ${job.taskId} back to queued (prior daemon left it in-flight)`,
+      )
+      resetCount++
+    }
+  }
+
+  // ── 2. Rebuild merge jobs for orphan merging tasks ──────────────────────────
+  //
+  // A task can be in `merging` status with no active merge_jobs row when the
+  // daemon died between setting task.status='merging' and inserting the job row.
+  const orphanResult = await taskStore.query(`
+    SELECT t.id, t.worktree_path, t.branch
+    FROM   tasks t
+    WHERE  t.status = 'merging'
+    AND    NOT EXISTS (
+             SELECT 1 FROM merge_jobs mj
+             WHERE  mj.task_id = t.id
+             AND    mj.status IN ('queued', 'claimed', 'running')
+           )
+  `)
+
+  const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
+  let rebuiltCount = 0
+  for (const row of orphanResult.rows) {
+    const taskId = row.id as string
+    const worktreePath = (row.worktree_path as string | null) ?? ''
+    const branch = (row.branch as string | null) ?? `task/${taskId}`
+    await store.enqueue({ taskId, integrationBranch, worktreePath, branch })
+    log(
+      `[reconcile] merge-jobs-startup: rebuilt queued merge job for orphan merging task ${taskId}`,
+    )
+    rebuiltCount++
+  }
+
+  return { resetCount, rebuiltCount }
+}
 
 /**
  * Run the full startup reconciliation pass by iterating the ordered

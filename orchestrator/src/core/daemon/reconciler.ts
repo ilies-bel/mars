@@ -137,6 +137,19 @@ export interface ReconcileSummary {
    * picks them up without waiting for the next daemon restart.
    */
   queuedCommittersReseeded: number
+  /**
+   * `merge_jobs` rows in `claimed` or `running` status that were reset back to
+   * `queued` (with `attempts` incremented) at daemon startup. A non-zero count
+   * indicates the prior daemon died while a merge was in-flight.
+   */
+  mergeJobsReset: number
+  /**
+   * New `merge_jobs` rows created at daemon startup for tasks in `merging`
+   * status that had no active (queued/claimed/running) job row. Covers the gap
+   * where the daemon died after setting `task.status='merging'` but before
+   * inserting the merge_jobs row.
+   */
+  mergeJobsRebuilt: number
 }
 
 /**
@@ -181,4 +194,6 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   orphanedChatRunsRecovered: 0,
   deadThreadsEvaporated: 0,
   queuedCommittersReseeded: 0,
+  mergeJobsReset: 0,
+  mergeJobsRebuilt: 0,
 })

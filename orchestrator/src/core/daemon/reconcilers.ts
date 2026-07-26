@@ -142,6 +142,54 @@ const blockerDriftRepair: Reconciler = {
 }
 
 /**
+ * 3a. Merge-jobs startup reconcile — re-hydrate the durable merge queue from
+ *     task state left by the prior daemon.  Two operations:
+ *
+ *     (a) Reset any `merge_jobs` row in `claimed`/`running` back to `queued`
+ *         with `attempts` incremented and timestamps cleared.  The prior daemon
+ *         held those rows in-flight when it exited; the merge must be retried.
+ *
+ *     (b) Insert a fresh `queued` row for any task in `status='merging'` that
+ *         has no active (queued/claimed/running) job row — covers the gap where
+ *         the daemon died after setting `task.status='merging'` but before
+ *         persisting the merge_jobs row.
+ *
+ *     Must run AFTER blocker-drift-repair (task statuses are stable) and
+ *     BEFORE reseed-dispatch (so freshly-queued merge jobs are picked up by
+ *     the boot-time seed).  Errors are swallowed (log + continue) so a transient
+ *     DB hiccup does not abort the rest of the pass.
+ */
+const mergeJobsStartupReconcile: Reconciler = {
+  name: 'merge-jobs-startup-reconcile',
+  async run({ log }) {
+    try {
+      const { reconcileMergeJobs } = await import('./startup-reconcile')
+      const { getDefaultMergeJobStore } = await import('../store/merge-job-store')
+      const { getDefaultDomainTaskStore } = await import('../store/task-store')
+      const result = await reconcileMergeJobs({
+        store: getDefaultMergeJobStore(),
+        taskStore: getDefaultDomainTaskStore(),
+        log,
+      })
+      if (result.resetCount > 0) {
+        log(
+          `[reconcile] merge-jobs-startup: reset ${result.resetCount} in-flight job(s) to queued`,
+        )
+      }
+      if (result.rebuiltCount > 0) {
+        log(
+          `[reconcile] merge-jobs-startup: rebuilt ${result.rebuiltCount} job(s) for orphan merging task(s)`,
+        )
+      }
+      return { mergeJobsReset: result.resetCount, mergeJobsRebuilt: result.rebuiltCount }
+    } catch (err) {
+      log(`[reconcile] merge-jobs-startup failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * 3. Orphaned-blocked scan — re-queue any `blocked` task whose blocker edges
  *    have all resolved or been removed (the zero-edge orphan case). Must run
  *    AFTER drift repair so we don't promote a task that was demoted in step 2.
@@ -710,6 +758,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   orphanedChatRunSweep,
   deadThreadEviction,
   blockerDriftRepair,
+  mergeJobsStartupReconcile,
   orphanedBlockedScan,
   recoveryDonePropagation,
   failedCommitterDependentRelease,

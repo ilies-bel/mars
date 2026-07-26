@@ -29,6 +29,7 @@ describe('RECONCILERS registry', () => {
       'orphaned-chat-run-sweep',
       'dead-thread-eviction',
       'blocker-drift-repair',
+      'merge-jobs-startup-reconcile',
       'orphaned-blocked-scan',
       'recovery-done-propagation',
       'failed-committer-dependent-release',
