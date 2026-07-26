@@ -379,6 +379,7 @@ const DDL: readonly string[] = [
     updated_at     text   NOT NULL
   )`,
   // Idempotent column migrations for already-provisioned databases.
+  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS qa text NOT NULL DEFAULT 'auto'`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS compensates_arc_id text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS activity_detail text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS env_restart_count bigint NOT NULL DEFAULT 0`,

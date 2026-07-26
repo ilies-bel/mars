@@ -408,8 +408,9 @@ export class Arc {
     const workflow = opts?.workflow ?? null
     const compensatesArcId = opts?.compensatesArcId ?? null
     const followupDedupKey = opts?.followupDedupKey ?? null
+    const qa: 'auto' | 'manual' = opts?.qa === 'manual' ? 'manual' : 'auto'
     await resolvedStore.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, preview_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, compensates_arc_id, followup_dedup_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, preview_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, compensates_arc_id, followup_dedup_key, qa, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         promptText,
@@ -436,6 +437,7 @@ export class Arc {
         workflow,
         compensatesArcId,
         followupDedupKey,
+        qa,
         now,
         now,
       ],

@@ -92,6 +92,10 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // operator-authored continuation of a failed arc whose recovery exhausted
   // automatic options (slice 2 of PRD 94e2a82a-recovery-operator).
   '--supersede',
+  // mars task add --qa <auto|manual>: select the review mode for the task's
+  // review step. 'auto' (default) runs typecheck/tests/lint; 'manual' parks
+  // the task for a human to exercise the running app before merge.
+  '--qa',
 ])
 
 /**

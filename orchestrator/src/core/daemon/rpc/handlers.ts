@@ -56,6 +56,7 @@ const addHandler = handler('add', async (req, deps) => {
     req.intent,
     req.originSessionId,
     req.workflow,
+    req.qa,
   )
   return { ok: true, data: task }
 })

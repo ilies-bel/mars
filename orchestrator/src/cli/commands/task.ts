@@ -24,7 +24,7 @@ import type { Command, CommandDeps, CommandResult } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
 
 const TASK_ADD_USAGE =
-  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--preview "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [--workflow <name>] [--live (disabled)] [--supersede <task-id>] [plan flags]'
+  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--preview "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [--workflow <name>] [--live (disabled)] [--supersede <task-id>] [--qa auto|manual] [plan flags]'
 
 interface EnqueueParams {
   prompt: string
@@ -42,6 +42,8 @@ interface EnqueueParams {
    * TODO(supersede-execution): consumed by slice N of PRD 94e2a82a.
    */
   supersedes?: string
+  /** QA mode for the review step: 'auto' (default) or 'manual'. */
+  qa?: 'auto' | 'manual'
 }
 
 /**
@@ -96,6 +98,7 @@ const enqueueViaDaemon = async (
       ...(originSessionId !== null ? { originSessionId } : {}),
       ...(params.workflow !== undefined ? { workflow: params.workflow } : {}),
       ...(params.supersedes !== undefined ? { supersedes: params.supersedes } : {}),
+      ...(params.qa !== undefined ? { qa: params.qa } : {}),
     },
     { onSpawnNotice: spawnNoticeErr(deps.err) },
   )) as { id: string; status: string }
@@ -179,6 +182,19 @@ export const taskAdd: Command = {
       supersedes = supersedesRaw
     }
 
+    // --qa <auto|manual>: validate and default to 'auto'.
+    const qaRaw = args.flags['--qa']?.trim()
+    let qa: 'auto' | 'manual' | undefined
+    if (qaRaw !== undefined) {
+      if (qaRaw !== 'auto' && qaRaw !== 'manual') {
+        deps.err(
+          `error: --qa must be 'auto' or 'manual'; got '${qaRaw}'`,
+        )
+        return { code: 2 }
+      }
+      qa = qaRaw
+    }
+
     return enqueueViaDaemon(deps, args.flags, {
       prompt,
       skipTriage: true,
@@ -189,6 +205,7 @@ export const taskAdd: Command = {
       spec: specResult.value,
       ...(workflow !== undefined ? { workflow } : {}),
       ...(supersedes !== undefined ? { supersedes } : {}),
+      ...(qa !== undefined ? { qa } : {}),
     })
   },
 }

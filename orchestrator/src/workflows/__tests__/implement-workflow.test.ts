@@ -18,6 +18,7 @@ import {
   recoveryAttachesToOrigin,
   resolveWorkerSystemPrompt,
 } from '../primitives/shared'
+import { implementInputSchema } from '../implement-workflow'
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 
@@ -725,5 +726,53 @@ describe('recoveryAttachesToOrigin — origin-attach decision', () => {
   it('ordinary tasks and diagnose chores never attach (they create their own)', () => {
     expect(recoveryAttachesToOrigin('task', false)).toBe(false)
     expect(recoveryAttachesToOrigin('diagnose', false)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// implementInputSchema — qa field threaded into workflow input
+// ---------------------------------------------------------------------------
+
+describe('implementInputSchema — qa field', () => {
+  // Minimal required fields for a valid parse. All other fields have defaults.
+  const base = {
+    taskId: 'mars-test-1234',
+    prompt: 'do the thing',
+    integrationBranch: 'main',
+    worktreePath: '/tmp/wt',
+    repoRoot: '/tmp/repo',
+    originSessionId: null,
+  }
+
+  it('defaults qa to "auto" when omitted', () => {
+    const result = implementInputSchema.parse(base)
+    expect(result.qa).toBe('auto')
+  })
+
+  it('accepts qa:"auto" explicitly', () => {
+    const result = implementInputSchema.parse({ ...base, qa: 'auto' })
+    expect(result.qa).toBe('auto')
+  })
+
+  it('accepts qa:"manual" explicitly', () => {
+    const result = implementInputSchema.parse({ ...base, qa: 'manual' })
+    expect(result.qa).toBe('manual')
+  })
+
+  it('rejects invalid qa values', () => {
+    expect(() => implementInputSchema.parse({ ...base, qa: 'bad' })).toThrow()
+    expect(() => implementInputSchema.parse({ ...base, qa: '' })).toThrow()
+    expect(() => implementInputSchema.parse({ ...base, qa: 'Auto' })).toThrow()
+  })
+
+  it('qa is wired to reviewType in the review step (source inspection)', () => {
+    // Guard: the implement-workflow must read ctx.input.qa and pass it as reviewType.
+    // This source-level assertion prevents accidental disconnection.
+    const source = readFileSync(
+      resolve(import.meta.dirname, '../implement-workflow.ts'),
+      'utf8',
+    )
+    expect(source).toContain('ctx.input.qa')
+    expect(source).toContain('reviewType: qa')
   })
 })

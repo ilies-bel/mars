@@ -539,3 +539,67 @@ describe('task add --supersede', () => {
     expect(req).not.toHaveProperty('supersedes')
   })
 })
+
+// ---------------------------------------------------------------------------
+// --qa flag
+// ---------------------------------------------------------------------------
+
+describe('mars task add --help shows --qa', () => {
+  it('lists the --qa flag with auto|manual values', () => {
+    const r = runCli(['task', 'add', '--help'])
+    expect(r.status).toBe(0)
+    expect(r.stdout).toContain('--qa')
+    expect(r.stdout).toContain('auto')
+    expect(r.stdout).toContain('manual')
+  })
+})
+
+describe('task add --qa validation', () => {
+  it('exits non-zero with a clear error for an invalid --qa value before enqueue', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-qa', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--qa', 'foo', 'some prompt'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).not.toBe(0)
+    expect(r.err.join('\n')).toContain("'foo'")
+    expect(r.err.join('\n')).toMatch(/auto.*manual|manual.*auto/)
+    // Daemon must not have been called.
+    expect(fake.calls).toHaveLength(0)
+  })
+
+  it('forwards qa:manual to the daemon', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-qa-manual', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--qa', 'manual', 'a task needing manual QA'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls[0]).toMatchObject({ op: 'add', qa: 'manual' })
+  })
+
+  it('forwards qa:auto to the daemon when explicitly set', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-qa-auto', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--qa', 'auto', 'a task with explicit auto QA'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls[0]).toMatchObject({ op: 'add', qa: 'auto' })
+  })
+
+  it('omits qa from the daemon request when --qa is not supplied (daemon defaults apply)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-qa-default', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'a task without qa flag'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    const req = fake.calls[0] as Record<string, unknown>
+    expect(req).not.toHaveProperty('qa')
+  })
+})

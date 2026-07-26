@@ -1449,6 +1449,9 @@ Other flags:
   --supersede <task-id>    declare this new task as an operator-authored
                            continuation of the given failed task; the referenced
                            task must be in status 'failed'
+  --qa auto|manual         review mode for the task's review step; 'auto'
+                           (default) runs typecheck/tests/lint; 'manual' parks
+                           the task for human sign-off before merge
 
 Plan flags:
   --functional <text|@file>   functional plan text

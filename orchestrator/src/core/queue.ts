@@ -411,6 +411,14 @@ export interface Task {
    */
   workflow: string | null
   /**
+   * QA mode for the review step. `'auto'` (default) runs scope-aware
+   * typecheck/tests/lint. `'manual'` parks the task for a human to exercise
+   * the running app before merge (not yet fully implemented — the review
+   * primitive currently throws on `'manual'`). Selected at enqueue via
+   * `mars task add --qa <auto|manual>`.
+   */
+  qa: 'auto' | 'manual'
+  /**
    * The step name the task is currently parked at when status is
    * `'awaiting-human'` (written by the manual-step park path). `null` on
    * non-parked rows and before this column was added.
@@ -691,6 +699,7 @@ SELECT
   t.current_step_name, t.current_step_guide,
   t.activity_detail,
   t.compensates_arc_id,
+  t.qa,
   t.created_at, t.updated_at
 FROM tasks t`
 
@@ -766,6 +775,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     currentStepGuide: (row.current_step_guide as string | null) ?? null,
     activityDetail: (row.activity_detail as string | null) ?? null,
     compensatesArcId: (row.compensates_arc_id as string | null) ?? null,
+    qa: (row.qa as string | null) === 'manual' ? 'manual' : 'auto',
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -878,6 +888,11 @@ export interface EnqueueTaskOptions {
    * kind-default file. Omitted/null → default-by-kind.
    */
   workflow?: string | null
+  /**
+   * QA mode for the review step. Defaults to `'auto'` at the SQL level.
+   * `'manual'` parks for human QA (not yet fully implemented).
+   */
+  qa?: 'auto' | 'manual'
   /**
    * When set, marks this task as a compensation/cleanup task for the arc
    * identified by this `origin_id`. Stored in `compensates_arc_id`. Only set

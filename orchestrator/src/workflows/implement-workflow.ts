@@ -43,7 +43,7 @@ import {
 export type { MarsServices }
 
 // Validated workflow input.
-const implementInputSchema = z.object({
+export const implementInputSchema = z.object({
   taskId: z.string(),
   prompt: z.string(),
   plan: planSchema.default(null),
@@ -67,6 +67,14 @@ const implementInputSchema = z.object({
    * Non-null only on `kind='fix'` tasks.
    */
   fixForTaskId: z.string().nullable().default(null),
+  /**
+   * QA mode for the review step. `'auto'` (default) runs scope-aware
+   * typecheck/tests/lint. `'manual'` parks for human QA (not yet fully
+   * implemented — the review primitive throws on `'manual'`).
+   * Sourced from `tasks.qa`; defaults to `'auto'` for tasks enqueued
+   * before this column existed.
+   */
+  qa: z.enum(['auto', 'manual']).default('auto'),
 })
 
 export type ImplementInput = z.infer<typeof implementInputSchema>
@@ -93,7 +101,9 @@ export const implementWorkflow = defineWorkflow<
     await ctx.step('setup-worktree', () => setupWorktree(ctx))
     await ctx.step('run-claude-code', () => runAgent(ctx))
     // review throws on failure, so reaching merge always means review passed.
-    await ctx.step('review', () => review(ctx, { reviewType: 'auto' }))
+    // qa is sourced from the task row (tasks.qa); defaults to 'auto'.
+    const qa = ctx.input.qa ?? 'auto'
+    await ctx.step('review', () => review(ctx, { reviewType: qa }))
     // Behaviour verification (fifth primitive): exercises the task's
     // Definition of Done against a live surface via Playwright MCP. PASS and
     // CAN'T-VERIFY return (CAN'T-VERIFY files a draft proposal + raises a

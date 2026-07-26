@@ -117,6 +117,7 @@ export interface DaemonDeps {
     intent?: string,
     originSessionId?: string | null,
     workflow?: string | null,
+    qa?: 'auto' | 'manual',
   ): Promise<Task>
   setTaskPriority(id: string, priority: number): Promise<Task>
   handleUpdate(id: string, patch: DaemonUpdatePatch): Promise<void>

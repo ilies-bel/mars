@@ -28,6 +28,8 @@ export type DaemonRequest =
        * TODO(supersede-execution): consumed by slice N of PRD 94e2a82a.
        */
       supersedes?: string
+      /** QA mode for the review step: 'auto' (default) or 'manual'. */
+      qa?: 'auto' | 'manual'
     }
   | { op: 'task.priority'; id: string; priority: number }
   | {
