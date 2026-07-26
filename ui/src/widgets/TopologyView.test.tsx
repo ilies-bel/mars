@@ -201,6 +201,44 @@ describe('TopologyView – navigation hint overlay', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Proposal filter — topology must narrow like the Board tab
+// ---------------------------------------------------------------------------
+
+describe('TopologyView – proposal filter', () => {
+  it('hides tasks from other proposals when selectedProposalId is set', () => {
+    // Two proposals' worth of tasks: p1 has 2, p2 has 1.
+    // Selecting p1 must exclude p2's task from the canvas entirely.
+    const allTasks: ProgressTask[] = [
+      { ...stubTask('t-p1a'), parentProposalId: 'p1' },
+      { ...stubTask('t-p1b'), parentProposalId: 'p1' },
+      { ...stubTask('t-p2a'), parentProposalId: 'p2' },
+    ]
+
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={allTasks} proposals={noProposals} selectedProposalId="p1" />,
+    )
+
+    // Only p1's 2 tasks are fed to the topology; the aria-label must reflect that.
+    expect(html).toContain('2 tasks')
+    expect(html).not.toContain('3 tasks')
+  })
+
+  it('renders every arc when selectedProposalId is null', () => {
+    const tasks: ProgressTask[] = [
+      { ...stubTask('t-p1a'), parentProposalId: 'p1' },
+      { ...stubTask('t-p2a'), parentProposalId: 'p2' },
+    ]
+
+    const html = renderToStaticMarkup(
+      <TopologyView tasks={tasks} proposals={noProposals} selectedProposalId={null} />,
+    )
+
+    // Full graph: both tasks present.
+    expect(html).toContain('2 tasks')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Minimap navigation aid — presence and CSS class
 // ---------------------------------------------------------------------------
 

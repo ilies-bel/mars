@@ -263,16 +263,35 @@ const TopologyViewInner = ({
   // changes and don't echo our own onSelectProposal callbacks into a drill-in.
   const lastSelectedRef = useRef<string | null | undefined>(undefined)
 
-  const empty = tasks.length === 0
+  // Filter to the selected proposal when one is active.
+  // Trade-off: tasks with a null parentProposalId disappear while a proposal is
+  // selected — this matches BoardView's semantics exactly (same control, same meaning).
+  // Recovery/fix tasks that inherit the parent proposal via parentProposalId stay visible.
+  const visibleTasks = useMemo(
+    () =>
+      selectedProposalId == null
+        ? tasks
+        : tasks.filter((t) => t.parentProposalId === selectedProposalId),
+    [tasks, selectedProposalId],
+  )
+  const visibleProposals = useMemo(
+    () =>
+      selectedProposalId == null
+        ? proposals
+        : proposals.filter((p) => p.id === selectedProposalId),
+    [proposals, selectedProposalId],
+  )
 
-  const dataSig = useMemo(() => dataSignature(tasks, proposals), [tasks, proposals])
-  const structSig = useMemo(() => structuralSignature(tasks, proposals), [tasks, proposals])
+  const empty = visibleTasks.length === 0
+
+  const dataSig = useMemo(() => dataSignature(visibleTasks, visibleProposals), [visibleTasks, visibleProposals])
+  const structSig = useMemo(() => structuralSignature(visibleTasks, visibleProposals), [visibleTasks, visibleProposals])
 
   // Deterministic rebuild: cluster flips rebuild colours but keep positions,
   // so the camera never jumps except on true structural change (fitView gate).
   const { nodes: baseNodes, edges: baseEdges } = useMemo(
-    () => buildTopology(tasks, proposals, openArcKey, expandedBundles),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- dataSig covers tasks/proposals
+    () => buildTopology(visibleTasks, visibleProposals, openArcKey, expandedBundles),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dataSig covers visibleTasks/visibleProposals
     [dataSig, openArcKey, expandedBundles],
   )
 
@@ -336,8 +355,8 @@ const TopologyViewInner = ({
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
   }, [])
 
-  const tasksRef = useRef(tasks)
-  tasksRef.current = tasks
+  const tasksRef = useRef(visibleTasks)
+  tasksRef.current = visibleTasks
 
   const onNodeMouseEnter = useCallback(
     (_: ReactMouseEvent, node: TopoNode) => {
@@ -481,7 +500,7 @@ const TopologyViewInner = ({
         role="img"
         className="dag-canvas absolute inset-0 h-full w-full"
         style={{ background: 'var(--color-surface-dark)' }}
-        aria-label={`Task topology graph, ${tasks.length} task${tasks.length === 1 ? '' : 's'}. Use the Board tab for a screen-reader and keyboard accessible view.`}
+        aria-label={`Task topology graph, ${visibleTasks.length} task${visibleTasks.length === 1 ? '' : 's'}. Use the Board tab for a screen-reader and keyboard accessible view.`}
       >
         <ReactFlow
           nodes={emphasized.nodes}
