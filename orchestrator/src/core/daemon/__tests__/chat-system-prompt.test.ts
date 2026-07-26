@@ -28,7 +28,7 @@ describe('resolveChatSystemPrompt', () => {
 
   it('returns CHAT_SYSTEM_PROMPT when the override file is absent', async () => {
     const result = await resolveChatSystemPrompt(repoRoot)
-    expect(result).toBe(CHAT_SYSTEM_PROMPT)
+    expect(result).toEqual({ prompt: CHAT_SYSTEM_PROMPT, source: 'built-in' })
   })
 
   it('returns trimmed file contents when the override file exists and is non-empty', async () => {
@@ -36,21 +36,21 @@ describe('resolveChatSystemPrompt', () => {
     await writeFile(join(repoRoot, '.mars', 'chat-system-prompt.md'), custom, 'utf8')
 
     const result = await resolveChatSystemPrompt(repoRoot)
-    expect(result).toBe(custom.trim())
+    expect(result).toEqual({ prompt: custom.trim(), source: 'override' })
   })
 
   it('falls back to CHAT_SYSTEM_PROMPT when the override file is empty', async () => {
     await writeFile(join(repoRoot, '.mars', 'chat-system-prompt.md'), '', 'utf8')
 
     const result = await resolveChatSystemPrompt(repoRoot)
-    expect(result).toBe(CHAT_SYSTEM_PROMPT)
+    expect(result).toEqual({ prompt: CHAT_SYSTEM_PROMPT, source: 'built-in' })
   })
 
   it('falls back to CHAT_SYSTEM_PROMPT when the override file is whitespace-only', async () => {
     await writeFile(join(repoRoot, '.mars', 'chat-system-prompt.md'), '   \n\t\n  ', 'utf8')
 
     const result = await resolveChatSystemPrompt(repoRoot)
-    expect(result).toBe(CHAT_SYSTEM_PROMPT)
+    expect(result).toEqual({ prompt: CHAT_SYSTEM_PROMPT, source: 'built-in' })
   })
 
   it('falls back to CHAT_SYSTEM_PROMPT when .mars directory does not exist', async () => {
@@ -58,7 +58,7 @@ describe('resolveChatSystemPrompt', () => {
     await rm(join(repoRoot, '.mars'), { recursive: true })
 
     const result = await resolveChatSystemPrompt(repoRoot)
-    expect(result).toBe(CHAT_SYSTEM_PROMPT)
+    expect(result).toEqual({ prompt: CHAT_SYSTEM_PROMPT, source: 'built-in' })
   })
 })
 

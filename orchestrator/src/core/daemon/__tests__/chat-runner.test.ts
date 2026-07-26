@@ -308,7 +308,7 @@ describe('executeToolCall', () => {
 
 // We need to hoist mock declarations before imports so vi.mock hoisting works.
 vi.mock('../chat-system-prompt', () => ({
-  resolveChatSystemPrompt: vi.fn().mockResolvedValue('TEST_SYSTEM_PROMPT'),
+  resolveChatSystemPrompt: vi.fn().mockResolvedValue({ prompt: 'TEST_SYSTEM_PROMPT', source: 'built-in' }),
 }))
 
 vi.mock('../codex-api', async (importOriginal) => {
@@ -334,12 +334,14 @@ vi.mock('../chat-skills', async (importOriginal) => {
 const mcpMock = vi.hoisted(() => ({
   getTools: vi.fn(),
   call: vi.fn(),
+  describe: vi.fn(),
   killAll: vi.fn(),
 }))
 vi.mock('../chat-mcp', () => ({
   ChatMcpManager: class {
     getTools = mcpMock.getTools
     call = mcpMock.call
+    describe = mcpMock.describe
     killAll = mcpMock.killAll
   },
 }))
@@ -699,6 +701,24 @@ describe('ChatRunner state machine', () => {
     } finally {
       await rm(repoRoot, { recursive: true, force: true })
     }
+  })
+
+  it('describeConfig reports model, prompt, tools, skills, and MCP servers', async () => {
+    vi.mocked(chatSkills.discoverSkills).mockResolvedValue([{ name: 'task', description: 'Enqueue.' }])
+    mcpMock.describe.mockResolvedValue([
+      { name: 'codegraph', command: 'codegraph serve --mcp', status: 'connected', tools: [{ name: 'codegraph_search', description: 'Find.' }] },
+    ])
+
+    const config = await new ChatRunner().describeConfig('/repo')
+
+    expect(config.model).toBe('gpt-5.5')
+    expect(config.systemPrompt).toBe('TEST_SYSTEM_PROMPT')
+    expect(config.systemPromptSource).toBe('built-in')
+    expect(config.builtinTools.map((t) => t.name)).toEqual(['shell', 'read_file', 'write_file', 'skill'])
+    expect(config.skills).toEqual([{ name: 'task', description: 'Enqueue.' }])
+    expect(config.mcpServers).toEqual([
+      { name: 'codegraph', command: 'codegraph serve --mcp', status: 'connected', tools: [{ name: 'codegraph_search', description: 'Find.' }] },
+    ])
   })
 
   it('advertises MCP tools and routes their calls through the MCP bridge', async () => {

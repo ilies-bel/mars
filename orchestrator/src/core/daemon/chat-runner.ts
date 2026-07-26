@@ -498,6 +498,37 @@ export class ChatRunner {
   }
 
   /**
+   * Describe the agent's effective configuration for `GET /view/chat/config`:
+   * the model, the resolved system prompt (and whether it is the built-in or
+   * the `.mars/chat-system-prompt.md` override), the built-in tools, the skill
+   * index, and each `.mcp.json` server with its status and tools. Connecting
+   * to the MCP servers happens here too when chat has not run yet — the view
+   * reports what a run would actually get.
+   */
+  async describeConfig(repoRoot: string): Promise<{
+    model: string
+    systemPrompt: string
+    systemPromptSource: 'built-in' | 'override'
+    builtinTools: Array<{ name: string; description: string }>
+    skills: Array<{ name: string; description: string }>
+    mcpServers: Array<{ name: string; command: string; status: 'connected' | 'failed'; tools: Array<{ name: string; description: string }> }>
+  }> {
+    const [resolved, skills, mcpServers] = await Promise.all([
+      resolveChatSystemPrompt(repoRoot),
+      discoverSkills(repoRoot),
+      this.mcp.describe(repoRoot),
+    ])
+    return {
+      model: CHAT_MODEL,
+      systemPrompt: resolved.prompt,
+      systemPromptSource: resolved.source,
+      builtinTools: CHAT_TOOLS.map((t) => ({ name: t.name, description: t.description })),
+      skills,
+      mcpServers,
+    }
+  }
+
+  /**
    * Clear the global auth-failure flag and re-queue all throttled threads.
    * Call this after the user has re-authenticated so stalled threads resume.
    */
@@ -810,13 +841,13 @@ export class ChatRunner {
       }, CHAT_TIMEOUT_MS)
 
       try {
-        const [basePrompt, skills, mcpTools] = await Promise.all([
+        const [resolvedPrompt, skills, mcpTools] = await Promise.all([
           resolveChatSystemPrompt(repoRoot),
           discoverSkills(repoRoot),
           this.mcp.getTools(repoRoot),
         ])
         const skillsSection = buildSkillsSection(skills)
-        const instructions = skillsSection.length > 0 ? `${basePrompt}\n\n${skillsSection}` : basePrompt
+        const instructions = skillsSection.length > 0 ? `${resolvedPrompt.prompt}\n\n${skillsSection}` : resolvedPrompt.prompt
         const tools = [...CHAT_TOOLS, ...buildMcpToolDefs(mcpTools)]
         const mcpToolNames = new Set(tools.slice(CHAT_TOOLS.length).map((t) => t.name))
         let auth: CodexAuth = await loadCodexAuth()

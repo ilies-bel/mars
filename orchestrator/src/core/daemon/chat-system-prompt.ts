@@ -61,6 +61,12 @@ daemon shuts down while this turn is still in flight. Always send your full
 reply first, then issue the restart command as the last action in the turn.
 If you run \`mars daemon restart\` mid-reply the turn will be cut short.`
 
+export interface ResolvedChatSystemPrompt {
+  prompt: string
+  /** 'override' when `.mars/chat-system-prompt.md` supplied the prompt. */
+  source: 'built-in' | 'override'
+}
+
 /**
  * Resolve the system prompt to use for the chat agent.
  *
@@ -69,13 +75,13 @@ If you run \`mars daemon restart\` mid-reply the turn will be cut short.`
  * Any read error or a missing / whitespace-only file falls back to the
  * built-in constant. Never cached — read per run.
  */
-export const resolveChatSystemPrompt = async (repoRoot: string): Promise<string> => {
+export const resolveChatSystemPrompt = async (repoRoot: string): Promise<ResolvedChatSystemPrompt> => {
   try {
     const content = await readFile(join(repoRoot, '.mars', 'chat-system-prompt.md'), 'utf8')
     const trimmed = content.trim()
-    if (trimmed.length > 0) return trimmed
+    if (trimmed.length > 0) return { prompt: trimmed, source: 'override' }
   } catch {
     // Missing file or unreadable → fall back to the built-in prompt.
   }
-  return CHAT_SYSTEM_PROMPT
+  return { prompt: CHAT_SYSTEM_PROMPT, source: 'built-in' }
 }

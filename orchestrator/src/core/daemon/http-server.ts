@@ -1644,6 +1644,15 @@ export const startHttpServer = async (
       sendJson(res, 200, { needsAuth: deps.chatRunner.isAuthFailed() })
       return
     }
+    // GET /view/chat/config — the chat agent's effective configuration: model,
+    // resolved system prompt (+ source), built-in tools, skills, MCP servers.
+    if (req.method === 'GET' && req.url === '/view/chat/config') {
+      deps.chatRunner
+        .describeConfig(getRepoRoot())
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
     if (req.method === 'POST' && req.url === '/codex-auth/refresh') {
       deps.chatRunner.clearAuthFailure(getRepoRoot(), deps.viewStreamHub)
       sendJson(res, 200, { ok: true })

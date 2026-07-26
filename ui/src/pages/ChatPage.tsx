@@ -66,6 +66,7 @@ import {
   PromptInputSubmit,
 } from '@/components/ai-elements/prompt-input'
 import { PaperclipIcon, MicIcon, SquareIcon, XIcon } from 'lucide-react'
+import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { WhileYouWereAwayPanel } from '@/widgets/WhileYouWereAwayPanel'
@@ -2303,6 +2304,12 @@ export const ThreadSidebar = ({
             </div>
           </details>
         )}
+      </div>
+
+      {/* Agent configuration — read-only view of the model, system prompt,
+          tools, skills, and MCP servers backing every conversation. */}
+      <div className="border-t border-iron/30 px-2 py-2">
+        <AgentConfigPanel projectId={projectId} />
       </div>
 
       {/* Delete toast — the row is already gone on screen; the request is not sent

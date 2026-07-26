@@ -130,4 +130,24 @@ describe('ChatMcpManager', () => {
     manager = new ChatMcpManager()
     expect(await manager.getTools(repoRoot)).toEqual([])
   })
+
+  it('describe reports connected servers with tools and failed ones without', async () => {
+    await writeRepo({
+      mcpServers: {
+        fake: { type: 'stdio', command: 'node', args: ['fake-server.cjs'] },
+        ghost: { type: 'stdio', command: '/nonexistent/binary-xyz' },
+      },
+    })
+    manager = new ChatMcpManager()
+    const described = await manager.describe(repoRoot)
+    expect(described).toEqual([
+      {
+        name: 'fake',
+        command: 'node fake-server.cjs',
+        status: 'connected',
+        tools: [{ name: 'echo_tool', description: 'Echo the message back.' }],
+      },
+      { name: 'ghost', command: '/nonexistent/binary-xyz', status: 'failed', tools: [] },
+    ])
+  })
 })

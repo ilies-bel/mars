@@ -235,6 +235,29 @@ export class ChatMcpManager {
     return Array.from(conns.values()).flatMap((c) => c.tools)
   }
 
+  /**
+   * Describe every configured server for the chat config view: launch command,
+   * connection status, and the tools it contributes. `failed` covers both a
+   * server that never connected and one whose process has since exited.
+   */
+  async describe(repoRoot: string): Promise<Array<{
+    name: string
+    command: string
+    status: 'connected' | 'failed'
+    tools: Array<{ name: string; description: string }>
+  }>> {
+    const [conns, configs] = await Promise.all([this.ensureConnections(repoRoot), readMcpConfig(repoRoot)])
+    return configs.map((config) => {
+      const conn = conns.get(config.name)
+      return {
+        name: config.name,
+        command: [config.command, ...config.args].join(' '),
+        status: conn?.alive ? 'connected' as const : 'failed' as const,
+        tools: conn?.tools.map((t) => ({ name: t.name, description: t.description })) ?? [],
+      }
+    })
+  }
+
   /** Invoke `tool`; never throws — failures come back as isError text. */
   async call(repoRoot: string, tool: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
     const conns = await this.ensureConnections(repoRoot)

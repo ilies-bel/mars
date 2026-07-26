@@ -1059,6 +1059,35 @@ export type ChatThreadsResponse = z.infer<typeof chatThreadsResponseSchema>
 export type ChatThreadDetail = z.infer<typeof chatThreadDetailSchema>
 
 // ---------------------------------------------------------------------------
+// Chat agent configuration (GET /api/chat/config)
+// ---------------------------------------------------------------------------
+
+export const chatConfigToolSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+})
+
+export const chatConfigMcpServerSchema = z.object({
+  name: z.string(),
+  command: z.string(),
+  status: z.enum(['connected', 'failed']),
+  tools: z.array(chatConfigToolSchema),
+})
+
+export const chatConfigSchema = z.object({
+  model: z.string(),
+  systemPrompt: z.string(),
+  systemPromptSource: z.enum(['built-in', 'override']),
+  builtinTools: z.array(chatConfigToolSchema),
+  skills: z.array(chatConfigToolSchema),
+  mcpServers: z.array(chatConfigMcpServerSchema),
+})
+
+export type ChatConfigTool = z.infer<typeof chatConfigToolSchema>
+export type ChatConfigMcpServer = z.infer<typeof chatConfigMcpServerSchema>
+export type ChatConfig = z.infer<typeof chatConfigSchema>
+
+// ---------------------------------------------------------------------------
 // Glossary
 // ---------------------------------------------------------------------------
 

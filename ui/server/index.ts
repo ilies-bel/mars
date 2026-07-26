@@ -722,6 +722,13 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/chat/config — the chat agent's effective configuration
+        // (model, system prompt, built-in tools, skills, MCP servers).
+        if (path === '/api/chat/config' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/chat/config')
+          return jsonResponse(r.status, r.body)
+        }
+
         if (path === '/api/codex-auth/refresh' && req.method === 'POST') {
           const result = await proxyPost(ctx.stateDir, '/codex-auth/refresh', {})
           return jsonResponse(result.status, result.body)

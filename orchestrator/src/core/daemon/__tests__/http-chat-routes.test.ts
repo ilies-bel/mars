@@ -37,11 +37,12 @@ vi.mock('../chat-skills', async (importOriginal) => {
 })
 
 // Mock the MCP bridge for the same reason — it reads .mcp.json and spawns servers.
-const mcpMock = vi.hoisted(() => ({ getTools: vi.fn(), call: vi.fn(), killAll: vi.fn() }))
+const mcpMock = vi.hoisted(() => ({ getTools: vi.fn(), call: vi.fn(), describe: vi.fn(), killAll: vi.fn() }))
 vi.mock('../chat-mcp', () => ({
   ChatMcpManager: class {
     getTools = mcpMock.getTools
     call = mcpMock.call
+    describe = mcpMock.describe
     killAll = mcpMock.killAll
   },
 }))
@@ -119,6 +120,7 @@ beforeEach(async () => {
   const chatSkills = await import('../chat-skills')
   vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
   mcpMock.getTools.mockResolvedValue([])
+  mcpMock.describe.mockResolvedValue([])
   // Default: the API run completes immediately with one message.
   mockStream.mockImplementation(async (opts) => {
     opts.onEvent(messageEvent('ok'))
@@ -690,5 +692,58 @@ describe('POST /chat/messages/:id/feedback/clear — HTTP route wiring', () => {
     const body = (await res.json()) as { ok: boolean; cleared: boolean }
     expect(body.ok).toBe(true)
     expect(body.cleared).toBe(false)
+  })
+})
+
+describe('GET /view/chat/config — HTTP route wiring', () => {
+  it('returns the agent configuration from ChatRunner.describeConfig', async () => {
+    const { startHttpServer } = await import('../http-server')
+    mcpMock.describe.mockResolvedValue([
+      { name: 'codegraph', command: 'codegraph serve --mcp', status: 'connected', tools: [{ name: 'codegraph_search', description: 'Find.' }] },
+    ])
+    server = await startHttpServer({
+      chatRunner: new ChatRunner(),
+      restartTask: async () => {},
+      remergeTask: async () => {},
+      unblockTask: async () => {},
+      purgeTask: async () => {},
+      pruneWorktree: async () => {},
+      dismissProposal: async () => {},
+      promoteProposal: async () => {},
+      validateTask: async () => {},
+      rejectTask: async () => {},
+      investigateWorktree: async () => ({ explanation: '' }),
+      diagnoseFailure: async () => ({ diagnosis: '' }),
+      restartDaemon: async () => {},
+      restartAllDaemonKilled: async () => [],
+      isAcceptingWork: () => true,
+      inFlightCount: () => 0,
+      selfUpdate: async () => {},
+      runReflect: async () => ({ proposalsRaised: 0 }),
+      enableAutoReflect: async () => {},
+      stepDone: async () => ({ next: null as string | null }),
+      snoozeItem: async () => {},
+      recipeCatalog: nullRecipeCatalog,
+      traceStore: nullTraceStore,
+      appServices: stubAppServices(),
+    })
+
+    const res = await fetch(`http://127.0.0.1:${server.port}/view/chat/config`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      model: string
+      systemPrompt: string
+      systemPromptSource: string
+      builtinTools: Array<{ name: string }>
+      skills: unknown[]
+      mcpServers: Array<{ name: string; status: string }>
+    }
+    expect(body.model).toBe('gpt-5.5')
+    expect(body.systemPromptSource).toBe('built-in')
+    expect(body.systemPrompt.length).toBeGreaterThan(0)
+    expect(body.builtinTools.map((t) => t.name)).toEqual(['shell', 'read_file', 'write_file', 'skill'])
+    expect(body.mcpServers).toEqual([
+      { name: 'codegraph', command: 'codegraph serve --mcp', status: 'connected', tools: [{ name: 'codegraph_search', description: 'Find.' }] },
+    ])
   })
 })

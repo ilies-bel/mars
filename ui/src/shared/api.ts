@@ -6,6 +6,7 @@ import {
   adrsResponseSchema,
   autoRecipeRunsResponseSchema,
   wywaDeltaResponseSchema,
+  chatConfigSchema,
   chatThreadDetailSchema,
   chatThreadsResponseSchema,
   eventsResponseSchema,
@@ -30,6 +31,7 @@ import {
   type AdrEntry,
   type AutoRecipeRun,
   type WywaDeltaResponse,
+  type ChatConfig,
   type ChatThread,
   type ChatThreadDetail,
   type EventsResponse,
@@ -829,6 +831,13 @@ export const fetchCodexAuthState = async (
   const data = await r.json() as { needsAuth: boolean }
   return { needsAuth: Boolean(data.needsAuth) }
 }
+
+/**
+ * Fetch the chat agent's effective configuration: model, resolved system
+ * prompt (+ source), built-in tools, skill index, and MCP servers.
+ */
+export const fetchChatConfig = async (projectId?: string): Promise<ChatConfig> =>
+  fetchJson(appendProject('/api/chat/config', projectId), chatConfigSchema)
 
 /**
  * Notify the daemon that the user has re-authenticated with Codex so all

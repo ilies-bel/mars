@@ -504,7 +504,7 @@ export const loadRecentTaskCorpus = async (
         const { resolveChatSystemPrompt } = await import('../daemon/chat-system-prompt.js')
         const { getRepoRoot } = await import('../context.js')
         const root = repoRoot ?? getRepoRoot()
-        chatSystemPrompt = await resolveChatSystemPrompt(root)
+        chatSystemPrompt = (await resolveChatSystemPrompt(root)).prompt
       }
     } catch {
       // chat tables absent (test store, fresh install) — skip gracefully
