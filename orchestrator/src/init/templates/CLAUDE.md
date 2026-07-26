@@ -10,7 +10,7 @@ work through Mars instead of editing the integration branch directly.
 
 ## Routing
 
-Route silently between three pipelines — never name the route, narrate
+Route silently between four pipelines — never name the route, narrate
 the decision, or ask the user to pick. Reads and searches are always
 direct.
 
@@ -20,7 +20,7 @@ guides, renderable via `mars workflow render <name>`. Pick the
 pipeline whose shape fits the work and select it at enqueue with
 `--workflow <name>`.
 
-The three lines:
+The four lines:
 
 1. **Hard / cross-repo / term-defining work → grill first.** While
    grilling, file `mars proposal add` for out-of-scope observations
@@ -32,6 +32,12 @@ The three lines:
    the task parks in `awaiting-human` with the Step guide in the action
    queue. Work in the worktree, then `mars step done <id>`. The verify +
    merge gate is the exit condition.
+4. **Investigation / audit / report-only work → report pipeline.**
+   `mars task add --workflow report "..."` — the report pipeline is
+   read-only: it runs setup + agent, then persists the transcript and
+   marks the task done — no commit, no verify, no merge. Reach for it
+   whenever the requested outcome is a finding or decision note, not a
+   code change.
 
 **Direct editing on the integration branch is a last resort, not a
 fourth route.** It is never silent and never implied. The bar is all of:
