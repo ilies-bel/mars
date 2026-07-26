@@ -175,8 +175,20 @@ const releaseNotesMarkViewed: Command = {
   },
 }
 
+const releaseNotesWatch: Command = {
+  path: 'release-notes watch',
+  summary: 'watch release notes live (interactive TUI)',
+  usage: 'usage: mars release-notes watch',
+  run: async (_args, deps) => {
+    const { runReleaseNotesWatch } = await import('../release-notes-watch')
+    await runReleaseNotesWatch({ stateDir: deps.ctx.stateDir })
+    return { code: 0 }
+  },
+}
+
 export const releaseNotesCommands: readonly Command[] = [
   releaseNotesList,
   releaseNotesDefault,
   releaseNotesMarkViewed,
+  releaseNotesWatch,
 ]

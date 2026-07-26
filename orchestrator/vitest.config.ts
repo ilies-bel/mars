@@ -20,7 +20,9 @@ export default defineConfig({
   test: {
     include: [
       'src/**/__tests__/**/*.test.ts',
+      'src/**/__tests__/**/*.test.tsx',
       'src/**/*.test.ts',
+      'src/**/*.test.tsx',
       'test/**/*.test.ts',
     ],
     // Exclude template scaffolding and any nested worktree checkouts so a
