@@ -10,6 +10,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { z } from 'zod'
 import { resolveStateClient } from '../store/state-client'
 
 const stateClient = resolveStateClient
@@ -21,6 +22,15 @@ export const initChatStore = async (): Promise<void> => {
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
+
+/**
+ * Envelope kind for chat messages.
+ * - 'validation'    — cleared from the projection when its backing entity
+ *                     mutates out of 'awaiting-human' state (ADR-0048).
+ * - 'acknowledgment' — plain first-person history; always visible.
+ */
+export const ChatMessageKindSchema = z.enum(['validation', 'acknowledgment'])
+export type ChatMessageKind = z.infer<typeof ChatMessageKindSchema>
 
 export type ThreadStatus = 'idle' | 'running' | 'throttled'
 export type AttentionStatus = 'generating' | 'ready' | 'drafting' | 'idle'
@@ -63,6 +73,14 @@ export interface ChatMessage {
   content: string
   segments: unknown | null
   created_at: string
+  /** Envelope kind — controls projection visibility (ADR-0048). */
+  kind: ChatMessageKind
+  /**
+   * ID of the task (or proposal) this validation message is anchored to.
+   * Null for acknowledgment messages and for validation messages with no
+   * specific backing entity.
+   */
+  backing_entity_id: string | null
 }
 
 export interface ThreadPreview extends ChatThread {
@@ -238,6 +256,7 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
 
 const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
   const rawSegments = row.segments as string | null
+  const rawKind = row.kind as string | null
   return {
     id: row.id as string,
     thread_id: row.thread_id as string,
@@ -245,6 +264,8 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
     content: row.content as string,
     segments: rawSegments != null ? (JSON.parse(rawSegments) as unknown) : null,
     created_at: row.created_at as string,
+    kind: (rawKind === 'validation' ? 'validation' : 'acknowledgment') as ChatMessageKind,
+    backing_entity_id: (row.backing_entity_id as string | null) ?? null,
   }
 }
 
@@ -375,21 +396,28 @@ export const getThread = async (id: string): Promise<ThreadWithMessages | null> 
 /**
  * Append a message to an existing thread. Also bumps `updated_at` on the parent
  * thread so `listThreads` ordering stays accurate.
+ *
+ * @param opts.kind          - Envelope kind (default: 'acknowledgment').
+ * @param opts.backingEntityId - Task or proposal id this validation message
+ *                              tracks. Only meaningful when kind='validation'.
  */
 export const appendMessage = async (
   threadId: string,
   role: MessageRole,
   content: string,
   segments?: unknown,
+  opts?: { kind?: ChatMessageKind; backingEntityId?: string },
 ): Promise<ChatMessage> => {
   const c = stateClient()
   const id = randomUUID()
   const ts = now()
   const segmentsJson = segments !== undefined ? JSON.stringify(segments) : null
+  const kind: ChatMessageKind = opts?.kind ?? 'acknowledgment'
+  const backingEntityId = opts?.backingEntityId ?? null
   await c.execute({
-    sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)`,
-    args: [id, threadId, role, content, segmentsJson, ts],
+    sql: `INSERT INTO chat_messages (id, thread_id, role, content, segments, created_at, kind, backing_entity_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, threadId, role, content, segmentsJson, ts, kind, backingEntityId],
   })
   await c.execute({
     sql: `UPDATE chat_threads SET updated_at = ? WHERE id = ?`,
@@ -402,7 +430,41 @@ export const appendMessage = async (
     content,
     segments: segments !== undefined ? segments : null,
     created_at: ts,
+    kind,
+    backing_entity_id: backingEntityId,
   }
+}
+
+/**
+ * Return the visible messages for a thread, applying the ADR-0048 projection
+ * rule: 'acknowledgment' messages are always visible; 'validation' messages are
+ * visible only while their backing entity (task) is still in 'awaiting-human'
+ * state. A validation message with no backing_entity_id is always visible.
+ *
+ * Messages are returned in chronological order (created_at ASC, seq ASC).
+ */
+export const listVisibleChatMessages = async (threadId: string): Promise<ChatMessage[]> => {
+  const c = stateClient()
+  const result = await c.execute({
+    sql: `SELECT m.*
+          FROM chat_messages m
+          WHERE m.thread_id = ?
+            AND (
+              m.kind = 'acknowledgment'
+              OR (m.kind = 'validation' AND m.backing_entity_id IS NULL)
+              OR (
+                m.kind = 'validation'
+                AND m.backing_entity_id IS NOT NULL
+                AND EXISTS (
+                  SELECT 1 FROM tasks t
+                  WHERE t.id = m.backing_entity_id AND t.status = 'awaiting-human'
+                )
+              )
+            )
+          ORDER BY m.created_at ASC, m.seq ASC`,
+    args: [threadId],
+  })
+  return (result.rows as unknown as Record<string, unknown>[]).map(rowToMessage)
 }
 
 /** Rename a thread. No-op when the thread does not exist. */

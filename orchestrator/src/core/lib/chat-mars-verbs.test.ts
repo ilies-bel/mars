@@ -3,6 +3,7 @@ import {
   SAFE_MARS_VERBS,
   DESTRUCTIVE_MARS_VERBS,
   classifyMarsVerb,
+  renderMarsVoice,
 } from './chat-mars-verbs'
 
 describe('chat-mars-verbs', () => {
@@ -58,5 +59,30 @@ describe('chat-mars-verbs', () => {
     it('empty string is "unknown"', () => {
       expect(classifyMarsVerb('')).toBe('unknown')
     })
+  })
+})
+
+// ── renderMarsVoice ───────────────────────────────────────────────────────────
+
+describe('renderMarsVoice', () => {
+  it('rewrites "the orchestrator did X" → "I did X"', () => {
+    expect(renderMarsVoice('the orchestrator did the work')).toBe('I did the work')
+  })
+
+  it('rewrites "Mars reports Y" → "I am reporting Y"', () => {
+    expect(renderMarsVoice('Mars reports everything is fine')).toBe('I am reporting everything is fine')
+  })
+
+  it('rewrites "the worktree was lost" → "I lost that worktree"', () => {
+    expect(renderMarsVoice('the worktree was lost')).toBe('I lost that worktree')
+  })
+
+  it('is case-insensitive for "the orchestrator"', () => {
+    expect(renderMarsVoice('The orchestrator started')).toBe('I started')
+  })
+
+  it('leaves unrelated text unchanged', () => {
+    const text = 'Everything is working correctly'
+    expect(renderMarsVoice(text)).toBe(text)
   })
 })

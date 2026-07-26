@@ -12,6 +12,7 @@ interface ChatStoreModule {
   listEvaporatedThreads: typeof import('./chat-store').listEvaporatedThreads
   getThread: typeof import('./chat-store').getThread
   appendMessage: typeof import('./chat-store').appendMessage
+  listVisibleChatMessages: typeof import('./chat-store').listVisibleChatMessages
   updateThreadTitle: typeof import('./chat-store').updateThreadTitle
   deleteThread: typeof import('./chat-store').deleteThread
   setThreadStatus: typeof import('./chat-store').setThreadStatus
@@ -173,6 +174,32 @@ describe('chat-store', () => {
     await m.appendMessage(thread.id, 'user', 'bump')
     const result = await m.getThread(thread.id)
     expect(result!.thread.updated_at >= before).toBe(true)
+  })
+
+  // ── kind column round-trip ──────────────────────────────────────────────────
+
+  it('appendMessage defaults kind to acknowledgment', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'assistant', 'hi')
+    expect(msg.kind).toBe('acknowledgment')
+    expect(msg.backing_entity_id).toBeNull()
+  })
+
+  it('appendMessage persists kind=validation and backing_entity_id', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread()
+    const msg = await m.appendMessage(thread.id, 'assistant', 'needs input', undefined, {
+      kind: 'validation',
+      backingEntityId: 'task-abc',
+    })
+    expect(msg.kind).toBe('validation')
+    expect(msg.backing_entity_id).toBe('task-abc')
+    // Rehydrate via getThread to confirm DB round-trip.
+    const result = await m.getThread(thread.id)
+    const stored = result!.messages.find((x) => x.id === msg.id)!
+    expect(stored.kind).toBe('validation')
+    expect(stored.backing_entity_id).toBe('task-abc')
   })
 
   // ── updateThreadTitle ───────────────────────────────────────────────────────
@@ -643,5 +670,89 @@ describe('purgeEvaporatedThreads', () => {
 
     expect(purgedThreadIds).toHaveLength(3)
     expect(new Set(purgedThreadIds)).toEqual(new Set([a.id, b.id, c.id]))
+  })
+})
+
+// ── listVisibleChatMessages — validation vs acknowledgment projection ─────────
+
+describe('listVisibleChatMessages — ADR-0048 projection', () => {
+  let repo6: string
+  beforeEach(() => { repo6 = setupRepo() })
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo6, { recursive: true, force: true })
+  })
+
+  it('acknowledgment messages are always visible', async () => {
+    const m = await loadModule(repo6)
+    const thread = await m.createThread()
+    await m.appendMessage(thread.id, 'assistant', 'I finished the task', undefined, {
+      kind: 'acknowledgment',
+    })
+    const visible = await m.listVisibleChatMessages(thread.id)
+    expect(visible).toHaveLength(1)
+    expect(visible[0].kind).toBe('acknowledgment')
+  })
+
+  it('validation message is visible while backing task is awaiting-human', async () => {
+    const m = await loadModule(repo6)
+    // Insert a task in awaiting-human state via raw SQL using the fresh state client.
+    const { resolveStateClient: rsc } = await import('../store/state-client')
+    const ts = new Date().toISOString()
+    await rsc().execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES (?, ?, 'awaiting-human', ?, ?)`,
+      args: ['task-validation-1', 'approve the plan', ts, ts],
+    })
+
+    const thread = await m.createThread()
+    await m.appendMessage(thread.id, 'assistant', 'Please confirm this plan', undefined, {
+      kind: 'validation',
+      backingEntityId: 'task-validation-1',
+    })
+
+    const visible = await m.listVisibleChatMessages(thread.id)
+    expect(visible).toHaveLength(1)
+    expect(visible[0].kind).toBe('validation')
+  })
+
+  it('validation message disappears once backing task leaves awaiting-human; acknowledgment stays', async () => {
+    const m = await loadModule(repo6)
+    const { resolveStateClient: rsc } = await import('../store/state-client')
+    const ts = new Date().toISOString()
+
+    // Seed a task in awaiting-human.
+    await rsc().execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES (?, ?, 'awaiting-human', ?, ?)`,
+      args: ['task-validation-2', 'review and approve', ts, ts],
+    })
+
+    const thread = await m.createThread()
+    // A validation message tied to the task.
+    await m.appendMessage(thread.id, 'assistant', 'I need your approval', undefined, {
+      kind: 'validation',
+      backingEntityId: 'task-validation-2',
+    })
+    // An acknowledgment message — should always remain visible.
+    await m.appendMessage(thread.id, 'assistant', 'I completed the previous step', undefined, {
+      kind: 'acknowledgment',
+    })
+
+    // Both visible while task is awaiting-human.
+    const before = await m.listVisibleChatMessages(thread.id)
+    expect(before).toHaveLength(2)
+
+    // Transition the task out of awaiting-human.
+    await rsc().execute({
+      sql: `UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?`,
+      args: [new Date().toISOString(), 'task-validation-2'],
+    })
+
+    // Validation message disappears; acknowledgment stays.
+    const after = await m.listVisibleChatMessages(thread.id)
+    expect(after).toHaveLength(1)
+    expect(after[0].kind).toBe('acknowledgment')
+    expect(after[0].content).toBe('I completed the previous step')
   })
 })

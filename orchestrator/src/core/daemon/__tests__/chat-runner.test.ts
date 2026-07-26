@@ -191,6 +191,8 @@ const msg = (role: 'user' | 'assistant', content: string, segments: unknown = nu
   content,
   segments,
   created_at: '',
+  kind: 'acknowledgment',
+  backing_entity_id: null,
 })
 
 describe('buildApiInput', () => {
@@ -646,7 +648,7 @@ describe('ChatRunner state machine', () => {
   it('does not auto-title when thread already has messages', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture },
-      messages: [{ id: 'm1', thread_id: 't1', role: 'user', content: 'prior', segments: null, created_at: '' }],
+      messages: [{ id: 'm1', thread_id: 't1', role: 'user', content: 'prior', segments: null, created_at: '', kind: 'acknowledgment' as const, backing_entity_id: null }],
       feedbacks: new Map(),
     })
 
@@ -821,8 +823,8 @@ describe('ChatRunner state machine', () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture, title: 'Chat' },
       messages: [
-        { id: 'm0', thread_id: 't1', role: 'user', content: 'hello', segments: [{ type: 'text', text: 'hello' }], created_at: '' },
-        { id: 'm1', thread_id: 't1', role: 'assistant', content: 'hi there', segments: [{ type: 'text', text: 'hi there' }], created_at: '' },
+        { id: 'm0', thread_id: 't1', role: 'user', content: 'hello', segments: [{ type: 'text', text: 'hello' }], created_at: '', kind: 'acknowledgment' as const, backing_entity_id: null },
+        { id: 'm1', thread_id: 't1', role: 'assistant', content: 'hi there', segments: [{ type: 'text', text: 'hi there' }], created_at: '', kind: 'acknowledgment' as const, backing_entity_id: null },
       ],
       feedbacks: new Map(),
     })
@@ -853,7 +855,7 @@ describe('ChatRunner state machine', () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture, title: 'Alert', origin: 'alert', alert_item_id: 'item-1' },
       messages: [
-        { id: 'm0', thread_id: 't1', role: 'assistant', content: 'Daemon running stale code', segments: [alertSeg], created_at: '' },
+        { id: 'm0', thread_id: 't1', role: 'assistant', content: 'Daemon running stale code', segments: [alertSeg], created_at: '', kind: 'acknowledgment' as const, backing_entity_id: null },
       ],
       feedbacks: new Map(),
     })

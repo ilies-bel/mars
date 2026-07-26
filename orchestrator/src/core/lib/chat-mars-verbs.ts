@@ -44,3 +44,19 @@ export const classifyMarsVerb = (op: string): 'safe' | 'destructive' | 'unknown'
   if (DESTRUCTIVE_MARS_VERBS.includes(op)) return 'destructive'
   return 'unknown'
 }
+
+/**
+ * Rewrite third-person Mars/orchestrator references into a unified first-person
+ * voice so every message the operator reads speaks as one 'I' entity.
+ *
+ * Transforms (case-insensitive where it makes sense):
+ *   'the orchestrator …'  → 'I …'
+ *   'Mars reports …'      → 'I am reporting …'
+ *   'the worktree was lost' → 'I lost that worktree'
+ */
+export const renderMarsVoice = (text: string): string => {
+  return text
+    .replace(/\bthe orchestrator\b/gi, 'I')
+    .replace(/\bMars reports\b/gi, 'I am reporting')
+    .replace(/\bthe worktree was lost\b/gi, 'I lost that worktree')
+}

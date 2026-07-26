@@ -413,6 +413,10 @@ const DDL: readonly string[] = [
   // IF NOT EXISTS makes this idempotent on fresh databases (where seq already
   // exists from the CREATE TABLE above).
   `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS seq bigint GENERATED ALWAYS AS IDENTITY`,
+  // Chat message envelope: kind ('validation' | 'acknowledgment') and optional
+  // backing entity link for auto-clear projection (slice 1 of PRD cdf6a60a).
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'acknowledgment'`,
+  `ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS backing_entity_id text`,
   `CREATE INDEX IF NOT EXISTS idx_chat_messages_thread_id
      ON chat_messages(thread_id)`,
   `CREATE TABLE IF NOT EXISTS chat_feedback (
