@@ -16,7 +16,7 @@
  * DB `FOR UPDATE SKIP LOCKED` claim so correctness does not rely solely on
  * the DB index.
  *
- * Gated behind `MARS_MERGE_QUEUE=1` in `server.ts` — off by default.
+ * Always started by `server.ts` — the merge queue is unconditionally on.
  *
  * ## Promise-based park pattern (slice 4)
  *
@@ -111,8 +111,7 @@ export function resolveMergeJob(taskId: string, result: MergeJobResult): boolean
 /**
  * Enqueue a merge job for `taskId` and suspend until the worker completes it.
  *
- * This is the primary entry point for the workflow `merge` primitive when
- * `MARS_MERGE_QUEUE=1`. It:
+ * This is the primary entry point for the workflow `merge` primitive. It:
  *   1. Registers an awaiting promise (BEFORE enqueuing to avoid a race).
  *   2. Inserts a `merge_jobs` row via the store.
  *   3. Emits `merge-job.enqueued` on the bus to wake a parked worker.
@@ -167,7 +166,10 @@ async function runMergeJob(
       branch: job.branch,
       worktreePath: job.worktreePath,
       integrationBranch: job.integrationBranch,
-      lockTimeoutMs: 5 * 60 * 1000,
+      // Belt-and-suspenders single-daemon file guard: the queue's
+      // single-consumer loop already serialises merges; 30 s is sufficient
+      // to cover any transient lock-file conflict without blocking long.
+      lockTimeoutMs: 30_000,
       watchdogMs,
       signal,
     })

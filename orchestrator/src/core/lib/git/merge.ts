@@ -242,6 +242,20 @@ export interface MergeResult {
    * before this result is returned.
    */
   reason?: string
+  /**
+   * The integration-branch SHA just before the fast-forward (i.e. the old tip
+   * of `integrationBranch`). Set only on a successful fast-forward merge so the
+   * caller can reconstruct the merged diff via `git diff mergePreSha mergePostSha`.
+   * Absent when the merge was aborted, was a no-op, or the integration gate
+   * reverted the fast-forward.
+   */
+  mergePreSha?: string
+  /**
+   * The task-branch SHA that was fast-forwarded into `integrationBranch`
+   * (i.e. the new tip after the fast-forward). Set in the same conditions as
+   * `mergePreSha`.
+   */
+  mergePostSha?: string
 }
 
 let cachedSupervisorSpec: string | null = null
@@ -511,6 +525,11 @@ export const mergeBranch = async ({
   try {
     lastStep = 'acquire-lock'
     firePhase('acquire-lock')
+    // Belt-and-suspenders single-daemon guard: the merge queue's
+    // single-consumer loop already serialises merges, so this file lock is
+    // only a safety net against a second daemon process accidentally running
+    // alongside the first. The caller (merge-worker) passes lockTimeoutMs=30s,
+    // which is sufficient for a transient conflict without blocking long.
     const release = await acquireLock(
       resolve(getStateDir(), '.merge.lock'),
       lockTimeoutMs,
@@ -1054,6 +1073,10 @@ export const mergeBranch = async ({
       supervisorConversation,
       vegaSessionId,
       retriesAttempted,
+      // SHAs for the Scorer runtime: `git diff mergePreSha mergePostSha`
+      // reconstructs the merged diff after the worktree is removed.
+      mergePreSha: finalIntegrationSha,
+      mergePostSha: finalTaskSha,
     }
     })(),
     abortPromise,

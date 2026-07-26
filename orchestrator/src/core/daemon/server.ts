@@ -888,7 +888,7 @@ export const startDaemon = async (
     // commitInFlight records the inFlight entry AND clears the matching claim
     // in one step (claim-clears-after-commit); see dispatchTriage.
     const releaseTracking = tracker.commitInFlight(task.id, 'implement')
-    // Merge-queue handoff bookkeeping (MARS_MERGE_QUEUE=1 only).
+    // Merge-queue handoff bookkeeping.
     // `mergeHandedOff` flips to true when the workflow calls enqueueMergeJobAndAwait,
     // at which point the implement slot has been released and merge tracking started.
     let releaseMergeTracking: (() => void) | null = null
@@ -1140,42 +1140,34 @@ export const startDaemon = async (
               })
               return awaitManualDone(runId, stepName)
             },
-            // Durable merge-queue hook (MARS_MERGE_QUEUE=1). When set,
-            // the merge primitive routes git merges through the single-consumer
-            // worker instead of calling mergeBranch inline. The hook enqueues
-            // a merge_jobs row, wakes the worker, and suspends the workflow
-            // until the worker resolves the promise with the outcome.
-            //
-            // Slice 5: At the point of handoff, the implement semaphore slot and
-            // tracker entry are released so other coders can proceed while this
-            // task is parked in the merge queue. Merge tracking (kind='merge')
-            // replaces the implement entry in the inFlight map.
-            ...(process.env.MARS_MERGE_QUEUE === '1'
-              ? {
-                  enqueueMergeJobAndAwait: async (args: {
-                    taskId: string
-                    branch: string
-                    worktreePath: string
-                    integrationBranch: string
-                  }) => {
-                    if (!mergeHandedOff) {
-                      mergeHandedOff = true
-                      releaseTracking()
-                      release(sems.implement)
-                      releaseMergeTracking = tracker.commitInFlight(task.id, 'merge')
-                      void drain()
-                    }
-                    const result = await enqueueMergeJobAndAwait({
-                      store: getDefaultMergeJobStore(),
-                      bus,
-                      ...args,
-                    })
-                    releaseMergeTracking?.()
-                    releaseMergeTracking = null
-                    return result
-                  },
-                }
-              : {}),
+            // Durable merge-queue hook. The merge primitive always routes git
+            // merges through the single-consumer worker. At the point of
+            // handoff the implement semaphore slot and tracker entry are
+            // released so other coders can proceed while this task is parked
+            // in the merge queue. Merge tracking (kind='merge') replaces the
+            // implement entry in the inFlight map.
+            enqueueMergeJobAndAwait: async (args: {
+              taskId: string
+              branch: string
+              worktreePath: string
+              integrationBranch: string
+            }) => {
+              if (!mergeHandedOff) {
+                mergeHandedOff = true
+                releaseTracking()
+                release(sems.implement)
+                releaseMergeTracking = tracker.commitInFlight(task.id, 'merge')
+                void drain()
+              }
+              const result = await enqueueMergeJobAndAwait({
+                store: getDefaultMergeJobStore(),
+                bus,
+                ...args,
+              })
+              releaseMergeTracking?.()
+              releaseMergeTracking = null
+              return result
+            },
           },
           runId: task.id,
           logger: workflowLogger,
@@ -1362,11 +1354,11 @@ export const startDaemon = async (
       // drain() re-arms the loop. drain() has its own internal catch, so the
       // fire-and-forget `void` here can never leak a rejection.
       //
-      // When MARS_MERGE_QUEUE=1 and the task was handed off to the merge queue,
+      // When a task was handed off to the merge queue (mergeHandedOff=true),
       // the implement slot was already released at handoff. Only clean up merge
       // tracking here. If the task never reached the merge step (early return,
-      // failure before merge), use the legacy path to release the implement slot.
-      if (process.env.MARS_MERGE_QUEUE === '1' && mergeHandedOff) {
+      // failure before merge), release the implement slot now.
+      if (mergeHandedOff) {
         // TS CFA inside an async function incorrectly narrows `releaseMergeTracking`
         // to `null` here (it sees the `= null` assignment in the service closure and
         // concludes the type at this point is always null). Cast to the declared type.
@@ -3909,21 +3901,19 @@ export const startDaemon = async (
     }
   })()
 
-  // ── Merge worker (MARS_MERGE_QUEUE=1) ────────────────────────────────────
+  // ── Merge worker ──────────────────────────────────────────────────────────
   // Single-consumer loop that claims merge_jobs rows and executes them
-  // serially. Off by default — gated behind MARS_MERGE_QUEUE=1 so this slice
-  // does not change production behaviour. The AbortController is aborted in
-  // shutdown(); stop() then waits for any in-flight job to finish.
+  // serially. Always started — the merge queue is unconditionally on.
+  // The AbortController is aborted in shutdown(); stop() then waits for any
+  // in-flight job to finish.
   const mergeWorkerAc = new AbortController()
-  if (process.env.MARS_MERGE_QUEUE === '1') {
-    mergeWorkerHandle = startMergeWorker({
-      store: getDefaultMergeJobStore(),
-      log,
-      bus,
-      signal: mergeWorkerAc.signal,
-    })
-    log('[merge-worker] started (MARS_MERGE_QUEUE=1)')
-  }
+  mergeWorkerHandle = startMergeWorker({
+    store: getDefaultMergeJobStore(),
+    log,
+    bus,
+    signal: mergeWorkerAc.signal,
+  })
+  log('[merge-worker] started')
 
   // ── GitHub release update poller ─────────────────────────────────────────
   // Fetches https://api.github.com/repos/ilies-bel/mars/releases/latest once

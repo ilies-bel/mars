@@ -1,8 +1,8 @@
 /**
  * Regression test: merge-parked tasks do not starve coder dispatch.
  *
- * When MARS_MERGE_QUEUE=1, a task that enters the merge step releases its
- * `sems.implement` slot so other coders can proceed. This file verifies:
+ * When a task enters the merge step it releases its `sems.implement` slot so
+ * other coders can proceed. This file verifies:
  *
  *   1. 5 tasks parked in the merge phase hold ZERO implement slots — new
  *      dispatches can acquire `sems.implement` up to cap immediately.
@@ -23,8 +23,7 @@ import { createTaskFlightTracker } from '../task-flight-tracker'
 const IMPLEMENT_CAP = 3
 
 /**
- * Simulate what `dispatchImplement` does when MARS_MERGE_QUEUE=1 and a task
- * reaches the merge step:
+ * Simulate what `dispatchImplement` does when a task reaches the merge step:
  *   1. acquire(sem)            — grab the implement slot
  *   2. commitInFlight('implement')
  *   3. releaseImpl()           — release implement tracking
@@ -46,7 +45,7 @@ async function parkInMergeQueue(
   return tracker.commitInFlight(taskId, 'merge')
 }
 
-describe('merge does not starve implement dispatch (MARS_MERGE_QUEUE=1)', () => {
+describe('merge does not starve implement dispatch', () => {
   it('5 tasks parked in merging hold zero implement slots, leaving cap available for new dispatches', async () => {
     const tracker = createTaskFlightTracker()
     const sem = makeSem(IMPLEMENT_CAP)

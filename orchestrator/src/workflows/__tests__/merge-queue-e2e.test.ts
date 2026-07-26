@@ -1,10 +1,9 @@
 /**
- * End-to-end test: merge primitive with MARS_MERGE_QUEUE=1 routes through the
- * durable single-consumer worker and executes jobs strictly sequentially.
+ * End-to-end test: merge primitive routes through the durable single-consumer
+ * worker and executes jobs strictly sequentially.
  *
  * This test verifies the observable contract:
- *   - Two concurrent calls to the `merge` primitive with MARS_MERGE_QUEUE=1
- *     both complete successfully.
+ *   - Two concurrent calls to the `merge` primitive both complete successfully.
  *   - The underlying `mergeFn` (injected into the worker) is never called
  *     concurrently: the second call's `mergeFn` does not start until the first
  *     call's `mergeFn` has returned.
@@ -19,7 +18,7 @@
  * This test confirms both ends of the pipe are connected.
  */
 import { EventEmitter } from 'node:events'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../../core/store/merge-job-store.js'
 
 // ── Module mocks (system boundaries) ─────────────────────────────────────────
@@ -221,20 +220,7 @@ function makeCtx(
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('merge primitive with MARS_MERGE_QUEUE=1 — strict sequential execution', () => {
-  const originalEnv = process.env.MARS_MERGE_QUEUE
-
-  beforeEach(() => {
-    process.env.MARS_MERGE_QUEUE = '1'
-  })
-
-  afterEach(() => {
-    if (originalEnv === undefined) {
-      delete process.env.MARS_MERGE_QUEUE
-    } else {
-      process.env.MARS_MERGE_QUEUE = originalEnv
-    }
-  })
+describe('merge primitive — strict sequential execution via durable queue', () => {
 
   it('two concurrent merge calls execute strictly sequentially in the worker', async () => {
     /**
