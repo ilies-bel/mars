@@ -404,6 +404,22 @@ describe('getArcRescueAttempts and incrementArcRescueAttempts', () => {
       'arc rescue counter can only be read on an origin task, not a recovery/fix task',
     )
   })
+
+  // Regression: slices cut from a PRD carry the parent proposal's slug in
+  // origin_id, so resolveOriginIdForTask hands the accessors an id with no task
+  // row at all. That used to throw the recovery/fix guard error, which wedged the
+  // arc-verifier subscriber's cursor on the first such task.terminal event and
+  // stalled the whole pipeline (no dead-letter by ADR-0032). A missing arc origin
+  // row is a normal shape and must read as 0.
+  it('arc rescue accessors report 0 for an origin id with no task row (PRD slug)', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const proposalSlug = 'b625d966-add-pre-rebase-worktree-hygiene-check'
+
+    await expect(store.getArcRescueAttempts(proposalSlug)).resolves.toBe(0)
+    await expect(store.incrementArcRescueAttempts(proposalSlug)).resolves.toBe(0)
+  })
 })
 
 describe('task_deployments', () => {

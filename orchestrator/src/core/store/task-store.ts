@@ -538,32 +538,51 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     getTranscript: (taskId) => queueGetTranscript(taskId),
 
     // ── Arc rescue counter ─────────────────────────────────────────────────
+    // An arc is keyed by `origin_id`, which is NOT always a task id: slices cut
+    // from a PRD carry the parent proposal's slug (e.g.
+    // 'b625d966-add-pre-rebase-worktree-hygiene-check'). Such an arc has no
+    // origin task row and therefore no rescue counter — that is a normal shape,
+    // not an error, so both accessors report 0 for it. Only a caller that hands
+    // in a real task row belonging to a recovery/fix task is misusing the API,
+    // and that case still throws.
     getArcRescueAttempts: async (originId) => {
       const c = guardClient()
       const r = await c.execute({
-        sql: `SELECT arc_rescue_attempts FROM tasks WHERE id = ? AND fix_for_task_id IS NULL`,
+        sql: `SELECT arc_rescue_attempts, fix_for_task_id FROM tasks WHERE id = ?`,
         args: [originId],
       })
-      if (r.rows.length === 0) {
+      if (r.rows.length === 0) return 0
+      const row = r.rows[0] as unknown as {
+        arc_rescue_attempts: number | bigint
+        fix_for_task_id: string | null
+      }
+      if (row.fix_for_task_id !== null) {
         throw new Error(
           'arc rescue counter can only be read on an origin task, not a recovery/fix task',
         )
       }
-      const row = r.rows[0] as unknown as { arc_rescue_attempts: number | bigint }
       return Number(row.arc_rescue_attempts)
     },
 
     incrementArcRescueAttempts: async (originId) => {
       const c = guardClient()
-      const r = await c.execute({
-        sql: `UPDATE tasks SET arc_rescue_attempts = arc_rescue_attempts + 1 WHERE id = ? AND fix_for_task_id IS NULL RETURNING arc_rescue_attempts`,
+      const existing = await c.execute({
+        sql: `SELECT fix_for_task_id FROM tasks WHERE id = ?`,
         args: [originId],
       })
-      if (r.rows.length === 0) {
+      if (existing.rows.length === 0) return 0
+      const existingRow = existing.rows[0] as unknown as {
+        fix_for_task_id: string | null
+      }
+      if (existingRow.fix_for_task_id !== null) {
         throw new Error(
           'arc rescue counter can only be read on an origin task, not a recovery/fix task',
         )
       }
+      const r = await c.execute({
+        sql: `UPDATE tasks SET arc_rescue_attempts = arc_rescue_attempts + 1 WHERE id = ? AND fix_for_task_id IS NULL RETURNING arc_rescue_attempts`,
+        args: [originId],
+      })
       const row = r.rows[0] as unknown as { arc_rescue_attempts: number | bigint }
       return Number(row.arc_rescue_attempts)
     },

@@ -243,6 +243,12 @@ export interface TaskSpec {
    * Absent on coder slices and ad-hoc rows.
    */
   subDeliverable?: SubDeliverableSpec
+  /**
+   * Shell command that boots the app for a `reviewType: 'manual'` review step.
+   * The review primitive prefers this over `package.json` `scripts.dev` when
+   * resolving how to start the preview. Absent on ad-hoc rows.
+   */
+  previewCmd?: string | null
 }
 
 export const EMPTY_TASK_SPEC: TaskSpec = {

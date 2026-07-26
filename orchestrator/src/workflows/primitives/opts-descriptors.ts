@@ -61,6 +61,8 @@ export const mergeDescriptors = {
 export const awaitHumanDescriptors = {
   note: 'Human-readable note shown in the action-queue row body alongside the task id. Default null.',
   taskId: 'Override the task id. Defaults to ctx.runId.',
+  previewUrl: 'Preview URL for a manual-QA row. Null when no preview was started.',
+  logPath: 'Log file path for the preview process on a manual-QA row. Null when no preview was started.',
 } satisfies Record<keyof AwaitHumanOpts, string>
 
 /**
