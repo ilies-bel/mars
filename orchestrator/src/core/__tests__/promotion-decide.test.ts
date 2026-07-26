@@ -465,16 +465,37 @@ describe('runPromotionDecision (integration)', () => {
     expect(outcome).toBe('insufficient-data')
 
     // action_queue_items table may not exist yet (raiseActionQueueItem was never called).
-    // Guard with sqlite_master check.
-    const tableExists = await client.execute(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name='action_queue_items'`,
-    )
+    // Guard with information_schema check (PostgreSQL — never sqlite_master).
+    const tableExists = await client.execute({
+      sql: `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?`,
+      args: ['action_queue_items'],
+    })
     if (tableExists.rows.length > 0) {
       const rows = await client.execute(
         `SELECT id FROM action_queue_items WHERE kind = 'promotion-decision'`,
       )
       expect(rows.rows).toHaveLength(0)
     }
+  })
+
+  it('introspects tables via information_schema', async () => {
+    const { sc } = await loadMods(repo)
+    const client = sc.resolveStateClient()
+
+    // Create a fresh table so we have a known name to look up.
+    await client.execute(`CREATE TABLE _regress_introspect (id TEXT PRIMARY KEY)`)
+
+    // information_schema.tables must surface the newly-created table.
+    // A future accidental revert to sqlite_master would break this assertion.
+    const result = await client.execute({
+      sql: `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?`,
+      args: ['_regress_introspect'],
+    })
+    expect(result.rows).toHaveLength(1)
+    expect((result.rows[0] as { table_name: string }).table_name).toBe('_regress_introspect')
+
+    // Clean up.
+    await client.execute(`DROP TABLE _regress_introspect`)
   })
 
   it('raising the same ledger id twice is idempotent (seen_count bumps, no new row)', async () => {
