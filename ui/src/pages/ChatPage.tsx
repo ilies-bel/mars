@@ -1242,11 +1242,10 @@ export const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: 
     ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
 
   useEffect(() => {
-    if (prefill !== undefined) {
-      setText(prefill)
-      onPrefillConsumed()
-      textareaRef.current?.focus()
-    }
+    if (prefill === undefined) return
+    setText(prefill)
+    onPrefillConsumed()
+    textareaRef.current?.focus()
   }, [prefill, onPrefillConsumed])
 
   // Revoke object URLs on unmount to avoid memory leaks.
@@ -1700,11 +1699,10 @@ export const Composer = ({
 
   // Apply chip / slash-command prefill from welcome state.
   useEffect(() => {
-    if (initialText !== undefined) {
-      setText(initialText)
-      onInitialTextConsumed()
-      textareaRef.current?.focus()
-    }
+    if (initialText === undefined) return
+    setText(initialText)
+    onInitialTextConsumed()
+    textareaRef.current?.focus()
   }, [initialText, onInitialTextConsumed])
 
   // Revoke object URLs when attachments are removed to avoid memory leaks.
