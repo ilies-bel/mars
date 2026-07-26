@@ -12,6 +12,7 @@ import {
   type ClaudePermissionMode,
 } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
+import { codexHeadless } from './providers/codex-headless'
 
 export type ProviderName = 'claude' | 'gemini' | 'codex'
 
@@ -305,17 +306,9 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       // followed by a space and the rest of the spinner text up to end-of-line.
       spinnerOverride: /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] .*$/,
     },
-    // Headless adapter stub — not yet implemented. A headless dispatch routed
-    // to the codex provider will throw at runtime; its adapter slice lands in
-    // a later PRD iteration.
-    headless: {
-      capabilities: {
-        contextTokenMetering: false,
-        quotaRejected: false,
-        sessionId: false,
-      },
-      run: (_prompt: string, _opts: HeadlessRunOpts): Promise<RunClaudeResult> =>
-        Promise.reject(new Error('codex headless adapter not yet implemented')),
-    },
+    // Headless adapter: spawns `codex exec --json`, normalises its JSONL
+    // stream to ClaudeEvent shape, and returns a RunClaudeResult with null
+    // sessionId and quotaRejected (signals codex does not expose).
+    headless: codexHeadless,
   },
 } as const
