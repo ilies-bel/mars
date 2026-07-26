@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Cluster, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import type { Role, UITask } from '@/shared/types'
-import { titleFromPrompt } from '@/shared/promptTitle'
+import { taskTitle } from '@/shared/promptTitle'
 import { ArcColumn, type BoardArc } from '@/widgets/Column'
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ const roleFromStatus = (status: ProgressTask['status']): Role => {
 
 const toUI = (t: ProgressTask): UITask => ({
   id: t.id,
-  title: titleFromPrompt(t.prompt),
+  title: taskTitle(t),
   status: t.status,
   role: roleFromStatus(t.status),
   failed: t.status === 'failed',
@@ -118,7 +118,7 @@ export const buildArcsByCluster = (
     const originProposal = originTask === undefined ? proposalById.get(id) : undefined
     const hasOrphanedOrigin = originTask === undefined && originProposal === undefined
     const title = originTask !== undefined
-      ? titleFromPrompt(originTask.prompt)
+      ? taskTitle(originTask)
       : originProposal !== undefined
         ? originProposal.title
         : `Abandoned arc ${id}`

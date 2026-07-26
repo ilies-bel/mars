@@ -1,9 +1,5 @@
 import type { ColumnKey, Role, Snapshot, Task, UITask } from './types'
-
-const titleFromPrompt = (prompt: string): string => {
-  const first = prompt.split(/\r?\n/, 1)[0]?.trim() ?? ''
-  return first.length > 0 ? first : prompt.trim()
-}
+import { taskTitle } from './promptTitle'
 
 const roleFromTask = (t: Task): Role => {
   switch (t.status) {
@@ -50,13 +46,11 @@ const columnFor = (t: Task): ColumnKey | null => {
 }
 
 const toUI = (t: Task, byId: Map<string, Task>): UITask => {
-  const originPrompt =
-    t.originId != null && t.originId !== t.id
-      ? (byId.get(t.originId)?.prompt ?? t.prompt)
-      : t.prompt
+  const origin =
+    t.originId != null && t.originId !== t.id ? (byId.get(t.originId) ?? t) : t
   return {
     id: t.id,
-    title: titleFromPrompt(originPrompt),
+    title: taskTitle(origin),
     status: t.status,
     role: roleFromTask(t),
     failed: t.status === 'failed',

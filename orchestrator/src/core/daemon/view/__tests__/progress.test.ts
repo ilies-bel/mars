@@ -30,6 +30,7 @@ const zeroAggregates: AggregateReader = {
 const makeRow = (overrides: Partial<ProgressTaskRow> = {}): ProgressTaskRow => ({
   id: 'task-1',
   prompt: 'Do something',
+  intent: null,
   status: 'queued',
   planFunctional: null,
   planTechnical: null,

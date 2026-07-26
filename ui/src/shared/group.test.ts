@@ -66,6 +66,8 @@ describe('groupTasks – card title resolution', () => {
     const card = snapshot.columns.done.find(c => c.id === 'fix-orphan')
 
     expect(card).toBeDefined()
-    expect(card?.title).toBe('# Recovery run — first-principles (no matching recipe)')
+    // The leading '#' is stripped: group.ts now shares the same title helper as
+    // the board and topology instead of carrying its own first-line-only copy.
+    expect(card?.title).toBe('Recovery run — first-principles (no matching recipe)')
   })
 })

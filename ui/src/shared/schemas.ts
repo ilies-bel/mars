@@ -120,6 +120,12 @@ export const taskSchema = z.object({
    * Null/absent for queued/done/failed tasks.
    */
   activityDetail: z.string().nullable().optional(),
+  /**
+   * Short human-readable summary set at enqueue. Card titles prefer this over
+   * `prompt`, which is routinely a multi-paragraph brief on a single line and
+   * makes the board unscannable. Null/absent on legacy rows.
+   */
+  intent: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })

@@ -13,7 +13,7 @@
 import dagre from '@dagrejs/dagre'
 import type { Edge, Node } from '@xyflow/react'
 import { blockerKey, type ChainResult } from '@/shared/chainTrace'
-import { titleFromPrompt } from '@/shared/promptTitle'
+import { taskTitle } from '@/shared/promptTitle'
 import type { Cluster, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
@@ -210,7 +210,7 @@ const arcNodeId = (arcKey: string): string => `arc:${arcKey}`
 export const arcKeyFromNodeId = (id: string): string => id.replace(/^arc:/, '')
 
 /** First non-empty line of a task's prompt, used as its node label. */
-const taskLabel = (t: ProgressTask): string => titleFromPrompt(t.prompt) || t.id
+const taskLabel = (t: ProgressTask): string => taskTitle(t) || t.id
 
 export type Emphasis = 'lit' | 'dim' | 'rest'
 
@@ -653,7 +653,7 @@ export const buildTopology = (
     // Use full `group` (including Done origin) for label — a Done origin still
     // names its arc. This preserves the 8f2a5a12 fix.
     const rootTask = group.find((t) => t.id === key) ?? group[0]!
-    const label = proposal ? proposal.title : titleFromPrompt(rootTask.prompt) || key
+    const label = proposal ? proposal.title : taskTitle(rootTask) || key
 
     // dom and counts tally only active members — Done members are not work in progress.
     const counts = emptyCounts()

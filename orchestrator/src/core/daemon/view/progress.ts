@@ -53,6 +53,13 @@ export interface ProgressTaskSpec {
 export interface ProgressTask {
   id: string
   prompt: string
+  /**
+   * Short human-readable summary of the task, set at enqueue (explicitly via
+   * `--intent`, otherwise derived from the prompt's first sentence). Board and
+   * topology cards prefer this over the raw prompt, which is routinely a
+   * multi-paragraph brief on a single line. Null on legacy rows.
+   */
+  intent: string | null
   status: string
   cluster: Cluster
   plan: { functional: string; technical: string } | null
@@ -88,6 +95,7 @@ export interface ProgressTask {
 export interface ProgressTaskRow {
   id: string
   prompt: string
+  intent: string | null
   status: string
   planFunctional: string | null
   planTechnical: string | null
@@ -217,6 +225,7 @@ export const buildProgressView = async (
     tasks.push({
       id: row.id,
       prompt: row.prompt,
+      intent: row.intent,
       status: row.status,
       cluster,
       plan:
@@ -267,7 +276,7 @@ const parseBlockedBy = (raw: unknown): string[] => {
 export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => ({
   async listProgressTasks() {
     const r = await client.execute(`
-      SELECT t.id, t.prompt, t.status,
+      SELECT t.id, t.prompt, t.intent, t.status,
              t.plan_functional, t.plan_technical,
              t.branch, t.worktree_path, t.error,
              t.failure_signature, t.drop_reason,
@@ -295,6 +304,7 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
       return {
         id: ro.id as string,
         prompt: ro.prompt as string,
+        intent: (ro.intent as string | null) ?? null,
         status: ro.status as string,
         planFunctional: (ro.plan_functional as string | null) ?? null,
         planTechnical: (ro.plan_technical as string | null) ?? null,

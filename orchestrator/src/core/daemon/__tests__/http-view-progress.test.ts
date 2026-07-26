@@ -154,6 +154,7 @@ describe('GET /view/progress', () => {
       {
         id: 'task-1',
         prompt: 'do the thing',
+        intent: null,
         status: 'queued',
         cluster: 'Queued',
         plan: null,
