@@ -5,6 +5,60 @@
 
 import type { ActionQueueItem, ChatSegmentAttachment } from '@/shared/schemas'
 
+// ---------------------------------------------------------------------------
+// relativeTime — human-readable relative timestamp
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts an ISO timestamp to a short relative label:
+ *   < 1 min  → "just now"
+ *   < 1 hour → "Xm ago"
+ *   < 1 day  → "Xh ago"
+ *   otherwise → "Xd ago"
+ *
+ * @param iso    ISO-8601 timestamp string
+ * @param nowMs  Optional anchor (ms since epoch) — defaults to Date.now().
+ *               Accepting an explicit anchor makes the function testable
+ *               without time mocking.
+ */
+export const relativeTime = (iso: string, nowMs: number = Date.now()): string => {
+  const diff = nowMs - new Date(iso).getTime()
+  if (diff <= 0) return 'just now'
+  const mins = Math.floor(diff / 60_000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+// ---------------------------------------------------------------------------
+// smartTitle — strip verbose category prefixes from thread titles
+// ---------------------------------------------------------------------------
+
+/**
+ * Common verbose prefixes that systems attach to auto-generated thread titles.
+ * Stripping them reveals the meaningful part (e.g. the task ID).
+ */
+const TITLE_PREFIXES = [
+  'Phantom task auto-',
+] as const
+
+/**
+ * Returns a compact, human-readable display title for a thread:
+ *   - null / empty → "New thread"
+ *   - known verbose prefix → the portion after the prefix
+ *   - anything else → the title unchanged
+ */
+export const smartTitle = (title: string | null): string => {
+  if (!title) return 'New thread'
+  for (const prefix of TITLE_PREFIXES) {
+    if (title.startsWith(prefix)) return title.slice(prefix.length)
+  }
+  return title
+}
+
 const PRIORITY_RANK: Record<'high' | 'normal' | 'low', number> = {
   high: 0,
   normal: 1,

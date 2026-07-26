@@ -84,7 +84,7 @@ import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlSt
 import { taskHash } from '@/shared/routing'
 import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
-import { resolveMediaKind, fileMediaKind } from './chatPageUtils'
+import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
 
 // ---------------------------------------------------------------------------
 // Welcome state: quick-action chips and slash palette
@@ -778,12 +778,23 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
     setEditing(false)
   }
 
-  const title = thread.title || 'New thread'
+  const title = smartTitle(thread.title)
+
+  // Derive the alert kind from the alertItemId prefix (e.g. 'failed-task:mars-123' → 'failed-task')
+  const alertKind = thread.alertItemId
+    ? thread.alertItemId.split(':')[0] ?? null
+    : null
+
+  // Type-specific icon: alert threads get a category icon; user threads get a chat bubble.
+  const typeIcon = thread.origin === 'alert'
+    ? (KIND_ICON[alertKind ?? ''] ?? '🔔')
+    : '💬'
+  const iconDimmed = thread.origin === 'alert' && thread.alertResolved
 
   return (
     <div
       className={[
-        'group flex items-center gap-1 rounded px-2 py-1.5 cursor-pointer',
+        'group flex items-center gap-1 rounded px-2 py-1.5 cursor-pointer border-b border-iron/10',
         isSelected ? 'bg-iron/20 text-fg' : 'text-iron hover:bg-iron/10 hover:text-fg',
       ].join(' ')}
       onClick={onSelect}
@@ -804,18 +815,28 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
         />
       ) : (
         <>
-          {thread.origin === 'alert' && (
-            <span
-              className={[
-                'flex-none text-[10px]',
-                thread.alertResolved ? 'opacity-30' : 'text-accent',
-              ].join(' ')}
-              title={thread.alertResolved ? 'Alert resolved' : 'Active alert'}
-            >
-              🔔
+          <span
+            className={[
+              'flex-none text-[11px]',
+              iconDimmed ? 'opacity-30' : '',
+            ].join(' ')}
+            title={
+              thread.origin === 'alert'
+                ? thread.alertResolved
+                  ? 'Alert resolved'
+                  : `Alert: ${alertKind ?? 'unknown'}`
+                : 'Conversation'
+            }
+            aria-label={thread.origin === 'alert' ? (alertKind ?? 'alert') : 'conversation'}
+          >
+            {typeIcon}
+          </span>
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{title}</span>
+          {thread.updatedAt && (
+            <span className="ml-1 flex-none font-mono text-[10px] text-muted">
+              {relativeTime(thread.updatedAt)}
             </span>
           )}
-          <span className="flex-1 truncate font-mono text-[11px]">{title}</span>
           {thread.attentionStatus === 'ready' && (
             <span
               data-testid="ready-badge"
