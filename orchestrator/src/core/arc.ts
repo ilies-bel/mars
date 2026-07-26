@@ -990,16 +990,20 @@ export class Arc {
   }
 
   /**
-   * Reprioritize a still-queued task (ADR-0052 sole-writer). Relocated
-   * bit-for-bit from `queue.ts:setTaskPriority`: the priority `UPDATE tasks SET
+   * Reprioritize a pre-dispatch or blocked task (ADR-0052 sole-writer).
+   * Relocated from `queue.ts:setTaskPriority`: the priority `UPDATE tasks SET
    * priority = …, updated_at = …` is a non-lifecycle column write (no status
    * change, no outbox event), but it must still live behind the Arc aggregate
    * so the task table has exactly one writer (ADR-0052) — `setTaskPriority` in
    * queue.ts is now a thin wrapper that delegates here.
    *
-   * Guards mirror the historic body: only a `'queued'` task can be
-   * reprioritized (a running/done/failed task's priority is meaningless), and a
-   * missing id throws. Returns the re-selected {@link Task}.
+   * Priority is a dispatch-ordering attribute: it is read when a task becomes
+   * eligible to dispatch, so setting it on `'draft'`, `'triaging'`, or
+   * `'blocked'` tasks is meaningful and harmless — the value takes effect the
+   * moment the task becomes `'queued'`. Terminal states (`'done'`, `'failed'`,
+   * `'dropped'`) and in-flight states (`'running'`, `'verifying'`, `'merging'`,
+   * etc.) are rejected with a state-specific message. Returns the re-selected
+   * {@link Task}.
    */
   async reprioritize(priority: number): Promise<Task> {
     validatePriority(priority)
@@ -1014,11 +1018,27 @@ export class Arc {
       throw new Error(`task ${id} not found`)
     }
     const status = (before.rows[0] as unknown as { status: string }).status
-    if (status !== 'queued') {
+    const TERMINAL = ['done', 'failed', 'dropped']
+    const IN_FLIGHT = [
+      'running',
+      'verifying',
+      'merging',
+      'awaiting-validation',
+      'awaiting-human',
+      'vega-reconciling',
+      'under_investigation',
+    ]
+    if (TERMINAL.includes(status)) {
       throw new Error(
-        `task ${id} is ${status}; only queued tasks can be reprioritized`,
+        `task ${id} is ${status}; priority has no effect on terminal tasks`,
       )
     }
+    if (IN_FLIGHT.includes(status)) {
+      throw new Error(
+        `task ${id} is ${status}; priority cannot be changed while the task is in-flight`,
+      )
+    }
+    // Allowed: draft, triaging, queued, blocked
     const now = new Date().toISOString()
     await s.execute({
       sql: `UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?`,

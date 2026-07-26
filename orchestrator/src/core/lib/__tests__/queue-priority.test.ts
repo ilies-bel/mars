@@ -89,16 +89,6 @@ describe('task priority', () => {
     ).rejects.toThrow(/priority/)
   })
 
-  it('setTaskPriority rejects when task is not queued', async () => {
-    const q = await loadQueue(repo)
-    const t = await q.enqueueTask('pending', undefined, { skipTriage: true })
-    // Push it out of queued.
-    await q.updateTask(t.id, { status: 'running' })
-    await expect(q.setTaskPriority(t.id, 2)).rejects.toThrow(
-      /only queued tasks can be reprioritized/,
-    )
-  })
-
   it('setTaskPriority on a queued task updates the value', async () => {
     const q = await loadQueue(repo)
     const t = await q.enqueueTask('queued one', undefined, { skipTriage: true })
@@ -107,6 +97,75 @@ describe('task priority', () => {
     expect(updated.priority).toBe(3)
     const fetched = await q.getTask(t.id)
     expect(fetched?.priority).toBe(3)
+  })
+
+  it('setTaskPriority on a draft task persists the value', async () => {
+    const q = await loadQueue(repo)
+    // skipTriage: false → status starts as 'draft'
+    const t = await q.enqueueTask('draft task', undefined, {
+      skipTriage: false,
+    })
+    expect(t.status).toBe('draft')
+    const updated = await q.setTaskPriority(t.id, 2)
+    expect(updated.priority).toBe(2)
+    const fetched = await q.getTask(t.id)
+    expect(fetched?.priority).toBe(2)
+  })
+
+  it('setTaskPriority on a blocked task persists and survives transition to queued', async () => {
+    const q = await loadQueue(repo)
+    const t = await q.enqueueTask('will-block', undefined, { skipTriage: true })
+    await q.updateTask(t.id, { status: 'blocked' })
+    // Priority set while blocked
+    const updated = await q.setTaskPriority(t.id, 3)
+    expect(updated.priority).toBe(3)
+    // Simulate blocker resolution: task transitions back to queued
+    await q.updateTask(t.id, { status: 'queued' })
+    const fetched = await q.getTask(t.id)
+    expect(fetched?.status).toBe('queued')
+    expect(fetched?.priority).toBe(3)
+  })
+
+  it('setTaskPriority rejects terminal states with a state-specific message', async () => {
+    const q = await loadQueue(repo)
+    const t = await q.enqueueTask('will-done', undefined, { skipTriage: true })
+    await q.updateTask(t.id, { status: 'done' })
+    await expect(q.setTaskPriority(t.id, 2)).rejects.toThrow(
+      /is done; priority has no effect on terminal tasks/,
+    )
+
+    const t2 = await q.enqueueTask('will-fail', undefined, { skipTriage: true })
+    await q.updateTask(t2.id, { status: 'failed' })
+    await expect(q.setTaskPriority(t2.id, 2)).rejects.toThrow(
+      /is failed; priority has no effect on terminal tasks/,
+    )
+
+    const t3 = await q.enqueueTask('will-drop', undefined, { skipTriage: true })
+    await q.updateTask(t3.id, { status: 'dropped' })
+    await expect(q.setTaskPriority(t3.id, 2)).rejects.toThrow(
+      /is dropped; priority has no effect on terminal tasks/,
+    )
+  })
+
+  it('setTaskPriority rejects in-flight states with a state-specific message', async () => {
+    const q = await loadQueue(repo)
+    const t = await q.enqueueTask('will-run', undefined, { skipTriage: true })
+    await q.updateTask(t.id, { status: 'running' })
+    await expect(q.setTaskPriority(t.id, 2)).rejects.toThrow(
+      /is running; priority cannot be changed while the task is in-flight/,
+    )
+
+    const t2 = await q.enqueueTask('will-verify', undefined, { skipTriage: true })
+    await q.updateTask(t2.id, { status: 'verifying' })
+    await expect(q.setTaskPriority(t2.id, 2)).rejects.toThrow(
+      /is verifying; priority cannot be changed while the task is in-flight/,
+    )
+
+    const t3 = await q.enqueueTask('will-merge', undefined, { skipTriage: true })
+    await q.updateTask(t3.id, { status: 'merging' })
+    await expect(q.setTaskPriority(t3.id, 2)).rejects.toThrow(
+      /is merging; priority cannot be changed while the task is in-flight/,
+    )
   })
 
   it('setTaskPriority rejects out-of-range values', async () => {
