@@ -204,6 +204,28 @@ export const dominant = (r: Rollup): Cluster => {
 export const taskArcKey = (t: ProgressTask): string =>
   t.parentProposalId ?? t.originId ?? t.id
 
+/**
+ * Shared arc label resolution: proposal-first, then origin-task title.
+ *
+ * The origin-task branch goes through `taskTitle`, so a server-provided
+ * `intent` wins over the raw prompt — same rule every other task label uses.
+ *
+ * Returns `undefined` when neither arcKey resolves to a known proposal nor to
+ * an origin task in the group — the caller supplies the fallback (e.g. the
+ * topology falls back to the first task's title; the board uses "Abandoned arc").
+ */
+export const resolveArcLabel = (
+  arcKey: string,
+  tasks: ReadonlyArray<ProgressTask>,
+  proposalMap: ReadonlyMap<string, { readonly title: string }>,
+): string | undefined => {
+  const proposal = proposalMap.get(arcKey)
+  if (proposal) return proposal.title
+  const originTask = tasks.find((t) => t.id === arcKey)
+  if (originTask) return taskTitle(originTask) || undefined
+  return undefined
+}
+
 const arcNodeId = (arcKey: string): string => `arc:${arcKey}`
 
 /** Strip the `arc:` prefix back to the bare arc key. */
@@ -649,11 +671,9 @@ export const buildTopology = (
     const activeMembers = activeMembersMap.get(key)!
     if (activeMembers.length === 0) continue // fully-completed arc: emit nothing
 
-    const proposal = proposalMap.get(key)
     // Use full `group` (including Done origin) for label — a Done origin still
     // names its arc. This preserves the 8f2a5a12 fix.
-    const rootTask = group.find((t) => t.id === key) ?? group[0]!
-    const label = proposal ? proposal.title : taskTitle(rootTask) || key
+    const label = resolveArcLabel(key, group, proposalMap) ?? (taskTitle(group[0]!) || key)
 
     // dom and counts tally only active members — Done members are not work in progress.
     const counts = emptyCounts()
@@ -687,7 +707,7 @@ export const buildTopology = (
         position: { x: pos.x, y: pos.y },
         width: groupSize.w,
         height: groupSize.h,
-        data: { kind: 'arcGroup', label, arcKey: key, isProposal: proposal != null, count: activeMembers.length, dom, emphasis: 'rest' },
+        data: { kind: 'arcGroup', label, arcKey: key, isProposal: proposalMap.has(key), count: activeMembers.length, dom, emphasis: 'rest' },
       })
       for (const t of activeMembers) {
         const p = innerPositions.get(t.id)!
@@ -709,7 +729,7 @@ export const buildTopology = (
         position: { x: pos.x, y: pos.y },
         width: CARD_W,
         height: CARD_H,
-        data: { kind: 'arcCard', label, arcKey: key, isProposal: proposal != null, count: activeMembers.length, dom, emphasis: 'rest' },
+        data: { kind: 'arcCard', label, arcKey: key, isProposal: proposalMap.has(key), count: activeMembers.length, dom, emphasis: 'rest' },
       })
     }
   }

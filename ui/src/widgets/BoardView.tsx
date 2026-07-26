@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { Cluster, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import type { Role, UITask } from '@/shared/types'
 import { taskTitle } from '@/shared/promptTitle'
+import { resolveArcLabel, taskArcKey } from '@/widgets/topologyFlowModel'
 import { ArcColumn, type BoardArc } from '@/widgets/Column'
 
 // ---------------------------------------------------------------------------
@@ -79,7 +80,7 @@ export const buildArcsByCluster = (
   const grouped = new Map<string, ProgressTask[]>()
 
   for (const task of tasks) {
-    const arcId = task.originId ?? task.id
+    const arcId = taskArcKey(task)
     const arcTasks = grouped.get(arcId)
     if (arcTasks) arcTasks.push(task)
     else grouped.set(arcId, [task])
@@ -111,17 +112,14 @@ export const buildArcsByCluster = (
     const latestTask = [...arcTasks].sort(compareNewestFirst)[0]!
 
     const displayTask = originTask ?? latestTask
-    // Namespace resolution: task id first, then proposal id, then orphaned.
-    // origin_id intentionally has no FK and may hold proposal ids — tasks
-    // produced by `mars proposal slice` carry origin_id = proposal_id.
-    // Only declare the origin orphaned when neither namespace owns the id.
-    const originProposal = originTask === undefined ? proposalById.get(id) : undefined
-    const hasOrphanedOrigin = originTask === undefined && originProposal === undefined
-    const title = originTask !== undefined
-      ? taskTitle(originTask)
-      : originProposal !== undefined
-        ? originProposal.title
-        : `Abandoned arc ${id}`
+    // Arc label: proposal-first, then origin-task title (intent, else prompt),
+    // then "Abandoned arc". arc keys may hold a parentProposalId or an originId
+    // pointing to a proposal (tasks produced by `mars proposal slice`);
+    // resolveArcLabel handles both. undefined means neither namespace owns the
+    // id — the origin was force-purged.
+    const resolvedLabel = resolveArcLabel(id, orderedTasks, proposalById)
+    const hasOrphanedOrigin = resolvedLabel === undefined
+    const title = resolvedLabel ?? `Abandoned arc ${id}`
     arcsByCluster[cluster].push({
       id,
       cluster,

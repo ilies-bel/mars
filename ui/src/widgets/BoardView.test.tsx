@@ -698,6 +698,77 @@ describe('buildArcsByCluster — done origin regression', () => {
 })
 
 // ---------------------------------------------------------------------------
+// parentProposalId grouping: tasks share parentProposalId, different originIds
+// ---------------------------------------------------------------------------
+
+describe('buildArcsByCluster — parentProposalId grouping', () => {
+  it('groups tasks with the same parentProposalId into one arc keyed by the proposal', () => {
+    const taskA = task({
+      id: 'task-a',
+      cluster: 'Queued',
+      status: 'queued',
+      originId: 'origin-a',
+      parentProposalId: 'prop-1',
+    })
+    const taskB = task({
+      id: 'task-b',
+      cluster: 'Queued',
+      status: 'queued',
+      originId: 'origin-b',
+      parentProposalId: 'prop-1',
+    })
+    const proposal = { id: 'prop-1', title: 'My Big Feature', source: 'human' as const, status: 'draft' }
+
+    const arcs = buildArcsByCluster([taskA, taskB], [proposal])
+
+    expect(arcs.Queued).toHaveLength(1)
+    expect(arcs.Queued[0]!.id).toBe('prop-1')
+    expect(arcs.Queued[0]!.title).toBe('My Big Feature')
+    expect(arcs.Queued[0]!.hasOrphanedOrigin).toBe(false)
+    expect(arcs.Queued[0]!.tasks.map((t) => t.id).sort()).toEqual(['task-a', 'task-b'])
+  })
+
+  it('uses the proposal title (not any task prompt) for parentProposalId-keyed arcs', () => {
+    const t = task({
+      id: 'task-1',
+      prompt: 'Do the work',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-1',
+      parentProposalId: 'prop-xyz',
+    })
+    const proposal = { id: 'prop-xyz', title: 'Feature: new pipeline', source: 'human' as const, status: 'draft' }
+
+    const arcs = buildArcsByCluster([t], [proposal])
+    const arc = arcs['In progress'][0]!
+
+    expect(arc.title).toBe('Feature: new pipeline')
+    expect(arc.title).not.toContain('Do the work')
+  })
+
+  it('keeps tasks with different parentProposalIds in separate arcs', () => {
+    const taskA = task({
+      id: 'task-a',
+      cluster: 'Queued',
+      parentProposalId: 'prop-1',
+    })
+    const taskB = task({
+      id: 'task-b',
+      cluster: 'Queued',
+      parentProposalId: 'prop-2',
+    })
+    const p1 = { id: 'prop-1', title: 'Proposal One', source: 'human' as const, status: 'draft' }
+    const p2 = { id: 'prop-2', title: 'Proposal Two', source: 'human' as const, status: 'draft' }
+
+    const arcs = buildArcsByCluster([taskA, taskB], [p1, p2])
+
+    expect(arcs.Queued).toHaveLength(2)
+    const ids = arcs.Queued.map((a) => a.id).sort()
+    expect(ids).toEqual(['prop-1', 'prop-2'])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Proposal-rooted arcs: origin_id holds a proposal id, not a task id
 // ---------------------------------------------------------------------------
 
