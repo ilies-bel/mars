@@ -142,6 +142,44 @@ describe('parseEventToSegments', () => {
     const segs = parseEventToSegments(toolCallEvent('call-6', 'read_file', { path: 'a.md' }))
     expect(segs[0]).toMatchObject({ type: 'tool_use', status: 'executed' })
   })
+
+  // ── Codex CLI JSONL events ────────────────────────────────────────────────
+
+  it('emits a text segment from item.completed with agent_message', () => {
+    expect(
+      parseEventToSegments({ type: 'item.completed', item: { type: 'agent_message', text: 'hi' } }),
+    ).toEqual([{ type: 'text', text: 'hi' }])
+  })
+
+  it('emits a result segment from turn.completed with usage', () => {
+    expect(
+      parseEventToSegments({
+        type: 'turn.completed',
+        usage: { input_tokens: 10, output_tokens: 5, cached_input_tokens: 2 },
+      }),
+    ).toEqual([
+      {
+        type: 'result',
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadTokens: 2,
+        cost: null,
+        durationMs: null,
+      },
+    ])
+  })
+
+  it('returns [] for thread.started (session capture happens outside the parser)', () => {
+    expect(parseEventToSegments({ type: 'thread.started', thread_id: 't_1' })).toEqual([])
+  })
+
+  it('returns [] without throwing for null', () => {
+    expect(parseEventToSegments(null)).toEqual([])
+  })
+
+  it('returns [] without throwing for a non-object primitive', () => {
+    expect(parseEventToSegments('bogus')).toEqual([])
+  })
 })
 
 // ── Transcript replay tests ───────────────────────────────────────────────────
