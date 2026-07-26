@@ -213,8 +213,9 @@ describe('WORKER_CONFIGS provider field', () => {
     }
   })
 
-  it("all seven Workers declare provider: 'claude'", () => {
-    expect(workerNames).toHaveLength(7)
+  it("all Workers declare provider: 'claude'", () => {
+    // RescueOperator (8th) added in PRD 94e2a82a; update this count if more workers are added.
+    expect(workerNames).toHaveLength(8)
     for (const name of workerNames) {
       expect(WORKER_CONFIGS[name].provider).toBe('claude')
     }

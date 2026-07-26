@@ -221,7 +221,9 @@ describe('listMergedWorkers', () => {
     expect(names).toContain('Fixer')
     expect(names).toContain('BehaviourVerifier')
     expect(names).toContain('Scorer')
-    expect(workers).toHaveLength(7)
+    expect(names).toContain('RescueOperator')
+    // RescueOperator (8th) added in PRD 94e2a82a; update this count if more workers are added.
+    expect(workers).toHaveLength(8)
   })
 
   it('includes a novel registry worker alongside the defaults', () => {

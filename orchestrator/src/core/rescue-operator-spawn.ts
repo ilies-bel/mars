@@ -19,6 +19,7 @@
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
 import type { Task } from './queue'
 import type { FixRecipeContext } from './lib/fix-recipes'
+import { buildRescueOperatorPrompt } from './workers/rescue-operator'
 
 export interface MaybeSpawnRescueOperatorInput {
   failedTask: Task
@@ -66,12 +67,7 @@ export const maybeSpawnRescueOperator = async (
   // spawning a second rescue on the same arc.
   await store.incrementArcRescueAttempts(originId)
 
-  // TODO(rescue-operator-prompt): full prompt implementation lives in a later
-  // slice. This stub is sufficient for enqueue + identification by tag.
-  const prompt =
-    `[rescue-operator] Arc ${originId} has dead-ended.\n` +
-    `Failed task: ${failedTask.id}. Failure signature: ${failureSignature}.\n` +
-    `Investigate and recover the arc.`
+  const prompt = buildRescueOperatorPrompt(failedTask.id, originId, failureSignature)
 
   const rescueTask = await store.enqueueTask(prompt, undefined, {
     tags: ['rescue-operator'],

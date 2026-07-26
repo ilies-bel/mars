@@ -28,6 +28,10 @@ import type { ClaudeEvent } from '../lib/claude-stream'
 import type { ProviderName } from './providers'
 import { PROVIDERS } from './providers'
 import { runPtySession } from './run-pty-session'
+import {
+  RESCUE_OPERATOR_SYSTEM_PROMPT,
+  RESCUE_OPERATOR_DENIED_TOOLS,
+} from './rescue-operator'
 
 // The bash pattern that invokes the ask-user path. Coder and Fixer workers
 // may call `mars task ask <taskId> "<question>"` to surface a question to the
@@ -65,6 +69,7 @@ export type WorkerName =
   | 'Fixer'
   | 'BehaviourVerifier'
   | 'Scorer'
+  | 'RescueOperator'
 
 // Execution runtime for a Worker. 'headless' runs via `claude -p` in a
 // non-interactive subprocess (current default for all built-in Workers).
@@ -377,6 +382,30 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     provider: 'claude',
     tags: ['scorer'],
   },
+  // RescueOperator Worker: court of last resort for a dead-ended Arc.
+  // Dispatched when an Arc has no automatic move left (no fix recipe, or
+  // recovery Chore itself failed). Carries a pinned system prompt that
+  // names exactly three permitted corrective actions (restart, continue,
+  // supersede) and forbids all others. Uses bypassPermissions so it can
+  // run mars CLI commands headlessly; RESCUE_OPERATOR_DENIED_TOOLS blocks
+  // backlog-mutation commands outside the three permitted actions.
+  // Sonnet / high effort — targeted recovery work, same posture as Fixer.
+  // At most one RescueOperator task fires per Arc (arc_rescue_attempts >= 1
+  // guard in rescue-operator-spawn.ts). See PRD 94e2a82a.
+  RescueOperator: {
+    name: 'RescueOperator',
+    model: CLAUDE_SONNET_MODEL,
+    effort: 'high',
+    permissionMode: 'bypassPermissions',
+    bare: false,
+    systemPrompt: RESCUE_OPERATOR_SYSTEM_PROMPT,
+    disallowedTools: RESCUE_OPERATOR_DENIED_TOOLS,
+    outputFormat: 'stream-json',
+    maxContextTokens: GENEROUS_CONTEXT_TOKENS,
+    runtime: 'headless',
+    provider: 'claude',
+    tags: ['rescue-operator'],
+  },
 } as const
 
 // Construction-time guard. `claude -p` cannot accept both --system-prompt
@@ -449,6 +478,7 @@ export const Workers: Readonly<Record<WorkerName, Worker>> = {
   Fixer: buildWorker(WORKER_CONFIGS.Fixer),
   BehaviourVerifier: buildWorker(WORKER_CONFIGS.BehaviourVerifier),
   Scorer: buildWorker(WORKER_CONFIGS.Scorer),
+  RescueOperator: buildWorker(WORKER_CONFIGS.RescueOperator),
 } as const
 
 export const getWorker = (name: WorkerName): Worker => Workers[name]
