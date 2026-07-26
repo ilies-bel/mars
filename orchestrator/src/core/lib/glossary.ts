@@ -5,6 +5,7 @@ export interface GlossaryTerm {
   term: string
   definition: string
   aliases: readonly string[]
+  surfaceForms: readonly string[]
 }
 
 export interface GlossaryDoc {
@@ -16,24 +17,49 @@ export interface GlossaryDoc {
 const HEADER = '# Project Context\n\nCanonical domain terms for this project. Edited via `mars glossary`.\n'
 const LANGUAGE_HEADING = '## Language'
 
-const stripAvoid = (block: string): { definition: string; aliases: string[] } => {
+export const generateDefaultSurfaceForms = (term: string): string[] => {
+  const lower = term.toLowerCase()
+  let plural: string
+  if (/(?:s|x|z|ch|sh)$/.test(lower)) {
+    plural = lower + 'es'
+  } else if (/y$/.test(lower)) {
+    plural = lower.slice(0, -1) + 'ies'
+  } else {
+    plural = lower + 's'
+  }
+  return lower === plural ? [lower] : [lower, plural]
+}
+
+const stripAvoid = (
+  block: string,
+): { definition: string; aliases: string[]; surfaceForms: string[] | undefined } => {
   const lines = block.split('\n')
   const aliases: string[] = []
+  let parsedSurfaceForms: string[] | undefined
   const kept: string[] = []
   for (const line of lines) {
     const trimmed = line.trim()
-    const match = trimmed.match(/^_Avoid_:\s*(.*)$/i)
-    if (match) {
-      const list = match[1] ?? ''
+    const avoidMatch = trimmed.match(/^_Avoid_:\s*(.*)$/i)
+    if (avoidMatch) {
+      const list = avoidMatch[1] ?? ''
       for (const a of list.split(',')) {
         const cleaned = a.trim()
         if (cleaned.length > 0) aliases.push(cleaned)
       }
       continue
     }
+    const sfMatch = trimmed.match(/^_Surface forms_:\s*(.*)$/i)
+    if (sfMatch) {
+      const list = sfMatch[1] ?? ''
+      parsedSurfaceForms = list
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+      continue
+    }
     kept.push(line)
   }
-  return { definition: kept.join('\n').trim(), aliases }
+  return { definition: kept.join('\n').trim(), aliases, surfaceForms: parsedSurfaceForms }
 }
 
 export const parseGlossary = (text: string): GlossaryDoc => {
@@ -60,8 +86,13 @@ export const parseGlossary = (text: string): GlossaryDoc => {
     if (!match) continue
     const term = match[1].trim()
     const rest = match[2] ?? ''
-    const { definition, aliases } = stripAvoid(rest)
-    terms.push({ term, definition, aliases })
+    const { definition, aliases, surfaceForms } = stripAvoid(rest)
+    terms.push({
+      term,
+      definition,
+      aliases,
+      surfaceForms: surfaceForms ?? generateDefaultSurfaceForms(term),
+    })
   }
 
   return { preamble, terms, trailer }
@@ -70,23 +101,34 @@ export const parseGlossary = (text: string): GlossaryDoc => {
 export const renderGlossary = (doc: GlossaryDoc): string => {
   const preamble = doc.preamble.trim().length > 0 ? `${doc.preamble.trim()}\n\n` : `${HEADER}\n`
   const termBlocks = doc.terms.map((t) => {
-    const aliases =
-      t.aliases.length > 0 ? `\n_Avoid_: ${t.aliases.join(', ')}` : ''
-    return `**${t.term}**:\n${t.definition.trim()}${aliases}`
+    const aliases = t.aliases.length > 0 ? `\n_Avoid_: ${t.aliases.join(', ')}` : ''
+    const defaults = generateDefaultSurfaceForms(t.term)
+    const sfDiffers =
+      t.surfaceForms.length !== defaults.length ||
+      t.surfaceForms.some((f, i) => f !== defaults[i])
+    const surfaceFormsLine = sfDiffers ? `\n_Surface forms_: ${t.surfaceForms.join(', ')}` : ''
+    return `**${t.term}**:\n${t.definition.trim()}${aliases}${surfaceFormsLine}`
   })
   const language = `${LANGUAGE_HEADING}\n\n${termBlocks.join('\n\n')}\n`
   const trailer = doc.trailer.trim().length > 0 ? `\n${doc.trailer.trim()}\n` : ''
   return `${preamble}${language}${trailer}`
 }
 
-export const upsertTerm = (doc: GlossaryDoc, next: GlossaryTerm): GlossaryDoc => {
-  const lower = next.term.toLowerCase()
+export const upsertTerm = (
+  doc: GlossaryDoc,
+  next: Omit<GlossaryTerm, 'surfaceForms'> & { readonly surfaceForms?: readonly string[] },
+): GlossaryDoc => {
+  const term: GlossaryTerm = {
+    ...next,
+    surfaceForms: next.surfaceForms ?? generateDefaultSurfaceForms(next.term),
+  }
+  const lower = term.term.toLowerCase()
   const found = doc.terms.findIndex((t) => t.term.toLowerCase() === lower)
   if (found === -1) {
-    return { ...doc, terms: [...doc.terms, next] }
+    return { ...doc, terms: [...doc.terms, term] }
   }
   const terms = [...doc.terms]
-  terms[found] = next
+  terms[found] = term
   return { ...doc, terms }
 }
 
