@@ -34,12 +34,21 @@ export interface MainDirtyDispatchInput {
   log: (msg: string) => void
 }
 
+/** Structured result from the dispatch-time dirty-main probe. */
+export type MainDirtyDispatchResult =
+  | { parked: false }
+  | { parked: true; fixTaskId: string; spawned: boolean }
+
 /**
- * Run the dispatch-time dirty-main probe. Returns `true` when the task was
- * parked behind a `main-commiter` recovery and the caller must NOT dispatch
- * the workflow. Returns `false` when:
+ * Run the dispatch-time dirty-main probe. Returns `{ parked: false }` when:
  * - the integration branch is clean, or
  * - the recipe is missing from the catalog (verify-time check still applies).
+ *
+ * Returns `{ parked: true, fixTaskId, spawned }` when the task was parked
+ * behind a `main-commiter` recovery and the caller must NOT dispatch the
+ * workflow. `spawned` is true only when a NEW committer was inserted; the
+ * caller is responsible for emitting `task.queued` for `fixTaskId` so the
+ * dispatch loop picks it up without waiting for the next daemon restart.
  *
  * Done committers no longer suppress parking (invariant 2): a done committer
  * proves main was clean when it verified, but if main is dirty again a fresh
@@ -47,7 +56,7 @@ export interface MainDirtyDispatchInput {
  */
 export const runMainDirtyDispatchCheck = async (
   input: MainDirtyDispatchInput,
-): Promise<boolean> => {
+): Promise<MainDirtyDispatchResult> => {
   const { task, integrationBranch, traceStore, recipeCatalog, log } = input
   const { repoRoot } = resolveContext()
   const originId = await resolveOriginIdForTask(task.id).catch(() => task.id)
@@ -61,7 +70,7 @@ export const runMainDirtyDispatchCheck = async (
       store: traceStore,
     },
   })
-  if (!detection.dirty) return false
+  if (!detection.dirty) return { parked: false }
 
   const recipe = recipeCatalog.get(MAIN_COMMITER_RECIPE)
   if (!recipe) {
@@ -75,7 +84,7 @@ export const runMainDirtyDispatchCheck = async (
     log(
       `[main-dirty] dispatch-time: integration branch ${integrationBranch} is dirty for task ${task.id}, but recipe '${MAIN_COMMITER_RECIPE}' is missing from the catalog; proceeding to dispatch (verify-time check still applies)`,
     )
-    return false
+    return { parked: false }
   }
 
   const resolution = await spawnOrAttachMainCommitter({
@@ -94,5 +103,5 @@ export const runMainDirtyDispatchCheck = async (
         : `attached to existing committer in status=${resolution.attachedToStatus}`
     })`,
   )
-  return true
+  return { parked: true, fixTaskId: resolution.fixTaskId, spawned: resolution.spawned }
 }

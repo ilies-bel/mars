@@ -95,7 +95,7 @@ describe('runMainDirtyDispatchCheck', () => {
       const logs: string[] = []
       const { runMainDirtyDispatchCheck } = await import('../main-dirty-dispatch')
 
-      const parked = await runMainDirtyDispatchCheck({
+      const result = await runMainDirtyDispatchCheck({
         task: testTask,
         integrationBranch: 'main',
         traceStore: nullTraceStore,
@@ -105,7 +105,12 @@ describe('runMainDirtyDispatchCheck', () => {
 
       // Must be parked — done committer is NOT satisfied as dedup; a fresh
       // committer was spawned and testTask is blocked behind it.
-      expect(parked).toBe(true)
+      expect(result.parked).toBe(true)
+      // Caller must know a fresh committer was spawned so it can emit task.queued.
+      if (result.parked) {
+        expect(result.spawned).toBe(true)
+        expect(result.fixTaskId).toBeTruthy()
+      }
 
       // Source task must be blocked (on the fresh committer).
       const testTaskAfter = await queue.getTask(testTask.id)

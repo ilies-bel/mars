@@ -131,6 +131,12 @@ export interface ReconcileSummary {
    * dead-thread eviction sweep at daemon start.
    */
   deadThreadsEvaporated: number
+  /**
+   * Stale `main-commiter` fix tasks in `queued` status with `blocked`
+   * dependents that were re-seeded via `task.queued` so the dispatch loop
+   * picks them up without waiting for the next daemon restart.
+   */
+  queuedCommittersReseeded: number
 }
 
 /**
@@ -174,4 +180,5 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   ghostSubscribersSwept: 0,
   orphanedChatRunsRecovered: 0,
   deadThreadsEvaporated: 0,
+  queuedCommittersReseeded: 0,
 })

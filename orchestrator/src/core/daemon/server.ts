@@ -863,17 +863,26 @@ export const startDaemon = async (
           const { runMainDirtyDispatchCheck } = await import(
             './main-dirty-dispatch'
           )
-          const parked = await runMainDirtyDispatchCheck({
+          const dirtyResult = await runMainDirtyDispatchCheck({
             task,
             integrationBranch,
             traceStore,
             recipeCatalog,
             log,
           })
-          if (parked) {
+          if (dirtyResult.parked) {
             // Source is now `blocked` with an edge to a (new or existing)
             // main-commiter. Skip dispatching the workflow — its first step
             // (setup) would just hit the same condition.
+            //
+            // When a FRESH committer was spawned, emit task.queued for it so
+            // the dispatch loop picks it up immediately. Without this, the
+            // committer row sits in `queued` forever unless the daemon restarts
+            // (reseed-dispatch re-seeds it at boot). The bus handler pushes the
+            // id into pendingImplement and calls drain().
+            if (dirtyResult.spawned) {
+              bus.emit('task.queued', { taskId: dirtyResult.fixTaskId })
+            }
             return
           }
         } catch (err) {
@@ -4030,6 +4039,61 @@ export const startDaemon = async (
     })()
   }, STALE_MERGING_SWEEP_MS)
   staleMergingSweep.unref()
+
+  // ── Stale queued-committer sweep ─────────────────────────────────────────
+  // Periodically re-seeds `main-commiter` fix tasks stuck in `queued` with
+  // `blocked` dependents whose `updated_at` exceeds the 15-minute threshold.
+  // This mirrors the boot-time `queued-committer-reseed` reconciler and covers
+  // the runtime case: the reconciler fires once at boot, but the committer can
+  // be spawned long after boot (e.g. when dirty-main is first detected mid-run).
+  // Emitting `task.queued` on the bus triggers the handler that pushes the id
+  // into `pendingImplement` and calls `drain()`. The primary fix (emitting
+  // `task.queued` immediately on spawn in `dispatchImplement`) eliminates the
+  // gap for new daemons; this sweep is belt-and-suspenders for any race window
+  // or daemon that predates that fix. .unref() so it never prevents shutdown.
+  const STALE_QUEUED_COMMITTER_SWEEP_MS = 5 * 60_000
+  const STALE_QUEUED_COMMITTER_THRESHOLD_MS = 15 * 60_000
+  const staleQueuedCommitterSweep = setInterval(() => {
+    void (async () => {
+      try {
+        const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
+          '../lib/main-dirty'
+        )
+        const { getDefaultDomainTaskStore: getDomainStore } = await import('../store/task-store')
+        const threshold = new Date(Date.now() - STALE_QUEUED_COMMITTER_THRESHOLD_MS).toISOString()
+        const r = await getDomainStore().query(
+          `SELECT DISTINCT t.id AS id, t.recovery_payload AS recovery_payload
+             FROM tasks t
+             JOIN task_blockers tb ON tb.blocker_task_id = t.id
+             JOIN tasks dep ON dep.id = tb.task_id
+            WHERE t.kind = 'fix'
+              AND t.status = 'queued'
+              AND dep.status = 'blocked'
+              AND t.updated_at < ?`,
+          [threshold],
+        )
+        let reseeded = 0
+        for (const row of r.rows as unknown as Array<{
+          id: string
+          recovery_payload: string | null
+        }>) {
+          if (parseMainCommiterPayload(row.recovery_payload)?.recipe !== MAIN_COMMITER_RECIPE) {
+            continue
+          }
+          bus.emit('task.queued', { taskId: row.id })
+          reseeded++
+        }
+        if (reseeded > 0) {
+          log(
+            `[stale-queued-committer-sweep] re-seeded ${reseeded} stale queued main-commiter(s) with blocked dependents`,
+          )
+        }
+      } catch (err) {
+        log(`[stale-queued-committer-sweep] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, STALE_QUEUED_COMMITTER_SWEEP_MS)
+  staleQueuedCommitterSweep.unref()
 
   // ── Reflect-recommended detector sweep ───────────────────────────────────
   // Periodically evaluates reflect-worthiness (KPI drift, failure clusters,

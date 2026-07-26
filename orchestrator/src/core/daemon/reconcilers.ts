@@ -322,6 +322,95 @@ const failedCommitterDependentRelease: Reconciler = {
 }
 
 /**
+ * 5c. Queued-committer reseed — re-seed `main-commiter` fix tasks that are
+ *     stuck in `queued` with `blocked` dependents and have not been updated for
+ *     longer than QUEUED_COMMITTER_THRESHOLD_MS (default 15 min). This covers
+ *     the gap left by the 2026-07-25 incident:
+ *
+ *     `spawnOrAttachMainCommitter` now emits `task.queued` immediately after
+ *     spawning (fixing the primary root cause), but the periodic/runtime sweep
+ *     here is an additional safety net for any daemon that was already running
+ *     with an older binary or whose bus event was somehow missed.
+ *
+ *     How the incident happened: `dispatchImplement` spawned the committer but
+ *     did not emit `task.queued` for it. The boot-time `reseed-dispatch` had
+ *     already run before the committer was created, so it was never seeded.
+ *     The `pollFallback` (30-second idle re-seed) was also suppressed because
+ *     three `awaiting-human` tasks held implement slots in-flight.
+ *
+ *     Action: emit `task.queued` for each stale queued committer. The bus
+ *     handler in server.ts pushes the id into `pendingImplement` and calls
+ *     `drain()` — exactly what `reseed-dispatch` does at boot.
+ *
+ *     Why BEFORE reseed-dispatch: so any freshly re-seeded committer is picked
+ *     up by the same boot's dispatch loop, consistent with `failed-committer-
+ *     dependent-release`. Must also run on the periodic sweep (see server.ts
+ *     `staleQueuedCommitterSweep`), not just at boot, because the incident
+ *     proves the daemon can be running without a restart for 14+ hours.
+ *
+ *     Idempotent: emitting `task.queued` when the committer is already
+ *     in-flight is a no-op (the bus handler guards `tracker.isInFlight`).
+ *     Swallows its own errors like its neighbours.
+ */
+const QUEUED_COMMITTER_THRESHOLD_MS = 15 * 60_000
+
+const queuedCommitterReseed: Reconciler = {
+  name: 'queued-committer-reseed',
+  async run({ log, bus }) {
+    try {
+      const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
+        '../lib/main-dirty'
+      )
+      const store = getDefaultDomainTaskStore()
+
+      const threshold = new Date(Date.now() - QUEUED_COMMITTER_THRESHOLD_MS).toISOString()
+
+      // Queued fix tasks that still have at least one `blocked` dependent and
+      // whose updated_at exceeds the stale threshold. The main-commiter filter
+      // is applied per-row (recovery_payload is the only reliable marker).
+      const r = await store.query(
+        `SELECT DISTINCT t.id AS id, t.recovery_payload AS recovery_payload
+           FROM tasks t
+           JOIN task_blockers tb ON tb.blocker_task_id = t.id
+           JOIN tasks dep ON dep.id = tb.task_id
+          WHERE t.kind = 'fix'
+            AND t.status = 'queued'
+            AND dep.status = 'blocked'
+            AND t.updated_at < ?`,
+        [threshold],
+      )
+
+      let reseeded = 0
+      for (const row of r.rows as unknown as Array<{
+        id: string
+        recovery_payload: string | null
+      }>) {
+        if (
+          parseMainCommiterPayload(row.recovery_payload)?.recipe !==
+          MAIN_COMMITER_RECIPE
+        ) {
+          continue
+        }
+        bus.emit('task.queued', { taskId: row.id })
+        log(
+          `[reconcile] queued-committer-reseed: re-seeded stale queued main-commiter ${row.id}`,
+        )
+        reseeded++
+      }
+      if (reseeded > 0) {
+        log(
+          `[reconcile] queued-committer-reseed: re-seeded ${reseeded} stale queued main-commiter(s) with blocked dependents`,
+        )
+      }
+      return { queuedCommittersReseeded: reseeded }
+    } catch (err) {
+      log(`[reconcile] queued-committer-reseed failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * 5. Requeue stale-running — tasks that were `running` when the prior daemon
  *    died are re-queued from setup (no retry budget burn). Must run BEFORE
  *    reseed-dispatch so that orphaned 'running' rows are converted to 'queued'
@@ -624,6 +713,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   orphanedBlockedScan,
   recoveryDonePropagation,
   failedCommitterDependentRelease,
+  queuedCommitterReseed,
   requeueStaleRunning,
   reseedDispatch,
   orphanSpanSweep,

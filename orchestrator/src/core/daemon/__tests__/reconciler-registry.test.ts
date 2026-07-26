@@ -32,6 +32,7 @@ describe('RECONCILERS registry', () => {
       'orphaned-blocked-scan',
       'recovery-done-propagation',
       'failed-committer-dependent-release',
+      'queued-committer-reseed',
       'requeue-stale-running',
       'reseed-dispatch',
       'orphan-span-sweep',
