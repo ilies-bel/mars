@@ -266,6 +266,40 @@ describe('digestTask — environmental failure markers', () => {
     expect(d.environmentalFailureReason).toContain('synthetic')
   })
 
+  it('detects verify:branch-contaminated task error as environmental failure', () => {
+    // The contamination guard fires at the orchestrator's verify step, after Claude
+    // exits normally — so there are no conversation markers. The signal lives in the
+    // task's error string, passed as the optional third argument to digestTask.
+    const contaminationError =
+      'task mars-abc verify:branch-contaminated: branch HEAD a1b2c3d is already an ancestor of main — task branch was repointed onto the integration timeline (parallel recovery/restart race)'
+    const d = digestTask('task-1', [], contaminationError)
+    expect(d.environmentalFailure).toBe(true)
+    expect(d.environmentalFailureReason).toMatch(/branch-contaminated/)
+  })
+
+  it('ignores taskError that does not contain verify:branch-contaminated', () => {
+    // A generic error from the coder should NOT be classified environmental.
+    const d = digestTask('task-1', [], 'TypeScript error: property foo does not exist on type Bar')
+    expect(d.environmentalFailure).toBe(false)
+    expect(d.environmentalFailureReason).toBeNull()
+  })
+
+  it('combines branch-contaminated task error with conversation markers', () => {
+    // When both a synthetic assistant and a branch-contaminated error are present,
+    // both reasons should appear in the combined reason string.
+    const conversation: ClaudeEvent[] = [
+      {
+        type: 'assistant',
+        message: { role: 'assistant', model: '<synthetic>', content: [] },
+      } as unknown as ClaudeEvent,
+    ]
+    const contaminationError = 'verify:branch-contaminated: branch HEAD abc is ancestor of main'
+    const d = digestTask('task-1', conversation, contaminationError)
+    expect(d.environmentalFailure).toBe(true)
+    expect(d.environmentalFailureReason).toContain('synthetic')
+    expect(d.environmentalFailureReason).toContain('branch-contaminated')
+  })
+
   it('returns environmentalFailure=false for a normal conversation', () => {
     const conversation: ClaudeEvent[] = [
       readEvent('r1', 'foo.ts'),

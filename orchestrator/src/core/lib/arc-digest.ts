@@ -34,6 +34,11 @@ export interface TaskDigest {
    *   rate_limit_info.status==='rejected' counts; an 'allowed' event is ignored.
    *   Secondary signal: result with is_error=true and api_error_status===429.
    * - synthetic assistant: an assistant message with message.model === '<synthetic>'
+   * - verify:branch-contaminated: the task's error string contains this literal,
+   *   meaning the orchestrator's verify-phase contamination guard detected that
+   *   the task branch was externally repointed onto the integration timeline
+   *   (parallel recovery/restart race). Passed via the optional taskError argument
+   *   to digestTask — the contamination is orchestrator-side, not in the conversation.
    */
   environmentalFailureReason: string | null
   /** Total assistant+user event count. */
@@ -126,8 +131,20 @@ const extractToolResults = (
 /**
  * Compute a mechanical, LLM-free digest for one task's ClaudeEvent[] conversation.
  * No I/O, no external calls. Safe to call on an empty conversation.
+ *
+ * @param taskId - The task identifier.
+ * @param conversation - The raw Claude CLI event stream for this task.
+ * @param taskError - Optional task error string from the database (tasks.error).
+ *   Used to detect orchestrator-level environmental failures that leave no trace
+ *   in the conversation — specifically `verify:branch-contaminated`, which fires
+ *   in the verify phase after Claude exits and therefore never appears as a
+ *   ClaudeEvent.
  */
-export const digestTask = (taskId: string, conversation: ClaudeEvent[]): TaskDigest => {
+export const digestTask = (
+  taskId: string,
+  conversation: ClaudeEvent[],
+  taskError?: string | null,
+): TaskDigest => {
   const readCounts = new Map<string, number>()
   const editCounts = new Map<string, number>()
   const bashCounts = new Map<string, number>()
@@ -148,6 +165,17 @@ export const digestTask = (taskId: string, conversation: ClaudeEvent[]): TaskDig
   // 'allowed' events are informational and must not flag environmentalFailure.
   if (extractQuotaRejected(conversation) !== null) {
     envReasons.push('rate_limit_event rejected or api_error_status=429')
+  }
+
+  // ── Environmental failure: branch-contamination guard (orchestrator-side) ─
+  // The verify:branch-contaminated failure is detected by the orchestrator's
+  // verify step AFTER Claude exits — it never appears as a ClaudeEvent.
+  // The signal lives in the task's error field (tasks.error in the DB), which
+  // contains the literal "verify:branch-contaminated" when the contamination
+  // guard fires. This classifies the parallel-recovery/restart-race condition
+  // as environmental rather than a genuine coding failure.
+  if (taskError?.includes('verify:branch-contaminated')) {
+    envReasons.push('branch repointed onto integration timeline (verify:branch-contaminated)')
   }
 
   for (const event of conversation) {
@@ -231,9 +259,16 @@ export const digestTask = (taskId: string, conversation: ClaudeEvent[]): TaskDig
 
 /**
  * Compute mechanical digests for all tasks in an arc.
+ *
+ * Each task entry may optionally carry an `error` string (the tasks.error
+ * database column) so that orchestrator-level failures such as
+ * `verify:branch-contaminated` — which leave no trace in the ClaudeEvent[]
+ * conversation — can be classified as environmental rather than coding
+ * failures. The field is optional; existing callers that omit it are
+ * unaffected.
  */
 export const digestArc = (
-  tasks: ReadonlyArray<{ taskId: string; conversation: ClaudeEvent[] }>,
+  tasks: ReadonlyArray<{ taskId: string; conversation: ClaudeEvent[]; error?: string | null }>,
 ): ArcDigest => ({
-  tasks: tasks.map((t) => digestTask(t.taskId, t.conversation)),
+  tasks: tasks.map((t) => digestTask(t.taskId, t.conversation, t.error)),
 })
