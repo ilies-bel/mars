@@ -350,6 +350,22 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: WORKTREE_MISSING_ACTIONS,
       },
       {
+        signature: 'verify:has-diff/branch-drift',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'Verify aborted: task worktree is on the wrong branch',
+        verboseReason:
+          'The verify hygiene check found a different branch checked out in the task worktree than the task branch recorded in the database. This is an infrastructure condition, not a coder error — the task can be restarted.',
+        actions: WORKTREE_MISSING_ACTIONS,
+      },
+      {
+        signature: 'verify:has-diff/stale-rebase-state',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'Verify aborted: stale rebase state in task worktree',
+        verboseReason:
+          'The verify hygiene check detected a stale git rebase state directory (rebase-merge or rebase-apply) in the task worktree, left over from a previously interrupted rebase. This is an infrastructure condition, not a coder error — the task can be restarted.',
+        actions: WORKTREE_MISSING_ACTIONS,
+      },
+      {
         signature: 'verify:has-diff/unclassified',
         staticEncodable: notEncodable('orchestration'),
         warmTitle: 'The coder did not produce any changes',

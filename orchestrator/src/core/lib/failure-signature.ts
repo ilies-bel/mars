@@ -138,6 +138,20 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     match: /worktree path .+ no longer exists/i,
   },
   {
+    // assertWorktreeHygieneForVerify fires this when the worktree has a
+    // different branch checked out than the task branch recorded in the DB.
+    // Infrastructure condition — task can be restarted.
+    errorClass: 'branch-drift',
+    match: /verify hygiene: worktree on wrong branch, expected/i,
+  },
+  {
+    // assertWorktreeHygieneForVerify fires this when a .git/rebase-merge or
+    // .git/rebase-apply state directory is still present in the worktree from
+    // a previous interrupted rebase. Infrastructure condition — restart.
+    errorClass: 'stale-rebase-state',
+    match: /verify hygiene: stale rebase state present at/i,
+  },
+  {
     errorClass: 'uncommitted-changes',
     // Matches both legacy wording (`merge target ... has uncommitted changes`)
     // and the new fast-forward-feasibility wording emitted by

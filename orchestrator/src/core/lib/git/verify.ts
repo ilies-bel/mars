@@ -7,6 +7,7 @@ import {
   resolveGitBin,
   type TraceCtx,
 } from './internal'
+import { assertWorktreeHygieneForVerify } from '../verify'
 
 /**
  * The output marker emitted by the npm decoy `tsc` placeholder when
@@ -475,6 +476,19 @@ export const verifyChanges = async (
   const verifyCtx: TraceCtx | undefined = args.traceCtx
     ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'verify' }
     : undefined
+
+  // Pre-verify hygiene probe: validate that the worktree directory still
+  // exists, the expected branch is checked out, and no stale rebase state is
+  // present.  Any failure here aborts immediately — the diff / typecheck /
+  // test sub-checks below would either produce misleading output or crash.
+  if (args.branch) {
+    try {
+      await assertWorktreeHygieneForVerify(args.cwd, args.branch, verifyCtx)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { passed: false, steps: [{ name: 'has-diff', passed: false, output: msg }] }
+    }
+  }
 
   // Declare results before the has-diff block so the passing gate can be
   // included in the output (making gate-outcomes show what actually ran).
