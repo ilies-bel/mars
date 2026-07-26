@@ -124,7 +124,10 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--register-project',
   // `mars init --start`: print daemon URL non-interactively (useful with --yes).
   '--start',
-  // `mars task add --live`: sugar for `--workflow live` (park-at-code live entry).
+  // `mars task add --live`: sugar for `--workflow live`. DISABLED — the live
+  // pipeline is withheld while HITL is being refined; the flag still parses so
+  // it can be rejected with a clear error rather than falling through to
+  // "unknown flag" or being joined into the literal prompt text.
   '--live',
   '--help',
   '-h',
