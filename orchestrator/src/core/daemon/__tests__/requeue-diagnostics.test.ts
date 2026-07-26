@@ -22,8 +22,12 @@ import type { StepRecord } from '@mars/workflow'
 import {
   computeStepWindow,
   computeAttemptDensity,
+  classifyRequeueBreach,
+  DENSITY_FLOOR_PER_MIN,
+  BLOCKED_WAIT_RATIO,
 } from '../requeue-diagnostics'
 import type { StepWindow } from '../requeue-diagnostics'
+import type { Task } from '../../queue'
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers shared across suites
@@ -211,6 +215,132 @@ describe('computeAttemptDensity', () => {
     const spanMs = 60_000
     const w: StepWindow = { firstAttemptStartedAt: 0, lastAttemptStartedAt: spanMs, spanMs, attemptCount: 7 }
     expect(computeAttemptDensity(w)).toBeCloseTo(7)
+  })
+})
+
+// ──────────────────────────────────────────────────────────────────────────────
+// classifyRequeueBreach — pure function, no DB setup needed
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Minimal Task fixture: classifier only uses t.id in reason strings.
+const makeTask = (id: string = 'task-abc'): Task =>
+  ({ id } as unknown as Task)
+
+// Build a StepWindow fixture for density tests.
+const makeWindow = (attemptCount: number, spanMs: number): StepWindow => ({
+  firstAttemptStartedAt: 0,
+  lastAttemptStartedAt: spanMs,
+  spanMs,
+  attemptCount,
+})
+
+describe('classifyRequeueBreach', () => {
+  it('exports DENSITY_FLOOR_PER_MIN and BLOCKED_WAIT_RATIO as numbers', () => {
+    expect(typeof DENSITY_FLOOR_PER_MIN).toBe('number')
+    expect(typeof BLOCKED_WAIT_RATIO).toBe('number')
+    expect(DENSITY_FLOOR_PER_MIN).toBeGreaterThan(0)
+    expect(BLOCKED_WAIT_RATIO).toBeGreaterThan(0)
+    expect(BLOCKED_WAIT_RATIO).toBeLessThanOrEqual(1)
+  })
+
+  it('classifies as retry-churn when density is at the floor threshold', () => {
+    // Exactly DENSITY_FLOOR_PER_MIN attempts in 1 minute → density = floor.
+    const w = makeWindow(DENSITY_FLOOR_PER_MIN, 60_000)
+    const result = classifyRequeueBreach(makeTask(), w, 0, 120_000)
+
+    expect(result.kind).toBe('retry-churn')
+    expect(result.reason).toContain('attempt density')
+  })
+
+  it('classifies as retry-churn when density is well above the floor', () => {
+    // 60 attempts over 1 minute → density = 60/min (far above default floor of 1).
+    const w = makeWindow(60, 60_000)
+    const result = classifyRequeueBreach(makeTask('task-hot'), w, 0, 120_000)
+
+    expect(result.kind).toBe('retry-churn')
+    expect(result.reason).toContain('task-hot')
+  })
+
+  it('classifies as blocked-wait when blocked time dominates elapsed time', () => {
+    // 2 attempts over 120 minutes (sparse → density < 1/min), but blocked for
+    // 70% of elapsed time → exceeds the default BLOCKED_WAIT_RATIO of 0.5.
+    const elapsedMs = 120 * 60_000
+    const blockedWaitMs = Math.round(elapsedMs * 0.7) // 70%
+    const w = makeWindow(2, elapsedMs - 1_000) // span just under elapsed
+
+    // density = 2 / 120 = 0.017/min < 1 → not retry-churn
+    const result = classifyRequeueBreach(makeTask('task-blocked'), w, blockedWaitMs, elapsedMs)
+
+    expect(result.kind).toBe('blocked-wait')
+    expect(result.reason).toContain('task-blocked')
+    expect(result.reason).toContain('blocked')
+  })
+
+  it('classifies as blocked-wait exactly at the ratio boundary', () => {
+    // blocked for exactly BLOCKED_WAIT_RATIO of elapsed time.
+    const elapsedMs = 60_000
+    const blockedWaitMs = Math.round(elapsedMs * BLOCKED_WAIT_RATIO) // exactly at ratio
+    // density: 0 (window null) → not retry-churn
+    const result = classifyRequeueBreach(makeTask(), null, blockedWaitMs, elapsedMs)
+
+    expect(result.kind).toBe('blocked-wait')
+  })
+
+  it('classifies as queue-starvation when attempts are sparse and no blocked wait', () => {
+    // 1 attempt, no blocked time, low density — queue starved.
+    const w = makeWindow(1, 0) // single attempt with zero span
+    // density = 1/1 = 1 (equals floor) → that would be retry-churn...
+    // Use 2 attempts over a long span to keep density below the floor.
+    const wSparse = makeWindow(2, 10 * 60_000) // 2 attempts over 10 minutes → 0.2/min
+    const result = classifyRequeueBreach(makeTask('task-starved'), wSparse, 0, 10 * 60_000)
+
+    expect(result.kind).toBe('queue-starvation')
+    expect(result.reason).toContain('task-starved')
+  })
+
+  it('classifies as queue-starvation for exactly 0 attempts (null window)', () => {
+    // null window → attemptCount = 0, density = 0, blockedWaitMs = 0
+    const result = classifyRequeueBreach(makeTask(), null, 0, 30_000)
+
+    expect(result.kind).toBe('queue-starvation')
+  })
+
+  it('classifies as long-running when density is low, no excess blocking, and more than 2 attempts', () => {
+    // 5 attempts over 3 hours → density ≈ 0.028/min (well below 1/min).
+    // blockedWaitMs = 10 minutes out of 180 minutes elapsed = ~5.6% → below 50% ratio.
+    const elapsedMs = 3 * 60 * 60_000
+    const blockedWaitMs = 10 * 60_000 // only 10 minutes blocked
+    const w = makeWindow(5, elapsedMs - 1_000)
+
+    const result = classifyRequeueBreach(makeTask('task-slow'), w, blockedWaitMs, elapsedMs)
+
+    expect(result.kind).toBe('long-running')
+    expect(result.reason).toContain('task-slow')
+    expect(result.reason).toContain('5 attempt(s)')
+  })
+
+  it('includes the task id in the reason string for all kinds', () => {
+    const id = 'mars-deadbeef'
+
+    // retry-churn
+    expect(
+      classifyRequeueBreach(makeTask(id), makeWindow(60, 60_000), 0, 120_000).reason,
+    ).toContain(id)
+
+    // blocked-wait
+    expect(
+      classifyRequeueBreach(makeTask(id), null, 50_000, 60_000).reason,
+    ).toContain(id)
+
+    // queue-starvation
+    expect(
+      classifyRequeueBreach(makeTask(id), null, 0, 30_000).reason,
+    ).toContain(id)
+
+    // long-running
+    expect(
+      classifyRequeueBreach(makeTask(id), makeWindow(5, 3 * 60 * 60_000), 5_000, 3 * 60 * 60_000).reason,
+    ).toContain(id)
   })
 })
 

@@ -21,6 +21,27 @@
 
 import type { StepRecord } from '@mars/workflow'
 import { resolveQueueClient, ensureQueueSchema } from '../queue'
+import type { Task } from '../queue'
+
+// ── Tuning constants ──────────────────────────────────────────────────────────
+
+/**
+ * Minimum attempt density (attempts per minute) that classifies a breach as
+ * a hot retry churn. Configurable via `MARS_REQUEUE_DENSITY_FLOOR_PER_MIN`;
+ * defaults to 1 attempt/minute.
+ */
+export const DENSITY_FLOOR_PER_MIN: number = Number(
+  process.env.MARS_REQUEUE_DENSITY_FLOOR_PER_MIN ?? 1,
+)
+
+/**
+ * Minimum fraction of elapsed time spent in `status='blocked'` that
+ * classifies a breach as a blocked-wait pattern. Configurable via
+ * `MARS_REQUEUE_BLOCKED_RATIO`; defaults to 0.5 (50%).
+ */
+export const BLOCKED_WAIT_RATIO: number = Number(
+  process.env.MARS_REQUEUE_BLOCKED_RATIO ?? 0.5,
+)
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -145,4 +166,90 @@ export const computeBlockedWaitMs = async (
   }
 
   return totalMs
+}
+
+// ── Breach classifier ─────────────────────────────────────────────────────────
+
+/**
+ * Discriminated union describing why a requeue-ceiling breach occurred.
+ *
+ * - `retry-churn`       — attempt density is above the floor; the task is in a
+ *                         tight hot loop (≥ {@link DENSITY_FLOOR_PER_MIN} per min).
+ * - `blocked-wait`      — the majority of elapsed time was spent in
+ *                         `status='blocked'` (≥ {@link BLOCKED_WAIT_RATIO} of
+ *                         `elapsedMs`).
+ * - `queue-starvation`  — very few attempts (≤ 2), no blocked wait, but the
+ *                         task hasn't made progress — the queue may be starved.
+ * - `long-running`      — a single healthy attempt is still executing slowly;
+ *                         not a retry churn.
+ */
+export type RequeueBreachClass = {
+  kind: 'retry-churn' | 'blocked-wait' | 'queue-starvation' | 'long-running'
+  reason: string
+}
+
+/**
+ * Classify a requeue-ceiling breach into an actionable kind.
+ *
+ * This is a **pure function** — it accepts pre-computed diagnostics and has
+ * no side effects or DB calls.
+ *
+ * Priority order:
+ * 1. High attempt density → `retry-churn`
+ * 2. High blocked-wait ratio → `blocked-wait`
+ * 3. Very few attempts with zero blocked wait → `queue-starvation`
+ * 4. Otherwise → `long-running`
+ *
+ * @param t           - The task being evaluated (used for diagnostics labels).
+ * @param window      - Pre-computed step window from {@link computeStepWindow}
+ *                      (null if no steps have been attempted).
+ * @param blockedWaitMs - Total ms the task has spent in `status='blocked'`,
+ *                        from {@link computeBlockedWaitMs}.
+ * @param elapsedMs   - Total elapsed ms since the first attempt (or task
+ *                      creation); the caller computes this from the ceiling
+ *                      anchor.
+ */
+export const classifyRequeueBreach = (
+  t: Task,
+  window: StepWindow | null,
+  blockedWaitMs: number,
+  elapsedMs: number,
+): RequeueBreachClass => {
+  const density = window != null ? computeAttemptDensity(window) : 0
+  const attemptCount = window?.attemptCount ?? 0
+
+  if (density >= DENSITY_FLOOR_PER_MIN) {
+    return {
+      kind: 'retry-churn',
+      reason:
+        `task ${t.id}: attempt density ${density.toFixed(2)}/min ≥ floor ` +
+        `${DENSITY_FLOOR_PER_MIN}/min (${attemptCount} attempt(s))`,
+    }
+  }
+
+  if (elapsedMs > 0 && blockedWaitMs / elapsedMs >= BLOCKED_WAIT_RATIO) {
+    const pct = Math.round((blockedWaitMs / elapsedMs) * 100)
+    return {
+      kind: 'blocked-wait',
+      reason:
+        `task ${t.id}: ${pct}% of elapsed time blocked ` +
+        `(${blockedWaitMs}ms blocked / ${elapsedMs}ms elapsed)`,
+    }
+  }
+
+  if (attemptCount <= 2 && blockedWaitMs === 0) {
+    return {
+      kind: 'queue-starvation',
+      reason:
+        `task ${t.id}: ${attemptCount} attempt(s) with no blocked wait — ` +
+        `sparse progress suggests queue starvation`,
+    }
+  }
+
+  return {
+    kind: 'long-running',
+    reason:
+      `task ${t.id}: ${attemptCount} attempt(s) over ` +
+      `${Math.round(elapsedMs / 60_000)}m — healthy attempt or slow progress`,
+  }
 }
