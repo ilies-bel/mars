@@ -534,3 +534,7 @@ _Avoid_: continuous mode, feed mode, sms mode, single-conversation mode
 **Subject**:
 One topic under discussion in chat, backed one-to-one by a chat thread carrying its own freshly-loaded agent context.
 _Avoid_: topic, segment, conversation, thread segment
+
+**Active subject**:
+The single Subject currently bound to the composer, whose thread receives the operator's next turn.
+_Avoid_: current thread, selected thread, focused subject, live subject
