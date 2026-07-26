@@ -238,6 +238,13 @@ export const ACTION_QUEUE_KINDS = [
   // operator is aware without queue disruption. Level-triggered (ADR-0048):
   // idempotent raises bump seen_count. Cleared when the operator acknowledges.
   'env-incident',
+  // A task has been sitting in 'queued' status past MARS_STALE_QUEUED_MS
+  // (default 10 min) despite the daemon being healthy. One row per stale task
+  // (signature-keyed 'stale-queued:<taskId>'); idempotent re-raises bump
+  // seen_count. Payload carries queuedAgeMs, activeWorkerCount, queueDepth,
+  // and dispatchDecisionSummary so the operator can diagnose pool saturation
+  // vs. dispatcher stall. Cleared automatically once the task leaves 'queued'.
+  'stale-queued',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

@@ -4421,6 +4421,44 @@ export const startDaemon = async (
   }, PHANTOM_WATCHDOG_MS)
   phantomWatchdog.unref()
 
+  // ── Stale-queued watchdog ─────────────────────────────────────────────────
+  // Periodically scans for tasks that have been sitting in 'queued' past
+  // MARS_STALE_QUEUED_MS (default 10 min) and raises a 'stale-queued'
+  // action-queue alert for each one. The alert payload includes the queued age,
+  // active worker count, and total queue depth so the operator can tell whether
+  // the pool is saturated or the dispatcher is stuck.
+  //
+  // Duplicate suppression: raiseActionQueueItem deduplicates on
+  // sha1('stale-queued:<taskId>'), so repeated sweeps while the task remains
+  // queued bump seen_count rather than spawning sibling rows.
+  //
+  // Runs on the same interval as the phantom-task watchdog (MARS_PHANTOM_WATCHDOG_MS).
+  // .unref() so the timer never prevents shutdown.
+  const { runStaleQueuedSweep } = await import('./stale-queued-watchdog')
+  const staleQueuedWatchdog = setInterval(() => {
+    void (async () => {
+      try {
+        const activeWorkerCount = tracker.inFlightCount()
+        const queuedTasks = await listTasks('queued')
+        const queueDepth = queuedTasks.length
+        const { alerted } = await runStaleQueuedSweep({
+          activeWorkerCount,
+          queueDepth,
+          dispatchDecisionSummary: [],
+        })
+        if (alerted.length > 0) {
+          log(
+            `[stale-queued-watchdog] raised alert for ${alerted.length} stale-queued task(s): ${alerted.join(', ')}`,
+          )
+          viewStreamHub.broadcast('action-queue')
+        }
+      } catch (err) {
+        log(`[stale-queued-watchdog] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, PHANTOM_WATCHDOG_MS)
+  staleQueuedWatchdog.unref()
+
   // ── Observability telemetry sweeper ───────────────────────────────────────
   // Periodically deletes trace_events rows older than three days so the
   // state store stays bounded across multi-day sessions. The sweep reuses

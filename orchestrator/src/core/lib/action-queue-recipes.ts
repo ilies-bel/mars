@@ -686,6 +686,29 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
       { op: 'restart', label: 'Restart task', style: 'primary' },
     ],
   },
+
+  // ── Dispatch / queue ────────────────────────────────────────────────────────
+
+  'stale-queued': {
+    humanSummary: (ctx) => {
+      const taskId = str(ctx.payload['taskId']) || ctx.entityId
+      const ageMs = ctx.payload['queuedAgeMs']
+      const ageMin = typeof ageMs === 'number' ? Math.round(ageMs / 60_000) : '?'
+      return `Task ${taskId} has been waiting in the queue for ${ageMin} min — the worker pool may be saturated or the dispatcher may be stuck.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      taskId: str(ctx.payload['taskId']),
+      queuedAgeMs: ctx.payload['queuedAgeMs'],
+      activeWorkerCount: ctx.payload['activeWorkerCount'],
+      queueDepth: ctx.payload['queueDepth'],
+      dispatchDecisionSummary: ctx.payload['dispatchDecisionSummary'],
+    }),
+    verbs: [
+      { op: 'restart', label: 'Restart task', style: 'primary' },
+    ],
+  },
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
