@@ -647,7 +647,25 @@ export async function __execSchemaBatch(
 ): Promise<void> {
   const backend = backendOf.get(client)
   if (!backend) {
-    throw new Error('db: __execSchemaBatch requires a client created by openDb')
+    // A client that never passed through `openDb` (or reached us across a
+    // duplicated module instance, where this WeakMap is not the one it was
+    // registered in) cannot use the single-transaction fast path.
+    //
+    // Fall back to `client.batch` — exactly what `ensureSchema` did before the
+    // fast path existed. It costs the deadlock guarantee documented above: the
+    // re-entry guard means the DDL runs in two transactions with a window
+    // between them where the advisory lock is not held. That is a narrow,
+    // startup-only race.
+    //
+    // Throwing instead is far worse, and was: this threw on the `code` step of
+    // ordinary tasks, so EVERY task in the queue died on dispatch and nothing
+    // completed for hours. Degrading beats halting the orchestrator.
+    console.warn(
+      'db: __execSchemaBatch got a client not registered by openDb; ' +
+        'falling back to client.batch (schema DDL runs in two transactions)',
+    )
+    await client.batch(stmts)
+    return
   }
   const normalized = stmts.map((s) => normalizeStatement(s))
   await backend.transaction(async (query) => {
