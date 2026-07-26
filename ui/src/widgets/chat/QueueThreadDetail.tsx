@@ -371,7 +371,7 @@ const LearnedRecipeSection = ({ failureSignature }: { failureSignature: string }
 
   return (
     <div data-testid="learned-recipe-section">
-      <dt className="mb-1 text-[10px] uppercase tracking-wider text-iron">
+      <dt className="mb-2 border-b border-iron/20 pb-1 text-[10px] uppercase tracking-wider text-iron">
         Auto-run rule
       </dt>
       <dd className="flex items-center gap-3">

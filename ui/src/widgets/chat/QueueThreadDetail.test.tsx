@@ -248,6 +248,19 @@ describe('QueueThreadDetail – section heading border treatment', () => {
     expect(dtMatch).not.toBeNull()
     expect(dtMatch![0]).toContain('border-b')
   })
+
+  it('Auto-run rule heading carries a border-b divider class', () => {
+    const recipe: LearnedRecipe = {
+      failureSignature: 'verify:typecheck',
+      actionOp: 'restart',
+      learnedAt: '2026-01-01T00:00:00.000Z',
+    }
+    // LearnedRecipeSection only renders when a recipe is stored for the item's signature.
+    const html = renderDetail(BASE_ITEM, [recipe])
+    const dtMatch = html.match(/<dt[^>]*>[^<]*Auto-run rule[^<]*<\/dt>/)
+    expect(dtMatch).not.toBeNull()
+    expect(dtMatch![0]).toContain('border-b')
+  })
 })
 
 // ---------------------------------------------------------------------------
