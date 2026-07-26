@@ -36,6 +36,16 @@ vi.mock('../chat-skills', async (importOriginal) => {
   return { ...actual, discoverSkills: vi.fn().mockResolvedValue([]) }
 })
 
+// Mock the MCP bridge for the same reason — it reads .mcp.json and spawns servers.
+const mcpMock = vi.hoisted(() => ({ getTools: vi.fn(), call: vi.fn(), killAll: vi.fn() }))
+vi.mock('../chat-mcp', () => ({
+  ChatMcpManager: class {
+    getTools = mcpMock.getTools
+    call = mcpMock.call
+    killAll = mcpMock.killAll
+  },
+}))
+
 // Mock the shell-tool executor so no real subprocess is spawned.
 vi.mock('../../lib/git/claude', () => ({
   resolveClaudeBin: vi.fn(() => '/usr/bin/claude'),
@@ -108,6 +118,7 @@ beforeEach(async () => {
   mockLoadAuth.mockResolvedValue({ accessToken: 'tok', accountId: 'acc', refreshToken: 'ref' })
   const chatSkills = await import('../chat-skills')
   vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
+  mcpMock.getTools.mockResolvedValue([])
   // Default: the API run completes immediately with one message.
   mockStream.mockImplementation(async (opts) => {
     opts.onEvent(messageEvent('ok'))

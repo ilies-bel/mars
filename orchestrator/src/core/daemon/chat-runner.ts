@@ -6,7 +6,8 @@
  * The daemon owns the whole agent loop: it replays the thread transcript as
  * Responses input items on every turn (`store: false` — no server-side session,
  * nothing in the context window the daemon didn't put there), exposes the
- * function tools in `CHAT_TOOLS` (`shell`, `read_file`, `write_file`, `skill`),
+ * function tools in `CHAT_TOOLS` (`shell`, `read_file`, `write_file`, `skill`)
+ * plus every tool of the repo's `.mcp.json` servers (bridged via chat-mcp.ts),
  * executes tool calls itself, and feeds the outputs back until the model
  * produces a final message. The repo's `.claude/skills` index is appended to
  * the instructions so the agent can load any skill runbook on demand.
@@ -27,6 +28,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import { buildWorkerEnv, runSubprocessStreaming } from '../lib/git/claude'
+import { ChatMcpManager, type McpToolInfo } from './chat-mcp'
 import { buildSkillsSection, discoverSkills, loadSkill } from './chat-skills'
 import {
   appendMessage,
@@ -241,8 +243,35 @@ const SKILL_TOOL: FunctionToolDef = {
   },
 }
 
-/** The function tools the chat agent gets, in the order sent to the API. */
+/** The built-in function tools the chat agent gets, in the order sent to the API. */
 export const CHAT_TOOLS: FunctionToolDef[] = [SHELL_TOOL, READ_FILE_TOOL, WRITE_FILE_TOOL, SKILL_TOOL]
+
+/** Cap on MCP tool output fed back to the model (codegraph_explore returns verbatim source). */
+const MCP_OUTPUT_CHAR_CAP = 20_000
+/** Cap on an MCP tool description forwarded to the API. */
+const MCP_DESCRIPTION_CHAR_CAP = 2_000
+
+/**
+ * Map the repo's MCP tools to Responses function tools. A tool whose name
+ * collides with a built-in or an earlier server's tool is dropped — tool
+ * names are the only dispatch key. Exported for unit testing.
+ */
+export const buildMcpToolDefs = (mcpTools: readonly McpToolInfo[]): FunctionToolDef[] => {
+  const taken = new Set(CHAT_TOOLS.map((t) => t.name))
+  const defs: FunctionToolDef[] = []
+  for (const t of mcpTools) {
+    if (taken.has(t.name)) continue
+    taken.add(t.name)
+    defs.push({
+      type: 'function',
+      name: t.name,
+      description: truncate(t.description, MCP_DESCRIPTION_CHAR_CAP),
+      strict: false,
+      parameters: t.inputSchema,
+    })
+  }
+  return defs
+}
 
 const CHAT_MODEL = 'gpt-5.5'
 /** Upper bound on model↔tool round-trips within one chat turn. */
@@ -423,6 +452,9 @@ export class ChatRunner {
   /** Map from threadId to the AbortController that can kill the active run. */
   private activeRuns = new Map<string, AbortController>()
 
+  /** Lazy per-repo MCP servers (`.mcp.json`) whose tools the agent gets. */
+  private readonly mcp = new ChatMcpManager()
+
   /**
    * Per-thread retry state for throttled runs.
    * `retryCount` tracks how many backoff retries have fired so far;
@@ -571,6 +603,7 @@ export class ChatRunner {
       clearTimeout(retry.timer)
     }
     this.throttledRetries.clear()
+    this.mcp.killAll()
   }
 
   /**
@@ -777,12 +810,15 @@ export class ChatRunner {
       }, CHAT_TIMEOUT_MS)
 
       try {
-        const [basePrompt, skills] = await Promise.all([
+        const [basePrompt, skills, mcpTools] = await Promise.all([
           resolveChatSystemPrompt(repoRoot),
           discoverSkills(repoRoot),
+          this.mcp.getTools(repoRoot),
         ])
         const skillsSection = buildSkillsSection(skills)
         const instructions = skillsSection.length > 0 ? `${basePrompt}\n\n${skillsSection}` : basePrompt
+        const tools = [...CHAT_TOOLS, ...buildMcpToolDefs(mcpTools)]
+        const mcpToolNames = new Set(tools.slice(CHAT_TOOLS.length).map((t) => t.name))
         let auth: CodexAuth = await loadCodexAuth()
         let authRetried = false
 
@@ -801,7 +837,7 @@ export class ChatRunner {
                 model: CHAT_MODEL,
                 instructions,
                 input,
-                tools: CHAT_TOOLS,
+                tools,
                 signal: abort.signal,
                 onEvent: (event) => {
                   for (const seg of parseEventToSegments(event)) {
@@ -833,7 +869,13 @@ export class ChatRunner {
 
           for (const call of pendingCalls) {
             const args = isObject(call.input) ? call.input : {}
-            const result = await executeToolCall(call.tool, args, repoRoot, abort.signal)
+            let result: { content: unknown; isError: boolean }
+            if (mcpToolNames.has(call.tool)) {
+              const r = await this.mcp.call(repoRoot, call.tool, args)
+              result = { content: truncate(r.text, MCP_OUTPUT_CHAR_CAP), isError: r.isError }
+            } else {
+              result = await executeToolCall(call.tool, args, repoRoot, abort.signal)
+            }
             broadcastSegment({ type: 'tool_result', tool_use_id: call.callId, content: result.content, isError: result.isError })
             input.push({ type: 'function_call', name: call.tool, arguments: JSON.stringify(args), call_id: call.callId })
             input.push({ type: 'function_call_output', call_id: call.callId, output: JSON.stringify(result.content) })
