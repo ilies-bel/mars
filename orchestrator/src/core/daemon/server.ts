@@ -234,6 +234,25 @@ export function selectBestCandidate(
 }
 
 /**
+ * Returns `true` when a task must skip the dispatch-time dirty-main check.
+ *
+ * Two categories are exempt:
+ * - `kind === 'fix'`: the main-commiter recovery IS the tool we use to clean a
+ *   dirty integration branch, so it must be allowed to dispatch against it.
+ * - `workflow === 'report'`: report tasks are read-only and never merge back
+ *   into the integration branch, so a dirty branch cannot block them.
+ *
+ * Exported so the exemption predicate can be unit-tested without mounting a
+ * live daemon (same pattern as {@link selectBestCandidate}).
+ */
+export function isDispatchDirtyMainExempt(task: {
+  kind?: string
+  workflow?: string | null
+}): boolean {
+  return task.kind === 'fix' || task.workflow === 'report'
+}
+
+/**
  * Adapt the daemon's `log(line)` sink into the pino-shaped `Logger` the
  * @mars/workflow engine expects. The engine calls `info/warn/error` with
  * either `(msg)` or `(fields, msg)` and chains `child(bindings)`; we fold the
@@ -854,11 +873,11 @@ export const startDaemon = async (
     try {
       // Slice F.2: dispatch-time dirty-main check. Runs BEFORE workflow
       // dispatch (i.e. before the worktree is created) so we never burn the
-      // coding turn on a tree we'd reject at verify anyway. Recovery
-      // (kind='fix') tasks are exempt — the main-commiter is itself the
-      // tool we use to fix dirty-main, so it MUST be allowed to dispatch
-      // against the dirty integration branch.
-      if (task.kind !== 'fix') {
+      // coding turn on a tree we'd reject at verify anyway.
+      // isDispatchDirtyMainExempt captures the full exemption set:
+      //   - kind='fix' (the main-commiter IS the dirty-main fix; must dispatch)
+      //   - workflow='report' (read-only, never merges; dirty branch irrelevant)
+      if (!isDispatchDirtyMainExempt(task)) {
         try {
           const { runMainDirtyDispatchCheck } = await import(
             './main-dirty-dispatch'
