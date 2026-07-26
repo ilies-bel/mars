@@ -16,7 +16,7 @@
  * without rippling through the call sites.
  */
 
-export const DEFAULT_RETRY_BUDGET = 1
+export const DEFAULT_SELF_HEAL_BUDGET = 1
 
 /** Failure signature stamped on tasks killed by `mars daemon kill`. */
 export const DAEMON_KILLED_SIGNATURE = 'daemon-killed'
@@ -27,4 +27,4 @@ export const retryBudgetBySignature: Readonly<Record<string, number>> =
   })
 
 export const getRetryBudget = (signature: string): number =>
-  retryBudgetBySignature[signature] ?? DEFAULT_RETRY_BUDGET
+  retryBudgetBySignature[signature] ?? DEFAULT_SELF_HEAL_BUDGET

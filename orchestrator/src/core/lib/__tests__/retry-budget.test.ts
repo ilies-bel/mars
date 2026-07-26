@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DEFAULT_RETRY_BUDGET,
+  DEFAULT_SELF_HEAL_BUDGET,
   getRetryBudget,
   retryBudgetBySignature,
 } from '../retry-budget'
@@ -12,9 +12,9 @@ describe('getRetryBudget', () => {
 
   it('returns the default budget of 1 for an unknown signature', () => {
     expect(getRetryBudget('verify:has-diff/no-commits-ahead')).toBe(
-      DEFAULT_RETRY_BUDGET,
+      DEFAULT_SELF_HEAL_BUDGET,
     )
-    expect(DEFAULT_RETRY_BUDGET).toBe(1)
+    expect(DEFAULT_SELF_HEAL_BUDGET).toBe(1)
   })
 
   it('returns the default for arbitrary previously-unseen signatures', () => {

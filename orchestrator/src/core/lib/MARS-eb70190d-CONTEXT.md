@@ -8,7 +8,7 @@ Both files in the brief's `<files>` block exist on main with the exact
 shape the acceptance criteria call for:
 
 - `orchestrator/src/core/lib/retry-budget.ts` exports
-  `DEFAULT_RETRY_BUDGET = 1`, a frozen `Readonly<Record<string, number>>`
+  `DEFAULT_SELF_HEAL_BUDGET = 1`, a frozen `Readonly<Record<string, number>>`
   `retryBudgetBySignature` with `daemon-killed: 3`, and a
   `getRetryBudget(signature)` helper that falls back to the default.
 - `orchestrator/src/core/lib/__tests__/retry-budget.test.ts` has 5

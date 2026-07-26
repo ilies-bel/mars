@@ -2,15 +2,15 @@ import { computeFailureSignature } from './lib/failure-signature'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
 import { clearBlockers, updateTask } from './queue'
 
-export const DEFAULT_RETRY_BUDGET = 0
+export const DEFAULT_FIX_RETRY_BUDGET = 0
 
 export const TASK_BLOCKED_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 
 export const getRetryBudget = (): number => {
   const raw = process.env.MARS_FIX_RETRY_BUDGET
-  if (!raw) return DEFAULT_RETRY_BUDGET
+  if (!raw) return DEFAULT_FIX_RETRY_BUDGET
   const n = Number(raw)
-  if (!Number.isFinite(n) || n < 0) return DEFAULT_RETRY_BUDGET
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_FIX_RETRY_BUDGET
   return Math.floor(n)
 }
 
