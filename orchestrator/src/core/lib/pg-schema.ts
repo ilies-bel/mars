@@ -710,6 +710,19 @@ const DDL: readonly string[] = [
   // preview_cmd column are removed (PRD f354b404 slice 1). Existing rows have
   // the column dropped idempotently; tasks now carry no per-task preview command.
   `ALTER TABLE IF EXISTS tasks DROP COLUMN IF EXISTS preview_cmd`,
+
+  // ── daemon liveness (single-row heartbeat) ────────────────────────────────
+  // Written by startHeartbeatWriter on every daemon boot and updated on a
+  // fixed interval (default 5 s, env-tunable via MARS_HEARTBEAT_MS). The
+  // CHECK(id = 1) enforces single-row: we always upsert id=1 so there is
+  // never more than one row. boot_ts is refreshed on each daemon start so
+  // the row accurately reflects the CURRENT daemon instance.
+  `CREATE TABLE IF NOT EXISTS daemon_heartbeat (
+    id           bigint      PRIMARY KEY CHECK (id = 1),
+    pid          bigint      NOT NULL,
+    boot_ts      timestamptz NOT NULL,
+    last_beat_ts timestamptz NOT NULL
+  )`,
 ]
 
 /**

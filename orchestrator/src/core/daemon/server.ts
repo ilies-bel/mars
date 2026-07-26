@@ -123,6 +123,7 @@ import { startApiEndpointProbe } from '../lib/api-endpoint-probe'
 import { ChatRunner, CHAT_TIMEOUT_MS } from './chat-runner'
 import { startMergeWorker, enqueueMergeJobAndAwait, type MergeWorkerHandle } from './merge-worker'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
+import { startHeartbeatWriter, type HeartbeatHandle } from './heartbeat-writer'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -611,6 +612,19 @@ export const startDaemon = async (
       })
       .catch(() => {})
   })
+
+  // ── Daemon heartbeat writer ───────────────────────────────────────────────
+  // Upserts a daemon_heartbeat row (id=1) with the current pid and boot
+  // timestamp, then ticks last_beat_ts every MARS_HEARTBEAT_MS (default 5 s)
+  // so external observers can detect a stale/dead daemon. The handle is
+  // stopped in shutdown() below.
+  let heartbeatHandle: HeartbeatHandle | null = null
+  try {
+    heartbeatHandle = await startHeartbeatWriter({ db: dbClient })
+    log('[heartbeat] writer started')
+  } catch (err) {
+    log(`[heartbeat] writer failed to start (non-fatal): ${(err as Error).message}`)
+  }
 
   // Resolve git binary once at startup. If git is not on PATH the daemon
   // exits immediately with a clear message instead of letting the first
@@ -4569,6 +4583,7 @@ export const startDaemon = async (
   const shutdown = async (force = false): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
+    heartbeatHandle?.stop()
     clearInterval(pollFallback)
     clearInterval(githubUpdatePoll)
     clearInterval(devStalenessCheck)
