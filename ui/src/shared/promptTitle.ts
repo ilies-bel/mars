@@ -48,14 +48,19 @@ export const titleFromPrompt = (prompt: string): string => {
 
 /**
  * Display title for a task. Prefers the server-provided `intent` — a short
- * summary written at enqueue time — and falls back to deriving one from the
- * prompt for legacy rows that predate the field.
+ * summary written at enqueue time — and falls back to the prompt for legacy
+ * rows that predate the field.
+ *
+ * `intent` is normalised through the same deriver rather than trusted as-is:
+ * plenty of stored intents are themselves a 200-char slab of Markdown ("# Slice
+ * 11: …\n\n## New file: …"), because callers may pass one explicitly and nothing
+ * sanitises it on the way in. Treating it as a *candidate* title keeps every
+ * card readable regardless of what is in the column.
  */
 export const taskTitle = (task: {
   intent?: string | null
   prompt: string
 }): string => {
   const intent = task.intent?.trim()
-  if (intent) return intent
-  return titleFromPrompt(task.prompt)
+  return titleFromPrompt(intent && intent.length > 0 ? intent : task.prompt)
 }

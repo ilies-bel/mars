@@ -87,6 +87,16 @@ describe('taskTitle', () => {
     ).toBe('Fix the merge gate')
   })
 
+  it('normalises a Markdown slab stored in intent instead of trusting it', () => {
+    // Real shape found in the tasks table — intent is not sanitised on write.
+    const intent =
+      '# Slice 11: CLI commands for verify gates and credentials\n\n' +
+      'Add CLI subcommands for managing verify gates.\n\n## New file: x.ts'
+    expect(taskTitle({ intent, prompt: 'unused' })).toBe(
+      'Slice 11: CLI commands for verify gates and credentials',
+    )
+  })
+
   it('falls back to the prompt when intent is null', () => {
     expect(taskTitle({ intent: null, prompt: '# Derived title\nbody' })).toBe(
       'Derived title',

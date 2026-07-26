@@ -253,7 +253,48 @@ export const buildProgressView = async (
   }
 
   const proposals = await proposalReader.listByIds([...proposalIdSet])
-  return { tasks, proposals, aggregates }
+  return { tasks: pruneCompletedArcs(tasks), proposals, aggregates }
+}
+
+/**
+ * Drop Done tasks that belong to fully-completed arcs.
+ *
+ * Done tasks are never rendered: the board skips all-Done arcs outright and the
+ * topology emits no nodes or edges for them. They are carried purely as arc
+ * METADATA — a completed origin supplies its arc's title, which is what stops
+ * an active arc from rendering as "Abandoned arc / origin force-purged". So the
+ * only Done rows worth sending are those sharing an arc with a task that is
+ * actually on screen.
+ *
+ * Without this the view ships every task the repo has ever completed, with full
+ * prompts, on every poll of a live-refreshing page: 2015 of 2086 rows and ~10 MB
+ * per request in the repo this was written against.
+ *
+ * The two views key arcs differently — the board by `originId ?? id`, the
+ * topology by `parentProposalId ?? originId ?? id` — so a Done row is kept when
+ * ANY of its three identifiers matches an arc key claimed by a non-Done task.
+ * That is deliberately generous: over-keeping costs a row, under-keeping
+ * resurrects the false "abandoned arc" display.
+ *
+ * Header counts are unaffected — doneToday/doneTotal come from COUNT queries,
+ * not from this list.
+ */
+const pruneCompletedArcs = (tasks: ProgressTask[]): ProgressTask[] => {
+  const activeArcKeys = new Set<string>()
+  for (const t of tasks) {
+    if (t.cluster === 'Done') continue
+    activeArcKeys.add(t.id)
+    if (t.originId !== null) activeArcKeys.add(t.originId)
+    if (t.parentProposalId !== null) activeArcKeys.add(t.parentProposalId)
+  }
+  return tasks.filter((t) => {
+    if (t.cluster !== 'Done') return true
+    return (
+      activeArcKeys.has(t.id) ||
+      (t.originId !== null && activeArcKeys.has(t.originId)) ||
+      (t.parentProposalId !== null && activeArcKeys.has(t.parentProposalId))
+    )
+  })
 }
 
 // ── DB adapters (for daemon use) ─────────────────────────────────────────────

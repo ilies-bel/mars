@@ -153,3 +153,52 @@ describe('buildProgressView — aggregate counts', () => {
     expect(aggregates.failedOpen).toBe(1)
   })
 })
+
+describe('buildProgressView — completed-arc pruning', () => {
+  it('drops Done tasks whose arc has no active member', async () => {
+    const staleDone = makeRow({ id: 'old-1', status: 'done' })
+    const alsoDone = makeRow({ id: 'old-2', status: 'done', originId: 'old-1' })
+    const { tasks } = await buildProgressView(
+      makeStore([staleDone, alsoDone]),
+      noProposals,
+      zeroAggregates,
+    )
+    expect(tasks).toHaveLength(0)
+  })
+
+  it('keeps a Done origin whose arc still has an active task (board arc title)', async () => {
+    // The board resolves an arc's title from its origin. Dropping a Done origin
+    // makes the active arc render as "Abandoned arc / origin force-purged".
+    const doneOrigin = makeRow({ id: 'origin-1', status: 'done' })
+    const activeChild = makeRow({ id: 'child-1', status: 'running', originId: 'origin-1' })
+    const { tasks } = await buildProgressView(
+      makeStore([doneOrigin, activeChild]),
+      noProposals,
+      zeroAggregates,
+    )
+    expect(tasks.map((t) => t.id).sort()).toEqual(['child-1', 'origin-1'])
+  })
+
+  it('keeps a Done task sharing only a parent proposal with an active task', async () => {
+    // The topology keys arcs by parentProposalId first, so proposal siblings
+    // belong to the same arc even with no origin_id relationship.
+    const doneSibling = makeRow({ id: 'slice-1', status: 'done', parentProposalId: 'prd-1' })
+    const activeSibling = makeRow({ id: 'slice-2', status: 'queued', parentProposalId: 'prd-1' })
+    const { tasks } = await buildProgressView(
+      makeStore([doneSibling, activeSibling]),
+      noProposals,
+      zeroAggregates,
+    )
+    expect(tasks.map((t) => t.id).sort()).toEqual(['slice-1', 'slice-2'])
+  })
+
+  it('never prunes non-Done tasks', async () => {
+    const failed = makeRow({ id: 'f-1', status: 'failed' })
+    const { tasks } = await buildProgressView(
+      makeStore([failed]),
+      noProposals,
+      zeroAggregates,
+    )
+    expect(tasks.map((t) => t.id)).toEqual(['f-1'])
+  })
+})
