@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs'
+import { existsSync, writeFileSync, unlinkSync, readFileSync, openSync, closeSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveContext } from '../core/context'
@@ -78,6 +78,11 @@ export const launchUi = (opts: LaunchOptions): void => {
 
   const port = opts.port ? parseInt(opts.port, 10) : 7777
   const host = opts.host ?? '127.0.0.1'
+  const ctx = resolveContext(opts.repo)
+  const logFile = resolve(ctx.stateDir, 'ui.log')
+  // Open the log file for appending before spawning so the child inherits
+  // a valid, open fd from the very first byte it writes.
+  const logFd = openSync(logFile, 'a')
 
   const args: string[] = []
   if (opts.repo) args.push('--repo', opts.repo)
@@ -85,10 +90,22 @@ export const launchUi = (opts: LaunchOptions): void => {
   if (opts.host) args.push('--host', opts.host)
   if (opts.dev) args.push('--dev')
 
+  // Spawn detached with stdio redirected to the log file (not the tty).
+  //
+  // detached: true — the child becomes the leader of a new process group, so
+  //   it is not killed by SIGHUP when the launching shell closes.
+  // stdio: ['ignore', logFd, logFd] — disconnecting stdin from the tty
+  //   prevents the kernel from sending SIGHUP when the tty hangs up.
+  // child.unref() — the parent's event loop no longer waits for the child,
+  //   allowing the CLI to exit 0 immediately and leave the server running.
   const child = spawn(process.execPath, [launcher, ...args], {
-    stdio: 'inherit',
+    detached: true,
+    stdio: ['ignore', logFd, logFd],
     env: process.env,
   })
+  // Parent no longer needs its copy of the fd — the child has inherited its own.
+  closeSync(logFd)
+  child.unref()
 
   const pidFile = getPidFilePath(opts.repo)
   const entry: UiPidEntry = {
@@ -99,23 +116,11 @@ export const launchUi = (opts: LaunchOptions): void => {
   }
   writeFileSync(pidFile, JSON.stringify(entry, null, 2))
 
-  child.on('exit', (code) => {
-    try {
-      unlinkSync(pidFile)
-    } catch {
-      // already gone — ignore
-    }
-    process.exit(code ?? 0)
-  })
-  child.on('error', (err) => {
-    try {
-      unlinkSync(pidFile)
-    } catch {
-      // already gone — ignore
-    }
-    console.error(`failed to launch mars ui: ${err.message}`)
-    process.exit(1)
-  })
+  process.stdout.write(
+    `mars-ui  starting (pid=${child.pid})\n` +
+      `         url=http://${host}:${port}\n` +
+      `         log=${logFile}\n`,
+  )
 }
 
 export const statusUi = (repo?: string): void => {
