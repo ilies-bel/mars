@@ -26,7 +26,13 @@
 
 import type { WorkflowStore } from '@mars/workflow'
 import { raiseActionQueueItem } from '../lib/action-queue'
-import { updateTask, type Task } from '../queue'
+import { updateTask, listTasks, type Task } from '../queue'
+import {
+  computeStepWindow,
+  computeAttemptDensity,
+  computeBlockedWaitMs,
+  classifyRequeueBreach,
+} from './requeue-diagnostics'
 
 /**
  * Maximum wall-clock time (ms) a task may spend in the re-queue cycle before
@@ -47,7 +53,13 @@ export const REQUEUE_MAX_RETRY_MS: number = Number(
  * current attempt count and elapsed retry time so the state is always visible.
  *
  * If the time bound is exceeded, the task is failed and an operator
- * action-queue item is raised.
+ * action-queue item is raised. The failure reason code is derived from the
+ * breach classifier: one of `'requeue-retry-churn'`, `'requeue-blocked-wait'`,
+ * `'requeue-queue-starvation'`, or `'requeue-long-running'`.
+ *
+ * The action-queue payload carries a `diagnostics` object with:
+ * `{ class, attemptDensityPerMin, stepWindowMs, blockedWaitMs, maxAttempt,
+ * queuedNeighbourCount }`.
  *
  * @param nowMs - injectable clock for testing; defaults to `Date.now()`.
  * @returns `true` if the task was escalated (caller must NOT re-seed it);
@@ -99,11 +111,31 @@ export const checkAndEscalateRequeueCeiling = async (
 
   if (elapsedMs < REQUEUE_MAX_RETRY_MS) return false
 
+  // ── Diagnostics ────────────────────────────────────────────────────────────
+  const stepWindow = computeStepWindow(steps)
+  const attemptDensityPerMin =
+    stepWindow != null ? computeAttemptDensity(stepWindow) : 0
+  const blockedWaitMs = await computeBlockedWaitMs(t.id, nowMs).catch(() => 0)
+  const breachClass = classifyRequeueBreach(t, stepWindow, blockedWaitMs, elapsedMs)
+  const queuedNeighbourCount = await listTasks('queued')
+    .then((tasks) => tasks.filter((qt) => qt.id !== t.id).length)
+    .catch(() => 0)
+
+  // ── Map breach class → failure reason code ─────────────────────────────────
+  const failureReasonCode =
+    breachClass.kind === 'retry-churn'
+      ? 'requeue-retry-churn'
+      : breachClass.kind === 'blocked-wait'
+        ? 'requeue-blocked-wait'
+        : breachClass.kind === 'queue-starvation'
+          ? 'requeue-queue-starvation'
+          : 'requeue-long-running'
+
   const boundMins = Math.round(REQUEUE_MAX_RETRY_MS / 60_000)
   log(
     `[dispatch] poll-fallback: task ${t.id} exceeded retry time bound ` +
-      `(${elapsedMins}m elapsed, bound ${boundMins}m, ${maxAttempt} attempt(s)); ` +
-      `escalating to failed`,
+      `(${elapsedMins}m elapsed, bound ${boundMins}m, ${maxAttempt} attempt(s), ` +
+      `class ${breachClass.kind}); escalating to failed`,
   )
 
   // `failureReason` must be a step-id-grammar value so the signature minted
@@ -117,27 +149,35 @@ export const checkAndEscalateRequeueCeiling = async (
     error:
       `Re-queue time bound exceeded: task retried ${maxAttempt} time(s) ` +
       `over ${elapsedMins} minutes without completing ` +
-      `(bound ${boundMins}m). ` +
+      `(bound ${boundMins}m, class ${breachClass.kind}). ` +
       `Run \`mars restart ${t.id}\` to reset.`,
     failureReason: 'requeue:time-bound-exceeded',
-    failureReasonCode: 'requeue-time-bound-exceeded',
+    failureReasonCode,
   }).catch(() => {})
 
   await raiseActionQueueItem({
     kind: 'failed',
     category: 'orchestrator',
     priority: 'high',
-    title: `Task ${t.id}: re-queue time bound exceeded`,
+    title: `Task ${t.id}: re-queue ceiling exceeded (${breachClass.kind})`,
     body:
       `Task was re-dispatched ${maxAttempt} time(s) over ${elapsedMins} minutes ` +
-      `without completing (bound ${boundMins}m). ` +
-      `Likely a stale checkpoint / worktree mismatch. ` +
+      `without completing (bound ${boundMins}m, class ${breachClass.kind}). ` +
+      `${breachClass.reason} ` +
       `Run \`mars restart ${t.id}\` to reset.`,
     payload: {
       taskId: t.id,
       maxAttempt,
       elapsedMs,
       boundMs: REQUEUE_MAX_RETRY_MS,
+      diagnostics: {
+        class: breachClass.kind,
+        attemptDensityPerMin,
+        stepWindowMs: stepWindow?.spanMs ?? 0,
+        blockedWaitMs,
+        maxAttempt,
+        queuedNeighbourCount,
+      },
     },
     context: {},
     raisedBy: 'daemon:poll-fallback',

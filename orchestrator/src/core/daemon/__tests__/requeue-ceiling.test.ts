@@ -30,6 +30,7 @@ interface QueueModule {
   getTask: typeof import('../../queue').getTask
   updateTask: typeof import('../../queue').updateTask
   migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
 }
 
 interface WorkflowStoreModule {
@@ -109,6 +110,29 @@ const makeStepRecord = (
   transcriptKey: null,
   resultJson: null,
 })
+
+// Build a minimal WorkflowStore mock that returns a fixed steps list.
+// Only listSteps is exercised by checkAndEscalateRequeueCeiling.
+const makeMockStore = (steps: StepRecord[]): WorkflowStore =>
+  ({ listSteps: async (_runId: string) => steps }) as unknown as WorkflowStore
+
+// Insert an outbox event row with a controlled ts (seconds since epoch).
+// Follows the same pattern as requeue-diagnostics.test.ts.
+const insertEvent = async (
+  q: QueueModule,
+  type: string,
+  taskId: string,
+  tsSec: number,
+): Promise<void> => {
+  const payload =
+    type === 'task.blocked'
+      ? JSON.stringify({ taskId, fixTaskId: null, failureSignature: '', failingStep: '' })
+      : JSON.stringify({ taskId })
+  await q.resolveQueueClient().execute({
+    sql: `INSERT INTO events (type, payload, ts) VALUES (?, ?, ?)`,
+    args: [type, payload, tsSec],
+  })
+}
 
 describe('checkAndEscalateRequeueCeiling', () => {
   let repo: string
@@ -200,6 +224,9 @@ describe('checkAndEscalateRequeueCeiling', () => {
     //
     // Use MARS_REQUEUE_MAX_RETRY_MS=0 so any non-zero elapsed time exceeds
     // the bound — this makes the test independent of execution speed.
+    //
+    // The fixture (attempt=3, startedAt=0) produces density=3/min ≥ 1,
+    // so the breach is classified as 'retry-churn'.
     const { q, ws, aq, ceiling } = await loadModules(repo, { maxRetryMs: 0 })
     const t = await q.enqueueTask('wedged task', undefined, { skipTriage: true })
     const store: WorkflowStore = ws.createQueueWorkflowStore()
@@ -225,10 +252,10 @@ describe('checkAndEscalateRequeueCeiling', () => {
     // Returns true → caller must NOT re-seed.
     expect(escalated).toBe(true)
 
-    // Task flipped to failed with time-bound failure code.
+    // Task flipped to failed with retry-churn failure code.
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('failed')
-    expect(reloaded?.failureReasonCode).toBe('requeue-time-bound-exceeded')
+    expect(reloaded?.failureReasonCode).toBe('requeue-retry-churn')
     expect(reloaded?.error).toMatch(/time bound/)
 
     // An open action-queue item was raised for this task.
@@ -408,5 +435,171 @@ describe('checkAndEscalateRequeueCeiling', () => {
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
+  })
+
+  // ── Class-specific escalation tests ────────────────────────────────────────
+  //
+  // Each test constructs a representative StepRecord[] fixture for one breach
+  // class and asserts the resulting failureReasonCode and payload.diagnostics.
+  // A mock WorkflowStore is used so step arrays can be crafted freely (the real
+  // store's upsert-on-conflict constraint allows only one record per step name
+  // per run, making multi-timestamp spans impossible to construct).
+
+  it('emits requeue-retry-churn code for a high-density hot loop', async () => {
+    // Fixture: attempt=5, startedAt=0 → spanMs=0 → density=5/1=5 ≥ 1/min.
+    const { q, aq, ceiling } = await loadModules(repo, { maxRetryMs: 0 })
+    const t = await q.enqueueTask('churn task', undefined, { skipTriage: true })
+    const steps = [makeStepRecord('run-1', 'code', 5, 'failed', 0)]
+    const store = makeMockStore(steps)
+
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      t,
+      store,
+      makeSilentLog(),
+      Date.now() + 1,
+    )
+    expect(escalated).toBe(true)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.failureReasonCode).toBe('requeue-retry-churn')
+
+    const items = await aq.listActionQueueItems('open')
+    const item = items.find((i) => i.originTaskId === t.id)
+    expect(item).toBeDefined()
+    expect(item?.payload).toMatchObject({
+      diagnostics: {
+        class: 'retry-churn',
+        maxAttempt: 5,
+        queuedNeighbourCount: 0,
+      },
+    })
+    expect(item?.title).toContain('retry-churn')
+  })
+
+  it('emits requeue-blocked-wait code when the majority of elapsed time was blocked', async () => {
+    // Fixture: 2 sparse attempts over 10 min (density≈0.22 < 1); blocked for
+    // 6 min out of 10 min elapsed (60% > 50% threshold).
+    const nowMs = 2_000_000_000
+    const { q, aq, ceiling } = await loadModules(repo, { maxRetryMs: 0 })
+    const t = await q.enqueueTask('blocked task', undefined, { skipTriage: true })
+
+    // Two records with the same step name and valid timestamps spread 9 minutes
+    // apart — gives density = 2/9 ≈ 0.22/min < 1 → not retry-churn.
+    const steps = [
+      makeStepRecord('run-1', 'code', 2, 'failed', nowMs - 10 * 60_000),
+      makeStepRecord('run-2', 'code', 2, 'failed', nowMs - 1 * 60_000),
+    ]
+    const store = makeMockStore(steps)
+
+    // Insert blocked-wait events: blocked at (nowMs - 7 min), unblocked at
+    // (nowMs - 1 min) → 6 min = 360_000 ms blocked.
+    const blockedTsSec = (nowMs - 7 * 60_000) / 1_000
+    const unblockTsSec = (nowMs - 1 * 60_000) / 1_000
+    await insertEvent(q, 'task.blocked', t.id, blockedTsSec)
+    await insertEvent(q, 'task.queued', t.id, unblockTsSec)
+
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      t,
+      store,
+      makeSilentLog(),
+      nowMs,
+    )
+    expect(escalated).toBe(true)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.failureReasonCode).toBe('requeue-blocked-wait')
+
+    const items = await aq.listActionQueueItems('open')
+    const item = items.find((i) => i.originTaskId === t.id)
+    expect(item).toBeDefined()
+    expect(item?.payload).toMatchObject({
+      diagnostics: {
+        class: 'blocked-wait',
+        maxAttempt: 2,
+        queuedNeighbourCount: 0,
+      },
+    })
+    // blockedWaitMs should be approximately 360_000ms (6 minutes).
+    const diag = item?.payload?.diagnostics as Record<string, unknown> | undefined
+    expect(Number(diag?.blockedWaitMs)).toBeGreaterThan(0)
+    expect(item?.title).toContain('blocked-wait')
+  })
+
+  it('emits requeue-queue-starvation code for few sparse attempts with no blocked wait', async () => {
+    // Fixture: 2 attempts over 10 min (density≈0.22 < 1), no blocked events,
+    // attemptCount ≤ 2 → queue-starvation.
+    const nowMs = 2_000_000_000
+    const { q, aq, ceiling } = await loadModules(repo, { maxRetryMs: 0 })
+    const t = await q.enqueueTask('starved task', undefined, { skipTriage: true })
+
+    const steps = [
+      makeStepRecord('run-1', 'code', 2, 'failed', nowMs - 10 * 60_000),
+      makeStepRecord('run-2', 'code', 2, 'failed', nowMs - 1 * 60_000),
+    ]
+    const store = makeMockStore(steps)
+    // No blocked events → blockedWaitMs = 0.
+
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      t,
+      store,
+      makeSilentLog(),
+      nowMs,
+    )
+    expect(escalated).toBe(true)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.failureReasonCode).toBe('requeue-queue-starvation')
+
+    const items = await aq.listActionQueueItems('open')
+    const item = items.find((i) => i.originTaskId === t.id)
+    expect(item).toBeDefined()
+    expect(item?.payload).toMatchObject({
+      diagnostics: {
+        class: 'queue-starvation',
+        maxAttempt: 2,
+        blockedWaitMs: 0,
+        queuedNeighbourCount: 0,
+      },
+    })
+    expect(item?.title).toContain('queue-starvation')
+  })
+
+  it('emits requeue-long-running code for many slow attempts with no excess blocking', async () => {
+    // Fixture: 5 attempts over 3 hours — density = 5/90 ≈ 0.056/min < 1,
+    // attemptCount > 2, no blocked events → long-running.
+    const nowMs = 2_000_000_000
+    const { q, aq, ceiling } = await loadModules(repo, { maxRetryMs: 0 })
+    const t = await q.enqueueTask('long-running task', undefined, { skipTriage: true })
+
+    const steps = [
+      makeStepRecord('run-1', 'code', 5, 'failed', nowMs - 180 * 60_000),
+      makeStepRecord('run-2', 'code', 5, 'failed', nowMs - 90 * 60_000),
+    ]
+    const store = makeMockStore(steps)
+    // No blocked events → blockedWaitMs = 0.
+
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      t,
+      store,
+      makeSilentLog(),
+      nowMs,
+    )
+    expect(escalated).toBe(true)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.failureReasonCode).toBe('requeue-long-running')
+
+    const items = await aq.listActionQueueItems('open')
+    const item = items.find((i) => i.originTaskId === t.id)
+    expect(item).toBeDefined()
+    expect(item?.payload).toMatchObject({
+      diagnostics: {
+        class: 'long-running',
+        maxAttempt: 5,
+        blockedWaitMs: 0,
+        queuedNeighbourCount: 0,
+      },
+    })
+    expect(item?.title).toContain('long-running')
   })
 })
