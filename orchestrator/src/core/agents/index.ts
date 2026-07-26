@@ -8,7 +8,9 @@
  * markdown definitions off disk.
  */
 
-export type AgentName = 'vcs-supervisor' | 'writer'
+import { stewardAgent } from './steward'
+
+export type AgentName = 'vcs-supervisor' | 'writer' | 'steward'
 
 export interface AgentSpec {
   /** Stable identifier; matches the markdown frontmatter `name`. */
@@ -27,6 +29,11 @@ export interface AgentSpec {
   readonly deniedTools: readonly string[]
   /** Optional per-agent execution timeout, in milliseconds. */
   readonly timeoutMs?: number
+  /**
+   * Optional Zod schema for event-driven agents. When present, the dispatcher
+   * validates the incoming event payload before invoking the agent.
+   */
+  readonly inputSchema?: { parse: (data: unknown) => unknown }
 }
 
 const VCS_SUPERVISOR_SYSTEM_PROMPT = `# VCS Supervisor: "Vega"
@@ -213,6 +220,7 @@ const vcsSupervisor: AgentSpec = {
 export const agents: Readonly<Record<AgentName, AgentSpec>> = {
   'vcs-supervisor': vcsSupervisor,
   writer,
+  steward: stewardAgent,
 }
 
 /**
