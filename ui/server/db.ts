@@ -201,8 +201,9 @@ const normaliseSource = (raw: unknown): ProposalSource => {
 
 /**
  * Maps a task to its Progress-tab cluster, or `null` if the task is out of
- * scope (draft/done/dropped). All failed tasks are always in scope — there
- * is no recency gate on the Failed cluster.
+ * scope (draft/dropped). Done tasks are included as arc metadata with cluster
+ * 'Done'. All failed tasks are always in scope — there is no recency gate on
+ * the Failed cluster.
  */
 const clusterFor = (task: Task): Cluster | null => {
   switch (task.status) {

@@ -61,41 +61,65 @@ const CSS_VAR_NAMES = {
 /**
  * `var()` wrappers for direct use in DOM style props — CSS stays the single
  * source of truth and the browser resolves the tokens live.
+ *
+ * Declared as a literal so tsc verifies every Cluster key is present at
+ * compile time (no `{} as Record<…>` cast).
  */
-export const CLUSTER_CSS: Record<Cluster, ClusterStyle> = (() => {
-  const result = {} as Record<Cluster, ClusterStyle>
-  for (const cluster of ['In progress', 'Blocked', 'Queued', 'Failed'] as const) {
-    const vars = CSS_VAR_NAMES[cluster]
-    result[cluster] = {
-      fill:   `var(${vars.fill})`,
-      stroke: `var(${vars.stroke})`,
-      text:   `var(${vars.text})`,
-      dot:    `var(${vars.stroke})`,
-    }
-  }
-  return result
-})()
+export const CLUSTER_CSS: Record<Cluster, ClusterStyle> = {
+  'In progress': {
+    fill:   `var(${CSS_VAR_NAMES['In progress'].fill})`,
+    stroke: `var(${CSS_VAR_NAMES['In progress'].stroke})`,
+    text:   `var(${CSS_VAR_NAMES['In progress'].text})`,
+    dot:    `var(${CSS_VAR_NAMES['In progress'].stroke})`,
+  },
+  Blocked: {
+    fill:   `var(${CSS_VAR_NAMES.Blocked.fill})`,
+    stroke: `var(${CSS_VAR_NAMES.Blocked.stroke})`,
+    text:   `var(${CSS_VAR_NAMES.Blocked.text})`,
+    dot:    `var(${CSS_VAR_NAMES.Blocked.stroke})`,
+  },
+  Queued: {
+    fill:   `var(${CSS_VAR_NAMES.Queued.fill})`,
+    stroke: `var(${CSS_VAR_NAMES.Queued.stroke})`,
+    text:   `var(${CSS_VAR_NAMES.Queued.text})`,
+    dot:    `var(${CSS_VAR_NAMES.Queued.stroke})`,
+  },
+  Failed: {
+    fill:   `var(${CSS_VAR_NAMES.Failed.fill})`,
+    stroke: `var(${CSS_VAR_NAMES.Failed.stroke})`,
+    text:   `var(${CSS_VAR_NAMES.Failed.text})`,
+    dot:    `var(${CSS_VAR_NAMES.Failed.stroke})`,
+  },
+  Done: {
+    fill:   `var(${CSS_VAR_NAMES.Done.fill})`,
+    stroke: `var(${CSS_VAR_NAMES.Done.stroke})`,
+    text:   `var(${CSS_VAR_NAMES.Done.text})`,
+    dot:    `var(${CSS_VAR_NAMES.Done.stroke})`,
+  },
+}
 
 /**
  * Resolve the palette to CONCRETE colour values via a CSS custom-property
  * resolver. Needed only where `var()` cannot be used (the MiniMap renders
  * SVG fills through a JS callback). In tests, pass a stub resolver.
+ *
+ * Declared as a literal so tsc verifies every Cluster key is present at
+ * compile time (no `{} as Record<…>` cast).
  */
 export function buildClusterStyleFromVars(
   getVar: (name: string) => string,
 ): Record<Cluster, ClusterStyle> {
-  const result = {} as Record<Cluster, ClusterStyle>
-  for (const cluster of ['In progress', 'Blocked', 'Queued', 'Failed'] as const) {
-    const vars = CSS_VAR_NAMES[cluster]
+  const resolve = (vars: { fill: string; stroke: string; text: string }): ClusterStyle => {
     const stroke = getVar(vars.stroke).trim()
-    result[cluster] = {
-      fill:  getVar(vars.fill).trim(),
-      stroke,
-      text:  getVar(vars.text).trim(),
-      dot:   stroke, // legend swatch reuses the stroke accent
-    }
+    return { fill: getVar(vars.fill).trim(), stroke, text: getVar(vars.text).trim(), dot: stroke }
   }
-  return result
+  return {
+    'In progress': resolve(CSS_VAR_NAMES['In progress']),
+    Blocked:       resolve(CSS_VAR_NAMES.Blocked),
+    Queued:        resolve(CSS_VAR_NAMES.Queued),
+    Failed:        resolve(CSS_VAR_NAMES.Failed),
+    Done:          resolve(CSS_VAR_NAMES.Done),
+  }
 }
 
 /** Proposal-identity accents (match --color-dag-proposal-* in index.css). */
@@ -401,7 +425,8 @@ export const buildTopology = (
 ): TopologyGraph => {
   const proposalMap = new Map(proposals.map((p) => [p.id, p]))
 
-  // Group tasks by arc key (insertion order = stable layout order).
+  // Group ALL tasks (including Done) by arc key — Done origins still supply
+  // arc identity and labelling. Insertion order = stable layout order.
   const arcGroups = new Map<string, ProgressTask[]>()
   for (const t of tasks) {
     const key = taskArcKey(t)
@@ -410,25 +435,38 @@ export const buildTopology = (
     else arcGroups.set(key, [t])
   }
 
-  const taskIds = new Set(tasks.map((t) => t.id))
+  // Non-Done members per arc: these are the only tasks that render as nodes.
+  // An arc whose every member is Done is fully completed and emits nothing.
+  const activeMembersMap = new Map<string, ProgressTask[]>()
+  for (const [key, group] of arcGroups) {
+    activeMembersMap.set(key, group.filter((t) => t.cluster !== 'Done'))
+  }
 
-  // Raw edges over TASK ids.
+  const taskIds = new Set(tasks.map((t) => t.id))
+  const doneIds = new Set(tasks.filter((t) => t.cluster === 'Done').map((t) => t.id))
+
+  // Raw edges over TASK ids — exclude edges where either endpoint is Done,
+  // so no edge dangles at a node that is not emitted.
   const rawEdges: RawEdge[] = []
   for (const t of tasks) {
+    if (t.cluster === 'Done') continue // Done tasks emit no edges
     for (const b of t.blockedBy ?? []) {
-      if (!taskIds.has(b)) continue
+      if (!taskIds.has(b) || doneIds.has(b)) continue
       rawEdges.push({ key: blockerKey(b, t.id), kind: 'blocker', source: b, target: t.id })
     }
-    if (t.fixForTaskId != null && taskIds.has(t.fixForTaskId)) {
+    if (t.fixForTaskId != null && taskIds.has(t.fixForTaskId) && !doneIds.has(t.fixForTaskId)) {
       rawEdges.push({ key: `recovery:${t.id}`, kind: 'recovery', source: t.fixForTaskId, target: t.id })
     }
   }
 
   // Visible top-level element for a task: itself (bare or inside the open
-  // group) or its arc's collapsed card.
+  // group) or its arc's collapsed card. arcOf is keyed over ALL tasks
+  // (including Done) so edges can locate their arc during lifting, but
+  // isMulti counts only active members — Done members don't count toward
+  // the "needs a card" threshold.
   const arcOf = new Map<string, string>()
   for (const [key, group] of arcGroups) for (const t of group) arcOf.set(t.id, key)
-  const isMulti = (key: string): boolean => (arcGroups.get(key)?.length ?? 0) > 1
+  const isMulti = (key: string): boolean => (activeMembersMap.get(key)?.length ?? 0) > 1
   const topElementOf = (id: string): string => {
     const key = arcOf.get(id)!
     if (!isMulti(key)) return id
@@ -441,7 +479,8 @@ export const buildTopology = (
   }
 
   // --- Inner layout of the open arc (also determines the group's size) ------
-  const openTasks = openArcKey != null && isMulti(openArcKey) ? arcGroups.get(openArcKey)! : null
+  // Use activeMembers only — Done members are never rendered as child nodes.
+  const openTasks = openArcKey != null && isMulti(openArcKey) ? activeMembersMap.get(openArcKey)! : null
   let innerPositions: Map<string, Placed> | null = null
   let groupSize: Box | null = null
   if (openTasks) {
@@ -461,9 +500,11 @@ export const buildTopology = (
 
   // --- Top-level items -------------------------------------------------------
   const topItems: LayoutItem[] = []
-  for (const [key, group] of arcGroups) {
+  for (const [key] of arcGroups) {
+    const activeMembers = activeMembersMap.get(key)!
+    if (activeMembers.length === 0) continue // fully-completed arc: no nodes to render
     if (!isMulti(key)) {
-      const t = group[0]!
+      const t = activeMembers[0]!
       topItems.push({ id: t.id, w: TASK_W, h: TASK_H })
     } else if (key === openArcKey && groupSize) {
       topItems.push({ id: arcNodeId(key), w: groupSize.w, h: groupSize.h })
@@ -605,16 +646,22 @@ export const buildTopology = (
   // --- Emit React Flow nodes -------------------------------------------------
   const nodes: TopoNode[] = []
   for (const [key, group] of arcGroups) {
+    const activeMembers = activeMembersMap.get(key)!
+    if (activeMembers.length === 0) continue // fully-completed arc: emit nothing
+
     const proposal = proposalMap.get(key)
+    // Use full `group` (including Done origin) for label — a Done origin still
+    // names its arc. This preserves the 8f2a5a12 fix.
     const rootTask = group.find((t) => t.id === key) ?? group[0]!
     const label = proposal ? proposal.title : titleFromPrompt(rootTask.prompt) || key
 
+    // dom and counts tally only active members — Done members are not work in progress.
     const counts = emptyCounts()
-    for (const t of group) counts[t.cluster]++
-    const dom = dominant({ total: group.length, counts })
+    for (const t of activeMembers) counts[t.cluster]++
+    const dom = dominant({ total: activeMembers.length, counts })
 
     if (!isMulti(key)) {
-      const t = group[0]!
+      const t = activeMembers[0]!
       // Skip: this single-task node was collapsed into a bundle pill.
       if (leafToBundle.has(t.id)) continue
       const pos = topPosition.get(t.id)!
@@ -640,9 +687,9 @@ export const buildTopology = (
         position: { x: pos.x, y: pos.y },
         width: groupSize.w,
         height: groupSize.h,
-        data: { kind: 'arcGroup', label, arcKey: key, isProposal: proposal != null, count: group.length, dom, emphasis: 'rest' },
+        data: { kind: 'arcGroup', label, arcKey: key, isProposal: proposal != null, count: activeMembers.length, dom, emphasis: 'rest' },
       })
-      for (const t of group) {
+      for (const t of activeMembers) {
         const p = innerPositions.get(t.id)!
         nodes.push({
           id: t.id,
@@ -662,7 +709,7 @@ export const buildTopology = (
         position: { x: pos.x, y: pos.y },
         width: CARD_W,
         height: CARD_H,
-        data: { kind: 'arcCard', label, arcKey: key, isProposal: proposal != null, count: group.length, dom, emphasis: 'rest' },
+        data: { kind: 'arcCard', label, arcKey: key, isProposal: proposal != null, count: activeMembers.length, dom, emphasis: 'rest' },
       })
     }
   }

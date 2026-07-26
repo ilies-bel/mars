@@ -47,7 +47,7 @@ const proposal = (id: string, title = `Goal ${id}`): ProgressProposalNode => ({
 })
 
 const rollup = (counts: Partial<Rollup['counts']>): Rollup => {
-  const full = { Queued: 0, 'In progress': 0, Blocked: 0, Failed: 0, ...counts }
+  const full = { Queued: 0, 'In progress': 0, Blocked: 0, Failed: 0, Done: 0, ...counts }
   return { total: full.Queued + full['In progress'] + full.Blocked + full.Failed, counts: full }
 }
 
@@ -96,10 +96,11 @@ describe('dominant', () => {
 })
 
 describe('CLUSTER_CSS', () => {
-  it('has a var() entry for every real cluster and no Done', () => {
+  it('has a defined var() entry for every Cluster value including Done', () => {
     const keys = Object.keys(CLUSTER_CSS)
-    expect(keys.sort()).toEqual(['Blocked', 'Failed', 'In progress', 'Queued'])
+    expect(keys.sort()).toEqual(['Blocked', 'Done', 'Failed', 'In progress', 'Queued'])
     for (const style of Object.values(CLUSTER_CSS)) {
+      expect(style.fill).toBeDefined()
       expect(style.fill.startsWith('var(--color-dag-')).toBe(true)
       expect(style.stroke.startsWith('var(--color-dag-')).toBe(true)
     }
@@ -109,8 +110,10 @@ describe('CLUSTER_CSS', () => {
 describe('buildClusterStyleFromVars', () => {
   const stub = (name: string): string => ` ${name}-resolved `
 
-  it('resolves to a non-empty color for every cluster key', () => {
+  it('resolves to a non-empty color for every cluster key including Done', () => {
     const styles = buildClusterStyleFromVars(stub)
+    const keys = Object.keys(styles)
+    expect(keys.sort()).toEqual(['Blocked', 'Done', 'Failed', 'In progress', 'Queued'])
     for (const style of Object.values(styles)) {
       expect(style.fill.length).toBeGreaterThan(0)
       expect(style.fill.endsWith('-resolved')).toBe(true)
@@ -262,6 +265,79 @@ describe('buildTopology', () => {
     expect(a.nodes.map((n) => ({ id: n.id, ...n.position }))).toEqual(
       b.nodes.map((n) => ({ id: n.id, ...n.position })),
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Done-task filtering tests
+// ---------------------------------------------------------------------------
+
+describe('buildTopology — Done task filtering', () => {
+  it('never emits a task node with cluster Done — Done task in a mixed arc is hidden', () => {
+    const tasks = [
+      task({ id: 'origin', cluster: 'Done', prompt: 'origin work' }),
+      task({ id: 'active', cluster: 'Queued', originId: 'origin', fixForTaskId: 'origin' }),
+    ]
+    const { nodes } = buildTopology(tasks, [], null)
+    const taskNodes = nodes.filter((n) => n.type === 'task')
+    expect(taskNodes.every((n) => n.data.cluster !== 'Done')).toBe(true)
+  })
+
+  it('emits no nodes or edges for an arc whose all members are Done', () => {
+    const tasks = [
+      task({ id: 'o1', cluster: 'Done' }),
+      task({ id: 'f1', cluster: 'Done', originId: 'o1', fixForTaskId: 'o1' }),
+    ]
+    const { nodes, edges } = buildTopology(tasks, [], null)
+    expect(nodes).toHaveLength(0)
+    expect(edges).toHaveLength(0)
+  })
+
+  it('renders an arc with 1 active + several Done members as a bare task node, not an arcCard', () => {
+    const tasks = [
+      task({ id: 'origin', cluster: 'Done', prompt: 'origin work' }),
+      task({ id: 'fix1', cluster: 'Done', originId: 'origin' }),
+      task({ id: 'fix2', cluster: 'Queued', originId: 'origin' }),
+    ]
+    const { nodes } = buildTopology(tasks, [], null)
+    expect(nodes.find((n) => n.type === 'arcCard')).toBeUndefined()
+    const taskNode = nodes.find((n) => n.type === 'task')
+    expect(taskNode).toBeDefined()
+    expect(taskNode!.id).toBe('fix2')
+  })
+
+  it('a Done origin still supplies the arc label — 8f2a5a12 regression stays fixed', () => {
+    const tasks = [
+      task({ id: 'origin', cluster: 'Done', prompt: 'do the important thing' }),
+      task({ id: 'child1', cluster: 'Queued', originId: 'origin' }),
+      task({ id: 'child2', cluster: 'In progress', originId: 'origin' }),
+    ]
+    const { nodes } = buildTopology(tasks, [], null)
+    const card = nodes.find((n) => n.type === 'arcCard')!
+    expect(card).toBeDefined()
+    expect(card.data.label).toBe('do the important thing')
+  })
+
+  it('does not emit an edge whose endpoint is a Done task', () => {
+    const tasks = [
+      task({ id: 'done1', cluster: 'Done' }),
+      task({ id: 'active', cluster: 'Queued', blockedBy: ['done1'] }),
+    ]
+    const { edges } = buildTopology(tasks, [], null)
+    expect(edges).toHaveLength(0)
+  })
+
+  it('active card count reflects only active members, not Done members', () => {
+    const tasks = [
+      task({ id: 'origin', cluster: 'Done', prompt: 'origin' }),
+      task({ id: 'done1', cluster: 'Done', originId: 'origin' }),
+      task({ id: 'active1', cluster: 'Queued', originId: 'origin' }),
+      task({ id: 'active2', cluster: 'In progress', originId: 'origin' }),
+    ]
+    const { nodes } = buildTopology(tasks, [], null)
+    const card = nodes.find((n) => n.type === 'arcCard')!
+    expect(card).toBeDefined()
+    expect(card.data.count).toBe(2)
   })
 })
 
