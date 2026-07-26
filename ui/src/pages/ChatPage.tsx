@@ -1166,27 +1166,37 @@ const ChatConversation = ({
 // ---------------------------------------------------------------------------
 
 interface SlashPaletteProps {
-  filter: string
+  matches: ReadonlyArray<{ cmd: string; prompt: string }>
+  activeIndex: number
   onSelect: (prompt: string) => void
+  onActivate: (index: number) => void
 }
 
-const SlashPalette = ({ filter, onSelect }: SlashPaletteProps) => {
-  const lower = filter.toLowerCase()
-  const matches = SLASH_COMMANDS.filter((c) => c.cmd.startsWith(lower))
+const SlashPalette = ({ matches, activeIndex, onSelect, onActivate }: SlashPaletteProps) => {
   if (matches.length === 0) return null
 
   return (
-    <div className="absolute bottom-full left-0 mb-1 w-full rounded border border-primary/30 bg-background shadow-lg">
-      {matches.map(({ cmd, prompt }) => (
+    <div
+      role="listbox"
+      className="absolute bottom-full left-0 mb-1 w-full rounded border border-primary/30 bg-background shadow-lg"
+    >
+      {matches.map(({ cmd, prompt }, index) => (
         <button
           key={cmd}
+          role="option"
+          aria-selected={index === activeIndex}
           type="button"
-          className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-primary hover:bg-primary/20 hover:text-foreground"
+          className={`flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] ${
+            index === activeIndex
+              ? 'bg-primary/20 text-foreground'
+              : 'text-primary hover:bg-primary/20 hover:text-foreground'
+          }`}
           onMouseDown={(e) => {
             // Prevent textarea blur before click fires.
             e.preventDefault()
             onSelect(prompt)
           }}
+          onMouseEnter={() => onActivate(index)}
         >
           <span className="text-foreground">{cmd}</span>
           <span className="truncate text-primary/50">{prompt}</span>
@@ -1682,6 +1692,12 @@ export const Composer = ({
 }: ComposerProps) => {
   const [text, setText] = useState('')
   const [showPalette, setShowPalette] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const matches = useMemo(() => {
+    if (!showPalette) return [] as ReadonlyArray<{ cmd: string; prompt: string }>
+    const lower = text.trimStart().toLowerCase()
+    return SLASH_COMMANDS.filter((c) => c.cmd.startsWith(lower))
+  }, [showPalette, text])
   const [localSendError, setLocalSendError] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [isUploading, setIsUploading] = useState(false)
@@ -1787,6 +1803,33 @@ export const Composer = ({
   }, [text, attachments.length, disabled, isPending, sendPending, isUploading, onSendOverride, onSend, send])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showPalette && matches.length > 0) {
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        handleSlashSelect(matches[activeIndex]!.prompt)
+        return
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setActiveIndex((i) => (i + 1) % matches.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setActiveIndex((i) => (i - 1 + matches.length) % matches.length)
+        return
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault()
+        handleSlashSelect(matches[activeIndex]!.prompt)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setShowPalette(false)
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
@@ -1797,7 +1840,9 @@ export const Composer = ({
     const value = e.target.value
     setText(value)
     const trimmed = value.trimStart()
-    setShowPalette(trimmed.startsWith('/') && !trimmed.includes(' '))
+    const shouldShow = trimmed.startsWith('/') && !trimmed.includes(' ')
+    setShowPalette(shouldShow)
+    if (shouldShow) setActiveIndex(0)
   }
 
   const handleSlashSelect = (prompt: string) => {
@@ -1915,8 +1960,10 @@ export const Composer = ({
     >
       {showPalette && (
         <SlashPalette
-          filter={text.trimStart()}
+          matches={matches}
+          activeIndex={activeIndex}
           onSelect={handleSlashSelect}
+          onActivate={setActiveIndex}
         />
       )}
 
@@ -2010,7 +2057,9 @@ export const Composer = ({
           onPaste={handlePaste}
           onFocus={() => {
             const trimmed = text.trimStart()
-            setShowPalette(trimmed.startsWith('/') && !trimmed.includes(' '))
+            const shouldShow = trimmed.startsWith('/') && !trimmed.includes(' ')
+            setShowPalette(shouldShow)
+            if (shouldShow) setActiveIndex(0)
           }}
           onBlur={() => setTimeout(() => setShowPalette(false), 150)}
           disabled={isDisabled}

@@ -15,8 +15,14 @@
  */
 
 import { describe, it, expect } from 'bun:test'
+// vi must come from 'vitest' directly so that vi.mock() calls are recognised
+// and hoisted by vitest's transformer. beforeEach/afterEach come along for
+// consistency with the interactive tests below.
+import { vi, beforeEach, afterEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { createElement } from 'react'
+import { createElement, act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
   MessageView,
   FeedbackControls,
@@ -24,6 +30,7 @@ import {
   AttachmentDisplay,
   ThinkingIndicator,
   LiveAssistantBubble,
+  Composer,
 } from './ChatPage'
 import { emptyLiveBuffer, applyLiveEvent } from '@/shared/chatBuffer'
 import { pickTopAlert, resolveMediaKind, fileMediaKind } from './chatPageUtils'
@@ -32,6 +39,28 @@ import { chatThreadDetailSchema } from '@/shared/schemas'
 import type { ChatMessage, ActionQueueItem, ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import fixture from './__fixtures__/chat-thread-fixture.json'
+
+vi.mock('@/shared/api', () => ({
+  fetchChatThreads: vi.fn().mockResolvedValue([]),
+  fetchChatThread: vi.fn().mockResolvedValue(null),
+  fetchActionQueue: vi.fn().mockResolvedValue([]),
+  createChatThread: vi.fn().mockResolvedValue({ id: 'thread-new' }),
+  postChatMessage: vi.fn().mockResolvedValue({}),
+  uploadAttachment: vi.fn().mockResolvedValue({ id: 'u1', path: '/tmp/u1', mimeType: 'image/png', name: 'f.png', size: 1 }),
+  renameChatThread: vi.fn().mockResolvedValue({}),
+  deleteChatThread: vi.fn().mockResolvedValue({}),
+  stopChatThread: vi.fn().mockResolvedValue({}),
+  invokeAction: vi.fn().mockResolvedValue({}),
+  setMessageFeedback: vi.fn().mockResolvedValue({}),
+  clearMessageFeedback: vi.fn().mockResolvedValue({}),
+  fetchChatHistory: vi.fn().mockResolvedValue([]),
+  fetchCodexAuthState: vi.fn().mockResolvedValue(null),
+  refreshCodexAuth: vi.fn().mockResolvedValue(null),
+  ApiError: class ApiError extends Error {
+    kind: string
+    constructor(kind: string, message: string) { super(message); this.kind = kind }
+  },
+}))
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -945,5 +974,137 @@ describe('LiveAssistantBubble — tool state synchronization', () => {
     expect(persistedHtml).toContain('Completed')
     expect(liveHtml).not.toContain('Pending')
     expect(persistedHtml).not.toContain('Pending')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Slash-palette keyboard navigation
+// ---------------------------------------------------------------------------
+
+describe('Slash-palette keyboard navigation', () => {
+  let container: HTMLDivElement
+
+  beforeEach(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    document.body.removeChild(container)
+  })
+
+  /** Renders Composer into container, returns the root and an onSend spy. */
+  function renderComposerForPalette(onSend = vi.fn().mockResolvedValue(undefined)) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    const root = createRoot(container)
+    root.render(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(Composer, {
+          threadId: 'thread-1',
+          disabled: false,
+          onInitialTextConsumed: () => {},
+          onSend,
+          onStop: vi.fn(),
+          isBusy: false,
+        }),
+      ),
+    )
+    return { root, onSend }
+  }
+
+  /** Types text into the composer textarea by setting its value and firing an input event. */
+  async function typeText(textarea: HTMLTextAreaElement, text: string) {
+    await act(() => {
+      // Use the native value setter so React's controlled-input tracking
+      // sees the change, then fire 'input' which React maps to onChange.
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      if (nativeSetter) {
+        nativeSetter.call(textarea, text)
+      } else {
+        textarea.value = text
+      }
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+  }
+
+  /** Dispatches a keydown event on the given element. */
+  async function pressKey(element: HTMLElement, key: string) {
+    await act(() => {
+      element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    })
+  }
+
+  it('Tab completes the highlighted skill and closes the palette', async () => {
+    await act(() => { renderComposerForPalette() })
+
+    const textarea = container.querySelector('textarea')!
+    expect(textarea).not.toBeNull()
+
+    // Type '/gr' — only /grill should match
+    await typeText(textarea, '/gr')
+
+    // Palette should be open
+    expect(container.querySelector('[role="listbox"]')).not.toBeNull()
+
+    // Tab should select /grill and close the palette
+    await pressKey(textarea, 'Tab')
+
+    expect(textarea.value).toBe('Grill this idea into a PRD: ')
+    expect(container.querySelector('[role="listbox"]')).toBeNull()
+  })
+
+  it('ArrowDown then Tab selects the second match', async () => {
+    await act(() => { renderComposerForPalette() })
+
+    const textarea = container.querySelector('textarea')!
+
+    // Type '/' — all commands match; first match is /grill, second is /task
+    await typeText(textarea, '/')
+
+    expect(container.querySelector('[role="listbox"]')).not.toBeNull()
+
+    // ArrowDown moves highlight to index 1 (/task)
+    await pressKey(textarea, 'ArrowDown')
+
+    // Tab selects /task
+    await pressKey(textarea, 'Tab')
+
+    expect(textarea.value).toBe('Enqueue a task: ')
+    expect(container.querySelector('[role="listbox"]')).toBeNull()
+  })
+
+  it('Enter completes the active match instead of sending when palette is open', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    await act(() => { renderComposerForPalette(onSend) })
+
+    const textarea = container.querySelector('textarea')!
+
+    await typeText(textarea, '/gr')
+    expect(container.querySelector('[role="listbox"]')).not.toBeNull()
+
+    // Enter should complete, not send
+    await pressKey(textarea, 'Enter')
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(textarea.value).toBe('Grill this idea into a PRD: ')
+    expect(container.querySelector('[role="listbox"]')).toBeNull()
+  })
+
+  it('Escape closes the palette without altering the typed text', async () => {
+    await act(() => { renderComposerForPalette() })
+
+    const textarea = container.querySelector('textarea')!
+
+    await typeText(textarea, '/gr')
+    expect(container.querySelector('[role="listbox"]')).not.toBeNull()
+
+    // Escape should close the palette
+    await pressKey(textarea, 'Escape')
+
+    expect(container.querySelector('[role="listbox"]')).toBeNull()
+    expect(textarea.value).toBe('/gr')
   })
 })

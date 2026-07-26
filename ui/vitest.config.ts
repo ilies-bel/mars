@@ -30,6 +30,7 @@ export default defineConfig({
           name: 'node',
           environment: 'node',
           // Include all src/ tests EXCEPT *.composer.test.* (those need DOM)
+          // and ChatPage.test.tsx (moved to dom to support slash-palette keyboard tests)
           // plus the server tests that use Node.js HTTP and mocks.
           include: [
             'src/**/*.test.{ts,tsx}',
@@ -43,6 +44,7 @@ export default defineConfig({
           ],
           exclude: [
             'src/**/*.composer.test.tsx',
+            'src/pages/ChatPage.test.tsx',
           ],
         },
       },
@@ -52,8 +54,12 @@ export default defineConfig({
         test: {
           name: 'dom',
           environment: 'happy-dom',
-          // Only the Composer interactive tests need a real DOM environment.
-          include: ['src/**/*.composer.test.tsx'],
+          // Composer interactive tests + ChatPage.test.tsx (slash-palette keyboard tests
+          // require a real DOM; SSR-based tests also work fine under happy-dom).
+          include: [
+            'src/**/*.composer.test.tsx',
+            'src/pages/ChatPage.test.tsx',
+          ],
         },
       },
     ],
