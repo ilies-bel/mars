@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Cluster, ProgressTask } from '@/shared/schemas'
+import type { Cluster, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import type { Role, UITask } from '@/shared/types'
 import { titleFromPrompt } from '@/shared/promptTitle'
 import { ArcColumn, type BoardArc } from '@/widgets/Column'
@@ -66,10 +66,16 @@ const compareNewestFirst = (a: ProgressTask, b: ProgressTask): number =>
  * Collapse the open task projection into its durable Arc roots. An Arc that
  * has a recovery in flight is deliberately placed by that live recovery rather
  * than its historical failure: the board should show the state of the work now.
+ *
+ * origin_id is a dual-namespace column: it holds either a task id or a proposal
+ * id (arcs produced by `mars proposal slice` carry origin_id = proposal_id).
+ * Namespace resolution order: task id first, then proposal id, then orphaned.
  */
 export const buildArcsByCluster = (
   tasks: ProgressTask[],
+  proposals: ProgressProposalNode[],
 ): Record<Cluster, BoardArc[]> => {
+  const proposalById = new Map(proposals.map((p) => [p.id, p]))
   const grouped = new Map<string, ProgressTask[]>()
 
   for (const task of tasks) {
@@ -105,14 +111,17 @@ export const buildArcsByCluster = (
     const latestTask = [...arcTasks].sort(compareNewestFirst)[0]!
 
     const displayTask = originTask ?? latestTask
-    // When the origin task is absent (force-purged / deleted), use the arc id as
-    // the title so users can cross-reference with the compensation arc badge
-    // ("↩ compensates arc <id>"). Do NOT use the recovery prompt as the title:
-    // it is technical noise and the line-through treatment would be misleading.
-    const hasOrphanedOrigin = originTask === undefined
-    const title = hasOrphanedOrigin
-      ? `Abandoned arc ${id}`
-      : titleFromPrompt(displayTask.prompt)
+    // Namespace resolution: task id first, then proposal id, then orphaned.
+    // origin_id intentionally has no FK and may hold proposal ids — tasks
+    // produced by `mars proposal slice` carry origin_id = proposal_id.
+    // Only declare the origin orphaned when neither namespace owns the id.
+    const originProposal = originTask === undefined ? proposalById.get(id) : undefined
+    const hasOrphanedOrigin = originTask === undefined && originProposal === undefined
+    const title = originTask !== undefined
+      ? titleFromPrompt(originTask.prompt)
+      : originProposal !== undefined
+        ? originProposal.title
+        : `Abandoned arc ${id}`
     arcsByCluster[cluster].push({
       id,
       cluster,
@@ -137,6 +146,7 @@ export const buildArcsByCluster = (
 
 export interface BoardViewProps {
   byCluster: Record<Cluster, ProgressTask[]>
+  proposals: ProgressProposalNode[]
   error: Error | null
   selectedProposalId: string | null
   /**
@@ -153,6 +163,7 @@ export interface BoardViewProps {
 
 export const BoardView = ({
   byCluster,
+  proposals,
   error,
   selectedProposalId,
   searchMatchIds,
@@ -170,7 +181,7 @@ export const BoardView = ({
   // "Abandoned arc / origin force-purged" display. They bypass search and
   // proposal filtering because they are not visible items on the board.
   const doneTasks = byCluster['Done'] ?? []
-  const arcsByCluster = buildArcsByCluster([...activeTasks, ...doneTasks])
+  const arcsByCluster = buildArcsByCluster([...activeTasks, ...doneTasks], proposals)
 
   // Total active tasks visible after proposal + search filtering.
   // Used to detect the search zero-state (active query that matches nothing).

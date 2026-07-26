@@ -158,6 +158,7 @@ export const ProgressPage = () => {
         ) : (
           <BoardView
             byCluster={byCluster}
+            proposals={proposals}
             error={error}
             selectedProposalId={selectedProposalId}
             searchMatchIds={searchMatchIds}

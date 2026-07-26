@@ -52,7 +52,7 @@ describe('buildArcsByCluster', () => {
       updatedAt: '2024-01-02T00:00:00Z',
     })
 
-    const arcs = buildArcsByCluster([failedOrigin, queuedRecovery])
+    const arcs = buildArcsByCluster([failedOrigin, queuedRecovery], [])
 
     expect(arcs.Failed).toHaveLength(0)
     expect(arcs.Queued).toHaveLength(1)
@@ -64,7 +64,7 @@ describe('buildArcsByCluster', () => {
     const first = task({ id: 'legacy-1', cluster: 'Queued' })
     const second = task({ id: 'legacy-2', cluster: 'Queued' })
 
-    const arcs = buildArcsByCluster([first, second])
+    const arcs = buildArcsByCluster([first, second], [])
 
     expect(arcs.Queued.map((arc) => arc.id)).toEqual(['legacy-1', 'legacy-2'])
   })
@@ -89,7 +89,7 @@ describe('BoardView – Arc summaries', () => {
     const byCluster = { ...emptyByCluster(), Failed: [origin], Queued: [recovery] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html.match(/data-arc-id="origin-1"/g)).toHaveLength(1)
@@ -115,7 +115,7 @@ describe('BoardView – Arc summaries', () => {
     const byCluster = { ...emptyByCluster(), Queued: [origin, followUp] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toMatch(/data-tab="Queued"[^>]*>Queued<span[^>]*>1<\/span>/)
@@ -134,7 +134,7 @@ describe('BoardView – substep label on in-progress arcs', () => {
     const byCluster = { ...emptyByCluster(), 'In progress': [merging] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     // The specific substep label appears (the column already says "In progress").
@@ -153,7 +153,7 @@ describe('BoardView – substep label on in-progress arcs', () => {
     const byCluster = { ...emptyByCluster(), 'In progress': [running] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('coding')
@@ -164,7 +164,7 @@ describe('BoardView – substep label on in-progress arcs', () => {
     const byCluster = { ...emptyByCluster(), Queued: [queued] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     // No running-coloured substep chip on a non-live arc.
@@ -183,7 +183,7 @@ describe('BoardView – in-progress card animation', () => {
     const byCluster = { ...emptyByCluster(), 'In progress': [running] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('mars-card-live')
@@ -194,7 +194,7 @@ describe('BoardView – in-progress card animation', () => {
     const byCluster = { ...emptyByCluster(), Queued: [queued] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).not.toContain('mars-card-live')
@@ -208,7 +208,7 @@ describe('BoardView – proposal filter on cluster columns', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1, t2] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId="p1" />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId="p1" />,
     )
 
     expect(html).toContain('task-from-p1')
@@ -221,7 +221,7 @@ describe('BoardView – proposal filter on cluster columns', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1, t2] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('task-from-p1')
@@ -250,7 +250,7 @@ describe('BoardView – proposal filter on cluster columns', () => {
     }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId="p1" />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId="p1" />,
     )
 
     expect(html).toContain('p1-queued')
@@ -265,7 +265,7 @@ describe('BoardView – proposal filter on cluster columns', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1, t2] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId="p1" />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId="p1" />,
     )
 
     expect(html).toContain('p1-task')
@@ -278,7 +278,7 @@ describe('BoardView – proposal filter on cluster columns', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1, t2] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('no-parent')
@@ -295,6 +295,7 @@ describe('BoardView – search filter on cluster columns', () => {
     const html = renderToStaticMarkup(
       <BoardView
         byCluster={byCluster}
+        proposals={[]}
         error={null}
         selectedProposalId={null}
         searchMatchIds={new Set(['task-a'])}
@@ -315,6 +316,7 @@ describe('BoardView – search filter on cluster columns', () => {
     const html = renderToStaticMarkup(
       <BoardView
         byCluster={byCluster}
+        proposals={[]}
         error={null}
         selectedProposalId={null}
         searchMatchIds={new Set(['match-q', 'match-ip'])}
@@ -335,6 +337,7 @@ describe('BoardView – search filter on cluster columns', () => {
     const html = renderToStaticMarkup(
       <BoardView
         byCluster={byCluster}
+        proposals={[]}
         error={null}
         selectedProposalId={null}
         searchMatchIds={null}
@@ -349,7 +352,7 @@ describe('BoardView – search filter on cluster columns', () => {
 describe('BoardView – mobile responsive tab strip (single-column below breakpoint)', () => {
   it('renders a tab strip with a button for each cluster status', () => {
     const html = renderToStaticMarkup(
-      <BoardView byCluster={emptyByCluster()} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={emptyByCluster()} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('data-testid="board-tab-strip"')
@@ -361,7 +364,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
 
   it('never renders a Proposals tab (proposals are not part of the board)', () => {
     const html = renderToStaticMarkup(
-      <BoardView byCluster={emptyByCluster()} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={emptyByCluster()} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).not.toContain('data-tab="Proposals"')
@@ -373,7 +376,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
     const byCluster = { ...emptyByCluster(), Failed: [t] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     // The Failed tab button carries aria-selected=true; Queued does not
@@ -386,7 +389,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
     const byCluster = { ...emptyByCluster(), 'In progress': [t] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toMatch(/data-tab="In progress"[^>]*aria-selected="true"/)
@@ -395,7 +398,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
 
   it('defaults to Queued when board is empty (no failed, no in-progress)', () => {
     const html = renderToStaticMarkup(
-      <BoardView byCluster={emptyByCluster()} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={emptyByCluster()} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toMatch(/data-tab="Queued"[^>]*aria-selected="true"/)
@@ -406,7 +409,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
     const byCluster = { ...emptyByCluster(), Failed: [t] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     // Active column wrapper (Failed) should NOT start with hidden
@@ -422,7 +425,7 @@ describe('BoardView – mobile responsive tab strip (single-column below breakpo
     const byCluster = { ...emptyByCluster(), Failed: [t] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     // Count "1" should appear near the Failed tab
@@ -436,7 +439,7 @@ describe('BoardView – column lane styling (no card-in-card nesting)', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     // Column lane wrappers must not add a card-level border around already-carded TaskCards.
@@ -449,7 +452,7 @@ describe('BoardView – column lane styling (no card-in-card nesting)', () => {
     const byCluster = { ...emptyByCluster(), Queued: [t1] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     // The column <header> element (not the tab strip) must carry a border-b underline
@@ -474,7 +477,7 @@ describe('buildArcsByCluster — arc lifecycle states', () => {
       kind: 'fix',
     })
 
-    const arcs = buildArcsByCluster([recovery])
+    const arcs = buildArcsByCluster([recovery], [])
 
     expect(arcs['In progress']).toHaveLength(1)
     expect(arcs['In progress'][0]?.hasOrphanedOrigin).toBe(true)
@@ -491,7 +494,7 @@ describe('buildArcsByCluster — arc lifecycle states', () => {
       kind: 'fix',
     })
 
-    const arcs = buildArcsByCluster([origin, recovery])
+    const arcs = buildArcsByCluster([origin, recovery], [])
     const allArcs = [...arcs.Queued, ...arcs.Failed, ...arcs['In progress'], ...arcs.Blocked]
 
     expect(allArcs).toHaveLength(1)
@@ -508,7 +511,7 @@ describe('buildArcsByCluster — arc lifecycle states', () => {
       kind: 'fix',
     })
 
-    const arcs = buildArcsByCluster([recovery])
+    const arcs = buildArcsByCluster([recovery], [])
     const arc = arcs['In progress'][0]!
 
     expect(arc.title).toBe('Abandoned arc origin-deleted')
@@ -524,7 +527,7 @@ describe('buildArcsByCluster — arc lifecycle states', () => {
       compensatesArcId: 'origin-purged',
     })
 
-    const arcs = buildArcsByCluster([compensationTask])
+    const arcs = buildArcsByCluster([compensationTask], [])
 
     expect(arcs.Queued).toHaveLength(1)
     expect(arcs.Queued[0]?.compensatesArcId).toBe('origin-purged')
@@ -544,7 +547,7 @@ describe('BoardView — arc lifecycle rendering', () => {
     const byCluster = { ...emptyByCluster(), 'In progress': [recovery] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('data-arc-state="orphaned-origin"')
@@ -565,7 +568,7 @@ describe('BoardView — arc lifecycle rendering', () => {
     const byCluster = { ...emptyByCluster(), Queued: [compensation] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('data-arc-state="cleanup-required"')
@@ -578,7 +581,7 @@ describe('BoardView — arc lifecycle rendering', () => {
     const byCluster = { ...emptyByCluster(), Queued: [origin] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     expect(html).toContain('data-arc-state="active"')
@@ -615,7 +618,7 @@ describe('buildArcsByCluster — done origin regression', () => {
       originId: 'origin-done',
     })
 
-    const arcs = buildArcsByCluster([doneOrigin, runningSlice, blockedSlice])
+    const arcs = buildArcsByCluster([doneOrigin, runningSlice, blockedSlice], [])
 
     // Arc is placed in Blocked (higher attention priority than In progress)
     expect(arcs.Blocked).toHaveLength(1)
@@ -641,7 +644,7 @@ describe('buildArcsByCluster — done origin regression', () => {
       originId: 'O',
     })
 
-    const arcs = buildArcsByCluster([doneOrigin, blockedSlice])
+    const arcs = buildArcsByCluster([doneOrigin, blockedSlice], [])
 
     expect(arcs.Blocked).toHaveLength(1)
     expect(arcs['In progress']).toHaveLength(0)
@@ -663,7 +666,7 @@ describe('buildArcsByCluster — done origin regression', () => {
       originId: 'origin-all-done',
     })
 
-    const arcs = buildArcsByCluster([doneOrigin, doneSlice])
+    const arcs = buildArcsByCluster([doneOrigin, doneSlice], [])
 
     const allArcs = [
       ...arcs.Blocked,
@@ -686,11 +689,111 @@ describe('buildArcsByCluster — done origin regression', () => {
       kind: 'fix',
     })
 
-    const arcs = buildArcsByCluster([recovery])
+    const arcs = buildArcsByCluster([recovery], [])
 
     expect(arcs['In progress']).toHaveLength(1)
     expect(arcs['In progress'][0]!.hasOrphanedOrigin).toBe(true)
     expect(arcs['In progress'][0]!.title).toBe('Abandoned arc origin-deleted')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Proposal-rooted arcs: origin_id holds a proposal id, not a task id
+// ---------------------------------------------------------------------------
+
+describe('buildArcsByCluster — proposal-rooted arcs', () => {
+  it('sets hasOrphanedOrigin=false when the arc id resolves to a proposal', () => {
+    // Arc produced by `mars proposal slice`: origin_id = proposal id.
+    const slice = task({
+      id: 'slice-1',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'proposal-abc',
+    })
+    const proposal = { id: 'proposal-abc', title: 'Durable merge queue', source: 'human' as const, status: 'draft' }
+
+    const arcs = buildArcsByCluster([slice], [proposal])
+
+    expect(arcs['In progress']).toHaveLength(1)
+    expect(arcs['In progress'][0]?.hasOrphanedOrigin).toBe(false)
+  })
+
+  it('uses the proposal title (not "Abandoned arc") when the arc id is a known proposal', () => {
+    const slice = task({
+      id: 'slice-1',
+      cluster: 'Queued',
+      status: 'queued',
+      originId: 'proposal-abc',
+    })
+    const proposal = { id: 'proposal-abc', title: 'Durable merge queue', source: 'human' as const, status: 'draft' }
+
+    const arcs = buildArcsByCluster([slice], [proposal])
+    const arc = arcs.Queued[0]!
+
+    expect(arc.title).toBe('Durable merge queue')
+    expect(arc.title).not.toMatch(/Abandoned arc/)
+  })
+
+  it('still sets hasOrphanedOrigin=true when the arc id is in neither tasks nor proposals', () => {
+    const recovery = task({
+      id: 'fix-orphan',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-force-purged',
+      fixForTaskId: 'origin-force-purged',
+      kind: 'fix',
+    })
+    // Proposals list does not contain 'origin-force-purged'
+    const proposal = { id: 'unrelated-proposal', title: 'Something else', source: 'human' as const, status: 'draft' }
+
+    const arcs = buildArcsByCluster([recovery], [proposal])
+
+    expect(arcs['In progress'][0]?.hasOrphanedOrigin).toBe(true)
+    expect(arcs['In progress'][0]?.title).toBe('Abandoned arc origin-force-purged')
+  })
+})
+
+describe('BoardView — proposal-rooted arc rendering', () => {
+  it('renders a proposal-rooted arc with proposal title and no "origin force-purged" line', () => {
+    const slice = task({
+      id: 'slice-1',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'proposal-abc',
+    })
+    const byCluster = { ...emptyByCluster(), 'In progress': [slice] }
+    const proposals = [{ id: 'proposal-abc', title: 'Durable merge queue', source: 'human' as const, status: 'draft' }]
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} proposals={proposals} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('Durable merge queue')
+    expect(html).not.toContain('Abandoned arc')
+    expect(html).not.toContain('origin force-purged')
+    expect(html).not.toContain('data-arc-state="orphaned-origin"')
+  })
+
+  it('renders an arc whose id is in neither namespace with "Abandoned arc" treatment', () => {
+    const recovery = task({
+      id: 'fix-orphan',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-force-purged',
+      fixForTaskId: 'origin-force-purged',
+      kind: 'fix',
+    })
+    const byCluster = { ...emptyByCluster(), 'In progress': [recovery] }
+    // Proposals list does not include 'origin-force-purged'
+    const proposals = [{ id: 'unrelated', title: 'Unrelated proposal', source: 'human' as const, status: 'draft' }]
+
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={byCluster} proposals={proposals} error={null} selectedProposalId={null} />,
+    )
+
+    expect(html).toContain('Abandoned arc origin-force-purged')
+    expect(html).toContain('origin force-purged')
+    expect(html).toContain('data-arc-state="orphaned-origin"')
   })
 })
 
@@ -724,7 +827,7 @@ describe('BoardView — done origin regression rendering', () => {
     }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     // Arc must be rendered in Blocked column
@@ -751,7 +854,7 @@ describe('BoardView — done origin regression rendering', () => {
     const byCluster = { ...emptyByCluster(), Done: [doneOrigin] }
 
     const html = renderToStaticMarkup(
-      <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
+      <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
     // Arc must not appear anywhere on the board
