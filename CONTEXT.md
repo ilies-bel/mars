@@ -504,8 +504,8 @@ The deterministic verify step: it runs configured shell checks such as typecheck
 _Avoid_: agent verification, agent verify, shell verification
 
 **Notice**:
-A bell message stating a fact the operator should know (e.g. the Steward raised the concurrency limit) that has no backing entity, so it clears only when the operator acknowledges it — unlike an Alert, which clears solely by entity mutation.
-_Avoid_: alert, notification, toast, info-alert, banner
+A zero-token, entity-less message Mars speaks on its own that never takes the floor and clears only when the operator acknowledges it.
+_Avoid_: bell notice, informational message, system message, toast
 
 **Verify gate**:
 An opt-in, per-verify-scope check the orchestrator runs during the verify phase, held in the gate registry and created by the operator at onboarding.
