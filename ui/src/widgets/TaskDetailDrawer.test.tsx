@@ -1929,6 +1929,131 @@ describe('TaskDetailDrawer – step card Output panel (result_json)', () => {
   })
 })
 
+// ── Step card Input panel (input_json) ────────────────────────────────────────
+
+/**
+ * The expanded card shows an "Input" section when the step's inputJson is
+ * present. Mirrors the Output panel — collapsed by default, always in static
+ * DOM, scrollable on large payloads.
+ */
+describe('TaskDetailDrawer – step card Input panel (input_json)', () => {
+  it('shows the Input section when a run step has inputJson', () => {
+    const inputData = { prompt: 'do the thing', taskId: 'mars-abc' }
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'code',
+              inputJson: JSON.stringify(inputData),
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('data-testid="step-result-input"')
+  })
+
+  it('pretty-prints the inputJson so keys are visible', () => {
+    const inputData = { prompt: 'do the thing', taskId: 'mars-abc' }
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'code',
+              inputJson: JSON.stringify(inputData),
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('&quot;prompt&quot;')
+    expect(html).toContain('&quot;do the thing&quot;')
+    expect(html).toContain('&quot;taskId&quot;')
+  })
+
+  it('Input section is always in the DOM (collapsed <details> — accessible before interaction)', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'verify',
+              inputJson: JSON.stringify({ check: true }),
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('data-testid="step-result-input"')
+    expect(html).not.toContain('open=""')
+  })
+
+  it('does not render the Input section when inputJson is null', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [makeRTStep({ stepName: 'setup' })],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).not.toContain('data-testid="step-result-input"')
+  })
+
+  it('Input section is keyboard-accessible via <details>/<summary>', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'merge',
+              inputJson: JSON.stringify({ merged: true }),
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('>Input<')
+    expect(html).toContain('data-testid="step-result-input"')
+  })
+
+  it('falls back to showing inputJson as-is when it is not valid JSON', () => {
+    const timeline = makeRunTimeline({
+      runs: [
+        makeRTRun({
+          steps: [
+            makeRTStep({
+              stepName: 'setup',
+              inputJson: 'not-valid-json',
+            }),
+          ],
+        }),
+      ],
+    })
+    const html = renderDrawer(
+      <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
+    )
+    expect(html).toContain('data-testid="step-result-input"')
+    expect(html).toContain('not-valid-json')
+  })
+})
+
 // ── Negative durationMs (killed steps) ───────────────────────────────────────
 
 /**

@@ -66,6 +66,8 @@ export interface RunTimelineStep {
   failureReason: string | null
   /** JSON-serialised return value of the step function, or null when absent. */
   resultJson?: string | null
+  /** JSON-serialised input payload passed to the step function, or null when absent. */
+  inputJson?: string | null
   /** Human-readable one-line summary produced by non-LLM steps (e.g. reflect). */
   summary?: string | null
 }
@@ -109,6 +111,8 @@ export interface StepCardEntry {
   claudeSessionId?: string | null
   /** JSON-serialised step result, rendered as an expandable Output panel. */
   resultJson?: string | null
+  /** JSON-serialised step input, rendered as an expandable Input panel. */
+  inputJson?: string | null
   /** Human-readable one-line summary produced by non-LLM steps (e.g. reflect). */
   summary?: string | null
 }
@@ -433,6 +437,7 @@ export const runStepToCard = (
   cacheReadTokens: step.cacheReadTokens,
   claudeSessionId: step.claudeSessionId,
   resultJson: step.resultJson,
+  inputJson: step.inputJson,
   summary: step.summary,
 })
 
@@ -1057,6 +1062,37 @@ const StepCard = ({
           <p className="pt-2 font-mono text-[11px] text-muted/60">
             No tool invocations recorded
           </p>
+        ) : null}
+
+        {/* Input — collapsed by default; keyboard-accessible via <details>/<summary> */}
+        {entry.inputJson != null ? (
+          <details className="mt-2 border-t border-iron/10 pt-1.5">
+            <summary
+              tabIndex={0}
+              className="cursor-pointer font-mono text-[10px] text-muted [&::-webkit-details-marker]:hidden"
+              onKeyDown={(e) => {
+                if (e.key === ' ') {
+                  e.preventDefault()
+                  const parent = e.currentTarget.closest('details') as HTMLDetailsElement | null
+                  if (parent) parent.open = !parent.open
+                }
+              }}
+            >
+              Input
+            </summary>
+            <pre
+              data-testid="step-result-input"
+              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-panel/60 p-1.5 font-mono text-[10px] text-iron"
+            >
+              {(() => {
+                try {
+                  return JSON.stringify(JSON.parse(entry.inputJson), null, 2)
+                } catch {
+                  return entry.inputJson
+                }
+              })()}
+            </pre>
+          </details>
         ) : null}
 
         {/* Output — collapsed by default; keyboard-accessible via <details>/<summary> */}
