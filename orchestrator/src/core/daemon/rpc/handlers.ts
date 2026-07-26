@@ -437,6 +437,21 @@ const killHandler = handler('kill', async (_req, deps) => {
   }
 })
 
+const previewSpawnHandler = handler('preview.spawn', async (req, deps) => {
+  const result = await deps.handlePreviewSpawn(req.taskId, req.cmd, req.cwd)
+  return { ok: true, data: result }
+})
+
+const previewStatusHandler = handler('preview.status', async (req, deps) => {
+  const result = deps.handlePreviewStatus(req.taskId)
+  return { ok: true, data: result }
+})
+
+const previewTeardownHandler = handler('preview.teardown', async (req, deps) => {
+  await deps.handlePreviewTeardown(req.taskId)
+  return { ok: true }
+})
+
 const taskNoteHandler = handler('task.note', async (req, deps) => {
   const entry = await deps.appendProgress({
     taskId: req.id,
@@ -519,4 +534,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   killHandler,
   taskNoteHandler,
   taskCheckHandler,
+  previewSpawnHandler,
+  previewStatusHandler,
+  previewTeardownHandler,
 ]

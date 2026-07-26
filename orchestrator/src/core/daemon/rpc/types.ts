@@ -190,6 +190,15 @@ export interface DaemonDeps {
     stepName: string,
   ): Promise<{ nextStep: string; queued: boolean; cleared: string[] }>
   appendProgress(params: AppendProgressParams): Promise<ProgressEntry>
+
+  // ── Preview-process registry (preview.spawn / preview.status / preview.teardown) ──
+  handlePreviewSpawn(
+    taskId: string,
+    cmd: string,
+    cwd: string,
+  ): Promise<{ pid: number; logPath: string; url?: string }>
+  handlePreviewStatus(taskId: string): { pid: number; logPath: string; url?: string } | null
+  handlePreviewTeardown(taskId: string): Promise<void>
 }
 
 /** The `patch` shape carried by the `update` op (matches protocol). */

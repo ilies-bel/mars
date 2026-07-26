@@ -89,6 +89,12 @@ export type DaemonRequest =
   | { op: 'resume' }
   | { op: 'task.note'; id: string; body: string; author?: string }
   | { op: 'task.check'; id: string; criterionIndex: number; uncheck?: boolean; author?: string }
+  // Preview-process management: spawn a detached stack process whose
+  // stdout/stderr are teed to `.mars/previews/<taskId>.log`, query its
+  // current status, or tear it down (SIGTERM → SIGKILL fallback).
+  | { op: 'preview.spawn'; taskId: string; cmd: string; cwd: string }
+  | { op: 'preview.status'; taskId: string }
+  | { op: 'preview.teardown'; taskId: string }
 
 export type DaemonResponse =
   | { ok: true; data?: unknown }

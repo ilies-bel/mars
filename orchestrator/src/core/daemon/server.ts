@@ -117,6 +117,7 @@ import {
 } from './task-flight-tracker'
 import { rpcRegistry, dispatchRpc } from './rpc/registry'
 import type { DaemonDeps } from './rpc/types'
+import { PreviewRegistry } from './preview-registry'
 import { createAppServices } from '../app-services'
 import { startApiEndpointProbe } from '../lib/api-endpoint-probe'
 import { ChatRunner, CHAT_TIMEOUT_MS } from './chat-runner'
@@ -3163,6 +3164,10 @@ export const startDaemon = async (
   const appendProgress = (params: Parameters<typeof Arc.appendProgress>[0]) =>
     Arc.appendProgress(params)
 
+  // Preview-process registry: manages long-lived stack children spawned by the
+  // preview.spawn / preview.status / preview.teardown RPC ops.
+  const previewRegistry = new PreviewRegistry(resolveContext().stateDir)
+
   // ── RPC command seam (ADR daemon-command-seam; mirrors ADR-0023) ──────────
   // The 27-case `switch (req.op)` is now a flat op-keyed registry of leaf
   // handlers in `./rpc/`. `handleRequest` keeps its socket-facing signature and
@@ -3225,6 +3230,9 @@ export const startDaemon = async (
     handleStepDone,
     handleStepReset,
     appendProgress,
+    handlePreviewSpawn: (taskId, cmd, cwd) => previewRegistry.spawn(taskId, cmd, cwd),
+    handlePreviewStatus: (taskId) => previewRegistry.status(taskId),
+    handlePreviewTeardown: (taskId) => previewRegistry.teardown(taskId),
   })
 
   const handleRequest = async (req: DaemonRequest): Promise<DaemonResponse> => {
