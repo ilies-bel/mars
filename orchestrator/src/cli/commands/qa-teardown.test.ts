@@ -14,9 +14,14 @@
  * All CLI-seam tests use the in-process command runner + recording fake daemon
  * (ADR-0023). Prompt-content tests exercise `handleTaskFailureWithFixTask`
  * directly against a real in-process SQLite DB.
+ *
+ * A single PGlite instance is shared across all tests via beforeAll/afterAll.
+ * PGlite WASM cannot safely run multiple simultaneous instances in the same
+ * Node.js process, so vi.resetModules() is NOT used per-test here — modules
+ * are loaded once and shared for the lifetime of this test file.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -27,38 +32,14 @@ import {
 } from '../test-adapter'
 import type { DomainTaskStore } from '../../core/store/task-store'
 import type { OrchestratorContext } from '../../core/context'
+import type { enqueueTask, updateTask, getTask, resolveQueueClient } from '../../core/queue'
+import type { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
+import type { recipes } from '../../core/lib/fix-recipes'
+import type { createTaskStore } from '../../core/store/task-store'
+import type { resolveContext } from '../../core/context'
 
 // ---------------------------------------------------------------------------
-// Module type shims (loaded dynamically via vi.resetModules() isolation)
-// ---------------------------------------------------------------------------
-
-interface QueueModule {
-  enqueueTask: typeof import('../../core/queue').enqueueTask
-  updateTask: typeof import('../../core/queue').updateTask
-  getTask: typeof import('../../core/queue').getTask
-  resolveQueueClient: typeof import('../../core/queue').resolveQueueClient
-  ensureQueueSchema: typeof import('../../core/queue').ensureQueueSchema
-  migrateQueueSchema: typeof import('../../core/queue').migrateQueueSchema
-}
-
-interface FixTasksModule {
-  handleTaskFailureWithFixTask: typeof import('../../core/queue-fix-tasks').handleTaskFailureWithFixTask
-}
-
-interface RecipesModule {
-  recipes: typeof import('../../core/lib/fix-recipes').recipes
-}
-
-interface StoreModule {
-  createTaskStore: typeof import('../../core/store/task-store').createTaskStore
-}
-
-interface ContextModule {
-  resolveContext: typeof import('../../core/context').resolveContext
-}
-
-// ---------------------------------------------------------------------------
-// Repo setup
+// Repo setup helpers
 // ---------------------------------------------------------------------------
 
 const setupRepo = (): string => {
@@ -83,33 +64,68 @@ const setupCleanWorktree = (): string => {
 }
 
 // ---------------------------------------------------------------------------
-// Dynamic module loader (CLI tests)
+// Shared module state — initialised once in beforeAll
 // ---------------------------------------------------------------------------
 
-const loadCliModules = async (repo: string): Promise<{
-  store: DomainTaskStore
-  ctx: OrchestratorContext
-  q: QueueModule
-}> => {
-  vi.resetModules()
-  process.env.MARS_REPO = repo
-
-  const q = (await import('../../core/queue')) as unknown as QueueModule
-  await q.migrateQueueSchema()
-
-  const storeModule = (await import('../../core/store/task-store')) as unknown as StoreModule
-  const ctxModule = (await import('../../core/context')) as unknown as ContextModule
-
-  return {
-    q,
-    store: storeModule.createTaskStore(q.resolveQueueClient()),
-    ctx: ctxModule.resolveContext(repo),
-  }
+let store: DomainTaskStore
+let ctx: OrchestratorContext
+let q: {
+  enqueueTask: typeof enqueueTask
+  updateTask: typeof updateTask
+  getTask: typeof getTask
+  resolveQueueClient: typeof resolveQueueClient
 }
+let ft: { handleTaskFailureWithFixTask: typeof handleTaskFailureWithFixTask }
+let rc: { recipes: typeof recipes }
+let sharedRepo: string
+const allWorktrees: string[] = []
+
+beforeAll(async () => {
+  sharedRepo = setupRepo()
+  process.env.MARS_REPO = sharedRepo
+
+  q = await import('../../core/queue')
+  // Warm the schema explicitly so the first test doesn't pay cold-start cost
+  const { ensureQueueSchema } = q as unknown as { ensureQueueSchema: () => Promise<void> }
+  await ensureQueueSchema()
+
+  ft = await import('../../core/queue-fix-tasks')
+  rc = await import('../../core/lib/fix-recipes')
+
+  const storeModule = await import('../../core/store/task-store')
+  const ctxModule = await import('../../core/context')
+  store = (storeModule as unknown as { createTaskStore: typeof createTaskStore }).createTaskStore(
+    q.resolveQueueClient(),
+  )
+  ctx = (ctxModule as unknown as { resolveContext: typeof resolveContext }).resolveContext(
+    sharedRepo,
+  )
+})
+
+afterAll(() => {
+  // Do NOT call db.close() here — explicitly closing a file-backed PGlite
+  // instance via its PostgreSQL End packet leaves the WASM runtime in a
+  // "terminated" state that prevents subsequent test files from creating new
+  // PGlite instances in the same fork. Let the GC reclaim the instance
+  // (the same approach used by every other vi.resetModules()-per-test suite).
+  delete process.env.MARS_REPO
+  rmSync(sharedRepo, { recursive: true, force: true })
+  for (const wt of allWorktrees) {
+    rmSync(wt, { recursive: true, force: true })
+  }
+})
+
+// Clean up any per-test spy / mock state.
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 /** Create a task in awaiting-human with the given currentStepName and leaseOwner. */
 const makeAwaitingHumanTask = async (
-  q: QueueModule,
   opts: {
     currentStepName?: string | null
     leaseOwner?: string
@@ -128,62 +144,42 @@ const makeAwaitingHumanTask = async (
   return task.id
 }
 
-// ---------------------------------------------------------------------------
-// Dynamic module loader (DB / prompt tests)
-// ---------------------------------------------------------------------------
-
-const loadDbModules = async (repo: string): Promise<{
-  q: QueueModule
-  ft: FixTasksModule
-  rc: RecipesModule
-}> => {
-  vi.resetModules()
-  process.env.MARS_REPO = repo
-
-  const q = (await import('../../core/queue')) as unknown as QueueModule
-  await q.ensureQueueSchema()
-
-  const ft = (await import('../../core/queue-fix-tasks')) as unknown as FixTasksModule
-  const rc = (await import('../../core/lib/fix-recipes')) as unknown as RecipesModule
-
-  return { q, ft, rc }
-}
-
 /** Register a synthetic recipe that returns a deterministic base prompt. */
 const registerTestRecipe = (
-  rc: RecipesModule,
   sig: string,
   basePrompt = 'base recovery prompt',
 ): (() => void) => {
-  rc.recipes[sig] = {
+  const typedRc = rc as { recipes: Record<string, { signature: string; title: () => string; buildPrompt: () => string }> }
+  typedRc.recipes[sig] = {
     signature: sig,
     title: () => `test: ${sig}`,
     buildPrompt: () => basePrompt,
   }
   return () => {
-    delete rc.recipes[sig]
+    delete typedRc.recipes[sig]
   }
 }
 
-// ---------------------------------------------------------------------------
-// Test state
-// ---------------------------------------------------------------------------
-
-let repo: string
-let worktrees: string[] = []
+// Per-test worktree tracker (cleaned in afterAll above via allWorktrees).
+let currentWorktrees: string[] = []
 
 beforeEach(() => {
-  repo = setupRepo()
-  worktrees = []
+  currentWorktrees = []
 })
 
 afterEach(() => {
-  delete process.env.MARS_REPO
-  rmSync(repo, { recursive: true, force: true })
-  for (const wt of worktrees) {
+  for (const wt of currentWorktrees) {
     rmSync(wt, { recursive: true, force: true })
   }
+  currentWorktrees = []
 })
+
+const newWorktree = (): string => {
+  const wt = setupCleanWorktree()
+  currentWorktrees.push(wt)
+  allWorktrees.push(wt)
+  return wt
+}
 
 // ===========================================================================
 // (a) mars step done — preview.teardown wiring
@@ -191,11 +187,8 @@ afterEach(() => {
 
 describe('mars step done — preview.teardown wiring', () => {
   it('calls preview.teardown before step-done when currentStepName is "review"', async () => {
-    const wt = setupCleanWorktree()
-    worktrees.push(wt)
-
-    const { store, ctx, q } = await loadCliModules(repo)
-    const id = await makeAwaitingHumanTask(q, { currentStepName: 'review', worktreePath: wt })
+    const wt = newWorktree()
+    const id = await makeAwaitingHumanTask({ currentStepName: 'review', worktreePath: wt })
 
     const fake = makeFakeDaemon(() => undefined)
     const r = await runCommandInProcess(['step', 'done', id], { store, ctx, daemon: fake })
@@ -210,11 +203,8 @@ describe('mars step done — preview.teardown wiring', () => {
   })
 
   it('does NOT call preview.teardown when currentStepName is not "review"', async () => {
-    const wt = setupCleanWorktree()
-    worktrees.push(wt)
-
-    const { store, ctx, q } = await loadCliModules(repo)
-    const id = await makeAwaitingHumanTask(q, { currentStepName: 'code', worktreePath: wt })
+    const wt = newWorktree()
+    const id = await makeAwaitingHumanTask({ currentStepName: 'code', worktreePath: wt })
 
     const fake = makeFakeDaemon(() => undefined)
     const r = await runCommandInProcess(['step', 'done', id], { store, ctx, daemon: fake })
@@ -225,11 +215,8 @@ describe('mars step done — preview.teardown wiring', () => {
   })
 
   it('swallows preview.teardown errors and still sends step-done', async () => {
-    const wt = setupCleanWorktree()
-    worktrees.push(wt)
-
-    const { store, ctx, q } = await loadCliModules(repo)
-    const id = await makeAwaitingHumanTask(q, { currentStepName: 'review', worktreePath: wt })
+    const wt = newWorktree()
+    const id = await makeAwaitingHumanTask({ currentStepName: 'review', worktreePath: wt })
 
     // preview.teardown throws; step-done must still go out
     const fake = makeFakeDaemon((req) => {
@@ -247,11 +234,8 @@ describe('mars step done — preview.teardown wiring', () => {
   })
 
   it('does NOT call preview.teardown when currentStepName is null', async () => {
-    const wt = setupCleanWorktree()
-    worktrees.push(wt)
-
-    const { store, ctx, q } = await loadCliModules(repo)
-    const id = await makeAwaitingHumanTask(q, { currentStepName: null, worktreePath: wt })
+    const wt = newWorktree()
+    const id = await makeAwaitingHumanTask({ currentStepName: null, worktreePath: wt })
 
     const fake = makeFakeDaemon(() => undefined)
     const r = await runCommandInProcess(['step', 'done', id], { store, ctx, daemon: fake })
@@ -268,11 +252,8 @@ describe('mars step done — preview.teardown wiring', () => {
 
 describe('mars release --abort --note — CLI wiring', () => {
   it('sends preview.teardown then release-lease with abort=true and note', async () => {
-    const wt = setupCleanWorktree()
-    worktrees.push(wt)
-
-    const { store, ctx, q } = await loadCliModules(repo)
-    const id = await makeAwaitingHumanTask(q, { worktreePath: wt })
+    const wt = newWorktree()
+    const id = await makeAwaitingHumanTask({ worktreePath: wt })
 
     const fake = makeFakeDaemon(() => undefined)
     const r = await runCommandInProcess(
@@ -298,8 +279,6 @@ describe('mars release --abort --note — CLI wiring', () => {
 
 describe('handleTaskFailureWithFixTask — qaNote propagates into fix-task prompt', () => {
   it('fix-task prompt contains the QA note under ## QA note heading', async () => {
-    const { q, ft, rc } = await loadDbModules(repo)
-
     const task = await q.enqueueTask('original task', undefined, { skipTriage: true })
     await q.updateTask(task.id, {
       status: 'running',
@@ -308,7 +287,7 @@ describe('handleTaskFailureWithFixTask — qaNote propagates into fix-task promp
 
     const sig = `qa-note-test-${task.id}`
     const basePrompt = 'base recovery prompt from recipe'
-    const teardown = registerTestRecipe(rc, sig, basePrompt)
+    const teardown = registerTestRecipe(sig, basePrompt)
 
     try {
       const result = await ft.handleTaskFailureWithFixTask({
@@ -337,11 +316,8 @@ describe('handleTaskFailureWithFixTask — qaNote propagates into fix-task promp
 
 describe('mars release --abort (no note) — CLI wiring', () => {
   it('sends preview.teardown then release-lease with abort=true and no note', async () => {
-    const wt = setupCleanWorktree()
-    worktrees.push(wt)
-
-    const { store, ctx, q } = await loadCliModules(repo)
-    const id = await makeAwaitingHumanTask(q, { worktreePath: wt })
+    const wt = newWorktree()
+    const id = await makeAwaitingHumanTask({ worktreePath: wt })
 
     const fake = makeFakeDaemon(() => undefined)
     const r = await runCommandInProcess(['release', '--abort', id], { store, ctx, daemon: fake })
@@ -363,8 +339,6 @@ describe('mars release --abort (no note) — CLI wiring', () => {
 
 describe('handleTaskFailureWithFixTask — no qaNote means no ## QA note in prompt', () => {
   it('fix-task prompt has no QA note section when note is absent', async () => {
-    const { q, ft, rc } = await loadDbModules(repo)
-
     const task = await q.enqueueTask('original task no-note', undefined, { skipTriage: true })
     await q.updateTask(task.id, {
       status: 'running',
@@ -372,7 +346,7 @@ describe('handleTaskFailureWithFixTask — no qaNote means no ## QA note in prom
     })
 
     const sig = `no-note-test-${task.id}`
-    const teardown = registerTestRecipe(rc, sig, 'base prompt without note')
+    const teardown = registerTestRecipe(sig, 'base prompt without note')
 
     try {
       const result = await ft.handleTaskFailureWithFixTask({
