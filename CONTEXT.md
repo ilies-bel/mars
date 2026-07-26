@@ -546,3 +546,7 @@ _Avoid_: quick reply, suggestion chip, action button, canned reply
 **Subject boundary**:
 The state of the chat feed when no Subject is active, where preloaded responses offer the ranked next Subjects and free text opens a new one.
 _Avoid_: handoff, seam, thread break, context reload point
+
+**Autonomy level**:
+The per-lever setting governing whether Mars may act unprompted, valued off, ask, or tell.
+_Avoid_: autonomy dial, permission level, auto mode, steward mode
