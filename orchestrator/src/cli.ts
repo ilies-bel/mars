@@ -529,6 +529,12 @@ Commands:
                                 instruction ('git pull && npm install').
                                 Requires a running daemon
                                 ('mars daemon start').
+  propose <verb> [args...]      emit a single-line JSON proposal envelope
+                                { kind: 'mars-propose', verb, args, proposalId }
+                                to stdout and exit 0 — no side effects. The
+                                confirm gate renders it as a parked tool call.
+                                Rejects verbs not in DESTRUCTIVE_MARS_VERBS
+                                (exit 2, error to stderr).
   statusline                    print a one-line Claude Code status segment.
                                 Reads stdin for session JSON (tolerated but
                                 optional). Reads .mars/update.json for an
@@ -1360,6 +1366,30 @@ Subcommands:
   show
       Print the KPI window comparison (previous window vs current
       window) as JSON to stdout.`,
+  propose: `mars propose <verb> [args...]
+
+Emit a single-line JSON proposal envelope to stdout and exit 0. Performs
+NO mutations — no Postgres writes, no worktree changes, no daemon HTTP
+calls. The output is a JSON object:
+
+  { kind: 'mars-propose', verb, args, proposalId }
+
+where proposalId is a random UUID. The destructive-confirm gate reads
+this envelope and renders it as a parked tool call awaiting operator
+confirmation.
+
+Valid verbs (DESTRUCTIVE_MARS_VERBS):
+  dismiss          dismiss a scorer suggestion
+  purge            delete a task (worktree + branch + row)
+  reject           reject a draft proposal
+  prune-worktree   prune done/dropped worktrees
+
+Any verb not in the list above causes a usage error (exit 2, message to
+stderr).
+
+Example:
+  mars propose purge mars-abc1
+  # → {"kind":"mars-propose","verb":"purge","args":["mars-abc1"],"proposalId":"<uuid>"}`,
   help: `mars help [command]
 
 Show top-level help, or detailed help for a single command. Equivalent

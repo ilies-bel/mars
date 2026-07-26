@@ -38,6 +38,7 @@ import { operatorCommands } from './operator'
 import { chatFeedbackCommands } from './chat-feedback'
 import { releaseNotesCommands } from './release-notes'
 import { verifyGateCommands } from './verify-gate'
+import { proposeCommands } from './propose'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -71,6 +72,7 @@ export const allCommands: readonly Command[] = [
   ...chatFeedbackCommands,
   ...releaseNotesCommands,
   ...verifyGateCommands,
+  ...proposeCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)
