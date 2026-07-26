@@ -863,8 +863,8 @@ export const chatSegmentToolUseSchema = z.object({
   result: z.unknown().optional(),
   /** True when the tool returned an error result. */
   isError: z.boolean().optional().default(false),
-  /** 'pending' while the tool is in-flight; 'complete'/'error' once done. */
-  status: z.enum(['pending', 'complete', 'error']).optional().default('complete'),
+  /** 'pending' while the tool is in-flight; 'complete'/'error' once done; 'proposed' when awaiting operator confirmation. */
+  status: z.enum(['pending', 'complete', 'error', 'proposed']).optional().default('complete'),
 })
 
 /** Alert action button rendered on the alert card (legacy — prefer alertVerbSchema). */

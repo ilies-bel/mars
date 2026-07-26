@@ -674,6 +674,25 @@ const renderPart = (
       />
     )
   }
+  if (part.type === 'data-proposedToolCall') {
+    return (
+      <div
+        key={key}
+        data-testid="proposed-tool-call"
+        className="my-2 rounded-md border border-highlight/30 bg-highlight/5 px-3 py-2 font-mono text-[12px]"
+      >
+        <p className="font-semibold text-highlight uppercase tracking-wide text-[10px]">
+          Proposed — awaiting your confirmation
+        </p>
+        <p className="mt-1 text-foreground">{part.data.toolName}</p>
+        {part.data.input != null && (
+          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-[11px] text-muted-foreground leading-relaxed">
+            {JSON.stringify(part.data.input, null, 2)}
+          </pre>
+        )}
+      </div>
+    )
+  }
   if (part.type === 'data-alert') {
     return <AlertCardFromSegment key={key} alert={part.data} />
   }

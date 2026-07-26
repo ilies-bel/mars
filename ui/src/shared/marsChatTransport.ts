@@ -52,6 +52,8 @@ export type MarsDataParts = {
   alert: ChatSegmentAlert
   attachment: ChatSegmentAttachment
   chatError: { message: string }
+  /** A tool call proposed by the agent but awaiting operator confirmation. Never gets a result folded in. */
+  proposedToolCall: { toolName: string; input: unknown; toolCallId: string }
 }
 
 /** The concrete `UIMessage` shape Mars chat uses (typed metadata + data parts). */

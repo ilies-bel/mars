@@ -202,6 +202,77 @@ describe('chatMessageToUIMessage', () => {
   it('returns an empty parts array for a message with no segments', () => {
     expect(chatMessageToUIMessage(makeMsg([])).parts).toEqual([])
   })
+
+  it('maps a tool_use with status=proposed to a data-proposedToolCall part', () => {
+    const out = chatMessageToUIMessage(makeMsg([
+      { type: 'tool_use', id: 'tu-p', toolName: 'mars_restart', input: { taskId: 'task-1' }, status: 'proposed', isError: false },
+    ]))
+    expect(out.parts).toHaveLength(1)
+    expect(out.parts[0]!.type).toBe('data-proposedToolCall')
+    const part = out.parts[0] as { type: string; data: { toolName: string; input: unknown; toolCallId: string } }
+    expect(part.data.toolName).toBe('mars_restart')
+    expect(part.data.input).toEqual({ taskId: 'task-1' })
+    expect(part.data.toolCallId).toBe('tu-p')
+  })
+
+  it('does not fold a tool_result into a proposed tool_use', () => {
+    const out = chatMessageToUIMessage(makeMsg([
+      { type: 'tool_use', id: 'tu-p', toolName: 'mars_restart', input: { taskId: 'task-1' }, status: 'proposed', isError: false },
+      { type: 'tool_result', tool_use_id: 'tu-p', content: 'restarted', isError: false },
+    ]))
+    // proposed part survives; tool_result is silently dropped
+    expect(out.parts).toHaveLength(1)
+    expect(out.parts[0]!.type).toBe('data-proposedToolCall')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Proposed tool_use — proposed-state rendering via MessageView
+// ---------------------------------------------------------------------------
+
+describe('MessageView – proposed tool_use rendering', () => {
+  it('renders a proposed tool_use as a "Proposed — awaiting your confirmation" card', () => {
+    const msg = chatMessageToUIMessage(makeMsg([
+      { type: 'tool_use', id: 'tu-p', toolName: 'mars_restart', input: { taskId: 'task-1' }, status: 'proposed', isError: false },
+    ]))
+    const html = renderToStaticMarkup(
+      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
+    )
+    expect(html).toContain('Proposed — awaiting your confirmation')
+    expect(html).toContain('mars_restart')
+    expect(html).toContain('task-1')
+    expect(html).toContain('data-testid="proposed-tool-call"')
+  })
+
+  it('does NOT render a ToolGroup for a proposed tool_use', () => {
+    const msg = chatMessageToUIMessage(makeMsg([
+      { type: 'tool_use', id: 'tu-p', toolName: 'mars_restart', input: {}, status: 'proposed', isError: false },
+    ]))
+    const html = renderToStaticMarkup(
+      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
+    )
+    // ToolGroup would render a 'Pending'/'Running'/'Completed' status badge — none should appear
+    expect(html).not.toContain('Pending')
+    expect(html).not.toContain('Completed')
+    expect(html).not.toContain('Running')
+  })
+
+  it('renders executed tool_use normally (not as proposed) even when a proposed one is also present', () => {
+    const msg = chatMessageToUIMessage(makeMsg([
+      { type: 'tool_use', id: 'tu-p', toolName: 'mars_snooze', input: {}, status: 'proposed', isError: false },
+      { type: 'tool_use', id: 'tu-c', toolName: 'Bash', input: { cmd: 'ls' }, status: 'complete', isError: false },
+      { type: 'tool_result', tool_use_id: 'tu-c', content: 'file1.ts', isError: false },
+    ]))
+    const html = renderToStaticMarkup(
+      createElement(MessageView, { message: msg, onDiscuss: () => undefined }),
+    )
+    // Proposed card is present
+    expect(html).toContain('Proposed — awaiting your confirmation')
+    expect(html).toContain('mars_snooze')
+    // Executed tool still renders via ToolGroup (shows 'Completed' badge)
+    expect(html).toContain('Bash')
+    expect(html).toContain('Completed')
+  })
 })
 
 // ---------------------------------------------------------------------------

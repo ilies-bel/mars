@@ -55,6 +55,15 @@ export function chatMessageToUIMessage(msg: ChatMessage): MarsUIMessage {
       }
       case 'tool_use': {
         const toolCallId = seg.id ?? `${msg.id}-tool-${parts.length}`
+        // Proposed tool calls render as a pending confirmation card and must never
+        // have a tool_result folded in — even if one arrives later. Using a
+        // data-proposedToolCall type ensures the fold guard in the tool_result
+        // branch (`!existing.type.startsWith('tool-')`) naturally skips them.
+        if (seg.status === 'proposed') {
+          lastToolIndex = parts.push({ type: 'data-proposedToolCall', data: { toolName: seg.toolName, input: seg.input, toolCallId } }) - 1
+          toolIndexById.set(toolCallId, lastToolIndex)
+          break
+        }
         const type = `tool-${seg.toolName}` as const
         let part: Part
         if (seg.result !== undefined) {
