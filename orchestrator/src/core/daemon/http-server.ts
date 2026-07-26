@@ -27,7 +27,7 @@ import {
   RELEASE_NOTES_LAST_VIEWED_KEY,
 } from '../lib/settings'
 import { resolveStateClient } from '../store/state-client'
-import { getNotificationsEnabled, setNotificationsEnabled } from '../store/state-store'
+import { getNotificationsEnabled, setNotificationsEnabled, readDaemonHeartbeat } from '../store/state-store'
 import {
   createThread,
   toThreadApiView,
@@ -673,6 +673,32 @@ export const startHttpServer = async (
     // correctly shows the daemon as live even while it is draining.
     if (req.method === 'GET' && req.url === '/healthz') {
       sendJson(res, 200, { ok: true })
+      return
+    }
+
+    // GET /liveness — operator uptime probe. Returns { pid, bootTs, lastBeatTs,
+    // uptimeMs, staleMs } when the heartbeat row exists so operators can confirm
+    // the daemon is alive, how long it has been up, and how fresh its last beat is.
+    // Returns 503 { reason: 'no-heartbeat' } before the heartbeat writer has
+    // written its first row (daemon still starting, or heartbeat writer failed).
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/liveness') {
+      readDaemonHeartbeat(resolveStateClient())
+        .then((hb) => {
+          if (hb === null) {
+            sendJson(res, 503, { reason: 'no-heartbeat' })
+            return
+          }
+          const now = Date.now()
+          sendJson(res, 200, {
+            pid: hb.pid,
+            bootTs: hb.bootTs,
+            lastBeatTs: hb.lastBeatTs,
+            uptimeMs: now - hb.bootTs,
+            staleMs: now - hb.lastBeatTs,
+          })
+        })
+        .catch((err: unknown) => sendError(res, err))
       return
     }
 

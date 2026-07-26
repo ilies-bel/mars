@@ -262,6 +262,29 @@ export const setNotificationsEnabled = async (
   })
 }
 
+/**
+ * Read the single `daemon_heartbeat` row (id = 1). Returns null when no
+ * heartbeat row exists yet — e.g. the daemon has not started its heartbeat
+ * writer.
+ *
+ * Timestamps are returned as milliseconds since epoch so callers can compute
+ * derived fields (uptimeMs, staleMs) with a plain `Date.now() - x`.
+ */
+export const readDaemonHeartbeat = async (
+  db: DbClient,
+): Promise<{ pid: number; bootTs: number; lastBeatTs: number } | null> => {
+  const result = await db.execute(
+    'SELECT pid, boot_ts, last_beat_ts FROM daemon_heartbeat WHERE id = 1',
+  )
+  if (result.rows.length === 0) return null
+  const row = result.rows[0]
+  return {
+    pid: Number(row.pid),
+    bootTs: new Date(row.boot_ts as string).getTime(),
+    lastBeatTs: new Date(row.last_beat_ts as string).getTime(),
+  }
+}
+
 let cachedDefaultStateStore: DomainStateStore | null = null
 
 /**
