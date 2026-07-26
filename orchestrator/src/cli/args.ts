@@ -135,6 +135,9 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--optional',
   // mars list --all: bypass the default 10-row limit and return every matching task.
   '--all',
+  // mars release-notes list — cursor-based feed filtering
+  '--unseen',
+  '--mark-viewed',
 ])
 
 // Short aliases for value-bearing flags, normalised to their long form before

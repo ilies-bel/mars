@@ -1,10 +1,17 @@
 /**
- * Tests for `mars release-notes list` and bare `mars release-notes`.
+ * Tests for `mars release-notes list`, bare `mars release-notes`, and
+ * `mars release-notes mark-viewed`.
  *
- * Covers all acceptance criteria for slice mars-2d2728db:
+ * Covers all acceptance criteria for slices mars-2d2728db and mars-562dab0a:
  *   1. Happy path — daemon up, entries returned: one tab-separated line per arc
  *   2. Empty feed — daemon up, zero entries: prints "release notes empty"
  *   3. Daemon down (no port file) — exits non-zero with daemon-not-running message
+ *   4. --since filtering — only entries strictly newer than the ISO timestamp
+ *   5. --unseen — reads cursor and filters; all entries when cursor is null
+ *   6. --since + --unseen conflict — usage error exit 2
+ *   7. --mark-viewed — POSTs cursor after listing, prints "marked viewed at <ISO>"
+ *   8. mark-viewed subcommand — POSTs cursor, prints timestamp
+ *   9. Invalid --since — exits non-zero with usage message
  *
  * Isolation: `vi.resetModules()` + fresh temp-dir git repo per test group.
  * `fetch` is stubbed via `vi.stubGlobal` so no real HTTP call is made.
@@ -74,6 +81,32 @@ const stubFetch = (payload: unknown): ReturnType<typeof vi.fn> => {
 /** Stub fetch to simulate an unreachable daemon (connection refused). */
 const stubFetchDown = (): void => {
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED') }))
+}
+
+/**
+ * Stub fetch to dispatch to per-path handlers based on URL substring matching.
+ * Keys are sorted by length descending so more-specific paths (e.g.
+ * `/view/release-notes-cursor`) match before their prefixes (`/view/release-notes`).
+ */
+const stubFetchMulti = (
+  handlers: Record<string, unknown | (() => Promise<unknown>)>,
+): ReturnType<typeof vi.fn> => {
+  // Longer keys are more specific; sort descending so they win over prefixes.
+  const sortedKeys = Object.keys(handlers).sort((a, b) => b.length - a.length)
+  const mock = vi.fn(async (url: string, _init?: RequestInit) => {
+    const key = sortedKeys.find((k) => url.includes(k))
+    if (key === undefined) throw new Error(`unexpected fetch URL: ${url}`)
+    const payload =
+      typeof handlers[key] === 'function'
+        ? await (handlers[key] as () => Promise<unknown>)()
+        : handlers[key]
+    return {
+      ok: true,
+      json: async () => payload,
+    }
+  })
+  vi.stubGlobal('fetch', mock)
+  return mock
 }
 
 const loadDeps = async (): Promise<Omit<InProcessOptions, 'daemon'>> => {
@@ -248,5 +281,305 @@ describe('mars release-notes (bare) — alias for list', () => {
 
     expect(r.code).not.toBe(0)
     expect(r.err.join('\n')).toMatch(/daemon not running/i)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5. --since filtering
+// ---------------------------------------------------------------------------
+
+describe('mars release-notes list --since', () => {
+  it('filters to entries strictly newer than the given ISO timestamp', async () => {
+    writeDaemonPort(repo)
+    stubFetch(sampleEntries)
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    // Only the 2026-07-24 entry is newer than 2026-07-23T12:00:00Z
+    const r = await run(
+      ['release-notes', 'list', '--since', '2026-07-23T12:00:00Z'],
+      { ...deps, daemon: fake },
+    )
+
+    expect(r.code).toBe(0)
+    expect(r.out).toHaveLength(1)
+    expect(r.out[0]).toContain('Add release notes feed')
+  })
+
+  it('prints "release notes empty" when no entries are newer than --since', async () => {
+    writeDaemonPort(repo)
+    stubFetch(sampleEntries)
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(
+      ['release-notes', 'list', '--since', '2026-07-25T00:00:00Z'],
+      { ...deps, daemon: fake },
+    )
+
+    expect(r.code).toBe(0)
+    expect(r.out).toEqual(['release notes empty'])
+  })
+
+  it('shows all entries when --since is older than every entry', async () => {
+    writeDaemonPort(repo)
+    stubFetch(sampleEntries)
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(
+      ['release-notes', 'list', '--since', '2026-07-01T00:00:00Z'],
+      { ...deps, daemon: fake },
+    )
+
+    expect(r.code).toBe(0)
+    expect(r.out).toHaveLength(2)
+  })
+
+  it('exits non-zero with usage message for an invalid --since value', async () => {
+    writeDaemonPort(repo)
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(
+      ['release-notes', 'list', '--since', 'not-a-date'],
+      { ...deps, daemon: fake },
+    )
+
+    expect(r.code).not.toBe(0)
+    expect(r.err.join('\n')).toContain('usage:')
+  })
+
+  it('exits with code 2 for invalid --since (not code 1)', async () => {
+    writeDaemonPort(repo)
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(
+      ['release-notes', 'list', '--since', 'garbage'],
+      { ...deps, daemon: fake },
+    )
+
+    expect(r.code).toBe(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. --unseen filtering
+// ---------------------------------------------------------------------------
+
+describe('mars release-notes list --unseen', () => {
+  it('shows all entries when cursor is null (never viewed)', async () => {
+    writeDaemonPort(repo)
+    stubFetchMulti({
+      '/view/release-notes-cursor': { lastViewedAt: null },
+      '/view/release-notes': sampleEntries,
+    })
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(['release-notes', 'list', '--unseen'], { ...deps, daemon: fake })
+
+    expect(r.code).toBe(0)
+    expect(r.out).toHaveLength(2)
+  })
+
+  it('filters to entries newer than cursor lastViewedAt', async () => {
+    writeDaemonPort(repo)
+    stubFetchMulti({
+      '/view/release-notes-cursor': { lastViewedAt: '2026-07-23T12:00:00.000Z' },
+      '/view/release-notes': sampleEntries,
+    })
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(['release-notes', 'list', '--unseen'], { ...deps, daemon: fake })
+
+    expect(r.code).toBe(0)
+    expect(r.out).toHaveLength(1)
+    expect(r.out[0]).toContain('Add release notes feed')
+  })
+
+  it('prints "release notes empty" when all entries are already viewed', async () => {
+    writeDaemonPort(repo)
+    stubFetchMulti({
+      '/view/release-notes-cursor': { lastViewedAt: '2026-07-25T00:00:00.000Z' },
+      '/view/release-notes': sampleEntries,
+    })
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(['release-notes', 'list', '--unseen'], { ...deps, daemon: fake })
+
+    expect(r.code).toBe(0)
+    expect(r.out).toEqual(['release notes empty'])
+  })
+
+  it('GETs the cursor from /view/release-notes-cursor', async () => {
+    writeDaemonPort(repo)
+    const fetchMock = stubFetchMulti({
+      '/view/release-notes-cursor': { lastViewedAt: null },
+      '/view/release-notes': sampleEntries,
+    })
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    await run(['release-notes', 'list', '--unseen'], { ...deps, daemon: fake })
+
+    const calledUrls = (fetchMock.mock.calls as [string][]).map(([url]) => url)
+    expect(calledUrls.some((u) => u.includes('/view/release-notes-cursor'))).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 7. --since + --unseen conflict
+// ---------------------------------------------------------------------------
+
+describe('mars release-notes list --since + --unseen conflict', () => {
+  it('rejects combining --since and --unseen with usage error and exit 2', async () => {
+    writeDaemonPort(repo)
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(
+      ['release-notes', 'list', '--since', '2026-07-01T00:00:00Z', '--unseen'],
+      { ...deps, daemon: fake },
+    )
+
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('usage:')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 8. --mark-viewed combined with listing
+// ---------------------------------------------------------------------------
+
+describe('mars release-notes list --mark-viewed', () => {
+  it('POSTs the cursor after listing and prints "marked viewed at <ISO>"', async () => {
+    writeDaemonPort(repo)
+    const CURSOR_RESULT = { lastViewedAt: '2026-07-26T12:00:00.000Z' }
+    const fetchMock = stubFetchMulti({
+      '/view/release-notes': sampleEntries,
+      '/view/release-notes-cursor': CURSOR_RESULT,
+    })
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(
+      ['release-notes', 'list', '--mark-viewed'],
+      { ...deps, daemon: fake },
+    )
+
+    expect(r.code).toBe(0)
+    // Last output line is the "marked viewed at" confirmation
+    const lastLine = r.out[r.out.length - 1]
+    expect(lastLine).toBe(`marked viewed at ${CURSOR_RESULT.lastViewedAt}`)
+
+    // Verify that a POST was made to the cursor endpoint
+    const calls = fetchMock.mock.calls as [string, RequestInit?][]
+    const postCall = calls.find(([url, init]) =>
+      url.includes('/view/release-notes-cursor') && init?.method === 'POST',
+    )
+    expect(postCall).toBeDefined()
+  })
+
+  it('entries are still printed before the "marked viewed at" line', async () => {
+    writeDaemonPort(repo)
+    const CURSOR_RESULT = { lastViewedAt: '2026-07-26T12:00:00.000Z' }
+    stubFetchMulti({
+      '/view/release-notes': sampleEntries,
+      '/view/release-notes-cursor': CURSOR_RESULT,
+    })
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(
+      ['release-notes', 'list', '--mark-viewed'],
+      { ...deps, daemon: fake },
+    )
+
+    // 2 entries + 1 "marked viewed at" line
+    expect(r.out).toHaveLength(3)
+    expect(r.out[0]).toContain('Add release notes feed')
+    expect(r.out[1]).toContain('Fix daemon port lookup')
+    expect(r.out[2]).toContain('marked viewed at')
+  })
+
+  it('can combine --since with --mark-viewed', async () => {
+    writeDaemonPort(repo)
+    const CURSOR_RESULT = { lastViewedAt: '2026-07-26T12:00:00.000Z' }
+    stubFetchMulti({
+      '/view/release-notes': sampleEntries,
+      '/view/release-notes-cursor': CURSOR_RESULT,
+    })
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(
+      ['release-notes', 'list', '--since', '2026-07-23T12:00:00Z', '--mark-viewed'],
+      { ...deps, daemon: fake },
+    )
+
+    expect(r.code).toBe(0)
+    // 1 filtered entry + mark-viewed line
+    expect(r.out).toHaveLength(2)
+    expect(r.out[0]).toContain('Add release notes feed')
+    expect(r.out[1]).toContain('marked viewed at')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. `mars release-notes mark-viewed` subcommand
+// ---------------------------------------------------------------------------
+
+describe('mars release-notes mark-viewed', () => {
+  it('POSTs the cursor and prints the returned timestamp', async () => {
+    writeDaemonPort(repo)
+    const CURSOR_RESULT = { lastViewedAt: '2026-07-26T15:00:00.000Z' }
+    const fetchMock = stubFetchMulti({
+      '/view/release-notes-cursor': CURSOR_RESULT,
+    })
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(['release-notes', 'mark-viewed'], { ...deps, daemon: fake })
+
+    expect(r.code).toBe(0)
+    expect(r.out).toHaveLength(1)
+    expect(r.out[0]).toBe(CURSOR_RESULT.lastViewedAt)
+
+    // Verify a POST was made (not a GET)
+    const calls = fetchMock.mock.calls as [string, RequestInit?][]
+    const postCall = calls.find(([url, init]) =>
+      url.includes('/view/release-notes-cursor') && init?.method === 'POST',
+    )
+    expect(postCall).toBeDefined()
+  })
+
+  it('exits non-zero when daemon is not running', async () => {
+    // No port file
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(['release-notes', 'mark-viewed'], { ...deps, daemon: fake })
+
+    expect(r.code).not.toBe(0)
+    expect(r.err.join('\n')).toMatch(/daemon not running/i)
+  })
+
+  it('does not print any release-notes entries — only the timestamp', async () => {
+    writeDaemonPort(repo)
+    const CURSOR_RESULT = { lastViewedAt: '2026-07-26T15:00:00.000Z' }
+    stubFetchMulti({
+      '/view/release-notes-cursor': CURSOR_RESULT,
+    })
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const r = await run(['release-notes', 'mark-viewed'], { ...deps, daemon: fake })
+
+    // Exactly one output line — the timestamp, nothing else
+    expect(r.out).toHaveLength(1)
   })
 })
