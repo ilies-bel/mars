@@ -288,12 +288,12 @@ export const listThreads = async (): Promise<ThreadPreview[]> => {
            (SELECT content
               FROM chat_messages m
              WHERE m.thread_id = t.id
-             ORDER BY m.created_at DESC, m.id DESC
+             ORDER BY m.created_at DESC, m.seq DESC
              LIMIT 1) AS last_message,
            (SELECT role
               FROM chat_messages m
              WHERE m.thread_id = t.id
-             ORDER BY m.created_at DESC, m.id DESC
+             ORDER BY m.created_at DESC, m.seq DESC
              LIMIT 1) AS last_message_role
       FROM chat_threads t
      WHERE t.evaporated_at IS NULL
@@ -317,12 +317,12 @@ export const listEvaporatedThreads = async (): Promise<ThreadPreview[]> => {
            (SELECT content
               FROM chat_messages m
              WHERE m.thread_id = t.id
-             ORDER BY m.created_at DESC, m.id DESC
+             ORDER BY m.created_at DESC, m.seq DESC
              LIMIT 1) AS last_message,
            (SELECT role
               FROM chat_messages m
              WHERE m.thread_id = t.id
-             ORDER BY m.created_at DESC, m.id DESC
+             ORDER BY m.created_at DESC, m.seq DESC
              LIMIT 1) AS last_message_role
       FROM chat_threads t
      WHERE t.evaporated_at IS NOT NULL
@@ -354,7 +354,7 @@ export const getThread = async (id: string): Promise<ThreadWithMessages | null> 
           FROM chat_messages m
           LEFT JOIN chat_feedback f ON f.message_id = m.id
           WHERE m.thread_id = ?
-          ORDER BY m.created_at ASC, m.id ASC`,
+          ORDER BY m.created_at ASC, m.seq ASC`,
     args: [id],
   })
   const feedbacks = new Map<string, { rating: FeedbackRating; note: string | null }>()
