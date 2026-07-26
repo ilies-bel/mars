@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   FAILURE_KINDS,
+  WORKTREE_MISSING_ACTIONS,
   lookupFailureKind,
   unknownFailureKind,
 } from '../failure-kinds'
@@ -309,6 +310,27 @@ describe('new catalog entries for previously-unmatched signatures', () => {
     expect(entry).not.toBeNull()
     expect(entry!.warmTitle).not.toBe('The coder did not produce any changes')
     expect(entry!.verboseReason).not.toContain('The coder may have encountered an error')
+  })
+
+  it('verify:has-diff/worktree-missing action list has no diagnose-failure and contains exactly restart and purge', () => {
+    // When the worktree is gone there is nothing left to investigate — the
+    // only meaningful repairs are re-provisioning (restart) or dropping
+    // (purge). The Investigate action must NOT appear in this menu.
+    const entry = lookupFailureKind('verify:has-diff/worktree-missing')
+    expect(entry).not.toBeNull()
+    expect(entry!.actions.every((a) => a.op !== 'diagnose-failure')).toBe(true)
+    const ops = entry!.actions.map((a) => a.op)
+    expect(ops).toContain('restart')
+    expect(ops).toContain('purge')
+    expect(ops).toHaveLength(2)
+  })
+
+  it('WORKTREE_MISSING_ACTIONS export contains exactly restart and purge', () => {
+    const ops = WORKTREE_MISSING_ACTIONS.map((a) => a.op)
+    expect(ops).toContain('restart')
+    expect(ops).toContain('purge')
+    expect(ops).toHaveLength(2)
+    expect(WORKTREE_MISSING_ACTIONS.every((a) => a.op !== 'diagnose-failure')).toBe(true)
   })
 
   it('code:coder-exit-nonzero/api-unreachable is registered with an environmental human explanation', () => {

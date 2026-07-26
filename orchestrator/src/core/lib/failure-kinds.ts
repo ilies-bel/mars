@@ -208,6 +208,17 @@ const DEFAULT_ACTIONS: ActionDescriptor[] = [
 ]
 
 /**
+ * Recovery menu for worktree-missing failures: the worktree is gone so there
+ * is nothing to diagnose — only restart (re-provision from scratch) or purge
+ * are meaningful. Used by every FailureKind whose root cause is a missing or
+ * irrecoverable worktree/branch/origin state.
+ */
+export const WORKTREE_MISSING_ACTIONS: ActionDescriptor[] = [
+  { id: 'restart', label: 'Restart from scratch', op: 'restart' },
+  { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+]
+
+/**
  * Recovery menu for daemon-killed tasks: requeue this one, or batch-restart all
  * affected tasks. This is the ADR-0035 daemon-killed special-case re-expressed
  * on the signature keying — one row kind (`failed-task` carrying the
@@ -336,7 +347,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         warmTitle: 'Task worktree disappeared before verify could run',
         verboseReason:
           "The verify step could not inspect a diff because the task's worktree was gone (likely pruned by a daemon restart or recover sweep while the task was in flight). This is an infrastructure condition, not a coder error — the task can be restarted.",
-        actions: DEFAULT_ACTIONS,
+        actions: WORKTREE_MISSING_ACTIONS,
       },
       {
         signature: 'verify:has-diff/unclassified',
@@ -472,10 +483,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         warmTitle: 'The task worktree had uncommitted changes when the rebase started',
         verboseReason:
           'The merge step was aborted because the task worktree contained uncommitted or untracked files that prevented the rebase from starting. This is a worktree hygiene condition, not a code defect; restarting re-provisions the worktree from scratch.',
-        actions: [
-          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
-          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
-        ],
+        actions: WORKTREE_MISSING_ACTIONS,
       },
       {
         // merge:vcs-supervisor-aborted/rebase-no-in-progress-state fires when
@@ -491,10 +499,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         warmTitle: 'The rebase could not start (no in-progress state)',
         verboseReason:
           'The merge step was aborted because git rebase exited non-zero without leaving a rebase state directory on disk — the worktree or ref state prevented the rebase from starting. This is a git worktree/rebase-state condition, not a code defect; restarting re-provisions the worktree from scratch.',
-        actions: [
-          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
-          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
-        ],
+        actions: WORKTREE_MISSING_ACTIONS,
       },
       {
         signature: 'merge:vcs-supervisor-aborted/unclassified',
