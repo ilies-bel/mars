@@ -13,6 +13,7 @@ import {
 } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import { codexHeadless } from './providers/codex-headless'
+import { geminiHeadless } from './providers/gemini-headless'
 
 export type ProviderName = 'claude' | 'gemini' | 'codex'
 
@@ -268,18 +269,10 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       // followed by optional whitespace / ANSI clear sequences.
       spinnerOverride: /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/,
     },
-    // Headless adapter stub — not yet implemented. A headless dispatch routed
-    // to the gemini provider will throw at runtime; its adapter slice lands in
-    // a later PRD iteration.
-    headless: {
-      capabilities: {
-        contextTokenMetering: false,
-        quotaRejected: false,
-        sessionId: false,
-      },
-      run: (_prompt: string, _opts: HeadlessRunOpts): Promise<RunClaudeResult> =>
-        Promise.reject(new Error('gemini headless adapter not yet implemented')),
-    },
+    // Headless adapter: spawns `gemini -p`, normalises its line-buffered stdout
+    // to ClaudeEvent shape, and returns a RunClaudeResult with null sessionId
+    // and quotaRejected (signals gemini does not expose).
+    headless: geminiHeadless,
   },
   codex: {
     name: 'codex',
