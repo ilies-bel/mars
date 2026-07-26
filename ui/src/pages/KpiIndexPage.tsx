@@ -9,7 +9,7 @@ import { WatchtowerSection } from '@/widgets/WatchtowerSection'
  */
 export const KpiIndexPage = () => (
   <div className="flex flex-col gap-4 overflow-y-auto p-6">
-    <h2 className="font-mono text-[11px] uppercase tracking-wide text-iron">KPIs</h2>
+    <h2 className="font-mono text-[11px] uppercase tracking-wide text-primary">KPIs</h2>
     <KpiVector />
     <WatchtowerSection />
   </div>

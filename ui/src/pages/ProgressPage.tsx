@@ -92,7 +92,7 @@ export const ProgressPage = () => {
   const failedCount = aggregates.failedOpen
 
   return (
-    <div className="flex h-full w-full min-h-0 overflow-hidden bg-bg">
+    <div className="flex h-full w-full min-h-0 overflow-hidden bg-background">
       <div className="flex min-w-0 flex-1 flex-col">
         <TopStripe
           inProgress={inProgressCount}
@@ -102,14 +102,14 @@ export const ProgressPage = () => {
         />
         <TabStrip active={activeTab} onSelect={setActiveTab} />
         {/* Text search — always visible */}
-        <div className="flex items-center gap-2 border-b border-iron/20 bg-bg px-4 py-1.5">
+        <div className="flex items-center gap-2 border-b border-primary/20 bg-background px-4 py-1.5">
           <input
             type="text"
             data-testid="search-tasks"
             placeholder="Search id, prompt, branch…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-fg placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-border"
+            className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border"
           />
         </div>
         {/* Proposal filter — shown while loading (tasks===null) to reserve the
@@ -122,7 +122,7 @@ export const ProgressPage = () => {
           >
             <label
               htmlFor="proposal-filter-select"
-              className="shrink-0 font-mono text-[11px] text-muted"
+              className="shrink-0 font-mono text-[11px] text-muted-foreground"
             >
               Proposal
             </label>
@@ -131,7 +131,7 @@ export const ProgressPage = () => {
               value={selectedProposalId ?? ''}
               onChange={(e) => setSelectedProposalId(e.target.value || null)}
               disabled={tasks === null}
-              className="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-fg focus:outline-none focus:ring-1 focus:ring-border disabled:opacity-50"
+              className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-border disabled:opacity-50"
             >
               <option value="">All</option>
               {proposals.map((p) => (
@@ -143,7 +143,7 @@ export const ProgressPage = () => {
           </div>
         ) : null}
         {error && tasks === null ? (
-          <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
+          <main className="flex min-h-0 flex-1 overflow-hidden bg-background">
             <FallbackSurface error={error} of="tasks" variant="pane" />
           </main>
         ) : activeTab === 'topology' ? (

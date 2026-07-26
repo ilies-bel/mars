@@ -612,8 +612,8 @@ describe('EventRow severity styling', () => {
       ]),
     )
     const html = renderPage(qc)
-    expect(html).toContain('border-iron/30')
-    expect(html).toContain('bg-iron/5')
+    expect(html).toContain('border-primary/30')
+    expect(html).toContain('bg-primary/5')
     expect(html).not.toContain('border-error')
     expect(html).not.toContain('border-warn')
   })

@@ -58,13 +58,13 @@ export const FallbackSurface = ({ error, of, variant = 'pane' }: FallbackSurface
       data-testid="api-error-panel"
       className="flex h-full flex-col items-center justify-center px-6 text-center"
     >
-      <div className="max-w-lg border border-iron/40 bg-iron/10 p-6 font-mono text-left">
-        <p className="text-[13px] uppercase tracking-wide text-fg">{fb.headline}</p>
+      <div className="max-w-lg border border-primary/40 bg-primary/10 p-6 font-mono text-left">
+        <p className="text-[13px] uppercase tracking-wide text-foreground">{fb.headline}</p>
         {fb.remedy !== null && (
-          <p className="mt-4 text-[11px] text-muted">{fb.remedy}</p>
+          <p className="mt-4 text-[11px] text-muted-foreground">{fb.remedy}</p>
         )}
         {fb.detail !== null && (
-          <p className="mt-3 whitespace-pre-wrap break-all text-[11px] text-iron">
+          <p className="mt-3 whitespace-pre-wrap break-all text-[11px] text-primary">
             {fb.detail}
           </p>
         )}

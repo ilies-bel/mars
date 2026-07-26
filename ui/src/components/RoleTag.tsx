@@ -1,10 +1,10 @@
 import type { Role } from '@/shared/types'
 
 const COLOR: Record<Role, string> = {
-  planner: 'text-ochre',
-  builder: 'text-flame',
-  reviewer: 'text-basalt',
-  orchestrator: 'text-iron',
+  planner: 'text-warn',
+  builder: 'text-highlight',
+  reviewer: 'text-muted-foreground',
+  orchestrator: 'text-primary',
 }
 
 export const RoleTag = ({ role }: { role: Role }) => (

@@ -37,7 +37,7 @@ const KIND_ACCENT: Record<string, string> = {
   'failed-task': 'border-l-error',
   'arc-failed': 'border-l-error',
   'stale-worktree': 'border-l-warn',
-  'awaiting-validation': 'border-l-[#1D4ED8]',
+  'awaiting-validation': 'border-l-trace-mars',
   'draft-proposal': 'border-l-success',
 }
 
@@ -76,12 +76,12 @@ const verbButtonClass = (style: AlertVerb['style']): string => {
   const base =
     'rounded px-3 py-1 font-mono text-[11px] border transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
   if (style === 'primary')
-    return `${base} border-flame/60 bg-flame/10 text-flame hover:bg-flame/20`
+    return `${base} border-highlight/60 bg-highlight/10 text-highlight hover:bg-highlight/20`
   if (style === 'destructive')
     return `${base} border-error/40 bg-error/10 text-error hover:bg-error/20`
   if (style === 'snooze')
-    return `${base} border-iron/30 text-iron/70 hover:bg-iron/20`
-  return `${base} border-iron/30 text-iron hover:bg-iron/20`
+    return `${base} border-primary/30 text-primary/70 hover:bg-primary/20`
+  return `${base} border-primary/30 text-primary hover:bg-primary/20`
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="font-mono text-[10px] text-iron/60 hover:text-iron transition-colors select-none"
+        className="font-mono text-[10px] text-primary/60 hover:text-primary transition-colors select-none"
         data-testid="alert-detail-toggle"
       >
         Details {open ? '▾' : '▸'}
@@ -152,28 +152,28 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
         >
           {detail.failureSignature && (
             <div>
-              <dt className="font-mono text-[9px] uppercase text-iron/40">Failure</dt>
-              <dd className="font-mono text-[10px] text-iron">{detail.failureSignature}</dd>
+              <dt className="font-mono text-[9px] uppercase text-primary/40">Failure</dt>
+              <dd className="font-mono text-[10px] text-primary">{detail.failureSignature}</dd>
             </div>
           )}
           {detail.branch && (
             <div>
-              <dt className="font-mono text-[9px] uppercase text-iron/40">Branch</dt>
-              <dd className="font-mono text-[10px] text-iron">{detail.branch}</dd>
+              <dt className="font-mono text-[9px] uppercase text-primary/40">Branch</dt>
+              <dd className="font-mono text-[10px] text-primary">{detail.branch}</dd>
             </div>
           )}
           {detail.worktree && (
             <div>
-              <dt className="font-mono text-[9px] uppercase text-iron/40">Worktree</dt>
-              <dd className="font-mono text-[10px] text-iron break-all">{detail.worktree}</dd>
+              <dt className="font-mono text-[9px] uppercase text-primary/40">Worktree</dt>
+              <dd className="font-mono text-[10px] text-primary break-all">{detail.worktree}</dd>
             </div>
           )}
           {detail.rawError && (
             <div>
-              <dt className="font-mono text-[9px] uppercase text-iron/40">Error</dt>
+              <dt className="font-mono text-[9px] uppercase text-primary/40">Error</dt>
               <dd>
                 <pre
-                  className="mt-0.5 max-h-32 overflow-y-auto rounded bg-iron/10 p-1.5 font-mono text-[10px] text-iron/80 whitespace-pre-wrap break-all"
+                  className="mt-0.5 max-h-32 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-[10px] text-primary/80 whitespace-pre-wrap break-all"
                   data-testid="alert-detail-raw-error"
                 >
                   {detail.rawError}
@@ -183,7 +183,7 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
           )}
           {detail.changelog && (
             <div>
-              <dt className="font-mono text-[9px] uppercase text-iron/40">Changelog</dt>
+              <dt className="font-mono text-[9px] uppercase text-primary/40">Changelog</dt>
               <dd className="mt-0.5 chat-markdown prose prose-sm prose-invert max-w-none text-[11px]">
                 <Response>{detail.changelog}</Response>
               </dd>
@@ -207,7 +207,7 @@ interface SnoozeMenuProps {
 
 const SnoozeMenu = ({ onSelect, onClose, disabled }: SnoozeMenuProps) => (
   <div
-    className="absolute z-10 mt-1 rounded border border-iron/30 bg-surface shadow-lg"
+    className="absolute z-10 mt-1 rounded border border-primary/30 bg-card shadow-lg"
     data-testid="snooze-menu"
   >
     {SNOOZE_PRESETS.map(({ value, label }) => (
@@ -216,7 +216,7 @@ const SnoozeMenu = ({ onSelect, onClose, disabled }: SnoozeMenuProps) => (
         type="button"
         disabled={disabled}
         onClick={() => onSelect(value)}
-        className="block w-full px-4 py-1.5 text-left font-mono text-[11px] text-iron hover:bg-iron/20 disabled:opacity-40 transition-colors"
+        className="block w-full px-4 py-1.5 text-left font-mono text-[11px] text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
         data-testid={`snooze-preset-${value}`}
       >
         {label}
@@ -225,7 +225,7 @@ const SnoozeMenu = ({ onSelect, onClose, disabled }: SnoozeMenuProps) => (
     <button
       type="button"
       onClick={onClose}
-      className="block w-full border-t border-iron/20 px-4 py-1.5 text-left font-mono text-[10px] text-iron/50 hover:bg-iron/10 transition-colors"
+      className="block w-full border-t border-primary/20 px-4 py-1.5 text-left font-mono text-[10px] text-primary/50 hover:bg-primary/10 transition-colors"
     >
       Cancel
     </button>
@@ -320,13 +320,13 @@ export const AlertCard = ({
   if (isSnoozed) {
     return (
       <div
-        className={`my-2 rounded-lg border border-iron/20 border-l-4 ${accentClass} bg-surface p-3 text-[12px] opacity-50`}
+        className={`my-2 rounded-lg border border-primary/20 border-l-4 ${accentClass} bg-card p-3 text-[12px] opacity-50`}
         data-testid="alert-card-snoozed"
       >
         <div className="flex items-center gap-2">
           <span className="text-[13px]" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
-          <span className="flex-1 font-mono text-[11px] text-iron/60 line-clamp-1">{summary}</span>
-          <span className="font-mono text-[10px] text-iron/40">
+          <span className="flex-1 font-mono text-[11px] text-primary/60 line-clamp-1">{summary}</span>
+          <span className="font-mono text-[10px] text-primary/40">
             reappears in {reappearsIn(snoozedUntil)}
           </span>
         </div>
@@ -335,7 +335,7 @@ export const AlertCard = ({
             type="button"
             disabled={pendingOp !== null}
             onClick={() => void handleRestore()}
-            className="rounded border border-iron/30 px-2 py-0.5 font-mono text-[10px] text-iron hover:bg-iron/20 disabled:opacity-40 transition-colors"
+            className="rounded border border-primary/30 px-2 py-0.5 font-mono text-[10px] text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
             data-testid="alert-card-restore"
           >
             {pendingOp === 'restore' ? '…' : 'Restore'}
@@ -354,7 +354,7 @@ export const AlertCard = ({
         'my-2 rounded-lg border border-l-4 p-3 text-[12px]',
         accentClass,
         resolved
-          ? 'border-iron/20 bg-surface opacity-60'
+          ? 'border-primary/20 bg-card opacity-60'
           : 'border-accent/30 bg-accent/5',
       ].join(' ')}
       data-testid="alert-card"
@@ -362,11 +362,11 @@ export const AlertCard = ({
       {/* Header: icon + headline + resolved badge */}
       <div className="mb-1 flex items-center gap-2">
         <span className="text-[13px] shrink-0" aria-hidden="true">{KIND_ICON[kind] ?? '🔔'}</span>
-        <span className="flex-1 font-mono text-[11px] font-semibold text-fg line-clamp-3" data-testid="alert-card-summary">
+        <span className="flex-1 font-mono text-[11px] font-semibold text-foreground line-clamp-3" data-testid="alert-card-summary">
           {summary}
         </span>
         {resolved && (
-          <span className="ml-auto shrink-0 rounded bg-iron/20 px-1.5 py-0.5 font-mono text-[10px] text-iron/60">
+          <span className="ml-auto shrink-0 rounded bg-primary/20 px-1.5 py-0.5 font-mono text-[10px] text-primary/60">
             Resolved
           </span>
         )}
@@ -375,7 +375,7 @@ export const AlertCard = ({
       {/* Entity id — clickable monospace identifier opening the entity detail view */}
       <a
         href={entityHash}
-        className="mb-1 block font-mono text-[10px] text-iron/50 truncate hover:text-iron/80 hover:underline transition-colors"
+        className="mb-1 block font-mono text-[10px] text-primary/50 truncate hover:text-primary/80 hover:underline transition-colors"
         data-testid="alert-card-entity-id"
         aria-label={`Open details for ${entityId}`}
       >
@@ -384,8 +384,8 @@ export const AlertCard = ({
 
       {/* Goal line — the arc's main intent, shown when present */}
       {goal && (
-        <p className="mb-1 font-mono text-[10px] text-iron/70" data-testid="alert-card-goal">
-          <span className="uppercase text-[9px] text-iron/40 mr-1">Goal</span>
+        <p className="mb-1 font-mono text-[10px] text-primary/70" data-testid="alert-card-goal">
+          <span className="uppercase text-[9px] text-primary/40 mr-1">Goal</span>
           {goal}
         </p>
       )}

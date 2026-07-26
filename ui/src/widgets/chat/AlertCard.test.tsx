@@ -440,19 +440,19 @@ describe('ActionQueueRow – recipe rendering', () => {
 // ---------------------------------------------------------------------------
 // ActionQueueRow – verb visual hierarchy
 // Verifies that the legacy-action fallback assigns the correct visual weight
-// to each op kind: purge → danger (error), restart → primary (flame),
+// to each op kind: purge → danger (error), restart → primary (highlight),
 // investigate → ghost (default).
 // ---------------------------------------------------------------------------
 
 describe('ActionQueueRow – verb visual hierarchy', () => {
-  it('renders restart action with primary (flame) styling in legacy fallback', () => {
+  it('renders restart action with primary (highlight) styling in legacy fallback', () => {
     const item = {
       ...BASE_ITEM,
       verbs: [] as AlertVerb[],
       actions: [{ id: 'r', label: 'RESTART', op: 'restart' }],
     } as unknown as ActionQueueItem
     const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
-    expect(html).toContain('text-flame')
+    expect(html).toContain('text-highlight')
   })
 
   it('renders purge action with error (danger) styling in legacy fallback', () => {
@@ -472,7 +472,7 @@ describe('ActionQueueRow – verb visual hierarchy', () => {
       actions: [{ id: 'i', label: 'INVESTIGATE', op: 'investigate' }],
     } as unknown as ActionQueueItem
     const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
-    expect(html).not.toContain('text-flame')
+    expect(html).not.toContain('text-highlight')
     expect(html).not.toContain('text-error')
   })
 })
@@ -495,14 +495,14 @@ describe('ActionQueueRow – recipe verb visual hierarchy', () => {
     expect(html).toContain('text-error')
   })
 
-  it('renders restart recipe verb with primary (flame) styling even when backend sends default', () => {
+  it('renders restart recipe verb with primary (highlight) styling even when backend sends default', () => {
     const item = {
       ...BASE_ITEM,
       humanSummary: 'Task failed',
       verbs: [{ op: 'restart', label: 'RESTART', style: 'default' as const }],
     } as ActionQueueItem
     const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
-    expect(html).toContain('text-flame')
+    expect(html).toContain('text-highlight')
   })
 
   it('renders investigate recipe verb with ghost (default) styling', () => {
@@ -512,7 +512,7 @@ describe('ActionQueueRow – recipe verb visual hierarchy', () => {
       verbs: [{ op: 'investigate', label: 'INVESTIGATE', style: 'default' as const }],
     } as ActionQueueItem
     const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
-    expect(html).not.toContain('text-flame')
+    expect(html).not.toContain('text-highlight')
     expect(html).not.toContain('text-error')
   })
 })

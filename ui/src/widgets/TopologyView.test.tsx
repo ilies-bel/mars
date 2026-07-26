@@ -181,7 +181,7 @@ describe('TopologyView – navigation hint overlay', () => {
 
   it('uses a text size >= 11px and a token that clears AA contrast on the light bg', () => {
     // The prior overlay was 10.5px in text-muted-dark (#A89684 → ~2.5:1 on
-    // --color-bg). It must now be >=11px and coloured with text-muted
+    // --color-bg). It must now be >=11px and coloured with text-muted-foreground
     // (#705F50 → 4.9:1 on --color-bg) so it meets WCAG AA. No opacity dampener
     // either — that silently drops effective contrast back under the threshold.
     const html = renderToStaticMarkup(
@@ -194,7 +194,7 @@ describe('TopologyView – navigation hint overlay', () => {
     const cls = match?.[1] ?? ''
     expect(cls).toContain('text-[11px]')
     expect(cls).not.toContain('text-[10.5px]')
-    expect(cls).toContain('text-muted')
+    expect(cls).toContain('text-muted-foreground')
     expect(cls).not.toContain('text-muted-dark')
     expect(cls).not.toContain('opacity-70')
   })

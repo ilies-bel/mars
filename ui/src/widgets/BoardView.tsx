@@ -203,7 +203,7 @@ export const BoardView = ({
         role="tablist"
         aria-label="Board status"
         data-testid="board-tab-strip"
-        className="flex min-h-[44px] shrink-0 items-center overflow-x-auto border-b border-border bg-bg px-2 md:hidden"
+        className="flex min-h-[44px] shrink-0 items-center overflow-x-auto border-b border-border bg-background px-2 md:hidden"
       >
         {visibleTabs.map((tab) => {
           const count = tabCounts[tab]
@@ -216,8 +216,8 @@ export const BoardView = ({
               onClick={() => setActiveTab(tab)}
               className={`flex min-h-[44px] shrink-0 items-center gap-1.5 border-b-2 px-3 font-sans text-[11px] font-semibold tracking-[0.08em] transition-colors ${
                 activeTab === tab
-                  ? 'border-flame text-flame'
-                  : 'border-transparent text-muted hover:text-fg'
+                  ? 'border-highlight text-highlight'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
               }`}
             >
               {tab}
@@ -235,7 +235,7 @@ export const BoardView = ({
       {/*   tablet  (768–1024px): CSS grid, 2–3 fluid columns, vertical scroll */}
       {/*   desktop (>1024px):  flex-row, original 5 equal columns            */}
       {/* ------------------------------------------------------------------ */}
-      <main className="relative flex flex-col min-h-0 flex-1 gap-3 overflow-hidden bg-bg p-4 md:grid md:grid-cols-[repeat(auto-fit,minmax(280px,1fr))] md:auto-rows-[400px] md:overflow-y-auto lg:flex lg:flex-row lg:overflow-hidden">
+      <main className="relative flex flex-col min-h-0 flex-1 gap-3 overflow-hidden bg-background p-4 md:grid md:grid-cols-[repeat(auto-fit,minmax(280px,1fr))] md:auto-rows-[400px] md:overflow-y-auto lg:flex lg:flex-row lg:overflow-hidden">
         {/* Zero-state search pill — shown when a non-empty search matches no tasks.
             pointer-events:none so it never blocks column scroll interaction. */}
         {searchMatchIds != null && totalMatchedTasks === 0 && (
@@ -243,15 +243,15 @@ export const BoardView = ({
             data-testid="search-zero-state"
             className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
           >
-            <span className="rounded border border-border bg-surface px-3 py-1.5 font-mono text-[11px] text-muted">
+            <span className="rounded border border-border bg-card px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
               {`0 tasks match '${(searchQuery ?? '').trim()}'`}
             </span>
           </div>
         )}
         {CLUSTERS.map((cluster) => {
           const arcsForCluster = arcsByCluster[cluster]
-          const accent: 'flame' | 'muted' =
-            cluster === 'In progress' ? 'flame' : 'muted'
+          const accent: 'highlight' | 'muted' =
+            cluster === 'In progress' ? 'highlight' : 'muted'
           // Mobile: show only the active tab's column. Tablet+: show all.
           const isActiveOnMobile = activeTab === cluster
           return (
@@ -271,7 +271,7 @@ export const BoardView = ({
         })}
       </main>
       {error ? (
-        <div className="border-t border-iron/40 bg-iron/10 px-6 py-1.5 font-mono text-[11px] text-iron">
+        <div className="border-t border-primary/40 bg-primary/10 px-6 py-1.5 font-mono text-[11px] text-primary">
           {error.message}
         </div>
       ) : null}

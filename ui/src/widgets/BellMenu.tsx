@@ -27,7 +27,7 @@ const navigateToThread = (threadId: string): void => {
  *
  * The badge count is Alerts + open Notices, capped at "9+". Clicking toggles a
  * minimal popover; outside-click and Escape close it. Styling reuses NavBar's
- * tokens (bg-bg / border-iron/30 / text-fg / text-iron).
+ * tokens (bg-background / border-primary/30 / text-foreground / text-primary).
  */
 export const BellMenu = () => {
   const { alerts } = useAlerts()
@@ -78,13 +78,13 @@ export const BellMenu = () => {
         onClick={() => setOpen((v) => !v)}
         aria-label={total > 0 ? `Bell, ${total} items` : 'Bell'}
         aria-expanded={open}
-        className="relative rounded px-2 py-1 text-iron hover:text-fg"
+        className="relative rounded px-2 py-1 text-primary hover:text-foreground"
       >
         <BellIcon size={14} aria-hidden="true" />
         {badge !== null && (
           <span
             aria-hidden="true"
-            className="absolute -top-1 -right-1 rounded-full bg-iron/60 px-1 font-mono text-[9px] leading-none text-fg"
+            className="absolute -top-1 -right-1 rounded-full bg-primary/60 px-1 font-mono text-[9px] leading-none text-foreground"
           >
             {badge}
           </span>
@@ -92,13 +92,13 @@ export const BellMenu = () => {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded border border-iron/30 bg-bg p-2 text-[11px] shadow-lg">
+        <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded border border-primary/30 bg-background p-2 text-[11px] shadow-lg">
           <section>
-            <h2 className="px-1 pb-1 font-mono text-[9px] uppercase tracking-wide text-iron">
+            <h2 className="px-1 pb-1 font-mono text-[9px] uppercase tracking-wide text-primary">
               Alerts
             </h2>
             {alerts.length === 0 ? (
-              <p className="px-1 py-1 text-iron">No alerts</p>
+              <p className="px-1 py-1 text-primary">No alerts</p>
             ) : (
               <ul>
                 {alerts.map((alert) => (
@@ -108,10 +108,10 @@ export const BellMenu = () => {
                       disabled={isPending}
                       onClick={() => discussAlert(alert.arcId)}
                       aria-label={`Discuss: ${alert.goal}`}
-                      className="block w-full rounded px-1 py-1 text-left hover:bg-iron/10 disabled:opacity-50"
+                      className="block w-full rounded px-1 py-1 text-left hover:bg-primary/10 disabled:opacity-50"
                     >
-                      <p className="text-fg">{alert.goal}</p>
-                      <p className="text-iron">{alert.reason}</p>
+                      <p className="text-foreground">{alert.goal}</p>
+                      <p className="text-primary">{alert.reason}</p>
                     </button>
                   </li>
                 ))}
@@ -119,14 +119,14 @@ export const BellMenu = () => {
             )}
           </section>
 
-          <div className="my-2 h-px bg-iron/30" aria-hidden="true" />
+          <div className="my-2 h-px bg-primary/30" aria-hidden="true" />
 
           <section>
-            <h2 className="px-1 pb-1 font-mono text-[9px] uppercase tracking-wide text-iron">
+            <h2 className="px-1 pb-1 font-mono text-[9px] uppercase tracking-wide text-primary">
               Notices
             </h2>
             {notices.length === 0 ? (
-              <p className="px-1 py-1 text-iron">No notices</p>
+              <p className="px-1 py-1 text-primary">No notices</p>
             ) : (
               <ul>
                 {notices.map((notice) => (
@@ -134,11 +134,11 @@ export const BellMenu = () => {
                     key={notice.id}
                     className="flex items-start justify-between gap-2 px-1 py-1"
                   >
-                    <span className="text-fg">{notice.body}</span>
+                    <span className="text-foreground">{notice.body}</span>
                     <button
                       type="button"
                       onClick={() => ack(notice.id)}
-                      className="shrink-0 rounded border border-iron/30 px-1.5 py-0.5 text-[10px] text-iron hover:text-fg"
+                      className="shrink-0 rounded border border-primary/30 px-1.5 py-0.5 text-[10px] text-primary hover:text-foreground"
                     >
                       Ok, got it
                     </button>

@@ -167,25 +167,25 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
     <div className="w-full max-w-2xl space-y-3">
       {topAlert && (
         <article
-          className="border border-iron/40 bg-surface p-4 text-left"
+          className="border border-primary/40 bg-card p-4 text-left"
           data-testid="hero-alert-preview"
           aria-label="Most important conversation"
         >
-          <div className="flex items-center gap-2 font-mono text-[10px] text-muted">
+          <div className="flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
             <span aria-hidden="true" className="text-[13px]">{KIND_ICON[topAlert.kind] ?? '🔔'}</span>
             <span>Mars</span>
             <span aria-hidden="true">·</span>
             <span>{kindBadgeLabel(topAlert.kind)}</span>
             <span className={`ml-auto uppercase ${priorityBadgeClass(topAlert.priority)}`}>{topAlert.priority}</span>
           </div>
-          <h2 className="mt-2 font-mono text-[14px] font-semibold text-fg">{topAlert.title}</h2>
-          <p className="mt-1 line-clamp-2 font-mono text-[12px] leading-relaxed text-iron">{topAlert.body}</p>
+          <h2 className="mt-2 font-mono text-[14px] font-semibold text-foreground">{topAlert.title}</h2>
+          <p className="mt-1 line-clamp-2 font-mono text-[12px] leading-relaxed text-primary">{topAlert.body}</p>
           <div className="mt-3 flex items-center justify-between gap-3">
-            <span className="truncate font-mono text-[10px] text-muted">{topAlert.entityId}</span>
+            <span className="truncate font-mono text-[10px] text-muted-foreground">{topAlert.entityId}</span>
             <button
               type="button"
               data-testid="hero-alert-open"
-              className="shrink-0 border border-iron/50 px-3 py-1.5 font-mono text-[10px] uppercase text-fg transition-colors hover:bg-iron/15 active:scale-[0.98]"
+              className="shrink-0 border border-primary/50 px-3 py-1.5 font-mono text-[10px] uppercase text-foreground transition-colors hover:bg-primary/15 active:scale-[0.98]"
               onClick={() => onAlertClick(topAlert)}
             >
               Open conversation
@@ -207,7 +207,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
                 type="button"
                 data-testid="hero-alert-option"
                 title={alert.title}
-                className="flex min-w-0 max-w-full items-center gap-1.5 border border-iron/30 px-2.5 py-1.5 font-mono text-[11px] text-iron transition-colors hover:bg-iron/10 hover:text-fg active:scale-[0.98]"
+                className="flex min-w-0 max-w-full items-center gap-1.5 border border-primary/30 px-2.5 py-1.5 font-mono text-[11px] text-primary transition-colors hover:bg-primary/10 hover:text-foreground active:scale-[0.98]"
                 onClick={() => onAlertClick(alert)}
               >
                 <span aria-hidden="true">{KIND_ICON[alert.kind] ?? '🔔'}</span>
@@ -223,7 +223,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
           <button
             key={chip.label}
             type="button"
-            className="border border-iron/40 px-3 py-1.5 font-mono text-[11px] text-iron transition-colors hover:border-iron/70 hover:bg-iron/15 hover:text-fg active:scale-[0.98]"
+            className="border border-primary/40 px-3 py-1.5 font-mono text-[11px] text-primary transition-colors hover:border-primary/70 hover:bg-primary/15 hover:text-foreground active:scale-[0.98]"
             onClick={() =>
               'action' in chip && chip.action === 'what-happened'
                 ? onWhatHappened()
@@ -435,7 +435,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
             'rounded p-0.5 transition-colors',
             localRating === 'up'
               ? 'text-accent'
-              : 'text-iron/40 hover:text-iron',
+              : 'text-primary/40 hover:text-primary',
           ].join(' ')}
           onClick={() => void handleUp()}
         >
@@ -449,7 +449,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
             'rounded p-0.5 transition-colors',
             localRating === 'down'
               ? 'text-red-400'
-              : 'text-iron/40 hover:text-iron',
+              : 'text-primary/40 hover:text-primary',
           ].join(' ')}
           onClick={() => void handleDown()}
         >
@@ -457,7 +457,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
         </button>
         {localNote && localRating === 'down' && (
           <span
-            className="max-w-[200px] truncate font-mono text-[10px] text-iron/50"
+            className="max-w-[200px] truncate font-mono text-[10px] text-primary/50"
             title={localNote}
           >
             {localNote}
@@ -470,7 +470,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
           type="text"
           aria-label="What went wrong? (optional)"
           placeholder="What went wrong? (optional)"
-          className="w-full max-w-xs rounded border border-iron/30 bg-surface px-2 py-1 font-mono text-[11px] text-fg placeholder:text-iron/40 focus:border-iron/60 focus:outline-none"
+          className="w-full max-w-xs rounded border border-primary/30 bg-card px-2 py-1 font-mono text-[11px] text-foreground placeholder:text-primary/40 focus:border-primary/60 focus:outline-none"
           value={noteInput}
           onChange={(e) => setNoteInput(e.target.value)}
           onKeyDown={(e) => {
@@ -510,7 +510,7 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
         <img
           src={src}
           alt={attachment.name}
-          className="max-h-64 rounded border border-iron/20 object-contain"
+          className="max-h-64 rounded border border-primary/20 object-contain"
         />
       </a>
     )
@@ -520,7 +520,7 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
       <div className="my-1" data-testid="attachment-audio">
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <audio controls src={src} className="w-full max-w-sm" />
-        <p className="mt-0.5 font-mono text-[10px] text-iron/60 truncate">{attachment.name}</p>
+        <p className="mt-0.5 font-mono text-[10px] text-primary/60 truncate">{attachment.name}</p>
       </div>
     )
   }
@@ -528,8 +528,8 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
     return (
       <div className="my-1" data-testid="attachment-video">
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video controls src={src} className="max-h-64 w-full rounded border border-iron/20 object-contain" />
-        <p className="mt-0.5 font-mono text-[10px] text-iron/60 truncate">{attachment.name}</p>
+        <video controls src={src} className="max-h-64 w-full rounded border border-primary/20 object-contain" />
+        <p className="mt-0.5 font-mono text-[10px] text-primary/60 truncate">{attachment.name}</p>
       </div>
     )
   }
@@ -550,7 +550,7 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
 const ChatResponseError = ({ onTryAgain, message }: { onTryAgain: () => void; message?: string }) => (
   <div
     role="alert"
-    className="my-2 flex items-start gap-3 rounded-md border border-error/25 bg-error/5 px-3 py-2.5 text-[13px] text-fg"
+    className="my-2 flex items-start gap-3 rounded-md border border-error/25 bg-error/5 px-3 py-2.5 text-[13px] text-foreground"
   >
     <span
       aria-hidden="true"
@@ -560,10 +560,10 @@ const ChatResponseError = ({ onTryAgain, message }: { onTryAgain: () => void; me
     </span>
     <div className="min-w-0 leading-relaxed">
       <p className="font-medium">Response interrupted</p>
-      <p className="text-muted">{message || 'Codex could not finish this reply. Send another message to try again.'}</p>
+      <p className="text-muted-foreground">{message || 'Codex could not finish this reply. Send another message to try again.'}</p>
       <button
         type="button"
-        className="mt-1.5 text-[12px] font-medium text-error underline decoration-error/40 underline-offset-2 transition-colors hover:text-fg"
+        className="mt-1.5 text-[12px] font-medium text-error underline decoration-error/40 underline-offset-2 transition-colors hover:text-foreground"
         onClick={onTryAgain}
       >
         Try again
@@ -736,7 +736,7 @@ export const MessageView = ({
           the default contained pill from MessageContent variant='contained'. */}
       <MessageContent
         variant={isUser ? 'contained' : 'flat'}
-        className={!isUser ? 'border border-iron/20 bg-surface px-3 py-2' : undefined}
+        className={!isUser ? 'border border-primary/20 bg-card px-3 py-2' : undefined}
       >
         {parts.map((p, i) => renderPart(p, i, onDiscuss))}
         <ResultFooter usage={usage} />
@@ -802,8 +802,8 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
   return (
     <div
       className={[
-        'group flex items-center gap-1 rounded px-2 py-1.5 cursor-pointer border-b border-iron/10',
-        isSelected ? 'bg-iron/20 text-fg' : 'text-iron hover:bg-iron/10 hover:text-fg',
+        'group flex items-center gap-1 rounded px-2 py-1.5 cursor-pointer border-b border-primary/10',
+        isSelected ? 'bg-primary/20 text-foreground' : 'text-primary hover:bg-primary/10 hover:text-foreground',
       ].join(' ')}
       role="button"
       tabIndex={0}
@@ -814,7 +814,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
       {editing ? (
         <input
           ref={inputRef}
-          className="flex-1 rounded bg-iron/10 px-1 font-mono text-[11px] text-fg outline-none"
+          className="flex-1 rounded bg-primary/10 px-1 font-mono text-[11px] text-foreground outline-none"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commitEdit}
@@ -844,7 +844,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
           </span>
           <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{title}</span>
           {thread.updatedAt && (
-            <span className="ml-1 flex-none font-mono text-[10px] text-muted">
+            <span className="ml-1 flex-none font-mono text-[10px] text-muted-foreground">
               {relativeTime(thread.updatedAt)}
             </span>
           )}
@@ -857,13 +857,13 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
           )}
           {(thread.attentionStatus === 'generating' || thread.status === 'running') && thread.attentionStatus !== 'ready' && (
             <span
-              className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-iron/60"
+              className="h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-primary/60"
               title={thread.status === 'throttled' ? 'Retrying…' : undefined}
             />
           )}
           <button
             type="button"
-            className="flex-none rounded px-1 py-0.5 text-[10px] text-iron/50 opacity-0 transition-opacity hover:bg-red-900/20 hover:text-red-400 focus-visible:opacity-100 group-hover:opacity-100"
+            className="flex-none rounded px-1 py-0.5 text-[10px] text-primary/50 opacity-0 transition-opacity hover:bg-red-900/20 hover:text-red-400 focus-visible:opacity-100 group-hover:opacity-100"
             onClick={(e) => { e.stopPropagation(); onDelete() }}
             aria-label="Delete thread"
           >
@@ -890,11 +890,11 @@ export const ThinkingIndicator = () => (
   <div role="status" aria-live="polite" className="flex items-center gap-2 px-4 py-2">
     {/* Three staggered bouncing dots — livelier than a single static pulse */}
     <span className="flex items-center gap-[3px]" aria-hidden="true">
-      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:0ms]" />
-      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:150ms]" />
-      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-iron/50 [animation-delay:300ms]" />
+      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-primary/50 [animation-delay:0ms]" />
+      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-primary/50 [animation-delay:150ms]" />
+      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-primary/50 [animation-delay:300ms]" />
     </span>
-    <span className="font-mono text-[11px] text-iron/50">Thinking…</span>
+    <span className="font-mono text-[11px] text-primary/50">Thinking…</span>
   </div>
 )
 
@@ -915,7 +915,7 @@ export const ThinkingIndicator = () => (
  */
 export const LiveAssistantBubble = ({ buffer }: { buffer: LiveBuffer }): ReactNode => (
   <Message from="assistant" data-message-role="assistant">
-    <MessageContent variant="flat" className="border border-iron/20 bg-surface px-3 py-2">
+    <MessageContent variant="flat" className="border border-primary/20 bg-card px-3 py-2">
       {buffer.segments.length === 0 && !buffer.done ? (
         // No segments yet — show the bouncing-dot placeholder (same as ThinkingIndicator).
         <ThinkingIndicator />
@@ -947,7 +947,7 @@ export const LiveAssistantBubble = ({ buffer }: { buffer: LiveBuffer }): ReactNo
       )}
       {!buffer.done && buffer.segments.length > 0 && (
         <span
-          className="ml-0.5 inline-block h-3 w-0.5 animate-pulse rounded-sm bg-fg/60"
+          className="ml-0.5 inline-block h-3 w-0.5 animate-pulse rounded-sm bg-foreground/60"
           aria-hidden="true"
         />
       )}
@@ -1175,20 +1175,20 @@ const SlashPalette = ({ filter, onSelect }: SlashPaletteProps) => {
   if (matches.length === 0) return null
 
   return (
-    <div className="absolute bottom-full left-0 mb-1 w-full rounded border border-iron/30 bg-bg shadow-lg">
+    <div className="absolute bottom-full left-0 mb-1 w-full rounded border border-primary/30 bg-background shadow-lg">
       {matches.map(({ cmd, prompt }) => (
         <button
           key={cmd}
           type="button"
-          className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-iron hover:bg-iron/20 hover:text-fg"
+          className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-primary hover:bg-primary/20 hover:text-foreground"
           onMouseDown={(e) => {
             // Prevent textarea blur before click fires.
             e.preventDefault()
             onSelect(prompt)
           }}
         >
-          <span className="text-fg">{cmd}</span>
-          <span className="truncate text-iron/50">{prompt}</span>
+          <span className="text-foreground">{cmd}</span>
+          <span className="truncate text-primary/50">{prompt}</span>
         </button>
       ))}
     </div>
@@ -1568,12 +1568,12 @@ export const HeroEmptyState = ({
       <WhileYouWereAwayPanel projectId={projectId ?? null} />
       <div className="text-center">
         <h1
-          className="font-mono text-[28px] font-bold text-fg"
+          className="font-mono text-[28px] font-bold text-foreground"
           data-testid="hero-headline"
         >
           What should Mars build?
         </h1>
-        <p className="mt-2 font-mono text-[13px] text-iron/60">
+        <p className="mt-2 font-mono text-[13px] text-primary/60">
           Start a conversation or pick a suggestion below.
         </p>
       </div>
@@ -1588,7 +1588,7 @@ export const HeroEmptyState = ({
             })
           }
           title={topAlert.reason}
-          className="max-w-2xl truncate border border-iron/30 px-3 py-1.5 font-mono text-[11px] text-iron transition-colors hover:border-iron/60 hover:bg-iron/10 hover:text-fg active:scale-[0.98] disabled:opacity-50"
+          className="max-w-2xl truncate border border-primary/30 px-3 py-1.5 font-mono text-[11px] text-primary transition-colors hover:border-primary/60 hover:bg-primary/10 hover:text-foreground active:scale-[0.98] disabled:opacity-50"
         >
           Next: {topAlert.goal}
         </button>
@@ -2249,11 +2249,11 @@ export const ThreadSidebar = ({
   const historyThreads = historyData ?? []
 
   return (
-    <aside className="flex w-64 flex-shrink-0 flex-col border-r border-iron/30 bg-bg">
-      <div className="border-b border-iron/30 px-2 py-2">
+    <aside className="flex w-64 flex-shrink-0 flex-col border-r border-primary/30 bg-background">
+      <div className="border-b border-primary/30 px-2 py-2">
         <button
           type="button"
-          className="w-full rounded border border-iron/30 px-2 py-1 font-mono text-[11px] text-iron hover:bg-iron/20 hover:text-fg"
+          className="w-full rounded border border-primary/30 px-2 py-1 font-mono text-[11px] text-primary hover:bg-primary/20 hover:text-foreground"
           onClick={() => create()}
         >
           + New thread
@@ -2265,12 +2265,12 @@ export const ThreadSidebar = ({
           placeholder="Search…"
           aria-label="Search threads"
           data-testid="thread-search"
-          className="mt-2 w-full border border-iron/30 bg-bg px-2 py-1 font-mono text-[12px] text-fg placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-iron/50"
+          className="mt-2 w-full border border-primary/30 bg-background px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
         />
       </div>
       <div className="flex-1 overflow-y-auto px-1 py-1 space-y-0.5">
         {threads.length === 0 && (
-          <p className="px-2 py-3 font-mono text-[10px] text-iron/40">
+          <p className="px-2 py-3 font-mono text-[10px] text-primary/40">
             {query.trim() ? 'No matches' : 'No threads yet'}
           </p>
         )}
@@ -2287,7 +2287,7 @@ export const ThreadSidebar = ({
 
         {historyThreads.length > 0 && (
           <details data-testid="chat-history-section" className="mt-2">
-            <summary className="cursor-pointer px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-iron/40 hover:text-iron/60">
+            <summary className="cursor-pointer px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-primary/40 hover:text-primary/60">
               History
             </summary>
             <div className="space-y-0.5 pt-0.5">
@@ -2308,7 +2308,7 @@ export const ThreadSidebar = ({
 
       {/* Agent configuration — read-only view of the model, system prompt,
           tools, skills, and MCP servers backing every conversation. */}
-      <div className="border-t border-iron/30 px-2 py-2">
+      <div className="border-t border-primary/30 px-2 py-2">
         <AgentConfigPanel projectId={projectId} />
       </div>
 
@@ -2319,7 +2319,7 @@ export const ThreadSidebar = ({
           data-testid="thread-delete-undo-toast"
           role="status"
           aria-live="polite"
-          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 border border-iron/40 bg-bg px-4 py-2 font-mono text-[11px] text-fg shadow-lg"
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 border border-primary/40 bg-background px-4 py-2 font-mono text-[11px] text-foreground shadow-lg"
         >
           {toast.kind === 'pending' ? (
             <>
@@ -2327,7 +2327,7 @@ export const ThreadSidebar = ({
               <button
                 type="button"
                 onClick={undoDelete}
-                className="border border-iron/40 px-2 py-0.5 font-mono text-[10px] uppercase text-iron transition hover:bg-iron/10 active:scale-[0.97]"
+                className="border border-primary/40 px-2 py-0.5 font-mono text-[10px] uppercase text-primary transition hover:bg-primary/10 active:scale-[0.97]"
               >
                 Undo
               </button>
@@ -2339,7 +2339,7 @@ export const ThreadSidebar = ({
                 type="button"
                 onClick={() => setToast(null)}
                 aria-label="Dismiss"
-                className="border border-iron/40 px-2 py-0.5 font-mono text-[10px] uppercase text-iron transition hover:bg-iron/10 active:scale-[0.97]"
+                className="border border-primary/40 px-2 py-0.5 font-mono text-[10px] uppercase text-primary transition hover:bg-primary/10 active:scale-[0.97]"
               >
                 Dismiss
               </button>
@@ -2539,12 +2539,12 @@ export const ChatPage = () => {
       {codexAuthState?.needsAuth && (
         <div
           data-testid="codex-auth-banner"
-          className="flex items-center gap-3 border-b border-amber-600/40 bg-amber-950/30 px-4 py-2 font-mono text-[11px] text-amber-400"
+          className="flex items-center gap-3 border-b border-warn/40 bg-warn/10 px-4 py-2 font-mono text-[11px] text-warn"
         >
           <span>Codex sign-in required — all threads are paused.</span>
           <button
             type="button"
-            className="ml-auto border border-amber-600/40 px-2 py-0.5 text-[10px] uppercase hover:bg-amber-900/30 active:scale-[0.97]"
+            className="ml-auto border border-warn/40 px-2 py-0.5 text-[10px] uppercase hover:bg-warn/10 active:scale-[0.97]"
             onClick={() => retryCodexAuth()}
           >
             Re-authenticate
@@ -2591,12 +2591,12 @@ export const ChatPage = () => {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Mobile top bar — hamburger button */}
         {!isMdScreen && (
-          <div className="flex items-center border-b border-iron/30 px-3 py-2">
+          <div className="flex items-center border-b border-primary/30 px-3 py-2">
             <button
               type="button"
               aria-label="Open sidebar"
               onClick={() => setSidebarOpen(true)}
-              className="mr-3 font-mono text-[16px] text-iron hover:text-fg"
+              className="mr-3 font-mono text-[16px] text-primary hover:text-foreground"
             >
               ☰
             </button>
@@ -2616,14 +2616,14 @@ export const ChatPage = () => {
             data-testid="resolved-pane"
             className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
           >
-            <p className="font-mono text-[13px] text-fg">This item has been resolved.</p>
-            <p className="font-mono text-[11px] text-iron">
+            <p className="font-mono text-[13px] text-foreground">This item has been resolved.</p>
+            <p className="font-mono text-[11px] text-primary">
               It was removed from the action queue.
             </p>
             <div className="flex gap-3">
               <button
                 type="button"
-                className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-iron hover:bg-iron/10"
+                className="border border-primary/40 px-3 py-1 font-mono text-[11px] text-primary hover:bg-primary/10"
                 onClick={() => {
                   const id = selectedQueueItemId!
                   window.location.hash = taskHash(
@@ -2636,7 +2636,7 @@ export const ChatPage = () => {
               </button>
               <button
                 type="button"
-                className="border border-iron/40 px-3 py-1 font-mono text-[11px] text-iron hover:bg-iron/10"
+                className="border border-primary/40 px-3 py-1 font-mono text-[11px] text-primary hover:bg-primary/10"
                 onClick={() => setSelectedQueueItemId(null)}
               >
                 ← Back to chat

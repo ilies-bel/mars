@@ -567,7 +567,7 @@ describe('MessageView – role + content', () => {
     const html = renderMessage(makeMsg([{ type: 'text', text: 'hello' }], 'assistant'))
     // Card chrome: bordered message box with a surface background and padding
     expect(html).toContain('border')
-    expect(html).toContain('bg-surface')
+    expect(html).toContain('bg-card')
     expect(html).toContain('px-3')
   })
 

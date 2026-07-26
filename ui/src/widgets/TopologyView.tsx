@@ -299,7 +299,7 @@ const TopologyViewInner = ({
           type: MarkerType.ArrowClosed,
           width: 14,
           height: 14,
-          color: emphasis === 'lit' ? '#c4b5fd' : '#52525b',
+          color: emphasis === 'lit' ? 'var(--color-dag-proposal-text)' : 'var(--color-dag-edge-blocker)',
         },
         zIndex: emphasis === 'lit' ? 1 : 0,
       }
@@ -458,7 +458,7 @@ const TopologyViewInner = ({
         : data.kind === 'fanoutBundle'
           ? 'Queued'
           : data.dom
-    return styles[cluster]?.stroke || '#9ca3af'
+    return styles[cluster]?.stroke || 'var(--color-dag-queued-stroke)'
   }, [])
 
   const openArcLabel = useMemo(() => {
@@ -469,14 +469,14 @@ const TopologyViewInner = ({
 
   if (empty) {
     return (
-      <main className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-bg">
-        <p className="font-mono text-[13px] text-iron">No active tasks</p>
+      <main className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-background">
+        <p className="font-mono text-[13px] text-primary">No active tasks</p>
       </main>
     )
   }
 
   return (
-    <main className="relative flex min-h-0 flex-1 overflow-hidden bg-bg" onDoubleClick={onWrapperDoubleClick}>
+    <main className="relative flex min-h-0 flex-1 overflow-hidden bg-background" onDoubleClick={onWrapperDoubleClick}>
       <div
         role="img"
         className="dag-canvas absolute inset-0 h-full w-full"
@@ -503,7 +503,7 @@ const TopologyViewInner = ({
           onNodeMouseLeave={clearHover}
           onPaneClick={clearHover}
         >
-          <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#3a2820" />
+          <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="var(--color-border-dark)" />
           <Controls showInteractive={false} position="bottom-left" className="topo-controls" />
           <MiniMap
             pannable
@@ -522,20 +522,20 @@ const TopologyViewInner = ({
           data-testid="search-zero-state"
           className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center"
         >
-          <span className="rounded bg-[#1a0f0a]/90 px-3 py-1.5 font-mono text-[11px] text-muted-dark ring-1 ring-[#3a2820]/60">
+          <span className="rounded bg-foreground/90 px-3 py-1.5 font-mono text-[11px] text-muted-dark ring-1 ring-border-dark/60">
             {`0 tasks match '${(searchQuery ?? '').trim()}'`}
           </span>
         </div>
       )}
       {/* Breadcrumb chip — visible while an arc is drilled-in. */}
       {openArcLabel && (
-        <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[260px] items-center gap-1.5 truncate rounded bg-[#1a0f0a]/80 px-2 py-1 font-mono text-[10.5px] text-muted-dark ring-1 ring-[#3a2820]/60">
+        <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[260px] items-center gap-1.5 truncate rounded bg-foreground/80 px-2 py-1 font-mono text-[10.5px] text-muted-dark ring-1 ring-border-dark/60">
           <span className="truncate">{openArcLabel}</span>
           <span className="shrink-0 opacity-50">· Esc to collapse</span>
         </div>
       )}
       {/* Navigation hint — quiet, top-left under the breadcrumb spot when free. */}
-      <div className="pointer-events-none absolute bottom-10 right-3 z-10 text-right font-mono text-[11px] leading-relaxed text-muted">
+      <div className="pointer-events-none absolute bottom-10 right-3 z-10 text-right font-mono text-[11px] leading-relaxed text-muted-foreground">
         scroll = zoom · drag = pan
         <br />
         {hintText ? (

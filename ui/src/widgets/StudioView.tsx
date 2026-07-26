@@ -89,7 +89,7 @@ export const liveElapsedLabel = (startedAt: string, nowMs: number): string => {
 // ── Panels ────────────────────────────────────────────────────────────────────
 
 const PANEL_SUMMARY_CLASS =
-  'cursor-pointer list-none rounded border border-iron/30 px-2 py-0.5 font-mono text-[10px] text-iron hover:bg-iron/10 [&::-webkit-details-marker]:hidden'
+  'cursor-pointer list-none rounded border border-primary/30 px-2 py-0.5 font-mono text-[10px] text-primary hover:bg-primary/10 [&::-webkit-details-marker]:hidden'
 
 /** Space-key toggle for <details>, mirroring the drawer's step cards. */
 const toggleOnSpace = (e: React.KeyboardEvent): void => {
@@ -115,7 +115,7 @@ const PromptBody = ({
   withCopy: boolean
 }) => {
   if (isLoading && prompt === undefined) {
-    return <p className="font-mono text-[11px] text-muted">Loading prompt…</p>
+    return <p className="font-mono text-[11px] text-muted-foreground">Loading prompt…</p>
   }
   if (error !== null && prompt === undefined) {
     return (
@@ -126,7 +126,7 @@ const PromptBody = ({
   }
   if (prompt === undefined || prompt.prompt === null) {
     return (
-      <p data-testid="studio-prompt-empty" className="font-mono text-[11px] text-muted">
+      <p data-testid="studio-prompt-empty" className="font-mono text-[11px] text-muted-foreground">
         No prompt recorded for this step — the run predates prompt persistence
         and no transcript could be recovered.
       </p>
@@ -145,13 +145,13 @@ const PromptBody = ({
         ) : (
           <span
             data-testid="studio-prompt-source"
-            className="rounded border border-iron/30 px-1 py-0.5 font-mono text-[10px] text-muted"
+            className="rounded border border-primary/30 px-1 py-0.5 font-mono text-[10px] text-muted-foreground"
           >
             persisted
           </span>
         )}
         {claudeSessionId != null ? (
-          <span className="font-mono text-[10px] text-muted" title={claudeSessionId}>
+          <span className="font-mono text-[10px] text-muted-foreground" title={claudeSessionId}>
             session:{claudeSessionId.slice(0, 8)}
           </span>
         ) : null}
@@ -160,13 +160,13 @@ const PromptBody = ({
             text={prompt.prompt}
             data-testid="studio-prompt-copy"
             aria-label="Copy the composed prompt"
-            className="ml-auto shrink-0 rounded border border-iron/40 px-2 py-0.5 font-mono text-[10px] text-iron hover:bg-iron/10"
+            className="ml-auto shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-[10px] text-primary hover:bg-primary/10"
           />
         ) : null}
       </div>
       <pre
         data-testid="studio-prompt-text"
-        className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded bg-panel/60 p-2 font-mono text-[10px] leading-relaxed text-iron"
+        className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded bg-secondary/60 p-2 font-mono text-[10px] leading-relaxed text-primary"
       >
         {prompt.prompt}
       </pre>
@@ -187,7 +187,7 @@ const PhaseChip = ({ phase, stepName }: { phase: string; stepName: string }) => 
   const primitive = primitiveForStep(phase, stepName)
   if (primitive === null) {
     return (
-      <span className="rounded border border-iron/30 px-1 font-mono text-[10px] text-muted">
+      <span className="rounded border border-primary/30 px-1 font-mono text-[10px] text-muted-foreground">
         {phase}
       </span>
     )
@@ -197,7 +197,7 @@ const PhaseChip = ({ phase, stepName }: { phase: string; stepName: string }) => 
       href={primitiveHash(primitive)}
       data-testid="studio-node-primitive-link"
       title={`Open the ${primitive} primitive — tool surface and run history`}
-      className="rounded border border-iron/30 px-1 font-mono text-[10px] text-muted hover:bg-iron/10 hover:text-fg"
+      className="rounded border border-primary/30 px-1 font-mono text-[10px] text-muted-foreground hover:bg-primary/10 hover:text-foreground"
     >
       {phase}
     </a>
@@ -245,16 +245,16 @@ const StudioNode = ({
       : entry.outcome === 'failed'
         ? 'border-error/40'
         : entry.outcome === 'killed'
-          ? 'border-ochre/40'
-          : 'border-iron/20'
+          ? 'border-warn/40'
+          : 'border-primary/20'
   const bgClass =
     entry.outcome === 'running'
       ? 'bg-warn/5'
       : entry.outcome === 'failed'
         ? 'bg-error/5'
         : entry.outcome === 'killed'
-          ? 'bg-ochre/5'
-          : 'bg-panel/30'
+          ? 'bg-warn/5'
+          : 'bg-secondary/30'
 
   const durationLabel = isRunning
     ? liveElapsedLabel(entry.startedAt, now)
@@ -279,9 +279,9 @@ const StudioNode = ({
         <StepStatusIcon outcome={entry.outcome} />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex flex-wrap items-baseline gap-2">
-            <span className="text-sm font-semibold text-fg">{entry.stepName}</span>
+            <span className="text-sm font-semibold text-foreground">{entry.stepName}</span>
             {entry.workerName != null ? (
-              <span className="font-mono text-[10px] text-muted">{entry.workerName}</span>
+              <span className="font-mono text-[10px] text-muted-foreground">{entry.workerName}</span>
             ) : null}
             {entry.phase != null ? (
               <PhaseChip phase={entry.phase} stepName={entry.stepName} />
@@ -290,13 +290,13 @@ const StudioNode = ({
           {entry.outcome === 'failed' || entry.outcome === 'killed' ? (
             <p
               data-testid="studio-node-failure"
-              className={`font-mono text-[11px] ${entry.outcome === 'failed' ? 'text-error' : 'text-ochre'}`}
+              className={`font-mono text-[11px] ${entry.outcome === 'failed' ? 'text-error' : 'text-warn'}`}
             >
               {entry.failureReason ?? entry.outcome}
             </p>
           ) : null}
           {entry.inputTokens != null || entry.outputTokens != null ? (
-            <p className="font-mono text-[10px] text-muted">
+            <p className="font-mono text-[10px] text-muted-foreground">
               {entry.inputTokens != null ? `in:${entry.inputTokens}` : null}
               {entry.outputTokens != null ? ` out:${entry.outputTokens}` : null}
               {entry.cacheReadTokens != null && entry.cacheReadTokens > 0
@@ -308,7 +308,7 @@ const StudioNode = ({
         {durationLabel !== null ? (
           <span
             data-testid="studio-node-duration"
-            className="shrink-0 font-mono text-xs text-muted"
+            className="shrink-0 font-mono text-xs text-muted-foreground"
           >
             {durationLabel}
           </span>
@@ -325,7 +325,7 @@ const StudioNode = ({
           <summary tabIndex={0} className={PANEL_SUMMARY_CLASS} onKeyDown={toggleOnSpace}>
             Input
           </summary>
-          <div className="mt-1.5 border-t border-iron/15 pt-1.5">
+          <div className="mt-1.5 border-t border-primary/15 pt-1.5">
             {isLlmStep ? (
               <PromptBody
                 prompt={prompt}
@@ -334,7 +334,7 @@ const StudioNode = ({
                 withCopy={false}
               />
             ) : (
-              <p className="font-mono text-[11px] text-muted">
+              <p className="font-mono text-[11px] text-muted-foreground">
                 Non-worker step — it consumes workflow state, not a prompt. No
                 input is recorded for this step.
               </p>
@@ -346,11 +346,11 @@ const StudioNode = ({
           <summary tabIndex={0} className={PANEL_SUMMARY_CLASS} onKeyDown={toggleOnSpace}>
             Output
           </summary>
-          <div className="mt-1.5 border-t border-iron/15 pt-1.5">
+          <div className="mt-1.5 border-t border-primary/15 pt-1.5">
             {entry.resultJson != null ? (
               <pre
                 data-testid="studio-output-json"
-                className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-panel/60 p-1.5 font-mono text-[10px] text-iron"
+                className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-[10px] text-primary"
               >
                 {(() => {
                   try {
@@ -361,7 +361,7 @@ const StudioNode = ({
                 })()}
               </pre>
             ) : (
-              <p className="font-mono text-[11px] text-muted">
+              <p className="font-mono text-[11px] text-muted-foreground">
                 {entry.outcome === 'running'
                   ? 'Still running — no output yet.'
                   : 'No output recorded for this step.'}
@@ -378,7 +378,7 @@ const StudioNode = ({
           <summary tabIndex={0} className={PANEL_SUMMARY_CLASS} onKeyDown={toggleOnSpace}>
             Show trace
           </summary>
-          <div className="mt-1.5 border-t border-iron/15 pt-1.5">
+          <div className="mt-1.5 border-t border-primary/15 pt-1.5">
             {isLlmStep ? (
               <PromptBody
                 prompt={prompt}
@@ -388,7 +388,7 @@ const StudioNode = ({
                 withCopy
               />
             ) : (
-              <p className="font-mono text-[11px] text-muted">
+              <p className="font-mono text-[11px] text-muted-foreground">
                 Non-worker step — no worker session or prompt to trace.
               </p>
             )}
@@ -401,7 +401,7 @@ const StudioNode = ({
       {!isLast ? (
         <div
           data-testid="studio-connector"
-          className="mx-5 h-5 w-0 border-l-2 border-iron/30"
+          className="mx-5 h-5 w-0 border-l-2 border-primary/30"
           aria-hidden="true"
         />
       ) : null}
@@ -441,7 +441,7 @@ export const StudioView = ({ taskId, timeline, stepPrompts, nowMs, fetchImpl }: 
         data-testid="studio-empty"
         className="flex flex-1 items-center justify-center p-6"
       >
-        <p className="max-w-[52ch] text-center font-mono text-sm text-iron">
+        <p className="max-w-[52ch] text-center font-mono text-sm text-primary">
           No step spans recorded for task {taskId} yet. Either its workflow has
           not started executing, or the run predates step tracing.
         </p>
@@ -454,10 +454,10 @@ export const StudioView = ({ taskId, timeline, stepPrompts, nowMs, fetchImpl }: 
       {runs.map((run, runIdx) => (
         <section key={run.runId} data-testid="studio-run" data-run-id={run.runId}>
           <header className="mb-2 flex flex-wrap items-baseline gap-2">
-            <h3 className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+            <h3 className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
               Run {runIdx + 1} of {runs.length}
             </h3>
-            <span className="break-all font-mono text-[10px] text-muted/70" title={run.runId}>
+            <span className="break-all font-mono text-[10px] text-muted-foreground/70" title={run.runId}>
               {run.runId}
             </span>
             {run.endedAt === null ? (

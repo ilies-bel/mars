@@ -9,15 +9,15 @@ interface Props {
 }
 
 export const TopStripe = ({ inProgress, failed, doneToday, connected }: Props) => (
-  <header className="flex h-12 items-center justify-between border-b border-border bg-bg px-6">
+  <header className="flex h-12 items-center justify-between border-b border-border bg-background px-6">
     <div className="flex items-center gap-3">
-      <h1 className="text-[14px] font-semibold text-fg">Tasks</h1>
+      <h1 className="text-[14px] font-semibold text-foreground">Tasks</h1>
       <button
         type="button"
         onClick={() => {
           window.location.hash = releaseNotesHash()
         }}
-        className="rounded border border-iron/40 px-2 py-0.5 font-mono text-xs text-iron hover:bg-iron/10"
+        className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
       >
         Release Notes
       </button>
@@ -25,10 +25,10 @@ export const TopStripe = ({ inProgress, failed, doneToday, connected }: Props) =
     <div className="flex items-center gap-4">
       <div className="flex items-center gap-3 font-mono tracking-wide">
         <div data-testid="stat-in-progress" className="flex items-center gap-1">
-          <span className="tabular-nums text-[14px] font-bold text-flame">{inProgress}</span>
-          <span className="text-[10px] text-muted">IN PROGRESS</span>
+          <span className="tabular-nums text-[14px] font-bold text-status-running">{inProgress}</span>
+          <span className="text-[10px] text-muted-foreground">IN PROGRESS</span>
         </div>
-        <span className="text-muted">·</span>
+        <span className="text-muted-foreground">·</span>
         <button
           type="button"
           data-testid="stat-done"
@@ -39,19 +39,19 @@ export const TopStripe = ({ inProgress, failed, doneToday, connected }: Props) =
           className="flex cursor-pointer items-center gap-1 hover:opacity-80"
         >
           <span className="tabular-nums text-[14px] font-bold text-success">{doneToday}</span>
-          <span className="text-[10px] text-muted">DONE TODAY</span>
+          <span className="text-[10px] text-muted-foreground">DONE TODAY</span>
         </button>
-        <span className="text-muted">·</span>
+        <span className="text-muted-foreground">·</span>
         <div data-testid="stat-failed" className="flex items-center gap-1">
           <span className="tabular-nums text-[14px] font-bold text-error">{failed}</span>
-          <span className="text-[10px] text-muted">FAILED</span>
+          <span className="text-[10px] text-muted-foreground">FAILED</span>
         </div>
       </div>
       <div className="flex items-center gap-1.5">
         <span
           className={`h-2 w-2 rounded-full bg-success ${connected ? 'animate-mars-pulse' : 'opacity-30'}`}
         />
-        <span className="font-mono text-[12px] text-muted">
+        <span className="font-mono text-[12px] text-muted-foreground">
           {connected ? 'live' : 'offline'}
         </span>
       </div>

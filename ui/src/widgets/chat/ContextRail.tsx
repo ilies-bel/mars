@@ -47,19 +47,19 @@ const relativeAge = (isoString: string): string => {
  * Status chip label and colour.
  */
 const STATUS_CHIP: Record<string, { label: string; className: string }> = {
-  queued: { label: 'queued', className: 'text-amber/80' },
-  running: { label: 'running', className: 'text-flame' },
-  verifying: { label: 'verifying', className: 'text-ochre' },
+  queued: { label: 'queued', className: 'text-status-queued/80' },
+  running: { label: 'running', className: 'text-status-running' },
+  verifying: { label: 'verifying', className: 'text-status-verifying' },
   merging: { label: 'merging', className: 'text-success/80' },
-  'vega-reconciling': { label: 'reconciling', className: 'text-ochre' },
+  'vega-reconciling': { label: 'reconciling', className: 'text-warn' },
   failed: { label: 'failed', className: 'text-error' },
-  blocked: { label: 'blocked', className: 'text-muted' },
+  blocked: { label: 'blocked', className: 'text-muted-foreground' },
   under_investigation: { label: 'investigating', className: 'text-warn' },
-  draft: { label: 'draft', className: 'text-muted' },
+  draft: { label: 'draft', className: 'text-muted-foreground' },
 }
 
 const statusChip = (status: string) =>
-  STATUS_CHIP[status] ?? { label: status, className: 'text-muted' }
+  STATUS_CHIP[status] ?? { label: status, className: 'text-muted-foreground' }
 
 // ---------------------------------------------------------------------------
 // Live tasks panel
@@ -93,7 +93,7 @@ const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
 
   if (tasks.length === 0) {
     return (
-      <p className="px-3 py-2 font-mono text-[10px] text-muted/60">
+      <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground/60">
         No active tasks
       </p>
     )
@@ -109,7 +109,7 @@ const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
         return (
           <li key={task.id}>
             <div
-              className={`group flex w-full flex-col gap-0.5 rounded px-2 py-1.5 transition-colors hover:bg-iron/10 ${isNew ? 'border-l-2 border-flame/60 pl-[6px]' : ''}`}
+              className={`group flex w-full flex-col gap-0.5 rounded px-2 py-1.5 transition-colors hover:bg-primary/10 ${isNew ? 'border-l-2 border-highlight/60 pl-[6px]' : ''}`}
             >
               <span className="flex items-baseline justify-between gap-1 min-w-0">
                 {/* Status chip: link to Progress page filtered by this status */}
@@ -123,18 +123,18 @@ const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
                   {chip.label}
                 </a>
                 {isNew && (
-                  <span className="shrink-0 font-mono text-[9px] uppercase text-flame/70">
+                  <span className="shrink-0 font-mono text-[9px] uppercase text-highlight/70">
                     new
                   </span>
                 )}
-                <span className="ml-auto shrink-0 font-mono text-[10px] text-muted/60">
+                <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground/60">
                   {relativeAge(task.createdAt)}
                 </span>
               </span>
               {/* Description: click to expand/collapse; title reveals full text on hover */}
               <button
                 type="button"
-                className={`min-w-0 w-full break-words font-mono text-[10px] text-fg/80 leading-snug text-left ${isExpanded ? '' : 'line-clamp-2'}`}
+                className={`min-w-0 w-full break-words font-mono text-[10px] text-foreground/80 leading-snug text-left ${isExpanded ? '' : 'line-clamp-2'}`}
                 onClick={() => setExpandedId(isExpanded ? null : task.id)}
                 title={task.prompt}
                 data-testid="context-rail-description"
@@ -165,7 +165,7 @@ const GlossaryPanel = () => {
 
   if (isLoading) {
     return (
-      <p className="px-3 py-2 font-mono text-[10px] text-muted animate-pulse">
+      <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground animate-pulse">
         Loading…
       </p>
     )
@@ -190,7 +190,7 @@ const GlossaryPanel = () => {
 
   if (data.length === 0) {
     return (
-      <p className="px-3 py-2 font-mono text-[10px] text-muted/60">
+      <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground/60">
         No terms defined yet
       </p>
     )
@@ -204,27 +204,27 @@ const GlossaryPanel = () => {
           placeholder="Search terms…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-full rounded border border-iron/30 bg-surface px-2 py-1 font-mono text-[10px] text-fg placeholder:text-muted focus:border-iron/60 focus:outline-none"
+          className="w-full rounded border border-primary/30 bg-card px-2 py-1 font-mono text-[10px] text-foreground placeholder:text-muted-foreground focus:border-primary/60 focus:outline-none"
         />
       </div>
       {visible.length === 0 ? (
-        <p className="px-3 py-1 font-mono text-[10px] text-muted/60">No matches</p>
+        <p className="px-3 py-1 font-mono text-[10px] text-muted-foreground/60">No matches</p>
       ) : (
         <ul className="flex flex-col gap-0.5 py-1">
           {visible.map((term) => (
             <li key={term.term}>
               <details className="px-2">
-                <summary className="cursor-pointer list-none rounded px-1 py-1 font-mono text-[10px] text-fg hover:bg-iron/10 [&::-webkit-details-marker]:hidden">
+                <summary className="cursor-pointer list-none rounded px-1 py-1 font-mono text-[10px] text-foreground hover:bg-primary/10 [&::-webkit-details-marker]:hidden">
                   {term.term}
                 </summary>
                 <div className="pb-1 pl-1 pr-1 pt-0.5">
-                  <p className="font-mono text-[10px] leading-snug text-fg/80">
+                  <p className="font-mono text-[10px] leading-snug text-foreground/80">
                     {term.definition}
                   </p>
                   {term.avoid.length > 0 && (
-                    <p className="mt-0.5 font-mono text-[9px] text-muted">
+                    <p className="mt-0.5 font-mono text-[9px] text-muted-foreground">
                       avoid:{' '}
-                      <span className="text-iron/60">
+                      <span className="text-primary/60">
                         {term.avoid.join(', ')}
                       </span>
                     </p>
@@ -256,7 +256,7 @@ const SkillsPanel = ({ onInsertPrompt }: SkillsPanelProps) => {
 
   if (isLoading) {
     return (
-      <p className="px-3 py-2 font-mono text-[10px] text-muted animate-pulse">
+      <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground animate-pulse">
         Loading…
       </p>
     )
@@ -272,7 +272,7 @@ const SkillsPanel = ({ onInsertPrompt }: SkillsPanelProps) => {
 
   if (data.length === 0) {
     return (
-      <p className="px-3 py-2 font-mono text-[10px] text-muted/60">
+      <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground/60">
         No skills found
       </p>
     )
@@ -284,15 +284,15 @@ const SkillsPanel = ({ onInsertPrompt }: SkillsPanelProps) => {
         <li key={skill.name}>
           <button
             type="button"
-            className="flex w-full flex-col gap-0.5 rounded px-2 py-1.5 text-left transition-colors hover:bg-iron/10"
+            className="flex w-full flex-col gap-0.5 rounded px-2 py-1.5 text-left transition-colors hover:bg-primary/10"
             onClick={() => onInsertPrompt(`/${skill.name} `)}
             title={`Insert /${skill.name} into composer`}
           >
-            <span className="font-mono text-[10px] font-semibold text-fg">
+            <span className="font-mono text-[10px] font-semibold text-foreground">
               /{skill.name}
             </span>
             {skill.description && (
-              <span className="font-mono text-[10px] text-muted leading-snug">
+              <span className="font-mono text-[10px] text-muted-foreground leading-snug">
                 {skill.description.length > 80
                   ? skill.description.slice(0, 77) + '…'
                   : skill.description}
@@ -344,20 +344,20 @@ export const SessionArtifactsPanel = ({ threadId, projectId }: SessionArtifactsP
     <div className="flex flex-col">
       {/* --- Files --- */}
       <div className="px-3 pt-2 pb-1">
-        <p className="font-mono text-[9px] uppercase tracking-widest text-muted/60 mb-1">
+        <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60 mb-1">
           Files
         </p>
         {!threadId ? (
-          <p className="font-mono text-[10px] text-muted/50">No thread selected</p>
+          <p className="font-mono text-[10px] text-muted-foreground/50">No thread selected</p>
         ) : threadLoading ? (
-          <p className="font-mono text-[10px] text-muted animate-pulse">Loading…</p>
+          <p className="font-mono text-[10px] text-muted-foreground animate-pulse">Loading…</p>
         ) : attachments.length === 0 ? (
-          <p className="font-mono text-[10px] text-muted/50">No files uploaded</p>
+          <p className="font-mono text-[10px] text-muted-foreground/50">No files uploaded</p>
         ) : (
           <ul className="flex flex-col gap-0.5">
             {attachments.map((att, i) => (
               <li key={`${att.path}-${i}`} className="flex items-center gap-1">
-                <span className="font-mono text-[10px] text-fg/70 truncate" title={att.name}>
+                <span className="font-mono text-[10px] text-foreground/70 truncate" title={att.name}>
                   {att.name}
                 </span>
               </li>
@@ -368,22 +368,22 @@ export const SessionArtifactsPanel = ({ threadId, projectId }: SessionArtifactsP
 
       {/* --- Created tasks --- */}
       <div className="px-3 pt-1 pb-1">
-        <p className="font-mono text-[9px] uppercase tracking-widest text-muted/60 mb-1">
+        <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60 mb-1">
           Created tasks
         </p>
         {!threadId ? (
-          <p className="font-mono text-[10px] text-muted/50">No thread selected</p>
+          <p className="font-mono text-[10px] text-muted-foreground/50">No thread selected</p>
         ) : threadLoading ? (
-          <p className="font-mono text-[10px] text-muted animate-pulse">Loading…</p>
+          <p className="font-mono text-[10px] text-muted-foreground animate-pulse">Loading…</p>
         ) : taskIds.length === 0 ? (
-          <p className="font-mono text-[10px] text-muted/50">No tasks created</p>
+          <p className="font-mono text-[10px] text-muted-foreground/50">No tasks created</p>
         ) : (
           <ul className="flex flex-wrap gap-1">
             {taskIds.map((id) => (
               <li key={id}>
                 <a
                   href={`#/task/${encodeURIComponent(id)}?from=chat`}
-                  className="inline-block rounded bg-iron/15 px-1.5 py-0.5 font-mono text-[10px] text-fg/80 hover:bg-iron/30 transition-colors"
+                  className="inline-block rounded bg-primary/15 px-1.5 py-0.5 font-mono text-[10px] text-foreground/80 hover:bg-primary/30 transition-colors"
                   title={id}
                   data-testid="session-artifacts-task-chip"
                 >
@@ -397,19 +397,19 @@ export const SessionArtifactsPanel = ({ threadId, projectId }: SessionArtifactsP
 
       {/* --- ADRs --- */}
       <div className="px-3 pt-1 pb-2">
-        <p className="font-mono text-[9px] uppercase tracking-widest text-muted/60 mb-1">
+        <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60 mb-1">
           Recent ADRs
         </p>
         {adrsLoading ? (
-          <p className="font-mono text-[10px] text-muted animate-pulse">Loading…</p>
+          <p className="font-mono text-[10px] text-muted-foreground animate-pulse">Loading…</p>
         ) : adrs.length === 0 ? (
-          <p className="font-mono text-[10px] text-muted/50">No ADRs yet</p>
+          <p className="font-mono text-[10px] text-muted-foreground/50">No ADRs yet</p>
         ) : (
           <>
             <ul className="flex flex-col gap-0.5">
               {visibleAdrs.map((adr) => (
-                <li key={adr.number} className="font-mono text-[10px] text-fg/80 leading-snug">
-                  <span className="text-muted/60 mr-1">#{adr.number}</span>
+                <li key={adr.number} className="font-mono text-[10px] text-foreground/80 leading-snug">
+                  <span className="text-muted-foreground/60 mr-1">#{adr.number}</span>
                   <span className="line-clamp-1" title={adr.title}>
                     {adr.title}
                   </span>
@@ -419,7 +419,7 @@ export const SessionArtifactsPanel = ({ threadId, projectId }: SessionArtifactsP
             {adrs.length > 5 && (
               <button
                 type="button"
-                className="mt-1 font-mono text-[9px] text-muted hover:text-fg transition-colors"
+                className="mt-1 font-mono text-[9px] text-muted-foreground hover:text-foreground transition-colors"
                 onClick={() => setShowAllAdrs((v) => !v)}
                 data-testid="session-artifacts-adrs-toggle"
               >
@@ -447,10 +447,10 @@ const PanelSection = ({ title, defaultOpen = true, children }: PanelSectionProps
   const [open, setOpen] = useState(defaultOpen)
 
   return (
-    <div className="border-b border-iron/20">
+    <div className="border-b border-primary/20">
       <button
         type="button"
-        className="flex w-full items-center justify-between px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-muted hover:text-fg transition-colors"
+        className="flex w-full items-center justify-between px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
@@ -491,12 +491,12 @@ export const ContextRail = ({
   if (collapsed) {
     return (
       <aside
-        className="flex w-8 flex-shrink-0 flex-col items-center border-l border-iron/30 bg-bg py-2 gap-3"
+        className="flex w-8 flex-shrink-0 flex-col items-center border-l border-primary/30 bg-background py-2 gap-3"
         aria-label="Context rail (collapsed)"
       >
         <button
           type="button"
-          className="rounded p-1 font-mono text-[11px] text-muted hover:bg-iron/10 hover:text-fg transition-colors"
+          className="rounded p-1 font-mono text-[11px] text-muted-foreground hover:bg-primary/10 hover:text-foreground transition-colors"
           onClick={() => onToggleCollapse?.()}
           title="Expand context rail"
           aria-label="Expand context rail"
@@ -509,16 +509,16 @@ export const ContextRail = ({
 
   return (
     <aside
-      className="flex w-56 flex-shrink-0 flex-col border-l border-iron/30 bg-bg overflow-y-auto"
+      className="flex w-56 flex-shrink-0 flex-col border-l border-primary/30 bg-background overflow-y-auto"
       aria-label="Context rail"
     >
-      <div className="flex items-center justify-between border-b border-iron/20 px-3 py-2">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-muted">
+      <div className="flex items-center justify-between border-b border-primary/20 px-3 py-2">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
           Context
         </span>
         <button
           type="button"
-          className="rounded p-0.5 font-mono text-[11px] text-muted hover:bg-iron/10 hover:text-fg transition-colors"
+          className="rounded p-0.5 font-mono text-[11px] text-muted-foreground hover:bg-primary/10 hover:text-foreground transition-colors"
           onClick={() => onToggleCollapse?.()}
           title="Collapse context rail"
           aria-label="Collapse context rail"

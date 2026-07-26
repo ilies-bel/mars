@@ -38,18 +38,18 @@ function TaskTracePanel({ taskId }: { taskId: string }) {
     return <SkeletonList rows={3} rowClassName="h-4 w-full mb-1" label="Loading traces" />
   }
   if (!data || data.events.length === 0) {
-    return <p className="font-mono text-[11px] text-muted">No trace events for this task.</p>
+    return <p className="font-mono text-[11px] text-muted-foreground">No trace events for this task.</p>
   }
 
   return (
     <ul className="flex flex-col gap-0.5">
       {data.events.map((e) => (
         <li key={e.id} className={`font-mono text-[10px] ${traceEventRowClass(e.severity)}`}>
-          <span className="text-muted">{relativeTime(e.timestamp)}</span>{' '}
+          <span className="text-muted-foreground">{relativeTime(e.timestamp)}</span>{' '}
           <span className={`uppercase ${severityColor(e.severity)}`}>
             [{e.severity}]
           </span>{' '}
-          <span className="text-iron">{e.kind}</span>{' '}
+          <span className="text-primary">{e.kind}</span>{' '}
           <span className={marsToolTextClass(e)}>{summarizeTraceEvent(e)}</span>
         </li>
       ))}
@@ -100,11 +100,11 @@ export default function ArcChainRail({
               onClick={() => handleNodeClick(node)}
               className={[
                 'flex w-full items-baseline gap-1.5 rounded px-2 py-1 text-left font-mono text-[11px]',
-                'transition-colors hover:bg-iron/10',
-                selectedId === node.id ? 'bg-iron/15 font-bold text-fg' : 'text-fg/80',
+                'transition-colors hover:bg-primary/10',
+                selectedId === node.id ? 'bg-primary/15 font-bold text-foreground' : 'text-foreground/80',
               ].join(' ')}
             >
-              <span className="shrink-0 text-[9px] uppercase text-iron">
+              <span className="shrink-0 text-[9px] uppercase text-primary">
                 {node.kind === 'proposal'
                   ? 'Proposal'
                   : node.attemptIndex !== undefined
@@ -113,7 +113,7 @@ export default function ArcChainRail({
               </span>
               <span className="break-words">{node.label}</span>
               {node.status ? (
-                <span className="ml-auto shrink-0 text-[9px] uppercase text-muted">
+                <span className="ml-auto shrink-0 text-[9px] uppercase text-muted-foreground">
                   {node.status}
                 </span>
               ) : null}
@@ -129,13 +129,13 @@ export default function ArcChainRail({
           data-node-id={selectedNode.id}
         >
           <div>
-            <p className="mb-1 text-[10px] uppercase tracking-wider text-iron">Prompt</p>
-            <p className="whitespace-pre-wrap font-mono text-[12px] text-fg">
+            <p className="mb-1 text-[10px] uppercase tracking-wider text-primary">Prompt</p>
+            <p className="whitespace-pre-wrap font-mono text-[12px] text-foreground">
               {selectedNode.label}
             </p>
           </div>
           <div>
-            <p className="mb-1 text-[10px] uppercase tracking-wider text-iron">Traces</p>
+            <p className="mb-1 text-[10px] uppercase tracking-wider text-primary">Traces</p>
             <TaskTracePanel taskId={selectedNode.id} />
           </div>
         </aside>

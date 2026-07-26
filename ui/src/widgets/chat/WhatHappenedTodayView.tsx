@@ -90,12 +90,12 @@ export const WhatHappenedTodayView = ({ onBack }: WhatHappenedTodayViewProps) =>
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="flex items-center border-b border-iron/30 px-4 py-2">
+      <div className="flex items-center border-b border-primary/30 px-4 py-2">
         <button
           type="button"
           data-testid="what-happened-back"
           onClick={onBack}
-          className="font-mono text-[11px] text-iron transition-colors hover:text-fg"
+          className="font-mono text-[11px] text-primary transition-colors hover:text-foreground"
         >
           ← Back to chat
         </button>
@@ -114,12 +114,12 @@ export const WhatHappenedTodayView = ({ onBack }: WhatHappenedTodayViewProps) =>
           <Message from="assistant" data-message-role="assistant">
             <MessageContent
               variant="flat"
-              className="border border-iron/20 bg-surface px-3 py-2"
+              className="border border-primary/20 bg-card px-3 py-2"
             >
               <Response>{text}</Response>
               {!done && (
                 <span
-                  className="ml-0.5 inline-block h-3 w-0.5 animate-pulse rounded-sm bg-fg/60 align-middle"
+                  className="ml-0.5 inline-block h-3 w-0.5 animate-pulse rounded-sm bg-foreground/60 align-middle"
                   aria-hidden="true"
                   data-testid="what-happened-cursor"
                 />

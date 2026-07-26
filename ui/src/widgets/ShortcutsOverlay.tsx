@@ -94,7 +94,7 @@ export const ShortcutsOverlay = ({ onClose }: ShortcutsOverlayProps) => {
         data-testid="shortcuts-overlay-scrim"
         aria-hidden="true"
         data-closing={closing ? 'true' : undefined}
-        className="modal-scrim fixed inset-0 z-40 bg-fg/40"
+        className="modal-scrim fixed inset-0 z-40 bg-foreground/40"
         onClick={handleClose}
       />
       {/* Centering wrapper at z-50 */}
@@ -107,10 +107,10 @@ export const ShortcutsOverlay = ({ onClose }: ShortcutsOverlayProps) => {
           data-testid="shortcuts-overlay"
           data-closing={closing ? 'true' : undefined}
           tabIndex={-1}
-          className="modal-panel flex w-full max-w-sm flex-col rounded-lg border border-iron/40 bg-bg shadow-2xl outline-none"
+          className="modal-panel flex w-full max-w-sm flex-col rounded-lg border border-primary/40 bg-background shadow-2xl outline-none"
         >
-          <header className="flex items-center justify-between border-b border-iron/40 px-4 py-3">
-            <h2 className="font-mono text-sm uppercase tracking-wide text-iron">
+          <header className="flex items-center justify-between border-b border-primary/40 px-4 py-3">
+            <h2 className="font-mono text-sm uppercase tracking-wide text-primary">
               Keyboard Shortcuts
             </h2>
             <button
@@ -118,7 +118,7 @@ export const ShortcutsOverlay = ({ onClose }: ShortcutsOverlayProps) => {
               onClick={handleClose}
               aria-label="Close shortcuts"
               data-testid="shortcuts-close"
-              className="rounded border border-iron/40 px-2 py-0.5 font-mono text-xs text-iron hover:bg-iron/10"
+              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
             >
               Close
             </button>
@@ -126,11 +126,11 @@ export const ShortcutsOverlay = ({ onClose }: ShortcutsOverlayProps) => {
           <table className="w-full border-collapse" role="table">
             <tbody>
               {SHORTCUTS.map(({ key, desc }) => (
-                <tr key={key} className="border-b border-iron/20 last:border-b-0">
+                <tr key={key} className="border-b border-primary/20 last:border-b-0">
                   <td className="w-16 px-4 py-2.5">
-                    <kbd className="font-mono text-[11px] font-semibold text-flame">{key}</kbd>
+                    <kbd className="font-mono text-[11px] font-semibold text-highlight">{key}</kbd>
                   </td>
-                  <td className="px-4 py-2.5 text-sm text-fg">{desc}</td>
+                  <td className="px-4 py-2.5 text-sm text-foreground">{desc}</td>
                 </tr>
               ))}
             </tbody>

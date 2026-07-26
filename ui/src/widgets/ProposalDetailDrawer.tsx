@@ -21,14 +21,14 @@ interface ProposalDetailDrawerProps {
  * iron treatment rather than rendering nothing.
  */
 const STATUS_BADGE: Record<string, string> = {
-  draft: 'bg-iron/10 text-iron',
-  'prd-ready': 'bg-amber/15 text-ochre',
-  sliced: 'bg-amber/15 text-ochre',
-  dismissed: 'bg-iron/10 text-iron line-through',
+  draft: 'bg-primary/10 text-primary',
+  'prd-ready': 'bg-warn/15 text-warn',
+  sliced: 'bg-warn/15 text-warn',
+  dismissed: 'bg-primary/10 text-primary line-through',
 }
 
 const badgeClass = (status: string): string =>
-  STATUS_BADGE[status] ?? 'bg-iron/10 text-iron'
+  STATUS_BADGE[status] ?? 'bg-primary/10 text-primary'
 
 /**
  * Copy-pasteable CLI commands shown in the drawer for each proposal status.
@@ -132,7 +132,7 @@ export const ProposalDetailDrawer = ({
         data-testid="proposal-detail-overlay"
         aria-hidden="true"
         data-closing={closing ? 'true' : undefined}
-        className="drawer-scrim fixed inset-0 z-40 bg-fg/40"
+        className="drawer-scrim fixed inset-0 z-40 bg-foreground/40"
         onClick={handleClose}
       />
       <aside
@@ -143,13 +143,13 @@ export const ProposalDetailDrawer = ({
         data-testid="proposal-detail-drawer"
         data-closing={closing ? 'true' : undefined}
         tabIndex={-1}
-        className="drawer-panel fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-iron/40 bg-bg shadow-2xl outline-none"
+        className="drawer-panel fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-primary/40 bg-background shadow-2xl outline-none"
       >
-      <header className="flex items-start justify-between gap-3 border-b border-iron/40 px-4 py-3">
+      <header className="flex items-start justify-between gap-3 border-b border-primary/40 px-4 py-3">
         <div className="flex min-w-0 flex-col gap-2">
           <h2
             data-testid="proposal-detail-title"
-            className="break-words font-mono text-sm text-fg"
+            className="break-words font-mono text-sm text-foreground"
           >
             {proposal.title}
           </h2>
@@ -165,7 +165,7 @@ export const ProposalDetailDrawer = ({
             </span>
             <span
               data-testid="proposal-detail-source"
-              className="font-mono text-[9px] uppercase tracking-wide text-muted"
+              className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground"
             >
               {proposal.source}
             </span>
@@ -176,7 +176,7 @@ export const ProposalDetailDrawer = ({
           onClick={handleClose}
           aria-label="Close proposal detail"
           data-testid="proposal-detail-close"
-          className="shrink-0 rounded border border-iron/40 px-2 py-0.5 font-mono text-xs text-iron hover:bg-iron/10"
+          className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
         >
           Close
         </button>
@@ -187,39 +187,39 @@ export const ProposalDetailDrawer = ({
         {proposal.problem.trim() ? (
           <section
             data-testid="proposal-detail-problem"
-            className="border-b border-iron/40 px-4 py-3"
+            className="border-b border-primary/40 px-4 py-3"
           >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted">
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
               Problem
             </p>
-            <p className="whitespace-pre-wrap font-mono text-xs text-fg">{proposal.problem}</p>
+            <p className="whitespace-pre-wrap font-mono text-xs text-foreground">{proposal.problem}</p>
           </section>
         ) : null}
 
         {proposal.solution.trim() ? (
           <section
             data-testid="proposal-detail-solution"
-            className="border-b border-iron/40 px-4 py-3"
+            className="border-b border-primary/40 px-4 py-3"
           >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted">
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
               Solution
             </p>
-            <p className="whitespace-pre-wrap font-mono text-xs text-fg">{proposal.solution}</p>
+            <p className="whitespace-pre-wrap font-mono text-xs text-foreground">{proposal.solution}</p>
           </section>
         ) : null}
 
         {proposal.userStories.length > 0 ? (
           <section
             data-testid="proposal-detail-stories"
-            className="border-b border-iron/40 px-4 py-3"
+            className="border-b border-primary/40 px-4 py-3"
           >
-            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted">
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
               User stories
             </p>
             <ol className="flex flex-col gap-1.5">
               {proposal.userStories.map((story, idx) => (
-                <li key={idx} className="flex gap-2 font-mono text-xs text-fg">
-                  <span className="shrink-0 text-muted">{idx + 1}.</span>
+                <li key={idx} className="flex gap-2 font-mono text-xs text-foreground">
+                  <span className="shrink-0 text-muted-foreground">{idx + 1}.</span>
                   <span>{story}</span>
                 </li>
               ))}
@@ -230,9 +230,9 @@ export const ProposalDetailDrawer = ({
         {childTasks.length > 0 ? (
           <section
             data-testid="sliced-tasks"
-            className="flex flex-col gap-2 border-b border-iron/40 px-4 py-3"
+            className="flex flex-col gap-2 border-b border-primary/40 px-4 py-3"
           >
-            <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted">
+            <h3 className="font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
               Sliced tasks
             </h3>
             <ul className="flex flex-col gap-1.5">
@@ -240,15 +240,15 @@ export const ProposalDetailDrawer = ({
                 <li key={task.id}>
                   <a
                     href={`#/task/${encodeURIComponent(task.id)}`}
-                    className="flex items-center gap-2 rounded border border-iron/20 px-2 py-1.5 font-mono text-xs transition-colors hover:bg-iron/5"
+                    className="flex items-center gap-2 rounded border border-primary/20 px-2 py-1.5 font-mono text-xs transition-colors hover:bg-primary/5"
                   >
-                    <span className="shrink-0 text-iron">{task.id}</span>
+                    <span className="shrink-0 text-primary">{task.id}</span>
                     <span
                       className={`inline-flex shrink-0 items-center rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${badgeClass(task.status)}`}
                     >
                       {task.status}
                     </span>
-                    <span className="min-w-0 truncate text-fg">
+                    <span className="min-w-0 truncate text-foreground">
                       {task.prompt.split('\n')[0]?.slice(0, 80) ?? ''}
                     </span>
                   </a>
@@ -260,15 +260,15 @@ export const ProposalDetailDrawer = ({
       </div>
 
       {/* CLI commands — read-only, status-appropriate, copy-to-clipboard */}
-      <section className="border-t border-iron/40 px-4 py-3">
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted">
+      <section className="border-t border-primary/40 px-4 py-3">
+        <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
           CLI
         </p>
         {(STATUS_CLI_VERBS[proposal.status] ?? ['show']).map((verb) => {
           const cmd = `mars proposal ${verb} ${proposal.id}`
           return (
             <div key={verb} className="mb-1.5 flex items-center gap-2">
-              <code className="flex-1 truncate rounded bg-iron/10 px-2 py-1 font-mono text-xs text-fg">
+              <code className="flex-1 truncate rounded bg-primary/10 px-2 py-1 font-mono text-xs text-foreground">
                 {cmd}
               </code>
               <CopyButton

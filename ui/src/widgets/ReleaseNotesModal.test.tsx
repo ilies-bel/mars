@@ -299,19 +299,19 @@ describe('ReleaseNotesModal – unseen divider', () => {
     expect(html).toContain('data-oldest-unseen="true"')
   })
 
-  it('divider rule-lines use bg-flame/40 and label uses text-flame so the color is visible', () => {
-    // The accent color token does not exist in @theme; the divider must use
-    // the defined `flame` token so rule-lines and label render with color.
+  it('divider rule-lines use bg-highlight/40 and label uses text-highlight so the color is visible', () => {
+    // The divider must use the semantic `highlight` token so rule-lines and
+    // label render with the brand accent color.
     const html = render(
       loaded([ENTRY_NEWEST, ENTRY_NEWER, ENTRY_OLDER]),
       { lastViewedAt: LAST_VIEWED_BETWEEN },
     )
     expect(html).toContain('data-testid="unseen-divider"')
-    // Both rule-line spans must carry bg-flame/40
-    const ruleMatches = html.match(/bg-flame\/40/g) ?? []
+    // Both rule-line spans must carry bg-highlight/40
+    const ruleMatches = html.match(/bg-highlight\/40/g) ?? []
     expect(ruleMatches.length).toBeGreaterThanOrEqual(2)
-    // The label span must carry text-flame
-    expect(html).toContain('text-flame')
+    // The label span must carry text-highlight
+    expect(html).toContain('text-highlight')
     // Broken classes must not appear
     expect(html).not.toContain('bg-accent')
     expect(html).not.toContain('text-accent')

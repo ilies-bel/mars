@@ -17,9 +17,9 @@ describe('SkeletonBlock – pulsing bar', () => {
     expect(html).toContain('animate-mars-pulse')
   })
 
-  it('applies the bg-iron/20 base color', () => {
+  it('applies the bg-primary/20 base color', () => {
     const html = renderToStaticMarkup(<SkeletonBlock />)
-    expect(html).toContain('bg-iron/20')
+    expect(html).toContain('bg-primary/20')
   })
 
   it('merges additional className for sizing', () => {

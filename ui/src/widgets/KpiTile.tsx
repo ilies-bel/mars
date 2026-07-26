@@ -51,7 +51,7 @@ export const KpiTile = ({ kpi }: KpiTileProps) => {
     return (
       <a
         href={kpiHash(kpi.key)}
-        className="kpi-tile kpi-tile--low-confidence flex w-[180px] min-h-[120px] flex-col items-center justify-center rounded border border-iron/20 bg-surface px-4 py-2 font-mono text-muted text-xs no-underline hover:bg-iron/5 focus:outline-none focus:ring-2 focus:ring-iron/40"
+        className="kpi-tile kpi-tile--low-confidence flex w-[180px] min-h-[120px] flex-col items-center justify-center rounded border border-primary/20 bg-card px-4 py-2 font-mono text-muted-foreground text-xs no-underline hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary/40"
         aria-label={`View ${label} details`}
       >
         {label}: insufficient samples
@@ -67,13 +67,13 @@ export const KpiTile = ({ kpi }: KpiTileProps) => {
     <a
       href={kpiHash(kpi.key)}
       title={KPI_DESCRIPTIONS[kpi.key]}
-      className="flex w-[180px] min-h-[120px] flex-col items-center justify-between rounded border border-iron/20 bg-surface px-4 py-2 font-mono no-underline hover:bg-iron/5 focus:outline-none focus:ring-2 focus:ring-iron/40"
+      className="flex w-[180px] min-h-[120px] flex-col items-center justify-between rounded border border-primary/20 bg-card px-4 py-2 font-mono no-underline hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary/40"
       aria-label={`View ${label} details — ${cue.label}`}
     >
-      <span className="text-[10px] uppercase tracking-wide text-muted">{label}</span>
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
       <Sparkline points={seriesPoints} />
       <div className="flex flex-col items-center gap-0.5">
-        <span className="text-lg font-semibold text-fg">{formatKpiValue(kpi.key, kpi.currentValue)}</span>
+        <span className="text-lg font-semibold text-foreground">{formatKpiValue(kpi.key, kpi.currentValue)}</span>
         <span className={`flex items-center gap-1 text-[10px] ${cue.colorClass}`}>
           <span aria-hidden="true">{cue.glyph}</span>
           <span>{cue.label}</span>

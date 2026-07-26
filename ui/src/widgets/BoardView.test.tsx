@@ -139,7 +139,7 @@ describe('BoardView – substep label on in-progress arcs', () => {
 
     // The specific substep label appears (the column already says "In progress").
     expect(html).toContain('merging')
-    expect(html).toContain('text-flame')
+    expect(html).toContain('text-status-running')
   })
 
   it('maps status running to the "coding" substep', () => {
@@ -167,8 +167,8 @@ describe('BoardView – substep label on in-progress arcs', () => {
       <BoardView byCluster={byCluster} error={null} selectedProposalId={null} />,
     )
 
-    // No flame-coloured substep chip on a non-live arc.
-    expect(html).not.toContain('uppercase tracking-wide text-flame')
+    // No running-coloured substep chip on a non-live arc.
+    expect(html).not.toContain('uppercase tracking-wide text-status-running')
   })
 })
 
@@ -440,8 +440,8 @@ describe('BoardView – column lane styling (no card-in-card nesting)', () => {
     )
 
     // Column lane wrappers must not add a card-level border around already-carded TaskCards.
-    // The combination "border border-border bg-panel" is the column card anti-pattern.
-    expect(html).not.toContain('border border-border bg-panel')
+    // The combination "border border-border bg-secondary" is the column card anti-pattern.
+    expect(html).not.toContain('border border-border bg-secondary')
   })
 
   it('column header carries an underline to preserve visual separation without full card chrome', () => {

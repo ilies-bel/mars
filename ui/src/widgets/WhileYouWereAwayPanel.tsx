@@ -80,16 +80,16 @@ export const WhileYouWereAwayPanel = ({ projectId }: WhileYouWereAwayPanelProps)
   return (
     <section
       data-testid="while-you-were-away"
-      className="w-full max-w-xl rounded-xl border border-iron/20 bg-surface px-5 py-4 text-left"
+      className="w-full max-w-xl rounded-xl border border-primary/20 bg-card px-5 py-4 text-left"
     >
       <div className="flex items-baseline justify-between gap-4">
-        <h2 className="font-mono text-[13px] font-bold uppercase tracking-wide text-fg">
+        <h2 className="font-mono text-[13px] font-bold uppercase tracking-wide text-foreground">
           While you were away
         </h2>
         <a
           href={releaseNotesHash()}
           data-testid="release-notes-link"
-          className="font-mono text-[11px] text-iron/60 underline underline-offset-2 hover:text-fg"
+          className="font-mono text-[11px] text-primary/60 underline underline-offset-2 hover:text-foreground"
         >
           Release notes
         </a>
@@ -100,7 +100,7 @@ export const WhileYouWereAwayPanel = ({ projectId }: WhileYouWereAwayPanelProps)
             <li
               key={`${event.kind}-${event.at}-${i}`}
               data-testid="wywa-event"
-              className="font-mono text-[12px] text-fg/80"
+              className="font-mono text-[12px] text-foreground/80"
             >
               {event.summary}
             </li>
@@ -108,7 +108,7 @@ export const WhileYouWereAwayPanel = ({ projectId }: WhileYouWereAwayPanelProps)
         </ul>
       )}
       {overflow > 0 && (
-        <p data-testid="wywa-overflow" className="mt-2 font-mono text-[12px] text-iron/50">
+        <p data-testid="wywa-overflow" className="mt-2 font-mono text-[12px] text-primary/50">
           and {overflow} more
         </p>
       )}

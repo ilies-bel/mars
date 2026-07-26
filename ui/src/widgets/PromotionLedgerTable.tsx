@@ -37,7 +37,7 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
   return (
     <table className="w-full text-xs">
       <thead>
-        <tr className="text-left text-iron">
+        <tr className="text-left text-primary">
           <th className="pb-1 pr-2 font-normal">Timestamp</th>
           <th className="pb-1 pr-2 font-normal">Workflow</th>
           <th className="pb-1 pr-2 font-normal">Decision</th>
@@ -54,13 +54,13 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
           </tr>
         ) : entries.length === 0 ? (
           <tr>
-            <td colSpan={5} className="py-1 text-iron">No promotions yet</td>
+            <td colSpan={5} className="py-1 text-primary">No promotions yet</td>
           </tr>
         ) : (
           entries.map((entry) => (
             <Fragment key={entry.id}>
               <tr
-                className="cursor-pointer hover:bg-surface-hover"
+                className="cursor-pointer hover:bg-card-hover"
                 onClick={() => toggle(entry.id)}
               >
                 <td className="py-0.5 pr-2 font-mono">{formatTs(entry.createdAt)}</td>
@@ -76,7 +76,7 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
               {expanded.has(entry.id) && (
                 <tr>
                   <td colSpan={5}>
-                    <pre className="overflow-auto rounded bg-surface p-2 text-[10px]">
+                    <pre className="overflow-auto rounded bg-card p-2 text-[10px]">
                       {JSON.stringify(entry, null, 2)}
                     </pre>
                   </td>

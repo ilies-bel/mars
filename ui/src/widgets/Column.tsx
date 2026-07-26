@@ -28,17 +28,17 @@ export interface BoardArc {
 interface Props {
   label: string
   arcs: BoardArc[]
-  accent?: 'flame' | 'muted'
+  accent?: 'highlight' | 'muted'
   /** Search results should be immediately visible inside their matching arcs. */
   expandAll?: boolean
 }
 
 const STATUS_CLASS: Record<Cluster, string> = {
-  Failed: 'bg-iron/10 text-iron',
-  Blocked: 'bg-amber/15 text-ochre',
-  'In progress': 'bg-flame/10 text-flame',
-  Queued: 'bg-basalt/10 text-basalt',
-  Done: 'bg-basalt/10 text-basalt', // never rendered on board; present for type completeness
+  Failed: 'bg-status-failed/10 text-status-failed',
+  Blocked: 'bg-status-blocked/15 text-status-blocked',
+  'In progress': 'bg-status-running/10 text-status-running',
+  Queued: 'bg-status-queued/10 text-status-queued',
+  Done: 'bg-status-queued/10 text-status-queued', // never rendered on board; present for type completeness
 }
 
 /**
@@ -50,22 +50,22 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
   let taskIndex = 0
 
   return (
-    <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-2 bg-panel p-3">
+    <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-2 bg-secondary p-3">
       <header className="flex items-center justify-between border-b border-border/50 px-1 pb-2">
         <span
           className={`font-sans text-[11px] font-semibold tracking-[0.1em] ${
-            accent === 'flame' ? 'text-flame' : 'text-muted'
+            accent === 'highlight' ? 'text-highlight' : 'text-muted-foreground'
           }`}
         >
           {label}
         </span>
-        <span className="font-mono text-[11px] font-semibold text-muted">
+        <span className="font-mono text-[11px] font-semibold text-muted-foreground">
           {arcs.length}
         </span>
       </header>
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
         {arcs.length === 0 ? (
-          <div className="px-1 py-2 font-mono text-[11px] text-muted/70">
+          <div className="px-1 py-2 font-mono text-[11px] text-muted-foreground/70">
             empty
           </div>
         ) : (
@@ -102,7 +102,7 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
                 data-arc-state={arcState}
                 data-compensates-arc={arc.compensatesArcId ?? undefined}
                 open={expandAll || undefined}
-                className={`mars-card group rounded-lg bg-surface hover:bg-panel${isLive ? ' mars-card-live' : ''}`}
+                className={`mars-card group rounded-lg bg-card hover:bg-secondary${isLive ? ' mars-card-live' : ''}`}
               >
                 <summary
                   aria-label={`Arc ${arc.id}: ${arc.cluster}, ${arc.tasks.length} ${taskLabel}${isCompensation ? `, compensating arc ${arc.compensatesArcId}` : ''}`}
@@ -110,31 +110,31 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
                 >
                   <span
                     aria-hidden="true"
-                    className="mt-0.5 text-muted transition-transform duration-150 group-open:rotate-180 motion-reduce:transition-none"
+                    className="mt-0.5 text-muted-foreground transition-transform duration-150 group-open:rotate-180 motion-reduce:transition-none"
                   >
                     ▾
                   </span>
                   <span className="min-w-0 flex-1">
                     {/* Title: muted for orphaned arcs (origin force-purged, recovery live).
                         No line-through — the recovery is active, not abandoned. */}
-                    <span className={`block line-clamp-2 text-body font-medium leading-snug ${isOrphaned ? 'text-muted/70' : 'text-fg'}`}>
+                    <span className={`block line-clamp-2 text-body font-medium leading-snug ${isOrphaned ? 'text-muted-foreground/70' : 'text-foreground'}`}>
                       {arc.title}
                     </span>
-                    <span className="mt-1 block font-mono text-meta text-muted">
+                    <span className="mt-1 block font-mono text-meta text-muted-foreground">
                       arc {arc.id}
                     </span>
                     {substep ? (
-                      <span className="mt-1 block font-mono text-micro font-semibold uppercase tracking-wide text-flame">
+                      <span className="mt-1 block font-mono text-micro font-semibold uppercase tracking-wide text-status-running">
                         {substep}
                       </span>
                     ) : null}
                     {isCompensation ? (
-                      <span className="mt-1 block font-mono text-[10px] text-ochre">
+                      <span className="mt-1 block font-mono text-[10px] text-warn">
                         ↩ compensates arc {arc.compensatesArcId}
                       </span>
                     ) : null}
                     {isOrphaned ? (
-                      <span className="mt-1 block font-mono text-[10px] text-muted/70" data-arc-state="orphaned-origin">
+                      <span className="mt-1 block font-mono text-[10px] text-muted-foreground/70" data-arc-state="orphaned-origin">
                         ↱ recovery in progress · origin force-purged
                       </span>
                     ) : null}
@@ -146,7 +146,7 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
                       ) : null}
                       {arc.cluster}
                     </span>
-                    <span className="font-mono text-meta text-muted">
+                    <span className="font-mono text-meta text-muted-foreground">
                       {arc.tasks.length} {taskLabel}
                     </span>
                   </span>

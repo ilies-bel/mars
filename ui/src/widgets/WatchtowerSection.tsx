@@ -22,7 +22,7 @@ const ScoreTrends = () => {
   }
 
   if (!workflows || workflows.length === 0) {
-    return <p className="text-iron text-xs">No scores yet</p>
+    return <p className="text-primary text-xs">No scores yet</p>
   }
 
   return (
@@ -40,19 +40,19 @@ const ScoreTrends = () => {
 
 export const WatchtowerSection = () => (
   <div className="flex flex-col gap-3">
-    <h3 className="font-mono text-[11px] uppercase tracking-wide text-iron">Watchtower</h3>
+    <h3 className="font-mono text-[11px] uppercase tracking-wide text-primary">Watchtower</h3>
     <div className="flex flex-col gap-3">
       {/* Score trends — live data via useScorerWorkflows + WatchtowerTrendChart */}
       <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="font-mono text-[11px] uppercase tracking-wide text-iron">Score trends</h4>
+        <h4 className="font-mono text-[11px] uppercase tracking-wide text-primary">Score trends</h4>
         <ScoreTrends />
       </div>
       <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="font-mono text-[11px] uppercase tracking-wide text-iron">Promotion ledger</h4>
+        <h4 className="font-mono text-[11px] uppercase tracking-wide text-primary">Promotion ledger</h4>
         <PromotionLedgerTable />
       </div>
       <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="font-mono text-[11px] uppercase tracking-wide text-iron">Loop ledger</h4>
+        <h4 className="font-mono text-[11px] uppercase tracking-wide text-primary">Loop ledger</h4>
         <LoopLedgerPanel />
       </div>
     </div>

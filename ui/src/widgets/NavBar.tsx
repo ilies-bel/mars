@@ -12,7 +12,7 @@ interface NavBarProps {
 const linkClass = (active: boolean): string =>
   [
     'rounded px-2 py-1 font-mono text-[11px] uppercase tracking-wide',
-    active ? 'bg-iron/30 text-fg' : 'text-iron hover:text-fg',
+    active ? 'bg-primary/30 text-foreground' : 'text-primary hover:text-foreground',
   ].join(' ')
 
 interface CountBadgeProps {
@@ -21,7 +21,7 @@ interface CountBadgeProps {
 
 const CountBadge = ({ count }: CountBadgeProps) =>
   count === 0 ? null : (
-    <span aria-hidden="true" className="absolute -top-1 -right-1 rounded-full bg-iron/60 px-1 font-mono text-[9px] leading-none text-fg">
+    <span aria-hidden="true" className="absolute -top-1 -right-1 rounded-full bg-primary/60 px-1 font-mono text-[9px] leading-none text-foreground">
       {count}
     </span>
   )
@@ -61,9 +61,9 @@ export const NavBar = ({ hash }: NavBarProps) => {
   const progressCount = tasks?.length ?? 0
 
   return (
-    <nav className="flex items-center gap-2 border-b border-iron/30 bg-bg px-4 py-1.5">
+    <nav className="flex items-center gap-2 border-b border-primary/30 bg-background px-4 py-1.5">
       <ProjectSelector />
-      <span className="mx-1 h-3 w-px bg-iron/30" aria-hidden="true" />
+      <span className="mx-1 h-3 w-px bg-primary/30" aria-hidden="true" />
       <span className="relative">
         <CountBadge count={actionCount} />
         <a

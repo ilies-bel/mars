@@ -45,7 +45,7 @@ export const FrameworkUpdateBannerInner = ({
   <div
     role="region"
     aria-label="Framework update notification"
-    className="flex items-center justify-between gap-3 bg-flame/10 px-4 py-2 text-sm text-fg"
+    className="flex items-center justify-between gap-3 bg-highlight/10 px-4 py-2 text-sm text-foreground"
   >
     <span>
       Mars v{latest} available (you&apos;re on v{installed})
@@ -56,7 +56,7 @@ export const FrameworkUpdateBannerInner = ({
           href={releaseUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="underline hover:text-flame"
+          className="underline hover:text-highlight"
         >
           Release notes
         </a>
@@ -77,8 +77,8 @@ export const FrameworkUpdateBannerInner = ({
           title={isUpdating ? 'Update in progress…' : undefined}
           className={
             isUpdating
-              ? 'cursor-not-allowed rounded px-2 py-0.5 opacity-40 ring-1 ring-iron/40'
-              : 'rounded px-2 py-0.5 ring-1 ring-iron/40 hover:bg-iron/10'
+              ? 'cursor-not-allowed rounded px-2 py-0.5 opacity-40 ring-1 ring-primary/40'
+              : 'rounded px-2 py-0.5 ring-1 ring-primary/40 hover:bg-primary/10'
           }
         >
           {isUpdating ? 'Updating…' : 'Update now'}
@@ -90,7 +90,7 @@ export const FrameworkUpdateBannerInner = ({
         type="button"
         onClick={onDismiss}
         aria-label="Dismiss update banner"
-        className="flex h-5 w-5 items-center justify-center rounded hover:bg-iron/20"
+        className="flex h-5 w-5 items-center justify-center rounded hover:bg-primary/20"
       >
         ×
       </button>

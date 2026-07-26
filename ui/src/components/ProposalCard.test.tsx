@@ -61,9 +61,9 @@ describe('ProposalCard – focus-visible ring', () => {
     expect(html).toContain('focus-visible:outline-none')
   })
 
-  it('applies a flame-coloured focus ring for keyboard navigation', () => {
+  it('applies the semantic ring token for keyboard navigation', () => {
     const html = renderToStaticMarkup(<ProposalCard proposal={draft()} />)
     expect(html).toContain('focus-visible:ring-2')
-    expect(html).toContain('focus-visible:ring-flame')
+    expect(html).toContain('focus-visible:ring-ring')
   })
 })

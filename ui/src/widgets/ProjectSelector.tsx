@@ -106,7 +106,7 @@ export const ProjectSelectorInner = ({
         aria-expanded={open}
         onClick={onToggle}
         data-testid="project-selector-trigger"
-        className="flex items-center gap-1.5 rounded px-2 py-0.5 font-mono text-[11px] text-fg transition-colors hover:bg-iron/20"
+        className="flex items-center gap-1.5 rounded px-2 py-0.5 font-mono text-[11px] text-foreground transition-colors hover:bg-primary/20"
       >
         <span
           role="img"
@@ -118,7 +118,7 @@ export const ProjectSelectorInner = ({
         </span>
         <span aria-hidden="true">{focusedIcon}</span>
         {focusedName}
-        <span aria-hidden="true" className="ml-1 text-iron">
+        <span aria-hidden="true" className="ml-1 text-primary">
           {open ? '▲' : '▼'}
         </span>
       </button>
@@ -131,7 +131,7 @@ export const ProjectSelectorInner = ({
           aria-activedescendant={activatedId}
           onKeyDown={onListboxKeyDown}
           data-testid="project-dropdown"
-          className="absolute left-0 top-full z-50 mt-1 min-w-[14rem] rounded border border-iron/30 bg-bg shadow-lg outline-none"
+          className="absolute left-0 top-full z-50 mt-1 min-w-[14rem] rounded border border-primary/30 bg-background shadow-lg outline-none"
         >
           {projects.map((p, idx) => {
             const { name, icon } = projectIdentity(p)
@@ -151,10 +151,10 @@ export const ProjectSelectorInner = ({
                 className={[
                   'flex flex-col cursor-pointer px-2 py-1.5 font-mono text-[11px] transition-colors',
                   isFocused
-                    ? 'bg-iron/30 text-fg'
+                    ? 'bg-primary/30 text-foreground'
                     : isActive
-                      ? 'bg-iron/10 text-fg'
-                      : 'text-iron hover:bg-iron/10 hover:text-fg',
+                      ? 'bg-primary/10 text-foreground'
+                      : 'text-primary hover:bg-primary/10 hover:text-foreground',
                 ].join(' ')}
               >
                 <div className="flex items-center gap-1.5">
@@ -176,7 +176,7 @@ export const ProjectSelectorInner = ({
                           disabled={isStarting}
                           onClick={(e) => onStart(p.projectId, e)}
                           data-testid={`start-btn-${p.projectId}`}
-                          className="rounded border border-iron/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-fg hover:bg-iron/20 disabled:opacity-50"
+                          className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
                         >
                           {isStarting ? '…' : 'Start'}
                         </button>
@@ -187,7 +187,7 @@ export const ProjectSelectorInner = ({
                           disabled={isRestarting}
                           onClick={(e) => onRestart(p.projectId, e)}
                           data-testid={`restart-btn-${p.projectId}`}
-                          className="rounded border border-iron/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-fg hover:bg-iron/20 disabled:opacity-50"
+                          className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-[9px] uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
                         >
                           {isRestarting ? '…' : 'Restart'}
                         </button>

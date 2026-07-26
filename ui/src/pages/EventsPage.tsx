@@ -170,8 +170,8 @@ const chipClass = (active: boolean): string =>
   [
     'rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide transition-colors',
     active
-      ? 'border-iron/60 bg-iron/30 text-fg'
-      : 'border-iron/30 bg-transparent text-iron hover:border-iron/50 hover:text-fg',
+      ? 'border-primary/60 bg-primary/30 text-foreground'
+      : 'border-primary/30 bg-transparent text-primary hover:border-primary/50 hover:text-foreground',
   ].join(' ')
 
 interface MultiSelectProps<T extends string> {
@@ -192,7 +192,7 @@ const MultiSelect = <T extends string>({
   displayLabel,
 }: MultiSelectProps<T>) => (
   <div className="flex flex-wrap items-center gap-1" data-testid={testId}>
-    <span className="self-center font-mono text-[9px] uppercase tracking-wide text-muted/60">
+    <span className="self-center font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
       {label}:
     </span>
     {options.map((opt) => {
@@ -268,14 +268,14 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
   const body = (
     <>
       <div className="grid items-baseline gap-x-2" style={{ gridTemplateColumns: '4.5rem 2.5rem 4rem 6rem auto' }}>
-        <span className="truncate text-muted">{relativeTime(event.timestamp, now)}</span>
+        <span className="truncate text-muted-foreground">{relativeTime(event.timestamp, now)}</span>
         <span
           className={`font-mono text-[10px] uppercase ${event.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(event.severity)}`}
         >
           {event.severity}
         </span>
-        <span className="truncate rounded bg-iron/10 px-1 text-center font-mono text-[10px] text-iron">{humanizeKind(event.kind)}</span>
-        <span className="truncate font-mono text-[9px] text-muted">
+        <span className="truncate rounded bg-primary/10 px-1 text-center font-mono text-[10px] text-primary">{humanizeKind(event.kind)}</span>
+        <span className="truncate font-mono text-[9px] text-muted-foreground">
           {callerSource ?? ''}
           {event.phase ? ` · ${humanizePhase(event.phase)}` : ''}
         </span>
@@ -284,14 +284,14 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
             <a
               href={taskHash(event.taskId, 'events')}
               onClick={(e) => e.stopPropagation()}
-              className="shrink-0 font-mono text-[10px] text-muted hover:text-fg hover:underline"
+              className="shrink-0 font-mono text-[10px] text-muted-foreground hover:text-foreground hover:underline"
             >
               {truncateId(event.taskId)}
             </a>
           ) : null}
           {logLineSource && logLineSource !== callerSource ? (
             <span
-              className="shrink-0 rounded bg-iron/20 px-1 font-mono text-[9px] text-muted"
+              className="shrink-0 rounded bg-primary/20 px-1 font-mono text-[9px] text-muted-foreground"
               data-testid={`event-row-source-${event.id}`}
             >
               {logLineSource}
@@ -304,7 +304,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
             <button
               type="button"
               onClick={toggleFields}
-              className="-my-1 inline-flex min-h-[24px] shrink-0 items-center px-2 py-1 font-mono text-[9px] text-muted underline hover:text-iron"
+              className="-my-1 inline-flex min-h-[24px] shrink-0 items-center px-2 py-1 font-mono text-[9px] text-muted-foreground underline hover:text-primary"
               data-testid={`event-row-fields-toggle-${event.id}`}
             >
               {fieldsExpanded ? 'hide fields' : 'fields'}
@@ -314,7 +314,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
       </div>
       {fieldsExpanded && logLineFields ? (
         <pre
-          className="mt-1 max-w-full overflow-x-auto font-mono text-[10px] text-muted"
+          className="mt-1 max-w-full overflow-x-auto font-mono text-[10px] text-muted-foreground"
           data-testid={`event-row-fields-${event.id}`}
         >
           {JSON.stringify(logLineFields, null, 2)}
@@ -325,7 +325,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
   if (href === undefined) {
     return (
       <div
-        className={`block rounded border ${severityRowClass(event.severity)} px-3 py-1.5 font-mono text-[12px] text-fg`}
+        className={`block rounded border ${severityRowClass(event.severity)} px-3 py-1.5 font-mono text-[12px] text-foreground`}
         data-testid={`event-row-${event.id}`}
       >
         {body}
@@ -336,7 +336,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
     <div>
       <a
         href={href}
-        className={`block rounded border ${severityRowClass(event.severity)} px-3 py-1.5 font-mono text-[12px] text-fg hover:bg-iron/15`}
+        className={`block rounded border ${severityRowClass(event.severity)} px-3 py-1.5 font-mono text-[12px] text-foreground hover:bg-primary/15`}
         data-testid={`event-row-${event.id}`}
       >
         {body}
@@ -408,12 +408,12 @@ const GroupedRow = memo(({
         <button
           type="button"
           onClick={handleToggle}
-          className="mb-1 flex w-full items-center gap-2 rounded border border-iron/30 bg-iron/10 px-3 py-1 font-mono text-[10px] text-iron hover:text-fg"
+          className="mb-1 flex w-full items-center gap-2 rounded border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-[10px] text-primary hover:text-foreground"
           data-testid={`group-row-${first.id}`}
         >
           <span>▾</span>
-          <span className="rounded bg-iron/20 px-1 font-semibold">×{events.length}</span>
-          <span className="text-muted">{relativeTime(first.timestamp, now)} – {relativeTime(last.timestamp, now)}</span>
+          <span className="rounded bg-primary/20 px-1 font-semibold">×{events.length}</span>
+          <span className="text-muted-foreground">{relativeTime(first.timestamp, now)} – {relativeTime(last.timestamp, now)}</span>
           <span className="min-w-0 truncate">{summarizeTraceEvent(first)}</span>
         </button>
         <div className="flex flex-col gap-1">
@@ -435,14 +435,14 @@ const GroupedRow = memo(({
     <button
       type="button"
       onClick={handleToggle}
-      className="flex w-full items-center gap-2 rounded border border-iron/20 bg-iron/5 px-3 py-1.5 font-mono text-[12px] text-fg hover:bg-iron/15"
+      className="flex w-full items-center gap-2 rounded border border-primary/20 bg-primary/5 px-3 py-1.5 font-mono text-[12px] text-foreground hover:bg-primary/15"
       data-testid={`group-row-${first.id}`}
     >
-      <span className="shrink-0 text-[10px] text-muted">{relativeTime(first.timestamp, now)}</span>
-      <span className="shrink-0 text-[10px] text-muted">–</span>
-      <span className="shrink-0 text-[10px] text-muted">{relativeTime(last.timestamp, now)}</span>
-      <span className="shrink-0 rounded bg-iron/20 px-1.5 font-mono text-[10px] font-semibold text-iron">×{events.length}</span>
-      <span className="min-w-0 truncate text-[11px] text-muted">{summarizeTraceEvent(first)}</span>
+      <span className="shrink-0 text-[10px] text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
+      <span className="shrink-0 text-[10px] text-muted-foreground">–</span>
+      <span className="shrink-0 text-[10px] text-muted-foreground">{relativeTime(last.timestamp, now)}</span>
+      <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-[10px] font-semibold text-primary">×{events.length}</span>
+      <span className="min-w-0 truncate text-[11px] text-muted-foreground">{summarizeTraceEvent(first)}</span>
     </button>
   )
 })
@@ -462,7 +462,7 @@ const arcSeverityBorder = (severity: TraceEvent['severity']): string => {
 const arcSeverityBg = (severity: TraceEvent['severity']): string => {
   if (severity === 'error') return 'bg-error/[0.03]'
   if (severity === 'warn') return 'bg-warn/[0.03]'
-  return 'bg-surface'
+  return 'bg-card'
 }
 
 interface TimelineStepProps {
@@ -488,7 +488,7 @@ const TimelineStep = ({ group, now }: TimelineStepProps) => {
         ? 'text-error'
         : outcome === 'running'
           ? 'text-warn'
-          : 'text-muted'
+          : 'text-muted-foreground'
 
   return (
     <div className="ml-4">
@@ -497,28 +497,28 @@ const TimelineStep = ({ group, now }: TimelineStepProps) => {
         onClick={() => setExpanded((e) => !e)}
         className="flex w-full items-center gap-2 py-0.5 text-left font-mono text-[11px]"
       >
-        <span className="shrink-0 text-[9px] text-muted">
+        <span className="shrink-0 text-[9px] text-muted-foreground">
           {expanded ? '▾' : '▸'}
         </span>
-        <span className="font-semibold text-fg">{stepName}</span>
+        <span className="font-semibold text-foreground">{stepName}</span>
         <span className={`text-[10px] ${outcomeClass}`}>{outcome}</span>
-        <span className="text-[10px] text-muted">
+        <span className="text-[10px] text-muted-foreground">
           {relativeTime(group.step.timestamp, now)}
         </span>
         {group.tools.length > 0 && (
-          <span className="text-[9px] text-muted">
+          <span className="text-[9px] text-muted-foreground">
             ({group.tools.length} tool call{group.tools.length !== 1 ? 's' : ''})
           </span>
         )}
       </button>
       {expanded && group.tools.length > 0 && (
-        <div className="ml-5 border-l border-iron/20 pl-2">
+        <div className="ml-5 border-l border-primary/20 pl-2">
           {group.tools.map((tool) => (
             <div
               key={tool.id}
               className="flex items-baseline gap-1 py-0.5 font-mono text-[10px]"
             >
-              <span className="shrink-0 text-muted">
+              <span className="shrink-0 text-muted-foreground">
                 {relativeTime(tool.timestamp, now)}
               </span>
               <span
@@ -549,19 +549,19 @@ const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
   )
 
   return (
-    <div className="border-l-2 border-iron/20 pl-3">
+    <div className="border-l-2 border-primary/20 pl-3">
       <button
         type="button"
         onClick={() => setExpanded((e) => !e)}
         className="flex w-full items-center gap-2 py-1 text-left"
       >
-        <span className="font-mono text-[9px] text-muted">
+        <span className="font-mono text-[9px] text-muted-foreground">
           {expanded ? '▾' : '▸'}
         </span>
         <a
           href={taskHash(group.taskId, 'events')}
           onClick={(e) => e.stopPropagation()}
-          className="font-mono text-[11px] text-fg hover:underline"
+          className="font-mono text-[11px] text-foreground hover:underline"
         >
           {group.taskId.length > 16
             ? `${group.taskId.slice(0, 8)}…${group.taskId.slice(-4)}`
@@ -573,12 +573,12 @@ const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
               ? 'bg-error/10 text-error'
               : group.severity === 'warn'
                 ? 'bg-warn/10 text-warn'
-                : 'bg-iron/10 text-muted'
+                : 'bg-primary/10 text-muted-foreground'
           }`}
         >
           {group.severity}
         </span>
-        <span className="font-mono text-[10px] text-muted">
+        <span className="font-mono text-[10px] text-muted-foreground">
           {group.events.length} event{group.events.length !== 1 ? 's' : ''}
           {group.steps.length > 0 &&
             ` · ${group.steps.length} step${group.steps.length !== 1 ? 's' : ''}`}
@@ -592,7 +592,7 @@ const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
               key={e.id}
               className={`ml-2 flex items-baseline gap-1 rounded border px-2 py-0.5 font-mono text-[10px] ${severityRowClass(e.severity)}`}
             >
-              <span className="shrink-0 text-muted">
+              <span className="shrink-0 text-muted-foreground">
                 {relativeTime(e.timestamp, now)}
               </span>
               <span className={`shrink-0 text-[9px] uppercase ${severityColor(e.severity)}`}>
@@ -630,10 +630,10 @@ const TimelineArcGroup = ({ group, now }: TimelineArcGroupProps) => {
         onClick={() => setExpanded((e) => !e)}
         className="flex w-full items-center gap-2 text-left"
       >
-        <span className="font-mono text-[9px] text-muted">
+        <span className="font-mono text-[9px] text-muted-foreground">
           {expanded ? '▾' : '▸'}
         </span>
-        <span className="font-mono text-[11px] font-semibold text-fg">
+        <span className="font-mono text-[11px] font-semibold text-foreground">
           Arc{' '}
           {group.arcId === '__unlinked__'
             ? '(unlinked)'
@@ -656,11 +656,11 @@ const TimelineArcGroup = ({ group, now }: TimelineArcGroupProps) => {
               ? 'warning'
               : 'ok'}
         </span>
-        <span className="font-mono text-[10px] text-muted">
+        <span className="font-mono text-[10px] text-muted-foreground">
           {group.taskGroups.length} task
           {group.taskGroups.length !== 1 ? 's' : ''}
         </span>
-        <span className="ml-auto font-mono text-[10px] text-muted">
+        <span className="ml-auto font-mono text-[10px] text-muted-foreground">
           {relativeTime(group.firstTimestamp, now)}
           {group.firstTimestamp !== group.lastTimestamp &&
             ` — ${relativeTime(group.lastTimestamp, now)}`}
@@ -687,7 +687,7 @@ const TimelineView = ({ events, now }: TimelineViewProps) => {
 
   if (arcGroups.length === 0) {
     return (
-      <div data-testid="events-empty" className="font-mono text-[11px] text-iron">
+      <div data-testid="events-empty" className="font-mono text-[11px] text-primary">
         No events match these filters.
       </div>
     )
@@ -885,17 +885,17 @@ export const EventsPage = () => {
 
   if (initial.isError && !initial.data) {
     return (
-      <main className="flex min-h-0 flex-1 overflow-hidden bg-bg">
+      <main className="flex min-h-0 flex-1 overflow-hidden bg-background">
         <FallbackSurface error={initial.error} of="events stream" variant="pane" />
       </main>
     )
   }
 
   return (
-    <main className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-bg p-4">
+    <main className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-background p-4">
       {/* Header — fixed above the scrollable list */}
       <header className="flex items-center gap-3">
-        <h1 className="font-mono text-[11px] uppercase tracking-wide text-iron">
+        <h1 className="font-mono text-[11px] uppercase tracking-wide text-primary">
           Events — {events.length} event{events.length === 1 ? '' : 's'}
         </h1>
         <div className="ml-auto flex items-center gap-1">
@@ -908,8 +908,8 @@ export const EventsPage = () => {
               className={[
                 'rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide transition-colors',
                 viewMode === mode
-                  ? 'bg-iron/30 text-fg'
-                  : 'text-iron hover:text-fg',
+                  ? 'bg-primary/30 text-foreground'
+                  : 'text-primary hover:text-foreground',
               ].join(' ')}
             >
               {mode}
@@ -921,14 +921,14 @@ export const EventsPage = () => {
           onClick={onRefresh}
           disabled={initial.isFetching}
           data-testid="events-refresh"
-          className="rounded border border-iron/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-fg hover:bg-iron/15 disabled:opacity-50"
+          className="rounded border border-primary/40 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-foreground hover:bg-primary/15 disabled:opacity-50"
         >
           {initial.isFetching ? 'Refreshing…' : 'Refresh'}
         </button>
         {fetchedAt !== null ? (
           <span
             data-testid="events-fetched-at"
-            className="font-mono text-[10px] text-muted"
+            className="font-mono text-[10px] text-muted-foreground"
           >
             {fetchedAt}
           </span>
@@ -946,7 +946,7 @@ export const EventsPage = () => {
         <div className="flex flex-wrap items-center gap-3">
           {/* Time range */}
           <div className="flex items-center gap-1">
-            <span className="font-mono text-[9px] uppercase tracking-wide text-muted/60">
+            <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
               Time:
             </span>
             <select
@@ -959,7 +959,7 @@ export const EventsPage = () => {
                   range: e.target.value as TimeRange,
                 }))
               }
-              className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg focus:border-iron/60 focus:outline-none"
+              className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground focus:border-primary/60 focus:outline-none"
             >
               {TIME_RANGE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -969,7 +969,7 @@ export const EventsPage = () => {
             </select>
           </div>
 
-          <div className="h-4 w-px shrink-0 bg-iron/20" aria-hidden="true" />
+          <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
 
           <MultiSelect
             label="Severity"
@@ -979,7 +979,7 @@ export const EventsPage = () => {
             testId="events-severity"
           />
 
-          <div className="h-4 w-px shrink-0 bg-iron/20" aria-hidden="true" />
+          <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
 
           <MultiSelect
             label="Kind"
@@ -1002,11 +1002,11 @@ export const EventsPage = () => {
             displayLabel={(p) => humanizePhase(p) ?? p}
           />
 
-          <div className="h-4 w-px shrink-0 bg-iron/20" aria-hidden="true" />
+          <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
 
           {/* Task ID exact match */}
           <div className="flex items-center gap-1">
-            <span className="font-mono text-[9px] uppercase tracking-wide text-muted/60">
+            <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
               Task&nbsp;ID:
             </span>
             <input
@@ -1018,13 +1018,13 @@ export const EventsPage = () => {
               onChange={(e) =>
                 setState((prev) => ({ ...prev, taskId: e.target.value }))
               }
-              className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
+              className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground placeholder-iron focus:border-primary/60 focus:outline-none"
             />
           </div>
 
           {/* Origin ID exact match */}
           <div className="flex items-center gap-1">
-            <span className="font-mono text-[9px] uppercase tracking-wide text-muted/60">
+            <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
               Origin&nbsp;ID:
             </span>
             <input
@@ -1036,13 +1036,13 @@ export const EventsPage = () => {
               onChange={(e) =>
                 setState((prev) => ({ ...prev, originId: e.target.value }))
               }
-              className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
+              className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground placeholder-iron focus:border-primary/60 focus:outline-none"
             />
           </div>
 
           {/* Full-text */}
           <div className="flex flex-1 items-center gap-1 min-w-[180px]">
-            <span className="font-mono text-[9px] uppercase tracking-wide text-muted/60">
+            <span className="font-mono text-[9px] uppercase tracking-wide text-muted-foreground/60">
               Search:
             </span>
             <input
@@ -1054,7 +1054,7 @@ export const EventsPage = () => {
               onChange={(e) =>
                 setState((prev) => ({ ...prev, q: e.target.value }))
               }
-              className="flex-1 rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
+              className="flex-1 rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[11px] text-foreground placeholder-iron focus:border-primary/60 focus:outline-none"
             />
           </div>
         </div>
@@ -1067,13 +1067,13 @@ export const EventsPage = () => {
         data-testid="events-list"
       >
         {initial.isPending ? (
-          <div className="font-mono text-[11px] text-iron">Loading events…</div>
+          <div className="font-mono text-[11px] text-primary">Loading events…</div>
         ) : viewMode === 'timeline' ? (
           <TimelineView events={events} now={now} />
         ) : events.length === 0 ? (
           <div
             data-testid="events-empty"
-            className="font-mono text-[11px] text-iron"
+            className="font-mono text-[11px] text-primary"
           >
             No events match these filters.
           </div>
@@ -1132,7 +1132,7 @@ export const EventsPage = () => {
               disabled={more.isPending}
               onClick={() => more.mutate(nextCursor)}
               data-testid="events-load-more"
-              className="font-mono text-[10px] uppercase text-fg underline disabled:opacity-50"
+              className="font-mono text-[10px] uppercase text-foreground underline disabled:opacity-50"
             >
               {more.isPending ? 'Loading…' : 'Load more'}
             </button>

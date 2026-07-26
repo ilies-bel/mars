@@ -159,7 +159,7 @@ describe('OriginTree – navigable mode', () => {
     expect(html).toContain('<button')
     expect(html).toContain('type="button"')
     // Hover + layout affordance consistent with the palette.
-    expect(html).toContain('hover:bg-iron/10')
+    expect(html).toContain('hover:bg-primary/10')
     expect(html).toContain('text-left')
     // The node ids stay targetable on the <li> wrapper.
     expect(html).toContain('data-origin-node-id="prop-abc"')

@@ -138,7 +138,7 @@
    * One token per task status, valued from the Mars palette above. Component
    * code references these (text-status-failed, bg-status-blocked/15, ...);
    * the palette names themselves are banned from .tsx (see lint:tokens). */
-  --color-status-queued:    var(--color-muted);
+  --color-status-queued:    var(--color-basalt);
   --color-status-running:   var(--color-flame);
   --color-status-verifying: var(--color-amber);
   --color-status-blocked:   var(--color-ochre);

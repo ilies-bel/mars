@@ -446,7 +446,7 @@ export const runStepToCard = (
 // drawer shell so it renders synchronously in unit tests (the drawer's own
 // fetch effect never fires under renderToStaticMarkup).
 
-const SECTION_LABEL = 'font-mono text-[11px] uppercase tracking-[0.1em] text-muted'
+const SECTION_LABEL = 'font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground'
 
 /** A section header in the drawer body, matching the existing "Context" style. */
 const SectionLabel = ({ children }: { children: ReactNode }) => (
@@ -458,7 +458,7 @@ const StringList = ({ items }: { items: string[] }) =>
   items.length > 0 ? (
     <ul className="flex flex-col gap-0.5">
       {items.map((s) => (
-        <li key={s} className="break-all font-mono text-[11px] text-iron">
+        <li key={s} className="break-all font-mono text-[11px] text-primary">
           {s}
         </li>
       ))}
@@ -468,10 +468,10 @@ const StringList = ({ items }: { items: string[] }) =>
 /** One labelled cell in the compact meta grid. */
 const MetaCell = ({ label, value }: { label: string; value: ReactNode }) => (
   <div className="flex flex-col gap-0.5">
-    <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+    <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
       {label}
     </span>
-    <span className="break-all font-mono text-[11px] text-fg">{value}</span>
+    <span className="break-all font-mono text-[11px] text-foreground">{value}</span>
   </div>
 )
 
@@ -519,11 +519,11 @@ export const TaskDetailBody = ({
     <div className="flex flex-col gap-4">
       {/* a. Header tier — always present. */}
       <div>
-        <p className="break-words text-sm font-medium text-fg">{title}</p>
+        <p className="break-words text-sm font-medium text-foreground">{title}</p>
         <div className="mt-1 flex items-baseline gap-2">
           <span
             data-testid="task-detail-status"
-            className="font-mono text-xs uppercase tracking-wide text-iron"
+            className="font-mono text-xs uppercase tracking-wide text-primary"
           >
             {task.status}
           </span>
@@ -532,7 +532,7 @@ export const TaskDetailBody = ({
             label={task.id}
             data-testid="copy-task-id"
             aria-label={`Copy task id: ${task.id}`}
-            className="break-all cursor-pointer font-mono text-[10px] text-muted hover:text-fg transition-colors"
+            className="break-all cursor-pointer font-mono text-[10px] text-muted-foreground hover:text-foreground transition-colors"
           />
         </div>
       </div>
@@ -547,7 +547,7 @@ export const TaskDetailBody = ({
             {task.status === 'failed' ? 'Failure' : isBlocked ? 'Blocked' : 'Error'}
           </p>
           {isBlocked ? (
-            <p className="mt-1 text-[11px] text-iron">
+            <p className="mt-1 text-[11px] text-primary">
               Waiting on {task.blockedBy.length} blocker
               {task.blockedBy.length === 1 ? '' : 's'}.
             </p>
@@ -572,7 +572,7 @@ export const TaskDetailBody = ({
           {/* Raw error and signature demoted to a secondary technical detail. */}
           {(task.error != null || task.failureSignature != null) ? (
             <details className="mt-1">
-              <summary className="cursor-pointer font-mono text-[10px] text-muted">
+              <summary className="cursor-pointer font-mono text-[10px] text-muted-foreground">
                 Technical details
               </summary>
               {task.error != null ? (
@@ -612,10 +612,10 @@ export const TaskDetailBody = ({
         promptIsLong ? (
           <div>
             <details>
-              <summary className="cursor-pointer select-none font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+              <summary className="cursor-pointer select-none font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
                 Prompt · {promptLineCount} lines
               </summary>
-              <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-fg">
+              <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-foreground">
                 {task.prompt}
               </pre>
             </details>
@@ -623,7 +623,7 @@ export const TaskDetailBody = ({
         ) : (
           <div>
             <SectionLabel>Prompt</SectionLabel>
-            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-fg">
+            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-foreground">
               {task.prompt}
             </pre>
           </div>
@@ -634,9 +634,9 @@ export const TaskDetailBody = ({
       {currentStep != null ? (
         <div data-testid="task-detail-current-step">
           <SectionLabel>Step</SectionLabel>
-          <p className="font-mono text-[11px] text-fg">
+          <p className="font-mono text-[11px] text-foreground">
             {currentStep.stepName}
-            <span className="text-muted"> · {relativeTime(currentStep.startedAt)}</span>
+            <span className="text-muted-foreground"> · {relativeTime(currentStep.startedAt)}</span>
           </p>
         </div>
       ) : null}
@@ -655,7 +655,7 @@ export const TaskDetailBody = ({
           <MetaCell label="Created" value={relativeTime(task.createdAt) || task.createdAt} />
           <MetaCell label="Updated" value={relativeTime(task.updatedAt) || task.updatedAt} />
         </div>
-        <p className="font-mono text-[10px] text-iron">recovery: {task.retryCount}</p>
+        <p className="font-mono text-[10px] text-primary">recovery: {task.retryCount}</p>
       </div>
 
       {/* h. Diagnostics — collapsed by default. */}
@@ -663,26 +663,26 @@ export const TaskDetailBody = ({
         <summary className={`cursor-pointer ${SECTION_LABEL}`}>Diagnostics</summary>
         <dl className="mt-2 flex flex-col gap-1.5">
           <div>
-            <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+            <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
               Worktree
             </dt>
-            <dd className="break-all font-mono text-[11px] text-iron">
+            <dd className="break-all font-mono text-[11px] text-primary">
               {task.worktreePath ?? '—'}
             </dd>
           </div>
           {task.blockerTaskId != null ? (
             <div>
-              <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+              <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
                 Blocker task id
               </dt>
-              <dd className="break-all font-mono text-[11px] text-iron">
+              <dd className="break-all font-mono text-[11px] text-primary">
                 {task.blockerTaskId}
               </dd>
             </div>
           ) : null}
           {task.blockedBy.length > 0 ? (
             <div>
-              <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+              <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
                 Blocked by
               </dt>
               <dd>
@@ -718,7 +718,7 @@ const EvalChip = ({ label, value, warn }: { label: string; value: number | strin
       className={`rounded border px-1 py-0.5 font-mono text-[10px] ${
         warn
           ? 'border-warn/40 bg-warn/5 text-warn'
-          : 'border-iron/30 text-muted'
+          : 'border-primary/30 text-muted-foreground'
       }`}
     >
       {label} {String(value)}
@@ -730,8 +730,8 @@ const EvalChip = ({ label, value, warn }: { label: string; value: number | strin
 
 /**
  * Status icon for a step card — a small ring with a symbol inside.
- * Green check ring = completed, amber pulse = running, red × = failed,
- * ochre dot = killed. Uses CSS design tokens so it matches the rest of the
+ * Green check ring = completed, warn pulse = running, red × = failed,
+ * warn dot = killed. Uses CSS design tokens so it matches the rest of the
  * drawer's colour palette. Exported for reuse by StudioView so step status
  * carries identical visual semantics on both surfaces.
  */
@@ -778,9 +778,9 @@ export const StepStatusIcon = ({ outcome }: { outcome: StepCardEntry['outcome'] 
     <span
       data-testid="step-status-icon"
       aria-label="killed"
-      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-ochre/60 bg-ochre/10"
+      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 border-warn/60 bg-warn/10"
     >
-      <span className="h-2 w-2 rounded-full bg-ochre" />
+      <span className="h-2 w-2 rounded-full bg-warn" />
     </span>
   )
 }
@@ -802,7 +802,7 @@ const AgentToolCallRow = ({ call }: { call: AgentToolCall }) => {
   return (
     <div
       data-testid="agent-tool-row"
-      className="border-t border-iron/10 py-1.5"
+      className="border-t border-primary/10 py-1.5"
     >
       <div className="flex flex-wrap items-center gap-2">
         {/* Success / error badge */}
@@ -819,14 +819,14 @@ const AgentToolCallRow = ({ call }: { call: AgentToolCall }) => {
         {/* Tool name */}
         <code
           data-testid="agent-tool-name"
-          className="shrink-0 font-mono text-[11px] text-fg"
+          className="shrink-0 font-mono text-[11px] text-foreground"
         >
           {call.toolName}
         </code>
 
         {/* Truncated input preview */}
         {inputPreview ? (
-          <span className="min-w-0 truncate font-mono text-[10px] text-muted">
+          <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">
             {inputPreview.slice(0, 120)}
           </span>
         ) : null}
@@ -856,7 +856,7 @@ const ToolInvocationRow = ({ event }: { event: TraceEvent }) => {
   return (
     <div
       data-testid="step-tool-row"
-      className="border-t border-iron/10 py-1.5"
+      className="border-t border-primary/10 py-1.5"
     >
       <div className="flex flex-wrap items-center gap-2">
         {/* Exit-code badge */}
@@ -877,14 +877,14 @@ const ToolInvocationRow = ({ event }: { event: TraceEvent }) => {
         {/* Humanized command */}
         <code
           data-testid="tool-cmd"
-          className="flex-1 break-all font-mono text-[11px] text-fg"
+          className="flex-1 break-all font-mono text-[11px] text-foreground"
         >
           {cmd}
         </code>
 
         {/* Duration */}
         {durationMs !== null && (
-          <span className="ml-auto shrink-0 font-mono text-[10px] text-muted">
+          <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
             {formatDuration(durationMs)}
           </span>
         )}
@@ -893,19 +893,19 @@ const ToolInvocationRow = ({ event }: { event: TraceEvent }) => {
       {/* stdout / stderr — expandable via native <details> */}
       {(stdout || stderr) && (
         <details className="mt-1">
-          <summary className="cursor-pointer font-mono text-[10px] text-muted">
+          <summary className="cursor-pointer font-mono text-[10px] text-muted-foreground">
             output
           </summary>
           <div className="mt-1 space-y-1">
             {stdout ? (
-              <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded bg-panel/60 p-1.5 font-mono text-[10px] text-iron">
+              <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-[10px] text-primary">
                 {stdout}
               </pre>
             ) : null}
             {stderr ? (
               <pre
                 className={`max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded p-1.5 font-mono text-[10px] ${
-                  isActualFail ? 'bg-error/5 text-error/80' : 'bg-panel/60 text-iron'
+                  isActualFail ? 'bg-error/5 text-error/80' : 'bg-secondary/60 text-primary'
                 }`}
               >
                 {stderr}
@@ -958,8 +958,8 @@ const StepCard = ({
       : entry.outcome === 'failed'
         ? 'border-error/40'
         : entry.outcome === 'killed'
-          ? 'border-ochre/40'
-          : 'border-iron/20'
+          ? 'border-warn/40'
+          : 'border-primary/20'
 
   const bgClass =
     entry.outcome === 'running'
@@ -967,8 +967,8 @@ const StepCard = ({
       : entry.outcome === 'failed'
         ? 'bg-error/5'
         : entry.outcome === 'killed'
-          ? 'bg-ochre/5'
-          : 'bg-panel/30'
+          ? 'bg-warn/5'
+          : 'bg-secondary/30'
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === ' ') {
@@ -996,13 +996,13 @@ const StepCard = ({
         {/* Step info */}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-sm text-fg">{entry.stepName}</span>
+            <span className="font-semibold text-sm text-foreground">{entry.stepName}</span>
             {entry.workerName != null ? (
-              <span className="font-mono text-[10px] text-muted">{entry.workerName}</span>
+              <span className="font-mono text-[10px] text-muted-foreground">{entry.workerName}</span>
             ) : null}
           </div>
           {summary ? (
-            <p className="font-mono text-[11px] text-muted">{summary}</p>
+            <p className="font-mono text-[11px] text-muted-foreground">{summary}</p>
           ) : null}
           {entry.evalResults && entry.evalResults.length > 0 ? (
             <div className="mt-0.5 flex flex-wrap gap-1">
@@ -1015,17 +1015,17 @@ const StepCard = ({
 
         {/* Duration badge (right) */}
         {entry.durationMs != null ? (
-          <span className="shrink-0 font-mono text-xs text-muted">
+          <span className="shrink-0 font-mono text-xs text-muted-foreground">
             {formatDuration(entry.durationMs)}
           </span>
         ) : null}
       </summary>
 
       {/* Expanded content — always in DOM, hidden by <details> when closed */}
-      <div data-testid="step-card-expanded" className="border-t border-iron/15 px-3 pb-3">
+      <div data-testid="step-card-expanded" className="border-t border-primary/15 px-3 pb-3">
         {/* Token counts (LLM-backed steps) */}
         {(entry.inputTokens != null || entry.outputTokens != null) ? (
-          <p className="pt-2 font-mono text-[10px] text-muted">
+          <p className="pt-2 font-mono text-[10px] text-muted-foreground">
             {entry.inputTokens != null ? `in:${entry.inputTokens}` : null}
             {entry.outputTokens != null ? ` out:${entry.outputTokens}` : null}
             {entry.cacheReadTokens != null && entry.cacheReadTokens > 0
@@ -1035,7 +1035,7 @@ const StepCard = ({
         ) : null}
         {entry.claudeSessionId != null ? (
           <p
-            className="pt-1 font-mono text-[10px] text-muted"
+            className="pt-1 font-mono text-[10px] text-muted-foreground"
             title={entry.claudeSessionId}
           >
             session:{entry.claudeSessionId.slice(0, 8)}
@@ -1059,17 +1059,17 @@ const StepCard = ({
             ))}
           </div>
         ) : toolEvents.length === 0 && entry.claudeSessionId == null ? (
-          <p className="pt-2 font-mono text-[11px] text-muted/60">
+          <p className="pt-2 font-mono text-[11px] text-muted-foreground/60">
             No tool invocations recorded
           </p>
         ) : null}
 
         {/* Input — collapsed by default; keyboard-accessible via <details>/<summary> */}
         {entry.inputJson != null ? (
-          <details className="mt-2 border-t border-iron/10 pt-1.5">
+          <details className="mt-2 border-t border-primary/10 pt-1.5">
             <summary
               tabIndex={0}
-              className="cursor-pointer font-mono text-[10px] text-muted [&::-webkit-details-marker]:hidden"
+              className="cursor-pointer font-mono text-[10px] text-muted-foreground [&::-webkit-details-marker]:hidden"
               onKeyDown={(e) => {
                 if (e.key === ' ') {
                   e.preventDefault()
@@ -1082,7 +1082,7 @@ const StepCard = ({
             </summary>
             <pre
               data-testid="step-result-input"
-              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-panel/60 p-1.5 font-mono text-[10px] text-iron"
+              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-[10px] text-primary"
             >
               {(() => {
                 try {
@@ -1097,10 +1097,10 @@ const StepCard = ({
 
         {/* Output — collapsed by default; keyboard-accessible via <details>/<summary> */}
         {entry.resultJson != null ? (
-          <details className="mt-2 border-t border-iron/10 pt-1.5">
+          <details className="mt-2 border-t border-primary/10 pt-1.5">
             <summary
               tabIndex={0}
-              className="cursor-pointer font-mono text-[10px] text-muted [&::-webkit-details-marker]:hidden"
+              className="cursor-pointer font-mono text-[10px] text-muted-foreground [&::-webkit-details-marker]:hidden"
               onKeyDown={(e) => {
                 if (e.key === ' ') {
                   e.preventDefault()
@@ -1113,7 +1113,7 @@ const StepCard = ({
             </summary>
             <pre
               data-testid="step-result-output"
-              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-panel/60 p-1.5 font-mono text-[10px] text-iron"
+              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-[10px] text-primary"
             >
               {(() => {
                 try {
@@ -1169,24 +1169,24 @@ const StepCardList = ({
 }) => (
   <section
     data-testid="step-card-list"
-    className="border-b border-iron/20 px-4 py-3"
+    className="border-b border-primary/20 px-4 py-3"
   >
     <div className="mb-3 flex items-baseline justify-between">
-      <h3 className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+      <h3 className="font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
         Steps
       </h3>
       {studioHref !== undefined ? (
         <a
           href={studioHref}
           data-testid="open-in-studio"
-          className="font-mono text-[11px] text-iron hover:text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-iron/40"
+          className="font-mono text-[11px] text-primary hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
         >
           Open in Studio →
         </a>
       ) : null}
     </div>
     {cards.length === 0 ? (
-      <p className="font-mono text-xs text-iron">No steps recorded yet</p>
+      <p className="font-mono text-xs text-primary">No steps recorded yet</p>
     ) : (
       <div className="flex flex-col">
         {cards.map((card, i) => {
@@ -1209,7 +1209,7 @@ const StepCardList = ({
               />
               {i < cards.length - 1 ? (
                 <div
-                  className="mx-4 h-4 border-l-2 border-dashed border-iron/25"
+                  className="mx-4 h-4 border-l-2 border-dashed border-primary/25"
                   aria-hidden="true"
                 />
               ) : null}
@@ -1270,15 +1270,15 @@ const ProposalStepTimeline = ({
         : s.outcome === 'failed'
           ? 'text-error'
           : s.outcome === 'killed'
-            ? 'text-ochre'
-            : 'text-fg'
+            ? 'text-warn'
+            : 'text-foreground'
     const dotClass =
       s.outcome === 'running'
         ? 'bg-warn border-warn/60 motion-safe:animate-pulse'
         : s.outcome === 'failed'
           ? 'bg-error/80 border-error/60'
           : s.outcome === 'killed'
-            ? 'bg-ochre/80 border-ochre/60'
+            ? 'bg-warn/80 border-warn/60'
             : 'bg-accent/40 border-accent/30'
     return (
       <li
@@ -1298,11 +1298,11 @@ const ProposalStepTimeline = ({
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
           <span className="min-w-[6rem] font-semibold">{s.stepName}</span>
           {s.workerName != null ? (
-            <span className="shrink-0 text-muted">{s.workerName}</span>
+            <span className="shrink-0 text-muted-foreground">{s.workerName}</span>
           ) : null}
-          <span className="shrink-0 text-muted">{outcomeLabel(s.outcome)}</span>
+          <span className="shrink-0 text-muted-foreground">{outcomeLabel(s.outcome)}</span>
           {s.durationMs != null ? (
-            <span className="ml-auto shrink-0 text-muted">{formatDuration(s.durationMs)}</span>
+            <span className="ml-auto shrink-0 text-muted-foreground">{formatDuration(s.durationMs)}</span>
           ) : null}
           {s.evalResults && s.evalResults.length > 0 ? (
             <span className="flex flex-wrap items-center gap-1">
@@ -1317,10 +1317,10 @@ const ProposalStepTimeline = ({
   }
 
   return (
-    <div className="border-b border-iron/20">
+    <div className="border-b border-primary/20">
       {/* ── Proposal steps group ─────────────────────────────────────────── */}
       <section data-testid="step-group-proposal" className="px-4 py-3">
-        <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+        <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
           Proposal steps
         </h3>
         {otherProposalSpans.length > 0 ? (
@@ -1330,7 +1330,7 @@ const ProposalStepTimeline = ({
         ) : null}
         {autoLinkerSpans.length > 0 ? (
           <details className="mt-1">
-            <summary className="cursor-pointer font-mono text-[11px] text-muted">
+            <summary className="cursor-pointer font-mono text-[11px] text-muted-foreground">
               auto-linker-direction &times; {autoLinkerSpans.length} ({formatDuration(autoLinkerTotalMs)})
             </summary>
             <ol className="mt-1 flex flex-col">
@@ -1339,7 +1339,7 @@ const ProposalStepTimeline = ({
           </details>
         ) : null}
         {proposalSpans.length === 0 ? (
-          <p className="font-mono text-xs text-iron">No proposal-level steps recorded</p>
+          <p className="font-mono text-xs text-primary">No proposal-level steps recorded</p>
         ) : null}
       </section>
 
@@ -1348,9 +1348,9 @@ const ProposalStepTimeline = ({
         <section
           key={taskId}
           data-testid={`step-group-${taskId}`}
-          className="border-t border-iron/20 px-4 py-3"
+          className="border-t border-primary/20 px-4 py-3"
         >
-          <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+          <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
             {taskId} &middot; {taskSpans.length} steps
           </h3>
           <ol className="flex flex-col">
@@ -1725,7 +1725,7 @@ export const TaskDetailDrawer = ({
         data-testid="task-detail-overlay"
         aria-hidden="true"
         data-closing={closing ? 'true' : undefined}
-        className="drawer-scrim fixed inset-0 z-40 hidden bg-fg/40 xl:block"
+        className="drawer-scrim fixed inset-0 z-40 hidden bg-foreground/40 xl:block"
         onClick={handleClose}
       />
       <aside
@@ -1737,10 +1737,10 @@ export const TaskDetailDrawer = ({
         data-state={state.kind}
         data-closing={closing ? 'true' : undefined}
         tabIndex={-1}
-        className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-iron/40 bg-bg outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
+        className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-primary/40 bg-background outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
       >
-      <header className="flex items-center justify-between border-b border-iron/40 px-4 py-3">
-        <h2 className="font-mono text-sm uppercase tracking-wide text-iron">
+      <header className="flex items-center justify-between border-b border-primary/40 px-4 py-3">
+        <h2 className="font-mono text-sm uppercase tracking-wide text-primary">
           Task {currentId}
         </h2>
         <button
@@ -1748,7 +1748,7 @@ export const TaskDetailDrawer = ({
           onClick={handleClose}
           aria-label="Close task detail"
           data-testid="task-detail-close"
-          className="rounded border border-iron/40 px-2 py-0.5 font-mono text-xs text-iron hover:bg-iron/10"
+          className="rounded border border-primary/40 px-2 py-0.5 font-mono text-xs text-primary hover:bg-primary/10"
         >
           Close
         </button>
@@ -1759,15 +1759,15 @@ export const TaskDetailDrawer = ({
         <nav
           data-testid="task-detail-breadcrumb"
           aria-label="Task drill-in trail"
-          className="flex flex-wrap items-center gap-1 border-b border-iron/20 px-4 py-2 font-mono text-[11px]"
+          className="flex flex-wrap items-center gap-1 border-b border-primary/20 px-4 py-2 font-mono text-[11px]"
         >
           {trail.map((id, i) => {
             const isCurrent = i === trail.length - 1
             return (
               <span key={id} className="flex items-center gap-1">
-                {i > 0 ? <span className="text-muted">▸</span> : null}
+                {i > 0 ? <span className="text-muted-foreground">▸</span> : null}
                 {isCurrent ? (
-                  <span data-crumb-id={id} className="font-medium text-fg">
+                  <span data-crumb-id={id} className="font-medium text-foreground">
                     {crumbLabel(id)}
                   </span>
                 ) : (
@@ -1775,7 +1775,7 @@ export const TaskDetailDrawer = ({
                     type="button"
                     data-crumb-id={id}
                     onClick={() => navigate(id)}
-                    className="text-iron hover:underline"
+                    className="text-primary hover:underline"
                   >
                     {crumbLabel(id)}
                   </button>
@@ -1789,9 +1789,9 @@ export const TaskDetailDrawer = ({
       {subgraph != null && state.kind !== 'not-found' ? (
         <section
           data-testid="task-detail-subgraph"
-          className="border-b border-iron/20 px-4 py-3"
+          className="border-b border-primary/20 px-4 py-3"
         >
-          <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted">
+          <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
             Context
           </h3>
           <div className="overflow-x-auto">
@@ -1931,7 +1931,7 @@ export const TaskDetailDrawer = ({
           data-testid="task-detail-not-found"
           className="flex flex-1 items-center justify-center p-6"
         >
-          <p className="max-w-[40ch] text-center font-mono text-sm text-iron">
+          <p className="max-w-[40ch] text-center font-mono text-sm text-primary">
             Task not found. It may have been purged.
           </p>
         </div>

@@ -83,22 +83,22 @@ export const Breadcrumbs = ({ hash }: BreadcrumbsProps) => {
   return (
     <nav
       aria-label="Breadcrumb"
-      className="flex shrink-0 items-center gap-1.5 border-b border-iron/20 bg-panel px-4 py-1"
+      className="flex shrink-0 items-center gap-1.5 border-b border-primary/20 bg-secondary px-4 py-1"
     >
       {crumbs.map((crumb, i) => (
         <span key={i} className="flex items-center gap-1.5">
           {i > 0 && (
-            <span className="text-[10px] text-muted" aria-hidden="true">›</span>
+            <span className="text-[10px] text-muted-foreground" aria-hidden="true">›</span>
           )}
           {crumb.href ? (
             <a
               href={crumb.href}
-              className="font-mono text-[10px] text-muted hover:text-fg"
+              className="font-mono text-[10px] text-muted-foreground hover:text-foreground"
             >
               {crumb.label}
             </a>
           ) : (
-            <span className="font-mono text-[10px] font-semibold text-fg">
+            <span className="font-mono text-[10px] font-semibold text-foreground">
               {crumb.label}
             </span>
           )}

@@ -121,7 +121,7 @@ describe('TaskCard – press and hover feedback', () => {
 
   it('carries hover background shift class', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('t-4')} index={0} />)
-    expect(html).toContain('hover:bg-panel')
+    expect(html).toContain('hover:bg-secondary')
   })
 
   it('carries active press-scale class', () => {
@@ -145,7 +145,7 @@ describe('TaskCard – focus-visible ring', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('t-8')} index={0} />)
     // CSS :has() scopes the ring to the card article, not just the button text area
     expect(html).toContain('has-[button:focus-visible]:ring-2')
-    expect(html).toContain('has-[button:focus-visible]:ring-flame')
+    expect(html).toContain('has-[button:focus-visible]:ring-ring')
   })
 })
 

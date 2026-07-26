@@ -130,12 +130,12 @@ describe('TopStripe – connection indicator', () => {
 })
 
 describe('TopStripe – visual hierarchy (numbers pop from labels)', () => {
-  it('IN PROGRESS count uses flame color to signal active work', () => {
+  it('IN PROGRESS count uses the running status color to signal active work', () => {
     const html = renderToStaticMarkup(
       <TopStripe inProgress={3} doneToday={0} failed={0} connected={true} />,
     )
     const section = between(html, 'stat-in-progress', 'stat-done')
-    expect(section).toContain('text-flame')
+    expect(section).toContain('text-status-running')
   })
 
   it('DONE TODAY count uses success color', () => {
@@ -159,8 +159,8 @@ describe('TopStripe – visual hierarchy (numbers pop from labels)', () => {
       <TopStripe inProgress={3} doneToday={0} failed={0} connected={true} />,
     )
     const section = between(html, 'stat-in-progress', 'stat-done')
-    // The label span should carry text-muted (not the number span which carries text-flame)
-    expect(section).toContain('text-muted')
+    // The label span should carry text-muted-foreground (not the number span which carries text-status-running)
+    expect(section).toContain('text-muted-foreground')
   })
 
   it('FAILED label is muted so the number stands out', () => {
@@ -168,6 +168,6 @@ describe('TopStripe – visual hierarchy (numbers pop from labels)', () => {
       <TopStripe inProgress={0} doneToday={0} failed={2} connected={true} />,
     )
     const section = from(html, 'stat-failed')
-    expect(section).toContain('text-muted')
+    expect(section).toContain('text-muted-foreground')
   })
 })

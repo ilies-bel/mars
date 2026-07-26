@@ -1,13 +1,16 @@
 /**
- * Shared skeleton primitives for loading states.
+ * Shared skeleton building blocks for loading states, composed on the
+ * ui/skeleton primitive.
  *
- * Built on `bg-iron/20` and `.animate-mars-pulse` (not Tailwind's
- * `animate-pulse`) so the animation respects `prefers-reduced-motion`.
+ * Overrides the primitive's `animate-pulse` with `.animate-mars-pulse`
+ * (respects `prefers-reduced-motion`) and its `bg-accent` with the Mars
+ * loading tint.
  *
  * Usage:
  *   <SkeletonBlock className="h-4 w-1/2" />
  *   <SkeletonList rows={3} rowClassName="h-4 w-full mb-2" label="Loading items" />
  */
+import { Skeleton } from '@/components/ui/skeleton'
 
 interface SkeletonBlockProps {
   /** Tailwind classes for size, spacing, and any per-bar overrides. */
@@ -18,7 +21,9 @@ interface SkeletonBlockProps {
  * A single pulsing bar. Use `className` to control height, width, and spacing.
  */
 export const SkeletonBlock = ({ className = '' }: SkeletonBlockProps) => (
-  <div className={`animate-mars-pulse rounded bg-iron/20 ${className}`} />
+  <Skeleton
+    className={`animate-mars-pulse rounded bg-primary/20 ${className}`}
+  />
 )
 
 interface SkeletonListProps {

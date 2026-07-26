@@ -149,7 +149,7 @@ const AppInner = () => {
   }, [route, aqItems.length])
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
       <AlertNotifier />
       <FrameworkUpdateBanner />
       <NavBar hash={hash} />

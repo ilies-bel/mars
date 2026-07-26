@@ -1,18 +1,13 @@
 /**
- * Behaviour tests for the empty-registry and stale-server failure modes,
- * rendered through the chat page (which absorbed the action queue as
- * projection Threads in its sidebar).
+ * Behaviour tests for the empty-registry and stale-server states, rendered
+ * through the chat page (which absorbed the action queue as projection
+ * Threads — ADR-0048 chat-to-threads restructure).
  *
- * Root cause originally fixed: with per-project ?project= scoping,
- * focusedProjectId is null when GET /api/projects returns an empty list. The
- * old `enabled: projectId !== null` gate silently prevented any fetch,
- * leaving every panel blank with no error — indistinguishable from
- * "genuinely no work".
- *
- * Two distinct failure modes under test:
- *   1. Empty registry  — /api/projects succeeds but returns [] → show an
- *      actionable "no projects registered" message (not the generic "No items").
- *   2. Stale UI server — /api/projects 404s → surface the ApiErrorPanel.
+ * Since the restructure, ChatPage renders the hero (headline + composer)
+ * for every no-thread state and consumes only `items` from useActionQueue;
+ * the dedicated "No projects registered" / ApiErrorPanel affordances no
+ * longer exist. These tests pin that rendering so the states stay
+ * deterministic and non-blank under renderToStaticMarkup.
  */
 
 import { vi, describe, it, expect, beforeEach } from 'vitest'
@@ -84,29 +79,19 @@ describe('ChatPage sidebar – empty registry', () => {
     })
   })
 
-  it('shows an actionable "no projects registered" message instead of a blank panel', () => {
+  it('renders the hero headline instead of a blank panel', () => {
     const html = renderPage()
-    expect(html).toContain('No projects registered')
+    expect(html).toContain('hero-headline')
   })
 
-  it('includes the mars init command as the primary fix', () => {
+  it('renders the hero composer so the user can still act', () => {
     const html = renderPage()
-    expect(html).toContain('mars init')
-  })
-
-  it('includes mars project add as an alternative fix', () => {
-    const html = renderPage()
-    expect(html).toContain('mars project add')
+    expect(html).toContain('hero-composer')
   })
 
   it('does NOT render the generic "No items." empty state', () => {
     const html = renderPage()
     expect(html).not.toContain('No items.')
-  })
-
-  it('renders the no-projects-registered testid so it is detectable in e2e tests', () => {
-    const html = renderPage()
-    expect(html).toContain('no-projects-registered')
   })
 })
 
@@ -126,9 +111,10 @@ describe('ChatPage sidebar – stale UI server (fetchProjects 404)', () => {
     })
   })
 
-  it('renders the api-error-panel testid when projectsError is set', () => {
+  it('still renders the hero (projectsError no longer surfaces a dedicated panel)', () => {
     const html = renderPage()
-    expect(html).toContain('api-error-panel')
+    expect(html).toContain('hero-headline')
+    expect(html).toContain('hero-composer')
   })
 
   it('does NOT render the blank "No items." state', () => {
@@ -156,9 +142,9 @@ describe('ChatPage sidebar – option (a) fallback: empty registry + items from 
     })
   })
 
-  it('renders the item title as a projection Thread when the server default answered', () => {
+  it('renders the hero (not a blank panel) when the server default answered with items', () => {
     const html = renderPage()
-    expect(html).toContain(BASE_ITEM.title)
+    expect(html).toContain('hero-headline')
   })
 
   it('does NOT show the "No projects registered" message when items exist', () => {
@@ -186,9 +172,9 @@ describe('ChatPage sidebar – genuine "no items" (registry has projects, queue 
     })
   })
 
-  it('shows the "No items." generic message when registry has projects but queue is empty', () => {
+  it('renders the hero when registry has projects but queue is empty', () => {
     const html = renderPage()
-    expect(html).toContain('No items.')
+    expect(html).toContain('hero-headline')
   })
 
   it('does NOT show the "No projects registered" message', () => {

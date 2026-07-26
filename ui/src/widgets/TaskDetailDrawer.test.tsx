@@ -1163,7 +1163,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
 
   // ── Accessibility / color-token tests ────────────────────────────────────────
 
-  it('a failed step row uses the accessible error token (text-error), not text-red-400 or text-amber-400', () => {
+  it('a failed step row uses the accessible error token (text-error), not raw red/amber scale classes', () => {
     const spans = [
       span({ stepName: 'code', workflowInstanceId: 'wf-1', outcome: 'failed' }),
     ]
@@ -1171,11 +1171,11 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
     expect(html).not.toContain('text-red-400')
-    expect(html).not.toContain('text-amber-400')
+    expect(html).not.toMatch(/text-(?:amber)-\d+/)
     expect(html).toContain('text-error')
   })
 
-  it('a warn-state EvalChip renders with text-warn, not text-amber-400', () => {
+  it('a warn-state EvalChip renders with text-warn, not a raw amber scale class', () => {
     const spans = [
       span({
         stepName: 'code',
@@ -1187,7 +1187,7 @@ describe('TaskDetailDrawer – step timeline (via stepSpans prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} stepSpans={spans} />,
     )
-    expect(html).not.toContain('text-amber-400')
+    expect(html).not.toMatch(/text-(?:amber)-\d+/)
     expect(html).toContain('text-warn')
   })
 
@@ -1675,7 +1675,7 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
     expect(html).not.toContain('text-red-400')
-    expect(html).not.toContain('text-amber-400')
+    expect(html).not.toMatch(/text-(?:amber)-\d+/)
     expect(html).toContain('text-error') // failed step status icon uses text-error
     expect(html).toContain('border-warn') // running step card/icon uses border-warn
   })

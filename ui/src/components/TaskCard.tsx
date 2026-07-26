@@ -26,7 +26,7 @@ const truncate = (s: string, n: number): string =>
 export const TaskCard = memo(({ task, index }: Props) => {
   const accent =
     task.status === 'failed'
-      ? 'bg-iron/10'
+      ? 'bg-primary/10'
       : task.status === 'dropped'
         ? 'opacity-70'
         : ''
@@ -62,30 +62,30 @@ export const TaskCard = memo(({ task, index }: Props) => {
     <article
       data-task-index={index}
       data-task-status={task.status}
-      className={`mars-card relative flex flex-col gap-2 rounded-lg bg-surface p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-panel active:scale-[0.99] motion-reduce:transform-none has-[button:focus-visible]:outline-none has-[button:focus-visible]:ring-2 has-[button:focus-visible]:ring-flame${isLive ? ' mars-card-live' : ''} ${accent}`.trimEnd()}
+      className={`mars-card relative flex flex-col gap-2 rounded-lg bg-card p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-secondary active:scale-[0.99] motion-reduce:transform-none has-[button:focus-visible]:outline-none has-[button:focus-visible]:ring-2 has-[button:focus-visible]:ring-ring${isLive ? ' mars-card-live' : ''} ${accent}`.trimEnd()}
     >
       {/* Row 1: id link + status badges — raised above the stretched button via z-10
           so the anchor receives its own pointer events independently. */}
       <div className="relative z-10 flex min-w-0 items-start justify-between gap-2">
         <a
           href={`#/task/${encodeURIComponent(task.id)}`}
-          className="block min-w-0 truncate font-mono text-meta text-muted hover:text-fg hover:underline"
+          className="block min-w-0 truncate font-mono text-meta text-muted-foreground hover:text-foreground hover:underline"
         >
           {task.id}
         </a>
         <div className="flex shrink-0 items-center gap-1.5">
           {isLive ? (
-            <span className="inline-flex items-center gap-1 font-mono text-micro font-semibold uppercase tracking-wide text-flame">
+            <span className="inline-flex items-center gap-1 font-mono text-micro font-semibold uppercase tracking-wide text-status-running">
               <span
                 aria-hidden="true"
-                className="inline-block h-1.5 w-1.5 rounded-full bg-flame motion-safe:animate-mars-pulse"
+                className="inline-block h-1.5 w-1.5 rounded-full bg-status-running motion-safe:animate-mars-pulse"
               />
               {substep}
             </span>
           ) : null}
           {task.retryCount > 0 ? (
             <span
-              className="rounded bg-basalt/10 px-1.5 py-0.5 font-mono text-micro font-semibold tracking-wide text-basalt"
+              className="rounded bg-muted-foreground/10 px-1.5 py-0.5 font-mono text-micro font-semibold tracking-wide text-muted-foreground"
               title={`recovered ×${task.retryCount}`}
             >
               ↻ recovered
@@ -104,13 +104,13 @@ export const TaskCard = memo(({ task, index }: Props) => {
         type="button"
         aria-label={task.title}
         onClick={openDrawer}
-        className={`w-full text-left line-clamp-3 text-body font-medium leading-snug text-fg focus-visible:outline-none before:absolute before:inset-0 before:content-['']${task.status === 'dropped' ? ' line-through' : ''}`}
+        className={`w-full text-left line-clamp-3 text-body font-medium leading-snug text-foreground focus-visible:outline-none before:absolute before:inset-0 before:content-['']${task.status === 'dropped' ? ' line-through' : ''}`}
       >
         {task.title}
       </button>
 
       {task.status === 'dropped' && task.dropReason ? (
-        <div className="font-mono text-meta text-muted">
+        <div className="font-mono text-meta text-muted-foreground">
           {truncate(task.dropReason, 120)}
         </div>
       ) : null}
@@ -118,7 +118,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
       {/* Blocked section: raised above the stretched button so the anchor link
           receives its own pointer events. */}
       {task.status === 'blocked' ? (
-        <div className="relative z-10 font-mono text-meta text-ochre">
+        <div className="relative z-10 font-mono text-meta text-status-blocked">
           {task.blockerTaskId ? (
             <a
               href={`#/task/${task.blockerTaskId}`}
@@ -139,14 +139,14 @@ export const TaskCard = memo(({ task, index }: Props) => {
         <details
           className="relative z-10 border-t border-border/50 pt-2"
         >
-          <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 py-0.5 font-mono text-micro font-semibold text-muted/80 hover:text-fg">
-            <span className="text-fg/60">spec</span>
+          <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 py-0.5 font-mono text-micro font-semibold text-muted-foreground/80 hover:text-foreground">
+            <span className="text-foreground/60">spec</span>
             <span className="opacity-40 text-[9px]">▾</span>
           </summary>
-          <div className="flex flex-col gap-1 pt-1 font-mono text-micro text-muted">
+          <div className="flex flex-col gap-1 pt-1 font-mono text-micro text-muted-foreground">
             {spec.files.length > 0 ? (
               <div>
-                <span className="font-semibold text-fg/60">files</span>
+                <span className="font-semibold text-foreground/60">files</span>
                 <ul className="mt-0.5 space-y-0.5">
                   {spec.files.map((f) => (
                     <li key={f} className="truncate pl-2">
@@ -158,7 +158,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
             ) : null}
             {(spec.readFirst ?? []).length > 0 ? (
               <div>
-                <span className="font-semibold text-fg/60">read first</span>
+                <span className="font-semibold text-foreground/60">read first</span>
                 <ol className="mt-0.5 list-decimal space-y-0.5 pl-4">
                   {(spec.readFirst ?? []).map((f) => (
                     <li key={f} className="truncate">
@@ -170,7 +170,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
             ) : null}
             {spec.prescriptiveAction ? (
               <div>
-                <span className="font-semibold text-fg/60">action</span>
+                <span className="font-semibold text-foreground/60">action</span>
                 <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap pl-2">
                   {spec.prescriptiveAction}
                 </p>
@@ -178,7 +178,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
             ) : null}
             {spec.verifyCmd ? (
               <div>
-                <span className="font-semibold text-fg/60">verify</span>
+                <span className="font-semibold text-foreground/60">verify</span>
                 <code className="mt-0.5 block truncate pl-2">{spec.verifyCmd}</code>
               </div>
             ) : null}
@@ -188,7 +188,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
 
       <div className="flex items-center justify-between gap-2">
         <RoleTag role={task.role} />
-        <span className="font-mono text-meta text-muted">
+        <span className="font-mono text-meta text-muted-foreground">
           upd {relativeTime(task.updatedAt)}
         </span>
       </div>
