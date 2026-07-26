@@ -86,7 +86,7 @@ describe('ensureSchema', () => {
       'failure_reason_code', 'recovery_payload', 'fix_for_task_id',
       'failure_signature', 'kind', 'priority', 'tag', 'tags_json', 'origin_id',
       'parent_proposal_id', 'slice_index', 'failed_phase', 'resume_from',
-      'verify_cmd', 'preview_cmd', 'dev_server_url', 'dev_server_pid',
+      'verify_cmd', 'dev_server_url', 'dev_server_pid',
       'preview_validated', 'task_type', 'read_first_json',
       'prescriptive_action', 'slice_kind', 'sub_deliverable_json',
       'integration_head_sha', 'followup_dedup_key', 'intent', 'lease_owner',

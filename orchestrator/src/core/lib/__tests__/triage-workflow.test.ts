@@ -166,7 +166,6 @@ describe('triage workflow', () => {
       spec: {
         files: ['src/foo.ts'],
         verifyCmd: null,
-        previewCmd: null,
         doneCriteria: ['foo is implemented'],
         taskType: 'auto' as const,
       },

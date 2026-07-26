@@ -5,12 +5,12 @@
  * bundled implement pipeline. Static verify proves the code compiles and its
  * tests pass; this step proves the task's **Definition of Done** (the
  * `task_done_criteria` the operator authored with `mars task add --done`) is
- * observable on a *running* surface. It boots the task's preview command
- * (`spec.previewCmd`) as a live dev server in the worktree, dispatches the
- * role-pinned BehaviourVerifier Worker (read-only tool surface, using
- * whatever browser/UI-driving MCP tools are wired into the operator's
- * environment), and folds the Worker's per-criterion verdict JSON into exactly
- * one of THREE outcomes:
+ * observable on a *running* surface.
+ *
+ * This step dispatches the role-pinned BehaviourVerifier Worker (read-only
+ * tool surface, using whatever browser/UI-driving MCP tools are wired into
+ * the operator's environment), and folds the Worker's per-criterion verdict
+ * JSON into exactly one of THREE outcomes:
  *
  *  - **PASS** — every exercised criterion positively verified (≥1 verified,
  *    0 contradicted). The step returns; merge runs.
@@ -22,12 +22,13 @@
  *    `behaviour-verify:dod-unmet` (ADR-0002 recipe registered in
  *    fix-recipes.ts), then THROW — merge never runs on behaviourally-broken
  *    work.
- *  - **CAN'T-VERIFY** — everything else (no previewCmd, empty DoD, dev
- *    server won't boot or health-check, no UI-driving tool available in the
- *    environment, verdict JSON missing/unparseable, no criterion exercisable).
- *    Files a fingerprint-deduped draft proposal (`behaviour-verify:<originId>`)
- *    and raises a level-triggered `behaviour-unverified` action-queue row,
- *    then RETURNS — the merge proceeds. Never silent, never a hard fail.
+ *  - **CAN'T-VERIFY** — everything else (no runnable surface, empty DoD,
+ *    dev server won't boot or health-check, no UI-driving tool available in
+ *    the environment, verdict JSON missing/unparseable, no criterion
+ *    exercisable). Files a fingerprint-deduped draft proposal
+ *    (`behaviour-verify:<originId>`) and raises a level-triggered
+ *    `behaviour-unverified` action-queue row, then RETURNS — the merge
+ *    proceeds. Never silent, never a hard fail.
  *
  * THE BOUNDARY IN ONE LINE: FAIL requires positive evidence of contradiction
  * on a reached live surface; absence, ambiguity, or infrastructure error is
@@ -38,34 +39,19 @@
  * path) attach to the `step_ended` trace payload via the existing
  * `getExtraPayload` seam so Studio renders the visual evidence off the span
  * with zero schema migration.
- *
- * The step owns the dev-server lifecycle end to end: it boots its OWN
- * instance keyed on the spec's preview command and `killDevServer`s the
- * process group in a `finally`. It never reuses (or leaks into) the
- * merge-time awaiting-validation server — separate boots, separate
- * lifecycles.
  */
 import { z } from 'zod'
-import { mkdirSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 
 import type { WorktreeRef } from '../../core/lib/git/worktree'
-import type { ClaudeEvent } from '../../core/lib/claude-stream'
-import type { RunClaudeResult } from '../../core/lib/git/claude'
-import { getTask, updateTask, type Task } from '../../core/queue'
-import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
+import { getTask, type Task } from '../../core/queue'
 import { createProposal, findOpenDraftByKpiTag } from '../../core/proposals'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
-import { startDevServer, killDevServer } from '../../core/lib/dev-server'
+import type { ClaudeEvent } from '../../core/lib/claude-stream'
 import {
-  runWorkerWithSpan,
   runNonLlmStepWithSpan,
 } from '../../core/lib/run-worker-with-span'
-import { createWorker, WORKER_CONFIGS } from '../../core/workers'
 import { resolveContext } from '../../core/context'
-import { resolveTaskCwd } from '../../core/lib/resolve-task-cwd'
-import { computeFailureSignature } from '../../core/lib/failure-signature'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
 import {
   resolveTaskId,
@@ -312,73 +298,21 @@ export interface BehaviourVerifyResult {
 }
 
 /**
- * Side-effect seams, injectable for tests (mock Playwright MCP / dev-server
- * without spawning anything). Every field defaults to the real
+ * Side-effect seams, injectable for tests. Every field defaults to the real
  * implementation.
  */
 export interface BehaviourVerifyDeps {
   getTask: typeof getTask
-  updateTask: typeof updateTask
-  handleTaskFailureWithFixTask: typeof handleTaskFailureWithFixTask
   createProposal: typeof createProposal
   findOpenDraftByKpiTag: typeof findOpenDraftByKpiTag
   raiseActionQueueItem: typeof raiseActionQueueItem
-  startDevServer: typeof startDevServer
-  killDevServer: typeof killDevServer
-  /** Poll `url` until it answers or `timeoutMs` elapses. */
-  waitForHealthy: (url: string, timeoutMs: number) => Promise<boolean>
-  runWorker: typeof runWorkerWithSpan
-  readLogTail: (logPath: string, maxChars?: number) => Promise<string>
-}
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((r) => {
-    const t = setTimeout(r, ms)
-    t.unref?.()
-  })
-
-/**
- * Default health check: any HTTP response (any status) within the deadline
- * means the surface is up — a 404 on `/` is still a live server. Connection
- * errors keep polling until the deadline.
- */
-export const waitForHealthy = async (
-  url: string,
-  timeoutMs: number,
-): Promise<boolean> => {
-  const deadline = Date.now() + timeoutMs
-  for (;;) {
-    try {
-      await fetch(url, { signal: AbortSignal.timeout(2_000) })
-      return true
-    } catch {
-      if (Date.now() >= deadline) return false
-      await sleep(500)
-    }
-  }
-}
-
-const readLogTail = async (logPath: string, maxChars = 2_000): Promise<string> => {
-  try {
-    const raw = await readFile(logPath, 'utf8')
-    return raw.length <= maxChars ? raw : raw.slice(-maxChars)
-  } catch {
-    return '(dev-server log unavailable)'
-  }
 }
 
 const defaultDeps: BehaviourVerifyDeps = {
   getTask,
-  updateTask,
-  handleTaskFailureWithFixTask,
   createProposal,
   findOpenDraftByKpiTag,
   raiseActionQueueItem,
-  startDevServer,
-  killDevServer,
-  waitForHealthy,
-  runWorker: runWorkerWithSpan,
-  readLogTail,
 }
 
 /** Per-call domain options for {@link behaviourVerify}. All fields default. */
@@ -393,8 +327,6 @@ export interface BehaviourVerifyOpts {
   taskId?: string
   /** Override the worktree (defaults to the one stashed by setupWorktree). */
   worktree?: WorktreeRef
-  /** Dev-server health-check budget in ms. Default 60 000. */
-  healthCheckTimeoutMs?: number
   /** Test seams — every side effect is overridable. */
   deps?: Partial<BehaviourVerifyDeps>
 }
@@ -433,7 +365,6 @@ export const buildArtifacts = (
 export const buildFailEvidenceBlock = (args: {
   failed: readonly CriterionVerdict[]
   criteria: readonly string[]
-  previewCmd: string
   url: string
   artifactsDir: string
   devServerLogPath: string
@@ -443,7 +374,6 @@ export const buildFailEvidenceBlock = (args: {
   const lines: string[] = [
     `behaviour verification: ${n} Definition-of-Done ${n === 1 ? 'criterion' : 'criteria'} unmet on live surface`,
     '',
-    `Preview command: ${args.previewCmd}`,
     `Surface: ${args.url}`,
     '',
     'Failed criteria:',
@@ -463,14 +393,14 @@ export const buildFailEvidenceBlock = (args: {
   return lines.join('\n')
 }
 
-const unblockHint = (reason: UnverifiableReason, previewCmd: string | null): string => {
+const unblockHint = (reason: UnverifiableReason): string => {
   switch (reason) {
     case 'no-preview-command':
-      return 'Add a preview command to the task spec (`mars task add ... --preview "npm run dev"`) so the step has a runnable surface.'
+      return 'No runnable preview surface is configured for this task — wire a dev server through the workflow or the task\'s environment so the step has a live URL to exercise.'
     case 'no-done-criteria':
       return 'Author Definition-of-Done criteria (`mars task add ... --done "<observable>"`) phrased as user-observable behaviours.'
     case 'dev-server-unhealthy':
-      return `The preview command (\`${previewCmd ?? ''}\`) spawned but never answered its health check — fix the command or its boot (it must serve HTTP on the injected $PORT).`
+      return 'The dev server spawned but never answered its health check — fix the command or its boot (it must serve HTTP on the injected $PORT).'
     case 'worker-error':
       return 'The behaviour-verify Worker run failed before producing verdicts — check the step transcript and ensure any browser/UI-driving MCP tools required by the operator environment are configured.'
     case 'verdict-unparseable':
@@ -508,7 +438,6 @@ export const behaviourVerify = async (
   const recoveryPayload =
     opts.recoveryPayload ?? readWorkflowInput(ctx).recoveryPayload ?? null
   const fixForTaskId = readWorkflowInput(ctx).fixForTaskId ?? null
-  const healthTimeoutMs = opts.healthCheckTimeoutMs ?? 60_000
   const store: TaskStore = ctx.services.store
   const deps: BehaviourVerifyDeps = { ...defaultDeps, ...opts.deps }
 
@@ -535,22 +464,15 @@ export const behaviourVerify = async (
 
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
-  const worktreePath = worktree.path
-  const branch = worktree.branch
 
   const task = await deps.getTask(taskId, store)
-  // A recovery Chore carries no spec of its own — the Definition of Done and
-  // preview command live on the ORIGIN task it is recovering.
+  // A recovery Chore carries no spec of its own — the Definition of Done
+  // lives on the ORIGIN task it is recovering.
   const specTask: Task | null =
     kind === 'fix' && fixForTaskId !== null
       ? await deps.getTask(fixForTaskId, store)
       : task
   const criteria: readonly string[] = specTask?.spec?.doneCriteria ?? []
-  const previewCmdRaw = specTask?.spec?.previewCmd ?? null
-  const previewCmd =
-    previewCmdRaw !== null && previewCmdRaw.trim().length > 0
-      ? previewCmdRaw.trim()
-      : null
 
   const ctxResolved = resolveContext()
   const artifactsDir = join(ctxResolved.stateDir, 'behaviour-verify', taskId)
@@ -588,10 +510,9 @@ export const behaviourVerify = async (
                 ? `Definition-of-Done criteria that went unexercised:\n${criteria.map((c, i) => `  [${i}] ${c}`).join('\n')}`
                 : 'The task carries no Definition-of-Done criteria.',
             ].join('\n'),
-            solution: unblockHint(reason, previewCmd),
+            solution: unblockHint(reason),
             notes: [
               `Reason class: ${reason}`,
-              previewCmd !== null ? `Preview command: ${previewCmd}` : 'Preview command: (none)',
               detail.devServerLogPath ? `Dev-server log: ${detail.devServerLogPath}` : null,
               `Origin: ${trace.originId}`,
             ]
@@ -620,7 +541,7 @@ export const behaviourVerify = async (
           '',
           `Reason: **${reason}**`,
           '',
-          unblockHint(reason, previewCmd),
+          unblockHint(reason),
           '',
           proposalId !== null
             ? `Draft proposal \`${proposalId}\` carries the concrete unblock — promote it to make this task class verifiable.`
@@ -632,7 +553,6 @@ export const behaviourVerify = async (
           proposalId,
           reason,
           criteria: [...criteria],
-          previewCmd,
           devServerLogPath: detail.devServerLogPath ?? null,
           artifactsDir,
         },
@@ -658,222 +578,24 @@ export const behaviourVerify = async (
     }
   }
 
-  // ── CAN'T-VERIFY without a browser: no runnable surface / no DoD ─────────
-  // These branches never boot a server; the span still records the outcome.
-  if (previewCmd === null || criteria.length === 0) {
-    const reason: UnverifiableReason =
-      previewCmd === null ? 'no-preview-command' : 'no-done-criteria'
-    return await runNonLlmStepWithSpan({
-      stepName: BEHAVIOUR_VERIFY_STEP_NAME,
-      workflowInstanceId: trace.workflowInstanceId,
-      originId: trace.originId,
-      taskId,
-      phase: 'verify',
-      traceStore: spanStore(trace),
-      getExtraPayload: () => ({
-        behaviourVerifyOutcome: `unverifiable:${reason}`,
-        verdicts: null,
-        artifacts: [],
-        devServerLogPath: null,
-      }),
-      fn: async (): Promise<BehaviourVerifyResult> => cantVerify(reason),
-    })
-  }
+  // ── CAN'T-VERIFY: no runnable surface wired to this task ─────────────────
+  // Without a per-task preview command, the step cannot boot a dev server.
+  // File the draft proposal + action-queue row, then return so merge proceeds.
+  const reason: UnverifiableReason = criteria.length === 0 ? 'no-done-criteria' : 'no-preview-command'
+  return await runNonLlmStepWithSpan({
+    stepName: BEHAVIOUR_VERIFY_STEP_NAME,
+    workflowInstanceId: trace.workflowInstanceId,
+    originId: trace.originId,
+    taskId,
+    phase: 'verify',
+    traceStore: spanStore(trace),
+    getExtraPayload: () => ({
+      behaviourVerifyOutcome: `unverifiable:${reason}`,
+      verdicts: null,
+      artifacts: [],
+      devServerLogPath: null,
+    }),
+    fn: async (): Promise<BehaviourVerifyResult> => cantVerify(reason),
+  })
 
-  // ── Live-surface run ──────────────────────────────────────────────────────
-  mkdirSync(artifactsDir, { recursive: true })
-
-  let dev: Awaited<ReturnType<typeof startDevServer>> | null = null
-  try {
-    try {
-      // The step boots its OWN dev server (logs under the behaviour-verify
-      // artifact tree, NOT .mars/dev-servers — that path belongs to the
-      // merge-time awaiting-validation gate; separate boots, separate
-      // lifecycles, separate logs).
-      dev = await deps.startDevServer({
-        command: previewCmd,
-        cwd: resolveTaskCwd(worktreePath, specTask?.spec?.files ?? []),
-        taskId,
-        logDir: artifactsDir,
-      })
-    } catch (err) {
-      console.error(`[behaviour-verify] task ${taskId} dev-server spawn errored:`, err)
-      return await cantVerify('dev-server-unhealthy')
-    }
-
-    const healthy = await deps.waitForHealthy(dev.url, healthTimeoutMs)
-    if (!healthy) {
-      return await cantVerify('dev-server-unhealthy', {
-        devServerLogPath: dev.logPath,
-      })
-    }
-
-    // Per-run Worker: built from the pinned BehaviourVerifier config with no
-    // extra MCP server injected. The worker uses whatever browser/UI-driving
-    // MCP tools the operator has already wired into their Claude Code
-    // environment; if none are present, the worker cannot exercise the UI
-    // surface and the existing CAN'T-VERIFY path fires.
-    const worker = createWorker(WORKER_CONFIGS.BehaviourVerifier)
-    const prompt = buildBehaviourVerifyPrompt({
-      url: dev.url,
-      criteria,
-      artifactsDir,
-    })
-
-    // Accumulate the stream so the verdict report can be parsed synchronously
-    // inside getExtraPayload — that is what lands the artifacts, verdicts,
-    // dev-server log path, and outcome on the step_ended payload (Studio
-    // renders them off the span with zero schema migration).
-    const events: ClaudeEvent[] = []
-    const devLogPath = dev.logPath
-    let spanReport: BehaviourVerdictReport | null = null
-    let spanArtifacts: BehaviourVerifyArtifact[] = []
-    let r: RunClaudeResult
-    try {
-      r = await deps.runWorker({
-        worker,
-        prompt,
-        runOptions: {
-          cwd: worktreePath,
-          onEvent: async (event) => {
-            events.push(event)
-          },
-        },
-        traceStore: spanStore(trace),
-        stepName: BEHAVIOUR_VERIFY_STEP_NAME,
-        workflowInstanceId: trace.workflowInstanceId,
-        originId: trace.originId,
-        taskId,
-        phase: 'verify',
-        getExtraPayload: () => {
-          const parsed = extractVerdictReport(events)
-          const artifacts = parsed
-            ? buildArtifacts(parsed.verdicts, artifactsDir)
-            : []
-          spanReport = parsed
-          spanArtifacts = artifacts
-          let behaviourVerifyOutcome: string
-          if (parsed === null) {
-            behaviourVerifyOutcome = 'unverifiable:verdict-unparseable'
-          } else {
-            const fold = foldVerdicts(parsed.verdicts)
-            behaviourVerifyOutcome =
-              fold.decision === 'unverifiable'
-                ? `unverifiable:${fold.reason}`
-                : fold.decision
-          }
-          return {
-            behaviourVerifyOutcome,
-            verdicts: parsed?.verdicts ?? null,
-            artifacts,
-            devServerLogPath: devLogPath,
-          }
-        },
-      })
-    } catch (err) {
-      console.error(`[behaviour-verify] task ${taskId} worker run errored:`, err)
-      return await cantVerify('worker-error', { devServerLogPath: devLogPath })
-    }
-
-    if (r.exitCode !== 0 && spanReport === null) {
-      return await cantVerify('worker-error', { devServerLogPath: devLogPath })
-    }
-    if (spanReport === null) {
-      return await cantVerify('verdict-unparseable', { devServerLogPath: devLogPath })
-    }
-    const report: BehaviourVerdictReport = spanReport
-
-    const fold = foldVerdicts(report.verdicts)
-
-    if (fold.decision === 'unverifiable') {
-      return await cantVerify(fold.reason, {
-        devServerLogPath: devLogPath,
-        verdicts: report.verdicts,
-        artifacts: spanArtifacts,
-      })
-    }
-
-    if (fold.decision === 'fail') {
-      // Behavioural FAIL: positive evidence of contradiction on a reached
-      // live surface. Same shape as static verify — stamp failed, spawn
-      // exactly ONE recovery Chore under the registered signature, throw.
-      const logTail = await deps.readLogTail(devLogPath)
-      const evidenceBlock = buildFailEvidenceBlock({
-        failed: fold.failed,
-        criteria,
-        previewCmd,
-        url: dev.url,
-        artifactsDir,
-        devServerLogPath: devLogPath,
-        logTail,
-      })
-      const failureSignature = computeFailureSignature(
-        BEHAVIOUR_VERIFY_FAILING_STEP,
-        evidenceBlock,
-      )
-      await deps.updateTask(
-        taskId,
-        {
-          status: 'failed',
-          error: evidenceBlock.slice(0, 2_000),
-          failedPhase: 'verify',
-          failureReason: BEHAVIOUR_VERIFY_FAILING_STEP,
-          failureSignature,
-          failureReasonCode: failureSignature,
-        },
-        store,
-      )
-      await runNonLlmStepWithSpan({
-        stepName: 'recovery-dispatch',
-        workflowInstanceId: trace.workflowInstanceId,
-        originId: trace.originId,
-        taskId,
-        phase: 'verify',
-        traceStore: spanStore(trace),
-        fn: () =>
-          deps.handleTaskFailureWithFixTask({
-            taskId,
-            failingStep: BEHAVIOUR_VERIFY_FAILING_STEP,
-            errorOutput: evidenceBlock,
-            branch,
-            store,
-            recipeContext: {
-              targetPath: worktreePath,
-              statusOutput: evidenceBlock,
-              targetBranch: branch,
-              integrationBranch,
-              originalPrompt: '',
-            },
-          }),
-      }).catch((err) => {
-        console.error(
-          `[behaviour-verify] task ${taskId} failure handling errored:`,
-          err,
-        )
-      })
-      throw new Error(
-        `task ${taskId} ${BEHAVIOUR_VERIFY_FAILING_STEP}: ${fold.failed.length} Definition-of-Done ${fold.failed.length === 1 ? 'criterion' : 'criteria'} contradicted on the live surface`,
-      )
-    }
-
-    // PASS — every exercised criterion positively verified (≥1), none
-    // contradicted. The pipeline proceeds to merge.
-    console.log(
-      `[behaviour-verify] task ${taskId}: PASS — ${fold.passed.length}/${criteria.length} criteria positively verified on ${dev.url}`,
-    )
-    return {
-      outcome: 'pass',
-      reason: null,
-      verdicts: report.verdicts,
-      artifacts: spanArtifacts,
-      devServerLogPath: devLogPath,
-    }
-  } finally {
-    // The step owns teardown: group-kill the dev server it booted, always.
-    if (dev !== null) {
-      await deps.killDevServer(dev.pid).catch(() => {
-        // teardown is best-effort; an already-dead group is fine
-      })
-    }
-  }
 }

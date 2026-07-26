@@ -6,22 +6,16 @@
  *   2. no-merge arcs skipped — arc with no landed commits → no agent call, no AQ item
  *   3. failing verdict → exactly one arc-verification-failed AQ item
  *   4. kill-switch flag suppresses all runs
- *   5. arc E2E pass:
- *      - no previewCmd on origin task → Reflector draft proposal emitted (source='reflection')
- *      - no done criteria on origin task → Reflector draft proposal emitted
- *      - previewCmd exists, dev server healthy, E2E ok → verdict unchanged, no proposal
- *      - previewCmd exists, dev server healthy, canVerify=false → proposal emitted, verdict unchanged
- *      - previewCmd exists, dev server healthy, E2E fails → findings added, AQ item raised
- *      - previewCmd exists, dev server spawn fails → proposal emitted, verdict unchanged
- *      - previewCmd exists, health check times out → proposal emitted, verdict unchanged
+ *   5. arc E2E pass — always CAN'T-VERIFY (no live surface):
+ *      - origin task with done criteria → Reflector draft proposal emitted (source='reflection')
+ *      - origin task with no done criteria → Reflector draft proposal emitted
+ *      - fingerprint already exists → no duplicate proposal created
  *
  * System boundaries mocked:
  *   - raiseActionQueueItem (action-queue DB write)
  *   - runClaudeCode (Claude subprocess)
  *   - getDefaultTaskStore (mars.db read)
  *   - createProposal / findOpenDraftByKpiTag (proposals DB write)
- *   - startDevServer / killDevServer (process spawn)
- *   - fetch (HTTP health check)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -91,22 +85,6 @@ vi.mock('../../proposals', () => ({
   findOpenDraftByKpiTag: findOpenDraftByKpiTagMock,
 }))
 
-// ── Mock startDevServer / killDevServer ───────────────────────────────────────
-
-const startDevServerMock = vi.hoisted(() =>
-  vi.fn(async () => ({
-    pid: 1234,
-    url: 'http://127.0.0.1:49999',
-    logPath: '/tmp/arc-e2e-test.log',
-    port: 49999,
-  })),
-)
-const killDevServerMock = vi.hoisted(() => vi.fn(async (_pid: number) => {}))
-vi.mock('../dev-server', () => ({
-  startDevServer: startDevServerMock,
-  killDevServer: killDevServerMock,
-}))
-
 // ── Import after mocks ────────────────────────────────────────────────────────
 
 const {
@@ -122,14 +100,13 @@ const {
 /** Minimal task-shaped object with the spec fields arc-verifier reads. */
 const makeTask = (
   id: string,
-  spec: { verifyCmd?: string | null; previewCmd?: string | null; doneCriteria?: string[] } = {},
+  spec: { verifyCmd?: string | null; doneCriteria?: string[] } = {},
 ) => ({
   id,
   status: 'done',
   prompt: `task ${id}`,
   spec: {
     verifyCmd: spec.verifyCmd ?? null,
-    previewCmd: spec.previewCmd ?? null,
     doneCriteria: spec.doneCriteria ?? [],
     files: [],
     taskType: 'auto' as const,
@@ -137,24 +114,14 @@ const makeTask = (
 })
 
 describe('arc-verifier', () => {
-  // We need a typed reference to the fetch spy for per-test overrides.
-  // Using vi.fn directly avoids the overloaded-signature type error.
-  let fetchSpy: { mockResolvedValue: (v: unknown) => unknown; mockRejectedValue: (e: unknown) => unknown; mockRestore: () => void } | undefined
-
   beforeEach(() => {
     vi.clearAllMocks()
     _clearTriggeredForTests()
     delete process.env.MARS_ARC_VERIFY_DISABLED
-    // Default: fetch succeeds (dev server healthy).
-    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('ok', { status: 200 }),
-    )
-    fetchSpy = spy as unknown as typeof fetchSpy
   })
 
   afterEach(() => {
     delete process.env.MARS_ARC_VERIFY_DISABLED
-    fetchSpy?.mockRestore()
   })
 
   // ── kill-switch ─────────────────────────────────────────────────────────────
@@ -366,25 +333,18 @@ describe('arc-verifier', () => {
       }
     })
 
-    // ── arc E2E pass ──────────────────────────────────────────────────────────
+    // ── arc E2E pass — always CAN'T-VERIFY (no live surface) ─────────────────
     //
-    // Tests for the post-static-check live-surface E2E pass. Boundary mocks:
-    //   - createProposal / findOpenDraftByKpiTag (proposals DB)
-    //   - startDevServer / killDevServer (process spawn)
-    //   - fetch (health check HTTP)
-    //   - runClaudeCode (called twice: once for static check, once for E2E)
-    //
-    // Isolation: each test resets static verdict to ok=true so we can isolate
-    // the E2E-pass branch. `e2eHealthCheckTimeoutMs:0` makes the health-check
-    // loop exit immediately on the first fetch failure without any real wait.
+    // After the static Claude spot-check, runArcVerification always emits a
+    // Reflector draft proposal (source='reflection') because no per-task preview
+    // command exists (removed in PRD f354b404 slice 1). The arc is never failed
+    // for this infrastructure gap.
 
-    describe('arc E2E pass', () => {
-      const ORIGIN_WITH_PREVIEW = 'origin-e2e-preview'
-
+    describe("arc E2E pass — always CAN'T-VERIFY", () => {
       /** Make a store where the origin task has the given spec. */
       const makeE2eStore = (
         originId: string,
-        spec: { verifyCmd?: string | null; previewCmd?: string | null; doneCriteria?: string[] } = {},
+        spec: { verifyCmd?: string | null; doneCriteria?: string[] } = {},
       ) => {
         const task = makeTask(originId, spec)
         return makeStore(
@@ -405,209 +365,41 @@ describe('arc-verifier', () => {
           quotaRejected: null,
         })
         findOpenDraftByKpiTagMock.mockResolvedValue(null)
-        startDevServerMock.mockResolvedValue({
-          pid: 1234,
-          url: 'http://127.0.0.1:49999',
-          logPath: '/tmp/arc-e2e-test.log',
-          port: 49999,
-        })
-        killDevServerMock.mockResolvedValue(undefined)
       })
 
-      it('[e2e-no-preview] emits Reflector draft proposal (source=reflection) when origin task has no previewCmd', async () => {
+      it('[e2e-has-criteria] emits Reflector draft proposal (source=reflection) when origin task has done criteria', async () => {
         getDefaultTaskStoreMock.mockResolvedValue(
-          makeE2eStore(ORIGIN_WITH_PREVIEW, { doneCriteria: ['Feature works'] }),
-          // previewCmd defaults to null
+          makeE2eStore('origin-e2e-criteria', { doneCriteria: ['Feature works'] }),
         )
 
-        const verdict = await runArcVerification(ORIGIN_WITH_PREVIEW, {
-          cwd: '/tmp',
-          e2eHealthCheckTimeoutMs: 0,
-        })
+        const verdict = await runArcVerification('origin-e2e-criteria', { cwd: '/tmp' })
 
-        // Static check passes, no E2E infra → verdict unchanged.
+        // Static check passes, no live surface → verdict unchanged.
         expect(verdict).toEqual({ ok: true, findings: [] })
-        // Dev server was never booted (no previewCmd).
-        expect(startDevServerMock).not.toHaveBeenCalled()
         // A Reflector draft proposal was emitted.
         expect(createProposalMock).toHaveBeenCalledOnce()
         const proposalOpts = (createProposalMock.mock.calls as unknown as Array<[string, { source: string }]>)[0][1]
         expect(proposalOpts.source).toBe('reflection')
-        // No AQ item for a can't-verify (arc is not failed).
+        // No AQ item — arc is not failed.
         expect(raiseSpy).not.toHaveBeenCalled()
       })
 
-      it('[e2e-no-criteria] emits Reflector draft proposal when origin task has previewCmd but no done criteria', async () => {
+      it('[e2e-no-criteria] emits Reflector draft proposal when origin task has no done criteria', async () => {
         getDefaultTaskStoreMock.mockResolvedValue(
-          makeE2eStore(ORIGIN_WITH_PREVIEW, { previewCmd: 'npm run dev', doneCriteria: [] }),
+          makeE2eStore('origin-e2e-no-criteria', { doneCriteria: [] }),
         )
 
-        const verdict = await runArcVerification(ORIGIN_WITH_PREVIEW, {
-          cwd: '/tmp',
-          e2eHealthCheckTimeoutMs: 0,
-        })
+        const verdict = await runArcVerification('origin-e2e-no-criteria', { cwd: '/tmp' })
 
-        expect(verdict).toEqual({ ok: true, findings: [] })
-        expect(startDevServerMock).not.toHaveBeenCalled()
-        expect(createProposalMock).toHaveBeenCalledOnce()
-        expect(((createProposalMock.mock.calls as unknown as Array<[string, { source: string }]>)[0][1]).source).toBe('reflection')
-        expect(raiseSpy).not.toHaveBeenCalled()
-      })
-
-      it('[e2e-spawn-fail] emits Reflector draft proposal when dev server fails to spawn', async () => {
-        getDefaultTaskStoreMock.mockResolvedValue(
-          makeE2eStore('origin-spawn-fail', {
-            previewCmd: 'npm run dev',
-            doneCriteria: ['Feature renders'],
-          }),
-        )
-        startDevServerMock.mockRejectedValueOnce(new Error('spawn ENOENT'))
-
-        const verdict = await runArcVerification('origin-spawn-fail', {
-          cwd: '/tmp',
-          e2eHealthCheckTimeoutMs: 0,
-        })
-
-        // Arc not failed — spawn failure is infrastructure gap.
-        expect(verdict).toEqual({ ok: true, findings: [] })
-        expect(killDevServerMock).not.toHaveBeenCalled()
-        expect(createProposalMock).toHaveBeenCalledOnce()
-        expect(((createProposalMock.mock.calls as unknown as Array<[string, { source: string }]>)[0][1]).source).toBe('reflection')
-        expect(raiseSpy).not.toHaveBeenCalled()
-      })
-
-      it('[e2e-unhealthy] emits Reflector draft proposal when dev server never answers health check', async () => {
-        getDefaultTaskStoreMock.mockResolvedValue(
-          makeE2eStore('origin-unhealthy', {
-            previewCmd: 'npm run dev',
-            doneCriteria: ['Feature renders'],
-          }),
-        )
-        // Make fetch always throw so the health-check loop times out.
-        fetchSpy?.mockRejectedValue(new Error('ECONNREFUSED'))
-
-        const verdict = await runArcVerification('origin-unhealthy', {
-          cwd: '/tmp',
-          e2eHealthCheckTimeoutMs: 0,  // exit immediately on first failure
-        })
-
-        expect(verdict).toEqual({ ok: true, findings: [] })
-        // Server was booted and killed in finally.
-        expect(startDevServerMock).toHaveBeenCalledOnce()
-        expect(killDevServerMock).toHaveBeenCalledWith(1234)
-        expect(createProposalMock).toHaveBeenCalledOnce()
-        expect(((createProposalMock.mock.calls as unknown as Array<[string, { source: string }]>)[0][1]).source).toBe('reflection')
-        expect(raiseSpy).not.toHaveBeenCalled()
-      })
-
-      it('[e2e-pass] does not emit a proposal when E2E check passes', async () => {
-        getDefaultTaskStoreMock.mockResolvedValue(
-          makeE2eStore('origin-e2e-pass', {
-            previewCmd: 'npm run dev',
-            doneCriteria: ['Feature renders correctly'],
-          }),
-        )
-        // Static check + E2E check both pass (runClaudeCode called twice).
-        runClaudeCodeMock.mockResolvedValue({
-          exitCode: 0,
-          stdout: '{"ok":true,"canVerify":true,"findings":[]}',
-          stderr: '',
-          sessionId: null,
-          conversation: [],
-          quotaRejected: null,
-        })
-        // fetch succeeds on first try (already default but make explicit).
-        fetchSpy?.mockResolvedValue(new Response('ok', { status: 200 }))
-
-        const verdict = await runArcVerification('origin-e2e-pass', { cwd: '/tmp' })
-
-        expect(verdict).toEqual({ ok: true, findings: [] })
-        expect(startDevServerMock).toHaveBeenCalledOnce()
-        expect(killDevServerMock).toHaveBeenCalledWith(1234)
-        expect(createProposalMock).not.toHaveBeenCalled()
-        expect(raiseSpy).not.toHaveBeenCalled()
-      })
-
-      it('[e2e-cant-verify] emits Reflector draft proposal when E2E agent has no browser tools', async () => {
-        getDefaultTaskStoreMock.mockResolvedValue(
-          makeE2eStore('origin-no-browser', {
-            previewCmd: 'npm run dev',
-            doneCriteria: ['Feature renders correctly'],
-          }),
-        )
-        // First call: static check passes. Second call: E2E reports canVerify=false.
-        runClaudeCodeMock
-          .mockResolvedValueOnce({
-            exitCode: 0,
-            stdout: '{"ok":true,"findings":[]}',
-            stderr: '',
-            sessionId: null,
-            conversation: [],
-            quotaRejected: null,
-          })
-          .mockResolvedValueOnce({
-            exitCode: 0,
-            stdout: '{"ok":true,"canVerify":false,"findings":["no browser tools"]}',
-            stderr: '',
-            sessionId: null,
-            conversation: [],
-            quotaRejected: null,
-          })
-        fetchSpy?.mockResolvedValue(new Response('ok', { status: 200 }))
-
-        const verdict = await runArcVerification('origin-no-browser', { cwd: '/tmp' })
-
-        // Arc not failed — can't-verify is an infrastructure gap.
         expect(verdict).toEqual({ ok: true, findings: [] })
         expect(createProposalMock).toHaveBeenCalledOnce()
         expect(((createProposalMock.mock.calls as unknown as Array<[string, { source: string }]>)[0][1]).source).toBe('reflection')
         expect(raiseSpy).not.toHaveBeenCalled()
-      })
-
-      it('[e2e-fail] adds findings and raises AQ item when E2E check fails', async () => {
-        getDefaultTaskStoreMock.mockResolvedValue(
-          makeE2eStore('origin-e2e-fail', {
-            previewCmd: 'npm run dev',
-            doneCriteria: ['Button is blue'],
-          }),
-        )
-        const e2eFindings = ['Button is red, not blue as required']
-        // First call: static check passes. Second call: E2E fails.
-        runClaudeCodeMock
-          .mockResolvedValueOnce({
-            exitCode: 0,
-            stdout: '{"ok":true,"findings":[]}',
-            stderr: '',
-            sessionId: null,
-            conversation: [],
-            quotaRejected: null,
-          })
-          .mockResolvedValueOnce({
-            exitCode: 0,
-            stdout: JSON.stringify({ ok: false, canVerify: true, findings: e2eFindings }),
-            stderr: '',
-            sessionId: null,
-            conversation: [],
-            quotaRejected: null,
-          })
-        fetchSpy?.mockResolvedValue(new Response('ok', { status: 200 }))
-
-        const verdict = await runArcVerification('origin-e2e-fail', { cwd: '/tmp' })
-
-        expect(verdict.ok).toBe(false)
-        // The E2E findings are included (prefixed with [e2e]).
-        expect(verdict.findings.some((f) => f.includes('Button is red'))).toBe(true)
-        // AQ item raised because verdict.ok is false.
-        expect(raiseSpy).toHaveBeenCalledTimes(1)
-        expect(raiseSpy.mock.calls[0][0].kind).toBe('arc-verification-failed')
-        // No draft proposal (it's a product failure, not an infra gap).
-        expect(createProposalMock).not.toHaveBeenCalled()
       })
 
       it('[e2e-dedup-proposal] does not create duplicate proposals when fingerprint already exists', async () => {
         getDefaultTaskStoreMock.mockResolvedValue(
           makeE2eStore('origin-dedup-proposal', { doneCriteria: ['works'] }),
-          // previewCmd: null → triggers proposal
         )
         // Simulate existing open proposal.
         findOpenDraftByKpiTagMock.mockResolvedValue({ id: 'existing-proposal' })

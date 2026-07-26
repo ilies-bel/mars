@@ -24,7 +24,7 @@ import type { Command, CommandDeps, CommandResult } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
 
 const TASK_ADD_USAGE =
-  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--preview "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [--workflow <name>] [--live (disabled)] [--supersede <task-id>] [--qa auto|manual] [plan flags]'
+  'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag coder] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--type auto|checkpoint] [--workflow <name>] [--live (disabled)] [--supersede <task-id>] [--qa auto|manual] [plan flags]'
 
 interface EnqueueParams {
   prompt: string
@@ -262,9 +262,6 @@ export const renderTaskDetail = async (
     }
     if (task.spec.verifyCmd) {
       deps.out(`verifyCmd: ${task.spec.verifyCmd}`)
-    }
-    if (task.spec.previewCmd) {
-      deps.out(`previewCmd: ${task.spec.previewCmd}`)
     }
     if (task.spec.doneCriteria.length > 0) {
       const { Arc } = await import('../../core/arc')

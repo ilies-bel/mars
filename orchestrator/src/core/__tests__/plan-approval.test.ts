@@ -145,7 +145,6 @@ describe('approveProposalPlan — task status transitions', () => {
       spec: {
         files: [],
         verifyCmd: null,
-        previewCmd: null,
         doneCriteria: ['it works'],
         taskType: 'auto',
         sliceKind: 'coder',
@@ -181,7 +180,6 @@ describe('approveProposalPlan — task status transitions', () => {
       spec: {
         files: [],
         verifyCmd: null,
-        previewCmd: null,
         doneCriteria: ['deployed'],
         taskType: 'auto',
         sliceKind: 'hitl',
@@ -217,7 +215,6 @@ describe('approveProposalPlan — task status transitions', () => {
       spec: {
         files: [],
         verifyCmd: null,
-        previewCmd: null,
         doneCriteria: ['foundation done'],
         taskType: 'auto',
         sliceKind: 'coder',
@@ -230,7 +227,6 @@ describe('approveProposalPlan — task status transitions', () => {
       spec: {
         files: [],
         verifyCmd: null,
-        previewCmd: null,
         doneCriteria: ['feature done'],
         taskType: 'auto',
         sliceKind: 'coder',

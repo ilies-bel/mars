@@ -59,7 +59,6 @@ const parkAtGate = async (
     spec: {
       files: [],
       verifyCmd: null,
-      previewCmd: 'npm run dev',
       doneCriteria: [],
       taskType: 'auto',
     },

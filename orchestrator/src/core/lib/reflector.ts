@@ -578,7 +578,6 @@ export const persistSuggestions = async (
         spec: {
           files: [],
           verifyCmd: null,
-          previewCmd: null,
           doneCriteria: [s.title],
           taskType: 'auto',
         },

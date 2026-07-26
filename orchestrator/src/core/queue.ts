@@ -21,12 +21,12 @@ export type TaskStatus =
   | 'queued'
   | 'running'
   | 'verifying'
-  // Parked after a clean verify when the task carries a preview command: a
-  // live dev server is running off the worktree and the task waits for a human
-  // to Validate (→ merge) or Reject (→ failed) via the action queue. Like
-  // 'blocked', this is a non-dispatchable parking status; the gate is a
-  // workflow boundary (the worker returns and holds no merge lock) so it
-  // survives daemon restarts. See the awaiting-validation action-queue kind.
+  // Parked after a clean verify: a live dev server is running off the worktree
+  // and the task waits for a human to Validate (→ merge) or Reject (→ failed)
+  // via the action queue. Like 'blocked', this is a non-dispatchable parking
+  // status; the gate is a workflow boundary (the worker returns and holds no
+  // merge lock) so it survives daemon restarts. See the awaiting-validation
+  // action-queue kind.
   | 'awaiting-validation'
   // Parked for operator-owned interactive work in the task's worktree. A
   // human holds a lease (leaseOwner / leasedAt / leaseNote) and works in
@@ -218,17 +218,6 @@ export interface SubDeliverableSpec {
 export interface TaskSpec {
   files: readonly string[]
   verifyCmd: string | null
-  /**
-   * Human-in-the-loop preview command. When non-null, the merge step does NOT
-   * merge automatically: after a clean verify it starts this command as a live
-   * dev server off the task's worktree, parks the task in 'awaiting-validation',
-   * and raises an action-queue row with a clickable URL plus Validate / Reject
-   * buttons. The exact command is authored on the task definition
-   * (`mars task add ... --preview "npm run dev"`); tasks with no preview command
-   * merge as before. Distinct from `verifyCmd`, which runs to completion and
-   * gates on exit code; the preview command is long-running and gates on a human.
-   */
-  previewCmd: string | null
   doneCriteria: readonly string[]
   taskType: TaskType
   /**
@@ -259,7 +248,6 @@ export interface TaskSpec {
 export const EMPTY_TASK_SPEC: TaskSpec = {
   files: [],
   verifyCmd: null,
-  previewCmd: null,
   doneCriteria: [],
   taskType: 'auto',
 }
@@ -362,7 +350,6 @@ export interface Task {
    * True once the operator clicked Validate on this task's preview gate. The
    * merge step gates only while this is false; after Validate the daemon flips
    * it true and re-queues, and the re-dispatched merge runs past the gate.
-   * False on every task that never carries a preview command.
    */
   previewValidated: boolean
   /**
@@ -688,7 +675,7 @@ SELECT
   t.failed_phase, t.resume_from,
   (SELECT COALESCE(json_agg(path ORDER BY position)::text, '[]')
      FROM task_spec_files WHERE task_id = t.id) AS files_json,
-  t.verify_cmd, t.preview_cmd,
+  t.verify_cmd,
   (SELECT COALESCE(json_agg(criterion ORDER BY position)::text, '[]')
      FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
   t.task_type, t.read_first_json, t.prescriptive_action, t.slice_kind,
@@ -800,7 +787,6 @@ const parseStringArray = (raw: unknown): string[] => {
 const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
   const rawFiles = (row.files_json as string | null) ?? null
   const rawVerify = (row.verify_cmd as string | null) ?? null
-  const rawPreview = (row.preview_cmd as string | null) ?? null
   const rawDone = (row.done_criteria_json as string | null) ?? null
   const rawType = (row.task_type as string | null) ?? null
   const rawReadFirst = (row.read_first_json as string | null) ?? null
@@ -810,7 +796,6 @@ const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
   const anySet =
     rawFiles !== null ||
     rawVerify !== null ||
-    rawPreview !== null ||
     rawDone !== null ||
     rawType !== null ||
     rawReadFirst !== null ||
@@ -829,7 +814,6 @@ const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
   return {
     files: parseStringArray(rawFiles),
     verifyCmd: rawVerify,
-    previewCmd: rawPreview,
     doneCriteria: parseStringArray(rawDone),
     taskType: isTaskType(rawType) ? rawType : 'auto',
     readFirst: parseStringArray(rawReadFirst),

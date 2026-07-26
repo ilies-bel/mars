@@ -1427,7 +1427,6 @@ Structured-task flags (all optional):
   --files <path> ...       files the coder should focus on (repeatable)
   --verify "<cmd>"         shell command the orchestrator runs to verify the
                            work; non-zero exit → task fails
-  --preview "<cmd>"        optional dev-server command for UI-review tasks
   --done "<criterion>" ... acceptance criteria checklist (repeatable)
   --type auto|checkpoint   task type: 'checkpoint' pauses for human review
                            before merging; 'auto' (default) merges directly

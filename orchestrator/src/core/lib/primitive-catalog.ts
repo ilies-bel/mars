@@ -117,7 +117,7 @@ export const PRIMITIVE_CATALOG: Readonly<Record<PrimitiveName, PrimitiveCatalogE
     executor: 'agent',
     workerNames: ['BehaviourVerifier'],
     caveats: [
-      "Boots a live dev server (spec.previewCmd) in the worktree for the duration of the step — the Worker observes it, never edits it.",
+      "When a live dev server is wired via the workflow environment, the Worker exercises the running surface and reports verdicts — otherwise the step emits a CAN'T-VERIFY draft proposal and merge proceeds.",
     ],
   },
   merge: {

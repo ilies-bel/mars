@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 
 import {
   BEHAVIOUR_DOD_UNMET_SIGNATURE,
@@ -37,13 +37,11 @@ import {
 import { WORKER_CONFIGS } from '../../../core/workers'
 import {
   runNonLlmStepWithSpan,
-  type RunWorkerWithSpanOptions,
 } from '../../../core/lib/run-worker-with-span'
 import { __resetContextCacheForTests } from '../../../core/context'
 import type { Task } from '../../../core/queue'
 import type { Proposal } from '../../../core/proposals'
 import type { ClaudeEvent } from '../../../core/lib/claude-stream'
-import type { RunClaudeResult } from '../../../core/lib/git/claude'
 import type { TraceEventStore } from '../../../core/lib/trace-events-store'
 
 // ---------------------------------------------------------------------------
@@ -178,7 +176,6 @@ describe('behaviour-verify:dod-unmet registration (ship-blocker wiring)', () => 
   const evidenceBlock = buildFailEvidenceBlock({
     failed: [v(0, 'fail', 'criterion-0.png')],
     criteria: ['the banner renders'],
-    previewCmd: 'npm run dev',
     url: 'http://127.0.0.1:4000',
     artifactsDir: '/tmp/art',
     devServerLogPath: '/tmp/art/t.log',
@@ -316,7 +313,6 @@ const makeCtx = (
   }) as unknown as MarsCtx
 
 const taskWithSpec = (spec: {
-  previewCmd: string | null
   doneCriteria: string[]
 }): Task =>
   ({
@@ -324,169 +320,31 @@ const taskWithSpec = (spec: {
     spec: {
       files: [],
       verifyCmd: null,
-      previewCmd: spec.previewCmd,
       doneCriteria: spec.doneCriteria,
       taskType: 'auto',
     },
   }) as unknown as Task
 
-const verdictText = (verdicts: CriterionVerdict[]): string =>
-  `${VERDICT_OPEN_TAG}${JSON.stringify({ verdicts })}${VERDICT_CLOSE_TAG}`
-
 interface DepsHarness {
   deps: BehaviourVerifyDeps
-  captured: { spanExtra: Record<string, unknown> | null }
 }
 
 const makeDeps = (args: {
   task: Task | null
-  workerFinalText?: string
-  workerExitCode?: number
-  healthy?: boolean
   existingDraft?: { id: string; title: string } | null
 }): DepsHarness => {
-  const captured: DepsHarness['captured'] = { spanExtra: null }
-  const logPath = join(tmpRepo, 'dev-server.log')
   const deps: BehaviourVerifyDeps = {
     getTask: vi.fn(async () => args.task),
-    updateTask: vi.fn(async () => undefined) as unknown as BehaviourVerifyDeps['updateTask'],
-    handleTaskFailureWithFixTask: vi.fn(async () => ({ outcome: 'blocked' as const })),
     createProposal: vi.fn(
       async (title: string) => ({ id: 'prop-1', title }) as unknown as Proposal,
     ),
     findOpenDraftByKpiTag: vi.fn(async () => args.existingDraft ?? null),
     raiseActionQueueItem: vi.fn(async () => 'aq-1'),
-    startDevServer: vi.fn(async () => ({
-      pid: 4242,
-      url: 'http://127.0.0.1:5555',
-      logPath,
-      port: 5555,
-    })),
-    killDevServer: vi.fn(async () => undefined),
-    waitForHealthy: vi.fn(async () => args.healthy ?? true),
-    runWorker: vi.fn(async (options: RunWorkerWithSpanOptions) => {
-      if (args.workerFinalText !== undefined) {
-        await options.runOptions.onEvent?.(resultEvent(args.workerFinalText))
-      }
-      captured.spanExtra = options.getExtraPayload?.() ?? null
-      const result: RunClaudeResult = {
-        exitCode: args.workerExitCode ?? 0,
-        stdout: '',
-        stderr: '',
-        sessionId: 'sess-1',
-        conversation: [],
-        quotaRejected: null,
-      }
-      return result
-    }) as unknown as BehaviourVerifyDeps['runWorker'],
-    readLogTail: vi.fn(async () => 'dev server said hello'),
   }
-  return { deps, captured }
+  return { deps }
 }
 
 const WORKTREE = { path: '/tmp/wt-behav', branch: 'task/mars-behav01' }
-
-describe('behaviourVerify — PASS', () => {
-  beforeEach(() => {
-    __resetContextCacheForTests()
-    process.env.MARS_REPO = tmpRepo
-  })
-
-  it('all criteria positively verified → returns pass, tears down the dev server, no self-heal', async () => {
-    const { store } = makeTraceStore()
-    const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
-    const { deps, captured } = makeDeps({
-      task: taskWithSpec({ previewCmd: 'npm run dev', doneCriteria: ['banner renders'] }),
-      workerFinalText: verdictText([v(0, 'pass', 'criterion-0.png')]),
-    })
-
-    const result = await behaviourVerify(ctx, {
-      worktree: WORKTREE,
-      deps,
-    })
-
-    expect(result.outcome).toBe('pass')
-    expect(result.reason).toBeNull()
-    expect(result.verdicts).toHaveLength(1)
-    // Artifact attachment: relative evidence resolves into the artifact dir.
-    expect(result.artifacts).toHaveLength(1)
-    expect(result.artifacts[0].type).toBe('screenshot')
-    expect(result.artifacts[0].path).toBe(
-      resolve(tmpRepo, '.mars', 'behaviour-verify', 'mars-behav01', 'criterion-0.png'),
-    )
-    expect(result.artifacts[0].criterionIndex).toBe(0)
-    expect(result.devServerLogPath).not.toBeNull()
-
-    // The step_ended payload (via getExtraPayload) carries outcome + evidence.
-    expect(captured.spanExtra).not.toBeNull()
-    expect(captured.spanExtra!.behaviourVerifyOutcome).toBe('pass')
-    expect(captured.spanExtra!.devServerLogPath).toBe(result.devServerLogPath)
-    expect(captured.spanExtra!.artifacts).toEqual(result.artifacts)
-    expect(captured.spanExtra!.verdicts).toEqual(result.verdicts)
-
-    // Lifecycle + never-silent bookkeeping.
-    expect(deps.killDevServer).toHaveBeenCalledWith(4242)
-    expect(deps.handleTaskFailureWithFixTask).not.toHaveBeenCalled()
-    expect(deps.updateTask).not.toHaveBeenCalled()
-    expect(deps.raiseActionQueueItem).not.toHaveBeenCalled()
-    expect(deps.createProposal).not.toHaveBeenCalled()
-  })
-})
-
-describe('behaviourVerify — behavioural FAIL', () => {
-  beforeEach(() => {
-    __resetContextCacheForTests()
-    process.env.MARS_REPO = tmpRepo
-  })
-
-  it('an evidenced contradiction stamps the task failed, spawns ONE recovery under the registered signature, and throws', async () => {
-    const { store } = makeTraceStore()
-    const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
-    const { deps } = makeDeps({
-      task: taskWithSpec({
-        previewCmd: 'npm run dev',
-        doneCriteria: ['banner renders', 'save button persists'],
-      }),
-      workerFinalText: verdictText([
-        v(0, 'pass', 'criterion-0.png'),
-        v(1, 'fail', 'criterion-1.png'),
-      ]),
-    })
-
-    await expect(
-      behaviourVerify(ctx, { worktree: WORKTREE, deps }),
-    ).rejects.toThrow(/behaviour-verify:dod-unmet/)
-
-    // Task stamped failed exactly like static verify.
-    expect(deps.updateTask).toHaveBeenCalledTimes(1)
-    const updateArgs = vi.mocked(deps.updateTask).mock.calls[0]
-    expect(updateArgs[0]).toBe('mars-behav01')
-    expect(updateArgs[1]).toMatchObject({
-      status: 'failed',
-      failedPhase: 'verify',
-      failureReason: BEHAVIOUR_VERIFY_FAILING_STEP,
-      failureSignature: BEHAVIOUR_DOD_UNMET_SIGNATURE,
-    })
-
-    // Exactly one recovery spawn through the standard handler.
-    expect(deps.handleTaskFailureWithFixTask).toHaveBeenCalledTimes(1)
-    const failureInput = vi.mocked(deps.handleTaskFailureWithFixTask).mock.calls[0][0]
-    expect(failureInput.failingStep).toBe(BEHAVIOUR_VERIFY_FAILING_STEP)
-    // The recovery prompt context inlines ONLY the failed criterion with its
-    // evidence path and the dev-server log tail.
-    expect(failureInput.recipeContext?.statusOutput).toContain('save button persists')
-    expect(failureInput.recipeContext?.statusOutput).toContain('criterion-1.png')
-    expect(failureInput.recipeContext?.statusOutput).toContain('dev server said hello')
-    expect(failureInput.recipeContext?.statusOutput).not.toContain('[0] banner renders')
-    // The first line binds to the registered recipe.
-    expect(classifyError(failureInput.errorOutput)).toBe('dod-unmet')
-
-    // No CAN'T-VERIFY surface fired, and the dev server was torn down.
-    expect(deps.raiseActionQueueItem).not.toHaveBeenCalled()
-    expect(deps.createProposal).not.toHaveBeenCalled()
-    expect(deps.killDevServer).toHaveBeenCalledWith(4242)
-  })
-})
 
 describe("behaviourVerify — CAN'T-VERIFY", () => {
   beforeEach(() => {
@@ -494,21 +352,17 @@ describe("behaviourVerify — CAN'T-VERIFY", () => {
     process.env.MARS_REPO = tmpRepo
   })
 
-  it('no preview command (the no-UI-surface branch): no browser, draft + alert, merge proceeds', async () => {
+  it('no preview command (the no-UI-surface branch): draft + alert, merge proceeds', async () => {
     const { store, events } = makeTraceStore()
     const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
     const { deps } = makeDeps({
-      task: taskWithSpec({ previewCmd: null, doneCriteria: ['banner renders'] }),
+      task: taskWithSpec({ doneCriteria: ['banner renders'] }),
     })
 
     const result = await behaviourVerify(ctx, { worktree: WORKTREE, deps })
 
     expect(result.outcome).toBe('unverifiable')
     expect(result.reason).toBe('no-preview-command')
-
-    // Never launched a surface or a browser.
-    expect(deps.startDevServer).not.toHaveBeenCalled()
-    expect(deps.runWorker).not.toHaveBeenCalled()
 
     // Fingerprinted draft proposal.
     expect(deps.findOpenDraftByKpiTag).toHaveBeenCalledWith(
@@ -528,10 +382,6 @@ describe("behaviourVerify — CAN'T-VERIFY", () => {
     expect(raised.payload.proposalId).toBe('prop-1')
     expect(raised.payload.reason).toBe('no-preview-command')
 
-    // Never a hard fail.
-    expect(deps.updateTask).not.toHaveBeenCalled()
-    expect(deps.handleTaskFailureWithFixTask).not.toHaveBeenCalled()
-
     // The span records the outcome even though no Worker ran.
     const ended = events.find(
       (e) =>
@@ -546,7 +396,7 @@ describe("behaviourVerify — CAN'T-VERIFY", () => {
     const { store } = makeTraceStore()
     const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
     const { deps } = makeDeps({
-      task: taskWithSpec({ previewCmd: null, doneCriteria: ['x'] }),
+      task: taskWithSpec({ doneCriteria: ['x'] }),
       existingDraft: { id: 'prop-existing', title: 'already filed' },
     })
 
@@ -558,78 +408,20 @@ describe("behaviourVerify — CAN'T-VERIFY", () => {
     expect(raised.payload.proposalId).toBe('prop-existing')
   })
 
-  it('empty Definition of Done → unverifiable (no-done-criteria) without booting a server', async () => {
+  it('empty Definition of Done → unverifiable (no-done-criteria)', async () => {
     const { store } = makeTraceStore()
     const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
     const { deps } = makeDeps({
-      task: taskWithSpec({ previewCmd: 'npm run dev', doneCriteria: [] }),
+      task: taskWithSpec({ doneCriteria: [] }),
     })
 
     const result = await behaviourVerify(ctx, { worktree: WORKTREE, deps })
 
     expect(result.outcome).toBe('unverifiable')
     expect(result.reason).toBe('no-done-criteria')
-    expect(deps.startDevServer).not.toHaveBeenCalled()
     expect(deps.raiseActionQueueItem).toHaveBeenCalledTimes(1)
   })
 
-  it('dev server never answers its health check → unverifiable, server killed, worker never dispatched', async () => {
-    const { store } = makeTraceStore()
-    const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
-    const { deps } = makeDeps({
-      task: taskWithSpec({ previewCmd: 'npm run dev', doneCriteria: ['x'] }),
-      healthy: false,
-    })
-
-    const result = await behaviourVerify(ctx, {
-      worktree: WORKTREE,
-      healthCheckTimeoutMs: 10,
-      deps,
-    })
-
-    expect(result.outcome).toBe('unverifiable')
-    expect(result.reason).toBe('dev-server-unhealthy')
-    expect(deps.runWorker).not.toHaveBeenCalled()
-    expect(deps.killDevServer).toHaveBeenCalledWith(4242)
-    expect(deps.raiseActionQueueItem).toHaveBeenCalledTimes(1)
-    expect(deps.handleTaskFailureWithFixTask).not.toHaveBeenCalled()
-  })
-
-  it('worker emits no parseable verdict JSON → unverifiable (verdict-unparseable), never an inferred pass', async () => {
-    const { store } = makeTraceStore()
-    const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
-    const { deps, captured } = makeDeps({
-      task: taskWithSpec({ previewCmd: 'npm run dev', doneCriteria: ['x'] }),
-      workerFinalText: 'Looks good to me — everything passed!',
-    })
-
-    const result = await behaviourVerify(ctx, { worktree: WORKTREE, deps })
-
-    expect(result.outcome).toBe('unverifiable')
-    expect(result.reason).toBe('verdict-unparseable')
-    expect(captured.spanExtra!.behaviourVerifyOutcome).toBe(
-      'unverifiable:verdict-unparseable',
-    )
-    expect(deps.raiseActionQueueItem).toHaveBeenCalledTimes(1)
-    expect(deps.handleTaskFailureWithFixTask).not.toHaveBeenCalled()
-    expect(deps.killDevServer).toHaveBeenCalledWith(4242)
-  })
-
-  it('only-unverifiable verdicts (pure backend criteria) → unverifiable (no-exercisable-criteria), merge proceeds', async () => {
-    const { store } = makeTraceStore()
-    const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
-    const { deps } = makeDeps({
-      task: taskWithSpec({ previewCmd: 'npm run dev', doneCriteria: ['db row appears'] }),
-      workerFinalText: verdictText([v(0, 'unverifiable')]),
-    })
-
-    const result = await behaviourVerify(ctx, { worktree: WORKTREE, deps })
-
-    expect(result.outcome).toBe('unverifiable')
-    expect(result.reason).toBe('no-exercisable-criteria')
-    expect(deps.raiseActionQueueItem).toHaveBeenCalledTimes(1)
-    expect(deps.updateTask).not.toHaveBeenCalled()
-  })
 })
 
 describe('behaviourVerify — skips', () => {
@@ -648,7 +440,6 @@ describe('behaviourVerify — skips', () => {
     expect(result.outcome).toBe('skipped')
     expect(result.reason).toBe('diagnose')
     expect(deps.getTask).not.toHaveBeenCalled()
-    expect(deps.startDevServer).not.toHaveBeenCalled()
     expect(deps.raiseActionQueueItem).not.toHaveBeenCalled()
     expect(events).toHaveLength(0)
   })

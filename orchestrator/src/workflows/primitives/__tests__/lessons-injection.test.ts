@@ -83,7 +83,6 @@ describe('composePrompt — non-empty lessons rendering', () => {
       taskType: 'auto' as const,
       files: ['src/foo.ts'],
       verifyCmd: 'npm test',
-      previewCmd: null,
       doneCriteria: ['tests pass'],
       readFirst: [],
       prescriptiveAction: null,

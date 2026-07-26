@@ -127,7 +127,6 @@ const DDL: readonly string[] = [
     failed_phase         text,
     resume_from          text,
     verify_cmd           text,
-    preview_cmd          text,
     dev_server_url       text,
     dev_server_pid       bigint,
     preview_validated    bigint NOT NULL DEFAULT 0,
@@ -707,6 +706,10 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_auto_recipe_runs_ran_at
      ON auto_recipe_runs(ran_at DESC)`,
+  // Drop the per-task preview command column: the --preview CLI flag and the
+  // preview_cmd column are removed (PRD f354b404 slice 1). Existing rows have
+  // the column dropped idempotently; tasks now carry no per-task preview command.
+  `ALTER TABLE IF EXISTS tasks DROP COLUMN IF EXISTS preview_cmd`,
 ]
 
 /**

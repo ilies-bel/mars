@@ -48,7 +48,6 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--tag',
   '--files',
   '--verify',
-  '--preview',
   '--done',
   '--type',
   '--wrapper',
@@ -352,9 +351,6 @@ export const parseTaskType = (
 export interface TaskSpec {
   files: readonly string[]
   verifyCmd: string | null
-  /** HITL preview command (e.g. 'npm run dev'); null when the task merges
-   * automatically. See core `TaskSpec.previewCmd`. */
-  previewCmd: string | null
   doneCriteria: readonly string[]
   taskType: 'auto' | 'checkpoint'
 }
@@ -362,7 +358,7 @@ export interface TaskSpec {
 /**
  * Returns true when `value` contains an odd number of `"` characters OR an odd
  * number of `'` characters — a signal that the shell mangled a quoted argument.
- * Applied only to command-shaped flags (`--verify`, `--preview`); prose fields
+ * Applied only to command-shaped flags (`--verify`); prose fields
  * like `--done` legitimately contain apostrophes (e.g. "don't") and are excluded.
  */
 export const hasUnbalancedQuotes = (value: string): boolean =>
@@ -379,13 +375,11 @@ export const parseTaskSpec = (
   const filesList = args.multiFlags['--files'] ?? []
   const doneList = args.multiFlags['--done'] ?? []
   const verifyRaw = args.flags['--verify']
-  const previewRaw = args.flags['--preview']
   const typeRaw = args.flags['--type']
   const anySpec =
     filesList.length > 0 ||
     doneList.length > 0 ||
     verifyRaw !== undefined ||
-    previewRaw !== undefined ||
     typeRaw !== undefined
   if (!anySpec) return { ok: true, value: undefined }
 
@@ -393,12 +387,6 @@ export const parseTaskSpec = (
     return {
       ok: false,
       message: `--verify value has an unbalanced quote (${verifyRaw}); this usually means the shell mangled the argument — re-quote the whole value in single quotes: --verify 'cmd && cmd'`,
-    }
-  }
-  if (previewRaw !== undefined && hasUnbalancedQuotes(previewRaw)) {
-    return {
-      ok: false,
-      message: `--preview value has an unbalanced quote (${previewRaw}); this usually means the shell mangled the argument — re-quote the whole value in single quotes: --preview 'cmd && cmd'`,
     }
   }
 
@@ -413,7 +401,6 @@ export const parseTaskSpec = (
     value: {
       files: filesList,
       verifyCmd: verifyRaw ?? null,
-      previewCmd: previewRaw ?? null,
       doneCriteria: doneList,
       taskType,
     },

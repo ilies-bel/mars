@@ -297,7 +297,6 @@ describe('proposal take — integration: task creation behavior', () => {
       spec: {
         files: [],
         verifyCmd: null,
-        previewCmd: null,
         doneCriteria: ['As a user I can do the live feature'],
         taskType: 'auto',
       },

@@ -46,7 +46,6 @@ export const specSchema = z
   .object({
     files: z.array(z.string()),
     verifyCmd: z.string().nullable(),
-    previewCmd: z.string().nullable().default(null),
     doneCriteria: z.array(z.string()),
     taskType: z.enum(TASK_TYPES as readonly ['auto', 'checkpoint']),
     readFirst: z.array(z.string()).default([]),
@@ -118,16 +117,6 @@ export const QUOTA_REJECTED_ABORT_MESSAGE = (
   resetsAt: number,
 ): string =>
   `task ${taskId} env-rejected: provider rate limit reached (resetsAt=${resetsAt})`
-
-// Thrown by the merge step's preview gate when a task carries a previewCmd and
-// has not yet been validated. The step starts a live dev server, parks the task
-// in 'awaiting-validation', raises the action-queue row, then throws this so the
-// 'merge' step does NOT checkpoint as completed — the operator's Validate click
-// re-queues the task and the engine re-enters merge past the gate. The daemon
-// dispatch loop detects this sentinel and suppresses failure handling (the task
-// is intentionally parked, not failed).
-export const PREVIEW_GATE_MESSAGE = (taskId: string): string =>
-  `task ${taskId} parked at preview gate; awaiting operator validation`
 
 // Thrown by the awaitHuman primitive when a task is parked for live human work.
 //

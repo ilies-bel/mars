@@ -326,7 +326,7 @@ describe('hasUnbalancedQuotes', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Guard 2b — parseTaskSpec rejects --verify/--preview with unbalanced quotes
+// Guard 2b — parseTaskSpec rejects --verify with unbalanced quotes
 // ---------------------------------------------------------------------------
 
 describe('parseTaskSpec — unbalanced quote guard', () => {

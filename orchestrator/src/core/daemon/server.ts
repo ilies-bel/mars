@@ -1033,7 +1033,6 @@ export const startDaemon = async (
             ? {
                 files: [...task.spec.files],
                 verifyCmd: task.spec.verifyCmd,
-                previewCmd: task.spec.previewCmd ?? null,
                 doneCriteria: [...task.spec.doneCriteria],
                 taskType: task.spec.taskType,
                 readFirst: [...(task.spec.readFirst ?? [])],
@@ -1199,14 +1198,6 @@ export const startDaemon = async (
             log(`[implement] ${task.id} failed: origin worktree missing; recovery cannot attach (action-queue item raised)`)
             return
 
-          case 'preview-gate':
-            // The merge step started a live dev server, parked the task in
-            // 'awaiting-validation', and raised the action-queue row, then threw
-            // this sentinel so the merge step stays resumable. The task is
-            // intentionally parked, NOT failed.
-            log(`[implement] ${task.id} parked awaiting-validation: preview server up, waiting for operator Validate/Reject`)
-            return
-
           case 'await-human': {
             // The primitive parked the task in 'awaiting-human', raised the
             // action-queue row, and threw this sentinel so the step does NOT
@@ -1299,7 +1290,6 @@ export const startDaemon = async (
           }
           case 'main-dirty-verify':
           case 'main-dirty-merge':
-          case 'preview-gate':
             // These are fully self-handled; suppress the generic re-update.
             log(`[implement] ${task.id} ${err.kind} abort (exception path); task already handled`)
             break
@@ -2691,7 +2681,6 @@ export const startDaemon = async (
         spec: {
           files: [],
           verifyCmd: null,
-          previewCmd: null,
           doneCriteria,
           taskType: 'auto',
         },

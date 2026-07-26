@@ -152,7 +152,7 @@ describe('composePrompt — diagnose Chore short-circuit', () => {
       prompt,
       { functional: 'F', technical: 'T' },
       'coder',
-      { files: ['src/foo.ts'], verifyCmd: null, previewCmd: null, doneCriteria: [], taskType: 'auto' },
+      { files: ['src/foo.ts'], verifyCmd: null, doneCriteria: [], taskType: 'auto' },
       'mars-aaaaaaaa',
       '/tmp/worktree',
       'diagnose',
@@ -215,8 +215,7 @@ describe('composePrompt — worktree orientation', () => {
       'coder',
       {
         files: ['orchestrator/src/foo.ts'],
-        verifyCmd: 'npx vitest run', previewCmd: null,
-        doneCriteria: ['it works'],
+        verifyCmd: 'npx vitest run',        doneCriteria: ['it works'],
         taskType: 'auto',
       },
       'mars-test-123',
@@ -242,7 +241,7 @@ describe('composePrompt — worktree orientation', () => {
       'coder',
       {
         files: ['.github/workflows/ci.yml', 'orchestrator/y.ts'],
-        verifyCmd: null, previewCmd: null,
+        verifyCmd: null,
         doneCriteria: [],
         taskType: 'auto',
       },
@@ -555,8 +554,7 @@ describe('composePrompt — read-first and prescriptive-action sections', () => 
       'coder',
       {
         files: ['src/a.ts'],
-        verifyCmd: 'npx tsc --noEmit', previewCmd: null,
-        doneCriteria: ['types pass'],
+        verifyCmd: 'npx tsc --noEmit',        doneCriteria: ['types pass'],
         taskType: 'auto',
         readFirst: ['src/b.ts', 'src/c.ts'],
         prescriptiveAction: 'Call doSomething() in src/a.ts at line 42.',
@@ -577,7 +575,7 @@ describe('composePrompt — read-first and prescriptive-action sections', () => 
       'coder',
       {
         files: ['src/a.ts'],
-        verifyCmd: null, previewCmd: null,
+        verifyCmd: null,
         doneCriteria: [],
         taskType: 'auto',
         readFirst: ['first.ts', 'second.ts', 'third.ts'],
@@ -601,8 +599,7 @@ describe('composePrompt — read-first and prescriptive-action sections', () => 
       'coder',
       {
         files: ['src/a.ts'],
-        verifyCmd: 'npx tsc --noEmit', previewCmd: null,
-        doneCriteria: [],
+        verifyCmd: 'npx tsc --noEmit',        doneCriteria: [],
         taskType: 'auto',
         readFirst: ['src/b.ts'],
         prescriptiveAction: 'do the thing',
@@ -626,8 +623,7 @@ describe('composePrompt — read-first and prescriptive-action sections', () => 
       'coder',
       {
         files: ['src/a.ts'],
-        verifyCmd: 'npx tsc --noEmit', previewCmd: null,
-        doneCriteria: ['types pass'],
+        verifyCmd: 'npx tsc --noEmit',        doneCriteria: ['types pass'],
         taskType: 'auto',
       },
       'mars-test-norf',
@@ -644,7 +640,7 @@ describe('composePrompt — read-first and prescriptive-action sections', () => 
       'coder',
       {
         files: ['src/a.ts'],
-        verifyCmd: null, previewCmd: null,
+        verifyCmd: null,
         doneCriteria: [],
         taskType: 'auto',
         readFirst: [],
@@ -663,7 +659,7 @@ describe('composePrompt — read-first and prescriptive-action sections', () => 
       'coder',
       {
         files: ['src/a.ts'],
-        verifyCmd: null, previewCmd: null,
+        verifyCmd: null,
         doneCriteria: [],
         taskType: 'auto',
         readFirst: [],

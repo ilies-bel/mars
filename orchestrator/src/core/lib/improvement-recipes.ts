@@ -68,7 +68,7 @@ const RECIPES: ImprovementRecipe[] = [
     setupSteps: [
       'Install @playwright/test',
       'Create e2e/ with smoke test',
-      'Configure previewCmd',
+      'Configure a live dev server in the workflow environment',
       'Set up credentials: mars credentials set SSO_TOKEN SSO_TOKEN_ENV',
       'Add gate: mars verify add e2e --cmd npx --args "playwright test"',
     ],

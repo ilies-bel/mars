@@ -108,13 +108,10 @@ import {
   MAIN_DIRTY_VERIFY_MESSAGE,
   MAIN_DIRTY_MERGE_MESSAGE,
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
-  PREVIEW_GATE_MESSAGE,
   AWAIT_HUMAN_MESSAGE,
   QUOTA_REJECTED_ABORT_MESSAGE,
 } from './shared'
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
-import { startDevServer } from '../../core/lib/dev-server'
-import { resolveTaskCwd } from '../../core/lib/resolve-task-cwd'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 
@@ -1879,124 +1876,6 @@ export const merge = async (
       success: true,
       message: 'diagnose Chore complete; verdict-driven branch runs in daemon',
     }
-  }
-
-  // ── Human-in-the-loop preview gate ────────────────────────────────────────
-  // The user chose "gate BEFORE merge": when a task carries a preview command
-  // and has not yet been validated, we start a live dev server off the worktree
-  // and park the task in 'awaiting-validation' WITHOUT touching the integration
-  // branch. Nothing merges until the operator clicks Validate (which sets
-  // previewValidated and re-queues — the engine re-enters this step past the
-  // gate) or Reject (which fails the task). Throwing PREVIEW_GATE_MESSAGE keeps
-  // the merge step resumable; the daemon detects the sentinel and suppresses
-  // failure handling.
-  const gateTask = await getTask(taskId)
-  const previewCmd = gateTask?.spec?.previewCmd ?? null
-  if (previewCmd !== null && previewCmd.trim().length > 0 && !(gateTask?.previewValidated ?? false)) {
-    const ctxResolved = resolveContext()
-    const previewCwd = resolveTaskCwd(worktreePath, gateTask?.spec?.files ?? [])
-    const logDir = join(ctxResolved.stateDir, 'dev-servers')
-    let dev: { url: string; pid: number; logPath: string; port: number } | null = null
-    try {
-      dev = await startDevServer({
-        command: previewCmd,
-        cwd: previewCwd,
-        taskId,
-        logDir,
-      })
-    } catch (bootErr) {
-      // The preview server failed to start. Still park the task in
-      // 'awaiting-validation' and raise an action-queue row so the operator
-      // knows a human decision is required — the task must NOT silently strand
-      // with no alert. The row title says "preview failed to boot" so the
-      // operator understands the dev server is not running.
-      console.error(`[merge:preview-gate] task ${taskId} dev-server boot failed:`, bootErr)
-      await updateTask(
-        taskId,
-        { status: 'awaiting-validation', failedPhase: null, devServerUrl: null, devServerPid: null },
-        store,
-      )
-      raiseActionQueueItem({
-        kind: 'awaiting-validation',
-        category: 'user',
-        priority: 'high',
-        title: `Validate ${taskId}: preview failed to boot`,
-        body: [
-          `Task \`${taskId}\` passed verify and is ready to merge into \`${integrationBranch}\`, but its preview server failed to start.`,
-          '',
-          `Preview command: \`${previewCmd}\``,
-          `Boot error: ${bootErr instanceof Error ? bootErr.message : String(bootErr)}`,
-          '',
-          `Fix the preview command or choose:`,
-          `  - **Validate** to merge into \`${integrationBranch}\` without previewing, or`,
-          `  - **Reject** to stop the merge and fail the task (its worktree is kept so you can restart or drop it).`,
-        ].join('\n'),
-        payload: { taskId, devServerUrl: null, devServerPid: null, previewCmd, integrationBranch, branch },
-        context: { repoRoot: process.env.MARS_REPO ?? null },
-        raisedBy: 'merge:preview-gate',
-        signature: `${taskId}:awaiting-validation`,
-        originTaskId: taskId,
-        occurrence: { at: new Date().toISOString(), taskId, devServerUrl: null },
-      }).catch((err) => {
-        console.error(`[merge:preview-gate] task ${taskId} action-queue raise errored:`, err)
-      })
-      throw new WorkflowTerminalError('preview-gate', PREVIEW_GATE_MESSAGE(taskId))
-    }
-    await updateTask(
-      taskId,
-      {
-        status: 'awaiting-validation',
-        failedPhase: null,
-        devServerUrl: dev.url,
-        devServerPid: dev.pid,
-      },
-      store,
-    )
-    raiseActionQueueItem({
-      kind: 'awaiting-validation',
-      category: 'user',
-      priority: 'high',
-      title: `Validate ${taskId}: preview running at ${dev.url}`,
-      body: [
-        `Task \`${taskId}\` passed verify and is ready to merge into \`${integrationBranch}\`, but it carries a preview command, so it is paused for your review.`,
-        '',
-        `A live dev server is running off the task's worktree:`,
-        '',
-        `  ${dev.url}`,
-        '',
-        `Open it, check the change, then:`,
-        `  - **Validate** to merge into \`${integrationBranch}\` and finish the task, or`,
-        `  - **Reject** to stop the merge and fail the task (its worktree is kept so you can restart or drop it).`,
-        '',
-        `Preview command: \`${previewCmd}\``,
-        `Server log: \`${dev.logPath}\``,
-        '',
-        `Nothing has been merged yet — \`${integrationBranch}\` is untouched until you Validate.`,
-      ].join('\n'),
-      payload: {
-        taskId,
-        devServerUrl: dev.url,
-        devServerPid: dev.pid,
-        previewCmd,
-        integrationBranch,
-        branch,
-      },
-      context: { repoRoot: process.env.MARS_REPO ?? null },
-      raisedBy: 'merge:preview-gate',
-      signature: `${taskId}:awaiting-validation`,
-      originTaskId: taskId,
-      occurrence: {
-        at: new Date().toISOString(),
-        taskId,
-        devServerUrl: dev.url,
-      },
-    }).catch((err) => {
-      console.error(
-        `[merge:preview-gate] task ${taskId} action-queue raise errored:`,
-        err,
-      )
-    })
-    throw new WorkflowTerminalError('preview-gate', PREVIEW_GATE_MESSAGE(taskId))
   }
 
   let vegaSpanInfo: { workerName: string; sessionId: string | null } | null = null

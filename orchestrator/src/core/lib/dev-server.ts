@@ -3,14 +3,8 @@
  * human-in-the-loop validation gate (the awaiting-validation status /
  * action-queue kind).
  *
- * When a task carries a `previewCmd` in its spec, the merge step does NOT merge
- * automatically. Instead, after a clean verify it starts that exact command as
- * a live dev server off the task's worktree, parks the task in
- * 'awaiting-validation', and raises an action-queue row with the URL and
- * Validate / Reject buttons. The operator opens the URL, eyeballs the change,
- * and clicks Validate (→ merge) or Reject (→ failed). This module owns the
- * spawn / kill / liveness primitives; the lifecycle wiring lives in the merge
- * primitive and the daemon validate/reject handlers.
+ * This module owns the spawn / kill / liveness primitives for live dev server
+ * management. It is used by `behaviourVerify` and the arc-level E2E pass.
  *
  * Design notes
  * ------------
