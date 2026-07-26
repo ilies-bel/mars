@@ -25,6 +25,302 @@ import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store
 import { Arc } from '../arc'
 import type { TraceEventStore } from './trace-events-store'
 
+// ---------------------------------------------------------------------------
+// Shared guard: stranded-checkout detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Probes whether `repoRoot` is actually checked out on `integrationBranch`.
+ * Returns `{ status: 'ok' }` when the branch matches (or is detached at the
+ * integration tip), `{ status: 'stranded', currentBranch }` when the primary
+ * checkout is on a different branch (e.g. a task branch left behind by a
+ * crashed merge step).
+ *
+ * Shared by `checkIntegrationBranchDirty` and `classifyIntegrationDirtState`
+ * to avoid misreading a stale branch's state as dirty main.
+ */
+const probeIntegrationBranch = async (
+  repoRoot: string,
+  integrationBranch: string,
+  traceCtx: TraceCtx,
+): Promise<{ status: 'ok' } | { status: 'stranded'; currentBranch: string }> => {
+  const branchProbe = await runTool(
+    {
+      tool: 'git',
+      argv: ['rev-parse', '--abbrev-ref', 'HEAD'],
+      cwd: repoRoot,
+      taskId: traceCtx.taskId ?? null,
+      originId: traceCtx.originId ?? null,
+      phase: traceCtx.phase ?? null,
+      expectsFailure: true,
+    },
+    traceCtx.store,
+  ).catch(() => null)
+
+  if (branchProbe === null || branchProbe.exitCode !== 0) return { status: 'ok' }
+
+  const currentBranch = branchProbe.stdout.trim()
+  if (currentBranch === integrationBranch) return { status: 'ok' }
+
+  if (currentBranch === 'HEAD') {
+    // Detached HEAD is OK when it points to the integration branch tip.
+    const headShaProbe = await runTool(
+      {
+        tool: 'git',
+        argv: ['rev-parse', 'HEAD'],
+        cwd: repoRoot,
+        taskId: traceCtx.taskId ?? null,
+        originId: traceCtx.originId ?? null,
+        phase: traceCtx.phase ?? null,
+        expectsFailure: true,
+      },
+      traceCtx.store,
+    ).catch(() => null)
+    const integShaProbe = await runTool(
+      {
+        tool: 'git',
+        argv: ['rev-parse', integrationBranch],
+        cwd: repoRoot,
+        taskId: traceCtx.taskId ?? null,
+        originId: traceCtx.originId ?? null,
+        phase: traceCtx.phase ?? null,
+        expectsFailure: true,
+      },
+      traceCtx.store,
+    ).catch(() => null)
+    if (
+      headShaProbe?.exitCode === 0 &&
+      integShaProbe?.exitCode === 0 &&
+      headShaProbe.stdout.trim() === integShaProbe.stdout.trim()
+    ) {
+      return { status: 'ok' } // Detached at integration branch tip — fine.
+    }
+  }
+
+  return { status: 'stranded', currentBranch }
+}
+
+// ---------------------------------------------------------------------------
+// Classify dirt state
+// ---------------------------------------------------------------------------
+
+/**
+ * Discriminated-union result for `classifyIntegrationDirtState`.
+ *
+ * - `clean`            — no dirty files; committer is not needed.
+ * - `committer-scope`  — dirty files a fresh main-committer can legitimately
+ *                        stage and commit (modified tracked files, new untracked
+ *                        files). `statusOutput` is the raw porcelain output.
+ * - `unrelated`        — dirt the committer CANNOT resolve survives a committer
+ *                        run: ignored entries, unmerged/conflicted paths,
+ *                        submodule gitlink changes, or paths whose parent
+ *                        directory is ignored. `contaminatedPaths` lists those
+ *                        paths verbatim so callers can quote them in alerts.
+ */
+export type ClassifyIntegrationDirtStateResult =
+  | { kind: 'clean' }
+  | { kind: 'committer-scope'; statusOutput: string }
+  | { kind: 'unrelated'; statusOutput: string; contaminatedPaths: string[] }
+
+/**
+ * Returns `true` when a porcelain v1 line represents dirt a fresh
+ * main-committer cannot resolve:
+ *
+ * - `XY === '!!'`       — ignored entry (`git stash` historically ignores these)
+ * - `XY[0] === 'U'`     — unmerged on the index side (UU, UD, UA, …)
+ * - `XY[1] === 'U'`     — unmerged on the worktree side (DU, AU, …)
+ *
+ * For '??'-with-ignored-parent detection, use `classifyIntegrationDirtState`
+ * which has access to the full set of ignored directory prefixes.
+ */
+export const isCommitterUnresolvable = (porcelainLine: string): boolean => {
+  if (porcelainLine.length < 2) return false
+  const xy = porcelainLine.slice(0, 2)
+  if (xy === '!!') return true
+  if (xy[0] === 'U' || xy[1] === 'U') return true
+  return false
+}
+
+/** Extract the destination path from a porcelain v1 line. */
+const parsePorcelainPath = (line: string): string => {
+  // Format: "XY PATH" or "XY ORIG -> DEST" (rename/copy)
+  const raw = line.slice(3)
+  const arrowIdx = raw.indexOf(' -> ')
+  return arrowIdx >= 0 ? raw.slice(arrowIdx + 4).trim() : raw.trim()
+}
+
+/**
+ * Classify the integration branch's dirty state into three outcomes.
+ *
+ * Runs three git probes:
+ *  1. `git status --porcelain --untracked-files=all` — standard dirty check
+ *  2. `git status --ignored --porcelain`             — captures `!!` ignored entries
+ *  3. `git ls-files --unmerged`                      — detects unresolved conflicts
+ *
+ * Additionally probes `git ls-files --stage` to detect submodule gitlink
+ * changes (mode 160000 entries).
+ *
+ * Contamination rules (→ `'unrelated'`):
+ *  - `XY === '!!'`           — ignored entries; `git stash` historically skips these
+ *  - `XY[0|1] === 'U'`       — unmerged/conflicted paths
+ *  - mode 160000 paths       — submodule gitlink changes
+ *  - `??` inside ignored dir — untracked files whose parent directory is ignored
+ */
+export const classifyIntegrationDirtState = async (input: {
+  repoRoot: string
+  integrationBranch: string
+  traceCtx: TraceCtx
+}): Promise<ClassifyIntegrationDirtStateResult> => {
+  const { repoRoot, integrationBranch, traceCtx } = input
+
+  // Stranded-checkout guard: if the primary checkout is on a task branch,
+  // bail out as clean rather than misreading its state.
+  const guard = await probeIntegrationBranch(repoRoot, integrationBranch, traceCtx)
+  if (guard.status === 'stranded') {
+    console.warn(
+      `[main-dirty] classify: integration branch repoRoot is checked out on ${guard.currentBranch}, expected ${integrationBranch}; returning clean`,
+    )
+    return { kind: 'clean' }
+  }
+
+  const nullResult = { exitCode: 1, stdout: '', stderr: '', durationMs: 0, traceEventId: '' }
+
+  // 1. git status --porcelain --untracked-files=all
+  const status = await runTool(
+    {
+      tool: 'git',
+      argv: ['status', '--porcelain', '--untracked-files=all'],
+      cwd: repoRoot,
+      taskId: traceCtx.taskId ?? null,
+      originId: traceCtx.originId ?? null,
+      phase: traceCtx.phase ?? null,
+      expectsFailure: true,
+    },
+    traceCtx.store,
+  ).catch(() => nullResult)
+
+  // 2. git status --ignored --porcelain (captures !! entries)
+  const ignoredStatus = await runTool(
+    {
+      tool: 'git',
+      argv: ['status', '--ignored', '--porcelain'],
+      cwd: repoRoot,
+      taskId: traceCtx.taskId ?? null,
+      originId: traceCtx.originId ?? null,
+      phase: traceCtx.phase ?? null,
+      expectsFailure: true,
+    },
+    traceCtx.store,
+  ).catch(() => nullResult)
+
+  // 3. git ls-files --unmerged (detects conflict stages)
+  const unmergedProbe = await runTool(
+    {
+      tool: 'git',
+      argv: ['ls-files', '--unmerged'],
+      cwd: repoRoot,
+      taskId: traceCtx.taskId ?? null,
+      originId: traceCtx.originId ?? null,
+      phase: traceCtx.phase ?? null,
+      expectsFailure: true,
+    },
+    traceCtx.store,
+  ).catch(() => nullResult)
+
+  // Parse regular status lines (non-empty).
+  const regularLines = status.exitCode === 0
+    ? status.stdout.split('\n').filter(Boolean)
+    : []
+
+  // Extract only !! lines from the --ignored output (avoid duplicating regular entries).
+  const ignoredOnlyLines = ignoredStatus.exitCode === 0
+    ? ignoredStatus.stdout.split('\n').filter((l) => l.slice(0, 2) === '!!')
+    : []
+
+  // Parse unmerged paths from ls-files --unmerged (format: "MODE SHA STAGE\tPATH").
+  const unmergedPaths = new Set<string>()
+  if (unmergedProbe.exitCode === 0 && unmergedProbe.stdout.trim().length > 0) {
+    for (const line of unmergedProbe.stdout.split('\n').filter(Boolean)) {
+      const tabIdx = line.indexOf('\t')
+      if (tabIdx >= 0) unmergedPaths.add(line.slice(tabIdx + 1).trim())
+    }
+  }
+
+  // Combine for status output.
+  const allStatusLines = [...regularLines, ...ignoredOnlyLines]
+  const statusOutput = allStatusLines.join('\n') + (allStatusLines.length > 0 ? '\n' : '')
+
+  // Early exit: fully clean.
+  if (allStatusLines.length === 0 && unmergedPaths.size === 0) {
+    return { kind: 'clean' }
+  }
+
+  // Build set of ignored directory prefixes (from !! entries ending with '/').
+  const ignoredDirPrefixes = new Set<string>()
+  for (const line of ignoredOnlyLines) {
+    const p = parsePorcelainPath(line)
+    if (p.endsWith('/')) ignoredDirPrefixes.add(p)
+  }
+
+  // Detect submodule gitlinks via git ls-files --stage (mode 160000).
+  const submodulePaths = new Set<string>()
+  const stageProbe = await runTool(
+    {
+      tool: 'git',
+      argv: ['ls-files', '--stage'],
+      cwd: repoRoot,
+      taskId: traceCtx.taskId ?? null,
+      originId: traceCtx.originId ?? null,
+      phase: traceCtx.phase ?? null,
+      expectsFailure: true,
+    },
+    traceCtx.store,
+  ).catch(() => null)
+  if (stageProbe !== null && stageProbe.exitCode === 0) {
+    for (const line of stageProbe.stdout.split('\n').filter(Boolean)) {
+      if (line.startsWith('160000 ')) {
+        const tabIdx = line.indexOf('\t')
+        if (tabIdx >= 0) submodulePaths.add(line.slice(tabIdx + 1).trim())
+      }
+    }
+  }
+
+  // Collect contaminated paths.
+  const seen = new Set<string>()
+  const contaminatedPaths: string[] = []
+  const addContaminated = (p: string): void => {
+    if (!seen.has(p)) { seen.add(p); contaminatedPaths.push(p) }
+  }
+
+  for (const line of allStatusLines) {
+    if (isCommitterUnresolvable(line)) {
+      addContaminated(parsePorcelainPath(line))
+      continue
+    }
+    const p = parsePorcelainPath(line)
+    // Submodule gitlink change.
+    if (submodulePaths.has(p)) {
+      addContaminated(p)
+      continue
+    }
+    // '??'-with-ignored-parent: untracked file inside an ignored directory.
+    if (line.slice(0, 2) === '??') {
+      for (const dir of ignoredDirPrefixes) {
+        if (p.startsWith(dir)) { addContaminated(p); break }
+      }
+    }
+  }
+
+  // Also add unmerged paths confirmed by ls-files --unmerged.
+  for (const p of unmergedPaths) addContaminated(p)
+
+  if (contaminatedPaths.length > 0) {
+    return { kind: 'unrelated', statusOutput, contaminatedPaths }
+  }
+
+  return { kind: 'committer-scope', statusOutput }
+}
+
 export interface CheckIntegrationBranchDirtyInput {
   /** Repo root where the integration branch is checked out (NOT a worktree). */
   repoRoot: string
@@ -70,64 +366,12 @@ export const checkIntegrationBranchDirty = async (
   // `git status` reads that branch's state as "dirty main" and drives a
   // false-positive committer loop. Returning dirty:false here is safe —
   // pessimistically reporting clean prevents the loop without losing work.
-  const branchProbe = await runTool(
-    {
-      tool: 'git',
-      argv: ['rev-parse', '--abbrev-ref', 'HEAD'],
-      cwd: repoRoot,
-      taskId: traceCtx.taskId ?? null,
-      originId: traceCtx.originId ?? null,
-      phase: traceCtx.phase ?? null,
-      expectsFailure: true,
-    },
-    traceCtx.store,
-  ).catch(() => null)
-
-  if (branchProbe !== null && branchProbe.exitCode === 0) {
-    const currentBranch = branchProbe.stdout.trim()
-    if (currentBranch !== integrationBranch) {
-      let strandedCheckout = true
-      if (currentBranch === 'HEAD') {
-        // Detached HEAD is OK when it points to the integration branch tip.
-        const headShaProbe = await runTool(
-          {
-            tool: 'git',
-            argv: ['rev-parse', 'HEAD'],
-            cwd: repoRoot,
-            taskId: traceCtx.taskId ?? null,
-            originId: traceCtx.originId ?? null,
-            phase: traceCtx.phase ?? null,
-            expectsFailure: true,
-          },
-          traceCtx.store,
-        ).catch(() => null)
-        const integShaProbe = await runTool(
-          {
-            tool: 'git',
-            argv: ['rev-parse', integrationBranch],
-            cwd: repoRoot,
-            taskId: traceCtx.taskId ?? null,
-            originId: traceCtx.originId ?? null,
-            phase: traceCtx.phase ?? null,
-            expectsFailure: true,
-          },
-          traceCtx.store,
-        ).catch(() => null)
-        if (
-          headShaProbe?.exitCode === 0 &&
-          integShaProbe?.exitCode === 0 &&
-          headShaProbe.stdout.trim() === integShaProbe.stdout.trim()
-        ) {
-          strandedCheckout = false // Detached at integration branch tip — OK.
-        }
-      }
-      if (strandedCheckout) {
-        console.warn(
-          `[main-dirty] integration branch repoRoot is checked out on ${currentBranch}, expected ${integrationBranch}; skipping dirty-main probe`,
-        )
-        return { dirty: false, statusOutput: '' }
-      }
-    }
+  const guard = await probeIntegrationBranch(repoRoot, integrationBranch, traceCtx)
+  if (guard.status === 'stranded') {
+    console.warn(
+      `[main-dirty] integration branch repoRoot is checked out on ${guard.currentBranch}, expected ${integrationBranch}; skipping dirty-main probe`,
+    )
+    return { dirty: false, statusOutput: '' }
   }
 
   // `--untracked-files=all` so a wholly-new directory shows up file-by-file
