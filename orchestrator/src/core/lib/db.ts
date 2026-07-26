@@ -491,26 +491,33 @@ const backendOf = new WeakMap<DbClient, BackendOps>()
 
 // A client can be opened directly by a CLI command or a focused library test,
 // without first passing through daemon startup.  Keep that path safe by
-// applying the canonical schema before its first user operation.  The schema
-// bootstrap itself executes through the same client, so the guard suppresses
-// re-entry while `ensureSchema` is issuing its DDL.
+// applying the canonical schema before its first user operation.
 //
-// schemaApplyingByClient is set only AFTER the dynamic import resolves (not
-// synchronously before it).  This is intentional: two callers that race on
-// the very first execute() call — e.g. the two legs of a Promise.all — both
-// arrive before any await has run, so both see schemaApplyingByClient = false
-// and fall through to `await ready`.  Re-entrant callers from within
-// ensureSchema's own DDL loop arrive after the import and see the flag set,
-// which short-circuits them safely (awaiting `ready` there would deadlock).
-const schemaReadyByClient = new WeakMap<DbClient, Promise<void>>()
+// schemaReadyByTarget serialises schema bootstrap at the *database* level
+// (keyed by the registry key: "kind:normalizedTarget").  Two distinct DbClient
+// objects that point at the same database share one promise, so only a single
+// pg_advisory_xact_lock / DDL transaction runs per process per target — no
+// matter how many separate openDb / resolveQueueClient calls were made.
+//
+// schemaApplyingByClient is the re-entry guard: while ensureSchema is issuing
+// DDL it calls client.batch() which calls ensureClientSchema() again on the
+// same client.  Without the guard that would start a second bootstrap and
+// deadlock waiting for the advisory lock the current transaction already holds.
+// It is set AFTER the dynamic import resolves so that two callers that race on
+// the very first execute() before any await runs both fall through to
+// `await ready` rather than returning immediately before the promise is set.
+const schemaReadyByTarget = new Map<string, Promise<void>>()
 const schemaApplyingByClient = new WeakSet<DbClient>()
 
-async function ensureClientSchema(client: DbClient): Promise<void> {
-  // Re-entrant call from within ensureSchema's DDL loop — skip to avoid deadlock.
+async function ensureClientSchema(client: DbClient, key: string): Promise<void> {
+  // Re-entrant call from within ensureSchema's DDL batch — skip.
   if (schemaApplyingByClient.has(client)) return
-  let ready = schemaReadyByClient.get(client)
+  let ready = schemaReadyByTarget.get(key)
   if (!ready) {
     ready = (async () => {
+      // ensureSchema is imported lazily to avoid a circular-module dependency
+      // (pg-schema.ts imports db.ts; db.ts must not import pg-schema.ts at the
+      // top level).
       const { ensureSchema } = await import('./pg-schema.js')
       schemaApplyingByClient.add(client)
       try {
@@ -519,7 +526,7 @@ async function ensureClientSchema(client: DbClient): Promise<void> {
         schemaApplyingByClient.delete(client)
       }
     })()
-    schemaReadyByClient.set(client, ready)
+    schemaReadyByTarget.set(key, ready)
   }
   await ready
 }
@@ -527,12 +534,12 @@ async function ensureClientSchema(client: DbClient): Promise<void> {
 function makeClient(backend: BackendOps, key: string): DbClient {
   const client: DbClient = {
     execute: async (stmt, args) => {
-      await ensureClientSchema(client)
+      await ensureClientSchema(client, key)
       const { sql, params } = normalizeStatement(stmt, args)
       return backend.query(sql, params)
     },
     batch: async (stmts, _mode?) => {
-      await ensureClientSchema(client)
+      await ensureClientSchema(client, key)
       const normalized = stmts.map((s) => normalizeStatement(s))
       return backend.transaction(async (query) => {
         const results: DbResultSet[] = []
@@ -619,13 +626,70 @@ export async function withTransaction<T>(
 }
 
 /**
+ * Internal-only: runs `stmts` in a single transaction on `client` WITHOUT
+ * going through the `ensureClientSchema` lazy-bootstrap guard.
+ *
+ * Used exclusively by `ensureSchema` in `pg-schema.ts`.  If `ensureSchema`
+ * called `client.batch(...)` instead, `batch` would invoke `ensureClientSchema`
+ * which would recursively call `ensureSchema` (the re-entry guard catches the
+ * inner call), and then the OUTER `client.batch` body would run the SAME DDL
+ * a second time in a separate transaction.  That double-transaction leaves a
+ * window between the two transactions where the advisory lock is not held,
+ * allowing another session to interleave DDL and create a DML-DDL deadlock.
+ *
+ * By bypassing `ensureClientSchema` entirely, `ensureSchema` runs its DDL in
+ * exactly one transaction — the advisory lock is acquired and held for the full
+ * duration.
+ */
+export async function __execSchemaBatch(
+  client: DbClient,
+  stmts: readonly DbStatement[],
+): Promise<void> {
+  const backend = backendOf.get(client)
+  if (!backend) {
+    throw new Error('db: __execSchemaBatch requires a client created by openDb')
+  }
+  const normalized = stmts.map((s) => normalizeStatement(s))
+  await backend.transaction(async (query) => {
+    for (const { sql, params } of normalized) {
+      await query(sql, params)
+    }
+  })
+}
+
+/**
  * Test-only: closes every registered client and empties the registry so the
  * next `openDb` starts fresh (mirrors `__resetStateClientForTests`).
  */
 export async function __resetDbRegistryForTests(): Promise<void> {
   const entries = [...registry.values()]
   registry.clear()
+  schemaReadyByTarget.clear()
   await Promise.allSettled(entries.map((e) => e.backend.end()))
+}
+
+/**
+ * Test-only: creates a fresh DbClient that is NOT added to the shared
+ * registry. Every call returns a distinct object with its own connection pool
+ * / PGlite instance, even when `target` is the same as a registered client.
+ *
+ * Used by the concurrency regression suite to reproduce the scenario where two
+ * independent modules hold separate client objects for the same database.
+ */
+export function __createFreshClientForTests(target: string): DbClient {
+  const kind = resolveBackendKind()
+  const normalizedTarget =
+    kind === 'pglite' && target.startsWith('file:')
+      ? target.slice('file:'.length)
+      : target
+  const backend =
+    kind === 'embedded'
+      ? makeEmbeddedBackend(target)
+      : makePgliteBackend(normalizedTarget)
+  // Use a sentinel key that does not collide with the registry so close()
+  // never accidentally removes the real singleton.
+  const key = `__fresh__:${kind}:${normalizedTarget}`
+  return makeClient(backend, key)
 }
 
 /**
@@ -657,7 +721,9 @@ export async function recycleDbPool(target: string): Promise<void> {
   // Remove from the registry FIRST so that concurrent `openDb` callers create
   // a fresh entry immediately, even if `end()` takes time to drain.
   registry.delete(key)
-  schemaReadyByClient.delete(entry.client)
+  // Clear the per-target schema-ready promise so the next openDb(target) call
+  // re-bootstraps the schema on its first use.
+  schemaReadyByTarget.delete(key)
   await Promise.race([
     entry.backend.end().catch(() => {}),
     new Promise<void>((resolve) => setTimeout(resolve, 5_000)),

@@ -35,6 +35,7 @@
  */
 
 import type { DbClient } from './db.js'
+import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
 export const SCHEMA_VERSION = '0002'
@@ -845,9 +846,20 @@ export const SCHEMA_ADVISORY_LOCK_KEY = 20260726
  * AccessExclusiveLock each DDL statement takes on `tasks`. The xact-scoped
  * variant auto-releases when the wrapping transaction commits or rolls back —
  * no explicit unlock is required.
+ *
+ * Implementation note: this function uses `__execSchemaBatch` (a raw
+ * transaction helper exported from db.ts) instead of `client.batch`.
+ * `client.batch` calls `ensureClientSchema` internally, which would
+ * recursively trigger `ensureSchema` (caught by the re-entry guard), and then
+ * the outer `client.batch` would run the SAME DDL a second time in a separate
+ * transaction.  That double-transaction leaves a window between the two
+ * commits where the advisory lock is not held, creating an opportunity for a
+ * DML-DDL deadlock with the running daemon.  `__execSchemaBatch` bypasses the
+ * schema-bootstrap guard entirely so the DDL executes in exactly one
+ * transaction.
  */
 export async function ensureSchema(client: DbClient): Promise<void> {
-  await client.batch([
+  await __execSchemaBatch(client, [
     // Serialize concurrent callers: DDL takes AccessExclusiveLock on
     // `tasks`, so two interleaved ensureSchema batches deadlock. This
     // advisory lock makes the second caller wait until the first commits.
