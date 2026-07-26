@@ -80,7 +80,7 @@ export interface AttachmentInfo {
 export type ChatSegment =
   | { type: 'text'; text: string }
   | { type: 'thinking'; thinking: string }
-  | { type: 'tool_use'; id: string; name: string; tool: string; input: unknown }
+  | { type: 'tool_use'; id: string; name: string; tool: string; input: unknown; status?: 'executed' | 'proposed' | 'error' }
   | { type: 'tool_result'; tool_use_id: string; content: unknown; isError: boolean }
   | { type: 'result'; durationMs: number | null; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cost: number | null }
   | { type: 'error'; message: string }
@@ -143,6 +143,7 @@ export const parseEventToSegments = (event: unknown): ChatSegment[] => {
         tool,
         name: command !== null ? deriveCommandName(command) : skillName !== null ? `skill ${skillName}` : tool,
         input: args,
+        status: 'executed',
       })
     } else if (item.type === 'reasoning' && Array.isArray(item.summary)) {
       const thinking = item.summary
@@ -858,7 +859,8 @@ export class ChatRunner {
         const usageTotals = { input: 0, output: 0, cached: 0 }
 
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-          const pendingCalls: Array<{ callId: string; tool: string; input: unknown }> = []
+          type PendingCall = { callId: string; tool: string; input: unknown; seg: ChatSegment & { type: 'tool_use' } }
+          const pendingCalls: PendingCall[] = []
 
           for (;;) {
             pendingCalls.length = 0
@@ -879,8 +881,13 @@ export class ChatRunner {
                       usageTotals.cached += seg.cacheReadTokens ?? 0
                       continue
                     }
-                    broadcastSegment(seg)
-                    if (seg.type === 'tool_use') pendingCalls.push({ callId: seg.id, tool: seg.tool, input: seg.input })
+                    // Defer tool_use broadcast until after execution so we can
+                    // detect mars-propose envelopes and set the correct status.
+                    if (seg.type === 'tool_use') {
+                      pendingCalls.push({ callId: seg.id, tool: seg.tool, input: seg.input, seg })
+                    } else {
+                      broadcastSegment(seg)
+                    }
                   }
                 },
               })
@@ -907,7 +914,41 @@ export class ChatRunner {
             } else {
               result = await executeToolCall(call.tool, args, repoRoot, abort.signal)
             }
-            broadcastSegment({ type: 'tool_result', tool_use_id: call.callId, content: result.content, isError: result.isError })
+
+            // Detect mars-propose envelope: stdout is valid JSON matching
+            // { kind: 'mars-propose', verb, args, proposalId }.
+            let proposed: { verb: string; propArgs: unknown; proposalId: string } | null = null
+            if (call.tool === 'shell' && isObject(result.content) && typeof (result.content as Record<string, unknown>).stdout === 'string') {
+              const raw = ((result.content as Record<string, unknown>).stdout as string).trim()
+              try {
+                const parsed = JSON.parse(raw)
+                if (
+                  isObject(parsed) &&
+                  parsed.kind === 'mars-propose' &&
+                  typeof parsed.verb === 'string' &&
+                  typeof parsed.proposalId === 'string'
+                ) {
+                  proposed = { verb: parsed.verb, propArgs: parsed.args, proposalId: parsed.proposalId as string }
+                }
+              } catch { /* not JSON — treat as normal output */ }
+            }
+
+            if (proposed !== null) {
+              // Proposed: emit a single tool_use with status:'proposed'; no tool_result.
+              broadcastSegment({
+                type: 'tool_use',
+                id: call.callId,
+                tool: call.tool,
+                name: 'mars ' + proposed.verb,
+                input: { args: proposed.propArgs, proposalId: proposed.proposalId },
+                status: 'proposed',
+              })
+            } else {
+              // Normal: emit deferred tool_use then tool_result.
+              broadcastSegment(call.seg)
+              broadcastSegment({ type: 'tool_result', tool_use_id: call.callId, content: result.content, isError: result.isError })
+            }
+
             input.push({ type: 'function_call', name: call.tool, arguments: JSON.stringify(args), call_id: call.callId })
             input.push({ type: 'function_call_output', call_id: call.callId, output: JSON.stringify(result.content) })
             if (abort.signal.aborted) break

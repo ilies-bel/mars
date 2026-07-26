@@ -97,6 +97,7 @@ describe('parseEventToSegments', () => {
       id: 'call-1',
       name: 'ls',
       input: { command: 'ls -la' },
+      status: 'executed',
     })
   })
 
@@ -135,6 +136,11 @@ describe('parseEventToSegments', () => {
     expect(
       parseEventToSegments({ type: 'response.output_item.done', item: { type: 'reasoning', summary: [] } }),
     ).toEqual([])
+  })
+
+  it('all tool_use segments carry status: executed', () => {
+    const segs = parseEventToSegments(toolCallEvent('call-6', 'read_file', { path: 'a.md' }))
+    expect(segs[0]).toMatchObject({ type: 'tool_use', status: 'executed' })
   })
 })
 
@@ -961,6 +967,87 @@ describe('ChatRunner state machine', () => {
     expect(attSeg).toBeDefined()
     expect((attSeg as { path: string; kindHint: string }).path).toBe('/abs/path/screen.png')
     expect((attSeg as { path: string; kindHint: string }).kindHint).toBe('image')
+  })
+
+  // ── mars-propose envelope detection ──────────────────────────────────────
+
+  it('emits a proposed tool_use and no tool_result when stdout is a mars-propose envelope', async () => {
+    const envelope = JSON.stringify({ kind: 'mars-propose', verb: 'restart', args: ['daemon'], proposalId: 'prop-1' })
+    mockStream
+      .mockImplementationOnce(streamEmitting(functionCallEvent('call-p', 'mars propose restart daemon'), completedEvent()))
+      .mockImplementationOnce(streamEmitting(messageEvent('Proposed restart.'), completedEvent()))
+    mockShell.mockResolvedValue({ exitCode: 0, stdout: envelope, stderr: '' })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'restart the daemon', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
+    const segments = assistantCall![3] as Array<{ type: string; status?: string; name?: string }>
+    const toolUseSegs = segments.filter((s) => s.type === 'tool_use')
+    const toolResultSegs = segments.filter((s) => s.type === 'tool_result')
+
+    expect(toolUseSegs).toHaveLength(1)
+    expect(toolUseSegs[0]).toMatchObject({ type: 'tool_use', status: 'proposed', name: 'mars restart' })
+    expect(toolResultSegs).toHaveLength(0)
+  })
+
+  it('emits proposed tool_use with verb/args/proposalId from the envelope', async () => {
+    const envelope = JSON.stringify({ kind: 'mars-propose', verb: 'purge', args: ['t-42'], proposalId: 'prop-99' })
+    mockStream
+      .mockImplementationOnce(streamEmitting(functionCallEvent('call-q', 'mars propose purge t-42'), completedEvent()))
+      .mockImplementationOnce(streamEmitting(messageEvent('Done.'), completedEvent()))
+    mockShell.mockResolvedValue({ exitCode: 0, stdout: envelope, stderr: '' })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'purge task', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
+    const segments = assistantCall![3] as Array<{ type: string; input?: unknown; status?: string }>
+    const proposed = segments.find((s) => s.type === 'tool_use' && s.status === 'proposed')
+    expect(proposed).toMatchObject({
+      type: 'tool_use',
+      status: 'proposed',
+      name: 'mars purge',
+      input: { args: ['t-42'], proposalId: 'prop-99' },
+    })
+  })
+
+  it('falls back to executed tool_use + tool_result when stdout is malformed JSON', async () => {
+    mockStream
+      .mockImplementationOnce(streamEmitting(functionCallEvent('call-r', 'mars propose bad'), completedEvent()))
+      .mockImplementationOnce(streamEmitting(messageEvent('Done.'), completedEvent()))
+    mockShell.mockResolvedValue({ exitCode: 0, stdout: 'not json at all', stderr: '' })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'bad propose', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
+    const segments = assistantCall![3] as Array<{ type: string; status?: string }>
+    const toolUse = segments.find((s) => s.type === 'tool_use')
+    const toolResult = segments.find((s) => s.type === 'tool_result')
+    expect(toolUse?.status).toBe('executed')
+    expect(toolResult).toBeDefined()
+  })
+
+  it('falls back to executed rendering when stdout is JSON but not a mars-propose envelope', async () => {
+    mockStream
+      .mockImplementationOnce(streamEmitting(functionCallEvent('call-s', 'echo hello'), completedEvent()))
+      .mockImplementationOnce(streamEmitting(messageEvent('Done.'), completedEvent()))
+    mockShell.mockResolvedValue({ exitCode: 0, stdout: JSON.stringify({ kind: 'something-else' }), stderr: '' })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'echo hello', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
+    const segments = assistantCall![3] as Array<{ type: string; status?: string }>
+    const toolUse = segments.find((s) => s.type === 'tool_use')
+    const toolResult = segments.find((s) => s.type === 'tool_result')
+    expect(toolUse?.status).toBe('executed')
+    expect(toolResult).toBeDefined()
   })
 
   // ── shutdownDrain ─────────────────────────────────────────────────────────
