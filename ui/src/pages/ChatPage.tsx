@@ -1163,7 +1163,7 @@ const ChatConversation = ({
       <Composer
         threadId={threadId}
         projectId={projectId}
-        disabled={serverRunning || isBusy}
+        disabled={false}
         isBusy={isBusy || serverRunning}
         onSend={handleSend}
         onStop={handleStop}
@@ -1800,7 +1800,7 @@ export const Composer = ({
   const handleSend = useCallback(() => {
     const trimmed = text.trim()
     // Allow sending with just attachments (empty text) or just text.
-    if ((!trimmed && attachments.length === 0) || disabled || isPending || sendPending || isUploading) return
+    if ((!trimmed && attachments.length === 0) || isBusy || isPending || sendPending || isUploading) return
     setShowPalette(false)
     setLocalSendError(null)
     if (onSendOverride) {
@@ -1813,7 +1813,7 @@ export const Composer = ({
       send(trimmed)
       // setText('') / attachment clearing handled inside send.onSuccess so inputs survive failure
     }
-  }, [text, attachments.length, disabled, isPending, sendPending, isUploading, onSendOverride, onSend, send])
+  }, [text, attachments.length, isBusy, isPending, sendPending, isUploading, onSendOverride, onSend, send])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showPalette && matches.length > 0) {
@@ -1962,7 +1962,7 @@ export const Composer = ({
     setVoiceBlob(null)
   }, [voiceBlob, addFiles])
 
-  const isDisabled = disabled || isPending || sendPending || isUploading
+  const isDisabled = isPending || sendPending || isUploading
 
   return (
     <div
@@ -2063,7 +2063,7 @@ export const Composer = ({
 
         <PromptInputTextarea
           ref={textareaRef}
-          placeholder={isDisabled ? 'Running…' : 'Message mars… (Enter to send, Shift+Enter for newline)'}
+          placeholder='Message mars… (Enter to send, Shift+Enter for newline)'
           value={text}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
@@ -2085,7 +2085,7 @@ export const Composer = ({
               data-testid="attach-btn"
               aria-label="Attach file"
               title="Attach image, audio or video"
-              disabled={isDisabled}
+              disabled={disabled || isDisabled}
               onClick={() => fileInputRef.current?.click()}
             >
               <PaperclipIcon className="size-4" />
@@ -2122,7 +2122,7 @@ export const Composer = ({
               type="button"
               data-testid="send-btn"
               status={isUploading ? 'submitted' : undefined}
-              disabled={isDisabled || (text.trim().length === 0 && attachments.length === 0)}
+              disabled={disabled || isDisabled || (text.trim().length === 0 && attachments.length === 0)}
               onClick={handleSend}
             />
           )}
