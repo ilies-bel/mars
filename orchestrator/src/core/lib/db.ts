@@ -431,12 +431,34 @@ class Mutex {
   }
 }
 
+// PGlite 0.5.x honours the `parsers` option for int8 (OID 20) but silently
+// ignores it for numeric (OID 1700) — the parser is never invoked.  Work
+// around this by reading the per-query `fields` descriptor that PGlite always
+// provides and converting string values in numeric columns to JS numbers after
+// the fact.
+const PGLITE_NUMERIC_OID = 1700
+
 function toResultSetPglite(
-  result: { rows: DbRow[]; affectedRows?: number },
+  result: { rows: DbRow[]; affectedRows?: number; fields?: ReadonlyArray<{ name: string; dataTypeID: number }> },
   sql: string,
 ): DbResultSet {
+  const numericCols = new Set(
+    (result.fields ?? []).filter((f) => f.dataTypeID === PGLITE_NUMERIC_OID).map((f) => f.name),
+  )
+  const normalize = numericCols.size === 0
+    ? normalizeRow
+    : (row: DbRow): DbRow => {
+        let r = normalizeRow(row)
+        for (const col of numericCols) {
+          const v = r[col]
+          if (typeof v === 'string') {
+            r = { ...r, [col]: Number(v) }
+          }
+        }
+        return r
+      }
   return {
-    rows: result.rows.map(normalizeRow),
+    rows: result.rows.map(normalize),
     rowsAffected:
       leadingKeyword(sql) === 'select' ? 0 : (result.affectedRows ?? 0),
   }

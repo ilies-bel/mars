@@ -63,63 +63,68 @@ describe('translatePlaceholders', () => {
   })
 })
 
-const makeTasksTable = async (c: DbClient): Promise<void> => {
+// Use 'test_tasks' (not 'tasks') to avoid colliding with the production schema
+// that ensureClientSchema applies automatically before the first execute().
+// The production schema creates 'tasks' via CREATE TABLE IF NOT EXISTS, so a
+// bare CREATE TABLE tasks here would fail with "relation already exists".
+const makeTestTasksTable = async (c: DbClient): Promise<void> => {
   await c.execute(
-    'CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT NOT NULL, retry_count INTEGER NOT NULL DEFAULT 0)',
+    'CREATE TABLE test_tasks (id TEXT PRIMARY KEY, status TEXT NOT NULL, retry_count INTEGER NOT NULL DEFAULT 0)',
   )
 }
 
 describe('execute (pglite backend)', () => {
   it('returns rows as objects keyed by column name', async () => {
     const c = openDb(freshKey())
-    await makeTasksTable(c)
-    await c.execute('INSERT INTO tasks (id, status) VALUES (?, ?)', ['t1', 'queued'])
-    const r = await c.execute('SELECT id, status, retry_count FROM tasks WHERE id = ?', ['t1'])
+    await makeTestTasksTable(c)
+    await c.execute('INSERT INTO test_tasks (id, status) VALUES (?, ?)', ['t1', 'queued'])
+    const r = await c.execute('SELECT id, status, retry_count FROM test_tasks WHERE id = ?', ['t1'])
     expect(r.rows).toEqual([{ id: 't1', status: 'queued', retry_count: 0 }])
   })
 
   it('accepts the {sql, args} statement-object shape', async () => {
     const c = openDb(freshKey())
-    await makeTasksTable(c)
+    await makeTestTasksTable(c)
     await c.execute({
-      sql: 'INSERT INTO tasks (id, status) VALUES (?, ?)',
+      sql: 'INSERT INTO test_tasks (id, status) VALUES (?, ?)',
       args: ['t2', 'running'],
     })
-    const r = await c.execute({ sql: 'SELECT status FROM tasks WHERE id = ?', args: ['t2'] })
+    const r = await c.execute({ sql: 'SELECT status FROM test_tasks WHERE id = ?', args: ['t2'] })
     expect(r.rows[0]?.['status']).toBe('running')
   })
 
   it('reports rowsAffected for DML and 0 for SELECT', async () => {
     const c = openDb(freshKey())
-    await makeTasksTable(c)
-    await c.execute('INSERT INTO tasks (id, status) VALUES (?, ?), (?, ?)', [
+    await makeTestTasksTable(c)
+    await c.execute('INSERT INTO test_tasks (id, status) VALUES (?, ?), (?, ?)', [
       'a', 'queued', 'b', 'queued',
     ])
-    const upd = await c.execute("UPDATE tasks SET status = 'done' WHERE status = ?", ['queued'])
+    const upd = await c.execute("UPDATE test_tasks SET status = 'done' WHERE status = ?", ['queued'])
     expect(upd.rowsAffected).toBe(2)
-    const sel = await c.execute('SELECT * FROM tasks')
+    const sel = await c.execute('SELECT * FROM test_tasks')
     expect(sel.rowsAffected).toBe(0)
-    const del = await c.execute('DELETE FROM tasks WHERE id = ?', ['a'])
+    const del = await c.execute('DELETE FROM test_tasks WHERE id = ?', ['a'])
     expect(del.rowsAffected).toBe(1)
-    const noop = await c.execute('DELETE FROM tasks WHERE id = ?', ['missing'])
+    const noop = await c.execute('DELETE FROM test_tasks WHERE id = ?', ['missing'])
     expect(noop.rowsAffected).toBe(0)
   })
 
   it('supports INSERT ... RETURNING id (the lastInsertRowid replacement)', async () => {
     const c = openDb(freshKey())
+    // Use 'test_events' (not 'events') — production schema owns 'events'.
     await c.execute(
-      'CREATE TABLE events (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, type TEXT)',
+      'CREATE TABLE test_events (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, type TEXT)',
     )
-    const r = await c.execute('INSERT INTO events (type) VALUES (?) RETURNING id', ['x'])
+    const r = await c.execute('INSERT INTO test_events (type) VALUES (?) RETURNING id', ['x'])
     expect(r.rows[0]?.['id']).toBe(1)
     expect(typeof r.rows[0]?.['id']).toBe('number')
   })
 
   it('returns int8 aggregates and columns as JS numbers', async () => {
     const c = openDb(freshKey())
-    await makeTasksTable(c)
-    await c.execute('INSERT INTO tasks (id, status) VALUES (?, ?)', ['t1', 'queued'])
-    const count = await c.execute('SELECT COUNT(*) AS cnt FROM tasks')
+    await makeTestTasksTable(c)
+    await c.execute('INSERT INTO test_tasks (id, status) VALUES (?, ?)', ['t1', 'queued'])
+    const count = await c.execute('SELECT COUNT(*) AS cnt FROM test_tasks')
     expect(count.rows[0]?.['cnt']).toBe(1)
     const big = await c.execute('SELECT 9007199254740::int8 AS v, 1.5::numeric AS n')
     expect(big.rows[0]?.['v']).toBe(9007199254740)
@@ -145,27 +150,27 @@ describe('execute (pglite backend)', () => {
 describe('withTransaction', () => {
   it('commits when the callback resolves', async () => {
     const c = openDb(freshKey())
-    await makeTasksTable(c)
+    await makeTestTasksTable(c)
     const out = await withTransaction(c, async (tx) => {
-      await tx.execute('INSERT INTO tasks (id, status) VALUES (?, ?)', ['t1', 'queued'])
-      await tx.execute("UPDATE tasks SET status = 'running' WHERE id = ?", ['t1'])
+      await tx.execute('INSERT INTO test_tasks (id, status) VALUES (?, ?)', ['t1', 'queued'])
+      await tx.execute("UPDATE test_tasks SET status = 'running' WHERE id = ?", ['t1'])
       return 'ok'
     })
     expect(out).toBe('ok')
-    const r = await c.execute('SELECT status FROM tasks WHERE id = ?', ['t1'])
+    const r = await c.execute('SELECT status FROM test_tasks WHERE id = ?', ['t1'])
     expect(r.rows[0]?.['status']).toBe('running')
   })
 
   it('rolls back everything and rethrows the original error', async () => {
     const c = openDb(freshKey())
-    await makeTasksTable(c)
+    await makeTestTasksTable(c)
     await expect(
       withTransaction(c, async (tx) => {
-        await tx.execute('INSERT INTO tasks (id, status) VALUES (?, ?)', ['t1', 'queued'])
+        await tx.execute('INSERT INTO test_tasks (id, status) VALUES (?, ?)', ['t1', 'queued'])
         throw new Error('boom')
       }),
     ).rejects.toThrow('boom')
-    const r = await c.execute('SELECT COUNT(*) AS cnt FROM tasks')
+    const r = await c.execute('SELECT COUNT(*) AS cnt FROM test_tasks')
     expect(r.rows[0]?.['cnt']).toBe(0)
   })
 
@@ -188,26 +193,26 @@ describe('withTransaction', () => {
 
   it('keeps a concurrent plain execute out of an open transaction', async () => {
     const c = openDb(freshKey())
-    await makeTasksTable(c)
+    await makeTestTasksTable(c)
     const tx = withTransaction(c, async (t) => {
-      await t.execute('INSERT INTO tasks (id, status) VALUES (?, ?)', ['inside', 'queued'])
+      await t.execute('INSERT INTO test_tasks (id, status) VALUES (?, ?)', ['inside', 'queued'])
       await new Promise((resolve) => setTimeout(resolve, 10))
       throw new Error('abort')
     })
     // Issued while the transaction above is still open; must serialize AFTER
     // its rollback, not join it (and so must survive the rollback).
-    const outside = c.execute('INSERT INTO tasks (id, status) VALUES (?, ?)', [
+    const outside = c.execute('INSERT INTO test_tasks (id, status) VALUES (?, ?)', [
       'outside', 'queued',
     ])
     await expect(tx).rejects.toThrow('abort')
     await outside
-    const r = await c.execute('SELECT id FROM tasks ORDER BY id')
+    const r = await c.execute('SELECT id FROM test_tasks ORDER BY id')
     expect(r.rows).toEqual([{ id: 'outside' }])
   })
 
   it('recovers after a failed transaction (mutex chain does not wedge)', async () => {
     const c = openDb(freshKey())
-    await makeTasksTable(c)
+    await makeTestTasksTable(c)
     await expect(
       withTransaction(c, async (tx) => {
         await tx.execute('INSERT INTO nonexistent_table VALUES (1)')
@@ -221,12 +226,12 @@ describe('withTransaction', () => {
 describe('batch', () => {
   it('executes statements in order and returns one result set per statement', async () => {
     const c = openDb(freshKey())
-    await makeTasksTable(c)
+    await makeTestTasksTable(c)
     const results = await c.batch(
       [
-        { sql: 'INSERT INTO tasks (id, status) VALUES (?, ?)', args: ['a', 'queued'] },
-        { sql: 'INSERT INTO tasks (id, status) VALUES (?, ?)', args: ['b', 'queued'] },
-        { sql: 'SELECT COUNT(*) AS cnt FROM tasks', args: [] },
+        { sql: 'INSERT INTO test_tasks (id, status) VALUES (?, ?)', args: ['a', 'queued'] },
+        { sql: 'INSERT INTO test_tasks (id, status) VALUES (?, ?)', args: ['b', 'queued'] },
+        { sql: 'SELECT COUNT(*) AS cnt FROM test_tasks', args: [] },
       ],
       'write',
     )
@@ -237,24 +242,24 @@ describe('batch', () => {
 
   it('is atomic: a failing statement rolls back the whole batch', async () => {
     const c = openDb(freshKey())
-    await makeTasksTable(c)
+    await makeTestTasksTable(c)
     await expect(
       c.batch(
         [
-          { sql: 'INSERT INTO tasks (id, status) VALUES (?, ?)', args: ['a', 'queued'] },
-          { sql: 'INSERT INTO tasks (id, status) VALUES (?, ?)', args: ['a', 'dup-pk'] },
+          { sql: 'INSERT INTO test_tasks (id, status) VALUES (?, ?)', args: ['a', 'queued'] },
+          { sql: 'INSERT INTO test_tasks (id, status) VALUES (?, ?)', args: ['a', 'dup-pk'] },
         ],
         'write',
       ),
     ).rejects.toThrow()
-    const r = await c.execute('SELECT COUNT(*) AS cnt FROM tasks')
+    const r = await c.execute('SELECT COUNT(*) AS cnt FROM test_tasks')
     expect(r.rows[0]?.['cnt']).toBe(0)
   })
 
   it('accepts bare-string statements and the read mode flag', async () => {
     const c = openDb(freshKey())
-    await makeTasksTable(c)
-    const [r] = await c.batch(['SELECT COUNT(*) AS cnt FROM tasks'], 'read')
+    await makeTestTasksTable(c)
+    const [r] = await c.batch(['SELECT COUNT(*) AS cnt FROM test_tasks'], 'read')
     expect(r?.rows[0]?.['cnt']).toBe(0)
   })
 })
@@ -320,5 +325,31 @@ describe('backend selection', () => {
     } finally {
       process.env.MARS_DB_BACKEND = 'pglite'
     }
+  })
+})
+
+describe('isolation', () => {
+  // Both tests use the same fixed key so they share the same logical database
+  // identity; the afterEach(__resetDbRegistryForTests) between them is what
+  // makes the second CREATE TABLE succeed. If the reset is ever removed or
+  // broken, the second test will fail loudly with "relation already exists".
+  const FIXED_KEY = `db-isolation-test-${process.pid}`
+
+  it('does not leak tables between cases (first)', async () => {
+    const c = openDb(FIXED_KEY)
+    await c.execute('CREATE TABLE isolation_probe (id INTEGER PRIMARY KEY)')
+    await c.execute('INSERT INTO isolation_probe (id) VALUES (42)')
+    const r = await c.execute('SELECT id FROM isolation_probe')
+    expect(r.rows[0]?.['id']).toBe(42)
+  })
+
+  it('does not leak tables between cases (second - same key, same table name)', async () => {
+    // afterEach from the previous case must have reset the registry; otherwise
+    // openDb(FIXED_KEY) returns the same database and CREATE TABLE fails.
+    const c = openDb(FIXED_KEY)
+    await c.execute('CREATE TABLE isolation_probe (id INTEGER PRIMARY KEY)')
+    await c.execute('INSERT INTO isolation_probe (id) VALUES (99)')
+    const r = await c.execute('SELECT id FROM isolation_probe')
+    expect(r.rows[0]?.['id']).toBe(99)
   })
 })
