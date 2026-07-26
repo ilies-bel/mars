@@ -331,6 +331,35 @@ describe('EventsPage render', () => {
     expect(html).toContain('data-testid="events-q"')
   })
 
+  it('renders category labels (Severity, Kind, Phase) as non-interactive spans — not buttons', () => {
+    // The Severity:, Kind:, Phase: labels must be informational read-only spans.
+    // CSS text-transform:uppercase makes them visually all-caps but the DOM text
+    // stays in the prop's original mixed case. Users click the pill *buttons* to
+    // toggle filters; they never click labels.
+    // This verifies the label/pill distinction is preserved at the semantic level.
+    const qc = makeClient(EMPTY_RESPONSE)
+    const html = renderPage(qc)
+    // Each label appears as plain text in the HTML — not wrapped in a <button>.
+    expect(html).toContain('>Severity:<')
+    expect(html).toContain('>Kind:<')
+    expect(html).toContain('>Phase:<')
+    // The pill buttons carry aria-pressed; the labels must NOT carry aria-pressed.
+    // Count occurrences: one aria-pressed per pill (3 severities + 8 kinds + 5 phases = 16).
+    const pillCount = (html.match(/aria-pressed=/g) ?? []).length
+    expect(pillCount).toBe(SEVERITY_OPTIONS.length + KIND_OPTIONS.length + PHASE_OPTIONS.length)
+  })
+
+  it('renders thin visual separators between the SEVERITY, KIND, and PHASE pill groups', () => {
+    // The filter bar splits its three pill groups with decorative dividers so
+    // operators can distinguish them at a glance without relying on label text alone.
+    // Separators are aria-hidden so assistive technology skips them.
+    const qc = makeClient(EMPTY_RESPONSE)
+    const html = renderPage(qc)
+    // There are 3 separators: (time|SEVERITY), (SEVERITY|KIND), (PHASE|inputs).
+    const separatorCount = (html.match(/aria-hidden="true"/g) ?? []).length
+    expect(separatorCount).toBeGreaterThanOrEqual(3)
+  })
+
   it('shows the Load more button when nextCursor is non-null and there are events', () => {
     const qc = makeClient(
       makeResponse([makeEvent()], 'opaque-cursor'),

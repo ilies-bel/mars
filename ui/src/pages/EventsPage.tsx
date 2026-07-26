@@ -192,7 +192,7 @@ const MultiSelect = <T extends string>({
   displayLabel,
 }: MultiSelectProps<T>) => (
   <div className="flex flex-wrap items-center gap-1" data-testid={testId}>
-    <span className="self-center font-mono text-[10px] uppercase tracking-wide text-iron">
+    <span className="self-center font-mono text-[9px] uppercase tracking-wide text-muted/60">
       {label}:
     </span>
     {options.map((opt) => {
@@ -940,111 +940,123 @@ export const EventsPage = () => {
         <KpiVector />
       </div>
 
-      {/* Filter row — fixed above the scrollable list */}
-      <div className="flex flex-wrap items-start gap-4">
-        {/* Time range */}
-        <div className="flex items-center gap-1">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-iron">
-            Time:
-          </span>
-          <select
-            aria-label="Time range"
-            data-testid="events-time-range"
-            value={state.range}
-            onChange={(e) =>
-              setState((prev) => ({
-                ...prev,
-                range: e.target.value as TimeRange,
-              }))
-            }
-            className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg focus:border-iron/60 focus:outline-none"
-          >
-            {TIME_RANGE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* Filter rows — two logical lines: (time · SEVERITY · KIND) / (PHASE · inputs) */}
+      <div className="flex flex-col gap-2">
+        {/* Row 1: time range · SEVERITY · KIND */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Time range */}
+          <div className="flex items-center gap-1">
+            <span className="font-mono text-[9px] uppercase tracking-wide text-muted/60">
+              Time:
+            </span>
+            <select
+              aria-label="Time range"
+              data-testid="events-time-range"
+              value={state.range}
+              onChange={(e) =>
+                setState((prev) => ({
+                  ...prev,
+                  range: e.target.value as TimeRange,
+                }))
+              }
+              className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg focus:border-iron/60 focus:outline-none"
+            >
+              {TIME_RANGE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <MultiSelect
-          label="Severity"
-          options={SEVERITY_OPTIONS}
-          selected={state.severities}
-          onToggle={(v) => toggleIn<Severity>('severities', v)}
-          testId="events-severity"
-        />
+          <div className="h-4 w-px shrink-0 bg-iron/20" aria-hidden="true" />
 
-        <MultiSelect
-          label="Kind"
-          options={KIND_OPTIONS}
-          selected={state.kinds}
-          onToggle={(v) => toggleIn<Kind>('kinds', v)}
-          testId="events-kind"
-          displayLabel={humanizeKind}
-        />
+          <MultiSelect
+            label="Severity"
+            options={SEVERITY_OPTIONS}
+            selected={state.severities}
+            onToggle={(v) => toggleIn<Severity>('severities', v)}
+            testId="events-severity"
+          />
 
-        <MultiSelect
-          label="Phase"
-          options={PHASE_OPTIONS}
-          selected={state.phases}
-          onToggle={(v) => toggleIn<Phase>('phases', v)}
-          testId="events-phase"
-          displayLabel={(p) => humanizePhase(p) ?? p}
-        />
+          <div className="h-4 w-px shrink-0 bg-iron/20" aria-hidden="true" />
 
-        {/* Task ID exact match */}
-        <div className="flex items-center gap-1">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-iron">
-            Task&nbsp;ID:
-          </span>
-          <input
-            type="text"
-            aria-label="Filter by task ID"
-            data-testid="events-task-id"
-            placeholder="exact id…"
-            value={state.taskId}
-            onChange={(e) =>
-              setState((prev) => ({ ...prev, taskId: e.target.value }))
-            }
-            className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
+          <MultiSelect
+            label="Kind"
+            options={KIND_OPTIONS}
+            selected={state.kinds}
+            onToggle={(v) => toggleIn<Kind>('kinds', v)}
+            testId="events-kind"
+            displayLabel={humanizeKind}
           />
         </div>
 
-        {/* Origin ID exact match */}
-        <div className="flex items-center gap-1">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-iron">
-            Origin&nbsp;ID:
-          </span>
-          <input
-            type="text"
-            aria-label="Filter by origin ID"
-            data-testid="events-origin-id"
-            placeholder="exact id…"
-            value={state.originId}
-            onChange={(e) =>
-              setState((prev) => ({ ...prev, originId: e.target.value }))
-            }
-            className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
+        {/* Row 2: PHASE · text inputs */}
+        <div className="flex flex-wrap items-center gap-3">
+          <MultiSelect
+            label="Phase"
+            options={PHASE_OPTIONS}
+            selected={state.phases}
+            onToggle={(v) => toggleIn<Phase>('phases', v)}
+            testId="events-phase"
+            displayLabel={(p) => humanizePhase(p) ?? p}
           />
-        </div>
 
-        {/* Full-text */}
-        <div className="flex flex-1 items-center gap-1 min-w-[180px]">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-iron">
-            Search:
-          </span>
-          <input
-            type="text"
-            aria-label="Search payload"
-            data-testid="events-q"
-            placeholder="payload contains…"
-            value={state.q}
-            onChange={(e) =>
-              setState((prev) => ({ ...prev, q: e.target.value }))
-            }
-            className="flex-1 rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
-          />
+          <div className="h-4 w-px shrink-0 bg-iron/20" aria-hidden="true" />
+
+          {/* Task ID exact match */}
+          <div className="flex items-center gap-1">
+            <span className="font-mono text-[9px] uppercase tracking-wide text-muted/60">
+              Task&nbsp;ID:
+            </span>
+            <input
+              type="text"
+              aria-label="Filter by task ID"
+              data-testid="events-task-id"
+              placeholder="exact id…"
+              value={state.taskId}
+              onChange={(e) =>
+                setState((prev) => ({ ...prev, taskId: e.target.value }))
+              }
+              className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
+            />
+          </div>
+
+          {/* Origin ID exact match */}
+          <div className="flex items-center gap-1">
+            <span className="font-mono text-[9px] uppercase tracking-wide text-muted/60">
+              Origin&nbsp;ID:
+            </span>
+            <input
+              type="text"
+              aria-label="Filter by origin ID"
+              data-testid="events-origin-id"
+              placeholder="exact id…"
+              value={state.originId}
+              onChange={(e) =>
+                setState((prev) => ({ ...prev, originId: e.target.value }))
+              }
+              className="rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
+            />
+          </div>
+
+          {/* Full-text */}
+          <div className="flex flex-1 items-center gap-1 min-w-[180px]">
+            <span className="font-mono text-[9px] uppercase tracking-wide text-muted/60">
+              Search:
+            </span>
+            <input
+              type="text"
+              aria-label="Search payload"
+              data-testid="events-q"
+              placeholder="payload contains…"
+              value={state.q}
+              onChange={(e) =>
+                setState((prev) => ({ ...prev, q: e.target.value }))
+              }
+              className="flex-1 rounded border border-iron/30 bg-iron/5 px-2 py-0.5 font-mono text-[11px] text-fg placeholder-iron focus:border-iron/60 focus:outline-none"
+            />
+          </div>
         </div>
       </div>
 
