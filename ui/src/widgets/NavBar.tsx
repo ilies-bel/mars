@@ -1,5 +1,5 @@
 import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
-import { detectRoute, actionQueueCount } from '@/shared/routing'
+import { resolvePageRoute, actionQueueCount } from '@/shared/routing'
 import { useNotificationsPreference } from '@/entities/notifications'
 import { ProjectSelector } from './ProjectSelector'
 import { BellMenu } from './BellMenu'
@@ -51,7 +51,12 @@ const NotificationsToggle = () => {
 }
 
 export const NavBar = ({ hash }: NavBarProps) => {
-  const route = detectRoute(hash)
+  // `resolvePageRoute`, not `detectRoute`: overlay hashes like `#/task/<id>`
+  // render a drawer ON TOP of the page you came from, so the underlying page is
+  // still what's active. `detectRoute` has no overlay cases and falls through to
+  // its 'chat' default, which lit up Chat in the nav whenever you opened a task
+  // from the board.
+  const route = resolvePageRoute(hash)
 
   const { staleWorktrees } = useStaleWorktrees()
 
