@@ -522,3 +522,7 @@ _Avoid_: shadcn variable, intent token
 **Palette token**:
 A raw Mars brand color (iron, flame, dust) defined in the stylesheet and consumed only by semantic tokens, never directly by components.
 _Avoid_: brand token, raw color
+
+**Steward ledger**:
+The append-only record of every Steward intervention, keyed by target kind, target id, and target version (or content hash), that both enforces the one-fix-per-version rule and feeds every display of Steward activity.
+_Avoid_: intervention log, steward history, steward audit
