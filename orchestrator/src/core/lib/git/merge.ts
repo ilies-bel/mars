@@ -864,6 +864,10 @@ export const mergeBranch = async ({
     // merge already landed via the ref update; log and continue.
     lastStep = 'resync-working-tree'
     let didResyncWorkingTree = false
+    // Set when Step 3 found genuine uncommitted operator work and deliberately
+    // declined to clobber it. `post-merge-assert` below reads this so it does
+    // not undo that decision with its own `reset --hard`.
+    let operatorEditsPresent = false
     try {
       const headBranch = (
         await gexec(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot())
@@ -881,6 +885,7 @@ export const mergeBranch = async ({
           output += reset.stdout + reset.stderr
           didResyncWorkingTree = true
         } else {
+          operatorEditsPresent = true
           output += `\n[mergeBranch] merge target checkout has local changes vs ${finalIntegrationSha.slice(0, 9)}; left as-is to avoid clobbering (HEAD ref advanced).`
         }
       }
@@ -963,24 +968,74 @@ export const mergeBranch = async ({
         )
         if (postStatus.stdout.trim() !== '') {
           output += `\n[mergeBranch] post-merge dirty-tree detected on integration checkout (status:\n${postStatus.stdout.slice(0, 500)}\n)`
-          // Attempt to restore the integration checkout to the current HEAD
-          // (which is finalTaskSha — the merge already landed via update-ref).
-          try {
-            const restored = await gexec(['reset', '--hard', 'HEAD'], repoRoot())
-            output += `\n[mergeBranch] restored integration checkout to HEAD: ${restored.stdout.trim().slice(0, 200)}`
-          } catch (restoreErr: unknown) {
-            const m = restoreErr instanceof Error ? restoreErr.message : String(restoreErr)
-            output += `\n[mergeBranch] restore-to-HEAD failed: ${m.slice(0, 300)}`
+          // The dirt is one of two very different things and they must NOT be
+          // treated alike:
+          //
+          //   a) merge-attributable dirt — Step 3's `reset --hard` failed or was
+          //      interrupted. HEAD already points at finalTaskSha, so resetting
+          //      to HEAD only materialises content that is already committed.
+          //      Nothing can be lost.
+          //
+          //   b) the operator's uncommitted work — Step 3 saw it and explicitly
+          //      declined to clobber it ("a dirty tree is recoverable where lost
+          //      edits are not"). A `reset --hard` here silently destroys it and
+          //      undoes that decision. This really happened: edits made directly
+          //      on the integration checkout vanished mid-session, twice.
+          //
+          // For (b) we stash instead of resetting. That still leaves a clean tree
+          // — so the dispatch-time dirty-main guard does not park the queue — but
+          // the work survives in `git stash list` and can be restored with
+          // `git stash pop`.
+          let preservedByStash = false
+          if (operatorEditsPresent) {
+            try {
+              const stash = await gexec(
+                [
+                  'stash',
+                  'push',
+                  '--include-untracked',
+                  '-m',
+                  `mars: preserved operator edits displaced by merge of ${finalTaskSha.slice(0, 9)}`,
+                ],
+                repoRoot(),
+              )
+              preservedByStash = true
+              output +=
+                `\n[mergeBranch] PRESERVED operator edits on ${integrationBranch} by stashing them ` +
+                `(recover with 'git stash pop'): ${stash.stdout.trim().slice(0, 200)}`
+            } catch (stashErr: unknown) {
+              const m = stashErr instanceof Error ? stashErr.message : String(stashErr)
+              // Could not stash — leave the tree exactly as it is. A dirty tree
+              // parks the queue, which is annoying; destroying the edits is worse.
+              output += `\n[mergeBranch] could not stash operator edits, leaving tree untouched: ${m.slice(0, 300)}`
+            }
+          } else {
+            // Attempt to restore the integration checkout to the current HEAD
+            // (which is finalTaskSha — the merge already landed via update-ref).
+            try {
+              const restored = await gexec(['reset', '--hard', 'HEAD'], repoRoot())
+              output += `\n[mergeBranch] restored integration checkout to HEAD: ${restored.stdout.trim().slice(0, 200)}`
+            } catch (restoreErr: unknown) {
+              const m = restoreErr instanceof Error ? restoreErr.message : String(restoreErr)
+              output += `\n[mergeBranch] restore-to-HEAD failed: ${m.slice(0, 300)}`
+            }
           }
-          return {
-            merged: false,
-            conflictResolved,
-            aborted: false,
-            reason: 'merge-left-dirty-tree',
-            output,
-            supervisorConversation,
-            vegaSessionId,
-            retriesAttempted,
+          // A successful stash leaves the tree clean and the merge already
+          // landed via update-ref, so there is nothing left to report as a
+          // failure. Every other path still returns 'merge-left-dirty-tree' so
+          // the normal failure handling runs and we never claim success over a
+          // tree we could not clean.
+          if (!preservedByStash) {
+            return {
+              merged: false,
+              conflictResolved,
+              aborted: false,
+              reason: 'merge-left-dirty-tree',
+              output,
+              supervisorConversation,
+              vegaSessionId,
+              retriesAttempted,
+            }
           }
         }
       }
