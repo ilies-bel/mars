@@ -804,8 +804,11 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, onDelete }: Thread
         'group flex items-center gap-1 rounded px-2 py-1.5 cursor-pointer border-b border-iron/10',
         isSelected ? 'bg-iron/20 text-fg' : 'text-iron hover:bg-iron/10 hover:text-fg',
       ].join(' ')}
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
       onDoubleClick={startEdit}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect() } }}
     >
       {editing ? (
         <input
