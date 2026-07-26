@@ -28,6 +28,7 @@ import type { ReleaseNoteEntry } from '@/shared/schemas'
 import { relativeTime } from '@/shared/time'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { computeUnseen } from '@/shared/useUnseenReleaseNotes'
+import { SkeletonList } from '@/components/Skeleton'
 
 interface ReleaseNotesModalProps {
   /** Clears the `#/release-notes` hash so the modal closes. */
@@ -256,7 +257,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
           data-testid="release-notes-drawer"
           data-closing={closing ? 'true' : undefined}
           tabIndex={-1}
-          className="modal-panel flex w-full max-w-[560px] max-h-[85vh] flex-col rounded-lg border border-iron/40 bg-bg shadow-2xl outline-none"
+          className="modal-panel flex w-full max-w-[560px] max-h-[85vh] min-h-[240px] flex-col rounded-lg border border-iron/40 bg-bg shadow-2xl outline-none"
         >
           <header className="flex items-center justify-between border-b border-iron/40 px-4 py-3">
             <h2 className="font-mono text-sm uppercase tracking-wide text-iron">
@@ -275,12 +276,12 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
 
           <div className="flex-1 overflow-y-auto">
             {isPending ? (
-              <p
-                data-testid="release-notes-loading"
-                className="px-4 py-6 font-mono text-xs text-iron"
-              >
-                Loading…
-              </p>
+              <SkeletonList
+                rows={6}
+                rowClassName="h-10 w-full mb-2 mx-4"
+                label="Loading release notes"
+                className="px-4 py-4"
+              />
             ) : isError ? (
               <p
                 data-testid="release-notes-error"

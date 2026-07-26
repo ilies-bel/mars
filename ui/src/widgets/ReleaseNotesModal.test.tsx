@@ -169,9 +169,9 @@ describe('ReleaseNotesModal – populated list', () => {
 // ---------------------------------------------------------------------------
 
 describe('ReleaseNotesModal – loading state', () => {
-  it('shows the loading message while the query is pending', () => {
+  it('shows the loading skeleton while the query is pending', () => {
     const html = render(LOADING)
-    expect(html).toContain('Loading…')
+    expect(html).toContain('aria-busy="true"')
     expect(html).not.toContain('data-testid="release-notes-list"')
     expect(html).not.toContain('No work has landed yet.')
   })

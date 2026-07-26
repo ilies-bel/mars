@@ -1,4 +1,5 @@
 import { FallbackSurface } from '@/components/FallbackSurface'
+import { SkeletonBlock } from '@/components/Skeleton'
 import { useKpis } from '@/entities/kpi/useKpis'
 import { KpiTile } from './KpiTile'
 
@@ -9,7 +10,15 @@ export const KpiVector = () => {
     return <FallbackSurface error={error} of="KPI data" variant="inline" />
   }
 
-  if (isLoading || !kpis) return null
+  if (isLoading || !kpis) {
+    return (
+      <div className="flex flex-wrap gap-3" aria-busy="true" aria-label="Loading KPIs">
+        {[0, 1, 2, 3].map((i) => (
+          <SkeletonBlock key={i} className="w-[180px] min-h-[120px] rounded border border-iron/10" />
+        ))}
+      </div>
+    )
+  }
 
   if (kpis.length === 0) {
     return (

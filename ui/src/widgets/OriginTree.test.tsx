@@ -212,7 +212,7 @@ describe('OriginTree – loading and error states', () => {
   it('renders the loading line while the query is pending', () => {
     const html = render(LOADING, { taskId: 't-loading' })
     expect(html).toContain('>Origins<')
-    expect(html).toContain('Loading…')
+    expect(html).toContain('aria-busy="true"')
     expect(html).not.toContain('data-testid="origin-tree"')
   })
 

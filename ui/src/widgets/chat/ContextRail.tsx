@@ -19,6 +19,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchGlossary, fetchSkills } from '@/shared/api'
 import { useProgress } from '@/hooks/useProgress'
+import { SkeletonList } from '@/components/Skeleton'
 
 import type { GlossaryTerm, Skill } from '@/shared/schemas'
 import type { ProgressTask } from '@/shared/schemas'
@@ -81,9 +82,11 @@ const LiveTasksPanel = ({ sessionStartedAt }: LiveTasksPanelProps) => {
 
   if (tasks === null) {
     return (
-      <p className="px-3 py-2 font-mono text-[10px] text-muted animate-pulse">
-        Loading…
-      </p>
+      <SkeletonList
+        rows={2}
+        rowClassName="mx-3 h-11 mb-0.5"
+        label="Loading tasks"
+      />
     )
   }
 

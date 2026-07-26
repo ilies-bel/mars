@@ -3,6 +3,7 @@ import { fetchOrigins } from '@/shared/api'
 import { originKindLabel } from '@/shared/actionQueueDetail'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { FallbackSurface } from '@/components/FallbackSurface'
+import { SkeletonList } from '@/components/Skeleton'
 import type { OriginNode } from '@/shared/schemas'
 
 interface OriginTreeProps {
@@ -103,7 +104,9 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
         <dt className="mb-2 border-b border-iron/20 pb-1 text-[10px] uppercase tracking-wider text-iron">
           Origins
         </dt>
-        <dd className="text-muted">Loading…</dd>
+        <dd>
+          <SkeletonList rows={3} rowClassName="h-6 w-full mb-1" label="Loading origins" />
+        </dd>
       </div>
     )
   }

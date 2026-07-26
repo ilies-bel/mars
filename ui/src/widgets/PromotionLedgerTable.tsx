@@ -1,5 +1,6 @@
 import { Fragment, useState } from 'react'
 import { usePromotionLedger } from '@/entities/watchtower/usePromotionLedger'
+import { SkeletonList } from '@/components/Skeleton'
 
 interface Props {
   workflow?: string
@@ -17,6 +18,9 @@ const fmtScore = (n: number | null): string => (n === null ? '–' : n.toFixed(2
  *
  * Clicking any row toggles an inline evidence panel underneath that
  * pretty-prints the full ledger entry as JSON.
+ *
+ * The <thead> is always rendered so the table box stays the same size while
+ * loading — only <tbody> is gated behind isLoading / empty-state checks.
  */
 export const PromotionLedgerTable = ({ workflow }: Props) => {
   const { entries, isLoading } = usePromotionLedger(workflow)
@@ -30,12 +34,6 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
       return next
     })
 
-  if (isLoading) return null
-
-  if (entries.length === 0) {
-    return <p className="text-iron text-xs">No promotions yet</p>
-  }
-
   return (
     <table className="w-full text-xs">
       <thead>
@@ -48,33 +46,45 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
         </tr>
       </thead>
       <tbody>
-        {entries.map((entry) => (
-          <Fragment key={entry.id}>
-            <tr
-              className="cursor-pointer hover:bg-surface-hover"
-              onClick={() => toggle(entry.id)}
-            >
-              <td className="py-0.5 pr-2 font-mono">{formatTs(entry.createdAt)}</td>
-              <td className="py-0.5 pr-2">{entry.workflow}</td>
-              <td className="py-0.5 pr-2">{entry.decision}</td>
-              <td className="py-0.5 pr-2 font-mono text-[10px]">
-                {entry.candidateVersionId} → {entry.incumbentVersionId}
-              </td>
-              <td className="py-0.5">
-                {fmtScore(entry.candidateScore)} vs {fmtScore(entry.incumbentScore)}
-              </td>
-            </tr>
-            {expanded.has(entry.id) && (
-              <tr>
-                <td colSpan={5}>
-                  <pre className="overflow-auto rounded bg-surface p-2 text-[10px]">
-                    {JSON.stringify(entry, null, 2)}
-                  </pre>
+        {isLoading ? (
+          <tr>
+            <td colSpan={5}>
+              <SkeletonList rows={3} rowClassName="h-5 w-full mb-1" label="Loading promotions" />
+            </td>
+          </tr>
+        ) : entries.length === 0 ? (
+          <tr>
+            <td colSpan={5} className="py-1 text-iron">No promotions yet</td>
+          </tr>
+        ) : (
+          entries.map((entry) => (
+            <Fragment key={entry.id}>
+              <tr
+                className="cursor-pointer hover:bg-surface-hover"
+                onClick={() => toggle(entry.id)}
+              >
+                <td className="py-0.5 pr-2 font-mono">{formatTs(entry.createdAt)}</td>
+                <td className="py-0.5 pr-2">{entry.workflow}</td>
+                <td className="py-0.5 pr-2">{entry.decision}</td>
+                <td className="py-0.5 pr-2 font-mono text-[10px]">
+                  {entry.candidateVersionId} → {entry.incumbentVersionId}
+                </td>
+                <td className="py-0.5">
+                  {fmtScore(entry.candidateScore)} vs {fmtScore(entry.incumbentScore)}
                 </td>
               </tr>
-            )}
-          </Fragment>
-        ))}
+              {expanded.has(entry.id) && (
+                <tr>
+                  <td colSpan={5}>
+                    <pre className="overflow-auto rounded bg-surface p-2 text-[10px]">
+                      {JSON.stringify(entry, null, 2)}
+                    </pre>
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          ))
+        )}
       </tbody>
     </table>
   )

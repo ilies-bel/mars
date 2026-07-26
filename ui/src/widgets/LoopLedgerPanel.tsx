@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
 import { useLoopLedger } from '@/entities/watchtower/useLoopLedger'
+import { SkeletonList } from '@/components/Skeleton'
 
 const formatTs = (ms: number): string =>
   new Date(ms).toISOString().replace('T', ' ').slice(0, 19)
@@ -12,6 +13,10 @@ const formatTs = (ms: number): string =>
  * a table with columns [Run, Scored at, Score, Recorded, Suggest, Review].
  * Each row corresponds to one pass through the run→score→record→suggest→review
  * loop. Stages that have not yet completed render '—'.
+ *
+ * The <select> depends only on `workflows`, not the ledger query, so it is
+ * rendered unconditionally. The isLoading guard is moved to the table body
+ * so the workflow selector stays visible while ledger data loads.
  */
 export const LoopLedgerPanel = () => {
   const { data: workflows } = useScorerWorkflows()
@@ -22,8 +27,6 @@ export const LoopLedgerPanel = () => {
   const workflow = selected ?? workflows?.[0] ?? null
 
   const { entries, isLoading } = useLoopLedger(workflow)
-
-  if (isLoading) return null
 
   return (
     <div className="flex flex-col gap-2">
@@ -38,7 +41,9 @@ export const LoopLedgerPanel = () => {
           </option>
         ))}
       </select>
-      {entries.length === 0 ? (
+      {isLoading ? (
+        <SkeletonList rows={3} rowClassName="h-5 w-full mb-1" label="Loading loop ledger" />
+      ) : entries.length === 0 ? (
         <p className="text-iron text-xs">No loop runs yet</p>
       ) : (
         <table className="w-full text-xs">

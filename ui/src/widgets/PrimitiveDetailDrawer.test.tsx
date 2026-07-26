@@ -361,6 +361,6 @@ describe('PrimitiveDetailDrawer — chrome and navigation', () => {
 
   it('renders the loading state before any detail arrives', () => {
     const loadingHtml = render(<PrimitiveDetailDrawer name="verify" onClose={() => {}} />)
-    expect(loadingHtml).toContain('Loading primitive…')
+    expect(loadingHtml).toContain('aria-busy="true"')
   })
 })

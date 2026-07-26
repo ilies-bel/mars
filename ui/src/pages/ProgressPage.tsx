@@ -112,8 +112,10 @@ export const ProgressPage = () => {
             className="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-fg placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-border"
           />
         </div>
-        {/* Proposal filter — shown only when there are in-scope proposals */}
-        {proposals.length > 0 ? (
+        {/* Proposal filter — shown while loading (tasks===null) to reserve the
+            slot height, and whenever there are in-scope proposals to filter by.
+            Hidden only when data has settled and no proposals exist. */}
+        {(tasks === null || proposals.length > 0) ? (
           <div
             className="flex items-center gap-2 border-b border-border px-4 py-2"
             data-testid="proposal-filter"
@@ -128,7 +130,8 @@ export const ProgressPage = () => {
               id="proposal-filter-select"
               value={selectedProposalId ?? ''}
               onChange={(e) => setSelectedProposalId(e.target.value || null)}
-              className="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-fg focus:outline-none focus:ring-1 focus:ring-border"
+              disabled={tasks === null}
+              className="min-w-0 flex-1 rounded border border-border bg-surface px-2 py-0.5 font-mono text-[11px] text-fg focus:outline-none focus:ring-1 focus:ring-border disabled:opacity-50"
             >
               <option value="">All</option>
               {proposals.map((p) => (

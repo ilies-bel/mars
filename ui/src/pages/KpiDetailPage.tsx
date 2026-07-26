@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { KpiKey, KpiArc } from '@/shared/schemas'
 import { FallbackSurface } from '@/components/FallbackSurface'
+import { SkeletonList } from '@/components/Skeleton'
 import { useKpis } from '@/entities/kpi/useKpis'
 import { useKpiArcs } from '@/entities/kpi/useKpiArcs'
 import { kpiBand, kpiBandCue } from '@/entities/kpi/bands'
@@ -188,45 +189,47 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg">
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-        {/* KPI summary card */}
-        {kpi && !kpi.lowConfidence && cue ? (
-          <div className="mb-4 flex flex-col gap-2 rounded border border-iron/20 bg-surface p-4">
-            <div className="flex flex-wrap items-baseline gap-4">
-              <span className="font-mono text-3xl font-bold text-fg">
-                {formatKpiValue(kpiKey, kpi.currentValue)}
-              </span>
-              <span className={`flex items-center gap-1 text-sm ${cue.colorClass}`}>
-                <span aria-hidden="true">{cue.glyph}</span>
-                <span>{cue.label}</span>
-              </span>
-              {drift && drift !== 'flat' && (
-                <span
-                  className={`flex items-center gap-1 text-sm ${
-                    drift === 'improved' ? 'text-success' : 'text-error'
-                  }`}
-                >
-                  <span aria-hidden="true">{drift === 'improved' ? '↑' : '↓'}</span>
-                  <span>{drift === 'improved' ? 'Improved' : 'Regressed'}</span>
-                  <span className="text-muted">
-                    ({kpi.delta >= 0 ? '+' : ''}
-                    {kpiKey === 'cost_per_arc'
-                      ? formatKpiValue(kpiKey, kpi.delta)
-                      : `${(kpi.delta * 100).toFixed(1)}pp`}
-                    )
-                  </span>
+        {/* KPI summary card — min-h reserves space while kpi data loads */}
+        <div className="mb-4 min-h-[110px]">
+          {kpi && !kpi.lowConfidence && cue ? (
+            <div className="flex flex-col gap-2 rounded border border-iron/20 bg-surface p-4">
+              <div className="flex flex-wrap items-baseline gap-4">
+                <span className="font-mono text-3xl font-bold text-fg">
+                  {formatKpiValue(kpiKey, kpi.currentValue)}
                 </span>
-              )}
-              <span className="ml-auto text-xs text-muted">
-                {kpi.sampleCount} sample{kpi.sampleCount !== 1 ? 's' : ''}
-              </span>
+                <span className={`flex items-center gap-1 text-sm ${cue.colorClass}`}>
+                  <span aria-hidden="true">{cue.glyph}</span>
+                  <span>{cue.label}</span>
+                </span>
+                {drift && drift !== 'flat' && (
+                  <span
+                    className={`flex items-center gap-1 text-sm ${
+                      drift === 'improved' ? 'text-success' : 'text-error'
+                    }`}
+                  >
+                    <span aria-hidden="true">{drift === 'improved' ? '↑' : '↓'}</span>
+                    <span>{drift === 'improved' ? 'Improved' : 'Regressed'}</span>
+                    <span className="text-muted">
+                      ({kpi.delta >= 0 ? '+' : ''}
+                      {kpiKey === 'cost_per_arc'
+                        ? formatKpiValue(kpiKey, kpi.delta)
+                        : `${(kpi.delta * 100).toFixed(1)}pp`}
+                      )
+                    </span>
+                  </span>
+                )}
+                <span className="ml-auto text-xs text-muted">
+                  {kpi.sampleCount} sample{kpi.sampleCount !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <Sparkline points={(kpi.series ?? []).map((p) => p.value)} width={240} height={32} />
             </div>
-            <Sparkline points={(kpi.series ?? []).map((p) => p.value)} width={240} height={32} />
-          </div>
-        ) : kpi?.lowConfidence ? (
-          <div className="mb-4 rounded border border-iron/20 bg-surface p-4 text-sm text-muted">
-            {label}: insufficient samples
-          </div>
-        ) : null}
+          ) : kpi?.lowConfidence ? (
+            <div className="rounded border border-iron/20 bg-surface p-4 text-sm text-muted">
+              {label}: insufficient samples
+            </div>
+          ) : null}
+        </div>
 
         {/* Description */}
         <p className="mb-4 font-mono text-[11px] text-muted">
@@ -320,7 +323,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
           </div>
 
           {isLoading && (
-            <p className="text-sm text-muted">Loading…</p>
+            <SkeletonList rows={6} rowClassName="h-8 w-full mb-0.5" label="Loading arcs" />
           )}
 
           {error && !isLoading && (

@@ -38,6 +38,7 @@ import type {
 import { PRIMITIVE_NAMES } from '@/entities/primitive/types'
 import { primitiveHash, studioHash, taskHash } from '@/shared/routing'
 import { relativeTime } from '@/shared/time'
+import { SkeletonList } from '@/components/Skeleton'
 
 // ── Pure model ────────────────────────────────────────────────────────────────
 
@@ -358,7 +359,7 @@ export const PrimitiveDetailDrawer = ({
                   Could not load the primitive ({query.error.message}).
                 </p>
               ) : (
-                <p className="font-mono text-xs text-muted">Loading primitive…</p>
+                <SkeletonList rows={4} rowClassName="h-6 w-full mb-2" label="Loading primitive" />
               )}
             </div>
           ) : (

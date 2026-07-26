@@ -1,4 +1,5 @@
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
+import { SkeletonList } from '@/components/Skeleton'
 import { LoopLedgerPanel } from './LoopLedgerPanel'
 import { PromotionLedgerTable } from './PromotionLedgerTable'
 import { WatchtowerTrendChart } from './WatchtowerTrendChart'
@@ -10,7 +11,15 @@ import { WatchtowerTrendChart } from './WatchtowerTrendChart'
 const ScoreTrends = () => {
   const { data: workflows, isLoading } = useScorerWorkflows()
 
-  if (isLoading) return null
+  if (isLoading) {
+    return (
+      <SkeletonList
+        rows={1}
+        rowClassName="h-[90px] w-full"
+        label="Loading score trends"
+      />
+    )
+  }
 
   if (!workflows || workflows.length === 0) {
     return <p className="text-iron text-xs">No scores yet</p>

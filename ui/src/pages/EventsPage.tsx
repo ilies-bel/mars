@@ -936,7 +936,7 @@ export const EventsPage = () => {
       </header>
 
       {/* KPI strip — four metric tiles at the top of the Events tab */}
-      <div className="flex flex-wrap items-start gap-3">
+      <div className="flex flex-wrap items-start gap-3 min-h-[120px]">
         <KpiVector />
       </div>
 

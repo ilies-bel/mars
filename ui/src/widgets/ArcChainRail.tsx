@@ -6,6 +6,7 @@ import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { relativeTime } from '@/shared/time'
 import { severityColor, summarizeTraceEvent, marsToolTextClass } from '@/shared/actionQueueDetail'
 import { traceEventRowClass } from '@/shared/traceSeverity'
+import { SkeletonList } from '@/components/Skeleton'
 
 export interface ArcChainRailProps {
   chain: AlertChainNode[]
@@ -34,7 +35,7 @@ function TaskTracePanel({ taskId }: { taskId: string }) {
   })
 
   if (isPending) {
-    return <p className="font-mono text-[11px] text-muted">Loading traces…</p>
+    return <SkeletonList rows={3} rowClassName="h-4 w-full mb-1" label="Loading traces" />
   }
   if (!data || data.events.length === 0) {
     return <p className="font-mono text-[11px] text-muted">No trace events for this task.</p>
