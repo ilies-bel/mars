@@ -685,6 +685,20 @@ const DDL: readonly string[] = [
      ON merge_jobs(task_id)
      WHERE status IN ('queued', 'claimed', 'running')`,
 
+  // ── task deployments ──────────────────────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS task_deployments (
+    deployment_id text        PRIMARY KEY,
+    task_id       text        NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    provider      text        NOT NULL,
+    url           text,
+    status        text        NOT NULL CHECK (status IN ('pending','ready','failed')),
+    error         text,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_task_deployments_task
+     ON task_deployments(task_id, created_at DESC)`,
+
   // ── learned recipes (operator-taught auto-run rules) ─────────────────────
   // Per failure signature, global: the operator teaches a recovery op once
   // and the system auto-executes it on every subsequent occurrence of the
@@ -794,6 +808,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'learned_recipes',
   'auto_recipe_runs',
   'merge_jobs',
+  'task_deployments',
   'dispatch_spend_control',
 ]
 

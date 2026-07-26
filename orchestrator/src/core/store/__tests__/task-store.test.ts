@@ -405,3 +405,149 @@ describe('getArcRescueAttempts and incrementArcRescueAttempts', () => {
     )
   })
 })
+
+describe('task_deployments', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('writeDeployment inserts a row and returns it', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask('deployment test task', undefined, {
+      skipTriage: true,
+    })
+
+    const dep = await store.writeDeployment({
+      taskId: task.id,
+      provider: 'fly',
+      deploymentId: 'dep-insert-test',
+      url: 'https://insert-test.fly.dev',
+      status: 'pending',
+    })
+
+    expect(dep.deploymentId).toBe('dep-insert-test')
+    expect(dep.taskId).toBe(task.id)
+    expect(dep.provider).toBe('fly')
+    expect(dep.url).toBe('https://insert-test.fly.dev')
+    expect(dep.status).toBe('pending')
+    expect(dep.error).toBeNull()
+    expect(typeof dep.createdAt).toBe('string')
+    expect(typeof dep.updatedAt).toBe('string')
+  })
+
+  it('getLatestDeployment returns null when no rows exist', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask('no-deploys task', undefined, {
+      skipTriage: true,
+    })
+
+    const dep = await store.getLatestDeployment(task.id)
+    expect(dep).toBeNull()
+  })
+
+  it('insert → updateDeploymentStatus → getLatestDeployment round-trip', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask('round-trip task', undefined, {
+      skipTriage: true,
+    })
+
+    await store.writeDeployment({
+      taskId: task.id,
+      provider: 'fly',
+      deploymentId: 'dep-roundtrip',
+      status: 'pending',
+    })
+
+    await store.updateDeploymentStatus('dep-roundtrip', {
+      status: 'ready',
+      url: 'https://ready.fly.dev',
+      error: null,
+    })
+
+    const latest = await store.getLatestDeployment(task.id)
+    expect(latest).not.toBeNull()
+    expect(latest?.deploymentId).toBe('dep-roundtrip')
+    expect(latest?.status).toBe('ready')
+    expect(latest?.url).toBe('https://ready.fly.dev')
+    expect(latest?.error).toBeNull()
+  })
+
+  it('updateDeploymentStatus records error on failure', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask('error task', undefined, {
+      skipTriage: true,
+    })
+
+    await store.writeDeployment({
+      taskId: task.id,
+      provider: 'fly',
+      deploymentId: 'dep-fail-test',
+      status: 'pending',
+    })
+
+    await store.updateDeploymentStatus('dep-fail-test', {
+      status: 'failed',
+      error: 'build timed out',
+    })
+
+    const latest = await store.getLatestDeployment(task.id)
+    expect(latest?.status).toBe('failed')
+    expect(latest?.error).toBe('build timed out')
+  })
+
+  it('listDeploymentsForTask returns all rows for the task', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask('list task', undefined, {
+      skipTriage: true,
+    })
+
+    await store.writeDeployment({
+      taskId: task.id,
+      provider: 'fly',
+      deploymentId: 'dep-list-a',
+      status: 'pending',
+    })
+    await store.writeDeployment({
+      taskId: task.id,
+      provider: 'fly',
+      deploymentId: 'dep-list-b',
+      status: 'ready',
+      url: 'https://list-b.fly.dev',
+    })
+
+    const deps = await store.listDeploymentsForTask(task.id)
+    expect(deps).toHaveLength(2)
+    const ids = deps.map((d) => d.deploymentId)
+    expect(ids).toContain('dep-list-a')
+    expect(ids).toContain('dep-list-b')
+  })
+
+  it('listDeploymentsForTask returns empty array when no rows exist', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask('no-list task', undefined, {
+      skipTriage: true,
+    })
+
+    const deps = await store.listDeploymentsForTask(task.id)
+    expect(deps).toHaveLength(0)
+  })
+})

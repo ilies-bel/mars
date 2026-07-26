@@ -78,6 +78,41 @@ const execFileAsync = promisify(execFile)
 /** Patch shape for `updateTask`, matching queue.ts's parameter exactly. */
 export type UpdateTaskPatch = Parameters<typeof queueUpdateTask>[1]
 
+/** Status values for a task deployment row. */
+export type DeploymentStatus = 'pending' | 'ready' | 'failed'
+
+/** Domain representation of a `task_deployments` row. */
+export interface TaskDeployment {
+  deploymentId: string
+  taskId: string
+  provider: string
+  url: string | null
+  status: DeploymentStatus
+  error: string | null
+  /** ISO-8601 string (coerced from Date when using the pg backend). */
+  createdAt: string
+  /** ISO-8601 string (coerced from Date when using the pg backend). */
+  updatedAt: string
+}
+
+/** Input shape for `writeDeployment`. */
+export interface WriteDeploymentInput {
+  taskId: string
+  provider: string
+  deploymentId: string
+  url?: string | null
+  status: DeploymentStatus
+}
+
+/** Patch shape for `updateDeploymentStatus`. */
+export interface UpdateDeploymentStatusPatch {
+  status: DeploymentStatus
+  /** When present (including null), the stored url is replaced. */
+  url?: string | null
+  /** When present (including null), the stored error is replaced. */
+  error?: string | null
+}
+
 /**
  * Rollup verdict for an arc of tasks sharing one `origin_id`. See
  * {@link DomainTaskStore.arcStatus} for the predicate semantics.
@@ -269,6 +304,31 @@ export interface DomainTaskStore {
    */
   arcStatus(originId: string, opts?: ArcStatusOptions): Promise<ArcStatus>
 
+  // ── Deployments ──────────────────────────────────────────────────────────
+  /**
+   * Insert a new deployment row for `input.taskId` and return the persisted
+   * row. `deployment_id` is the caller-supplied primary key.
+   */
+  writeDeployment(input: WriteDeploymentInput): Promise<TaskDeployment>
+  /**
+   * Return the newest deployment row for `taskId` (ordered by `created_at
+   * DESC`), or `null` when no rows exist yet.
+   */
+  getLatestDeployment(taskId: string): Promise<TaskDeployment | null>
+  /**
+   * Update `status` (and optionally `url` / `error`) on the deployment row
+   * identified by `deploymentId`, bumping `updated_at` to `now()`.
+   * Fields absent from `patch` are left unchanged.
+   */
+  updateDeploymentStatus(
+    deploymentId: string,
+    patch: UpdateDeploymentStatusPatch,
+  ): Promise<void>
+  /**
+   * Return all deployment rows for `taskId`, newest-first.
+   */
+  listDeploymentsForTask(taskId: string): Promise<TaskDeployment[]>
+
   // ── Generic SQL escape hatches ───────────────────────────────────────────
   /** Execute a single read in a read-only transaction. Non-null client. */
   query(stmt: DbStatement | string, params?: DbInValue[]): Promise<DbResultSet>
@@ -289,6 +349,31 @@ export interface DomainTaskStore {
    * callback settles. Nesting is rejected. Non-null client.
    */
   atomic<T>(fn: (scope: Scope) => Promise<T>): Promise<T>
+}
+
+/**
+ * Coerce a `timestamptz` value to an ISO-8601 string regardless of backend.
+ * - pg (embedded) returns `Date` objects for timestamptz columns.
+ * - PGlite returns ISO strings directly.
+ */
+const coerceTimestamp = (v: unknown): string => {
+  if (v instanceof Date) return v.toISOString()
+  return v as string
+}
+
+/** Map a raw DB row to the `TaskDeployment` domain shape. */
+const rowToDeployment = (row: unknown): TaskDeployment => {
+  const r = row as Record<string, unknown>
+  return {
+    deploymentId: r['deployment_id'] as string,
+    taskId: r['task_id'] as string,
+    provider: r['provider'] as string,
+    url: (r['url'] as string | null) ?? null,
+    status: r['status'] as DeploymentStatus,
+    error: (r['error'] as string | null) ?? null,
+    createdAt: coerceTimestamp(r['created_at']),
+    updatedAt: coerceTimestamp(r['updated_at']),
+  }
 }
 
 /**
@@ -512,6 +597,66 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
 
       const landedCommits = await readLandedCommits(originId, opts)
       return { status, tasks, landedCommits }
+    },
+
+    // ── Deployments ────────────────────────────────────────────────────────
+
+    writeDeployment: async (input) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `INSERT INTO task_deployments (deployment_id, task_id, provider, url, status)
+              VALUES (?, ?, ?, ?, ?) RETURNING *`,
+        args: [
+          input.deploymentId,
+          input.taskId,
+          input.provider,
+          input.url ?? null,
+          input.status,
+        ],
+      })
+      return rowToDeployment(r.rows[0])
+    },
+
+    getLatestDeployment: async (taskId) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `SELECT * FROM task_deployments
+              WHERE task_id = ?
+              ORDER BY created_at DESC
+              LIMIT 1`,
+        args: [taskId],
+      })
+      return r.rows.length === 0 ? null : rowToDeployment(r.rows[0])
+    },
+
+    updateDeploymentStatus: async (deploymentId, patch) => {
+      const c = guardClient()
+      const setClauses: string[] = ['status = ?', 'updated_at = now()']
+      const args: DbInValue[] = [patch.status]
+      if (patch.url !== undefined) {
+        setClauses.push('url = ?')
+        args.push(patch.url ?? null)
+      }
+      if (patch.error !== undefined) {
+        setClauses.push('error = ?')
+        args.push(patch.error ?? null)
+      }
+      args.push(deploymentId)
+      await c.execute({
+        sql: `UPDATE task_deployments SET ${setClauses.join(', ')} WHERE deployment_id = ?`,
+        args,
+      })
+    },
+
+    listDeploymentsForTask: async (taskId) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `SELECT * FROM task_deployments
+              WHERE task_id = ?
+              ORDER BY created_at DESC`,
+        args: [taskId],
+      })
+      return r.rows.map(rowToDeployment)
     },
 
     // ── Generic SQL escape hatches ─────────────────────────────────────────
