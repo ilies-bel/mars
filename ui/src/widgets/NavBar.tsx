@@ -1,4 +1,3 @@
-import { useProgress } from '@/hooks/useProgress'
 import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
 import { detectRoute, actionQueueCount } from '@/shared/routing'
 import { useNotificationsPreference } from '@/entities/notifications'
@@ -55,10 +54,8 @@ export const NavBar = ({ hash }: NavBarProps) => {
   const route = detectRoute(hash)
 
   const { staleWorktrees } = useStaleWorktrees()
-  const { tasks } = useProgress()
 
   const actionCount = actionQueueCount({ staleWorktrees })
-  const progressCount = tasks?.length ?? 0
 
   return (
     <nav className="flex items-center gap-2 border-b border-primary/30 bg-background px-4 py-1.5">
@@ -74,13 +71,8 @@ export const NavBar = ({ hash }: NavBarProps) => {
           Chat
         </a>
       </span>
-      <span className="relative">
-        <CountBadge count={progressCount} />
-        <a
-          className={linkClass(route === 'progress')}
-          href="#/progress"
-          aria-label={progressCount > 0 ? `Progress, ${progressCount} open tasks` : undefined}
-        >
+      <span>
+        <a className={linkClass(route === 'progress')} href="#/progress">
           Progress
         </a>
       </span>
