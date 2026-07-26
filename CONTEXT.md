@@ -542,3 +542,7 @@ _Avoid_: current thread, selected thread, focused subject, live subject
 **Preloaded response**:
 A labelled next move rendered inline in the chat feed whose op resolves either to a zero-token Mars verb or to opening a Subject.
 _Avoid_: quick reply, suggestion chip, action button, canned reply
+
+**Subject boundary**:
+The state of the chat feed when no Subject is active, where preloaded responses offer the ranked next Subjects and free text opens a new one.
+_Avoid_: handoff, seam, thread break, context reload point
