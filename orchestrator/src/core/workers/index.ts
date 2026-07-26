@@ -187,6 +187,13 @@ export interface RunOptions {
    * PID liveness instead of the bare wall-clock ceiling on `task.updatedAt`.
    */
   readonly onPid?: (pid: number) => void
+  /**
+   * The task id this invocation is dispatched for. Forwarded to
+   * {@link runClaudeCode} so the worker env is stamped with
+   * `MARS_MCP_TASK_ID` and the mars-worker MCP server is injected into the
+   * inline `--mcp-config` JSON.
+   */
+  readonly taskId?: string
 }
 
 export interface Worker {
@@ -466,6 +473,7 @@ const buildWorker = (config: WorkerConfig): Worker => {
             mcpServers: config.mcpConfig,
             externalAbort: options.externalAbort,
             onPid: options.onPid,
+            taskId: options.taskId,
           }),
   }
 }

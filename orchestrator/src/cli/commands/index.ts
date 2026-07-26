@@ -44,6 +44,7 @@ import { proposeCommands } from './propose'
 import { mergeCommands } from './merge'
 import { deployCommands } from './deploy'
 import { purgeCommands } from './purge'
+import { mcpWorkerCommands } from './mcp-worker'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -83,6 +84,7 @@ export const allCommands: readonly Command[] = [
   ...mergeCommands,
   ...deployCommands,
   ...purgeCommands,
+  ...mcpWorkerCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)

@@ -44,6 +44,12 @@ export type HeadlessRunOpts = Readonly<{
    * path can record the PID on the in-flight tracker entry.
    */
   onPid?: (pid: number) => void
+  /**
+   * Task id for this dispatch. Forwarded to {@link runClaudeCode} so
+   * `MARS_MCP_TASK_ID` is stamped in the worker env and the mars-worker
+   * MCP server is injected into the inline `--mcp-config` JSON.
+   */
+  taskId?: string
 }>
 
 // Adapter for headless (non-interactive subprocess) dispatch of a Provider's

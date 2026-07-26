@@ -152,6 +152,9 @@ export const runWorkerWithSpan = async (
 
   const runOptionsWithAccum: RunOptions = {
     ...runOptions,
+    // Thread the task id so buildWorkerEnv stamps MARS_MCP_TASK_ID and the
+    // mars-worker MCP server is injected into the dispatched session.
+    taskId: taskId ?? undefined,
     onEvent: async (event) => {
       accumulatedEvents.push(event)
       pendingChunkEvents.push(event)

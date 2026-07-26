@@ -215,6 +215,16 @@ export interface RunClaudeArgs {
    * because no PID is assigned before the 'error' event fires.
    */
   onPid?: (pid: number) => void
+  /**
+   * The task id this invocation is dispatched for. When set:
+   *   1. `buildWorkerEnv` stamps `MARS_MCP_TASK_ID=<taskId>` in the worker env
+   *      so the injected mars-worker MCP server can route `mars_task_note` calls
+   *      back to the correct task without accepting an id from the model.
+   *   2. The mars-worker stdio MCP server is merged into the inline `--mcp-config`
+   *      JSON (alongside any operator-provisioned `mcpServers`) so every
+   *      dispatched Coder/Fixer run inherits the tool.
+   */
+  taskId?: string
 }
 
 export type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -509,13 +519,53 @@ export const claudeStreamArgs = (
 //                              contaminate it — forensic incident 2026-07-02).
 // ANTHROPIC_API_KEY, PATH, and everything unrelated are preserved.
 const HOST_AGENT_ENV_RE = /^(?:CLAUDE(?:CODE)?(?:$|_)|CMUX_|AI_AGENT$|MARS_REPO$)/i
-export const buildWorkerEnv = (): NodeJS.ProcessEnv => {
+
+/**
+ * Build the worker subprocess environment.
+ *
+ * Strips host-agent identity vars (see regex above) so a daemon launched from
+ * inside an interactive `claude` shell cannot contaminate dispatched workers.
+ *
+ * When `taskId` is supplied (Coder/Fixer dispatches), `MARS_MCP_TASK_ID` is
+ * stamped so the injected MCP worker server can route `mars_task_note` calls
+ * back to the correct task without accepting an id argument from the model.
+ */
+export const buildWorkerEnv = (taskId?: string): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const key of Object.keys(env)) {
     if (HOST_AGENT_ENV_RE.test(key)) delete env[key]
   }
+  if (taskId) {
+    env['MARS_MCP_TASK_ID'] = taskId
+  }
   return env
 }
+
+/**
+ * Build the inline `--mcp-config` JSON for the mars-worker stdio MCP server.
+ *
+ * Returns the config OBJECT (not a JSON string) so the caller can merge it
+ * into a broader mcpServers map. When this object's `mcpServers` is passed as
+ * `extraServers` to `codegraphMcpConfigJson`, the mars-worker entry merges
+ * alongside any other operator-provisioned servers.
+ *
+ * The server is spawned via `marsBinPath mcp worker` and receives the task id
+ * through `MARS_MCP_TASK_ID` in its inherited environment (set by
+ * `buildWorkerEnv(taskId)`).
+ */
+export const marsWorkerMcpConfigJson = (
+  taskId: string,
+  marsBinPath: string,
+): { mcpServers: Record<string, unknown> } => ({
+  mcpServers: {
+    'mars-worker': {
+      type: 'stdio',
+      command: marsBinPath,
+      args: ['mcp', 'worker'],
+      env: { MARS_MCP_TASK_ID: taskId },
+    },
+  },
+})
 
 let cachedClaudeBin: string | null = null
 let cachedClaudeBinFor: string | undefined = undefined
@@ -606,6 +656,7 @@ export const runClaudeCode = async ({
   mcpServers,
   externalAbort,
   onPid,
+  taskId,
 }: RunClaudeArgs): Promise<RunClaudeResult> => {
   const conversation: ClaudeEvent[] = []
   const budget = resolveContextTokenBudget(maxContextTokens)
@@ -673,12 +724,19 @@ export const runClaudeCode = async ({
       // eliminating the fixed token tax from schema + instruction injection on
       // every task. Interactive sessions still get the MCP via .mcp.json (mars
       // init). ONLY when a Worker pins extra MCP servers (WorkerConfig.mcpConfig
-      // — operator-provisioned servers the worker MAY declare) do we emit an
-      // mcpConfig; codegraph is then pinned to the main checkout's index (the
-      // worker runs inside a worktree) and the extra servers merge on top.
-      ...(mcpServers
-        ? { mcpConfig: codegraphMcpConfigJson(resolveCodegraphRoot(cwd), mcpServers) }
-        : {}),
+      // — operator-provisioned servers the worker MAY declare) OR when a taskId
+      // is set (Coder/Fixer dispatch — injects the mars-worker MCP server) do we
+      // emit an mcpConfig; codegraph is then pinned to the main checkout's index
+      // (the worker runs inside a worktree) and the extra servers merge on top.
+      ...(() => {
+        const marsWorkerServers = taskId
+          ? marsWorkerMcpConfigJson(taskId, resolveClaudeBin()).mcpServers
+          : {}
+        const mergedServers = { ...marsWorkerServers, ...(mcpServers ?? {}) }
+        return Object.keys(mergedServers).length > 0
+          ? { mcpConfig: codegraphMcpConfigJson(resolveCodegraphRoot(cwd), mergedServers) }
+          : {}
+      })(),
     }),
     cwd,
     async ({ stream, line }) => {
@@ -748,7 +806,7 @@ export const runClaudeCode = async ({
       }
     },
     abort.signal,
-    buildWorkerEnv(),
+    buildWorkerEnv(taskId),
     onPid,
   )
   clearTimeout(timeoutHandle)
