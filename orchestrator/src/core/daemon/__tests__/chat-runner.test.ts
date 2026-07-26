@@ -20,7 +20,7 @@ import {
   vi,
   type MockInstance,
 } from 'vitest'
-import { parseEventToSegments, buildApiInput, ChatRunner, CHAT_TIMEOUT_MS } from '../chat-runner'
+import { parseEventToSegments, buildApiInput, executeToolCall, ChatRunner, CHAT_TIMEOUT_MS } from '../chat-runner'
 import { ChatStreamHub } from '../chat-stream-hub'
 import type { UiMessageChunk } from '../ui-message-chunks'
 import { CodexApiError, type StreamCodexResponseOpts } from '../codex-api'
@@ -36,6 +36,11 @@ const messageEvent = (text: string): unknown => ({
 const functionCallEvent = (callId: string, command: string): unknown => ({
   type: 'response.output_item.done',
   item: { type: 'function_call', call_id: callId, name: 'shell', arguments: JSON.stringify({ command }) },
+})
+
+const toolCallEvent = (callId: string, name: string, args: Record<string, unknown>): unknown => ({
+  type: 'response.output_item.done',
+  item: { type: 'function_call', call_id: callId, name, arguments: JSON.stringify(args) },
 })
 
 const reasoningEvent = (text: string): unknown => ({
@@ -100,6 +105,26 @@ describe('parseEventToSegments', () => {
     expect(segs[0]).toMatchObject({ type: 'tool_use', name: 'mars task' })
   })
 
+  it('carries the real function name in `tool` for dispatch', () => {
+    const segs = parseEventToSegments(functionCallEvent('call-3', 'ls'))
+    expect(segs[0]).toMatchObject({ type: 'tool_use', tool: 'shell', name: 'ls' })
+  })
+
+  it('uses the function name as display name for non-shell tools', () => {
+    const segs = parseEventToSegments(toolCallEvent('call-4', 'read_file', { path: 'CONTEXT.md' }))
+    expect(segs[0]).toMatchObject({
+      type: 'tool_use',
+      tool: 'read_file',
+      name: 'read_file',
+      input: { path: 'CONTEXT.md' },
+    })
+  })
+
+  it('derives `skill <name>` display names for skill loads', () => {
+    const segs = parseEventToSegments(toolCallEvent('call-5', 'skill', { name: 'diagnose' }))
+    expect(segs[0]).toMatchObject({ type: 'tool_use', tool: 'skill', name: 'skill diagnose' })
+  })
+
   it('emits a thinking segment from a reasoning summary', () => {
     expect(parseEventToSegments(reasoningEvent('pondering'))).toEqual([
       { type: 'thinking', thinking: 'pondering' },
@@ -145,6 +170,15 @@ describe('buildApiInput', () => {
       { type: 'function_call_output', call_id: 'call-1', output: JSON.stringify({ stdout: 'file\n', stderr: '', exitCode: 0 }) },
       { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'One file.' }] },
     ])
+  })
+
+  it('replays the persisted `tool` name for non-shell calls', () => {
+    const segments = [
+      { type: 'tool_use', id: 'call-9', tool: 'read_file', name: 'read_file', input: { path: 'a.md' } },
+      { type: 'tool_result', tool_use_id: 'call-9', content: 'file body', isError: false },
+    ]
+    const input = buildApiInput([msg('assistant', '', segments)])
+    expect(input[0]).toMatchObject({ type: 'function_call', name: 'read_file', call_id: 'call-9' })
   })
 
   it('drops a tool_use with no matching tool_result so calls never go unpaired', () => {
@@ -195,6 +229,81 @@ describe('buildApiInput', () => {
   })
 })
 
+// ── Tool dispatcher tests ─────────────────────────────────────────────────────
+
+describe('executeToolCall', () => {
+  let repoRoot: string
+
+  beforeEach(async () => {
+    const { mkdtemp } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    repoRoot = await mkdtemp(join(tmpdir(), 'chat-tools-'))
+    // chat-skills is module-mocked for the state-machine tests below; these
+    // dispatcher tests exercise the real discovery against the temp repo.
+    const actual = await vi.importActual<typeof import('../chat-skills')>('../chat-skills')
+    vi.mocked(chatSkills.discoverSkills).mockImplementation(actual.discoverSkills)
+  })
+
+  afterEach(async () => {
+    const { rm } = await import('node:fs/promises')
+    await rm(repoRoot, { recursive: true, force: true })
+  })
+
+  const signal = new AbortController().signal
+
+  it('reads a file relative to the repo root with offset/limit', async () => {
+    const { writeFile } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    await writeFile(join(repoRoot, 'notes.txt'), 'one\ntwo\nthree\nfour', 'utf8')
+    const r = await executeToolCall('read_file', { path: 'notes.txt', offset: 2, limit: 2 }, repoRoot, signal)
+    expect(r).toEqual({ content: 'two\nthree', isError: false })
+  })
+
+  it('returns isError for a missing file instead of throwing', async () => {
+    const r = await executeToolCall('read_file', { path: 'nope.txt' }, repoRoot, signal)
+    expect(r.isError).toBe(true)
+    expect(String(r.content)).toContain('read failed')
+  })
+
+  it('writes a file, creating parent directories', async () => {
+    const { readFile } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    const r = await executeToolCall('write_file', { path: '.mars/notes/a.md', content: 'hi' }, repoRoot, signal)
+    expect(r.isError).toBe(false)
+    expect(await readFile(join(repoRoot, '.mars/notes/a.md'), 'utf8')).toBe('hi')
+  })
+
+  it('loads a skill and appends a bundled-files note', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    const dir = join(repoRoot, '.claude', 'skills', 'diagnose')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'SKILL.md'), '---\nname: diagnose\ndescription: Diagnose a task.\n---\n\nDo the thing.', 'utf8')
+    await writeFile(join(dir, 'helper.md'), 'extra', 'utf8')
+    const r = await executeToolCall('skill', { name: 'diagnose' }, repoRoot, signal)
+    expect(r.isError).toBe(false)
+    expect(String(r.content)).toContain('Do the thing.')
+    expect(String(r.content)).toContain('helper.md')
+  })
+
+  it('rejects an unknown skill and lists the available ones', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises')
+    const { join } = await import('node:path')
+    const dir = join(repoRoot, '.claude', 'skills', 'task')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'SKILL.md'), '---\nname: task\ndescription: d\n---\n', 'utf8')
+    const r = await executeToolCall('skill', { name: '../../etc' }, repoRoot, signal)
+    expect(r.isError).toBe(true)
+    expect(String(r.content)).toContain('Available skills: task')
+  })
+
+  it('returns isError for an unknown tool name', async () => {
+    const r = await executeToolCall('teleport', {}, repoRoot, signal)
+    expect(r).toEqual({ content: 'unknown tool "teleport"', isError: true })
+  })
+})
+
 // ── Mock layer for state-machine tests ───────────────────────────────────────
 
 // We need to hoist mock declarations before imports so vi.mock hoisting works.
@@ -212,6 +321,14 @@ vi.mock('../codex-api', async (importOriginal) => {
   }
 })
 
+// Skill discovery does real fs I/O; the fake-timer tests below drive _run with
+// process.nextTick drains, which never wait for the threadpool. Mock it at the
+// module boundary (loadSkill/buildSkillsSection stay real).
+vi.mock('../chat-skills', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../chat-skills')>()
+  return { ...actual, discoverSkills: vi.fn() }
+})
+
 vi.mock('../../lib/git/claude', () => ({
   buildWorkerEnv: vi.fn(() => ({})),
   runSubprocessStreaming: vi.fn(),
@@ -227,6 +344,7 @@ vi.mock('../../lib/chat-store', () => ({
 // Dynamically import the mocked modules AFTER vi.mock declarations.
 // Because vitest hoists vi.mock, these will receive the mocked implementations.
 const codexApi = await import('../codex-api')
+const chatSkills = await import('../chat-skills')
 const { runSubprocessStreaming } = await import('../../lib/git/claude')
 const chatStore = await import('../../lib/chat-store')
 
@@ -274,6 +392,7 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockLoadAuth.mockResolvedValue(AUTH)
+    vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture },
       messages: [],
@@ -323,6 +442,7 @@ describe('ChatRunner state machine', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockLoadAuth.mockResolvedValue(AUTH)
+    vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
     mockStream.mockImplementation(streamEmitting(messageEvent('ok'), completedEvent()))
     mockShell.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
     vi.mocked(chatStore.getThread).mockResolvedValue({
@@ -524,6 +644,44 @@ describe('ChatRunner state machine', () => {
     const segments = assistantCall![3] as Array<{ type: string; isError?: boolean }>
     const toolResult = segments.find((s) => s.type === 'tool_result')
     expect(toolResult?.isError).toBe(true)
+  })
+
+  it('dispatches a read_file call without spawning a subprocess and advertises all tools', async () => {
+    const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const repoRoot = await mkdtemp(join(tmpdir(), 'chat-run-'))
+    try {
+      await writeFile(join(repoRoot, 'CONTEXT.md'), 'glossary body', 'utf8')
+      vi.mocked(chatSkills.discoverSkills).mockResolvedValue([{ name: 'diagnose', description: 'Diagnose a task.' }])
+
+      mockStream
+        .mockImplementationOnce(streamEmitting(toolCallEvent('call-1', 'read_file', { path: 'CONTEXT.md' }), completedEvent()))
+        .mockImplementationOnce(streamEmitting(messageEvent('Read it.'), completedEvent()))
+
+      const runner = new ChatRunner()
+      await runner.sendMessage('t1', 'read the glossary', repoRoot, undefined)
+      await new Promise((r) => setTimeout(r, 20))
+
+      expect(mockShell).not.toHaveBeenCalled()
+
+      // All four tools are advertised, and the skill index rides on the instructions.
+      const firstOpts = mockStream.mock.calls[0][0]
+      expect(firstOpts.tools.map((t) => t.name)).toEqual(['shell', 'read_file', 'write_file', 'skill'])
+      expect(firstOpts.instructions).toContain('TEST_SYSTEM_PROMPT')
+      expect(firstOpts.instructions).toContain('- diagnose: Diagnose a task.')
+
+      // The file content was fed back under the real tool name.
+      const secondInput = mockStream.mock.calls[1][0].input
+      expect(secondInput).toContainEqual(
+        { type: 'function_call', name: 'read_file', arguments: JSON.stringify({ path: 'CONTEXT.md' }), call_id: 'call-1' },
+      )
+      expect(secondInput).toContainEqual(
+        { type: 'function_call_output', call_id: 'call-1', output: JSON.stringify('glossary body') },
+      )
+    } finally {
+      await rm(repoRoot, { recursive: true, force: true })
+    }
   })
 
   // ── Transcript replay ─────────────────────────────────────────────────────

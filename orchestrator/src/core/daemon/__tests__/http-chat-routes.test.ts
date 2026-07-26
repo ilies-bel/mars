@@ -29,6 +29,13 @@ vi.mock('../codex-api', async (importOriginal) => {
   }
 })
 
+// Mock skill discovery so the run reaches the API layer without real fs I/O
+// (the assertions below only wait a single setImmediate turn).
+vi.mock('../chat-skills', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../chat-skills')>()
+  return { ...actual, discoverSkills: vi.fn().mockResolvedValue([]) }
+})
+
 // Mock the shell-tool executor so no real subprocess is spawned.
 vi.mock('../../lib/git/claude', () => ({
   resolveClaudeBin: vi.fn(() => '/usr/bin/claude'),
@@ -96,9 +103,11 @@ const nullRecipeCatalog: RecipeCatalog = {
 
 let server: HttpServerHandle | null = null
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks()
   mockLoadAuth.mockResolvedValue({ accessToken: 'tok', accountId: 'acc', refreshToken: 'ref' })
+  const chatSkills = await import('../chat-skills')
+  vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
   // Default: the API run completes immediately with one message.
   mockStream.mockImplementation(async (opts) => {
     opts.onEvent(messageEvent('ok'))
@@ -165,9 +174,9 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
     expect(body.ok).toBe(true)
 
     // Verify the API layer was invoked — confirming ChatRunner was called.
-    // (The run is still in-flight; give microtasks a tick to start.)
-    await new Promise((r) => setImmediate(r))
-    expect(mockStream).toHaveBeenCalled()
+    // (The run is still in-flight; wait for it to reach the API layer — a
+    // single setImmediate loses the race when the threadpool is loaded.)
+    await vi.waitFor(() => expect(mockStream).toHaveBeenCalled())
 
     // Clean up.
     resolveRun()

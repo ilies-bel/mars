@@ -49,7 +49,7 @@ describe('ChunkMapper.push', () => {
 
   it('maps tool_use to tool-input-start + tool-input-available', () => {
     const m = new ChunkMapper()
-    const out = m.push({ type: 'tool_use', id: 'c1', name: 'ls', input: { command: 'ls' } })
+    const out = m.push({ type: 'tool_use', id: 'c1', name: 'ls', tool: 'shell', input: { command: 'ls' } })
     expect(out).toEqual([
       { type: 'tool-input-start', toolCallId: 'c1', toolName: 'ls' },
       { type: 'tool-input-available', toolCallId: 'c1', toolName: 'ls', input: { command: 'ls' } },

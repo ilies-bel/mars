@@ -5,9 +5,11 @@
  *
  * The daemon owns the whole agent loop: it replays the thread transcript as
  * Responses input items on every turn (`store: false` — no server-side session,
- * nothing in the context window the daemon didn't put there), exposes one
- * `shell` function tool, executes tool calls itself, and feeds the outputs
- * back until the model produces a final message.
+ * nothing in the context window the daemon didn't put there), exposes the
+ * function tools in `CHAT_TOOLS` (`shell`, `read_file`, `write_file`, `skill`),
+ * executes tool calls itself, and feeds the outputs back until the model
+ * produces a final message. The repo's `.claude/skills` index is appended to
+ * the instructions so the agent can load any skill runbook on demand.
  *
  * One run per thread at a time (in-memory guard); concurrent POST requests
  * get a 409 response from the HTTP route. A 10-minute wall-clock timeout
@@ -21,7 +23,11 @@
  *   http/network → terminal error (user-safe message, no provider details)
  */
 
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
+
 import { buildWorkerEnv, runSubprocessStreaming } from '../lib/git/claude'
+import { buildSkillsSection, discoverSkills, loadSkill } from './chat-skills'
 import {
   appendMessage,
   getThread,
@@ -72,7 +78,7 @@ export interface AttachmentInfo {
 export type ChatSegment =
   | { type: 'text'; text: string }
   | { type: 'thinking'; thinking: string }
-  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'tool_use'; id: string; name: string; tool: string; input: unknown }
   | { type: 'tool_result'; tool_use_id: string; content: unknown; isError: boolean }
   | { type: 'result'; durationMs: number | null; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cost: number | null }
   | { type: 'error'; message: string }
@@ -104,7 +110,8 @@ const deriveCommandName = (command: string): string => {
  *
  * Recognised event → segment mappings:
  * - `response.output_item.done(message)`       → `text`
- * - `response.output_item.done(function_call)` → `tool_use`
+ * - `response.output_item.done(function_call)` → `tool_use` (`tool` carries the
+ *   real function name for dispatch/replay; `name` is the display label)
  * - `response.output_item.done(reasoning)`     → `thinking` (summary text)
  * - `response.completed`                       → `result` (usage)
  * All other event types produce no segments.
@@ -125,13 +132,14 @@ export const parseEventToSegments = (event: unknown): ChatSegment[] => {
     } else if (item.type === 'function_call' && typeof item.call_id === 'string' && typeof item.arguments === 'string') {
       let args: unknown
       try { args = JSON.parse(item.arguments) } catch { args = { raw: item.arguments } }
-      const command = isObject(args) && typeof args.command === 'string' ? args.command : null
+      const tool = typeof item.name === 'string' ? item.name : 'tool'
+      const command = tool === 'shell' && isObject(args) && typeof args.command === 'string' ? args.command : null
+      const skillName = tool === 'skill' && isObject(args) && typeof args.name === 'string' ? args.name : null
       segs.push({
         type: 'tool_use',
         id: item.call_id,
-        name: command !== null
-          ? deriveCommandName(command)
-          : typeof item.name === 'string' ? item.name : 'tool',
+        tool,
+        name: command !== null ? deriveCommandName(command) : skillName !== null ? `skill ${skillName}` : tool,
         input: args,
       })
     } else if (item.type === 'reasoning' && Array.isArray(item.summary)) {
@@ -160,13 +168,14 @@ export const parseEventToSegments = (event: unknown): ChatSegment[] => {
 
 // ── Transcript → Responses input ──────────────────────────────────────────────
 
-/** The single function tool the chat agent gets. */
+// ── Tool surface ──────────────────────────────────────────────────────────────
+
 const SHELL_TOOL: FunctionToolDef = {
   type: 'function',
   name: 'shell',
   description:
     'Run a shell command from the repository root and return its stdout, stderr, and exit code. ' +
-    'Use it for mars CLI commands, git, file inspection, and daemon HTTP queries.',
+    'Use it for mars CLI commands, git, and daemon HTTP queries.',
   strict: false,
   parameters: {
     type: 'object',
@@ -178,6 +187,63 @@ const SHELL_TOOL: FunctionToolDef = {
   },
 }
 
+const READ_FILE_TOOL: FunctionToolDef = {
+  type: 'function',
+  name: 'read_file',
+  description:
+    'Read a UTF-8 text file and return its content. Prefer this over shell cat/sed for file reads.',
+  strict: false,
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'File path, absolute or relative to the repository root.' },
+      offset: { type: 'number', description: '1-based line number to start reading from (default 1).' },
+      limit: { type: 'number', description: 'Maximum number of lines to return (default: to end of file).' },
+    },
+    required: ['path'],
+    additionalProperties: false,
+  },
+}
+
+const WRITE_FILE_TOOL: FunctionToolDef = {
+  type: 'function',
+  name: 'write_file',
+  description:
+    'Create or overwrite a UTF-8 text file (parent directories are created). ' +
+    'Never use it to edit source files on main — code changes route through `mars task add`. ' +
+    'Intended for `.mars/` state files (notes, chat-system-prompt.md) and scratch output.',
+  strict: false,
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'File path, absolute or relative to the repository root.' },
+      content: { type: 'string', description: 'The full file content to write.' },
+    },
+    required: ['path', 'content'],
+    additionalProperties: false,
+  },
+}
+
+const SKILL_TOOL: FunctionToolDef = {
+  type: 'function',
+  name: 'skill',
+  description:
+    'Load a skill — a reusable runbook from .claude/skills — and follow its instructions for the ' +
+    'rest of the turn. Call it as soon as the user request matches a skill in the index.',
+  strict: false,
+  parameters: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: 'The skill name, exactly as listed in the skill index.' },
+    },
+    required: ['name'],
+    additionalProperties: false,
+  },
+}
+
+/** The function tools the chat agent gets, in the order sent to the API. */
+export const CHAT_TOOLS: FunctionToolDef[] = [SHELL_TOOL, READ_FILE_TOOL, WRITE_FILE_TOOL, SKILL_TOOL]
+
 const CHAT_MODEL = 'gpt-5.5'
 /** Upper bound on model↔tool round-trips within one chat turn. */
 const MAX_TOOL_TURNS = 40
@@ -186,8 +252,84 @@ const TOOL_OUTPUT_CHAR_CAP = 10_000
 /** Rough cap on the serialized replayed transcript; oldest messages drop first. */
 const MAX_TRANSCRIPT_CHARS = 120_000
 
+/** Larger cap for `skill` output — a runbook must survive loading whole. */
+const SKILL_OUTPUT_CHAR_CAP = 30_000
+
 const truncate = (s: string, cap: number): string =>
   s.length > cap ? `${s.slice(0, cap)}…[truncated]` : s
+
+/**
+ * Execute one function-tool call and return the content fed back to the model
+ * (also persisted as the `tool_result` segment). Exported for unit testing.
+ * All failure modes return `isError: true` rather than throwing — a bad tool
+ * call must never kill the run.
+ */
+export const executeToolCall = async (
+  tool: string,
+  args: Record<string, unknown>,
+  repoRoot: string,
+  signal: AbortSignal,
+): Promise<{ content: unknown; isError: boolean }> => {
+  switch (tool) {
+    case 'shell': {
+      const command = typeof args.command === 'string' ? args.command : null
+      if (command === null) {
+        return { content: { stdout: '', stderr: 'invalid shell arguments: missing "command"', exitCode: 1 }, isError: true }
+      }
+      const r = await runSubprocessStreaming('bash', ['-lc', command], repoRoot, undefined, signal, buildWorkerEnv())
+      return {
+        content: {
+          stdout: truncate(r.stdout, TOOL_OUTPUT_CHAR_CAP),
+          stderr: truncate(r.stderr, TOOL_OUTPUT_CHAR_CAP),
+          exitCode: r.exitCode,
+        },
+        isError: r.exitCode !== 0,
+      }
+    }
+    case 'read_file': {
+      const path = typeof args.path === 'string' ? args.path : null
+      if (path === null) return { content: 'invalid read_file arguments: missing "path"', isError: true }
+      try {
+        const lines = (await readFile(resolve(repoRoot, path), 'utf8')).split('\n')
+        const offset = typeof args.offset === 'number' && args.offset > 1 ? Math.floor(args.offset) : 1
+        const limit = typeof args.limit === 'number' && args.limit > 0 ? Math.floor(args.limit) : lines.length
+        return { content: truncate(lines.slice(offset - 1, offset - 1 + limit).join('\n'), TOOL_OUTPUT_CHAR_CAP), isError: false }
+      } catch (err) {
+        return { content: `read failed: ${err instanceof Error ? err.message : String(err)}`, isError: true }
+      }
+    }
+    case 'write_file': {
+      const path = typeof args.path === 'string' ? args.path : null
+      const content = typeof args.content === 'string' ? args.content : null
+      if (path === null || content === null) {
+        return { content: 'invalid write_file arguments: "path" and "content" are required', isError: true }
+      }
+      try {
+        const target = resolve(repoRoot, path)
+        await mkdir(dirname(target), { recursive: true })
+        await writeFile(target, content, 'utf8')
+        return { content: `wrote ${Buffer.byteLength(content, 'utf8')} bytes to ${target}`, isError: false }
+      } catch (err) {
+        return { content: `write failed: ${err instanceof Error ? err.message : String(err)}`, isError: true }
+      }
+    }
+    case 'skill': {
+      const name = typeof args.name === 'string' ? args.name : null
+      if (name === null) return { content: 'invalid skill arguments: missing "name"', isError: true }
+      const skill = await loadSkill(repoRoot, name)
+      if (!skill) {
+        const available = (await discoverSkills(repoRoot)).map((s) => s.name).join(', ')
+        return { content: `unknown skill "${name}". Available skills: ${available || '(none)'}`, isError: true }
+      }
+      const filesNote = skill.files.length > 0
+        ? `\n\n[Bundled files under .claude/skills/${name}/: ${skill.files.join(', ')} — read them with read_file when the instructions reference them.]`
+        : ''
+      return { content: truncate(`${skill.content}${filesNote}`, SKILL_OUTPUT_CHAR_CAP), isError: false }
+    }
+    default:
+      return { content: `unknown tool "${tool}"`, isError: true }
+  }
+}
 
 const renderAlertText = (seg: AlertSegment): string => {
   const lines = [`[Alert: ${seg.kind}] ${seg.title}`, `Why now: ${seg.whyNow}`]
@@ -227,7 +369,8 @@ const messageToItems = (msg: ChatMessage): ResponseInputItem[] => {
     } else if (seg.type === 'tool_use' && typeof seg.id === 'string') {
       const result = resultsById.get(seg.id)
       if (!result) continue
-      items.push({ type: 'function_call', name: 'shell', arguments: JSON.stringify(seg.input ?? {}), call_id: seg.id })
+      const tool = typeof seg.tool === 'string' ? seg.tool : 'shell'
+      items.push({ type: 'function_call', name: tool, arguments: JSON.stringify(seg.input ?? {}), call_id: seg.id })
       items.push({ type: 'function_call_output', call_id: seg.id, output: truncate(JSON.stringify(result.content ?? ''), TOOL_OUTPUT_CHAR_CAP) })
     }
     // thinking / result / error / tool_result → not replayed
@@ -634,7 +777,12 @@ export class ChatRunner {
       }, CHAT_TIMEOUT_MS)
 
       try {
-        const instructions = await resolveChatSystemPrompt(repoRoot)
+        const [basePrompt, skills] = await Promise.all([
+          resolveChatSystemPrompt(repoRoot),
+          discoverSkills(repoRoot),
+        ])
+        const skillsSection = buildSkillsSection(skills)
+        const instructions = skillsSection.length > 0 ? `${basePrompt}\n\n${skillsSection}` : basePrompt
         let auth: CodexAuth = await loadCodexAuth()
         let authRetried = false
 
@@ -643,7 +791,7 @@ export class ChatRunner {
         const usageTotals = { input: 0, output: 0, cached: 0 }
 
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-          const pendingCalls: Array<{ callId: string; input: unknown }> = []
+          const pendingCalls: Array<{ callId: string; tool: string; input: unknown }> = []
 
           for (;;) {
             pendingCalls.length = 0
@@ -653,7 +801,7 @@ export class ChatRunner {
                 model: CHAT_MODEL,
                 instructions,
                 input,
-                tools: [SHELL_TOOL],
+                tools: CHAT_TOOLS,
                 signal: abort.signal,
                 onEvent: (event) => {
                   for (const seg of parseEventToSegments(event)) {
@@ -665,7 +813,7 @@ export class ChatRunner {
                       continue
                     }
                     broadcastSegment(seg)
-                    if (seg.type === 'tool_use') pendingCalls.push({ callId: seg.id, input: seg.input })
+                    if (seg.type === 'tool_use') pendingCalls.push({ callId: seg.id, tool: seg.tool, input: seg.input })
                   }
                 },
               })
@@ -685,23 +833,10 @@ export class ChatRunner {
 
           for (const call of pendingCalls) {
             const args = isObject(call.input) ? call.input : {}
-            const command = typeof args.command === 'string' ? args.command : null
-            let output: { stdout: string; stderr: string; exitCode: number }
-            if (command === null) {
-              output = { stdout: '', stderr: 'invalid shell arguments: missing "command"', exitCode: 1 }
-            } else {
-              const r = await runSubprocessStreaming(
-                'bash', ['-lc', command], repoRoot, undefined, abort.signal, buildWorkerEnv(),
-              )
-              output = {
-                stdout: truncate(r.stdout, TOOL_OUTPUT_CHAR_CAP),
-                stderr: truncate(r.stderr, TOOL_OUTPUT_CHAR_CAP),
-                exitCode: r.exitCode,
-              }
-            }
-            broadcastSegment({ type: 'tool_result', tool_use_id: call.callId, content: output, isError: output.exitCode !== 0 })
-            input.push({ type: 'function_call', name: 'shell', arguments: JSON.stringify(args), call_id: call.callId })
-            input.push({ type: 'function_call_output', call_id: call.callId, output: JSON.stringify(output) })
+            const result = await executeToolCall(call.tool, args, repoRoot, abort.signal)
+            broadcastSegment({ type: 'tool_result', tool_use_id: call.callId, content: result.content, isError: result.isError })
+            input.push({ type: 'function_call', name: call.tool, arguments: JSON.stringify(args), call_id: call.callId })
+            input.push({ type: 'function_call_output', call_id: call.callId, output: JSON.stringify(result.content) })
             if (abort.signal.aborted) break
           }
           if (abort.signal.aborted) break
