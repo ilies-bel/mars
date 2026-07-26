@@ -69,18 +69,11 @@ interface QueueModule {
   migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
-interface DbModule {
-  __resetDbRegistryForTests: () => Promise<void>
-}
-
-// Holds the cleanup fn for the current test's PGlite instance so afterEach
-// can close it before deleting the temp directory.
-let cleanupDb: (() => Promise<void>) | null = null
-
 /**
- * Load queue + requeue-diagnostics with a fresh module scope.  Captures a
- * reference to `__resetDbRegistryForTests` so the caller can close PGlite
- * before wiping the data directory.
+ * Load queue + requeue-diagnostics with a fresh module scope.
+ * Follows the same pattern as requeue-ceiling.test.ts: vi.resetModules()
+ * provides test isolation; PGlite is abandoned (not explicitly closed) so the
+ * WASM module stays in a consistent state across tests.
  */
 const loadBlockedWaitModules = async (
   repo: string,
@@ -88,17 +81,10 @@ const loadBlockedWaitModules = async (
   q: QueueModule
   computeBlockedWaitMs: (taskId: string, nowMs: number) => Promise<number>
 }> => {
-  // Close the previous PGlite instance before resetting the module cache.
-  if (cleanupDb) {
-    await cleanupDb().catch(() => {})
-    cleanupDb = null
-  }
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.migrateQueueSchema()
-  const dbMod = (await import('../../lib/db')) as unknown as DbModule
-  cleanupDb = dbMod.__resetDbRegistryForTests
   const diag = await import('../requeue-diagnostics')
   return { q, computeBlockedWaitMs: diag.computeBlockedWaitMs }
 }
@@ -373,13 +359,7 @@ describe('computeBlockedWaitMs', () => {
     repo = setupRepo()
   })
 
-  afterEach(async () => {
-    // Close PGlite BEFORE deleting its data directory to prevent WASM state
-    // leakage into subsequent tests.
-    if (cleanupDb) {
-      await cleanupDb().catch(() => {})
-      cleanupDb = null
-    }
+  afterEach(() => {
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
