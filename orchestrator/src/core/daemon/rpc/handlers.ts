@@ -87,8 +87,8 @@ const remergeHandler = handler('remerge', async (req, deps) => {
 })
 
 const purgeHandler = handler('purge', async (req, deps) => {
-  await deps.handlePurge(req.id, req.force ?? false)
-  return { ok: true }
+  const result = await deps.handlePurge(req.id, req.force ?? false)
+  return { ok: true, data: result }
 })
 
 const arcPurgeHandler = handler('arc-purge', async (req, deps) => {

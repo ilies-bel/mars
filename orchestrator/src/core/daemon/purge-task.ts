@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 import {
   getTask,
   dropTask,
+  enqueueTask,
   type DropTaskResult,
 } from '../queue'
 import { getDefaultDomainTaskStore } from '../store/task-store'
@@ -14,6 +15,20 @@ import {
 import { supersedeActionQueueItemsForOrigin, resolveAllRowsForTask } from '../lib/action-queue'
 
 const exec = promisify(execFile)
+
+/**
+ * Return type of {@link corePurgeTask}. Extends {@link DropTaskResult} with an
+ * optional `compensationTaskId` field that is populated when a force-purge of a
+ * 'done', non-fix task creates (or finds an existing) cleanup/compensation task.
+ */
+export interface PurgeTaskResult extends DropTaskResult {
+  /**
+   * Id of the compensation/cleanup task created when `force=true` and the
+   * purged task's `status` was `'done'` and its `kind` was not `'fix'`. Absent
+   * (undefined) when no compensation task was needed or applicable.
+   */
+  compensationTaskId?: string
+}
 
 /**
  * Error thrown by {@link corePurgeTask} when the branch has unique commits
@@ -39,6 +54,15 @@ export class PurgeAheadError extends Error {
   }
 }
 
+export interface CorePurgeTaskOptions {
+  /**
+   * When true, skip the single-task compensation task creation even if
+   * `force=true` and the task was `'done'`. Use this when the caller (e.g.
+   * `coreArcPurge`) will handle compensation at a higher level (arc-scope).
+   */
+  skipCompensation?: boolean
+}
+
 /**
  * Core purge mechanics used by both the UDS RPC handler (`mars purge`) and
  * tests. Validates the task exists and is in a terminal status, checks for
@@ -55,7 +79,8 @@ export const corePurgeTask = async (
   force: boolean,
   integrationBranch: string,
   repoRoot: string,
-): Promise<DropTaskResult> => {
+  opts?: CorePurgeTaskOptions,
+): Promise<PurgeTaskResult> => {
   const task = await getTask(id)
   if (!task) {
     // Task is already gone — the purge goal is already achieved. Resolve any
@@ -74,6 +99,12 @@ export const corePurgeTask = async (
       `task ${id} is ${task.status}; refuse to purge in-flight tasks`,
     )
   }
+
+  // Capture task metadata BEFORE deletion — needed for compensation task creation.
+  const capturedStatus = task.status
+  const capturedKind = task.kind ?? 'task'
+  const capturedOriginId = task.originId
+  const capturedIntent = task.intent || task.prompt.split('\n')[0]
 
   const branch = task.branch ?? `task/${task.id}`
 
@@ -115,5 +146,38 @@ export const corePurgeTask = async (
   await resolveAllRowsForTask(id)
   await supersedeActionQueueItemsForOrigin(id, 'origin-purged', 'purge:pre-delete')
 
-  return dropTask(id)
+  const dropResult = await dropTask(id)
+
+  // Compensation task: when force=true and the purged task had integrated work
+  // (status='done') and is not a recovery leaf (kind!='fix'), create exactly one
+  // cleanup task. The followup_dedup_key makes this idempotent — a repeated
+  // force-purge (or a crash-retry) finds the existing task and returns its id.
+  // Skip when the caller (e.g. coreArcPurge) handles compensation at arc scope.
+  if (!force || capturedStatus !== 'done' || capturedKind === 'fix' || opts?.skipCompensation) {
+    return dropResult
+  }
+
+  const dedupKey = `task-force-purge-compensation:${id}`
+  const store = getDefaultDomainTaskStore()
+  const existing = await store.execute({
+    sql: `SELECT id FROM tasks WHERE followup_dedup_key = ?`,
+    args: [dedupKey],
+  })
+  const existingRows = existing.rows as unknown as { id: string }[]
+  if (existingRows.length > 0) {
+    return { ...dropResult, compensationTaskId: existingRows[0].id }
+  }
+
+  const compensationTask = await enqueueTask(
+    `Compensate for force-purged task ${id}.\n\nThe task below was force-purged while its work had already been integrated into the integration branch (${integrationBranch}). Review the integration branch to identify and handle any orphaned code from this abandoned task.\n\n**Abandoned task:** ${id}\n**Origin task intent:** ${capturedIntent}\n\n**Expected cleanup or revert scope:**\n1. Run \`git log ${integrationBranch} --oneline\` to find commits from the task branch.\n2. Decide whether to revert the integrated changes or keep them with documentation.\n3. If reverting: use \`git revert <sha>\` for each relevant commit.\n4. If keeping: add a code comment or ADR entry referencing this abandoned task with rationale.`,
+    undefined,
+    {
+      skipTriage: true,
+      compensatesArcId: capturedOriginId,
+      followupDedupKey: dedupKey,
+      intent: `Compensate for force-purged task ${id}`,
+    },
+  )
+
+  return { ...dropResult, compensationTaskId: compensationTask.id }
 }

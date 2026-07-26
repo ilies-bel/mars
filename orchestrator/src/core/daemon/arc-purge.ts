@@ -19,7 +19,7 @@
  * atomically.
  */
 import { getTask, enqueueTask } from '../queue'
-import { corePurgeTask } from './purge-task'
+import { corePurgeTask, type CorePurgeTaskOptions } from './purge-task'
 import { listUniqueCommitsAhead } from '../lib/sweep'
 import { getDefaultDomainTaskStore } from '../store/task-store'
 
@@ -94,9 +94,12 @@ export const coreArcPurge = async (
 
   // Collect full task details BEFORE purging: status determines whether the arc
   // had work integrated into the branch (status='done' means merged).
+  // Recovery leaves (kind='fix') are excluded: a fix task that reached 'done'
+  // means the recovery succeeded and the origin's work was already integrated
+  // before the purge — only non-fix members drive the compensation decision.
   const memberTaskDetails = await Promise.all(members.map((m) => getTask(m.id)))
   const integratedMemberIds = memberTaskDetails
-    .filter((t): t is NonNullable<typeof t> => t !== null && t.status === 'done')
+    .filter((t): t is NonNullable<typeof t> => t !== null && t.status === 'done' && t.kind !== 'fix')
     .map((t) => t.id)
   const hasIntegratedWork = integratedMemberIds.length > 0
 
@@ -118,9 +121,12 @@ export const coreArcPurge = async (
     ...(originMember ? [originMember] : []),
   ]
 
+  // skipCompensation: arc-level compensation is handled below; task-level
+  // compensation would create a duplicate row per member.
+  const memberPurgeOpts: CorePurgeTaskOptions = { skipCompensation: true }
   const purgedIds: string[] = []
   for (const member of orderedMembers) {
-    await corePurgeTask(member.id, force, integrationBranch, repoRoot)
+    await corePurgeTask(member.id, force, integrationBranch, repoRoot, memberPurgeOpts)
     purgedIds.push(member.id)
   }
 

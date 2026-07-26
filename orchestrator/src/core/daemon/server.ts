@@ -2389,15 +2389,21 @@ export const startDaemon = async (
     return result
   }
 
-  const handlePurge = async (id: string, force: boolean): Promise<void> => {
+  const handlePurge = async (
+    id: string,
+    force: boolean,
+  ): Promise<{ compensationTaskId?: string }> => {
     const { corePurgeTask } = await import('./purge-task')
     const { getRepoRoot } = await import('../context')
-    await corePurgeTask(id, force, integrationBranch, getRepoRoot())
+    const result = await corePurgeTask(id, force, integrationBranch, getRepoRoot())
     // Action-queue rows for the purged task are closed by the Invalidator,
     // which consumes the task.terminal{purged} event dropTask emits in-tx
     // before deleting the row. No inline supersede here — that best-effort
     // path was lost when the daemon was down and is the staleness class this
     // design removes (ADR-0027/0030).
+    return result.compensationTaskId !== undefined
+      ? { compensationTaskId: result.compensationTaskId }
+      : {}
   }
 
   const handleArcPurge = async (
