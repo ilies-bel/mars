@@ -518,3 +518,7 @@ _Avoid_: gate disable, gate suspension, gate kill-switch, quarantined gate
 **Semantic token**:
 A color or radius variable named for UI intent (primary, destructive, status-failed) — the only vocabulary component code may reference.
 _Avoid_: shadcn variable, intent token
+
+**Palette token**:
+A raw Mars brand color (iron, flame, dust) defined in the stylesheet and consumed only by semantic tokens, never directly by components.
+_Avoid_: brand token, raw color
