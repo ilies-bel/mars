@@ -498,22 +498,60 @@ const VALID_TASK_STATUSES: ReadonlySet<string> = new Set<TaskStatus>([
   'blocked',
 ])
 
+const LIST_DEFAULT_LIMIT = 10
+
 const list: Command = {
   path: 'list',
   summary: 'list tasks (optionally filtered by status)',
-  usage: 'usage: mars list [<status>]',
+  usage: 'usage: mars list [<status>] [--limit <n>] [--all]',
   run: async (args, deps) => {
-    const statusArg = args.positional[0]
+    // Separate boolean flags from positional status arg.
+    const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
+    const positionals = args.positional.filter((a) => !a.startsWith('--'))
+
+    const statusArg = positionals[0]
     if (statusArg !== undefined && !VALID_TASK_STATUSES.has(statusArg)) {
       deps.err(
         `unknown status '${statusArg}'; valid values: ${[...VALID_TASK_STATUSES].join(', ')}`,
       )
       return { code: 2 }
     }
-    const tasks = await deps.store.listTasks(statusArg as TaskStatus)
+
+    const showAll = boolFlags.has('--all')
+
+    // --limit <n> is parsed into args.flags by parseArgs (it's in FLAGS_WITH_VALUES).
+    let limit: number | undefined
+    if (showAll) {
+      limit = undefined
+    } else if (args.flags['--limit'] !== undefined) {
+      const parsed = parseInt(args.flags['--limit'], 10)
+      if (isNaN(parsed) || parsed < 1) {
+        deps.err('--limit must be a positive integer')
+        return { code: 2 }
+      }
+      limit = parsed
+    } else {
+      limit = LIST_DEFAULT_LIMIT
+    }
+
+    const { tasks, total } = await deps.store.listTasksPaged(
+      statusArg as TaskStatus,
+      limit,
+    )
+
     for (const t of tasks) {
       deps.out(`${t.id}\t${t.status}\tP${t.priority ?? 0}\t${t.prompt.slice(0, 60)}`)
     }
+
+    const showing = tasks.length
+    if (showing < total) {
+      deps.out(
+        `\nShowing ${showing} of ${total} tasks  (use --limit <n> or --all to see more)`,
+      )
+    } else {
+      deps.out(`\n${total} task${total !== 1 ? 's' : ''} total`)
+    }
+
     return { code: 0 }
   },
 }

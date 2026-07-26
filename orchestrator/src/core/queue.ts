@@ -1350,6 +1350,53 @@ export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
 }
 
 /**
+ * Paginated task listing. Returns up to `limit` rows (ordered by priority
+ * DESC, created_at ASC) alongside the total row count matching the optional
+ * status filter. When `limit` is undefined all matching rows are returned
+ * (escape-hatch for `--all`).
+ */
+export const listTasksPaged = async (
+  status?: TaskStatus,
+  limit?: number,
+): Promise<{ tasks: Task[]; total: number }> => {
+  await ensureQueueSchema()
+  const client = resolveQueueClient()
+
+  const countArgs: DbInValue[] = []
+  let countSql = 'SELECT COUNT(*) AS n FROM tasks t'
+  if (status !== undefined) {
+    countSql += ' WHERE t.status = ?'
+    countArgs.push(status)
+  }
+  const countResult = await client.execute(
+    countArgs.length ? { sql: countSql, args: countArgs } : countSql,
+  )
+  const total = Number(
+    (countResult.rows[0] as Record<string, unknown>)['n'] ?? 0,
+  )
+
+  const taskArgs: DbInValue[] = []
+  let taskSql = `${TASK_SEL}`
+  if (status !== undefined) {
+    taskSql += ' WHERE t.status = ?'
+    taskArgs.push(status)
+  }
+  taskSql += ' ORDER BY t.priority DESC, t.created_at ASC'
+  if (limit !== undefined) {
+    taskSql += ' LIMIT ?'
+    taskArgs.push(limit)
+  }
+  const r = await client.execute(
+    taskArgs.length ? { sql: taskSql, args: taskArgs } : taskSql,
+  )
+
+  return {
+    tasks: r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>)),
+    total,
+  }
+}
+
+/**
  * Reprioritize a still-queued task. Thin wrapper over the Arc aggregate's
  * {@link Arc.reprioritize} write funnel (ADR-0052 sole-writer): the priority
  * `UPDATE tasks SET …` now lives in `core/arc.ts`, the only legitimate

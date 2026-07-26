@@ -118,6 +118,32 @@ describe('createTaskStore', () => {
     expect(prompts).toContain('task-two')
   })
 
+  it('listTasksPaged returns tasks with total count', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    await store.enqueueTask('paged-one', undefined, { skipTriage: true })
+    await store.enqueueTask('paged-two', undefined, { skipTriage: true })
+    await store.enqueueTask('paged-three', undefined, { skipTriage: true })
+
+    const { tasks, total } = await store.listTasksPaged('queued')
+    expect(total).toBe(3)
+    expect(tasks.map((t) => t.prompt)).toContain('paged-one')
+  })
+
+  it('listTasksPaged respects limit and still reports full total', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    await store.enqueueTask('limit-a', undefined, { skipTriage: true })
+    await store.enqueueTask('limit-b', undefined, { skipTriage: true })
+    await store.enqueueTask('limit-c', undefined, { skipTriage: true })
+
+    const { tasks, total } = await store.listTasksPaged('queued', 2)
+    expect(total).toBe(3)
+    expect(tasks).toHaveLength(2)
+  })
+
   it('exposes every expected domain method', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
     const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
@@ -125,6 +151,7 @@ describe('createTaskStore', () => {
     const expectedMethods = [
       'getTask',
       'listTasks',
+      'listTasksPaged',
       'enqueueTask',
       'updateTask',
       'dropTask',

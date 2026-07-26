@@ -133,6 +133,8 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   // mars verify-gate add — gate required/optional toggle
   '--required',
   '--optional',
+  // mars list --all: bypass the default 10-row limit and return every matching task.
+  '--all',
 ])
 
 // Short aliases for value-bearing flags, normalised to their long form before

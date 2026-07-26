@@ -282,6 +282,107 @@ describe('task show / list (store-backed reads)', () => {
     expect(defaultLine).toContain('P0')
     expect(highLine).toContain('P3')
   })
+
+  it('defaults to 10 rows and prints total count when more tasks exist', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    for (let i = 0; i < 12; i++) {
+      await store.enqueueTask(`task ${i}`, undefined, { skipTriage: true })
+    }
+    const r = await runCommandInProcess(['list'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const taskLines = r.out.filter((l) => l.includes('\t'))
+    expect(taskLines).toHaveLength(10)
+    const summary = r.out.join('\n')
+    expect(summary).toContain('10 of 12')
+  })
+
+  it('shows total count without truncation hint when all tasks fit', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    await store.enqueueTask('only task', undefined, { skipTriage: true })
+    const r = await runCommandInProcess(['list'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const summary = r.out.join('\n')
+    expect(summary).toContain('1 task total')
+    expect(summary).not.toContain('of ')
+  })
+
+  it('filters by status when status arg is given', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    await store.enqueueTask('queued task', undefined, { skipTriage: true })
+    const r = await runCommandInProcess(['list', 'queued'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const text = r.out.join('\n')
+    expect(text).toContain('queued task')
+    expect(text).toContain('queued')
+  })
+
+  it('rejects an unknown status with exit code 2', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['list', 'bogus-status'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain("unknown status 'bogus-status'")
+  })
+
+  it('--limit overrides the default cap', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    for (let i = 0; i < 5; i++) {
+      await store.enqueueTask(`limit task ${i}`, undefined, { skipTriage: true })
+    }
+    const r = await runCommandInProcess(['list', '--limit', '2'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const taskLines = r.out.filter((l) => l.includes('\t'))
+    expect(taskLines).toHaveLength(2)
+    const summary = r.out.join('\n')
+    expect(summary).toContain('2 of 5')
+  })
+
+  it('--all returns every task regardless of count', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    for (let i = 0; i < 15; i++) {
+      await store.enqueueTask(`all task ${i}`, undefined, { skipTriage: true })
+    }
+    const r = await runCommandInProcess(['list', '--all'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const taskLines = r.out.filter((l) => l.includes('\t'))
+    expect(taskLines).toHaveLength(15)
+    const summary = r.out.join('\n')
+    expect(summary).toContain('15 tasks total')
+  })
+
+  it('--limit validates that value is a positive integer', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['list', '--limit', 'abc'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('--limit must be a positive integer')
+  })
 })
 
 describe('task priority (daemon-routed mutation)', () => {

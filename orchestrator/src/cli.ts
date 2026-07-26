@@ -169,7 +169,13 @@ Commands:
                                 set the technical plan on a draft/queued task
   show <id>                     print full detail for an id; looks up tasks
                                 first, then proposals (both in the Mars database)
-  list [status]                 list tasks (draft|queued|blocked|running|verifying|merging|vega-reconciling|awaiting-human|done|failed|dropped)
+  list [<status>] [--limit <n>] [--all]
+                                list tasks; defaults to 10 rows with total
+                                count. Status: draft|queued|blocked|running|
+                                verifying|merging|vega-reconciling|
+                                awaiting-human|done|failed|dropped.
+                                --limit <n> shows n rows; --all shows every
+                                matching task.
   continue <id> [<id> ...]      resume failed task(s) on their existing
                                 worktree+branch, jumping straight into the
                                 failed phase (verify or merge). Refuses if a
@@ -752,10 +758,12 @@ file.`,
 
 Print full detail for an id. Looks up tasks first, then proposals
 (both in the Mars database).`,
-  list: `mars list [status]
+  list: `mars list [<status>] [--limit <n>] [--all]
 
-List tasks. Status one of: draft, queued, blocked, running, verifying, merging,
-vega-reconciling, awaiting-human, done, failed, dropped. Defaults to all when omitted.`,
+List tasks. Defaults to the 10 most-recent rows; prints total count so you
+know when the view is truncated. Status filter: draft, queued, blocked,
+running, verifying, merging, vega-reconciling, awaiting-human, done, failed,
+dropped. --limit <n> adjusts the cap; --all disables it.`,
   continue: `mars continue <id> [<id> ...]
 
 Resume failed task(s) on their existing worktree+branch, jumping
