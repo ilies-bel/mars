@@ -4,6 +4,7 @@ import { ensureSchema } from '../core/lib/pg-schema'
 import { resolveContext, resolveDbTarget } from '../core/context'
 import { importLegacySqlite } from './import-sqlite'
 import { ensureVerifyGatesSchema } from '../core/verify-gates'
+import { ensureCredentialSchema } from '../core/lib/credential-store'
 
 /**
  * Materialise the canonical Mars schema in the per-repo database (the
@@ -27,6 +28,7 @@ export const initDatabases = async (): Promise<void> => {
   try {
     await ensureSchema(client)
     await ensureVerifyGatesSchema(client)
+    await ensureCredentialSchema(client)
     // Fold a pre-migration `.mars/mars.db` into PG before anything writes new
     // rows. The importer renames the SQLite file to `mars.db.bak-<ts>` on
     // success, so subsequent runs are no-sqlite no-ops.
