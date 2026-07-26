@@ -16,6 +16,36 @@
  * than papering over it.
  */
 
+/**
+ * Grammar that a valid step identifier must satisfy.
+ * Shape: `<segment>` or `<segment>:<segment>` (repeatable colon-separated).
+ * Each segment is lower-case ASCII, digits, and hyphens; must start with a
+ * letter. Spaces, capitals, and punctuation other than `-`/`:` are rejected.
+ *
+ * Examples that pass: `verify:has-diff`, `code:coder-exit-nonzero`,
+ * `requeue:time-bound-exceeded`, `unknown`.
+ *
+ * Examples that fail: `Re-queue time bound exceeded: 1 attempt(s) over 270m`
+ * (spaces, capitals, parentheses), `''` (empty), `verify:` (empty segment).
+ */
+export const STEP_ID_RE = /^[a-z][a-z0-9-]*(?::[a-z0-9-]+)*$/
+
+/** Fallback step id used when the raw value is absent or fails the grammar. */
+export const UNKNOWN_STEP_ID = 'unknown'
+
+/**
+ * Validate and return a step id, or `null` when `raw` is absent or contains
+ * prose (spaces, capitals, punctuation that violates the grammar).
+ *
+ * @returns The trimmed value when it satisfies `STEP_ID_RE`; `null` otherwise.
+ */
+export const asStepId = (raw: string | null | undefined): string | null => {
+  if (raw === null || raw === undefined) return null
+  const trimmed = raw.trim()
+  if (trimmed === '') return null
+  return STEP_ID_RE.test(trimmed) ? trimmed : null
+}
+
 const ANSI_PATTERN =
   // CSI sequences and a few common other escape sequences.
   // eslint-disable-next-line no-control-regex
@@ -379,11 +409,21 @@ const RECOVERY_REASON_PREFIX_RE = /^recovery_(?:exhausted|failed):/
  *
  * Invariant: `computeFailureSignature(step, computeFailureSignature(step, x))`
  * equals `computeFailureSignature(step, x)` for all inputs.
+ *
+ * Invariant: the step half of the returned signature always satisfies
+ * `STEP_ID_RE`. If `rawFailingStep` is prose (spaces, capitals, punctuation)
+ * it is normalised to `UNKNOWN_STEP_ID` so the caller cannot mint a
+ * prose-contaminated signature.
  */
 export const computeFailureSignature = (
-  failingStep: string,
+  rawFailingStep: string,
   errorOutput: string,
 ): string => {
+  // Normalise the step id. Prose values (e.g. "Re-queue time bound exceeded:
+  // 1 attempt(s) over 270m …") fail the grammar and are replaced with
+  // UNKNOWN_STEP_ID so no prose can reach the signature.
+  const failingStep = asStepId(rawFailingStep) ?? UNKNOWN_STEP_ID
+
   // When `errorOutput` is a composed reason string, its first line looks like:
   //   recovery_exhausted:verify:typecheck/typecheck-cannot-find-name: <truncated error>
   //   recovery_failed:verify:typecheck/typecheck-cannot-find-name: <truncated error>

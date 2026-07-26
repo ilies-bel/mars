@@ -94,6 +94,12 @@ export const checkAndEscalateRequeueCeiling = async (
       `escalating to failed`,
   )
 
+  // `failureReason` must be a step-id-grammar value so the signature minted
+  // by recovery-spawn.ts is stable across occurrences. The varying measurements
+  // (attempt count, elapsed minutes) belong in `error` and the action-queue
+  // body — not in the identity field. Do NOT set `failedPhase` here: it is
+  // typed `code | verify | merge` (queue.ts) and the ceiling fires at dispatch
+  // level, outside all three phases.
   await updateTask(t.id, {
     status: 'failed',
     error:
@@ -101,9 +107,7 @@ export const checkAndEscalateRequeueCeiling = async (
       `over ${elapsedMins} minutes without completing ` +
       `(bound ${boundMins}m). ` +
       `Run \`mars restart ${t.id}\` to reset.`,
-    failureReason:
-      `Re-queue time bound exceeded: ${maxAttempt} attempt(s) over ${elapsedMins}m ` +
-      `(bound ${boundMins}m).`,
+    failureReason: 'requeue:time-bound-exceeded',
     failureReasonCode: 'requeue-time-bound-exceeded',
   }).catch(() => {})
 

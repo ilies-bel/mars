@@ -264,6 +264,43 @@ describe('checkAndEscalateRequeueCeiling', () => {
     expect(reloaded?.status).toBe('queued')
   })
 
+  // ── failureReason is a stable step id (not prose with elapsed time) ────────
+
+  it('sets failureReason to the stable step id requeue:time-bound-exceeded so two failures with different elapsed minutes share one signature', async () => {
+    // Regression test for the live defect: the old prose reason included
+    // elapsed minutes, minting a distinct signature for every occurrence
+    // ("Re-queue time bound exceeded: 1 attempt(s) over 270m …" ≠
+    //  "Re-queue time bound exceeded: 1 attempt(s) over 271m …").
+    // After the fix, failureReason is the step id and the measurements
+    // live only in the `error` field and the action-queue body.
+    const { q, ws, ceiling } = await loadModules(repo, { maxRetryMs: 0 })
+    const t = await q.enqueueTask('ceiling signature task', undefined, { skipTriage: true })
+    const store: WorkflowStore = ws.createQueueWorkflowStore()
+
+    await store.createRun({
+      id: t.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: 0,
+      updatedAt: 0,
+    })
+    await store.putStep(makeStepRecord(t.id, 'setup-worktree', 1, 'failed'))
+
+    await ceiling.checkAndEscalateRequeueCeiling(
+      t,
+      store,
+      makeSilentLog(),
+      Date.now() + 1,
+    )
+
+    const reloaded = await q.getTask(t.id)
+    // Must be the step-id grammar value, not elapsed-time prose.
+    expect(reloaded?.failureReason).toBe('requeue:time-bound-exceeded')
+    // The human-readable detail belongs in `error`, not `failureReason`.
+    expect(reloaded?.error).toMatch(/time(?: bound| retried)/)
+  })
+
   // ── Fresh task (no step records) is never escalated ────────────────────────
 
   it('does not escalate a task with no step records', async () => {

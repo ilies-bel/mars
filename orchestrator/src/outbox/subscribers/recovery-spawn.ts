@@ -5,6 +5,7 @@ import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks.js'
 import { getTask, updateTask } from '../../core/queue.js'
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
+import { asStepId, UNKNOWN_STEP_ID } from '../../core/lib/failure-signature.js'
 import { registerSubscriberName } from '../registry.js'
 
 /**
@@ -123,7 +124,14 @@ export async function drainRecoverySpawner(
       // dedup agrees across the inline and durable dispatch paths. Recovery
       // task failures (fixForTaskId != null) escalate before the signature is
       // used for a recipe lookup, so the exact value is safe for that path too.
-      const failingStep = task.failureReason ?? task.failedPhase ?? ''
+      //
+      // `asStepId` validates the step-id grammar (lower-case, digits, hyphens,
+      // colon-separated segments). Terminal paths such as requeue-ceiling write
+      // prose to `failure_reason`; `asStepId` returns null for those, falling
+      // back to `failed_phase` (also validated) or `UNKNOWN_STEP_ID` so no
+      // prose ever reaches `computeFailureSignature` as the step half.
+      const failingStep =
+        asStepId(task.failureReason) ?? asStepId(task.failedPhase) ?? UNKNOWN_STEP_ID
 
       // Gate meta-monitor suppression AND signature-storm circuit breaker both
       // live INSIDE handleTaskFailureWithFixTask (the shared chokepoint) so they

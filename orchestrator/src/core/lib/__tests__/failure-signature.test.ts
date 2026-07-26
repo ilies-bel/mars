@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  asStepId,
   causeForSignature,
   classifyError,
   computeFailureSignature,
   errorClassRules,
   firstNonBlankLine,
   isUnclassifiedSignature,
+  STEP_ID_RE,
   UNCLASSIFIED_ERROR_CLASS,
+  UNKNOWN_STEP_ID,
 } from '../failure-signature'
 
 describe('computeFailureSignature', () => {
@@ -526,6 +529,116 @@ describe('api-unreachable classification', () => {
     ].join('\n')
     expect(classifyError(pgError)).toBe('test-pg-connection-refused')
     expect(classifyError(pgError)).not.toBe('api-unreachable')
+  })
+})
+
+describe('asStepId', () => {
+  it('returns a valid step id unchanged', () => {
+    expect(asStepId('verify:has-diff')).toBe('verify:has-diff')
+    expect(asStepId('code:coder-exit-nonzero')).toBe('code:coder-exit-nonzero')
+    expect(asStepId('requeue:time-bound-exceeded')).toBe('requeue:time-bound-exceeded')
+    expect(asStepId('unknown')).toBe('unknown')
+    expect(asStepId('behaviour-verify:dod-unmet')).toBe('behaviour-verify:dod-unmet')
+  })
+
+  it('returns null for prose with spaces', () => {
+    // The exact string that was reaching the signature before this fix.
+    expect(asStepId('Re-queue time bound exceeded: 1 attempt(s) over 270m (bound 120m).')).toBeNull()
+    expect(asStepId('Re-queue time bound exceeded: 2 attempt(s) over 275m (bound 120m).')).toBeNull()
+  })
+
+  it('returns null for strings with uppercase letters', () => {
+    expect(asStepId('Verify:has-diff')).toBeNull()
+    expect(asStepId('VERIFY')).toBeNull()
+  })
+
+  it('returns null for empty or blank strings', () => {
+    expect(asStepId('')).toBeNull()
+    expect(asStepId('   ')).toBeNull()
+  })
+
+  it('returns null for null or undefined', () => {
+    expect(asStepId(null)).toBeNull()
+    expect(asStepId(undefined)).toBeNull()
+  })
+
+  it('returns null for strings with disallowed punctuation', () => {
+    expect(asStepId('verify/')).toBeNull()
+    expect(asStepId('verify:has-diff/no-commits-ahead')).toBeNull() // slash is a separator in signatures, not step ids
+    expect(asStepId('step(1)')).toBeNull()
+  })
+
+  it('STEP_ID_RE accepts all well-formed step ids used by the system', () => {
+    const validIds = [
+      'verify:has-diff',
+      'verify:typecheck',
+      'verify:test',
+      'merge:preflight',
+      'merge:crashed',
+      'merge:vcs-supervisor-aborted',
+      'code:coder-exit-nonzero',
+      'setup:install-failed',
+      'behaviour-verify:dod-unmet',
+      'requeue:time-bound-exceeded',
+      'unknown',
+    ]
+    for (const id of validIds) {
+      expect(STEP_ID_RE.test(id), `expected ${id} to pass STEP_ID_RE`).toBe(true)
+    }
+  })
+})
+
+describe('computeFailureSignature — prose-blocking invariant', () => {
+  it('does not mint a prose-contaminated signature when failure_reason is prose', () => {
+    // Reproduces the exact live defect: two re-queue ceiling failures that
+    // differed only in elapsed minutes produced distinct signatures.
+    const sig270 = computeFailureSignature(
+      'Re-queue time bound exceeded: 1 attempt(s) over 270m (bound 120m).',
+      'Re-queue time bound exceeded: task retried 1 time(s) over 270 minutes without completing.',
+    )
+    const sig271 = computeFailureSignature(
+      'Re-queue time bound exceeded: 1 attempt(s) over 271m (bound 120m).',
+      'Re-queue time bound exceeded: task retried 1 time(s) over 271 minutes without completing.',
+    )
+    // Both must be identical — prose step was normalised to UNKNOWN_STEP_ID.
+    expect(sig270).toBe(sig271)
+    // The step half must not contain the prose text.
+    expect(sig270.startsWith(UNKNOWN_STEP_ID + '/')).toBe(true)
+  })
+
+  it('a verify:<gate> step id still passes through unchanged (regression guard)', () => {
+    // This is the fine-grained step the verify primitive stamps. It must
+    // reach the signature unchanged so the gate meta-monitor and recipe
+    // dedup continue to work correctly.
+    const sig = computeFailureSignature(
+      'verify:has-diff',
+      'no commits ahead of integration branch',
+    )
+    expect(sig).toBe('verify:has-diff/no-commits-ahead')
+    expect(sig.startsWith('verify:has-diff/')).toBe(true)
+  })
+
+  it('two requeue-ceiling escalations with different elapsed minutes share one signature', () => {
+    // Simulate what recovery-spawn.ts sees after the requeue-ceiling fix:
+    // failureReason is the stable step id, error contains the varying prose.
+    const sig1 = computeFailureSignature(
+      'requeue:time-bound-exceeded', // stable step id from requeue-ceiling
+      'Re-queue time bound exceeded: task retried 1 time(s) over 270 minutes without completing (bound 120m). Run `mars restart abc` to reset.',
+    )
+    const sig2 = computeFailureSignature(
+      'requeue:time-bound-exceeded',
+      'Re-queue time bound exceeded: task retried 2 time(s) over 275 minutes without completing (bound 120m). Run `mars restart abc` to reset.',
+    )
+    expect(sig1).toBe(sig2)
+    expect(sig1).toBe(`requeue:time-bound-exceeded/${UNCLASSIFIED_ERROR_CLASS}`)
+  })
+
+  it('computeFailureSignature remains idempotent with normalised step ids', () => {
+    const step = 'verify:typecheck'
+    const error = 'TS2304: Cannot find name foo'
+    const once = computeFailureSignature(step, error)
+    const twice = computeFailureSignature(step, once)
+    expect(once).toBe(twice)
   })
 })
 
