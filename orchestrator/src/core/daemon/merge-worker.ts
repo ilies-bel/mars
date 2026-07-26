@@ -1,12 +1,13 @@
 /**
- * Durable single-consumer merge worker (PRD 92af89ce, slice 2).
+ * Durable single-consumer merge worker (PRD 92af89ce, slices 2 + 4).
  *
  * `startMergeWorker` starts a loop that:
  *   1. Calls `store.claimNext()` to atomically claim the oldest queued job.
  *   2. If no job is available, waits for a `merge-job.enqueued` bus event or
  *      500 ms, then retries.
- *   3. If a job is claimed: calls `markRunning`, invokes `runMergeJob` (a
- *      placeholder in this slice), then repeats.
+ *   3. If a job is claimed: calls `markRunning`, invokes `runMergeJob` (which
+ *      calls the injected `mergeFn`, defaults to the real `mergeBranch`), then
+ *      resolves the caller's awaiting promise via `resolveMergeJob`.
  *
  * Concurrency is strictly one: a single `inFlight: Promise<void> | null`
  * variable tracks the active job. The loop `await`s it before picking the
@@ -16,13 +17,34 @@
  * the DB index.
  *
  * Gated behind `MARS_MERGE_QUEUE=1` in `server.ts` — off by default.
+ *
+ * ## Promise-based park pattern (slice 4)
+ *
+ * `enqueueMergeJobAndAwait` mirrors `awaitManualDone` / `resolveManualStep`
+ * from `@mars/workflow`:
+ *   - The workflow primitive calls `enqueueMergeJobAndAwait(...)` which
+ *     registers a pending promise keyed by `taskId`, enqueues a DB row,
+ *     wakes the worker, and returns the promise.
+ *   - After `runMergeJob` completes (success or failure), `resolveMergeJob`
+ *     looks up the promise by `taskId` and resolves it with the outcome.
  */
 
 import type { EventEmitter } from 'node:events'
-import { getTask } from '../queue.js'
-import type { MergeJob, MergeJobStore } from '../store/merge-job-store.js'
+import type { MergeArgs, MergeResult } from '../lib/git/merge.js'
+import { mergeBranch, MergeAbortedError } from '../lib/git/merge.js'
+import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../store/merge-job-store.js'
 
 // ── Public types ──────────────────────────────────────────────────────────────
+
+/**
+ * The result delivered to a waiting `enqueueMergeJobAndAwait` call.
+ * - `done`: `mergeBranch` returned normally; `result` is the full MergeResult.
+ * - `failed`: the job failed before or during the merge; `errorCode` carries
+ *   the machine-readable reason used for action-queue triage.
+ */
+export type MergeJobResult =
+  | { status: 'done'; result: MergeResult }
+  | { status: 'failed'; error: string; errorCode: 'watchdog' | 'crash' | 'canceled' }
 
 export interface MergeWorkerDeps {
   store: MergeJobStore
@@ -34,23 +56,141 @@ export interface MergeWorkerDeps {
    * event has arrived. Defaults to 500 ms. Tests can set this lower.
    */
   pollIntervalMs?: number
+  /**
+   * Merge function to invoke for each job. Defaults to the real `mergeBranch`.
+   * Override in tests to avoid real git operations.
+   */
+  mergeFn?: (args: MergeArgs) => Promise<MergeResult>
 }
 
 export interface MergeWorkerHandle {
   stop(): Promise<void>
 }
 
+// ── Promise-based park / resume (mirrors awaitManualDone pattern) ─────────────
+
+/** Live promise resolvers for in-flight merge jobs, keyed by taskId. */
+const pendingMergeJobs = new Map<string, (r: MergeJobResult) => void>()
+
+/**
+ * Register a pending merge job and return a promise that resolves only when
+ * `resolveMergeJob` is called for the same `taskId`.
+ *
+ * Set up BEFORE enqueuing the DB row so the resolver is in place before the
+ * worker can process the job.
+ */
+export function awaitMergeJobDone(taskId: string): Promise<MergeJobResult> {
+  return new Promise<MergeJobResult>((resolve) => {
+    pendingMergeJobs.set(taskId, resolve)
+  })
+}
+
+/**
+ * Resolve a pending merge job registered by `awaitMergeJobDone`.
+ *
+ * Returns `true` if a pending promise was found and resolved, `false` if the
+ * key was not in the map (duplicate call or worker ran before enqueue was
+ * awaited — should not happen in normal operation).
+ */
+export function resolveMergeJob(taskId: string, result: MergeJobResult): boolean {
+  const resolve = pendingMergeJobs.get(taskId)
+  if (!resolve) return false
+  pendingMergeJobs.delete(taskId)
+  resolve(result)
+  return true
+}
+
+/**
+ * Enqueue a merge job for `taskId` and suspend until the worker completes it.
+ *
+ * This is the primary entry point for the workflow `merge` primitive when
+ * `MARS_MERGE_QUEUE=1`. It:
+ *   1. Registers an awaiting promise (BEFORE enqueuing to avoid a race).
+ *   2. Inserts a `merge_jobs` row via the store.
+ *   3. Emits `merge-job.enqueued` on the bus to wake a parked worker.
+ *   4. Returns the promise — the caller suspends here until `resolveMergeJob`
+ *      is called by the worker after the job finishes.
+ */
+export async function enqueueMergeJobAndAwait(args: {
+  store: MergeJobStore
+  bus: EventEmitter
+  taskId: string
+  branch: string
+  worktreePath: string
+  integrationBranch: string
+}): Promise<MergeJobResult> {
+  // Register BEFORE enqueue so we can never miss the termination event.
+  const resultPromise = awaitMergeJobDone(args.taskId)
+  await args.store.enqueue({
+    taskId: args.taskId,
+    branch: args.branch,
+    worktreePath: args.worktreePath,
+    integrationBranch: args.integrationBranch,
+  } satisfies EnqueueMergeJobInput)
+  args.bus.emit('merge-job.enqueued')
+  return resultPromise
+}
+
 // ── Implementation ────────────────────────────────────────────────────────────
 
 /**
- * Placeholder merge execution. In a future slice this will perform the real
- * git merge. For now it fetches the task row (to confirm the job is
- * grounded in a real task) then marks the job done.
+ * Execute a single merge job. Calls `mergeFn` with the job's stored args and
+ * an AbortSignal that mirrors the worker's shutdown signal (so an in-flight
+ * merge is interrupted on daemon shutdown). Resolves the caller's awaiting
+ * promise via `resolveMergeJob` before returning. Does NOT throw — all error
+ * paths are caught, logged, and delivered as `{status:'failed'}` outcomes.
  */
-async function runMergeJob(job: MergeJob, store: MergeJobStore, log: (msg: string) => void): Promise<void> {
-  const task = await getTask(job.taskId)
-  log(`[merge-worker] executing job ${job.id} for task ${job.taskId} (task status=${task?.status ?? 'not found'})`)
-  await store.markDone(job.id)
+async function runMergeJob(
+  job: MergeJob,
+  store: MergeJobStore,
+  log: (msg: string) => void,
+  mergeFn: (args: MergeArgs) => Promise<MergeResult>,
+  signal: AbortSignal,
+): Promise<void> {
+  log(
+    `[merge-worker] executing job ${job.id} for task ${job.taskId} branch=${job.branch}`,
+  )
+
+  const watchdogMs = Number(process.env.MARS_MERGE_WATCHDOG_MS ?? 300_000)
+
+  let result: MergeJobResult
+  try {
+    const mergeResult = await mergeFn({
+      branch: job.branch,
+      worktreePath: job.worktreePath,
+      integrationBranch: job.integrationBranch,
+      lockTimeoutMs: 5 * 60 * 1000,
+      watchdogMs,
+      signal,
+    })
+    result = { status: 'done', result: mergeResult }
+    // Best-effort: failure here is non-fatal — the job status in the DB is
+    // cosmetic at this point; the promise is what drives the primitive.
+    await store.markDone(job.id).catch((e: unknown) => {
+      log(
+        `[merge-worker] job ${job.id} markDone failed (non-fatal): ${(e as Error).message}`,
+      )
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const errorCode: 'watchdog' | 'crash' | 'canceled' =
+      signal.aborted
+        ? 'canceled'
+        : err instanceof MergeAbortedError && err.reason === 'watchdog'
+          ? 'watchdog'
+          : 'crash'
+    result = { status: 'failed', error: msg, errorCode }
+    log(`[merge-worker] job ${job.id} failed (errorCode=${errorCode}): ${msg}`)
+    await store
+      .markFailed(job.id, { message: msg, code: errorCode })
+      .catch((e: unknown) => {
+        log(
+          `[merge-worker] job ${job.id} markFailed failed (non-fatal): ${(e as Error).message}`,
+        )
+      })
+  }
+
+  resolveMergeJob(job.taskId, result)
 }
 
 /**
@@ -83,15 +223,23 @@ function waitForJobOrTimeout(signal: AbortSignal, bus: EventEmitter, ms: number)
 /**
  * Start the single-consumer merge worker loop.
  *
- * @param deps.store  - The merge-job store (injected; testable via a fake).
- * @param deps.log    - Logger function.
- * @param deps.bus    - The daemon event bus (EventEmitter).
- * @param deps.signal - AbortSignal that stops the worker (e.g. daemon shutdown).
+ * @param deps.store        - The merge-job store (injected; testable via a fake).
+ * @param deps.log          - Logger function.
+ * @param deps.bus          - The daemon event bus (EventEmitter).
+ * @param deps.signal       - AbortSignal that stops the worker (e.g. daemon shutdown).
+ * @param deps.mergeFn      - Merge function; defaults to `mergeBranch`.
  *
  * @returns A handle with a `stop()` method that signals the loop to exit
  *          and waits for any in-flight job to finish.
  */
-export function startMergeWorker({ store, log, bus, signal, pollIntervalMs = 500 }: MergeWorkerDeps): MergeWorkerHandle {
+export function startMergeWorker({
+  store,
+  log,
+  bus,
+  signal,
+  pollIntervalMs = 500,
+  mergeFn = mergeBranch,
+}: MergeWorkerDeps): MergeWorkerHandle {
   const ac = new AbortController()
 
   // Mirror external signal into our internal controller so callers can also
@@ -122,20 +270,35 @@ export function startMergeWorker({ store, log, bus, signal, pollIntervalMs = 500
         continue
       }
 
+      // Create a per-job AbortController that mirrors the worker shutdown
+      // signal so the in-flight mergeBranch is interrupted on daemon exit.
+      const jobAc = new AbortController()
+      if (ac.signal.aborted) {
+        jobAc.abort()
+      } else {
+        ac.signal.addEventListener('abort', () => jobAc.abort(), { once: true })
+      }
+
       // Process the job. Set inFlight BEFORE awaiting so the guard is always
       // accurate from the perspective of any concurrent inspect.
       let resolveInFlight!: () => void
-      inFlight = new Promise<void>((res) => { resolveInFlight = res })
+      inFlight = new Promise<void>((res) => {
+        resolveInFlight = res
+      })
 
       try {
         await store.markRunning(job.id)
-        await runMergeJob(job, store, log)
+        await runMergeJob(job, store, log, mergeFn, jobAc.signal)
       } catch (err) {
-        log(`[merge-worker] job ${job.id} failed: ${(err as Error).message}`)
-        await store.markFailed(job.id, { message: (err as Error).message }).catch(() => {
+        const msg = (err as Error).message
+        log(`[merge-worker] job ${job.id} failed: ${msg}`)
+        await store.markFailed(job.id, { message: msg }).catch(() => {
           // best-effort: if markFailed itself fails, the job will be cleaned up
           // by the startup reconcile on next daemon boot.
         })
+        // Resolve any pending primitive promise if runMergeJob never ran
+        // (i.e., markRunning threw before runMergeJob was called).
+        resolveMergeJob(job.taskId, { status: 'failed', error: msg, errorCode: 'crash' })
       } finally {
         inFlight = null
         resolveInFlight()

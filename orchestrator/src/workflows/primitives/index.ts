@@ -59,7 +59,7 @@ import {
   appendEnrichmentScopes,
   recordEnrichmentShadowRuns,
 } from '../../core/lib/gate-enrichment'
-import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch } from '../../core/lib/git/merge'
+import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch, type MergeResult } from '../../core/lib/git/merge'
 import { acquireLock } from '../../core/lib/git/lock'
 import {
   createWorker,
@@ -183,6 +183,23 @@ export interface MarsServices {
    * inject a tracker can safely omit this field.
    */
   onPid?: (pid: number) => void
+  /**
+   * Optional hook registered by the daemon when `MARS_MERGE_QUEUE=1`. When
+   * present, the `merge` primitive delegates the actual git merge to the
+   * durable single-consumer merge worker instead of calling `mergeBranch`
+   * inline. The hook enqueues a `merge_jobs` row, wakes the worker, and
+   * returns a Promise that resolves with the worker's outcome when the job
+   * completes.
+   *
+   * When absent (legacy path or test contexts that don't need the queue),
+   * the primitive falls back to the inline `mergeBranch` call.
+   */
+  enqueueMergeJobAndAwait?: (args: {
+    taskId: string
+    branch: string
+    worktreePath: string
+    integrationBranch: string
+  }) => Promise<{ status: 'done'; result: MergeResult } | { status: 'failed'; error: string; errorCode: string }>
 }
 
 /**
@@ -2269,35 +2286,62 @@ export const merge = async (
         }
 
         const supervisorConversation: ClaudeEvent[] = []
-        const m = await mergeBranch({
-          branch,
-          worktreePath,
-          integrationBranch,
-          // The integration gate runs two full repository suites under this
-          // same merge watchdog. Five minutes is enough for Git operations,
-          // but not for a serialized full-suite run; it was aborting healthy
-          // merges before a gate could return a real result.
-          lockTimeoutMs: 5 * 60 * 1000,
-          watchdogMs: 15 * 60 * 1000,
-          traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
-          onPhase: async (phase) => {
-            await updateTask(taskId, { activityDetail: `merge:${phase}` }, store)
-          },
-          onVegaStart: async () => {
-            await updateTask(taskId, { status: 'vega-reconciling' }, store)
-          },
-          onSupervisorEvent: async (event) => {
-            supervisorConversation.push(event)
-            emit?.(event)
-          },
-          onAfterFastForward: async (info) => {
-            capturedMergeShas = {
-              mergePreSha: info.finalIntegrationSha,
-              mergePostSha: info.finalTaskSha,
-            }
-            await integrationGateRunner(info)
-          },
-        })
+        let m: MergeResult
+        if (
+          process.env.MARS_MERGE_QUEUE === '1' &&
+          ctx.services.enqueueMergeJobAndAwait
+        ) {
+          // Queue path: delegate the merge to the durable single-consumer
+          // worker. The worker calls mergeBranch and resolves the promise
+          // with the outcome when done. Serialisation is enforced by the
+          // worker's single-consumer loop and the DB `FOR UPDATE SKIP LOCKED`
+          // claim, so concurrent merge primitives don't race on the file lock.
+          const queueResult = await ctx.services.enqueueMergeJobAndAwait({
+            taskId,
+            branch,
+            worktreePath,
+            integrationBranch,
+          })
+          if (queueResult.status === 'failed') {
+            // Let the outer crash-handler deal with this — it marks the task
+            // failed and spawns a fix-task, same as an inline mergeBranch
+            // throw.
+            throw new Error(`merge job failed (${queueResult.errorCode}): ${queueResult.error}`)
+          }
+          m = queueResult.result
+        } else {
+          // Inline path (legacy / MARS_MERGE_QUEUE not set): call mergeBranch
+          // directly, holding the file lock for the duration.
+          m = await mergeBranch({
+            branch,
+            worktreePath,
+            integrationBranch,
+            // The integration gate runs two full repository suites under this
+            // same merge watchdog. Five minutes is enough for Git operations,
+            // but not for a serialized full-suite run; it was aborting healthy
+            // merges before a gate could return a real result.
+            lockTimeoutMs: 5 * 60 * 1000,
+            watchdogMs: 15 * 60 * 1000,
+            traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
+            onPhase: async (phase) => {
+              await updateTask(taskId, { activityDetail: `merge:${phase}` }, store)
+            },
+            onVegaStart: async () => {
+              await updateTask(taskId, { status: 'vega-reconciling' }, store)
+            },
+            onSupervisorEvent: async (event) => {
+              supervisorConversation.push(event)
+              emit?.(event)
+            },
+            onAfterFastForward: async (info) => {
+              capturedMergeShas = {
+                mergePreSha: info.finalIntegrationSha,
+                mergePostSha: info.finalTaskSha,
+              }
+              await integrationGateRunner(info)
+            },
+          })
+        }
 
         if (supervisorConversation.length > 0) {
           const supervisorUsage = summarizeUsage(supervisorConversation)

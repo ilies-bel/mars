@@ -121,7 +121,7 @@ import { PreviewRegistry } from './preview-registry'
 import { createAppServices } from '../app-services'
 import { startApiEndpointProbe } from '../lib/api-endpoint-probe'
 import { ChatRunner, CHAT_TIMEOUT_MS } from './chat-runner'
-import { startMergeWorker, type MergeWorkerHandle } from './merge-worker'
+import { startMergeWorker, enqueueMergeJobAndAwait, type MergeWorkerHandle } from './merge-worker'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
@@ -1118,6 +1118,26 @@ export const startDaemon = async (
               })
               return awaitManualDone(runId, stepName)
             },
+            // Durable merge-queue hook (MARS_MERGE_QUEUE=1). When set,
+            // the merge primitive routes git merges through the single-consumer
+            // worker instead of calling mergeBranch inline. The hook enqueues
+            // a merge_jobs row, wakes the worker, and suspends the workflow
+            // until the worker resolves the promise with the outcome.
+            ...(process.env.MARS_MERGE_QUEUE === '1'
+              ? {
+                  enqueueMergeJobAndAwait: (args: {
+                    taskId: string
+                    branch: string
+                    worktreePath: string
+                    integrationBranch: string
+                  }) =>
+                    enqueueMergeJobAndAwait({
+                      store: getDefaultMergeJobStore(),
+                      bus,
+                      ...args,
+                    }),
+                }
+              : {}),
           },
           runId: task.id,
           logger: workflowLogger,

@@ -17,14 +17,20 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type { MergeJob, MergeJobStore } from '../../store/merge-job-store.js'
 
-// ── Module stub — replace getTask to avoid a real DB ─────────────────────────
+// ── Fast no-op merge function (avoids real git in unit tests) ─────────────────
 
-vi.mock('../../queue.js', () => ({
-  getTask: async (taskId: string) => ({ id: taskId, status: 'done' }),
-}))
+const fakeMergeFn = async () => ({
+  merged: true,
+  conflictResolved: false,
+  aborted: false,
+  output: '',
+  supervisorConversation: [],
+  vegaSessionId: null,
+  retriesAttempted: 0,
+})
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -173,7 +179,7 @@ describe('startMergeWorker — serial job processing', () => {
     const { startMergeWorker } = await import('../merge-worker.js')
     const ac = new AbortController()
     // Use a short poll interval so the worker parks quickly without a real 500ms wait.
-    const handle = startMergeWorker({ store, log: () => {}, bus: new EventEmitter(), signal: ac.signal, pollIntervalMs: 10 })
+    const handle = startMergeWorker({ store, log: () => {}, bus: new EventEmitter(), signal: ac.signal, pollIntervalMs: 10, mergeFn: fakeMergeFn })
 
     // Wait until markDone has been recorded, then stop.
     await waitFor(() => calls.includes(`markDone:${job.id}`))
@@ -202,7 +208,7 @@ describe('startMergeWorker — serial job processing', () => {
 
     const { startMergeWorker } = await import('../merge-worker.js')
     const ac = new AbortController()
-    const handle = startMergeWorker({ store, log: () => {}, bus: new EventEmitter(), signal: ac.signal, pollIntervalMs: 10 })
+    const handle = startMergeWorker({ store, log: () => {}, bus: new EventEmitter(), signal: ac.signal, pollIntervalMs: 10, mergeFn: fakeMergeFn })
 
     // Wait until both jobs are fully processed.
     await waitFor(() => calls.includes(`markDone:${j1.id}`) && calls.includes(`markDone:${j2.id}`))
@@ -229,7 +235,7 @@ describe('startMergeWorker — serial job processing', () => {
 
     const { startMergeWorker } = await import('../merge-worker.js')
     const ac = new AbortController()
-    const handle = startMergeWorker({ store, log: () => {}, bus, signal: ac.signal, pollIntervalMs: 10 })
+    const handle = startMergeWorker({ store, log: () => {}, bus, signal: ac.signal, pollIntervalMs: 10, mergeFn: fakeMergeFn })
 
     // Give the loop a moment to park (claimNext → null → wait).
     await new Promise<void>((r) => setTimeout(r, 15))
@@ -256,7 +262,7 @@ describe('startMergeWorker — serial job processing', () => {
 
     const { startMergeWorker } = await import('../merge-worker.js')
     const ac = new AbortController()
-    const handle = startMergeWorker({ store, log: () => {}, bus: new EventEmitter(), signal: ac.signal, pollIntervalMs: 10 })
+    const handle = startMergeWorker({ store, log: () => {}, bus: new EventEmitter(), signal: ac.signal, pollIntervalMs: 10, mergeFn: fakeMergeFn })
 
     // Abort immediately — worker is parked.
     ac.abort()
@@ -268,7 +274,7 @@ describe('startMergeWorker — serial job processing', () => {
 
     const { startMergeWorker } = await import('../merge-worker.js')
     const externalAc = new AbortController()
-    const handle = startMergeWorker({ store, log: () => {}, bus: new EventEmitter(), signal: externalAc.signal, pollIntervalMs: 10 })
+    const handle = startMergeWorker({ store, log: () => {}, bus: new EventEmitter(), signal: externalAc.signal, pollIntervalMs: 10, mergeFn: fakeMergeFn })
 
     externalAc.abort()
     await expect(handle.stop()).resolves.toBeUndefined()
@@ -280,7 +286,7 @@ describe('startMergeWorker — serial job processing', () => {
 
     const { startMergeWorker } = await import('../merge-worker.js')
     const ac = new AbortController()
-    const handle = startMergeWorker({ store, log: () => {}, bus, signal: ac.signal, pollIntervalMs: 500 })
+    const handle = startMergeWorker({ store, log: () => {}, bus, signal: ac.signal, pollIntervalMs: 500, mergeFn: fakeMergeFn })
 
     // Give the loop time to park on the 500ms timer.
     await new Promise<void>((r) => setTimeout(r, 15))
@@ -302,7 +308,7 @@ describe('startMergeWorker — serial job processing', () => {
     const { startMergeWorker } = await import('../merge-worker.js')
     const ac = new AbortController()
     // Use a short poll interval so the test completes quickly.
-    const handle = startMergeWorker({ store, log: () => {}, bus, signal: ac.signal, pollIntervalMs: 20 })
+    const handle = startMergeWorker({ store, log: () => {}, bus, signal: ac.signal, pollIntervalMs: 20, mergeFn: fakeMergeFn })
 
     // Give the loop time to park.
     await new Promise<void>((r) => setTimeout(r, 10))
@@ -323,7 +329,7 @@ describe('startMergeWorker — serial job processing', () => {
 
     const { startMergeWorker } = await import('../merge-worker.js')
     const ac = new AbortController()
-    const handle = startMergeWorker({ store, log: () => {}, bus: new EventEmitter(), signal: ac.signal, pollIntervalMs: 10 })
+    const handle = startMergeWorker({ store, log: () => {}, bus: new EventEmitter(), signal: ac.signal, pollIntervalMs: 10, mergeFn: fakeMergeFn })
 
     // Wait for the failure path to complete.
     await waitFor(() => calls.includes(`markFailed:${job.id}`))
