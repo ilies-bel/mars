@@ -852,3 +852,158 @@ describe('learned-recipe auto-run via task.blocked subscriber', () => {
     expect(await openRowCount(client)).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// dropped-via-supersede: auto-close action-queue rows on supersede drop
+// ---------------------------------------------------------------------------
+
+describe('action-queue-raiser:task.dropped-via-supersede subscriber', () => {
+  let tmpDir: string;
+  let client: DbClient;
+  let buildActionQueueRaiserSubscribers: typeof import('./action-queue-raisers.js').buildActionQueueRaiserSubscribers;
+
+  beforeEach(async () => {
+    tmpDir = setupRepo();
+    process.env.MARS_REPO = tmpDir;
+    vi.resetModules();
+    client = await makeClient(tmpDir);
+
+    const mod = await import('./action-queue-raisers.js');
+    buildActionQueueRaiserSubscribers = mod.buildActionQueueRaiserSubscribers;
+  });
+
+  afterEach(async () => {
+    await client.close();
+    delete process.env.MARS_REPO;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** Build a minimal `task.dropped` BusEvent. */
+  function droppedEvent(
+    eventId: number,
+    taskId: string,
+    dropReason: string,
+  ): BusEvent {
+    return {
+      id: eventId,
+      type: 'task.dropped',
+      payload: { taskId, dropReason },
+      ts: 1_000,
+    };
+  }
+
+  /** Insert a pre-existing open 'failed' row keyed on `originId`. */
+  async function insertOpenFailedRow(c: DbClient, id: string, originId: string): Promise<void> {
+    await c.execute({
+      sql: `INSERT INTO action_queue_items
+              (id, kind, category, priority, state, title, body, raised_by, raised_at, origin_task_id)
+            VALUES (?, 'failed', 'orchestrator', 'high', 'open', 'task blocked', '',
+                    'test', ?, ?)`,
+      args: [id, new Date().toISOString(), originId],
+    });
+  }
+
+  // ── Acceptance criterion 1 ─────────────────────────────────────────────
+  // dropped-via-supersede closes the open action-queue row for the task.
+
+  it('task.dropped with supersede dropReason closes the open action-queue row', async () => {
+    const taskId = 'task-supersede-alpha';
+    await insertOpenFailedRow(client, 'aq-supersede-1', taskId);
+    expect(await openRowCount(client)).toBe(1);
+
+    const subscribers = buildActionQueueRaiserSubscribers(client);
+    for (const sub of subscribers) {
+      await sub.handler(
+        droppedEvent(2000, taskId, `superseded by new task new-alpha`),
+      );
+    }
+
+    // Row must be resolved — the superseding task continues the work.
+    expect(await openRowCount(client)).toBe(0);
+    const r = await client.execute(
+      `SELECT state, resolution FROM action_queue_items WHERE id = 'aq-supersede-1'`,
+    );
+    const row = r.rows[0] as unknown as { state: string; resolution: string };
+    expect(row.state).toBe('resolved');
+    expect(row.resolution).toBe('superseded');
+  });
+
+  // ── Acceptance criterion 2 ─────────────────────────────────────────────
+  // Already-closed row is idempotent — replaying the event does nothing more.
+
+  it('already-closed row is idempotent when the event replays', async () => {
+    const taskId = 'task-supersede-beta';
+    await insertOpenFailedRow(client, 'aq-supersede-2', taskId);
+
+    const subscribers = buildActionQueueRaiserSubscribers(client);
+    const event = droppedEvent(2001, taskId, 'superseded by new task new-beta');
+
+    // First delivery — closes the row.
+    for (const sub of subscribers) {
+      await sub.handler(event);
+    }
+    expect(await openRowCount(client)).toBe(0);
+
+    // Replay — same event id. processedOnce prevents re-entry; row stays resolved.
+    for (const sub of subscribers) {
+      await sub.handler(event);
+    }
+    expect(await openRowCount(client)).toBe(0);
+    const r = await client.execute(
+      `SELECT state FROM action_queue_items WHERE id = 'aq-supersede-2'`,
+    );
+    expect((r.rows[0] as unknown as { state: string }).state).toBe('resolved');
+  });
+
+  // ── Acceptance criterion 3 ─────────────────────────────────────────────
+  // No-row-exists case is a no-op — does not throw or create rows.
+
+  it('no-row-exists case is a no-op — no rows created or thrown', async () => {
+    const taskId = 'task-supersede-gamma';
+    // No action-queue row pre-exists for this task.
+    expect(await openRowCount(client)).toBe(0);
+
+    const subscribers = buildActionQueueRaiserSubscribers(client);
+    await expect(async () => {
+      for (const sub of subscribers) {
+        await sub.handler(
+          droppedEvent(2002, taskId, 'superseded by new task new-gamma'),
+        );
+      }
+    }).not.toThrow();
+
+    expect(await openRowCount(client)).toBe(0);
+  });
+
+  // ── Gate: non-supersede drops do NOT close rows ────────────────────────
+  // A dropped transition for a reason other than supersede must not close rows.
+
+  it('task.dropped with non-supersede dropReason does not close the action-queue row', async () => {
+    const taskId = 'task-dropped-other';
+    await insertOpenFailedRow(client, 'aq-dropped-other-1', taskId);
+    expect(await openRowCount(client)).toBe(1);
+
+    const subscribers = buildActionQueueRaiserSubscribers(client);
+    for (const sub of subscribers) {
+      await sub.handler(
+        droppedEvent(2003, taskId, 'operator requested drop'),
+      );
+    }
+
+    // Row must remain open — the drop was not a supersede.
+    expect(await openRowCount(client)).toBe(1);
+  });
+
+  it('task.dropped with empty dropReason does not close the action-queue row', async () => {
+    const taskId = 'task-dropped-empty';
+    await insertOpenFailedRow(client, 'aq-dropped-empty-1', taskId);
+    expect(await openRowCount(client)).toBe(1);
+
+    const subscribers = buildActionQueueRaiserSubscribers(client);
+    for (const sub of subscribers) {
+      await sub.handler(droppedEvent(2004, taskId, ''));
+    }
+
+    expect(await openRowCount(client)).toBe(1);
+  });
+});

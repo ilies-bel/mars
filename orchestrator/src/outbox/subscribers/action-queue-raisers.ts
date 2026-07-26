@@ -2,7 +2,7 @@ import type { DbClient } from '../../core/lib/db.js';
 import { processedOnce } from '../../bus/processed-once.js';
 import type { Subscriber } from '../dispatcher.js';
 import type { BusEvent } from '../../bus/events.js';
-import { raiseActionQueueItem, setActionQueueState } from '../../core/lib/action-queue.js';
+import { raiseActionQueueItem, setActionQueueState, supersedeActionQueueItemsForOrigin } from '../../core/lib/action-queue.js';
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js';
 import { resolveStateClient } from '../../core/store/state-client.js';
 import { registerSubscriberName } from '../registry.js';
@@ -14,6 +14,16 @@ registerSubscriberName(ACTION_QUEUE_RAISER_SUBSCRIBER);
 /** Unique name for the durable subscriber that resolves stale 'failed' rows when a fix task completes. */
 export const FIX_TASK_DONE_RESOLVER_SUBSCRIBER = 'action-queue-raiser:fix-task-done';
 registerSubscriberName(FIX_TASK_DONE_RESOLVER_SUBSCRIBER);
+
+/**
+ * Unique name for the durable subscriber that closes open action-queue rows
+ * when a task is dropped via the supersede path (ADR-0048 entity status is
+ * the sole mechanism to clear a row). Only fires when `dropReason` signals a
+ * supersede — other dropped transitions (e.g. from `dropTask`) leave rows
+ * untouched.
+ */
+export const DROPPED_VIA_SUPERSEDE_CLEARER_SUBSCRIBER = 'action-queue-raiser:task.dropped-via-supersede';
+registerSubscriberName(DROPPED_VIA_SUPERSEDE_CLEARER_SUBSCRIBER);
 
 /**
  * Fix task statuses that indicate recovery is actively in progress and no
@@ -54,7 +64,11 @@ const GRACE_MS = 60_000
  *   processedOnce dedup table.
  */
 export function buildActionQueueRaiserSubscribers(client: DbClient): Subscriber[] {
-  return [taskBlockedActionQueueRaiser(client), fixTaskDoneActionQueueResolver(client)];
+  return [
+    taskBlockedActionQueueRaiser(client),
+    fixTaskDoneActionQueueResolver(client),
+    droppedViaSupersedeClearer(client),
+  ];
 }
 
 /**
@@ -282,6 +296,56 @@ function fixTaskDoneActionQueueResolver(client: DbClient): Subscriber {
           by: `outbox:${FIX_TASK_DONE_RESOLVER_SUBSCRIBER}`,
         });
       }
+    },
+  };
+}
+
+/**
+ * Subscriber that closes open action-queue rows when a task is dropped via the
+ * supersede path.
+ *
+ * When `Arc.createOrigin` supersedes an existing task it calls `updateTask`
+ * with `{ status: 'dropped', failureReason: 'superseded by new task <id>' }`.
+ * That write emits a `task.dropped` outbox event whose `dropReason` carries the
+ * free-text value. This subscriber detects that string prefix and auto-resolves
+ * any open action-queue row that was keyed to the superseded task, so the
+ * operator does not see a stale alert for work that has been continued by the
+ * rescuing task (ADR-0048 entity status is the sole mechanism to clear a row).
+ *
+ * Gate: only processes events where `dropReason` starts with
+ * `'superseded by new task'`. All other `task.dropped` events are ignored, so
+ * drops caused by `dropTask` or other paths never silently close rows.
+ *
+ * Idempotent via `processedOnce`: replaying the same event never closes a row
+ * a second time. Already-resolved rows are also a no-op (handled inside
+ * `supersedeActionQueueItemsForOrigin`).
+ */
+function droppedViaSupersedeClearer(client: DbClient): Subscriber {
+  return {
+    name: DROPPED_VIA_SUPERSEDE_CLEARER_SUBSCRIBER,
+    handler: async (event: BusEvent): Promise<void> => {
+      if (event.type !== 'task.dropped') return;
+
+      const p = event.payload as { taskId: string; dropReason: string };
+
+      // Only close rows for drops that came from the supersede path.
+      if (!p.dropReason.startsWith('superseded by new task')) return;
+
+      const { ran } = await processedOnce({
+        client,
+        subscriberId: DROPPED_VIA_SUPERSEDE_CLEARER_SUBSCRIBER,
+        eventId: event.id,
+        sideEffect: async (_tx) => {
+          // Event-level dedup only; the action-queue write happens outside.
+        },
+      });
+      if (!ran) return;
+
+      await supersedeActionQueueItemsForOrigin(
+        p.taskId,
+        'origin-dropped',
+        `outbox:${DROPPED_VIA_SUPERSEDE_CLEARER_SUBSCRIBER}`,
+      );
     },
   };
 }
