@@ -398,10 +398,19 @@ describe('TaskDetailDrawer – responsive shell (sheet < xl, drawer ≥ xl)', ()
   })
 })
 
-// ── Subgraph: cluster colours match main canvas ───────────────────────────────
+// ── Subgraph: context chips — light-surface layout ────────────────────────────
 
-describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', () => {
-  it('colours a Queued task node with the Queued palette (same as TopologyView)', () => {
+/**
+ * The context section renders flex-wrap chips instead of an absolute-positioned
+ * SVG canvas so labels never overlap and the chips look native on the drawer's
+ * light card background.
+ *
+ * Each chip is an <a> element with light-surface Tailwind classes
+ * (bg-secondary, border-border, text-foreground) and a small colored status dot
+ * (backgroundColor = var(--color-dag-*-fill)) for cluster identity.
+ */
+describe('TaskDetailDrawer – subgraph (light-surface flex chips)', () => {
+  it('renders context chips with bg-secondary class for light surface', () => {
     const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
@@ -410,12 +419,104 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
         proposals={[]}
       />,
     )
-    // Colours are now CSS design-token references so both canvases stay in sync.
-    expect(html).toContain('var(--color-dag-queued-fill)')
-    expect(html).toContain('var(--color-dag-queued-stroke)')
+    expect(html).toContain('bg-secondary')
   })
 
-  it('colours a Failed task node with the Failed palette (same as TopologyView)', () => {
+  it('renders context chips with border-border class for light surface', () => {
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('border-border')
+  })
+
+  it('renders context chips with text-foreground class for light surface', () => {
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('text-foreground')
+  })
+
+  it('does not render an SVG element in the context section (replaced by flex chips)', () => {
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    // The context section must NOT contain an SVG; chips are HTML elements.
+    const sectionMatch = html.match(
+      /data-testid="task-detail-subgraph"[\s\S]*?<\/section>/,
+    )
+    expect(sectionMatch?.[0] ?? '').not.toContain('<svg')
+  })
+
+  it('each chip appears exactly once — no overlapping duplicate nodes', () => {
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="focus"
+        onClose={() => {}}
+        tasks={[
+          task({ id: 'blocker', cluster: 'In progress' }),
+          task({ id: 'focus', cluster: 'Blocked', blockedBy: ['blocker'] }),
+        ]}
+        proposals={[]}
+      />,
+    )
+    const blockerCount = (html.match(/data-node-id="blocker"/g) ?? []).length
+    const focusCount = (html.match(/data-node-id="focus"/g) ?? []).length
+    expect(blockerCount).toBe(1)
+    expect(focusCount).toBe(1)
+  })
+
+  it('each chip with a proposal + task has exactly one node each (two chips total)', () => {
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Queued', parentProposalId: 'p1' })]}
+        proposals={[proposal('p1', 'Show Release Notes')]}
+      />,
+    )
+    const p1Count = (html.match(/data-node-id="p1"/g) ?? []).length
+    const t1Count = (html.match(/data-node-id="t1"/g) ?? []).length
+    expect(p1Count).toBe(1)
+    expect(t1Count).toBe(1)
+  })
+})
+
+// ── Subgraph: cluster status dot (dag fill color) ─────────────────────────────
+
+/**
+ * Each chip carries a small colored dot whose background-color is the dag
+ * cluster fill token — this preserves visual cluster identity without painting
+ * the whole chip with the dark-canvas palette.
+ */
+describe('TaskDetailDrawer – subgraph (cluster status dot uses dag fill color)', () => {
+  it('status dot for a Queued task uses the Queued fill token', () => {
+    const html = renderDrawer(
+      <TaskDetailDrawer
+        taskId="t1"
+        onClose={() => {}}
+        tasks={[task({ id: 't1', cluster: 'Queued' })]}
+        proposals={[]}
+      />,
+    )
+    expect(html).toContain('var(--color-dag-queued-fill)')
+  })
+
+  it('status dot for a Failed task uses the Failed fill token', () => {
     const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
@@ -424,12 +525,10 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
         proposals={[]}
       />,
     )
-    // Colours are now CSS design-token references so both canvases stay in sync.
     expect(html).toContain('var(--color-dag-failed-fill)')
-    expect(html).toContain('var(--color-dag-failed-stroke)')
   })
 
-  it('colours a Blocked task node with the Blocked palette (same as TopologyView)', () => {
+  it('status dot for a Blocked task uses the Blocked fill token', () => {
     const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
@@ -439,10 +538,9 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
       />,
     )
     expect(html).toContain('var(--color-dag-blocked-fill)')
-    expect(html).toContain('var(--color-dag-blocked-stroke)')
   })
 
-  it('colours an In progress task node with the In progress palette (same as TopologyView)', () => {
+  it('status dot for an In progress task uses the In progress fill token', () => {
     const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
@@ -452,10 +550,9 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
       />,
     )
     expect(html).toContain('var(--color-dag-in-progress-fill)')
-    expect(html).toContain('var(--color-dag-in-progress-stroke)')
   })
 
-  it('colours a proposal node with the purple proposal palette (same as TopologyView)', () => {
+  it('status dot for a proposal node uses the proposal fill token', () => {
     const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
@@ -465,10 +562,9 @@ describe('TaskDetailDrawer – subgraph (cluster colours match main canvas)', ()
       />,
     )
     expect(html).toContain('var(--color-dag-proposal-fill)')
-    expect(html).toContain('var(--color-dag-proposal-stroke)')
   })
 
-  it('attaches data-cluster to task nodes for cluster identification', () => {
+  it('attaches data-cluster to task chip elements for cluster identification', () => {
     const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"

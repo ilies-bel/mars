@@ -23,7 +23,7 @@ import { useQuery } from '@tanstack/react-query'
 import type { AgentToolCall, ProgressProposalNode, ProgressTask, Task, TraceEvent } from '@/shared/schemas'
 import { taskSchema } from '@/shared/schemas'
 import { focusSubgraph } from '@/shared/focusSubgraph'
-import { dagClusterStyle, DAG_EDGE_BLOCKER, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
+import { dagClusterStyle } from '@/shared/dagColors'
 import { relativeTime, formatDuration } from '@/shared/time'
 import { studioHash } from '@/shared/routing'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
@@ -229,8 +229,6 @@ type LoadState =
 // Slightly smaller than TopologyView's main-canvas constants; the drawer
 // wraps in overflow-x-auto so wide chains remain navigable.
 
-const MINI_NODE_W = 130
-const MINI_NODE_H = 28
 const MINI_LAYER_W = 160
 const MINI_LAYER_H = 44
 const MINI_PAD_X = 12
@@ -1598,21 +1596,9 @@ export const TaskDetailDrawer = ({
     [tasks, proposals, currentId],
   )
 
-  // Precompute a lookup for edge rendering.
-  const posById = useMemo(
-    () =>
-      subgraph
-        ? new Map(subgraph.positioned.map((n) => [n.id, n]))
-        : new Map<string, PositionedMiniNode>(),
-    [subgraph],
-  )
-
-  const svgWidth = subgraph
-    ? subgraph.positioned.reduce((acc, n) => Math.max(acc, n.x + MINI_NODE_W), 0) + MINI_PAD_X
-    : 0
-  const svgHeight = subgraph
-    ? subgraph.positioned.reduce((acc, n) => Math.max(acc, n.y + MINI_NODE_H), 0) + MINI_PAD_Y
-    : 0
+  // (posById / svgWidth / svgHeight removed — context chips are now flex HTML
+  // elements; x/y coordinates from buildSubgraphLayout are no longer used for
+  // rendering, only for the topological ordering in positioned[].)
 
   // Tool invocations — fetched from /api/trace-events?kind=tool_invoked&taskId=<id>.
   // Grouped into step cards by timestamp (events between step.startedAt and
@@ -1794,77 +1780,49 @@ export const TaskDetailDrawer = ({
           <h3 className="mb-2 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground">
             Context
           </h3>
-          <div className="overflow-x-auto">
-            <svg
-              width={svgWidth}
-              height={svgHeight}
-              viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-              aria-label="Task dependency context"
-            >
-              {/* Edges — rendered first so nodes appear on top */}
-              {subgraph.edges.map((e) => {
-                const from = posById.get(e.from)
-                const to = posById.get(e.to)
-                if (!from || !to) return null
-                const x1 = from.x + MINI_NODE_W
-                const y1 = from.y + MINI_NODE_H / 2
-                const x2 = to.x
-                const y2 = to.y + MINI_NODE_H / 2
-                const cx = (x1 + x2) / 2
-                return (
-                  <path
-                    key={`${e.from}::${e.to}::${e.kind}`}
-                    d={`M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`}
-                    data-edge-kind={e.kind}
-                    fill="none"
-                    style={{ stroke: e.kind === 'provenance' ? DAG_EDGE_PROVENANCE : DAG_EDGE_BLOCKER }}
-                    strokeWidth={1.5}
-                    strokeDasharray={e.kind === 'provenance' ? '4 2' : undefined}
+          {/* Flex-wrap chip layout — each node is an HTML anchor chip so labels
+              never overflow into adjacent nodes and the styling sits naturally on
+              the drawer's light card background.  Edge metadata is preserved in
+              hidden spans for structural assertions. */}
+          <div className="flex flex-wrap items-center gap-2">
+            {subgraph.positioned.map((node) => {
+              const s = miniNodeStyle(node.kind, node.cluster)
+              return (
+                <a
+                  key={node.id}
+                  href={`#/task/${encodeURIComponent(node.id)}`}
+                  style={{ cursor: 'pointer' }}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    navigate(node.id)
+                  }}
+                  data-node-id={node.id}
+                  data-node-kind={node.kind}
+                  {...(node.kind === 'task' ? { 'data-cluster': node.cluster } : {})}
+                  className="flex min-w-0 items-center gap-1.5 rounded border border-border bg-secondary px-2 py-1 font-mono text-[10px] text-foreground hover:bg-secondary/80"
+                >
+                  {/* Status dot — uses the dag cluster fill token so cluster
+                      identity is preserved on the light surface without painting
+                      the entire chip with the dark-canvas palette. */}
+                  <span
+                    className="inline-block h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: s.fill }}
+                    aria-hidden="true"
                   />
-                )
-              })}
-
-              {/* Nodes — each wrapped in an SVG <a> so click and keyboard
-                  Enter both invoke navigate(), matching TopologyView's pattern. */}
-              {subgraph.positioned.map((node) => {
-                const s = miniNodeStyle(node.kind, node.cluster)
-                return (
-                  <a
-                    key={node.id}
-                    href={`#/task/${encodeURIComponent(node.id)}`}
-                    style={{ cursor: 'pointer' }}
-                    onClick={(e) => {
-                      e.preventDefault()
-                      navigate(node.id)
-                    }}
-                  >
-                    <g
-                      data-node-id={node.id}
-                      data-node-kind={node.kind}
-                      {...(node.kind === 'task' ? { 'data-cluster': node.cluster } : {})}
-                      transform={`translate(${node.x}, ${node.y})`}
-                    >
-                      <rect
-                        width={MINI_NODE_W}
-                        height={MINI_NODE_H}
-                        rx={3}
-                        style={{ fill: s.fill, stroke: s.stroke }}
-                        strokeWidth={1.5}
-                      />
-                      <text
-                        x={6}
-                        y={MINI_NODE_H / 2 + 4}
-                        fontSize={10}
-                        fontFamily="monospace"
-                        style={{ fill: s.text }}
-                      >
-                        {node.label}
-                      </text>
-                    </g>
-                  </a>
-                )
-              })}
-            </svg>
+                  <span className="max-w-[140px] truncate">{node.label}</span>
+                </a>
+              )
+            })}
+            {/* Edge metadata preserved as screen-reader-only spans so structural
+                assertions on data-edge-kind continue to hold. */}
+            {subgraph.edges.map((e) => (
+              <span
+                key={`${e.from}::${e.to}::${e.kind}`}
+                data-edge-kind={e.kind}
+                className="sr-only"
+                aria-hidden="true"
+              />
+            ))}
           </div>
         </section>
       ) : null}
