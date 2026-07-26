@@ -40,6 +40,7 @@ import {
   fetchCodexAuthState,
   refreshCodexAuth,
   ApiError,
+  type AttachmentInfo,
 } from '@/shared/api'
 import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
 import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback } from '@/shared/schemas'
@@ -1039,10 +1040,10 @@ const ChatConversation = ({
   }, [threadId, serverRunning, isBusy, resumeStream])
 
   const handleSend = useCallback(
-    async (text: string, attachmentIds?: string[]) => {
+    async (text: string, attachments?: AttachmentInfo[]) => {
       await sendMessage(
         { text },
-        attachmentIds && attachmentIds.length > 0 ? { body: { attachmentIds } } : undefined,
+        attachments && attachments.length > 0 ? { body: { attachments } } : undefined,
       )
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
     },
@@ -1650,7 +1651,7 @@ export interface ComposerProps {
    * `ChatConversation` to `useChat.sendMessage`, which drives the
    * `MarsChatTransport` (postChatMessage lives inside the transport now).
    */
-  onSend?: (text: string, attachmentIds?: string[]) => Promise<void>
+  onSend?: (text: string, attachments?: AttachmentInfo[]) => Promise<void>
   /** Stop the in-flight run. Wired to `useChat.stop` (aborts + stopChatThread). */
   onStop?: () => void
   /** True while a reply is streaming / the thread is running — shows the Stop button. */
@@ -1745,19 +1746,18 @@ export const Composer = ({
     // to `onSend`, which drives useChat/the transport (postChatMessage now lives
     // inside the transport).
     mutationFn: async (msg: string) => {
-      let attachmentIds: string[] | undefined
+      let uploadedAttachments: AttachmentInfo[] | undefined
       if (attachments.length > 0 && threadId) {
         setIsUploading(true)
         try {
-          const results = await Promise.all(
+          uploadedAttachments = await Promise.all(
             attachments.map((a) => uploadAttachment(threadId, a.file, projectId)),
           )
-          attachmentIds = results.map((r) => r.id)
         } finally {
           setIsUploading(false)
         }
       }
-      await onSend?.(msg, attachmentIds)
+      await onSend?.(msg, uploadedAttachments)
     },
     onMutate: () => setLocalSendError(null),
     onSuccess: () => {
@@ -2496,14 +2496,13 @@ export const ChatPage = () => {
   const { mutate: createAndSend, isPending: isCreatingThread } = useMutation({
     mutationFn: async ({ message, files }: { message: string; files: File[] }) => {
       const thread = await createChatThread(projectId)
-      let attachmentIds: string[] | undefined
+      let uploadedAttachments: AttachmentInfo[] | undefined
       if (files.length > 0) {
-        const results = await Promise.all(
+        uploadedAttachments = await Promise.all(
           files.map((f) => uploadAttachment(thread.id, f, projectId)),
         )
-        attachmentIds = results.map((r) => r.id)
       }
-      await postChatMessage(thread.id, message, projectId, attachmentIds)
+      await postChatMessage(thread.id, message, projectId, uploadedAttachments)
       return thread
     },
     onMutate: () => setSendError(null),

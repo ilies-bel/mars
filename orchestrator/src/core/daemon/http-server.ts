@@ -2030,10 +2030,15 @@ export const startHttpServer = async (
             name: z.string(),
             size: z.number(),
           })
-          const schema = z.object({
-            content: z.string().min(1),
-            attachments: z.array(attachmentSchema).optional(),
-          })
+          const schema = z
+            .object({
+              content: z.string(),
+              attachments: z.array(attachmentSchema).optional(),
+            })
+            .refine(
+              (d) => d.content.length > 0 || (d.attachments?.length ?? 0) > 0,
+              { message: 'content or at least one attachment is required', path: ['content'] },
+            )
           const result = schema.safeParse(parsed)
           if (!result.success) {
             sendJson(res, 400, { ok: false, error: 'body must be { content: string, attachments?: AttachmentInfo[] }' })

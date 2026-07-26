@@ -25,7 +25,7 @@ vi.mock('@/shared/api', () => ({
   fetchActionQueue: vi.fn().mockResolvedValue([]),
   createChatThread: vi.fn().mockResolvedValue({ id: 'thread-new' }),
   postChatMessage: vi.fn().mockResolvedValue({}),
-  uploadAttachment: vi.fn().mockResolvedValue({ id: 'upload-1' }),
+  uploadAttachment: vi.fn().mockResolvedValue({ id: 'upload-1', path: '/tmp/upload-1.png', mimeType: 'image/png', name: 'photo.png', size: 1024 }),
   renameChatThread: vi.fn().mockResolvedValue({}),
   deleteChatThread: vi.fn().mockResolvedValue({}),
   stopChatThread: vi.fn().mockResolvedValue({}),
@@ -57,7 +57,7 @@ function renderComposer(
   props?: {
     threadId?: string
     disabled?: boolean
-    onSend?: (text: string, ids?: string[]) => Promise<void>
+    onSend?: (text: string, attachments?: unknown[]) => Promise<void>
     onStop?: () => void
     isBusy?: boolean
   },
@@ -238,7 +238,7 @@ describe('Composer – attachment chip add/remove', () => {
 // ---------------------------------------------------------------------------
 
 describe('Composer – send flow', () => {
-  it('uploads attachments then hands the resulting ids to onSend (postChatMessage lives in the transport now)', async () => {
+  it('uploads attachments then hands the full metadata to onSend (postChatMessage lives in the transport now)', async () => {
     const { uploadAttachment } = await import('@/shared/api')
 
     let onSend!: ReturnType<typeof vi.fn>
@@ -268,13 +268,16 @@ describe('Composer – send flow', () => {
     })
     expect(uploadAttachment).toHaveBeenCalledWith('thread-42', expect.any(File), undefined)
 
-    // onSend then receives the upload id from uploadAttachment's return value.
+    // onSend then receives the full AttachmentInfo from uploadAttachment's return value —
+    // not just the id string. The full metadata is required by the daemon schema.
     await vi.waitFor(() => {
       expect(onSend).toHaveBeenCalledTimes(1)
     })
-    const [calledText, calledAttachmentIds] = onSend.mock.calls[0] as [string, string[] | undefined]
+    const [calledText, calledAttachments] = onSend.mock.calls[0] as [string, unknown[] | undefined]
     expect(calledText).toBe('')
-    expect(calledAttachmentIds).toEqual(['upload-1'])
+    expect(calledAttachments).toEqual([
+      { id: 'upload-1', path: '/tmp/upload-1.png', mimeType: 'image/png', name: 'photo.png', size: 1024 },
+    ])
   })
 
   it('does not call uploadAttachment or onSend when there is no text and no attachments', async () => {

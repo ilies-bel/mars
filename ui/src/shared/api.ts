@@ -669,18 +669,32 @@ export const createChatThread = async (projectId?: string): Promise<ChatThread> 
 }
 
 /**
+ * Metadata returned by the daemon after a successful file upload.
+ * Mirrors the daemon's `AttachmentInfo` interface and is accepted verbatim
+ * by `postChatMessage`'s `attachments` parameter.
+ */
+export interface AttachmentInfo {
+  id: string
+  path: string
+  mimeType: string
+  name: string
+  size: number
+}
+
+/**
  * Post a user message to a thread. The daemon queues a Claude response.
  * Returns once the message is enqueued — the response arrives via SSE or
  * a subsequent `fetchChatThread` call.
  *
- * Pass `attachmentIds` (returned by `uploadAttachment`) to reference uploaded
- * files in the message body.
+ * Pass `attachments` (returned by `uploadAttachment`) to send uploaded files
+ * alongside the message. The full metadata (including `size`) is required by
+ * the daemon schema — passing only ids is not supported.
  */
 export const postChatMessage = async (
   threadId: string,
   text: string,
   projectId?: string,
-  attachmentIds?: string[],
+  attachments?: AttachmentInfo[],
 ): Promise<void> => {
   const path = appendProject(`/api/chat/threads/${encodeURIComponent(threadId)}/message`, projectId)
   const r = await fetch(`${BASE}${path}`, {
@@ -688,7 +702,7 @@ export const postChatMessage = async (
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       content: text,
-      ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     }),
   })
   if (!r.ok) await throwMutationError(path, r)
@@ -696,8 +710,8 @@ export const postChatMessage = async (
 
 /**
  * Upload a file attachment to a thread. Returns the server-assigned attachment
- * metadata (id, path, mimeType, name). Pass the returned `id` in
- * `postChatMessage`'s `attachmentIds` array to reference the file in the message.
+ * metadata (id, path, mimeType, name, size). Pass the full returned object in
+ * `postChatMessage`'s `attachments` array to reference the file in the message.
  *
  * The multipart body is streamed to the daemon via the UI server proxy without
  * buffering the entire file in memory.
@@ -706,7 +720,7 @@ export const uploadAttachment = async (
   threadId: string,
   file: File,
   projectId?: string,
-): Promise<{ id: string; path: string; mimeType: string; name: string }> => {
+): Promise<AttachmentInfo> => {
   const path = appendProject(
     `/api/chat/threads/${encodeURIComponent(threadId)}/attachments`,
     projectId,
@@ -726,7 +740,7 @@ export const uploadAttachment = async (
     throw err
   }
   if (!r.ok) await throwMutationError(path, r)
-  return r.json() as Promise<{ id: string; path: string; mimeType: string; name: string }>
+  return r.json() as Promise<AttachmentInfo>
 }
 
 /**

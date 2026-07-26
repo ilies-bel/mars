@@ -22,6 +22,7 @@
  */
 import type { ChatTransport, UIMessage, UIMessageChunk } from 'ai'
 import { ApiError, chatUiStreamUrl, postChatMessage, stopChatThread } from './api'
+import type { AttachmentInfo } from './api'
 import type { ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment } from './schemas'
 
 /** Usage stats carried on the terminal `finish` chunk's metadata. */
@@ -63,13 +64,16 @@ export interface MarsChatTransportOptions {
   projectId?: string
 }
 
-/** Extract `attachmentIds` passed via `sendMessage(msg, { body })`. */
-const readAttachmentIds = (body: unknown): string[] | undefined => {
+/** Extract `attachments` (full `AttachmentInfo` objects) passed via `sendMessage(msg, { body })`. */
+const readAttachments = (body: unknown): AttachmentInfo[] | undefined => {
   if (typeof body !== 'object' || body === null) return undefined
-  const raw = (body as { attachmentIds?: unknown }).attachmentIds
+  const raw = (body as { attachments?: unknown }).attachments
   if (!Array.isArray(raw)) return undefined
-  const ids = raw.filter((x): x is string => typeof x === 'string')
-  return ids.length > 0 ? ids : undefined
+  const items = raw.filter(
+    (x): x is AttachmentInfo =>
+      typeof x === 'object' && x !== null && typeof (x as AttachmentInfo).id === 'string',
+  )
+  return items.length > 0 ? items : undefined
 }
 
 /** Flatten the text parts of a `UIMessage` into a single content string. */
@@ -185,10 +189,10 @@ export const createMarsChatTransport = (
 
   return {
     sendMessages: ({ messages, abortSignal, body }) => {
-      // Last user turn -> daemon content + attachment ids.
+      // Last user turn -> daemon content + full attachment metadata.
       const lastUser = [...messages].reverse().find((m) => m.role === 'user')
       const content = flattenText(lastUser)
-      const attachmentIds = readAttachmentIds(body)
+      const attachments = readAttachments(body)
 
       const stream = new ReadableStream<UIMessageChunk>({
         start(controller) {
@@ -223,7 +227,7 @@ export const createMarsChatTransport = (
             // Post the user turn. A 409 "already running" is a valid race — attach
             // to the existing run's stream instead of surfacing an error.
             try {
-              await postChatMessage(threadId, content, projectId, attachmentIds)
+              await postChatMessage(threadId, content, projectId, attachments)
             } catch (err: unknown) {
               if (!(err instanceof ApiError && err.status === 409)) {
                 const message = err instanceof Error ? err.message : String(err)

@@ -301,10 +301,124 @@ describe('POST /chat/threads/:id/message — HTTP route wiring', () => {
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content: '' }),  // empty string fails min(1) check
+        body: JSON.stringify({ content: '' }),  // empty string with no attachments fails the refine check
       },
     )
     expect(res.status).toBe(400)
+  })
+
+  it('returns 202 when content is empty but at least one attachment is provided (attachment-only message)', async () => {
+    const { startHttpServer } = await import('../http-server')
+    const chatRunner = new ChatRunner()
+
+    mockStream.mockImplementation(async (opts) => {
+      opts.onEvent(messageEvent('ok'))
+    })
+
+    server = await startHttpServer({
+      chatRunner,
+      restartTask: async () => {},
+      remergeTask: async () => {},
+      unblockTask: async () => {},
+      purgeTask: async () => {},
+      pruneWorktree: async () => {},
+      dismissProposal: async () => {},
+      promoteProposal: async () => {},
+      validateTask: async () => {},
+      rejectTask: async () => {},
+      investigateWorktree: async () => ({ explanation: '' }),
+      diagnoseFailure: async () => ({ diagnosis: '' }),
+      restartDaemon: async () => {},
+      restartAllDaemonKilled: async () => [],
+      isAcceptingWork: () => true,
+      inFlightCount: () => 0,
+      selfUpdate: async () => {},
+      runReflect: async () => ({ proposalsRaised: 0 }),
+      enableAutoReflect: async () => {},
+      stepDone: async () => ({ next: null as string | null }),
+      snoozeItem: async () => {},
+      recipeCatalog: nullRecipeCatalog,
+      traceStore: nullTraceStore,
+      appServices: stubAppServices(),
+    })
+
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/chat/threads/t1/message`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          content: '',
+          attachments: [
+            { id: 'att-1', path: '/tmp/upload.png', mimeType: 'image/png', name: 'photo.png', size: 2048 },
+          ],
+        }),
+      },
+    )
+    expect(res.status).toBe(202)
+    const body = (await res.json()) as { ok: boolean }
+    expect(body.ok).toBe(true)
+  })
+
+  it('passes the full attachment metadata to ChatRunner when sending with attachments', async () => {
+    const { startHttpServer } = await import('../http-server')
+
+    // Spy on chatRunner.sendMessage to verify it receives the attachment array.
+    const chatRunner = new ChatRunner()
+    const sendMessageSpy = vi.spyOn(chatRunner, 'sendMessage')
+
+    let resolveRun: () => void = () => {}
+    mockStream.mockReturnValue(
+      new Promise<void>((r) => {
+        resolveRun = () => r()
+      }),
+    )
+
+    server = await startHttpServer({
+      chatRunner,
+      restartTask: async () => {},
+      remergeTask: async () => {},
+      unblockTask: async () => {},
+      purgeTask: async () => {},
+      pruneWorktree: async () => {},
+      dismissProposal: async () => {},
+      promoteProposal: async () => {},
+      validateTask: async () => {},
+      rejectTask: async () => {},
+      investigateWorktree: async () => ({ explanation: '' }),
+      diagnoseFailure: async () => ({ diagnosis: '' }),
+      restartDaemon: async () => {},
+      restartAllDaemonKilled: async () => [],
+      isAcceptingWork: () => true,
+      inFlightCount: () => 0,
+      selfUpdate: async () => {},
+      runReflect: async () => ({ proposalsRaised: 0 }),
+      enableAutoReflect: async () => {},
+      stepDone: async () => ({ next: null as string | null }),
+      snoozeItem: async () => {},
+      recipeCatalog: nullRecipeCatalog,
+      traceStore: nullTraceStore,
+      appServices: stubAppServices(),
+    })
+
+    const attachment = { id: 'att-1', path: '/tmp/upload.png', mimeType: 'image/png', name: 'photo.png', size: 2048 }
+
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/chat/threads/t1/message`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ content: 'check this image', attachments: [attachment] }),
+      },
+    )
+    expect(res.status).toBe(202)
+
+    // Verify ChatRunner.sendMessage received the attachments array.
+    await vi.waitFor(() => expect(sendMessageSpy).toHaveBeenCalled())
+    const [, , , , receivedAttachments] = sendMessageSpy.mock.calls[0]
+    expect(receivedAttachments).toEqual([attachment])
+
+    resolveRun()
   })
 
   it('returns 400 when the body uses the wrong field name { text } instead of { content }', async () => {
