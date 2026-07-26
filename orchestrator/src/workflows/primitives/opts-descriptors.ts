@@ -45,8 +45,8 @@ export const reviewDescriptors = {
   recoveryPayload: 'Serialised recovery payload; skips test/typecheck/lint for main-committer recovery.',
   taskId: 'Override the task id. Defaults to ctx.runId.',
   worktree: 'Override the worktree. Defaults to the one stashed by setupWorktree.',
-  reviewType: 'Review type — "auto" (default) runs typecheck/tests/lint; "manual" not yet implemented (throws).',
-  guide: 'Step guide for a "manual" step — reserved for future use when manual review is wired.',
+  reviewType: 'Review type — "auto" (default) runs typecheck/tests/lint; "manual" boots the stack and parks for human QA.',
+  guide: 'Step guide for a "manual" step. Displayed in the action-queue row body alongside the preview URL and log path.',
 } satisfies Record<keyof ReviewOpts, string>
 
 /** One-line descriptions for every {@link MergeOpts} field. */

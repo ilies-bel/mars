@@ -150,6 +150,19 @@ export interface ActionQueueRow {
    * when the referenced task cannot be found.
    */
   arcGoal?: string | null
+  /**
+   * Live preview URL for an `awaiting-human` manual-QA row. Present when the
+   * `review(ctx, { reviewType: 'manual' })` primitive successfully spawned a
+   * preview process and that process reported a URL. Null on every other row
+   * kind and when no URL was detected.
+   */
+  previewUrl?: string | null
+  /**
+   * Log file path for an `awaiting-human` manual-QA row. Present when the
+   * `review(ctx, { reviewType: 'manual' })` primitive spawned a preview
+   * process. Null on every other row kind.
+   */
+  logPath?: string | null
 }
 
 /** Raw actionQueue row shape as persisted in `action_queue_items`. */
@@ -682,6 +695,16 @@ export const buildActionQueueView = async ({
         : null
     })()
 
+    // Extract preview URL and log path for awaiting-human manual-QA rows.
+    const previewUrl: string | null =
+      uiKind === 'awaiting-human' && typeof row.payload.previewUrl === 'string'
+        ? row.payload.previewUrl
+        : null
+    const logPath: string | null =
+      uiKind === 'awaiting-human' && typeof row.payload.logPath === 'string'
+        ? row.payload.logPath
+        : null
+
     // Extract tool-promotion benchmark detail from payload for tool-promotion rows.
     const toolPromotionDetail: ActionQueueRow['toolPromotionDetail'] =
       uiKind === 'tool-promotion'
@@ -717,6 +740,8 @@ export const buildActionQueueView = async ({
       fixForTaskId,
       arcGoal,
       toolPromotionDetail,
+      previewUrl,
+      logPath,
       humanSummary: recipeFields.humanSummary,
       humanDetail: recipeFields.humanDetail,
       verbs: recipeFields.verbs,

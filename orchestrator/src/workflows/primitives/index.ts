@@ -114,6 +114,7 @@ import {
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
+import { readFile } from 'node:fs/promises'
 
 // ---------------------------------------------------------------------------
 // Session-key construction (exported for regression tests)
@@ -197,6 +198,19 @@ export interface MarsServices {
     worktreePath: string
     integrationBranch: string
   }) => Promise<{ status: 'done'; result: MergeResult } | { status: 'failed'; error: string; errorCode: string }>
+  /**
+   * Optional hook to spawn a long-lived preview process for the `reviewType:
+   * 'manual'` gate. The daemon injects the real `PreviewRegistry.spawn`; tests
+   * inject a fake. When absent the manual-review path throws immediately.
+   *
+   * Arguments mirror `PreviewRegistry.spawn(taskId, cmd, cwd)`. Returns the
+   * OS PID, a log-file path, and an optional detected URL.
+   */
+  previewSpawn?: (args: {
+    taskId: string
+    cmd: string
+    cwd: string
+  }) => Promise<{ pid: number; logPath: string; url?: string }>
 }
 
 /**
@@ -1207,8 +1221,10 @@ export interface ReviewOpts {
   worktree?: WorktreeRef
   /**
    * Review type — WHO executes this step (workflow-declared). `'manual'`
-   * is not yet implemented and throws `NotImplementedError`. `'auto'` (default)
-   * runs scope-aware typecheck/tests/lint as always.
+   * boots the stack via `MarsServices.previewSpawn` and parks the workflow
+   * behind an `awaitHuman` gate with the preview URL and log path embedded in
+   * the action-queue row. `'auto'` (default) runs scope-aware
+   * typecheck/tests/lint as always.
    */
   reviewType?: 'auto' | 'manual'
   /** Step guide for a `'manual'` step. Reserved for future use. */
@@ -1233,7 +1249,7 @@ export interface ReviewResult {
  *     - runs `verifyChanges` (the has-diff / commits-ahead gate always runs),
  *     - on failure stamps the task, spawns the recovery fix-task through `store`,
  *       and throws.
- *   - `reviewType:'manual'` — not yet implemented; throws immediately.
+ *   - `reviewType:'manual'` — boots the stack and parks for human QA via `awaitHuman`.
  *
  * Returns `{ verified: true }` on success. The throw model means reaching the
  * caller's merge step always implies review passed.
@@ -1257,9 +1273,73 @@ export const review = async (
     })
     return { verified: true }
   }
-  // Manual review type: not yet implemented — slice 6 wires this.
+  // Manual review type: boot the stack and park for human QA.
   if ((opts.reviewType ?? 'auto') !== 'auto') {
-    throw new Error('manual review not yet wired')
+    const manualTaskId = resolveTaskId(ctx, opts.taskId)
+    const manualStore: TaskStore = ctx.services.store
+    const manualWorktree = await resolveWorktree(ctx, manualTaskId, manualStore, opts.worktree)
+    const cwd = manualWorktree.path
+
+    // Resolve boot command: task-spec previewCmd → package.json scripts.dev → error.
+    let cmd: string | null = input(ctx).spec?.previewCmd ?? null
+    if (!cmd) {
+      try {
+        const pkgRaw = await readFile(join(cwd, 'package.json'), 'utf8')
+        const pkg = JSON.parse(pkgRaw) as Record<string, unknown>
+        const scripts = pkg.scripts
+        if (
+          scripts !== null &&
+          typeof scripts === 'object' &&
+          'dev' in scripts &&
+          typeof (scripts as Record<string, unknown>).dev === 'string'
+        ) {
+          cmd = (scripts as Record<string, string>).dev
+        }
+      } catch {
+        // no package.json or parse error — fall through to the error below
+      }
+    }
+    if (!cmd) {
+      throw new Error(
+        `manual review: no preview command found for task ${manualTaskId}. ` +
+          `Set \`previewCmd\` on the task spec or add a "dev" script to ` +
+          `package.json in the worktree (${cwd}).`,
+      )
+    }
+
+    // Spawn the preview via the daemon-injected previewSpawn service.
+    const { previewSpawn } = ctx.services
+    if (!previewSpawn) {
+      throw new Error(
+        `manual review: previewSpawn service not available for task ${manualTaskId}. ` +
+          `The daemon must inject MarsServices.previewSpawn.`,
+      )
+    }
+    const { logPath, url: previewUrl } = await previewSpawn({
+      taskId: manualTaskId,
+      cmd,
+      cwd,
+    })
+
+    // Park via awaitHuman with the preview info embedded in the payload.
+    const guide = [
+      `Test the app and run \`mars step done ${manualTaskId}\` to pass or ` +
+        `\`mars release --abort ${manualTaskId} --note '<qa note>'\` to fail.`,
+      previewUrl ? `Preview URL: ${previewUrl}` : null,
+      `Logs: ${logPath}`,
+    ]
+      .filter(Boolean)
+      .join('\n')
+
+    await awaitHuman(ctx, {
+      note: guide,
+      taskId: manualTaskId,
+      previewUrl: previewUrl ?? null,
+      logPath,
+    })
+    // awaitHuman always throws WorkflowTerminalError; this return is unreachable
+    // but satisfies the Promise<ReviewResult> return type.
+    return { verified: true }
   }
   // Resolve dispatch facts: explicit opts → ctx.input → hard default.
   const taskId = resolveTaskId(ctx, opts.taskId)
@@ -2378,14 +2458,24 @@ export interface AwaitHumanOpts {
    * Override the task id (defaults to `ctx.runId`).
    */
   taskId?: string
+  /**
+   * Preview URL returned by the preview spawn for a manual-QA row. Null when
+   * no preview was started. Included in the action-queue row payload.
+   */
+  previewUrl?: string | null
+  /**
+   * Log file path for the preview process for a manual-QA row. Null when no
+   * preview was started. Included in the action-queue row payload.
+   */
+  logPath?: string | null
 }
 
 /**
  * Park the task in 'awaiting-human' and durably suspend the pipeline until
  * the operator releases the lease via `mars release <id>`.
  *
- * @deprecated **Prefer `reviewType: 'manual'` on {@link review} once wired (slice 6).**
- * When fully implemented, `review` with `reviewType === 'manual'` will use the
+ * @deprecated **Prefer `reviewType: 'manual'` on {@link review}.**
+ * `review` with `reviewType === 'manual'` uses the
  * promise-based park/resume mechanism (`onManualPark` / `resolveManualStep`)
  * registered by the daemon, which lets the workflow continue in-process after
  * `mars step done` without a re-dispatch. `awaitHuman` remains for backward
@@ -2495,6 +2585,8 @@ export const awaitHuman = async (
       leasedAt: now,
       leaseNote: note,
       stepName,
+      ...(opts.previewUrl != null ? { previewUrl: opts.previewUrl } : {}),
+      ...(opts.logPath != null ? { logPath: opts.logPath } : {}),
     },
     context: { taskId },
     raisedBy: 'primitive:await-human',

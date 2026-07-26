@@ -193,12 +193,130 @@ describe('awaitHuman primitive', () => {
 // 2b. Manual reviewType on review (workflow-declared)
 // ---------------------------------------------------------------------------
 
-describe('manual reviewType on review primitive', () => {
-  it('review reviewType:manual throws "manual review not yet wired"', async () => {
-    const ctx = makeCtx('review')
+/**
+ * Build a minimal MarsCtx for manual-review tests. Accepts:
+ *   - worktreePath: injected directly via opts.worktree override
+ *   - previewCmd: written into ctx.input.spec so the primitive picks it up
+ *   - previewSpawn: fake spawn service injected via ctx.services
+ */
+const makeManualCtx = (
+  worktreePath: string,
+  previewCmd: string | null,
+  previewSpawn: (args: { taskId: string; cmd: string; cwd: string }) => Promise<{ pid: number; logPath: string; url?: string }>,
+) => ({
+  runId: 'test-task-id',
+  workflowId: 'task',
+  input: {
+    taskId: 'test-task-id',
+    spec: previewCmd !== null ? { previewCmd } : null,
+  },
+  logger: { child: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }) },
+  signal: new AbortController().signal,
+  services: { store: makeStubStore(), traceStore: null, previewSpawn },
+  currentStep: {
+    name: 'review',
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    signal: new AbortController().signal,
+    setSha: vi.fn(),
+    setTranscriptKey: vi.fn(),
+    setSummary: vi.fn(),
+  },
+  emit: vi.fn(),
+  step: vi.fn(),
+})
+
+describe('review with reviewType:manual', () => {
+  const fakeWorktree = { path: '/fake/worktree', branch: 'task/test-task-id' }
+
+  beforeEach(() => {
+    mockUpdateTask.mockClear()
+    mockRaiseActionQueueItem.mockClear()
+  })
+
+  it('calls previewSpawn with the worktree cwd', async () => {
+    const mockSpawn = vi.fn().mockResolvedValue({
+      pid: 1234,
+      logPath: '/fake/.mars/previews/test-task-id.log',
+      url: 'http://localhost:3000',
+    })
+    const ctx = makeManualCtx('/fake/worktree', 'npm run dev', mockSpawn)
     await expect(
-      review(ctx as never, { reviewType: 'manual', guide: 'QA in the browser' }),
-    ).rejects.toThrow('manual review not yet wired')
+      review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
+    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    expect(mockSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: '/fake/worktree', cmd: 'npm run dev', taskId: 'test-task-id' }),
+    )
+  })
+
+  it('the awaiting-human row payload carries previewUrl and logPath', async () => {
+    const mockSpawn = vi.fn().mockResolvedValue({
+      pid: 1234,
+      logPath: '/fake/.mars/previews/test-task-id.log',
+      url: 'http://localhost:3000',
+    })
+    const ctx = makeManualCtx('/fake/worktree', 'npm run dev', mockSpawn)
+    await expect(
+      review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
+    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    expect(mockRaiseActionQueueItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'awaiting-human',
+        payload: expect.objectContaining({
+          previewUrl: 'http://localhost:3000',
+          logPath: '/fake/.mars/previews/test-task-id.log',
+        }),
+      }),
+    )
+  })
+
+  it('parks via awaitHuman (transitions task to awaiting-human)', async () => {
+    const mockSpawn = vi.fn().mockResolvedValue({
+      pid: 1234,
+      logPath: '/fake/.mars/previews/test-task-id.log',
+      url: 'http://localhost:3000',
+    })
+    const ctx = makeManualCtx('/fake/worktree', 'npm run dev', mockSpawn)
+    await expect(
+      review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
+    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    expect(mockUpdateTask).toHaveBeenCalledWith(
+      'test-task-id',
+      expect.objectContaining({ status: 'awaiting-human' }),
+      expect.anything(),
+    )
+  })
+
+  it('errors with a descriptive message when no previewCmd and no package.json', async () => {
+    // No previewCmd on spec; no package.json at /fake/worktree (path does not exist).
+    const mockSpawn = vi.fn()
+    const ctx = makeManualCtx('/fake/worktree', null, mockSpawn)
+    await expect(
+      review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
+    ).rejects.toThrow('manual review: no preview command found for task')
+    expect(mockSpawn).not.toHaveBeenCalled()
+  })
+
+  it('omits previewUrl from payload when spawn returns no url', async () => {
+    const mockSpawn = vi.fn().mockResolvedValue({
+      pid: 1234,
+      logPath: '/fake/.mars/previews/test-task-id.log',
+      // url intentionally absent
+    })
+    const ctx = makeManualCtx('/fake/worktree', 'npm run dev', mockSpawn)
+    await expect(
+      review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
+    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    expect(mockRaiseActionQueueItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          logPath: '/fake/.mars/previews/test-task-id.log',
+        }),
+      }),
+    )
+    // previewUrl must not appear in the payload (null check via spreading —
+    // the payload should not have previewUrl key when url is undefined).
+    const call = mockRaiseActionQueueItem.mock.calls[0] as [{ payload: Record<string, unknown> }]
+    expect(call[0].payload.previewUrl).toBeUndefined()
   })
 })
 
