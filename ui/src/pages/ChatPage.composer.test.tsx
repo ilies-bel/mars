@@ -60,6 +60,7 @@ function renderComposer(
     onSend?: (text: string, attachments?: unknown[]) => Promise<void>
     onStop?: () => void
     isBusy?: boolean
+    threadTokens?: number | null
   },
 ) {
   const qc = makeQueryClient()
@@ -77,6 +78,7 @@ function renderComposer(
         onSend,
         onStop,
         isBusy: props?.isBusy ?? false,
+        threadTokens: props?.threadTokens,
       }),
     ),
   )
@@ -382,5 +384,42 @@ describe('Composer – writable while busy', () => {
     // The value may not propagate via controlled React state without a proper
     // change handler spy; assert the textarea was never forcibly cleared.
     expect(textarea.value).not.toBe('')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Token count — shown below the chat box when thread has usage data
+// ---------------------------------------------------------------------------
+
+describe('Composer – thread token count', () => {
+  it('shows a token count when threadTokens is a positive number', async () => {
+    await act(() => {
+      renderComposer(container, { threadTokens: 1234 })
+    })
+    const el = container.querySelector('[data-testid="thread-token-count"]')
+    expect(el).not.toBeNull()
+    expect(el?.textContent).toContain('1,234')
+    expect(el?.textContent).toContain('tokens')
+  })
+
+  it('does not render a token count when threadTokens is null', async () => {
+    await act(() => {
+      renderComposer(container, { threadTokens: null })
+    })
+    expect(container.querySelector('[data-testid="thread-token-count"]')).toBeNull()
+  })
+
+  it('does not render a token count when threadTokens is omitted', async () => {
+    await act(() => {
+      renderComposer(container)
+    })
+    expect(container.querySelector('[data-testid="thread-token-count"]')).toBeNull()
+  })
+
+  it('does not render a token count when threadTokens is 0', async () => {
+    await act(() => {
+      renderComposer(container, { threadTokens: 0 })
+    })
+    expect(container.querySelector('[data-testid="thread-token-count"]')).toBeNull()
   })
 })

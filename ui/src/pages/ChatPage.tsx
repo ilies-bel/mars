@@ -1086,6 +1086,16 @@ const ChatConversation = ({
   // the empty-state chips.
   const showWelcome = !isLoading && messages.length === 0 && !showThinking
 
+  // Cumulative token count across all assistant messages in this thread.
+  const totalTokens = useMemo(
+    () =>
+      messages.reduce((sum, m) => {
+        const usage = m.metadata?.usage
+        return sum + (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0)
+      }, 0),
+    [messages],
+  )
+
   // Build a LiveBuffer from the AI SDK's streaming parts so LiveAssistantBubble
   // can render them in arrival order (text ↔ tool ↔ text interleaving).
   // Only computed while actively streaming; null otherwise.
@@ -1174,6 +1184,7 @@ const ChatConversation = ({
         onStop={handleStop}
         initialText={prefill}
         onInitialTextConsumed={onPrefillConsumed}
+        threadTokens={totalTokens > 0 ? totalTokens : null}
       />
     </>
   )
@@ -1684,6 +1695,8 @@ export interface ComposerProps {
   onStop?: () => void
   /** True while a reply is streaming / the thread is running — shows the Stop button. */
   isBusy?: boolean
+  /** Cumulative token count (input + output) for all messages in this thread. */
+  threadTokens?: number | null
 }
 
 /** A pending file attachment in the composer before it is uploaded. */
@@ -1707,6 +1720,7 @@ export const Composer = ({
   onSend,
   onStop,
   isBusy = false,
+  threadTokens,
 }: ComposerProps) => {
   const [text, setText] = useState('')
   const [showPalette, setShowPalette] = useState(false)
@@ -2133,6 +2147,15 @@ export const Composer = ({
           )}
         </PromptInputToolbar>
       </div>
+
+      {threadTokens != null && threadTokens > 0 && (
+        <p
+          data-testid="thread-token-count"
+          className="mt-1 font-mono text-[10px] text-muted-foreground"
+        >
+          {threadTokens.toLocaleString()} tokens
+        </p>
+      )}
 
       {(sendError || localSendError) && (
         <p
