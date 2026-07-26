@@ -659,6 +659,32 @@ const DDL: readonly string[] = [
     PRIMARY KEY (run_id, step_name)
   )`,
 
+  // ── merge queue ───────────────────────────────────────────────────────────
+  // Durable single-consumer merge queue (PRD 92af89ce). Each row represents
+  // one pending, in-flight, or terminal merge attempt for a task branch.
+  // The partial unique index below ensures at most one active job per task.
+  `CREATE TABLE IF NOT EXISTS merge_jobs (
+    id                 uuid        PRIMARY KEY,
+    task_id            text        NOT NULL REFERENCES tasks(id),
+    status             text        NOT NULL DEFAULT 'queued'
+                                   CHECK (status IN ('queued','claimed','running','done','failed','canceled')),
+    attempts           integer     NOT NULL DEFAULT 0,
+    claimed_at         timestamptz NULL,
+    started_at         timestamptz NULL,
+    finished_at        timestamptz NULL,
+    error              text        NULL,
+    error_code         text        NULL,
+    integration_branch text        NOT NULL,
+    worktree_path      text        NOT NULL,
+    branch             text        NOT NULL,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    updated_at         timestamptz NOT NULL DEFAULT now()
+  )`,
+  // At most one active (queued/claimed/running) merge job per task_id.
+  `CREATE UNIQUE INDEX IF NOT EXISTS merge_jobs_active_task_uidx
+     ON merge_jobs(task_id)
+     WHERE status IN ('queued', 'claimed', 'running')`,
+
   // ── learned recipes (operator-taught auto-run rules) ─────────────────────
   // Per failure signature, global: the operator teaches a recovery op once
   // and the system auto-executes it on every subsequent occurrence of the
@@ -737,6 +763,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'workflow_step_runs',
   'learned_recipes',
   'auto_recipe_runs',
+  'merge_jobs',
 ]
 
 /**
