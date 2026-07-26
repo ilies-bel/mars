@@ -197,6 +197,22 @@ describe('toClaudeSessionId', () => {
     const joined = args.join(' ')
     expect(joined).not.toContain('"codegraph"')
   })
+
+  it('dispatched worker args do not include --setting-sources (prevents primary CLAUDE.md from loading into workers)', () => {
+    // --setting-sources project,local causes the worker to load the primary
+    // checkout's CLAUDE.md, which tells it to "operate from the repo root".
+    // A worker that follows that guidance navigates to the primary checkout,
+    // where sibling worktrees are visible under .mars/worktrees/, and can
+    // write into them — causing cross-worktree contamination (investigation:
+    // docs/investigations/cross-worktree-contamination.md).
+    //
+    // --add-dir was evaluated (Claude Code 2.1.220): it ADDS directories to
+    // the allowed set rather than restricting to them, so it expands access
+    // rather than confining. Removing --setting-sources is the correct lever
+    // to prevent the primary CLAUDE.md from loading.
+    const args = claudeStreamArgs('hello')
+    expect(args).not.toContain('--setting-sources')
+  })
 })
 
 describe('session-key composition (restart-collision avoidance)', () => {

@@ -457,8 +457,23 @@ export const claudeStreamArgs = (
   // (codegraph) is silently ignored and `codegraph_*` tools never appear.
   ...(options.mcpConfig ? ['--mcp-config', options.mcpConfig] : []),
   '--strict-mcp-config',
-  '--setting-sources',
-  'project,local',
+  // '--setting-sources project,local' is intentionally omitted for dispatched
+  // workers. Loading it caused the primary checkout's CLAUDE.md (which targets
+  // interactive human sessions and says "operate from the repo root") to load
+  // into every worker context. Workers that followed that guidance navigated to
+  // the primary checkout, where .mars/worktrees/ is fully visible, and wrote
+  // into sibling worktrees — confirmed in docs/investigations/cross-worktree-contamination.md.
+  //
+  // --add-dir was evaluated against the pinned CLI (Claude Code 2.1.220): it
+  // ADDS directories to the allowed set rather than restricting to them, so it
+  // expands access instead of confining. It is not a substitute.
+  //
+  // Trade-off: workers no longer inherit project-level CLAUDE.md context (e.g.
+  // repo-specific conventions). This is acceptable: the worker's own worktree's
+  // CLAUDE.md still loads via CWD discovery, and the orchestrator injects its
+  // own guidance via --system-prompt (WORKTREE_CONFINEMENT_SYSTEM_PROMPT,
+  // SEARCH_TOOL_SYSTEM_PROMPT, CODEGRAPH_CLI_SYSTEM_PROMPT). Silent cross-
+  // worktree corruption is a worse outcome than losing project CLAUDE.md context.
   '--no-session-persistence',
   '--exclude-dynamic-system-prompt-sections',
   ...(options.bare ? ['--bare'] : []),
