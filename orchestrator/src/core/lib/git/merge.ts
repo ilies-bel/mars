@@ -419,6 +419,23 @@ const DEFAULT_WATCHDOG_MS = 300_000
 const ABORT_CLEANUP_TIMEOUT_MS = 10_000
 
 /**
+ * Formats a millisecond duration into a human-readable string.
+ * Tiers: <1s → "Nms", <60s → "N.Ns", <60m → "Nm Ns" (drops "Ns" when s===0),
+ * else "Nh Nm" (drops "Nm" when m===0).
+ */
+function formatMsDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  const totalSec = Math.floor(ms / 1000)
+  if (totalSec < 60) return `${(ms / 1000).toFixed(1)}s`
+  const m = Math.floor(totalSec / 60)
+  const s = totalSec % 60
+  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`
+  const h = Math.floor(m / 60)
+  const rm = m % 60
+  return rm > 0 ? `${h}h ${rm}m` : `${h}h`
+}
+
+/**
  * Thrown by {@link mergeBranch} when the merge is cancelled — either by the
  * internal watchdog timer (`reason: 'watchdog'`) or by the caller's
  * `AbortSignal` (`reason: 'external'`). `elapsedMs` is the wall-clock time from
@@ -432,7 +449,7 @@ export class MergeAbortedError extends Error {
 
   constructor(reason: 'watchdog' | 'external', elapsedMs: number, lastStep: string) {
     super(
-      `mergeBranch aborted (${reason}) after ${elapsedMs}ms during step '${lastStep}'`,
+      `mergeBranch aborted (${reason}) after ${formatMsDuration(elapsedMs)} during step '${lastStep}'`,
     )
     this.name = 'MergeAbortedError'
     this.reason = reason
