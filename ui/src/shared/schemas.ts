@@ -221,6 +221,8 @@ export const alertVerbSchema = z.object({
   op: z.string(),
   label: z.string(),
   style: z.enum(['primary', 'destructive', 'default', 'snooze']),
+  /** Client-side hint text — e.g. the command to copy for a 'copy' op. */
+  hint: z.string().optional(),
 })
 
 /**

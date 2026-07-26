@@ -401,7 +401,18 @@ export const AlertCard = ({
       {!resolved && resolvedOp === null && verbs.length > 0 && (
         <div className="relative flex flex-wrap gap-1.5 mb-2">
           {verbs.map((verb) => (
-            verb.style === 'snooze' ? (
+            verb.op === 'copy' ? (
+              <button
+                key={verb.op}
+                type="button"
+                className={verbButtonClass('default')}
+                title={verb.hint ?? verb.label}
+                onClick={() => void navigator.clipboard.writeText(verb.hint ?? verb.label)}
+                data-testid={`alert-card-verb-${verb.op}`}
+              >
+                {verb.label}
+              </button>
+            ) : verb.style === 'snooze' ? (
               <div key={verb.op} className="relative">
                 <button
                   type="button"
