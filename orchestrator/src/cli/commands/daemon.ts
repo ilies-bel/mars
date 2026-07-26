@@ -11,6 +11,7 @@
 import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { patchDaemonConfigFile, readDaemonConfigFile } from '../../core/daemon/config'
 import {
   daemonPaths,
   isDaemonAlive,
@@ -357,14 +358,82 @@ const daemonRestart: Command = {
   },
 }
 
+/**
+ * Maps the kebab-case CLI cap names to their camelCase JSON keys in daemon.json.
+ * `loadDaemonConfig` reads both spellings; we always write camelCase for consistency.
+ */
+const CAP_NAME_MAP: Readonly<Record<string, string>> = {
+  implement: 'implement',
+  triage: 'triage',
+  refine: 'refine',
+  'structured-write': 'structuredWrite',
+  'setup-install': 'setupInstall',
+}
+
+const daemonSetCap: Command = {
+  path: 'daemon set-cap',
+  summary: 'set a concurrency cap and hot-reload into the running daemon',
+  usage: 'usage: mars daemon set-cap <name> <n>',
+  run: async (args, deps) => {
+    const positional = args.positional.filter((a) => !a.startsWith('--'))
+    const name = positional[0]
+    const rawN = positional[1]
+    if (!name || !rawN) {
+      deps.err('usage: mars daemon set-cap <name> <n>')
+      return { code: 2 }
+    }
+    const capKey = CAP_NAME_MAP[name]
+    if (capKey === undefined) {
+      deps.err(
+        `mars daemon set-cap: unknown cap '${name}'; valid names: ${Object.keys(CAP_NAME_MAP).join(', ')}`,
+      )
+      return { code: 2 }
+    }
+    const n = Number(rawN)
+    if (!Number.isInteger(n) || n <= 0) {
+      deps.err(`mars daemon set-cap: <n> must be a positive integer; got '${rawN}'`)
+      return { code: 2 }
+    }
+    const current = readDaemonConfigFile()
+    const existingCaps =
+      current.caps !== null &&
+      typeof current.caps === 'object' &&
+      !Array.isArray(current.caps)
+        ? (current.caps as Record<string, unknown>)
+        : {}
+    patchDaemonConfigFile({ caps: { ...existingCaps, [capKey]: n } })
+    try {
+      const data = (await deps.daemon.sendRequest({ op: 'reload-config' })) as {
+        caps: {
+          implement: number
+          triage: number
+          refine: number
+          'structured-write': number
+        }
+      }
+      deps.out(
+        `concurrency reloaded: implement=${data.caps.implement} triage=${data.caps.triage} refine=${data.caps.refine} structured-write=${data.caps['structured-write']}`,
+      )
+    } catch (err) {
+      const msg = errorMessage(err)
+      if (isDaemonDownError(msg)) {
+        deps.out(`cap ${name}=${n} written; will apply on next daemon start`)
+        return { code: 0 }
+      }
+      throw err
+    }
+    return { code: 0 }
+  },
+}
+
 const daemonGroup: Command = {
   path: 'daemon',
   summary: 'daemon subcommands',
   usage:
-    'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|pause|resume> [flags]',
+    'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|pause|resume> [flags]',
   run: (_args, deps) => {
     deps.err(
-      'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|pause|resume> [flags]',
+      'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|pause|resume> [flags]',
     )
     return { code: 2 }
   },
@@ -378,6 +447,7 @@ export const daemonCommands: readonly Command[] = [
   daemonStatus,
   daemonReload,
   daemonSetFlag,
+  daemonSetCap,
   daemonPause,
   daemonResume,
   daemonGroup,
