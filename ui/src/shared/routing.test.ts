@@ -667,3 +667,17 @@ describe('resolvePageRoute — overlay from support', () => {
     expect(resolvePageRoute('#/primitive/verify')).toBe('progress')
   })
 })
+
+describe('resolvePageRoute – overlay hashes keep the underlying page active', () => {
+  it('resolves a bare task overlay to Progress, not the chat default', () => {
+    // `#/task/<id>` renders a drawer ON TOP of the board. detectRoute has no
+    // overlay cases and falls through to its 'chat' default, so a NavBar built
+    // on it lit up Chat whenever a task was opened from the board.
+    expect(detectRoute('#/task/mars-78858e6a')).toBe('chat')
+    expect(resolvePageRoute('#/task/mars-78858e6a')).toBe('progress')
+  })
+
+  it('honours the recorded origin page when the overlay carries one', () => {
+    expect(resolvePageRoute('#/task/mars-78858e6a?from=chat')).toBe('chat')
+  })
+})

@@ -39,6 +39,9 @@ mock.module('@/entities/stale-worktrees/useStaleWorktrees', () => ({
 
 mock.module('@/shared/routing', () => ({
   detectRoute: () => 'progress',
+  // NavBar reads resolvePageRoute (overlay-aware). Real overlay behaviour is
+  // asserted in routing.test.ts, where the function is not mocked.
+  resolvePageRoute: () => 'progress',
   actionQueueCount: () => 3,
 }))
 

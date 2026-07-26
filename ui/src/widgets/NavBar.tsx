@@ -1,5 +1,6 @@
 import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
 import { resolvePageRoute, actionQueueCount } from '@/shared/routing'
+import { useProgress } from '@/hooks/useProgress'
 import { useNotificationsPreference } from '@/entities/notifications'
 import { ProjectSelector } from './ProjectSelector'
 import { BellMenu } from './BellMenu'
@@ -62,6 +63,12 @@ export const NavBar = ({ hash }: NavBarProps) => {
 
   const actionCount = actionQueueCount({ staleWorktrees })
 
+  // Open (non-Done) tasks, so the nav shows how much work is in flight without
+  // leaving the page. Done rows are carried in the progress payload purely as
+  // arc metadata and must not be counted.
+  const { tasks } = useProgress()
+  const progressCount = (tasks ?? []).filter((t) => t.cluster !== 'Done').length
+
   return (
     <nav className="flex items-center gap-2 border-b border-primary/30 bg-background px-4 py-1.5">
       <ProjectSelector />
@@ -76,8 +83,15 @@ export const NavBar = ({ hash }: NavBarProps) => {
           Chat
         </a>
       </span>
-      <span>
-        <a className={linkClass(route === 'progress')} href="#/progress">
+      <span className="relative">
+        <CountBadge count={progressCount} />
+        <a
+          className={linkClass(route === 'progress')}
+          href="#/progress"
+          aria-label={
+            progressCount > 0 ? `Progress, ${progressCount} open tasks` : undefined
+          }
+        >
           Progress
         </a>
       </span>
