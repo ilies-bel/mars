@@ -777,12 +777,30 @@ export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
 }
 
 /**
+ * A fixed 64-bit key for the PostgreSQL advisory lock that serializes
+ * concurrent `ensureSchema` callers. Constant across all processes so
+ * every caller agrees on the same lock. Exported so tests can reference it.
+ */
+export const SCHEMA_ADVISORY_LOCK_KEY = 20260726
+
+/**
  * Applies the complete canonical schema (idempotent) and records
  * SCHEMA_VERSION in schema_migrations. Safe to run at every startup;
  * everything executes in one transaction (PostgreSQL DDL is transactional).
+ *
+ * Concurrent callers are serialized by a PostgreSQL advisory lock so that
+ * two interleaved `ensureSchema` batches cannot deadlock on the
+ * AccessExclusiveLock each DDL statement takes on `tasks`. The xact-scoped
+ * variant auto-releases when the wrapping transaction commits or rolls back —
+ * no explicit unlock is required.
  */
 export async function ensureSchema(client: DbClient): Promise<void> {
   await client.batch([
+    // Serialize concurrent callers: DDL takes AccessExclusiveLock on
+    // `tasks`, so two interleaved ensureSchema batches deadlock. This
+    // advisory lock makes the second caller wait until the first commits.
+    // pg_advisory_xact_lock auto-releases on COMMIT/ROLLBACK.
+    { sql: 'SELECT pg_advisory_xact_lock(?)', args: [SCHEMA_ADVISORY_LOCK_KEY] },
     ...DDL,
     {
       sql: `INSERT INTO schema_migrations (version, applied_at)

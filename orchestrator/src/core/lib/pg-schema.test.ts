@@ -3,6 +3,7 @@ import { __resetDbRegistryForTests, openDb, type DbClient } from './db.js'
 import {
   ensureSchema,
   IDENTITY_COLUMNS,
+  SCHEMA_ADVISORY_LOCK_KEY,
   SCHEMA_TABLES,
   SCHEMA_VERSION,
 } from './pg-schema.js'
@@ -53,6 +54,26 @@ describe('ensureSchema', () => {
     await ensureSchema(c)
     const r = await c.execute('SELECT version FROM schema_migrations')
     expect(r.rows).toEqual([{ version: SCHEMA_VERSION }])
+  })
+
+  it('two concurrent calls both resolve without a deadlock error', async () => {
+    // Verify that SCHEMA_ADVISORY_LOCK_KEY is exported and is a number —
+    // it is the constant every process uses to name the advisory lock.
+    expect(typeof SCHEMA_ADVISORY_LOCK_KEY).toBe('number')
+
+    // Start from an empty database so both legs race to apply the full DDL.
+    const c = openDb(freshKey())
+    try {
+      // Both calls resolve; neither throws. On the embedded backend the
+      // advisory lock would queue the second caller instead of deadlocking.
+      await Promise.all([ensureSchema(c), ensureSchema(c)])
+      const r = await c.execute('SELECT version FROM schema_migrations')
+      // Exactly one version row — the ON CONFLICT guard plus the advisory
+      // lock's serialisation mean the row is written once.
+      expect(r.rows).toEqual([{ version: SCHEMA_VERSION }])
+    } finally {
+      await c.close()
+    }
   })
 
   it('tasks has the full canonical column set with translated types', async () => {
