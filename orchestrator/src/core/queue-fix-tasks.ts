@@ -3,7 +3,7 @@ import {
   buildVerifyReproHint,
   type RanVerifyStep,
 } from './lib/derive-repro-command'
-import { type FixRecipeContext } from './lib/fix-recipes'
+import { type FixRecipeContext, hasRecipe } from './lib/fix-recipes'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
 import { truncateFailure } from './lib/truncate-failure'
 import { internalBus } from '../internal-bus'
@@ -25,6 +25,7 @@ import {
   type AttachToExistingFixTaskInput,
 } from './arc'
 import { isEnvironmentalSignature } from './lib/failure-kinds'
+import { maybeSpawnRescueOperator } from './rescue-operator-spawn'
 
 /**
  * Maximum number of times a task can be auto-restarted for an environmental
@@ -441,6 +442,16 @@ export const handleTaskFailureWithFixTask = async (
         failingStep: input.failingStep,
       },
     })
+
+    // Arc dead-end: the recovery Chore itself failed — spawn a rescue-operator
+    // agent to investigate and recover the arc. Best-effort: a rescue spawn
+    // error must not block the escalation from completing.
+    try {
+      await maybeSpawnRescueOperator({ failedTask: task, failureSignature, store: s })
+    } catch (rescueErr) {
+      // eslint-disable-next-line no-console
+      console.error('[rescue-operator] spawn failed (non-fatal):', rescueErr)
+    }
 
     return {
       outcome: 'escalated',
@@ -921,6 +932,20 @@ export const handleTaskFailureWithFixTask = async (
     recipeContext,
     store: s,
   })
+
+  // No registered fix recipe → the Arc has no targeted recovery playbook; spawn
+  // a rescue-operator agent in parallel with the generic fix task so the arc
+  // does not dead-end silently. Recipe-backed failures (hasRecipe = true) have
+  // a known playbook and must NOT trigger a rescue on their first attempt.
+  // Best-effort: a rescue spawn error must not block the blocked outcome.
+  if (!hasRecipe(failureSignature)) {
+    try {
+      await maybeSpawnRescueOperator({ failedTask: task, failureSignature, store: s })
+    } catch (rescueErr) {
+      // eslint-disable-next-line no-console
+      console.error('[rescue-operator] spawn failed (non-fatal):', rescueErr)
+    }
+  }
 
   return {
     outcome: 'blocked',
