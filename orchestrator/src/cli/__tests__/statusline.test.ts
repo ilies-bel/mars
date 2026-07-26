@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { spawnSync, spawn, type SpawnSyncReturns } from 'node:child_process'
 import { createServer, type Server } from 'node:http'
 import { buildStatusLine, buildContextSegment, buildLeaseSegment } from '../statusline.js'
 
@@ -21,6 +21,38 @@ const runCli = (
     encoding: 'utf8',
     input: opts.input ?? '',
     env: { ...process.env, ...opts.env },
+  })
+
+/**
+ * Async CLI runner for tests that need a live in-process HTTP stub server.
+ * spawnSync blocks the Node event loop, so any in-process HTTP server cannot
+ * respond to requests from the CLI child process. This async variant uses
+ * spawn() (non-blocking) so the event loop stays alive and the stub can serve
+ * requests normally.
+ */
+const runCliAsync = (
+  args: readonly string[],
+  opts: { input?: string; env?: Record<string, string> } = {},
+): Promise<{ status: number; stdout: string; stderr: string }> =>
+  new Promise((resolvePromise, reject) => {
+    const proc = spawn(process.execPath, [tsxBin, cliEntry, ...args], {
+      env: { ...process.env, ...opts.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    proc.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString()
+    })
+    proc.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString()
+    })
+    proc.stdin.write(opts.input ?? '')
+    proc.stdin.end()
+    proc.on('close', (code: number | null) => {
+      resolvePromise({ status: code ?? 0, stdout, stderr })
+    })
+    proc.on('error', reject)
   })
 
 // ── Unit tests for the pure buildStatusLine function ──────────────────────────
@@ -384,6 +416,9 @@ describe('mars statusline CLI', () => {
     const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
     mkdirSync(worktreeDir, { recursive: true })
 
+    // Use startStubDaemon + runCliAsync: spawnSync blocks the event loop, which
+    // prevents the in-process HTTP stub from serving requests. runCliAsync uses
+    // non-blocking spawn() so the stub can respond while the CLI runs.
     const server = await startStubDaemon(tmpRepo, [
       {
         id: taskId,
@@ -395,7 +430,7 @@ describe('mars statusline CLI', () => {
     ])
 
     try {
-      const result = runCli(['statusline'], {
+      const result = await runCliAsync(['statusline'], {
         input: JSON.stringify({ workspace: { current_dir: worktreeDir } }),
         env: { MARS_REPO: tmpRepo },
       })
@@ -418,6 +453,7 @@ describe('mars statusline CLI', () => {
     const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
     mkdirSync(worktreeDir, { recursive: true })
 
+    // Use runCliAsync for the same reason as the previous test.
     const server = await startStubDaemon(tmpRepo, [
       {
         id: taskId,
@@ -429,7 +465,7 @@ describe('mars statusline CLI', () => {
     ])
 
     try {
-      const result = runCli(['statusline'], {
+      const result = await runCliAsync(['statusline'], {
         input: JSON.stringify({ workspace: { current_dir: worktreeDir } }),
         env: { MARS_REPO: tmpRepo },
       })
@@ -462,6 +498,41 @@ describe('mars statusline CLI', () => {
       expect(result.stdout.trim()).toContain('mars')
       expect(result.stdout).not.toContain('⛏')
     } finally {
+      rmSync(tmpRepo, { recursive: true, force: true })
+    }
+  })
+
+  // Regression guard: the lease segment must be ABSENT when the task exists
+  // in the daemon but has no active lease (leasedAt=null, no step). Without
+  // this test, a future drift that always renders the segment would silently
+  // pass the presence tests.
+  it('omits leased segment when worktree dir exists but task has no active lease', async () => {
+    const tmpRepo = makeRepo()
+    const taskId = 'mars-nolease99'
+    const worktreeDir = resolve(tmpRepo, '.mars', 'worktrees', taskId)
+    mkdirSync(worktreeDir, { recursive: true })
+
+    const server = await startStubDaemon(tmpRepo, [
+      {
+        id: taskId,
+        intent: 'Some task',
+        leasedAt: null, // not currently leased
+        leaseNote: null,
+        currentStepName: null,
+      },
+    ])
+
+    try {
+      const result = await runCliAsync(['statusline'], {
+        input: JSON.stringify({ workspace: { current_dir: worktreeDir } }),
+        env: { MARS_REPO: tmpRepo },
+      })
+      expect(result.status).toBe(0)
+      // Segment must be absent — no active lease, no step
+      expect(result.stdout).not.toContain('⛏')
+      expect(result.stdout.trim()).toContain('mars')
+    } finally {
+      await stopStubDaemon(server)
       rmSync(tmpRepo, { recursive: true, force: true })
     }
   })
