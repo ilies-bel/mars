@@ -412,7 +412,8 @@ describe('checkAndEscalateRequeueCeiling', () => {
     expect(escalated).toBe(true)
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('failed')
-    expect(reloaded?.failureReasonCode).toBe('requeue-time-bound-exceeded')
+    // With attempt=1 and spanMs=0, density = 1.0/min ≥ floor → retry-churn.
+    expect(reloaded?.failureReasonCode).toBe('requeue-retry-churn')
   })
 
   // ── Fresh task (no step records) is never escalated ────────────────────────
