@@ -171,9 +171,9 @@ Commands:
                                 first, then proposals (both in the Mars database)
   list [<status>] [--limit <n>] [--all]
                                 list tasks; defaults to 10 rows with total
-                                count. Status: draft|queued|blocked|running|
-                                verifying|merging|vega-reconciling|
-                                awaiting-human|done|failed|dropped.
+                                count. Status: draft|triaging|queued|blocked|
+                                running|verifying|merging|vega-reconciling|
+                                awaiting-validation|done|failed|dropped.
                                 --limit <n> shows n rows; --all shows every
                                 matching task.
   continue <id> [<id> ...]      resume failed task(s) on their existing
@@ -760,10 +760,20 @@ Print full detail for an id. Looks up tasks first, then proposals
 (both in the Mars database).`,
   list: `mars list [<status>] [--limit <n>] [--all]
 
-List tasks. Defaults to the 10 most-recent rows; prints total count so you
-know when the view is truncated. Status filter: draft, queued, blocked,
-running, verifying, merging, vega-reconciling, awaiting-human, done, failed,
-dropped. --limit <n> adjusts the cap; --all disables it.`,
+List tasks. Defaults to the 10 most-recent matching rows; use --all to see
+every row or --limit <n> to set an explicit cap.
+
+Status filters to a specific phase (omit for all statuses):
+  draft, triaging, queued, blocked, running, verifying, merging,
+  vega-reconciling, awaiting-validation, done, failed, dropped
+
+Output includes a footer with total matching count and shown count so you
+can tell at a glance whether there is more than what is displayed — without
+having to drop into psql.
+
+Flags:
+  --limit <n>  Show at most <n> rows (default: 10)
+  --all        Show every matching row (overrides --limit)`,
   continue: `mars continue <id> [<id> ...]
 
 Resume failed task(s) on their existing worktree+branch, jumping

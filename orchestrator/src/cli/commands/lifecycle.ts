@@ -524,9 +524,10 @@ const list: Command = {
     if (showAll) {
       limit = undefined
     } else if (args.flags['--limit'] !== undefined) {
-      const parsed = parseInt(args.flags['--limit'], 10)
-      if (isNaN(parsed) || parsed < 1) {
-        deps.err('--limit must be a positive integer')
+      const limitRaw = args.flags['--limit']
+      const parsed = Number(limitRaw)
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        deps.err(`--limit must be a positive integer; got '${limitRaw}'`)
         return { code: 2 }
       }
       limit = parsed

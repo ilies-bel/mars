@@ -383,6 +383,17 @@ describe('task show / list (store-backed reads)', () => {
     expect(r.code).toBe(2)
     expect(r.err.join('\n')).toContain('--limit must be a positive integer')
   })
+
+  it('rejects a non-positive --limit value with code 2', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['list', '--limit', '0'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('--limit must be a positive integer')
+  })
 })
 
 describe('task priority (daemon-routed mutation)', () => {
