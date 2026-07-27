@@ -185,25 +185,27 @@ describe('parseEventToSegments', () => {
 // ── buildChatArgs tests ──────────────────────────────────────────────────────
 
 describe('buildChatArgs', () => {
-  it('returns exec args without resume when sessionId is null', () => {
-    const args = buildChatArgs('hello', null, 'sys prompt')
+  it('wraps the system prompt in <system_instructions> on the first turn (no session)', () => {
+    const args = buildChatArgs('hello', null, 'YOU ARE MARS')
     expect(args[0]).toBe('exec')
     expect(args[1]).toBe('--json')
     expect(args).not.toContain('resume')
     expect(args).toContain('--sandbox')
     expect(args).toContain('workspace-write')
-    expect(args).toContain('--instructions')
-    expect(args[args.indexOf('--instructions') + 1]).toBe('sys prompt')
-    expect(args.at(-1)).toBe('hello')
+    expect(args).not.toContain('--instructions')
+    const last = args.at(-1) as string
+    expect(last).toContain('<system_instructions>\nYOU ARE MARS\n</system_instructions>')
+    expect(last.indexOf('<system_instructions>')).toBeLessThan(last.lastIndexOf('hello'))
+    expect(last).toMatch(/\n\nhello$/)
   })
 
-  it('returns resume args when sessionId is present', () => {
-    const args = buildChatArgs('follow up', 't_abc', 'sys prompt')
+  it('does not wrap system_instructions on resume turns (session present)', () => {
+    const args = buildChatArgs('hello', 't_abc', 'YOU ARE MARS')
     expect(args.slice(0, 3)).toEqual(['exec', 'resume', '--json'])
     expect(args).not.toContain('--sandbox')
     expect(args).not.toContain('--instructions')
     expect(args.at(-2)).toBe('t_abc')
-    expect(args.at(-1)).toBe('follow up')
+    expect(args.at(-1)).toBe('hello')
   })
 })
 

@@ -318,8 +318,7 @@ export const buildChatArgs = (
     '--model', CHAT_MODEL,
     '-c', 'model_reasoning_effort="high"',
     '--sandbox', 'workspace-write',
-    '--instructions', systemPrompt,
-    content,
+    `<system_instructions>\n${systemPrompt}\n</system_instructions>\n\n${content}`,
   ]
 }
 
