@@ -3,6 +3,7 @@ import { mkdir, writeFile, rm, readdir, readFile } from 'node:fs/promises'
 import { join, extname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { FAILURE_KINDS } from '../lib/failure-kinds'
+import { getProvider } from '../lib/deployment/registry'
 import type { RecipeCatalog } from '../lib/recipes'
 import { buildOriginTree } from '../lib/origin-tree'
 import type { DerivedActionQueueFilter } from './view/action-queue'
@@ -455,6 +456,12 @@ export interface HttpServerDeps {
    * daemon this is the SAME hub instance injected into the {@link ChatRunner}.
    */
   chatStreamHub?: ChatStreamHub
+  /**
+   * Returns the latest deployment record for the given task, or `null` when no
+   * deployment has been written for it. Used by `GET /deployments/:taskId/logs`.
+   * Optional: when omitted the endpoint returns 503 Service Unavailable.
+   */
+  getLatestDeployment?: (taskId: string) => Promise<import('../store/task-store').TaskDeployment | null>
 }
 
 export interface HttpServerHandle {
@@ -2197,6 +2204,42 @@ export const startHttpServer = async (
         deps.appServices
           .ackNotice(id)
           .then((acknowledged) => sendJson(res, 200, { acknowledged }))
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // GET /deployments/:taskId/logs — fetch provider logs for the latest
+    // deployment on a task. Returns text/plain with raw log output; 404 when no
+    // deployment exists for the task; 500 when the provider's logs() call fails.
+    // Pure read; no draining gate.
+    {
+      const deployLogsMatch =
+        req.method === 'GET' && req.url
+          ? req.url.match(/^\/deployments\/([^/?]+)\/logs(?:\?.*)?$/)
+          : null
+      if (deployLogsMatch && deployLogsMatch[1]) {
+        const taskId = decodeURIComponent(deployLogsMatch[1])
+        if (!deps.getLatestDeployment) {
+          sendJson(res, 503, { ok: false, error: 'deployment support not configured' })
+          return
+        }
+        deps.getLatestDeployment(taskId)
+          .then((row) => {
+            if (row === null) {
+              sendJson(res, 404, { ok: false, error: `no deployment found for task ${taskId}` })
+              return
+            }
+            const provider = getProvider(row.provider)
+            if (provider === undefined) {
+              sendJson(res, 500, { ok: false, error: `provider '${row.provider}' is not registered` })
+              return
+            }
+            return provider.logs(row.deploymentId).then((logs) => {
+              res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' })
+              res.end(logs)
+            })
+          })
           .catch((err: unknown) => sendError(res, err))
         return
       }

@@ -42,6 +42,7 @@ import { verifyCommands } from './verify'
 import { credentialsCommands } from './credentials'
 import { proposeCommands } from './propose'
 import { mergeCommands } from './merge'
+import { deployCommands } from './deploy'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -79,6 +80,7 @@ export const allCommands: readonly Command[] = [
   ...credentialsCommands,
   ...proposeCommands,
   ...mergeCommands,
+  ...deployCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)
