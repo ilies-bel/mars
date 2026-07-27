@@ -2,6 +2,7 @@ import { memo } from 'react'
 import type { UITask } from '@/shared/types'
 import { relativeTime } from '@/shared/time'
 import { isLiveStatus, substepLabel } from '@/shared/substep'
+import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { RoleTag } from './RoleTag'
 import { StatusChip } from './StatusChip'
 
@@ -48,6 +49,9 @@ export const TaskCard = memo(({ task, index }: Props) => {
     task.status === 'failed'
 
   const spec = task.spec
+  const failureLabel = task.failed && task.failureSignature
+    ? humanizeFailureCode(task.failureSignature)
+    : null
 
   const openDrawer = () => {
     window.location.hash = `#/task/${encodeURIComponent(task.id)}`
@@ -62,6 +66,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
     <article
       data-task-index={index}
       data-task-status={task.status}
+      title={failureLabel ?? undefined}
       className={`mars-card relative flex flex-col gap-2 rounded-lg bg-card p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-secondary active:scale-[0.99] motion-reduce:transform-none has-[button:focus-visible]:outline-none has-[button:focus-visible]:ring-2 has-[button:focus-visible]:ring-ring${isLive ? ' mars-card-live' : ''} ${accent}`.trimEnd()}
     >
       {/* Row 1: id link + status badges — raised above the stretched button via z-10
@@ -108,6 +113,12 @@ export const TaskCard = memo(({ task, index }: Props) => {
       >
         {task.title}
       </button>
+
+      {failureLabel ? (
+        <div className="font-mono text-meta text-error/80">
+          {failureLabel}
+        </div>
+      ) : null}
 
       {task.status === 'dropped' && task.dropReason ? (
         <div className="font-mono text-meta text-muted-foreground">

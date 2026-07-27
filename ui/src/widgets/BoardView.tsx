@@ -48,6 +48,7 @@ const toUI = (t: ProgressTask): UITask => ({
   retryCount: t.retryCount ?? 0,
   blockerTaskId: t.blockerTaskId ?? null,
   spec: t.spec ?? null,
+  failureSignature: t.failureSignature ?? null,
   compensatesArcId: t.compensatesArcId ?? null,
   createdAt: t.createdAt,
   updatedAt: t.updatedAt,
@@ -120,6 +121,9 @@ export const buildArcsByCluster = (
     const resolvedLabel = resolveArcLabel(id, orderedTasks, proposalById)
     const hasOrphanedOrigin = resolvedLabel === undefined
     const title = resolvedLabel ?? `Abandoned arc ${id}`
+    const latestFailedTask = [...arcTasks]
+      .filter((t) => t.status === 'failed' && t.failureSignature != null)
+      .sort(compareNewestFirst)[0]
     arcsByCluster[cluster].push({
       id,
       cluster,
@@ -128,6 +132,7 @@ export const buildArcsByCluster = (
       updatedAt: latestTask.updatedAt,
       compensatesArcId: displayTask.compensatesArcId ?? null,
       hasOrphanedOrigin,
+      failureSignature: latestFailedTask?.failureSignature ?? null,
     })
   }
 

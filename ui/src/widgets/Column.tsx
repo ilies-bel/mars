@@ -1,6 +1,7 @@
 import type { UITask } from '@/shared/types'
 import { TaskCard } from '@/components/TaskCard'
 import { isLiveStatus, substepLabel } from '@/shared/substep'
+import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import type { Cluster } from '@/shared/schemas'
 
 export interface BoardArc {
@@ -23,6 +24,7 @@ export interface BoardArc {
    * the recovery in a muted "abandoned origin" presentation.
    */
   hasOrphanedOrigin?: boolean
+  failureSignature?: string | null
 }
 
 interface Props {
@@ -136,6 +138,14 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
                     {isOrphaned ? (
                       <span className="mt-1 block font-mono text-[10px] text-muted-foreground/70" data-arc-state="orphaned-origin">
                         ↱ recovery in progress · origin force-purged
+                      </span>
+                    ) : null}
+                    {arc.failureSignature != null ? (
+                      <span
+                        className="mt-1 block font-mono text-[10px] text-error/80"
+                        title={arc.failureSignature}
+                      >
+                        {humanizeFailureCode(arc.failureSignature)}
                       </span>
                     ) : null}
                   </span>

@@ -525,6 +525,15 @@ export const TaskDetailBody = ({
           >
             {task.status}
           </span>
+          {task.failureSignature != null ? (
+            <span
+              data-testid="task-detail-failure-reason"
+              className="font-mono text-xs text-error"
+              title={task.failureSignature}
+            >
+              · {humanizeFailureCode(task.failureSignature)}
+            </span>
+          ) : null}
           <CopyButton
             text={task.id}
             label={task.id}
