@@ -4324,6 +4324,41 @@ export const startDaemon = async (
   }, THREAD_PURGE_SWEEP_MS)
   threadPurgeSweep.unref()
 
+  // ── Steward runtime-knob tuning ──────────────────────────────────────────
+  // When the implement queue is backlogged (pending > cap × 0.75) for a
+  // sustained window (default 60 s), emit kpi.backlog.degraded so the
+  // steward subscriber bumps the cap autonomously. .unref() so the
+  // interval never prevents a clean shutdown.
+  const BACKLOG_CHECK_MS = Number(process.env.MARS_BACKLOG_CHECK_MS ?? 10_000)
+  const BACKLOG_SUSTAIN_MS = Number(process.env.MARS_BACKLOG_SUSTAIN_MS ?? 60_000)
+  let backlogSince: number | null = null
+  const { startStewardRuntimeTune } = await import('../../outbox/subscribers/steward-runtime-tune')
+  startStewardRuntimeTune({
+    bus,
+    implementSem: sems.implement,
+    baselineCap: initialCaps.implement,
+    log,
+  })
+  const backlogCheck = setInterval(() => {
+    const pending = tracker.pendingImplementCount?.() ?? 0
+    const threshold = Math.floor(sems.implement.limit * 0.75)
+    if (pending > threshold) {
+      if (backlogSince === null) backlogSince = Date.now()
+      const elapsed = Date.now() - backlogSince
+      if (elapsed >= BACKLOG_SUSTAIN_MS) {
+        bus.emit('kpi.backlog.degraded', {
+          pending,
+          cap: sems.implement.limit,
+          sustainedMs: elapsed,
+        })
+        backlogSince = null
+      }
+    } else {
+      backlogSince = null
+    }
+  }, BACKLOG_CHECK_MS)
+  backlogCheck.unref()
+
   // ── Observability store size watchdog ─────────────────────────────────────
   // Periodically checks the trace_events footprint inside mars.db. When the
   // table exceeds 500 MB a single open action-queue item is raised so the

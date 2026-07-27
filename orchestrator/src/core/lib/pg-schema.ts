@@ -391,6 +391,7 @@ const DDL: readonly string[] = [
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS env_restart_count bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS arc_rescue_attempts bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS review_packet_json text`,
+  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS qa_report_json text`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
   // Chat runs on the Codex Responses API with full transcript replay — the
   // CLI-session binding and one-shot context seeding are gone.
@@ -798,6 +799,16 @@ const DDL: readonly string[] = [
      ON purged_tasks_archive(origin_id)`,
   `CREATE INDEX IF NOT EXISTS idx_purged_tasks_archive_purged_at
      ON purged_tasks_archive(purged_at DESC)`,
+
+  // ── workflow patch proposals (steward diff-for-validation) ─────────────────
+  `CREATE TABLE IF NOT EXISTS workflow_patch_proposals (
+    id              text PRIMARY KEY,
+    workflow_path   text NOT NULL,
+    unified_diff    text NOT NULL,
+    rationale       text NOT NULL,
+    status          text NOT NULL DEFAULT 'awaiting-human',
+    created_at      timestamptz NOT NULL DEFAULT now()
+  )`,
 ]
 
 /**
@@ -860,6 +871,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'task_deployments',
   'dispatch_spend_control',
   'purged_tasks_archive',
+  'workflow_patch_proposals',
 ]
 
 /**

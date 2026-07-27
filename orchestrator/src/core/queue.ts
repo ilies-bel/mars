@@ -264,6 +264,20 @@ export interface TaskPlan {
   technical: string
 }
 
+export interface QaReportCriterion {
+  criterion: string
+  verdict: 'pass' | 'fail' | 'unverifiable'
+  screenshotPath: string | null
+  note: string
+}
+
+export interface QaReport {
+  criteria: QaReportCriterion[]
+  bootReason: string | null
+  completedAt: string
+  durationMs: number | null
+}
+
 export interface Task {
   id: string
   prompt: string
@@ -292,6 +306,7 @@ export interface Task {
    * rows landed before slice G.
    */
   failureReasonCode: string | null
+  stallDiagnostics: string | null
   retryCount: number
   /**
    * Number of times this task has been auto-restarted due to an environmental
@@ -462,6 +477,13 @@ export interface Task {
    * rows and legacy rows created before this column was added).
    */
   requeueAnchorMs?: number | null
+  /**
+   * Structured QA report persisted by behaviour-verify. Contains per-criterion
+   * verdicts, screenshot paths, and timing data. Null when no behaviour-verify
+   * has run or on legacy rows.
+   */
+  qaReport?: QaReport | null
+  deferrable: boolean
   createdAt: string
   updatedAt: string
 }
@@ -697,7 +719,7 @@ SELECT
   (SELECT COALESCE(json_agg(session_id ORDER BY position)::text, '[]')
      FROM task_claude_sessions WHERE task_id = t.id) AS claude_session_ids,
   t.error, t.drop_reason, t.retry_count, t.author_kind, t.author_name,
-  t.failure_reason, t.failure_reason_code, t.recovery_payload,
+  t.failure_reason, t.failure_reason_code, t.stall_diagnostics, t.recovery_payload,
   t.fix_for_task_id, t.failure_signature, t.kind, t.priority, t.tag,
   t.tags_json, t.origin_id, t.parent_proposal_id, t.slice_index,
   t.failed_phase, t.resume_from,
@@ -716,6 +738,8 @@ SELECT
   t.compensates_arc_id,
   t.qa,
   t.requeue_anchor_ms,
+  t.qa_report_json,
+  t.deferrable,
   t.created_at, t.updated_at
 FROM tasks t`
 
@@ -763,6 +787,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     dropReason: (row.drop_reason as string | null) ?? null,
     failureReason: (row.failure_reason as string | null) ?? null,
     failureReasonCode: (row.failure_reason_code as string | null) ?? null,
+    stallDiagnostics: (row.stall_diagnostics as string | null) ?? null,
     retryCount: Number(row.retry_count ?? 0),
     envRestartCount: Number(row.env_restart_count ?? 0),
     fixForTaskId,
@@ -796,8 +821,21 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
       row.requeue_anchor_ms === null || row.requeue_anchor_ms === undefined
         ? null
         : Number(row.requeue_anchor_ms),
+    qaReport: parseQaReport(row.qa_report_json),
+    deferrable: Number(row.deferrable ?? 0) === 1,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
+  }
+}
+
+const parseQaReport = (raw: unknown): QaReport | null => {
+  if (raw === null || raw === undefined) return null
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (!parsed || !Array.isArray(parsed.criteria)) return null
+    return parsed as QaReport
+  } catch {
+    return null
   }
 }
 
@@ -915,6 +953,7 @@ export interface EnqueueTaskOptions {
    * identified by this `origin_id`. Stored in `compensates_arc_id`. Only set
    * by the force-purge path — do not use this for recovery tasks.
    */
+  deferrable?: boolean
   compensatesArcId?: string
   /**
    * Dedup key stored in `followup_dedup_key` to prevent duplicate tasks on
@@ -994,6 +1033,7 @@ export const updateTask = async (
       | 'envRestartCount'
       | 'workflow'
       | 'requeueAnchorMs'
+      | 'stallDiagnostics'
     > & {
       /**
        * Typed catalog code for the failure (e.g. `verify:main-dirty`).
@@ -1214,6 +1254,10 @@ export const updateTask = async (
   if (patch.failureReasonCode !== undefined) {
     fields.push('failure_reason_code = ?')
     args.push(patch.failureReasonCode)
+  }
+  if (patch.stallDiagnostics !== undefined) {
+    fields.push('stall_diagnostics = ?')
+    args.push(patch.stallDiagnostics)
   }
   if (patch.recoveryPayload !== undefined) {
     fields.push('recovery_payload = ?')

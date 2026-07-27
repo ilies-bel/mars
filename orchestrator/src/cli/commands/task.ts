@@ -119,7 +119,8 @@ export const taskAdd: Command = {
     // `--live` is valueless, so the parser leaves it in positional; strip it
     // before prompt resolution or it would be joined into a literal prompt.
     const live = args.positional.includes('--live')
-    const positional = args.positional.filter((a) => a !== '--live')
+    const deferrableFlag = args.positional.includes('--deferrable')
+    const positional = args.positional.filter((a) => a !== '--live' && a !== '--deferrable')
     const workflowFlag = args.flags['--workflow']?.trim()
     if (live && workflowFlag !== undefined && workflowFlag !== 'live') {
       deps.err(
@@ -206,6 +207,7 @@ export const taskAdd: Command = {
       ...(workflow !== undefined ? { workflow } : {}),
       ...(supersedes !== undefined ? { supersedes } : {}),
       ...(qa !== undefined ? { qa } : {}),
+      ...(deferrableFlag ? { deferrable: true } : {}),
     })
   },
 }
