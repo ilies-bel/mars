@@ -43,6 +43,7 @@ const baseTask = (overrides: Partial<Task>): Task => ({
   currentStepName: null,
   currentStepGuide: null,
   qa: 'auto',
+  deferrable: false,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
   ...overrides,

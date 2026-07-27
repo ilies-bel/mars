@@ -3,7 +3,7 @@ import { mkdtemp, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-const getSettingMock = vi.fn<[unknown, string], Promise<string | null>>()
+const getSettingMock = vi.fn<(_db: unknown, key: string) => Promise<string | null>>()
 
 vi.mock('../../lib/settings', () => ({
   getSetting: (...args: unknown[]) => getSettingMock(args[0], args[1] as string),
