@@ -71,7 +71,12 @@ describe('runMainDirtyDispatchCheck', () => {
     vi.resetModules()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Close all PGlite handles opened during this test BEFORE deleting the
+    // repo directory. Orphaned WASM instances with I/O open on deleted files
+    // corrupt subsequent tests ("could not open file base/5/...").
+    const { __resetDbRegistryForTests } = await import('../../lib/db')
+    await __resetDbRegistryForTests()
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
   })
