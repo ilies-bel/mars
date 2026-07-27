@@ -1752,21 +1752,25 @@ export const review = async (
           traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
         })
         if (postClean.dirty) {
-          r = {
-            passed: false,
-            steps: [
-              ...r.steps,
-              {
-                name: 'integration-clean',
-                passed: false,
-                output:
-                  `verify:main-committer-still-dirty — integration branch ${integrationBranch} is still dirty after main-committer ran.\n` +
-                  `The committer exited without cleaning the integration checkout (e.g. git stash refused to capture some files, or the committer did not commit).\n` +
-                  `Operator action required — dirty files:\n${postClean.statusOutput}`,
-                tier: 'task' as const,
-              },
-            ],
-          }
+          // Orchestration failure: the committer ran and passed its own verify
+          // steps but left the integration branch dirty. This is NOT a code
+          // defect — no fix task must be spawned. Stamp the task failed with an
+          // orchestration code, raise a dedicated action-queue alert, and throw
+          // a terminal error so the pipeline aborts. The _verifyFailedRecorded
+          // flag prevents the outer catch from double-stamping.
+          const { handleCommitterStillDirty } = await import(
+            '../../core/daemon/main-dirty-action-queue'
+          )
+          const contaminatedPaths = postClean.statusOutput
+            .split('\n')
+            .map((l) => l.slice(3).trim())
+            .filter(Boolean)
+          await handleCommitterStillDirty(taskId, integrationBranch, contaminatedPaths, store)
+          _verifyFailedRecorded = true
+          throw new WorkflowTerminalError(
+            'committer-still-dirty',
+            `task ${taskId} orchestration:main-committer-still-dirty: integration branch ${integrationBranch} still dirty after committer ran`,
+          )
         }
       }
 

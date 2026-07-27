@@ -23,6 +23,7 @@ export type WorkflowTerminalKind =
   | 'main-dirty-merge'
   | 'preview-gate'
   | 'await-human'
+  | 'committer-still-dirty'
 
 export interface WorkflowTerminalMeta {
   /** Unix epoch seconds at which the provider quota resets. Only set for `quota-rejected`. */

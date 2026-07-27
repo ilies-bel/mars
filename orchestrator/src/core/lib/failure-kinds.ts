@@ -542,6 +542,23 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         recipe: null,
         actions: DAEMON_KILLED_ACTIONS,
       },
+      // ── orchestration:main-committer-still-dirty ───────────────────────────
+      // Raised when the post-verify clean check finds the integration branch
+      // still dirty after the main-committer task ran. This is an orchestration
+      // condition — not a code defect — so there is no recovery recipe and no
+      // fix task is spawned. The operator must resolve the dirty state manually.
+      {
+        signature: 'orchestration:main-committer-still-dirty',
+        staticEncodable: notEncodable('orchestration'),
+        warmTitle: 'Integration branch still dirty after main-committer ran',
+        verboseReason:
+          'The main-committer task completed but left uncommitted files on the integration branch; no automatic recovery is possible — operator review required.',
+        recipe: null,
+        actions: [
+          { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      },
     ]),
 )
 

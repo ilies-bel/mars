@@ -18,8 +18,10 @@
 import { execFileSync } from 'node:child_process'
 import { raiseActionQueueItem, supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
 import { getDefaultTaskStore } from '../store/task-store'
+import type { DomainTaskStore as TaskStore } from '../store/task-store'
 import { MAIN_COMMITER_RECIPE } from '../lib/main-dirty'
 import { Arc } from '../arc'
+import { updateTask } from '../queue'
 
 /**
  * SQL fragment that matches open actionQueue rows for failed `main-commiter`
@@ -354,4 +356,69 @@ export const releaseMainCommitterDependents = async (
   // the edge delete, and the task.unblocked emit all live in the Arc aggregate.
   // This is a thin delegating wrapper with no task-table write of its own.
   await Arc.releaseMainCommitterDependents(committerTaskId, log)
+}
+
+/**
+ * Stamp a main-committer task `failed` with the orchestration failure code and
+ * raise a single high-priority action-queue alert naming the still-dirty paths.
+ *
+ * Called from the verify primitive when `git status --porcelain` on the
+ * integration branch is non-empty AFTER the committer ran and its own verify
+ * steps passed. This is a non-recoverable orchestration condition — no fix task
+ * is spawned. Dependents remain blocked until the operator resolves the dirt
+ * manually and then restarts or purges the committer task.
+ *
+ * The action-queue row uses `signature: main-committer-still-dirty:<taskId>` so
+ * repeat detections for the same committer task deduplicate via `seen_count`.
+ */
+export const handleCommitterStillDirty = async (
+  taskId: string,
+  integrationBranch: string,
+  contaminatedPaths: string[],
+  store: TaskStore | undefined,
+): Promise<void> => {
+  const pathLines =
+    contaminatedPaths.length > 0
+      ? contaminatedPaths.map((p) => `- ${p}`).join('\n')
+      : '(no specific paths identified)'
+
+  await updateTask(
+    taskId,
+    {
+      status: 'failed',
+      error: pathLines,
+      failedPhase: 'verify',
+      failureReason: 'orchestration:main-committer-still-dirty',
+      failureReasonCode: 'orchestration:main-committer-still-dirty',
+    },
+    store,
+  )
+
+  await raiseActionQueueItem({
+    kind: 'failed',
+    category: 'orchestrator',
+    priority: 'high',
+    title: 'main-committer left integration branch dirty',
+    body: [
+      `The main-committer task \`${taskId}\` completed but left the integration branch \`${integrationBranch}\` still dirty.`,
+      '',
+      'Contaminated paths:',
+      '',
+      pathLines,
+      '',
+      'The committer exited without fully cleaning the integration checkout',
+      '(e.g. git stash refused to capture some files, or the committer did not commit).',
+      'No automatic recovery is possible — operator review is required.',
+      '',
+      'To resolve:',
+      '  1. Inspect the paths above on the integration branch.',
+      '  2. Commit, stash, or remove the dirty files.',
+      '  3. Restart or purge the blocked tasks once the branch is clean.',
+    ].join('\n'),
+    payload: { taskId, integrationBranch, contaminatedPaths },
+    context: { repoRoot: process.env.MARS_REPO ?? null },
+    raisedBy: 'workflow:verify:main-committer-still-dirty',
+    signature: `main-committer-still-dirty:${taskId}`,
+    originTaskId: taskId,
+  })
 }
