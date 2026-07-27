@@ -1,3 +1,12 @@
+/**
+ * Tests for buildForkSeed and the fork-seed insertion path in forkThread.
+ *
+ * Uses the same loadModule / vi.resetModules() pattern as chat-store.test.ts:
+ * each test gets a fresh PGlite-backed module environment; the temp directories
+ * are left intact until the vitest global-teardown sweeps them so there is no
+ * race between PGlite's asynchronous WASM cleanup and file deletion.
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
@@ -35,7 +44,8 @@ describe('chat-store fork seed', () => {
 
   afterEach(() => {
     delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
+    // Temp dirs are cleaned by the vitest global-teardown sweep (prefix 'mars-');
+    // do NOT delete here so there is no race with PGlite's async WASM cleanup.
   })
 
   // ── buildForkSeed ────────────────────────────────────────────────────────────
@@ -110,7 +120,7 @@ describe('chat-store fork seed', () => {
 
   // ── forkThread seed insertion ─────────────────────────────────────────────────
 
-  it('forkThread inserts one fork_seed assistant message on first creation', async () => {
+  it('forkThread inserts one fork_seed assistant message on first creation (2 task ids + 1 ADR ref)', async () => {
     const m = await loadModule(repo)
     await m.initChatStore()
 
@@ -191,7 +201,7 @@ describe('chat-store fork seed', () => {
     const child1 = await m.getThread(c1.id)
     const child2 = await m.getThread(c2.id)
 
-    expect(child1!.messages.filter((m) => m.role === 'assistant')).toHaveLength(1)
-    expect(child2!.messages.filter((m) => m.role === 'assistant')).toHaveLength(1)
+    expect(child1!.messages.filter((msg) => msg.role === 'assistant')).toHaveLength(1)
+    expect(child2!.messages.filter((msg) => msg.role === 'assistant')).toHaveLength(1)
   })
 })
