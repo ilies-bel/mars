@@ -164,6 +164,24 @@ export const parseEventToSegments = (event: unknown): ChatSegment[] => {
       cacheReadTokens: isObject(details) && typeof details.cached_tokens === 'number' ? details.cached_tokens : null,
       cost: null,
     })
+  } else if (event.type === 'item.completed' && isObject(event.item)) {
+    // Codex CLI JSONL: agent_message items carry the assistant's reply as a plain text field.
+    const item = event.item
+    if (item.type === 'agent_message' && typeof item.text === 'string' && item.text.length > 0) {
+      segs.push({ type: 'text', text: item.text })
+    }
+  } else if (event.type === 'turn.completed') {
+    // Codex CLI JSONL: usage is a top-level field on the event (not nested in response).
+    // cached_input_tokens (not input_tokens_details.cached_tokens) is the cache field.
+    const usage = isObject(event.usage) ? event.usage : undefined
+    segs.push({
+      type: 'result',
+      durationMs: null,
+      cost: null,
+      inputTokens: usage && typeof usage.input_tokens === 'number' ? usage.input_tokens : null,
+      outputTokens: usage && typeof usage.output_tokens === 'number' ? usage.output_tokens : null,
+      cacheReadTokens: usage && typeof usage.cached_input_tokens === 'number' ? usage.cached_input_tokens : null,
+    })
   }
 
   return segs
