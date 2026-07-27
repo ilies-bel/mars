@@ -135,7 +135,7 @@ describe('startWorkerMcpServer', () => {
     await serverDone
   })
 
-  it('lists exactly one tool: mars_task_note', async () => {
+  it('lists mars_task_note and mars_task_check in tools/list', async () => {
     const { serverInput, serverOutput, serverDone } = startServer(
       { MARS_MCP_TASK_ID: 'task-abc' },
       sendRequest,
@@ -146,9 +146,9 @@ describe('startWorkerMcpServer', () => {
     const resp = await nextLine(serverOutput) as Record<string, unknown>
 
     expect(resp.id).toBe(2)
-    const tools = (resp.result as Record<string, unknown>).tools as unknown[]
-    expect(tools).toHaveLength(1)
-    expect((tools[0] as Record<string, unknown>).name).toBe('mars_task_note')
+    const tools = (resp.result as Record<string, unknown>).tools as Array<Record<string, unknown>>
+    expect(tools).toHaveLength(2)
+    expect(tools.map(t => t.name)).toEqual(['mars_task_note', 'mars_task_check'])
 
     serverInput.end()
     await serverDone
@@ -229,6 +229,116 @@ describe('startWorkerMcpServer', () => {
     const resp = await nextLine(serverOutput) as Record<string, unknown>
 
     expect(resp.id).toBe(5)
+    const result = resp.result as Record<string, unknown>
+    expect(result.isError).toBe(true)
+    expect(capturedRequests).toHaveLength(0)
+
+    serverInput.end()
+    await serverDone
+  })
+
+  it('mars_task_check forwards op:task.check with criterionIndex and uncheck:false', async () => {
+    const TASK_ID = 'mars-abc123'
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: TASK_ID },
+      sendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+
+    sendMsg(serverInput, {
+      jsonrpc: '2.0',
+      id: 10,
+      method: 'tools/call',
+      params: { name: 'mars_task_check', arguments: { index: 2 } },
+    })
+    const resp = await nextLine(serverOutput) as Record<string, unknown>
+
+    expect(resp.id).toBe(10)
+    const result = resp.result as Record<string, unknown>
+    expect(result.isError).toBeFalsy()
+
+    expect(capturedRequests).toHaveLength(1)
+    const req = capturedRequests[0] as { op: string; id: string; criterionIndex: number; uncheck: boolean; author: string }
+    expect(req.op).toBe('task.check')
+    expect(req.id).toBe(TASK_ID)
+    expect(req.criterionIndex).toBe(2)
+    expect(req.uncheck).toBe(false)
+    expect(req.author).toBe('mcp-worker')
+
+    serverInput.end()
+    await serverDone
+  })
+
+  it('mars_task_check with uncheck:true forwards uncheck:true', async () => {
+    const TASK_ID = 'mars-abc123'
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: TASK_ID },
+      sendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+
+    sendMsg(serverInput, {
+      jsonrpc: '2.0',
+      id: 11,
+      method: 'tools/call',
+      params: { name: 'mars_task_check', arguments: { index: 3, uncheck: true } },
+    })
+    const resp = await nextLine(serverOutput) as Record<string, unknown>
+
+    expect(resp.id).toBe(11)
+    const result = resp.result as Record<string, unknown>
+    expect(result.isError).toBeFalsy()
+
+    expect(capturedRequests).toHaveLength(1)
+    const req = capturedRequests[0] as { op: string; id: string; criterionIndex: number; uncheck: boolean }
+    expect(req.op).toBe('task.check')
+    expect(req.criterionIndex).toBe(3)
+    expect(req.uncheck).toBe(true)
+
+    serverInput.end()
+    await serverDone
+  })
+
+  it('mars_task_check rejects index=0 at schema level', async () => {
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: 'task-abc' },
+      sendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+
+    sendMsg(serverInput, {
+      jsonrpc: '2.0',
+      id: 12,
+      method: 'tools/call',
+      params: { name: 'mars_task_check', arguments: { index: 0 } },
+    })
+    const resp = await nextLine(serverOutput) as Record<string, unknown>
+
+    expect(resp.id).toBe(12)
+    const result = resp.result as Record<string, unknown>
+    expect(result.isError).toBe(true)
+    expect(capturedRequests).toHaveLength(0)
+
+    serverInput.end()
+    await serverDone
+  })
+
+  it('mars_task_check rejects non-integer index at schema level', async () => {
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: 'task-abc' },
+      sendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+
+    sendMsg(serverInput, {
+      jsonrpc: '2.0',
+      id: 13,
+      method: 'tools/call',
+      params: { name: 'mars_task_check', arguments: { index: 1.5 } },
+    })
+    const resp = await nextLine(serverOutput) as Record<string, unknown>
+
+    expect(resp.id).toBe(13)
     const result = resp.result as Record<string, unknown>
     expect(result.isError).toBe(true)
     expect(capturedRequests).toHaveLength(0)

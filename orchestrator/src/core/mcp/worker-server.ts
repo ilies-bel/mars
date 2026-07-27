@@ -3,8 +3,7 @@
  *
  * Spawned once per dispatched Coder run via `mars mcp worker`. Reads the
  * origin task id from MARS_MCP_TASK_ID (injected into the worker env by the
- * dispatch path) and exposes exactly one tool — `mars_task_note` — that
- * appends a progress note to that task via the daemon `task.note` op.
+ * dispatch path) and exposes worker-safe tools that route to the daemon.
  *
  * Protocol: JSON-RPC 2.0 over newline-delimited stdio (MCP 2024-11-05).
  * Implements only the methods a dispatched agent session uses:
@@ -18,6 +17,11 @@ import type { DaemonRequest } from '../daemon/protocol.js'
 
 const TaskNoteArgsSchema = z.object({
   body: z.string().min(1, 'body must be a non-empty string'),
+})
+
+const TaskCheckArgsSchema = z.object({
+  index: z.number().int('index must be an integer').min(1, 'index must be ≥ 1'),
+  uncheck: z.boolean().optional(),
 })
 
 export interface WorkerServerDeps {
@@ -106,51 +110,85 @@ export async function startWorkerMcpServer(
                 additionalProperties: false,
               },
             },
+            {
+              name: 'mars_task_check',
+              description: 'Mark or unmark a done-criterion on the current task',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  index: {
+                    type: 'integer',
+                    minimum: 1,
+                    description: '1-based index of the done criterion to toggle',
+                  },
+                  uncheck: {
+                    type: 'boolean',
+                    description: 'When true, unmarks the criterion instead of marking it',
+                  },
+                },
+                required: ['index'],
+                additionalProperties: false,
+              },
+            },
           ],
         })
         break
 
       case 'tools/call': {
         const p = params as Record<string, unknown> | undefined
+        const toolName = p?.name
 
-        if (p?.name !== 'mars_task_note') {
+        if (toolName === 'mars_task_note') {
+          const parsed = TaskNoteArgsSchema.safeParse(p?.arguments)
+          if (!parsed.success) {
+            respond(id, {
+              content: [{ type: 'text', text: `Invalid arguments: ${parsed.error.message}` }],
+              isError: true,
+            })
+            break
+          }
+          try {
+            await deps.sendRequest({
+              op: 'task.note',
+              id: taskId,
+              body: parsed.data.body,
+              author: 'mcp-worker',
+            })
+            respond(id, { content: [{ type: 'text', text: 'Note appended' }] })
+          } catch (err) {
+            respond(id, {
+              content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+              isError: true,
+            })
+          }
+        } else if (toolName === 'mars_task_check') {
+          const parsed = TaskCheckArgsSchema.safeParse(p?.arguments)
+          if (!parsed.success) {
+            respond(id, {
+              content: [{ type: 'text', text: `Invalid arguments: ${parsed.error.message}` }],
+              isError: true,
+            })
+            break
+          }
+          try {
+            await deps.sendRequest({
+              op: 'task.check',
+              id: taskId,
+              criterionIndex: parsed.data.index,
+              uncheck: !!parsed.data.uncheck,
+              author: 'mcp-worker',
+            })
+            const verb = parsed.data.uncheck ? 'unchecked' : 'checked'
+            respond(id, { content: [{ type: 'text', text: `Criterion ${parsed.data.index} ${verb}` }] })
+          } catch (err) {
+            respond(id, {
+              content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+              isError: true,
+            })
+          }
+        } else {
           respond(id, {
-            content: [{ type: 'text', text: `Unknown tool: ${String(p?.name)}` }],
-            isError: true,
-          })
-          break
-        }
-
-        const parsed = TaskNoteArgsSchema.safeParse(p?.arguments)
-        if (!parsed.success) {
-          respond(id, {
-            content: [
-              {
-                type: 'text',
-                text: `Invalid arguments: ${parsed.error.message}`,
-              },
-            ],
-            isError: true,
-          })
-          break
-        }
-
-        try {
-          await deps.sendRequest({
-            op: 'task.note',
-            id: taskId,
-            body: parsed.data.body,
-            author: 'mcp-worker',
-          })
-          respond(id, { content: [{ type: 'text', text: 'Note appended' }] })
-        } catch (err) {
-          respond(id, {
-            content: [
-              {
-                type: 'text',
-                text: `Error: ${err instanceof Error ? err.message : String(err)}`,
-              },
-            ],
+            content: [{ type: 'text', text: `Unknown tool: ${String(toolName)}` }],
             isError: true,
           })
         }
