@@ -51,6 +51,49 @@ const statusChip = (status: string) =>
   STATUS_CHIP[status] ?? { label: status, className: 'text-muted-foreground' }
 
 // ---------------------------------------------------------------------------
+// Done criteria subsection (rendered inside FocusPanel when kind='task')
+// ---------------------------------------------------------------------------
+
+const DoneCriteriaSection = ({ task }: { task: ProgressTask }) => {
+  // Flat fields take precedence; fall back to nested spec fields when absent.
+  const criteria = task.doneCriteria ?? task.spec?.doneCriteria
+  const verify = task.verify ?? task.spec?.verifyCmd
+
+  if (!criteria?.length && !verify) return null
+
+  return (
+    <details className="mt-1">
+      <summary className="cursor-pointer list-none font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60 hover:text-foreground transition-colors [&::-webkit-details-marker]:hidden">
+        Done criteria ▸
+      </summary>
+      <div className="pt-1">
+        {criteria && criteria.length > 0 && (
+          <ul className="flex flex-col gap-0.5" data-testid="done-criteria-list">
+            {criteria.map((c, i) => (
+              <li
+                key={i}
+                className="font-mono text-[10px] leading-snug text-foreground/80"
+                data-testid="done-criteria-item"
+              >
+                ☐ {c}
+              </li>
+            ))}
+          </ul>
+        )}
+        {verify && (
+          <code
+            className="mt-1 block font-mono text-[9px] text-foreground/70 break-all"
+            data-testid="done-criteria-verify"
+          >
+            {verify}
+          </code>
+        )}
+      </div>
+    </details>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Focus panel — shows the active thread title and status
 // ---------------------------------------------------------------------------
 
@@ -89,6 +132,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult }: FocusPanelProps)
           >
             {chip.label}
           </span>
+          <DoneCriteriaSection task={task} />
         </div>
       )
     }

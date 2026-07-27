@@ -582,6 +582,201 @@ describe('ContextRail – FocusPanel linked entity', () => {
     expect(html).toContain('failed')
   })
 
+  // ---------------------------------------------------------------------------
+  // Done criteria subsection
+  // ---------------------------------------------------------------------------
+
+  it('done criteria list renders for a task fixture with two done criteria', () => {
+    const alertItem: ActionQueueItem = {
+      id: 'alert-criteria-1',
+      entityId: 'task-criteria-1',
+      kind: 'failed-task',
+      title: 'Task with criteria',
+      body: '',
+      at: '2024-01-01T00:00:00.000Z',
+      priority: 'high',
+      dag: null,
+      errorKind: 'verify',
+      actions: [],
+      humanSummary: '',
+      verbs: [],
+    }
+    const taskWithCriteria: ProgressTask = {
+      id: 'task-criteria-1',
+      prompt: 'Build the feature',
+      status: 'failed',
+      plan: null,
+      branch: null,
+      worktreePath: null,
+      error: null,
+      dropReason: null,
+      retryCount: 0,
+      blockedBy: [],
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+      cluster: 'Failed',
+      doneCriteria: ['First criterion', 'Second criterion'],
+      verify: 'cd ui && npx vitest run',
+    }
+    mockFocusState.aqItems = [alertItem]
+    mockFocusState.tasks = [taskWithCriteria]
+
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-criteria-1',
+        title: 'Criteria thread',
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 0,
+        origin: 'alert',
+        alertItemId: 'alert-criteria-1',
+        alertResolved: false,
+      },
+      messages: [],
+    }
+
+    const html = renderToStaticMarkup(
+      <ContextRail
+        sessionStartedAt={0}
+        onInsertPrompt={() => {}}
+        activeThreadId="thread-criteria-1"
+        threadDetail={threadDetail}
+      />,
+    )
+    mockFocusState.aqItems = []
+    mockFocusState.tasks = null
+
+    expect(html).toContain('data-testid="done-criteria-list"')
+    expect(html).toContain('First criterion')
+    expect(html).toContain('Second criterion')
+    expect(html).toContain('data-testid="done-criteria-verify"')
+    expect(html).toContain('cd ui &amp;&amp; npx vitest run')
+  })
+
+  it('done criteria section is absent for an alert-only thread', () => {
+    const alertItem: ActionQueueItem = {
+      id: 'alert-alert-1',
+      entityId: 'wt-alert-1',
+      kind: 'stale-worktree',
+      title: 'Stale worktree',
+      body: '',
+      at: '2024-01-01T00:00:00.000Z',
+      priority: 'normal',
+      dag: null,
+      errorKind: '',
+      actions: [],
+      humanSummary: '',
+      verbs: [],
+      staleWorktreeDetail: {
+        prompt: null,
+        status: 'done',
+        ageHours: 10,
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        branch: 'task-abc',
+        empty: false,
+        investigation: null,
+      },
+    }
+    mockFocusState.aqItems = [alertItem]
+
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-alert-only',
+        title: 'Alert-only thread',
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 0,
+        origin: 'alert',
+        alertItemId: 'alert-alert-1',
+        alertResolved: false,
+      },
+      messages: [],
+    }
+
+    const html = renderToStaticMarkup(
+      <ContextRail
+        sessionStartedAt={0}
+        onInsertPrompt={() => {}}
+        activeThreadId="thread-alert-only"
+        threadDetail={threadDetail}
+      />,
+    )
+    mockFocusState.aqItems = []
+
+    expect(html).not.toContain('data-testid="done-criteria-list"')
+    expect(html).not.toContain('Done criteria')
+  })
+
+  it('done criteria section is absent for a task with empty done_criteria and no verify', () => {
+    const alertItem: ActionQueueItem = {
+      id: 'alert-empty-1',
+      entityId: 'task-empty-1',
+      kind: 'failed-task',
+      title: 'Task without criteria',
+      body: '',
+      at: '2024-01-01T00:00:00.000Z',
+      priority: 'high',
+      dag: null,
+      errorKind: 'verify',
+      actions: [],
+      humanSummary: '',
+      verbs: [],
+    }
+    const taskNoCriteria: ProgressTask = {
+      id: 'task-empty-1',
+      prompt: 'A task with no spec criteria',
+      status: 'failed',
+      plan: null,
+      branch: null,
+      worktreePath: null,
+      error: null,
+      dropReason: null,
+      retryCount: 0,
+      blockedBy: [],
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+      cluster: 'Failed',
+      doneCriteria: [],
+      verify: null,
+    }
+    mockFocusState.aqItems = [alertItem]
+    mockFocusState.tasks = [taskNoCriteria]
+
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-empty-1',
+        title: 'Empty criteria thread',
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 0,
+        origin: 'alert',
+        alertItemId: 'alert-empty-1',
+        alertResolved: false,
+      },
+      messages: [],
+    }
+
+    const html = renderToStaticMarkup(
+      <ContextRail
+        sessionStartedAt={0}
+        onInsertPrompt={() => {}}
+        activeThreadId="thread-empty-1"
+        threadDetail={threadDetail}
+      />,
+    )
+    mockFocusState.aqItems = []
+    mockFocusState.tasks = null
+
+    expect(html).not.toContain('data-testid="done-criteria-list"')
+    expect(html).not.toContain('Done criteria')
+  })
+
   it('unlinked thread: shows thread title and status, no kind badge', () => {
     const threadDetail: ChatThreadDetail = {
       thread: {

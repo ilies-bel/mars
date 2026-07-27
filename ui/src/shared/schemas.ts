@@ -134,6 +134,18 @@ const clusterSchema = z.enum(['Queued', 'In progress', 'Blocked', 'Failed', 'Don
 
 const progressTaskSchema = taskSchema.extend({
   cluster: clusterSchema,
+  /**
+   * Flat done criteria hoisted from spec.doneCriteria. Client-only parse
+   * widening — the server may send these nested in `spec`; this field accepts
+   * them when the server returns them flat (e.g. via a future API update or a
+   * test fixture). Absent on legacy rows.
+   */
+  doneCriteria: z.array(z.string()).optional(),
+  /**
+   * Flat verify command hoisted from spec.verifyCmd. Same client-only widening
+   * rationale as doneCriteria above.
+   */
+  verify: z.string().nullable().optional(),
 })
 
 /**
