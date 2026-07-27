@@ -20,7 +20,7 @@ import {
   vi,
   type MockInstance,
 } from 'vitest'
-import { parseEventToSegments, buildApiInput, executeToolCall, ChatRunner, CHAT_TIMEOUT_MS } from '../chat-runner'
+import { parseEventToSegments, buildApiInput, buildChatArgs, executeToolCall, ChatRunner, CHAT_TIMEOUT_MS } from '../chat-runner'
 import { ChatStreamHub } from '../chat-stream-hub'
 import type { UiMessageChunk } from '../ui-message-chunks'
 import { CodexApiError, type StreamCodexResponseOpts } from '../codex-api'
@@ -179,6 +179,31 @@ describe('parseEventToSegments', () => {
 
   it('returns [] without throwing for a non-object primitive', () => {
     expect(parseEventToSegments('bogus')).toEqual([])
+  })
+})
+
+// ── buildChatArgs tests ──────────────────────────────────────────────────────
+
+describe('buildChatArgs', () => {
+  it('returns exec args without resume when sessionId is null', () => {
+    const args = buildChatArgs('hello', null, 'sys prompt')
+    expect(args[0]).toBe('exec')
+    expect(args[1]).toBe('--json')
+    expect(args).not.toContain('resume')
+    expect(args).toContain('--sandbox')
+    expect(args).toContain('workspace-write')
+    expect(args).toContain('--instructions')
+    expect(args[args.indexOf('--instructions') + 1]).toBe('sys prompt')
+    expect(args.at(-1)).toBe('hello')
+  })
+
+  it('returns resume args when sessionId is present', () => {
+    const args = buildChatArgs('follow up', 't_abc', 'sys prompt')
+    expect(args.slice(0, 3)).toEqual(['exec', 'resume', '--json'])
+    expect(args).not.toContain('--sandbox')
+    expect(args).not.toContain('--instructions')
+    expect(args.at(-2)).toBe('t_abc')
+    expect(args.at(-1)).toBe('follow up')
   })
 })
 
@@ -400,6 +425,8 @@ vi.mock('../../lib/git/claude', () => ({
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: '' }),
   getThread: vi.fn(),
+  getThreadSession: vi.fn().mockResolvedValue(null),
+  setThreadSession: vi.fn().mockResolvedValue(undefined),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
 }))
@@ -432,6 +459,7 @@ const AUTH = { accessToken: 'tok', accountId: 'acc', refreshToken: 'ref' }
 const threadFixture = {
   id: 't1', title: '', status: 'idle' as const, created_at: '', updated_at: '',
   origin: null, alert_item_id: null, alert_resolved: false, evaporated_at: null,
+  parent_thread_id: null, fork_idempotency_key: null,
 }
 
 /** streamCodexResponse implementation that emits the given events and resolves. */
@@ -451,12 +479,62 @@ const streamHangingUntilAbort = (onStart?: (opts: StreamCodexResponseOpts) => vo
     })
   }
 
+/**
+ * Mock `runSubprocessStreaming` to emit JSONL events then resolve.
+ * Calls `onLine` for each event as `{ stream: 'stdout', line: JSON.stringify(event) }`.
+ */
+const subprocessEmitting = (...events: unknown[]) =>
+  async (
+    _cmd: string,
+    _args: readonly string[],
+    _cwd: string,
+    onLine?: (ev: { stream: string; line: string }) => void | Promise<void>,
+  ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+    for (const ev of events) {
+      const line = JSON.stringify(ev)
+      onLine?.({ stream: 'stdout', line })
+    }
+    return { exitCode: 0, stdout: '', stderr: '' }
+  }
+
+/** Mock `runSubprocessStreaming` that hangs until the abort signal fires. */
+const subprocessHangingUntilAbort = (onStart?: () => void) =>
+  (
+    _cmd: string,
+    _args: readonly string[],
+    _cwd: string,
+    _onLine?: unknown,
+    signal?: AbortSignal,
+  ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+    onStart?.()
+    return new Promise((_, reject) => {
+      signal?.addEventListener('abort', () =>
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+      )
+    })
+  }
+
+/** Codex CLI JSONL events — item.completed with agent_message. */
+const cliMessageEvent = (text: string): unknown => ({
+  type: 'item.completed',
+  item: { type: 'agent_message', text },
+})
+
+/** Codex CLI JSONL events — turn.completed with usage. */
+const cliTurnCompletedEvent = (input = 5, output = 3, cached = 0): unknown => ({
+  type: 'turn.completed',
+  usage: { input_tokens: input, output_tokens: output, cached_input_tokens: cached },
+})
+
+/** Codex CLI JSONL events — thread.started with session id. */
+const cliThreadStartedEvent = (threadId: string): unknown => ({
+  type: 'thread.started',
+  thread_id: threadId,
+})
+
 describe('ChatRunner UIMessage-chunk streaming', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockLoadAuth.mockResolvedValue(AUTH)
-    vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
-    mcpMock.getTools.mockResolvedValue([])
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture },
       messages: [],
@@ -469,15 +547,14 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
     const chunks: UiMessageChunk[] = []
     hub.subscribe('t1', { onChunk: (sc) => chunks.push(sc.chunk), onEnd: () => {} })
 
-    mockStream.mockImplementation(
-      streamEmitting(messageEvent('Hello'), messageEvent(' world'), messageEvent('!'), completedEvent()),
+    mockShell.mockImplementation(
+      subprocessEmitting(cliMessageEvent('Hello'), cliMessageEvent(' world'), cliMessageEvent('!'), cliTurnCompletedEvent()) as never,
     )
 
     const runner = new ChatRunner(hub)
     await runner.sendMessage('t1', 'hi', '/repo', undefined)
     await new Promise((r) => setTimeout(r, 20))
 
-    // Opening chunks, then a text-delta per message item, then a terminal finish.
     expect(chunks[0]).toEqual({ type: 'start' })
     expect(chunks[1]).toEqual({ type: 'start-step' })
     const textDeltas = chunks
@@ -488,8 +565,8 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
   })
 
   it('accumulated message items join correctly for DB persistence', async () => {
-    mockStream.mockImplementation(
-      streamEmitting(messageEvent('A'), messageEvent('B'), messageEvent('C'), completedEvent()),
+    mockShell.mockImplementation(
+      subprocessEmitting(cliMessageEvent('A'), cliMessageEvent('B'), cliMessageEvent('C'), cliTurnCompletedEvent()) as never,
     )
 
     const runner = new ChatRunner()
@@ -505,11 +582,9 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
 describe('ChatRunner state machine', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockLoadAuth.mockResolvedValue(AUTH)
-    vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
-    mcpMock.getTools.mockResolvedValue([])
-    mockStream.mockImplementation(streamEmitting(messageEvent('ok'), completedEvent()))
-    mockShell.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
+    mockShell.mockImplementation(
+      subprocessEmitting(cliMessageEvent('ok'), cliTurnCompletedEvent()) as never,
+    )
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture },
       messages: [],
@@ -522,12 +597,11 @@ describe('ChatRunner state machine', () => {
   })
 
   it('returns alreadyRunning=false when the thread is idle', async () => {
-    // Make the API call hang indefinitely so we can inspect the running state.
     let release: () => void = () => {}
-    mockStream.mockImplementation((opts) => {
-      opts.onEvent(messageEvent('late'))
-      return new Promise((resolve) => { release = () => resolve() })
-    })
+    mockShell.mockImplementation(((_cmd: string, _args: readonly string[], _cwd: string, onLine?: (ev: { stream: string; line: string }) => void) => {
+      onLine?.({ stream: 'stdout', line: JSON.stringify(cliMessageEvent('late')) })
+      return new Promise((resolve) => { release = () => resolve({ exitCode: 0, stdout: '', stderr: '' }) })
+    }) as never)
     const runner = new ChatRunner()
     const result = await runner.sendMessage('t1', 'hello', '/repo', undefined)
     expect(result.alreadyRunning).toBe(false)
@@ -536,10 +610,10 @@ describe('ChatRunner state machine', () => {
 
   it('returns alreadyRunning=true (409 signal) when a run is already active', async () => {
     let release: () => void = () => {}
-    mockStream.mockImplementationOnce((opts) => {
-      opts.onEvent(messageEvent('first'))
-      return new Promise((resolve) => { release = () => resolve() })
-    })
+    mockShell.mockImplementation(((_cmd: string, _args: readonly string[], _cwd: string, onLine?: (ev: { stream: string; line: string }) => void) => {
+      onLine?.({ stream: 'stdout', line: JSON.stringify(cliMessageEvent('first')) })
+      return new Promise((resolve) => { release = () => resolve({ exitCode: 0, stdout: '', stderr: '' }) })
+    }) as never)
 
     const runner = new ChatRunner()
     const r1 = await runner.sendMessage('t1', 'first', '/repo', undefined)
@@ -568,9 +642,14 @@ describe('ChatRunner state machine', () => {
 
   it('stop() aborts the active run and returns true', async () => {
     let aborted = false
-    mockStream.mockImplementation(streamHangingUntilAbort((opts) => {
-      opts.signal.addEventListener('abort', () => { aborted = true })
-    }))
+    mockShell.mockImplementation(subprocessHangingUntilAbort(() => { aborted = false }) as never)
+    // Re-override: we need to detect abort on the signal
+    mockShell.mockImplementation(((_cmd: string, _args: readonly string[], _cwd: string, _onLine: unknown, signal?: AbortSignal) => {
+      signal?.addEventListener('abort', () => { aborted = true })
+      return new Promise((_, reject) => {
+        signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+      })
+    }) as never)
 
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'hi', '/repo', undefined)
@@ -585,12 +664,11 @@ describe('ChatRunner state machine', () => {
 
   it('finalises with an error segment when the timeout fires', async () => {
     vi.useFakeTimers()
-    mockStream.mockImplementation(streamHangingUntilAbort())
+    mockShell.mockImplementation(subprocessHangingUntilAbort() as never)
 
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'timeout test', '/repo', undefined)
 
-    // Advance past the 10-minute timeout.
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 100)
 
     vi.useRealTimers()
@@ -608,8 +686,8 @@ describe('ChatRunner state machine', () => {
   })
 
   it('persists assistant message with accumulated text on success', async () => {
-    mockStream.mockImplementation(
-      streamEmitting(messageEvent('Hello '), messageEvent('world!'), completedEvent()),
+    mockShell.mockImplementation(
+      subprocessEmitting(cliMessageEvent('Hello '), cliMessageEvent('world!'), cliTurnCompletedEvent()) as never,
     )
 
     const runner = new ChatRunner()
@@ -622,7 +700,7 @@ describe('ChatRunner state machine', () => {
   })
 
   it('finalises with an error segment when the run produces no text', async () => {
-    mockStream.mockImplementation(streamEmitting(completedEvent()))
+    mockShell.mockImplementation(subprocessEmitting(cliTurnCompletedEvent()) as never)
 
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'hi', '/repo', undefined)

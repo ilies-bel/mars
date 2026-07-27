@@ -64,6 +64,8 @@ export interface ChatThread {
    * Null for active threads.
    */
   evaporated_at: string | null
+  parent_thread_id: string | null
+  fork_idempotency_key: string | null
 }
 
 export interface ChatMessage {
@@ -111,6 +113,7 @@ export interface ChatThreadApiView {
   alertItemId: string | null
   /** True when the underlying action-queue item has been resolved. */
   alertResolved: boolean
+  parentThreadId: string | null
 }
 
 /** Camelcase view shape for messages served over the HTTP API. */
@@ -156,6 +159,7 @@ export const toThreadApiView = (
   origin: t.origin,
   alertItemId: t.alert_item_id,
   alertResolved: t.alert_resolved,
+  parentThreadId: t.parent_thread_id,
 })
 
 /**
@@ -252,6 +256,8 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   alert_item_id: (row.alert_item_id as string | null) ?? null,
   alert_resolved: Boolean(row.alert_resolved),
   evaporated_at: (row.evaporated_at as string | null) ?? null,
+  parent_thread_id: (row.parent_thread_id as string | null) ?? null,
+  fork_idempotency_key: (row.fork_idempotency_key as string | null) ?? null,
 })
 
 const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
@@ -295,6 +301,54 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
     alert_item_id: null,
     alert_resolved: false,
     evaporated_at: null,
+    parent_thread_id: null,
+    fork_idempotency_key: null,
+  }
+}
+
+/**
+ * Fork a chat thread. Creates a new human-lifecycle thread linked to the
+ * source via `parent_thread_id`. Uses `fork_idempotency_key` to deduplicate:
+ * repeated calls with the same (sourceThreadId, idempotencyKey) return the
+ * existing child thread. The fork is always a plain human thread
+ * (`origin=null`, `alert_item_id=null`) regardless of the source's origin.
+ */
+export const forkThread = async (
+  opts: { sourceThreadId: string; goal: string; idempotencyKey: string },
+): Promise<{ thread: ChatThread; deduped: boolean }> => {
+  const c = stateClient()
+  const existing = await c.execute({
+    sql: `SELECT * FROM chat_threads
+          WHERE parent_thread_id = ? AND fork_idempotency_key = ?`,
+    args: [opts.sourceThreadId, opts.idempotencyKey],
+  })
+  if (existing.rows.length > 0) {
+    return { thread: rowToThread(existing.rows[0] as Record<string, unknown>), deduped: true }
+  }
+  const id = randomUUID()
+  const ts = now()
+  await c.execute({
+    sql: `INSERT INTO chat_threads
+            (id, title, status, created_at, updated_at, origin, alert_item_id,
+             alert_resolved, parent_thread_id, fork_idempotency_key)
+          VALUES (?, ?, 'idle', ?, ?, NULL, NULL, 0, ?, ?)`,
+    args: [id, opts.goal, ts, ts, opts.sourceThreadId, opts.idempotencyKey],
+  })
+  return {
+    thread: {
+      id,
+      title: opts.goal,
+      status: 'idle',
+      created_at: ts,
+      updated_at: ts,
+      origin: null,
+      alert_item_id: null,
+      alert_resolved: false,
+      evaporated_at: null,
+      parent_thread_id: opts.sourceThreadId,
+      fork_idempotency_key: opts.idempotencyKey,
+    },
+    deduped: false,
   }
 }
 
@@ -474,6 +528,30 @@ export const updateThreadTitle = async (id: string, title: string): Promise<void
     sql: `UPDATE chat_threads SET title = ?, updated_at = ? WHERE id = ?`,
     args: [title, now(), id],
   })
+}
+
+/**
+ * Persist the Codex CLI session id on a thread so the next turn can resume it.
+ */
+export const setThreadSession = async (threadId: string, sessionId: string): Promise<void> => {
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE chat_threads SET session_id = ?, updated_at = ? WHERE id = ?`,
+    args: [sessionId, now(), threadId],
+  })
+}
+
+/**
+ * Read the persisted Codex CLI session id for a thread (null when unset).
+ */
+export const getThreadSession = async (threadId: string): Promise<string | null> => {
+  const c = stateClient()
+  const result = await c.execute({
+    sql: `SELECT session_id FROM chat_threads WHERE id = ?`,
+    args: [threadId],
+  })
+  const row = result.rows[0]
+  return row && typeof row.session_id === 'string' ? row.session_id : null
 }
 
 /**
@@ -695,6 +773,8 @@ export const startThreadFromAlert = async (
     alert_item_id: arcId,
     alert_resolved: false,
     evaporated_at: null,
+    parent_thread_id: null,
+    fork_idempotency_key: null,
   }
 }
 
