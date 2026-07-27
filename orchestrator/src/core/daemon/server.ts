@@ -3703,6 +3703,11 @@ export const startDaemon = async (
       const { coreRejectTask } = await import('./validate-task')
       await coreRejectTask(id)
     },
+    landWork: async (id) => {
+      const { landWorkForTask } = await import('./land-work')
+      await landWorkForTask(id)
+      bus.emit('task.queued', { taskId: id })
+    },
     investigateWorktree,
     diagnoseFailure,
     restartDaemon: async () => {

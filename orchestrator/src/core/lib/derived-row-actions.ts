@@ -30,6 +30,7 @@ export type DerivedRowKind =
   | 'workflow-draft-pending'
   | 'scorer-suggested'
   | 'signature-storm'
+  | 'worktree-ahead'
 
 /**
  * Resolve the recovery menu for a non-failure derived row kind. Returns an
@@ -129,6 +130,12 @@ export const derivedRowActions = (rowKind: string, entityId?: string): ActionDes
         hint: entityId ? `mars scorer dismiss ${entityId}` : 'mars scorer dismiss',
         needsConfirm: true,
       },
+    ]
+  }
+  if (rowKind === 'worktree-ahead') {
+    return [
+      { id: 'land-work', label: 'Land work', op: 'land-work' },
+      { id: 'prune-worktree', label: 'Discard unmerged work', op: 'prune-worktree', needsConfirm: true },
     ]
   }
   if (rowKind === 'signature-storm') {

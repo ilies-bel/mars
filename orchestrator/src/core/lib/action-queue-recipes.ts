@@ -216,7 +216,7 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
       leaseOwned: ctx.payload['leaseOwned'],
     }),
     verbs: [
-      { op: 'land', label: 'Land commits onto integration branch', style: 'primary' },
+      { op: 'land-work', label: 'Land work', style: 'primary' },
       { op: 'prune-worktree', label: 'Discard unmerged work', style: 'danger' },
     ],
   },

@@ -354,6 +354,13 @@ export interface HttpServerDeps {
    */
   rejectTask: (id: string) => Promise<void>
   /**
+   * Fast-forward (or cherry-pick) a task branch's ahead commits onto the
+   * integration branch, then resolve the worktree-ahead action-queue row.
+   * Throws when the task is not found (code: 'NOT_FOUND') or there are no
+   * commits ahead (code: 'NO_COMMITS_AHEAD').
+   */
+  landWork: (id: string) => Promise<void>
+  /**
    * Run a cheap Haiku investigation over the worktree diff, persist the result
    * onto the actionQueue item payload, and return the explanation text. Read-only:
    * never mutates the worktree. Concurrent calls for the same id must be
@@ -548,6 +555,7 @@ type EntityOp =
   | 'promote'
   | 'validate'
   | 'reject'
+  | 'land-work'
 
 const TRACE_EVENT_KIND_SET = new Set<TraceEventKind>(TRACE_EVENT_KINDS)
 const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
@@ -657,6 +665,7 @@ const handleEventsRequest = async (
  *   POST /actions/restart-daemon       → re-exec the daemon
  *   POST /actions/run-reflect          → run reflect flow + clear reflect-recommended row
  *   POST /actions/enable-auto-reflect  → set autoTrigger=true + clear reflect-recommended row
+ *   POST /actions/land-work/:id        → merge ahead commits onto integration branch
  *
  * The server uses an OS-assigned port (port 0). Callers discover the port via
  * the returned {@link HttpServerHandle}, which the daemon also writes to
@@ -675,6 +684,7 @@ export const startHttpServer = async (
     promote: deps.promoteProposal,
     validate: deps.validateTask,
     reject: deps.rejectTask,
+    'land-work': deps.landWork,
   }
 
   // Track live sockets so close() can force-end long-lived connections (e.g.

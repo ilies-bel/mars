@@ -49,6 +49,7 @@ const makeDeps = (
   promoteProposal: async () => {},
   validateTask: async () => {},
   rejectTask: async () => {},
+  landWork: async () => {},
   investigateWorktree: async () => ({ explanation: '' }),
   diagnoseFailure: async () => ({ diagnosis: '' }),
   restartDaemon: async () => {},

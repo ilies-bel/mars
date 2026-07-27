@@ -68,6 +68,9 @@ import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
  * - `reject`                   — reject a task parked at the preview gate: kill
  *                                its dev server and fail the task (worktree
  *                                preserved); nothing merges (per-task).
+ * - `land-work`                 — fast-forward (or cherry-pick) a task branch's
+ *                                ahead commits onto the integration branch, then
+ *                                resolve the worktree-ahead action-queue row.
  */
 export type ActionOp =
   | 'restart'
@@ -84,6 +87,7 @@ export type ActionOp =
   | 'reject'
   | 'run-reflect'
   | 'enable-auto-reflect'
+  | 'land-work'
 
 /**
  * The auto-encodable check families of the gate-enrichment pipeline
