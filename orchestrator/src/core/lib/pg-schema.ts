@@ -219,6 +219,18 @@ const DDL: readonly string[] = [
      ON self_heal_attempts(parent_task_id, failure_signature)`,
   `CREATE INDEX IF NOT EXISTS idx_self_heal_attempts_fix_task
      ON self_heal_attempts(fix_task_id)`,
+  // Slice 3 of PRD d7835017: per-(task_id, failure_signature) non-code requeue ledger.
+  // Separate table avoids modifying the NOT NULL + FK constraint on
+  // self_heal_attempts.fix_task_id, which is incompatible with nullable entries.
+  // self_heal_attempts remains unchanged; non-code re-queues live here only.
+  `CREATE TABLE IF NOT EXISTS non_code_requeue_attempts (
+    id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    task_id           text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    failure_signature text NOT NULL,
+    created_at        text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_non_code_requeue_attempts_task
+     ON non_code_requeue_attempts(task_id, failure_signature)`,
   `CREATE TABLE IF NOT EXISTS task_claude_sessions (
     task_id    text   NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     session_id text   NOT NULL,

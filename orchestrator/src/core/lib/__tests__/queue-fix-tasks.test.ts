@@ -1247,7 +1247,7 @@ describe('phantom-kill routing', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('re-queues the origin and increments retryCount when phantom-killed with no worktree (first kill)', async () => {
+  it('re-queues the origin WITHOUT consuming retryCount when phantom-killed with no worktree (first kill)', async () => {
     const { q, ft } = await loadModules(repo)
     const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
 
@@ -1270,13 +1270,15 @@ describe('phantom-kill routing', () => {
     })
 
     expect(r.outcome).toBe('requeued')
-    expect(r.retryCount).toBe(1)
+    // retryCount must stay 0 — phantom kills use the non-code retry counter,
+    // so the code recovery slot is preserved for a real code failure.
+    expect(r.retryCount).toBe(0)
     expect(r.fixTaskId).toBeUndefined()
 
-    // Origin is back to queued with incremented retryCount.
+    // Origin is back to queued; retryCount unchanged.
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.retryCount).toBe(1)
+    expect(reloaded?.retryCount).toBe(0)
     // Failure markers cleared.
     expect(reloaded?.failureSignature).toBeNull()
     expect(reloaded?.failedPhase).toBeNull()
@@ -1289,50 +1291,65 @@ describe('phantom-kill routing', () => {
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
   })
 
-  it('escalates to the action queue on a second phantom kill (recovery slot already consumed)', async () => {
-    process.env.MARS_FIX_RETRY_BUDGET = '0'
+  it('escalates to the action queue after MAX_NON_CODE_RETRIES phantom kills with no worktree', async () => {
+    // cap=1: 1 re-queue allowed, escalate when count > 1 (i.e. on the 2nd kill)
+    process.env.MARS_MAX_NON_CODE_RETRIES = '1'
     const { q, ft } = await loadModules(repo)
     const actionQueue = (await import('../action-queue')) as unknown as {
       listActionQueueItems: typeof import('../action-queue').listActionQueueItems
     }
     const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
 
-    // Simulate state after first phantom-kill requeue: retryCount=1, now failed again.
-    await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'failed',
-              failure_reason = ?, failure_reason_code = ?,
-              failed_phase = 'code',
-              error = 'Task auto-failed by phantom-task watchdog (reason: ceiling, age: 31 min)',
-              branch = NULL, worktree_path = NULL,
-              retry_count = 1
-            WHERE id = ?`,
-      args: ['phantom-task watchdog: ceiling', 'phantom-task:ceiling', t.id],
-    })
+    const stamp = async () => {
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'failed',
+                failure_reason = ?, failure_reason_code = ?,
+                failed_phase = 'code',
+                error = 'Task auto-failed by phantom-task watchdog (reason: ceiling, age: 31 min)',
+                branch = NULL, worktree_path = NULL
+              WHERE id = ?`,
+        args: ['phantom-task watchdog: ceiling', 'phantom-task:ceiling', t.id],
+      })
+    }
 
-    // Second phantom kill: retryCount=1 > budget=0 → budget-exhaustion path fires.
-    const r = await ft.handleTaskFailureWithFixTask({
+    // Kill 1: count=1, 1 > cap=1 is false → re-queue
+    await stamp()
+    const r1 = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'phantom-task watchdog: ceiling',
       errorOutput: 'Task auto-failed by phantom-task watchdog (reason: ceiling, age: 31 min)',
     })
+    expect(r1.outcome).toBe('requeued')
+    expect(r1.retryCount).toBe(0)
 
-    expect(r.outcome).toBe('failed')
-    expect(r.fixTaskId).toBeUndefined()
+    // Kill 2: count=2, 2 > cap=1 is true → escalate
+    await stamp()
+    const r2 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'phantom-task watchdog: ceiling',
+      errorOutput: 'Task auto-failed by phantom-task watchdog (reason: ceiling, age: 31 min)',
+    })
+    expect(r2.outcome).toBe('non-code-retry-exhausted')
+    expect(r2.fixTaskId).toBeUndefined()
+    // retryCount never changed — code recovery slot intact
+    expect(r2.retryCount).toBe(0)
 
-    // Task stays failed (not re-queued again).
+    // Task is marked failed (escalated, not re-queued).
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failureReason).toMatch(/^non-code-retry-exhausted:/)
 
     // An action-queue item was raised for operator attention.
     const items = await actionQueue.listActionQueueItems('open')
     expect(items.filter((i) => i.kind === 'failed')).toHaveLength(1)
 
-    // Still no fix-task rows.
+    // Still no fix-task rows (code recovery slot was never consumed).
     const fixTasks = await q.resolveQueueClient().execute({
       sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
       args: [t.id],
     })
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+    delete process.env.MARS_MAX_NON_CODE_RETRIES
   })
 
   it('takes the normal fix-task path when phantom-killed AFTER setup ran (branch/worktree exist)', async () => {
@@ -1434,11 +1451,12 @@ describe('non-code failure re-queue routing', () => {
     expect(r.failureSignature).toBe(
       'merge:vcs-supervisor-aborted/rebase-no-in-progress-state',
     )
-    expect(r.retryCount).toBe(1)
+    // retryCount must stay 0 — non-code re-queues no longer consume the code recovery slot
+    expect(r.retryCount).toBe(0)
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.retryCount).toBe(1)
+    expect(reloaded?.retryCount).toBe(0)
     expect(reloaded?.failureSignature).toBeNull()
     expect(reloaded?.failedPhase).toBeNull()
 
@@ -1474,11 +1492,12 @@ describe('non-code failure re-queue routing', () => {
     // classifyFailure → 'connectivity' → not 'code' → re-queue
     expect(r.outcome).toBe('requeued')
     expect(r.failureSignature).toBe('verify:test/test-pg-connection-refused')
-    expect(r.retryCount).toBe(1)
+    // retryCount must stay 0 — non-code re-queues no longer consume the code recovery slot
+    expect(r.retryCount).toBe(0)
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.retryCount).toBe(1)
+    expect(reloaded?.retryCount).toBe(0)
     expect(reloaded?.failureSignature).toBeNull()
     expect(reloaded?.failedPhase).toBeNull()
 
@@ -1517,11 +1536,12 @@ describe('non-code failure re-queue routing', () => {
     // classifyFailure → 'connectivity' → not 'code' → re-queue (generalised path)
     expect(r.outcome).toBe('requeued')
     expect(r.failureSignature).toBe('code:api-proxy/api-unreachable')
-    expect(r.retryCount).toBe(1)
+    // retryCount must stay 0 — non-code re-queues no longer consume the code recovery slot
+    expect(r.retryCount).toBe(0)
 
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
-    expect(reloaded?.retryCount).toBe(1)
+    expect(reloaded?.retryCount).toBe(0)
     expect(reloaded?.failureSignature).toBeNull()
 
     // No fix-task rows were inserted.
@@ -1563,5 +1583,202 @@ describe('non-code failure re-queue routing', () => {
       args: [t.id],
     })
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+})
+
+// ── Non-code retry cap (Slice 3 of PRD d7835017) ─────────────────────────────
+//
+// Non-code re-queues (connectivity, orchestration, infra) must NOT consume the
+// code recovery slot. A per-(taskId, failureSignature) counter gates further
+// re-queues; after MAX_NON_CODE_RETRIES (default 3) the task escalates to the
+// action queue without ever touching retryCount.
+
+describe('non-code retry cap', () => {
+  let repo: string
+
+  beforeAll(async () => {
+    if (!templateRepo) {
+      templateRepo = setupRepo()
+      vi.resetModules()
+      process.env.MARS_REPO = templateRepo
+      const q = (await import('../../queue')) as unknown as QueueModule
+      await q.migrateQueueSchema()
+      const actionQueue = (await import('../action-queue')) as unknown as {
+        initActionQueue: typeof import('../action-queue').initActionQueue
+      }
+      await actionQueue.initActionQueue()
+      delete process.env.MARS_REPO
+      vi.resetModules()
+    }
+  })
+
+  beforeEach(() => {
+    repo = setupRepo()
+    cloneTemplateDbs(repo)
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_MAX_NON_CODE_RETRIES
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  // (a) Three consecutive rebase-no-in-progress-state failures re-queue with retryCount staying at 0.
+  it('(a) three consecutive non-code failures re-queue without incrementing retryCount', async () => {
+    process.env.MARS_MAX_NON_CODE_RETRIES = '3'
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    const stamp = async () => {
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'failed',
+                failure_reason = 'merge step aborted: rebase could not start',
+                failed_phase = 'merge',
+                error = 'rebase produced no in-progress state'
+              WHERE id = ?`,
+        args: [t.id],
+      })
+    }
+
+    for (let i = 1; i <= 3; i++) {
+      await stamp()
+      const r = await ft.handleTaskFailureWithFixTask({
+        taskId: t.id,
+        failingStep: 'merge:vcs-supervisor-aborted',
+        errorOutput: 'rebase produced no in-progress state',
+      })
+      expect(r.outcome).toBe('requeued')
+      expect(r.retryCount).toBe(0)
+
+      const task = await q.getTask(t.id)
+      expect(task?.status).toBe('queued')
+      expect(task?.retryCount).toBe(0)
+    }
+
+    // Non-code retry counter is at 3; code recovery slot untouched.
+    const nonCodeRows = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM non_code_requeue_attempts WHERE task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((nonCodeRows.rows[0] as unknown as { n: number }).n)).toBe(3)
+
+    // No fix-task rows were ever inserted.
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  // (b) The fourth escalates to an action-queue item and marks the task failed.
+  it('(b) fourth non-code failure escalates to action queue and marks task failed', async () => {
+    process.env.MARS_MAX_NON_CODE_RETRIES = '3'
+    const { q, ft } = await loadModules(repo)
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
+    }
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    const stamp = async () => {
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'failed',
+                failure_reason = 'merge step aborted: rebase could not start',
+                failed_phase = 'merge',
+                error = 'rebase produced no in-progress state'
+              WHERE id = ?`,
+        args: [t.id],
+      })
+    }
+
+    // First 3 re-queue
+    for (let i = 0; i < 3; i++) {
+      await stamp()
+      const r = await ft.handleTaskFailureWithFixTask({
+        taskId: t.id,
+        failingStep: 'merge:vcs-supervisor-aborted',
+        errorOutput: 'rebase produced no in-progress state',
+      })
+      expect(r.outcome).toBe('requeued')
+    }
+
+    // 4th: cap reached → escalate
+    await stamp()
+    const r4 = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'merge:vcs-supervisor-aborted',
+      errorOutput: 'rebase produced no in-progress state',
+    })
+    expect(r4.outcome).toBe('non-code-retry-exhausted')
+    expect(r4.fixTaskId).toBeUndefined()
+    // retryCount still 0 — code recovery slot was never consumed
+    expect(r4.retryCount).toBe(0)
+
+    // Task is now failed
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failureReason).toMatch(/^non-code-retry-exhausted:/)
+
+    // Action-queue item raised
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items.filter((i) => i.kind === 'failed')).toHaveLength(1)
+
+    // Still no fix-task rows
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  // (c) After a non-code re-queue, a subsequent CODE failure gets its one recovery fix-task
+  //     (retryCount transitions 0→1 exactly once and the fix task is spawned).
+  it('(c) code failure after non-code re-queue still gets one code recovery (retryCount 0→1)', async () => {
+    process.env.MARS_MAX_NON_CODE_RETRIES = '3'
+    const { q, ft, rc } = await loadModules(repo)
+    const sig = 'verify:typecheck/typecheck-cannot-find-name'
+    const cleanup = registerTestRecipe(rc, sig)
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    // Step 1: one non-code failure → requeue, retryCount stays 0
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed',
+              failure_reason = 'merge step aborted: rebase could not start',
+              failed_phase = 'merge',
+              error = 'rebase produced no in-progress state'
+            WHERE id = ?`,
+      args: [t.id],
+    })
+    const rNonCode = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'merge:vcs-supervisor-aborted',
+      errorOutput: 'rebase produced no in-progress state',
+    })
+    expect(rNonCode.outcome).toBe('requeued')
+    expect(rNonCode.retryCount).toBe(0)
+
+    // Step 2: code failure → spawns fix task, retryCount 0→1
+    const rCode = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+      branch: 'task/x',
+    })
+    expect(rCode.outcome).toBe('blocked')
+    expect(rCode.fixTaskId).toBeTruthy()
+    // retryCount transitions 0→1 exactly once
+    expect(rCode.retryCount).toBe(1)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('blocked')
+    expect(reloaded?.retryCount).toBe(1)
+
+    // One fix-task was spawned
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(1)
+
+    cleanup()
   })
 })

@@ -75,6 +75,58 @@ export const getMaxFixAttempts = (): number => {
   return Math.floor(n)
 }
 
+const DEFAULT_MAX_NON_CODE_RETRIES = 3
+
+/**
+ * Cap on the number of non-code re-queues for a given (taskId,
+ * failureSignature) pair before the task is escalated to the action queue.
+ * Defaults to 3; override via `MARS_MAX_NON_CODE_RETRIES`.
+ */
+export const getMaxNonCodeRetries = (): number => {
+  const raw = process.env.MARS_MAX_NON_CODE_RETRIES
+  if (!raw) return DEFAULT_MAX_NON_CODE_RETRIES
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_MAX_NON_CODE_RETRIES
+  return Math.floor(n)
+}
+
+/**
+ * Count non-code re-queue attempts for a given (taskId, failureSignature)
+ * pair by reading the `non_code_requeue_attempts` ledger.
+ */
+export const countNonCodeRetries = async (
+  taskId: string,
+  failureSignature: string,
+  store?: TaskStore,
+): Promise<number> => {
+  const s = store ?? (await getDefaultTaskStore())
+  const r = await s.query({
+    sql: `SELECT COUNT(*) AS n FROM non_code_requeue_attempts
+           WHERE task_id = ?
+             AND failure_signature = ?`,
+    args: [taskId, failureSignature],
+  })
+  return Number((r.rows[0] as unknown as { n: number }).n)
+}
+
+/**
+ * Append a non-code-requeue ledger row for (taskId, failureSignature).
+ * Called by both the phantom-task-no-worktree branch and the generic
+ * non-code-failure branch before re-queuing, so both paths share one policy.
+ */
+const bumpNonCodeRetries = async (
+  taskId: string,
+  failureSignature: string,
+  store: TaskStore,
+): Promise<void> => {
+  await store.execute({
+    sql: `INSERT INTO non_code_requeue_attempts
+           (task_id, failure_signature, created_at)
+           VALUES (?, ?, ?)`,
+    args: [taskId, failureSignature, new Date().toISOString()],
+  })
+}
+
 /**
  * Count every historical fix-task attempt for a given (sourceTaskId,
  * failureSignature) pair, regardless of the fix task's current status.
@@ -260,6 +312,7 @@ export interface HandleTaskFailureViaTaskResult {
     | 'fix-fail-loop'
     | 'gate-suppressed'
     | 'noop'
+    | 'non-code-retry-exhausted'
     | 'requeued'
     | 'signature-storm-tripped'
   fixTaskId?: string
@@ -804,24 +857,42 @@ export const handleTaskFailureWithFixTask = async (
   // stranded the worktree. Recovery (fix) failures are still escalated, not
   // re-recovered (see the `task.fixForTaskId !== null` branch above).
 
-  // ── Phantom-kill-with-no-worktree routing (ADR-0061) ─────────────────────
+  // ── Phantom-kill-with-no-worktree routing (ADR-0061, updated Slice 3 PRD d7835017) ─
   // A task killed by the phantom watchdog before setup ran has no branch or
   // worktree for a worktree-scoped fix task to operate on — that fix is dead
   // on arrival and burns the origin's one recovery slot for a failure that a
   // plain re-queue solves. Detect by the watchdog's `failureReason` prefix AND
   // the absence of both branch and worktree (both are null before setup runs).
   //
-  // Routing: re-queue the origin from setup on a fresh worker instead of
-  // spawning a fix task. This IS the recovery — retryCount++ consumes the
-  // slot. A second phantom kill reaches this point with retryCount already
-  // incremented, so the budget-exhaustion guard above fires first and
-  // escalates to the action queue without falling through here.
+  // Routing: re-queue the origin from setup using the non-code retry counter so
+  // the code recovery slot is preserved. After MAX_NON_CODE_RETRIES consecutive
+  // phantom kills the task is escalated to the action queue instead of looping.
   if (
     task.failureReason?.startsWith('phantom-task watchdog:') &&
     !task.worktreePath &&
     !task.branch
   ) {
-    const nextRetryCount = task.retryCount + 1
+    await bumpNonCodeRetries(input.taskId, failureSignature, s)
+    const nonCodeCount = await countNonCodeRetries(input.taskId, failureSignature, s)
+    const nonCodeCap = getMaxNonCodeRetries()
+    if (nonCodeCount > nonCodeCap) {
+      const failureReason = `non-code-retry-exhausted:${failureSignature}`
+      await markTaskFailed(input.taskId, failureReason)
+      await raiseActionQueueItem({
+        kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
+        category: 'orchestrator',
+        priority: 'high',
+        title: `Non-code retry cap reached for ${input.taskId}: ${failureSignature}`,
+        body: `Task ${input.taskId} has been re-queued ${nonCodeCount} time(s) for a non-code failure (${failureSignature}) — the cap of ${nonCodeCap} is reached. The code recovery slot was NOT consumed. Resolve the underlying infra/orchestration condition and restart the task.`,
+        payload: { taskId: input.taskId, failureSignature, nonCodeCount, cap: nonCodeCap },
+        context: { repoRoot: process.env.MARS_REPO ?? null },
+        raisedBy: 'agent:fail-fix-handler',
+        signature: `non-code-retry-exhausted:${input.taskId}:${failureSignature}`,
+        originTaskId: task.originId,
+        occurrence: { at: new Date().toISOString(), taskId: input.taskId, failureSignature, nonCodeCount },
+      })
+      return { outcome: 'non-code-retry-exhausted', failureSignature, retryCount: task.retryCount }
+    }
     await updateTask(
       input.taskId,
       {
@@ -830,11 +901,14 @@ export const handleTaskFailureWithFixTask = async (
         failedPhase: null,
         failureSignature: null,
         failureReasonCode: null,
-        retryCount: nextRetryCount,
       },
       s,
     )
-    return { outcome: 'requeued', retryCount: nextRetryCount, failureSignature }
+    // eslint-disable-next-line no-console
+    console.log(
+      `[failure-handler] task ${input.taskId}: phantom-kill non-code re-queue #${nonCodeCount}/${nonCodeCap} (${failureSignature})`,
+    )
+    return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
   }
 
   // ── Non-code failure re-queue ─────────────────────────────────────────────
@@ -842,11 +916,32 @@ export const handleTaskFailureWithFixTask = async (
   // orchestration, or infra), spawning a recovery fix-task is wasteful: the
   // fix task cannot resolve the issue by editing code and would burn the one
   // recovery slot on a doomed repair. Re-queue the origin from setup instead.
-  // retryCount++ consumes the slot so the budget-exhaustion guard above still
-  // catches a persistent condition after one re-queue cycle.
+  // Uses the per-(taskId, failureSignature) non-code retry counter so the code
+  // recovery slot is preserved regardless of how many non-code re-queues occur.
+  // After MAX_NON_CODE_RETRIES re-queues the task is escalated to the action queue.
   const failureCategory = classifyFailure(failureSignature)
   if (failureCategory !== 'code') {
-    const nextRetryCount = task.retryCount + 1
+    await bumpNonCodeRetries(input.taskId, failureSignature, s)
+    const nonCodeCount = await countNonCodeRetries(input.taskId, failureSignature, s)
+    const nonCodeCap = getMaxNonCodeRetries()
+    if (nonCodeCount > nonCodeCap) {
+      const failureReason = `non-code-retry-exhausted:${failureSignature}`
+      await markTaskFailed(input.taskId, failureReason)
+      await raiseActionQueueItem({
+        kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
+        category: 'orchestrator',
+        priority: 'high',
+        title: `Non-code retry cap reached for ${input.taskId}: ${failureSignature}`,
+        body: `Task ${input.taskId} has been re-queued ${nonCodeCount} time(s) for a non-code failure (${failureSignature}) — the cap of ${nonCodeCap} is reached. The code recovery slot was NOT consumed. Resolve the underlying infra/orchestration condition and restart the task.`,
+        payload: { taskId: input.taskId, failureSignature, nonCodeCount, cap: nonCodeCap },
+        context: { repoRoot: process.env.MARS_REPO ?? null },
+        raisedBy: 'agent:fail-fix-handler',
+        signature: `non-code-retry-exhausted:${input.taskId}:${failureSignature}`,
+        originTaskId: task.originId,
+        occurrence: { at: new Date().toISOString(), taskId: input.taskId, failureSignature, nonCodeCount },
+      })
+      return { outcome: 'non-code-retry-exhausted', failureSignature, retryCount: task.retryCount }
+    }
     await updateTask(
       input.taskId,
       {
@@ -855,15 +950,14 @@ export const handleTaskFailureWithFixTask = async (
         failedPhase: null,
         failureSignature: null,
         failureReasonCode: null,
-        retryCount: nextRetryCount,
       },
       s,
     )
     // eslint-disable-next-line no-console
     console.log(
-      `[failure-handler] task ${input.taskId}: non-code failure (${failureCategory}:${failureSignature}) — re-queuing instead of spawning recovery fix-task`,
+      `[failure-handler] task ${input.taskId}: non-code failure (${failureCategory}:${failureSignature}) re-queue #${nonCodeCount}/${nonCodeCap} — no recovery slot consumed`,
     )
-    return { outcome: 'requeued', retryCount: nextRetryCount, failureSignature }
+    return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
   }
 
   // Fix-fail-loop cap. Count every historical fix-task row for this
