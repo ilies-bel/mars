@@ -635,3 +635,24 @@ export const startThreadFromAlert = async (
     evaporated_at: null,
   }
 }
+
+/**
+ * Resolve an alert-origin thread: flip `alert_resolved = 1` and stamp
+ * `evaporated_at` with the current timestamp in the same UPDATE, starting the
+ * retention clock. COALESCE guards the evaporated_at column so a pre-existing
+ * value is never overwritten (idempotent at the column level).
+ *
+ * @returns `true` on the first resolution, `false` when the thread was already
+ *   resolved (second call is a no-op).
+ */
+export const resolveAlertThread = async (threadId: string): Promise<boolean> => {
+  const c = stateClient()
+  const ts = now()
+  const result = await c.execute({
+    sql: `UPDATE chat_threads
+          SET alert_resolved = 1, updated_at = ?, evaporated_at = COALESCE(evaporated_at, ?)
+          WHERE id = ? AND alert_resolved = 0`,
+    args: [ts, ts, threadId],
+  })
+  return ((result as unknown as { rowsAffected?: number }).rowsAffected ?? 0) > 0
+}
