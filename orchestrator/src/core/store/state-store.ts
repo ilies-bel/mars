@@ -272,9 +272,15 @@ export const setNotificationsEnabled = async (
  */
 export const readDaemonHeartbeat = async (
   db: DbClient,
-): Promise<{ pid: number; bootTs: number; lastBeatTs: number } | null> => {
+): Promise<{
+  pid: number
+  bootTs: number
+  lastBeatTs: number
+  /** Milliseconds the daemon was offline before the most recent boot (0 when unavailable). */
+  prevGapMs: number
+} | null> => {
   const result = await db.execute(
-    'SELECT pid, boot_ts, last_beat_ts FROM daemon_heartbeat WHERE id = 1',
+    'SELECT pid, boot_ts, last_beat_ts, prev_gap_ms FROM daemon_heartbeat WHERE id = 1',
   )
   if (result.rows.length === 0) return null
   const row = result.rows[0]
@@ -282,6 +288,10 @@ export const readDaemonHeartbeat = async (
     pid: Number(row.pid),
     bootTs: new Date(row.boot_ts as string).getTime(),
     lastBeatTs: new Date(row.last_beat_ts as string).getTime(),
+    prevGapMs:
+      row.prev_gap_ms !== null && row.prev_gap_ms !== undefined
+        ? Number(row.prev_gap_ms)
+        : 0,
   }
 }
 

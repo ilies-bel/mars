@@ -20,6 +20,13 @@ export interface HeartbeatDeps {
   db: DbClient
   /** Injectable for tests; defaults to `() => new Date()`. */
   now?: () => Date
+  /**
+   * Milliseconds the daemon was offline before this boot, computed as
+   * `boot_ts - prevLastBeatTs` by the caller. Written to `prev_gap_ms` on
+   * the heartbeat row so watchdogs can rebase task deadlines.
+   * Defaults to `null` (no outage recorded) when omitted.
+   */
+  prevGapMs?: number
 }
 
 /**
@@ -33,18 +40,20 @@ export const startHeartbeatWriter = async (
   const { db } = deps
   const now = deps.now ?? (() => new Date())
   const intervalMs = Number(process.env.MARS_HEARTBEAT_MS ?? 5_000)
+  const prevGapMs = deps.prevGapMs ?? null
 
   // Upsert the boot row synchronously so callers see a fresh row
   // immediately after await.
   const boot = now()
   await db.execute({
-    sql: `INSERT INTO daemon_heartbeat (id, pid, boot_ts, last_beat_ts)
-          VALUES (1, $1, $2, $2)
+    sql: `INSERT INTO daemon_heartbeat (id, pid, boot_ts, last_beat_ts, prev_gap_ms)
+          VALUES (1, $1, $2, $2, $3)
           ON CONFLICT (id) DO UPDATE
             SET pid          = EXCLUDED.pid,
                 boot_ts      = EXCLUDED.boot_ts,
-                last_beat_ts = EXCLUDED.last_beat_ts`,
-    args: [process.pid, boot.toISOString()],
+                last_beat_ts = EXCLUDED.last_beat_ts,
+                prev_gap_ms  = EXCLUDED.prev_gap_ms`,
+    args: [process.pid, boot.toISOString(), prevGapMs],
   })
 
   const timer = setInterval(() => {

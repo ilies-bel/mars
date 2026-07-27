@@ -750,6 +750,10 @@ const DDL: readonly string[] = [
     boot_ts      timestamptz NOT NULL,
     last_beat_ts timestamptz NOT NULL
   )`,
+  // Outage gap column: milliseconds the daemon was offline before the most
+  // recent boot. Written by startHeartbeatWriter so elapsed-time watchdogs
+  // can rebase task deadlines after a prolonged downtime.
+  `ALTER TABLE IF EXISTS daemon_heartbeat ADD COLUMN IF NOT EXISTS prev_gap_ms bigint`,
 
   // ── dispatch spend controller (migration 0003) ────────────────────────────
   // Single-row operator-set control levers for the dispatch spend controller.

@@ -628,9 +628,30 @@ export const startDaemon = async (
   // timestamp, then ticks last_beat_ts every MARS_HEARTBEAT_MS (default 5 s)
   // so external observers can detect a stale/dead daemon. The handle is
   // stopped in shutdown() below.
+  //
+  // Before overwriting the row, read the previous last_beat_ts so we can
+  // compute the outage gap (how long the daemon was offline). That gap is
+  // written to prev_gap_ms and used by elapsed-time watchdogs to rebase
+  // task deadlines instead of killing tasks that were only stalled by
+  // the downtime.
+  let heartbeatPrevGapMs = 0
+  try {
+    const { readDaemonHeartbeat } = await import('./heartbeat-writer').then(
+      () => import('../store/state-store'),
+    )
+    const prevHb = await readDaemonHeartbeat(dbClient)
+    if (prevHb) {
+      heartbeatPrevGapMs = Math.max(0, Date.now() - prevHb.lastBeatTs)
+    }
+  } catch {
+    // Non-fatal: if reading the previous row fails we simply assume no gap.
+  }
   let heartbeatHandle: HeartbeatHandle | null = null
   try {
-    heartbeatHandle = await startHeartbeatWriter({ db: dbClient })
+    heartbeatHandle = await startHeartbeatWriter({
+      db: dbClient,
+      prevGapMs: heartbeatPrevGapMs,
+    })
     log('[heartbeat] writer started')
   } catch (err) {
     log(`[heartbeat] writer failed to start (non-fatal): ${(err as Error).message}`)
@@ -4046,7 +4067,7 @@ export const startDaemon = async (
         const wfStore = makeWFStore()
         for (const t of queued) {
           if (tracker.isInFlight(t.id)) continue
-          const escalated = await checkAndEscalateRequeueCeiling(t, wfStore, log)
+          const escalated = await checkAndEscalateRequeueCeiling(t, wfStore, log, Date.now(), heartbeatPrevGapMs)
           if (!escalated) tracker.enqueuePending(t.id, 'implement')
         }
         log(

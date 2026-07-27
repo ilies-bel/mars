@@ -62,6 +62,10 @@ export const REQUEUE_MAX_RETRY_MS: number = Number(
  * queuedNeighbourCount }`.
  *
  * @param nowMs - injectable clock for testing; defaults to `Date.now()`.
+ * @param prevGapMs - milliseconds the daemon was offline before this boot
+ *   (read from `daemon_heartbeat.prev_gap_ms`). Subtracted from elapsed time
+ *   so tasks that only appear to breach because of a downtime window are
+ *   left running rather than killed. Defaults to 0 (no outage adjustment).
  * @returns `true` if the task was escalated (caller must NOT re-seed it);
  *          `false` if the task is within the time bound or has not been
  *          attempted yet (caller may proceed to `tracker.enqueuePending`).
@@ -71,6 +75,7 @@ export const checkAndEscalateRequeueCeiling = async (
   store: WorkflowStore,
   log: (msg: string) => void,
   nowMs: number = Date.now(),
+  prevGapMs = 0,
 ): Promise<boolean> => {
   const steps = await store.listSteps(t.id).catch(() => [])
   const maxAttempt =
@@ -101,6 +106,9 @@ export const checkAndEscalateRequeueCeiling = async (
         : new Date(t.createdAt).getTime()
 
   const elapsedMs = nowMs - retryStartMs
+  // Subtract any daemon outage gap so tasks that only appear to exceed the
+  // bound because the daemon was offline are not killed.
+  const effectiveElapsedMs = Math.max(0, elapsedMs - prevGapMs)
   const elapsedMins = Math.round(elapsedMs / 60_000)
 
   // Log retry extent on every poll cycle so the state is visible before
@@ -109,7 +117,20 @@ export const checkAndEscalateRequeueCeiling = async (
     `[dispatch] task ${t.id} still retrying: attempt ${maxAttempt}, ${elapsedMins}m elapsed`,
   )
 
-  if (elapsedMs < REQUEUE_MAX_RETRY_MS) return false
+  if (effectiveElapsedMs < REQUEUE_MAX_RETRY_MS) {
+    if (prevGapMs > 0 && elapsedMs >= REQUEUE_MAX_RETRY_MS) {
+      // The task would have breached without the outage adjustment — log the rebase.
+      const oldDeadlineMs = retryStartMs + REQUEUE_MAX_RETRY_MS
+      const newDeadlineMs = retryStartMs + prevGapMs + REQUEUE_MAX_RETRY_MS
+      log(
+        `[dispatch] task ${t.id} deadline rebased after daemon outage: ` +
+          `outageMs=${prevGapMs}, ` +
+          `oldDeadline=${new Date(oldDeadlineMs).toISOString()}, ` +
+          `newDeadline=${new Date(newDeadlineMs).toISOString()}`,
+      )
+    }
+    return false
+  }
 
   // ── Diagnostics ────────────────────────────────────────────────────────────
   const stepWindow = computeStepWindow(steps)
