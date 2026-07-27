@@ -394,6 +394,19 @@ export const recoverPhase = async (
         // Raise an action-queue item so the operator knows about the preserved branch.
         // Best-effort: a failure here must not block the phase-recovery loop.
         const { raiseActionQueueItem } = await import('../lib/action-queue')
+        const { WorktreeAheadPayloadSchema, WORKTREE_AHEAD_FAILURE_REASON } = await import(
+          '../lib/worktree-ahead-payload'
+        )
+        const typedPayload = WorktreeAheadPayloadSchema.parse({
+          taskId: t.id,
+          branch,
+          worktreePath: t.worktreePath ?? null,
+          integrationBranch,
+          commitsAhead,
+          onMainLean: 'unknown',
+          leaseOwned: false,
+          failureReason: WORKTREE_AHEAD_FAILURE_REASON,
+        })
         await raiseActionQueueItem({
           kind: 'worktree-ahead',
           category: 'orchestrator',
@@ -407,7 +420,7 @@ export const recoverPhase = async (
             `${integrationBranch} or remove with 'mars purge --force ${t.id}'.\n\n` +
             `Commits:\n` +
             commitsAhead.map((c) => `  ${c.shortSha} ${c.subject}`).join('\n'),
-          payload: { taskId: t.id, branch, integrationBranch, commitsAhead },
+          payload: typedPayload,
           context: { repoRoot },
           raisedBy: 'phase-recovery',
           signature: `phase-recovery-ahead:${t.id}`,

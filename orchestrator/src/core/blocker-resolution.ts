@@ -7,14 +7,19 @@ import {
 } from './queue-retry'
 import { getTask } from './queue'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
+import {
+  WORKTREE_AHEAD_FAILURE_REASON,
+  WorktreeAheadPayloadSchema,
+  type WorktreeAheadPayload,
+} from './lib/worktree-ahead-payload'
+import { type OrphanCommit, listUniqueCommitsAhead } from './lib/sweep'
 
 const execFileP = promisify(execFile)
 
 export const CANCELLED_CASCADE_ACTION_QUEUE_KIND: ActionQueueKind = 'cancelled-blocker-cascade'
 export const CANCELLED_FAILURE_REASON = 'cancelled'
 export const CANCELLED_CASCADE_FAILURE_REASON = 'cancelled-blocker-cascade'
-export const WORKTREE_AHEAD_FAILURE_REASON =
-  'worktree_ahead_of_integration_at_unblock'
+export { WORKTREE_AHEAD_FAILURE_REASON } from './lib/worktree-ahead-payload'
 export const WORKTREE_AHEAD_ACTION_QUEUE_KIND: ActionQueueKind = 'worktree-ahead'
 
 export const integrationBranchName = (): string =>
@@ -156,6 +161,7 @@ export const raiseWorktreeAheadActionQueue = async (
   worktreePath: string,
   aheadCount: number,
   integrationBranch: string,
+  opts?: { leaseOwned?: boolean },
 ): Promise<void> => {
   const lean = await computeOnMainLean(worktreePath, integrationBranch)
   const leanLine =
@@ -164,6 +170,24 @@ export const raiseWorktreeAheadActionQueue = async (
       : lean === 'not-on-main'
         ? '\n\nThis work is NOT on main — lean RESTART.'
         : ''
+
+  const repoRoot = process.env.MARS_REPO ?? process.cwd()
+  const branch = `task/${taskId}`
+  const commitsAhead = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot).catch(
+    () => [] as OrphanCommit[],
+  )
+
+  const payload: WorktreeAheadPayload = WorktreeAheadPayloadSchema.parse({
+    taskId,
+    branch,
+    worktreePath,
+    integrationBranch,
+    commitsAhead,
+    onMainLean: lean,
+    leaseOwned: opts?.leaseOwned ?? false,
+    failureReason: WORKTREE_AHEAD_FAILURE_REASON,
+  })
+
   try {
     await raiseActionQueueItem({
       kind: WORKTREE_AHEAD_ACTION_QUEUE_KIND,
@@ -178,14 +202,8 @@ export const raiseWorktreeAheadActionQueue = async (
         `Resolve manually: inspect the worktree and decide whether to land or drop ` +
         `those commits before retrying.` +
         leanLine,
-      payload: {
-        taskId,
-        worktreePath,
-        aheadCount,
-        integrationBranch,
-        failureReason: WORKTREE_AHEAD_FAILURE_REASON,
-      },
-      context: { repoRoot: process.env.MARS_REPO ?? null },
+      payload,
+      context: { repoRoot },
       raisedBy: 'agent:blocker-resolution',
       signature: `${taskId}:worktree-ahead`,
       originTaskId: taskId,

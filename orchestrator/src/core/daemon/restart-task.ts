@@ -206,6 +206,19 @@ export const coreRestartTask = async (
         `${commitsAhead.length} unmerged commit(s) ahead of ${integrationBranch} — ` +
         `branch NOT deleted. Use 'mars purge --force ${id}' to remove explicitly.`,
     )
+    const { WorktreeAheadPayloadSchema, WORKTREE_AHEAD_FAILURE_REASON: WAF } = await import(
+      '../lib/worktree-ahead-payload'
+    )
+    const typedPayload = WorktreeAheadPayloadSchema.parse({
+      taskId: id,
+      branch,
+      worktreePath: task.worktreePath ?? null,
+      integrationBranch,
+      commitsAhead,
+      onMainLean: 'unknown',
+      leaseOwned: Boolean(task.leaseOwner),
+      failureReason: WAF,
+    })
     await raiseActionQueueItem({
       kind: 'worktree-ahead',
       category: 'orchestrator',
@@ -219,7 +232,7 @@ export const coreRestartTask = async (
         `${integrationBranch} or remove with 'mars purge --force ${id}'.\n\n` +
         `Commits:\n` +
         commitsAhead.map((c) => `  ${c.shortSha} ${c.subject}`).join('\n'),
-      payload: { taskId: id, branch, integrationBranch, commitsAhead },
+      payload: typedPayload,
       context: { repoRoot },
       raisedBy: 'restart-cleanup',
       signature: `restart-ahead:${id}`,
