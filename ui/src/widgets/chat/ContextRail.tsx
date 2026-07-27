@@ -636,7 +636,7 @@ const ActivityPanel = ({ feed }: { feed: ActivityEntry[] }) => {
             </span>
           ) : (
             <span
-              className="text-[8px] text-iron/60"
+              className="text-[8px] text-muted-foreground/60"
               aria-label="persisted"
             >
               ●
@@ -644,7 +644,7 @@ const ActivityPanel = ({ feed }: { feed: ActivityEntry[] }) => {
           )}
           <span
             className={`font-mono text-[10px] truncate ${
-              entry.state === 'live' ? 'text-foreground' : 'text-iron/70'
+              entry.state === 'live' ? 'text-foreground' : 'text-muted-foreground/70'
             }`}
           >
             {entry.toolName}
