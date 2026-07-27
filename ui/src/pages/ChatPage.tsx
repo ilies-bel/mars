@@ -80,6 +80,7 @@ import {
 } from '@/widgets/chat/queueThreads'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
+import { startThreadFromAlert } from '@/entities/alerts/api'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
@@ -2575,12 +2576,6 @@ export const ChatPage = () => {
     setWhatHappenedActive(false)
   }, [])
 
-  const handleSelectQueueItem = useCallback((id: string) => {
-    setSelectedQueueItemId(id)
-    setSelectedThreadId(null)
-    setWhatHappenedActive(false)
-  }, [])
-
   // Deep link: when the selected queue item is backed by an alert-origin
   // conversation, open the conversation instead (the merged sidebar entry).
   useEffect(() => {
@@ -2652,6 +2647,27 @@ export const ChatPage = () => {
     mutationFn: () => refreshCodexAuth(projectId),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['codex-auth'] }),
   })
+
+  // Tracks the thread opened inline beneath the opening block when the user
+  // clicks a next-move chip. Kept separate from selectedThreadId so the
+  // opening block is never unmounted.
+  const [activeSubjectThreadId, setActiveSubjectThreadId] = useState<string | null>(null)
+
+  // Opens a Subject inline when a chip is picked. Arc-failed rows (alerts)
+  // reuse the daemon-deduped thread via startThreadFromAlert; other rows get
+  // a fresh generic thread.
+  const handleOpenSubject = useCallback(async (row: ActionQueueItem) => {
+    let threadId: string
+    if (row.kind === 'arc-failed') {
+      const result = await startThreadFromAlert(row.entityId)
+      threadId = result.threadId
+    } else {
+      const thread = await createChatThread(projectId)
+      threadId = thread.id
+      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+    }
+    setActiveSubjectThreadId(threadId)
+  }, [projectId, qc])
 
   // Seeded opening message: when actionable items exist show a compact,
   // grouped queue summary so the operator sees real pending work at a glance.
@@ -2834,9 +2850,12 @@ export const ChatPage = () => {
                         // the task detail page so the operator can inspect the
                         // blocker chain and decide what to do next.
                         window.location.hash = taskHash(row.id, 'chat')
-                      } else {
-                        handleSelectQueueItem(row.id)
+                        return
                       }
+                      // Real queue rows open their Subject inline, in the same
+                      // scroll, so the opening block is never unmounted.
+                      const item = queueItems.find((q) => q.id === row.id)
+                      if (item) void handleOpenSubject(item)
                     }}
                   />
                 ) : (
@@ -2846,17 +2865,35 @@ export const ChatPage = () => {
                   </p>
                 )}
               </div>
+              {activeSubjectThreadId && (
+                <div
+                  data-testid="active-subject"
+                  data-thread-id={activeSubjectThreadId}
+                  className="mt-4 flex flex-col"
+                >
+                  <ChatConversation
+                    key={activeSubjectThreadId}
+                    threadId={activeSubjectThreadId}
+                    projectId={projectId}
+                    onPrefillConsumed={() => {}}
+                    onInsertPrompt={handleInsertPrompt}
+                    onLiveBufferChange={setActiveLiveBuffer}
+                  />
+                </div>
+              )}
             </div>
-            <div className="flex justify-center px-6 pb-6">
-              <HeroComposer
-                onSend={(msg, files, clearState) =>
-                  createAndSend({ message: msg, files }, { onSuccess: () => clearState() })
-                }
-                isPending={isCreatingThread}
-                prefill={prefill}
-                onPrefillConsumed={() => setPrefill(undefined)}
-              />
-            </div>
+            {!activeSubjectThreadId && (
+              <div className="flex justify-center px-6 pb-6">
+                <HeroComposer
+                  onSend={(msg, files, clearState) =>
+                    createAndSend({ message: msg, files }, { onSuccess: () => clearState() })
+                  }
+                  isPending={isCreatingThread}
+                  prefill={prefill}
+                  onPrefillConsumed={() => setPrefill(undefined)}
+                />
+              </div>
+            )}
             {sendError && (
               <p
                 role="alert"
