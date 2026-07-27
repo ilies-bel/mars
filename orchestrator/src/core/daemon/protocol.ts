@@ -30,6 +30,8 @@ export type DaemonRequest =
       supersedes?: string
       /** QA mode for the review step: 'auto' (default) or 'manual'. */
       qa?: 'auto' | 'manual'
+      /** When true, the usage-aware scheduler may defer this task. */
+      deferrable?: boolean
     }
   | { op: 'task.priority'; id: string; priority: number }
   | {
@@ -116,7 +118,7 @@ export type DaemonRequest =
       }
     }
   /** Apply a persisted control lever to the running daemon process env immediately. */
-  | { op: 'apply-lever'; name: 'recovery'; value: 'on' | 'off' }
+  | { op: 'apply-lever'; name: 'recovery' | 'scoring'; value: 'on' | 'off' }
 
 export type DaemonResponse =
   | { ok: true; data?: unknown }

@@ -57,6 +57,7 @@ const addHandler = handler('add', async (req, deps) => {
     req.originSessionId,
     req.workflow,
     req.qa,
+    req.deferrable,
   )
   return { ok: true, data: task }
 })
@@ -292,8 +293,10 @@ const pingHandler = handler('ping', async (_req, _deps) => {
   return { ok: true, data: { pid: process.pid } }
 })
 
+const KNOWN_LEVERS = new Set(['recovery', 'scoring'])
+
 const applyLeverHandler = handler('apply-lever', async (req, deps) => {
-  if (req.name !== 'recovery') {
+  if (!KNOWN_LEVERS.has(req.name)) {
     return { ok: false, error: `apply-lever: unknown lever '${req.name}'` }
   }
   if (req.value !== 'on' && req.value !== 'off') {
@@ -302,9 +305,11 @@ const applyLeverHandler = handler('apply-lever', async (req, deps) => {
       error: `apply-lever: value must be 'on' or 'off'; got '${req.value}'`,
     }
   }
-  applyControlLevers({ recovery: req.value })
+  const current = loadDaemonConfig().controlLevers
+  applyControlLevers({ ...current, [req.name]: req.value })
+  const envKey = req.name === 'recovery' ? 'MARS_RECOVERY_DISABLED' : 'MARS_SCORING_DISABLED'
   deps.log(
-    `apply-lever: recovery=${req.value} (MARS_RECOVERY_DISABLED=${process.env.MARS_RECOVERY_DISABLED ?? '<unset>'})`,
+    `apply-lever: ${req.name}=${req.value} (${envKey}=${process.env[envKey] ?? '<unset>'})`,
   )
   return { ok: true, data: { name: req.name, value: req.value } }
 })

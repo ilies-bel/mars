@@ -28,6 +28,7 @@ const operatorStatus: Command = {
   run: (_args, deps) => {
     const levers = readControlLevers()
     deps.out(`recovery: ${levers.recovery}`)
+    deps.out(`scoring: ${levers.scoring}`)
     return { code: 0 }
   },
 }
@@ -44,9 +45,11 @@ const operatorSet: Command = {
       deps.err('usage: mars operator set <lever> <on|off>')
       return { code: 2 }
     }
-    if (lever !== 'recovery') {
+    const validLevers = ['recovery', 'scoring'] as const
+    type LeverName = (typeof validLevers)[number]
+    if (!validLevers.includes(lever as LeverName)) {
       deps.err(
-        `mars operator set: unknown lever '${lever}'; valid levers: recovery`,
+        `mars operator set: unknown lever '${lever}'; valid levers: ${validLevers.join(', ')}`,
       )
       return { code: 2 }
     }
@@ -54,19 +57,17 @@ const operatorSet: Command = {
       deps.err(`mars operator set: value must be 'on' or 'off'; got '${value}'`)
       return { code: 2 }
     }
-    writeControlLever('recovery', value)
-    // Best-effort: apply to a running daemon immediately. Missing daemon is
-    // not an error — the file is the source of truth and will be applied on
-    // next daemon startup.
+    const leverName = lever as LeverName
+    writeControlLever(leverName, value)
     try {
-      await deps.daemon.sendRequest({ op: 'apply-lever', name: 'recovery', value })
+      await deps.daemon.sendRequest({ op: 'apply-lever', name: leverName, value })
     } catch (err) {
       const msg = errorMessage(err)
       if (!isDaemonDownError(msg)) {
         deps.err(`warning: lever written but live apply failed: ${msg}`)
       }
     }
-    deps.out(`recovery: ${value}`)
+    deps.out(`${leverName}: ${value}`)
     return { code: 0 }
   },
 }

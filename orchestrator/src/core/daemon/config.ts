@@ -21,6 +21,7 @@ export type ControlLeverValue = 'on' | 'off'
 
 export interface ControlLevers {
   recovery: ControlLeverValue
+  scoring: ControlLeverValue
 }
 
 export interface DaemonCaps {
@@ -116,7 +117,7 @@ const DEFAULT_AUTO_APPROVE_PLANS = false
 
 const DEFAULT_PROVIDER: ProviderName = 'claude'
 
-const DEFAULT_CONTROL_LEVERS: ControlLevers = { recovery: 'on' }
+const DEFAULT_CONTROL_LEVERS: ControlLevers = { recovery: 'on', scoring: 'on' }
 
 const VALID_PROVIDER_NAMES = new Set<string>(['claude', 'gemini', 'codex'])
 
@@ -272,21 +273,24 @@ export const persistLeverAutonomyLevel = (name: string, level: AutonomyLevel): v
 export const readControlLevers = (): ControlLevers => {
   const file = readDaemonConfigFile()
   const cl = file.controlLevers
+  const result = { ...DEFAULT_CONTROL_LEVERS }
   if (cl !== null && typeof cl === 'object' && !Array.isArray(cl)) {
     const record = cl as Record<string, unknown>
-    const recovery = record.recovery
-    if (recovery === 'on' || recovery === 'off') {
-      return { recovery }
+    if (record.recovery === 'on' || record.recovery === 'off') {
+      result.recovery = record.recovery
+    }
+    if (record.scoring === 'on' || record.scoring === 'off') {
+      result.scoring = record.scoring
     }
   }
-  return { ...DEFAULT_CONTROL_LEVERS }
+  return result
 }
 
 /**
  * Persist a single control lever to daemon.json via `patchDaemonConfigFile`.
  * Preserves all other control levers and all other daemon.json fields.
  */
-export const writeControlLever = (name: 'recovery', value: ControlLeverValue): void => {
+export const writeControlLever = (name: keyof ControlLevers, value: ControlLeverValue): void => {
   const current = readControlLevers()
   patchDaemonConfigFile({ controlLevers: { ...current, [name]: value } })
 }
@@ -304,6 +308,11 @@ export const applyControlLevers = (levers: ControlLevers): void => {
     process.env.MARS_RECOVERY_DISABLED = '1'
   } else {
     delete process.env.MARS_RECOVERY_DISABLED
+  }
+  if (levers.scoring === 'off') {
+    process.env.MARS_SCORING_DISABLED = '1'
+  } else {
+    delete process.env.MARS_SCORING_DISABLED
   }
 }
 
