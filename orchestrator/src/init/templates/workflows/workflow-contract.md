@@ -47,7 +47,7 @@ export default defineWorkflow({
   async fn(ctx) {
     await ctx.step('setup',  () => setupWorktree(ctx))
     await ctx.step('code',   () => runAgent(ctx, { mode: 'auto' }))
-    await ctx.step('verify', () => verify(ctx,    { mode: 'auto' }))
+    await ctx.step('verify', () => review(ctx, { reviewType: 'auto' }))
     return  ctx.step('merge',  () => merge(ctx))
   },
 })

@@ -24,7 +24,7 @@ import {
   defineWorkflow,
   setupWorktree,
   runAgent,
-  verify,
+  review,
   merge,
 } from 'mars/workflow'
 
@@ -54,7 +54,7 @@ export default defineWorkflow({
 
     // verify → auto: scope-aware typecheck → tests → lint. Same gates that
     // bind agents bind operators — the pipeline enforces correctness for both.
-    await ctx.step('verify', () => verify(ctx, { mode: 'auto' }))
+    await ctx.step('verify', () => review(ctx, { reviewType: 'auto' }))
 
     // merge → auto: serialized fast-forward into the integration branch.
     return await ctx.step('merge', () => merge(ctx))

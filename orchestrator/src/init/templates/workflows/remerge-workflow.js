@@ -18,7 +18,7 @@
 
 /** @typedef {import('mars/workflow').WorkflowCtx} WorkflowCtx */
 
-import { defineWorkflow, setupWorktree, verify, merge } from 'mars/workflow'
+import { defineWorkflow, setupWorktree, review, merge } from 'mars/workflow'
 
 export default defineWorkflow({
   id: 'remerge',
@@ -32,7 +32,7 @@ export default defineWorkflow({
     // verify — scope-aware typecheck → tests → lint on the existing commits.
     // Throws on any failure (including branch contamination), so reaching
     // merge always means verify passed.
-    await ctx.step('verify', () => verify(ctx))
+    await ctx.step('verify', () => review(ctx))
 
     // merge — serialized fast-forward into the integration branch.
     return await ctx.step('merge', () => merge(ctx))

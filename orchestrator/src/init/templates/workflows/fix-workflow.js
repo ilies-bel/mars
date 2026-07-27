@@ -24,7 +24,7 @@ import {
   defineWorkflow,
   setupWorktree,
   runAgent,
-  verify,
+  review,
   merge,
 } from 'mars/workflow'
 
@@ -38,7 +38,7 @@ export default defineWorkflow({
     // fix-code → the Fixer (Sonnet) attempts the repair on the origin's branch.
     await ctx.step('fix-code', () => runAgent(ctx))
 
-    await ctx.step('verify', () => verify(ctx))
+    await ctx.step('verify', () => review(ctx))
 
     return await ctx.step('merge', () => merge(ctx))
   },

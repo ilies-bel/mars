@@ -27,7 +27,7 @@ import {
   defineWorkflow,
   setupWorktree,
   runAgent,
-  verify,
+  review,
   merge,
 } from 'mars/workflow'
 
@@ -46,7 +46,7 @@ export default defineWorkflow({
     await ctx.step('code', () => runAgent(ctx, { mode: 'auto' }))
 
     // verify → scope-aware typecheck → tests → lint. Execution mode: auto.
-    await ctx.step('verify', () => verify(ctx, { mode: 'auto' }))
+    await ctx.step('verify', () => review(ctx, { reviewType: 'auto' }))
 
     // ── Manual steps (optional) ──────────────────────────────────────────
     // Every step declares WHO executes it: auto (an agent — the default) or

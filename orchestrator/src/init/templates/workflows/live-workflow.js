@@ -26,7 +26,7 @@
 //   mars workflow validate live
 //
 // Hybrids are yours to compose: flip verify to manual for hand-QA
-// (`verify(ctx, { mode: 'manual', guide: '...' })`), add more manual stages,
+// (`review(ctx, { reviewType: 'manual', guide: '...' })`), add more manual stages,
 // or copy this file to <name>-workflow.js for a new pipeline and route tasks
 // with `mars task add --workflow <name>`.
 
@@ -36,7 +36,7 @@ import {
   defineWorkflow,
   setupWorktree,
   runAgent,
-  verify,
+  review,
   merge,
 } from 'mars/workflow'
 
@@ -59,7 +59,7 @@ export default defineWorkflow({
 
     // verify → auto: scope-aware typecheck → tests → lint. The same gates
     // that bind Workers bind humans.
-    await ctx.step('verify', () => verify(ctx))
+    await ctx.step('verify', () => review(ctx))
 
     // merge → auto: serialized fast-forward into the integration branch.
     return await ctx.step('merge', () => merge(ctx))
