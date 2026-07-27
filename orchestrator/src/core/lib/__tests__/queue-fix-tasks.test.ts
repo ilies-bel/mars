@@ -146,6 +146,10 @@ describe('queue-fix-tasks', () => {
     }
     await actionQueue.initActionQueue()
     delete process.env.MARS_REPO
+    // Free the template PGlite WASM memory before resetting modules so it
+    // does not become an orphaned allocation that adds to suite-wide pressure.
+    const { closeAllDbs } = await import('../db')
+    await closeAllDbs()
     vi.resetModules()
   })
 
