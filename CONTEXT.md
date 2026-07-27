@@ -488,8 +488,8 @@ The daemon behaviour of automatically triggering reflection (session-scoped refl
 _Avoid_: auto reflect, reflect trigger, MARS_REFLECT_DISABLED
 
 **Steward**:
-The event-driven subagent the orchestrator spawns to set up or modify a workflow and the framework's operating parameters (worker count, budgets, schedules) in response to signals — degraded KPIs, resource-load spikes, or onboarding; woken fresh per event, never long-running, never addressed directly by the human, and speaking only through the unified Mars voice.
-_Avoid_: ai operator, operator agent, self-optimizer, tuner, auto-tuner
+The seam through which Mars observes and improves its own pipeline health, owning the context boundary and the intervention ledger that every proactive health adapter — reflect, deep-reflect, auto-configuration — writes through; a capability seam rather than an agent, so an adapter carries a model only when its work requires judgement.
+_Avoid_: ai operator, operator agent, self-optimizer, tuner, auto-tuner, steward agent
 
 **Vision**:
 The product's enduring north-star — what it is, who it's for, and what success looks like — captured once during onboarding and persisted for the life of the project, surfaced to the chat agent in every session.
