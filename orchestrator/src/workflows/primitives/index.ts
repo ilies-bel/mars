@@ -60,6 +60,7 @@ import {
   recordEnrichmentShadowRuns,
 } from '../../core/lib/gate-enrichment'
 import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch, type MergeResult } from '../../core/lib/git/merge'
+import { autoCommitWorktreeIfDeterministic } from '../../core/lib/git/commit-main'
 import { acquireLock } from '../../core/lib/git/lock'
 import {
   createWorker,
@@ -1160,35 +1161,62 @@ export const runAgent = async (
     console.log(
       `[post-coder] task ${taskId}: dirty tree with 0 commits ahead of ${integrationBranch} — coder left ${postState.dirtyFiles.length} uncommitted path(s):\n  ${dirtyList}`,
     )
-    await updateTask(
-      taskId,
-      {
-        status: 'failed',
-        error: `coder exited cleanly but left ${postState.dirtyFiles.length} uncommitted path(s) — 0 commits ahead of ${integrationBranch}:\n  ${dirtyList}`,
-        failedPhase: 'code',
-        failureReason: 'coder-left-uncommitted',
-        failureReasonCode: 'coder-left-uncommitted',
-      },
-      store,
-    )
-    await handleTaskFailureWithFixTask({
-      taskId,
-      failingStep: 'code:coder-left-uncommitted',
-      errorOutput: `The coder finished but never committed. The worktree at ${worktreePath} holds completed work as uncommitted changes (${postState.dirtyFiles.length} path(s), 0 commits ahead of ${integrationBranch}). DO NOT redo the work — it is already on disk. Your job: review the uncommitted tree (\`git -C ${worktreePath} status\` / \`git -C ${worktreePath} diff\`), then \`git add -A\` and \`git commit\` it with a message describing the change, run the task's verify command, and exit. Save your work.`,
-      branch,
-      store,
-      recipeContext: {
-        targetPath: worktreePath,
-        statusOutput: `The previous coder left completed work UNCOMMITTED (${postState.dirtyFiles.length} uncommitted path(s), 0 commits ahead of ${integrationBranch}):\n  ${dirtyList}\n\nThe work is done — it just was never committed. Commit it (\`git add -A && git commit\`), do not re-implement it.`,
-        targetBranch: branch,
-        integrationBranch,
-        originalPrompt: '',
-      },
+
+    const autoResult = await autoCommitWorktreeIfDeterministic({
+      worktreePath,
+      dirtyFiles: postState.dirtyFiles,
+      traceCtx: buildPhaseCtx(trace, taskId, 'code'),
     })
-    console.log(
-      `[post-coder] task ${taskId}: uncommitted-work recovery fix-task spawned`,
-    )
-    throw new WorkflowTerminalError('coder-uncommitted', CODER_UNCOMMITTED_ABORT_MESSAGE(taskId))
+
+    if (autoResult.committed) {
+      console.log(
+        `[post-coder] task ${taskId}: auto-committed ${postState.dirtyFiles.length} path(s) as ${autoResult.sha.slice(0, 8)}`,
+      )
+    } else {
+      await updateTask(
+        taskId,
+        {
+          status: 'failed',
+          error: `coder exited cleanly but left ${postState.dirtyFiles.length} uncommitted path(s) — auto-commit failed: ${autoResult.reason}`,
+          failedPhase: 'code',
+          failureReason: 'coder-left-uncommitted',
+          failureReasonCode: 'orchestration:coder-left-uncommitted-unfixable',
+        },
+        store,
+      )
+      await raiseActionQueueItem({
+        kind: 'failed',
+        category: 'orchestrator',
+        priority: 'high',
+        title: `Auto-commit failed for task ${taskId}: coder left uncommitted work`,
+        body: [
+          `Task ${taskId} coder exited cleanly but left ${postState.dirtyFiles.length} uncommitted path(s) (0 commits ahead of ${integrationBranch}).`,
+          `Deterministic auto-commit was attempted but failed: ${autoResult.reason}`,
+          '',
+          'Dirty files:',
+          `  ${dirtyList}`,
+          '',
+          `Worktree: ${worktreePath}`,
+          '',
+          'Resolve: inspect the worktree, commit manually if the work is viable, or `mars purge` the task.',
+        ].join('\n'),
+        payload: {
+          taskId,
+          worktreePath,
+          dirtyFiles: postState.dirtyFiles,
+          autoCommitReason: autoResult.reason,
+        },
+        context: { repoRoot: process.env.MARS_REPO ?? null },
+        raisedBy: 'workflow:code:auto-commit-failed',
+        signature: `coder-uncommitted:${taskId}`,
+      }).catch((raiseErr) => {
+        console.error(
+          `[post-coder] task ${taskId}: action-queue raise for auto-commit failure errored:`,
+          raiseErr,
+        )
+      })
+      throw new WorkflowTerminalError('coder-uncommitted', CODER_UNCOMMITTED_ABORT_MESSAGE(taskId))
+    }
   }
 
   const usage = summarizeUsage(r.conversation)
@@ -1220,13 +1248,13 @@ export interface ReviewOpts {
   /** Override the worktree (defaults to the one stashed by setupWorktree). */
   worktree?: WorktreeRef
   /**
-   * Review type — WHO executes this step (workflow-declared). `'manual'`
-   * boots the stack via `MarsServices.previewSpawn` and parks the workflow
-   * behind an `awaitHuman` gate with the preview URL and log path embedded in
-   * the action-queue row. `'auto'` (default) runs scope-aware
-   * typecheck/tests/lint as always.
+   * Review type — WHO executes this step (workflow-declared).
+   *   - `'auto'` (default) runs scope-aware typecheck/tests/lint.
+   *   - `'manual'` boots the stack and parks for human QA.
+   *   - `'full-review'` spawns a review agent that produces a ReviewPacket
+   *     with findings across correctness/security/style/test-coverage.
    */
-  reviewType?: 'auto' | 'manual'
+  reviewType?: 'auto' | 'manual' | 'full-review'
   /** Step guide for a `'manual'` step. Reserved for future use. */
   guide?: string
 }

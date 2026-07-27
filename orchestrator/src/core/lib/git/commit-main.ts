@@ -1,4 +1,4 @@
-import { exec, resolveGitBin, type TraceCtx } from './internal'
+import { exec, execProbe, resolveGitBin, type TraceCtx } from './internal'
 
 export interface CommitMainArgs {
   /** Absolute path to the worktree directory where git commands will run. */
@@ -37,4 +37,63 @@ export const commitMain = async (args: CommitMainArgs): Promise<CommitMainResult
 
   const { stdout } = await exec(git, ['rev-parse', 'HEAD'], { cwd }, traceCtx)
   return { sha: stdout.trim() }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-commit helper for coder-left-uncommitted worktrees
+// ---------------------------------------------------------------------------
+
+export interface AutoCommitArgs {
+  worktreePath: string
+  dirtyFiles: string[]
+  traceCtx?: TraceCtx
+}
+
+export type AutoCommitResult =
+  | { committed: true; sha: string }
+  | { committed: false; reason: string }
+
+/**
+ * Attempt a deterministic `git add -A && git commit` inside the worktree.
+ *
+ * Returns `{committed: true, sha}` on success so the pipeline can continue
+ * to verify as if the coder had committed. Returns `{committed: false, reason}`
+ * when the commit itself fails (pre-commit hook rejection, empty staged set,
+ * etc.) — the caller decides what to do next.
+ */
+export const autoCommitWorktreeIfDeterministic = async (
+  args: AutoCommitArgs,
+): Promise<AutoCommitResult> => {
+  const git = resolveGitBin()
+  const { worktreePath, dirtyFiles, traceCtx } = args
+  const count = dirtyFiles.length
+  const message = `chore(auto-commit): coder finished but did not commit — ${count} path(s)`
+
+  const addResult = await execProbe(
+    git,
+    ['add', '-A'],
+    { cwd: worktreePath },
+    traceCtx,
+  )
+  if (addResult.exitCode !== 0) {
+    return { committed: false, reason: `git add -A failed: ${addResult.stderr.trim()}` }
+  }
+
+  const commitResult = await execProbe(
+    git,
+    ['commit', '-m', message],
+    { cwd: worktreePath },
+    traceCtx,
+  )
+  if (commitResult.exitCode !== 0) {
+    return { committed: false, reason: `git commit failed: ${commitResult.stderr.trim()}` }
+  }
+
+  const { stdout } = await exec(
+    git,
+    ['rev-parse', 'HEAD'],
+    { cwd: worktreePath },
+    traceCtx,
+  )
+  return { committed: true, sha: stdout.trim() }
 }
