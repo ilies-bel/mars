@@ -85,7 +85,7 @@ import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlSt
 import { taskHash } from '@/shared/routing'
 import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
-import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle, pickTopAlert, topRowsByPriority } from './chatPageUtils'
+import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
 import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
 import { SkeletonList } from '@/components/Skeleton'
 
@@ -2647,12 +2647,10 @@ export const ChatPage = () => {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['codex-auth'] }),
   })
 
-  // Seeded opening message: top queue item's humanSummary, or a fallback
-  // when the queue is empty. Shown as the first message in the chat feed
-  // before the user starts any thread.
-  const openingText =
-    pickTopAlert(queueItems)?.humanSummary ||
-    "Nothing's pressing right now — what would you like to work on?"
+  // Seeded opening message: when actionable items exist show a compact,
+  // grouped queue summary so the operator sees real pending work at a glance.
+  // When the queue is genuinely empty, fall back to an invitation prompt.
+  const hasActionableItems = queueItems.length > 0
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -2808,14 +2806,16 @@ export const ChatPage = () => {
                 className="flex flex-col gap-1"
               >
                 <span className="font-mono text-[11px] text-primary">mars</span>
-                <p className="font-mono text-[14px] text-foreground">
-                  {openingText}
-                </p>
-                {!selectedThreadId && (
+                {!selectedThreadId && hasActionableItems ? (
                   <OpeningNextMoves
-                    rows={topRowsByPriority(queueItems, 3)}
+                    rows={queueItems}
                     onPick={(row) => handleSelectQueueItem(row.id)}
                   />
+                ) : (
+                  <p className="font-mono text-[14px] text-foreground">
+                    Nothing&apos;s pressing right now — what would you like to
+                    work on?
+                  </p>
                 )}
               </div>
             </div>

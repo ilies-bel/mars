@@ -2,11 +2,12 @@
 /**
  * Seeded opening message tests for ChatPage.
  *
- * Covers the new behaviour introduced by the collapse-hero PRD (slice 2):
+ * Verifies the queue-summary opening introduced when pending work exists:
  *   - There is no hero screen; the chat feed is present on first paint.
- *   - Mars's first message is derived from the top action-queue item's
- *     humanSummary, or a static "nothing pressing" fallback when the queue
- *     is empty.
+ *   - When the action queue has actionable items, a grouped queue summary is
+ *     shown (blocked-task group + proposal-to-refine group).
+ *   - When the queue is genuinely empty, a simple "nothing pressing" invitation
+ *     is shown instead.
  */
 
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -171,38 +172,12 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
       )
     })
 
-    // Seeded feed is present
     expect(container.querySelector('[data-testid="seeded-feed"]')).not.toBeNull()
-
-    // Old hero headline is gone
     expect(container.querySelector('[data-testid="hero-headline"]')).toBeNull()
-  })
-
-  it('shows the top queue item humanSummary as the Mars opening message', async () => {
-    const item = makeItem({ humanSummary: 'Task deploy-prod got stuck — decide what to do.' })
-    mockUseActionQueue.mockReturnValue({
-      items: [item],
-      error: null,
-      projectsError: null,
-      projectsEmpty: false,
-    })
-
-    await act(async () => {
-      root.render(
-        <QueryClientProvider client={makeQc()}>
-          <ChatPage />
-        </QueryClientProvider>,
-      )
-    })
-
-    const el = container.querySelector('[data-testid="mars-opening-message"]')
-    expect(el).not.toBeNull()
-    expect(el?.textContent).toContain('Task deploy-prod got stuck — decide what to do.')
   })
 
   it('shows the nothing-pressing fallback when the queue is empty', async () => {
     // mockUseActionQueue already returns empty items from beforeEach
-
     await act(async () => {
       root.render(
         <QueryClientProvider client={makeQc()}>
@@ -216,21 +191,21 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
     expect(el?.textContent).toContain("Nothing's pressing right now")
   })
 
-  it('picks the highest-priority item when the queue has multiple rows', async () => {
-    const low = makeItem({
-      id: 'q-low',
-      priority: 'low',
-      humanSummary: 'Low priority item.',
-      at: '2026-01-02T00:00:00.000Z',
+  it('does not show the queue-summary widget when the queue is empty', async () => {
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
     })
-    const high = makeItem({
-      id: 'q-high',
-      priority: 'high',
-      humanSummary: 'High priority item needs attention.',
-      at: '2026-01-01T00:00:00.000Z',
-    })
+
+    expect(container.querySelector('[data-testid="opening-next-moves"]')).toBeNull()
+  })
+
+  it('shows the queue-summary widget instead of plain text when items exist', async () => {
     mockUseActionQueue.mockReturnValue({
-      items: [low, high],
+      items: [makeItem({ title: 'Deploy job stuck' })],
       error: null,
       projectsError: null,
       projectsEmpty: false,
@@ -244,8 +219,102 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
       )
     })
 
-    const el = container.querySelector('[data-testid="mars-opening-message"]')
-    expect(el?.textContent).toContain('High priority item needs attention.')
-    expect(el?.textContent).not.toContain('Low priority item.')
+    const openingEl = container.querySelector('[data-testid="mars-opening-message"]')
+    expect(openingEl?.querySelector('[data-testid="opening-next-moves"]')).not.toBeNull()
+  })
+
+  it('shows accurate blocked-task count in the group header', async () => {
+    mockUseActionQueue.mockReturnValue({
+      items: [
+        makeItem({ id: 'b1', title: 'Task A' }),
+        makeItem({ id: 'b2', title: 'Task B' }),
+        makeItem({ id: 'b3', title: 'Task C' }),
+      ],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const header = container.querySelector('[data-testid="queue-group-header"]')
+    expect(header?.textContent).toContain('3 blocked tasks')
+  })
+
+  it('shows a proposal-to-refine group when draft proposals exist', async () => {
+    mockUseActionQueue.mockReturnValue({
+      items: [makeItem({ id: 'p1', kind: 'draft-proposal', title: 'New feature idea' })],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const header = container.querySelector('[data-testid="queue-group-header"]')
+    expect(header?.textContent).toContain('1 proposal to refine')
+  })
+
+  it('surfaces both blocked-task and proposal groups when both kinds exist', async () => {
+    mockUseActionQueue.mockReturnValue({
+      items: [
+        makeItem({ id: 'b1', kind: 'failed-task', title: 'Task failed' }),
+        makeItem({ id: 'b2', kind: 'failed-task', title: 'Another task' }),
+        makeItem({ id: 'p1', kind: 'draft-proposal', title: 'New idea' }),
+      ],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const headers = container.querySelectorAll('[data-testid="queue-group-header"]')
+    expect(headers.length).toBe(2)
+
+    const texts = Array.from(headers).map((h) => h.textContent ?? '')
+    expect(texts.some((t) => t.includes('2 blocked tasks'))).toBe(true)
+    expect(texts.some((t) => t.includes('1 proposal to refine'))).toBe(true)
+  })
+
+  it('lists every actionable item as a clickable chip', async () => {
+    mockUseActionQueue.mockReturnValue({
+      items: [
+        makeItem({ id: 'b1', title: 'Task A' }),
+        makeItem({ id: 'b2', title: 'Task B' }),
+      ],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const chips = container.querySelectorAll('[data-testid="next-move-chip"]')
+    expect(chips.length).toBe(2)
   })
 })
