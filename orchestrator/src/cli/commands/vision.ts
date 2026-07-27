@@ -59,4 +59,5 @@ const visionGroup: Command = {
   },
 }
 
+/** All `mars vision` leaf commands registered by the CLI index. */
 export const visionCommands: readonly Command[] = [visionSet, visionShow, visionGroup]

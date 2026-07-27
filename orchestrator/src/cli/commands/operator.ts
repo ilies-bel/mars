@@ -124,6 +124,7 @@ const operatorGroup: Command = {
   },
 }
 
+/** All `mars operator` leaf commands registered by the CLI index. */
 export const operatorCommands: readonly Command[] = [
   operatorStatus,
   operatorSet,
