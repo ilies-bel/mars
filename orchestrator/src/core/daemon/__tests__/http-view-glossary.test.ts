@@ -101,8 +101,8 @@ describe('GET /view/glossary', () => {
 
     const fixture = {
       terms: [
-        { term: 'Arc', definition: 'A chain of tasks sharing an originId.', avoid: ['chain', 'pipeline'] },
-        { term: 'Task', definition: 'A unit of work managed by the orchestrator.', avoid: [] },
+        { term: 'Arc', definition: 'A chain of tasks sharing an originId.', avoid: ['chain', 'pipeline'], surfaceForms: ['arc', 'arcs'] },
+        { term: 'Task', definition: 'A unit of work managed by the orchestrator.', avoid: [], surfaceForms: ['task', 'tasks'] },
       ],
     }
 
@@ -182,7 +182,9 @@ describe('GET /view/glossary', () => {
     expect(result.terms[0]?.term).toBe('Worktree')
     expect(result.terms[0]?.definition).toBe('An isolated git working tree for a task.')
     expect(result.terms[0]?.avoid).toEqual(['branch', 'sandbox'])
+    expect(result.terms[0]?.surfaceForms).toContain('worktree')
     expect(result.terms[1]?.term).toBe('Task')
     expect(result.terms[1]?.avoid).toEqual([])
+    expect(result.terms[1]?.surfaceForms).toContain('task')
   })
 })

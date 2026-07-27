@@ -66,6 +66,7 @@ export type DaemonRequest =
       term: string
       definition?: string
       aliases?: readonly string[]
+      surfaceForms?: readonly string[]
     }
   | { op: 'adr-add'; title: string; body: string }
   | { op: 'init'; opts: RunInitOptions }

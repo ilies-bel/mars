@@ -120,6 +120,7 @@ import { rpcRegistry, dispatchRpc } from './rpc/registry'
 import type { DaemonDeps } from './rpc/types'
 import { PreviewRegistry } from './preview-registry'
 import { createAppServices } from '../app-services'
+import { buildLiveAgentsRoster } from './live-agents-roster'
 import { startApiEndpointProbe } from '../lib/api-endpoint-probe'
 import { ChatRunner, CHAT_TIMEOUT_MS } from './chat-runner'
 import { startMergeWorker, enqueueMergeJobAndAwait, type MergeWorkerHandle } from './merge-worker'
@@ -1413,6 +1414,7 @@ export const startDaemon = async (
     term: string
     definition?: string
     aliases?: readonly string[]
+    surfaceForms?: readonly string[]
   }): Promise<void> => {
     const synthetic = `glossary-write:${req.kind}:${req.term}:${Date.now()}`
     await acquire(sems['glossary-write'])
@@ -1443,6 +1445,7 @@ export const startDaemon = async (
               term: req.term,
               definition: req.definition ?? '',
               aliases: req.aliases ?? [],
+              ...(req.surfaceForms ? { surfaceForms: req.surfaceForms } : {}),
             })
             await writeGlossaryFile(path, next)
             return
@@ -2010,6 +2013,7 @@ export const startDaemon = async (
     originSessionId?: string | null,
     workflow?: string | null,
     qa?: 'auto' | 'manual',
+    deferrable?: boolean,
   ): Promise<Task> => {
     const opts: Parameters<typeof enqueueTask>[2] = {}
     if (skipTriage) opts.skipTriage = true
@@ -2021,6 +2025,7 @@ export const startDaemon = async (
     if (originSessionId !== undefined) opts.originSessionId = originSessionId
     if (workflow != null) opts.workflow = workflow
     if (qa !== undefined) opts.qa = qa
+    if (deferrable === true) opts.deferrable = true
     // Arc inheritance (ADR-0050): when a task has exactly one blocker it is
     // almost always a continuation of that blocker's work (the canonical coder
     // follow-up pattern: `mars task add "..." --blocked-by $TASK_ID`). Inherit
@@ -3833,6 +3838,16 @@ export const startDaemon = async (
     traceStore,
     viewStreamHub,
     appServices,
+    getLiveAgentsRoster: () =>
+      buildLiveAgentsRoster({
+        flights: tracker.inFlightSnapshot().map((e) => ({
+          taskId: e.taskId,
+          workerName: e.kind,
+          startedAt: e.startedAt,
+          lastActivityMs: e.lastActivityMs,
+        })),
+        reflectors: [],
+      }),
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)

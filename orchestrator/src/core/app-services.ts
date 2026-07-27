@@ -34,7 +34,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { resolve as resolvePath } from 'node:path'
 import { resolveContext, getRepoRoot } from './context'
-import { readGlossaryFile } from './lib/glossary'
+import { readGlossaryFile, generateDefaultSurfaceForms } from './lib/glossary'
 import {
   getDefaultDomainTaskStore,
   getCompositionRootClient,
@@ -229,7 +229,7 @@ export interface AppServices {
   // ── loop ledger — per-run score history joined with promotion decisions (PRD 41aa2fb2) ──
   viewLoopLedger: (workflow: string, limit: number) => Promise<{ entries: LoopLedgerEntry[] }>
   // ── read views: glossary and skills ────────────────────────────────────────
-  viewGlossary: () => Promise<{ terms: Array<{ term: string; definition: string; avoid: string[] }> }>
+  viewGlossary: () => Promise<{ terms: Array<{ term: string; definition: string; avoid: string[]; surfaceForms: string[] }> }>
   viewSkills: () => Promise<{ skills: Array<{ name: string; description: string; path: string }> }>
   // ── chat threads + messages ───────────────────────────────────────────────
   viewChatThreads: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
@@ -1271,6 +1271,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         term: t.term,
         definition: t.definition,
         avoid: [...t.aliases],
+        surfaceForms: [...(t.surfaceForms.length > 0 ? t.surfaceForms : generateDefaultSurfaceForms(t.term))],
       })),
     }
   }

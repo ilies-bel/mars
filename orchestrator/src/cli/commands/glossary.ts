@@ -6,7 +6,10 @@
  */
 
 import { resolve as resolvePath } from 'node:path'
-import { readGlossaryFile } from '../../core/lib/glossary'
+import {
+  readGlossaryFile,
+  generateDefaultSurfaceForms,
+} from '../../core/lib/glossary'
 import type { Command } from '../command'
 import { spawnNoticeErr } from './shared'
 
@@ -17,13 +20,13 @@ const glossarySet: Command = {
   path: 'glossary set',
   summary: 'set a glossary term (daemon-routed write to CONTEXT.md)',
   usage:
-    'usage: mars glossary set "<term>" "<definition>" [--avoid alias1,alias2]',
+    'usage: mars glossary set "<term>" "<definition>" [--avoid alias1,alias2] [--surface-form f1 ...]',
   run: async (args, deps) => {
     const term = args.positional[0]
     const definition = args.positional[1]
     if (!term || !definition) {
       deps.err(
-        'usage: mars glossary set "<term>" "<definition>" [--avoid alias1,alias2]',
+        'usage: mars glossary set "<term>" "<definition>" [--avoid alias1,alias2] [--surface-form f1 ...]',
       )
       return { code: 2 }
     }
@@ -34,8 +37,17 @@ const glossarySet: Command = {
           .map((a) => a.trim())
           .filter((a) => a.length > 0)
       : []
+    const sfFlags = args.multiFlags['--surface-form'] ?? []
+    const surfaceForms = sfFlags.length > 0 ? sfFlags : undefined
     await deps.daemon.sendRequest(
-      { op: 'glossary-write', kind: 'set', term, definition, aliases },
+      {
+        op: 'glossary-write',
+        kind: 'set',
+        term,
+        definition,
+        aliases,
+        surfaceForms,
+      },
       { onSpawnNotice: spawnNoticeErr(deps.err) },
     )
     deps.out(`glossary set dispatched: "${term}"`)
@@ -103,6 +115,11 @@ const glossaryShow: Command = {
     if (found.aliases.length > 0) {
       deps.out(`avoid:       ${found.aliases.join(', ')}`)
     }
+    const forms =
+      found.surfaceForms.length > 0
+        ? found.surfaceForms
+        : generateDefaultSurfaceForms(found.term)
+    deps.out(`surface forms: ${[...forms].join(', ')}`)
     return { code: 0 }
   },
 }

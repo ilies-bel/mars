@@ -90,6 +90,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--manifest',
   // mars verify add — repeated gate args (--args tsc --args --noEmit)
   '--args',
+  '--surface-form',
   // mars credentials set — human-readable description of the credential
   '--description',
   // mars task add --supersede <task-id>: declare this task as a manual
@@ -106,6 +107,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--resume-at',
   '--suppress-recovery',
   '--ramp-back-step',
+  '--surface-form',
 ])
 
 /**
@@ -167,6 +169,7 @@ export const REPEATABLE_FLAGS: ReadonlySet<string> = new Set([
   '--done',
   '--tag',
   '--args',
+  '--surface-form',
 ])
 
 export const parseArgs = (argv: readonly string[]): ParsedArgs => {
