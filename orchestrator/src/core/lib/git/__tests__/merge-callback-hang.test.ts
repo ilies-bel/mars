@@ -21,7 +21,7 @@
  * callsite without mocking git internals. The test timeout (10 s) would trip
  * if the lock were held beyond the watchdog budget.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -63,6 +63,18 @@ beforeAll(() => {
   // Sanity: task/feat is exactly 1 commit ahead of main.
   const ahead = git('rev-list', '--count', 'main..task/feat')
   if (ahead !== '1') throw new Error(`unexpected ahead count: ${ahead}`)
+})
+
+// Re-pin the repo context before EVERY test, not just once in beforeAll.
+// `MARS_REPO` and the resolved-context cache are process-globals shared by every
+// test file in the worker, and the sibling merge suites clear both in their own
+// `afterAll`. When this file runs alongside them, `repoRoot()` resolved to
+// another suite's directory, whose untracked `.mars/` tripped the pre-rebase
+// dirty guard — so mergeBranch aborted before reaching the seam under test and
+// the watchdog was never exercised.
+beforeEach(() => {
+  process.env.MARS_REPO = repoDir
+  __resetContextCacheForTests()
 })
 
 afterAll(() => {
