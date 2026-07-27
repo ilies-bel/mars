@@ -46,6 +46,7 @@ import { promisify } from 'node:util'
 import { extname, isAbsolute, join, resolve } from 'node:path'
 
 import { discoverAppBoot, type BootPlan } from './app-boot-discovery'
+import { runBrowserCheck, type CriterionResult } from './browser-check'
 
 const execFileAsync = promisify(execFile)
 
@@ -324,6 +325,16 @@ export interface BehaviourVerifyDeps {
    * tests so no subprocess is spawned during unit tests.
    */
   getDiff: (worktreePath: string, integrationBranch: string) => Promise<string>
+  /**
+   * Launch the app from a BootPlan and capture a screenshot per criterion.
+   * Defaults to {@link runBrowserCheck} from browser-check.ts; injectable for
+   * tests so no real browser or dev server is needed.
+   */
+  runBrowserCheck: (
+    bootPlan: BootPlan,
+    criteria: readonly string[],
+    opts: { taskId: string; worktreeDir: string; logDir: string },
+  ) => Promise<CriterionResult[]>
 }
 
 const defaultGetDiff = async (worktreePath: string, integrationBranch: string): Promise<string> => {
@@ -346,6 +357,7 @@ const defaultDeps: BehaviourVerifyDeps = {
   findOpenDraftByKpiTag,
   raiseActionQueueItem,
   getDiff: defaultGetDiff,
+  runBrowserCheck: (boot, criteria, opts) => runBrowserCheck(boot, criteria, opts),
 }
 
 /** Per-call domain options for {@link behaviourVerify}. All fields default. */
@@ -677,6 +689,10 @@ export const behaviourVerify = async (
   const diff = await deps.getDiff(worktree.path, integrationBranch)
   const boot = touchesUi(diff) ? discoverAppBoot(worktree.path) : null
 
+  // Mutable slot populated inside `fn` so `getExtraPayload` (called after fn
+  // completes) can reflect the actual run outcome in the step trace.
+  let stepResult: BehaviourVerifyResult | null = null
+
   return await runNonLlmStepWithSpan({
     stepName: BEHAVIOUR_VERIFY_STEP_NAME,
     workflowInstanceId: trace.workflowInstanceId,
@@ -685,16 +701,48 @@ export const behaviourVerify = async (
     phase: 'verify',
     traceStore: spanStore(trace),
     getExtraPayload: () => ({
-      behaviourVerifyOutcome: boot !== null
-        ? `boot-discovered:no-preview-command`
-        : 'unverifiable:no-preview-command',
+      // When boot is null we preserve the original string so existing callers
+      // and tests that assert on this field are not broken. When browser check
+      // ran we tag it with the actual outcome.
+      behaviourVerifyOutcome: boot === null
+        ? 'unverifiable:no-preview-command'
+        : (stepResult !== null ? `browser-check:${stepResult.outcome}` : 'browser-check:pending'),
       bootPlan: boot,
-      verdicts: null,
-      artifacts: [],
-      devServerLogPath: null,
+      verdicts: stepResult?.verdicts ?? null,
+      artifacts: stepResult?.artifacts ?? [],
+      devServerLogPath: stepResult?.devServerLogPath ?? null,
     }),
-    fn: async (): Promise<BehaviourVerifyResult> =>
-      cantVerify('no-preview-command', { bootPlan: boot }),
+    fn: async (): Promise<BehaviourVerifyResult> => {
+      if (boot === null) {
+        stepResult = await cantVerify('no-preview-command')
+        return stepResult
+      }
+
+      const logDir = join(ctxResolved.stateDir, 'dev-servers')
+      const browserResults: CriterionResult[] = await deps.runBrowserCheck(
+        boot,
+        [...criteria],
+        { taskId, worktreeDir: worktree.path, logDir },
+      )
+
+      // Map CriterionResult → CriterionVerdict so the existing fold logic and
+      // artifact builder can consume the browser check output.
+      const verdicts: CriterionVerdict[] = browserResults.map((r, i) => ({
+        criterionIndex: i,
+        verdict: r.verdict,
+        evidence: r.screenshotPath,
+        note: r.note,
+      }))
+
+      const artifacts = buildArtifacts(verdicts, artifactsDir)
+
+      stepResult = await cantVerify('no-exercisable-criteria', {
+        verdicts,
+        artifacts,
+        bootPlan: boot,
+      })
+      return stepResult
+    },
   })
 
 }

@@ -343,6 +343,16 @@ const makeDeps = (args: {
     findOpenDraftByKpiTag: vi.fn(async () => args.existingDraft ?? null),
     raiseActionQueueItem: vi.fn(async () => 'aq-1'),
     getDiff: vi.fn(async () => args.diff ?? ''),
+    // Stub out the browser check so tests never start a real dev server or
+    // browser. Returns all-unverifiable results immediately.
+    runBrowserCheck: vi.fn(async (_boot, criteria) =>
+      [...criteria].map((criterion: string) => ({
+        criterion,
+        verdict: 'unverifiable' as const,
+        screenshotPath: null,
+        note: 'mocked: no real browser in unit tests',
+      })),
+    ),
   }
   return { deps }
 }

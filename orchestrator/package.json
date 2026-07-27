@@ -36,10 +36,10 @@
     "@electric-sql/pglite": "^0.5.4",
     "@mars/workflow": "file:../packages/workflow",
     "embedded-postgres": "18.4.0-beta.17",
-    "pg": "^8.22.0",
     "ink": "^7.0.2",
     "js-yaml": "^4.1.1",
     "node-pty": "^1.1.0",
+    "pg": "^8.22.0",
     "react": "^19.2.0",
     "smol-toml": "^1.6.1",
     "tsx": "^4.22.5",
@@ -47,6 +47,7 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.6.0",
     "@types/pg": "^8.20.0",
