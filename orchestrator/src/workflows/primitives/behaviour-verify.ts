@@ -41,7 +41,13 @@
  * with zero schema migration.
  */
 import { z } from 'zod'
-import { isAbsolute, join, resolve } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { extname, isAbsolute, join, resolve } from 'node:path'
+
+import { discoverAppBoot, type BootPlan } from './app-boot-discovery'
+
+const execFileAsync = promisify(execFile)
 
 import type { WorktreeRef } from '../../core/lib/git/worktree'
 import { getTask, type Task } from '../../core/queue'
@@ -295,6 +301,12 @@ export interface BehaviourVerifyResult {
   artifacts: BehaviourVerifyArtifact[]
   /** Dev-server log path when a server was booted. */
   devServerLogPath: string | null
+  /**
+   * Boot plan discovered by {@link discoverAppBoot} when the task's diff
+   * touched UI files. Null when the diff carries no UI changes, no boot
+   * command was discoverable, or the step was skipped.
+   */
+  bootPlan: BootPlan | null
 }
 
 /**
@@ -306,6 +318,26 @@ export interface BehaviourVerifyDeps {
   createProposal: typeof createProposal
   findOpenDraftByKpiTag: typeof findOpenDraftByKpiTag
   raiseActionQueueItem: typeof raiseActionQueueItem
+  /**
+   * Return the `git diff --name-only` output for the worktree branch vs the
+   * integration branch. Defaults to the real `git` invocation; injectable for
+   * tests so no subprocess is spawned during unit tests.
+   */
+  getDiff: (worktreePath: string, integrationBranch: string) => Promise<string>
+}
+
+const defaultGetDiff = async (worktreePath: string, integrationBranch: string): Promise<string> => {
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['-C', worktreePath, 'diff', `${integrationBranch}...HEAD`, '--name-only'],
+      { maxBuffer: 1_048_576 },
+    )
+    return stdout
+  } catch {
+    // Not a git repo, or git not available — treat as no UI files touched.
+    return ''
+  }
 }
 
 const defaultDeps: BehaviourVerifyDeps = {
@@ -313,6 +345,7 @@ const defaultDeps: BehaviourVerifyDeps = {
   createProposal,
   findOpenDraftByKpiTag,
   raiseActionQueueItem,
+  getDiff: defaultGetDiff,
 }
 
 /** Per-call domain options for {@link behaviourVerify}. All fields default. */
@@ -411,6 +444,40 @@ const unblockHint = (reason: UnverifiableReason): string => {
 }
 
 // ---------------------------------------------------------------------------
+// UI-file detection
+// ---------------------------------------------------------------------------
+
+/**
+ * File extensions that indicate UI/frontend work. Used to decide whether to
+ * attempt dev-server discovery for a given task diff.
+ */
+const UI_EXTENSIONS = new Set([
+  '.tsx', '.jsx', '.css', '.scss', '.sass', '.less',
+  '.html', '.svg', '.vue', '.svelte',
+])
+
+/**
+ * Path segments that indicate UI/frontend work regardless of extension. A file
+ * is considered a UI file when any of these segments appear in its path.
+ */
+const UI_PATH_SEGMENTS = ['ui/', '/ui/', 'components/', 'pages/', 'app/', 'frontend/', 'views/']
+
+/**
+ * Return true when the `--name-only` git diff output contains at least one
+ * file that looks like a UI/frontend file (by extension or path convention).
+ * A false negative is safe — the caller degrades to CAN'T-VERIFY, which is
+ * always a soft outcome.
+ */
+const touchesUi = (nameOnlyDiff: string): boolean => {
+  const lines = nameOnlyDiff.split('\n').filter((l) => l.trim().length > 0)
+  return lines.some((file) => {
+    const lower = file.toLowerCase()
+    if (UI_EXTENSIONS.has(extname(lower))) return true
+    return UI_PATH_SEGMENTS.some((seg) => lower.startsWith(seg) || lower.includes(seg))
+  })
+}
+
+// ---------------------------------------------------------------------------
 // The primitive
 // ---------------------------------------------------------------------------
 
@@ -447,6 +514,7 @@ export const behaviourVerify = async (
     verdicts: null,
     artifacts: [],
     devServerLogPath: null,
+    bootPlan: null,
   })
 
   // Skips mirror static verify's scope logic: a diagnose Chore has no
@@ -489,6 +557,7 @@ export const behaviourVerify = async (
       devServerLogPath?: string | null
       verdicts?: CriterionVerdict[] | null
       artifacts?: BehaviourVerifyArtifact[]
+      bootPlan?: BootPlan | null
     } = {},
   ): Promise<BehaviourVerifyResult> => {
     const fingerprint = behaviourUnverifiedFingerprint(trace.originId)
@@ -575,13 +644,39 @@ export const behaviourVerify = async (
       verdicts: detail.verdicts ?? null,
       artifacts: detail.artifacts ?? [],
       devServerLogPath: detail.devServerLogPath ?? null,
+      bootPlan: detail.bootPlan ?? null,
     }
   }
 
   // ── CAN'T-VERIFY: no runnable surface wired to this task ─────────────────
-  // Without a per-task preview command, the step cannot boot a dev server.
-  // File the draft proposal + action-queue row, then return so merge proceeds.
-  const reason: UnverifiableReason = criteria.length === 0 ? 'no-done-criteria' : 'no-preview-command'
+  // Without a live surface the step cannot exercise the Definition of Done.
+  // Attempt to discover a boot command from repo signals when the diff touches
+  // UI files; record the result on the run regardless of whether a plan was
+  // found. The merge proceeds in all cases (CAN'T-VERIFY is always soft).
+
+  if (criteria.length === 0) {
+    return await runNonLlmStepWithSpan({
+      stepName: BEHAVIOUR_VERIFY_STEP_NAME,
+      workflowInstanceId: trace.workflowInstanceId,
+      originId: trace.originId,
+      taskId,
+      phase: 'verify',
+      traceStore: spanStore(trace),
+      getExtraPayload: () => ({
+        behaviourVerifyOutcome: 'unverifiable:no-done-criteria',
+        bootPlan: null,
+        verdicts: null,
+        artifacts: [],
+        devServerLogPath: null,
+      }),
+      fn: async (): Promise<BehaviourVerifyResult> => cantVerify('no-done-criteria'),
+    })
+  }
+
+  // Has criteria — inspect the diff to decide whether to attempt boot discovery.
+  const diff = await deps.getDiff(worktree.path, integrationBranch)
+  const boot = touchesUi(diff) ? discoverAppBoot(worktree.path) : null
+
   return await runNonLlmStepWithSpan({
     stepName: BEHAVIOUR_VERIFY_STEP_NAME,
     workflowInstanceId: trace.workflowInstanceId,
@@ -590,12 +685,16 @@ export const behaviourVerify = async (
     phase: 'verify',
     traceStore: spanStore(trace),
     getExtraPayload: () => ({
-      behaviourVerifyOutcome: `unverifiable:${reason}`,
+      behaviourVerifyOutcome: boot !== null
+        ? `boot-discovered:no-preview-command`
+        : 'unverifiable:no-preview-command',
+      bootPlan: boot,
       verdicts: null,
       artifacts: [],
       devServerLogPath: null,
     }),
-    fn: async (): Promise<BehaviourVerifyResult> => cantVerify(reason),
+    fn: async (): Promise<BehaviourVerifyResult> =>
+      cantVerify('no-preview-command', { bootPlan: boot }),
   })
 
 }

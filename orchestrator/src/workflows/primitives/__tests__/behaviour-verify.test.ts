@@ -1,5 +1,5 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -332,6 +332,8 @@ interface DepsHarness {
 const makeDeps = (args: {
   task: Task | null
   existingDraft?: { id: string; title: string } | null
+  /** Simulated git diff --name-only output; defaults to empty (no UI files). */
+  diff?: string
 }): DepsHarness => {
   const deps: BehaviourVerifyDeps = {
     getTask: vi.fn(async () => args.task),
@@ -340,6 +342,7 @@ const makeDeps = (args: {
     ),
     findOpenDraftByKpiTag: vi.fn(async () => args.existingDraft ?? null),
     raiseActionQueueItem: vi.fn(async () => 'aq-1'),
+    getDiff: vi.fn(async () => args.diff ?? ''),
   }
   return { deps }
 }
@@ -482,5 +485,117 @@ describe('runNonLlmStepWithSpan — getExtraPayload lands on step_ended (artifac
     expect(ended).toBeDefined()
     expect(ended!.payload.behaviourVerifyOutcome).toBe('unverifiable:no-preview-command')
     expect(ended!.payload.outcome).toBe('completed')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Boot discovery integration — discoverAppBoot wired into behaviourVerify
+// ---------------------------------------------------------------------------
+
+describe('behaviourVerify — boot discovery from repo signals', () => {
+  let viteRepoRoot: string
+
+  beforeEach(() => {
+    __resetContextCacheForTests()
+    process.env.MARS_REPO = tmpRepo
+    viteRepoRoot = mkdtempSync(join(tmpdir(), 'mars-boot-disc-bv-'))
+    // Create a minimal Vite project so discoverAppBoot can detect it.
+    writeFileSync(join(viteRepoRoot, 'vite.config.ts'), '')
+  })
+
+  afterEach(() => {
+    rmSync(viteRepoRoot, { recursive: true, force: true })
+  })
+
+  it('bootPlan is recorded on the run when diff touches UI files and boot is discoverable', async () => {
+    const { store, events } = makeTraceStore()
+    const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
+    const { deps } = makeDeps({
+      task: taskWithSpec({ doneCriteria: ['banner renders on the home page'] }),
+      diff: 'ui/src/App.tsx\nui/src/styles.css\n',
+    })
+
+    const result = await behaviourVerify(ctx, {
+      worktree: { path: viteRepoRoot, branch: 'task/mars-behav01' },
+      deps,
+    })
+
+    // Still CAN'T-VERIFY because no server was actually started, but the
+    // bootPlan carries the discovered command and URL.
+    expect(result.outcome).toBe('unverifiable')
+    expect(result.bootPlan).not.toBeNull()
+    expect(result.bootPlan!.cmd).toBe('npm run dev')
+    expect(result.bootPlan!.url).toBe('http://localhost:5173')
+    expect(result.bootPlan!.reason).toContain('vite')
+
+    // The span payload also carries the bootPlan (readable via the HTTP API).
+    const ended = events.find(
+      (e) => e.kind === 'step_ended' && e.payload.stepName === BEHAVIOUR_VERIFY_STEP_NAME,
+    )
+    expect(ended).toBeDefined()
+    expect(ended!.payload.bootPlan).not.toBeNull()
+    const bootPlanOnSpan = ended!.payload.bootPlan as { cmd: string; url: string; reason: string }
+    expect(bootPlanOnSpan.cmd).toBe('npm run dev')
+    expect(bootPlanOnSpan.url).toBe('http://localhost:5173')
+  })
+
+  it('bootPlan is null when diff has no UI files — boot discovery is skipped entirely', async () => {
+    const { store } = makeTraceStore()
+    const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
+    const { deps } = makeDeps({
+      task: taskWithSpec({ doneCriteria: ['API returns 200'] }),
+      diff: 'orchestrator/src/core/queue.ts\npackage.json\n',
+    })
+
+    const result = await behaviourVerify(ctx, {
+      worktree: { path: viteRepoRoot, branch: 'task/mars-behav01' },
+      deps,
+    })
+
+    expect(result.outcome).toBe('unverifiable')
+    expect(result.bootPlan).toBeNull()
+    // getDiff should have been called once to inspect the diff.
+    expect(deps.getDiff).toHaveBeenCalledTimes(1)
+  })
+
+  it('getDiff is NOT called when criteria list is empty (short-circuit before diff)', async () => {
+    const { store } = makeTraceStore()
+    const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
+    const { deps } = makeDeps({
+      task: taskWithSpec({ doneCriteria: [] }),
+    })
+
+    const result = await behaviourVerify(ctx, {
+      worktree: { path: viteRepoRoot, branch: 'task/mars-behav01' },
+      deps,
+    })
+
+    expect(result.outcome).toBe('unverifiable')
+    expect(result.reason).toBe('no-done-criteria')
+    expect(result.bootPlan).toBeNull()
+    expect(deps.getDiff).not.toHaveBeenCalled()
+  })
+
+  it('bootPlan is null when UI diff is detected but no boot command found in the repo', async () => {
+    // Empty repo — no vite.config, no package.json.
+    const emptyRepoRoot = mkdtempSync(join(tmpdir(), 'mars-boot-empty-'))
+    try {
+      const { store } = makeTraceStore()
+      const ctx = makeCtx({ taskId: 'mars-behav01', kind: 'task' }, store)
+      const { deps } = makeDeps({
+        task: taskWithSpec({ doneCriteria: ['form submits successfully'] }),
+        diff: 'ui/src/Form.tsx\n',
+      })
+
+      const result = await behaviourVerify(ctx, {
+        worktree: { path: emptyRepoRoot, branch: 'task/mars-behav01' },
+        deps,
+      })
+
+      expect(result.outcome).toBe('unverifiable')
+      expect(result.bootPlan).toBeNull()
+    } finally {
+      rmSync(emptyRepoRoot, { recursive: true, force: true })
+    }
   })
 })
