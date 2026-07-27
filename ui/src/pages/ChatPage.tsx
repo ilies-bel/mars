@@ -1019,6 +1019,11 @@ const ChatConversation = ({
 
   const isBusy = status === 'streaming' || status === 'submitted'
   const serverRunning = threadDetail?.thread.status === 'running'
+
+  // Queued-next message: captured while a run is active, auto-submitted when ready.
+  const [queued, setQueued] = useState<{ text: string; attachments?: AttachmentInfo[] } | null>(null)
+  // Local prefill for restoring text when the user cancels a queued message.
+  const [localPrefill, setLocalPrefill] = useState<string | undefined>(undefined)
   // Pending indicator: show from the moment a send lands until the first stream
   // token arrives (submitted), and also whenever the daemon has an active run
   // that the client hasn't started streaming yet (server-initiated run, idle).
@@ -1053,6 +1058,23 @@ const ChatConversation = ({
     },
     [sendMessage, qc],
   )
+
+  // Auto-submit the queued message when the run finishes (status transitions
+  // from streaming/submitted → ready). The prev-status ref tracks transitions
+  // so re-renders that don't change status don't double-fire.
+  const prevStatusRef = useRef<string>(status)
+  useEffect(() => {
+    const prevStatus = prevStatusRef.current
+    prevStatusRef.current = status
+    if (
+      (prevStatus === 'streaming' || prevStatus === 'submitted') &&
+      status === 'ready' &&
+      queued !== null
+    ) {
+      void handleSend(queued.text, queued.attachments)
+      setQueued(null)
+    }
+  }, [status, queued, handleSend])
 
   // Stopping a run settles the transport (via the abort signal's onAbort handler,
   // which sends a finish chunk and calls stopChatThread on the daemon) and then
@@ -1182,9 +1204,23 @@ const ChatConversation = ({
         isBusy={isBusy || serverRunning}
         onSend={handleSend}
         onStop={handleStop}
-        initialText={prefill}
-        onInitialTextConsumed={onPrefillConsumed}
+        initialText={localPrefill ?? prefill}
+        onInitialTextConsumed={() => {
+          if (localPrefill !== undefined) {
+            setLocalPrefill(undefined)
+          } else {
+            onPrefillConsumed()
+          }
+        }}
         threadTokens={totalTokens > 0 ? totalTokens : null}
+        onQueueNext={(text, att) => setQueued({ text, attachments: att })}
+        queuedNext={queued ? { text: queued.text, attachmentCount: queued.attachments?.length ?? 0 } : null}
+        onCancelQueued={() => {
+          if (queued) {
+            setLocalPrefill(queued.text)
+            setQueued(null)
+          }
+        }}
       />
     </>
   )
@@ -1697,6 +1733,12 @@ export interface ComposerProps {
   isBusy?: boolean
   /** Cumulative token count (input + output) for all messages in this thread. */
   threadTokens?: number | null
+  /** Called when a message is queued while a run is active (isBusy). */
+  onQueueNext?: (text: string, attachments?: AttachmentInfo[]) => void
+  /** The currently queued next message, or null if none. Renders a preview chip. */
+  queuedNext?: { text: string; attachmentCount: number } | null
+  /** Called when the user cancels the queued message chip. Should restore the text to the composer. */
+  onCancelQueued?: () => void
 }
 
 /** A pending file attachment in the composer before it is uploaded. */
@@ -1721,6 +1763,9 @@ export const Composer = ({
   onStop,
   isBusy = false,
   threadTokens,
+  onQueueNext,
+  queuedNext,
+  onCancelQueued,
 }: ComposerProps) => {
   const [text, setText] = useState('')
   const [showPalette, setShowPalette] = useState(false)
@@ -1816,10 +1861,39 @@ export const Composer = ({
     onError: (err) => setLocalSendError(sendErrorMessage(err)),
   })
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     const trimmed = text.trim()
     // Allow sending with just attachments (empty text) or just text.
-    if ((!trimmed && attachments.length === 0) || isBusy || isPending || sendPending || isUploading) return
+    if (!trimmed && attachments.length === 0) return
+    if (isPending || sendPending || isUploading) return
+
+    // Queue path: when the thread is busy and a queue callback is provided,
+    // capture the message (uploading any attachments eagerly) instead of sending.
+    if (isBusy && onQueueNext) {
+      setShowPalette(false)
+      setLocalSendError(null)
+      let uploadedAttachments: AttachmentInfo[] | undefined
+      if (attachments.length > 0 && threadId) {
+        setIsUploading(true)
+        try {
+          uploadedAttachments = await Promise.all(
+            attachments.map((a) => uploadAttachment(threadId, a.file, projectId)),
+          )
+        } catch (err) {
+          setLocalSendError(sendErrorMessage(err))
+          return
+        } finally {
+          setIsUploading(false)
+        }
+      }
+      onQueueNext(trimmed, uploadedAttachments)
+      setText('')
+      setAttachments([])
+      return
+    }
+
+    if (isBusy) return  // busy but no queue callback — block send as before
+
     setShowPalette(false)
     setLocalSendError(null)
     if (onSendOverride) {
@@ -1832,7 +1906,7 @@ export const Composer = ({
       send(trimmed)
       // setText('') / attachment clearing handled inside send.onSuccess so inputs survive failure
     }
-  }, [text, attachments.length, isBusy, isPending, sendPending, isUploading, onSendOverride, onSend, send])
+  }, [text, attachments, isBusy, isPending, sendPending, isUploading, onQueueNext, threadId, projectId, onSendOverride, onSend, send])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showPalette && matches.length > 0) {
@@ -2042,6 +2116,27 @@ export const Composer = ({
             e.target.value = ''
           }}
         />
+
+        {/* Queued-next chip — shown when a message is waiting to be sent after the current run finishes. */}
+        {queuedNext && (
+          <div
+            data-testid="queued-next-chip"
+            className="flex items-center gap-2 border-b border-border px-3 py-2 text-[11px] text-muted-foreground"
+          >
+            <span className="flex-1 truncate font-mono opacity-70">{queuedNext.text}</span>
+            {queuedNext.attachmentCount > 0 && (
+              <span className="font-mono text-[10px] opacity-60">{queuedNext.attachmentCount} att.</span>
+            )}
+            <button
+              type="button"
+              data-testid="queued-next-cancel"
+              className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+              onClick={onCancelQueued}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
 
         {/* Attachment preview chips */}
         {attachments.length > 0 && (

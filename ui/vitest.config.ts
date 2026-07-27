@@ -45,6 +45,7 @@ export default defineConfig({
           exclude: [
             'src/**/*.composer.test.tsx',
             'src/pages/ChatPage.test.tsx',
+            'src/pages/ChatPage.queue.test.tsx',
           ],
         },
       },
@@ -59,6 +60,7 @@ export default defineConfig({
           include: [
             'src/**/*.composer.test.tsx',
             'src/pages/ChatPage.test.tsx',
+            'src/pages/ChatPage.queue.test.tsx',
           ],
         },
       },
