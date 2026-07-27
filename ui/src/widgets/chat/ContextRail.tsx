@@ -21,8 +21,10 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchGlossary, fetchSkills, fetchAdrs, fetchChatThread, fetchVision } from '@/shared/api'
 import { SkeletonList } from '@/components/Skeleton'
 import { parseCreatedTaskIds } from './parseCreatedTaskIds'
+import { useThreadFocus } from './useThreadFocus'
 
-import type { GlossaryTerm, Skill, ChatSegmentAttachment, AdrEntry, ChatThreadDetail } from '@/shared/schemas'
+import type { GlossaryTerm, Skill, ChatSegmentAttachment, AdrEntry, ChatThreadDetail, ProgressTask } from '@/shared/schemas'
+import type { ThreadFocusResult } from './useThreadFocus'
 
 // ---------------------------------------------------------------------------
 // Status chip
@@ -55,9 +57,63 @@ const statusChip = (status: string) =>
 interface FocusPanelProps {
   threadDetail?: ChatThreadDetail | null
   isStreaming?: boolean
+  focusResult?: ThreadFocusResult
 }
 
-const FocusPanel = ({ threadDetail, isStreaming }: FocusPanelProps) => {
+const FocusPanel = ({ threadDetail, isStreaming, focusResult }: FocusPanelProps) => {
+  // Linked entity: render kind badge + entity title + optional status chip.
+  if (focusResult && focusResult.kind !== 'none' && focusResult.entity) {
+    const { kind, entity, sourceLabel } = focusResult
+
+    if ('cluster' in entity) {
+      // ProgressTask entity
+      const task = entity as ProgressTask
+      const chip = statusChip(task.status)
+      return (
+        <div className="flex flex-col gap-1 px-3 py-2">
+          <span
+            className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60"
+            data-testid="focus-panel-kind-badge"
+          >
+            {kind}
+          </span>
+          <span
+            className="font-mono text-[10px] leading-snug text-foreground/80 line-clamp-2"
+            data-testid="focus-panel-title"
+          >
+            {task.intent ?? task.prompt}
+          </span>
+          <span
+            className={`font-mono text-[10px] uppercase ${chip.className}`}
+            data-testid="focus-panel-status-chip"
+          >
+            {chip.label}
+          </span>
+        </div>
+      )
+    }
+
+    // ActionQueueItem entity (alert or proposal)
+    const badgeLabel = kind === 'proposal' ? 'proposal' : sourceLabel
+    return (
+      <div className="flex flex-col gap-1 px-3 py-2">
+        <span
+          className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60"
+          data-testid="focus-panel-kind-badge"
+        >
+          {badgeLabel}
+        </span>
+        <span
+          className="font-mono text-[10px] leading-snug text-foreground/80 line-clamp-2"
+          data-testid="focus-panel-title"
+        >
+          {entity.title}
+        </span>
+      </div>
+    )
+  }
+
+  // Fallback: unlinked thread — show thread title and status chip (slice 1 behaviour).
   if (!threadDetail) {
     return (
       <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground/60">
@@ -521,6 +577,7 @@ export const ContextRail = ({
   collapsed = false,
   onToggleCollapse,
 }: ContextRailProps) => {
+  const focusResult = useThreadFocus(threadDetail?.thread)
   if (collapsed) {
     return (
       <aside
@@ -564,6 +621,7 @@ export const ContextRail = ({
         <FocusPanel
           threadDetail={activeThreadId ? threadDetail : null}
           isStreaming={isStreaming}
+          focusResult={activeThreadId ? focusResult : undefined}
         />
       </PanelSection>
 

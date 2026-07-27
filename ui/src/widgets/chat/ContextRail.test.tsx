@@ -19,7 +19,7 @@ import { describe, it, expect } from 'bun:test'
 import { vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ContextRail, ProjectVisionPanel, SessionArtifactsPanel } from './ContextRail'
-import type { ChatThreadDetail } from '@/shared/schemas'
+import type { ActionQueueItem, ChatThreadDetail, ProgressTask } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
 // Module mocks
@@ -30,6 +30,13 @@ const mockState = vi.hoisted(() => ({
   queryOverride: null as ((opts: { queryKey: unknown[] }) => unknown) | null,
 }))
 
+// Shared state for useThreadFocus hook mocks.
+const mockFocusState = vi.hoisted(() => ({
+  aqItems: [] as ActionQueueItem[],
+  historyItems: [] as ActionQueueItem[],
+  tasks: null as ProgressTask[] | null,
+}))
+
 // All panels (Glossary, Skills, SessionArtifacts, Vision) call useQuery.
 // The default returns isLoading=true (a safe "Loading…" state for most tests).
 // Tests that need specific data can set mockState.queryOverride.
@@ -38,6 +45,40 @@ vi.mock('@tanstack/react-query', () => ({
     if (mockState.queryOverride) return mockState.queryOverride(opts)
     return { data: undefined, isLoading: true, isError: false }
   },
+}))
+
+// Mock the three hooks that useThreadFocus depends on so the test file does not
+// require context providers (FocusedProjectProvider, QueryClientProvider, etc.).
+vi.mock('@/entities/actionQueue/useActionQueue', () => ({
+  useActionQueue: () => ({
+    items: mockFocusState.aqItems,
+    error: null,
+    projectsError: null,
+    projectsEmpty: false,
+  }),
+}))
+
+vi.mock('@/entities/actionQueue/useActionQueueHistory', () => ({
+  useActionQueueHistory: () => ({
+    items: mockFocusState.historyItems,
+    nextCursor: null,
+    isLoadingMore: false,
+    loadMore: () => {},
+    error: null,
+    projectsError: null,
+    projectsEmpty: false,
+  }),
+}))
+
+vi.mock('@/hooks/useProgress', () => ({
+  useProgress: () => ({
+    tasks: mockFocusState.tasks,
+    proposals: [],
+    byCluster: { Queued: [], 'In progress': [], Blocked: [], Failed: [], Done: [] },
+    aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 },
+    error: null,
+    connected: false,
+  }),
 }))
 
 // ---------------------------------------------------------------------------
@@ -404,5 +445,173 @@ describe('ContextRail – SessionArtifactsPanel with thread data', () => {
     mockState.queryOverride = null
 
     expect(html).toContain('No ADRs yet')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Focus panel – linked entity via useThreadFocus
+// ---------------------------------------------------------------------------
+
+describe('ContextRail – FocusPanel linked entity', () => {
+  it('alert-linked thread: shows kind badge and entity title', () => {
+    const alertItem: ActionQueueItem = {
+      id: 'alert-item-1',
+      entityId: 'wt-123',
+      kind: 'stale-worktree',
+      title: 'Stale worktree in branch task-abc',
+      body: 'Worktree has been stale for 24 hours',
+      at: '2024-01-01T00:00:00.000Z',
+      priority: 'normal',
+      dag: null,
+      errorKind: '',
+      actions: [],
+      humanSummary: '',
+      verbs: [],
+      staleWorktreeDetail: {
+        prompt: null,
+        status: 'done',
+        ageHours: 24,
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        branch: 'task-abc',
+        empty: false,
+        investigation: null,
+      },
+    }
+    mockFocusState.aqItems = [alertItem]
+
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-alert-1',
+        title: 'Alert thread',
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 0,
+        origin: 'alert',
+        alertItemId: 'alert-item-1',
+        alertResolved: false,
+      },
+      messages: [],
+    }
+
+    const html = renderToStaticMarkup(
+      <ContextRail
+        sessionStartedAt={0}
+        onInsertPrompt={() => {}}
+        activeThreadId="thread-alert-1"
+        threadDetail={threadDetail}
+      />,
+    )
+    mockFocusState.aqItems = []
+
+    // Kind badge uses kindBadgeLabel('stale-worktree') = 'stale wt'
+    expect(html).toContain('data-testid="focus-panel-kind-badge"')
+    expect(html).toContain('stale wt')
+    // Entity title is rendered
+    expect(html).toContain('Stale worktree in branch task-abc')
+  })
+
+  it('task-linked thread: shows task badge, prompt excerpt, and task status', () => {
+    const alertItem: ActionQueueItem = {
+      id: 'alert-item-2',
+      entityId: 'task-xyz',
+      kind: 'failed-task',
+      title: 'Task failed',
+      body: 'Verification did not pass',
+      at: '2024-01-01T00:00:00.000Z',
+      priority: 'high',
+      dag: null,
+      errorKind: 'verify',
+      actions: [],
+      humanSummary: '',
+      verbs: [],
+    }
+    const taskEntity: ProgressTask = {
+      id: 'task-xyz',
+      prompt: 'Implement the new feature for users',
+      status: 'failed',
+      plan: null,
+      branch: null,
+      worktreePath: null,
+      error: 'Verification failed',
+      dropReason: null,
+      retryCount: 0,
+      blockedBy: [],
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+      cluster: 'Failed',
+    }
+    mockFocusState.aqItems = [alertItem]
+    mockFocusState.tasks = [taskEntity]
+
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-task-1',
+        title: 'Task thread',
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 0,
+        origin: 'alert',
+        alertItemId: 'alert-item-2',
+        alertResolved: false,
+      },
+      messages: [],
+    }
+
+    const html = renderToStaticMarkup(
+      <ContextRail
+        sessionStartedAt={0}
+        onInsertPrompt={() => {}}
+        activeThreadId="thread-task-1"
+        threadDetail={threadDetail}
+      />,
+    )
+    mockFocusState.aqItems = []
+    mockFocusState.tasks = null
+
+    // Kind badge shows 'task'
+    expect(html).toContain('data-testid="focus-panel-kind-badge"')
+    expect(html).toContain('>task<')
+    // Task prompt rendered
+    expect(html).toContain('Implement the new feature for users')
+    // Task status chip
+    expect(html).toContain('data-testid="focus-panel-status-chip"')
+    expect(html).toContain('failed')
+  })
+
+  it('unlinked thread: shows thread title and status, no kind badge', () => {
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-unlinked',
+        title: 'My unlinked thread',
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 0,
+        origin: null,
+        alertItemId: null,
+        alertResolved: false,
+      },
+      messages: [],
+    }
+
+    const html = renderToStaticMarkup(
+      <ContextRail
+        sessionStartedAt={0}
+        onInsertPrompt={() => {}}
+        activeThreadId="thread-unlinked"
+        threadDetail={threadDetail}
+      />,
+    )
+
+    // Thread title and status from slice 1 fallback
+    expect(html).toContain('My unlinked thread')
+    expect(html).toContain('data-testid="focus-panel-status-chip"')
+    // No linked-entity badge
+    expect(html).not.toContain('data-testid="focus-panel-kind-badge"')
   })
 })
