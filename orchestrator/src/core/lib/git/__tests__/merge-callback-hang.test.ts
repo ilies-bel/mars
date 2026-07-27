@@ -53,6 +53,14 @@ beforeAll(() => {
   git('config', 'user.name', 'Mars Test')
   git('config', 'commit.gpgsign', 'false')
 
+  // `getStateDir()` materialises `.mars/` inside the repo when the merge
+  // acquires `.merge.lock`. A real Mars repo gitignores that path; without the
+  // same ignore here it shows up as an untracked file, trips the pre-rebase
+  // dirty-worktree guard, and mergeBranch returns `{ aborted: true }` BEFORE it
+  // ever reaches the onBeforeFastForward seam — so the watchdog under test was
+  // never exercised and the assertion failed for an unrelated reason.
+  commitFile('.gitignore', '.mars/\n', 'c0: ignore orchestrator state')
+
   // c1 on main; branch task/feat off c1, add c2 so it is 1 commit ahead.
   commitFile('a.txt', 'a', 'c1')
   git('branch', 'task/feat')
