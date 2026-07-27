@@ -116,6 +116,10 @@ import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import { loadDeployConfig, DeployConfigError } from '../../core/lib/deployment/config'
 import { getProvider } from '../../core/lib/deployment/registry'
 import type { DeployResult } from '../../core/lib/deployment/provider'
+import {
+  ReviewPacketSchema,
+  type ReviewPacket,
+} from '../../core/lib/review-packet'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
@@ -339,8 +343,8 @@ export interface ValidateRecorderEntry {
   step: string | null
   primitive: 'setupWorktree' | 'runAgent' | 'review' | 'merge' | 'awaitHuman'
   /** Execution mode the workflow declares for this step. */
-  mode: 'auto' | 'manual'
-  /** Step guide for manual steps; null otherwise. */
+  mode: 'auto' | 'manual' | 'full-review'
+  /** Step guide for manual or full-review steps; null otherwise. */
   guide: string | null
 }
 
@@ -1301,8 +1305,73 @@ export const review = async (
     })
     return { verified: true }
   }
+
+  // Full-review type: spawn a review agent and produce a ReviewPacket.
+  if (opts.reviewType === 'full-review') {
+    const frTaskId = resolveTaskId(ctx, opts.taskId)
+    const frStore: TaskStore = ctx.services.store
+    const frWorktree = await resolveWorktree(ctx, frTaskId, frStore, opts.worktree)
+    const frBranch = frWorktree.branch
+    const frIntegrationBranch =
+      opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
+
+    const reviewPrompt = [
+      `You are a code reviewer. Review the changes on branch "${frBranch}" against "${frIntegrationBranch}".`,
+      `Run: git diff ${frIntegrationBranch}...${frBranch} --stat`,
+      `Then: git diff ${frIntegrationBranch}...${frBranch}`,
+      '',
+      'Produce a JSON object (and nothing else) matching this schema:',
+      '{ "type": "full-review", "findings": [{ "category": "correctness"|"security"|"style"|"test-coverage", "severity": "info"|"warn"|"error", "message": "<description>", "file": "<path>", "line": <number> }], "generatedAt": "<ISO timestamp>" }',
+      '',
+      'Review for correctness bugs, security issues, style violations, and missing test coverage.',
+      'Output ONLY the JSON object.',
+    ].join('\n')
+
+    const worker = Workers.Coder
+    const sessionKey = buildSessionKey(frTaskId)
+    const trace = await resolveTrace(ctx, frTaskId)
+
+    const r = await runWorkerWithSpan({
+      worker,
+      prompt: reviewPrompt,
+      runOptions: {
+        cwd: frWorktree.path,
+        sessionId: sessionKey,
+        onEvent: async () => {},
+        onPid: ctx.services.onPid,
+      },
+      traceStore: spanStore(trace),
+      stepName: 'full-review',
+      workflowInstanceId: trace.workflowInstanceId,
+      originId: trace.originId,
+      taskId: frTaskId,
+      phase: 'verify',
+    })
+
+    const rawOutput = extractLastStreamText(r.conversation) ?? r.stdout
+    let packet: ReviewPacket
+    try {
+      const jsonMatch = rawOutput.match(/\{[\s\S]*\}/)
+      const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(rawOutput)
+      packet = ReviewPacketSchema.parse(parsed)
+    } catch {
+      packet = {
+        type: 'full-review',
+        findings: [{
+          category: 'correctness',
+          severity: 'warn',
+          message: 'Review agent output could not be parsed into a ReviewPacket.',
+        }],
+        generatedAt: new Date().toISOString(),
+      }
+    }
+
+    await frStore.setReviewPacket(frTaskId, packet)
+    return { verified: true }
+  }
+
   // Manual review type: boot the stack and park for human QA.
-  if ((opts.reviewType ?? 'auto') !== 'auto') {
+  if (opts.reviewType === 'manual') {
     const manualTaskId = resolveTaskId(ctx, opts.taskId)
     const manualStore: TaskStore = ctx.services.store
     const manualWorktree = await resolveWorktree(ctx, manualTaskId, manualStore, opts.worktree)

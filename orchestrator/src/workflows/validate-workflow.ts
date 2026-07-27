@@ -34,7 +34,7 @@ import {
 export interface DeclaredStep {
   step: string | null
   primitive: string
-  mode: 'auto' | 'manual'
+  mode: 'auto' | 'manual' | 'full-review'
   guide: string | null
 }
 
