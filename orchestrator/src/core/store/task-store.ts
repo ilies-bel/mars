@@ -30,6 +30,8 @@
 import type { DbClient, DbStatement, DbInValue, DbResultSet } from '../lib/db.js'
 import { withTransaction } from '../lib/db.js'
 import { ensureSchema } from '../lib/pg-schema.js'
+import { ReviewPacketSchema } from '../lib/review-packet.js'
+import type { ReviewPacket } from '../lib/review-packet.js'
 import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve, sep } from 'node:path'
@@ -328,6 +330,17 @@ export interface DomainTaskStore {
    * Return all deployment rows for `taskId`, newest-first.
    */
   listDeploymentsForTask(taskId: string): Promise<TaskDeployment[]>
+
+  // ── Review packet ─────────────────────────────────────────────────────────
+  /**
+   * Return the persisted `ReviewPacket` for `taskId`, or `null` when none has
+   * been stored yet. Parses via `ReviewPacketSchema` on read.
+   */
+  getReviewPacket(taskId: string): Promise<ReviewPacket | null>
+  /**
+   * Persist `packet` for `taskId` as JSON in `review_packet_json`.
+   */
+  setReviewPacket(taskId: string, packet: ReviewPacket): Promise<void>
 
   // ── Generic SQL escape hatches ───────────────────────────────────────────
   /** Execute a single read in a read-only transaction. Non-null client. */
@@ -676,6 +689,28 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
         args: [taskId],
       })
       return r.rows.map(rowToDeployment)
+    },
+
+    // ── Review packet ──────────────────────────────────────────────────────
+
+    getReviewPacket: async (taskId) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `SELECT review_packet_json FROM tasks WHERE id = ?`,
+        args: [taskId],
+      })
+      if (r.rows.length === 0) return null
+      const row = r.rows[0] as unknown as { review_packet_json: string | null }
+      if (row.review_packet_json === null || row.review_packet_json === undefined) return null
+      return ReviewPacketSchema.parse(JSON.parse(row.review_packet_json))
+    },
+
+    setReviewPacket: async (taskId, packet) => {
+      const c = guardClient()
+      await c.execute({
+        sql: `UPDATE tasks SET review_packet_json = ? WHERE id = ?`,
+        args: [JSON.stringify(packet), taskId],
+      })
     },
 
     // ── Generic SQL escape hatches ─────────────────────────────────────────
