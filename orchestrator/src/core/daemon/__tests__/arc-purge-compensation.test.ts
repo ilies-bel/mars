@@ -153,6 +153,44 @@ describe('coreArcPurge — force-purge compensation', () => {
     expect(comp?.compensatesArcId).toBe(origin.id)
   })
 
+  // ── compensation prompt includes commit SHA and git revert when commits exist ─
+
+  it('compensation prompt contains a commit SHA and git revert when arc member has merged commits', async () => {
+    const { q, ap } = await loadModules(repo)
+
+    const origin = await q.enqueueTask('implement arc feature', undefined, { skipTriage: true })
+    const branch = `task/${origin.id}`
+
+    // Create the task branch, add a commit, and fast-forward main onto it.
+    execFileSync('git', ['checkout', '-b', branch], { cwd: repo })
+    writeFileSync(resolve(repo, 'arc-feature.ts'), 'export const arc = 1\n')
+    execFileSync('git', ['add', 'arc-feature.ts'], { cwd: repo })
+    execFileSync('git', ['commit', '-m', 'add arc feature'], { cwd: repo })
+    execFileSync('git', ['checkout', 'main'], { cwd: repo })
+    execFileSync('git', ['merge', '--ff-only', branch], { cwd: repo })
+
+    // Advance main past the branch so branch tip is behind integrationBranch.
+    writeFileSync(resolve(repo, 'post.ts'), 'export const y = 2\n')
+    execFileSync('git', ['add', 'post.ts'], { cwd: repo })
+    execFileSync('git', ['commit', '-m', 'post-merge'], { cwd: repo })
+
+    // Mark the arc origin as done (no branch column → done-implies-merged guard skips).
+    await q.updateTask(origin.id, { status: 'done' })
+
+    const result = await ap.coreArcPurge(origin.id, true, 'main', repo)
+
+    expect(result.compensationTaskId).toBeDefined()
+    const comp = await q.getTask(result.compensationTaskId!)
+    expect(comp).not.toBeNull()
+
+    // Prompt must reference at least one commit SHA.
+    expect(comp!.prompt).toMatch(/[0-9a-f]{7,}/)
+    // Prompt must include revert instructions.
+    expect(comp!.prompt).toContain('git revert')
+    // Prompt must mention the touched file.
+    expect(comp!.prompt).toContain('arc-feature.ts')
+  })
+
   // ── (c) Idempotency: repeated force operations yield no duplicate task ──────
   it('returns the existing compensation task id on repeated force-purge without creating a duplicate', async () => {
     const { q, ap } = await loadModules(repo)

@@ -22,6 +22,8 @@ import { getTask, enqueueTask } from '../queue'
 import { corePurgeTask, type CorePurgeTaskOptions } from './purge-task'
 import { listUniqueCommitsAhead } from '../lib/sweep'
 import { getDefaultDomainTaskStore } from '../store/task-store'
+import { collectIntegrationEvidence } from '../lib/collect-integration-evidence'
+import { buildCompensationPrompt, type EvidenceEntry } from './compensation-prompt'
 
 export interface ArcPurgeResult {
   /** Ids of every task that was purged, in the order they were purged. */
@@ -110,6 +112,19 @@ export const coreArcPurge = async (
     originTaskDetail?.prompt.split('\n')[0] ??
     `arc ${originId}`
 
+  // Collect integration evidence for each integrated member BEFORE any branch
+  // is deleted by corePurgeTask. Evidence collection is purely read-only and
+  // must happen while the branches still exist locally.
+  const evidenceEntries: EvidenceEntry[] = []
+  if (force && hasIntegratedWork) {
+    for (const mid of integratedMemberIds) {
+      const memberTask = memberTaskDetails.find((t) => t?.id === mid)
+      const memberBranch = memberTask?.branch ?? `task/${mid}`
+      const evidence = await collectIntegrationEvidence(memberBranch, integrationBranch, repoRoot)
+      evidenceEntries.push({ memberId: mid, branch: memberBranch, evidence })
+    }
+  }
+
   // Purge each member. Non-origin members are purged first so the origin's
   // Arc.drop() cascade (fix children via fix_for_task_id) handles any remaining
   // fix tasks atomically. Members that were already cascade-deleted by a prior
@@ -149,30 +164,15 @@ export const coreArcPurge = async (
     return { purgedIds, originId, compensationTaskId: existingRows[0].id }
   }
 
-  const memberList = integratedMemberIds.map((mid) => `  - ${mid}`).join('\n')
+  const prompt = buildCompensationPrompt({
+    kind: 'arc',
+    originId,
+    originTitle,
+    integrationBranch,
+    entries: evidenceEntries,
+  })
   const compensationTask = await enqueueTask(
-    `Compensate for force-purged arc ${originId}.
-
-The arc below was force-purged while some of its work had already been integrated
-into the integration branch (${integrationBranch}). Review the integration branch to
-identify and handle any orphaned code from this abandoned arc.
-
-**Abandoned arc:** ${originId}
-**Origin task:** ${originTitle}
-**Members with integrated commits (status was 'done'):**
-${memberList}
-
-**Expected cleanup or revert scope:**
-1. Run \`git log ${integrationBranch} --oneline\` to find commits from the task branches above.
-2. Decide whether to revert the integrated changes or keep them with documentation.
-3. If reverting: use \`git revert <sha>\` for each relevant commit and push to ${integrationBranch}.
-4. If keeping: add a code comment or ADR entry referencing this abandoned arc with rationale.
-
-**Verification expectations:**
-- The integration branch is in a known, consistent state.
-- Either the orphaned changes are explicitly reverted, OR a written decision exists
-  to keep them with rationale documented (comment, ADR, or task note).
-- No dead code or broken imports remain from the abandoned arc.`,
+    prompt,
     undefined,
     {
       skipTriage: true,

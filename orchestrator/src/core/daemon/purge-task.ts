@@ -14,6 +14,8 @@ import {
   type OrphanCommit,
 } from '../lib/sweep'
 import { supersedeActionQueueItemsForOrigin, resolveAllRowsForTask } from '../lib/action-queue'
+import { collectIntegrationEvidence, type IntegrationEvidence } from '../lib/collect-integration-evidence'
+import { buildCompensationPrompt } from './compensation-prompt'
 
 const exec = promisify(execFile)
 
@@ -128,6 +130,14 @@ export const corePurgeTask = async (
     )
   }
 
+  // Collect integration evidence BEFORE deleting the branch. This must run
+  // while the branch still exists locally. Only collect when compensation
+  // will actually be created (force + done + non-fix + no skipCompensation).
+  let evidence: IntegrationEvidence = { commits: [], touchedFiles: [] }
+  if (force && capturedStatus === 'done' && capturedKind !== 'fix' && !opts?.skipCompensation) {
+    evidence = await collectIntegrationEvidence(branch, integrationBranch, repoRoot)
+  }
+
   const { removeWorktree } = await import('../lib/git/worktree')
 
   if (task.worktreePath && existsSync(task.worktreePath)) {
@@ -180,8 +190,15 @@ export const corePurgeTask = async (
     return { ...dropResult, compensationTaskId: existingRows[0].id }
   }
 
+  const prompt = buildCompensationPrompt({
+    kind: 'task',
+    originId: id,
+    originTitle: capturedIntent,
+    integrationBranch,
+    entries: [{ memberId: id, branch, evidence }],
+  })
   const compensationTask = await enqueueTask(
-    `Compensate for force-purged task ${id}.\n\nThe task below was force-purged while its work had already been integrated into the integration branch (${integrationBranch}). Review the integration branch to identify and handle any orphaned code from this abandoned task.\n\n**Abandoned task:** ${id}\n**Origin task intent:** ${capturedIntent}\n\n**Expected cleanup or revert scope:**\n1. Run \`git log ${integrationBranch} --oneline\` to find commits from the task branch.\n2. Decide whether to revert the integrated changes or keep them with documentation.\n3. If reverting: use \`git revert <sha>\` for each relevant commit.\n4. If keeping: add a code comment or ADR entry referencing this abandoned task with rationale.`,
+    prompt,
     undefined,
     {
       skipTriage: true,
