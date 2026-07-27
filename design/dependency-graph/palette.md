@@ -36,11 +36,11 @@ status field resolved.
 
 ## Token cross-reference
 
-All four tokens are defined in `design/ui.pen` (`variables` section).
-The full palette lives there; this document names only the four values
-used for status encoding.
+All four tokens were originally defined in the now-retired
+`design/ui.pen`. This document names only the four values used for
+status encoding.
 
-| Token         | Design-system role (from `design/ui.pen`)         |
+| Token         | Design-system role                                |
 | ------------- | -------------------------------------------------- |
 | `$mars-ice`   | Coolest accent in the Mars chromatic scale. Used for cool/resolved states. |
 | `$mars-iron`  | Deepest red in the Mars chromatic scale. High-alert surfaces and error chips. |

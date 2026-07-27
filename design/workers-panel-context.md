@@ -2,12 +2,13 @@
 
 This note exists to unblock the slice "Anchor visual style from existing
 Topology canvas" (mars-21cecac4) — the previous attempt exhausted its
-read budget poking at `design/ui.pen` without ever writing.
+read budget poking at the former `design/ui.pen` without ever writing.
 
 ## TL;DR for the next attempt
 
-You do **not** need to fully parse `design/ui.pen`. Everything you need
-to satisfy the acceptance criteria is already enumerated below.
+Everything you need to satisfy the acceptance criteria is already
+enumerated below. (`design/ui.pen` has been retired; the tokens below
+are the canonical reference.)
 
 The new draft should be a small file under `design/` (markdown is fine —
 the acceptance criteria say "a working note captured inside the new
@@ -18,7 +19,7 @@ prefer to mirror the JSON format — see "Format notes" below).
 Then commit and stop. Verify is a no-op for this slice; there is no
 frontend/orchestrator code to touch.
 
-## Existing canvases in `design/ui.pen` (the style anchor)
+## Existing canvases (the style anchor)
 
 The shell already has a left-rail navigation listing four canvases:
 
@@ -29,7 +30,7 @@ The shell already has a left-rail navigation listing four canvases:
 
 Workers will be the fifth peer in that rail. Match its visual language.
 
-## Design tokens to reuse (verbatim from `design/ui.pen`)
+## Design tokens to reuse
 
 All tokens are referenced as `$<name>` in the .pen JSON.
 
@@ -90,23 +91,8 @@ The new draft must visibly list at least:
 | Busy status          | `$mars-flame`    |
 | Idle status          | `$muted-light`   |
 
-## Format notes — `design/ui.pen`
+## Format notes
 
-`design/ui.pen` is a ~600 KB, ~15 763-line UTF-8 JSON document (a
-Penpot-style scene graph). Top level:
-
-```
-{
-  "version": "2.11",
-  "children": [ { "type": "frame", ... } ]
-}
-```
-
-Frames nest via `children`; tokens are referenced as `"fill": "$bg-light"`,
-`"fill": "$mars-flame"`, etc. You do **not** need to read it further to
-complete this slice — the token list above is the complete set
-(`rg -o '\$[a-z][a-z0-9-]+' design/ui.pen | sort -u`).
-
-If a future slice needs a full Penpot frame for the Workers canvas, it
-can copy the `shellPRail` / `shellPMain` block (around lines 3494–3590
-of `design/ui.pen`) as a template. Out of scope here.
+The token list above is the complete set originally extracted from the
+retired `design/ui.pen` (a Penpot-style scene graph). The .pen file has
+been removed; the token names above are the canonical reference.

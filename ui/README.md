@@ -7,7 +7,7 @@ orchestrator process — the contract is the SQLite schema.
 ## Stack
 
 - Vite + React + TypeScript
-- Tailwind v4 (CSS-first `@theme` tokens from `design/ui.pen`)
+- Tailwind v4 (CSS-first `@theme` tokens)
 - `@libsql/client` against `<repo>/.mars/mars.db`
 - `node:fs.watch` on the `.mars/` directory → SSE → browser refetch
 
