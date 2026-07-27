@@ -16,15 +16,18 @@
  * Panels lazy-load and degrade gracefully when the daemon is unreachable.
  */
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchGlossary, fetchSkills, fetchAdrs, fetchChatThread, fetchVision } from '@/shared/api'
 import { SkeletonList } from '@/components/Skeleton'
 import { parseCreatedTaskIds } from './parseCreatedTaskIds'
 import { useThreadFocus } from './useThreadFocus'
+import { buildActivityFeed } from './activityFeed'
 
 import type { GlossaryTerm, Skill, ChatSegmentAttachment, AdrEntry, ChatThreadDetail, ProgressTask } from '@/shared/schemas'
 import type { ThreadFocusResult } from './useThreadFocus'
+import type { LiveBuffer } from '@/shared/chatBuffer'
+import type { ActivityEntry } from './activityFeed'
 
 // ---------------------------------------------------------------------------
 // Status chip
@@ -558,6 +561,54 @@ export const SessionArtifactsPanel = ({ threadId, projectId }: SessionArtifactsP
 }
 
 // ---------------------------------------------------------------------------
+// Activity panel — recent tool calls, live + persisted
+// ---------------------------------------------------------------------------
+
+const ActivityPanel = ({ feed }: { feed: ActivityEntry[] }) => {
+  if (feed.length === 0) {
+    return (
+      <p className="px-3 py-2 font-mono text-[10px] text-muted-foreground/60">
+        No activity yet
+      </p>
+    )
+  }
+  return (
+    <ul className="flex flex-col py-1" data-testid="activity-feed">
+      {feed.map((entry) => (
+        <li
+          key={entry.id}
+          className="flex items-center gap-1.5 px-3 py-1"
+          data-testid={`activity-entry-${entry.state}`}
+        >
+          {entry.state === 'live' ? (
+            <span
+              className="text-[8px] text-highlight animate-pulse"
+              aria-label="live"
+            >
+              ●
+            </span>
+          ) : (
+            <span
+              className="text-[8px] text-iron/60"
+              aria-label="persisted"
+            >
+              ●
+            </span>
+          )}
+          <span
+            className={`font-mono text-[10px] truncate ${
+              entry.state === 'live' ? 'text-foreground' : 'text-iron/70'
+            }`}
+          >
+            {entry.toolName}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Panel section wrapper
 // ---------------------------------------------------------------------------
 
@@ -600,6 +651,9 @@ export interface ContextRailProps {
   threadDetail?: ChatThreadDetail | null
   /** True when the client is actively streaming a reply for the active thread. */
   isStreaming?: boolean
+  /** Live streaming buffer for the active thread. Passed from ChatConversation
+   * so the activity panel can render in-flight tool calls. */
+  liveBuffer?: LiveBuffer | null
   /** Epoch ms when the current chat session started (unused after removing Live
    * tasks panel; kept in props for API stability while callers adapt). */
   sessionStartedAt: number
@@ -617,11 +671,26 @@ export const ContextRail = ({
   activeThreadId,
   threadDetail,
   isStreaming,
+  liveBuffer,
   onInsertPrompt,
   collapsed = false,
   onToggleCollapse,
 }: ContextRailProps) => {
   const focusResult = useThreadFocus(threadDetail?.thread)
+
+  // Build the activity feed from live buffer + persisted thread history.
+  // Only computed when there is an active thread to avoid unnecessary work.
+  const activityFeed = useMemo(
+    () =>
+      activeThreadId
+        ? buildActivityFeed(
+            threadDetail ?? null,
+            liveBuffer ?? null,
+            isStreaming ?? false,
+          )
+        : [],
+    [activeThreadId, threadDetail, liveBuffer, isStreaming],
+  )
   if (collapsed) {
     return (
       <aside
@@ -668,6 +737,12 @@ export const ContextRail = ({
           focusResult={activeThreadId ? focusResult : undefined}
         />
       </PanelSection>
+
+      {activeThreadId && (
+        <PanelSection title="Recent activity" defaultOpen={true}>
+          <ActivityPanel feed={activityFeed} />
+        </PanelSection>
+      )}
 
       <PanelSection title="Session artifacts" defaultOpen={true}>
         <SessionArtifactsPanel threadId={threadId} projectId={projectId} />

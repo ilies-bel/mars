@@ -969,6 +969,9 @@ interface ChatConversationProps {
   onPrefillConsumed: () => void
   /** Insert a prompt into the composer (welcome chips + "try again"). */
   onInsertPrompt: (prompt: string) => void
+  /** Called whenever the live buffer for this thread changes. Used to lift
+   * the buffer up to ChatPage so ContextRail can render the activity panel. */
+  onLiveBufferChange?: (buf: LiveBuffer | null) => void
 }
 
 /**
@@ -984,6 +987,7 @@ const ChatConversation = ({
   prefill,
   onPrefillConsumed,
   onInsertPrompt,
+  onLiveBufferChange,
 }: ChatConversationProps) => {
   const qc = useQueryClient()
 
@@ -1155,6 +1159,13 @@ const ChatConversation = ({
   }, [messages, status])
 
   const liveMessageId = liveBuffer != null ? messages[messages.length - 1]?.id : null
+
+  // Lift the live buffer to ChatPage so the ContextRail activity panel can
+  // render in-flight tool calls. Fires on every liveBuffer change, including
+  // null (when streaming ends or this thread mounts fresh).
+  useEffect(() => {
+    onLiveBufferChange?.(liveBuffer)
+  }, [liveBuffer, onLiveBufferChange])
 
   return (
     <>
@@ -2628,6 +2639,11 @@ export const ChatPage = () => {
   })
   const activeIsStreaming = activeThreadDetail?.thread.status !== 'idle'
 
+  // Live buffer lifted from ChatConversation for the ContextRail activity panel.
+  // Resets to null whenever the selected thread changes (ChatConversation remounts
+  // with key={selectedThreadId} and fires onLiveBufferChange(null) on mount).
+  const [activeLiveBuffer, setActiveLiveBuffer] = useState<LiveBuffer | null>(null)
+
   // Debounced URL write-back — mirrors selection, kind filter, and search so
   // F5 restores the exact view. Uses replaceState (no hashchange event) to
   // avoid disturbing the app-level hash router.
@@ -2836,6 +2852,7 @@ export const ChatPage = () => {
             prefill={prefill}
             onPrefillConsumed={() => setPrefill(undefined)}
             onInsertPrompt={handleInsertPrompt}
+            onLiveBufferChange={setActiveLiveBuffer}
           />
         ) : queueSelectionResolved ? (
           <div
@@ -2923,6 +2940,7 @@ export const ChatPage = () => {
         activeThreadId={selectedThreadId ?? undefined}
         threadDetail={activeThreadDetail}
         isStreaming={activeIsStreaming}
+        liveBuffer={activeLiveBuffer}
         sessionStartedAt={sessionStartedAt}
         onInsertPrompt={handleInsertPrompt}
         collapsed={railCollapsed}
