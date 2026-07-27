@@ -4852,6 +4852,11 @@ export const startDaemon = async (
   }, ARC_VERIFIER_DRAIN_MS)
   arcVerifierDrain.unref()
 
+  // ── Usage snapshot sampler ────────────────────────────────────────────────
+  const { startUsageSampler } = await import('./usage-sampler')
+  const usageSamplerInterval = startUsageSampler(getCompositionRootClient(), log)
+  usageSamplerInterval.unref()
+
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
@@ -4874,6 +4879,7 @@ export const startDaemon = async (
     clearInterval(blockerResolutionDrain)
     clearInterval(recoverySpawnerDrain)
     clearInterval(arcVerifierDrain)
+    clearInterval(usageSamplerInterval)
     stopEndpointProbe()
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the

@@ -286,6 +286,25 @@ const daemonStatus: Command = {
   },
 }
 
+const daemonUsage: Command = {
+  path: 'daemon usage',
+  summary: 'print the latest usage snapshot as JSON',
+  usage: 'usage: mars daemon usage',
+  run: async (_args, deps) => {
+    const { migrateQueueSchema, resolveQueueClient } = await import('../../core/queue')
+    await migrateQueueSchema()
+    const client = resolveQueueClient()
+    const { getLatestUsageSnapshot } = await import('../../core/lib/usage-snapshot-store')
+    const row = await getLatestUsageSnapshot(client)
+    if (!row) {
+      deps.err('no usage snapshot available')
+      return { code: 1 }
+    }
+    deps.out(JSON.stringify(row))
+    return { code: 0 }
+  },
+}
+
 const daemonStart: Command = {
   path: 'daemon start',
   summary: 'start the daemon (detached, or --foreground)',
@@ -644,10 +663,10 @@ const daemonGroup: Command = {
   path: 'daemon',
   summary: 'daemon subcommands',
   usage:
-    'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control> [flags]',
+    'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control|usage> [flags]',
   run: (_args, deps) => {
     deps.err(
-      'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control> [flags]',
+      'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control|usage> [flags]',
     )
     return { code: 2 }
   },
@@ -666,5 +685,6 @@ export const daemonCommands: readonly Command[] = [
   daemonPause,
   daemonResume,
   daemonSpendControl,
+  daemonUsage,
   daemonGroup,
 ]

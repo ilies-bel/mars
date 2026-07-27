@@ -836,6 +836,20 @@ const DDL: readonly string[] = [
     status          text NOT NULL DEFAULT 'awaiting-human',
     created_at      timestamptz NOT NULL DEFAULT now()
   )`,
+
+  // ── usage snapshots (slice 2 of PRD 9888811c) ────────────────────────────
+  // Periodic daemon samples of token usage. Read by `mars daemon usage` and
+  // the future usage-aware scheduler. Forward-only — append rows, never mutate.
+  `CREATE TABLE IF NOT EXISTS usage_snapshots (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    captured_at   timestamptz NOT NULL DEFAULT now(),
+    input_tokens  bigint NOT NULL DEFAULT 0,
+    output_tokens bigint NOT NULL DEFAULT 0,
+    window_kind   text NOT NULL,
+    raw_json      jsonb NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_usage_snapshots_captured_at
+     ON usage_snapshots(captured_at DESC)`,
 ]
 
 /**
@@ -899,6 +913,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'dispatch_spend_control',
   'purged_tasks_archive',
   'workflow_patch_proposals',
+  'usage_snapshots',
 ]
 
 /**
