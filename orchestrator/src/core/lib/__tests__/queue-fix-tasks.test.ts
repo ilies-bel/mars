@@ -1372,3 +1372,163 @@ describe('phantom-kill routing', () => {
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(1)
   })
 })
+
+// Non-code failure re-queue routing: orchestration and connectivity failures
+// classified by classifyFailure() as non-code must be re-queued instead of
+// spawning a recovery fix-task that cannot fix them by editing code.
+describe('non-code failure re-queue routing', () => {
+  let repo: string
+
+  beforeAll(async () => {
+    // templateRepo is set by the outer describe('queue-fix-tasks') beforeAll
+    // when the full suite runs. When this describe block runs in isolation
+    // (e.g. with a -t filter), we need to initialise it ourselves.
+    if (!templateRepo) {
+      templateRepo = setupRepo()
+      vi.resetModules()
+      process.env.MARS_REPO = templateRepo
+      const q = (await import('../../queue')) as unknown as QueueModule
+      await q.migrateQueueSchema()
+      const actionQueue = (await import('../action-queue')) as unknown as {
+        initActionQueue: typeof import('../action-queue').initActionQueue
+      }
+      await actionQueue.initActionQueue()
+      delete process.env.MARS_REPO
+      vi.resetModules()
+    }
+  })
+
+  beforeEach(() => {
+    repo = setupRepo()
+    cloneTemplateDbs(repo)
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('rebase-no-in-progress-state (orchestration) re-queues the origin and inserts no fix-task row', async () => {
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    // Simulate a merge step aborted because git rebase could not start.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed',
+              failure_reason = 'merge step aborted: rebase could not start',
+              failed_phase = 'merge',
+              error = 'rebase produced no in-progress state'
+            WHERE id = ?`,
+      args: [t.id],
+    })
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'merge:vcs-supervisor-aborted',
+      errorOutput: 'rebase produced no in-progress state',
+    })
+
+    // Signature = merge:vcs-supervisor-aborted/rebase-no-in-progress-state
+    // classifyFailure → 'orchestration' → not 'code' → re-queue
+    expect(r.outcome).toBe('requeued')
+    expect(r.failureSignature).toBe(
+      'merge:vcs-supervisor-aborted/rebase-no-in-progress-state',
+    )
+    expect(r.retryCount).toBe(1)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('queued')
+    expect(reloaded?.retryCount).toBe(1)
+    expect(reloaded?.failureSignature).toBeNull()
+    expect(reloaded?.failedPhase).toBeNull()
+
+    // No fix-task rows were inserted.
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  it('test-pg-connection-refused (connectivity) re-queues the origin and inserts no fix-task row', async () => {
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    // Simulate a verify step that could not reach the PostgreSQL server.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed',
+              failure_reason = 'verify step failed: pg connection refused',
+              failed_phase = 'verify',
+              error = 'ECONNREFUSED 127.0.0.1:5432'
+            WHERE id = ?`,
+      args: [t.id],
+    })
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:test',
+      errorOutput: 'ECONNREFUSED 127.0.0.1:5432',
+    })
+
+    // Signature = verify:test/test-pg-connection-refused
+    // classifyFailure → 'connectivity' → not 'code' → re-queue
+    expect(r.outcome).toBe('requeued')
+    expect(r.failureSignature).toBe('verify:test/test-pg-connection-refused')
+    expect(r.retryCount).toBe(1)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('queued')
+    expect(reloaded?.retryCount).toBe(1)
+    expect(reloaded?.failureSignature).toBeNull()
+    expect(reloaded?.failedPhase).toBeNull()
+
+    // No fix-task rows were inserted.
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  it('api-unreachable-class failure (connectivity) is re-queued by the generalised non-code branch', async () => {
+    // Uses failingStep 'code:api-proxy' (NOT 'code:coder-exit-nonzero') so the
+    // produced signature 'code:api-proxy/api-unreachable' is NOT in the FAILURE_KINDS
+    // registry as environmental — isEnvironmentalSignature returns false and the
+    // handler falls through to the new classifyFailure-based non-code branch.
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed',
+              failure_reason = 'api proxy could not connect',
+              failed_phase = 'code',
+              error = 'Unable to connect to API (ECONNREFUSED)'
+            WHERE id = ?`,
+      args: [t.id],
+    })
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'code:api-proxy',
+      errorOutput: 'Unable to connect to API (ECONNREFUSED)',
+    })
+
+    // Signature = code:api-proxy/api-unreachable
+    // classifyFailure → 'connectivity' → not 'code' → re-queue (generalised path)
+    expect(r.outcome).toBe('requeued')
+    expect(r.failureSignature).toBe('code:api-proxy/api-unreachable')
+    expect(r.retryCount).toBe(1)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('queued')
+    expect(reloaded?.retryCount).toBe(1)
+    expect(reloaded?.failureSignature).toBeNull()
+
+    // No fix-task rows were inserted.
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+})
