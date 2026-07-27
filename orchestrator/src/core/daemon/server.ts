@@ -4340,7 +4340,7 @@ export const startDaemon = async (
     log,
   })
   const backlogCheck = setInterval(() => {
-    const pending = tracker.pendingImplementCount?.() ?? 0
+    const pending = tracker.pendingCount('implement')
     const threshold = Math.floor(sems.implement.limit * 0.75)
     if (pending > threshold) {
       if (backlogSince === null) backlogSince = Date.now()

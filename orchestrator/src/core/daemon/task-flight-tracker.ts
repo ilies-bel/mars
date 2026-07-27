@@ -140,6 +140,8 @@ export interface TaskFlightTracker {
   drainPending(kind: ClaimableKind): IterableIterator<string>
   /** Remove a single id from a pending set (e.g. once claimed for dispatch). */
   removePending(taskId: string, kind: ClaimableKind): void
+  /** Count of ids in the pending set for a kind. */
+  pendingCount(kind: ClaimableKind): number
   /** Empty both pending sets (shutdown / drain-stop / kill). */
   clearPending(): void
 
@@ -234,6 +236,7 @@ export const createTaskFlightTracker = (): TaskFlightTracker => {
     removePending: (taskId, kind) => {
       pendingSet(kind).delete(taskId)
     },
+    pendingCount: (kind) => pendingSet(kind).size,
     clearPending: () => {
       pendingTriage.clear()
       pendingImplement.clear()

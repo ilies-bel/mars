@@ -209,6 +209,17 @@ export const EventMap = {
   'task.under_investigation': z.object({
     taskId: z.string(),
   }),
+  /**
+   * Emitted by the daemon when the implement dispatch queue has been
+   * backlogged (pending > cap × 0.75) for longer than the sustained window.
+   * The steward-runtime-tune subscriber reacts by autonomously bumping the
+   * implement semaphore cap and posting an acknowledgment chat message.
+   */
+  'kpi.backlog.degraded': z.object({
+    pending: z.number().int().nonnegative(),
+    cap: z.number().int().positive(),
+    sustainedMs: z.number().nonnegative(),
+  }),
 } as const;
 
 /** Union of every registered event type name. */
