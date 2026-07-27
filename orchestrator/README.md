@@ -65,6 +65,28 @@ Add `/.mars/` to the target repo's `.gitignore`.
 | `src/workflows/`                | `@mars/workflow` pipelines: implement, triage, plan, slice, init |
 | `src/prompts/vcs-supervisor.md` | Bundled supervisor spec, inlined into `claude -p`  |
 
+## Test reliability
+
+The Vitest suite is the merge gate — every task's `verify` step runs
+`npx vitest run`. Two settings in [`vitest.config.ts`](./vitest.config.ts) are
+intentional guardrails that keep the suite green and repeatable under the
+PGlite embedded-Postgres backend. **Do not lower them without an ADR**
+(`docs/adr/`):
+
+- **`testTimeout` / `hookTimeout` (30 s each)** — PGlite cold-start takes
+  5–25 s per test that boots a fresh database instance. The default 5 s
+  timeout is too tight when many instances run concurrently; 30 s provides
+  headroom without masking real hangs.
+- **`pool: 'forks'` with `maxForks: 1` (single-fork)** — each parallel
+  worktree task runs its own `npm test`, so vitest's default of one fork per
+  CPU core creates N × ~9 forks under load; this exhausted RAM and OOM-killed
+  the daemon (observed 2026-07-21). Single-fork also prevents port contention
+  between concurrent PGlite clusters. Override on an idle machine with
+  `VITEST_MAX_FORKS=<n>`.
+
+See `vitest.config.ts` for the authoritative values and the full rationale
+comments.
+
 ## Prerequisites
 
 - `claude` CLI on PATH (Claude Code).
