@@ -623,6 +623,29 @@ export function openDb(target: string): DbClient {
 }
 
 /**
+ * Close every open database connection in the registry and clear the registry.
+ *
+ * Used exclusively by the test suite before `vi.resetModules()` so that PGlite
+ * WASM memory is freed rather than orphaned. Calling this in production code is
+ * a mistake — production uses a long-lived singleton pool that must not be torn
+ * down between requests.
+ *
+ * Safe to call when the registry is empty (no-op).
+ */
+export async function closeAllDbs(): Promise<void> {
+  const entries = [...registry.entries()]
+  for (const [key, entry] of entries) {
+    registry.delete(key)
+    try {
+      await entry.backend.end()
+    } catch {
+      // Best-effort: an already-crashed PGlite instance may throw on close.
+    }
+  }
+  schemaReadyByTarget.clear()
+}
+
+/**
  * Runs `fn` inside a transaction on a dedicated session: BEGIN before,
  * COMMIT on success, ROLLBACK on any error (rollback errors swallowed, the
  * original rethrown) — an exception can never strand an open transaction.

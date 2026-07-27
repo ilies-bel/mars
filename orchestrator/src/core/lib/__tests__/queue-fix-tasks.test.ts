@@ -83,6 +83,15 @@ const loadModules = async (
   br: BlockerModule
   rc: RecipesModule
 }> => {
+  // Close all open PGlite connections before resetting modules so WASM memory
+  // is freed rather than orphaned. Without this, 34+ in-memory PGlite instances
+  // accumulate across the suite and exhaust the WASM heap (RuntimeError: Aborted).
+  try {
+    const { closeAllDbs } = await import('../db')
+    await closeAllDbs()
+  } catch {
+    // Non-fatal: first invocation or already-crashed instance.
+  }
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
@@ -888,17 +897,28 @@ describe('queue-fix-tasks', () => {
       sql: `SELECT id, tags_json FROM tasks`,
       args: [],
     })
-    // Origin + fix + exactly one detached gate-enrichment Writer draft task
+    // Origin + fix + exactly one detached gate-enrichment Writer draft task +
+    // one rescue-operator task (spawned because 'verify:test/unclassified' has
+    // no registered recipe, triggering maybeSpawnRescueOperator in parallel
+    // with the generic fix task).
     // (PRD 745f33e0: 'verify:test/unclassified' is statically encodable and
     // unclaimed, so the failure chokepoint claims the signature and spawns
     // ONE writer-tagged candidate-drafting task — never a second one).
-    expect(all.rows.length).toBe(3)
+    expect(all.rows.length).toBe(4)
     const writerRows = all.rows.filter((row) =>
       String(
         (row as unknown as { tags_json: string | null }).tags_json ?? '',
       ).includes('writer'),
     )
     expect(writerRows).toHaveLength(1)
+    // The rescue-operator task was spawned alongside the generic fix task
+    // because no recipe is registered for this signature.
+    const rescueRows = all.rows.filter((row) =>
+      String(
+        (row as unknown as { tags_json: string | null }).tags_json ?? '',
+      ).includes('rescue-operator'),
+    )
+    expect(rescueRows).toHaveLength(1)
   })
 
   it('fix-fail loop: caps fix-task inserts per (sourceTaskId, failureSignature) at MARS_MAX_FIX_ATTEMPTS (default 2) and escalates to a fix-fail-loop actionQueue item', async () => {
