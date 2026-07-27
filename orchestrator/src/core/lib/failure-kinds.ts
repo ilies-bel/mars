@@ -623,15 +623,22 @@ export const unknownFailureKind = (
 
   // Map the step family to a plain-English label. Raw step ids must not appear
   // in warmTitle or verboseReason — the technical id belongs in details/traces.
+  // Derive the family as the substring before the first colon so both the bare
+  // form (e.g. `code`) and the qualified form (e.g. `code:coder-exit-nonzero`)
+  // resolve to the same label — matching the shape of failingStepFromSignature.
+  const colonIdx = failingStep.indexOf(':')
+  const family = colonIdx === -1 ? failingStep : failingStep.slice(0, colonIdx)
   let groupLabel: string
-  if (failingStep.startsWith('verify:')) {
+  if (family === 'verify') {
     groupLabel = 'A verification check did not pass'
-  } else if (failingStep.startsWith('setup:')) {
+  } else if (family === 'setup') {
     groupLabel = 'The coding environment could not be set up'
-  } else if (failingStep.startsWith('code:')) {
+  } else if (family === 'code') {
     groupLabel = 'The coder did not complete successfully'
-  } else if (failingStep.startsWith('merge:')) {
+  } else if (family === 'merge') {
     groupLabel = 'The changes could not be merged'
+  } else if (family === 'triage') {
+    groupLabel = 'The task could not be triaged'
   } else {
     groupLabel = 'A pipeline step did not complete'
   }

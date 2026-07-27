@@ -400,3 +400,59 @@ describe('new catalog entries for previously-unmatched signatures', () => {
     expect(entry!.actions.some((a) => a.op === 'purge')).toBe(true)
   })
 })
+
+describe('unknownFailureKind — triage family and colon-less step forms', () => {
+  it('triage:crashed maps to the triage plain-English label', () => {
+    const kind = unknownFailureKind('triage:crashed', '')
+    expect(kind.warmTitle).toBe('The task could not be triaged')
+  })
+
+  it('bare "code" (no colon) maps to the same label as "code:coder-exit-nonzero"', () => {
+    const bareKind = unknownFailureKind('code', '')
+    const qualifiedKind = unknownFailureKind('code:coder-exit-nonzero', '')
+    expect(bareKind.warmTitle).toBe(qualifiedKind.warmTitle)
+    expect(bareKind.warmTitle).toMatch(/coder/i)
+  })
+
+  it('unrecognised family still hits the generic fallback', () => {
+    const kind = unknownFailureKind('xyzzy:warp', '')
+    expect(kind.warmTitle).toBe('A pipeline step did not complete')
+  })
+
+  it('no warmTitle contains a colon', () => {
+    const cases = [
+      'triage:crashed',
+      'triage:unclassified',
+      'code',
+      'code:coder-exit-nonzero',
+      'verify:lint',
+      'setup:install',
+      'merge:preflight',
+      'xyzzy:unknown',
+    ]
+    for (const step of cases) {
+      const kind = unknownFailureKind(step, '')
+      expect(kind.warmTitle).not.toContain(':')
+    }
+  })
+
+  it('no warmTitle contains the raw qualified failingStep string (the colon-bearing form)', () => {
+    // When the step has a colon the full technical id (e.g. "triage:crashed")
+    // must not appear verbatim in the warmTitle. Bare family names (e.g. "code")
+    // are common English words that naturally appear inside labels like "coder",
+    // so this assertion is scoped to the qualified form only.
+    const qualifiedCases = [
+      'triage:crashed',
+      'triage:unclassified',
+      'code:coder-exit-nonzero',
+      'verify:lint',
+      'setup:install',
+      'merge:preflight',
+      'xyzzy:unknown',
+    ]
+    for (const step of qualifiedCases) {
+      const kind = unknownFailureKind(step, '')
+      expect(kind.warmTitle).not.toContain(step)
+    }
+  })
+})
