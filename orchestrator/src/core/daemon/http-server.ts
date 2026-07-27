@@ -1900,13 +1900,17 @@ export const startHttpServer = async (
             sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
             return
           }
-          const schema = z.object({ goal: z.string(), idempotencyKey: z.string() })
+          const schema = z.object({
+            goal: z.string(),
+            idempotencyKey: z.string(),
+            files: z.array(z.object({ path: z.string(), note: z.string().optional() })).optional(),
+          })
           const result = schema.safeParse(parsed)
           if (!result.success) {
-            sendJson(res, 400, { ok: false, error: 'body must be { goal: string, idempotencyKey: string }' })
+            sendJson(res, 400, { ok: false, error: 'body must be { goal: string, idempotencyKey: string, files?: {path:string;note?:string}[] }' })
             return
           }
-          forkThread({ sourceThreadId, goal: result.data.goal, idempotencyKey: result.data.idempotencyKey })
+          forkThread({ sourceThreadId, goal: result.data.goal, idempotencyKey: result.data.idempotencyKey, files: result.data.files })
             .then(({ thread }) => {
               deps.viewStreamHub?.broadcast('chat')
               sendJson(res, 200, { threadId: thread.id })

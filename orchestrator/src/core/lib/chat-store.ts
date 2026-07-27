@@ -242,6 +242,58 @@ export interface AlertSegment {
   goal?: string
 }
 
+// ── Fork-seed segment types ───────────────────────────────────────────────────
+
+/** Segment type referencing a task created during a thread. */
+export interface TaskRefSegment {
+  type: 'task_ref'
+  taskId: string
+}
+
+/** Segment type referencing an ADR cited during a thread. */
+export interface AdrRefSegment {
+  type: 'adr_ref'
+  ref: string
+}
+
+/** Segment type referencing a glossary term cited during a thread. */
+export interface GlossaryRefSegment {
+  type: 'glossary_ref'
+  ref: string
+}
+
+/** Segment type referencing an artifact surfaced during a thread. */
+export interface ArtifactRefSegment {
+  type: 'artifact_ref'
+  ref: string
+}
+
+/**
+ * Opening seed segment inserted as the first assistant message in a forked
+ * thread. Carries compact context distilled from the source thread.
+ */
+export interface ForkSeedSegment {
+  type: 'fork_seed'
+  goalSummary: string
+  transcriptSummary: string
+  artifactRefs: string[]
+  taskIds: string[]
+  adrRefs: string[]
+  glossaryRefs: string[]
+  files: Array<{ path: string; note?: string }>
+}
+
+/** Structured context seeded into a forked thread's opening assistant message. */
+export interface ForkSeed {
+  goalSummary: string
+  transcriptSummary: string
+  artifactRefs: string[]
+  taskIds: string[]
+  adrRefs: string[]
+  glossaryRefs: string[]
+  files: Array<{ path: string; note?: string }>
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const now = (): string => new Date().toISOString()
@@ -307,15 +359,103 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
 }
 
 /**
+ * Build a compact seed from a source thread's transcript.
+ *
+ * Scans `chat_messages.segments` for structured reference types
+ * (`task_ref`, `adr_ref`, `glossary_ref`, `artifact_ref`) and collects
+ * unique values. `transcriptSummary` is a plain concatenation of all
+ * message content, capped at 2000 characters. No LLM call is made here.
+ *
+ * @param sourceThreadId - The thread to derive context from.
+ * @param files          - Operator-supplied file references to embed in the seed.
+ */
+export const buildForkSeed = async (
+  sourceThreadId: string,
+  files?: Array<{ path: string; note?: string }>,
+): Promise<ForkSeed> => {
+  const c = stateClient()
+
+  const threadResult = await c.execute({
+    sql: `SELECT title FROM chat_threads WHERE id = ?`,
+    args: [sourceThreadId],
+  })
+  const goalSummary =
+    threadResult.rows.length > 0
+      ? ((threadResult.rows[0] as Record<string, unknown>).title as string)
+      : ''
+
+  const msgResult = await c.execute({
+    sql: `SELECT content, segments FROM chat_messages WHERE thread_id = ? ORDER BY created_at ASC, seq ASC`,
+    args: [sourceThreadId],
+  })
+
+  const taskIds: string[] = []
+  const adrRefs: string[] = []
+  const glossaryRefs: string[] = []
+  const artifactRefs: string[] = []
+  const contentParts: string[] = []
+
+  for (const row of msgResult.rows as unknown as Array<Record<string, unknown>>) {
+    contentParts.push(row.content as string)
+
+    const rawSegments = row.segments as string | null
+    if (rawSegments == null) continue
+
+    let segs: unknown[]
+    try {
+      const parsed: unknown = JSON.parse(rawSegments)
+      if (!Array.isArray(parsed)) continue
+      segs = parsed
+    } catch {
+      continue
+    }
+
+    for (const seg of segs) {
+      if (typeof seg !== 'object' || seg === null) continue
+      const s = seg as Record<string, unknown>
+      if (s['type'] === 'task_ref' && typeof s['taskId'] === 'string') {
+        if (!taskIds.includes(s['taskId'])) taskIds.push(s['taskId'])
+      } else if (s['type'] === 'adr_ref' && typeof s['ref'] === 'string') {
+        if (!adrRefs.includes(s['ref'])) adrRefs.push(s['ref'])
+      } else if (s['type'] === 'glossary_ref' && typeof s['ref'] === 'string') {
+        if (!glossaryRefs.includes(s['ref'])) glossaryRefs.push(s['ref'])
+      } else if (s['type'] === 'artifact_ref' && typeof s['ref'] === 'string') {
+        if (!artifactRefs.includes(s['ref'])) artifactRefs.push(s['ref'])
+      }
+    }
+  }
+
+  const full = contentParts.join('\n')
+  const transcriptSummary = full.length > 2000 ? `${full.slice(0, 2000)}…` : full
+
+  return {
+    goalSummary,
+    transcriptSummary,
+    artifactRefs,
+    taskIds,
+    adrRefs,
+    glossaryRefs,
+    files: files ?? [],
+  }
+}
+
+/**
  * Fork a chat thread. Creates a new human-lifecycle thread linked to the
  * source via `parent_thread_id`. Uses `fork_idempotency_key` to deduplicate:
  * repeated calls with the same (sourceThreadId, idempotencyKey) return the
  * existing child thread. The fork is always a plain human thread
  * (`origin=null`, `alert_item_id=null`) regardless of the source's origin.
+ *
+ * On first creation, inserts one assistant message carrying a `fork_seed`
+ * segment so the operator opening the child thread sees source context
+ * immediately. The idempotent-repeat path skips this insertion.
  */
-export const forkThread = async (
-  opts: { sourceThreadId: string; goal: string; idempotencyKey: string },
-): Promise<{ thread: ChatThread; deduped: boolean }> => {
+export const forkThread = async (opts: {
+  sourceThreadId: string
+  goal: string
+  idempotencyKey: string
+  files?: Array<{ path: string; note?: string }>
+}): Promise<{ thread: ChatThread; deduped: boolean }> => {
   const c = stateClient()
   const existing = await c.execute({
     sql: `SELECT * FROM chat_threads
@@ -334,6 +474,11 @@ export const forkThread = async (
           VALUES (?, ?, 'idle', ?, ?, NULL, NULL, 0, ?, ?)`,
     args: [id, opts.goal, ts, ts, opts.sourceThreadId, opts.idempotencyKey],
   })
+
+  const seed = await buildForkSeed(opts.sourceThreadId, opts.files)
+  const forkSeedSegment: ForkSeedSegment = { type: 'fork_seed', ...seed }
+  await appendMessage(id, 'assistant', seed.goalSummary || opts.goal, [forkSeedSegment])
+
   return {
     thread: {
       id,
