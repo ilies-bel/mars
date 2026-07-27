@@ -11,6 +11,7 @@ import { buildEventInsert } from './lib/outbox'
 import { Arc } from './arc'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
 import { raiseActionQueueItem } from './lib/action-queue'
+import { teardownDeploymentsForTask } from './lib/deployment/teardown'
 
 const execFileP = promisify(execFile)
 const gzipAsyncQ = promisify(gzip)
@@ -1360,6 +1361,11 @@ export const updateTask = async (
   }
 
   if (patch.status === 'done') {
+    // Best-effort: tear down any preview deployments for this task now that it
+    // has successfully merged. Errors are caught and logged inside
+    // teardownDeploymentsForTask — never rethrown into the caller.
+    await teardownDeploymentsForTask(id)
+
     const dependents = store
       ? await store.query({
           sql: `SELECT DISTINCT task_id FROM task_blockers WHERE blocker_task_id = ?`,

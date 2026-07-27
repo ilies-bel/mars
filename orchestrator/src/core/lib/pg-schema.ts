@@ -709,6 +709,8 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_task_deployments_task
      ON task_deployments(task_id, created_at DESC)`,
+  // Backfill torn_down_at for databases created before teardown support (PRD 268cbb5a).
+  `ALTER TABLE task_deployments ADD COLUMN IF NOT EXISTS torn_down_at timestamptz`,
 
   // ── learned recipes (operator-taught auto-run rules) ─────────────────────
   // Per failure signature, global: the operator teaches a recovery op once

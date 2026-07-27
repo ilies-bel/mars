@@ -1,3 +1,15 @@
+/**
+ * Deployment-provider registry.
+ *
+ * Providers self-register at startup via `registerProvider`. Callers (the
+ * teardown helper, the deploy/status paths) use `getProvider` to look up the
+ * registered implementation for a given provider key (e.g. "noop", "http").
+ *
+ * The registry is process-global: one Map shared by all importers within the
+ * same Node.js process. This is intentional — providers register once at
+ * boot and are never replaced during normal operation.
+ */
+
 import type { DeploymentProvider } from './provider'
 import { NoopProvider } from './noop-provider'
 import { HttpDeploymentProvider } from './http-provider'

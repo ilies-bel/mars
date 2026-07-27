@@ -7,6 +7,7 @@ import {
   enqueueTask,
   type DropTaskResult,
 } from '../queue'
+import { teardownDeploymentsForTask } from '../lib/deployment/teardown'
 import { getDefaultDomainTaskStore } from '../store/task-store'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
 import {
@@ -102,6 +103,12 @@ export const corePurgeTask = async (
       `task ${id} is ${task.status}; refuse to purge in-flight tasks`,
     )
   }
+
+  // Best-effort: tear down any preview deployments for this task before the row
+  // is deleted (ON DELETE CASCADE would also remove the deployment rows, but we
+  // want to actually decommission the remote environment first). Errors are
+  // caught and logged inside teardownDeploymentsForTask — never rethrown.
+  await teardownDeploymentsForTask(id)
 
   // Capture task metadata BEFORE deletion — needed for compensation task creation.
   const capturedStatus = task.status

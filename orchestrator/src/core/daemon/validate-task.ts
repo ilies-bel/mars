@@ -22,6 +22,7 @@
 import { getTask, updateTask } from '../queue'
 import { killDevServer } from '../lib/dev-server'
 import { supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
+import { teardownDeploymentsForTask } from '../lib/deployment/teardown'
 
 const WRONG_STATUS = 'WRONG_STATUS' as const
 
@@ -50,6 +51,9 @@ export const coreValidateTask = async (id: string): Promise<void> => {
   }
 
   await killDevServer(task.devServerPid)
+  // Best-effort: tear down any preview deployments for this task. Errors are
+  // caught and logged inside teardownDeploymentsForTask — never rethrown.
+  await teardownDeploymentsForTask(id)
 
   // previewValidated=true is the durable signal the merge step reads to skip the
   // gate on re-entry. Clear the live dev-server coordinates now that it's dead.
@@ -77,6 +81,9 @@ export const coreRejectTask = async (id: string): Promise<void> => {
   }
 
   await killDevServer(task.devServerPid)
+  // Best-effort: tear down any preview deployments for this task. Errors are
+  // caught and logged inside teardownDeploymentsForTask — never rethrown.
+  await teardownDeploymentsForTask(id)
 
   const reason = 'merge:preview-rejected'
   await updateTask(id, {
