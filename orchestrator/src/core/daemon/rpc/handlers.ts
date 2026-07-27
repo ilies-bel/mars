@@ -19,7 +19,8 @@ import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget'
 import { applyControlLevers, loadDaemonConfig } from '../config'
 import { setSemLimit } from '../server'
 import { setInstallSemCap } from '../../lib/worktree-install'
-import { updateTask } from '../../queue'
+import { updateTask, getTask, listBlockers } from '../../queue'
+import { Arc } from '../../arc'
 import type { DaemonRequest, DaemonResponse } from '../protocol'
 import type { DaemonDeps, RpcHandler } from './types'
 
@@ -572,6 +573,33 @@ const resumeHandler = handler('resume', async (_req, deps) => {
   return { ok: true, data: { paused: false } }
 })
 
+const taskContextForWorkerHandler = handler('task.contextForWorker', async (req, _deps) => {
+  const task = await getTask(req.id)
+  if (!task) {
+    return { ok: false, error: `task.contextForWorker: task '${req.id}' not found` }
+  }
+  const [progressEntries, blockerIds] = await Promise.all([
+    Arc.listProgress(req.id),
+    listBlockers(req.id),
+  ])
+  const doneCriteria = task.spec?.doneCriteria ?? []
+  const checklist = Arc.deriveChecklist(progressEntries, doneCriteria)
+  return {
+    ok: true,
+    data: {
+      id: task.id,
+      title: task.intent,
+      prompt: task.prompt,
+      files: Array.from(task.spec?.files ?? []),
+      verify: task.spec?.verifyCmd ?? null,
+      done: checklist.map((c) => ({ text: c.criterion, checked: c.checked })),
+      taskType: task.spec?.taskType ?? 'auto',
+      status: task.status,
+      blockers: blockerIds,
+    },
+  }
+})
+
 /**
  * The full leaf set. Order is help/discovery order; the registry rejects
  * duplicate ops. Mirrors `cli/commands/index.ts`'s `allCommands`.
@@ -615,6 +643,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   killHandler,
   taskNoteHandler,
   taskCheckHandler,
+  taskContextForWorkerHandler,
   previewSpawnHandler,
   previewStatusHandler,
   previewTeardownHandler,

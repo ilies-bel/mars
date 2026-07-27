@@ -118,10 +118,10 @@ describe('RPC registry', () => {
   it('registers exactly one leaf per protocol op, no duplicates', () => {
     // Every handler op is unique (buildRpcRegistry throws on dup).
     expect(() => buildRpcRegistry(allRpcHandlers)).not.toThrow()
-    // Spot-check the count matches the 44-op protocol surface
+    // Spot-check the count matches the 46-op protocol surface
     // (38 + preview.spawn + preview.status + preview.teardown + merge.cancel
-    //  + spend-control.show + spend-control.set).
-    expect(rpcRegistry.size).toBe(44)
+    //  + spend-control.show + spend-control.set + apply-lever + task.contextForWorker).
+    expect(rpcRegistry.size).toBe(46)
   })
 
   it('rejects duplicate ops', () => {

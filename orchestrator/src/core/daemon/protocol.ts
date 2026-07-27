@@ -94,6 +94,13 @@ export type DaemonRequest =
   | { op: 'resume' }
   | { op: 'task.note'; id: string; body: string; author?: string }
   | { op: 'task.check'; id: string; criterionIndex: number; uncheck?: boolean; author?: string }
+  /**
+   * Read the worker-safe context for a task. Returns only fields relevant to
+   * the dispatched agent: id, title, prompt, files, verify cmd, done criteria
+   * with check state, task type, status, and blocker ids. No internal counters,
+   * auth tokens, or raw DB rows are returned.
+   */
+  | { op: 'task.contextForWorker'; id: string }
   // Preview-process management: spawn a detached stack process whose
   // stdout/stderr are teed to `.mars/previews/<taskId>.log`, query its
   // current status, or tear it down (SIGTERM → SIGKILL fallback).

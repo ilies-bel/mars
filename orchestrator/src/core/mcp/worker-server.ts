@@ -130,6 +130,16 @@ export async function startWorkerMcpServer(
                 additionalProperties: false,
               },
             },
+            {
+              name: 'mars_task_context',
+              description:
+                'Fetch structured context for the current task: id, title, prompt, files, verify command, done criteria with check state, task type, status, and blocker ids',
+              inputSchema: {
+                type: 'object',
+                properties: {},
+                additionalProperties: false,
+              },
+            },
           ],
         })
         break
@@ -183,6 +193,24 @@ export async function startWorkerMcpServer(
           } catch (err) {
             respond(id, {
               content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+              isError: true,
+            })
+          }
+        } else if (toolName === 'mars_task_context') {
+          try {
+            const data = await deps.sendRequest({
+              op: 'task.contextForWorker',
+              id: taskId,
+            })
+            respond(id, { content: [{ type: 'text', text: JSON.stringify(data) }] })
+          } catch (err) {
+            respond(id, {
+              content: [
+                {
+                  type: 'text',
+                  text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ],
               isError: true,
             })
           }
