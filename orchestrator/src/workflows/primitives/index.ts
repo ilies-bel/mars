@@ -112,6 +112,9 @@ import {
   QUOTA_REJECTED_ABORT_MESSAGE,
 } from './shared'
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
+import { loadDeployConfig, DeployConfigError } from '../../core/lib/deployment/config'
+import { getProvider } from '../../core/lib/deployment/registry'
+import type { DeployResult } from '../../core/lib/deployment/provider'
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { readFile } from 'node:fs/promises'
@@ -1276,6 +1279,107 @@ export const review = async (
     const manualStore: TaskStore = ctx.services.store
     const manualWorktree = await resolveWorktree(ctx, manualTaskId, manualStore, opts.worktree)
     const cwd = manualWorktree.path
+
+    // ── Remote deployment gate ─────────────────────────────────────────────
+    // When .mars/deploy.config.json exists in stateDir, delegate QA hosting
+    // to the configured provider.  The task parks in awaiting-validation in
+    // both the success and failure paths — it must never fall through and
+    // silently merge.
+    const _stateDir = getStateDir()
+    let _deployConfig: Awaited<ReturnType<typeof loadDeployConfig>> | null = null
+    try {
+      _deployConfig = await loadDeployConfig(_stateDir)
+    } catch (err) {
+      if (!(err instanceof DeployConfigError)) throw err
+      // No deploy.config.json — fall through to local dev server.
+    }
+
+    if (_deployConfig !== null) {
+      const provider = getProvider(_deployConfig.provider)
+      if (!provider) {
+        throw new Error(
+          `preview-gate: deployment provider '${_deployConfig.provider}' is not registered`,
+        )
+      }
+      const worktreeBranch = manualWorktree.branch
+
+      let deployResult: DeployResult | null = null
+      let deployErrMsg: string | null = null
+      try {
+        deployResult = await provider.deploy({
+          taskId: manualTaskId,
+          worktreePath: cwd,
+          branch: worktreeBranch,
+          env: _deployConfig.env,
+        })
+      } catch (err) {
+        deployErrMsg = err instanceof Error ? err.message : String(err)
+      }
+
+      if (deployResult !== null) {
+        // Success: write a ready deployment row and park for human validation.
+        await manualStore.writeDeployment({
+          taskId: manualTaskId,
+          provider: _deployConfig.provider,
+          deploymentId: deployResult.deploymentId,
+          url: deployResult.url,
+          status: 'ready',
+        })
+        raiseActionQueueItem({
+          kind: 'awaiting-validation',
+          category: 'task',
+          priority: 'normal',
+          title: `Validate ${manualTaskId}`,
+          body: `Remote deployment ready${deployResult.url ? `: ${deployResult.url}` : ''}.`,
+          payload: { remoteUrl: deployResult.url, branch: worktreeBranch },
+          context: { taskId: manualTaskId },
+          raisedBy: 'primitive:preview-gate',
+          signature: manualTaskId,
+          originTaskId: manualTaskId,
+        }).catch((err) => {
+          console.error(`[preview-gate] task ${manualTaskId} action-queue raise errored:`, err)
+        })
+      } else {
+        // Failure: persist the error and notify the operator.
+        const errMsg = deployErrMsg ?? 'deploy returned no result'
+        const deploymentId = `deploy-fail-${manualTaskId}`
+        const row = await manualStore.writeDeployment({
+          taskId: manualTaskId,
+          provider: _deployConfig.provider,
+          deploymentId,
+          url: null,
+          status: 'failed',
+        })
+        await manualStore.updateDeploymentStatus(row.deploymentId, {
+          status: 'failed',
+          error: errMsg,
+        })
+        raiseActionQueueItem({
+          kind: 'awaiting-validation',
+          category: 'task',
+          priority: 'normal',
+          title: `Validate ${manualTaskId}: remote deploy failed`,
+          body: errMsg,
+          payload: { remoteUrl: null, branch: worktreeBranch },
+          context: { taskId: manualTaskId },
+          raisedBy: 'primitive:preview-gate',
+          signature: `${manualTaskId}:deploy-failed`,
+          originTaskId: manualTaskId,
+        }).catch((err) => {
+          console.error(`[preview-gate] task ${manualTaskId} action-queue raise errored:`, err)
+        })
+      }
+
+      // In both cases, park the task — never fall through to local dev server.
+      throw new WorkflowTerminalError(
+        'preview-gate',
+        deployErrMsg !== null
+          ? `remote deploy failed for ${manualTaskId}: ${deployErrMsg}`
+          : `remote deployment ready for ${manualTaskId}, awaiting validation`,
+        { stepName: ctx.currentStep?.name ?? 'preview-gate' },
+      )
+    }
+    // ── End remote deployment gate ──────────────────────────────────────────
 
     // Resolve boot command: task-spec previewCmd → package.json scripts.dev → error.
     let cmd: string | null = input(ctx).spec?.previewCmd ?? null
