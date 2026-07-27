@@ -44,6 +44,11 @@ const runCli = (args: readonly string[], env?: Record<string, string>): SpawnSyn
   })
 
 let repo: string
+// Keep a reference to the db module so afterEach can force-close all PGlite
+// instances before deleting the temp directory.  Without this, background WAL
+// operations in the WASM event loop hit ENOENT on the deleted path and cause
+// intermittent ErrnoError: errno 44 failures in unrelated tests.
+let dbModule: typeof import('../../core/lib/db') | null = null
 
 const setupRepo = (): string => {
   const dir = mkdtempSync(resolve(tmpdir(), 'mars-task-intent-test-'))
@@ -53,8 +58,17 @@ const setupRepo = (): string => {
 }
 
 const loadStoreAndCtx = async (): Promise<{ store: DomainTaskStore; ctx: OrchestratorContext }> => {
+  // Close any PGlite instances opened in a prior loadStoreAndCtx call before
+  // resetting modules, so they shut down cleanly against the current repo dir.
+  if (dbModule) {
+    await dbModule.__resetDbRegistryForTests()
+    dbModule = null
+  }
   vi.resetModules()
   process.env.MARS_REPO = repo
+  // Save a reference to the freshly-loaded db module so afterEach can close
+  // PGlite before rmSync removes the temp directory (see above).
+  dbModule = await import('../../core/lib/db')
   const queueModule = await import('../../core/queue')
   await queueModule.migrateQueueSchema()
   const storeModule = await import('../../core/store/task-store')
@@ -76,7 +90,15 @@ const baseOpts = async (
 beforeEach(() => {
   repo = setupRepo()
 })
-afterEach(() => {
+afterEach(async () => {
+  // Force-close all PGlite instances before deleting the temp dir.  The db
+  // backend creates a file-backed PGlite store at <stateDir>.pglite; if the
+  // directory is removed while the WASM event loop still has outstanding ops,
+  // subsequent tests intermittently fail with ErrnoError (errno 44 / ENOENT).
+  if (dbModule) {
+    await dbModule.__resetDbRegistryForTests()
+    dbModule = null
+  }
   delete process.env.MARS_REPO
   rmSync(repo, { recursive: true, force: true })
 })
