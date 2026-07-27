@@ -29,11 +29,15 @@ export default defineConfig({
         test: {
           name: 'node',
           environment: 'node',
+          // Provide minimal Bun runtime globals so tests written against Bun's
+          // API (Bun.serve, Bun.write) also execute under `npx vitest run`.
+          setupFiles: ['server/__testing__/bun-vitest-setup.ts'],
           // Include all src/ tests EXCEPT *.composer.test.* (those need DOM)
           // and ChatPage.test.tsx (moved to dom to support slash-palette keyboard tests)
           // plus the server tests that use Node.js HTTP and mocks.
           include: [
             'src/**/*.test.{ts,tsx}',
+            'server/actionQueue.test.ts',
             'server/daemonHttp.test.ts',
             'server/kpis.test.ts',
             'server/projectHealth.test.ts',

@@ -8,6 +8,7 @@ import { createClient, type Client } from '@libsql/client'
 import { actionQueueResponseSchema } from '../src/shared/schemas.ts'
 import { startServer } from './index.ts'
 import { makeDaemonStub } from './testDaemonStub.ts'
+import { failureKindDecisions } from './actionQueueDecisions.ts'
 
 interface ActionQueueItemBody {
   id: string
@@ -35,6 +36,7 @@ interface ActionQueueItemBody {
     investigation: string | null
   } | null
   diagnosis: { text: string; diagnosedAt: string } | null
+  decisions: Array<{ label: string; endpoint: string; payload: Record<string, unknown> }>
 }
 
 const setupRepo = (): string => {
@@ -567,6 +569,59 @@ describe('GET /api/action-queue (persisted view)', () => {
     const body = await fetchQueue()
     const row = body.find((r) => r.id === 'nodiag-row-1')
     expect(row?.diagnosis).toBeNull()
+  })
+
+  it('coder-killed-by-restart row: decisions include Continue and Drop buttons', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertActionQueueItem(c, {
+      id: 'ckbr-row-1',
+      kind: 'coder-killed-by-restart',
+      priority: 'high',
+      payload: { taskId: 't-ckbr' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'ckbr-row-1')
+    expect(row).toBeDefined()
+    // errorKind is preserved from the raw kind so failureKindDecisions receives it
+    expect(row?.errorKind).toBe('coder-killed-by-restart')
+    expect(row?.decisions).toHaveLength(2)
+    expect(row?.decisions[0].label).toBe('Continue')
+    expect(row?.decisions[1].label).toBe('Drop')
+  })
+})
+
+describe('decisions per failure kind', () => {
+  it('coder-killed-by-restart returns [Continue, Drop]', () => {
+    const decisions = failureKindDecisions('coder-killed-by-restart')
+    expect(decisions).toHaveLength(2)
+    expect(decisions[0].label).toBe('Continue')
+    expect(decisions[1].label).toBe('Drop')
+    expect(typeof decisions[0].endpoint).toBe('string')
+    expect(decisions[0].endpoint.length).toBeGreaterThan(0)
+    expect(typeof decisions[0].payload).toBe('object')
+  })
+
+  it('verify-failed returns [Retry, Drop]', () => {
+    const decisions = failureKindDecisions('verify-failed')
+    expect(decisions).toHaveLength(2)
+    expect(decisions[0].label).toBe('Retry')
+    expect(decisions[1].label).toBe('Drop')
+    expect(typeof decisions[0].endpoint).toBe('string')
+  })
+
+  it('merge-blocked returns [Retry Merge, Drop]', () => {
+    const decisions = failureKindDecisions('merge-blocked')
+    expect(decisions).toHaveLength(2)
+    expect(decisions[0].label).toBe('Retry Merge')
+    expect(decisions[1].label).toBe('Drop')
+    expect(typeof decisions[0].endpoint).toBe('string')
+  })
+
+  it('unknown kind returns []', () => {
+    expect(failureKindDecisions('some-unknown-kind')).toEqual([])
+    expect(failureKindDecisions('')).toEqual([])
   })
 })
 

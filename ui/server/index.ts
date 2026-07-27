@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { resolveUploadPath } from './chatUploadPath.ts'
+import { failureKindDecisions } from './actionQueueDecisions.ts'
 import { loadProjectRegistry } from '../../orchestrator/src/registry/projects.ts'
 import {
   fetchKpis,
@@ -119,7 +120,7 @@ const staticResponse = (root: string, urlPath: string): Response | null => {
 export const startServer = async (
   args: CliArgs,
   deps: ServerDeps = {},
-): Promise<ReturnType<typeof Bun.serve>> => {
+): Promise<Awaited<ReturnType<typeof Bun.serve>>> => {
   const proxyGet = deps.proxyGet ?? realProxyGet
   const proxyPost = deps.proxyPost ?? realProxyPost
   const sseHeartbeatMs = deps.sseHeartbeatMs ?? 15_000
@@ -131,9 +132,9 @@ export const startServer = async (
 
   const distDir = args.distDir ? resolve(args.distDir) : undefined
 
-  let server: ReturnType<typeof Bun.serve>
+  let server: Awaited<ReturnType<typeof Bun.serve>>
   try {
-    server = Bun.serve({
+    server = await Bun.serve({
       port: args.port,
       hostname: args.host,
       idleTimeout: 0,
@@ -206,6 +207,13 @@ export const startServer = async (
             ctx.stateDir,
             `/view/action-queue${url.search}`,
           )
+          if (result.status === 200 && Array.isArray(result.body)) {
+            const enriched = (result.body as Record<string, unknown>[]).map((item) => ({
+              ...item,
+              decisions: failureKindDecisions((item.errorKind ?? item.kind) as string),
+            }))
+            return jsonResponse(200, enriched)
+          }
           return jsonResponse(result.status, result.body)
         }
 
