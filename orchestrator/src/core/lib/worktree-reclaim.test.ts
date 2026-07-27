@@ -2,14 +2,18 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { classifyWorktree, computeDirBytes } from './worktree-reclaim'
+import { classifyWorktree, computeDirBytes, SAFE_CATEGORIES } from './worktree-reclaim'
+import type { WorktreeGitState } from './worktree-reclaim'
 import type { Task } from '../queue'
 
 // ---------------------------------------------------------------------------
 // Minimal Task fixture — only the fields classifyWorktree cares about
 // ---------------------------------------------------------------------------
 
-const makeTask = (status: Task['status']): Task =>
+const makeTask = (
+  status: Task['status'],
+  overrides?: Partial<Pick<Task, 'leaseOwner'>>,
+): Task =>
   ({
     id: 'mars-test-0001',
     prompt: 'test',
@@ -37,7 +41,7 @@ const makeTask = (status: Task['status']): Task =>
     updatedAt: new Date().toISOString(),
     updatedAtMs: Date.now(),
     spec: null,
-    leaseOwner: null,
+    leaseOwner: overrides?.leaseOwner ?? null,
     leasedAt: null,
     leaseNote: null,
     intent: null,
@@ -45,7 +49,7 @@ const makeTask = (status: Task['status']): Task =>
   }) as unknown as Task
 
 // ---------------------------------------------------------------------------
-// classifyWorktree
+// classifyWorktree — original categories
 // ---------------------------------------------------------------------------
 
 describe('classifyWorktree', () => {
@@ -87,6 +91,129 @@ describe('classifyWorktree', () => {
   it('returns unknown for a verifying task', () => {
     const result = classifyWorktree({ id: 'mars-abc1', task: makeTask('verifying') })
     expect(result.category).toBe('unknown')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// classifyWorktree — protection categories
+// ---------------------------------------------------------------------------
+
+describe('classifyWorktree — protection categories', () => {
+  it('returns protected-dirty when worktree has uncommitted changes', () => {
+    const gitState: WorktreeGitState = { dirty: true, ahead: 0 }
+    const result = classifyWorktree({
+      id: 'mars-abc1',
+      task: makeTask('done'),
+      gitState,
+    })
+    expect(result.category).toBe('protected-dirty')
+    expect(result.reason).toContain('uncommitted')
+  })
+
+  it('returns protected-ahead when branch has commits ahead', () => {
+    const gitState: WorktreeGitState = { dirty: false, ahead: 3 }
+    const result = classifyWorktree({
+      id: 'mars-abc1',
+      task: makeTask('done'),
+      gitState,
+    })
+    expect(result.category).toBe('protected-ahead')
+    expect(result.reason).toContain('3 commit(s)')
+  })
+
+  it('returns protected-leased when worktree has a lease owner', () => {
+    const result = classifyWorktree({
+      id: 'mars-abc1',
+      task: makeTask('running'),
+      lease: { owner: 'alice' },
+    })
+    expect(result.category).toBe('protected-leased')
+    expect(result.reason).toContain('alice')
+  })
+
+  it('returns protected-awaiting-human for awaiting-human tasks', () => {
+    const result = classifyWorktree({
+      id: 'mars-abc1',
+      task: makeTask('awaiting-human' as Task['status']),
+    })
+    expect(result.category).toBe('protected-awaiting-human')
+  })
+
+  it('returns protected-awaiting-validation for awaiting-validation tasks', () => {
+    const result = classifyWorktree({
+      id: 'mars-abc1',
+      task: makeTask('awaiting-validation' as Task['status']),
+    })
+    expect(result.category).toBe('protected-awaiting-validation')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// classifyWorktree — precedence
+// ---------------------------------------------------------------------------
+
+describe('classifyWorktree — precedence', () => {
+  it('awaiting-validation beats leased beats ahead beats dirty', () => {
+    const gitState: WorktreeGitState = { dirty: true, ahead: 5 }
+    const lease = { owner: 'bob' }
+
+    // awaiting-validation wins over everything
+    const r1 = classifyWorktree({
+      id: 'x',
+      task: makeTask('awaiting-validation' as Task['status'], { leaseOwner: 'bob' }),
+      gitState,
+      lease,
+    })
+    expect(r1.category).toBe('protected-awaiting-validation')
+
+    // awaiting-human beats leased/ahead/dirty
+    const r2 = classifyWorktree({
+      id: 'x',
+      task: makeTask('awaiting-human' as Task['status'], { leaseOwner: 'bob' }),
+      gitState,
+      lease,
+    })
+    expect(r2.category).toBe('protected-awaiting-human')
+
+    // leased beats ahead/dirty
+    const r3 = classifyWorktree({
+      id: 'x',
+      task: makeTask('running'),
+      gitState,
+      lease,
+    })
+    expect(r3.category).toBe('protected-leased')
+
+    // ahead beats dirty
+    const r4 = classifyWorktree({
+      id: 'x',
+      task: makeTask('running'),
+      gitState,
+    })
+    expect(r4.category).toBe('protected-ahead')
+
+    // dirty alone
+    const r5 = classifyWorktree({
+      id: 'x',
+      task: makeTask('running'),
+      gitState: { dirty: true, ahead: 0 },
+    })
+    expect(r5.category).toBe('protected-dirty')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// SAFE_CATEGORIES
+// ---------------------------------------------------------------------------
+
+describe('SAFE_CATEGORIES', () => {
+  it('contains only absent-task and terminal-clean', () => {
+    expect(SAFE_CATEGORIES.has('absent-task')).toBe(true)
+    expect(SAFE_CATEGORIES.has('terminal-clean')).toBe(true)
+    expect(SAFE_CATEGORIES.has('protected-dirty')).toBe(false)
+    expect(SAFE_CATEGORIES.has('protected-ahead')).toBe(false)
+    expect(SAFE_CATEGORIES.has('protected-leased')).toBe(false)
+    expect(SAFE_CATEGORIES.has('unknown')).toBe(false)
   })
 })
 

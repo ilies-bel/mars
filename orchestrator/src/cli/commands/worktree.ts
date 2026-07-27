@@ -10,7 +10,12 @@
 
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { classifyWorktree, computeDirBytes } from '../../core/lib/worktree-reclaim'
+import {
+  classifyWorktree,
+  computeDirBytes,
+  probeWorktreeGitState,
+  SAFE_CATEGORIES,
+} from '../../core/lib/worktree-reclaim'
 import type { Command } from '../command'
 
 /** Format bytes as a human-readable string (KB / MB / GB). */
@@ -21,7 +26,8 @@ const humanBytes = (n: number): string => {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-const RECLAIMABLE_CATEGORIES = new Set(['absent-task', 'terminal-clean'])
+const INTEGRATION_BRANCH = process.env.INTEGRATION_BRANCH ?? 'main'
+const PROBE_CONCURRENCY = 8
 
 const worktreeReclaim: Command = {
   path: 'worktree reclaim',
@@ -50,9 +56,23 @@ const worktreeReclaim: Command = {
     const allTasks = await deps.store.listTasks()
     const taskById = new Map(allTasks.map((t) => [t.id, t]))
 
+    // Probe git state in bounded-parallelism chunks
+    const gitStates = new Map<string, Awaited<ReturnType<typeof probeWorktreeGitState>>>()
+    for (let i = 0; i < entries.length; i += PROBE_CONCURRENCY) {
+      const chunk = entries.slice(i, i + PROBE_CONCURRENCY)
+      const results = await Promise.all(
+        chunk.map(async (name) => {
+          const wPath = join(worktreesDir, name)
+          const state = await probeWorktreeGitState(wPath, INTEGRATION_BRANCH)
+          return [name, state] as const
+        }),
+      )
+      for (const [name, state] of results) gitStates.set(name, state)
+    }
+
     // Table header
-    deps.out('ID'.padEnd(20) + 'STATUS'.padEnd(22) + 'CATEGORY'.padEnd(18) + 'BYTES')
-    deps.out('-'.repeat(80))
+    deps.out('ID'.padEnd(20) + 'STATUS'.padEnd(22) + 'CATEGORY'.padEnd(28) + 'BYTES')
+    deps.out('-'.repeat(90))
 
     let reclaimCount = 0
     let reclaimBytes = 0
@@ -60,18 +80,25 @@ const worktreeReclaim: Command = {
     for (const name of entries) {
       const worktreePath = join(worktreesDir, name)
       const task = taskById.get(name) ?? null
-      const { category, reason: _reason } = classifyWorktree({ id: name, task })
+      const gitState = gitStates.get(name) ?? null
+      const lease = task?.leaseOwner ? { owner: task.leaseOwner } : null
+      const { category, reason: _reason } = classifyWorktree({
+        id: name,
+        task,
+        gitState,
+        lease,
+      })
       const bytes = await computeDirBytes(worktreePath)
 
       const statusStr = task ? task.status : '(no task)'
       deps.out(
         name.padEnd(20) +
           statusStr.padEnd(22) +
-          category.padEnd(18) +
+          category.padEnd(28) +
           humanBytes(bytes),
       )
 
-      if (RECLAIMABLE_CATEGORIES.has(category)) {
+      if (SAFE_CATEGORIES.has(category)) {
         reclaimCount++
         reclaimBytes += bytes
       }
