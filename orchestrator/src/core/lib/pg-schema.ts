@@ -115,6 +115,11 @@ const DDL: readonly string[] = [
     author_name          text,
     failure_reason       text,
     failure_reason_code  text,
+    stall_diagnostics    text,
+    -- Quoted: DEFERRABLE is a reserved PostgreSQL keyword, so an unquoted
+    -- column definition is a syntax error. Reads stay unquoted (t.deferrable)
+    -- because a qualified reference parses fine.
+    "deferrable"         bigint NOT NULL DEFAULT 0,
     recovery_payload     text,
     fix_for_task_id      text   REFERENCES tasks(id),
     failure_signature    text,
@@ -392,6 +397,12 @@ const DDL: readonly string[] = [
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS arc_rescue_attempts bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS review_packet_json text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS qa_report_json text`,
+  // `stall_diagnostics` and `deferrable` are SELECTed by core/queue.ts but were
+  // never added to the canonical DDL, so every already-provisioned database
+  // failed `mars daemon status` with "column t.<name> does not exist".
+  // `deferrable` is a 0/1 flag (queue.ts reads it as Number(row.deferrable) === 1).
+  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS stall_diagnostics text`,
+  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS "deferrable" bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
   // Chat runs on the Codex Responses API with full transcript replay — the
   // CLI-session binding and one-shot context seeding are gone.
