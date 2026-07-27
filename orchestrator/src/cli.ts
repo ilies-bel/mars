@@ -250,6 +250,10 @@ Commands:
                                 matching task row). Keeps failed worktrees and
                                 any in-flight worktree (queued/running/verifying/
                                 merging). The bigger hammer versus clean.
+  worktree reclaim [--dry-run]  read-only scan: classify every directory under
+                                .mars/worktrees/ by task existence and status,
+                                compute disk usage, and print a table with a
+                                reclaimable-bytes footer. Nothing is deleted.
   daemon <start|stop|restart|kill|status|reload|set-flag|pause|resume> [flags]
                                 run the orchestration daemon. 'start' forks to
                                 background (also --detach). 'stop' stops
@@ -876,6 +880,7 @@ Requires an interactive terminal. Prints 'no orphan task branches' when
 there are none.`,
   worktree: `mars worktree clean [--dry-run] [--force-orphans]
 mars worktree prune [--dry-run]
+mars worktree reclaim [--dry-run]
 
 Walk .mars/worktrees/ (and legacy .worktrees/), classify each directory
 by joining against the matching task row, and remove the safe ones.
@@ -898,6 +903,14 @@ by joining against the matching task row, and remove the safe ones.
   in-flight (queued/running/verifying/    → kept (never touch)
     merging)
   draft / blocked                         → kept
+
+'reclaim' (read-only scan, dry-run only):
+  absent-task (no queue row)              → reclaimable
+  terminal-clean (done/failed/dropped)    → reclaimable
+  unknown (in-flight or human-held)       → kept
+
+  Prints a table of id | status | category | bytes and a footer showing
+  the total reclaimable entry count and bytes. Nothing is deleted.
 
 Flags (both subcommands):
   --dry-run         print what would happen, change nothing, exit 0.

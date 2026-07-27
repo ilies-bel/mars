@@ -180,10 +180,11 @@ const worktreeGroup: Command = {
   path: 'worktree',
   summary: 'worktree subcommands',
   usage:
-    'usage: mars worktree clean [--dry-run] [--force-orphans]\n       mars worktree prune [--dry-run]',
+    'usage: mars worktree clean [--dry-run] [--force-orphans]\n       mars worktree prune [--dry-run]\n       mars worktree reclaim [--dry-run]',
   run: (_args, deps) => {
     deps.err('usage: mars worktree clean [--dry-run] [--force-orphans]')
     deps.err('       mars worktree prune [--dry-run]')
+    deps.err('       mars worktree reclaim [--dry-run]')
     return { code: 1 }
   },
 }
