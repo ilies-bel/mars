@@ -107,6 +107,13 @@ export interface DaemonDeps {
   drain(): Promise<void>
   /** The daemon's graceful-exit routine (shutdown delegates to it). */
   shutdown(force?: boolean): Promise<void>
+  /**
+   * Clear the persisted signature-storm `tripped` flag and streak on operator
+   * resume.  Idempotent: a no-op when no storm row exists or `tripped` is
+   * already `false`.  Wired so a subsequent daemon restart does NOT re-pause
+   * a queue the operator deliberately resumed.
+   */
+  resetSignatureStorm(): Promise<void>
   /** Daemon socket/pid/http-port files, unlinked by `kill`. */
   paths: RpcDaemonPaths
 

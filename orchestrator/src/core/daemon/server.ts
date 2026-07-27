@@ -3341,6 +3341,10 @@ export const startDaemon = async (
     },
     drain: () => drain(),
     shutdown: (force?: boolean) => shutdown(force),
+    resetSignatureStorm: async () => {
+      const { resetFailureSignatureStreak } = await import('../lib/signature-storm-monitor')
+      await resetFailureSignatureStreak(getCompositionRootClient())
+    },
     paths: { socketPath, pidFile, httpPortFile },
     handleAdd,
     setTaskPriority,
@@ -3878,6 +3882,33 @@ export const startDaemon = async (
   })
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
+
+  // ── Signature-storm pause recovery ───────────────────────────────────────
+  // The circuit breaker's `tripped` flag is persisted across daemon restarts
+  // (in the `failure_signature_streak` singleton row). `isPaused`, however,
+  // is in-memory only and always starts as `false`. If the prior daemon trip
+  // the breaker, we must restore `isPaused = true` NOW — before reconcile()
+  // triggers the first drain() — so queued tasks don't dispatch during an
+  // active storm episode.
+  //
+  // Single source of truth: `tripped` drives both "never re-raise the action-
+  // queue row" (handled by recordFailureSignature's alreadyTripped guard) and
+  // "keep the queue paused" (handled here).  Persisting a separate `isPaused`
+  // column would introduce the same two-flag drift this fix is designed to
+  // eliminate.
+  //
+  // Resume path: `mars daemon resume` calls resetSignatureStorm(), which
+  // zeroes the streak and clears `tripped`, so the NEXT restart does NOT
+  // re-pause the queue the operator deliberately unblocked.
+  try {
+    const { isSignatureStormTripped } = await import('../lib/signature-storm-monitor')
+    if (await isSignatureStormTripped(getCompositionRootClient())) {
+      isPaused = true
+      log('[signature-storm] startup: tripped flag found in DB — dispatch remains paused; run `mars daemon resume` to re-enable')
+    }
+  } catch (err) {
+    log(`[signature-storm] startup: failed to read streak row (non-fatal): ${(err as Error).message}`)
+  }
 
   // Boot reconcile after server is listening (so any reconcile-driven dispatch
   // is fully wired) — fire-and-forget; errors logged inside.

@@ -51,6 +51,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): DaemonDeps => ({
   persistIsPaused: () => {},
   drain: async () => {},
   shutdown: async () => {},
+  resetSignatureStorm: async () => {},
   paths: { socketPath: '/tmp/x.sock', pidFile: '/tmp/x.pid', httpPortFile: '/tmp/x.port' },
   handleAdd: notImpl('handleAdd') as DaemonDeps['handleAdd'],
   setTaskPriority: notImpl('setTaskPriority') as DaemonDeps['setTaskPriority'],

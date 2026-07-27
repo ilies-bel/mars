@@ -570,6 +570,11 @@ const pauseHandler = handler('pause', async (_req, deps) => {
 const resumeHandler = handler('resume', async (_req, deps) => {
   deps.setIsPaused(false)
   deps.persistIsPaused(false)
+  // Clear the persisted signature-storm tripped flag so a subsequent daemon
+  // restart does not re-pause a queue the operator deliberately resumed.
+  // Idempotent when no storm was active: the UPDATE is a no-op when the row
+  // has tripped=false or does not exist.
+  await deps.resetSignatureStorm()
   void deps.drain()
   deps.log('daemon resumed; dispatch re-enabled')
   return { ok: true, data: { paused: false } }

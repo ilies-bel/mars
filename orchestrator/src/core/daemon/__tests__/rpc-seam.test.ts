@@ -42,9 +42,23 @@ const fakeTracker = (overrides: Partial<TaskFlightTracker> = {}): TaskFlightTrac
  */
 const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
   deps: DaemonDeps
-  state: { accepting: boolean; paused: boolean; persisted: boolean | null; drained: number; shutdownCalls: boolean[] }
+  state: {
+    accepting: boolean
+    paused: boolean
+    persisted: boolean | null
+    drained: number
+    shutdownCalls: boolean[]
+    stormResets: number
+  }
 } => {
-  const state = { accepting: true, paused: false, persisted: null as boolean | null, drained: 0, shutdownCalls: [] as boolean[] }
+  const state = {
+    accepting: true,
+    paused: false,
+    persisted: null as boolean | null,
+    drained: 0,
+    shutdownCalls: [] as boolean[],
+    stormResets: 0,
+  }
   const notImpl = (name: string) => () => {
     throw new Error(`unexpected call to ${name}`)
   }
@@ -74,6 +88,9 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     },
     shutdown: async (force) => {
       state.shutdownCalls.push(force === true)
+    },
+    resetSignatureStorm: async () => {
+      state.stormResets += 1
     },
     paths: { socketPath: '/tmp/x.sock', pidFile: '/tmp/x.pid', httpPortFile: '/tmp/x.port' },
     handleAdd: notImpl('handleAdd') as DaemonDeps['handleAdd'],
@@ -253,6 +270,15 @@ describe('pause / resume', () => {
     expect(state.persisted).toBe(false)
     // drain() was called once by resumeHandler
     expect(state.drained).toBe(1)
+  })
+
+  it('resume calls resetSignatureStorm to clear the persisted tripped flag', async () => {
+    // Ensures a subsequent daemon restart does not re-pause a queue the
+    // operator deliberately resumed (the signature-storm two-lifetime bug fix).
+    const { deps, state } = makeDeps()
+    state.paused = true
+    await dispatchRpc(rpcRegistry, { op: 'resume' }, deps)
+    expect(state.stormResets).toBe(1)
   })
 
   it('pause → task add (work-spawning op) is still accepted while paused', async () => {

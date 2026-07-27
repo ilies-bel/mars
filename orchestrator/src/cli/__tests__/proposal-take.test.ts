@@ -189,6 +189,7 @@ describe('proposal.take RPC handler', () => {
       persistIsPaused: () => {},
       drain: async () => {},
       shutdown: async () => {},
+      resetSignatureStorm: async () => {},
       paths: { socketPath: '', pidFile: '', httpPortFile: '' },
       handleAdd: notImpl('handleAdd') as DaemonDeps['handleAdd'],
       setTaskPriority: notImpl('setTaskPriority') as DaemonDeps['setTaskPriority'],

@@ -227,6 +227,20 @@ export const recordFailureSignature = async (
 }
 
 /**
+ * Returns `true` when the `failure_signature_streak` singleton row exists and
+ * has `tripped = true`.
+ *
+ * Called at daemon startup to restore the in-memory `isPaused` flag from the
+ * durable DB state. Without this check, `isPaused` resets to `false` on every
+ * daemon restart while `tripped` stays `true` — the two halves of the circuit
+ * breaker disagree and the queue drains at full rate during an active storm.
+ */
+export const isSignatureStormTripped = async (client: MonitorDb): Promise<boolean> => {
+  const row = await readStreakRow(client)
+  return row.tripped
+}
+
+/**
  * Reset the failure-signature streak. Call on any successful task completion
  * so the storm episode ends and a future storm (different signature or the
  * same one after a fix) can trip independently.

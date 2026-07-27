@@ -47,6 +47,7 @@ interface ActionQueueModule {
 interface StormMonitorModule {
   recordFailureSignature: typeof import('../signature-storm-monitor').recordFailureSignature
   resetFailureSignatureStreak: typeof import('../signature-storm-monitor').resetFailureSignatureStreak
+  isSignatureStormTripped: typeof import('../signature-storm-monitor').isSignatureStormTripped
   SIGNATURE_STORM_TRIP_THRESHOLD: typeof import('../signature-storm-monitor').SIGNATURE_STORM_TRIP_THRESHOLD
   SIGNATURE_STORM_ACTION_QUEUE_KIND: typeof import('../signature-storm-monitor').SIGNATURE_STORM_ACTION_QUEUE_KIND
 }
@@ -232,6 +233,58 @@ describe('signature-storm-monitor — unit', () => {
     expect(fresh.streak).toBe(1)
     expect(fresh.tripped).toBe(false)
     expect(fresh.alreadyTripped).toBe(false)
+  })
+
+  // ── isSignatureStormTripped — startup pause recovery ─────────────────────
+
+  it('isSignatureStormTripped returns false when no row exists', async () => {
+    const { sm, client } = await loadModules(repo)
+    // No failures recorded yet — no row in DB.
+    expect(await sm.isSignatureStormTripped(client)).toBe(false)
+  })
+
+  it('isSignatureStormTripped returns false when streak is below threshold', async () => {
+    const { sm, client } = await loadModules(repo)
+    const sig = 'setup:install-failed/unclassified'
+    const K = sm.SIGNATURE_STORM_TRIP_THRESHOLD
+    // Record K-1 failures (below threshold — tripped stays false).
+    for (let i = 0; i < K - 1; i++) {
+      await sm.recordFailureSignature(client, `task-${i}`, sig)
+    }
+    expect(await sm.isSignatureStormTripped(client)).toBe(false)
+  })
+
+  it('isSignatureStormTripped returns true after the breaker trips', async () => {
+    const { sm, client } = await loadModules(repo)
+    const sig = 'setup:install-failed/unclassified'
+    const K = sm.SIGNATURE_STORM_TRIP_THRESHOLD
+    for (let i = 0; i < K; i++) {
+      await sm.recordFailureSignature(client, `task-${i}`, sig)
+    }
+    // The K-th call tripped the breaker — persisted tripped=true in DB.
+    expect(await sm.isSignatureStormTripped(client)).toBe(true)
+  })
+
+  it('isSignatureStormTripped returns false after resetFailureSignatureStreak (simulates resume)', async () => {
+    // This models the daemon restart scenario:
+    //   1. Storm trips → tripped=true persisted in DB.
+    //   2. Operator calls `mars daemon resume` → resetFailureSignatureStreak clears tripped.
+    //   3. Next daemon startup calls isSignatureStormTripped → returns false → no re-pause.
+    const { sm, client } = await loadModules(repo)
+    const sig = 'setup:install-failed/unclassified'
+    const K = sm.SIGNATURE_STORM_TRIP_THRESHOLD
+
+    // Trip the breaker.
+    for (let i = 0; i < K; i++) {
+      await sm.recordFailureSignature(client, `task-${i}`, sig)
+    }
+    expect(await sm.isSignatureStormTripped(client)).toBe(true)
+
+    // Operator resumes → resume handler calls resetFailureSignatureStreak.
+    await sm.resetFailureSignatureStreak(client)
+
+    // Next daemon startup: tripped is cleared → no re-pause.
+    expect(await sm.isSignatureStormTripped(client)).toBe(false)
   })
 
   it('threshold is overridable via MARS_SIGNATURE_STORM_THRESHOLD env var', async () => {
