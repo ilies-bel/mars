@@ -2,6 +2,8 @@ import type { DbClient } from '../core/lib/db.js';
 import type { BusEvent } from '../bus/events.js';
 import { fetchPending, advanceCursor } from '../bus/subscribers.js';
 import { apiCircuitBreaker } from '../core/lib/api-circuit-breaker.js';
+import { decideDispatchControl } from '../core/daemon/spend-control/decide.js';
+import { gatherDecisionInputs, type SpendControlDeps } from './spend-control-inputs.js';
 
 /**
  * A named consumer of the Outbox `events` table paired with a delivery
@@ -11,6 +13,13 @@ import { apiCircuitBreaker } from '../core/lib/api-circuit-breaker.js';
 export interface Subscriber {
   /** Must match the registered subscriber name in the `subscribers` table. */
   name: string;
+  /**
+   * Worker kind (e.g. `'coder'`, `'writer'`). When set, the dispatcher tracks
+   * how many events of this kind are currently in-flight and enforces the
+   * per-kind ceiling returned by the spend-control decision. Subscribers
+   * without a kind are unconstrained by ceilings.
+   */
+  kind?: string;
   /**
    * Called once per event in delivery order. The cursor advances only if
    * this resolves — a rejection leaves the cursor in place so the event
@@ -64,10 +73,24 @@ export interface Dispatcher {
 export function startDispatcher(
   client: DbClient,
   subscribers: Subscriber[],
-  opts?: { pollMs?: number },
+  opts?: {
+    pollMs?: number;
+    /**
+     * Optional overrides for the spend-control input probes (injectable for
+     * testing). When omitted, the dispatcher uses zero-pressure defaults so
+     * existing callers that have no live spend meter are unaffected.
+     */
+    spendControl?: Omit<SpendControlDeps, 'client'>;
+  },
 ): Dispatcher {
   const pollMs = opts?.pollMs ?? 5_000;
+  const scDeps: SpendControlDeps = { client, ...opts?.spendControl };
   let stopped = false;
+
+  // Shared in-flight counter per kind, closed over by all subscriber loops.
+  // Incremented synchronously before the first `await` so the check+claim is
+  // effectively atomic within JS's single-threaded event loop.
+  const runningByKind = new Map<string, number>();
 
   // Wake-hint mechanism. All subscriber loops race against this promise;
   // notify() resolves it and installs a fresh pending promise for the next
@@ -116,6 +139,17 @@ export function startDispatcher(
         continue;
       }
 
+      // Spend-control gate: pause or enforce per-kind ceilings.
+      const decision = decideDispatchControl(await gatherDecisionInputs(scDeps));
+      if (decision.paused) {
+        console.error(`[spend-control] dispatch paused: ${decision.reason}`);
+        await Promise.race([
+          currentWake,
+          new Promise<void>(r => setTimeout(r, pollMs)),
+        ]);
+        continue;
+      }
+
       // API circuit-breaker gate: when the breaker is open, hold off
       // dispatching code-phase events until connectivity is restored.
       // The cursor stays unchanged so events are replayed on the next tick.
@@ -129,20 +163,57 @@ export function startDispatcher(
         continue;
       }
 
+      let ceilingHit = false;
       for (const event of events) {
         if (stopped) break;
+
+        // Per-kind concurrency ceiling: check then claim atomically (no await
+        // between the two operations, so JS's single-threaded event loop
+        // guarantees no other loop can interleave and claim the same slot).
+        if (sub.kind) {
+          const ceiling = decision.perKindCeilings[sub.kind];
+          if (ceiling !== undefined) {
+            const running = runningByKind.get(sub.kind) ?? 0;
+            if (running >= ceiling) {
+              ceilingHit = true;
+              break; // Hold; re-check on next tick.
+            }
+          }
+          runningByKind.set(sub.kind, (runningByKind.get(sub.kind) ?? 0) + 1);
+        }
+
+        let handlerFailed = false;
         try {
           await sub.handler(event);
           await advanceCursor(client, sub.name, event.id);
         } catch {
           // Handler failed — leave cursor unchanged so the event is
           // re-delivered on the next cycle.
+          handlerFailed = true;
+        } finally {
+          if (sub.kind) {
+            runningByKind.set(sub.kind, Math.max(0, (runningByKind.get(sub.kind) ?? 1) - 1));
+            // Wake other loops that may have been waiting for this slot.
+            notify();
+          }
+        }
+
+        if (handlerFailed) {
           await Promise.race([
             wakePromise,
             new Promise<void>(r => setTimeout(r, pollMs)),
           ]);
           break;
         }
+      }
+
+      // If a per-kind ceiling blocked dispatch, park until the next wake or
+      // poll so other loops can release their slots before we re-check.
+      if (ceilingHit) {
+        await Promise.race([
+          currentWake,
+          new Promise<void>(r => setTimeout(r, pollMs)),
+        ]);
       }
     }
   }
