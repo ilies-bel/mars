@@ -65,6 +65,12 @@ export interface CorePurgeTaskOptions {
    * `coreArcPurge`) will handle compensation at a higher level (arc-scope).
    */
   skipCompensation?: boolean
+  /**
+   * When true, skip the archive row insertion. Use when the caller (e.g.
+   * `coreArcPurge`) handles archiving at the arc level to avoid inserting
+   * duplicate rows.
+   */
+  archiveWritten?: boolean
 }
 
 /**
@@ -182,38 +188,66 @@ export const corePurgeTask = async (
   // cleanup task. The followup_dedup_key makes this idempotent — a repeated
   // force-purge (or a crash-retry) finds the existing task and returns its id.
   // Skip when the caller (e.g. coreArcPurge) handles compensation at arc scope.
-  if (!force || capturedStatus !== 'done' || capturedKind === 'fix' || opts?.skipCompensation) {
-    return dropResult
+  let compensationTaskId: string | undefined
+
+  if (force && capturedStatus === 'done' && capturedKind !== 'fix' && !opts?.skipCompensation) {
+    const dedupKey = `task-force-purge-compensation:${id}`
+    const store = getDefaultDomainTaskStore()
+    const existing = await store.execute({
+      sql: `SELECT id FROM tasks WHERE followup_dedup_key = ?`,
+      args: [dedupKey],
+    })
+    const existingRows = existing.rows as unknown as { id: string }[]
+    if (existingRows.length > 0) {
+      compensationTaskId = existingRows[0].id
+    } else {
+      const prompt = buildCompensationPrompt({
+        kind: 'task',
+        originId: id,
+        originTitle: capturedIntent,
+        integrationBranch,
+        entries: [{ memberId: id, branch, evidence }],
+      })
+      const compensationTask = await enqueueTask(
+        prompt,
+        undefined,
+        {
+          skipTriage: true,
+          compensatesArcId: capturedOriginId,
+          followupDedupKey: dedupKey,
+          intent: `Compensate for force-purged task ${id}`,
+        },
+      )
+      compensationTaskId = compensationTask.id
+    }
   }
 
-  const dedupKey = `task-force-purge-compensation:${id}`
-  const store = getDefaultDomainTaskStore()
-  const existing = await store.execute({
-    sql: `SELECT id FROM tasks WHERE followup_dedup_key = ?`,
-    args: [dedupKey],
-  })
-  const existingRows = existing.rows as unknown as { id: string }[]
-  if (existingRows.length > 0) {
-    return { ...dropResult, compensationTaskId: existingRows[0].id }
+  // Archive the purged task (evidence-only, best-effort). Skip when the caller
+  // (e.g. coreArcPurge) handles archiving at arc scope to avoid duplicates.
+  if (!opts?.archiveWritten) {
+    try {
+      const { insertPurgeArchiveRow } = await import('./purge-archive.js')
+      await insertPurgeArchiveRow({
+        id,
+        originId: capturedOriginId ?? null,
+        branch,
+        worktreePath: task.worktreePath ?? null,
+        terminalStatus: capturedStatus,
+        kind: capturedKind,
+        prompt: task.prompt,
+        intent: capturedIntent,
+        integratedCommitsJson: JSON.stringify(evidence.commits),
+        compensationTaskId: compensationTaskId ?? null,
+        purgedBy: 'purge',
+        forceFlag: force,
+      })
+    } catch (e) {
+      console.error('[purge-archive] insert failed:', e)
+    }
   }
 
-  const prompt = buildCompensationPrompt({
-    kind: 'task',
-    originId: id,
-    originTitle: capturedIntent,
-    integrationBranch,
-    entries: [{ memberId: id, branch, evidence }],
-  })
-  const compensationTask = await enqueueTask(
-    prompt,
-    undefined,
-    {
-      skipTriage: true,
-      compensatesArcId: capturedOriginId,
-      followupDedupKey: dedupKey,
-      intent: `Compensate for force-purged task ${id}`,
-    },
-  )
-
-  return { ...dropResult, compensationTaskId: compensationTask.id }
+  if (compensationTaskId !== undefined) {
+    return { ...dropResult, compensationTaskId }
+  }
+  return dropResult
 }

@@ -136,9 +136,9 @@ export const coreArcPurge = async (
     ...(originMember ? [originMember] : []),
   ]
 
-  // skipCompensation: arc-level compensation is handled below; task-level
-  // compensation would create a duplicate row per member.
-  const memberPurgeOpts: CorePurgeTaskOptions = { skipCompensation: true }
+  // skipCompensation + archiveWritten: arc-level compensation and archiving are
+  // handled below; task-level would create duplicate rows per member.
+  const memberPurgeOpts: CorePurgeTaskOptions = { skipCompensation: true, archiveWritten: true }
   const purgedIds: string[] = []
   for (const member of orderedMembers) {
     await corePurgeTask(member.id, force, integrationBranch, repoRoot, memberPurgeOpts)
@@ -149,38 +149,72 @@ export const coreArcPurge = async (
   // one compensation/cleanup task. The followup_dedup_key makes this idempotent:
   // a second force-purge (or a crash-retry) finds the existing task and returns
   // its id without creating a duplicate.
-  if (!force || !hasIntegratedWork) {
-    return { purgedIds, originId }
+  let compensationTaskId: string | undefined
+
+  if (force && hasIntegratedWork) {
+    const dedupKey = `arc-force-purge-compensation:${originId}`
+    const store = getDefaultDomainTaskStore()
+    const existing = await store.execute({
+      sql: `SELECT id FROM tasks WHERE followup_dedup_key = ?`,
+      args: [dedupKey],
+    })
+    const existingRows = existing.rows as unknown as { id: string }[]
+    if (existingRows.length > 0) {
+      compensationTaskId = existingRows[0].id
+    } else {
+      const prompt = buildCompensationPrompt({
+        kind: 'arc',
+        originId,
+        originTitle,
+        integrationBranch,
+        entries: evidenceEntries,
+      })
+      const compensationTask = await enqueueTask(
+        prompt,
+        undefined,
+        {
+          skipTriage: true,
+          compensatesArcId: originId,
+          followupDedupKey: dedupKey,
+          intent: `Compensate for force-purged arc ${originId}`,
+        },
+      )
+      compensationTaskId = compensationTask.id
+    }
   }
 
-  const dedupKey = `arc-force-purge-compensation:${originId}`
-  const store = getDefaultDomainTaskStore()
-  const existing = await store.execute({
-    sql: `SELECT id FROM tasks WHERE followup_dedup_key = ?`,
-    args: [dedupKey],
-  })
-  const existingRows = existing.rows as unknown as { id: string }[]
-  if (existingRows.length > 0) {
-    return { purgedIds, originId, compensationTaskId: existingRows[0].id }
+  // Insert archive rows for all arc members (evidence-only, best-effort).
+  // Done AFTER compensation task creation so the compensationTaskId is available.
+  const { insertPurgeArchiveRow } = await import('./purge-archive.js')
+  for (const memberTask of memberTaskDetails) {
+    if (!memberTask) continue
+    const memberBranch = memberTask.branch ?? `task/${memberTask.id}`
+    const memberEvidence = evidenceEntries.find((e) => e.memberId === memberTask.id)
+    const integratedCommitsJson = memberEvidence
+      ? JSON.stringify(memberEvidence.evidence.commits)
+      : '[]'
+    try {
+      await insertPurgeArchiveRow({
+        id: memberTask.id,
+        originId: memberTask.originId ?? null,
+        branch: memberBranch,
+        worktreePath: memberTask.worktreePath ?? null,
+        terminalStatus: memberTask.status,
+        kind: memberTask.kind ?? 'task',
+        prompt: memberTask.prompt,
+        intent: memberTask.intent || memberTask.prompt.split('\n')[0] || '',
+        integratedCommitsJson,
+        compensationTaskId: compensationTaskId ?? null,
+        purgedBy: 'arc-purge',
+        forceFlag: force,
+      })
+    } catch (e) {
+      console.error('[purge-archive] arc member insert failed:', e)
+    }
   }
 
-  const prompt = buildCompensationPrompt({
-    kind: 'arc',
-    originId,
-    originTitle,
-    integrationBranch,
-    entries: evidenceEntries,
-  })
-  const compensationTask = await enqueueTask(
-    prompt,
-    undefined,
-    {
-      skipTriage: true,
-      compensatesArcId: originId,
-      followupDedupKey: dedupKey,
-      intent: `Compensate for force-purged arc ${originId}`,
-    },
-  )
-
-  return { purgedIds, originId, compensationTaskId: compensationTask.id }
+  if (compensationTaskId !== undefined) {
+    return { purgedIds, originId, compensationTaskId }
+  }
+  return { purgedIds, originId }
 }

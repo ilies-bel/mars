@@ -763,6 +763,31 @@ const DDL: readonly string[] = [
     ramp_back_step_pct  integer     NOT NULL DEFAULT 10,
     updated_at          timestamptz NOT NULL DEFAULT now()
   )`,
+
+  // ── purge archive (slice 3 of PRD aa93d9cb) ──────────────────────────────
+  // Evidence log of every force-purged task. Written before the task row is
+  // deleted so lifecycle evidence survives the purge operation. Query via
+  // `mars purge log`. Archive is evidence-only: a failed insert is logged and
+  // the purge still returns success.
+  `CREATE TABLE IF NOT EXISTS purged_tasks_archive (
+    id                     text        PRIMARY KEY,
+    origin_id              text,
+    branch                 text,
+    worktree_path          text,
+    terminal_status        text,
+    kind                   text,
+    prompt                 text,
+    intent                 text,
+    integrated_commits_json text,
+    compensation_task_id   text,
+    purged_at              timestamptz NOT NULL DEFAULT now(),
+    purged_by              text,
+    force_flag             boolean     NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_purged_tasks_archive_origin
+     ON purged_tasks_archive(origin_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_purged_tasks_archive_purged_at
+     ON purged_tasks_archive(purged_at DESC)`,
 ]
 
 /**
@@ -824,6 +849,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'merge_jobs',
   'task_deployments',
   'dispatch_spend_control',
+  'purged_tasks_archive',
 ]
 
 /**
