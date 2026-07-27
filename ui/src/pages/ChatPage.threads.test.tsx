@@ -54,6 +54,24 @@ const renderSidebar = (threads: ChatThread[]): string => {
   )
 }
 
+/** Render the sidebar with no pre-seeded query data (simulates initial load). */
+const renderSidebarPending = (): string => {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+  })
+  // No setQueryData — query stays in pending state for static render
+  return renderToStaticMarkup(
+    createElement(
+      QueryClientProvider,
+      { client: qc },
+      createElement(ThreadSidebar, {
+        selectedId: null,
+        onSelect: () => {},
+      }),
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // relativeTime — pure function
 // ---------------------------------------------------------------------------
@@ -159,5 +177,31 @@ describe('ThreadSidebar – row scanability', () => {
   it('renders thread rows with a bottom border for visual separation', () => {
     const html = renderSidebar([makeThread()])
     expect(html).toContain('border-b')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ThreadSidebar — loading state (no false empty-state flash)
+// ---------------------------------------------------------------------------
+
+describe('ThreadSidebar – pending state', () => {
+  it('renders a skeleton while the query is pending, not the empty-state text', () => {
+    const html = renderSidebarPending()
+    // Skeleton wrapper should be present (aria-busy)
+    expect(html).toContain('aria-busy="true"')
+    // The empty-state text must NOT appear during the pending phase
+    expect(html).not.toContain("You're all clear")
+  })
+
+  it('renders skeleton with accessible label while pending', () => {
+    const html = renderSidebarPending()
+    expect(html).toContain('Loading threads')
+  })
+
+  it('renders the empty-state text only after data resolves as empty', () => {
+    const html = renderSidebar([]) // data resolved, zero threads
+    // The empty-state paragraph uses data-testid="empty-rail"
+    expect(html).toContain('data-testid="empty-rail"')
+    expect(html).not.toContain('aria-busy="true"')
   })
 })

@@ -89,6 +89,7 @@ import { taskHash } from '@/shared/routing'
 import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
 import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle, PRIORITY_RANK } from './chatPageUtils'
+import { SkeletonList } from '@/components/Skeleton'
 
 // ---------------------------------------------------------------------------
 // Welcome state: quick-action chips and slash palette
@@ -2305,7 +2306,7 @@ export const ThreadSidebar = ({
 }: ThreadSidebarProps) => {
   const qc = useQueryClient()
 
-  const { data } = useQuery({
+  const { data, isPending } = useQuery({
     queryKey: ['chat-threads', projectId],
     queryFn: () => fetchChatThreads(projectId),
   })
@@ -2460,15 +2461,21 @@ export const ThreadSidebar = ({
           className="mt-2 w-full border border-primary/30 bg-background px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
         />
       </div>
-      <div className="flex-1 overflow-y-auto px-1 py-1 space-y-0.5">
-        {threads.length === 0 && (
+      <div className="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5">
+        {isPending ? (
+          <SkeletonList
+            rows={3}
+            rowClassName="mx-2 h-7 mb-1"
+            label="Loading threads"
+          />
+        ) : threads.length === 0 ? (
           <p
             className="px-2 py-3 font-mono text-[10px] text-primary/40"
             data-testid="empty-rail"
           >
             {query.trim() ? 'No matches' : "You're all clear"}
           </p>
-        )}
+        ) : null}
         {threads.map((t) => (
           <ThreadItem
             key={t.id}

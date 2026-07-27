@@ -13,6 +13,7 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { Inbox } from 'lucide-react'
 import { useStaleWorktrees } from '@/entities/stale-worktrees/useStaleWorktrees'
 import { useProposals } from '@/entities/proposals/useProposals'
+import { SkeletonList } from '@/components/Skeleton'
 import {
   filterAlertItems,
   filterProposalItems,
@@ -204,8 +205,9 @@ export const ActionQueuePage = () => {
   )
 
   // Data sources
-  const { staleWorktrees } = useStaleWorktrees()
-  const { proposals } = useProposals()
+  const { staleWorktrees, isPending: staleWorktreesPending } = useStaleWorktrees()
+  const { proposals, isPending: proposalsPending } = useProposals()
+  const isPending = staleWorktreesPending || proposalsPending
 
   // Map raw entities to typed sidebar items
   const alertItems = useMemo<AlertItem[]>(
@@ -298,12 +300,18 @@ export const ActionQueuePage = () => {
         </div>
 
         {/* Item list */}
-        <div className="flex-1 overflow-y-auto">
-          {allFiltered.length === 0 && (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {isPending ? (
+            <SkeletonList
+              rows={3}
+              rowClassName="mx-3 h-12 mb-1 mt-1"
+              label="Loading action queue"
+            />
+          ) : allFiltered.length === 0 ? (
             <p className="px-3 py-4 font-mono text-[10px] text-muted-foreground">
               {query.trim() ? 'No matches' : 'Nothing here'}
             </p>
-          )}
+          ) : null}
           {filteredAlerts.map((item) => (
             <AlertRow
               key={itemKey(item)}

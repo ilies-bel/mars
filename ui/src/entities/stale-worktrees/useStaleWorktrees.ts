@@ -6,6 +6,7 @@ import type { StaleWorktree } from '@/shared/schemas'
 
 interface State {
   staleWorktrees: StaleWorktree[]
+  isPending: boolean
   error: string | null
   connected: boolean
 }
@@ -25,5 +26,5 @@ export const useStaleWorktrees = (): State => {
   const staleWorktrees = query.data?.staleWorktrees ?? []
   const error = query.error ? (query.error as Error).message : null
 
-  return { staleWorktrees, error, connected }
+  return { staleWorktrees, isPending: query.isPending, error, connected }
 }
