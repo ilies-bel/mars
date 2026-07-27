@@ -24,7 +24,7 @@ import {
   type UpsertFixTaskResult,
   type AttachToExistingFixTaskInput,
 } from './arc'
-import { isEnvironmentalSignature } from './lib/failure-kinds'
+import { isEnvironmentalSignature, failingStepGroupLabel } from './lib/failure-kinds'
 import { classifyFailure } from './lib/failure-class'
 import { maybeSpawnRescueOperator } from './rescue-operator-spawn'
 
@@ -48,6 +48,16 @@ export type {
 export const RECOVERY_FAILED_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 export const UNKNOWN_FAILURE_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 export const FIX_FAIL_LOOP_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
+
+/**
+ * Collapse internal whitespace and truncate a title to at most `max` characters.
+ * Titles are identity/display strings rendered in the chat sidebar and
+ * action-queue list. Unbounded values (e.g. from a raw `failingStep` that
+ * carries a multi-line error message) break grouping and the sidebar layout.
+ * Four call sites in this file use this cap — do not inline.
+ */
+const capTitle = (s: string, max = 100): string =>
+  s.replace(/\s+/g, ' ').trim().slice(0, max)
 
 /**
  * A verify-gate failing step is one whose name begins with `verify:` — the
@@ -419,7 +429,7 @@ export const handleTaskFailureWithFixTask = async (
       kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
       category: 'orchestrator',
       priority: 'high',
-      title: `Configure verify gates for task ${input.taskId}: ${input.failingStep}`,
+      title: capTitle(`Configure verify gates for task ${input.taskId}`),
       body: [
         `Task ${input.taskId} failed at ${input.failingStep}.`,
         '',
@@ -523,7 +533,7 @@ export const handleTaskFailureWithFixTask = async (
       kind: RECOVERY_FAILED_ACTION_QUEUE_KIND,
       category: 'orchestrator',
       priority: 'high',
-      title: `Fix and retry ${input.taskId}, or abandon ${originId}: recovery failed at ${input.failingStep}`,
+      title: capTitle(`Fix and retry ${input.taskId}, or abandon ${originId}: recovery failed during ${failingStepGroupLabel(input.failingStep)}`),
       body: buildRecoveryEscalationBody({
         recoveryTaskId: input.taskId,
         originTaskId: originId,
@@ -727,7 +737,7 @@ export const handleTaskFailureWithFixTask = async (
         kind: 'env-incident',
         category: 'daemon',
         priority: 'low',
-        title: `Environmental failure cap reached: ${failureSignature}`,
+        title: capTitle(`Environmental failure cap reached: ${failureSignature}`),
         body:
           `Task ${input.taskId} exceeded its environmental auto-restart cap (${MAX_ENV_RESTART_ATTEMPTS}) ` +
           `for signature '${failureSignature}'. This is an infrastructure condition ` +
@@ -992,7 +1002,7 @@ export const handleTaskFailureWithFixTask = async (
       kind: FIX_FAIL_LOOP_ACTION_QUEUE_KIND,
       category: 'orchestrator',
       priority: 'high',
-      title: `Diagnose and retry, or abandon ${input.taskId}: fix-fail loop on ${failureSignature}`,
+      title: capTitle(`Diagnose and retry, or abandon ${input.taskId}: fix-fail loop on ${failureSignature}`),
       body: buildFixFailLoopBody({
         sourceTaskId: input.taskId,
         originTaskId: task.originId,

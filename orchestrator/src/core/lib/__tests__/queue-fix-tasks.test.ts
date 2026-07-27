@@ -865,6 +865,101 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
+  it('recovery escalation title is single-line and under 100 chars when failingStep is a multi-line error with an absolute path', async () => {
+    // Regression for the live DB pattern where 53 chat threads had a 300+
+    // character title containing the full workflow file error and an absolute
+    // filesystem path. The fix: (1) replace raw failingStep with a step-family
+    // label (failure-kinds.ts invariant), (2) enforce a hard 100-char cap.
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft, rc } = await loadModules(repo)
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      getActionQueueItem: typeof import('../action-queue').getActionQueueItem
+    }
+    const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+    const first = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'err',
+    })
+    const recoveryId = first.fixTaskId!
+
+    // The multi-line, path-carrying failingStep that produced 300+ char titles
+    // in the live DB (verbatim from the incident).
+    const multiLineFailingStep = [
+      'workflow file /Users/ib472e5l/project/perso/mars-framework/.mars/workflows/fix-workflow.js',
+      'failed to load: No "exports" main defined in',
+      '/Users/ib472e5l/project/perso/mars-framework/orchestrator/node_modules/@mars/workflow/package.json.',
+      'No fallback pipeline is substituted — fix the file and re-dispatch',
+      "(check it with 'mars workflow validate fix').",
+    ].join('\n')
+
+    const second = await ft.handleTaskFailureWithFixTask({
+      taskId: recoveryId,
+      failingStep: multiLineFailingStep,
+      errorOutput: 'workflow file failed to load',
+    })
+    expect(second.outcome).toBe('escalated')
+    expect(second.actionQueueItemId).toBeTruthy()
+
+    const item = await actionQueue.getActionQueueItem(second.actionQueueItemId!)
+    expect(item).not.toBeNull()
+
+    // Title must be single-line (no newlines).
+    expect(item!.title).not.toContain('\n')
+
+    // Title must be under the 100-char cap.
+    expect(item!.title.length).toBeLessThanOrEqual(100)
+
+    // Title must not contain absolute filesystem paths.
+    expect(item!.title).not.toContain('/Users/')
+
+    // The raw failingStep must still reach the body (where technical detail
+    // belongs) so the operator can investigate.
+    expect(item!.body).toContain('fix-workflow.js')
+
+    cleanup()
+  })
+
+  it('recovery escalation title uses a plain-English step-family label, not the raw failingStep id', async () => {
+    // The title should say "recovery failed during a verification check"
+    // not "recovery failed at verify:typecheck" (raw step id in user-facing title
+    // violates the failure-kinds.ts invariant documented at line 611-613).
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft, rc } = await loadModules(repo)
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      getActionQueueItem: typeof import('../action-queue').getActionQueueItem
+    }
+    const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+    const first = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'err',
+    })
+    const recoveryId = first.fixTaskId!
+
+    const second = await ft.handleTaskFailureWithFixTask({
+      taskId: recoveryId,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+    })
+    expect(second.outcome).toBe('escalated')
+
+    const item = await actionQueue.getActionQueueItem(second.actionQueueItemId!)
+    expect(item).not.toBeNull()
+
+    // Raw step id must NOT appear in the title.
+    expect(item!.title).not.toContain('verify:typecheck')
+
+    // Title must use a plain-English description of the step family.
+    expect(item!.title).toMatch(/verification|check/i)
+
+    // The raw step id still reaches the body.
+    expect(item!.body).toContain('verify:typecheck')
+
+    cleanup()
+  })
 
   it('no-recipe path: spawns a generic-recipe recovery fix and blocks the source (ADR: uniform failure→fix spawn)', async () => {
     process.env.MARS_FIX_RETRY_BUDGET = '5'
