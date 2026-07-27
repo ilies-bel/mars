@@ -250,6 +250,7 @@ export const ACTION_QUEUE_KINDS = [
   // per transition direction (signature-keyed 'spend-control:<direction>');
   // level-triggered (ADR-0048): the row exists while the state holds.
   'spend-control-notice',
+  'requeue-warning',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

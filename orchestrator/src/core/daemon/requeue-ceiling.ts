@@ -24,6 +24,8 @@
  * without making step progress.
  */
 
+import fs from 'node:fs'
+import path from 'node:path'
 import type { WorkflowStore } from '@mars/workflow'
 import { raiseActionQueueItem } from '../lib/action-queue'
 import { updateTask, listTasks, type Task } from '../queue'
@@ -33,6 +35,7 @@ import {
   computeBlockedWaitMs,
   classifyRequeueBreach,
 } from './requeue-diagnostics'
+import { RingBuffer, collectStallDiagnostics } from '../workers/stall-diagnostics'
 
 /**
  * Maximum wall-clock time (ms) a task may spend in the re-queue cycle before
@@ -44,6 +47,10 @@ import {
  */
 export const REQUEUE_MAX_RETRY_MS: number = Number(
   process.env.MARS_REQUEUE_MAX_RETRY_MS ?? 2 * 60 * 60 * 1_000,
+)
+
+export const REQUEUE_WARN_RATIO: number = Number(
+  process.env.MARS_REQUEUE_WARN_RATIO ?? 0.8,
 )
 
 /**
@@ -129,6 +136,38 @@ export const checkAndEscalateRequeueCeiling = async (
           `newDeadline=${new Date(newDeadlineMs).toISOString()}`,
       )
     }
+
+    if (
+      REQUEUE_MAX_RETRY_MS > 0 &&
+      effectiveElapsedMs >= REQUEUE_MAX_RETRY_MS * REQUEUE_WARN_RATIO
+    ) {
+      const warnBoundMins = Math.round(REQUEUE_MAX_RETRY_MS / 60_000)
+      const warnStepWindow = computeStepWindow(steps)
+      const warnBreachClass = classifyRequeueBreach(t, warnStepWindow, 0, elapsedMs)
+      await raiseActionQueueItem({
+        kind: 'requeue-warning',
+        category: 'orchestrator',
+        priority: 'low',
+        title: `Task ${t.id}: approaching requeue ceiling (${warnBreachClass.kind})`,
+        body:
+          `Elapsed ${elapsedMins}m of bound ${warnBoundMins}m; ` +
+          `predicted class ${warnBreachClass.kind}.`,
+        payload: {
+          taskId: t.id,
+          diagnostics: {
+            class: warnBreachClass.kind,
+            maxAttempt,
+            elapsedMs,
+            boundMs: REQUEUE_MAX_RETRY_MS,
+          },
+        },
+        context: {},
+        raisedBy: 'daemon:poll-fallback',
+        signature: `requeue-warning:${t.id}`,
+        originTaskId: t.id,
+      }).catch(() => {})
+    }
+
     return false
   }
 
@@ -159,6 +198,39 @@ export const checkAndEscalateRequeueCeiling = async (
       `class ${breachClass.kind}); escalating to failed`,
   )
 
+  // ── Stall diagnostics ───────────────────────────────────────────────────────
+  // Capture the pty output tail from the task's log file so operators see WHY
+  // the coder stalled, not just that it exceeded the time bound.
+  const STDERR_TAIL_LINES = Number(process.env.MARS_STDERR_TAIL_LINES ?? 200)
+  let stallDiagnosticsJson: string | null = null
+  if (t.worktreePath) {
+    try {
+      const logDir = path.join(t.worktreePath, '.mars', 'pty')
+      const logFiles = fs.existsSync(logDir)
+        ? fs.readdirSync(logDir).filter((f) => f.endsWith('.log')).sort()
+        : []
+      if (logFiles.length > 0) {
+        const latestLog = fs.readFileSync(
+          path.join(logDir, logFiles[logFiles.length - 1]!),
+          'utf8',
+        )
+        const lines = latestLog.split('\n')
+        const ring = new RingBuffer(STDERR_TAIL_LINES)
+        for (const line of lines) ring.push(line)
+        const diag = collectStallDiagnostics({
+          outputTail: ring,
+          exitCode: null,
+          doneSignalFired: false,
+          startedAtMs: retryStartMs,
+          nowMs,
+        })
+        stallDiagnosticsJson = JSON.stringify(diag)
+      }
+    } catch {
+      // Best-effort — do not block the escalation path
+    }
+  }
+
   // `failureReason` must be a step-id-grammar value so the signature minted
   // by recovery-spawn.ts is stable across occurrences. The varying measurements
   // (attempt count, elapsed minutes) belong in `error` and the action-queue
@@ -167,6 +239,7 @@ export const checkAndEscalateRequeueCeiling = async (
   // level, outside all three phases.
   await updateTask(t.id, {
     status: 'failed',
+    stallDiagnostics: stallDiagnosticsJson,
     error:
       `Re-queue time bound exceeded: task retried ${maxAttempt} time(s) ` +
       `over ${elapsedMins} minutes without completing ` +

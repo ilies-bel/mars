@@ -209,7 +209,11 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
       branch: str(ctx.payload['branch']),
+      worktreePath: str(ctx.payload['worktreePath']),
+      integrationBranch: str(ctx.payload['integrationBranch']),
       commitsAhead: ctx.payload['commitsAhead'],
+      onMainLean: str(ctx.payload['onMainLean']),
+      leaseOwned: ctx.payload['leaseOwned'],
     }),
     verbs: [
       { op: 'land', label: 'Land commits onto integration branch', style: 'primary' },
@@ -723,6 +727,20 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
       direction: str(ctx.payload['direction']),
       rampBackFactor: ctx.payload['rampBackFactor'],
     }),
+    verbs: [],
+  },
+  'requeue-warning': {
+    humanSummary: (ctx) => {
+      const diag = ctx.payload['diagnostics'] as Record<string, unknown> | undefined
+      return `Task is approaching the requeue ceiling (predicted class: ${str(diag?.['class'])}).`
+    },
+    humanDetail: (ctx) => {
+      const diag = ctx.payload['diagnostics'] as Record<string, unknown> | undefined
+      return {
+        raisedAt: ctx.raisedAt,
+        predictedClass: str(diag?.['class']),
+      }
+    },
     verbs: [],
   },
 }

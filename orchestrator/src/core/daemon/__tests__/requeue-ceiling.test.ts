@@ -438,6 +438,71 @@ describe('checkAndEscalateRequeueCeiling', () => {
     expect(reloaded?.status).toBe('queued')
   })
 
+  // ── Early warning at pre-ceiling threshold ───────────────────────────────
+
+  it('raises a low-priority requeue-warning when elapsed reaches WARN_RATIO of the bound without escalating the task', async () => {
+    const { q, ws, aq, ceiling } = await loadModules(repo, { maxRetryMs: 100 })
+    const t = await q.enqueueTask('approaching-ceiling task', undefined, { skipTriage: true })
+    const store: WorkflowStore = ws.createQueueWorkflowStore()
+
+    const anchorMs = 1_000_000
+    await store.createRun({
+      id: t.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: 0,
+      updatedAt: 0,
+    })
+    await store.putStep(makeStepRecord(t.id, 'setup-worktree', 2, 'failed', anchorMs))
+
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      t,
+      store,
+      makeSilentLog(),
+      anchorMs + 90,
+    )
+
+    expect(escalated).toBe(false)
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('queued')
+
+    const items = await aq.listActionQueueItems('open')
+    const warning = items.find((i) => i.signature === `requeue-warning:${t.id}`)
+    expect(warning).toBeDefined()
+    expect(warning?.kind).toBe('requeue-warning')
+    expect(warning?.priority).toBe('low')
+    expect(warning?.title).toContain('approaching requeue ceiling')
+  })
+
+  it('does NOT raise a warning when elapsed is below the WARN_RATIO threshold', async () => {
+    const { q, ws, aq, ceiling } = await loadModules(repo, { maxRetryMs: 100 })
+    const t = await q.enqueueTask('healthy-ish task', undefined, { skipTriage: true })
+    const store: WorkflowStore = ws.createQueueWorkflowStore()
+
+    const anchorMs = 1_000_000
+    await store.createRun({
+      id: t.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: 0,
+      updatedAt: 0,
+    })
+    await store.putStep(makeStepRecord(t.id, 'setup-worktree', 2, 'failed', anchorMs))
+
+    await ceiling.checkAndEscalateRequeueCeiling(
+      t,
+      store,
+      makeSilentLog(),
+      anchorMs + 50,
+    )
+
+    const items = await aq.listActionQueueItems('open')
+    const warning = items.find((i) => i.signature === `requeue-warning:${t.id}`)
+    expect(warning).toBeUndefined()
+  })
+
   // ── Class-specific escalation tests ────────────────────────────────────────
   //
   // Each test constructs a representative StepRecord[] fixture for one breach
