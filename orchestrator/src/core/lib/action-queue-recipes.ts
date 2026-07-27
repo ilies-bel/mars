@@ -732,3 +732,12 @@ export const lookupRecipe = (kind: ActionQueueKind): Recipe => {
  */
 export const registeredKinds = (): ActionQueueKind[] =>
   Object.keys(REGISTRY) as ActionQueueKind[]
+
+/**
+ * Human-friendly Mars opening message used when the action queue is empty.
+ * Rendered as the seeded first message in the chat feed (slice 2 of the
+ * collapse-hero PRD) and available to any CLI/UI surface that needs a
+ * "nothing pending" status line.
+ */
+export const noPendingHumanSummary =
+  "Nothing's pressing right now — what would you like to work on?"

@@ -28,7 +28,6 @@ import { applyLiveEvent, emptyLiveBuffer, type LiveBuffer } from '@/shared/chatB
 import {
   fetchChatThreads,
   fetchChatThread,
-  fetchActionQueue,
   createChatThread,
   postChatMessage,
   uploadAttachment,
@@ -70,7 +69,6 @@ import { PaperclipIcon, MicIcon, SquareIcon, XIcon } from 'lucide-react'
 import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
-import { WhileYouWereAwayPanel } from '@/widgets/WhileYouWereAwayPanel'
 import { WhatHappenedTodayView } from '@/widgets/chat/WhatHappenedTodayView'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
@@ -82,13 +80,12 @@ import {
 } from '@/widgets/chat/queueThreads'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
-import { useAlerts, useStartThreadFromAlert } from '@/entities/alerts'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
 import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
-import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle, PRIORITY_RANK } from './chatPageUtils'
+import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle, pickTopAlert } from './chatPageUtils'
 import { SkeletonList } from '@/components/Skeleton'
 
 // ---------------------------------------------------------------------------
@@ -1573,138 +1570,6 @@ export const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: 
   )
 }
 
-// ---------------------------------------------------------------------------
-// Hero empty state (shown when no thread is selected)
-// ---------------------------------------------------------------------------
-
-export interface HeroEmptyStateProps {
-  projectId?: string
-  onSelectThread: (id: string) => void
-  /** Called with the typed text, raw File objects (uploaded AFTER the thread is
-   *  created, so ids are not yet known), and a clearState callback the caller
-   *  must invoke on success. Leave clearState un-called on failure to preserve
-   *  the composer's text and pending attachments. */
-  onCreateAndSend: (message: string, files: File[], clearState: () => void) => void
-  isPending: boolean
-  /** Non-null when the last send attempt failed; renders an error banner. */
-  sendError?: string | null
-  /** Opens the projection Thread for an action-queue item id in the sidebar/detail. */
-  onOpenQueueItem?: (id: string) => void
-  /** Opens the client-side "What happened today?" streamed release-notes view. */
-  onWhatHappened: () => void
-}
-
-/**
- * Full-pane hero shown when no thread is selected.
- *
- * Layout: headline → subtitle → large rounded composer → conversation choices.
- * The highest-priority alert is shown as a full conversation preview and the
- * next few alerts remain available as compact choices. Typing in the composer
- * and hitting Enter (or clicking Send) creates a new thread and posts the
- * first message in one gesture via the `onCreateAndSend` callback.
- */
-export const HeroEmptyState = ({
-  projectId,
-  onSelectThread,
-  onCreateAndSend,
-  isPending,
-  sendError,
-  onOpenQueueItem,
-  onWhatHappened,
-}: HeroEmptyStateProps) => {
-  const [prefill, setPrefill] = useState<string | undefined>(undefined)
-
-  // Arc-rooted Alerts (ADR-0054) back the subtle "Next action" shortcut: it
-  // grabs the top Alert and pulls it into a thread. `alerts[0]` mirrors the
-  // daemon's `nextActionAlert` default (the derivation lists arc failures ahead
-  // of stale-worktree housekeeping). Hidden when there are no alerts.
-  const { alerts } = useAlerts()
-  const topAlert = alerts[0] ?? null
-  const { mutate: pullAlert, isPending: pullPending } = useStartThreadFromAlert()
-
-  const { data: alertItems } = useQuery({
-    queryKey: ['action-queue', projectId],
-    queryFn: () => fetchActionQueue(projectId),
-    staleTime: 15_000,
-  })
-
-  const { data: threads } = useQuery({
-    queryKey: ['chat-threads', projectId],
-    queryFn: () => fetchChatThreads(projectId),
-    staleTime: 15_000,
-  })
-
-  const rankedAlerts = useMemo(
-    () => [...(alertItems ?? [])].sort((a, b) => {
-      const priority = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
-      return priority !== 0 ? priority : b.at.localeCompare(a.at)
-    }),
-    [alertItems],
-  )
-
-  const handleAlertClick = useCallback((alert: ActionQueueItem) => {
-    const alertThread = (threads ?? []).find((t) => t.alertItemId === alert.id) ?? null
-    if (alertThread) {
-      onSelectThread(alertThread.id)
-    } else {
-      onOpenQueueItem?.(alert.id)
-    }
-  }, [threads, onSelectThread, onOpenQueueItem])
-
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-6 px-8">
-      <WhileYouWereAwayPanel projectId={projectId ?? null} />
-      <div className="text-center">
-        <h1
-          className="font-mono text-[28px] font-bold text-foreground"
-          data-testid="hero-headline"
-        >
-          What should Mars build?
-        </h1>
-        <p className="mt-2 font-mono text-[13px] text-primary/60">
-          Start a conversation or pick a suggestion below.
-        </p>
-      </div>
-      {topAlert && (
-        <button
-          type="button"
-          data-testid="hero-next-action"
-          disabled={pullPending}
-          onClick={() =>
-            pullAlert(topAlert.arcId, {
-              onSuccess: ({ threadId }) => onSelectThread(threadId),
-            })
-          }
-          title={topAlert.reason}
-          className="max-w-2xl truncate border border-primary/30 px-3 py-1.5 font-mono text-[11px] text-primary transition-colors hover:border-primary/60 hover:bg-primary/10 hover:text-foreground active:scale-[0.98] disabled:opacity-50"
-        >
-          Next: {topAlert.goal}
-        </button>
-      )}
-      <HeroComposer
-        onSend={onCreateAndSend}
-        isPending={isPending}
-        prefill={prefill}
-        onPrefillConsumed={() => setPrefill(undefined)}
-      />
-      {sendError && (
-        <p
-          role="alert"
-          data-testid="hero-send-error"
-          className="font-mono text-[11px] text-red-400"
-        >
-          {sendError}
-        </p>
-      )}
-      <HeroSuggestions
-        alerts={rankedAlerts}
-        onAlertClick={handleAlertClick}
-        onChipClick={setPrefill}
-        onWhatHappened={onWhatHappened}
-      />
-    </div>
-  )
-}
 
 // ---------------------------------------------------------------------------
 // Composer
@@ -2775,6 +2640,13 @@ export const ChatPage = () => {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['codex-auth'] }),
   })
 
+  // Seeded opening message: top queue item's humanSummary, or a fallback
+  // when the queue is empty. Shown as the first message in the chat feed
+  // before the user starts any thread.
+  const openingText =
+    pickTopAlert(queueItems)?.humanSummary ||
+    "Nothing's pressing right now — what would you like to work on?"
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Global Codex auth banner — one banner for all throttled threads */}
@@ -2920,17 +2792,40 @@ export const ChatPage = () => {
         ) : whatHappenedActive ? (
           <WhatHappenedTodayView onBack={() => setWhatHappenedActive(false)} />
         ) : (
-          <HeroEmptyState
-            projectId={projectId}
-            onSelectThread={handleSelectThread}
-            onCreateAndSend={(msg, files, clearState) =>
-              createAndSend({ message: msg, files }, { onSuccess: () => clearState() })
-            }
-            isPending={isCreatingThread}
-            sendError={sendError}
-            onOpenQueueItem={handleSelectQueueItem}
-            onWhatHappened={() => setWhatHappenedActive(true)}
-          />
+          // Seeded feed: Mars speaks first. No hero screen — the feed is
+          // already populated on first paint.
+          <div className="flex h-full flex-col" data-testid="seeded-feed">
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+              <div
+                data-testid="mars-opening-message"
+                className="flex flex-col gap-1"
+              >
+                <span className="font-mono text-[11px] text-primary">mars</span>
+                <p className="font-mono text-[14px] text-foreground">
+                  {openingText}
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-center px-6 pb-6">
+              <HeroComposer
+                onSend={(msg, files, clearState) =>
+                  createAndSend({ message: msg, files }, { onSuccess: () => clearState() })
+                }
+                isPending={isCreatingThread}
+                prefill={prefill}
+                onPrefillConsumed={() => setPrefill(undefined)}
+              />
+            </div>
+            {sendError && (
+              <p
+                role="alert"
+                data-testid="hero-send-error"
+                className="pb-2 text-center font-mono text-[11px] text-red-400"
+              >
+                {sendError}
+              </p>
+            )}
+          </div>
         )}
       </div>
 
