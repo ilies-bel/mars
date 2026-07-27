@@ -49,6 +49,11 @@ export const REQUEUE_MAX_RETRY_MS: number = Number(
   process.env.MARS_REQUEUE_MAX_RETRY_MS ?? 2 * 60 * 60 * 1_000,
 )
 
+/**
+ * When effective elapsed time reaches this fraction of REQUEUE_MAX_RETRY_MS,
+ * a low-priority warning action-queue item is raised so the operator sees the
+ * task approaching the ceiling before it is escalated. Deduped by signature.
+ */
 export const REQUEUE_WARN_RATIO: number = Number(
   process.env.MARS_REQUEUE_WARN_RATIO ?? 0.8,
 )
@@ -137,25 +142,26 @@ export const checkAndEscalateRequeueCeiling = async (
       )
     }
 
+    // ── Early warning ───────────────────────────────────────────────────────
     if (
       REQUEUE_MAX_RETRY_MS > 0 &&
       effectiveElapsedMs >= REQUEUE_MAX_RETRY_MS * REQUEUE_WARN_RATIO
     ) {
-      const warnBoundMins = Math.round(REQUEUE_MAX_RETRY_MS / 60_000)
-      const warnStepWindow = computeStepWindow(steps)
-      const warnBreachClass = classifyRequeueBreach(t, warnStepWindow, 0, elapsedMs)
+      const boundMins = Math.round(REQUEUE_MAX_RETRY_MS / 60_000)
+      const stepWindow = computeStepWindow(steps)
+      const breachClass = classifyRequeueBreach(t, stepWindow, 0, elapsedMs)
       await raiseActionQueueItem({
         kind: 'requeue-warning',
         category: 'orchestrator',
         priority: 'low',
-        title: `Task ${t.id}: approaching requeue ceiling (${warnBreachClass.kind})`,
+        title: `Task ${t.id}: approaching requeue ceiling (${breachClass.kind})`,
         body:
-          `Elapsed ${elapsedMins}m of bound ${warnBoundMins}m; ` +
-          `predicted class ${warnBreachClass.kind}.`,
+          `Elapsed ${elapsedMins}m of bound ${boundMins}m; ` +
+          `predicted class ${breachClass.kind}.`,
         payload: {
           taskId: t.id,
           diagnostics: {
-            class: warnBreachClass.kind,
+            class: breachClass.kind,
             maxAttempt,
             elapsedMs,
             boundMs: REQUEUE_MAX_RETRY_MS,

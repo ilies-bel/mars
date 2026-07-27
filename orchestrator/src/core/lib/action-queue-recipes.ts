@@ -732,13 +732,17 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
   'requeue-warning': {
     humanSummary: (ctx) => {
       const diag = ctx.payload['diagnostics'] as Record<string, unknown> | undefined
-      return `Task is approaching the requeue ceiling (predicted class: ${str(diag?.['class'])}).`
+      const kind = str(diag?.['class'])
+      return `Task is approaching the requeue ceiling (predicted class: ${kind}).`
     },
     humanDetail: (ctx) => {
       const diag = ctx.payload['diagnostics'] as Record<string, unknown> | undefined
       return {
         raisedAt: ctx.raisedAt,
         predictedClass: str(diag?.['class']),
+        maxAttempt: diag?.['maxAttempt'],
+        elapsedMs: diag?.['elapsedMs'],
+        boundMs: diag?.['boundMs'],
       }
     },
     verbs: [],

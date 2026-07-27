@@ -250,6 +250,11 @@ export const ACTION_QUEUE_KINDS = [
   // per transition direction (signature-keyed 'spend-control:<direction>');
   // level-triggered (ADR-0048): the row exists while the state holds.
   'spend-control-notice',
+  // A task is approaching the requeue ceiling (elapsed >= WARN_RATIO * bound).
+  // Level-triggered (ADR-0048): one row per task, signature-keyed
+  // 'requeue-warning:<taskId>'; idempotent re-raises bump seen_count. The task
+  // is NOT failed — this is an early warning. Cleared automatically when the
+  // task completes or is escalated past the hard ceiling.
   'requeue-warning',
 ] as const
 

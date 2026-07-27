@@ -1,7 +1,8 @@
-import type { UITask } from '@/shared/types'
+import type { PurgeArchiveEntry, UITask } from '@/shared/types'
 import { TaskCard } from '@/components/TaskCard'
 import { isLiveStatus, substepLabel } from '@/shared/substep'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
+import { GhostArc } from '@/widgets/GhostArc'
 import type { Cluster } from '@/shared/schemas'
 
 export interface BoardArc {
@@ -33,6 +34,7 @@ interface Props {
   accent?: 'highlight' | 'muted'
   /** Search results should be immediately visible inside their matching arcs. */
   expandAll?: boolean
+  purgeArchive?: Map<string, PurgeArchiveEntry>
 }
 
 const STATUS_CLASS: Record<Cluster, string> = {
@@ -48,7 +50,7 @@ const STATUS_CLASS: Record<Cluster, string> = {
  * Opening an Arc exposes its constituent task cards, preserving the existing
  * task drawer affordance without making the board itself misleadingly verbose.
  */
-export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: Props) => {
+export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, purgeArchive }: Props) => {
   let taskIndex = 0
 
   return (
@@ -96,10 +98,17 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
                 ? 'orphaned-origin'
                 : 'active'
 
+            const ghostEntry = isCompensation && arc.compensatesArcId
+              ? purgeArchive?.get(arc.compensatesArcId)
+              : undefined
+
             return (
-              <details
-                key={arc.id}
-                data-arc-id={arc.id}
+              <div key={arc.id} className="flex flex-col gap-1">
+                {ghostEntry && arc.compensatesArcId ? (
+                  <GhostArc entry={ghostEntry} compensationArcId={arc.id} />
+                ) : null}
+                <details
+                  data-arc-id={arc.id}
                 data-arc-status={arc.cluster}
                 data-arc-state={arcState}
                 data-compensates-arc={arc.compensatesArcId ?? undefined}
@@ -169,6 +178,7 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false }: 
                   </div>
                 </div>
               </details>
+              </div>
             )
           })
         )}

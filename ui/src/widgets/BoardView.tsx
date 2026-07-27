@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Cluster, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
+import type { Cluster, ProgressProposalNode, ProgressTask, PurgeArchiveEntry } from '@/shared/schemas'
 import type { Role, UITask } from '@/shared/types'
 import { taskTitle } from '@/shared/promptTitle'
 import { resolveArcLabel, taskArcKey } from '@/widgets/topologyFlowModel'
@@ -162,6 +162,7 @@ export interface BoardViewProps {
    * searchMatchIds is non-null and no tasks match. Optional for back-compat.
    */
   searchQuery?: string
+  purgeArchive?: Map<string, PurgeArchiveEntry>
 }
 
 export const BoardView = ({
@@ -171,6 +172,7 @@ export const BoardView = ({
   selectedProposalId,
   searchMatchIds,
   searchQuery,
+  purgeArchive,
 }: BoardViewProps) => {
   // Filter active (non-Done) tasks by proposal + search before grouping so an
   // Arc spanning a failure and its recovery is represented exactly once, in the
@@ -279,6 +281,7 @@ export const BoardView = ({
                 accent={accent}
                 arcs={arcsForCluster}
                 expandAll={searchMatchIds != null}
+                purgeArchive={purgeArchive}
               />
             </div>
           )

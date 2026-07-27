@@ -460,15 +460,18 @@ describe('checkAndEscalateRequeueCeiling', () => {
       t,
       store,
       makeSilentLog(),
-      anchorMs + 90,
+      anchorMs + 90, // 90% of 100 ms bound → above 80% WARN_RATIO threshold
     )
 
     expect(escalated).toBe(false)
+
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
 
     const items = await aq.listActionQueueItems('open')
-    const warning = items.find((i) => i.signature === `requeue-warning:${t.id}`)
+    const warning = items.find(
+      (i) => i.signature === `requeue-warning:${t.id}`,
+    )
     expect(warning).toBeDefined()
     expect(warning?.kind).toBe('requeue-warning')
     expect(warning?.priority).toBe('low')
@@ -495,11 +498,13 @@ describe('checkAndEscalateRequeueCeiling', () => {
       t,
       store,
       makeSilentLog(),
-      anchorMs + 50,
+      anchorMs + 50, // 50% of bound — below 80% threshold
     )
 
     const items = await aq.listActionQueueItems('open')
-    const warning = items.find((i) => i.signature === `requeue-warning:${t.id}`)
+    const warning = items.find(
+      (i) => i.signature === `requeue-warning:${t.id}`,
+    )
     expect(warning).toBeUndefined()
   })
 

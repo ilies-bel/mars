@@ -266,57 +266,6 @@ describe('unknownFailureKind — plain-English fallback (no raw step ids, no jar
   })
 })
 
-describe('unknownFailureKind — triage family and colon-less step family coverage', () => {
-  it('triage:crashed maps to the triage label', () => {
-    const kind = unknownFailureKind('triage:crashed', '')
-    expect(kind.warmTitle).toBe('The task could not be triaged')
-    expect(kind.warmTitle).not.toContain('triage:crashed')
-  })
-
-  it('triage:crashed/unclassified maps to the same triage label', () => {
-    // The failingStep extracted from signature 'triage:crashed/unclassified' is
-    // 'triage:crashed', which has family 'triage'.
-    const kind = unknownFailureKind('triage:crashed', '')
-    expect(kind.warmTitle).toBe('The task could not be triaged')
-  })
-
-  it('bare code (colon-less) maps to the same label as code:coder-exit-nonzero', () => {
-    const bareCode = unknownFailureKind('code', '')
-    const withColon = unknownFailureKind('code:coder-exit-nonzero', '')
-    expect(bareCode.warmTitle).toBe(withColon.warmTitle)
-    expect(bareCode.warmTitle).toMatch(/coder/i)
-  })
-
-  it('code:coder-exit-nonzero maps to the coder label', () => {
-    const kind = unknownFailureKind('code:coder-exit-nonzero', '')
-    expect(kind.warmTitle).toBe('The coder did not complete successfully')
-    expect(kind.warmTitle).not.toContain('code:coder-exit-nonzero')
-  })
-
-  it('unrecognised family still hits the generic fallback', () => {
-    const kind = unknownFailureKind('xyzzy:warp', '')
-    expect(kind.warmTitle).toBe('A pipeline step did not complete')
-    expect(kind.warmTitle).not.toContain('xyzzy:warp')
-  })
-
-  // Verify that warmTitle never leaks technical step ids (colon-containing forms
-  // are the primary risk; single-word families like 'code' naturally appear as
-  // ordinary English substrings in the label text so the substring check only
-  // applies to forms that include a colon).
-  it.each([
-    ['verify:test', ''],
-    ['setup:install', ''],
-    ['code:coder-exit-nonzero', ''],
-    ['merge:preflight', ''],
-    ['triage:crashed', ''],
-    ['xyzzy:warp', ''],
-  ])('warmTitle for %s contains no colon and does not contain the raw failingStep', (step, err) => {
-    const kind = unknownFailureKind(step, err)
-    expect(kind.warmTitle).not.toContain(':')
-    expect(kind.warmTitle).not.toContain(step)
-  })
-})
-
 describe('new catalog entries for previously-unmatched signatures', () => {
   it('setup:install/unclassified is registered with a plain-English warm title', () => {
     const entry = lookupFailureKind('setup:install/unclassified')

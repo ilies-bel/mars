@@ -306,6 +306,11 @@ export interface Task {
    * rows landed before slice G.
    */
   failureReasonCode: string | null
+  /**
+   * JSON-encoded coder stall diagnostics captured before a hard timeout kill.
+   * Contains stderr tail, exit code, done-signal state, and elapsed time.
+   * Null on non-stalled tasks and legacy rows.
+   */
   stallDiagnostics: string | null
   retryCount: number
   /**
@@ -483,6 +488,11 @@ export interface Task {
    * has run or on legacy rows.
    */
   qaReport?: QaReport | null
+  /**
+   * When true, the usage-aware scheduler may defer this task to a cheaper
+   * window. Set at enqueue via `mars task add --deferrable`. Defaults to
+   * false for all rows.
+   */
   deferrable: boolean
   createdAt: string
   updatedAt: string
@@ -952,6 +962,10 @@ export interface EnqueueTaskOptions {
    * When set, marks this task as a compensation/cleanup task for the arc
    * identified by this `origin_id`. Stored in `compensates_arc_id`. Only set
    * by the force-purge path — do not use this for recovery tasks.
+   */
+  /**
+   * When true, the usage-aware scheduler may defer this task to a cheaper
+   * window. Defaults to false.
    */
   deferrable?: boolean
   compensatesArcId?: string

@@ -44,6 +44,8 @@ interface EnqueueParams {
   supersedes?: string
   /** QA mode for the review step: 'auto' (default) or 'manual'. */
   qa?: 'auto' | 'manual'
+  /** When true, the usage-aware scheduler may defer this task. */
+  deferrable?: boolean
 }
 
 /**
@@ -99,6 +101,7 @@ const enqueueViaDaemon = async (
       ...(params.workflow !== undefined ? { workflow: params.workflow } : {}),
       ...(params.supersedes !== undefined ? { supersedes: params.supersedes } : {}),
       ...(params.qa !== undefined ? { qa: params.qa } : {}),
+      ...(params.deferrable === true ? { deferrable: true } : {}),
     },
     { onSpawnNotice: spawnNoticeErr(deps.err) },
   )) as { id: string; status: string }
@@ -196,6 +199,10 @@ export const taskAdd: Command = {
       qa = qaRaw
     }
 
+    const deferrable = args.positional.includes('--deferrable') || positional.includes('--deferrable')
+      ? true
+      : undefined
+
     return enqueueViaDaemon(deps, args.flags, {
       prompt,
       skipTriage: true,
@@ -207,7 +214,7 @@ export const taskAdd: Command = {
       ...(workflow !== undefined ? { workflow } : {}),
       ...(supersedes !== undefined ? { supersedes } : {}),
       ...(qa !== undefined ? { qa } : {}),
-      ...(deferrableFlag ? { deferrable: true } : {}),
+      ...(deferrable !== undefined ? { deferrable } : {}),
     })
   },
 }

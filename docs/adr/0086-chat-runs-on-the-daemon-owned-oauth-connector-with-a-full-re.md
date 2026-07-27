@@ -1,3 +1,0 @@
-# Chat runs on the daemon-owned OAuth connector with a full re-hosted tool surface
-
-Chat has flip-flopped three times between a daemon-owned Codex Responses connector (codex-api.ts, OAuth via the codex login token) and shelling out to codex exec; the last revert (dae8ec03) had no rationale, so the decision keeps un-deciding itself. Decision: chat runs on the daemon-owned connector and the daemon re-hosts a full general tool surface (shell, read, write, skills, MCP) as in-process executors instead of borrowing the CLI tools; the codex exec path is retired. The connector already supports function calling, so only the daemon-side executor was unfinished; finishing it is the committed path. Supersedes ADR-0082.

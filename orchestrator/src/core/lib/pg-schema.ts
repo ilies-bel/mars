@@ -156,6 +156,7 @@ const DDL: readonly string[] = [
     env_restart_count    bigint NOT NULL DEFAULT 0,
     arc_rescue_attempts  bigint NOT NULL DEFAULT 0,
     requeue_anchor_ms    bigint,
+    deferrable           bigint NOT NULL DEFAULT 0,
     created_at           text   NOT NULL,
     updated_at           text   NOT NULL
   )`,
@@ -163,6 +164,8 @@ const DDL: readonly string[] = [
   // added. IF NOT EXISTS makes this idempotent on fresh databases (where the
   // column already exists from the CREATE TABLE above).
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requeue_anchor_ms bigint`,
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deferrable bigint NOT NULL DEFAULT 0`,
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS stall_diagnostics jsonb`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created
      ON tasks(priority DESC, created_at ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for
@@ -404,10 +407,9 @@ const DDL: readonly string[] = [
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS stall_diagnostics text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS "deferrable" bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
-  // Chat runs on the Codex Responses API with full transcript replay — the
-  // CLI-session binding and one-shot context seeding are gone.
-  `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS session_id`,
   `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS context_seeded`,
+  // Codex CLI exec/resume needs a persisted session id per thread.
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS session_id text`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id
      ON chat_threads(alert_item_id)`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_evaporated_at

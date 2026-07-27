@@ -246,6 +246,11 @@ export const AlertCard = ({
   const [snoozedUntil, setSnoozedUntil] = useState<string | null>(
     initialSnoozeUntil ?? null,
   )
+  const [teachPrompt, setTeachPrompt] = useState<{
+    signature: string
+    op: string
+  } | null>(null)
+  const [teachPending, setTeachPending] = useState(false)
 
   const isSnoozed = snoozedUntil !== null && new Date(snoozedUntil) > new Date()
 
@@ -441,19 +446,83 @@ export const AlertCard = ({
       )}
 
       {/* Decision buttons — one per server-defined Decision */}
-      {decisions.length > 0 && (
+      {decisions.length > 0 && !resolvedOp && (
         <div className="flex flex-wrap gap-1.5 mb-2">
           {decisions.map((d) => (
             <button
               key={d.label}
               type="button"
               className={verbButtonClass('default')}
-              onClick={() => void postDecision(d)}
+              disabled={pendingOp !== null}
+              onClick={() => {
+                setPendingOp(d.label)
+                setActionError(null)
+                postDecision(d)
+                  .then((res) => {
+                    if (!res.ok) throw new Error(`Decision failed: ${res.status}`)
+                    setResolvedOp(d.label)
+                    if (d.secondary?.kind === 'teach-recipe' && d.payload.op) {
+                      setTeachPrompt({
+                        signature: kind,
+                        op: String(d.payload.op),
+                      })
+                    }
+                  })
+                  .catch((err) =>
+                    setActionError(
+                      err instanceof Error ? err.message : String(err),
+                    ),
+                  )
+                  .finally(() => setPendingOp(null))
+              }}
               data-testid={`alert-card-decision-${d.label}`}
             >
-              {d.label}
+              {pendingOp === d.label ? '…' : d.label}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Secondary teach-recipe prompt */}
+      {teachPrompt && !teachPending && (
+        <div
+          className="mb-2 rounded border border-primary/20 bg-primary/5 p-2"
+          data-testid="teach-recipe-prompt"
+        >
+          <p className="font-mono text-[11px] text-primary/80 mb-1.5">
+            Apply this automatically next time?
+          </p>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              className={verbButtonClass('primary')}
+              onClick={() => {
+                setTeachPending(true)
+                fetch(
+                  `/api/failure-kinds/${encodeURIComponent(teachPrompt.signature)}/recipe`,
+                  {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ op: teachPrompt.op }),
+                  },
+                )
+                  .then(() => setTeachPrompt(null))
+                  .catch(() => setTeachPrompt(null))
+                  .finally(() => setTeachPending(false))
+              }}
+              data-testid="teach-recipe-yes"
+            >
+              Yes
+            </button>
+            <button
+              type="button"
+              className={verbButtonClass('default')}
+              onClick={() => setTeachPrompt(null)}
+              data-testid="teach-recipe-no"
+            >
+              No
+            </button>
+          </div>
         </div>
       )}
 

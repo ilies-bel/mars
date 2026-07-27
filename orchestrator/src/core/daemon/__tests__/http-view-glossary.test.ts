@@ -118,8 +118,10 @@ describe('GET /view/glossary', () => {
       expect(body.terms[0]?.term).toBe('Arc')
       expect(body.terms[0]?.definition).toBe('A chain of tasks sharing an originId.')
       expect(body.terms[0]?.avoid).toEqual(['chain', 'pipeline'])
+      expect(body.terms[0]?.surfaceForms).toEqual(['arc', 'arcs'])
       expect(body.terms[1]?.term).toBe('Task')
       expect(body.terms[1]?.avoid).toEqual([])
+      expect(body.terms[1]?.surfaceForms).toEqual(['task', 'tasks'])
     } finally {
       await close()
     }
