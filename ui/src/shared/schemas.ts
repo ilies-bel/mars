@@ -232,6 +232,23 @@ export const alertVerbSchema = z.object({
 })
 
 /**
+ * A server-defined decision button. Each Decision maps to exactly one button
+ * on the AlertCard. Clicking POSTs `payload` to `endpoint`. `secondary` is
+ * an optional follow-up prompt spec rendered after the POST returns.
+ */
+export const zDecision = z.object({
+  label: z.string(),
+  endpoint: z.string(),
+  payload: z.record(z.string(), z.unknown()).default({}),
+  secondary: z
+    .object({
+      kind: z.enum(['teach-recipe', 'scope-choice']),
+      prompt: z.string(),
+    })
+    .optional(),
+})
+
+/**
  * Structured detail block revealed behind the "Details ▸" expander on alert cards.
  * All fields are optional — the backend only populates fields relevant to the
  * specific alert kind (e.g. rawError for failed tasks, changelog for update kinds).
@@ -338,6 +355,12 @@ const actionQueueBaseSchema = z.object({
   verbs: z.array(alertVerbSchema).optional().default([]),
   /** ISO timestamp until which this row is snoozed. Absent when not snoozed. */
   snoozeUntil: z.string().optional(),
+  /**
+   * Server-defined decision buttons. Each entry maps to exactly one button on
+   * the AlertCard — no client-side switch on failure kind required.
+   * Falls back to empty for daemon versions predating this field.
+   */
+  decisions: z.array(zDecision).default([]),
 })
 
 // Detail block carried by every 'stale-worktree' row — absent on all other kinds.
@@ -505,6 +528,7 @@ export const actionQueueResponseSchema = z.array(
       failureReasonCode: null,
       humanSummary: '',
       verbs: [],
+      decisions: [],
     }
   }),
 )
@@ -779,6 +803,7 @@ export const actionQueueHistoryResponseSchema = z.object({
         failureReasonCode: null,
         humanSummary: '',
         verbs: [],
+        decisions: [],
       }
     }),
   ),
@@ -787,6 +812,7 @@ export const actionQueueHistoryResponseSchema = z.object({
 
 export type ActionQueueHistoryResponse = z.infer<typeof actionQueueHistoryResponseSchema>
 
+export type Decision = z.infer<typeof zDecision>
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
 export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>
 export type AlertChainNode = z.infer<typeof alertChainNodeSchema>

@@ -26,11 +26,13 @@ import type { AlertCardProps } from './AlertCard'
 const mockSnoozeActionQueueItem = vi.fn().mockResolvedValue(undefined)
 const mockRestoreSnoozedItem = vi.fn().mockResolvedValue(undefined)
 const mockInvokeAction = vi.fn().mockResolvedValue(undefined)
+const mockPostDecision = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
 
 vi.mock('@/shared/api', () => ({
   snoozeActionQueueItem: (...args: unknown[]) => mockSnoozeActionQueueItem(...args),
   restoreSnoozedItem: (...args: unknown[]) => mockRestoreSnoozedItem(...args),
   invokeAction: (...args: unknown[]) => mockInvokeAction(...args),
+  postDecision: (...args: unknown[]) => mockPostDecision(...args),
 }))
 
 // ---------------------------------------------------------------------------
@@ -220,5 +222,52 @@ describe('AlertCard – verb button invocation', () => {
     })
 
     expect(mockInvokeAction).toHaveBeenCalledWith('restart', 't-1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Decision button rendering and invocation
+// ---------------------------------------------------------------------------
+
+describe('AlertCard – Decision buttons', () => {
+  it('renders one button per Decision with the Decision label', () => {
+    const { container } = renderCard({
+      decisions: [{ label: 'Retry', endpoint: '/api/retry', payload: { id: 't1' } }],
+    })
+
+    const btn = container.querySelector('[data-testid="alert-card-decision-Retry"]')
+    expect(btn).not.toBeNull()
+    expect(btn!.textContent).toBe('Retry')
+  })
+
+  it('clicking a Decision button calls postDecision with the full Decision object', async () => {
+    const decision = { label: 'Retry', endpoint: '/api/retry', payload: { id: 't1' } }
+    const { container } = renderCard({ decisions: [decision] })
+
+    const btn = container.querySelector('[data-testid="alert-card-decision-Retry"]')!
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(mockPostDecision).toHaveBeenCalledTimes(1)
+    expect(mockPostDecision).toHaveBeenCalledWith(decision)
+  })
+
+  it('renders no Decision buttons when decisions is empty', () => {
+    const { container } = renderCard({ decisions: [] })
+    const btns = container.querySelectorAll('[data-testid^="alert-card-decision-"]')
+    expect(btns).toHaveLength(0)
+  })
+
+  it('renders multiple Decision buttons when multiple Decisions are provided', () => {
+    const { container } = renderCard({
+      decisions: [
+        { label: 'Retry', endpoint: '/api/retry', payload: { id: 't1' } },
+        { label: 'Purge', endpoint: '/api/purge', payload: { id: 't1' } },
+      ],
+    })
+
+    expect(container.querySelector('[data-testid="alert-card-decision-Retry"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="alert-card-decision-Purge"]')).not.toBeNull()
   })
 })

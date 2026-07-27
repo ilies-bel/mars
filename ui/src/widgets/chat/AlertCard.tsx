@@ -15,9 +15,9 @@
 
 import { useState } from 'react'
 import { Response } from '@/components/ai-elements/response'
-import { invokeAction, snoozeActionQueueItem, restoreSnoozedItem } from '@/shared/api'
+import { invokeAction, snoozeActionQueueItem, restoreSnoozedItem, postDecision } from '@/shared/api'
 import { PROCESS_LEVEL_OPS } from './QueueThreadDetail'
-import type { AlertHumanDetail, AlertVerb } from '@/shared/schemas'
+import type { AlertHumanDetail, AlertVerb, Decision } from '@/shared/schemas'
 import { taskHash, proposalHash } from '@/shared/routing'
 
 // ---------------------------------------------------------------------------
@@ -115,6 +115,13 @@ export interface AlertCardProps {
    * arc-failed alerts; absent for other kinds.
    */
   goal?: string
+  /**
+   * Server-defined decision buttons. One button is rendered per entry;
+   * clicking POSTs the Decision's payload to its endpoint.
+   * No client-side switch on failure kind needed — the server controls
+   * which buttons appear.
+   */
+  decisions?: Decision[]
 }
 
 // ---------------------------------------------------------------------------
@@ -244,6 +251,7 @@ export const AlertCard = ({
   goal,
   detail,
   verbs,
+  decisions = [],
   resolved = false,
   snoozeUntil: initialSnoozeUntil,
 }: AlertCardProps) => {
@@ -444,6 +452,23 @@ export const AlertCard = ({
                 {pendingOp === verb.op ? '…' : verb.label}
               </button>
             )
+          ))}
+        </div>
+      )}
+
+      {/* Decision buttons — one per server-defined Decision */}
+      {decisions.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {decisions.map((d) => (
+            <button
+              key={d.label}
+              type="button"
+              className={verbButtonClass('default')}
+              onClick={() => void postDecision(d)}
+              data-testid={`alert-card-decision-${d.label}`}
+            >
+              {d.label}
+            </button>
           ))}
         </div>
       )}

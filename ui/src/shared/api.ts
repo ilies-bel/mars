@@ -35,6 +35,7 @@ import {
   type ChatConfig,
   type ChatThread,
   type ChatThreadDetail,
+  type Decision,
   type EventsResponse,
   type FrameworkUpdate,
   type GlossaryTerm,
@@ -408,6 +409,17 @@ export const restoreSnoozedItem = async (id: string): Promise<void> => {
     )
   }
 }
+
+/**
+ * POST a server-defined Decision's payload to its endpoint.
+ * Returns the raw fetch Response — callers can inspect status if needed.
+ */
+export const postDecision = (d: Decision): Promise<Response> =>
+  fetch(`${BASE}${d.endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(d.payload),
+  })
 
 export const eventsUrl = (): string => `${BASE}/events`
 
@@ -1003,6 +1015,7 @@ export type {
   ChatThread,
   ChatThreadDetail,
   DaemonHealth,
+  Decision,
   EventsResponse,
   FrameworkUpdate,
   GlossaryTerm,
