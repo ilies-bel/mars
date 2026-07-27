@@ -19,6 +19,7 @@ import { openDb, recycleDbPool, type DbClient } from '../lib/db'
 import { ensureSchema } from '../lib/pg-schema'
 import { startEmbeddedPg, type EmbeddedPgHandle } from '../lib/pg-server'
 import { importLegacySqlite } from '../../init/import-sqlite'
+import { reconcileVerifyGatesOnStartup } from '../verify-gates-reconcile'
 import {
   addBlockers,
   dropTask,
@@ -568,6 +569,14 @@ export const startDaemon = async (
   // and retried on the next boot rather than blocking startup.
   const dbClient: DbClient = openDb(resolveDbTarget())
   await ensureSchema(dbClient)
+  // Backfill verify_gates from the supervisors manifest if the table is empty.
+  // ensureSchema already created the table (it's in the canonical DDL), so this
+  // only needs to seed rows — not create the table. Safe to call on every start:
+  // it inserts only (scope, name) pairs not already present.
+  await reconcileVerifyGatesOnStartup(
+    resolvePath(resolveContext().stateDir, 'supervisors', 'manifest.json'),
+    (msg) => log(`[verify-gates] ${msg}`),
+  )
   try {
     const legacySqlitePath = findExistingMarsDb()
     if (legacySqlitePath !== null) {
