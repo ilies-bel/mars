@@ -17,14 +17,15 @@
  */
 
 import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchGlossary, fetchSkills, fetchAdrs, fetchChatThread, fetchVision } from '@/shared/api'
 import { SkeletonList } from '@/components/Skeleton'
 import { parseCreatedTaskIds } from './parseCreatedTaskIds'
 import { useThreadFocus } from './useThreadFocus'
 import { buildActivityFeed } from './activityFeed'
+import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
 
-import type { GlossaryTerm, Skill, ChatSegmentAttachment, AdrEntry, ChatThreadDetail, ProgressTask } from '@/shared/schemas'
+import type { GlossaryTerm, Skill, ChatSegmentAttachment, AdrEntry, ChatThreadDetail, ProgressTask, ActionQueueItem } from '@/shared/schemas'
 import type { ThreadFocusResult } from './useThreadFocus'
 import type { LiveBuffer } from '@/shared/chatBuffer'
 import type { ActivityEntry } from './activityFeed'
@@ -97,6 +98,46 @@ const DoneCriteriaSection = ({ task }: { task: ProgressTask }) => {
 }
 
 // ---------------------------------------------------------------------------
+// Focus verbs row — verb buttons for alert-linked threads (second entry point)
+// ---------------------------------------------------------------------------
+
+interface FocusVerbsRowProps {
+  item: ActionQueueItem
+  threadId: string
+  resolved: boolean
+}
+
+const FocusVerbsRow = ({ item, threadId, resolved }: FocusVerbsRowProps) => {
+  const queryClient = useQueryClient()
+  const verbs = item.verbs ?? []
+
+  if (verbs.length === 0) return null
+
+  const handleVerb = async (op: string) => {
+    await dispatchAlertVerb(item.id, item.entityId, op)
+    void queryClient.invalidateQueries({ queryKey: ['action-queue'] })
+    void queryClient.invalidateQueries({ queryKey: ['chat-thread', threadId] })
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1" data-testid="focus-verbs-row">
+      {verbs.map((verb) => (
+        <button
+          key={verb.op}
+          type="button"
+          className={verbButtonClass(verb.style)}
+          disabled={resolved}
+          onClick={() => void handleVerb(verb.op)}
+          data-testid={`focus-verb-${verb.op}`}
+        >
+          {verb.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Focus panel — shows the active thread title and status
 // ---------------------------------------------------------------------------
 
@@ -104,9 +145,10 @@ interface FocusPanelProps {
   threadDetail?: ChatThreadDetail | null
   isStreaming?: boolean
   focusResult?: ThreadFocusResult
+  threadId?: string
 }
 
-const FocusPanel = ({ threadDetail, isStreaming, focusResult }: FocusPanelProps) => {
+const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusPanelProps) => {
   // Linked entity: render kind badge + entity title + optional status chip.
   if (focusResult && focusResult.kind !== 'none' && focusResult.entity) {
     const { kind, entity, sourceLabel } = focusResult
@@ -142,6 +184,8 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult }: FocusPanelProps)
 
     // ActionQueueItem entity (alert or proposal)
     const badgeLabel = kind === 'proposal' ? 'proposal' : sourceLabel
+    const alertItem = entity as ActionQueueItem
+    const alertResolved = threadDetail?.thread.alertResolved ?? false
     return (
       <div className="flex flex-col gap-1 px-3 py-2">
         <span
@@ -154,8 +198,11 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult }: FocusPanelProps)
           className="font-mono text-[10px] leading-snug text-foreground/80 line-clamp-2"
           data-testid="focus-panel-title"
         >
-          {entity.title}
+          {alertItem.title}
         </span>
+        {kind === 'alert' && threadId && (
+          <FocusVerbsRow item={alertItem} threadId={threadId} resolved={alertResolved} />
+        )}
       </div>
     )
   }
@@ -735,6 +782,7 @@ export const ContextRail = ({
           threadDetail={activeThreadId ? threadDetail : null}
           isStreaming={isStreaming}
           focusResult={activeThreadId ? focusResult : undefined}
+          threadId={activeThreadId}
         />
       </PanelSection>
 

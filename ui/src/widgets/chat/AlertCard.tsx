@@ -15,8 +15,8 @@
 
 import { useState } from 'react'
 import { Response } from '@/components/ai-elements/response'
-import { invokeAction, snoozeActionQueueItem, restoreSnoozedItem, postDecision } from '@/shared/api'
-import { PROCESS_LEVEL_OPS } from './QueueThreadDetail'
+import { snoozeActionQueueItem, restoreSnoozedItem, postDecision } from '@/shared/api'
+import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
 import type { AlertHumanDetail, AlertVerb, Decision } from '@/shared/schemas'
 import { taskHash, proposalHash } from '@/shared/routing'
 
@@ -66,22 +66,6 @@ const reappearsIn = (snoozeUntilIso: string): string => {
   }
   if (h > 0) return `${h} h ${m} min`
   return `${m} min`
-}
-
-// ---------------------------------------------------------------------------
-// Button styling
-// ---------------------------------------------------------------------------
-
-const verbButtonClass = (style: AlertVerb['style']): string => {
-  const base =
-    'rounded px-3 py-1 font-mono text-[11px] border transition-colors disabled:opacity-40 disabled:cursor-not-allowed'
-  if (style === 'primary')
-    return `${base} border-highlight/60 bg-highlight/10 text-highlight hover:bg-highlight/20`
-  if (style === 'destructive')
-    return `${base} border-error/40 bg-error/10 text-error hover:bg-error/20`
-  if (style === 'snooze')
-    return `${base} border-primary/30 text-primary/70 hover:bg-primary/20`
-  return `${base} border-primary/30 text-primary hover:bg-primary/20`
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +254,7 @@ export const AlertCard = ({
     setPendingOp(op)
     setActionError(null)
     try {
-      await invokeAction(op, PROCESS_LEVEL_OPS.has(op) ? undefined : entityId)
+      await dispatchAlertVerb(itemId, entityId, op)
       setResolvedOp(op)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))

@@ -45,6 +45,10 @@ vi.mock('@tanstack/react-query', () => ({
     if (mockState.queryOverride) return mockState.queryOverride(opts)
     return { data: undefined, isLoading: true, isError: false }
   },
+  // FocusVerbsRow calls useQueryClient for cache invalidation after verb dispatch.
+  useQueryClient: () => ({
+    invalidateQueries: () => Promise.resolve(),
+  }),
 }))
 
 // Mock the three hooks that useThreadFocus depends on so the test file does not
@@ -808,5 +812,198 @@ describe('ContextRail – FocusPanel linked entity', () => {
     expect(html).toContain('data-testid="focus-panel-status-chip"')
     // No linked-entity badge
     expect(html).not.toContain('data-testid="focus-panel-kind-badge"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// FocusPanel verbs row (slice 5 — operator actions rail)
+// ---------------------------------------------------------------------------
+
+describe('ContextRail – FocusPanel verbs row', () => {
+  it('renders verb buttons for an alert fixture with two verbs', () => {
+    const alertItem: ActionQueueItem = {
+      id: 'alert-verbs-1',
+      entityId: 'task-abc',
+      kind: 'stale-worktree',
+      title: 'Stale worktree alert',
+      body: '',
+      at: '2024-01-01T00:00:00.000Z',
+      priority: 'normal',
+      dag: null,
+      errorKind: '',
+      actions: [],
+      humanSummary: '',
+      verbs: [
+        { op: 'diagnose', label: 'Diagnose', style: 'primary' },
+        { op: 'purge', label: 'Purge', style: 'destructive' },
+      ],
+      staleWorktreeDetail: {
+        prompt: null,
+        status: 'done',
+        ageHours: 24,
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        branch: 'task-abc',
+        empty: false,
+        investigation: null,
+      },
+    }
+    mockFocusState.aqItems = [alertItem]
+
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-verbs-1',
+        title: 'Alert thread with verbs',
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 0,
+        origin: 'alert',
+        alertItemId: 'alert-verbs-1',
+        alertResolved: false,
+      },
+      messages: [],
+    }
+
+    const html = renderToStaticMarkup(
+      <ContextRail
+        sessionStartedAt={0}
+        onInsertPrompt={() => {}}
+        activeThreadId="thread-verbs-1"
+        threadDetail={threadDetail}
+      />,
+    )
+    mockFocusState.aqItems = []
+
+    expect(html).toContain('data-testid="focus-verbs-row"')
+    expect(html).toContain('data-testid="focus-verb-diagnose"')
+    expect(html).toContain('Diagnose')
+    expect(html).toContain('data-testid="focus-verb-purge"')
+    expect(html).toContain('Purge')
+  })
+
+  it('does not render the verbs row for a task-only fixture', () => {
+    const alertItem: ActionQueueItem = {
+      id: 'alert-task-only',
+      entityId: 'task-xyz',
+      kind: 'failed-task',
+      title: 'Task failed',
+      body: '',
+      at: '2024-01-01T00:00:00.000Z',
+      priority: 'high',
+      dag: null,
+      errorKind: 'verify',
+      actions: [],
+      humanSummary: '',
+      verbs: [],
+    }
+    const taskEntity: ProgressTask = {
+      id: 'task-xyz',
+      prompt: 'Implement the thing',
+      status: 'failed',
+      plan: null,
+      branch: null,
+      worktreePath: null,
+      error: null,
+      dropReason: null,
+      retryCount: 0,
+      blockedBy: [],
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+      cluster: 'Failed',
+    }
+    mockFocusState.aqItems = [alertItem]
+    mockFocusState.tasks = [taskEntity]
+
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-task-only',
+        title: 'Task thread',
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 0,
+        origin: 'alert',
+        alertItemId: 'alert-task-only',
+        alertResolved: false,
+      },
+      messages: [],
+    }
+
+    const html = renderToStaticMarkup(
+      <ContextRail
+        sessionStartedAt={0}
+        onInsertPrompt={() => {}}
+        activeThreadId="thread-task-only"
+        threadDetail={threadDetail}
+      />,
+    )
+    mockFocusState.aqItems = []
+    mockFocusState.tasks = null
+
+    // Task-linked threads show the task view (ProgressTask path), not verbs row
+    expect(html).not.toContain('data-testid="focus-verbs-row"')
+  })
+
+  it('disables verb buttons when the alert is resolved', () => {
+    const alertItem: ActionQueueItem = {
+      id: 'alert-resolved-1',
+      entityId: 'wt-resolved',
+      kind: 'stale-worktree',
+      title: 'Resolved alert',
+      body: '',
+      at: '2024-01-01T00:00:00.000Z',
+      priority: 'normal',
+      dag: null,
+      errorKind: '',
+      actions: [],
+      humanSummary: '',
+      verbs: [
+        { op: 'restart', label: 'Restart', style: 'primary' },
+      ],
+      staleWorktreeDetail: {
+        prompt: null,
+        status: 'done',
+        ageHours: 48,
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        branch: 'task-resolved',
+        empty: false,
+        investigation: null,
+      },
+    }
+    mockFocusState.aqItems = [alertItem]
+
+    const threadDetail: ChatThreadDetail = {
+      thread: {
+        id: 'thread-resolved-1',
+        title: 'Resolved alert thread',
+        status: 'idle',
+        attentionStatus: 'idle',
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+        messageCount: 0,
+        origin: 'alert',
+        alertItemId: 'alert-resolved-1',
+        alertResolved: true,
+      },
+      messages: [],
+    }
+
+    const html = renderToStaticMarkup(
+      <ContextRail
+        sessionStartedAt={0}
+        onInsertPrompt={() => {}}
+        activeThreadId="thread-resolved-1"
+        threadDetail={threadDetail}
+      />,
+    )
+    mockFocusState.aqItems = []
+
+    // Verbs row is present (non-empty verbs)
+    expect(html).toContain('data-testid="focus-verbs-row"')
+    // Button carries the disabled attribute
+    expect(html).toContain('data-testid="focus-verb-restart"')
+    expect(html).toContain('disabled')
   })
 })
