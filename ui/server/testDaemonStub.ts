@@ -314,6 +314,7 @@ const makeProgressTaskStore = (
     const select = [
       'id',
       'prompt',
+      pick('intent'),
       'status',
       pick('plan_functional'),
       pick('plan_technical'),
@@ -346,6 +347,7 @@ const makeProgressTaskStore = (
     return rows.map((ro) => ({
       id: ro.id as string,
       prompt: (ro.prompt as string) ?? '',
+      intent: (ro.intent as string | null) ?? null,
       status: ro.status as string,
       planFunctional: (ro.plan_functional as string | null) ?? null,
       planTechnical: (ro.plan_technical as string | null) ?? null,
