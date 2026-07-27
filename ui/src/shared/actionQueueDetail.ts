@@ -346,3 +346,35 @@ export const kindBadgeLabel = (kind: string): string => {
   if (kind === 'awaiting-validation') return 'validate'
   return kind
 }
+
+export function whyNowText(item: {
+  diagnosis?: { text: string } | null | undefined
+  errorKind: string
+  kind: string
+  failureReasonCode?: string | null
+  body: string
+  reason?: string
+}): string | null {
+  if (item.diagnosis?.text) {
+    const line = item.diagnosis.text.split('\n')[0]
+    return line.length > 100 ? `${line.slice(0, 100)}…` : line
+  }
+  if (item.errorKind && item.errorKind !== item.kind) {
+    return humanizeFailureCode(item.errorKind)
+  }
+  if (item.failureReasonCode) {
+    return humanizeFailureCode(item.failureReasonCode)
+  }
+  if (item.kind === 'arc-failed' && item.reason) {
+    const line = item.reason.split('\n')[0]
+    return line.length > 100 ? `${line.slice(0, 100)}…` : line
+  }
+  if (item.body) {
+    const line = item.body.split('\n')[0]
+    const GENERIC_BODY =
+      'A pipeline step did not complete. See the transcript for details.'
+    if (line.length === 0 || line === GENERIC_BODY) return null
+    return line.length > 100 ? `${line.slice(0, 100)}…` : line
+  }
+  return null
+}

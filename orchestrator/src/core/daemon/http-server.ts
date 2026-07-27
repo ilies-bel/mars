@@ -31,6 +31,7 @@ import { resolveStateClient } from '../store/state-client'
 import { getNotificationsEnabled, setNotificationsEnabled, readDaemonHeartbeat } from '../store/state-store'
 import {
   createThread,
+  forkThread,
   toThreadApiView,
   updateThreadTitle,
   deleteThread,
@@ -462,6 +463,7 @@ export interface HttpServerDeps {
    * Optional: when omitted the endpoint returns 503 Service Unavailable.
    */
   getLatestDeployment?: (taskId: string) => Promise<import('../store/task-store').TaskDeployment | null>
+  getLiveAgentsRoster?: () => import('./live-agents-roster').AgentRosterEntry[]
 }
 
 export interface HttpServerHandle {
@@ -726,6 +728,14 @@ export const startHttpServer = async (
         .then((m) => m.listLearnedRecipes())
         .then((recipes) => sendJson(res, 200, { ok: true, learnedRecipes: recipes }))
         .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /agents/live — live-agents roster built from in-flight task snapshots
+    // and reflector lifecycle entries. Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/agents/live') {
+      const agents = deps.getLiveAgentsRoster?.() ?? []
+      sendJson(res, 200, { agents })
       return
     }
 
@@ -1852,6 +1862,40 @@ export const startHttpServer = async (
       })
       req.on('error', (err: unknown) => sendError(res, err))
       return
+    }
+    {
+      const chatForkMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/chat\/threads\/([^/?]+)\/fork$/)
+          : null
+      if (chatForkMatch && chatForkMatch[1]) {
+        const sourceThreadId = decodeURIComponent(chatForkMatch[1])
+        let rawBody = ''
+        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+        req.on('end', () => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+            return
+          }
+          const schema = z.object({ goal: z.string(), idempotencyKey: z.string() })
+          const result = schema.safeParse(parsed)
+          if (!result.success) {
+            sendJson(res, 400, { ok: false, error: 'body must be { goal: string, idempotencyKey: string }' })
+            return
+          }
+          forkThread({ sourceThreadId, goal: result.data.goal, idempotencyKey: result.data.idempotencyKey })
+            .then(({ thread }) => {
+              deps.viewStreamHub?.broadcast('chat')
+              sendJson(res, 200, { threadId: thread.id })
+            })
+            .catch((err: unknown) => sendError(res, err))
+        })
+        req.on('error', (err: unknown) => sendError(res, err))
+        return
+      }
     }
     {
       const chatTitleMatch =

@@ -3,6 +3,7 @@ import type { TaskStatus } from './schemas'
 export type {
   TaskStatus,
   Task,
+  PurgeArchiveEntry,
 } from './schemas'
 
 export type ColumnKey = 'backlog' | 'in_progress' | 'done'
@@ -33,6 +34,7 @@ export interface UITask {
    * in the same order as the implementor brief.
    */
   spec: UITaskSpec | null
+  failureSignature?: string | null
   /**
    * When set, this task was created to compensate/cleanup a force-purged arc.
    * The value is the `origin_id` of the abandoned arc. Null/absent for regular tasks.

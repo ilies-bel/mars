@@ -11,7 +11,7 @@ import { memo } from 'react'
 import type { ActionDescriptor, ActionQueueItem } from '@/shared/schemas'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { relativeTime } from '@/shared/time'
-import { whyNowText } from '@/pages/ActionQueuePageFilters'
+import { whyNowText } from '@/shared/actionQueueDetail'
 import { draftRowHeadline } from './queueThreads'
 
 // ---- Shared row helpers ----

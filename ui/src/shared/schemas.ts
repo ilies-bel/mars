@@ -882,6 +882,26 @@ export const releaseNotesCursorSchema = z.object({
 export type ReleaseNotesCursor = z.infer<typeof releaseNotesCursorSchema>
 
 // ----------------------------------------------------------------------------
+// Purge archive (GET /purge-archive on daemon, proxied as /api/purge-archive)
+// ----------------------------------------------------------------------------
+
+export const purgeArchiveEntrySchema = z.object({
+  id: z.string(),
+  originId: z.string().nullable(),
+  branch: z.string().nullable(),
+  terminalStatus: z.string(),
+  purgedAt: z.string(),
+  integratedCommits: z.array(z.string()),
+  compensationTaskId: z.string().nullable(),
+})
+
+export type PurgeArchiveEntry = z.infer<typeof purgeArchiveEntrySchema>
+
+export const purgeArchiveResponseSchema = z.object({
+  rows: z.array(purgeArchiveEntrySchema),
+})
+
+// ----------------------------------------------------------------------------
 // Chat (GET /api/chat/threads, GET /api/chat/thread/:id, POST /api/chat/threads)
 // A chat thread holds an ordered list of messages each composed of typed
 // content segments (text / thinking / tool_use) from the Codex CLI.
