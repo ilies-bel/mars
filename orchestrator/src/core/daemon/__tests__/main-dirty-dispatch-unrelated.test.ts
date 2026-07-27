@@ -16,27 +16,36 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
 /**
- * Build a git repo that has an ignored directory entry — enough to make
+ * Build a git repo with an unresolved merge conflict — enough to make
  * `classifyIntegrationDirtState` return `{ kind: 'unrelated' }`.
  *
- * Strategy: commit a `.gitignore` that ignores `ignored-dir/`, then create
- * a file inside that directory. `git status --ignored --porcelain` then shows
- * `!! ignored-dir/`, which `isCommitterUnresolvable` classifies as unrelated.
+ * Strategy: diverge main and branch-b on the same file, then merge branch-b
+ * into main without resolving. `git status --porcelain` then shows
+ * `UU conflict.txt`, which `isCommitterUnresolvable` classifies as unrelated.
+ * (Plain ignored entries are benign since the `!!`-contamination fix.)
  */
 const setupRepoWithIgnoredDirt = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-unrelated-dirt-test-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
   execFileSync('git', ['config', 'user.email', 'test@example'], { cwd: repo })
   execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo })
-  // Commit .gitignore so git recognises the ignored directory.
-  writeFileSync(resolve(repo, '.gitignore'), 'ignored-dir/\n')
   writeFileSync(resolve(repo, 'README.md'), 'hi\n')
-  execFileSync('git', ['add', '.gitignore', 'README.md'], { cwd: repo })
+  writeFileSync(resolve(repo, 'conflict.txt'), 'base\n')
+  execFileSync('git', ['add', 'README.md', 'conflict.txt'], { cwd: repo })
   execFileSync('git', ['commit', '-q', '-m', 'init', '--allow-empty'], { cwd: repo })
   mkdirSync(resolve(repo, '.mars'), { recursive: true })
-  // Create an ignored file — this triggers `unrelated` classification.
-  mkdirSync(resolve(repo, 'ignored-dir'), { recursive: true })
-  writeFileSync(resolve(repo, 'ignored-dir/noise.txt'), 'noise\n')
+  // Diverge branch-b and main on conflict.txt, then merge to leave a UU entry.
+  execFileSync('git', ['checkout', '-q', '-b', 'branch-b'], { cwd: repo })
+  writeFileSync(resolve(repo, 'conflict.txt'), 'branch-b change\n')
+  execFileSync('git', ['commit', '-q', '-am', 'branch-b edit'], { cwd: repo })
+  execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+  writeFileSync(resolve(repo, 'conflict.txt'), 'main change\n')
+  execFileSync('git', ['commit', '-q', '-am', 'main edit'], { cwd: repo })
+  try {
+    execFileSync('git', ['merge', 'branch-b'], { cwd: repo, stdio: 'ignore' })
+  } catch {
+    // Expected: the merge conflicts and leaves conflict.txt unmerged (UU).
+  }
   return repo
 }
 
@@ -139,7 +148,7 @@ describe('runMainDirtyDispatchCheck — unrelated dirt path', () => {
         signature: string
         seen_count: number
       }
-      expect(row.body).toContain('ignored-dir/')
+      expect(row.body).toContain('conflict.txt')
 
       // Log must reference the unrelated-dirt action.
       expect(logs.some((l) => l.includes('unrelated') || l.includes('actionQueue'))).toBe(true)

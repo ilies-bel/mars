@@ -126,9 +126,13 @@ export type ClassifyIntegrationDirtStateResult =
  * Returns `true` when a porcelain v1 line represents dirt a fresh
  * main-committer cannot resolve:
  *
- * - `XY === '!!'`       — ignored entry (`git stash` historically ignores these)
  * - `XY[0] === 'U'`     — unmerged on the index side (UU, UD, UA, …)
  * - `XY[1] === 'U'`     — unmerged on the worktree side (DU, AU, …)
+ *
+ * Plain `!!` ignored entries are NOT unresolvable dirt: every dev checkout
+ * carries them (node_modules/, dist/, .DS_Store, …), they can never reach a
+ * commit, and a committer resolves them by ignoring them — treating them as
+ * contamination blocked every dispatch on any machine with a .gitignore.
  *
  * For '??'-with-ignored-parent detection, use `classifyIntegrationDirtState`
  * which has access to the full set of ignored directory prefixes.
@@ -136,7 +140,6 @@ export type ClassifyIntegrationDirtStateResult =
 export const isCommitterUnresolvable = (porcelainLine: string): boolean => {
   if (porcelainLine.length < 2) return false
   const xy = porcelainLine.slice(0, 2)
-  if (xy === '!!') return true
   if (xy[0] === 'U' || xy[1] === 'U') return true
   return false
 }
@@ -246,8 +249,11 @@ export const classifyIntegrationDirtState = async (input: {
     }
   }
 
-  // Combine for status output.
-  const allStatusLines = [...regularLines, ...ignoredOnlyLines]
+  // Combine for status output. Plain ignored entries (`!!`) are benign — they
+  // exist in every dev checkout and cannot reach a commit — so they neither
+  // dirty the branch nor appear in statusOutput; they are only consulted below
+  // as directory prefixes for the '??'-with-ignored-parent contamination case.
+  const allStatusLines = [...regularLines]
   const statusOutput = allStatusLines.join('\n') + (allStatusLines.length > 0 ? '\n' : '')
 
   // Early exit: fully clean.

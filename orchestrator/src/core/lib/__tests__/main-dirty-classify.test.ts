@@ -48,9 +48,9 @@ describe('isCommitterUnresolvable', () => {
     expect(isCommitterUnresolvable('?? new-file.ts')).toBe(false)
   })
 
-  it('returns true for an ignored entry (XY === !!)', async () => {
+  it('returns false for an ignored entry (XY === !!) — benign dev-checkout noise', async () => {
     const { isCommitterUnresolvable } = await import('../main-dirty')
-    expect(isCommitterUnresolvable('!! node_modules/')).toBe(true)
+    expect(isCommitterUnresolvable('!! node_modules/')).toBe(false)
   })
 
   it('returns true when XY starts with U (UU — both modified conflict)', async () => {
@@ -155,13 +155,13 @@ describe('classifyIntegrationDirtState — committer-scope arm', () => {
   })
 })
 
-describe('classifyIntegrationDirtState — unrelated arm: ignored entries', () => {
+describe('classifyIntegrationDirtState — ignored entries are benign', () => {
   let repo: string
 
   beforeEach(() => { repo = setupRepo() })
   afterEach(() => { rmSync(repo, { recursive: true, force: true }) })
 
-  it('returns unrelated when an ignored file is present', async () => {
+  it('returns clean when only an ignored file is present', async () => {
     const { classifyIntegrationDirtState } = await import('../main-dirty')
     // Add a .gitignore entry, then create the ignored file.
     writeFileSync(resolve(repo, '.gitignore'), 'secret.env\n')
@@ -174,13 +174,10 @@ describe('classifyIntegrationDirtState — unrelated arm: ignored entries', () =
       integrationBranch: 'main',
       traceCtx,
     })
-    expect(result.kind).toBe('unrelated')
-    if (result.kind === 'unrelated') {
-      expect(result.contaminatedPaths.some((p) => p.includes('secret.env'))).toBe(true)
-    }
+    expect(result.kind).toBe('clean')
   })
 
-  it('returns unrelated when an ignored directory is present', async () => {
+  it('returns clean when only an ignored directory is present', async () => {
     const { classifyIntegrationDirtState } = await import('../main-dirty')
     writeFileSync(resolve(repo, '.gitignore'), 'node_modules/\n')
     execFileSync('git', ['add', '.gitignore'], { cwd: repo })
@@ -194,29 +191,27 @@ describe('classifyIntegrationDirtState — unrelated arm: ignored entries', () =
       integrationBranch: 'main',
       traceCtx,
     })
-    expect(result.kind).toBe('unrelated')
-    if (result.kind === 'unrelated') {
-      // The contaminated path should reference node_modules in some form.
-      expect(result.contaminatedPaths.some((p) => p.includes('node_modules'))).toBe(true)
-    }
+    expect(result.kind).toBe('clean')
   })
 
-  it('statusOutput contains the ignored entry', async () => {
+  it('statusOutput excludes ignored entries when regular dirt is present', async () => {
     const { classifyIntegrationDirtState } = await import('../main-dirty')
     writeFileSync(resolve(repo, '.gitignore'), 'dist/\n')
     execFileSync('git', ['add', '.gitignore'], { cwd: repo })
     execFileSync('git', ['commit', '-q', '-m', 'add gitignore'], { cwd: repo })
     execFileSync('mkdir', ['-p', resolve(repo, 'dist')])
     writeFileSync(resolve(repo, 'dist/bundle.js'), 'compiled\n')
+    writeFileSync(resolve(repo, 'README.md'), 'modified\n')
 
     const result = await classifyIntegrationDirtState({
       repoRoot: repo,
       integrationBranch: 'main',
       traceCtx,
     })
-    expect(result.kind).toBe('unrelated')
-    if (result.kind === 'unrelated') {
-      expect(result.statusOutput).toContain('!!')
+    expect(result.kind).toBe('committer-scope')
+    if (result.kind === 'committer-scope') {
+      expect(result.statusOutput).not.toContain('!!')
+      expect(result.statusOutput).toContain('README.md')
     }
   })
 })
@@ -359,11 +354,11 @@ describe('classifyIntegrationDirtState — mixed dirt', () => {
   beforeEach(() => { repo = setupRepo() })
   afterEach(() => { rmSync(repo, { recursive: true, force: true }) })
 
-  it('returns unrelated even when committer-scope dirt co-exists with ignored dirt', async () => {
+  it('returns committer-scope when committer-scope dirt co-exists with ignored entries', async () => {
     const { classifyIntegrationDirtState } = await import('../main-dirty')
     // Regular dirt: modify README.
     writeFileSync(resolve(repo, 'README.md'), 'modified\n')
-    // Ignored dirt: create a .gitignore and an ignored file.
+    // Ignored (benign) entries: create a .gitignore and an ignored file.
     writeFileSync(resolve(repo, '.gitignore'), 'secret.env\n')
     execFileSync('git', ['add', '.gitignore'], { cwd: repo })
     execFileSync('git', ['commit', '-q', '-m', 'gitignore'], { cwd: repo })
@@ -374,10 +369,10 @@ describe('classifyIntegrationDirtState — mixed dirt', () => {
       integrationBranch: 'main',
       traceCtx,
     })
-    // Any unresolvable dirt → unrelated, even if committer-scope dirt also present.
-    expect(result.kind).toBe('unrelated')
-    if (result.kind === 'unrelated') {
-      expect(result.contaminatedPaths.some((p) => p.includes('secret.env'))).toBe(true)
+    // Ignored entries are benign — the committer can resolve the README edit.
+    expect(result.kind).toBe('committer-scope')
+    if (result.kind === 'committer-scope') {
+      expect(result.statusOutput).toContain('README.md')
     }
   })
 })
@@ -413,10 +408,21 @@ describe('classifyIntegrationDirtState — discriminated union shape', () => {
 
   it('unrelated result has kind, statusOutput, and contaminatedPaths array', async () => {
     const { classifyIntegrationDirtState } = await import('../main-dirty')
-    writeFileSync(resolve(repo, '.gitignore'), 'ignored.log\n')
-    execFileSync('git', ['add', '.gitignore'], { cwd: repo })
-    execFileSync('git', ['commit', '-q', '-m', 'gitignore'], { cwd: repo })
-    writeFileSync(resolve(repo, 'ignored.log'), 'log\n')
+    // Unresolved merge conflict — the surviving 'unrelated' trigger.
+    writeFileSync(resolve(repo, 'conflict.txt'), 'base\n')
+    execFileSync('git', ['add', 'conflict.txt'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', '-b', 'branch-b'], { cwd: repo })
+    writeFileSync(resolve(repo, 'conflict.txt'), 'branch-b\n')
+    execFileSync('git', ['commit', '-q', '-am', 'branch-b edit'], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    writeFileSync(resolve(repo, 'conflict.txt'), 'main\n')
+    execFileSync('git', ['commit', '-q', '-am', 'main edit'], { cwd: repo })
+    try {
+      execFileSync('git', ['merge', 'branch-b'], { cwd: repo, stdio: 'ignore' })
+    } catch {
+      // Expected conflict — leaves conflict.txt unmerged (UU).
+    }
 
     const result = await classifyIntegrationDirtState({
       repoRoot: repo,
