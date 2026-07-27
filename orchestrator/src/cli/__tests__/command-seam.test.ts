@@ -394,6 +394,57 @@ describe('task show / list (store-backed reads)', () => {
     expect(r.code).toBe(2)
     expect(r.err.join('\n')).toContain('--limit must be a positive integer')
   })
+
+  it('--status flag form filters tasks by status', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    await store.enqueueTask('queued task via flag', undefined, { skipTriage: true })
+    const r = await runCommandInProcess(['list', '--status', 'queued'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    const text = r.out.join('\n')
+    expect(text).toContain('queued task via flag')
+    expect(text).toContain('queued')
+  })
+
+  it('--status flag form rejects an unknown status with exit code 2', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['list', '--status', 'bogus-status'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain("unknown status 'bogus-status'")
+    expect(r.err.join('\n')).toContain('valid values:')
+  })
+
+  it('conflicting --status flag and positional with different values exits 2', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(['list', '--status', 'failed', 'queued'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('conflicting status values')
+    expect(r.err.join('\n')).toContain('failed')
+    expect(r.err.join('\n')).toContain('queued')
+  })
+
+  it('--status and positional with the same value is accepted', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    await store.enqueueTask('queued task same form', undefined, { skipTriage: true })
+    const r = await runCommandInProcess(['list', '--status', 'queued', 'queued'], {
+      store,
+      ctx,
+      daemon: makeFakeDaemon(),
+    })
+    expect(r.code).toBe(0)
+    expect(r.out.join('\n')).toContain('queued task same form')
+  })
 })
 
 describe('task priority (daemon-routed mutation)', () => {

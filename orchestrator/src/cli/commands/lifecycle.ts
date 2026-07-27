@@ -500,13 +500,28 @@ const LIST_DEFAULT_LIMIT = 10
 const list: Command = {
   path: 'list',
   summary: 'list tasks (optionally filtered by status)',
-  usage: 'usage: mars list [<status>] [--limit <n>] [--all]',
+  usage: 'usage: mars list [<status> | --status <status>] [--limit <n>] [--all]',
   run: async (args, deps) => {
     // Separate boolean flags from positional status arg.
     const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
     const positionals = args.positional.filter((a) => !a.startsWith('--'))
 
-    const statusArg = positionals[0]
+    const flagStatus = args.flags['--status']
+    const positionalStatus = positionals[0]
+
+    // Reject conflicting forms supplied simultaneously with different values.
+    if (
+      flagStatus !== undefined &&
+      positionalStatus !== undefined &&
+      flagStatus !== positionalStatus
+    ) {
+      deps.err(
+        `conflicting status values: --status '${flagStatus}' vs positional '${positionalStatus}'; use one form only`,
+      )
+      return { code: 2 }
+    }
+
+    const statusArg = flagStatus ?? positionalStatus
     if (statusArg !== undefined && !VALID_TASK_STATUSES.has(statusArg)) {
       deps.err(
         `unknown status '${statusArg}'; valid values: ${[...VALID_TASK_STATUSES].join(', ')}`,
