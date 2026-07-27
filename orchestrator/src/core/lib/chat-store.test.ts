@@ -23,6 +23,8 @@ interface ChatStoreModule {
   setMessageFeedback: typeof import('./chat-store').setMessageFeedback
   clearMessageFeedback: typeof import('./chat-store').clearMessageFeedback
   startThreadFromAlert: typeof import('./chat-store').startThreadFromAlert
+  purgeEvaporatedThreads: typeof import('./chat-store').purgeEvaporatedThreads
+  TWO_DAYS_MS: typeof import('./chat-store').TWO_DAYS_MS
 }
 
 const makeSegment = (title: string): import('./chat-store').AlertSegment => ({
@@ -565,5 +567,81 @@ describe('evaporateUnengagedThreads', () => {
     await m.markThreadEvaporated(already.id)
     const count = await m.evaporateUnengagedThreads()
     expect(count).toBe(0)
+  })
+})
+
+// ── purgeEvaporatedThreads ────────────────────────────────────────────────────
+
+describe('purgeEvaporatedThreads', () => {
+  let repo5: string
+  beforeEach(() => { repo5 = setupRepo() })
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo5, { recursive: true, force: true })
+  })
+
+  it('does not touch a thread whose evaporated_at is NULL', async () => {
+    const m = await loadModule(repo5)
+    const active = await m.createThread('active')
+    const { purgedThreadIds } = await m.purgeEvaporatedThreads({ retentionMs: 0, nowMs: Date.now() })
+    expect(purgedThreadIds).toHaveLength(0)
+    expect(await m.getThread(active.id)).not.toBeNull()
+  })
+
+  it('does not touch a freshly evaporated thread still within the retention window', async () => {
+    const m = await loadModule(repo5)
+    const thread = await m.createThread('fresh evaporation')
+    await m.markThreadEvaporated(thread.id)
+    // nowMs is now, retentionMs is 1 hour — evaporated just now is NOT past the cutoff
+    const { purgedThreadIds } = await m.purgeEvaporatedThreads({
+      retentionMs: 60 * 60 * 1000,
+      nowMs: Date.now(),
+    })
+    expect(purgedThreadIds).toHaveLength(0)
+    expect(await m.getThread(thread.id)).not.toBeNull()
+  })
+
+  it('hard-deletes a thread, its messages, and cascade-removes its feedback when past retention', async () => {
+    const m = await loadModule(repo5)
+    const thread = await m.createThread('over-retention')
+    const msg = await m.appendMessage(thread.id, 'assistant', 'answer')
+    await m.setMessageFeedback(msg.id, 'up', 'great')
+
+    // Evaporate the thread two hours ago by using a nowMs 2h in the future
+    await m.markThreadEvaporated(thread.id)
+    const twoHoursMs = 2 * 60 * 60 * 1000
+    const futureNow = Date.now() + twoHoursMs
+
+    const { purgedThreadIds } = await m.purgeEvaporatedThreads({
+      retentionMs: 60 * 60 * 1000, // 1 hour retention
+      nowMs: futureNow,
+    })
+
+    expect(purgedThreadIds).toContain(thread.id)
+    expect(purgedThreadIds).toHaveLength(1)
+    // Thread is gone
+    expect(await m.getThread(thread.id)).toBeNull()
+    // Thread no longer appears in evaporated list
+    const history = await m.listEvaporatedThreads()
+    expect(history.map((t) => t.id)).not.toContain(thread.id)
+  })
+
+  it('return count matches number of deleted threads', async () => {
+    const m = await loadModule(repo5)
+    const a = await m.createThread('a')
+    const b = await m.createThread('b')
+    const c = await m.createThread('c')
+    await m.markThreadEvaporated(a.id)
+    await m.markThreadEvaporated(b.id)
+    await m.markThreadEvaporated(c.id)
+
+    const twoHoursMs = 2 * 60 * 60 * 1000
+    const { purgedThreadIds } = await m.purgeEvaporatedThreads({
+      retentionMs: 60 * 60 * 1000,
+      nowMs: Date.now() + twoHoursMs,
+    })
+
+    expect(purgedThreadIds).toHaveLength(3)
+    expect(new Set(purgedThreadIds)).toEqual(new Set([a.id, b.id, c.id]))
   })
 })

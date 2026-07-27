@@ -656,3 +656,45 @@ export const resolveAlertThread = async (threadId: string): Promise<boolean> => 
   })
   return ((result as unknown as { rowsAffected?: number }).rowsAffected ?? 0) > 0
 }
+
+// ── Retention purge ───────────────────────────────────────────────────────────
+
+/** Default retention window: 2 days in milliseconds. */
+export const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000
+
+/**
+ * Hard-delete every evaporated thread whose `evaporated_at` is older than
+ * `now - retentionMs`, together with its `chat_messages` rows (and, via
+ * ON DELETE CASCADE, any `chat_feedback` rows on those messages).
+ *
+ * Deletion order inside each transaction: messages first, then the thread,
+ * so a mid-purge crash cannot leave orphaned messages.
+ *
+ * @param opts.retentionMs - Retention window in ms (default: TWO_DAYS_MS).
+ * @param opts.nowMs       - Injectable clock for tests (default: Date.now()).
+ * @returns The ids of every thread that was deleted.
+ */
+export const purgeEvaporatedThreads = async (opts?: {
+  retentionMs?: number
+  nowMs?: number
+}): Promise<{ purgedThreadIds: string[] }> => {
+  const cutoffIso = new Date(
+    (opts?.nowMs ?? Date.now()) - (opts?.retentionMs ?? TWO_DAYS_MS),
+  ).toISOString()
+  const c = stateClient()
+  const result = await c.execute({
+    sql: `SELECT id FROM chat_threads WHERE evaporated_at IS NOT NULL AND evaporated_at < ?`,
+    args: [cutoffIso],
+  })
+  const threadIds = (result.rows as unknown as Array<{ id: string }>).map((r) => r.id)
+  if (threadIds.length === 0) return { purgedThreadIds: [] }
+  // Build one batch so messages + thread deletions are atomic per thread and
+  // across all threads in a single transaction.
+  const stmts: Array<{ sql: string; args: readonly string[] }> = []
+  for (const id of threadIds) {
+    stmts.push({ sql: `DELETE FROM chat_messages WHERE thread_id = ?`, args: [id] })
+    stmts.push({ sql: `DELETE FROM chat_threads WHERE id = ?`, args: [id] })
+  }
+  await c.batch(stmts, 'write')
+  return { purgedThreadIds: threadIds }
+}
