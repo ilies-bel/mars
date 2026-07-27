@@ -479,6 +479,59 @@ const taskCheckHandler = handler('task.check', async (req, deps) => {
   return { ok: true, data: entry }
 })
 
+const spendControlShowHandler = handler('spend-control.show', async (_req, deps) => {
+  const levers = await deps.handleSpendControlShow()
+  return { ok: true, data: levers }
+})
+
+const spendControlSetHandler = handler('spend-control.set', async (req, deps) => {
+  const { patch } = req
+
+  // Range validation — checked before touching the DB.
+  if (
+    patch.pauseThresholdPct !== undefined &&
+    (patch.pauseThresholdPct < 0 || patch.pauseThresholdPct > 100)
+  ) {
+    return {
+      ok: false,
+      error: `spend-control.set: pause-at must be 0–100; got ${patch.pauseThresholdPct}`,
+    }
+  }
+  if (
+    patch.resumeThresholdPct !== undefined &&
+    (patch.resumeThresholdPct < 0 || patch.resumeThresholdPct > 100)
+  ) {
+    return {
+      ok: false,
+      error: `spend-control.set: resume-at must be 0–100; got ${patch.resumeThresholdPct}`,
+    }
+  }
+  if (patch.perKindCeilings !== null && patch.perKindCeilings !== undefined) {
+    for (const [kind, ceil] of Object.entries(patch.perKindCeilings)) {
+      if (!Number.isInteger(ceil) || ceil < 1) {
+        return {
+          ok: false,
+          error: `spend-control.set: ceiling for '${kind}' must be a positive integer; got ${ceil}`,
+        }
+      }
+    }
+  }
+
+  // Cross-field check: resume-at < pause-at after merging with current values.
+  const current = await deps.handleSpendControlShow()
+  const effectivePause = patch.pauseThresholdPct ?? current.pauseThresholdPct
+  const effectiveResume = patch.resumeThresholdPct ?? current.resumeThresholdPct
+  if (effectiveResume >= effectivePause) {
+    return {
+      ok: false,
+      error: `spend-control.set: resume-at (${effectiveResume}) must be less than pause-at (${effectivePause})`,
+    }
+  }
+
+  const updated = await deps.handleSpendControlSet(patch)
+  return { ok: true, data: updated }
+})
+
 const pauseHandler = handler('pause', async (_req, deps) => {
   deps.setIsPaused(true)
   deps.log(
@@ -544,4 +597,6 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   previewStatusHandler,
   previewTeardownHandler,
   mergeCancelHandler,
+  spendControlShowHandler,
+  spendControlSetHandler,
 ]

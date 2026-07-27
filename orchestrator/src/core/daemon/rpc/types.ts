@@ -41,6 +41,7 @@ import type {
   UnblockTaskResult,
 } from '../../queue'
 import type { RecoverAllBlockedTasksResult } from '../../blocker-resolution'
+import type { SpendControlLevers } from '../spend-control/store'
 
 /**
  * The live semaphore set as the RPC layer sees it. `reload-config` mutates the
@@ -209,6 +210,15 @@ export interface DaemonDeps {
    * finished).
    */
   handleCancelMergeJob(jobId: string): Promise<{ canceled: boolean; workerAborted: boolean }>
+
+  /** Read the current dispatch spend-control levers from the DB. */
+  handleSpendControlShow(): Promise<SpendControlLevers>
+
+  /**
+   * Merge `patch` into the current spend-control levers row and return the
+   * updated value. Unspecified fields are left unchanged.
+   */
+  handleSpendControlSet(patch: Partial<SpendControlLevers>): Promise<SpendControlLevers>
 }
 
 /** The `patch` shape carried by the `update` op (matches protocol). */

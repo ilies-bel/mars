@@ -124,6 +124,7 @@ import { ChatRunner, CHAT_TIMEOUT_MS } from './chat-runner'
 import { startMergeWorker, enqueueMergeJobAndAwait, type MergeWorkerHandle } from './merge-worker'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
 import { startHeartbeatWriter, type HeartbeatHandle } from './heartbeat-writer'
+import { loadSpendControl, upsertSpendControl } from './spend-control/store'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -3310,6 +3311,8 @@ export const startDaemon = async (
         : false
       return { canceled: updated !== null, workerAborted }
     },
+    handleSpendControlShow: () => loadSpendControl(dbClient),
+    handleSpendControlSet: (patch) => upsertSpendControl(dbClient, patch),
   })
 
   const handleRequest = async (req: DaemonRequest): Promise<DaemonResponse> => {

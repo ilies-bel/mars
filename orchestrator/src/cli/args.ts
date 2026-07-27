@@ -100,6 +100,12 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // review step. 'auto' (default) runs typecheck/tests/lint; 'manual' parks
   // the task for a human to exercise the running app before merge.
   '--qa',
+  // mars daemon spend-control set — operator spend-control levers.
+  '--coder-ceiling',
+  '--pause-at',
+  '--resume-at',
+  '--suppress-recovery',
+  '--ramp-back-step',
 ])
 
 /**

@@ -458,14 +458,196 @@ const daemonSetLever: Command = {
   },
 }
 
+// ── spend-control subcommands ──────────────────────────────────────────────
+
+/** Print current levers as a table. */
+const runSpendControlShow = async (
+  deps: Parameters<Command['run']>[1],
+): Promise<{ code: number }> => {
+  try {
+    const data = (await deps.daemon.sendRequest({ op: 'spend-control.show' })) as {
+      perKindCeilings: Record<string, number> | null
+      pauseThresholdPct: number
+      resumeThresholdPct: number
+      suppressRecovery: boolean
+      rampBackStepPct: number
+    }
+    deps.out('spend-control levers:')
+    if (data.perKindCeilings !== null && Object.keys(data.perKindCeilings).length > 0) {
+      for (const [kind, ceil] of Object.entries(data.perKindCeilings)) {
+        deps.out(`  ${kind}-ceiling:       ${ceil}`)
+      }
+    } else {
+      deps.out('  coder-ceiling:       (none)')
+    }
+    deps.out(`  pause-at:            ${data.pauseThresholdPct}%`)
+    deps.out(`  resume-at:           ${data.resumeThresholdPct}%`)
+    deps.out(`  suppress-recovery:   ${data.suppressRecovery ? 'on' : 'off'}`)
+    deps.out(`  ramp-back-step:      ${data.rampBackStepPct}%`)
+  } catch (err) {
+    const msg = errorMessage(err)
+    if (isDaemonDownError(msg)) {
+      deps.err("daemon not running; use 'mars daemon start' to start it")
+      return { code: 1 }
+    }
+    throw err
+  }
+  return { code: 0 }
+}
+
+/** Parse and upsert provided lever fields. */
+const runSpendControlSet = async (
+  args: Parameters<Command['run']>[0],
+  deps: Parameters<Command['run']>[1],
+): Promise<{ code: number }> => {
+  const rawCoderCeiling = args.flags['--coder-ceiling']
+  const rawPauseAt = args.flags['--pause-at']
+  const rawResumeAt = args.flags['--resume-at']
+  const rawSuppressRecovery = args.flags['--suppress-recovery']
+  const rawRampBackStep = args.flags['--ramp-back-step']
+
+  if (
+    rawCoderCeiling === undefined &&
+    rawPauseAt === undefined &&
+    rawResumeAt === undefined &&
+    rawSuppressRecovery === undefined &&
+    rawRampBackStep === undefined
+  ) {
+    deps.err(
+      'usage: mars daemon spend-control set [--coder-ceiling N] [--pause-at P] [--resume-at Q] [--suppress-recovery on|off] [--ramp-back-step S]',
+    )
+    return { code: 2 }
+  }
+
+  const patch: {
+    perKindCeilings?: Record<string, number> | null
+    pauseThresholdPct?: number
+    resumeThresholdPct?: number
+    suppressRecovery?: boolean
+    rampBackStepPct?: number
+  } = {}
+
+  if (rawCoderCeiling !== undefined) {
+    const n = Number(rawCoderCeiling)
+    if (!Number.isInteger(n) || n < 0) {
+      deps.err(
+        `mars daemon spend-control set: --coder-ceiling must be a non-negative integer; got '${rawCoderCeiling}'`,
+      )
+      return { code: 2 }
+    }
+    patch.perKindCeilings = n === 0 ? null : { coder: n }
+  }
+
+  if (rawPauseAt !== undefined) {
+    const n = Number(rawPauseAt)
+    if (!Number.isInteger(n) || n < 0 || n > 100) {
+      deps.err(
+        `mars daemon spend-control set: --pause-at must be 0–100; got '${rawPauseAt}'`,
+      )
+      return { code: 2 }
+    }
+    patch.pauseThresholdPct = n
+  }
+
+  if (rawResumeAt !== undefined) {
+    const n = Number(rawResumeAt)
+    if (!Number.isInteger(n) || n < 0 || n > 100) {
+      deps.err(
+        `mars daemon spend-control set: --resume-at must be 0–100; got '${rawResumeAt}'`,
+      )
+      return { code: 2 }
+    }
+    patch.resumeThresholdPct = n
+  }
+
+  if (rawSuppressRecovery !== undefined) {
+    if (rawSuppressRecovery !== 'on' && rawSuppressRecovery !== 'off') {
+      deps.err(
+        `mars daemon spend-control set: --suppress-recovery must be 'on' or 'off'; got '${rawSuppressRecovery}'`,
+      )
+      return { code: 2 }
+    }
+    patch.suppressRecovery = rawSuppressRecovery === 'on'
+  }
+
+  if (rawRampBackStep !== undefined) {
+    const n = Number(rawRampBackStep)
+    if (!Number.isInteger(n) || n < 1 || n > 100) {
+      deps.err(
+        `mars daemon spend-control set: --ramp-back-step must be 1–100; got '${rawRampBackStep}'`,
+      )
+      return { code: 2 }
+    }
+    patch.rampBackStepPct = n
+  }
+
+  // Cross-field: when both thresholds are given, resume must be < pause.
+  if (patch.pauseThresholdPct !== undefined && patch.resumeThresholdPct !== undefined) {
+    if (patch.resumeThresholdPct >= patch.pauseThresholdPct) {
+      deps.err(
+        `mars daemon spend-control set: --resume-at (${patch.resumeThresholdPct}) must be less than --pause-at (${patch.pauseThresholdPct})`,
+      )
+      return { code: 2 }
+    }
+  }
+
+  try {
+    const data = (await deps.daemon.sendRequest({
+      op: 'spend-control.set',
+      patch,
+    })) as {
+      perKindCeilings: Record<string, number> | null
+      pauseThresholdPct: number
+      resumeThresholdPct: number
+      suppressRecovery: boolean
+      rampBackStepPct: number
+    }
+    deps.out('spend-control updated:')
+    deps.out(`  pause-at:            ${data.pauseThresholdPct}%`)
+    deps.out(`  resume-at:           ${data.resumeThresholdPct}%`)
+    deps.out(`  suppress-recovery:   ${data.suppressRecovery ? 'on' : 'off'}`)
+    deps.out(`  ramp-back-step:      ${data.rampBackStepPct}%`)
+    if (data.perKindCeilings !== null && Object.keys(data.perKindCeilings).length > 0) {
+      for (const [kind, ceil] of Object.entries(data.perKindCeilings)) {
+        deps.out(`  ${kind}-ceiling:       ${ceil}`)
+      }
+    }
+  } catch (err) {
+    const msg = errorMessage(err)
+    if (isDaemonDownError(msg)) {
+      deps.err("daemon not running; use 'mars daemon start' to start it")
+      return { code: 1 }
+    }
+    throw err
+  }
+  return { code: 0 }
+}
+
+const daemonSpendControl: Command = {
+  path: 'daemon spend-control',
+  summary: 'show or update dispatch spend-control levers',
+  usage: 'usage: mars daemon spend-control <show|set> [flags]',
+  run: async (args, deps) => {
+    const sub = args.positional.filter((a) => !a.startsWith('--'))[0]
+    if (sub === 'show') {
+      return runSpendControlShow(deps)
+    }
+    if (sub === 'set') {
+      return runSpendControlSet(args, deps)
+    }
+    deps.err('usage: mars daemon spend-control <show|set> [flags]')
+    return { code: 2 }
+  },
+}
+
 const daemonGroup: Command = {
   path: 'daemon',
   summary: 'daemon subcommands',
   usage:
-    'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume> [flags]',
+    'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control> [flags]',
   run: (_args, deps) => {
     deps.err(
-      'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume> [flags]',
+      'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control> [flags]',
     )
     return { code: 2 }
   },
@@ -483,5 +665,6 @@ export const daemonCommands: readonly Command[] = [
   daemonSetLever,
   daemonPause,
   daemonResume,
+  daemonSpendControl,
   daemonGroup,
 ]

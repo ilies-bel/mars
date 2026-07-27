@@ -223,6 +223,8 @@ describe('proposal.take RPC handler', () => {
       handlePreviewStatus: notImpl('handlePreviewStatus') as DaemonDeps['handlePreviewStatus'],
       handlePreviewTeardown: notImpl('handlePreviewTeardown') as DaemonDeps['handlePreviewTeardown'],
       handleCancelMergeJob: notImpl('handleCancelMergeJob') as DaemonDeps['handleCancelMergeJob'],
+      handleSpendControlShow: notImpl('handleSpendControlShow') as DaemonDeps['handleSpendControlShow'],
+      handleSpendControlSet: notImpl('handleSpendControlSet') as DaemonDeps['handleSpendControlSet'],
       ...overrides,
     }
   }

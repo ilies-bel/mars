@@ -101,6 +101,19 @@ export type DaemonRequest =
   // the merge worker is currently processing it, aborts the per-job signal
   // so the merge operation is interrupted (slice-3 abort path).
   | { op: 'merge.cancel'; jobId: string }
+  // Read the current dispatch spend-control levers from the DB.
+  | { op: 'spend-control.show' }
+  // Upsert one or more spend-control levers. Unspecified fields are unchanged.
+  | {
+      op: 'spend-control.set'
+      patch: {
+        perKindCeilings?: Record<string, number> | null
+        pauseThresholdPct?: number
+        resumeThresholdPct?: number
+        suppressRecovery?: boolean
+        rampBackStepPct?: number
+      }
+    }
 
 export type DaemonResponse =
   | { ok: true; data?: unknown }
