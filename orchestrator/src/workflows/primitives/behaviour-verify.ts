@@ -719,11 +719,13 @@ export const behaviourVerify = async (
       }
 
       const logDir = join(ctxResolved.stateDir, 'dev-servers')
+      const startMs = Date.now()
       const browserResults: CriterionResult[] = await deps.runBrowserCheck(
         boot,
         [...criteria],
         { taskId, worktreeDir: worktree.path, logDir },
       )
+      const durationMs = Date.now() - startMs
 
       // Map CriterionResult → CriterionVerdict so the existing fold logic and
       // artifact builder can consume the browser check output.
@@ -735,6 +737,19 @@ export const behaviourVerify = async (
       }))
 
       const artifacts = buildArtifacts(verdicts, artifactsDir)
+
+      // Persist structured QA report atomically with the verdict.
+      await store.setQaReport(taskId, {
+        criteria: browserResults.map((r) => ({
+          criterion: r.criterion,
+          verdict: r.verdict,
+          screenshotPath: r.screenshotPath,
+          note: r.note,
+        })),
+        bootReason: boot.cmd,
+        completedAt: new Date().toISOString(),
+        durationMs,
+      })
 
       stepResult = await cantVerify('no-exercisable-criteria', {
         verdicts,

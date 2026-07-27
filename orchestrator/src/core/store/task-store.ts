@@ -342,6 +342,10 @@ export interface DomainTaskStore {
    */
   setReviewPacket(taskId: string, packet: ReviewPacket): Promise<void>
 
+  // ── QA report ───────────────────────────────────────────────────────────
+  getQaReport(taskId: string): Promise<import('../queue').QaReport | null>
+  setQaReport(taskId: string, report: import('../queue').QaReport): Promise<void>
+
   // ── Generic SQL escape hatches ───────────────────────────────────────────
   /** Execute a single read in a read-only transaction. Non-null client. */
   query(stmt: DbStatement | string, params?: DbInValue[]): Promise<DbResultSet>
@@ -710,6 +714,28 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
       await c.execute({
         sql: `UPDATE tasks SET review_packet_json = ? WHERE id = ?`,
         args: [JSON.stringify(packet), taskId],
+      })
+    },
+
+    // ── QA report ─────────────────────────────────────────────────────────
+
+    getQaReport: async (taskId) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `SELECT qa_report_json FROM tasks WHERE id = ?`,
+        args: [taskId],
+      })
+      if (r.rows.length === 0) return null
+      const row = r.rows[0] as unknown as { qa_report_json: string | null }
+      if (row.qa_report_json === null || row.qa_report_json === undefined) return null
+      return JSON.parse(row.qa_report_json)
+    },
+
+    setQaReport: async (taskId, report) => {
+      const c = guardClient()
+      await c.execute({
+        sql: `UPDATE tasks SET qa_report_json = ? WHERE id = ?`,
+        args: [JSON.stringify(report), taskId],
       })
     },
 
