@@ -163,6 +163,7 @@ const DDL: readonly string[] = [
   // added. IF NOT EXISTS makes this idempotent on fresh databases (where the
   // column already exists from the CREATE TABLE above).
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requeue_anchor_ms bigint`,
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS stall_diagnostics jsonb`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created
      ON tasks(priority DESC, created_at ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for

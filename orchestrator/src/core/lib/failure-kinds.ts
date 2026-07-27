@@ -607,24 +607,6 @@ export const failingStepFromSignature = (sig: string | null): string => {
 }
 
 /**
- * Map a failing step to a short plain-English group label suitable for use in
- * user-facing titles and warm titles. Raw step ids (e.g. `verify:has-diff`,
- * `unknown`) must NOT appear in user-facing fields — they belong in transcripts
- * and traces only. Call this wherever a title or label must describe a failure
- * category without leaking the internal step id.
- *
- * Two call sites use this: `unknownFailureKind` below and the recovery-failed
- * title in `queue-fix-tasks.ts`.
- */
-export const failingStepGroupLabel = (failingStep: string): string => {
-  if (failingStep.startsWith('verify:')) return 'a verification check'
-  if (failingStep.startsWith('setup:')) return 'environment setup'
-  if (failingStep.startsWith('code:')) return 'the coder'
-  if (failingStep.startsWith('merge:')) return 'the merge step'
-  return 'a pipeline step'
-}
-
-/**
  * Synthesise a FailureKind for a signature that is not in the registry.
  *
  * `warmTitle` is a plain-English group label derived from the failing step's

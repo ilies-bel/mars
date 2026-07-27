@@ -24,7 +24,7 @@ import {
   type UpsertFixTaskResult,
   type AttachToExistingFixTaskInput,
 } from './arc'
-import { isEnvironmentalSignature, failingStepGroupLabel } from './lib/failure-kinds'
+import { isEnvironmentalSignature } from './lib/failure-kinds'
 import { classifyFailure } from './lib/failure-class'
 import { maybeSpawnRescueOperator } from './rescue-operator-spawn'
 
@@ -58,6 +58,25 @@ export const FIX_FAIL_LOOP_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
  */
 const capTitle = (s: string, max = 100): string =>
   s.replace(/\s+/g, ' ').trim().slice(0, max)
+
+/**
+ * Map a failing step to a short plain-English phrase for use in user-facing
+ * titles. Raw step ids (e.g. `verify:has-diff`, `unknown`) must NOT appear in
+ * titles — they belong in transcripts and the body/whyNow only.
+ *
+ * Uses the step family (the part before the first ':') to stay correct even
+ * when the step carries a multi-line error message instead of a structured id.
+ */
+const stepFamilyLabel = (failingStep: string): string => {
+  const colonIdx = failingStep.indexOf(':')
+  const family = colonIdx === -1 ? failingStep : failingStep.slice(0, colonIdx)
+  if (family === 'verify') return 'a verification check'
+  if (family === 'setup') return 'environment setup'
+  if (family === 'code') return 'the coder'
+  if (family === 'merge') return 'the merge step'
+  if (family === 'triage') return 'the triage step'
+  return 'a pipeline step'
+}
 
 /**
  * A verify-gate failing step is one whose name begins with `verify:` — the
@@ -533,7 +552,7 @@ export const handleTaskFailureWithFixTask = async (
       kind: RECOVERY_FAILED_ACTION_QUEUE_KIND,
       category: 'orchestrator',
       priority: 'high',
-      title: capTitle(`Fix and retry ${input.taskId}, or abandon ${originId}: recovery failed during ${failingStepGroupLabel(input.failingStep)}`),
+      title: capTitle(`Fix and retry ${input.taskId}, or abandon ${originId}: recovery failed during ${stepFamilyLabel(input.failingStep)}`),
       body: buildRecoveryEscalationBody({
         recoveryTaskId: input.taskId,
         originTaskId: originId,
