@@ -136,12 +136,20 @@ describe('checkBranchHasDiff (zero-ahead is benign)', () => {
     // A no-op branch (tip == integration) passes the has-diff gate, so the
     // configured steps still run. The passing has-diff gate is now included in
     // results so gate-outcomes correctly shows what ran.
-    const r = await verifyChanges({
-      cwd: repo,
-      branch: 'task/empty',
-      integrationBranch: 'main',
-      steps: [{ name: 'runs-after-gate', ...truthyCmd, required: true }],
-    })
+    // Check out the task branch so assertWorktreeHygieneForVerify passes (it
+    // validates that the expected branch is checked out at the cwd).
+    execFileSync('git', ['checkout', '-q', 'task/empty'], { cwd: repo })
+    let r: { passed: boolean; steps: { name: string; passed: boolean }[] }
+    try {
+      r = await verifyChanges({
+        cwd: repo,
+        branch: 'task/empty',
+        integrationBranch: 'main',
+        steps: [{ name: 'runs-after-gate', ...truthyCmd, required: true }],
+      })
+    } finally {
+      execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    }
     expect(r.passed).toBe(true)
     expect(r.steps.map((s) => s.name)).toEqual(['has-diff', 'runs-after-gate'])
     expect(r.steps[0].name).toBe('has-diff')
@@ -826,12 +834,19 @@ describe('has-diff appears in gate outcomes when it passes', () => {
   })
 
   it('has-diff appears as the first step in results when it passes with configured task steps', async () => {
-    const r = await verifyChanges({
-      cwd: repo,
-      branch: 'task/with-step',
-      integrationBranch: 'main',
-      steps: [{ name: 'lint', ...truthyCmd, required: true }],
-    })
+    // Check out the task branch so assertWorktreeHygieneForVerify passes.
+    execFileSync('git', ['checkout', '-q', 'task/with-step'], { cwd: repo })
+    let r: { passed: boolean; steps: { name: string; passed: boolean }[] }
+    try {
+      r = await verifyChanges({
+        cwd: repo,
+        branch: 'task/with-step',
+        integrationBranch: 'main',
+        steps: [{ name: 'lint', ...truthyCmd, required: true }],
+      })
+    } finally {
+      execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    }
     expect(r.passed).toBe(true)
     expect(r.steps[0].name).toBe('has-diff')
     expect(r.steps[0].passed).toBe(true)
@@ -840,12 +855,19 @@ describe('has-diff appears in gate outcomes when it passes', () => {
 
   it('has-diff is the sole step in results for a no-op branch with no task steps', async () => {
     // A no-op task with an empty step list still shows has-diff in gate outcomes.
-    const r = await verifyChanges({
-      cwd: repo,
-      branch: 'task/noop',
-      integrationBranch: 'main',
-      steps: [],
-    })
+    // Check out the task branch so assertWorktreeHygieneForVerify passes.
+    execFileSync('git', ['checkout', '-q', 'task/noop'], { cwd: repo })
+    let r: { passed: boolean; steps: { name: string; passed: boolean }[] }
+    try {
+      r = await verifyChanges({
+        cwd: repo,
+        branch: 'task/noop',
+        integrationBranch: 'main',
+        steps: [],
+      })
+    } finally {
+      execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    }
     expect(r.passed).toBe(true)
     expect(r.steps.map((s) => s.name)).toEqual(['has-diff'])
     expect(r.steps[0].passed).toBe(true)
