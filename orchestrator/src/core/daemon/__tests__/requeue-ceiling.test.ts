@@ -603,4 +603,78 @@ describe('checkAndEscalateRequeueCeiling', () => {
     })
     expect(item?.title).toContain('long-running')
   })
+
+  // ── Integration: coreContinueTask + ceiling — full chain ───────────────────
+
+  it('integration: coreContinueTask sets requeueAnchorMs so the ceiling does not immediately fire after resuming a task with a 48h-old journal', async () => {
+    // The mars-c8a8a02d failure scenario, end-to-end:
+    //   1. A task failed with steps recorded 48h ago (journal preserved for
+    //      checkpoint-resume — the entire point of `mars continue`).
+    //   2. The operator runs `mars continue` (→ coreContinueTask).
+    //   3. On the next poll cycle the ceiling runs (→ checkAndEscalateRequeueCeiling).
+    //   4. The task must still be 'queued' — NOT failed immediately.
+    //
+    // This test drives coreContinueTask directly (unlike the "requeueAnchorMs
+    // anchors to now" test above, which manually sets the field) to prove the
+    // full operator → ceiling chain works end-to-end.
+    const { q, ws, ceiling } = await loadModules(repo)
+    // Import continue-task in the same module-reset context so it shares the DB.
+    const { coreContinueTask } = (await import('../continue-task')) as {
+      coreContinueTask: (id: string) => Promise<{ degradedToRestart: boolean; codePhaseResume?: boolean; note?: string }>
+    }
+
+    const t = await q.enqueueTask('48h-old failed task', undefined, { skipTriage: true })
+
+    // Simulate a task that failed in the verify phase with its worktree still
+    // on disk. Use `repo` as the worktree path — existsSync(repo) returns true.
+    await q.updateTask(t.id, {
+      status: 'failed',
+      error: 'verify timed out 48 hours ago',
+      failedPhase: 'verify',
+      branch: `task/${t.id}`,
+      worktreePath: repo,
+    })
+
+    // Create the workflow run with steps whose startedAt is 48h in the past.
+    // Without requeueAnchorMs this would cause immediate ceiling escalation.
+    const store: WorkflowStore = ws.createQueueWorkflowStore()
+    const fortyEightHoursAgoMs = Date.now() - 48 * 60 * 60 * 1_000
+    await store.createRun({
+      id: t.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: 0,
+      updatedAt: 0,
+    })
+    await store.putStep(
+      makeStepRecord(t.id, 'setup-worktree', 2, 'failed', fortyEightHoursAgoMs),
+    )
+
+    // ── mars continue ────────────────────────────────────────────────────────
+    const beforeContinueMs = Date.now()
+    const result = await coreContinueTask(t.id)
+    expect(result.degradedToRestart).toBe(false)
+
+    const afterContinue = await q.getTask(t.id)
+    expect(afterContinue?.status).toBe('queued')
+    // coreContinueTask must stamp requeueAnchorMs with the re-queue instant.
+    expect(afterContinue?.requeueAnchorMs).toBeDefined()
+    expect(afterContinue?.requeueAnchorMs!).toBeGreaterThanOrEqual(beforeContinueMs)
+
+    // ── Poll-fallback ceiling check (next cycle, immediately after continue) ─
+    const nowMs = Date.now()
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      afterContinue!,
+      store,
+      makeSilentLog(),
+      nowMs, // wall-clock ≈ requeueAnchorMs → elapsed ≈ 0 ms < 2h bound
+    )
+
+    // Must NOT escalate: the anchor is the continue timestamp (just now), not
+    // the 48h-old step.startedAt values preserved in the checkpoint journal.
+    expect(escalated).toBe(false)
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('queued')
+  })
 })
