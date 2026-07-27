@@ -6,10 +6,20 @@
  * the actual `fs/promises` APIs rather than mocks.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtemp, writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+
+vi.mock('../../lib/settings', () => ({
+  getSetting: vi.fn().mockResolvedValue(null),
+  ONBOARDING_OPERATOR_NAME_KEY: 'onboarding.operator_name',
+  ONBOARDING_VISION_KEY: 'onboarding.vision',
+}))
+vi.mock('../../store/state-client', () => ({
+  resolveStateClient: vi.fn().mockReturnValue({}),
+}))
+
 import { CHAT_SYSTEM_PROMPT, resolveChatSystemPrompt } from '../chat-system-prompt'
 import { DESTRUCTIVE_MARS_VERBS, SAFE_MARS_VERBS } from '../../lib/chat-mars-verbs'
 

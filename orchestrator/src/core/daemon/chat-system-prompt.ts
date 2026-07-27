@@ -14,6 +14,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { DESTRUCTIVE_MARS_VERBS, SAFE_MARS_VERBS } from '../lib/chat-mars-verbs'
+import { getSetting, ONBOARDING_OPERATOR_NAME_KEY, ONBOARDING_VISION_KEY } from '../lib/settings'
+import { resolveStateClient } from '../store/state-client'
 
 export const CHAT_SYSTEM_PROMPT = `You are Mars. Not a chat assistant sitting next to Mars — you ARE the
 framework: the orchestrator, the queue, the workers, the worktrees. When
@@ -75,13 +77,39 @@ export interface ResolvedChatSystemPrompt {
  * Any read error or a missing / whitespace-only file falls back to the
  * built-in constant. Never cached — read per run.
  */
+/**
+ * Build the optional operator/vision stanza prepended to the base prompt.
+ * Returns an empty string when neither value is set.
+ */
+const buildPersonalisationStanza = async (): Promise<string> => {
+  const db = resolveStateClient()
+  const [name, vision] = await Promise.all([
+    getSetting(db, ONBOARDING_OPERATOR_NAME_KEY),
+    getSetting(db, ONBOARDING_VISION_KEY),
+  ])
+  const parts: string[] = []
+  if (name) parts.push(`Operator: ${name}.`)
+  if (vision) parts.push(`Project Vision (persisted; keep in mind every turn):\n${vision}`)
+  if (parts.length === 0) return ''
+  return parts.join('\n\n') + '\n\n---\n\n'
+}
+
 export const resolveChatSystemPrompt = async (repoRoot: string): Promise<ResolvedChatSystemPrompt> => {
+  let base: string
+  let source: 'built-in' | 'override' = 'built-in'
   try {
     const content = await readFile(join(repoRoot, '.mars', 'chat-system-prompt.md'), 'utf8')
     const trimmed = content.trim()
-    if (trimmed.length > 0) return { prompt: trimmed, source: 'override' }
+    if (trimmed.length > 0) {
+      base = trimmed
+      source = 'override'
+    } else {
+      base = CHAT_SYSTEM_PROMPT
+    }
   } catch {
-    // Missing file or unreadable → fall back to the built-in prompt.
+    base = CHAT_SYSTEM_PROMPT
   }
-  return { prompt: CHAT_SYSTEM_PROMPT, source: 'built-in' }
+
+  const stanza = await buildPersonalisationStanza()
+  return { prompt: stanza + base, source }
 }
