@@ -1,5 +1,6 @@
 import type { DeploymentProvider } from './provider'
 import { NoopProvider } from './noop-provider'
+import { HttpDeploymentProvider } from './http-provider'
 
 const registry = new Map<string, DeploymentProvider>()
 
@@ -23,3 +24,10 @@ export function getProvider(key: string): DeploymentProvider | undefined {
 
 // Built-in providers registered at module load.
 registerProvider('noop', new NoopProvider())
+
+// Register the HTTP provider when the required env vars are present.
+const httpEndpoint = process.env.MARS_HTTP_DEPLOY_ENDPOINT
+const httpToken = process.env.MARS_HTTP_DEPLOY_TOKEN
+if (httpEndpoint && httpToken) {
+  registerProvider('http', new HttpDeploymentProvider({ endpoint: httpEndpoint, token: httpToken }))
+}
