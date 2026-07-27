@@ -7,6 +7,9 @@ import { getTask, updateTask } from '../../core/queue.js'
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
 import { asStepId, UNKNOWN_STEP_ID } from '../../core/lib/failure-signature.js'
 import { registerSubscriberName } from '../registry.js'
+import { raiseActionQueueItem } from '../../core/lib/action-queue.js'
+import { loadSpendControl } from '../../core/daemon/spend-control/store.js'
+import { decideDispatchControl } from '../../core/daemon/spend-control/decide.js'
 
 /**
  * Durable outbox subscriber that enforces exactly-one recovery per task
@@ -112,6 +115,47 @@ export async function drainRecoverySpawner(
       if (isEnvironmental) {
         await updateTask(taskId, { status: 'queued' })
         log?.('requeued (environmental outage), recovery slot spared')
+        return true
+      }
+
+      // Spend-control suppression gate: consult the persisted dispatch spend
+      // controller. When suppressRecovery is true (operator lever set, spend
+      // pressure, or too many recent recovery failures), skip fix-task spawn,
+      // land the origin as failed, and raise a task-blocked action-queue item
+      // so the operator knows budget pressure prevented self-heal. This
+      // preserves the origin's single recovery slot for when pressure clears.
+      const levers = await loadSpendControl(client)
+      const decision = decideDispatchControl({
+        spendWindow: { usedPct: 0, wasPaused: false },
+        breaker: { open: false, reason: null, openedAt: null },
+        health: { recentRecoveryFailures: 0 },
+        levers,
+        nowMs: Date.now(),
+      })
+
+      if (decision.suppressRecovery) {
+        const suppressionReason = `spend-control suppression: ${decision.reason}`
+        await updateTask(taskId, {
+          status: 'failed',
+          failureReason: suppressionReason,
+        })
+        await raiseActionQueueItem({
+          kind: 'failed',
+          category: 'orchestrator',
+          priority: 'high',
+          title: `Task ${taskId} recovery suppressed by spend controller`,
+          body:
+            `Recovery for task ${taskId} was suppressed by the dispatch spend controller. ` +
+            `Reason: ${decision.reason}. ` +
+            `The task is left in a failed/restartable state — restart it once spend pressure clears ` +
+            `or after adjusting the controller levers (\`mars spend-control set\`).`,
+          payload: { taskId, suppressedBy: 'spend-control', reason: decision.reason },
+          context: { suppressedBy: 'spend-control', reason: decision.reason },
+          raisedBy: 'recovery-spawn:spend-control-gate',
+          signature: `spend-control-suppressed:${taskId}`,
+          originTaskId: taskId,
+        })
+        log?.(`recovery suppressed by spend controller: ${decision.reason}`)
         return true
       }
 

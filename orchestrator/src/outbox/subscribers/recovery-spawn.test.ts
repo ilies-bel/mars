@@ -64,6 +64,10 @@ interface CircuitBreakerModule {
   apiCircuitBreaker: typeof import('../../core/lib/api-circuit-breaker').apiCircuitBreaker
 }
 
+interface SpendControlStoreModule {
+  upsertSpendControl: typeof import('../../core/daemon/spend-control/store').upsertSpendControl
+}
+
 interface Loaded {
   q: QueueModule
   aq: ActionQueueModule
@@ -73,6 +77,7 @@ interface Loaded {
   gm: GateMonitorModule
   pub: PublisherModule
   cb: CircuitBreakerModule
+  sc: SpendControlStoreModule
   client: DbClient
 }
 
@@ -120,7 +125,10 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   const cb = (await import(
     '../../core/lib/api-circuit-breaker'
   )) as unknown as CircuitBreakerModule
-  return { q, aq, ft, rc, rs, gm, pub, cb, client: q.resolveQueueClient() }
+  const sc = (await import(
+    '../../core/daemon/spend-control/store'
+  )) as unknown as SpendControlStoreModule
+  return { q, aq, ft, rc, rs, gm, pub, cb, sc, client: q.resolveQueueClient() }
 }
 
 /**
@@ -392,6 +400,84 @@ describe('recovery-spawn outbox subscriber', () => {
     // Origin should be blocked behind the recovery task.
     const reloaded = await q.getTask(t1.id)
     expect(reloaded?.status).toBe('blocked')
+
+    cleanup()
+  })
+
+  it('skips recovery and raises a failed action-queue item when spend-control suppressRecovery is true', async () => {
+    const { q, aq, rs, pub, client, sc } = await loadModules(repo)
+
+    // Enable the operator suppress-recovery lever.
+    await sc.upsertSpendControl(client, { suppressRecovery: true })
+
+    const t1 = await q.enqueueTask('feature with suppressed recovery', undefined, {
+      skipTriage: true,
+    })
+    // Pre-set to failed (mirrors production: the event is emitted FROM the
+    // status transition to failed, so the task is already failed at drain time).
+    await q.updateTask(t1.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      error: 'no commits ahead of integration branch',
+    })
+
+    await rs.ensureRecoverySpawner(client)
+    await publish(pub, client, 'task.failed', {
+      taskId: t1.id,
+      error: 'no commits ahead of integration branch',
+    })
+
+    const { processed } = await rs.drainRecoverySpawner(client)
+    expect(processed).toBe(1)
+
+    // No fix/recovery task should have been spawned.
+    const fixRows = await client.execute({
+      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t1.id],
+    })
+    expect(fixRows.rows).toHaveLength(0)
+
+    // Origin task stays failed (not blocked).
+    const reloaded = await q.getTask(t1.id)
+    expect(reloaded?.status).toBe('failed')
+
+    // An action-queue item citing spend-control suppression must be open.
+    const items = await aq.listActionQueueItems('open')
+    const suppressed = items.filter(
+      (item) =>
+        (item.payload as Record<string, unknown>).suppressedBy === 'spend-control' &&
+        (item.payload as Record<string, unknown>).taskId === t1.id,
+    )
+    expect(suppressed.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('spawns a recovery task normally when spend-control suppressRecovery is false (default)', async () => {
+    const { q, rc, rs, pub, client } = await loadModules(repo)
+
+    const t1 = await q.enqueueTask('feature with allowed recovery', undefined, {
+      skipTriage: true,
+    })
+    // Default spend-control levers have suppressRecovery=false; no upsert needed.
+    await q.updateTask(t1.id, { failedPhase: 'verify' })
+
+    const signature = 'verify/no-commits-ahead'
+    const cleanup = registerTestRecipe(rc, signature)
+
+    await rs.ensureRecoverySpawner(client)
+    await publish(pub, client, 'task.failed', {
+      taskId: t1.id,
+      error: 'no commits ahead of integration branch',
+    })
+
+    const { processed } = await rs.drainRecoverySpawner(client)
+    expect(processed).toBe(1)
+
+    // A fix task must have been spawned (not suppressed).
+    const fixRows = await client.execute({
+      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t1.id],
+    })
+    expect(fixRows.rows).toHaveLength(1)
 
     cleanup()
   })
