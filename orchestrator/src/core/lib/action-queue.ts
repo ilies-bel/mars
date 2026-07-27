@@ -245,6 +245,11 @@ export const ACTION_QUEUE_KINDS = [
   // and dispatchDecisionSummary so the operator can diagnose pool saturation
   // vs. dispatcher stall. Cleared automatically once the task leaves 'queued'.
   'stale-queued',
+  // The spend controller transitioned between paused/allowed states. Emitted
+  // so the operator sees why dispatch slowed without diving into logs. One row
+  // per transition direction (signature-keyed 'spend-control:<direction>');
+  // level-triggered (ADR-0048): the row exists while the state holds.
+  'spend-control-notice',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]

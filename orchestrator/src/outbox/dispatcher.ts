@@ -2,8 +2,9 @@ import type { DbClient } from '../core/lib/db.js';
 import type { BusEvent } from '../bus/events.js';
 import { fetchPending, advanceCursor } from '../bus/subscribers.js';
 import { apiCircuitBreaker } from '../core/lib/api-circuit-breaker.js';
-import { decideDispatchControl } from '../core/daemon/spend-control/decide.js';
+import { decideDispatchControl, type SpendControlDecision } from '../core/daemon/spend-control/decide.js';
 import { gatherDecisionInputs, type SpendControlDeps } from './spend-control-inputs.js';
+import { emitSpendControlTransition } from './spend-control-notifier.js';
 
 /**
  * A named consumer of the Outbox `events` table paired with a delivery
@@ -86,6 +87,7 @@ export function startDispatcher(
   const pollMs = opts?.pollMs ?? 5_000;
   const scDeps: SpendControlDeps = { client, ...opts?.spendControl };
   let stopped = false;
+  let prevDecision: SpendControlDecision | null = null;
 
   // Shared in-flight counter per kind, closed over by all subscriber loops.
   // Incremented synchronously before the first `await` so the check+claim is
@@ -141,6 +143,11 @@ export function startDispatcher(
 
       // Spend-control gate: pause or enforce per-kind ceilings.
       const decision = decideDispatchControl(await gatherDecisionInputs(scDeps));
+
+      // Emit action-queue notice on state transitions (fire-and-forget).
+      void emitSpendControlTransition(prevDecision, decision).catch(() => {});
+      prevDecision = decision;
+
       if (decision.paused) {
         console.error(`[spend-control] dispatch paused: ${decision.reason}`);
         await Promise.race([

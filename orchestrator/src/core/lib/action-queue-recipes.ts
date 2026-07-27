@@ -709,6 +709,22 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
       { op: 'restart', label: 'Restart task', style: 'primary' },
     ],
   },
+
+  'spend-control-notice': {
+    humanSummary: (ctx) => {
+      const direction = str(ctx.payload['direction'])
+      return direction === 'paused'
+        ? 'The spend controller has paused dispatch — token spend crossed the configured threshold.'
+        : 'The spend controller has resumed dispatch — spend dropped below the resume threshold.'
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      reason: str(ctx.payload['reason']),
+      direction: str(ctx.payload['direction']),
+      rampBackFactor: ctx.payload['rampBackFactor'],
+    }),
+    verbs: [],
+  },
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
