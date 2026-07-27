@@ -80,12 +80,25 @@ function useFakeStream(
   return { text: tokens.slice(0, count).join(''), done: count >= tokens.length }
 }
 
+/** A recipe auto-run hero-delta line rendered with a 🤖 prefix. */
+export interface AutorunEntry {
+  kind: 'recipe-autorun'
+  text: string
+}
+
 export interface WhatHappenedTodayViewProps {
   /** Return to the hero empty state. */
   onBack: () => void
+  /**
+   * Recipe auto-run events to surface in the delta view.
+   *
+   * Each entry renders as a 🤖-prefixed one-liner below the release-notes
+   * reply, explaining which taught recipe fired and on which task.
+   */
+  autorunEntries?: ReadonlyArray<AutorunEntry>
 }
 
-export const WhatHappenedTodayView = ({ onBack }: WhatHappenedTodayViewProps) => {
+export const WhatHappenedTodayView = ({ onBack, autorunEntries = [] }: WhatHappenedTodayViewProps) => {
   const { text, done } = useFakeStream(RELEASE_NOTES)
 
   return (
@@ -126,6 +139,24 @@ export const WhatHappenedTodayView = ({ onBack }: WhatHappenedTodayViewProps) =>
               )}
             </MessageContent>
           </Message>
+
+          {/* Recipe auto-run hero feed lines — one 🤖 line per auto-applied teach */}
+          {autorunEntries.length > 0 && (
+            <ul
+              data-testid="recipe-autorun-feed"
+              className="mt-2 flex flex-col gap-0.5 px-1"
+            >
+              {autorunEntries.map((entry, i) => (
+                <li
+                  key={i}
+                  data-testid="recipe-autorun-line"
+                  className="font-mono text-[12px] text-foreground/80"
+                >
+                  🤖 {entry.text}
+                </li>
+              ))}
+            </ul>
+          )}
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>

@@ -1,10 +1,12 @@
 /**
- * Release-notes feed — arc-grouped landed tasks.
+ * Release-notes feed — arc-grouped landed tasks, plus the hero-delta feed.
  *
- * Provides a pure function {@link buildReleaseNotes} that can be unit-tested
- * without a DB, mirroring the placement pattern of events.ts. The daemon owns
- * the actual query (via its own view/release-notes module) and the UI server
- * proxies to the daemon's /view/release-notes endpoint.
+ * Provides two pure functions testable without a DB:
+ *   - {@link buildReleaseNotes}  — arc-grouped landed-task feed
+ *   - {@link buildHeroDelta}     — recipe auto-run hero feed lines
+ *
+ * The daemon owns the actual queries (via its own view/release-notes module)
+ * and the UI server proxies to the daemon's endpoints.
  */
 
 /**
@@ -145,3 +147,53 @@ export const buildReleaseNotes = (
 
   return entries.slice(0, RELEASE_NOTES_LIMIT)
 }
+
+// ── Hero-delta: recipe auto-run feed ─────────────────────────────────────────
+
+/**
+ * One recipe auto-run event, as emitted by the orchestrator and stored in the
+ * events table under kind='recipe-autorun'.
+ */
+export interface RecipeAutorunEvent {
+  recipeId: string
+  failureKind: string
+  targetTaskId: string
+  at: string
+}
+
+/** One hero-delta feed line for a recipe auto-run. */
+export interface HeroDeltaEntry {
+  kind: 'recipe-autorun'
+  text: string
+}
+
+/** Hero-delta: recipe auto-run activity since the last visit. */
+export interface HeroDelta {
+  entries: HeroDeltaEntry[]
+}
+
+const MONTH_ABBREVS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+] as const
+
+function formatAutorunDate(iso: string): string {
+  const d = new Date(iso)
+  const month = MONTH_ABBREVS[d.getUTCMonth()] ?? 'Jan'
+  return `${month} ${d.getUTCDate()}`
+}
+
+/**
+ * Build the hero-delta feed from recipe auto-run events.
+ *
+ * Pure function — no I/O. Each event produces one plain-English feed line
+ * describing what recipe fired and on which task, following the format:
+ *   "Coder was killed by {failureKind} on task {targetTaskId} — auto-continued
+ *    per your teach on {date}"
+ */
+export const buildHeroDelta = (events: RecipeAutorunEvent[]): HeroDelta => ({
+  entries: events.map((e) => ({
+    kind: 'recipe-autorun' as const,
+    text: `Coder was killed by ${e.failureKind} on task ${e.targetTaskId} — auto-continued per your teach on ${formatAutorunDate(e.at)}`,
+  })),
+})

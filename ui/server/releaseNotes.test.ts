@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 import {
   buildReleaseNotes,
+  buildHeroDelta,
   RELEASE_NOTES_LIMIT,
   type TaskForReleaseNotes,
+  type RecipeAutorunEvent,
 } from './releaseNotes.ts'
 
 const makeTask = (
@@ -211,5 +213,48 @@ describe('buildReleaseNotes', () => {
     expect(entries[0]!.title).toBe('Refactor auth')
     expect(entries[0]!.detail.recoveryCount).toBe(1)
     expect(entries[0]!.landedAt).toBe('2026-05-10T09:00:00.000Z')
+  })
+})
+
+const makeAutorunEvent = (overrides: Partial<RecipeAutorunEvent> = {}): RecipeAutorunEvent => ({
+  recipeId: 'recipe-abc',
+  failureKind: 'restart',
+  targetTaskId: 'mars-42',
+  at: '2026-07-20T10:00:00.000Z',
+  ...overrides,
+})
+
+describe('buildHeroDelta', () => {
+  it('returns empty entries for an empty event list', () => {
+    const delta = buildHeroDelta([])
+    expect(delta.entries).toHaveLength(0)
+  })
+
+  it('maps a recipe-autorun event to a feed line with kind recipe-autorun', () => {
+    const delta = buildHeroDelta([makeAutorunEvent()])
+    expect(delta.entries).toHaveLength(1)
+    expect(delta.entries[0]!.kind).toBe('recipe-autorun')
+  })
+
+  it('feed line text describes the failure kind, task id, and teach date', () => {
+    const delta = buildHeroDelta([
+      makeAutorunEvent({ failureKind: 'restart', targetTaskId: 'mars-42', at: '2026-07-20T10:00:00.000Z' }),
+    ])
+    const text = delta.entries[0]!.text
+    expect(text).toContain('restart')
+    expect(text).toContain('mars-42')
+    expect(text).toContain('Jul 20')
+    expect(text).toContain('auto-continued per your teach')
+  })
+
+  it('produces one entry per event in input order', () => {
+    const events = [
+      makeAutorunEvent({ targetTaskId: 'mars-10', at: '2026-07-01T00:00:00.000Z' }),
+      makeAutorunEvent({ targetTaskId: 'mars-11', at: '2026-07-02T00:00:00.000Z' }),
+    ]
+    const delta = buildHeroDelta(events)
+    expect(delta.entries).toHaveLength(2)
+    expect(delta.entries[0]!.text).toContain('mars-10')
+    expect(delta.entries[1]!.text).toContain('mars-11')
   })
 })

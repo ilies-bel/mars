@@ -45,6 +45,7 @@ export default defineConfig({
             'server/projectContext.test.ts',
             'server/projects.test.ts',
             'server/chatUploads.test.ts',
+            'server/releaseNotes.test.ts',
           ],
           exclude: [
             'src/**/*.composer.test.tsx',

@@ -220,6 +220,17 @@ export const EventMap = {
     cap: z.number().int().positive(),
     sustainedMs: z.number().nonnegative(),
   }),
+  /**
+   * Emitted when the recipe dispatcher auto-applies a taught recipe to a
+   * fresh failure occurrence. The UI hero-delta builder surfaces this as a
+   * 🤖 feed line explaining what fired and on which task.
+   */
+  'recipe-autorun': z.object({
+    recipeId: z.string(),
+    failureKind: z.string(),
+    targetTaskId: z.string(),
+    at: z.string(),
+  }),
 } as const;
 
 /** Union of every registered event type name. */
