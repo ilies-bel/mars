@@ -307,7 +307,7 @@ const makeCtx = (
   ({
     runId: input.taskId ?? 'mars-behav01',
     input,
-    services: { store: {} as never, traceStore },
+    services: { store: { setQaReport: vi.fn(async () => {}) } as never, traceStore },
     emit: () => {},
     currentStep: undefined,
   }) as unknown as MarsCtx
@@ -353,6 +353,9 @@ const makeDeps = (args: {
         note: 'mocked: no real browser in unit tests',
       })),
     ),
+    // Not triggered in these tests (all browser results are 'unverifiable');
+    // stub prevents TS error and guards against accidental calls.
+    handleTaskFailure: vi.fn(async () => ({ outcome: 'noop' as const })),
   }
   return { deps }
 }
