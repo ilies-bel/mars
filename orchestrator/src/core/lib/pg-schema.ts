@@ -401,6 +401,11 @@ const DDL: readonly string[] = [
      ON chat_threads(alert_item_id)`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_evaporated_at
      ON chat_threads(evaporated_at)`,
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS parent_thread_id text`,
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS fork_idempotency_key text`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_threads_fork_idem
+     ON chat_threads(parent_thread_id, fork_idempotency_key)
+     WHERE fork_idempotency_key IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS chat_messages (
     id         text PRIMARY KEY,
     thread_id  text NOT NULL REFERENCES chat_threads(id),
