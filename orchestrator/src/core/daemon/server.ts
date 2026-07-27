@@ -4284,6 +4284,31 @@ export const startDaemon = async (
   }, REFLECT_DETECTOR_MS)
   reflectDetectorSweep.unref()
 
+  // ── Evaporated thread purge sweep ───────────────────────────────────────
+  // Periodically hard-deletes threads whose evaporated_at timestamp is past
+  // the retention window. Default cadence is hourly. .unref() so the
+  // interval never prevents a clean shutdown.
+  const THREAD_PURGE_SWEEP_MS = Number(
+    process.env.MARS_THREAD_PURGE_SWEEP_MS ?? 60 * 60_000,
+  )
+  const { purgeEvaporatedThreads } = await import('../lib/chat-store')
+  const threadPurgeSweep = setInterval(() => {
+    void (async () => {
+      try {
+        const { purgedThreadIds } = await purgeEvaporatedThreads()
+        if (purgedThreadIds.length > 0) {
+          log(
+            `[thread-purge] deleted ${purgedThreadIds.length} evaporated thread(s)`,
+          )
+          viewStreamHub.broadcast('chat')
+        }
+      } catch (err) {
+        log(`[thread-purge] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, THREAD_PURGE_SWEEP_MS)
+  threadPurgeSweep.unref()
+
   // ── Observability store size watchdog ─────────────────────────────────────
   // Periodically checks the trace_events footprint inside mars.db. When the
   // table exceeds 500 MB a single open action-queue item is raised so the
