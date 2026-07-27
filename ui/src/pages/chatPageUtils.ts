@@ -81,6 +81,15 @@ export const pickTopAlert = (items: ActionQueueItem[]): ActionQueueItem | null =
   })[0] ?? null
 }
 
+export const topRowsByPriority = (items: ActionQueueItem[], n: number): ActionQueueItem[] =>
+  [...items]
+    .sort((a, b) => {
+      const pd = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
+      if (pd !== 0) return pd
+      return b.at.localeCompare(a.at)
+    })
+    .slice(0, n)
+
 /**
  * Derives the media kind from a segment's kindHint or mimeType.
  * Returns 'image', 'audio', 'video', or 'other'.

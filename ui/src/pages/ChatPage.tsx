@@ -85,7 +85,8 @@ import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlSt
 import { taskHash } from '@/shared/routing'
 import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
-import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle, pickTopAlert } from './chatPageUtils'
+import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle, pickTopAlert, topRowsByPriority } from './chatPageUtils'
+import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
 import { SkeletonList } from '@/components/Skeleton'
 
 // ---------------------------------------------------------------------------
@@ -2809,6 +2810,12 @@ export const ChatPage = () => {
                 <p className="font-mono text-[14px] text-foreground">
                   {openingText}
                 </p>
+                {!selectedThreadId && (
+                  <OpeningNextMoves
+                    rows={topRowsByPriority(queueItems, 3)}
+                    onPick={(row) => handleSelectQueueItem(row.id)}
+                  />
+                )}
               </div>
             </div>
             <div className="flex justify-center px-6 pb-6">
