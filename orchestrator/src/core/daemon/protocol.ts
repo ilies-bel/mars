@@ -54,10 +54,10 @@ export type DaemonRequest =
   | { op: 'block'; id: string; blockerIds: readonly string[] }
   | { op: 'remove-blockers'; id: string; blockerIds: readonly string[] }
   | { op: 'recover'; id?: string }
-  | { op: 'proposal.promote'; proposalId: string }
-  | { op: 'proposal.slice'; proposalId: string }
+  | { op: 'proposal.promote'; proposalId: string; priority?: number }
+  | { op: 'proposal.slice'; proposalId: string; priority?: number }
   | { op: 'proposal.approve'; proposalId: string }
-  | { op: 'proposal.reslice'; proposalId: string; feedback: string }
+  | { op: 'proposal.reslice'; proposalId: string; feedback: string; priority?: number }
   | { op: 'proposal.take'; proposalId: string; workflow?: string }
   | { op: 'refine'; id: string; refresh?: boolean }
   | {

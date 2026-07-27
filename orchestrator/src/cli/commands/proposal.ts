@@ -30,6 +30,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
+import { parsePriority } from '../args'
 
 const execFileAsync = promisify(execFile)
 
@@ -287,12 +288,22 @@ function landSkillProposal(
 const proposalPromote: Command = {
   path: 'proposal promote',
   summary: 'mark a shaped draft proposal as PRD-ready',
-  usage: 'usage: mars proposal promote <id>',
+  usage: 'usage: mars proposal promote <id> [--priority 0..3]',
   run: async (args, deps) => {
     const id = args.positional[0]
     if (!id) {
-      deps.err('usage: mars proposal promote <id>')
+      deps.err('usage: mars proposal promote <id> [--priority 0..3]')
       return { code: 2 }
+    }
+    const priorityRaw = args.flags['--priority']
+    let priority: number | undefined
+    if (priorityRaw !== undefined) {
+      const parsed = parsePriority(priorityRaw)
+      if (!parsed.ok) {
+        deps.err(parsed.message)
+        return { code: 1 }
+      }
+      priority = parsed.value
     }
     // Resolve the proposal locally so we can branch on source before routing
     // to the daemon (skill-forge proposals are handled entirely client-side).
@@ -315,7 +326,7 @@ const proposalPromote: Command = {
     }
     try {
       const r = (await deps.daemon.sendRequest(
-        { op: 'proposal.promote', proposalId: resolved.id },
+        { op: 'proposal.promote', proposalId: resolved.id, ...(priority !== undefined && { priority }) },
         { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; status: string }
       deps.out(`proposal ${r.proposalId} marked ${r.status}`)
@@ -335,16 +346,26 @@ const proposalPromote: Command = {
 const proposalSlice: Command = {
   path: 'proposal slice',
   summary: 'decompose a prd-ready proposal into vertical-slice tasks',
-  usage: 'usage: mars proposal slice <id>',
+  usage: 'usage: mars proposal slice <id> [--priority 0..3]',
   run: async (args, deps) => {
     const id = args.positional[0]
     if (!id) {
-      deps.err('usage: mars proposal slice <id>')
+      deps.err('usage: mars proposal slice <id> [--priority 0..3]')
       return { code: 2 }
+    }
+    const priorityRaw = args.flags['--priority']
+    let priority: number | undefined
+    if (priorityRaw !== undefined) {
+      const parsed = parsePriority(priorityRaw)
+      if (!parsed.ok) {
+        deps.err(parsed.message)
+        return { code: 1 }
+      }
+      priority = parsed.value
     }
     try {
       const r = (await deps.daemon.sendRequest(
-        { op: 'proposal.slice', proposalId: id },
+        { op: 'proposal.slice', proposalId: id, ...(priority !== undefined && { priority }) },
         { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; status: string; taskIds: string[] }
       deps.out(
@@ -821,17 +842,27 @@ const proposalTake: Command = {
 const proposalReslice: Command = {
   path: 'proposal reslice',
   summary: 'discard current slices and re-run the Slicer with operator feedback',
-  usage: 'usage: mars proposal reslice <id> --feedback "<text>"',
+  usage: 'usage: mars proposal reslice <id> --feedback "<text>" [--priority 0..3]',
   run: async (args, deps) => {
     const id = args.positional[0]
     const feedback = args.flags['--feedback']
     if (!id || !feedback) {
-      deps.err('usage: mars proposal reslice <id> --feedback "<text>"')
+      deps.err('usage: mars proposal reslice <id> --feedback "<text>" [--priority 0..3]')
       return { code: 1 }
+    }
+    const priorityRaw = args.flags['--priority']
+    let priority: number | undefined
+    if (priorityRaw !== undefined) {
+      const parsed = parsePriority(priorityRaw)
+      if (!parsed.ok) {
+        deps.err(parsed.message)
+        return { code: 1 }
+      }
+      priority = parsed.value
     }
     try {
       const r = (await deps.daemon.sendRequest(
-        { op: 'proposal.reslice', proposalId: id, feedback },
+        { op: 'proposal.reslice', proposalId: id, feedback, ...(priority !== undefined && { priority }) },
         { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; status: string; taskIds: string[] }
       deps.out(

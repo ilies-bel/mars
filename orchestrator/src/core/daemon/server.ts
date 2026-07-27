@@ -2589,6 +2589,7 @@ export const startDaemon = async (
 
   const handleProposalPromote = async (
     proposalId: string,
+    priority?: number,
   ): Promise<{ proposalId: string; status: string }> => {
     assertProposalsSourceFresh(proposalsStamp)
     const proposal = await promoteProposal(proposalId)
@@ -2596,7 +2597,7 @@ export const startDaemon = async (
     // slicer failure (e.g. malformed PRD) leaves the proposal in prd-ready for
     // the operator to inspect and re-promote without aborting the promote itself.
     if (proposal.status === 'prd-ready') {
-      void handleProposalSlice(proposal.id).catch((err) =>
+      void handleProposalSlice(proposal.id, undefined, priority).catch((err) =>
         log(`[auto-slice] proposal ${proposal.id} failed: ${(err as Error).message}`),
       )
     }
@@ -2606,11 +2607,16 @@ export const startDaemon = async (
   const handleProposalSlice = async (
     proposalId: string,
     resliceFeedback?: string,
+    priority?: number,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }> => {
     assertProposalsSourceFresh(proposalsStamp)
     const { runSlice } = await import('../../workflows/slice-workflow')
     const sliceTaskStore = await getDefaultTaskStore()
-    const result = await runSlice(proposalId, resliceFeedback, { store: sliceTaskStore, traceStore })
+    const result = await runSlice(proposalId, resliceFeedback, {
+      store: sliceTaskStore,
+      traceStore,
+      ...(priority !== undefined && { priority }),
+    })
     // When autoApprovePlans=true, slice tasks are transitioned to 'queued'
     // immediately; emit 'task.queued' for each so the daemon's dispatch
     // loop picks them up under the implement semaphore. When
@@ -2644,6 +2650,7 @@ export const startDaemon = async (
   const handleProposalReslice = async (
     proposalId: string,
     feedback: string,
+    priority?: number,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }> => {
     const { getProposal, revertSlicedProposalToReady } = await import('../proposals')
 
@@ -2673,7 +2680,7 @@ export const startDaemon = async (
     await revertSlicedProposalToReady(proposalId)
 
     // Re-slice with the operator's feedback appended to the Slicer prompt.
-    return handleProposalSlice(proposalId, feedback)
+    return handleProposalSlice(proposalId, feedback, priority)
   }
 
   const handleProposalTake = async (

@@ -147,9 +147,12 @@ export interface DaemonDeps {
   runSync(): Promise<unknown>
   handleProposalPromote(
     proposalId: string,
+    priority?: number,
   ): Promise<{ proposalId: string; status: string }>
   handleProposalSlice(
     proposalId: string,
+    resliceFeedback?: string,
+    priority?: number,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }>
   handleProposalApprove(
     proposalId: string,
@@ -157,6 +160,7 @@ export interface DaemonDeps {
   handleProposalReslice(
     proposalId: string,
     feedback: string,
+    priority?: number,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }>
   handleProposalTake(
     proposalId: string,

@@ -23,6 +23,9 @@ const sliceInputSchema = z.object({
   /** Optional operator feedback from a prior reslice invocation. When set,
    *  appended to the Slicer prompt so the model can revise its output. */
   resliceFeedback: z.string().optional(),
+  /** Task priority (0–3) to assign to every slice task created by this run.
+   *  When omitted, tasks land at the default priority (0). */
+  priority: z.number().int().min(0).max(3).optional(),
 })
 
 const sliceOutputSchema = z.object({
@@ -1403,6 +1406,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
           parentProposalId: proposal.id,
           sliceIndex: i + 1,
           intent: (slice.title.trim() || slice.whatToBuild.split(/[.!?\n]/)[0].trim()).slice(0, 200),
+          ...(input.priority !== undefined && { priority: input.priority }),
           spec: {
             files,
             verifyCmd,
@@ -1438,6 +1442,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
             originId: proposal.id,
             parentProposalId: proposal.id,
             intent: sub.title.slice(0, 200),
+            ...(input.priority !== undefined && { priority: input.priority }),
             spec: {
               files: sub.files ?? [],
               verifyCmd: null,
@@ -1791,14 +1796,18 @@ export const describeSliceFailure = (result: unknown): string => {
 export const runSlice = async (
   proposalId: string,
   resliceFeedback?: string,
-  services?: Partial<SliceServices>,
+  services?: Partial<SliceServices> & { priority?: number },
 ): Promise<RunSliceResult> => {
   const taskStore = services?.store ?? await getDefaultTaskStore()
   const traceStore = services?.traceStore ?? nullTraceStore
-  const result = await runWorkflow(sliceWorkflow, { proposalId, resliceFeedback }, {
-    store: createQueueWorkflowStore(),
-    services: { store: taskStore, traceStore },
-  })
+  const result = await runWorkflow(
+    sliceWorkflow,
+    { proposalId, resliceFeedback, priority: services?.priority },
+    {
+      store: createQueueWorkflowStore(),
+      services: { store: taskStore, traceStore },
+    },
+  )
   if (result.status !== 'completed' || !result.output) {
     throw new Error(describeSliceFailure(result))
   }

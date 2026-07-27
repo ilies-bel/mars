@@ -887,6 +887,39 @@ describe('runSlice failure compensation: a failed slice must not strand the prop
     const after = await proposals.getProposal(proposalId)
     expect(after?.status).toBe('sliced')
   })
+
+  it('slice tasks inherit the priority passed to runSlice', async () => {
+    // When runSlice is called with an explicit priority, every task it
+    // creates must land in the queue with that priority — not the default 0.
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope(validSlicerOutput),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const proposalId = await seedPrdReadyProposal()
+
+    const slice = await import('../slice-workflow')
+    const result = await slice.runSlice(proposalId, undefined, { priority: 2 })
+
+    expect(result.taskIds).toHaveLength(1)
+
+    const queue = await vi.importActual<typeof import('../../core/queue')>(
+      '../../core/queue',
+    )
+    const task = await queue.getTask(result.taskIds[0])
+    expect(task?.priority).toBe(2)
+  })
 })
 
 // Stub that throws if the direction judge is called — used to verify that

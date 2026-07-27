@@ -127,12 +127,12 @@ const syncHandler = handler('sync', async (_req, deps) => {
 })
 
 const proposalPromoteHandler = handler('proposal.promote', async (req, deps) => {
-  const r = await deps.handleProposalPromote(req.proposalId)
+  const r = await deps.handleProposalPromote(req.proposalId, req.priority)
   return { ok: true, data: r }
 })
 
 const proposalSliceHandler = handler('proposal.slice', async (req, deps) => {
-  const r = await deps.handleProposalSlice(req.proposalId)
+  const r = await deps.handleProposalSlice(req.proposalId, undefined, req.priority)
   return { ok: true, data: r }
 })
 
@@ -142,7 +142,7 @@ const proposalApproveHandler = handler('proposal.approve', async (req, deps) => 
 })
 
 const proposalResliceHandler = handler('proposal.reslice', async (req, deps) => {
-  const r = await deps.handleProposalReslice(req.proposalId, req.feedback)
+  const r = await deps.handleProposalReslice(req.proposalId, req.feedback, req.priority)
   return { ok: true, data: r }
 })
 
