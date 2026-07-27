@@ -1531,4 +1531,37 @@ describe('non-code failure re-queue routing', () => {
     })
     expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
   })
+
+  it('preflight:no-gates-configured marks task failed without spawning a fix-task', async () => {
+    // A preflight failure is a configuration error — no verify gates are
+    // registered for the changed files. The handler must NOT spawn a recovery
+    // fix-task (that would burn the one recovery slot on a doomed repair).
+    // Instead it marks the task failed and raises an operator-notice.
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'preflight:no-gates-configured',
+      errorOutput:
+        'No verify gates are configured for the changed files. ' +
+        'Run `mars verify-gate check` to see manifest drift.',
+    })
+
+    expect(r.outcome).toBe('failed')
+    expect(r.failureSignature).toMatch(/^config-failure:preflight:/)
+    expect(r.retryCount).toBe(0)
+
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failedPhase).toBe('verify')
+    expect(reloaded?.failureReason).toMatch(/^config-failure:preflight:/)
+
+    // No fix-task must be spawned — this is a configuration error, not a code defect.
+    const fixTasks = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((fixTasks.rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
 })

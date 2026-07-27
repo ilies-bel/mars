@@ -3,8 +3,13 @@
  * existing output string, so downstream failure-recording code can assemble
  * a full diagnostic block without re-merging the blobs.
  *
+ * Also covers the zero-step pre-flight guard:
+ *   (a) empty changedFiles + zero steps still passes.
+ *   (b) non-empty changedFiles + zero steps fails with preflight:no-gates-configured.
+ *   (c) non-empty changedFiles + at least one step runs the gate as before.
+ *
  * Each test exercises the public verifyChanges API against real binaries
- * (`true` / `false` / `sleep`) — no mocks of internal collaborators.
+ * (`sh`, `sleep`) — no mocks of internal collaborators.
  */
 import { afterEach, describe, it, expect } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -119,4 +124,89 @@ describe('VerifyStep — exitCode / stdout / stderr fields', () => {
     },
     30_000,
   )
+})
+
+describe('VerifyStep — zero-step pre-flight guard', () => {
+  let tmpDir: string
+
+  afterEach(() => {
+    if (tmpDir) rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('(a) empty changedFiles + zero steps passes — no preflight guard fires', async () => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-preflight-empty-'))
+
+    // Caller passes changedFiles: [] — has-diff short-circuit does not fire
+    // (no branch/integrationBranch), and the preflight guard must NOT fire
+    // because changedFiles is empty.
+    const result = await verifyChanges({
+      cwd: tmpDir,
+      steps: [],
+      changedFiles: [],
+    })
+
+    expect(result.passed).toBe(true)
+    expect(result.steps).toHaveLength(0)
+  })
+
+  it('(a2) undefined changedFiles + zero steps also passes', async () => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-preflight-undef-'))
+
+    // Main-committer and no-op callers pass no changedFiles at all.
+    const result = await verifyChanges({
+      cwd: tmpDir,
+      steps: [],
+    })
+
+    expect(result.passed).toBe(true)
+    expect(result.steps).toHaveLength(0)
+  })
+
+  it('(b) nonempty changedFiles + zero gates fails with preflight:no-gates-configured', async () => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-preflight-fail-'))
+
+    const result = await verifyChanges({
+      cwd: tmpDir,
+      steps: [],
+      changedFiles: ['src/foo.ts'],
+    })
+
+    expect(result.passed).toBe(false)
+    expect(result.steps).toHaveLength(1)
+
+    const step = result.steps[0]
+    expect(step.name).toBe('preflight:no-gates-configured')
+    expect(step.tier).toBe('task')
+    expect(step.passed).toBe(false)
+    // Output must point the operator at the fix commands.
+    expect(step.output).toContain('mars verify-gate check')
+    expect(step.output).toContain('mars verify-gate add')
+    expect(step.output).toContain('configuration failure')
+  })
+
+  it('(c) nonempty changedFiles + at least one gate runs the gate normally', async () => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-preflight-gate-'))
+
+    // With at least one step, the preflight guard must NOT fire — the gate
+    // runs and determines the outcome.
+    const result = await verifyChanges({
+      cwd: tmpDir,
+      steps: [
+        {
+          name: 'pass-gate',
+          cmd: 'sh',
+          args: ['-c', 'echo ok'],
+          required: true,
+        },
+      ],
+      changedFiles: ['src/foo.ts'],
+    })
+
+    expect(result.passed).toBe(true)
+    const step = result.steps.find((s) => s.name === 'pass-gate')
+    expect(step).toBeDefined()
+    expect(step!.passed).toBe(true)
+    // No preflight step must appear.
+    expect(result.steps.find((s) => s.name === 'preflight:no-gates-configured')).toBeUndefined()
+  })
 })

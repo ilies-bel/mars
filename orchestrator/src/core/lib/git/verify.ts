@@ -509,10 +509,27 @@ export const verifyChanges = async (
     results.push(diffStep)
   }
 
-  // Verify gates are optional. When zero task-tier steps are configured for a
-  // task, the verify phase runs only the built-in gates (has-diff) and passes —
-  // there is intentionally no "you must configure gates" guard. Gate coverage,
-  // if desired, is opt-in via the verify_gates registry.
+  // Zero-step pre-flight guard: when the task changed files but no task-tier
+  // verify gates are configured, verifyChanges fails immediately with a
+  // synthetic `preflight:no-gates-configured` step. This is a configuration
+  // error — the operator must run `mars verify-gate check` to diagnose manifest
+  // drift and `mars verify-gate add` to register a gate. An empty changedFiles
+  // list (main-committer recipe, genuine no-op tasks) is NOT subject to this
+  // guard — those callers pass `undefined` or `[]` and the has-diff gate above
+  // already handles their short-circuit.
+  if (args.steps.length === 0 && args.changedFiles && args.changedFiles.length > 0) {
+    results.push({
+      name: 'preflight:no-gates-configured',
+      tier: 'task',
+      passed: false,
+      output:
+        'No verify gates are configured for the changed files. ' +
+        'Run `mars verify-gate check` to see manifest drift and ' +
+        '`mars verify-gate add` to register a gate. ' +
+        'This is a configuration failure, not a code defect.',
+    })
+    return { passed: false, steps: results }
+  }
 
   let stoppedOnRequired = false
   for (const spec of args.steps) {

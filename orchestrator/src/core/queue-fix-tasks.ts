@@ -343,6 +343,59 @@ export const handleTaskFailureWithFixTask = async (
     return { outcome: 'noop' }
   }
 
+  // Configuration-failure fast path: steps named `preflight:*` are operator-
+  // configuration errors (e.g. no verify gates registered for the changed
+  // files), NOT code defects. A fix-task cannot resolve them — the agent has
+  // no way to add verify-gate entries. Mark failed, raise an operator-notice,
+  // and return without spawning a recovery.
+  if (input.failingStep.startsWith('preflight:')) {
+    const configFailureSignature = `config-failure:${input.failingStep}`
+    await updateTask(
+      input.taskId,
+      {
+        status: 'failed',
+        error: input.errorOutput,
+        failedPhase: 'verify',
+        failureReason: configFailureSignature,
+        failureSignature: configFailureSignature,
+        failureReasonCode: configFailureSignature,
+      },
+      s,
+    )
+    await raiseActionQueueItem({
+      kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
+      category: 'orchestrator',
+      priority: 'high',
+      title: `Configure verify gates for task ${input.taskId}: ${input.failingStep}`,
+      body: [
+        `Task ${input.taskId} failed at ${input.failingStep}.`,
+        '',
+        'This is a configuration failure — the verify manifest has no gates for the files this task changed.',
+        'Steps to fix:',
+        '  1. Run `mars verify-gate check` to see which files lack gate coverage.',
+        '  2. Run `mars verify-gate add` to register a gate for the affected paths.',
+        `  3. \`mars restart ${input.taskId}\` once gate configuration is in place.`,
+        '',
+        input.errorOutput,
+      ].join('\n'),
+      payload: { taskId: input.taskId, failingStep: input.failingStep },
+      context: { repoRoot: process.env.MARS_REPO ?? null },
+      raisedBy: 'agent:fail-fix-handler',
+      signature: `${input.taskId}:${input.failingStep}`,
+      originTaskId: task.originId,
+      occurrence: {
+        at: new Date().toISOString(),
+        taskId: input.taskId,
+        failingStep: input.failingStep,
+      },
+    })
+    return {
+      outcome: 'failed',
+      failureSignature: configFailureSignature,
+      retryCount: task.retryCount,
+    }
+  }
+
   const { computeFailureSignature } = await import('./lib/failure-signature')
 
   // Diagnose Chores are terminal: a failing diagnose Chore must never
