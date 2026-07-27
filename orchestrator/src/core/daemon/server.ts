@@ -4337,6 +4337,18 @@ export const startDaemon = async (
   }, MARS_OUTBOX_PRUNE_INTERVAL_MS)
   outboxSweep.unref()
 
+  // ── Deployment-status sweeper ─────────────────────────────────────────────
+  // Periodically polls task_deployments rows with status='pending' and
+  // updates them once the provider reports ready or failed.  On a ready
+  // transition the sweeper also patches the awaiting-validation action-queue
+  // payload so operators see the preview URL without restarting the daemon.
+  // Interval defaults to 5 s (MARS_DEPLOY_POLL_INTERVAL_MS to override).
+  // .unref() is handled inside startDeploymentStatusSweeper so the interval
+  // never prevents a clean daemon shutdown.
+  const { startDeploymentStatusSweeper } = await import('./deployment-status-sweeper.js')
+  startDeploymentStatusSweeper()
+  log('[deployment-sweep] started')
+
   // ── Phantom-task watchdog ─────────────────────────────────────────────────
   // Periodically sweeps for tasks stuck in 'running' or 'verifying' with no
   // live subprocess, preventing a dead worker from holding an in-flight slot
