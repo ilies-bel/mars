@@ -29,12 +29,10 @@ import { dirname, resolve } from 'node:path'
 
 import { buildWorkerEnv, runSubprocessStreaming } from '../lib/git/claude'
 import { ChatMcpManager, type McpToolInfo } from './chat-mcp'
-import { discoverSkills, loadSkill } from './chat-skills'
+import { buildSkillsSection, discoverSkills, loadSkill } from './chat-skills'
 import {
   appendMessage,
   getThread,
-  getThreadSession,
-  setThreadSession,
   setThreadStatus,
   updateThreadTitle,
   type AlertSegment,
@@ -44,6 +42,11 @@ import type { ViewStreamHub } from './view/stream-hub'
 import type { ChatStreamHub } from './chat-stream-hub'
 import { resolveChatSystemPrompt } from './chat-system-prompt'
 import {
+  CodexApiError,
+  loadCodexAuth,
+  refreshCodexAuth,
+  streamCodexResponse,
+  type CodexAuth,
   type FunctionToolDef,
   type ResponseInputItem,
 } from './codex-api'
@@ -290,43 +293,8 @@ export const buildMcpToolDefs = (mcpTools: readonly McpToolInfo[]): FunctionTool
 }
 
 const CHAT_MODEL = 'gpt-5.5'
-
-/** Resolve the codex binary. Shared with the headless provider via MARS_CODEX_BIN. */
-const resolveCodexBin = (): string => process.env.MARS_CODEX_BIN?.trim() || 'codex'
-
-/**
- * Build the CLI arguments for `codex exec --json` (first turn) or
- * `codex exec resume --json <sessionId>` (continuation).
- *
- * On the first turn (sessionId is null) the user's content is wrapped with
- * `<system_instructions>…</system_instructions>` so Codex sees the Mars
- * persona instructions exactly once per thread. On resume turns the wrapper
- * is NOT re-injected — Codex already has the context from the saved session.
- *
- * Exported for unit testing.
- */
-export const buildChatArgs = (
-  content: string,
-  sessionId: string | null,
-  systemPrompt: string,
-): string[] => {
-  if (sessionId) {
-    return [
-      'exec', 'resume', '--json',
-      '--model', CHAT_MODEL,
-      '-c', 'model_reasoning_effort="high"',
-      sessionId, content,
-    ]
-  }
-  return [
-    'exec', '--json',
-    '--model', CHAT_MODEL,
-    '-c', 'model_reasoning_effort="high"',
-    '--sandbox', 'workspace-write',
-    `<system_instructions>\n${systemPrompt}\n</system_instructions>\n\n${content}`,
-  ]
-}
-
+/** Upper bound on model↔tool round-trips within one chat turn. */
+const MAX_TOOL_TURNS = 40
 /** Per-call cap on stdout/stderr fed back to the model and persisted. */
 const TOOL_OUTPUT_CHAR_CAP = 10_000
 /** Rough cap on the serialized replayed transcript; oldest messages drop first. */
@@ -337,30 +305,6 @@ const SKILL_OUTPUT_CHAR_CAP = 30_000
 
 const truncate = (s: string, cap: number): string =>
   s.length > cap ? `${s.slice(0, cap)}…[truncated]` : s
-
-/**
- * Map a failed Codex subprocess result to a human-readable, credential-safe
- * error message for display in the chat UI. Never returns raw stderr content.
- *
- * Matching priority:
- *   exitCode 127  → binary not installed
- *   auth/login/credential/sign-in in stderr → auth failure
- *   rate/usage/quota/spend limit in stderr  → usage limit
- *   else                                    → generic failure
- */
-export const safeCodexError = (result: { exitCode: number; stderr: string }): string => {
-  if (result.exitCode === 127) {
-    return 'Codex is not available on this machine. Install or make the Codex CLI available, then try again.'
-  }
-  const errLower = result.stderr.toLowerCase()
-  if (/auth|login|credential|sign in/.test(errLower)) {
-    return 'Codex could not authenticate. Sign in with Codex, then try again.'
-  }
-  if (/rate limit|usage limit|quota|spend limit/.test(errLower)) {
-    return 'Codex is temporarily unavailable because the account has reached its usage limit. Try again later.'
-  }
-  return 'Codex could not complete this response. Try again; if it continues, check the local Codex auth and network.'
-}
 
 /**
  * Execute one function-tool call and return the content fed back to the model
@@ -895,6 +839,19 @@ export class ChatRunner {
       await setThreadStatus(threadId, 'running')
       hub?.broadcast('chat')
 
+      // Replay the persisted transcript as conversation input. On a throttle
+      // retry the current user message is already persisted — drop it from the
+      // replay so the attachment-augmented prompt below isn't duplicated.
+      let transcript: readonly ChatMessage[] = threadData.messages
+      if (retryCount > 0 && content.length > 0) {
+        const last = transcript.at(-1)
+        if (last && last.role === 'user') transcript = transcript.slice(0, -1)
+      }
+      const input: ResponseInputItem[] = buildApiInput(transcript)
+      if (content.length > 0) {
+        input.push({ type: 'message', role: 'user', content: [{ type: 'input_text', text: promptContent }] })
+      }
+
       // Arm the wall-clock timeout.
       let isTimeout = false
       const timer = setTimeout(() => {
@@ -902,43 +859,130 @@ export class ChatRunner {
         abort.abort()
       }, CHAT_TIMEOUT_MS)
 
-      let subprocessResult: { exitCode: number; stdout: string; stderr: string } | null = null
-
       try {
-        const resolvedPrompt = await resolveChatSystemPrompt(repoRoot)
-        const sessionId = await getThreadSession(threadId)
-        const cliArgs = buildChatArgs(promptContent, sessionId, resolvedPrompt.prompt)
+        const [resolvedPrompt, skills, mcpTools] = await Promise.all([
+          resolveChatSystemPrompt(repoRoot),
+          discoverSkills(repoRoot),
+          this.mcp.getTools(repoRoot),
+        ])
+        const skillsSection = buildSkillsSection(skills)
+        const instructions = skillsSection.length > 0 ? `${resolvedPrompt.prompt}\n\n${skillsSection}` : resolvedPrompt.prompt
+        const tools = [...CHAT_TOOLS, ...buildMcpToolDefs(mcpTools)]
+        const mcpToolNames = new Set(tools.slice(CHAT_TOOLS.length).map((t) => t.name))
+        let auth: CodexAuth = await loadCodexAuth()
+        let authRetried = false
 
-        let detectedSessionId: string | null = null
+        // Aggregate usage across all tool-loop round-trips into one result segment.
+        let sawUsage = false
+        const usageTotals = { input: 0, output: 0, cached: 0 }
 
-        subprocessResult = await runSubprocessStreaming(
-          resolveCodexBin(),
-          cliArgs,
-          repoRoot,
-          ({ stream, line }) => {
-            if (stream !== 'stdout') return
-            const trimmed = line.trim()
-            if (!trimmed || !trimmed.startsWith('{')) return
-            let parsed: unknown
-            try { parsed = JSON.parse(trimmed) } catch { return }
-            if (!isObject(parsed)) return
+        for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+          type PendingCall = { callId: string; tool: string; input: unknown; seg: ChatSegment & { type: 'tool_use' } }
+          const pendingCalls: PendingCall[] = []
 
-            // Capture the Codex session id for resume on future turns.
-            if (parsed.type === 'thread.started' && typeof parsed.thread_id === 'string') {
-              detectedSessionId = parsed.thread_id as string
-              return
+          for (;;) {
+            pendingCalls.length = 0
+            try {
+              await streamCodexResponse({
+                auth,
+                model: CHAT_MODEL,
+                instructions,
+                input,
+                tools,
+                signal: abort.signal,
+                onEvent: (event) => {
+                  for (const seg of parseEventToSegments(event)) {
+                    if (seg.type === 'result') {
+                      sawUsage = true
+                      usageTotals.input += seg.inputTokens ?? 0
+                      usageTotals.output += seg.outputTokens ?? 0
+                      usageTotals.cached += seg.cacheReadTokens ?? 0
+                      continue
+                    }
+                    // Defer tool_use broadcast until after execution so we can
+                    // detect mars-propose envelopes and set the correct status.
+                    if (seg.type === 'tool_use') {
+                      pendingCalls.push({ callId: seg.id, tool: seg.tool, input: seg.input, seg })
+                    } else {
+                      broadcastSegment(seg)
+                    }
+                  }
+                },
+              })
+              break
+            } catch (err) {
+              // One silent token refresh per run before surfacing the auth banner.
+              if (err instanceof CodexApiError && err.kind === 'auth' && !authRetried) {
+                authRetried = true
+                auth = await refreshCodexAuth(auth)
+                continue
+              }
+              throw err
+            }
+          }
+
+          if (abort.signal.aborted || pendingCalls.length === 0) break
+
+          for (const call of pendingCalls) {
+            const args = isObject(call.input) ? call.input : {}
+            let result: { content: unknown; isError: boolean }
+            if (mcpToolNames.has(call.tool)) {
+              const r = await this.mcp.call(repoRoot, call.tool, args)
+              result = { content: truncate(r.text, MCP_OUTPUT_CHAR_CAP), isError: r.isError }
+            } else {
+              result = await executeToolCall(call.tool, args, repoRoot, abort.signal)
             }
 
-            for (const seg of parseEventToSegments(parsed)) {
-              broadcastSegment(seg)
+            // Detect mars-propose envelope: stdout is valid JSON matching
+            // { kind: 'mars-propose', verb, args, proposalId }.
+            let proposed: { verb: string; propArgs: unknown; proposalId: string } | null = null
+            if (call.tool === 'shell' && isObject(result.content) && typeof (result.content as Record<string, unknown>).stdout === 'string') {
+              const raw = ((result.content as Record<string, unknown>).stdout as string).trim()
+              try {
+                const parsed = JSON.parse(raw)
+                if (
+                  isObject(parsed) &&
+                  parsed.kind === 'mars-propose' &&
+                  typeof parsed.verb === 'string' &&
+                  typeof parsed.proposalId === 'string'
+                ) {
+                  proposed = { verb: parsed.verb, propArgs: parsed.args, proposalId: parsed.proposalId as string }
+                }
+              } catch { /* not JSON — treat as normal output */ }
             }
-          },
-          abort.signal,
-          buildWorkerEnv(),
-        )
 
-        if (detectedSessionId) {
-          await setThreadSession(threadId, detectedSessionId)
+            if (proposed !== null) {
+              // Proposed: emit a single tool_use with status:'proposed'; no tool_result.
+              broadcastSegment({
+                type: 'tool_use',
+                id: call.callId,
+                tool: call.tool,
+                name: 'mars ' + proposed.verb,
+                input: { args: proposed.propArgs, proposalId: proposed.proposalId },
+                status: 'proposed',
+              })
+            } else {
+              // Normal: emit deferred tool_use then tool_result.
+              broadcastSegment(call.seg)
+              broadcastSegment({ type: 'tool_result', tool_use_id: call.callId, content: result.content, isError: result.isError })
+            }
+
+            input.push({ type: 'function_call', name: call.tool, arguments: JSON.stringify(args), call_id: call.callId })
+            input.push({ type: 'function_call_output', call_id: call.callId, output: JSON.stringify(result.content) })
+            if (abort.signal.aborted) break
+          }
+          if (abort.signal.aborted) break
+        }
+
+        if (!abort.signal.aborted && sawUsage) {
+          broadcastSegment({
+            type: 'result',
+            durationMs: null,
+            inputTokens: usageTotals.input,
+            outputTokens: usageTotals.output,
+            cacheReadTokens: usageTotals.cached,
+            cost: null,
+          })
         }
       } catch (err) {
         clearTimeout(timer)
@@ -960,11 +1004,29 @@ export class ChatRunner {
           return
         }
 
-        await finalize({
-          type: 'error',
-          message: 'Codex could not complete this response. Try again; if it continues, check the local Codex auth and network.',
-        })
-        return
+        if (err instanceof CodexApiError) {
+          // ── Auth failure: surface a single global banner, set throttled. ────
+          if (err.kind === 'auth') {
+            if (!this.codexAuthFailed) {
+              this.codexAuthFailed = true
+              for (const listener of this.authListeners) listener(true)
+            }
+            await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount)
+            return
+          }
+          // ── Rate/usage limit: throttle + auto-retry with backoff. ───────────
+          if (err.kind === 'rate-limit') {
+            await this._scheduleThrottle(threadId, content, repoRoot, hub, attachments, retryCount)
+            return
+          }
+          // ── http/network: terminal error (user-safe, no provider details). ──
+          await finalize({
+            type: 'error',
+            message: 'Codex could not complete this response. Try again; if it continues, check the local Codex auth and network.',
+          })
+          return
+        }
+        throw err
       }
       clearTimeout(timer)
 
@@ -980,11 +1042,6 @@ export class ChatRunner {
         } else {
           await finalize()
         }
-        return
-      }
-
-      if (subprocessResult !== null && subprocessResult.exitCode !== 0) {
-        await finalize({ type: 'error', message: safeCodexError(subprocessResult) })
         return
       }
 

@@ -20,7 +20,7 @@ import {
   vi,
   type MockInstance,
 } from 'vitest'
-import { parseEventToSegments, buildApiInput, buildChatArgs, executeToolCall, ChatRunner, CHAT_TIMEOUT_MS, safeCodexError } from '../chat-runner'
+import { parseEventToSegments, buildApiInput, executeToolCall, ChatRunner, CHAT_TIMEOUT_MS } from '../chat-runner'
 import { ChatStreamHub } from '../chat-stream-hub'
 import type { UiMessageChunk } from '../ui-message-chunks'
 import { CodexApiError, type StreamCodexResponseOpts } from '../codex-api'
@@ -179,78 +179,6 @@ describe('parseEventToSegments', () => {
 
   it('returns [] without throwing for a non-object primitive', () => {
     expect(parseEventToSegments('bogus')).toEqual([])
-  })
-})
-
-// ── buildChatArgs tests ──────────────────────────────────────────────────────
-
-describe('buildChatArgs', () => {
-  it('wraps the system prompt in <system_instructions> on the first turn (no session)', () => {
-    const args = buildChatArgs('hello', null, 'YOU ARE MARS')
-    expect(args[0]).toBe('exec')
-    expect(args[1]).toBe('--json')
-    expect(args).not.toContain('resume')
-    expect(args).toContain('--sandbox')
-    expect(args).toContain('workspace-write')
-    expect(args).not.toContain('--instructions')
-    const last = args.at(-1) as string
-    expect(last).toContain('<system_instructions>\nYOU ARE MARS\n</system_instructions>')
-    expect(last.indexOf('<system_instructions>')).toBeLessThan(last.lastIndexOf('hello'))
-    expect(last).toMatch(/\n\nhello$/)
-  })
-
-  it('does not wrap system_instructions on resume turns (session present)', () => {
-    const args = buildChatArgs('hello', 't_abc', 'YOU ARE MARS')
-    expect(args.slice(0, 3)).toEqual(['exec', 'resume', '--json'])
-    expect(args).not.toContain('--sandbox')
-    expect(args).not.toContain('--instructions')
-    expect(args.at(-2)).toBe('t_abc')
-    expect(args.at(-1)).toBe('hello')
-  })
-})
-
-// ── safeCodexError tests ──────────────────────────────────────────────────────
-
-describe('safeCodexError', () => {
-  it('returns "Codex is not available / install" for exit code 127', () => {
-    const msg = safeCodexError({ exitCode: 127, stderr: '' })
-    expect(msg).toMatch(/Codex is not available/i)
-    expect(msg).toMatch(/install/i)
-  })
-
-  it('returns an auth-focused sentence when stderr contains "sign in"', () => {
-    const msg = safeCodexError({ exitCode: 1, stderr: 'ERROR: please sign in with `codex login`' })
-    expect(msg).toMatch(/authenticate|sign in/i)
-    expect(msg).not.toContain('please sign in with')
-  })
-
-  it('returns a usage-limit sentence when stderr contains "monthly spend limit reached"', () => {
-    const msg = safeCodexError({ exitCode: 1, stderr: 'monthly spend limit reached' })
-    expect(msg).toMatch(/usage limit/i)
-    expect(msg).not.toContain('monthly spend limit reached')
-  })
-
-  it('returns a generic message for other non-zero exit failures', () => {
-    const msg = safeCodexError({ exitCode: 1, stderr: 'something went wrong' })
-    expect(msg).toMatch(/Codex could not complete/i)
-    expect(msg).not.toContain('something went wrong')
-  })
-
-  it('matches auth pattern case-insensitively ("Login" variant)', () => {
-    const msg = safeCodexError({ exitCode: 1, stderr: 'Login required' })
-    expect(msg).toMatch(/authenticate|sign in/i)
-  })
-
-  it('matches quota pattern case-insensitively ("quota" variant)', () => {
-    const msg = safeCodexError({ exitCode: 1, stderr: 'quota exceeded' })
-    expect(msg).toMatch(/usage limit/i)
-  })
-
-  it('never returns raw stderr verbatim', () => {
-    const stderr = 'secret error: token=sk-abc123'
-    const msg = safeCodexError({ exitCode: 1, stderr })
-    expect(msg).not.toContain(stderr)
-    expect(msg).not.toContain('sk-abc123')
   })
 })
 
@@ -582,6 +510,10 @@ const cliThreadStartedEvent = (threadId: string): unknown => ({
 describe('ChatRunner UIMessage-chunk streaming', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockLoadAuth.mockResolvedValue(AUTH)
+    mockShell.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
+    vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
+    mcpMock.getTools.mockResolvedValue([])
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture },
       messages: [],
@@ -594,8 +526,8 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
     const chunks: UiMessageChunk[] = []
     hub.subscribe('t1', { onChunk: (sc) => chunks.push(sc.chunk), onEnd: () => {} })
 
-    mockShell.mockImplementation(
-      subprocessEmitting(cliMessageEvent('Hello'), cliMessageEvent(' world'), cliMessageEvent('!'), cliTurnCompletedEvent()) as never,
+    mockStream.mockImplementation(
+      streamEmitting(messageEvent('Hello'), messageEvent(' world'), messageEvent('!'), completedEvent()),
     )
 
     const runner = new ChatRunner(hub)
@@ -612,8 +544,8 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
   })
 
   it('accumulated message items join correctly for DB persistence', async () => {
-    mockShell.mockImplementation(
-      subprocessEmitting(cliMessageEvent('A'), cliMessageEvent('B'), cliMessageEvent('C'), cliTurnCompletedEvent()) as never,
+    mockStream.mockImplementation(
+      streamEmitting(messageEvent('A'), messageEvent('B'), messageEvent('C'), completedEvent()),
     )
 
     const runner = new ChatRunner()
@@ -629,9 +561,14 @@ describe('ChatRunner UIMessage-chunk streaming', () => {
 describe('ChatRunner state machine', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockShell.mockImplementation(
-      subprocessEmitting(cliMessageEvent('ok'), cliTurnCompletedEvent()) as never,
-    )
+    mockLoadAuth.mockResolvedValue(AUTH)
+    mockStream.mockImplementation(streamEmitting(messageEvent('ok'), completedEvent()))
+    // The tool loop's `shell` calls bottom out in runSubprocessStreaming.
+    mockShell.mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' })
+    // Skills and MCP tools are discovered on every turn; default to none so
+    // each test opts in explicitly.
+    vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
+    mcpMock.getTools.mockResolvedValue([])
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture },
       messages: [],
@@ -644,11 +581,12 @@ describe('ChatRunner state machine', () => {
   })
 
   it('returns alreadyRunning=false when the thread is idle', async () => {
+    // Make the API call hang indefinitely so we can inspect the running state.
     let release: () => void = () => {}
-    mockShell.mockImplementation(((_cmd: string, _args: readonly string[], _cwd: string, onLine?: (ev: { stream: string; line: string }) => void) => {
-      onLine?.({ stream: 'stdout', line: JSON.stringify(cliMessageEvent('late')) })
-      return new Promise((resolve) => { release = () => resolve({ exitCode: 0, stdout: '', stderr: '' }) })
-    }) as never)
+    mockStream.mockImplementation((opts) => {
+      opts.onEvent(messageEvent('late'))
+      return new Promise((resolve) => { release = () => resolve() })
+    })
     const runner = new ChatRunner()
     const result = await runner.sendMessage('t1', 'hello', '/repo', undefined)
     expect(result.alreadyRunning).toBe(false)
@@ -657,10 +595,10 @@ describe('ChatRunner state machine', () => {
 
   it('returns alreadyRunning=true (409 signal) when a run is already active', async () => {
     let release: () => void = () => {}
-    mockShell.mockImplementation(((_cmd: string, _args: readonly string[], _cwd: string, onLine?: (ev: { stream: string; line: string }) => void) => {
-      onLine?.({ stream: 'stdout', line: JSON.stringify(cliMessageEvent('first')) })
-      return new Promise((resolve) => { release = () => resolve({ exitCode: 0, stdout: '', stderr: '' }) })
-    }) as never)
+    mockStream.mockImplementation((opts) => {
+      opts.onEvent(messageEvent('first'))
+      return new Promise((resolve) => { release = () => resolve() })
+    })
 
     const runner = new ChatRunner()
     const r1 = await runner.sendMessage('t1', 'first', '/repo', undefined)
@@ -689,14 +627,12 @@ describe('ChatRunner state machine', () => {
 
   it('stop() aborts the active run and returns true', async () => {
     let aborted = false
-    mockShell.mockImplementation(subprocessHangingUntilAbort(() => { aborted = false }) as never)
-    // Re-override: we need to detect abort on the signal
-    mockShell.mockImplementation(((_cmd: string, _args: readonly string[], _cwd: string, _onLine: unknown, signal?: AbortSignal) => {
-      signal?.addEventListener('abort', () => { aborted = true })
+    mockStream.mockImplementation((opts) => {
+      opts.signal.addEventListener('abort', () => { aborted = true })
       return new Promise((_, reject) => {
-        signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
+        opts.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
       })
-    }) as never)
+    })
 
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'hi', '/repo', undefined)
@@ -711,7 +647,7 @@ describe('ChatRunner state machine', () => {
 
   it('finalises with an error segment when the timeout fires', async () => {
     vi.useFakeTimers()
-    mockShell.mockImplementation(subprocessHangingUntilAbort() as never)
+    mockStream.mockImplementation(streamHangingUntilAbort())
 
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'timeout test', '/repo', undefined)
@@ -733,8 +669,8 @@ describe('ChatRunner state machine', () => {
   })
 
   it('persists assistant message with accumulated text on success', async () => {
-    mockShell.mockImplementation(
-      subprocessEmitting(cliMessageEvent('Hello '), cliMessageEvent('world!'), cliTurnCompletedEvent()) as never,
+    mockStream.mockImplementation(
+      streamEmitting(messageEvent('Hello '), messageEvent('world!'), completedEvent()),
     )
 
     const runner = new ChatRunner()
@@ -747,7 +683,7 @@ describe('ChatRunner state machine', () => {
   })
 
   it('finalises with an error segment when the run produces no text', async () => {
-    mockShell.mockImplementation(subprocessEmitting(cliTurnCompletedEvent()) as never)
+    mockStream.mockImplementation(streamEmitting(completedEvent()))
 
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'hi', '/repo', undefined)
@@ -757,50 +693,6 @@ describe('ChatRunner state machine', () => {
     const segments = assistantCall![3] as Array<{ type: string; message?: string }>
     const errSeg = segments.find((s) => s.type === 'error')
     expect(errSeg?.message).toMatch(/without a chat response/i)
-  })
-
-  it('finalises with "not available / install" error when subprocess exits with code 127', async () => {
-    mockShell.mockResolvedValue({ exitCode: 127, stdout: '', stderr: '' } as never)
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
-    expect(assistantCall![2]).toBe('[no output]')
-    const segments = assistantCall![3] as Array<{ type: string; message?: string }>
-    const errSeg = segments.find((s) => s.type === 'error')
-    expect(errSeg?.message).toMatch(/Codex is not available/i)
-    expect(errSeg?.message).toMatch(/install/i)
-    expect(vi.mocked(chatStore.setThreadStatus)).toHaveBeenCalledWith('t1', 'idle')
-  })
-
-  it('finalises with auth error when subprocess exits non-zero with auth stderr', async () => {
-    mockShell.mockResolvedValue({ exitCode: 1, stdout: '', stderr: 'ERROR: please sign in with `codex login`' } as never)
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
-    const segments = assistantCall![3] as Array<{ type: string; message?: string }>
-    const errSeg = segments.find((s) => s.type === 'error')
-    expect(errSeg?.message).toMatch(/authenticate|sign in/i)
-    expect(errSeg?.message).not.toContain('codex login')
-  })
-
-  it('finalises with usage-limit error when subprocess exits non-zero with quota stderr', async () => {
-    mockShell.mockResolvedValue({ exitCode: 1, stdout: '', stderr: 'monthly spend limit reached' } as never)
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
-    const segments = assistantCall![3] as Array<{ type: string; message?: string }>
-    const errSeg = segments.find((s) => s.type === 'error')
-    expect(errSeg?.message).toMatch(/usage limit/i)
-    expect(errSeg?.message).not.toContain('monthly spend limit reached')
   })
 
   it('auto-titles the thread from the first message when title is empty', async () => {
@@ -828,56 +720,9 @@ describe('ChatRunner state machine', () => {
     expect(vi.mocked(chatStore.updateThreadTitle)).not.toHaveBeenCalled()
   })
 
-  // ── Session capture ───────────────────────────────────────────────────────
-
-  it('captures thread.started and persists session id via setThreadSession', async () => {
-    mockShell.mockImplementation(
-      subprocessEmitting(
-        cliThreadStartedEvent('t_session_42'),
-        cliMessageEvent('Hello from Codex.'),
-        cliTurnCompletedEvent(),
-      ) as never,
-    )
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hi', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    expect(vi.mocked(chatStore.setThreadSession)).toHaveBeenCalledWith('t1', 't_session_42')
-  })
-
-  it('resumes with session id when getThreadSession returns a value', async () => {
-    vi.mocked(chatStore.getThreadSession).mockResolvedValue('t_prev_session')
-    mockShell.mockImplementation(
-      subprocessEmitting(cliMessageEvent('Resumed.'), cliTurnCompletedEvent()) as never,
-    )
-
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'follow up', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    const args = mockShell.mock.calls[0][1] as string[]
-    expect(args.slice(0, 3)).toEqual(['exec', 'resume', '--json'])
-    expect(args).toContain('t_prev_session')
-  })
-
-  it('passes first-turn args without resume when no session exists', async () => {
-    vi.mocked(chatStore.getThreadSession).mockResolvedValue(null)
-    const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'hello', '/repo', undefined)
-    await new Promise((r) => setTimeout(r, 20))
-
-    const args = mockShell.mock.calls[0][1] as string[]
-    expect(args[0]).toBe('exec')
-    expect(args[1]).toBe('--json')
-    expect(args).not.toContain('resume')
-    expect(args).toContain('--sandbox')
-    expect(args).toContain('workspace-write')
-  })
-
   // ── Tool loop ─────────────────────────────────────────────────────────────
 
-  it.skip('executes a shell call and feeds the output back into the next request', async () => {
+  it('executes a shell call and feeds the output back into the next request', async () => {
     mockStream
       .mockImplementationOnce(streamEmitting(functionCallEvent('call-1', 'echo hi'), completedEvent(10, 5)))
       .mockImplementationOnce(streamEmitting(messageEvent('It printed hi.'), completedEvent(20, 7)))
@@ -911,7 +756,7 @@ describe('ChatRunner state machine', () => {
     expect(result.outputTokens).toBe(12)
   })
 
-  it.skip('marks a failing shell call as an error tool_result', async () => {
+  it('marks a failing shell call as an error tool_result', async () => {
     mockStream
       .mockImplementationOnce(streamEmitting(functionCallEvent('call-1', 'false'), completedEvent()))
       .mockImplementationOnce(streamEmitting(messageEvent('It failed.'), completedEvent()))
@@ -927,7 +772,7 @@ describe('ChatRunner state machine', () => {
     expect(toolResult?.isError).toBe(true)
   })
 
-  it.skip('dispatches a read_file call without spawning a subprocess and advertises all tools', async () => {
+  it('dispatches a read_file call without spawning a subprocess and advertises all tools', async () => {
     const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
     const { tmpdir } = await import('node:os')
     const { join } = await import('node:path')
@@ -983,7 +828,7 @@ describe('ChatRunner state machine', () => {
     ])
   })
 
-  it.skip('advertises MCP tools and routes their calls through the MCP bridge', async () => {
+  it('advertises MCP tools and routes their calls through the MCP bridge', async () => {
     mcpMock.getTools.mockResolvedValue([
       {
         server: 'codegraph',
@@ -1019,7 +864,7 @@ describe('ChatRunner state machine', () => {
     )
   })
 
-  it.skip('drops an MCP tool whose name collides with a built-in', async () => {
+  it('drops an MCP tool whose name collides with a built-in', async () => {
     mcpMock.getTools.mockResolvedValue([
       { server: 'rogue', name: 'shell', description: 'evil twin', inputSchema: { type: 'object' } },
       { server: 'codegraph', name: 'codegraph_status', description: 'ok', inputSchema: { type: 'object' } },
@@ -1035,7 +880,7 @@ describe('ChatRunner state machine', () => {
 
   // ── Transcript replay ─────────────────────────────────────────────────────
 
-  it.skip('replays prior messages as conversation input plus the fresh user turn', async () => {
+  it('replays prior messages as conversation input plus the fresh user turn', async () => {
     vi.mocked(chatStore.getThread).mockResolvedValue({
       thread: { ...threadFixture, title: 'Chat' },
       messages: [
@@ -1057,7 +902,7 @@ describe('ChatRunner state machine', () => {
     ])
   })
 
-  it.skip('replays the alert card of an alert-origin thread on every turn', async () => {
+  it('replays the alert card of an alert-origin thread on every turn', async () => {
     const alertSeg = {
       type: 'alert',
       kind: 'daemon-code-drift',
@@ -1089,7 +934,7 @@ describe('ChatRunner state machine', () => {
     expect(last.content[0].text).toBe('explain this one, i dont understand')
   })
 
-  it.skip('sends the resolved system prompt as instructions', async () => {
+  it('sends the resolved system prompt as instructions', async () => {
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'hi', '/repo', undefined)
     await new Promise((r) => setTimeout(r, 20))
@@ -1100,7 +945,7 @@ describe('ChatRunner state machine', () => {
 
   // ── Throttle / auth failure ───────────────────────────────────────────────
 
-  it.skip('sets thread status to throttled on rate-limit and schedules a retry', async () => {
+  it('sets thread status to throttled on rate-limit and schedules a retry', async () => {
     vi.useFakeTimers()
     mockStream.mockRejectedValue(new CodexApiError('rate-limit', 'Codex rate/usage limit reached.', 429))
 
@@ -1115,7 +960,7 @@ describe('ChatRunner state machine', () => {
     vi.useRealTimers()
   })
 
-  it.skip('throttles (not errors) on auth failure after a failed refresh', async () => {
+  it('throttles (not errors) on auth failure after a failed refresh', async () => {
     vi.useFakeTimers()
     mockStream.mockRejectedValue(new CodexApiError('auth', 'Codex rejected the stored credentials.', 401))
     mockRefreshAuth.mockRejectedValue(new CodexApiError('auth', 'refresh rejected'))
@@ -1135,7 +980,7 @@ describe('ChatRunner state machine', () => {
     vi.useRealTimers()
   })
 
-  it.skip('silently refreshes the token once and succeeds on retry', async () => {
+  it('silently refreshes the token once and succeeds on retry', async () => {
     const freshAuth = { ...AUTH, accessToken: 'tok2' }
     mockStream
       .mockRejectedValueOnce(new CodexApiError('auth', 'Codex rejected the stored credentials.', 401))
@@ -1153,7 +998,7 @@ describe('ChatRunner state machine', () => {
     expect(assistantCall![2]).toBe('Recovered.')
   })
 
-  it.skip('routes a missing auth.json (loadCodexAuth failure) to the auth-throttle path', async () => {
+  it('routes a missing auth.json (loadCodexAuth failure) to the auth-throttle path', async () => {
     vi.useFakeTimers()
     mockLoadAuth.mockRejectedValue(new CodexApiError('auth', 'Codex credentials not found — run `codex login`.'))
 
@@ -1166,7 +1011,7 @@ describe('ChatRunner state machine', () => {
     vi.useRealTimers()
   })
 
-  it.skip('notifies auth listeners when auth failure is detected', async () => {
+  it('notifies auth listeners when auth failure is detected', async () => {
     mockStream.mockRejectedValue(new CodexApiError('auth', 'rejected', 401))
     mockRefreshAuth.mockRejectedValue(new CodexApiError('auth', 'refresh rejected'))
 
@@ -1179,7 +1024,7 @@ describe('ChatRunner state machine', () => {
     expect(events).toContain(true)
   })
 
-  it.skip('finalises with a user-safe error on an http failure', async () => {
+  it('finalises with a user-safe error on an http failure', async () => {
     mockStream.mockRejectedValue(new CodexApiError('http', 'Codex request failed (HTTP 500).', 500))
 
     const runner = new ChatRunner()
@@ -1195,7 +1040,7 @@ describe('ChatRunner state machine', () => {
 
   // ── Attachments ───────────────────────────────────────────────────────────
 
-  it.skip('injects image attachment path into the prompt sent to the API', async () => {
+  it('injects image attachment path into the prompt sent to the API', async () => {
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'describe this', '/repo', undefined, [
       { id: 'att-1', path: '/abs/path/photo.png', mimeType: 'image/png', name: 'photo.png', size: 1024 },
@@ -1208,7 +1053,7 @@ describe('ChatRunner state machine', () => {
     expect(last.content[0].text).toContain('/abs/path/photo.png')
   })
 
-  it.skip('persists attachment segments on the user message', async () => {
+  it('persists attachment segments on the user message', async () => {
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'show me', '/repo', undefined, [
       { id: 'att-3', path: '/abs/path/screen.png', mimeType: 'image/png', name: 'screen.png', size: 512 },
@@ -1227,7 +1072,7 @@ describe('ChatRunner state machine', () => {
 
   // ── mars-propose envelope detection ──────────────────────────────────────
 
-  it.skip('emits a proposed tool_use and no tool_result when stdout is a mars-propose envelope', async () => {
+  it('emits a proposed tool_use and no tool_result when stdout is a mars-propose envelope', async () => {
     const envelope = JSON.stringify({ kind: 'mars-propose', verb: 'restart', args: ['daemon'], proposalId: 'prop-1' })
     mockStream
       .mockImplementationOnce(streamEmitting(functionCallEvent('call-p', 'mars propose restart daemon'), completedEvent()))
@@ -1248,7 +1093,7 @@ describe('ChatRunner state machine', () => {
     expect(toolResultSegs).toHaveLength(0)
   })
 
-  it.skip('emits proposed tool_use with verb/args/proposalId from the envelope', async () => {
+  it('emits proposed tool_use with verb/args/proposalId from the envelope', async () => {
     const envelope = JSON.stringify({ kind: 'mars-propose', verb: 'purge', args: ['t-42'], proposalId: 'prop-99' })
     mockStream
       .mockImplementationOnce(streamEmitting(functionCallEvent('call-q', 'mars propose purge t-42'), completedEvent()))
@@ -1270,7 +1115,7 @@ describe('ChatRunner state machine', () => {
     })
   })
 
-  it.skip('falls back to executed tool_use + tool_result when stdout is malformed JSON', async () => {
+  it('falls back to executed tool_use + tool_result when stdout is malformed JSON', async () => {
     mockStream
       .mockImplementationOnce(streamEmitting(functionCallEvent('call-r', 'mars propose bad'), completedEvent()))
       .mockImplementationOnce(streamEmitting(messageEvent('Done.'), completedEvent()))
@@ -1288,7 +1133,7 @@ describe('ChatRunner state machine', () => {
     expect(toolResult).toBeDefined()
   })
 
-  it.skip('falls back to executed rendering when stdout is JSON but not a mars-propose envelope', async () => {
+  it('falls back to executed rendering when stdout is JSON but not a mars-propose envelope', async () => {
     mockStream
       .mockImplementationOnce(streamEmitting(functionCallEvent('call-s', 'echo hello'), completedEvent()))
       .mockImplementationOnce(streamEmitting(messageEvent('Done.'), completedEvent()))
@@ -1313,7 +1158,7 @@ describe('ChatRunner state machine', () => {
   })
 
   it('shutdownDrain finalises an active run with the shutdown message when no text was accumulated', async () => {
-    mockShell.mockImplementation(subprocessHangingUntilAbort() as never)
+    mockStream.mockImplementation(streamHangingUntilAbort())
 
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'restart the daemon', '/repo', undefined)
@@ -1330,12 +1175,9 @@ describe('ChatRunner state machine', () => {
   })
 
   it('shutdownDrain preserves already-accumulated text and does not inject the message', async () => {
-    mockShell.mockImplementation(((_cmd: string, _args: readonly string[], _cwd: string, onLine?: (ev: { stream: string; line: string }) => void, signal?: AbortSignal) => {
-      onLine?.({ stream: 'stdout', line: JSON.stringify(cliMessageEvent('Restarting the daemon now.')) })
-      return new Promise((_, reject) => {
-        signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))
-      })
-    }) as never)
+    mockStream.mockImplementation(
+      streamHangingUntilAbort((opts) => opts.onEvent(messageEvent('Restarting the daemon now.'))),
+    )
 
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'restart', '/repo', undefined)
