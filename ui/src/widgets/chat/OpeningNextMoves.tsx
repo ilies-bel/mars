@@ -1,13 +1,25 @@
-import type { ActionQueueItem } from '@/shared/schemas'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
+
+/**
+ * Minimal row shape needed to render the opening queue summary.
+ * Both real ActionQueueItems and synthetic rows derived from useTasks()
+ * (e.g. tasks with status 'blocked' that are not yet in the action queue)
+ * satisfy this interface.
+ */
+export interface DisplayRow {
+  id: string
+  kind: string
+  title: string
+  humanSummary: string
+}
 
 interface Group {
   key: string
   label: string
-  items: ActionQueueItem[]
+  items: DisplayRow[]
 }
 
-function groupQueueItems(rows: ActionQueueItem[]): Group[] {
+function groupQueueItems(rows: DisplayRow[]): Group[] {
   const proposals = rows.filter((r) => r.kind === 'draft-proposal')
   const blocked = rows.filter((r) => r.kind !== 'draft-proposal')
 
@@ -36,8 +48,8 @@ function groupQueueItems(rows: ActionQueueItem[]): Group[] {
 }
 
 interface Props {
-  rows: ActionQueueItem[]
-  onPick: (row: ActionQueueItem) => void
+  rows: DisplayRow[]
+  onPick: (row: DisplayRow) => void
 }
 
 export const OpeningNextMoves = ({ rows, onPick }: Props) => {

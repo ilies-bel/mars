@@ -87,6 +87,8 @@ import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
 import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
 import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
+import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
+import { useTasks } from '@/hooks/useTasks'
 import { SkeletonList } from '@/components/Skeleton'
 
 // ---------------------------------------------------------------------------
@@ -2492,6 +2494,10 @@ export const ChatPage = () => {
   const { items: queueItems } = useActionQueue()
   const { items: historyItems } = useActionQueueHistory()
 
+  // Task snapshot used to surface blocked tasks that are not yet projected into
+  // the action queue (e.g. tasks waiting on a blocker that hasn't failed yet).
+  const { snapshot: taskSnapshot } = useTasks()
+
   // Threads at the root so a deep-linked queue item can resolve to its merged
   // alert-origin conversation. React Query dedupes this against the sidebar's
   // identical query — no extra request.
@@ -2649,8 +2655,21 @@ export const ChatPage = () => {
 
   // Seeded opening message: when actionable items exist show a compact,
   // grouped queue summary so the operator sees real pending work at a glance.
-  // When the queue is genuinely empty, fall back to an invitation prompt.
-  const hasActionableItems = queueItems.length > 0
+  // Supplement action-queue rows with tasks that have status 'blocked' and are
+  // not already represented by a queue item (matched by entityId). This ensures
+  // the opening never falsely claims "nothing's pressing" when blocked tasks
+  // are waiting for attention.
+  const blockedTaskRows: DisplayRow[] = (taskSnapshot?.columns.in_progress ?? [])
+    .filter((t) => t.status === 'blocked')
+    .filter((t) => !queueItems.some((q) => q.entityId === t.id))
+    .map((t) => ({
+      id: t.id,
+      kind: 'blocked',
+      title: t.title,
+      humanSummary: 'Waiting on a blocker task.',
+    }))
+  const openingRows: DisplayRow[] = [...queueItems, ...blockedTaskRows]
+  const hasActionableItems = openingRows.length > 0
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -2808,8 +2827,17 @@ export const ChatPage = () => {
                 <span className="font-mono text-[11px] text-primary">mars</span>
                 {!selectedThreadId && hasActionableItems ? (
                   <OpeningNextMoves
-                    rows={queueItems}
-                    onPick={(row) => handleSelectQueueItem(row.id)}
+                    rows={openingRows}
+                    onPick={(row) => {
+                      if (row.kind === 'blocked') {
+                        // Blocked tasks are not in the action queue; navigate to
+                        // the task detail page so the operator can inspect the
+                        // blocker chain and decide what to do next.
+                        window.location.hash = taskHash(row.id, 'chat')
+                      } else {
+                        handleSelectQueueItem(row.id)
+                      }
+                    }}
                   />
                 ) : (
                   <p className="font-mono text-[14px] text-foreground">

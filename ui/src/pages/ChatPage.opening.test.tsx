@@ -6,7 +6,9 @@
  *   - There is no hero screen; the chat feed is present on first paint.
  *   - When the action queue has actionable items, a grouped queue summary is
  *     shown (blocked-task group + proposal-to-refine group).
- *   - When the queue is genuinely empty, a simple "nothing pressing" invitation
+ *   - When the queue is empty but tasks are blocked, the opening still shows
+ *     the grouped summary (supplement from useTasks snapshot).
+ *   - When genuinely nothing is pending, a simple "nothing pressing" invitation
  *     is shown instead.
  */
 
@@ -107,6 +109,13 @@ vi.mock('@/shared/api', () => ({
   },
 }))
 
+// Controllable useTasks return value: start with null snapshot, override per-test.
+const mockUseTasks = vi.fn()
+
+vi.mock('@/hooks/useTasks', () => ({
+  useTasks: () => mockUseTasks(),
+}))
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -134,17 +143,42 @@ const makeItem = (overrides: Partial<ActionQueueItem> = {}): ActionQueueItem =>
     ...overrides,
   } as ActionQueueItem)
 
+/** Minimal UITask-like shape used to seed the useTasks mock snapshot. */
+const makeUITask = (id: string, title: string, status = 'blocked') => ({
+  id,
+  title,
+  status,
+  role: 'orchestrator' as const,
+  failed: false,
+  dropReason: null,
+  retryCount: 0,
+  blockerTaskId: null,
+  spec: null,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+})
+
+const makeSnapshot = (inProgressTasks: ReturnType<typeof makeUITask>[]) => ({
+  columns: {
+    backlog: [],
+    in_progress: inProgressTasks,
+    done: [],
+  },
+  counts: { inProgress: inProgressTasks.length, todo: 0, done: 0 },
+})
+
 let container: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 
 beforeEach(() => {
-  // Default: empty queue
+  // Default: empty queue and no tasks
   mockUseActionQueue.mockReturnValue({
     items: [],
     error: null,
     projectsError: null,
     projectsEmpty: false,
   })
+  mockUseTasks.mockReturnValue({ snapshot: null, error: null, connected: true })
 
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -176,8 +210,9 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
     expect(container.querySelector('[data-testid="hero-headline"]')).toBeNull()
   })
 
-  it('shows the nothing-pressing fallback when the queue is empty', async () => {
+  it('shows the nothing-pressing fallback when the queue is empty and no tasks are blocked', async () => {
     // mockUseActionQueue already returns empty items from beforeEach
+    // mockUseTasks already returns null snapshot
     await act(async () => {
       root.render(
         <QueryClientProvider client={makeQc()}>
@@ -191,7 +226,7 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
     expect(el?.textContent).toContain("Nothing's pressing right now")
   })
 
-  it('does not show the queue-summary widget when the queue is empty', async () => {
+  it('does not show the queue-summary widget when the queue is empty and no tasks are blocked', async () => {
     await act(async () => {
       root.render(
         <QueryClientProvider client={makeQc()}>
@@ -203,7 +238,7 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
     expect(container.querySelector('[data-testid="opening-next-moves"]')).toBeNull()
   })
 
-  it('shows the queue-summary widget instead of plain text when items exist', async () => {
+  it('shows the queue-summary widget instead of plain text when queue items exist', async () => {
     mockUseActionQueue.mockReturnValue({
       items: [makeItem({ title: 'Deploy job stuck' })],
       error: null,
@@ -316,5 +351,107 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
 
     const chips = container.querySelectorAll('[data-testid="next-move-chip"]')
     expect(chips.length).toBe(2)
+  })
+
+  // ---------------------------------------------------------------------------
+  // Task-data supplement: blocked tasks from useTasks()
+  // ---------------------------------------------------------------------------
+
+  it('shows the queue-summary widget when action queue is empty but tasks are blocked', async () => {
+    // Queue is empty (from beforeEach), but tasks snapshot has a blocked task
+    mockUseTasks.mockReturnValue({
+      snapshot: makeSnapshot([makeUITask('t1', 'Deploy blocked by build')]),
+      error: null,
+      connected: true,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const openingEl = container.querySelector('[data-testid="mars-opening-message"]')
+    expect(openingEl?.querySelector('[data-testid="opening-next-moves"]')).not.toBeNull()
+    // The nothing-pressing text must NOT appear
+    expect(openingEl?.textContent).not.toContain("Nothing's pressing right now")
+  })
+
+  it('shows accurate blocked-task count for tasks from useTasks snapshot', async () => {
+    mockUseTasks.mockReturnValue({
+      snapshot: makeSnapshot([
+        makeUITask('t1', 'Build failed'),
+        makeUITask('t2', 'Deploy waiting'),
+      ]),
+      error: null,
+      connected: true,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const header = container.querySelector('[data-testid="queue-group-header"]')
+    expect(header?.textContent).toContain('2 blocked tasks')
+  })
+
+  it('does not duplicate a blocked task already represented in the action queue', async () => {
+    // Queue has a failed-task item whose entityId matches the blocked task's id
+    mockUseActionQueue.mockReturnValue({
+      items: [makeItem({ id: 'q1', entityId: 't1', title: 'Build failed' })],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+    mockUseTasks.mockReturnValue({
+      snapshot: makeSnapshot([makeUITask('t1', 'Build failed')]),
+      error: null,
+      connected: true,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    // Should show 1 chip (from the queue), not 2 (queue + task)
+    const chips = container.querySelectorAll('[data-testid="next-move-chip"]')
+    expect(chips.length).toBe(1)
+  })
+
+  it('combines queue items and supplemental blocked tasks in a single grouped summary', async () => {
+    mockUseActionQueue.mockReturnValue({
+      items: [makeItem({ id: 'p1', kind: 'draft-proposal', title: 'New idea' })],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+    mockUseTasks.mockReturnValue({
+      snapshot: makeSnapshot([makeUITask('t1', 'Deploy blocked')]),
+      error: null,
+      connected: true,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const headers = container.querySelectorAll('[data-testid="queue-group-header"]')
+    const texts = Array.from(headers).map((h) => h.textContent ?? '')
+    expect(texts.some((t) => t.includes('1 blocked task'))).toBe(true)
+    expect(texts.some((t) => t.includes('1 proposal to refine'))).toBe(true)
   })
 })

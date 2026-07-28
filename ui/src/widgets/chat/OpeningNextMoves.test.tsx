@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { OpeningNextMoves } from './OpeningNextMoves'
-import type { ActionQueueItem } from '@/shared/schemas'
+import type { DisplayRow } from './OpeningNextMoves'
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -13,25 +13,13 @@ import type { ActionQueueItem } from '@/shared/schemas'
 const makeRow = (
   id: string,
   title: string,
-  kind: ActionQueueItem['kind'] = 'failed-task',
-): ActionQueueItem =>
-  ({
-    id,
-    kind,
-    entityId: `entity-${id}`,
-    priority: 'high',
-    title,
-    body: '',
-    at: '2026-07-27T00:00:00.000Z',
-    dag: null,
-    errorKind: 'unknown',
-    actions: [],
-    diagnosis: null,
-    failureReasonCode: null,
-    humanSummary: '',
-    verbs: [],
-    decisions: [],
-  }) as ActionQueueItem
+  kind = 'failed-task',
+): DisplayRow => ({
+  id,
+  kind,
+  title,
+  humanSummary: '',
+})
 
 // ---------------------------------------------------------------------------
 // Structure tests (SSR)
@@ -106,6 +94,28 @@ describe('OpeningNextMoves — structure', () => {
     expect(html).toContain('2 blocked tasks')
     expect(html).toContain('1 proposal to refine')
   })
+
+  it('groups synthetic blocked-task rows (kind="blocked") in the blocked-task group', () => {
+    const rows = [
+      makeRow('t1', 'Waiting for build', 'blocked'),
+      makeRow('t2', 'Waiting for deploy', 'blocked'),
+    ]
+    const html = renderToStaticMarkup(<OpeningNextMoves rows={rows} onPick={() => {}} />)
+    expect(html).toContain('2 blocked tasks')
+    expect(html).toContain('Waiting for build')
+    expect(html).toContain('Waiting for deploy')
+  })
+
+  it('renders the first chip in each group with foreground color class', () => {
+    const rows = [
+      makeRow('b1', 'Task A', 'failed-task'),
+      makeRow('b2', 'Task B', 'failed-task'),
+    ]
+    const html = renderToStaticMarkup(<OpeningNextMoves rows={rows} onPick={() => {}} />)
+    // First chip should have text-foreground, second should have text-muted-foreground
+    expect(html).toContain('text-foreground')
+    expect(html).toContain('text-muted-foreground')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -160,6 +170,36 @@ describe('OpeningNextMoves — interaction', () => {
     })
 
     expect(onPick).toHaveBeenCalledWith(proposal)
+
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+  })
+
+  it('calls onPick with synthetic blocked-task rows', async () => {
+    const onPick = mock()
+    const blockedRow: DisplayRow = {
+      id: 'task-xyz',
+      kind: 'blocked',
+      title: 'Deploy blocked by build',
+      humanSummary: 'Waiting on a blocker task.',
+    }
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(<OpeningNextMoves rows={[blockedRow]} onPick={onPick} />)
+    })
+
+    const chip = container.querySelector('[data-testid="next-move-chip"]') as HTMLButtonElement
+    await act(async () => {
+      chip.click()
+    })
+
+    expect(onPick).toHaveBeenCalledWith(blockedRow)
 
     await act(async () => {
       root.unmount()
