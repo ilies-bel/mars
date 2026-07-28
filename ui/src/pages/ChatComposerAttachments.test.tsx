@@ -29,12 +29,11 @@ const mockUploadAttachment = vi.fn().mockResolvedValue({
   mimeType: 'image/png',
   name: 'test.png',
 })
-const mockPostMessage = vi.fn().mockResolvedValue(undefined)
 const mockStopThread = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@/shared/api', () => ({
-  uploadChatAttachment: (...args: unknown[]) => mockUploadAttachment(...args),
-  postChatMessage: (...args: unknown[]) => mockPostMessage(...args),
+  uploadAttachment: (...args: unknown[]) => mockUploadAttachment(...args),
+  postChatMessage: vi.fn().mockResolvedValue(undefined),
   stopChatThread: (...args: unknown[]) => mockStopThread(...args),
 }))
 
@@ -50,6 +49,7 @@ const mountComposer = (
   overrides: Partial<{
     disabled: boolean
     onSendOverride: (msg: string) => void
+    onSend: (text: string, attachments?: unknown[]) => Promise<void>
   }> = {},
 ): { container: HTMLDivElement; unmount: () => void } => {
   const div = document.createElement('div')
@@ -65,6 +65,7 @@ const mountComposer = (
           disabled: overrides.disabled ?? false,
           onInitialTextConsumed: () => {},
           onSendOverride: overrides.onSendOverride,
+          onSend: overrides.onSend,
         }),
       ),
     )
@@ -94,7 +95,7 @@ describe('Composer – attachment chips', () => {
 
   it('renders the attach button and file input', () => {
     const { container, unmount } = mountComposer()
-    expect(container.querySelector('[data-testid="attach-button"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="attach-btn"]')).toBeTruthy()
     expect(container.querySelector('[data-testid="file-input"]')).toBeTruthy()
     unmount()
   })
@@ -136,7 +137,7 @@ describe('Composer – attachment chips', () => {
     expect(container.querySelectorAll('[data-testid="attachment-chip"]').length).toBe(1)
 
     // Click the remove button on the chip
-    const removeBtn = container.querySelector<HTMLButtonElement>('[data-testid="attachment-chip-remove"]')!
+    const removeBtn = container.querySelector<HTMLButtonElement>('[data-testid="remove-attachment"]')!
     await act(async () => {
       removeBtn.click()
     })
@@ -175,8 +176,9 @@ describe('Composer – send flow with attachments', () => {
     vi.clearAllMocks()
   })
 
-  it('calls uploadChatAttachment before postChatMessage when an attachment is present', async () => {
-    const { container, unmount } = mountComposer()
+  it('calls uploadAttachment before onSend when an attachment is present', async () => {
+    const mockOnSend = vi.fn().mockResolvedValue(undefined)
+    const { container, unmount } = mountComposer({ onSend: mockOnSend })
     const input = container.querySelector<HTMLInputElement>('[data-testid="file-input"]')!
     const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
 
@@ -201,10 +203,8 @@ describe('Composer – send flow with attachments', () => {
       textarea.dispatchEvent(new Event('change', { bubbles: true }))
     })
 
-    // Click Send
-    const sendBtn = Array.from(container.querySelectorAll('button')).find(
-      b => b.textContent?.trim() === 'Send',
-    )!
+    // Click Send (the Composer uses PromptInputSubmit with data-testid="send-btn")
+    const sendBtn = container.querySelector<HTMLButtonElement>('[data-testid="send-btn"]')!
 
     await act(async () => {
       sendBtn.click()
@@ -214,19 +214,18 @@ describe('Composer – send flow with attachments', () => {
 
     // Upload was called with the right file
     expect(mockUploadAttachment).toHaveBeenCalledWith('thread-1', file, undefined)
-    // Message was posted with the attachment ID returned by the upload
-    expect(mockPostMessage).toHaveBeenCalledWith('thread-1', expect.any(String), undefined, ['att-1'])
-    // The order: upload is called, then its resolved ID is used in postMessage.
-    // We verify this by checking the attachment ID 'att-1' appears in the post call —
-    // it only gets there if upload ran first and returned it.
-    const postCall = mockPostMessage.mock.calls[0]
-    expect(postCall?.[3]).toEqual(['att-1'])
+    // onSend was called — the attachment ID only appears if upload ran first and
+    // returned it, proving the upload-before-send ordering.
+    expect(mockOnSend).toHaveBeenCalledWith('hello with audio', [
+      expect.objectContaining({ id: 'att-1' }),
+    ])
 
     unmount()
   })
 
-  it('does not call uploadChatAttachment when no attachments are selected', async () => {
-    const { container, unmount } = mountComposer()
+  it('does not call uploadAttachment when no attachments are selected', async () => {
+    const mockOnSend = vi.fn().mockResolvedValue(undefined)
+    const { container, unmount } = mountComposer({ onSend: mockOnSend })
     const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
 
     await act(async () => {
@@ -237,9 +236,7 @@ describe('Composer – send flow with attachments', () => {
       textarea.dispatchEvent(new Event('change', { bubbles: true }))
     })
 
-    const sendBtn = Array.from(container.querySelectorAll('button')).find(
-      b => b.textContent?.trim() === 'Send',
-    )!
+    const sendBtn = container.querySelector<HTMLButtonElement>('[data-testid="send-btn"]')!
 
     await act(async () => {
       sendBtn.click()
@@ -247,8 +244,8 @@ describe('Composer – send flow with attachments', () => {
     })
 
     expect(mockUploadAttachment).not.toHaveBeenCalled()
-    // No attachments → empty array is passed
-    expect(mockPostMessage).toHaveBeenCalledWith('thread-1', 'just text', undefined, [])
+    // No attachments → onSend called without attachments
+    expect(mockOnSend).toHaveBeenCalledWith('just text', undefined)
 
     unmount()
   })

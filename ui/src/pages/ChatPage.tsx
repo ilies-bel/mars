@@ -1989,6 +1989,7 @@ export const Composer = ({
         <input
           ref={fileInputRef}
           type="file"
+          data-testid="file-input"
           accept="image/*,audio/*,video/*"
           multiple
           className="hidden"
