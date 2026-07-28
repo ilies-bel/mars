@@ -14,7 +14,7 @@
  * `CodexApiError` kinds, never HTTP details.
  */
 
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -137,10 +137,32 @@ export const loadCodexAuth = async (): Promise<CodexAuth> => {
 }
 
 /**
- * Exchange the stored refresh token for a fresh access token and persist the
- * rotated credentials back to `auth.json` (so the Codex CLI and future daemon
- * runs both see them). Throws `CodexApiError('auth')` when refresh fails —
- * the user must `codex login` again.
+ * Exchange the stored refresh token for a fresh access token and return the
+ * refreshed credentials **in memory only**.
+ *
+ * WHY we do NOT write back to `auth.json` (ADR-0087):
+ *
+ *   `auth.json` is owned by the user's `codex` CLI (`codex login`). Writing
+ *   the rotated tokens back risks two failure modes:
+ *
+ *   1. **Race**: if the Codex CLI concurrently refreshes the same token the
+ *      server rotates the refresh_token in the response; whichever write lands
+ *      last invalidates the other party's copy, breaking the CLI login.
+ *   2. **Partial write**: a crash between read-parse-mutate-write leaves
+ *      auth.json in a broken state even though the user's session was valid.
+ *
+ *   Access tokens issued by the ChatGPT auth service are long-lived (~8 days),
+ *   so expiry during a single daemon lifetime is uncommon. When it does occur
+ *   the 401 surfaces via the existing re-authenticate action-queue banner —
+ *   the user runs `codex login` once and is back. That is a better outcome
+ *   than silently corrupting their login.
+ *
+ *   In-memory refresh is still valuable: if a token expires while the daemon
+ *   is running, the refreshed token carries the session for the rest of the
+ *   process lifetime without requiring a manual re-login mid-session.
+ *
+ * Throws `CodexApiError('auth')` when refresh fails — the user must run
+ * `codex login` again.
  */
 export const refreshCodexAuth = async (auth: CodexAuth): Promise<CodexAuth> => {
   if (!auth.refreshToken) {
@@ -164,31 +186,15 @@ export const refreshCodexAuth = async (auth: CodexAuth): Promise<CodexAuth> => {
   if (!res.ok) {
     throw new CodexApiError('auth', 'Codex token refresh was rejected — run `codex login`.', res.status)
   }
-  const body = (await res.json()) as { access_token?: string; refresh_token?: string; id_token?: string }
+  const body = (await res.json()) as { access_token?: string; refresh_token?: string }
   if (typeof body.access_token !== 'string') {
     throw new CodexApiError('auth', 'Codex token refresh returned no access token — run `codex login`.')
   }
-  const refreshed: CodexAuth = {
+  return {
     accessToken: body.access_token,
     accountId: auth.accountId,
     refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : auth.refreshToken,
   }
-  // Best-effort persistence — an unwritable auth.json only costs a refresh next run.
-  try {
-    const path = authFilePath()
-    const onDisk = JSON.parse(await readFile(path, 'utf8')) as { tokens?: Record<string, unknown> }
-    onDisk.tokens = {
-      ...onDisk.tokens,
-      access_token: refreshed.accessToken,
-      refresh_token: refreshed.refreshToken,
-      ...(typeof body.id_token === 'string' ? { id_token: body.id_token } : {}),
-    }
-    ;(onDisk as Record<string, unknown>).last_refresh = new Date().toISOString()
-    await writeFile(path, JSON.stringify(onDisk, null, 2))
-  } catch {
-    // ignore — the in-memory tokens are still valid for this run
-  }
-  return refreshed
 }
 
 // ── Streaming request ─────────────────────────────────────────────────────────
