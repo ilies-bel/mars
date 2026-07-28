@@ -50,7 +50,7 @@ export const RESCUE_OPERATOR_SYSTEM_PROMPT =
   'issue, temporary resource limit) and a fresh run from scratch is ' +
   'likely to succeed.\n' +
   '\n' +
-  '2. **continue** — Run `mars step continue <task-id>`.\n' +
+  '2. **continue** — Run `mars continue <task-id>`.\n' +
   '   Use when the worktree contains salvageable partial work and ' +
   'resuming from the existing worktree is the right approach.\n' +
   '\n' +
