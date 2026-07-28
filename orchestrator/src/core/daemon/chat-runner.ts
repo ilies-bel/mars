@@ -45,6 +45,7 @@ import {
   CodexApiError,
   loadCodexAuth,
   refreshCodexAuth,
+  resolveCodexOAuthConfig,
   streamCodexResponse,
   type CodexAuth,
   type FunctionToolDef,
@@ -292,9 +293,6 @@ export const buildMcpToolDefs = (mcpTools: readonly McpToolInfo[]): FunctionTool
   return defs
 }
 
-const CHAT_MODEL = 'gpt-5.5'
-/** Upper bound on model↔tool round-trips within one chat turn. */
-const MAX_TOOL_TURNS = 40
 /** Per-call cap on stdout/stderr fed back to the model and persisted. */
 const TOOL_OUTPUT_CHAR_CAP = 10_000
 /** Rough cap on the serialized replayed transcript; oldest messages drop first. */
@@ -538,7 +536,7 @@ export class ChatRunner {
       this.mcp.describe(repoRoot),
     ])
     return {
-      model: CHAT_MODEL,
+      model: resolveCodexOAuthConfig().model,
       systemPrompt: resolved.prompt,
       systemPromptSource: resolved.source,
       builtinTools: CHAT_TOOLS.map((t) => ({ name: t.name, description: t.description })),
@@ -742,6 +740,7 @@ export class ChatRunner {
     attachments: AttachmentInfo[] | undefined,
     retryCount: number,
   ): Promise<void> {
+    const cfg = resolveCodexOAuthConfig()
     const accumulatedSegments: ChatSegment[] = []
     const broadcastSegment = (seg: ChatSegment): void => {
       if (seg.type === 'text' && seg.text.length === 0) return
@@ -857,7 +856,7 @@ export class ChatRunner {
       const timer = setTimeout(() => {
         isTimeout = true
         abort.abort()
-      }, CHAT_TIMEOUT_MS)
+      }, cfg.requestTimeoutMs)
 
       try {
         const [resolvedPrompt, skills, mcpTools] = await Promise.all([
@@ -876,7 +875,7 @@ export class ChatRunner {
         let sawUsage = false
         const usageTotals = { input: 0, output: 0, cached: 0 }
 
-        for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+        for (let turn = 0; turn < cfg.maxToolTurns; turn++) {
           type PendingCall = { callId: string; tool: string; input: unknown; seg: ChatSegment & { type: 'tool_use' } }
           const pendingCalls: PendingCall[] = []
 
@@ -885,7 +884,7 @@ export class ChatRunner {
             try {
               await streamCodexResponse({
                 auth,
-                model: CHAT_MODEL,
+                model: cfg.model,
                 instructions,
                 input,
                 tools,

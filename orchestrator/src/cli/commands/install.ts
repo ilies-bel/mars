@@ -43,6 +43,11 @@ const KNOWN_MARS_OVERRIDE_NOTES: ReadonlyMap<string, string> = new Map([
   ['MARS_WORKER_PROVIDER', 'worker provider override (coder only)'],
   ['MARS_REFLECT_DISABLED', 'disables reflection tracking'],
   ['MARS_RECOVERY_DISABLED', 'disables failure recovery'],
+  ['MARS_CODEX_BASE_URL', 'chat connector base URL override (default: https://chatgpt.com/backend-api/codex)'],
+  ['MARS_CHAT_MODEL', 'chat model override (default: gpt-5.5)'],
+  ['MARS_CHAT_EFFORT', 'chat reasoning effort override (default: high)'],
+  ['MARS_CHAT_MAX_TOOL_TURNS', 'chat max tool turns per run override (default: 40)'],
+  ['MARS_CHAT_REQUEST_TIMEOUT_MS', 'chat per-run wall-clock timeout override in ms (default: 600000)'],
 ])
 
 /**

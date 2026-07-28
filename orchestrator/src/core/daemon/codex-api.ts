@@ -21,10 +21,58 @@ import { randomUUID } from 'node:crypto'
 
 // ── Endpoint + OAuth constants ────────────────────────────────────────────────
 
-const CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses'
+const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api/codex'
 const OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token'
 /** OAuth client id of the Codex CLI's ChatGPT app — required for token refresh. */
 const CODEX_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
+
+// ── Env-driven config ─────────────────────────────────────────────────────────
+
+const _env = (key: string): string | undefined => {
+  const raw = process.env[key]
+  return raw !== undefined && raw.trim().length > 0 ? raw.trim() : undefined
+}
+
+const _numericEnv = (key: string, fallback: number): number => {
+  const raw = _env(key)
+  if (raw === undefined) return fallback
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+/** Resolved chat-connector tunables. Env-driven so operators can tune without a rebuild. */
+export interface CodexOAuthConfig {
+  /** Base URL for Codex API requests (the `/responses` suffix is appended internally). */
+  baseUrl: string
+  /** Model identifier forwarded to the Responses API. */
+  model: string
+  /** Reasoning effort passed to the API (`'high'` by default — the current hardcoded value). */
+  effort: string
+  /** Upper bound on model↔tool round-trips within one chat turn. */
+  maxToolTurns: number
+  /** Per-run wall-clock timeout in milliseconds. */
+  requestTimeoutMs: number
+}
+
+/**
+ * Resolve chat-connector tunables from env, falling back to the current
+ * hardcoded defaults so behaviour is unchanged when no vars are set.
+ *
+ * | Env var                       | Default                             |
+ * |-------------------------------|-------------------------------------|
+ * | MARS_CODEX_BASE_URL           | https://chatgpt.com/backend-api/codex |
+ * | MARS_CHAT_MODEL               | gpt-5.5                             |
+ * | MARS_CHAT_EFFORT              | high                                |
+ * | MARS_CHAT_MAX_TOOL_TURNS      | 40                                  |
+ * | MARS_CHAT_REQUEST_TIMEOUT_MS  | 600_000 (10 min)                    |
+ */
+export const resolveCodexOAuthConfig = (): CodexOAuthConfig => ({
+  baseUrl: (_env('MARS_CODEX_BASE_URL') ?? DEFAULT_BASE_URL).replace(/\/$/, ''),
+  model: _env('MARS_CHAT_MODEL') ?? 'gpt-5.5',
+  effort: _env('MARS_CHAT_EFFORT') ?? 'high',
+  maxToolTurns: _numericEnv('MARS_CHAT_MAX_TOOL_TURNS', 40),
+  requestTimeoutMs: _numericEnv('MARS_CHAT_REQUEST_TIMEOUT_MS', 10 * 60 * 1000),
+})
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -209,9 +257,10 @@ const RATE_LIMIT_RE = /(rate.?limit|usage.?limit|quota|too many requests)/i
  * callers can distinguish user stops from provider failures.
  */
 export const streamCodexResponse = async (opts: StreamCodexResponseOpts): Promise<void> => {
+  const { baseUrl, effort } = resolveCodexOAuthConfig()
   let res: Response
   try {
-    res = await fetch(CODEX_RESPONSES_URL, {
+    res = await fetch(`${baseUrl}/responses`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${opts.auth.accessToken}`,
@@ -229,7 +278,7 @@ export const streamCodexResponse = async (opts: StreamCodexResponseOpts): Promis
         tools: opts.tools,
         tool_choice: 'auto',
         parallel_tool_calls: false,
-        reasoning: { effort: 'high', summary: 'auto' },
+        reasoning: { effort, summary: 'auto' },
         store: false,
         stream: true,
         include: [],

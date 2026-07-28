@@ -1157,6 +1157,38 @@ describe('ChatRunner state machine', () => {
     expect(CHAT_TIMEOUT_MS).toBe(10 * 60 * 1000)
   })
 
+  // ── Env-driven tunables ───────────────────────────────────────────────────
+
+  it('uses MARS_CHAT_MODEL env var as the model forwarded to the Responses API', async () => {
+    vi.stubEnv('MARS_CHAT_MODEL', 'gpt-custom')
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(mockStream.mock.calls[0][0].model).toBe('gpt-custom')
+    vi.unstubAllEnvs()
+  })
+
+  it('stops the tool loop after MARS_CHAT_MAX_TOOL_TURNS iterations', async () => {
+    // With max=1, the loop runs exactly one turn (stream + tool execution),
+    // then exits without the second stream call that would get the final reply.
+    vi.stubEnv('MARS_CHAT_MAX_TOOL_TURNS', '1')
+
+    // Only set up the one call that will actually be consumed — a second
+    // mockImplementationOnce would stay in the queue and bleed into later tests.
+    mockStream.mockImplementationOnce(streamEmitting(functionCallEvent('call-1', 'echo hi'), completedEvent()))
+    mockShell.mockResolvedValue({ exitCode: 0, stdout: 'hi', stderr: '' })
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'run', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    // Only 1 stream call happened — the second (post-tool reply) was never made.
+    expect(mockStream).toHaveBeenCalledTimes(1)
+    vi.unstubAllEnvs()
+  })
+
   it('shutdownDrain finalises an active run with the shutdown message when no text was accumulated', async () => {
     mockStream.mockImplementation(streamHangingUntilAbort())
 
