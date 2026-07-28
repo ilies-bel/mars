@@ -5,7 +5,7 @@
  * Covers:
  * 1. Attachment chip appears when a file is selected via the "+" file picker.
  * 2. Removing a chip removes it from the list.
- * 3. Send flow: uploadChatAttachment is called before postChatMessage.
+ * 3. Send flow: uploadAttachment is called before onSend (which drives postChatMessage).
  * 4. Mic button is hidden when the Web Speech API is not available.
  *
  * Uses the happy-dom environment for DOM APIs and vi.mock to prevent real
@@ -18,6 +18,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createElement } from 'react'
 import { Composer } from './ChatPage'
+import type { AttachmentInfo } from '@/shared/api'
 
 // ---------------------------------------------------------------------------
 // Module mocks — hoisted before imports run.
@@ -28,7 +29,8 @@ const mockUploadAttachment = vi.fn().mockResolvedValue({
   path: 'uploads/test.png',
   mimeType: 'image/png',
   name: 'test.png',
-})
+  size: 100,
+} satisfies AttachmentInfo)
 const mockStopThread = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@/shared/api', () => ({
@@ -36,6 +38,12 @@ vi.mock('@/shared/api', () => ({
   postChatMessage: vi.fn().mockResolvedValue(undefined),
   stopChatThread: (...args: unknown[]) => mockStopThread(...args),
 }))
+
+// ---------------------------------------------------------------------------
+// Per-test mocks
+// ---------------------------------------------------------------------------
+
+let mockOnSend: ReturnType<typeof vi.fn>
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -48,8 +56,6 @@ const makeQc = () =>
 const mountComposer = (
   overrides: Partial<{
     disabled: boolean
-    onSendOverride: (msg: string) => void
-    onSend: (text: string, attachments?: unknown[]) => Promise<void>
   }> = {},
 ): { container: HTMLDivElement; unmount: () => void } => {
   const div = document.createElement('div')
@@ -64,8 +70,7 @@ const mountComposer = (
           threadId: 'thread-1',
           disabled: overrides.disabled ?? false,
           onInitialTextConsumed: () => {},
-          onSendOverride: overrides.onSendOverride,
-          onSend: overrides.onSend,
+          onSend: mockOnSend,
         }),
       ),
     )
@@ -91,6 +96,7 @@ const makeFile = (name: string, type: string): File =>
 describe('Composer – attachment chips', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockOnSend = vi.fn().mockResolvedValue(undefined)
   })
 
   it('renders the attach button and file input', () => {
@@ -174,11 +180,11 @@ describe('Composer – attachment chips', () => {
 describe('Composer – send flow with attachments', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockOnSend = vi.fn().mockResolvedValue(undefined)
   })
 
   it('calls uploadAttachment before onSend when an attachment is present', async () => {
-    const mockOnSend = vi.fn().mockResolvedValue(undefined)
-    const { container, unmount } = mountComposer({ onSend: mockOnSend })
+    const { container, unmount } = mountComposer()
     const input = container.querySelector<HTMLInputElement>('[data-testid="file-input"]')!
     const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
 
@@ -212,10 +218,11 @@ describe('Composer – send flow with attachments', () => {
       await new Promise(r => setTimeout(r, 100))
     })
 
-    // Upload was called with the right file
+    // Upload was called with the right file (threadId, file, projectId=undefined)
     expect(mockUploadAttachment).toHaveBeenCalledWith('thread-1', file, undefined)
-    // onSend was called — the attachment ID only appears if upload ran first and
-    // returned it, proving the upload-before-send ordering.
+    // onSend was called with the text and the uploaded attachment metadata.
+    // The attachment id only appears here if upload ran first and returned it,
+    // which proves the upload-before-send ordering.
     expect(mockOnSend).toHaveBeenCalledWith('hello with audio', [
       expect.objectContaining({ id: 'att-1' }),
     ])
@@ -224,8 +231,7 @@ describe('Composer – send flow with attachments', () => {
   })
 
   it('does not call uploadAttachment when no attachments are selected', async () => {
-    const mockOnSend = vi.fn().mockResolvedValue(undefined)
-    const { container, unmount } = mountComposer({ onSend: mockOnSend })
+    const { container, unmount } = mountComposer()
     const textarea = container.querySelector<HTMLTextAreaElement>('textarea')!
 
     await act(async () => {
@@ -244,7 +250,7 @@ describe('Composer – send flow with attachments', () => {
     })
 
     expect(mockUploadAttachment).not.toHaveBeenCalled()
-    // No attachments → onSend called without attachments
+    // No attachments → onSend is called with text and undefined attachments
     expect(mockOnSend).toHaveBeenCalledWith('just text', undefined)
 
     unmount()
@@ -256,6 +262,11 @@ describe('Composer – send flow with attachments', () => {
 // ---------------------------------------------------------------------------
 
 describe('Composer – mic button', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockOnSend = vi.fn().mockResolvedValue(undefined)
+  })
+
   it('hides the mic button when SpeechRecognition is not available', () => {
     // happy-dom does not expose SpeechRecognition
     const { container, unmount } = mountComposer()

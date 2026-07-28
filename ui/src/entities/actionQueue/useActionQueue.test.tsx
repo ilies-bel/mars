@@ -79,7 +79,7 @@ describe('ChatPage sidebar – empty registry', () => {
     })
   })
 
-  it('renders the hero headline instead of a blank panel', () => {
+  it('renders the seeded feed instead of a blank panel', () => {
     const html = renderPage()
     expect(html).toContain('seeded-feed')
   })
@@ -111,9 +111,10 @@ describe('ChatPage sidebar – stale UI server (fetchProjects 404)', () => {
     })
   })
 
-  it('still renders the hero (projectsError no longer surfaces a dedicated panel)', () => {
+  it('still renders the seeded feed (projectsError no longer surfaces a dedicated panel)', () => {
     const html = renderPage()
     expect(html).toContain('seeded-feed')
+    expect(html).toContain('mars-opening-message')
     expect(html).toContain('hero-composer')
   })
 
@@ -142,7 +143,7 @@ describe('ChatPage sidebar – option (a) fallback: empty registry + items from 
     })
   })
 
-  it('renders the hero (not a blank panel) when the server default answered with items', () => {
+  it('renders the seeded feed (not a blank panel) when the server default answered with items', () => {
     const html = renderPage()
     expect(html).toContain('seeded-feed')
   })
@@ -172,7 +173,7 @@ describe('ChatPage sidebar – genuine "no items" (registry has projects, queue 
     })
   })
 
-  it('renders the hero when registry has projects but queue is empty', () => {
+  it('renders the seeded feed when registry has projects but queue is empty', () => {
     const html = renderPage()
     expect(html).toContain('seeded-feed')
   })
