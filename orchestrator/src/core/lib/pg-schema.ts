@@ -156,7 +156,6 @@ const DDL: readonly string[] = [
     env_restart_count    bigint NOT NULL DEFAULT 0,
     arc_rescue_attempts  bigint NOT NULL DEFAULT 0,
     requeue_anchor_ms    bigint,
-    deferrable           bigint NOT NULL DEFAULT 0,
     created_at           text   NOT NULL,
     updated_at           text   NOT NULL
   )`,
@@ -164,8 +163,6 @@ const DDL: readonly string[] = [
   // added. IF NOT EXISTS makes this idempotent on fresh databases (where the
   // column already exists from the CREATE TABLE above).
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requeue_anchor_ms bigint`,
-  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS deferrable bigint NOT NULL DEFAULT 0`,
-  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS stall_diagnostics jsonb`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created
      ON tasks(priority DESC, created_at ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for
