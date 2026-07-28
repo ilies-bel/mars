@@ -6,15 +6,15 @@
  *     top-level `tokens.account_id`, but the id is always present in the
  *     access token's own claims. A missing field is not a broken login and
  *     must not force the user back through `codex login`.
- *  2. That `refreshCodexAuth` never writes back to `auth.json` (ADR-0087).
- *     The daemon refreshes in-memory for the process lifetime only, leaving
- *     the file the user's own `codex` CLI owns untouched to avoid a race that
- *     would corrupt their login.
+ *  2. That `refreshCodexAuth` writes rotated credentials back to `auth.json`
+ *     atomically (ADR-0088 / operator decision option a, superseding ADR-0087).
+ *     Only tokens explicitly returned by the server are persisted; a failed
+ *     write is swallowed so the run continues on the in-memory tokens.
  *  3. That `resolveCodexOAuthConfig` reads the chat connector tunables from
  *     the environment, falling back to the documented defaults when unset.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, readFile, rm, chmod } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -148,43 +148,98 @@ describe('loadCodexAuth', () => {
 })
 
 describe('refreshCodexAuth', () => {
-  it('returns refreshed credentials from the OAuth response without modifying auth.json', async () => {
-    // Arrange: write initial auth.json with a refresh token
-    const originalTokens = {
+  it('returns refreshed in-memory credentials and writes the rotated token to auth.json', async () => {
+    await writeAuth({
       access_token: tokenWithAccountId('acct-original'),
       account_id: 'acct-original',
       refresh_token: 'rt-original',
-    }
-    await writeAuth(originalTokens)
-    const originalOnDisk = await readFile(join(home, 'auth.json'), 'utf8')
+    })
 
-    // Simulate the OAuth token endpoint returning a new access token
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           access_token: tokenWithAccountId('acct-original'),
           refresh_token: 'rt-rotated',
-          id_token: 'id-new',
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       ),
     )
 
     const staleAuth = await loadCodexAuth()
-
-    // Act
     const refreshed = await refreshCodexAuth(staleAuth)
 
-    // Assert: in-memory result is the new token
+    // In-memory result carries the new tokens.
     expect(refreshed.accessToken).toBe(tokenWithAccountId('acct-original'))
     expect(refreshed.refreshToken).toBe('rt-rotated')
     expect(refreshed.accountId).toBe('acct-original')
 
-    // Assert: auth.json on disk is UNCHANGED (the daemon must not touch it)
-    const afterOnDisk = await readFile(join(home, 'auth.json'), 'utf8')
-    expect(afterOnDisk).toBe(originalOnDisk)
+    // auth.json on disk is updated with the server-issued tokens.
+    const onDisk = JSON.parse(await readFile(join(home, 'auth.json'), 'utf8')) as {
+      tokens: { access_token: string; refresh_token: string }
+    }
+    expect(onDisk.tokens.access_token).toBe(tokenWithAccountId('acct-original'))
+    expect(onDisk.tokens.refresh_token).toBe('rt-rotated')
 
-    fetchSpy.mockRestore()
+    vi.restoreAllMocks()
+  })
+
+  it('leaves the on-disk refresh_token unchanged when the server does not return one', async () => {
+    await writeAuth({
+      access_token: tokenWithAccountId('acct-a'),
+      account_id: 'acct-a',
+      refresh_token: 'rt-keep-me',
+    })
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        // Server returns a new access token but no refresh_token.
+        JSON.stringify({ access_token: tokenWithAccountId('acct-a') }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    const staleAuth = await loadCodexAuth()
+    const refreshed = await refreshCodexAuth(staleAuth)
+
+    // In-memory: falls back to the prior refresh token so the process stays alive.
+    expect(refreshed.refreshToken).toBe('rt-keep-me')
+
+    // On-disk: the existing refresh_token is preserved, not overwritten.
+    const onDisk = JSON.parse(await readFile(join(home, 'auth.json'), 'utf8')) as {
+      tokens: { refresh_token: string }
+    }
+    expect(onDisk.tokens.refresh_token).toBe('rt-keep-me')
+
+    vi.restoreAllMocks()
+  })
+
+  it('does not throw when auth.json is unwritable', async () => {
+    await writeAuth({
+      access_token: tokenWithAccountId('acct-b'),
+      account_id: 'acct-b',
+      refresh_token: 'rt-b',
+    })
+    // Make auth.json read-only so the write-back will fail.
+    await chmod(join(home, 'auth.json'), 0o444)
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ access_token: tokenWithAccountId('acct-b'), refresh_token: 'rt-b-new' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+
+    const auth = await loadCodexAuth()
+
+    // The failed disk write must not propagate — in-memory tokens are still valid.
+    await expect(refreshCodexAuth(auth)).resolves.toMatchObject({
+      accessToken: tokenWithAccountId('acct-b'),
+      refreshToken: 'rt-b-new',
+    })
+
+    vi.restoreAllMocks()
+    // Restore permissions so the temp-dir cleanup in afterEach can delete it.
+    await chmod(join(home, 'auth.json'), 0o644)
   })
 
   it('throws an auth error when no refresh token is available', async () => {
