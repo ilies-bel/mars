@@ -42,9 +42,9 @@ const fakeTracker = (overrides: Partial<TaskFlightTracker> = {}): TaskFlightTrac
  */
 const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
   deps: DaemonDeps
-  state: { accepting: boolean; paused: boolean; drained: number; shutdownCalls: boolean[] }
+  state: { accepting: boolean; paused: boolean; persisted: boolean | null; drained: number; shutdownCalls: boolean[] }
 } => {
-  const state = { accepting: true, paused: false, drained: 0, shutdownCalls: [] as boolean[] }
+  const state = { accepting: true, paused: false, persisted: null as boolean | null, drained: 0, shutdownCalls: [] as boolean[] }
   const notImpl = (name: string) => () => {
     throw new Error(`unexpected call to ${name}`)
   }
@@ -65,6 +65,9 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     getIsPaused: () => state.paused,
     setIsPaused: (v) => {
       state.paused = v
+    },
+    persistIsPaused: (v) => {
+      state.persisted = v
     },
     drain: async () => {
       state.drained += 1
@@ -228,21 +231,26 @@ describe('inline-case leaves reach live closure state', () => {
 })
 
 describe('pause / resume', () => {
-  it('pause sets isPaused and returns inFlight count', async () => {
+  it('pause sets isPaused, persists it, and returns inFlight count', async () => {
     const { deps, state } = makeDeps({ tracker: fakeTracker({ inFlightCount: () => 3 }) })
     expect(state.paused).toBe(false)
+    expect(state.persisted).toBeNull()
     const res = await dispatchRpc(rpcRegistry, { op: 'pause' }, deps)
     expect(res).toEqual({ ok: true, data: { paused: true, inFlight: 3 } })
     expect(state.paused).toBe(true)
+    // persistIsPaused must be called so the flag survives a daemon restart
+    expect(state.persisted).toBe(true)
   })
 
-  it('resume clears isPaused and kicks drain', async () => {
+  it('resume clears isPaused, persists the clear, and kicks drain', async () => {
     const { deps, state } = makeDeps()
     // Start paused
     state.paused = true
     const res = await dispatchRpc(rpcRegistry, { op: 'resume' }, deps)
     expect(res).toEqual({ ok: true, data: { paused: false } })
     expect(state.paused).toBe(false)
+    // persistIsPaused(false) must be called so the daemon does not come back paused
+    expect(state.persisted).toBe(false)
     // drain() was called once by resumeHandler
     expect(state.drained).toBe(1)
   })

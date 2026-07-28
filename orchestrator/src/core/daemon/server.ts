@@ -97,7 +97,12 @@ import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, typ
 import { RETENTION_MAX_ROWS_DEFAULT } from '../lib/retention-prune'
 import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForProcessExit } from './paths'
-import { applyControlLevers, loadDaemonConfig } from './config'
+import {
+  applyControlLevers,
+  loadDaemonConfig,
+  persistPaused,
+  readPersistedPaused,
+} from './config'
 import { setInstallSemCap } from '../lib/worktree-install'
 import { probeDuckDBLock } from './duckdb-lock'
 import {
@@ -816,8 +821,10 @@ export const startDaemon = async (
   // When true, the dispatch loop is suspended by an operator `mars daemon pause`.
   // Unlike acceptingWork=false (shutdown), tasks added while paused still reach
   // the pending sets so resume immediately dispatches them. In-flight tasks
-  // continue to completion. Does NOT survive a daemon restart.
-  let isPaused = false
+  // continue to completion. Persisted to daemon.json so the intent survives a
+  // daemon auto-respawn (ADR-0058): a new process coming up unpaused could
+  // trigger a merge-step git reset --hard on uncommitted operator work.
+  let isPaused = readPersistedPaused()
 
   // Per-kind concurrency caps. glossary-write and adr-add share one pool
   // because they both contend on the same merge lock downstream — a second
@@ -845,6 +852,11 @@ export const startDaemon = async (
   log(
     `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit} setup-install=${initialCaps.setupInstall}`,
   )
+  if (isPaused) {
+    log(
+      '[pause] restored persisted paused state from daemon.json — dispatch suspended. Run `mars daemon resume` to re-enable dispatch.',
+    )
+  }
 
   // Drain single-flight gate. While `drainRunning` is true, a second call
   // sets `drainAgain` and returns; the running drain re-runs once it finishes.
@@ -3311,6 +3323,9 @@ export const startDaemon = async (
     getIsPaused: () => isPaused,
     setIsPaused: (value: boolean) => {
       isPaused = value
+    },
+    persistIsPaused: (value: boolean) => {
+      persistPaused(value)
     },
     drain: () => drain(),
     shutdown: (force?: boolean) => shutdown(force),

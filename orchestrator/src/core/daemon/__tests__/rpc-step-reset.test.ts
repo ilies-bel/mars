@@ -48,6 +48,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): DaemonDeps => ({
   setAcceptingWork: () => {},
   getIsPaused: () => false,
   setIsPaused: () => {},
+  persistIsPaused: () => {},
   drain: async () => {},
   shutdown: async () => {},
   paths: { socketPath: '/tmp/x.sock', pidFile: '/tmp/x.pid', httpPortFile: '/tmp/x.port' },

@@ -234,6 +234,13 @@ recovery-spawn path itself.
   fix-task / Investigator spawns in-memory (not persisted across daemon
   restarts). Toggle off during failure storms (e.g. quota cascades) to stop
   the self-heal cycle while you diagnose.
+- **Pause / resume:** `mars daemon pause` suspends dispatch and **is persisted
+  to `.mars/daemon.json`** so the paused state survives a daemon auto-respawn.
+  A restarted daemon will come up paused and log `[pause] restored persisted
+  paused state` at startup. Run `mars daemon resume` to re-enable dispatch;
+  this also clears the persisted flag. Unlike `set-flag`, pause IS persisted
+  because the data-loss risk of silently un-pausing outweighs the surprise of
+  a restarted daemon still being paused.
 
 ## Conventions
 

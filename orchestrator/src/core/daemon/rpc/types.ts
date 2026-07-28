@@ -98,6 +98,11 @@ export interface DaemonDeps {
   getIsPaused(): boolean
   /** Flip the LIVE `isPaused` flag (pause / resume toggle it). */
   setIsPaused(value: boolean): void
+  /**
+   * Persist the `isPaused` flag to `daemon.json` so it survives a restart.
+   * Called by the pause/resume RPC handlers alongside `setIsPaused`.
+   */
+  persistIsPaused(value: boolean): void
   /** Kick the drain loop (reload-config raises caps then re-drains). */
   drain(): Promise<void>
   /** The daemon's graceful-exit routine (shutdown delegates to it). */

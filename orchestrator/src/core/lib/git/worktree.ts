@@ -304,6 +304,29 @@ export const provisionCommitterWorktree = async (
     ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'setup' }
     : undefined
 
+  // Defense-in-depth guard (ADR-0058 / fix-b): refuse to stash uncommitted
+  // work off the primary checkout when the daemon was paused. A paused daemon
+  // signals that an operator is actively working in the integration tree;
+  // silently stashing their edits to migrate them into the committer worktree
+  // is how the 2026-07-28 data-loss incident occurred.
+  //
+  // Under normal operation fix-(a) is the primary protection: the persisted
+  // pause flag makes a restarted daemon come up paused so drain() never fires
+  // and this function is never called. This guard is the fallback for the
+  // rare race where the persisted flag is true but dispatch slipped through
+  // (e.g. an RPC resume that didn't flush the file before the restart).
+  //
+  // Note: `readPersistedPaused` is intentionally imported lazily so tests that
+  // mock the config module don't need to set up the full daemon ecosystem.
+  const { readPersistedPaused } = await import('../../daemon/config')
+  if (readPersistedPaused()) {
+    throw new Error(
+      'provisionCommitterWorktree: daemon is paused — refusing to stash and migrate ' +
+        'uncommitted changes off the integration checkout. Run `mars daemon resume` once ' +
+        'the working tree is ready to be processed.',
+    )
+  }
+
   // Stash the dirty state in the main checkout. `--include-untracked` covers
   // untracked-but-not-ignored files so the committer sees the full picture.
   // `git stash push` returns non-zero when there is nothing to stash; treat

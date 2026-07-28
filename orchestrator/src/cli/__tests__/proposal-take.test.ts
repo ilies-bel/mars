@@ -186,6 +186,7 @@ describe('proposal.take RPC handler', () => {
       setAcceptingWork: () => {},
       getIsPaused: () => false,
       setIsPaused: () => {},
+      persistIsPaused: () => {},
       drain: async () => {},
       shutdown: async () => {},
       paths: { socketPath: '', pidFile: '', httpPortFile: '' },

@@ -225,6 +225,38 @@ export const patchDaemonConfigFile = (
 }
 
 /**
+ * Read the persisted `paused` flag from daemon.json.
+ *
+ * Returns `true` when `mars daemon pause` was called and the flag was written
+ * before the daemon exited. Returns `false` (the safe default) when the field
+ * is absent, non-boolean, or the file is missing or invalid.
+ *
+ * The flag is intentionally persisted so that an operator who pauses the daemon
+ * to work directly in the primary checkout does not lose that intent across an
+ * auto-respawn (which used to silently un-pause and could trigger a hard-reset
+ * of uncommitted operator work — ADR-0058).
+ */
+export const readPersistedPaused = (): boolean => {
+  const raw = readDaemonConfigFile()
+  return raw.paused === true
+}
+
+/**
+ * Persist the `paused` flag to `daemon.json` so it survives a daemon restart.
+ *
+ * When `value` is `false`, the key is removed from the file (equivalent to
+ * absent / default-false) rather than written as `false`, keeping the file
+ * minimal. Uses `patchDaemonConfigFile` so all other keys are preserved.
+ */
+export const persistPaused = (value: boolean): void => {
+  if (value) {
+    patchDaemonConfigFile({ paused: true })
+  } else {
+    patchDaemonConfigFile({ paused: null })
+  }
+}
+
+/**
  * Read the autonomy_level for `name` from daemon.json's `levers` map.
  * Returns `'ask'` when the lever is absent or the stored value is invalid.
  */

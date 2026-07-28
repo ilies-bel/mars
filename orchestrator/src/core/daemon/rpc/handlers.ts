@@ -557,6 +557,7 @@ const spendControlSetHandler = handler('spend-control.set', async (req, deps) =>
 
 const pauseHandler = handler('pause', async (_req, deps) => {
   deps.setIsPaused(true)
+  deps.persistIsPaused(true)
   deps.log(
     `daemon paused; dispatch suspended (inFlight=${deps.tracker.inFlightCount()})`,
   )
@@ -568,6 +569,7 @@ const pauseHandler = handler('pause', async (_req, deps) => {
 
 const resumeHandler = handler('resume', async (_req, deps) => {
   deps.setIsPaused(false)
+  deps.persistIsPaused(false)
   void deps.drain()
   deps.log('daemon resumed; dispatch re-enabled')
   return { ok: true, data: { paused: false } }
