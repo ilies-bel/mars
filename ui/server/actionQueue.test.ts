@@ -715,3 +715,159 @@ describe('actionQueueResponseSchema resilience', () => {
     expect(parsed[1].kind).toBe('failed-task')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Eligibility at the source/API boundary: kinds must survive intact so the UI
+// can group them correctly (alerts vs blocked tasks vs proposals).
+// A failed-task must NOT arrive as 'blocked'; a draft-proposal must NOT arrive
+// as 'failed-task'. These tests pin that contract at the data layer so a
+// regression in buildActionQueueView would be caught before it mislabels items
+// in the OpeningNextMoves widget.
+// ---------------------------------------------------------------------------
+describe('action-queue API: kind fidelity at source/UI boundary', () => {
+  let repo: string
+  let server: ReturnType<typeof Bun.serve> | null = null
+  let baseUrl: string
+
+  beforeEach(async () => {
+    repo = setupRepo()
+    const c = await createSchema(dbPath(repo))
+    c.close()
+    server = await startServer(
+      { repo, port: 0, host: '127.0.0.1' },
+      { proxyGet: makeDaemonStub(repo) },
+    )
+    baseUrl = `http://${server.hostname}:${server.port}`
+  })
+
+  afterEach(() => {
+    if (server) server.stop(true)
+    server = null
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  const fetchQueue = async (): Promise<ActionQueueItemBody[]> => {
+    const res = await fetch(`${baseUrl}/api/action-queue`)
+    expect(res.status).toBe(200)
+    return (await res.json()) as ActionQueueItemBody[]
+  }
+
+  it('a genuinely failed task arrives with kind="failed-task" (NOT kind="blocked")', async () => {
+    // A task that failed is an alert, not a blocked task.
+    // The UI groups them as "alerts" — only possible if kind is 'failed-task'.
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertActionQueueItem(c, {
+      id: 'ft-kind-1',
+      kind: 'failed',
+      priority: 'high',
+      title: 'Task failed during verify',
+      payload: { taskId: 'task-verify-fail' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'ft-kind-1')
+    expect(row?.kind).toBe('failed-task')
+    // This is NOT a blocked task — the UI must not mislabel it
+    expect(row?.kind).not.toBe('blocked')
+  })
+
+  it('a draft-proposal item arrives with kind="draft-proposal" (not coerced to failed-task)', async () => {
+    // Draft proposals await human refinement; they must reach the
+    // "proposals to refine" group in the opening, not the "alerts" group.
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertActionQueueItem(c, {
+      id: 'dp-kind-1',
+      kind: 'draft-proposal',
+      priority: 'low',
+      title: 'New feature idea',
+      payload: { proposalId: 'prop-abc', source: 'human' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'dp-kind-1')
+    expect(row?.kind).toBe('draft-proposal')
+    expect(row?.entityId).toBe('prop-abc')
+    // A draft-proposal is not a failure or a blocked task
+    expect(row?.kind).not.toBe('failed-task')
+    expect(row?.kind).not.toBe('blocked')
+  })
+
+  it('awaiting-human item arrives with kind="awaiting-human" (distinct from blocked and failed)', async () => {
+    // awaiting-human means a task is parked at a manual step — it is NOT the
+    // same as a task in status='blocked' (dependency wait) or status='failed'.
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertActionQueueItem(c, {
+      id: 'ah-kind-1',
+      kind: 'awaiting-human',
+      priority: 'high',
+      title: 'Task awaiting manual step',
+      payload: { taskId: 'task-manual-step' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'ah-kind-1')
+    expect(row?.kind).toBe('awaiting-human')
+    // Must NOT be treated as a "blocked task" (status=blocked) or a failure
+    expect(row?.kind).not.toBe('blocked')
+    expect(row?.kind).not.toBe('failed-task')
+  })
+
+  it('a stale-worktree alert arrives with kind="stale-worktree" (not a blocked task)', async () => {
+    // A stale worktree is an infrastructure alert — the task may still be
+    // running, it just has not been updated recently. Not a blocked task.
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertActionQueueItem(c, {
+      id: 'sw-kind-1',
+      kind: 'stale-worktree',
+      priority: 'low',
+      title: 'Stale worktree: task-stale',
+      context: { taskId: 'task-stale' },
+      payload: { ageHours: 30, status: 'running' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'sw-kind-1')
+    expect(row?.kind).toBe('stale-worktree')
+    // stale-worktree is an alert, not a blocked task or a failure
+    expect(row?.kind).not.toBe('blocked')
+    expect(row?.kind).not.toBe('failed-task')
+  })
+
+  it('mixed queue: each kind is preserved so the UI can group them independently', async () => {
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertActionQueueItem(c, {
+      id: 'mix-ft',
+      kind: 'failed',
+      payload: { taskId: 'task-mix-fail' },
+    })
+    await insertActionQueueItem(c, {
+      id: 'mix-dp',
+      kind: 'draft-proposal',
+      payload: { proposalId: 'prop-mix', source: 'human' },
+    })
+    await insertActionQueueItem(c, {
+      id: 'mix-ah',
+      kind: 'awaiting-human',
+      payload: { taskId: 'task-mix-human' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const ft = body.find((r) => r.id === 'mix-ft')
+    const dp = body.find((r) => r.id === 'mix-dp')
+    const ah = body.find((r) => r.id === 'mix-ah')
+
+    // Each arrives with its own distinct kind — the UI can group accurately
+    expect(ft?.kind).toBe('failed-task')
+    expect(dp?.kind).toBe('draft-proposal')
+    expect(ah?.kind).toBe('awaiting-human')
+
+    // No two kinds are the same
+    const kinds = [ft?.kind, dp?.kind, ah?.kind]
+    expect(new Set(kinds).size).toBe(3)
+  })
+})

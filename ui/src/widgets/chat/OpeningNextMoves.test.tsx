@@ -39,18 +39,32 @@ describe('OpeningNextMoves — structure', () => {
     expect(html).toContain('aria-label="Pending work"')
   })
 
-  it('renders a group header for 1 blocked task', () => {
+  it('renders an alert group header for 1 non-blocked non-proposal item', () => {
     const html = renderToStaticMarkup(
       <OpeningNextMoves rows={[makeRow('a', 'Fix auth')]} onPick={() => {}} />,
     )
     expect(html).toContain('data-testid="queue-group-header"')
-    expect(html).toContain('1 blocked task')
+    // failed-task is NOT a "blocked task" — it must be labelled as an alert
+    expect(html).toContain('1 alert')
+    expect(html).not.toContain('blocked task')
   })
 
-  it('renders a plural blocked-task header for multiple blocked tasks', () => {
+  it('renders an alerts group header for multiple non-blocked items', () => {
     const rows = [makeRow('a', 'Fix auth'), makeRow('b', 'Deploy'), makeRow('c', 'Build')]
     const html = renderToStaticMarkup(<OpeningNextMoves rows={rows} onPick={() => {}} />)
-    expect(html).toContain('3 blocked tasks')
+    expect(html).toContain('3 alerts')
+    expect(html).not.toContain('blocked tasks')
+  })
+
+  it('renders a "blocked tasks" header for genuinely blocked synthetic rows', () => {
+    const rows = [
+      makeRow('t1', 'Waiting for build', 'blocked'),
+      makeRow('t2', 'Waiting for deploy', 'blocked'),
+    ]
+    const html = renderToStaticMarkup(<OpeningNextMoves rows={rows} onPick={() => {}} />)
+    expect(html).toContain('2 blocked tasks')
+    // no alerts group — these are blocked, not failed
+    expect(html).not.toContain('alerts')
   })
 
   it('renders a proposal group header for draft-proposal items', () => {
@@ -61,9 +75,12 @@ describe('OpeningNextMoves — structure', () => {
       />,
     )
     expect(html).toContain('1 proposal to refine')
+    // proposals are NOT alerts or blocked tasks
+    expect(html).not.toContain('alert')
+    expect(html).not.toContain('blocked task')
   })
 
-  it('renders both groups when blocked tasks and proposals coexist', () => {
+  it('renders alert and proposal groups when non-blocked alerts and proposals coexist', () => {
     const rows = [
       makeRow('b1', 'Task failed', 'failed-task'),
       makeRow('p1', 'New idea', 'draft-proposal'),
@@ -71,6 +88,22 @@ describe('OpeningNextMoves — structure', () => {
     const html = renderToStaticMarkup(<OpeningNextMoves rows={rows} onPick={() => {}} />)
     const headerCount = (html.match(/data-testid="queue-group-header"/g) ?? []).length
     expect(headerCount).toBe(2)
+    // failed-task must NOT be labelled "blocked task"
+    expect(html).toContain('1 alert')
+    expect(html).not.toContain('blocked task')
+    expect(html).toContain('1 proposal to refine')
+  })
+
+  it('renders all three groups when alerts, blocked tasks, and proposals coexist', () => {
+    const rows = [
+      makeRow('f1', 'Task failed', 'failed-task'),
+      makeRow('b1', 'Waiting on build', 'blocked'),
+      makeRow('p1', 'New idea', 'draft-proposal'),
+    ]
+    const html = renderToStaticMarkup(<OpeningNextMoves rows={rows} onPick={() => {}} />)
+    const headerCount = (html.match(/data-testid="queue-group-header"/g) ?? []).length
+    expect(headerCount).toBe(3)
+    expect(html).toContain('1 alert')
     expect(html).toContain('1 blocked task')
     expect(html).toContain('1 proposal to refine')
   })
@@ -84,14 +117,16 @@ describe('OpeningNextMoves — structure', () => {
     expect(html).toContain('Deploy')
   })
 
-  it('groups draft-proposal rows separately from non-proposal rows', () => {
+  it('groups non-blocked, non-proposal rows (failed-task, arc-failed, etc.) as alerts', () => {
     const rows = [
       makeRow('b1', 'Task A', 'failed-task'),
       makeRow('b2', 'Task B', 'arc-failed'),
       makeRow('p1', 'Idea', 'draft-proposal'),
     ]
     const html = renderToStaticMarkup(<OpeningNextMoves rows={rows} onPick={() => {}} />)
-    expect(html).toContain('2 blocked tasks')
+    // failed-task and arc-failed are alerts — NOT "blocked tasks"
+    expect(html).toContain('2 alerts')
+    expect(html).not.toContain('blocked task')
     expect(html).toContain('1 proposal to refine')
   })
 
@@ -104,6 +139,8 @@ describe('OpeningNextMoves — structure', () => {
     expect(html).toContain('2 blocked tasks')
     expect(html).toContain('Waiting for build')
     expect(html).toContain('Waiting for deploy')
+    // blocked rows are NOT alerts
+    expect(html).not.toContain('alerts')
   })
 
   it('renders the first chip in each group with foreground color class', () => {

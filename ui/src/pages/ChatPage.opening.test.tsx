@@ -258,7 +258,8 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
     expect(openingEl?.querySelector('[data-testid="opening-next-moves"]')).not.toBeNull()
   })
 
-  it('shows accurate blocked-task count in the group header', async () => {
+  it('shows accurate alert count in the group header for failed-task items', async () => {
+    // failed-task items are alerts, NOT blocked tasks
     mockUseActionQueue.mockReturnValue({
       items: [
         makeItem({ id: 'b1', title: 'Task A' }),
@@ -278,8 +279,11 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
       )
     })
 
-    const header = container.querySelector('[data-testid="queue-group-header"]')
-    expect(header?.textContent).toContain('3 blocked tasks')
+    const headers = Array.from(container.querySelectorAll('[data-testid="queue-group-header"]'))
+    const texts = headers.map((h) => h.textContent ?? '')
+    // Three failed-task items → "3 alerts", NOT "3 blocked tasks"
+    expect(texts.some((t) => t.includes('3 alerts'))).toBe(true)
+    expect(texts.every((t) => !t.includes('blocked'))).toBe(true)
   })
 
   it('shows a proposal-to-refine group when draft proposals exist', async () => {
@@ -298,11 +302,16 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
       )
     })
 
-    const header = container.querySelector('[data-testid="queue-group-header"]')
-    expect(header?.textContent).toContain('1 proposal to refine')
+    const headers = Array.from(container.querySelectorAll('[data-testid="queue-group-header"]'))
+    const texts = headers.map((h) => h.textContent ?? '')
+    // draft-proposal is a proposal to refine — NOT an alert or blocked task
+    expect(texts.some((t) => t.includes('1 proposal to refine'))).toBe(true)
+    expect(texts.every((t) => !t.includes('alert'))).toBe(true)
+    expect(texts.every((t) => !t.includes('blocked'))).toBe(true)
   })
 
-  it('surfaces both blocked-task and proposal groups when both kinds exist', async () => {
+  it('surfaces alerts and proposal groups, not "blocked tasks", for failed-task + draft-proposal', async () => {
+    // failed-task is an alert; draft-proposal is a proposal. Neither is a "blocked task".
     mockUseActionQueue.mockReturnValue({
       items: [
         makeItem({ id: 'b1', kind: 'failed-task', title: 'Task failed' }),
@@ -326,7 +335,9 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
     expect(headers.length).toBe(2)
 
     const texts = Array.from(headers).map((h) => h.textContent ?? '')
-    expect(texts.some((t) => t.includes('2 blocked tasks'))).toBe(true)
+    // The two failed-task items are "alerts", NOT "blocked tasks"
+    expect(texts.some((t) => t.includes('2 alerts'))).toBe(true)
+    expect(texts.every((t) => !t.includes('blocked task'))).toBe(true)
     expect(texts.some((t) => t.includes('1 proposal to refine'))).toBe(true)
   })
 
@@ -453,5 +464,85 @@ describe('ChatPage — seeded opening message (no thread selected)', () => {
     const texts = Array.from(headers).map((h) => h.textContent ?? '')
     expect(texts.some((t) => t.includes('1 blocked task'))).toBe(true)
     expect(texts.some((t) => t.includes('1 proposal to refine'))).toBe(true)
+  })
+
+  // ---------------------------------------------------------------------------
+  // Eligibility: truthful grouping at the data-to-UI boundary
+  // ---------------------------------------------------------------------------
+
+  it('genuinely blocked task (from useTasks, status=blocked) reaches "blocked tasks" group, not "alerts"', async () => {
+    // A task with status='blocked' in the DB is a BLOCKED TASK — not an alert.
+    // It must reach the "blocked tasks" group in the opening, not be mislabelled.
+    mockUseTasks.mockReturnValue({
+      snapshot: makeSnapshot([makeUITask('t1', 'Deploy waiting on build')]),
+      error: null,
+      connected: true,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const headers = Array.from(container.querySelectorAll('[data-testid="queue-group-header"]'))
+    const texts = headers.map((h) => h.textContent ?? '')
+    expect(texts.some((t) => t.includes('blocked task'))).toBe(true)
+    // Must NOT appear as an "alert"
+    expect(texts.every((t) => !t.includes('alert'))).toBe(true)
+  })
+
+  it('draft proposal reaches "proposals to refine" group, not "alerts" or "blocked tasks"', async () => {
+    mockUseActionQueue.mockReturnValue({
+      items: [makeItem({ id: 'p1', kind: 'draft-proposal', title: 'New capability idea' })],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const headers = Array.from(container.querySelectorAll('[data-testid="queue-group-header"]'))
+    const texts = headers.map((h) => h.textContent ?? '')
+    expect(texts.some((t) => t.includes('proposal to refine'))).toBe(true)
+    expect(texts.every((t) => !t.includes('alert'))).toBe(true)
+    expect(texts.every((t) => !t.includes('blocked'))).toBe(true)
+  })
+
+  it('non-blocked alert kinds (failed-task, stale-worktree, arc-failed) reach "alerts" group, not "blocked tasks"', async () => {
+    // These are distinct failure kinds — the operator must not be told they are
+    // "blocked tasks" (which implies waiting on a dependency, not a failure).
+    mockUseActionQueue.mockReturnValue({
+      items: [
+        makeItem({ id: 'f1', kind: 'failed-task', title: 'Coder timed out' }),
+        makeItem({ id: 's1', kind: 'stale-worktree', title: 'Stale worktree: task-xyz' }),
+        makeItem({ id: 'a1', kind: 'arc-failed', title: 'Arc failed' }),
+      ],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={makeQc()}>
+          <ChatPage />
+        </QueryClientProvider>,
+      )
+    })
+
+    const headers = Array.from(container.querySelectorAll('[data-testid="queue-group-header"]'))
+    const texts = headers.map((h) => h.textContent ?? '')
+    expect(texts.some((t) => t.includes('3 alerts'))).toBe(true)
+    // Must NOT be labelled as "blocked tasks"
+    expect(texts.every((t) => !t.includes('blocked task'))).toBe(true)
   })
 })

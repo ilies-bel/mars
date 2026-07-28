@@ -19,11 +19,33 @@ interface Group {
   items: DisplayRow[]
 }
 
+/**
+ * Group rules (semantically truthful):
+ *
+ *  kind === 'blocked'        → "blocked tasks"   (synthetic rows from useTasks,
+ *                               tasks whose status is 'blocked' in the DB)
+ *  kind === 'draft-proposal' → "proposals to refine"
+ *  anything else             → "alerts"           (failed-task, stale-worktree,
+ *                               awaiting-validation, arc-failed, awaiting-human,
+ *                               reflect-recommended, scorer-suggested, …)
+ *
+ * The "alerts" group must never be labelled "blocked tasks" — those are two
+ * distinct states and conflating them misleads the operator.
+ */
 function groupQueueItems(rows: DisplayRow[]): Group[] {
+  const alerts = rows.filter((r) => r.kind !== 'blocked' && r.kind !== 'draft-proposal')
+  const blocked = rows.filter((r) => r.kind === 'blocked')
   const proposals = rows.filter((r) => r.kind === 'draft-proposal')
-  const blocked = rows.filter((r) => r.kind !== 'draft-proposal')
 
   const groups: Group[] = []
+
+  if (alerts.length > 0) {
+    groups.push({
+      key: 'alerts',
+      label: alerts.length === 1 ? '1 alert' : `${alerts.length} alerts`,
+      items: alerts,
+    })
+  }
 
   if (blocked.length > 0) {
     groups.push({
