@@ -1466,6 +1466,12 @@ export const startDaemon = async (
           if (!removed) return false
           await writeGlossaryFile(path, nextDoc)
         },
+        enqueueMerge: async (mergeArgs) =>
+          enqueueMergeJobAndAwait({
+            store: getDefaultMergeJobStore(),
+            bus,
+            ...mergeArgs,
+          }),
       })
       if (outcome.kind === 'aborted') {
         log(
@@ -1516,6 +1522,12 @@ export const startDaemon = async (
             body: req.body,
           })
         },
+        enqueueMerge: async (mergeArgs) =>
+          enqueueMergeJobAndAwait({
+            store: getDefaultMergeJobStore(),
+            bus,
+            ...mergeArgs,
+          }),
       })
       if (outcome.kind === 'aborted') {
         log(`[adr-add] "${req.title}" -> aborted: ${outcome.reason}`)

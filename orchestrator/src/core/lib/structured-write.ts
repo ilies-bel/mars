@@ -2,11 +2,20 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createWorktree, removeWorktree } from './git/worktree'
 import {
-  mergeBranch,
   checkMergeTargetStatus,
   type MergeResult,
 } from './git/merge'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
+import { getRepoRoot } from '../context'
+
+/**
+ * Outcome delivered by the injected `enqueueMerge` function. Mirrors the
+ * `MergeJobResult` type from `daemon/merge-worker` without importing from that
+ * module (which would create a lib→daemon circular dependency).
+ */
+type EnqueueMergeResult =
+  | { status: 'done'; result: MergeResult }
+  | { status: 'failed'; error: string; errorCode: string }
 
 export interface StructuredWriteArgs {
   /** Short kind tag, used as the branch prefix (e.g. "glossary", "adr"). */
@@ -20,11 +29,24 @@ export interface StructuredWriteArgs {
    * — the worktree will be torn down and the call will resolve as a no-op.
    */
   mutate: (worktreePath: string) => Promise<boolean | void>
-  /** Optional override for the merge lock timeout (default 5 min). */
-  lockTimeoutMs?: number
   /** Optional trace context. Populated when called from a workflow phase;
    *  omitted by direct CLI entry points (e.g. `mars glossary set`). */
   traceCtx?: TraceCtx
+  /**
+   * Enqueue a merge job through the durable single-consumer merge worker and
+   * wait for completion. Required — there is no fallback to inline
+   * `mergeBranch` (that reintroduces the stash-guard footgun for
+   * structured-write paths).
+   *
+   * In production wire this to `enqueueMergeJobAndAwait` from
+   * `daemon/merge-worker`. In tests provide a direct-`mergeBranch` shim.
+   */
+  enqueueMerge: (args: {
+    taskId: string
+    branch: string
+    worktreePath: string
+    integrationBranch: string
+  }) => Promise<EnqueueMergeResult>
 }
 
 export type StructuredWriteOutcome =
@@ -72,23 +94,66 @@ export const runStructuredWrite = async (
   args: StructuredWriteArgs,
 ): Promise<StructuredWriteOutcome> => {
   const integration = args.integrationBranch ?? integrationFromEnv()
-  const lockTimeoutMs = args.lockTimeoutMs ?? 5 * 60 * 1000
+  // writeId is used both as the worktree/branch id and as the merge-job taskId
+  // that identifies this structured write in the merge queue.
+  const writeId = `${args.kind}-${shortId()}`
 
-  // Writer preflight runs before the worktree exists, so there is no task
-  // branch yet. Self-check the integration ref: an integration-vs-integration
-  // ff is trivially clean unless the ref itself is broken, in which case we
-  // surface 'error' and abort below.
+  // Dirty-main preflight: check for uncommitted operator edits on the
+  // integration checkout BEFORE creating a worktree. This avoids the
+  // stash-guard footgun in mergeBranch that can displace in-progress work.
+  //
+  // `checkMergeTargetStatus` with integration..integration produces an empty
+  // diff and returns 'clean' regardless of working-tree dirt (it only checks
+  // paths the fast-forward would overwrite). We therefore probe dirty-main
+  // explicitly here via `checkIntegrationBranchDirty`.
+  {
+    const { checkIntegrationBranchDirty } = await import('./main-dirty')
+    const dirty = await checkIntegrationBranchDirty({
+      repoRoot: getRepoRoot(),
+      integrationBranch: integration,
+      traceCtx: { taskId: writeId, phase: 'merge', store: args.traceCtx?.store ?? nullTraceStore },
+    })
+    if (dirty.dirty) {
+      // Raise an action-queue item so the operator knows to clean main and
+      // re-run. Best-effort: if the DB is unavailable we still return aborted.
+      const { raiseActionQueueItem } = await import('./action-queue')
+      raiseActionQueueItem({
+        kind: 'failed',
+        category: 'orchestrator',
+        priority: 'high',
+        title: `Structured write aborted: ${integration} has uncommitted changes — clean main and re-run \`mars ${args.kind}\``,
+        body: [
+          `A structured write operation (\`${args.kind}\`) was aborted because the integration branch (\`${integration}\`) has uncommitted changes.`,
+          '',
+          `The operation did **not** stash or discard your work. Once you commit or stash the changes listed below, re-run the original command.`,
+          '',
+          'Dirty paths:',
+          '```',
+          dirty.statusOutput,
+          '```',
+        ].join('\n'),
+        payload: { kind: args.kind, integrationBranch: integration, statusOutput: dirty.statusOutput },
+        context: { repoRoot: process.env.MARS_REPO ?? null },
+        raisedBy: 'structured-write:dirty-main',
+        signature: `structured-write:dirty-main:${integration}`,
+      }).catch((err: unknown) => {
+        console.error(`[structured-write] dirty-main action-queue raise failed:`, err)
+      })
+      return {
+        kind: 'aborted',
+        reason: `merge target dirty: ${integration} has uncommitted changes`,
+        output: dirty.statusOutput,
+      }
+    }
+  }
+
+  // Ref-existence check: verify the integration branch resolves before we
+  // create a worktree off it. An error here (broken ref, not a git repo, …)
+  // is surfaced as 'aborted' so the caller can log it and release the slot.
   const target = await checkMergeTargetStatus({
     integrationBranch: integration,
     taskBranch: integration,
   })
-  if (target.kind === 'dirty') {
-    return {
-      kind: 'aborted',
-      reason: `merge target dirty: ${target.targetPath}`,
-      output: target.statusOutput,
-    }
-  }
   if (target.kind === 'error') {
     return {
       kind: 'aborted',
@@ -97,14 +162,12 @@ export const runStructuredWrite = async (
     }
   }
 
-  const writeId = `${args.kind}-${shortId()}`
   const worktree = await createWorktree({
     taskId: writeId,
     integrationBranch: integration,
     branchSuffix: args.kind,
   })
 
-  let merge: MergeResult | null = null
   try {
     const result = await args.mutate(worktree.path)
     if (result === false) {
@@ -145,12 +208,21 @@ export const runStructuredWrite = async (
       )
     }
 
-    merge = await mergeBranch({
+    const queueResult = await args.enqueueMerge({
+      taskId: writeId,
       branch: worktree.branch,
       worktreePath: worktree.path,
       integrationBranch: integration,
-      lockTimeoutMs,
     })
+
+    if (queueResult.status === 'failed') {
+      return {
+        kind: 'aborted',
+        reason: `merge job failed (${queueResult.errorCode}): ${queueResult.error}`,
+        output: '',
+      }
+    }
+    const merge = queueResult.result
 
     if (merge.aborted) {
       return {
