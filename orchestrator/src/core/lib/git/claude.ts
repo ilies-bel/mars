@@ -517,8 +517,21 @@ export const claudeStreamArgs = (
 //                              MARS_REPO (otherwise tests inside the worktree
 //                              resolve to the PRODUCTION .mars/mars.db and
 //                              contaminate it — forensic incident 2026-07-02).
+//   - MARS_DB_BACKEND        — database backend selector; a daemon launched with
+//                              MARS_DB_BACKEND=embedded (or with that value set
+//                              in the developer's shell) must NOT propagate it
+//                              into dispatched workers.  Workers run `npm test`
+//                              inside the task worktree; the test harness
+//                              (test/setup-env.ts) unconditionally overrides
+//                              the backend to `pglite` so tests get an isolated
+//                              in-process database.  If `embedded` reaches the
+//                              test process before setup-env.ts fires, the whole
+//                              suite connects to the live daemon PostgreSQL and
+//                              sees non-deterministic rows (incident 2026-07-28).
+//                              Stripping the var lets setup-env.ts apply its
+//                              unconditional assignment cleanly.
 // ANTHROPIC_API_KEY, PATH, and everything unrelated are preserved.
-const HOST_AGENT_ENV_RE = /^(?:CLAUDE(?:CODE)?(?:$|_)|CMUX_|AI_AGENT$|MARS_REPO$)/i
+const HOST_AGENT_ENV_RE = /^(?:CLAUDE(?:CODE)?(?:$|_)|CMUX_|AI_AGENT$|MARS_REPO$|MARS_DB_BACKEND$)/i
 
 /**
  * Build the worker subprocess environment.
