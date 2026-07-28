@@ -79,6 +79,29 @@ const authFilePath = (): string =>
   join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'auth.json')
 
 /**
+ * Recover `chatgpt_account_id` from the access token's own claims.
+ *
+ * `auth.json` does not always carry a top-level `tokens.account_id` — the id is
+ * always present in the JWT payload, so a missing field is not a broken login
+ * and must not force the user through `codex login` again.
+ */
+const decodeAccountId = (token: string): string | null => {
+  try {
+    const part = token.split('.')[1]
+    if (!part) return null
+    const json = Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')
+    const payload = JSON.parse(json) as unknown
+    if (typeof payload !== 'object' || payload === null) return null
+    const auth = (payload as Record<string, unknown>)['https://api.openai.com/auth']
+    if (typeof auth !== 'object' || auth === null) return null
+    const id = (auth as Record<string, unknown>).chatgpt_account_id
+    return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Load the OAuth credentials the Codex CLI persisted via `codex login`.
  * Throws `CodexApiError('auth')` when the file is missing or incomplete so
  * callers route straight to the re-authenticate path.
@@ -98,8 +121,12 @@ export const loadCodexAuth = async (): Promise<CodexAuth> => {
   }
   const tokens = (parsed as { tokens?: Record<string, unknown> }).tokens
   const accessToken = typeof tokens?.access_token === 'string' ? tokens.access_token : null
-  const accountId = typeof tokens?.account_id === 'string' ? tokens.account_id : null
-  if (!accessToken || !accountId) {
+  if (!accessToken) {
+    throw new CodexApiError('auth', 'Codex credentials are incomplete — run `codex login`.')
+  }
+  const accountId =
+    (typeof tokens?.account_id === 'string' ? tokens.account_id : null) ?? decodeAccountId(accessToken)
+  if (!accountId) {
     throw new CodexApiError('auth', 'Codex credentials are incomplete — run `codex login`.')
   }
   return {

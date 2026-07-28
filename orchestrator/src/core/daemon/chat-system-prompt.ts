@@ -6,8 +6,15 @@
  * run so edits take effect on the next message with no daemon restart.
  *
  * The resolved prompt is sent as the `instructions` field of the Codex
- * Responses API request. Nothing is injected ahead of it; the runner appends
- * the `.claude/skills` index (see chat-skills.ts) after it.
+ * Responses API request (see codex-api.ts). Nothing is injected ahead of it;
+ * the runner appends the `.claude/skills` index (see chat-skills.ts) after it.
+ *
+ * `instructions` is the one part of the request that is identical turn after
+ * turn, and therefore the only part a prefix cache could ever reuse. Nothing
+ * volatile (run ids, timestamps, thread state) may be interpolated into it. At
+ * ~400 tokens this prompt is currently below the provider's ~1024-token
+ * caching minimum, so no hits are expected today — weigh that before changing
+ * its size.
  */
 
 import { readFile } from 'node:fs/promises'
