@@ -339,6 +339,30 @@ const truncate = (s: string, cap: number): string =>
   s.length > cap ? `${s.slice(0, cap)}…[truncated]` : s
 
 /**
+ * Map a failed Codex subprocess result to a human-readable, credential-safe
+ * error message for display in the chat UI. Never returns raw stderr content.
+ *
+ * Matching priority:
+ *   exitCode 127  → binary not installed
+ *   auth/login/credential/sign-in in stderr → auth failure
+ *   rate/usage/quota/spend limit in stderr  → usage limit
+ *   else                                    → generic failure
+ */
+export const safeCodexError = (result: { exitCode: number; stderr: string }): string => {
+  if (result.exitCode === 127) {
+    return 'Codex is not available on this machine. Install or make the Codex CLI available, then try again.'
+  }
+  const errLower = result.stderr.toLowerCase()
+  if (/auth|login|credential|sign in/.test(errLower)) {
+    return 'Codex could not authenticate. Sign in with Codex, then try again.'
+  }
+  if (/rate limit|usage limit|quota|spend limit/.test(errLower)) {
+    return 'Codex is temporarily unavailable because the account has reached its usage limit. Try again later.'
+  }
+  return 'Codex could not complete this response. Try again; if it continues, check the local Codex auth and network.'
+}
+
+/**
  * Execute one function-tool call and return the content fed back to the model
  * (also persisted as the `tool_result` segment). Exported for unit testing.
  * All failure modes return `isError: true` rather than throwing — a bad tool
@@ -878,6 +902,8 @@ export class ChatRunner {
         abort.abort()
       }, CHAT_TIMEOUT_MS)
 
+      let subprocessResult: { exitCode: number; stdout: string; stderr: string } | null = null
+
       try {
         const resolvedPrompt = await resolveChatSystemPrompt(repoRoot)
         const sessionId = await getThreadSession(threadId)
@@ -885,7 +911,7 @@ export class ChatRunner {
 
         let detectedSessionId: string | null = null
 
-        await runSubprocessStreaming(
+        subprocessResult = await runSubprocessStreaming(
           resolveCodexBin(),
           cliArgs,
           repoRoot,
@@ -954,6 +980,11 @@ export class ChatRunner {
         } else {
           await finalize()
         }
+        return
+      }
+
+      if (subprocessResult !== null && subprocessResult.exitCode !== 0) {
+        await finalize({ type: 'error', message: safeCodexError(subprocessResult) })
         return
       }
 

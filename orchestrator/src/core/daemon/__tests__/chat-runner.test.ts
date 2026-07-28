@@ -20,7 +20,7 @@ import {
   vi,
   type MockInstance,
 } from 'vitest'
-import { parseEventToSegments, buildApiInput, buildChatArgs, executeToolCall, ChatRunner, CHAT_TIMEOUT_MS } from '../chat-runner'
+import { parseEventToSegments, buildApiInput, buildChatArgs, executeToolCall, ChatRunner, CHAT_TIMEOUT_MS, safeCodexError } from '../chat-runner'
 import { ChatStreamHub } from '../chat-stream-hub'
 import type { UiMessageChunk } from '../ui-message-chunks'
 import { CodexApiError, type StreamCodexResponseOpts } from '../codex-api'
@@ -206,6 +206,51 @@ describe('buildChatArgs', () => {
     expect(args).not.toContain('--instructions')
     expect(args.at(-2)).toBe('t_abc')
     expect(args.at(-1)).toBe('hello')
+  })
+})
+
+// ── safeCodexError tests ──────────────────────────────────────────────────────
+
+describe('safeCodexError', () => {
+  it('returns "Codex is not available / install" for exit code 127', () => {
+    const msg = safeCodexError({ exitCode: 127, stderr: '' })
+    expect(msg).toMatch(/Codex is not available/i)
+    expect(msg).toMatch(/install/i)
+  })
+
+  it('returns an auth-focused sentence when stderr contains "sign in"', () => {
+    const msg = safeCodexError({ exitCode: 1, stderr: 'ERROR: please sign in with `codex login`' })
+    expect(msg).toMatch(/authenticate|sign in/i)
+    expect(msg).not.toContain('please sign in with')
+  })
+
+  it('returns a usage-limit sentence when stderr contains "monthly spend limit reached"', () => {
+    const msg = safeCodexError({ exitCode: 1, stderr: 'monthly spend limit reached' })
+    expect(msg).toMatch(/usage limit/i)
+    expect(msg).not.toContain('monthly spend limit reached')
+  })
+
+  it('returns a generic message for other non-zero exit failures', () => {
+    const msg = safeCodexError({ exitCode: 1, stderr: 'something went wrong' })
+    expect(msg).toMatch(/Codex could not complete/i)
+    expect(msg).not.toContain('something went wrong')
+  })
+
+  it('matches auth pattern case-insensitively ("Login" variant)', () => {
+    const msg = safeCodexError({ exitCode: 1, stderr: 'Login required' })
+    expect(msg).toMatch(/authenticate|sign in/i)
+  })
+
+  it('matches quota pattern case-insensitively ("quota" variant)', () => {
+    const msg = safeCodexError({ exitCode: 1, stderr: 'quota exceeded' })
+    expect(msg).toMatch(/usage limit/i)
+  })
+
+  it('never returns raw stderr verbatim', () => {
+    const stderr = 'secret error: token=sk-abc123'
+    const msg = safeCodexError({ exitCode: 1, stderr })
+    expect(msg).not.toContain(stderr)
+    expect(msg).not.toContain('sk-abc123')
   })
 })
 
@@ -712,6 +757,50 @@ describe('ChatRunner state machine', () => {
     const segments = assistantCall![3] as Array<{ type: string; message?: string }>
     const errSeg = segments.find((s) => s.type === 'error')
     expect(errSeg?.message).toMatch(/without a chat response/i)
+  })
+
+  it('finalises with "not available / install" error when subprocess exits with code 127', async () => {
+    mockShell.mockResolvedValue({ exitCode: 127, stdout: '', stderr: '' } as never)
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
+    expect(assistantCall![2]).toBe('[no output]')
+    const segments = assistantCall![3] as Array<{ type: string; message?: string }>
+    const errSeg = segments.find((s) => s.type === 'error')
+    expect(errSeg?.message).toMatch(/Codex is not available/i)
+    expect(errSeg?.message).toMatch(/install/i)
+    expect(vi.mocked(chatStore.setThreadStatus)).toHaveBeenCalledWith('t1', 'idle')
+  })
+
+  it('finalises with auth error when subprocess exits non-zero with auth stderr', async () => {
+    mockShell.mockResolvedValue({ exitCode: 1, stdout: '', stderr: 'ERROR: please sign in with `codex login`' } as never)
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
+    const segments = assistantCall![3] as Array<{ type: string; message?: string }>
+    const errSeg = segments.find((s) => s.type === 'error')
+    expect(errSeg?.message).toMatch(/authenticate|sign in/i)
+    expect(errSeg?.message).not.toContain('codex login')
+  })
+
+  it('finalises with usage-limit error when subprocess exits non-zero with quota stderr', async () => {
+    mockShell.mockResolvedValue({ exitCode: 1, stdout: '', stderr: 'monthly spend limit reached' } as never)
+
+    const runner = new ChatRunner()
+    await runner.sendMessage('t1', 'hi', '/repo', undefined)
+    await new Promise((r) => setTimeout(r, 20))
+
+    const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
+    const segments = assistantCall![3] as Array<{ type: string; message?: string }>
+    const errSeg = segments.find((s) => s.type === 'error')
+    expect(errSeg?.message).toMatch(/usage limit/i)
+    expect(errSeg?.message).not.toContain('monthly spend limit reached')
   })
 
   it('auto-titles the thread from the first message when title is empty', async () => {
