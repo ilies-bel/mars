@@ -464,6 +464,12 @@ export interface HttpServerDeps {
    */
   getLatestDeployment?: (taskId: string) => Promise<import('../store/task-store').TaskDeployment | null>
   getLiveAgentsRoster?: () => import('./live-agents-roster').AgentRosterEntry[]
+  /**
+   * Returns the live implement-semaphore state the Steward page displays.
+   * Optional — when absent the endpoint still serves DB-derived data and
+   * marks liveCap / isPaused as -1 / false (daemon not wired up yet).
+   */
+  getStewardRuntimeState?: () => { liveCap: number; baselineCap: number; isPaused: boolean }
 }
 
 export interface HttpServerHandle {
@@ -1259,6 +1265,20 @@ export const startHttpServer = async (
       if (since) opts.sinceIso = since
       deps.appServices
         .viewReflect(opts)
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/steward — four-lane capability summary for the Steward page:
+    // runtimeTuning (executing), workflowPatches (built/never invoked),
+    // signatureStorm (live, currently tripped), agentSpec (declared/unbuilt).
+    // Live semaphore state is injected by the daemon via getStewardRuntimeState.
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/steward') {
+      const runtime = deps.getStewardRuntimeState?.() ?? { liveCap: -1, baselineCap: -1, isPaused: false }
+      deps.appServices
+        .viewSteward(runtime)
         .then((body) => sendJson(res, 200, body))
         .catch((err: unknown) => sendError(res, err))
       return

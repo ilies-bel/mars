@@ -235,6 +235,39 @@ export interface AppServices {
   viewChatThreads: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
   viewChatThread: (id: string) => Promise<{ thread: import('./lib/chat-store').ChatThreadApiView; messages: import('./lib/chat-store').ChatMessageApiView[] } | null>
   viewChatHistory: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
+  viewSteward: (runtime: { liveCap: number; baselineCap: number; isPaused: boolean }) => Promise<{
+    runtimeTuning: {
+      acks: Array<{ text: string; timestamp: string; pair: { from: number; to: number } | null }>
+      liveCap: number
+      baselineCap: number
+      ceiling: number
+      bumpFactor: number
+      thresholdFactor: number
+      sustainMs: number
+      checkMs: number
+    }
+    workflowPatches: {
+      rows: Array<{ id: string; workflow_path: string; unified_diff: string; rationale: string; status: string; created_at: string }>
+      hasCallers: boolean
+    }
+    signatureStorm: {
+      current_signature: string | null
+      streak_count: number
+      last_task_id: string | null
+      tripped: boolean
+      updated_at: string | null
+      signatureStormAqCount: number
+      tripThreshold: number
+      isPaused: boolean
+    }
+    agentSpec: {
+      name: string
+      model: string
+      allowedTools: readonly string[]
+      eventVariants: string[]
+      dispatchSites: number
+    }
+  }>
 }
 
 /**
@@ -1311,6 +1344,118 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return { skills }
   }
 
+  const viewSteward: AppServices['viewSteward'] = async (runtime) => {
+    const client = getCompositionRootClient()
+
+    // 1. Runtime tuning acks — chat_threads WHERE title = 'Steward: runtime tuning'
+    //    joined to chat_messages WHERE kind = 'acknowledgment', newest first.
+    let acks: Array<{ text: string; timestamp: string; pair: { from: number; to: number } | null }> = []
+    try {
+      const acksResult = await client.execute(
+        `SELECT m.content, m.created_at
+           FROM chat_messages m
+           JOIN chat_threads t ON t.id = m.thread_id
+          WHERE t.title = 'Steward: runtime tuning'
+            AND m.kind = 'acknowledgment'
+          ORDER BY m.created_at DESC`,
+      )
+      acks = acksResult.rows.map((row) => {
+        const r = row as unknown as { content: string; created_at: string }
+        const text = r.content
+        // Parse "from N to M" pattern defensively — free text; null on mismatch.
+        const m = /from (\d+) to (\d+)/.exec(text)
+        const pair = m ? { from: Number(m[1]), to: Number(m[2]) } : null
+        return { text, timestamp: r.created_at, pair }
+      })
+    } catch {
+      // Degrade gracefully on fresh repos without chat tables.
+    }
+
+    // 2. Workflow patch proposals — zero rows today; table may not exist.
+    let patchRows: Array<{ id: string; workflow_path: string; unified_diff: string; rationale: string; status: string; created_at: string }> = []
+    try {
+      const patchResult = await client.execute(
+        `SELECT id, workflow_path, unified_diff, rationale, status, created_at
+           FROM workflow_patch_proposals
+          ORDER BY created_at DESC`,
+      )
+      patchRows = patchResult.rows.map((row) => {
+        const r = row as unknown as { id: string; workflow_path: string; unified_diff: string; rationale: string; status: string; created_at: string }
+        return { id: r.id, workflow_path: r.workflow_path, unified_diff: r.unified_diff, rationale: r.rationale, status: r.status, created_at: String(r.created_at) }
+      })
+    } catch {
+      // Table absent on fresh repos.
+    }
+
+    // 3. Signature storm — singleton row id=1 plus action_queue_items count.
+    let streakRow: { current_signature: string | null; streak_count: number; last_task_id: string | null; tripped: boolean; updated_at: string | null } | null = null
+    try {
+      const streakResult = await client.execute(
+        `SELECT current_signature, streak_count, last_task_id, tripped, updated_at
+           FROM failure_signature_streak WHERE id = 1`,
+      )
+      if (streakResult.rows.length > 0) {
+        const r = streakResult.rows[0] as unknown as { current_signature: string | null; streak_count: number | bigint; last_task_id: string | null; tripped: boolean | number; updated_at: string | null }
+        streakRow = {
+          current_signature: r.current_signature,
+          streak_count: Number(r.streak_count),
+          last_task_id: r.last_task_id,
+          tripped: Boolean(r.tripped),
+          updated_at: r.updated_at,
+        }
+      }
+    } catch {
+      // Table absent on fresh repos.
+    }
+
+    let signatureStormAqCount = 0
+    try {
+      const countResult = await client.execute(
+        `SELECT COUNT(*) AS cnt FROM action_queue_items WHERE kind = 'signature-storm'`,
+      )
+      const r = countResult.rows[0] as unknown as { cnt: number | bigint } | undefined
+      signatureStormAqCount = Number(r?.cnt ?? 0)
+    } catch {
+      // action_queue_items may not exist.
+    }
+
+    const { SIGNATURE_STORM_TRIP_THRESHOLD } = await import('./lib/signature-storm-monitor')
+
+    return {
+      runtimeTuning: {
+        acks,
+        liveCap: runtime.liveCap,
+        baselineCap: runtime.baselineCap,
+        ceiling: runtime.baselineCap * 2,
+        bumpFactor: 1.33,
+        thresholdFactor: 0.75,
+        sustainMs: Number(process.env.MARS_BACKLOG_SUSTAIN_MS ?? 60_000),
+        checkMs: Number(process.env.MARS_BACKLOG_CHECK_MS ?? 10_000),
+      },
+      workflowPatches: {
+        rows: patchRows,
+        hasCallers: false,
+      },
+      signatureStorm: {
+        current_signature: streakRow?.current_signature ?? null,
+        streak_count: streakRow?.streak_count ?? 0,
+        last_task_id: streakRow?.last_task_id ?? null,
+        tripped: streakRow?.tripped ?? false,
+        updated_at: streakRow?.updated_at ?? null,
+        signatureStormAqCount,
+        tripThreshold: SIGNATURE_STORM_TRIP_THRESHOLD,
+        isPaused: runtime.isPaused,
+      },
+      agentSpec: {
+        name: 'steward',
+        model: 'claude-sonnet-4-6',
+        allowedTools: ['Read', 'Bash', 'Grep', 'Glob'],
+        eventVariants: ['kpi-degraded', 'resource-load', 'onboarding', 'workflow-suggestion'],
+        dispatchSites: 0,
+      },
+    }
+  }
+
   return {
     viewActionQueue,
     viewActionQueueHistory,
@@ -1350,5 +1495,6 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewChatThreads,
     viewChatThread,
     viewChatHistory,
+    viewSteward,
   }
 }

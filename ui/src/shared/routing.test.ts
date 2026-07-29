@@ -86,6 +86,10 @@ describe('detectRoute', () => {
     expect(detectRoute('#/kpi/failure_rate')).toBe('kpi')
     expect(detectRoute('#/kpi/cost_per_arc')).toBe('kpi')
   })
+
+  it('returns steward for the #/steward hash', () => {
+    expect(detectRoute('#/steward')).toBe('steward')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -106,6 +110,7 @@ describe('isKnownRoute', () => {
     expect(isKnownRoute('#/events')).toBe(true)
     expect(isKnownRoute('#/kpi')).toBe(true)
     expect(isKnownRoute('#/kpi/cost_per_arc')).toBe(true)
+    expect(isKnownRoute('#/steward')).toBe(true)
   })
 
   it('returns true for overlay routes', () => {
@@ -458,6 +463,10 @@ describe('pageTitle', () => {
 
   it('returns "mars — kpis" for the kpi route', () => {
     expect(pageTitle('kpi')).toBe('mars — kpis')
+  })
+
+  it('returns "mars — steward" for the steward route', () => {
+    expect(pageTitle('steward')).toBe('mars — steward')
   })
 })
 

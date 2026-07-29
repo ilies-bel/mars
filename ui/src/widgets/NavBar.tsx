@@ -100,6 +100,11 @@ export const NavBar = ({ hash }: NavBarProps) => {
           Events
         </a>
       </span>
+      <span className="relative">
+        <a className={linkClass(route === 'steward')} href="#/steward">
+          Steward
+        </a>
+      </span>
       <span className="ml-auto">
         <NotificationsToggle />
       </span>
