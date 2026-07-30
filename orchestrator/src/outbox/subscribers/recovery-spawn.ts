@@ -2,7 +2,10 @@ import type { DbClient } from '../../core/lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
-import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks.js'
+import {
+  handleTaskFailureWithFixTask,
+  hasUsableWorktree,
+} from '../../core/queue-fix-tasks.js'
 import { getTask, updateTask } from '../../core/queue.js'
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
 import { asStepId, UNKNOWN_STEP_ID } from '../../core/lib/failure-signature.js'
@@ -102,6 +105,25 @@ export async function drainRecoverySpawner(
       const { taskId, error, note } = event.payload as { taskId: string; error: string; note?: string }
       const task = await getTask(taskId)
       if (!task) return false
+
+      // Failures that happen before setup have no origin worktree for a fix
+      // task to reuse. Route them directly through the shared escalation before
+      // spend-control or outage gates can produce a less actionable notice.
+      if (
+        task.status === 'failed' &&
+        task.fixForTaskId === null &&
+        !(await hasUsableWorktree(task))
+      ) {
+        const failingStep =
+          asStepId(task.failureReason) ?? asStepId(task.failedPhase) ?? UNKNOWN_STEP_ID
+        await handleTaskFailureWithFixTask({
+          taskId,
+          failingStep,
+          errorOutput: error,
+          qaNote: note,
+        })
+        return true
+      }
 
       // If the API circuit breaker is open — or was opened within a 60 s grace
       // window — this failure is environmental, not a code or verify bug. Skip

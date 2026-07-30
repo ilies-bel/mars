@@ -3,6 +3,8 @@ import {
   buildVerifyReproHint,
   type RanVerifyStep,
 } from './lib/derive-repro-command'
+import { constants as fsConstants } from 'node:fs'
+import { access } from 'node:fs/promises'
 import { type FixRecipeContext, hasRecipe } from './lib/fix-recipes'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
 import { truncateFailure } from './lib/truncate-failure'
@@ -48,6 +50,22 @@ export type {
 export const RECOVERY_FAILED_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 export const UNKNOWN_FAILURE_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 export const FIX_FAIL_LOOP_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
+
+/**
+ * A recovery runs in its origin's existing worktree, so a recorded branch and
+ * an on-disk worktree are both required before a failure can be recovered.
+ */
+export const hasUsableWorktree = async (
+  task: Pick<Task, 'branch' | 'worktreePath'>,
+): Promise<boolean> => {
+  if (!task.branch?.trim() || !task.worktreePath?.trim()) return false
+  try {
+    await access(task.worktreePath, fsConstants.F_OK)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * Collapse internal whitespace and truncate a title to at most `max` characters.
@@ -615,18 +633,70 @@ export const handleTaskFailureWithFixTask = async (
       },
     })
 
-    // Arc dead-end: the recovery Chore itself failed — spawn a rescue-operator
-    // agent to investigate and recover the arc. Best-effort: a rescue spawn
-    // error must not block the escalation from completing.
-    try {
-      await maybeSpawnRescueOperator({ failedTask: task, failureSignature, store: s })
-    } catch (rescueErr) {
-      // eslint-disable-next-line no-console
-      console.error('[rescue-operator] spawn failed (non-fatal):', rescueErr)
+    // A recovery whose origin worktree was absent at setup has no recoverable
+    // code state. It must end at the action queue rather than spawning another
+    // operator task that would investigate the same structural dead end.
+    if (!failureSignature.startsWith('setup:origin-worktree-missing/')) {
+      // Arc dead-end: the recovery Chore itself failed — spawn a rescue-operator
+      // agent to investigate and recover the arc. Best-effort: a rescue spawn
+      // error must not block the escalation from completing.
+      try {
+        await maybeSpawnRescueOperator({ failedTask: task, failureSignature, store: s })
+      } catch (rescueErr) {
+        // eslint-disable-next-line no-console
+        console.error('[rescue-operator] spawn failed (non-fatal):', rescueErr)
+      }
     }
 
     return {
       outcome: 'escalated',
+      failureSignature,
+      retryCount: task.retryCount,
+      actionQueueItemId,
+    }
+  }
+
+  // Workflow failures are persisted as `failed` before this shared handler is
+  // called. A recovery would attach to the origin's worktree, so a task that
+  // failed before setup (or whose worktree later vanished) cannot host one.
+  // Escalate the origin directly and leave its recovery slot untouched.
+  if (task.status === 'failed' && !(await hasUsableWorktree(task))) {
+    const actionQueueItemId = await raiseActionQueueItem({
+      kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
+      category: 'orchestrator',
+      priority: 'high',
+      title: capTitle(`Task ${input.taskId} failed before it had a usable worktree`),
+      body: [
+        `Task ${input.taskId} failed at ${input.failingStep} before the orchestrator recorded a usable worktree and branch.`,
+        '',
+        'No recovery task was created because recoveries run in the origin worktree and would fail during setup.',
+        `Resolve the original failure, then restart the task: \`mars restart ${input.taskId}\`.`,
+        '',
+        'Last error output (tail-truncated):',
+        '```',
+        truncatedError,
+        '```',
+      ].join('\n'),
+      payload: {
+        taskId: input.taskId,
+        originTaskId: task.originId,
+        failingStep: input.failingStep,
+        failureSignature,
+        branch: task.branch,
+        worktreePath: task.worktreePath,
+      },
+      context: { repoRoot: process.env.MARS_REPO ?? null },
+      raisedBy: 'agent:fail-fix-handler',
+      signature: `origin-worktree-missing:${task.originId}`,
+      originTaskId: task.originId,
+      occurrence: {
+        at: new Date().toISOString(),
+        taskId: input.taskId,
+        failingStep: input.failingStep,
+      },
+    })
+    return {
+      outcome: 'failed',
       failureSignature,
       retryCount: task.retryCount,
       actionQueueItemId,

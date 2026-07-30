@@ -225,6 +225,39 @@ describe('recovery-spawn outbox subscriber', () => {
     cleanup()
   })
 
+  it('escalates a pre-setup failure without spawning a recovery task', async () => {
+    const { q, aq, rs, client } = await loadModules(repo)
+    const origin = await q.enqueueTask('triage this task', undefined, {
+      skipTriage: true,
+    })
+
+    await rs.ensureRecoverySpawner(client)
+    await q.updateTask(origin.id, {
+      status: 'failed',
+      failedPhase: 'code',
+      failureReason: 'triage',
+      error: 'triage workflow failed: claude -p exited 1',
+    })
+
+    const { processed } = await rs.drainRecoverySpawner(client)
+    expect(processed).toBe(1)
+
+    const recoveries = await client.execute({
+      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+      args: [origin.id],
+    })
+    expect(recoveries.rows).toHaveLength(0)
+
+    const items = await aq.listActionQueueItems('open')
+    expect(
+      items.filter(
+        (item) =>
+          item.originTaskId === origin.id &&
+          (item.payload as Record<string, unknown>).taskId === origin.id,
+      ),
+    ).toHaveLength(1)
+  })
+
   it('spawns zero additional recovery tasks when the same event is replayed (cursor already advanced)', async () => {
     const { q, ft, rc, rs, pub, client } = await loadModules(repo)
 
@@ -334,11 +367,57 @@ describe('recovery-spawn outbox subscriber', () => {
     expect(originItems.length).toBeGreaterThanOrEqual(1)
   })
 
+  it('does not launch a rescue task when a recovery cannot find its origin worktree', async () => {
+    const { q, ft, rs, pub, client } = await loadModules(repo)
+    const origin = await q.enqueueTask('implement feature Z', undefined, {
+      skipTriage: true,
+    })
+    const recovery = await ft.upsertFixTask({
+      sourceTaskId: origin.id,
+      failureSignature: 'verify/no-commits-ahead',
+      failingStep: 'verify:has-diff',
+      truncatedError: 'no commits ahead of integration branch',
+      branch: null,
+      recipeContext: {
+        targetPath: '',
+        statusOutput: 'no commits ahead',
+        targetBranch: 'main',
+        originalPrompt: origin.prompt,
+      },
+    })
+
+    await q.updateTask(recovery.fixTaskId, {
+      status: 'failed',
+      failedPhase: 'code',
+      failureReason: 'setup:origin-worktree-missing',
+      error: 'origin worktree is missing',
+    })
+    await rs.ensureRecoverySpawner(client)
+    await publish(pub, client, 'task.failed', {
+      taskId: recovery.fixTaskId,
+      error: 'origin worktree is missing',
+    })
+
+    await rs.drainRecoverySpawner(client)
+
+    const followUps = await client.execute({
+      sql: `SELECT id FROM tasks WHERE id NOT IN (?, ?)`,
+      args: [origin.id, recovery.fixTaskId],
+    })
+    expect(followUps.rows).toHaveLength(0)
+  })
+
   it('requeues the origin task and spares the recovery slot when the circuit breaker is open', async () => {
     const { q, cb, rs, pub, client } = await loadModules(repo)
 
     const t1 = await q.enqueueTask('implement feature amid outage', undefined, {
       skipTriage: true,
+    })
+    const worktreePath = resolve(repo, '.mars', 'worktrees', t1.id)
+    mkdirSync(worktreePath, { recursive: true })
+    await q.updateTask(t1.id, {
+      branch: `task/${t1.id}`,
+      worktreePath,
     })
     // Move the task to failed so the requeue is observable (status 'queued' → 'failed' → 'queued').
     await q.updateTask(t1.id, { status: 'failed', failedPhase: 'code', error: 'api connection refused' })
@@ -412,6 +491,12 @@ describe('recovery-spawn outbox subscriber', () => {
 
     const t1 = await q.enqueueTask('feature with suppressed recovery', undefined, {
       skipTriage: true,
+    })
+    const worktreePath = resolve(repo, '.mars', 'worktrees', t1.id)
+    mkdirSync(worktreePath, { recursive: true })
+    await q.updateTask(t1.id, {
+      branch: `task/${t1.id}`,
+      worktreePath,
     })
     // Pre-set to failed (mirrors production: the event is emitted FROM the
     // status transition to failed, so the task is already failed at drain time).
