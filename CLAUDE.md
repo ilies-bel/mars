@@ -157,9 +157,13 @@ mars action-queue list open --kind failed-task,stale-worktree
 
 It prints one tab-separated line per alert (`id  priority  kind  title`)
 and nothing at all when clear, so it is cheap enough to run often. The
-daemon's SSE `/events` endpoint carries every dispatch, step transition,
-and heartbeat; tailing it into a session costs far more context for the
-same signal. Reach for `/events` only when debugging the daemon itself.
+`GET /events` endpoint is a cursor-paginated JSON trace query (the response
+includes `events` and `nextCursor`), useful for after-the-fact inspection of
+a task's trace. The daemon's SSE channel is `GET /view/stream`; it sends
+payload-free, typed invalidation pings, so clients learn that a view changed
+and re-fetch rather than receiving event contents. Do not pull either HTTP
+surface into a session for routine alert-watching; use the filtered listing
+above.
 
 The action queue is served by the daemon. If the daemon is down the
 command exits 1 with `action queue: daemon not running`, and against a
