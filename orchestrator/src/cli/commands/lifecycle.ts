@@ -213,16 +213,22 @@ const purge: Command = {
       return { code: 2 }
     }
     const force = flagSet.has('--force')
+    let succeeded = 0
+    let failed = 0
     for (const id of ids) {
       try {
         await deps.daemon.sendRequest({ op: 'purge', id, force })
+        deps.out(`purged ${id}`)
+        succeeded++
       } catch (err) {
         deps.err(`${id}: ${errorMessage(err)}`)
-        return { code: 1 }
+        failed++
       }
-      deps.out(`purged ${id}`)
     }
-    return { code: 0 }
+    if (ids.length > 1) {
+      deps.out(`purge complete: ${succeeded} succeeded, ${failed} failed`)
+    }
+    return { code: failed > 0 ? 1 : 0 }
   },
 }
 
@@ -414,14 +420,13 @@ const drop: Command = {
   path: 'drop',
   summary:
     'delete any task entirely regardless of status; use mars purge for terminal tasks only',
-  usage: 'usage: mars drop <id> [--force]',
+  usage: 'usage: mars drop <id> [<id> ...] [--force]',
   run: async (args, deps) => {
     const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
-    const positionals = args.positional.filter((a) => !a.startsWith('--'))
-    const id = positionals[0]
-    if (!id) {
+    const ids = args.positional.filter((a) => !a.startsWith('--'))
+    if (ids.length === 0) {
       deps.err(
-        `usage: mars drop <id> [--force]\n\n` +
+        `usage: mars drop <id> [<id> ...] [--force]\n\n` +
           `Delete any task entirely (worktree+branch+row) regardless of\n` +
           `status. Clears every task_blockers row mentioning <id> on either\n` +
           `side, and nulls out any sibling row's fix_for_task_id that\n` +
@@ -435,25 +440,38 @@ const drop: Command = {
       return { code: 2 }
     }
     const force = flagSet.has('--force')
-    const data = (await deps.daemon.sendRequest({ op: 'drop', id, force })) as {
-      taskId: string
-      previousStatus: string
-      edgesRemoved: { incoming: number; outgoing: number }
-      cascadedFixTaskIds: string[]
-      worktreeRemoved: boolean
-      branchDeleted: boolean
+    let succeeded = 0
+    let failed = 0
+    for (const id of ids) {
+      try {
+        const data = (await deps.daemon.sendRequest({ op: 'drop', id, force })) as {
+          taskId: string
+          previousStatus: string
+          edgesRemoved: { incoming: number; outgoing: number }
+          cascadedFixTaskIds: string[]
+          worktreeRemoved: boolean
+          branchDeleted: boolean
+        }
+        const parts = [
+          `dropped ${data.taskId} (was ${data.previousStatus})`,
+          `worktree=${data.worktreeRemoved ? 'removed' : 'absent'}`,
+          `branch=${data.branchDeleted ? 'deleted' : 'absent'}`,
+          `edges=${data.edgesRemoved.incoming}in/${data.edgesRemoved.outgoing}out`,
+        ]
+        if (data.cascadedFixTaskIds.length > 0) {
+          parts.push(`cascaded fix tasks: ${data.cascadedFixTaskIds.join(', ')}`)
+        }
+        deps.out(parts.join('; '))
+        succeeded++
+      } catch (err) {
+        deps.err(`${id}: ${errorMessage(err)}`)
+        failed++
+      }
     }
-    const parts = [
-      `dropped ${data.taskId} (was ${data.previousStatus})`,
-      `worktree=${data.worktreeRemoved ? 'removed' : 'absent'}`,
-      `branch=${data.branchDeleted ? 'deleted' : 'absent'}`,
-      `edges=${data.edgesRemoved.incoming}in/${data.edgesRemoved.outgoing}out`,
-    ]
-    if (data.cascadedFixTaskIds.length > 0) {
-      parts.push(`cascaded fix tasks: ${data.cascadedFixTaskIds.join(', ')}`)
+    if (ids.length > 1) {
+      deps.out(`drop complete: ${succeeded} succeeded, ${failed} failed`)
     }
-    deps.out(parts.join('; '))
-    return { code: 0 }
+    return { code: failed > 0 ? 1 : 0 }
   },
 }
 
