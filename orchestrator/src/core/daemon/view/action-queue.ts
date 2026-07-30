@@ -163,6 +163,26 @@ export interface ActionQueueRow {
    * process. Null on every other row kind.
    */
   logPath?: string | null
+  /**
+   * Coder stall diagnostics captured just before the hard timeout fired
+   * (slice 5 of PRD d23b2704). Populated for `task-blocked` rows when the
+   * failing task row carries a non-null `stall_diagnostics` blob. Null on
+   * every other row kind and on legacy rows that predate the capture.
+   */
+  stallDiagnostics?: unknown | null
+  /**
+   * Live worker-pool snapshot computed at action-queue raise time (slice 6
+   * of PRD d23b2704). Lets the operator answer "was the pool saturated, was
+   * the provider hung, or did the coder itself die" from the first look at
+   * the alert. Null on every other row kind.
+   */
+  poolSnapshot?: {
+    activeWorkerCount: number
+    queuedCount: number
+    runningCount: number
+    blockedCount: number
+    recentDispatchDecisions: string[]
+  } | null
 }
 
 /** Raw actionQueue row shape as persisted in `action_queue_items`. */
@@ -719,6 +739,34 @@ export const buildActionQueueView = async ({
           }
         : null
 
+    // Extract stall diagnostics and pool snapshot for task-blocked rows
+    // (slice 6 of PRD d23b2704). Both fields fall back to null on legacy rows
+    // and on every other row kind, so pre-existing consumers never crash.
+    const stallDiagnostics: unknown | null =
+      uiKind === 'failed-task' && row.payload.stallDiagnostics !== undefined
+        ? (row.payload.stallDiagnostics ?? null)
+        : null
+    const poolSnapshot: ActionQueueRow['poolSnapshot'] = (() => {
+      if (uiKind !== 'failed-task') return null
+      const snap = row.payload.poolSnapshot
+      if (
+        typeof snap !== 'object' ||
+        snap === null ||
+        typeof (snap as Record<string, unknown>).activeWorkerCount !== 'number'
+      )
+        return null
+      const s = snap as Record<string, unknown>
+      return {
+        activeWorkerCount: s.activeWorkerCount as number,
+        queuedCount: typeof s.queuedCount === 'number' ? s.queuedCount : 0,
+        runningCount: typeof s.runningCount === 'number' ? s.runningCount : 0,
+        blockedCount: typeof s.blockedCount === 'number' ? s.blockedCount : 0,
+        recentDispatchDecisions: Array.isArray(s.recentDispatchDecisions)
+          ? (s.recentDispatchDecisions as string[])
+          : [],
+      }
+    })()
+
     const recipeFields = buildRecipeFields(row, entityId, title, body)
 
     rows.push({
@@ -742,6 +790,8 @@ export const buildActionQueueView = async ({
       toolPromotionDetail,
       previewUrl,
       logPath,
+      stallDiagnostics,
+      poolSnapshot,
       humanSummary: recipeFields.humanSummary,
       humanDetail: recipeFields.humanDetail,
       verbs: recipeFields.verbs,

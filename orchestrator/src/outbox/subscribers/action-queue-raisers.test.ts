@@ -446,6 +446,101 @@ describe('action-queue-raiser:task.blocked subscriber', () => {
     expect(row).not.toBeNull();
     expect(row!.kind).toBe('failed');
   });
+
+  // ── Slice 6: stall diagnostics and pool snapshot in payload ──────────
+
+  it('payload includes stallDiagnostics from task stall_diagnostics and poolSnapshot from live counts', async () => {
+    const taskId = 'task-with-stall-diag';
+    const stallDiagData = { stderrTail: 'out of memory', exitCode: 1, durationMs: 12345 };
+
+    // Seed the failing task with stall_diagnostics.
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at, stall_diagnostics)
+            VALUES (?, '', 'failed', '', '', ?)`,
+      args: [taskId, JSON.stringify(stallDiagData)],
+    });
+
+    // Seed tasks in different statuses to populate the pool snapshot.
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES ('pool-q1', '', 'queued', '', '')`,
+    });
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES ('pool-q2', '', 'queued', '', '')`,
+    });
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES ('pool-r1', '', 'running', '', '')`,
+    });
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES ('pool-b1', '', 'blocked', '', '')`,
+    });
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(blockedEvent(600, taskId));
+
+    const r = await client.execute({
+      sql: `SELECT payload FROM action_queue_items WHERE origin_task_id = ? AND state = 'open'`,
+      args: [taskId],
+    });
+    expect(r.rows).toHaveLength(1);
+    const payloadRaw = (r.rows[0] as unknown as { payload: string }).payload;
+    const payload = JSON.parse(payloadRaw) as Record<string, unknown>;
+
+    // stallDiagnostics must match the task's stall_diagnostics blob.
+    expect(payload.stallDiagnostics).toEqual(stallDiagData);
+
+    // poolSnapshot must carry live counts matching the seeded tasks.
+    const snap = payload.poolSnapshot as {
+      activeWorkerCount: number;
+      queuedCount: number;
+      runningCount: number;
+      blockedCount: number;
+      recentDispatchDecisions: unknown[];
+    };
+    expect(snap).not.toBeNull();
+    expect(snap.queuedCount).toBe(2);
+    expect(snap.runningCount).toBe(1);
+    expect(snap.activeWorkerCount).toBe(1); // mirrors runningCount
+    expect(snap.blockedCount).toBe(1);
+    expect(Array.isArray(snap.recentDispatchDecisions)).toBe(true);
+  });
+
+  it('payload has null stallDiagnostics when task row has no stall_diagnostics', async () => {
+    const taskId = 'task-no-stall-diag';
+
+    // Seed task WITHOUT stall_diagnostics.
+    await client.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+            VALUES (?, '', 'failed', '', '')`,
+      args: [taskId],
+    });
+
+    const [subscriber] = buildActionQueueRaiserSubscribers(client);
+    await subscriber.handler(blockedEvent(601, taskId));
+
+    const r = await client.execute({
+      sql: `SELECT payload FROM action_queue_items WHERE origin_task_id = ? AND state = 'open'`,
+      args: [taskId],
+    });
+    expect(r.rows).toHaveLength(1);
+    const payloadRaw = (r.rows[0] as unknown as { payload: string }).payload;
+    const payload = JSON.parse(payloadRaw) as Record<string, unknown>;
+
+    // stallDiagnostics must be null when the task has no stall_diagnostics.
+    expect(payload.stallDiagnostics).toBeNull();
+
+    // poolSnapshot must still be present (may have zero counts).
+    expect(payload.poolSnapshot).toBeDefined();
+    const snap = payload.poolSnapshot as Record<string, unknown>;
+    expect(typeof snap.activeWorkerCount).toBe('number');
+    expect(typeof snap.queuedCount).toBe('number');
+    expect(typeof snap.runningCount).toBe('number');
+    expect(typeof snap.blockedCount).toBe('number');
+    expect(Array.isArray(snap.recentDispatchDecisions)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

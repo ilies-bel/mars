@@ -402,6 +402,20 @@ const Detail: React.FC<DetailProps> = ({ row, now, pending, actionsBoxRef }) => 
           )}
         </Box>
       )}
+      {row.poolSnapshot && (
+        <Box marginTop={1} flexDirection="column">
+          <Text bold dimColor>pool snapshot (at failure):</Text>
+          <Text dimColor>
+            workers active: {row.poolSnapshot.activeWorkerCount}  queued: {row.poolSnapshot.queuedCount}  running: {row.poolSnapshot.runningCount}  blocked: {row.poolSnapshot.blockedCount}
+          </Text>
+        </Box>
+      )}
+      {row.stallDiagnostics != null && (
+        <Box marginTop={1} flexDirection="column">
+          <Text bold dimColor>stall diagnostics:</Text>
+          <Text dimColor>{JSON.stringify(row.stallDiagnostics, null, 2)}</Text>
+        </Box>
+      )}
       {pending && (
         <Box marginTop={1}>
           <Text dimColor>⟳ working…</Text>
