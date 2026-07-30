@@ -83,7 +83,7 @@ const INSTALL_HINTS: Record<ProviderName, string> = {
  * Auth detection is best-effort:
  *  - claude: ANTHROPIC_API_KEY env var OR ~/.claude/.credentials.json
  *  - gemini: ~/.config/gemini/oauth_creds.json OR ~/.gemini/credentials.json
- *  - codex: ${CODEX_HOME:-~/.codex}/auth.json
+ *  - codex: `codex login status` (supports file and OS-keyring sessions)
  *
  * Returns 'unknown' when the binary is present but no auth signal is found
  * — the user may still be authenticated via mechanisms we can't cheaply probe.
@@ -122,10 +122,9 @@ export const probeProvider = (
     }
   } else {
     // codex
-    const codexHome = deps.env['CODEX_HOME'] ?? join(deps.homeDir, '.codex')
-    if (deps.fileReadable(join(codexHome, 'auth.json'))) {
+    if (installed && deps.tryRun(binary, ['login', 'status']) === 0) {
       authed = 'yes'
-      authDetail = 'stored'
+      authDetail = 'cli-session'
     }
   }
 

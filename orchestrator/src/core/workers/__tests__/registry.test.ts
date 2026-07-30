@@ -5,11 +5,13 @@ import {
   CODER_MODEL,
   FIXER_BACKLOG_DENIED_TOOLS,
   READ_ONLY_DENIED_TOOLS,
+  WORKER_PROVIDER,
   WORKER_CONFIGS,
   Workers,
   createWorker,
   getWorker,
   pickWorkerForTags,
+  providerModel,
   resolveWorkerMaxContextTokens,
   type Worker,
   type WorkerConfig,
@@ -156,12 +158,12 @@ describe('Planner / Slicer / Triager pinned config', () => {
     })
   }
 
-  it('Planner and Slicer pin opus on high effort; Triager pins sonnet on medium effort', () => {
-    expect(WORKER_CONFIGS.Planner.model).toBe('claude-opus-4-7')
+  it('Planner and Slicer use the flagship tier; Triager uses balanced', () => {
+    expect(WORKER_CONFIGS.Planner.model).toBe(providerModel(WORKER_PROVIDER, 'flagship'))
     expect(WORKER_CONFIGS.Planner.effort).toBe('high')
-    expect(WORKER_CONFIGS.Slicer.model).toBe('claude-opus-4-7')
+    expect(WORKER_CONFIGS.Slicer.model).toBe(providerModel(WORKER_PROVIDER, 'flagship'))
     expect(WORKER_CONFIGS.Slicer.effort).toBe('high')
-    expect(WORKER_CONFIGS.Triager.model).toBe('claude-sonnet-4-6')
+    expect(WORKER_CONFIGS.Triager.model).toBe(providerModel(WORKER_PROVIDER, 'balanced'))
     expect(WORKER_CONFIGS.Triager.effort).toBe('medium')
   })
 
@@ -171,11 +173,11 @@ describe('Planner / Slicer / Triager pinned config', () => {
 describe('Fixer pinned config', () => {
   const args = argvFor('Fixer')
 
-  it('runs Sonnet on high effort with bypassPermissions (Sonnet — scoped mechanical recovery, not architectural reasoning)', () => {
-    // Fixer uses Sonnet (same as Coder) because recovery briefs are scoped
+  it('runs the balanced provider tier on high effort with bypassPermissions', () => {
+    // Fixer uses the balanced tier (same as Coder) because recovery briefs are scoped
     // mechanical work (finish-the-job or repair-one-defect). Opus pinning was
     // a cost amplifier under failure storms.
-    expect(valueAfter(args, '--model')).toBe('claude-sonnet-4-6')
+    expect(valueAfter(args, '--model')).toBe(providerModel(WORKER_PROVIDER, 'balanced'))
     expect(valueAfter(args, '--effort')).toBe('high')
     expect(args).toContain('--dangerously-skip-permissions')
   })
@@ -205,21 +207,21 @@ describe('Fixer pinned config', () => {
 // the intent was Sonnet (scoped mechanical work, not architectural reasoning).
 // During a failure storm this multiplied cost — each failed task spawned one
 // Opus Fixer. The tests below pin the dispatch-time model to prevent regression.
-describe('fix-run spawn argv regression (model was claude-opus-4-7 before 77b0f693)', () => {
-  it('Workers.Fixer is the worker selected for fix tasks and its model is claude-sonnet-4-6', () => {
+describe('fix-run model-tier regression', () => {
+  it('Workers.Fixer is selected for fix tasks and uses the balanced tier', () => {
     // The dispatch path in runAgent: kind === 'fix' ? Workers.Fixer : ...
     // Workers.Fixer must never silently revert to opus.
-    expect(Workers.Fixer.config.model).toBe('claude-sonnet-4-6')
-    expect(WORKER_CONFIGS.Fixer.model).toBe('claude-sonnet-4-6')
+    expect(Workers.Fixer.config.model).toBe(providerModel(WORKER_PROVIDER, 'balanced'))
+    expect(WORKER_CONFIGS.Fixer.model).toBe(providerModel(WORKER_PROVIDER, 'balanced'))
   })
 
-  it('fix-run argv contains --model claude-sonnet-4-6 and NOT claude-opus-4-7', () => {
+  it('fix-run argv contains the balanced model and not the flagship model', () => {
     // Verify the argv path end-to-end: WORKER_CONFIGS.Fixer → claudeStreamArgs.
     // If the model is ever reverted to opus, this catches it at the argv level,
     // not just at the config level.
     const fixArgs = argvFor('Fixer')
-    expect(valueAfter(fixArgs, '--model')).toBe('claude-sonnet-4-6')
-    expect(fixArgs).not.toContain('claude-opus-4-7')
+    expect(valueAfter(fixArgs, '--model')).toBe(providerModel(WORKER_PROVIDER, 'balanced'))
+    expect(fixArgs).not.toContain(providerModel(WORKER_PROVIDER, 'flagship'))
   })
 
   it('Fixer model is NOT overridable by MARS_WORKER_MODEL (only Coder is)', () => {
@@ -227,7 +229,7 @@ describe('fix-run spawn argv regression (model was claude-opus-4-7 before 77b0f6
     // Fixer must always use CLAUDE_SONNET_MODEL regardless of MARS_WORKER_MODEL.
     // This test verifies the isolation: even if MARS_WORKER_MODEL were set to opus,
     // the Fixer config stays on the pinned sonnet.
-    expect(WORKER_CONFIGS.Fixer.model).toBe('claude-sonnet-4-6')
+    expect(WORKER_CONFIGS.Fixer.model).toBe(providerModel(WORKER_PROVIDER, 'balanced'))
     // Coder may differ from Fixer if MARS_WORKER_MODEL is set, but Fixer must not.
     // The pinned constant is the same 'claude-sonnet-4-6' regardless of env.
     expect(WORKER_CONFIGS.Fixer.model).not.toBe(WORKER_CONFIGS.Planner.model) // Planner is Opus
@@ -236,11 +238,10 @@ describe('fix-run spawn argv regression (model was claude-opus-4-7 before 77b0f6
 })
 
 describe('MARS_WORKER_MODEL env var', () => {
-  it('defaults Coder to sonnet when MARS_WORKER_MODEL is unset', () => {
+  it('defaults Coder to the selected provider balanced tier when MARS_WORKER_MODEL is unset', () => {
     // CODER_MODEL is resolved at module-load time: process.env.MARS_WORKER_MODEL
-    // ?? 'claude-sonnet-4-6'. This test verifies the resolved value matches the
-    // env — either the override or the Sonnet default.
-    const expected = process.env.MARS_WORKER_MODEL ?? 'claude-sonnet-4-6'
+    // or the provider-native balanced model. This verifies the resolved value.
+    const expected = process.env.MARS_WORKER_MODEL ?? providerModel(WORKER_PROVIDER, 'balanced')
     expect(CODER_MODEL).toBe(expected)
   })
 

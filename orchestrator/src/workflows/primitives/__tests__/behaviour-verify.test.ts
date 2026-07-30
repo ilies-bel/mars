@@ -34,7 +34,11 @@ import {
   claudeStreamArgs,
   codegraphMcpConfigJson,
 } from '../../../core/lib/git/claude'
-import { WORKER_CONFIGS } from '../../../core/workers'
+import {
+  WORKER_CONFIGS,
+  WORKER_PROVIDER,
+  providerModel,
+} from '../../../core/workers'
 import {
   runNonLlmStepWithSpan,
 } from '../../../core/lib/run-worker-with-span'
@@ -228,9 +232,9 @@ describe('behaviour-verify:dod-unmet registration (ship-blocker wiring)', () => 
 // ---------------------------------------------------------------------------
 
 describe('BehaviourVerifier Worker — pinned posture, no shipped MCP dependency', () => {
-  it('WORKER_CONFIGS pins sonnet, headless, read-only tool surface', () => {
+  it('WORKER_CONFIGS pins the balanced provider tier, headless, read-only tool surface', () => {
     const cfg = WORKER_CONFIGS.BehaviourVerifier
-    expect(cfg.model).toBe('claude-sonnet-4-6')
+    expect(cfg.model).toBe(providerModel(WORKER_PROVIDER, 'balanced'))
     expect(cfg.runtime).toBe('headless')
     expect(cfg.disallowedTools).toContain('Edit')
     expect(cfg.disallowedTools).toContain('Write')

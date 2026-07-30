@@ -17,6 +17,33 @@ import { geminiHeadless } from './providers/gemini-headless'
 
 export type ProviderName = 'claude' | 'gemini' | 'codex'
 
+export type ProviderModelTier = 'flagship' | 'balanced' | 'fast'
+
+export interface ProviderModels {
+  readonly flagship: string
+  readonly balanced: string
+  readonly fast: string
+}
+
+/** Provider-native model ids behind MARS's semantic worker tiers. */
+export const PROVIDER_MODELS: Readonly<Record<ProviderName, ProviderModels>> = {
+  claude: {
+    flagship: 'claude-opus-4-7',
+    balanced: 'claude-sonnet-4-6',
+    fast: 'claude-haiku-4-5-20251001',
+  },
+  gemini: {
+    flagship: 'gemini-2.5-pro',
+    balanced: 'gemini-2.5-pro',
+    fast: 'gemini-2.5-flash',
+  },
+  codex: {
+    flagship: 'gpt-5.6-sol',
+    balanced: 'gpt-5.6-terra',
+    fast: 'gpt-5.6-luna',
+  },
+} as const
+
 // Runtime options forwarded to HeadlessAdapter.run when the orchestrator
 // dispatches a headless (non-interactive subprocess) invocation. Mirrors
 // the fields currently threaded into runClaudeCode from buildWorker so
@@ -69,6 +96,13 @@ export interface HeadlessAdapter {
     readonly quotaRejected: boolean
     readonly sessionId: boolean
   }
+}
+
+export type RunHeadlessProviderOpts = Omit<HeadlessRunOpts, 'model'> & {
+  readonly provider?: ProviderName
+  readonly model?: string
+  readonly modelTier?: ProviderModelTier
+  readonly timeoutMs?: number
 }
 
 // Runtime options forwarded to spawnArgv when the orchestrator launches
@@ -145,8 +179,8 @@ export interface Provider {
   readonly isReady?: (strippedBuffer: string) => boolean
   // Headless dispatch adapter. Required on every Provider so buildWorker's
   // headless branch can call it uniformly. Providers that do not yet have a
-  // real headless implementation (gemini, codex) supply a stub that rejects —
-  // their adapter slices land this in a later PRD slice.
+  // real headless implementation must fail explicitly rather than silently
+  // falling back to a different provider.
   readonly headless: HeadlessAdapter
 }
 
@@ -311,3 +345,52 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     headless: codexHeadless,
   },
 } as const
+
+const KNOWN_PROVIDER_NAMES: readonly ProviderName[] = ['claude', 'codex', 'gemini']
+
+export const resolveProviderName = (
+  raw: string | undefined = process.env.MARS_WORKER_PROVIDER,
+): ProviderName => {
+  if (raw === undefined || raw.trim() === '') return 'codex'
+  if (!(KNOWN_PROVIDER_NAMES as readonly string[]).includes(raw)) {
+    throw new Error(
+      `Unknown MARS_WORKER_PROVIDER '${raw}' — known: ${KNOWN_PROVIDER_NAMES.join(', ')}`,
+    )
+  }
+  return raw as ProviderName
+}
+
+/**
+ * Provider-neutral entry point for one-off headless model calls outside a
+ * named Worker. It applies the global provider, translates semantic model
+ * tiers, and owns wall-clock cancellation so callers never shell out to a
+ * provider CLI directly.
+ */
+export const runHeadlessProvider = async (
+  prompt: string,
+  opts: RunHeadlessProviderOpts,
+): Promise<RunClaudeResult> => {
+  const providerName = opts.provider ?? resolveProviderName()
+  const provider = PROVIDERS[providerName]
+  const abort = new AbortController()
+  const onExternalAbort = (): void => abort.abort()
+  if (opts.externalAbort?.aborted) abort.abort()
+  else opts.externalAbort?.addEventListener('abort', onExternalAbort, { once: true })
+
+  const timeout =
+    opts.timeoutMs !== undefined && opts.timeoutMs > 0
+      ? setTimeout(() => abort.abort(), opts.timeoutMs)
+      : undefined
+
+  try {
+    const { provider: _provider, modelTier = 'balanced', timeoutMs: _timeoutMs, ...runOpts } = opts
+    return await provider.headless.run(prompt, {
+      ...runOpts,
+      model: opts.model ?? PROVIDER_MODELS[providerName][modelTier],
+      externalAbort: abort.signal,
+    })
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+    opts.externalAbort?.removeEventListener('abort', onExternalAbort)
+  }
+}

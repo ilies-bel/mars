@@ -1,5 +1,5 @@
-// Worker registry — one auditable location for the per-stage pinned
-// `claude -p` configuration. Each named Worker bundles the model, effort,
+// Worker registry — one auditable location for per-stage provider-native
+// configuration. Each named Worker bundles the model tier, effort,
 // permission posture, bare mode, and denied tools that the stage runs
 // under. Workflow authors call `worker.run(prompt, { cwd, ... })`
 // instead of assembling claude flags ad-hoc.
@@ -25,8 +25,8 @@ import {
   type RunClaudeResult,
 } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
-import type { ProviderName } from './providers'
-import { PROVIDERS } from './providers'
+import type { ProviderModelTier, ProviderName } from './providers'
+import { PROVIDERS, PROVIDER_MODELS, resolveProviderName } from './providers'
 import { runPtySession } from './run-pty-session'
 import {
   RESCUE_OPERATOR_SYSTEM_PROMPT,
@@ -71,7 +71,7 @@ export type WorkerName =
   | 'Scorer'
   | 'RescueOperator'
 
-// Execution runtime for a Worker. 'headless' runs via `claude -p` in a
+// Execution runtime for a Worker. 'headless' runs via the selected provider's
 // non-interactive subprocess (current default for all built-in Workers).
 // 'pty' drives the agent under node-pty — non-attachable (no operator terminal
 // access; the operator reads traces/logs after the fact). No dispatch logic
@@ -85,7 +85,7 @@ export type ClaudeOutputFormat = 'stream-json' | 'json' | 'text'
 // run().
 //
 // This interface is the single auditable contract: every field a dispatched
-// `claude -p` invocation can be configured with appears here. A workflow
+// provider invocation can be configured with appears here. A workflow
 // author who reads WORKER_CONFIGS sees the entire role-pinned posture
 // (model, fallback model, effort, permission mode, agent, system prompt
 // shape, allow/deny lists, tool list, output format, bare mode) without
@@ -93,8 +93,8 @@ export type ClaudeOutputFormat = 'stream-json' | 'json' | 'text'
 //
 // `systemPrompt` and `appendSystemPrompt` are mutually exclusive. The
 // Worker factory throws at construction time if both are pinned — the
-// underlying `claude -p` flags `--system-prompt` and
-// `--append-system-prompt` cannot both be set on one invocation.
+// underlying agent CLI's mutually exclusive system-prompt modes cannot both
+// be set on one invocation.
 export interface WorkerConfig {
   readonly name: string
   readonly model: string
@@ -122,24 +122,21 @@ export interface WorkerConfig {
   // Workers leave this undefined and rely on the default tool surface;
   // tightly-scoped roles may pin a narrow list.
   readonly tools?: readonly string[]
-  // Wire format for claude -p's streamed output. Defaults to stream-json
-  // (the only format the orchestrator's event reader currently parses).
+  // Normalized wire format for streamed provider output.
   readonly outputFormat: ClaudeOutputFormat
   // Per-Worker context token budget. Compared against the LATEST assistant
   // event's input-side token count (input + cache_read + cache_creation) on
   // each turn; 0 = disabled. Set intentionally below the model's real context
-  // window to kill a run before Claude Code auto-compacts. A compression-
+  // window to kill a run before the provider auto-compacts. A compression-
   // induced kill is treated as a FAILURE (reason: context-exhausted) and
   // routed through the normal recovery flow.
   readonly maxContextTokens: number
   // Execution runtime for this Worker. All built-in Workers use 'headless'
-  // (dispatched via `claude -p` in a non-interactive subprocess). 'pty' is the
+  // (dispatched via the selected CLI in a non-interactive subprocess). 'pty' is the
   // node-pty harness — non-attachable; the operator reads traces/logs after the
   // fact. No dispatch logic branches on this field yet.
   readonly runtime: WorkerRuntime
-  // Agent CLI Provider that drives this Worker. Names an entry in the PROVIDERS
-  // registry (currently only 'claude'). Dispatch behaviour is unchanged — the
-  // field is read but not yet branched on; future slices will wire it up.
+  // Agent CLI Provider that drives this Worker. Names an entry in PROVIDERS.
   readonly provider: ProviderName
   // Tags this Worker handles. pickWorkerForTags returns this Worker when the
   // task's tag list intersects this set. Workers with no tags entry are never
@@ -202,16 +199,11 @@ export interface Worker {
   run(prompt: string, options: RunOptions): Promise<RunClaudeResult>
 }
 
-const CLAUDE_OPUS_MODEL = 'claude-opus-4-7'
-const CLAUDE_SONNET_MODEL = 'claude-sonnet-4-6'
-const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
-
 // codegraph nudge appended to the system prompt of the workers that benefit
 // most from the pre-indexed code knowledge graph (Planner, Slicer, Coder).
 // The codegraph MCP server is registered in the repo-root `.mcp.json`, so the
-// `codegraph_*` tools are available to every dispatched `claude -p` run that
-// reads project MCP config (which they all do — see claudeStreamArgs'
-// --strict-mcp-config + --setting-sources project,local). The nudge steers the
+// `codegraph_*` tools are available to provider runs whose adapter loads
+// project MCP config. The nudge steers the
 // worker toward the graph before it falls back to broad file-scanning, which
 // is what cuts tool calls and context churn.
 // Exported so tests can pin the exact blast radius (which Workers carry the
@@ -219,34 +211,23 @@ const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 export const CODEGRAPH_NUDGE =
   'A pre-indexed code knowledge graph is available via the `codegraph_*` MCP tools (codegraph_explore, codegraph_search, codegraph_callers, codegraph_callees, codegraph_impact, codegraph_node, codegraph_files, codegraph_status). Before broad file-scanning (rg/fd/Glob across the tree), consult codegraph to locate symbols, trace call graphs, and assess blast radius — it is faster and cheaper than reading files to reconstruct structure. Fall back to direct file reads when the graph lacks the detail you need.'
 
-// Resolve the effective model for the Coder Worker. When `MARS_WORKER_MODEL`
-// is set, it overrides the pinned default — useful for one-off sessions that
-// need Opus reasoning (e.g. a complex architectural migration) without editing
-// code. The env var is read at process start and affects every Coder run for
-// the lifetime of that daemon process; there is no per-task override.
-// Planner/Slicer are NOT affected — they always use their pinned Opus model
-// for cost/safety reasons. Fixer uses Sonnet (same as Coder) because recovery
-// briefs are scoped mechanical work, not architectural reasoning.
-export const CODER_MODEL: string =
-  process.env.MARS_WORKER_MODEL ?? CLAUDE_SONNET_MODEL
+// One provider owns an entire daemon run. `mars daemon start` resolves the
+// persisted `.mars/daemon.json` choice into MARS_WORKER_PROVIDER before any
+// workflow imports this registry. An explicit env value remains the one-run
+// override. Codex is the hard default for new and unconfigured repositories.
+export const WORKER_PROVIDER: ProviderName = resolveProviderName()
 
-// Resolve the effective provider for the Coder Worker. When `MARS_WORKER_PROVIDER`
-// is set, it overrides the pinned default — useful for running Coder sessions
-// under Codex or Gemini without editing code. The env var is read at process
-// start and affects every Coder run for the lifetime of that daemon process.
-// All other Workers (Planner, Slicer, Fixer, Triager, BehaviourVerifier, Scorer)
-// stay pinned to Claude.
-const KNOWN_PROVIDERS: readonly ProviderName[] = ['claude', 'codex', 'gemini'] as const
-const _rawProvider = process.env.MARS_WORKER_PROVIDER
-if (
-  _rawProvider !== undefined &&
-  !(KNOWN_PROVIDERS as readonly string[]).includes(_rawProvider)
-) {
-  throw new Error(
-    `Unknown MARS_WORKER_PROVIDER '${_rawProvider}' — known: ${KNOWN_PROVIDERS.join(', ')}`,
-  )
-}
-export const CODER_PROVIDER: ProviderName = (_rawProvider as ProviderName | undefined) ?? 'claude'
+export const providerModel = (
+  provider: ProviderName,
+  tier: ProviderModelTier,
+): string => PROVIDER_MODELS[provider][tier]
+
+// The explicit model override remains Coder-only. Every other role selects a
+// semantic tier, then the Provider translates that tier to a native model id.
+// This prevents switches such as Claude -> Codex from accidentally passing a
+// Claude model slug to `codex exec`.
+export const CODER_MODEL: string =
+  process.env.MARS_WORKER_MODEL ?? providerModel(WORKER_PROVIDER, 'balanced')
 
 // Day-one defaults agreed in the grill for PRD 948691d0. The Coder runs on
 // sonnet / high effort / bypassPermissions with the full tool surface (no
@@ -285,12 +266,12 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: CODER_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: CODER_PROVIDER,
+    provider: WORKER_PROVIDER,
     tags: ['coder'],
   },
   Planner: {
     name: 'Planner',
-    model: CLAUDE_OPUS_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'flagship'),
     effort: 'high',
     permissionMode: 'default',
     bare: false,
@@ -299,12 +280,12 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['planner'],
   },
   Slicer: {
     name: 'Slicer',
-    model: CLAUDE_OPUS_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'flagship'),
     effort: 'high',
     permissionMode: 'default',
     bare: false,
@@ -313,12 +294,12 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['slicer'],
   },
   Triager: {
     name: 'Triager',
-    model: CLAUDE_SONNET_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'balanced'),
     effort: 'medium',
     permissionMode: 'default',
     bare: false,
@@ -326,12 +307,12 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: TRIAGER_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['triager'],
   },
   Fixer: {
     name: 'Fixer',
-    model: CLAUDE_SONNET_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'balanced'),
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,
@@ -339,7 +320,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['fixer'],
   },
   // Behaviour-verify Worker: exercises the live dev server booted by the
@@ -355,7 +336,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   // operator has provisioned them; this worker carries none by default.
   BehaviourVerifier: {
     name: 'BehaviourVerifier',
-    model: CLAUDE_SONNET_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'balanced'),
     effort: 'medium',
     permissionMode: 'bypassPermissions',
     bare: false,
@@ -363,7 +344,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: resolveWorkerMaxContextTokens(100_000),
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['behaviour-verifier'],
   },
   // Scorer Worker (PRD 6cf85bc9): the record-only post-instance quality judge.
@@ -378,7 +359,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   // MARS_WORKER_MODEL (only Coder is).
   Scorer: {
     name: 'Scorer',
-    model: CLAUDE_HAIKU_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'fast'),
     effort: 'medium',
     permissionMode: 'default',
     bare: false,
@@ -386,7 +367,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: resolveWorkerMaxContextTokens(50_000),
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['scorer'],
   },
   // RescueOperator Worker: court of last resort for a dead-ended Arc.
@@ -401,7 +382,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   // guard in rescue-operator-spawn.ts). See PRD 94e2a82a.
   RescueOperator: {
     name: 'RescueOperator',
-    model: CLAUDE_SONNET_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'balanced'),
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,
@@ -410,13 +391,13 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['rescue-operator'],
   },
 } as const
 
-// Construction-time guard. `claude -p` cannot accept both --system-prompt
-// and --append-system-prompt on the same invocation, and silently letting
+// Construction-time guard. A Worker cannot pin both system-prompt modes;
+// silently letting
 // a Worker pin both would mean one is dropped at dispatch with no audit
 // trail. Throwing at module-load surfaces the misconfiguration where the
 // operator can fix it.
@@ -497,7 +478,7 @@ export const getWorker = (name: WorkerName): Worker => Workers[name]
  * Iterates through the registered Workers and returns the first one whose
  * `config.tags` set intersects with the task's tag list. When no Worker
  * claims any of the task's tags, the function falls through to the
- * **default headless Worker** — the Coder, running via `claude -p` with
+ * **default headless Worker** — the Coder, running via the selected provider with
  * full tool surface and bypassPermissions. This fallback guarantees every
  * task gets a runner even when no tag-specific Worker is registered.
  *

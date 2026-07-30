@@ -2893,7 +2893,7 @@ export const startDaemon = async (
         const { execFile } = await import('node:child_process')
         const { promisify } = await import('node:util')
         const { getRepoRoot } = await import('../context')
-        const { runClaudeCode } = await import('../lib/git/claude')
+        const { runHeadlessProvider } = await import('../workers/providers')
         const { getTask } = await import('../queue')
         const { patchOpenActionQueuePayload } = await import('../lib/action-queue')
 
@@ -2975,12 +2975,11 @@ export const startDaemon = async (
             )
             const investigatePrompt = promptParts.join('\n')
 
-            const result = await runClaudeCode({
+            const result = await runHeadlessProvider(investigatePrompt, {
               cwd: worktreePath,
-              prompt: investigatePrompt,
-              model: 'claude-haiku-4-5-20251001',
-              // Read-only: use default permission mode so no file edits are allowed.
+              modelTier: 'fast',
               permissionMode: 'default',
+              disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
             })
 
             // Extract the final text from the conversation. Prefer the 'result'
@@ -3036,7 +3035,7 @@ export const startDaemon = async (
         const { promisify } = await import('node:util')
         const { existsSync } = await import('node:fs')
         const { getRepoRoot } = await import('../context')
-        const { runClaudeCode } = await import('../lib/git/claude')
+        const { runHeadlessProvider } = await import('../workers/providers')
         const { getTask } = await import('../queue')
         const { patchOpenActionQueuePayload, supersedeActionQueueItemsForOrigin } = await import('../lib/action-queue')
 
@@ -3119,12 +3118,11 @@ export const startDaemon = async (
             'reshaping. A short paragraph — this is a triage aid, not a fix.',
         )
 
-        const result = await runClaudeCode({
+        const result = await runHeadlessProvider(promptParts.join('\n'), {
           cwd,
-          prompt: promptParts.join('\n'),
-          model: 'claude-sonnet-4-6',
-          // Read-only: default permission mode disallows file edits.
+          modelTier: 'balanced',
           permissionMode: 'default',
+          disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
         })
 
         let diagnosis = '(no diagnosis generated)'

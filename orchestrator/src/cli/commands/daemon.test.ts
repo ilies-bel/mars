@@ -116,6 +116,8 @@ describe('daemon start — race prevention', () => {
     expect(result.out.join('\n')).toContain('12345')
     // A child process was spawned.
     expect(spawnM).toHaveBeenCalledTimes(1)
+    const spawnOptions = spawnM.mock.calls[0]?.[2]
+    expect(spawnOptions?.env?.['MARS_WORKER_PROVIDER']).toBe('codex')
     // isDaemonAlive was called at least twice (initial check + at least one poll).
     expect(isDaemonAliveM).toHaveBeenCalledTimes(2)
   })

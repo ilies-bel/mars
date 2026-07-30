@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
+  loadDaemonConfig,
   patchDaemonConfigFile,
   persistLeverAutonomyLevel,
   readDaemonConfigFile,
@@ -27,13 +28,19 @@ import { errorMessage, isDaemonDownError } from './shared'
 
 const spawnDetached = (deps: CommandDeps): void => {
   const { command, baseArgs } = resolveLaunchCommand()
+  const workerProvider =
+    process.env.MARS_WORKER_PROVIDER ?? loadDaemonConfig().defaultProvider
   const child = spawn(
     command,
     [...baseArgs, '--repo', deps.ctx.repoRoot, 'daemon', 'start', '--foreground'],
     {
       detached: true,
       stdio: 'ignore',
-      env: { ...process.env, MARS_REPO: deps.ctx.repoRoot },
+      env: {
+        ...process.env,
+        MARS_REPO: deps.ctx.repoRoot,
+        MARS_WORKER_PROVIDER: workerProvider,
+      },
     },
   )
   child.unref()
@@ -312,6 +319,7 @@ const daemonStart: Command = {
   run: async (args, deps) => {
     const foreground = args.positional.includes('--foreground')
     if (foreground) {
+      process.env.MARS_WORKER_PROVIDER ??= loadDaemonConfig().defaultProvider
       const { logFile } = daemonPaths()
       const writeBootLog = (msg: string): void => {
         try {

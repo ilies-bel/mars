@@ -29,7 +29,7 @@ const swallowEpipe = (err: NodeJS.ErrnoException): void => {
 process.stdout.on('error', swallowEpipe)
 process.stderr.on('error', swallowEpipe)
 
-const usage = `mars — orchestrator for parallel Claude Code task workflows
+const usage = `mars — provider-agnostic orchestrator for parallel agent task workflows
 
 Usage:
   mars [--repo <path>] <command> [args]
@@ -261,7 +261,7 @@ Commands:
                                 finish (--force exits immediately and abandons
                                 in-flight). 'restart' stops then starts fresh.
                                 'kill' SIGKILLs the daemon's process group,
-                                terminating every child claude -p worker, and
+                                terminating every child provider worker, and
                                 marks in-flight tasks failed. 'status' (also
                                 --status) prints inFlight + queue counts.
                                 'reload' re-reads .mars/daemon.json (falling
@@ -936,7 +936,7 @@ Subcommands:
   restart            force-stop any running daemon, then start a fresh one
                      in the background. Exits 0 when the new daemon is up.
   kill               hard stop: mark every in-flight task failed and SIGKILL
-                     the daemon's process group (kills all child claude -p
+                     the daemon's process group (kills all child provider
                      workers). Use when 'stop' is hanging on stuck work.
   status             print pid, startedAt, inFlight, and queue counts.
                      Equivalent to the legacy --status flag form.

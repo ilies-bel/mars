@@ -10,8 +10,19 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { Workers, createWorker, type WorkerConfig } from '..'
+import type { WorkerConfig } from '..'
 import type { ClaudeEvent } from '../../lib/claude-stream'
+
+// This suite exercises Claude-specific session-id behaviour. Pin its provider
+// explicitly now that the framework-wide default is Codex.
+const originalProvider = process.env.MARS_WORKER_PROVIDER
+process.env.MARS_WORKER_PROVIDER = 'claude'
+const { Workers, createWorker } = await import('..')
+
+afterAll(() => {
+  if (originalProvider === undefined) delete process.env.MARS_WORKER_PROVIDER
+  else process.env.MARS_WORKER_PROVIDER = originalProvider
+})
 
 // ---------------------------------------------------------------------------
 // Shared stub setup — emits 3 well-formed stream-json lines then exits 0.

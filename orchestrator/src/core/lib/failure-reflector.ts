@@ -1,4 +1,4 @@
-import { runClaudeCode } from './git/claude'
+import { runHeadlessProvider } from '../workers/providers'
 import { getRepoRoot } from '../context'
 import { createHash } from 'node:crypto'
 import {
@@ -154,7 +154,7 @@ const persistSuggestion = async (s: FailureReflectorSuggestion): Promise<void> =
  * Spawn a harness-improvement analysis for an exhausted failure arc.
  *
  * Fire-and-forget: the call site does NOT await this. All errors are caught
- * and logged; nothing is ever thrown. The function runs Claude Code with a
+ * and logged; nothing is ever thrown. The function runs the selected provider with a
  * harness-improvement system prompt (NOT a code-fix prompt), then persists
  * each suggestion as a draft proposal with source='failure-reflector'.
  *
@@ -174,10 +174,10 @@ export const spawnFailureReflector = async (
       arcContext,
     )
 
-    const r = await runClaudeCode({
+    const r = await runHeadlessProvider(prompt, {
       cwd: getRepoRoot(),
-      prompt,
-      model: 'sonnet',
+      modelTier: 'balanced',
+      disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
     })
 
     const text = collectAssistantText(r.conversation) || r.stdout

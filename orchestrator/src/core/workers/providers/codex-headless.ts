@@ -1,8 +1,8 @@
 // Codex headless adapter — normalises the `codex exec --json` JSONL stream
-// into the orchestrator's ClaudeEvent shape so downstream readers work
-// unchanged. The adapter is deliberately minimal: context-token metering,
-// quota-rejection detection, and session-id extraction are all false/null
-// because the codex CLI does not expose those signals.
+// into the orchestrator's legacy ClaudeEvent shape so downstream readers work
+// unchanged. Authentication is deliberately delegated to Codex CLI: a local
+// `codex login` ChatGPT OAuth session (or another CLI-supported auth method) is
+// reused automatically and MARS never reads or copies credential material.
 
 import { runSubprocessStreaming, buildWorkerEnv, type RunClaudeResult } from '../../lib/git/claude'
 import type { ClaudeEvent } from '../../lib/claude-stream'
@@ -15,6 +15,16 @@ const resolveCodexBin = (): string => process.env.MARS_CODEX_BIN?.trim() || 'cod
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
+
+const isReadOnlyRun = (opts: HeadlessRunOpts): boolean => {
+  const denied = new Set(opts.disallowedTools ?? [])
+  return denied.has('Edit') && denied.has('Write')
+}
+
+const composePrompt = (prompt: string, systemPrompt?: string): string =>
+  systemPrompt?.trim()
+    ? `<mars_system_instructions>\n${systemPrompt.trim()}\n</mars_system_instructions>\n\n${prompt}`
+    : prompt
 
 /**
  * Parse a single JSONL line from the `codex exec --json` stream into a
@@ -88,14 +98,15 @@ export const codexHeadless: HeadlessAdapter = {
       resolveCodexBin(),
       [
         'exec',
+        '--ephemeral',
         '--json',
         '--model',
-        opts.model ?? 'gpt-5.5',
+        opts.model ?? 'gpt-5.6-sol',
         '-c',
         `model_reasoning_effort="${opts.effort ?? 'high'}"`,
         '--sandbox',
-        'workspace-write',
-        prompt,
+        isReadOnlyRun(opts) ? 'read-only' : 'workspace-write',
+        composePrompt(prompt, opts.systemPrompt),
       ],
       opts.cwd,
       async ({ stream, line }) => {

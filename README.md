@@ -2,9 +2,10 @@
 
 # Mars
 
-**An AFK agent team for your repo — on your laptop, on your Claude subscription.**
+**An AFK agent team for your repo — on your laptop, using your agent CLI subscription.**
 
-Mars runs Claude Code as a fleet of parallel workers against a single repo:
+Mars runs Codex by default—or Claude Code or Gemini—as a fleet of parallel
+workers against a single repo:
 each task gets its own git worktree, gets coded, verified, and merged — while
 you do something else. No servers to stand up. No API keys. No per-token bill.
 
@@ -28,7 +29,7 @@ https://github.com/user-attachments/assets/PLACEHOLDER-HERO-VIDEO
 ## Why Mars
 
 **A real agent team, zero infrastructure.** Queue work and walk away.
-A local daemon picks up tasks, spawns a Claude Code worker per task in
+A local daemon picks up tasks, spawns an agent CLI worker per task in
 its own isolated git worktree, runs them in parallel, verifies each
 (typecheck → test → lint), and fast-forwards the passing ones into your
 branch. Merge conflicts go to a dedicated reconciler agent ("Vega"). It feels
@@ -36,14 +37,14 @@ like a managed agent platform — but it's a single CLI and a local database
 next to your project. Nothing to deploy, nothing to log into, nothing in the
 cloud.
 
-**Your subscription, not an API bill.** Every model call shells out to your
-authenticated `claude` CLI. There are no provider SDKs and no API keys
-anywhere in Mars — so a long AFK session draws on the Claude subscription
-you already pay for instead of metering you per token.
+**Your subscription, not an API bill.** Every model call shells out to the
+selected authenticated agent CLI. Codex is the default and reuses the ChatGPT
+OAuth session created by `codex login`; Claude Code and Gemini remain selectable
+adapters. Mars has no provider SDK and never reads or copies provider credentials.
 
-**Smart model routing.** Mars routes each Worker role to the cheapest model
-that can do the job — Haiku for routine writing, Sonnet for coding, Opus only
-where architectural reasoning earns it. The human-facing surface is a CLI,
+**Smart model routing.** Mars routes each Worker role through semantic model
+tiers—fast, balanced, and flagship—and resolves those tiers to provider-native
+models. The human-facing surface is a CLI,
 not a chat transcript, so orchestration state stays out of the context window
 instead of bloating it.
 
@@ -60,7 +61,7 @@ You drop work into a queue; the daemon turns it into merged commits.
             ▼
   ┌──────────────────────────────────────────────────────┐
   │  1. setup    git worktree on task/<id> off main       │
-  │  2. code     claude -p  (parallel across tasks)       │
+  │  2. code     selected agent CLI  (parallel)           │
   │  3. verify   typecheck → test → lint  (fail-fast)     │
   │  4. merge    serialized via file lock → fast-forward   │
   │              conflict → reconciler agent ("Vega")      │
@@ -100,9 +101,10 @@ mars list                                    # see live statuses
 mars ui                                      # open the dashboard
 ```
 
-**Requirements:** `git`, the authenticated
-[Claude Code](https://docs.claude.com/en/docs/claude-code) CLI on `PATH`
-(every model call shells out to `claude -p` — no API keys), and Node >= 22.13.
+**Requirements:** `git`, Node >= 22.13, and an authenticated agent CLI on
+`PATH`. The default is Codex: install `codex`, then run `codex login` once.
+Use `mars init --provider claude` or `--provider gemini` to select another
+adapter.
 
 <!-- TODO: record a 30s terminal screencast of the quick-start flow above.
      Tool suggestion: asciinema or vhs (https://github.com/charmbracelet/vhs)
@@ -198,17 +200,19 @@ mars task add "migrate the config loader from YAML to TOML" \
 
 ### Worker model routing
 
-Each role runs on the right model tier — no Opus tokens wasted on boilerplate:
+Each role runs on the right semantic model tier. With the default Codex
+provider, those tiers resolve as follows:
 
 | Worker | Default model | Role |
 | --- | --- | --- |
-| Coder | `claude-sonnet-4-6` | Implementation |
-| Fixer | `claude-sonnet-4-6` | Scoped mechanical recovery |
-| Writer | `claude-haiku-4-5` | Documentation, routine text |
-| Planner / Slicer | `claude-opus-4-7` | Architectural reasoning |
-| Triager | `claude-sonnet-4-6` | Task classification |
+| Coder / Fixer | `gpt-5.6-terra` | Implementation and scoped recovery |
+| Planner / Slicer | `gpt-5.6-sol` | Architectural reasoning |
+| Triager / Behaviour Verifier | `gpt-5.6-terra` | Classification and behavioural checks |
+| Scorer | `gpt-5.6-luna` | Routine judging |
+| Rescue Operator | `gpt-5.6-terra` | Targeted recovery |
 
-Override the Coder model for a session: `MARS_WORKER_MODEL=claude-opus-4-7 mars daemon start`
+Override the Coder model for one daemon run:
+`MARS_WORKER_MODEL=gpt-5.6-sol mars daemon start`.
 
 ### Claude Code skills
 
@@ -274,7 +278,7 @@ https://github.com/user-attachments/assets/PLACEHOLDER-UI-WALKTHROUGH
 │  @mars/workflow engine (packages/workflow/)                  │
 │  ┌────────────────────────────────────────────────┐         │
 │  │ setup → code → verify → merge                  │         │
-│  │         (claude -p in isolated worktree)        │         │
+│  │         (selected agent CLI in worktree)        │         │
 │  └────────────────────────────────────────────────┘         │
 ├─────────────────────────────────────────────────────────────┤
 │  Embedded PostgreSQL (.mars/pg/)                             │
@@ -314,8 +318,9 @@ Full reference with env vars and workflow internals:
 
 - **Not a cloud service.** No hosted control plane, no multi-tenant queue, no
   auth, no telemetry. State is a local Postgres instance per repo.
-- **Not an API wrapper.** No `ANTHROPIC_API_KEY`, no provider SDKs. Every model
-  call goes through your local `claude -p`.
+- **Not an API wrapper.** Mars has no provider SDK. Every model call goes
+  through the selected local CLI and its existing authentication; Codex OAuth
+  is the default.
 - **Not a managed agent runtime.** Mars is the plumbing — worktree isolation,
   parallel dispatch, verification gates, serialized merges, persistence, audit
   log — so you compose your own workflow on top.

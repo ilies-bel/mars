@@ -20,8 +20,10 @@ import {
 } from '../rescue-operator'
 import {
   WORKER_CONFIGS,
+  WORKER_PROVIDER,
   Workers,
   pickWorkerForTags,
+  providerModel,
   type Worker,
   type WorkerName,
 } from '..'
@@ -136,8 +138,10 @@ describe('WORKER_CONFIGS.RescueOperator', () => {
     expect(WORKER_CONFIGS.RescueOperator.permissionMode).toBe('bypassPermissions')
   })
 
-  it('runs on Sonnet with high effort (same posture as Fixer)', () => {
-    expect(WORKER_CONFIGS.RescueOperator.model).toBe('claude-sonnet-4-6')
+  it('runs on the provider balanced tier with high effort (same posture as Fixer)', () => {
+    expect(WORKER_CONFIGS.RescueOperator.model).toBe(
+      providerModel(WORKER_PROVIDER, 'balanced'),
+    )
     expect(WORKER_CONFIGS.RescueOperator.effort).toBe('high')
   })
 

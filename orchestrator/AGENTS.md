@@ -6,7 +6,7 @@ imperative, agentic, code-producing workflows on the in-house
 
 ## Project Overview
 
-This orchestrator runs headless Claude Code in parallel git worktrees and
+This orchestrator runs provider-selected headless coding agents in parallel git worktrees and
 fast-forwards verified work into `main`. Workflows are plain imperative TS
 functions on the **`@mars/workflow`** engine (`packages/workflow/`): native
 control flow is the source of truth, `ctx.step(name, fn)` wraps each durable

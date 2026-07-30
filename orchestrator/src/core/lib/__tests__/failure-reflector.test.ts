@@ -6,7 +6,7 @@
  *  2. Repeated suggestions for the same title are deduplicated (notes appended)
  *  3. Non-blocking: errors from Claude are swallowed, never thrown
  *
- * runClaudeCode is mocked (subprocess boundary). Proposals are verified via
+ * runHeadlessProvider is mocked (provider subprocess boundary). Proposals are verified via
  * listProposals from the proposals module (the same PGlite instance the
  * reflector writes to).
  */
@@ -16,9 +16,9 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
-// Mock runClaudeCode at the system boundary (subprocess call).
-vi.mock('../git/claude', () => ({
-  runClaudeCode: vi.fn(),
+// Mock the provider-neutral system boundary (subprocess call).
+vi.mock('../../workers/providers', () => ({
+  runHeadlessProvider: vi.fn(),
 }))
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -66,8 +66,8 @@ describe('spawnFailureReflector', () => {
   })
 
   it('creates a proposal when Claude returns a valid suggestion', async () => {
-    const { runClaudeCode } = await import('../git/claude')
-    vi.mocked(runClaudeCode).mockResolvedValueOnce(
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider).mockResolvedValueOnce(
       makeClaudeResult([
         {
           recipe: 'add-typecheck',
@@ -92,8 +92,8 @@ describe('spawnFailureReflector', () => {
   })
 
   it('persists the action as the proposal solution', async () => {
-    const { runClaudeCode } = await import('../git/claude')
-    vi.mocked(runClaudeCode).mockResolvedValueOnce(
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider).mockResolvedValueOnce(
       makeClaudeResult([
         {
           recipe: null,
@@ -116,8 +116,8 @@ describe('spawnFailureReflector', () => {
   })
 
   it('deduplicates proposals with the same title on repeated calls', async () => {
-    const { runClaudeCode } = await import('../git/claude')
-    vi.mocked(runClaudeCode)
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider)
       .mockResolvedValueOnce(
         makeClaudeResult([
           {
@@ -152,8 +152,8 @@ describe('spawnFailureReflector', () => {
   })
 
   it('appends rationale from second call to existing proposal notes', async () => {
-    const { runClaudeCode } = await import('../git/claude')
-    vi.mocked(runClaudeCode)
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider)
       .mockResolvedValueOnce(
         makeClaudeResult([
           {
@@ -187,8 +187,8 @@ describe('spawnFailureReflector', () => {
   })
 
   it('creates separate proposals for suggestions with different titles', async () => {
-    const { runClaudeCode } = await import('../git/claude')
-    vi.mocked(runClaudeCode).mockResolvedValueOnce(
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider).mockResolvedValueOnce(
       makeClaudeResult([
         {
           recipe: 'add-typecheck',
@@ -216,8 +216,8 @@ describe('spawnFailureReflector', () => {
   })
 
   it('does not throw when Claude errors — fire-and-forget is non-blocking', async () => {
-    const { runClaudeCode } = await import('../git/claude')
-    vi.mocked(runClaudeCode).mockRejectedValueOnce(new Error('Claude unavailable'))
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider).mockRejectedValueOnce(new Error('provider unavailable'))
 
     const { spawnFailureReflector } = await import('../failure-reflector')
 
@@ -226,8 +226,8 @@ describe('spawnFailureReflector', () => {
   })
 
   it('does not create any proposals when Claude returns empty suggestions', async () => {
-    const { runClaudeCode } = await import('../git/claude')
-    vi.mocked(runClaudeCode).mockResolvedValueOnce(makeClaudeResult([]))
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider).mockResolvedValueOnce(makeClaudeResult([]))
 
     const { spawnFailureReflector } = await import('../failure-reflector')
     const { initProposals, listProposals } = await import('../../proposals')
@@ -240,8 +240,8 @@ describe('spawnFailureReflector', () => {
   })
 
   it('does not create proposals for malformed suggestions missing title or action', async () => {
-    const { runClaudeCode } = await import('../git/claude')
-    vi.mocked(runClaudeCode).mockResolvedValueOnce(
+    const { runHeadlessProvider } = await import('../../workers/providers')
+    vi.mocked(runHeadlessProvider).mockResolvedValueOnce(
       makeClaudeResult([
         { recipe: null, title: '', rationale: 'no title', action: 'do something' },
         { recipe: null, title: 'has title', rationale: 'no action', action: '' },

@@ -796,7 +796,7 @@ export interface RunAgentResult {
 }
 
 /**
- * Run the coder (headless `claude -p`) inside the worktree. Mirrors the former
+ * Run the coder through the selected headless provider inside the worktree. Mirrors the former
  * `run-claude-code` step body: sweeps stray debris from a prior failed attempt
  * (gated on 0 commits ahead), composes the full prompt, picks the worker
  * (kind-aware: fix → Fixer; else tag-routed including registry workers), runs

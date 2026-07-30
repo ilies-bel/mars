@@ -19,6 +19,11 @@ import {
   realProviderProbeDeps,
   type ProviderProbeDeps,
 } from './provider-probe'
+import { loadDaemonConfig } from '../../core/daemon/config'
+import {
+  resolveProviderName,
+  type ProviderName,
+} from '../../core/workers/providers'
 
 // ---------------------------------------------------------------------------
 // Public types (exported for tests)
@@ -127,25 +132,45 @@ export const runDoctorChecks = async (
   probes: DoctorProbes,
   pgDsnPath: string | null,
   providerProbeDeps: ProviderProbeDeps = realProviderProbeDeps,
+  selectedProvider: ProviderName = 'claude',
 ): Promise<CheckResult[]> => {
   const results: CheckResult[] = []
 
-  // 1. claude CLI — hard dependency; must be on PATH and runnable.
-  const claudeCode = probes.tryRun('claude', ['--version'])
-  if (claudeCode === null) {
+  // 1. Selected provider CLI — hard dependency; must be installed, runnable,
+  // and (for Codex, whose status command is authoritative) OAuth-authenticated.
+  const binEnvKey = `MARS_${selectedProvider.toUpperCase()}_BIN`
+  const providerBin = providerProbeDeps.env[binEnvKey] ?? selectedProvider
+  const providerCode = probes.tryRun(providerBin, ['--version'])
+  if (providerCode === null) {
     results.push({
-      label: 'claude CLI',
+      label: `${selectedProvider} CLI`,
       status: 'FAIL',
-      message: 'not found on PATH — install Claude Code from https://claude.ai/code',
+      message: `selected provider not found on PATH (install: ${probeProvider(selectedProvider, providerProbeDeps).installHint})`,
     })
-  } else if (claudeCode !== 0) {
+  } else if (providerCode !== 0) {
     results.push({
-      label: 'claude CLI',
+      label: `${selectedProvider} CLI`,
       status: 'FAIL',
-      message: `found but 'claude --version' exited ${claudeCode} — check your Claude Code installation`,
+      message: `found but '${providerBin} --version' exited ${providerCode} — check the selected provider installation`,
+    })
+  } else if (
+    selectedProvider === 'codex' &&
+    probes.tryRun(providerBin, ['login', 'status']) !== 0
+  ) {
+    results.push({
+      label: 'codex CLI',
+      status: 'FAIL',
+      message: "not authenticated — run 'codex login' to create the ChatGPT OAuth session",
     })
   } else {
-    results.push({ label: 'claude CLI', status: 'PASS', message: 'found and runnable' })
+    results.push({
+      label: `${selectedProvider} CLI`,
+      status: 'PASS',
+      message:
+        selectedProvider === 'codex'
+          ? 'found and authenticated (ChatGPT OAuth)'
+          : 'found and runnable',
+    })
   }
 
   // 2. git — hard dependency.
@@ -233,9 +258,9 @@ export const runDoctorChecks = async (
     }
   }
 
-  // 7–8. Alternative agent CLIs — WARN-only (optional; gemini and codex
-  //      complement Claude Code but are not required for Mars to operate).
-  for (const name of ['gemini', 'codex'] as const) {
+  // 7–8. Non-selected agent CLIs are WARN-only alternatives.
+  for (const name of ['claude', 'gemini', 'codex'] as const) {
+    if (name === selectedProvider) continue
     const probe = probeProvider(name, providerProbeDeps)
     if (!probe.installed) {
       results.push({
@@ -270,9 +295,14 @@ const doctor: Command = {
   summary: 'preflight check: verify runtime prerequisites',
   usage: 'usage: mars doctor',
   run: async (_args, deps) => {
+    const selectedProvider = resolveProviderName(
+      process.env.MARS_WORKER_PROVIDER ?? loadDaemonConfig().defaultProvider,
+    )
     const results = await runDoctorChecks(
       realProbes,
       resolve(deps.ctx.stateDir, 'pg.dsn'),
+      realProviderProbeDeps,
+      selectedProvider,
     )
     let hasFail = false
     for (const r of results) {
