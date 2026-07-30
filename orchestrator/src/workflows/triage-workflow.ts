@@ -9,6 +9,7 @@ import { createQueueWorkflowStore } from './queue-workflow-store'
 import { type TraceEventStore } from '../core/lib/trace-events-store'
 import { nullTraceStore } from '../core/lib/run-tool'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
+import { diagnoseClaudeFailure } from '../core/lib/claude-stream'
 
 const TASK_GRAPH_LIMIT = 30
 const PROMPT_PREVIEW_CHARS = 200
@@ -193,7 +194,7 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
       })
       if (r.exitCode !== 0) {
         throw new Error(
-          `claude -p exited ${r.exitCode}: ${(r.stderr || r.stdout).slice(0, 500)}`,
+          `claude -p exited ${r.exitCode}: ${diagnoseClaudeFailure(r.stdout, r.stderr)}`,
         )
       }
 

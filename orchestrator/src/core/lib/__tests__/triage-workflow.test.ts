@@ -224,6 +224,39 @@ describe('triage workflow', () => {
     expect(reloaded?.status).toBe('queued')
   })
 
+  it('reports the tail error instead of successful SessionStart hook events', async () => {
+    const successfulHook = JSON.stringify({
+      type: 'system',
+      subtype: 'hook_response',
+      hook_name: 'SessionStart:startup',
+      outcome: 'success',
+      session_id: 'boilerplate-session-id',
+      uuid: 'boilerplate-uuid',
+      output: 'x'.repeat(250),
+    })
+    const actualError = JSON.stringify({
+      type: 'result',
+      subtype: 'error',
+      is_error: true,
+      result: 'authentication failed: invalid API key',
+    })
+    setClaudeStub({
+      exitCode: 1,
+      stdout: [successfulHook, successfulHook, successfulHook, actualError].join('\n'),
+    })
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    await queue.enqueueTask('background task')
+    const task = await queue.enqueueTask('task whose triage fails')
+
+    const triage = await import('../../../workflows/triage-workflow')
+
+    const failure = await triage.runTriage(task.id).catch((error: unknown) => String(error))
+    expect(failure).toContain('authentication failed: invalid API key')
+    expect(failure).not.toContain('SessionStart:startup')
+  })
+
 })
 
 // ── Optimised data access: skip-path and store-method tests ─────────────────

@@ -15,6 +15,7 @@ import { listActionQueueItems, raiseActionQueueItem } from '../core/lib/action-q
 import { type TraceEventStore } from '../core/lib/trace-events-store'
 import { nullTraceStore } from '../core/lib/run-tool'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
+import { diagnoseClaudeFailure } from '../core/lib/claude-stream'
 import { loadDaemonConfig } from '../core/daemon/config'
 import { validateSliceReferences } from './slice-reference-validator'
 
@@ -1187,7 +1188,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
     })
     if (r.exitCode !== 0) {
       throw new Error(
-        `claude -p exited ${r.exitCode}: ${(r.stderr || r.stdout).slice(0, 500)}`,
+        `claude -p exited ${r.exitCode}: ${diagnoseClaudeFailure(r.stdout, r.stderr)}`,
       )
     }
 

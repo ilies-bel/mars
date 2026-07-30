@@ -10,6 +10,7 @@ import { createQueueWorkflowStore } from './queue-workflow-store'
 import { type TraceEventStore } from '../core/lib/trace-events-store'
 import { nullTraceStore } from '../core/lib/run-tool'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
+import { diagnoseClaudeFailure } from '../core/lib/claude-stream'
 
 const planInputSchema = z.object({
   taskId: z.string(),
@@ -95,7 +96,7 @@ export const planWorkflow = defineWorkflow<PlanInput, RunPlanResult, PlanService
       })
       if (r.exitCode !== 0) {
         throw new Error(
-          `claude -p exited ${r.exitCode}: ${(r.stderr || r.stdout).slice(0, 500)}`,
+          `claude -p exited ${r.exitCode}: ${diagnoseClaudeFailure(r.stdout, r.stderr)}`,
         )
       }
 

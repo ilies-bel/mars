@@ -267,3 +267,37 @@ export const extractLastStreamText = (conversation: readonly ClaudeEvent[]): str
   }
   return null
 }
+
+/**
+ * Select a concise diagnostic from a failed `claude -p` invocation.
+ *
+ * The stream begins with lifecycle events that carry session ids but no
+ * failure information. Prefer the human-readable payload of the last result
+ * or error event, then stderr, and only then the final non-boilerplate stream
+ * lines. This keeps task failure reasons useful and stable for grouping.
+ */
+export const diagnoseClaudeFailure = (stdout: string, stderr: string): string => {
+  const lines = stdout.split(/\r?\n/)
+  const events = lines
+    .map((line) => parseClaudeStreamLine(line))
+    .filter((event): event is ClaudeEvent => event !== null)
+
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]
+    if (event.type !== 'result' && event.type !== 'error' && event.is_error !== true) continue
+    for (const value of [event.result, event.error, event.message]) {
+      if (typeof value === 'string' && value.trim().length > 0) return value.trim()
+    }
+  }
+
+  if (stderr.trim().length > 0) return stderr.trim()
+
+  const fallback = lines.filter((line) => {
+    const event = parseClaudeStreamLine(line)
+    if (!event || event.type !== 'system') return line.trim().length > 0
+    if (event.subtype === 'hook_started') return false
+    return !(event.subtype === 'hook_response' && event.outcome === 'success')
+  })
+  const tail = fallback.slice(-3).join('\n').trim()
+  return tail.length > 0 ? tail : 'claude -p produced no diagnostic output'
+}
