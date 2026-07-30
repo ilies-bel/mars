@@ -69,7 +69,7 @@ import { PaperclipIcon, MicIcon, SquareIcon, XIcon } from 'lucide-react'
 import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
-import { WhatHappenedTodayView } from '@/widgets/chat/WhatHappenedTodayView'
+import { ChatHero, type HeroDelta } from '@/widgets/chat/ChatHero'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
 import {
@@ -2455,9 +2455,44 @@ export const ChatPage = () => {
   )
   const [query, setQuery] = useState<string>(() => readAqStateFromUrl().q)
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
-  // Client-only "What happened today?" release-notes stream. Shown in place of
-  // the hero empty state; cleared when the user navigates to any thread/item.
+  // Client-only "What happened today?" delta view. Shown inline (no modal) in
+  // place of the hero empty state; cleared when the user navigates to any
+  // thread/item. Also triggered by the idle-return hook when the operator comes
+  // back after 5+ minutes away so they see a summary without any blocking dialog.
   const [whatHappenedActive, setWhatHappenedActive] = useState(false)
+  // Placeholder delta — replaced by a real API fetch in a later slice. Kept
+  // here so ChatHero renders with an empty state until the data layer lands.
+  const [heroDelta] = useState<HeroDelta>({
+    merges: [],
+    recoveries: [],
+    recipes: [],
+    throttles: [],
+    evaporated: [],
+  })
+
+  // Idle-return detection: when the page becomes visible again after being
+  // hidden for 5+ minutes, show the delta inline so the operator sees a recap
+  // without any modal blocking the composer. Replaces the old #/release-notes
+  // hash-triggered modal flow.
+  const hiddenAtRef = useRef<number | null>(null)
+  useEffect(() => {
+    const IDLE_MS = 5 * 60 * 1000 // 5 minutes
+    const onVisibilityChange = () => {
+      if (typeof document === 'undefined') return
+      if (document.hidden) {
+        hiddenAtRef.current = Date.now()
+      } else if (hiddenAtRef.current !== null) {
+        const elapsed = Date.now() - hiddenAtRef.current
+        hiddenAtRef.current = null
+        if (elapsed >= IDLE_MS && !selectedThreadId && !selectedQueueItemId) {
+          setWhatHappenedActive(true)
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ---------------------------------------------------------------------------
   // Responsive breakpoints
@@ -2830,7 +2865,7 @@ export const ChatPage = () => {
             )}
           </>
         ) : whatHappenedActive ? (
-          <WhatHappenedTodayView onBack={() => setWhatHappenedActive(false)} />
+          <ChatHero delta={heroDelta} onBack={() => setWhatHappenedActive(false)} />
         ) : (
           // Seeded feed: Mars speaks first. No hero screen — the feed is
           // already populated on first paint.

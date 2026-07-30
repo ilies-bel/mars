@@ -40,11 +40,14 @@ mock.module('@/components/ai-elements/response', () => ({
     <span data-testid="response">{children}</span>,
 }))
 
-// Import the component under test AFTER mocks are registered so the mocked
+// Import the components under test AFTER mocks are registered so the mocked
 // modules are in place when WhatHappenedTodayView resolves its imports.
+// ChatHero does not use the mocked AI-elements, but we import it here for
+// consistent ordering.
 const { WhatHappenedTodayView } = await import(
   '@/widgets/chat/WhatHappenedTodayView'
 )
+const { ChatHero } = await import('@/widgets/chat/ChatHero')
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -107,5 +110,73 @@ describe('WhatHappenedTodayView — recipe-autorun hero feed lines', () => {
     expect(html).toContain('entry A')
     expect(html).toContain('entry B')
     expect(html).toContain('entry C')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ChatHero — sectioned inline delta rendering
+// ---------------------------------------------------------------------------
+
+import type { HeroDelta } from '@/widgets/chat/ChatHero'
+
+const makeDelta = (overrides: Partial<HeroDelta> = {}): HeroDelta => ({
+  merges: [],
+  recoveries: [],
+  recipes: [],
+  throttles: [],
+  evaporated: [],
+  ...overrides,
+})
+
+describe('ChatHero — sectioned delta rendering', () => {
+  it('renders all five section headers when delta has one item per section', () => {
+    const delta = makeDelta({
+      merges: [{ kind: 'merge', taskId: 'mars-1', title: 'Add feature X', at: '2026-07-20T10:00:00Z' }],
+      recoveries: [{ kind: 'recovery', taskId: 'fix-1', originTaskId: 'mars-1', title: 'Fix timeout', at: '2026-07-20T11:00:00Z' }],
+      recipes: [{ kind: 'recipe-autorun', text: 'Coder was killed by restart on task mars-2 — auto-continued per your teach on Jul 20' }],
+      throttles: [{ kind: 'throttle', taskId: 'mars-3', reason: 'Rate limit', at: '2026-07-20T12:00:00Z' }],
+      evaporated: [{ kind: 'evaporated', threadId: 'thread-1', title: 'Old alert', at: '2026-07-20T09:00:00Z' }],
+    })
+    const html = renderToStaticMarkup(<ChatHero delta={delta} onBack={() => {}} />)
+    expect(html).toContain('data-testid="delta-section-merges"')
+    expect(html).toContain('data-testid="delta-section-recoveries"')
+    expect(html).toContain('data-testid="delta-section-recipes"')
+    expect(html).toContain('data-testid="delta-section-throttles"')
+    expect(html).toContain('data-testid="delta-section-evaporated"')
+  })
+
+  it('omits a section when it has no items', () => {
+    const delta = makeDelta({
+      merges: [{ kind: 'merge', taskId: 'mars-1', title: 'Add feature X', at: '2026-07-20T10:00:00Z' }],
+      // recoveries, recipes, throttles, evaporated all empty
+    })
+    const html = renderToStaticMarkup(<ChatHero delta={delta} onBack={() => {}} />)
+    expect(html).toContain('data-testid="delta-section-merges"')
+    expect(html).not.toContain('data-testid="delta-section-recoveries"')
+    expect(html).not.toContain('data-testid="delta-section-recipes"')
+    expect(html).not.toContain('data-testid="delta-section-throttles"')
+    expect(html).not.toContain('data-testid="delta-section-evaporated"')
+  })
+
+  it('renders merge task id and title in the merges section', () => {
+    const delta = makeDelta({
+      merges: [{ kind: 'merge', taskId: 'mars-42', title: 'Ship the thing', at: '2026-07-20T10:00:00Z' }],
+    })
+    const html = renderToStaticMarkup(<ChatHero delta={delta} onBack={() => {}} />)
+    expect(html).toContain('mars-42')
+    expect(html).toContain('Ship the thing')
+  })
+
+  it('renders recipe text in the recipes section', () => {
+    const delta = makeDelta({
+      recipes: [{ kind: 'recipe-autorun', text: 'auto-continued per your teach on Jul 21' }],
+    })
+    const html = renderToStaticMarkup(<ChatHero delta={delta} onBack={() => {}} />)
+    expect(html).toContain('auto-continued per your teach on Jul 21')
+  })
+
+  it('renders a back button', () => {
+    const html = renderToStaticMarkup(<ChatHero delta={makeDelta()} onBack={() => {}} />)
+    expect(html).toContain('data-testid="chat-hero-back"')
   })
 })
