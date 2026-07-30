@@ -18,14 +18,12 @@
 
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchGlossary, fetchSkills, fetchAdrs, fetchChatThread, fetchVision } from '@/shared/api'
-import { SkeletonList } from '@/components/Skeleton'
-import { parseCreatedTaskIds } from './parseCreatedTaskIds'
+import { fetchGlossary, fetchSkills } from '@/shared/api'
 import { useThreadFocus } from './useThreadFocus'
 import { buildActivityFeed } from './activityFeed'
 import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
 
-import type { GlossaryTerm, Skill, ChatSegmentAttachment, AdrEntry, ChatThreadDetail, ProgressTask, ActionQueueItem } from '@/shared/schemas'
+import type { GlossaryTerm, Skill, ChatSegmentAttachment, ChatThreadDetail, ProgressTask, ActionQueueItem } from '@/shared/schemas'
 import type { ThreadFocusResult } from './useThreadFocus'
 import type { LiveBuffer } from '@/shared/chatBuffer'
 import type { ActivityEntry } from './activityFeed'
@@ -239,92 +237,6 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
 }
 
 // ---------------------------------------------------------------------------
-// Project vision panel
-// ---------------------------------------------------------------------------
-
-/** Lines from VISION.md to surface as "next conversation subjects" when the
- * vision is absent or very short. Generic prompts that help the user bootstrap
- * a project vision conversation with the operator. */
-const NEXT_SUBJECT_SUGGESTIONS = [
-  'What is the long-term goal of this project?',
-  'What are the non-goals and explicit constraints?',
-  'Which open questions need a human decision before the next milestone?',
-]
-
-interface ProjectVisionPanelProps {
-  projectId?: string
-}
-
-export const ProjectVisionPanel = ({ projectId }: ProjectVisionPanelProps) => {
-  const [expanded, setExpanded] = useState(false)
-
-  const { data: content, isLoading, isError } = useQuery({
-    queryKey: ['vision', projectId ?? ''],
-    queryFn: () => fetchVision(projectId),
-    staleTime: 120_000,
-  })
-
-  if (isLoading) {
-    return (
-      <SkeletonList
-        rows={2}
-        rowClassName="mx-3 h-4 mb-1"
-        label="Loading vision"
-      />
-    )
-  }
-
-  // Error or unavailable: surface the first next-subject suggestion so the
-  // panel stays useful even without a VISION.md.
-  if (isError || content === null || content === undefined || content.trim() === '') {
-    return (
-      <div className="px-3 py-2">
-        <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60 mb-1">
-          Next conversation subject
-        </p>
-        <ul className="flex flex-col gap-1">
-          {NEXT_SUBJECT_SUGGESTIONS.map((s) => (
-            <li
-              key={s}
-              className="font-mono text-[10px] leading-snug text-foreground/70"
-              data-testid="vision-next-subject"
-            >
-              → {s}
-            </li>
-          ))}
-        </ul>
-      </div>
-    )
-  }
-
-  // Vision available: show a trimmed excerpt with expand/collapse.
-  const PREVIEW_LENGTH = 300
-  const isLong = content.length > PREVIEW_LENGTH
-  const displayed = expanded || !isLong ? content : content.slice(0, PREVIEW_LENGTH).trimEnd() + '…'
-
-  return (
-    <div className="px-3 py-2">
-      <pre
-        className="whitespace-pre-wrap font-mono text-[10px] leading-snug text-foreground/80 break-words"
-        data-testid="vision-content"
-      >
-        {displayed}
-      </pre>
-      {isLong && (
-        <button
-          type="button"
-          className="mt-1 font-mono text-[9px] text-muted-foreground hover:text-foreground transition-colors"
-          onClick={() => setExpanded((v) => !v)}
-          data-testid="vision-expand-toggle"
-        >
-          {expanded ? 'show less' : 'show all'}
-        </button>
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Glossary panel
 // ---------------------------------------------------------------------------
 
@@ -480,129 +392,145 @@ const SkillsPanel = ({ onInsertPrompt }: SkillsPanelProps) => {
 }
 
 // ---------------------------------------------------------------------------
-// Session artifacts panel
+// Session artifact rail
 // ---------------------------------------------------------------------------
 
-export interface SessionArtifactsPanelProps {
-  threadId?: string
+export interface ProjectAdr {
+  number: number
+  title: string
+  slug: string
+  path: string
+}
+
+export interface ProjectMeta {
+  vision: string | null
+  theme: string | null
+}
+
+export interface ArtifactsRailProps {
+  tasks: string[]
+  files: ChatSegmentAttachment[]
+  adrs: ProjectAdr[]
+  meta: ProjectMeta
   projectId?: string
 }
 
-export const SessionArtifactsPanel = ({ threadId, projectId }: SessionArtifactsPanelProps) => {
-  const [showAllAdrs, setShowAllAdrs] = useState(false)
+interface RailSectionProps {
+  title: string
+  children: React.ReactNode
+}
 
-  // Fetch thread data (messages) only when a thread is selected.
-  const { data: threadDetail, isLoading: threadLoading } = useQuery({
-    queryKey: ['chat-thread', threadId ?? ''],
-    queryFn: () => fetchChatThread(threadId!, projectId),
-    enabled: !!threadId,
-    staleTime: 30_000,
-  })
+const RailSection = ({ title, children }: RailSectionProps) => (
+  <section className="border-b border-primary/20 px-3 py-2" aria-label={title}>
+    <h2 className="mb-1 font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60">
+      {title}
+    </h2>
+    {children}
+  </section>
+)
 
-  // ADRs are global — always fetch.
-  const { data: adrsData, isLoading: adrsLoading } = useQuery({
-    queryKey: ['adrs', projectId ?? ''],
-    queryFn: () => fetchAdrs(projectId),
-    staleTime: 60_000,
-  })
+const emptyArtifacts = (text: string) => (
+  <p className="font-mono text-[10px] text-muted-foreground/50">{text}</p>
+)
 
-  const messages = threadDetail?.messages ?? []
-  const attachments: ChatSegmentAttachment[] = messages.flatMap((m) =>
-    m.segments.filter((s): s is ChatSegmentAttachment => s.type === 'attachment'),
-  )
-  const taskIds = parseCreatedTaskIds(messages)
-  const adrs: AdrEntry[] = adrsData ?? []
-  const visibleAdrs = showAllAdrs ? adrs : adrs.slice(0, 5)
+export const ArtifactsRail = ({ tasks, files, adrs, meta, projectId }: ArtifactsRailProps) => {
+  const projectQuery = projectId ? `?project=${encodeURIComponent(projectId)}` : ''
 
   return (
-    <div className="flex flex-col">
-      {/* --- Files --- */}
-      <div className="px-3 pt-2 pb-1">
-        <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60 mb-1">
-          Files
-        </p>
-        {!threadId ? (
-          <p className="font-mono text-[10px] text-muted-foreground/50">No thread selected</p>
-        ) : threadLoading ? (
-          <p className="font-mono text-[10px] text-muted-foreground animate-pulse">Loading…</p>
-        ) : attachments.length === 0 ? (
-          <p className="font-mono text-[10px] text-muted-foreground/50">No files uploaded</p>
+    <div data-testid="artifacts-rail">
+      <RailSection title="Tasks">
+        {tasks.length === 0 ? (
+          emptyArtifacts('No tasks created this session')
         ) : (
           <ul className="flex flex-col gap-0.5">
-            {attachments.map((att, i) => (
-              <li key={`${att.path}-${i}`} className="flex items-center gap-1">
-                <span className="font-mono text-[10px] text-foreground/70 truncate" title={att.name}>
-                  {att.name}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      {/* --- Created tasks --- */}
-      <div className="px-3 pt-1 pb-1">
-        <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60 mb-1">
-          Created tasks
-        </p>
-        {!threadId ? (
-          <p className="font-mono text-[10px] text-muted-foreground/50">No thread selected</p>
-        ) : threadLoading ? (
-          <p className="font-mono text-[10px] text-muted-foreground animate-pulse">Loading…</p>
-        ) : taskIds.length === 0 ? (
-          <p className="font-mono text-[10px] text-muted-foreground/50">No tasks created</p>
-        ) : (
-          <ul className="flex flex-wrap gap-1">
-            {taskIds.map((id) => (
+            {tasks.map((id) => (
               <li key={id}>
                 <a
                   href={`#/task/${encodeURIComponent(id)}?from=chat`}
-                  className="inline-block rounded bg-primary/15 px-1.5 py-0.5 font-mono text-[10px] text-foreground/80 hover:bg-primary/30 transition-colors"
-                  title={id}
-                  data-testid="session-artifacts-task-chip"
+                  className="font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
                 >
-                  {id}
+                  Task {id}
                 </a>
               </li>
             ))}
           </ul>
         )}
-      </div>
+      </RailSection>
 
-      {/* --- ADRs --- */}
-      <div className="px-3 pt-1 pb-2">
-        <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/60 mb-1">
-          Recent ADRs
-        </p>
-        {adrsLoading ? (
-          <p className="font-mono text-[10px] text-muted-foreground animate-pulse">Loading…</p>
-        ) : adrs.length === 0 ? (
-          <p className="font-mono text-[10px] text-muted-foreground/50">No ADRs yet</p>
+      <RailSection title="Files">
+        {files.length === 0 ? (
+          emptyArtifacts('No files shared in this thread')
         ) : (
-          <>
-            <ul className="flex flex-col gap-0.5">
-              {visibleAdrs.map((adr) => (
-                <li key={adr.number} className="font-mono text-[10px] text-foreground/80 leading-snug">
-                  <span className="text-muted-foreground/60 mr-1">#{adr.number}</span>
-                  <span className="line-clamp-1" title={adr.title}>
-                    {adr.title}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            {adrs.length > 5 && (
-              <button
-                type="button"
-                className="mt-1 font-mono text-[9px] text-muted-foreground hover:text-foreground transition-colors"
-                onClick={() => setShowAllAdrs((v) => !v)}
-                data-testid="session-artifacts-adrs-toggle"
-              >
-                {showAllAdrs ? 'show less' : `show all (${adrs.length})`}
-              </button>
-            )}
-          </>
+          <ul className="flex flex-col gap-0.5">
+            {files.map((file, index) => (
+              <li key={`${file.path}-${index}`}>
+                <a
+                  href={`/api/chat/uploads/${encodeURIComponent(file.path)}${projectQuery}`}
+                  className="font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {file.name}
+                </a>
+              </li>
+            ))}
+          </ul>
         )}
-      </div>
+      </RailSection>
+
+      <RailSection title="ADRs">
+        {adrs.length === 0 ? (
+          emptyArtifacts('No ADRs recorded this session')
+        ) : (
+          <ul className="flex flex-col gap-0.5">
+            {adrs.map((adr) => (
+              <li key={adr.path}>
+                <a
+                  href={`/api/project/adrs/${encodeURIComponent(adr.path)}${projectQuery}`}
+                  className="font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  ADR {adr.number}: {adr.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </RailSection>
+
+      <RailSection title="Meta">
+        {meta.vision || meta.theme ? (
+          <ul className="flex flex-col gap-0.5">
+            {meta.vision && (
+              <li>
+                <a
+                  href={`/api/project/meta/vision${projectQuery}`}
+                  className="font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Project vision
+                </a>
+              </li>
+            )}
+            {meta.theme && (
+              <li>
+                <a
+                  href={`/api/project/meta/theme${projectQuery}`}
+                  className="font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Project theme
+                </a>
+              </li>
+            )}
+          </ul>
+        ) : (
+          emptyArtifacts('No project vision or theme recorded')
+        )}
+      </RailSection>
     </div>
   )
 }
@@ -690,6 +618,14 @@ const PanelSection = ({ title, defaultOpen = true, children }: PanelSectionProps
 
 export interface ContextRailProps {
   projectId?: string
+  /** Tasks created after this ChatPage mounted. */
+  tasks?: string[]
+  /** Attachments shared by the selected thread. */
+  files?: ChatSegmentAttachment[]
+  /** ADR files created or modified after this ChatPage mounted. */
+  adrs?: ProjectAdr[]
+  /** Stable project context surfaced alongside session artifacts. */
+  meta?: ProjectMeta
   /** The currently selected chat thread. Used to scope session-artifact data. */
   threadId?: string
   /** The id of the active thread (used to gate Focus panel display). */
@@ -714,7 +650,10 @@ export interface ContextRailProps {
 
 export const ContextRail = ({
   projectId,
-  threadId,
+  tasks = [],
+  files = [],
+  adrs = [],
+  meta = { vision: null, theme: null },
   activeThreadId,
   threadDetail,
   isStreaming,
@@ -792,13 +731,13 @@ export const ContextRail = ({
         </PanelSection>
       )}
 
-      <PanelSection title="Session artifacts" defaultOpen={true}>
-        <SessionArtifactsPanel threadId={threadId} projectId={projectId} />
-      </PanelSection>
-
-      <PanelSection title="Project vision" defaultOpen={true}>
-        <ProjectVisionPanel projectId={projectId} />
-      </PanelSection>
+      <ArtifactsRail
+        tasks={tasks}
+        files={files}
+        adrs={adrs}
+        meta={meta}
+        projectId={projectId}
+      />
 
       <PanelSection title="Glossary" defaultOpen={false}>
         <GlossaryPanel />

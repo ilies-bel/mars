@@ -37,6 +37,8 @@ import {
   clearMessageFeedback,
   fetchChatHistory,
   fetchCodexAuthState,
+  fetchProjectMeta,
+  fetchSessionAdrs,
   refreshCodexAuth,
   ApiError,
   type AttachmentInfo,
@@ -2542,8 +2544,8 @@ export const ChatPage = () => {
     if (isMdScreen) setSidebarOpen(false)
   }, [isMdScreen])
 
-  // Capture the epoch ms when this ChatPage first mounts so the ContextRail
-  // can highlight tasks that appeared during this session.
+  // Capture the epoch ms when this ChatPage first mounts so the right rail can
+  // keep its tasks and ADRs scoped to this operator session.
   const sessionStartedAt = useRef(Date.now()).current
   const qc = useQueryClient()
 
@@ -2556,6 +2558,17 @@ export const ChatPage = () => {
   // Task snapshot used to surface blocked tasks that are not yet projected into
   // the action queue (e.g. tasks waiting on a blocker that hasn't failed yet).
   const { snapshot: taskSnapshot } = useTasks()
+
+  const sessionTaskIds = useMemo(
+    () =>
+      taskSnapshot
+        ? Object.values(taskSnapshot.columns)
+            .flat()
+            .filter((task) => Date.parse(task.createdAt) >= sessionStartedAt)
+            .map((task) => task.id)
+        : [],
+    [taskSnapshot, sessionStartedAt],
+  )
 
   // Threads at the root so a deep-linked queue item can resolve to its merged
   // alert-origin conversation. React Query dedupes this against the sidebar's
@@ -2575,6 +2588,26 @@ export const ChatPage = () => {
     staleTime: 30_000,
   })
   const activeIsStreaming = activeThreadDetail?.thread.status !== 'idle'
+
+  const threadAttachments = useMemo(
+    () =>
+      activeThreadDetail?.messages.flatMap((message) =>
+        message.segments.filter((segment): segment is ChatSegmentAttachment => segment.type === 'attachment'),
+      ) ?? [],
+    [activeThreadDetail],
+  )
+
+  const { data: sessionAdrs = [] } = useQuery({
+    queryKey: ['project-adrs', projectId, sessionStartedAt],
+    queryFn: () => fetchSessionAdrs(sessionStartedAt, projectId ?? undefined),
+    staleTime: 30_000,
+  })
+
+  const { data: projectMeta = { vision: null, theme: null } } = useQuery({
+    queryKey: ['project-context', projectId],
+    queryFn: () => fetchProjectMeta(projectId ?? undefined),
+    staleTime: 120_000,
+  })
 
   // Live buffer lifted from ChatConversation for the ContextRail activity panel.
   // Resets to null whenever the selected thread changes (ChatConversation remounts
@@ -2967,6 +3000,10 @@ export const ChatPage = () => {
 
       <ContextRail
         projectId={projectId}
+        tasks={sessionTaskIds}
+        files={threadAttachments}
+        adrs={sessionAdrs}
+        meta={projectMeta}
         threadId={selectedThreadId ?? undefined}
         activeThreadId={selectedThreadId ?? undefined}
         threadDetail={activeThreadDetail}

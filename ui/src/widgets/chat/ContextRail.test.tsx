@@ -3,12 +3,7 @@
  *
  * Covers observable behaviour through the public interface:
  *   - The "Live tasks" panel is absent from the rail (replaced by session context).
- *   - The "Session artifacts" panel is present and open by default.
- *   - The "Project vision" panel is present.
- *   - ProjectVisionPanel renders vision content when VISION.md is available.
- *   - ProjectVisionPanel renders next-conversation-subject prompts when VISION.md
- *     is absent or unavailable.
- *   - SessionArtifactsPanel: files, created tasks, ADRs sections render.
+ *   - The always-visible artifact rail presents Tasks, Files, ADRs, and Meta.
  *   - Focus panel: renders the active thread title + status chip, or a
  *     "No active thread" placeholder when no thread is active.
  *
@@ -18,7 +13,7 @@
 import { describe, it, expect } from 'bun:test'
 import { vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ContextRail, ProjectVisionPanel, SessionArtifactsPanel } from './ContextRail'
+import { ArtifactsRail, ContextRail } from './ContextRail'
 import type { ActionQueueItem, ChatThreadDetail, ProgressTask } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
@@ -130,14 +125,12 @@ describe('ContextRail – Live tasks panel is absent', () => {
 // ---------------------------------------------------------------------------
 
 describe('ContextRail – session context panels are present', () => {
-  it('renders the "Session artifacts" section header', () => {
+  it('renders the four artifact section headers', () => {
     const html = renderRail()
-    expect(html).toContain('Session artifacts')
-  })
-
-  it('renders the "Project vision" section header', () => {
-    const html = renderRail()
-    expect(html).toContain('Project vision')
+    expect(html).toContain('Tasks')
+    expect(html).toContain('Files')
+    expect(html).toContain('ADRs')
+    expect(html).toContain('Meta')
   })
 
   it('renders the Glossary section header', () => {
@@ -150,85 +143,6 @@ describe('ContextRail – session context panels are present', () => {
     expect(html).toContain('Skills')
   })
 })
-
-// ---------------------------------------------------------------------------
-// ProjectVisionPanel — vision content
-// ---------------------------------------------------------------------------
-
-const renderVision = (visionData: string | null | undefined, isError = false) => {
-  mockState.queryOverride = () => ({
-    data: visionData,
-    isLoading: false,
-    isError,
-  })
-  const html = renderToStaticMarkup(<ProjectVisionPanel />)
-  mockState.queryOverride = null
-  return html
-}
-
-describe('ContextRail – ProjectVisionPanel with vision content', () => {
-  it('renders vision content when VISION.md is available', () => {
-    const html = renderVision('# Vision\nMars is a personal AI coding orchestrator.')
-    expect(html).toContain('Mars is a personal AI coding orchestrator.')
-    expect(html).toContain('data-testid="vision-content"')
-  })
-
-  it('does not render next-subject prompts when vision content is present', () => {
-    const html = renderVision('# Vision\nSome vision content here.')
-    expect(html).not.toContain('data-testid="vision-next-subject"')
-  })
-
-  it('truncates long vision content and shows an expand toggle', () => {
-    const longContent = 'A'.repeat(400)
-    const html = renderVision(longContent)
-    expect(html).toContain('data-testid="vision-expand-toggle"')
-    expect(html).toContain('show all')
-  })
-
-  it('does not show an expand toggle for short vision content', () => {
-    const shortContent = 'Short vision.'
-    const html = renderVision(shortContent)
-    expect(html).not.toContain('data-testid="vision-expand-toggle"')
-  })
-})
-
-describe('ContextRail – ProjectVisionPanel empty/unavailable states', () => {
-  it('renders next-subject suggestions when vision content is null', () => {
-    const html = renderVision(null)
-    expect(html).toContain('data-testid="vision-next-subject"')
-  })
-
-  it('renders next-subject suggestions when VISION.md content is empty string', () => {
-    const html = renderVision('')
-    expect(html).toContain('data-testid="vision-next-subject"')
-  })
-
-  it('renders next-subject suggestions when query errors', () => {
-    const html = renderVision(undefined, true)
-    expect(html).toContain('data-testid="vision-next-subject"')
-  })
-
-  it('next-subject suggestions mention the project vision concept', () => {
-    const html = renderVision(null)
-    // The suggestions should guide the user toward a vision conversation.
-    expect(html.toLowerCase()).toMatch(/vision|goal|question/)
-  })
-
-  it('does not render vision content element when VISION.md is unavailable', () => {
-    const html = renderVision(null)
-    expect(html).not.toContain('data-testid="vision-content"')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Session artifacts panel
-// ---------------------------------------------------------------------------
-
-/** Render SessionArtifactsPanel directly so we aren't blocked by the collapsed PanelSection. */
-const renderArtifacts = (threadId?: string) => {
-  mockState.queryOverride = null
-  return renderToStaticMarkup(<SessionArtifactsPanel threadId={threadId} />)
-}
 
 // ---------------------------------------------------------------------------
 // Focus panel
@@ -304,152 +218,59 @@ describe('ContextRail – Focus panel', () => {
 })
 
 
-describe('ContextRail – SessionArtifactsPanel structure', () => {
-  it('renders all three sub-section labels', () => {
-    const html = renderArtifacts()
+describe('ContextRail – artifact rail', () => {
+  it('renders four linked artifact sections for this session', () => {
+    const html = renderToStaticMarkup(
+      <ArtifactsRail
+        tasks={['mars-aabbccdd']}
+        files={[{ type: 'attachment', path: 'thread-1/design.png', mimeType: 'image/png', name: 'Design draft' }]}
+        adrs={[{ number: 42, title: 'Keep the rail focused', slug: 'keep-the-rail-focused', path: 'docs/adr/0042-keep-the-rail-focused.md' }]}
+        meta={{ vision: 'One operator surface', theme: 'Lean and local-first' }}
+      />,
+    )
+
+    expect(html).toContain('Tasks')
     expect(html).toContain('Files')
-    expect(html).toContain('Created tasks')
-    expect(html).toContain('Recent ADRs')
+    expect(html).toContain('ADRs')
+    expect(html).toContain('Meta')
+    expect(html).toContain('Task mars-aabbccdd')
+    expect(html).toContain('Design draft')
+    expect(html).toContain('Keep the rail focused')
+    expect(html).toContain('Project vision')
+    expect(html).toContain('Project theme')
+    expect(html).toContain('#/task/mars-aabbccdd?from=chat')
+    expect(html).toContain('/api/chat/uploads/thread-1%2Fdesign.png')
+    expect(html).toContain('/api/project/adrs/docs%2Fadr%2F0042-keep-the-rail-focused.md')
   })
 
-  it('shows "No thread selected" for files when no threadId is provided', () => {
-    const html = renderArtifacts(undefined)
-    expect(html).toContain('No thread selected')
+  const renderEmptyArtifactRail = () => renderToStaticMarkup(
+    <ArtifactsRail tasks={[]} files={[]} adrs={[]} meta={{ vision: null, theme: null }} />,
+  )
+
+  describe('Tasks section', () => {
+    it('keeps a subdued placeholder when no tasks were created', () => {
+      expect(renderEmptyArtifactRail()).toContain('No tasks created this session')
+    })
   })
 
-  it('shows ADR loading state when no data is fetched yet (isLoading=true)', () => {
-    // The default useQuery mock returns isLoading=true → "Loading…"
-    const html = renderArtifacts(undefined)
-    expect(html).toContain('Loading')
-  })
-})
-
-describe('ContextRail – SessionArtifactsPanel with thread data', () => {
-  it('shows task chips when thread has task-creating tool_use results', () => {
-    const threadDetail: ChatThreadDetail = {
-      thread: {
-        id: 'thread-1',
-        title: null,
-        status: 'idle',
-        attentionStatus: 'idle',
-        createdAt: '2024-01-01T00:00:00.000Z',
-        updatedAt: '2024-01-01T00:00:00.000Z',
-        messageCount: 1,
-        origin: null,
-        alertItemId: null,
-        alertResolved: false,
-      },
-      messages: [
-        {
-          id: 'msg-1',
-          threadId: 'thread-1',
-          role: 'assistant',
-          segments: [
-            {
-              type: 'tool_use',
-              toolName: 'Bash',
-              input: 'mars task add "implement feature"',
-              result: 'Task queued: mars-aabbccdd\nStatus: queued',
-              isError: false,
-              status: 'complete',
-            },
-          ],
-          createdAt: '2024-01-01T00:00:00.000Z',
-          feedback: null,
-        },
-      ],
-    }
-
-    mockState.queryOverride = (opts: { queryKey: unknown[] }) => {
-      const [key] = opts.queryKey as string[]
-      if (key === 'chat-thread') return { data: threadDetail, isLoading: false, isError: false }
-      return { data: undefined, isLoading: true, isError: false }
-    }
-
-    const html = renderToStaticMarkup(<SessionArtifactsPanel threadId="thread-1" />)
-    mockState.queryOverride = null
-
-    expect(html).toContain('mars-aabbccdd')
-    expect(html).toContain('data-testid="session-artifacts-task-chip"')
+  describe('Files section', () => {
+    it('keeps a subdued placeholder when the thread has no attachments', () => {
+      expect(renderEmptyArtifactRail()).toContain('No files shared in this thread')
+    })
   })
 
-  it('shows uploaded file names from attachment segments', () => {
-    const threadDetail: ChatThreadDetail = {
-      thread: {
-        id: 'thread-2',
-        title: null,
-        status: 'idle',
-        attentionStatus: 'idle',
-        createdAt: '2024-01-01T00:00:00.000Z',
-        updatedAt: '2024-01-01T00:00:00.000Z',
-        messageCount: 1,
-        origin: null,
-        alertItemId: null,
-        alertResolved: false,
-      },
-      messages: [
-        {
-          id: 'msg-2',
-          threadId: 'thread-2',
-          role: 'user',
-          segments: [
-            {
-              type: 'attachment',
-              path: 'thread-2/uuid.png',
-              mimeType: 'image/png',
-              name: 'screenshot.png',
-            },
-          ],
-          createdAt: '2024-01-01T00:00:00.000Z',
-          feedback: null,
-        },
-      ],
-    }
-
-    mockState.queryOverride = (opts: { queryKey: unknown[] }) => {
-      const [key] = opts.queryKey as string[]
-      if (key === 'chat-thread') return { data: threadDetail, isLoading: false, isError: false }
-      return { data: undefined, isLoading: true, isError: false }
-    }
-
-    const html = renderToStaticMarkup(<SessionArtifactsPanel threadId="thread-2" />)
-    mockState.queryOverride = null
-
-    expect(html).toContain('screenshot.png')
+  describe('ADRs section', () => {
+    it('keeps a subdued placeholder when the session produced no ADRs', () => {
+      expect(renderEmptyArtifactRail()).toContain('No ADRs recorded this session')
+    })
   })
 
-  it('shows ADRs from the /api/adrs endpoint', () => {
-    mockState.queryOverride = (opts: { queryKey: unknown[] }) => {
-      const [key] = opts.queryKey as string[]
-      if (key === 'adrs') {
-        return {
-          data: [{ number: 42, title: 'My ADR title', slug: 'my-adr-title' }],
-          isLoading: false,
-          isError: false,
-        }
-      }
-      return { data: undefined, isLoading: true, isError: false }
-    }
-
-    const html = renderToStaticMarkup(<SessionArtifactsPanel />)
-    mockState.queryOverride = null
-
-    expect(html).toContain('My ADR title')
-    expect(html).toContain('#42')
+  describe('Meta section', () => {
+    it('keeps a subdued placeholder when the project has no vision or theme', () => {
+      expect(renderEmptyArtifactRail()).toContain('No project vision or theme recorded')
+    })
   })
 
-  it('shows "No ADRs yet" when the ADR list is empty', () => {
-    mockState.queryOverride = (opts: { queryKey: unknown[] }) => {
-      const [key] = opts.queryKey as string[]
-      if (key === 'adrs') return { data: [], isLoading: false, isError: false }
-      return { data: undefined, isLoading: true, isError: false }
-    }
-
-    const html = renderToStaticMarkup(<SessionArtifactsPanel />)
-    mockState.queryOverride = null
-
-    expect(html).toContain('No ADRs yet')
-  })
 })
 
 // ---------------------------------------------------------------------------

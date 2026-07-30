@@ -18,6 +18,8 @@ import {
   originsResponseSchema,
   progressResponseSchema,
   projectsResponseSchema,
+  projectAdrsResponseSchema,
+  projectMetaSchema,
   proposalDetailSchema,
   proposalsResponseSchema,
   releaseNotesCursorSchema,
@@ -47,6 +49,8 @@ import {
   type ProgressProposalNode,
   type ProgressTask,
   type Project,
+  type ProjectAdrEntry,
+  type ProjectMeta,
   type ProposalDetail,
   type ProposalsPayload,
   type ReleaseNoteEntry,
@@ -913,6 +917,20 @@ export const fetchAdrs = async (projectId?: string): Promise<AdrEntry[]> => {
   const json = await fetchJson(appendProject('/api/adrs', projectId), adrsResponseSchema)
   return json.adrs
 }
+
+/** Fetch ADR files modified since this browser session began. */
+export const fetchSessionAdrs = async (
+  sessionStartedAt: number,
+  projectId?: string,
+): Promise<ProjectAdrEntry[]> => {
+  const path = appendProject(`/api/project/adrs?since=${encodeURIComponent(sessionStartedAt)}`, projectId)
+  const json = await fetchJson(path, projectAdrsResponseSchema)
+  return json.adrs
+}
+
+/** Fetch the stable product context shown alongside session artifacts. */
+export const fetchProjectMeta = async (projectId?: string): Promise<ProjectMeta> =>
+  fetchJson(appendProject('/api/project/context', projectId), projectMetaSchema)
 
 /**
  * Fetch the project vision from VISION.md (via the UI server).

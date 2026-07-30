@@ -1203,6 +1203,22 @@ export const adrsResponseSchema = z.object({
 
 export type AdrEntry = z.infer<typeof adrEntrySchema>
 
+export const projectAdrEntrySchema = adrEntrySchema.extend({
+  path: z.string(),
+})
+
+export const projectAdrsResponseSchema = z.object({
+  adrs: z.array(projectAdrEntrySchema),
+})
+
+export const projectMetaSchema = z.object({
+  vision: z.string().nullable(),
+  theme: z.string().nullable(),
+})
+
+export type ProjectAdrEntry = z.infer<typeof projectAdrEntrySchema>
+export type ProjectMeta = z.infer<typeof projectMetaSchema>
+
 // ---------------------------------------------------------------------------
 // Vision
 // ---------------------------------------------------------------------------
