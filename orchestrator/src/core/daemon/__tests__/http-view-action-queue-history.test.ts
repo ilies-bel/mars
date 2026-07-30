@@ -98,7 +98,7 @@ describe('buildActionQueueHistoryView — resolved row shape', () => {
     expect(result.rows).toHaveLength(1)
     const row = result.rows[0]!
     expect(row.id).toBe('row-resolved-1')
-    expect(row.kind).toBe('failed-task')
+    expect(row.kind).toBe('failed')
     expect(row.entityId).toBe('task-1')
     expect(row.priority).toBe('high')
     expect(row.actions).toEqual([]) // Resolved rows have no actions.

@@ -37,12 +37,12 @@ entity id, or an entity-id prefix):
 
 ## 1b — Argument is a filter (`open`, `all`)
 
-Run `mars action-queue list <filter> --kind failed-task,stale-worktree` and present the result per Step 2.
+Run `mars action-queue list <filter> --kind failed,stale-worktree` and present the result per Step 2.
 Default when no argument is given is `open`.
 
 ## 1c — No argument: show open alerts
 
-Run `mars action-queue list open --kind failed-task,stale-worktree` and present the result per Step 2.
+Run `mars action-queue list open --kind failed,stale-worktree` and present the result per Step 2.
 
 # Step 2 — Present the list
 
@@ -59,7 +59,7 @@ this template every time** — same columns, same order, same headers:
 ```
 | Id                                   | Pri    | Kind            | Title                                    |
 | ------------------------------------ | ------ | --------------- | ---------------------------------------- |
-| failed-task:mars-1a2b3c4d            | high   | failed          | Failed: rebuild the merge gate …         |
+| failed:mars-1a2b3c4d                 | high   | failed          | Failed: rebuild the merge gate …         |
 | stale-worktree:mars-9f8e7d6c         | low    | stale-worktree  | Stale worktree: task mars-9f8e7d6c …    |
 ```
 
@@ -90,7 +90,7 @@ id after Step 2), you've already printed `mars action-queue show <id>`.
 
 **Inspect the row's `kind` and dispatch:**
 
-## 3a — kind `failed` (failed-task)
+## 3a — kind `failed`
 
 The row wraps a task in `failed`/`dropped` — self-heal exhausted its
 options. The `entityId` is the task id. Offer terminal actions via **one**

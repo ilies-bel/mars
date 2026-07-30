@@ -24,17 +24,28 @@ import {
 } from '../../lib/action-queue-recipes'
 import { isActionQueueKind } from '../../lib/action-queue'
 
-export type DerivedActionQueueKind =
-  | 'failed-task'
-  | 'stale-worktree'
-  | 'draft-proposal'
-  | 'awaiting-validation'
-  | 'awaiting-human'
-  | 'reflect-recommended'
-  | 'workflow-draft-pending'
-  | 'scorer-suggested'
-  | 'tool-promotion'
+/**
+ * The display kind is the persisted action-queue kind. It is deliberately not
+ * collapsed into a smaller UI vocabulary: operators need to distinguish the
+ * condition that raised each row.
+ */
+export type DerivedActionQueueKind = string
 export type DerivedActionQueueFilter = 'open' | 'all'
+
+const NON_TASK_FAILURE_KINDS = new Set([
+  'stale-worktree',
+  'draft-proposal',
+  'awaiting-validation',
+  'awaiting-human',
+  'reflect-recommended',
+  'workflow-draft-pending',
+  'scorer-suggested',
+  'tool-promotion',
+  'hitl-slice-needs-operator',
+])
+
+/** Preserves the former failure-specific enrichment without changing labels. */
+const isTaskFailureKind = (kind: string): boolean => !NON_TASK_FAILURE_KINDS.has(kind)
 
 /** Resolution metadata carried by resolved rows in history responses. */
 export interface ActionQueueResolutionMeta {
@@ -357,19 +368,6 @@ export const buildActionQueueView = async ({
     }
   }
 
-  // Map a persisted ActionQueueKind to the ActionQueueRow `kind` vocabulary.
-  const toUiKind = (k: string): DerivedActionQueueKind => {
-    if (k === 'stale-worktree') return 'stale-worktree'
-    if (k === 'draft-proposal') return 'draft-proposal'
-    if (k === 'awaiting-validation') return 'awaiting-validation'
-    if (k === 'awaiting-human') return 'awaiting-human'
-    if (k === 'reflect-recommended') return 'reflect-recommended'
-    if (k === 'workflow-draft-pending') return 'workflow-draft-pending'
-    if (k === 'scorer-suggested') return 'scorer-suggested'
-    if (k === 'tool-promotion') return 'tool-promotion'
-    return 'failed-task'
-  }
-
   // Extract the entity id (task id, worktree id, proposal id, or scorer id)
   // from a row.
   const extractEntityId = (row: PersistedActionQueueRow): string => {
@@ -432,7 +430,8 @@ export const buildActionQueueView = async ({
   const rows: ActionQueueRow[] = []
 
   for (const row of persistedRows) {
-    const uiKind = toUiKind(row.kind)
+    const uiKind = row.kind
+    const isTaskFailure = isTaskFailureKind(row.kind)
     const entityId = extractEntityId(row)
     const errorKind = toErrorKind(row.kind)
 
@@ -441,7 +440,7 @@ export const buildActionQueueView = async ({
     // For stale-worktree, draft-proposal, and hitl-slice-needs-operator rows,
     // the non-failure derived-row action menu is the authority.
     let actions: { id: string; label: string; op: string }[]
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const sig = taskById.get(entityId)?.failureSignature ?? null
       const fk =
         sig !== null
@@ -461,7 +460,7 @@ export const buildActionQueueView = async ({
 
     // DAG enrichment for task-backed rows.
     let dag: ActionQueueRow['dag'] = null
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
         const blockers = task.blockedBy.map(toNode)
@@ -627,7 +626,7 @@ export const buildActionQueueView = async ({
     // so the operator immediately sees WHAT failed without digging into transcripts.
     let title = row.title
     let body = row.body
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const failedTask = taskById.get(entityId)
       const sig = failedTask?.failureSignature ?? null
       if (sig !== null) {
@@ -655,7 +654,7 @@ export const buildActionQueueView = async ({
     // Propagate fixForTaskId so the UI can render an "origin" link on recovery rows.
     // hitl-slice-needs-operator items are not task-backed, so no fixForTaskId.
     const fixForTaskId =
-      uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator'
+      isTaskFailure
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 
@@ -663,7 +662,7 @@ export const buildActionQueueView = async ({
     // follow fixForTaskId to the origin task; for origin tasks, use their own prompt.
     // This lets the operator see what was being attempted, not just that recovery failed.
     let arcGoal: string | null = null
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
         const originTask = task.fixForTaskId
@@ -743,11 +742,11 @@ export const buildActionQueueView = async ({
     // (slice 6 of PRD d23b2704). Both fields fall back to null on legacy rows
     // and on every other row kind, so pre-existing consumers never crash.
     const stallDiagnostics: unknown | null =
-      uiKind === 'failed-task' && row.payload.stallDiagnostics !== undefined
+      isTaskFailure && row.payload.stallDiagnostics !== undefined
         ? (row.payload.stallDiagnostics ?? null)
         : null
     const poolSnapshot: ActionQueueRow['poolSnapshot'] = (() => {
-      if (uiKind !== 'failed-task') return null
+      if (!isTaskFailure) return null
       const snap = row.payload.poolSnapshot
       if (
         typeof snap !== 'object' ||
@@ -916,18 +915,6 @@ export const buildActionQueueHistoryView = async ({
     }
   }
 
-  const toUiKind = (k: string): DerivedActionQueueKind => {
-    if (k === 'stale-worktree') return 'stale-worktree'
-    if (k === 'draft-proposal') return 'draft-proposal'
-    if (k === 'awaiting-validation') return 'awaiting-validation'
-    if (k === 'awaiting-human') return 'awaiting-human'
-    if (k === 'reflect-recommended') return 'reflect-recommended'
-    if (k === 'workflow-draft-pending') return 'workflow-draft-pending'
-    if (k === 'scorer-suggested') return 'scorer-suggested'
-    if (k === 'tool-promotion') return 'tool-promotion'
-    return 'failed-task'
-  }
-
   const extractEntityId = (row: PersistedActionQueueRow): string => {
     if (row.kind === 'stale-worktree') {
       if (typeof row.context.taskId === 'string') return row.context.taskId
@@ -975,13 +962,14 @@ export const buildActionQueueHistoryView = async ({
   const rows: ActionQueueRow[] = []
 
   for (const row of persistedRows) {
-    const uiKind = toUiKind(row.kind)
+    const uiKind = row.kind
+    const isTaskFailure = isTaskFailureKind(row.kind)
     const entityId = extractEntityId(row)
     const errorKind = toErrorKind(row.kind)
 
     // DAG enrichment (same as live view).
     let dag: ActionQueueRow['dag'] = null
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
         const blockers = task.blockedBy.map(toNode)
@@ -1124,7 +1112,7 @@ export const buildActionQueueHistoryView = async ({
     // lead with "no recipe for <sig>" (same rule as the live view).
     let title = row.title
     let body = row.body
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const failedTask = taskById.get(entityId)
       const sig = failedTask?.failureSignature ?? null
       if (sig !== null) {
@@ -1147,13 +1135,13 @@ export const buildActionQueueHistoryView = async ({
     }
 
     const fixForTaskId =
-      uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator'
+      isTaskFailure
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 
     // Derive the arc goal from the origin task's prompt (same logic as the live view).
     let arcGoal: string | null = null
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
         const originTask = task.fixForTaskId

@@ -13,18 +13,10 @@ state and disappears the moment it leaves — there is no ack/resolve
 bookkeeping. Your job is to list the rows, let the user pick one, and
 dispatch to the right sub-skill or terminal action.
 
-There are exactly four row kinds:
-
-- `failed-task` — a task in `failed`/`dropped`; self-heal is out of options.
-- `blocked-task` — a task waiting on one or more blockers.
-- `stale-worktree` — a worktree dir on disk whose task is terminal or
-  absent (a finished task should have removed its own worktree).
-- `draft-proposal` — a draft proposal awaiting shaping.
-
-Each row's `id` is a stable composite `kind:entityId` (e.g.
-`failed-task:mars-abc12345`, `stale-worktree:mars-abc12345`,
-`draft-proposal:p-xyz`). The row has no identity of its own — it *is* the
-entity's current state.
+Each row carries its stored `kind` unchanged. Do not group or rename kinds:
+for example, `failed`, `stale-queued`, `signature-storm`, and
+`subscriber-stalled` describe different operator conditions. The row's `id`
+and `entityId` identify the item to inspect.
 
 # Step 1 — Resolve the target
 
@@ -63,8 +55,7 @@ If there are **no rows**, print exactly one line and stop:
 Otherwise, print the rows directly to the user — **no `AskUserQuestion`
 menu**. Group and order them for skim-ability:
 
-1. Grouped by priority (high → normal → low). `failed-task` is high,
-   `blocked-task` is normal, `stale-worktree` and `draft-proposal` are low.
+1. Grouped by priority (high → normal → low), preserving the CLI's kind labels.
 2. Within a priority, most-recent first (the CLI already sorts this way).
 
 **Default row cap — render at most 30 rows.** Action queue volume routinely
@@ -79,7 +70,7 @@ template every time** — same columns, same order, same headers:
 ```
 | Id                          | Pri    | Kind           | Title                                    |
 | --------------------------- | ------ | -------------- | ---------------------------------------- |
-| failed-task:mars-1a2b3c4d   | high   | failed-task    | Failed: rebuild the merge gate …         |
+| failed:mars-1a2b3c4d        | high   | failed         | Failed: rebuild the merge gate …         |
 | blocked-task:mars-9f8e7d6c  | normal | blocked-task   | Blocked: sweep auto-prime references …   |
 ```
 
@@ -87,7 +78,7 @@ Column rules, applied identically on every invocation:
 
 - **Id** — the full composite `kind:entityId`.
 - **Pri** — `high` / `normal` / `low`. Never blank.
-- **Kind** — one of the four derived kinds.
+- **Kind** — the raw kind label from the CLI.
 - **Title** — truncated at ~90 chars.
 
 Whenever rows are withheld — either the 30-row cap fired or rows cluster
@@ -140,7 +131,7 @@ Skill({ skill: "mars:grill", args: "<entityId>" })
 The grill skill (and subsequently `mars:to-prd`) owns the interaction.
 The row clears when the proposal leaves `draft`.
 
-## 3c — kind `failed-task`
+## 3c — kind `failed`
 
 The row wraps a task in `failed`/`dropped` — self-heal exhausted its
 options. The `entityId` is the task id.
@@ -189,7 +180,7 @@ Stop after the dispatch.
 # What you do NOT do
 
 - Do not investigate the underlying issue *inline yourself*. For a
-  `failed-task` row, delegate the investigation to `/mars:diagnose` (Step
+  `failed` row, delegate the investigation to `/mars:diagnose` (Step
   3c) — it owns the arc-walk and prints the structured diagnosis. You do
   not re-derive it by hand, and you never edit/restart/purge based on your
   own ad-hoc poking. For the other row kinds, the row's body and `dag:`

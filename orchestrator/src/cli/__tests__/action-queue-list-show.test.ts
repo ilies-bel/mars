@@ -25,7 +25,11 @@ import {
   makeFakeDaemon,
   type InProcessOptions,
 } from '../test-adapter'
-import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
+import {
+  buildActionQueueView,
+  type ActionQueueRow,
+  type PersistedActionQueueRow,
+} from '../../core/daemon/view/action-queue'
 
 const FAKE_PORT = 19999
 
@@ -82,6 +86,18 @@ const makeRow = (
   ...overrides,
 } as ActionQueueRow)
 
+const makePersistedRow = (id: string, kind: string): PersistedActionQueueRow => ({
+  id,
+  kind,
+  priority: 'high',
+  title: `${kind} alert`,
+  body: '',
+  payload: {},
+  context: {},
+  raisedAt: '2026-07-30T12:00:00.000Z',
+  lastSeenAt: '2026-07-30T12:00:00.000Z',
+})
+
 beforeEach(() => {
   repo = setupRepo()
 })
@@ -114,6 +130,53 @@ describe('action-queue list', () => {
     expect(r.code).toBe(0)
     expect(r.out).toContain('aq-abc\thigh\tfailed-task\tTask A')
     expect(r.out).toContain('aq-def\tlow\tdraft-proposal\tProp B')
+  })
+
+  it('keeps stored kinds distinct in full and lean listings', async () => {
+    const persistedRows: PersistedActionQueueRow[] = [
+      makePersistedRow('stale-1', 'stale-queued'),
+      makePersistedRow('stale-2', 'stale-queued'),
+      makePersistedRow('stale-3', 'stale-queued'),
+      makePersistedRow('failed-1', 'failed'),
+      makePersistedRow('storm-1', 'signature-storm'),
+      makePersistedRow('storm-2', 'signature-storm'),
+      makePersistedRow('subscriber-1', 'subscriber-stalled'),
+    ]
+    const rows = await buildActionQueueView({
+      stateStore: {
+        listOpenActionQueueItems: async () => persistedRows,
+        listResolvedActionQueueItems: async () => ({ items: [], nextCursor: null }),
+      },
+      taskStore: { listTasks: async () => [] },
+      repoRoot: repo,
+      filter: 'open',
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => rows,
+    }))
+    writeDaemonPort(repo, FAKE_PORT)
+    const opts = await loadOpts(repo)
+
+    const full = await runCommandInProcess(['action-queue', 'list', 'open'], opts)
+    const lean = await runCommandInProcess(['action-queue', 'list', 'open', '--lean'], opts)
+    const staleOnly = await runCommandInProcess(
+      ['action-queue', 'list', 'open', '--kind', 'stale-queued'],
+      opts,
+    )
+    const fullOutput = full.out.join('\n')
+    const leanOutput = lean.out.join('\n')
+    const staleOnlyOutput = staleOnly.out.join('\n')
+
+    expect(full.code).toBe(0)
+    expect(fullOutput).toContain('\tstale-queued\t')
+    expect(fullOutput).not.toContain('failed-task')
+    expect(staleOnlyOutput).toContain('stale-1\thigh\tstale-queued\t')
+    expect(staleOnlyOutput).not.toContain('failed-1')
+    for (const kind of new Set(persistedRows.map((row) => row.kind))) {
+      const directCount = persistedRows.filter((row) => row.kind === kind).length
+      expect(leanOutput).toContain(`${kind}:${directCount}`)
+    }
   })
 
   it('passes filter=all when asked', async () => {

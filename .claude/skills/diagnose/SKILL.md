@@ -1,6 +1,6 @@
 ---
 name: diagnose
-description: Diagnose a failed / stuck Mars task by walking its recovery chain (origin → recovery via fix_for_task_id / origin_id), pulling task prompts, failure signatures, and the relevant git history, then printing a structured "what happened & why". Read-only — proposes no action of its own; the caller (usually /mars:action-queue) offers the terminal verbs afterward. Use when the user says "diagnose <id>", "why did <id> fail", "what happened to <id>", pastes a failed-task id, or invokes `/mars:diagnose <id>`.
+description: Diagnose a failed / stuck Mars task by walking its recovery chain (origin → recovery via fix_for_task_id / origin_id), pulling task prompts, failure signatures, and the relevant git history, then printing a structured "what happened & why". Read-only — proposes no action of its own; the caller (usually /mars:action-queue) offers the terminal verbs afterward. Use when the user says "diagnose <id>", "why did <id> fail", "what happened to <id>", pastes a failed action-queue id, or invokes `/mars:diagnose <id>`.
 ---
 
 # Mars: task diagnoser
@@ -20,7 +20,7 @@ already resolved on `main`.
 
 # Step 1 — Resolve the id to a task
 
-The argument may be an action-queue composite id (`failed-task:mars-abc`,
+The argument may be an action-queue composite id (`failed:mars-abc`,
 or a bare action-queue row id like `3ff616cd`), an entity id, a full task
 id (`mars-0f2d5252`), or a prefix (`2b7bdf30`).
 

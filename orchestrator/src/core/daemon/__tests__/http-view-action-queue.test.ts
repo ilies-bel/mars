@@ -84,7 +84,7 @@ describe('buildActionQueueView — failed-task row', () => {
     expect(rows).toHaveLength(1)
     const row = rows[0]!
     expect(row.id).toBe('row-1')
-    expect(row.kind).toBe('failed-task')
+    expect(row.kind).toBe('failed')
     expect(row.entityId).toBe('task-1')
     expect(row.priority).toBe('high')
     // title and body are now derived from the Failure kind registry; with
