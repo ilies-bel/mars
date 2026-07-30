@@ -252,6 +252,19 @@ recovery-spawn path itself.
   `orchestrator/docs/implement-pipeline.md`; the `mastra` skill no longer
   applies to this repo.
 - Never commit `.env`, `.mars/`, or `node_modules`.
+- **Deleting tasks: `purge` vs `drop`.** `mars purge <id>` only accepts
+  terminal tasks (`failed`/`done`/`dropped`) — it refuses anything it
+  considers in-flight, and `queued` counts as in-flight. `mars drop <id>
+  [--force]` deletes a task in **any** status. Both clean up properly:
+  they remove the worktree, the branch, and the task's blocker edges,
+  reporting e.g. `worktree=absent; branch=absent; edges=1in/0out`.
+  **Never delete task rows with raw SQL.** Deleting a row out from under
+  its dependents leaves the `task_blockers` edges dangling and strands
+  every dependent in `blocked` forever; deleting an origin whose recovery
+  task still points at it produces a
+  `setup:origin-worktree-missing` cascade (this has already happened once
+  at a scale of 170 tasks). Bulk deletes are slow (~1-3 s each) — run them
+  backgrounded in batches, never as one foreground command.
 - Never `cd`. Bash CWD persists across tool calls, and `mars` resolves
   the repo from CWD upward — once shifted into `.mars/worktrees/<id>/`,
   every later `mars` call silently binds to that worktree's `.mars/` and
@@ -328,6 +341,18 @@ Enqueue the moment you spot one — **one `mars task add` per item**, no
 batching, no MEMORY.md, no markdown TODOs. Only concrete, actionable work
 the user has seen. If user says "skip", drop it. At stopping points
 ("looks good", "ship it"), do a final sweep as a safety net.
+
+**An operational error is a loose end.** Whenever a `mars` command is
+rejected, a verb turns out to be the wrong one, a flag does not exist, a
+query returns something the docs did not predict, or a manual workaround
+is needed to get unstuck — **file a task for it in the same breath as
+fixing it**. Do not settle for repairing the immediate symptom and
+explaining the lesson in chat: chat is discarded, the next session
+re-learns it the hard way, and the workaround silently becomes tribal
+knowledge. The task should capture the surprising behaviour, the correct
+invocation, and where the guardrail belongs (a CLAUDE.md convention, a
+clearer CLI error message, or a code fix). Update this file in the same
+change when the lesson is a durable convention rather than a bug.
 
 Each task prompt must stand alone. Include:
 
