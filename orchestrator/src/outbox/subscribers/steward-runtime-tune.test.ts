@@ -12,22 +12,27 @@ describe('steward-runtime-tune', () => {
   })
 
   /**
-   * `loadPerCore` and `swap` default to a quiet host so neither gate fires.
+   * `loadPerCore` and `pagingPps` default to a quiet host so neither gate
+   * fires. The paging reader is a monotonic counter, so the test stub derives
+   * counter values from fake time.
    * Tests that exercise a gate, the shed lane, or the recover lane pass
    * explicit values. Both host readers MUST be injected — the real ones read
-   * this machine's load average and shell out to `sysctl`.
+   * this machine's load average and paging counters.
    */
   const setup = (
     cap = 12,
     loadPerCore = 0.2,
-    { swap = 0, baselineCap = cap }: { swap?: number; baselineCap?: number } = {},
+    { pagingPps = 0, baselineCap = cap }: { pagingPps?: number; baselineCap?: number } = {},
   ) => {
     const bus = new EventEmitter()
     const implementSem = makeSem(cap)
     const log = vi.fn()
     const writeChatAck = vi.fn().mockResolvedValue(undefined) as ReturnType<typeof vi.fn> & ((text: string) => Promise<void>)
     const readLoadPerCore = vi.fn(() => loadPerCore)
-    const readSwapPressure = vi.fn(async () => swap)
+    const startMs = Date.now()
+    const readPagingCounter = vi.fn(async () =>
+      Math.round(((Date.now() - startMs) / 1000) * pagingPps),
+    )
     const stop = startStewardRuntimeTune({
       bus,
       implementSem,
@@ -35,10 +40,15 @@ describe('steward-runtime-tune', () => {
       log,
       writeChatAck,
       readLoadPerCore,
-      readSwapPressure,
+      readPagingCounter,
     })
     disposers.push(stop)
-    return { bus, implementSem, log, writeChatAck, readLoadPerCore, readSwapPressure }
+    return { bus, implementSem, log, writeChatAck, readLoadPerCore, readPagingCounter }
+  }
+
+  const primePaging = async () => {
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(15_000 * 2)
   }
 
   it('bumps implement cap on kpi.backlog.degraded', async () => {
@@ -172,7 +182,7 @@ describe('steward-runtime-tune', () => {
       log: vi.fn(),
       writeChatAck: vi.fn().mockResolvedValue(undefined) as ReturnType<typeof vi.fn> & ((text: string) => Promise<void>),
       readLoadPerCore,
-      readSwapPressure: vi.fn(async () => 0),
+      readPagingCounter: vi.fn(async () => 0),
     })
 
     // The immediate start-up sample already ran; what the disposer must stop
@@ -187,50 +197,64 @@ describe('steward-runtime-tune', () => {
     expect(readLoadPerCore.mock.calls.length).toBe(callsBeforeStop)
   })
 
-  // ── swap pressure ─────────────────────────────────────────────────────────
+  // ── paging pressure ───────────────────────────────────────────────────────
   //
   // Load average conflates CPU saturation with swap thrash: on Darwin and
   // Linux it counts uninterruptible sleep, so a paging host reports the same
   // number as a compute-bound one. These cover the memory signal on its own,
   // with load held at a quiet 0.2 throughout.
 
-  it('sheds on swap pressure even while load is normal', async () => {
+  it('sheds on sustained paging activity even while load is normal', async () => {
     vi.useFakeTimers()
-    const { implementSem, writeChatAck, log } = setup(12, 0.2, { swap: 0.94 })
+    const { implementSem, log } = setup(12, 0.2, { pagingPps: 5_000 })
 
-    await vi.advanceTimersByTimeAsync(0)
+    await primePaging()
 
     expect(implementSem.limit).toBe(8) // floor(12 * 0.67)
-    expect(log.mock.calls.flat().join(' ')).toMatch(/shed implement cap .*\(swap 94% >= 80%\)/)
+    expect(log.mock.calls.flat().join(' ')).toMatch(/shed implement cap .*\(paging 5000 pages\/s >= 500\)/)
   })
 
-  it('names swap, not load, in the acknowledgment when swap tripped the shed', async () => {
+  it('names paging, not load, in the acknowledgment when paging tripped the shed', async () => {
     vi.useFakeTimers()
-    const { writeChatAck } = setup(12, 0.2, { swap: 0.94 })
+    const { writeChatAck } = setup(12, 0.2, { pagingPps: 5_000 })
 
-    await vi.advanceTimersByTimeAsync(0)
+    await primePaging()
 
     const text = writeChatAck.mock.calls[0]![0]
-    expect(text).toMatch(/swap reached 94%/)
+    expect(text).toMatch(/swapping at 5000 pages\/s/)
     expect(text).not.toMatch(/per core/)
   })
 
-  it('refuses to bump under swap pressure even when load and backlog allow it', async () => {
-    const { bus, implementSem, log, writeChatAck } = setup(12, 0.2, { swap: 0.7 })
+  it('refuses to bump while paging even when load and backlog allow it', async () => {
+    vi.useFakeTimers()
+    const { bus, implementSem, log, writeChatAck } = setup(12, 0.2, { pagingPps: 5_000 })
+
+    await primePaging()
+    log.mockClear()
+    writeChatAck.mockClear()
 
     bus.emit('kpi.backlog.degraded', { pending: 400, cap: 12, sustainedMs: 90_000 })
-    await vi.waitFor(() => expect(log).toHaveBeenCalled())
+    await vi.advanceTimersByTimeAsync(0)
 
-    expect(implementSem.limit).toBe(12) // unchanged
+    expect(implementSem.limit).toBe(8) // unchanged by the bump lane
     expect(writeChatAck).not.toHaveBeenCalled()
-    expect(log.mock.calls.flat().join(' ')).toMatch(/swap 70% >= 50%/)
+    expect(log.mock.calls.flat().join(' ')).toMatch(/paging 5000 pages\/s >= 150/)
   })
 
-  it('treats an unreadable swap signal as no pressure', async () => {
+  it('treats an unreadable paging counter as no pressure', async () => {
     vi.useFakeTimers()
-    // The default reader returns 0 when it cannot determine swap; a 0 must
-    // never shed on its own, otherwise an unknown host tanks throughput.
-    const { implementSem } = setup(12, 0.2, { swap: 0 })
+    const bus = new EventEmitter()
+    const implementSem = makeSem(12)
+    const stop = startStewardRuntimeTune({
+      bus,
+      implementSem,
+      baselineCap: 12,
+      log: vi.fn(),
+      writeChatAck: vi.fn().mockResolvedValue(undefined) as ReturnType<typeof vi.fn> & ((text: string) => Promise<void>),
+      readLoadPerCore: () => 0.2,
+      readPagingCounter: async () => null,
+    })
+    disposers.push(stop)
 
     await vi.advanceTimersByTimeAsync(15_000 * 4)
 
@@ -241,15 +265,18 @@ describe('steward-runtime-tune', () => {
 
   it('climbs back to baseline one worker at a time once pressure clears', async () => {
     vi.useFakeTimers()
-    const { implementSem } = setup(1, 0.2, { swap: 0.1, baselineCap: 4 })
+    const { implementSem } = setup(1, 0.2, { pagingPps: 0, baselineCap: 4 })
 
     await vi.advanceTimersByTimeAsync(0) // start-up sample
+    expect(implementSem.limit).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(implementSem.limit).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(15_000)
     expect(implementSem.limit).toBe(2)
 
-    await vi.advanceTimersByTimeAsync(15_000)
-    expect(implementSem.limit).toBe(3)
-
-    await vi.advanceTimersByTimeAsync(15_000)
+    await vi.advanceTimersByTimeAsync(15_000 * 6)
     expect(implementSem.limit).toBe(4)
   })
 
@@ -258,17 +285,17 @@ describe('steward-runtime-tune', () => {
     // Mirrors a daemon restart onto an already-thrashing host: the cap comes
     // up at baseline and the dispatcher starts claiming slots at once, so the
     // first sample must not be an interval away.
-    const { implementSem, log } = setup(3, 0.2, { swap: 0.97 })
+    const { implementSem, log } = setup(3, 10)
 
     await vi.advanceTimersByTimeAsync(0)
 
     expect(implementSem.limit).toBe(2)
-    expect(log.mock.calls.flat().join(' ')).toMatch(/shed implement cap 3 → 2 \(swap 97%/)
+    expect(log.mock.calls.flat().join(' ')).toMatch(/shed implement cap 3 → 2 \(load\/core 10/)
   })
 
   it('stops recovering exactly at baseline, never above it', async () => {
     vi.useFakeTimers()
-    const { implementSem } = setup(1, 0.2, { swap: 0.1, baselineCap: 3 })
+    const { implementSem } = setup(1, 0.2, { pagingPps: 0, baselineCap: 3 })
 
     await vi.advanceTimersByTimeAsync(15_000 * 10)
 
@@ -279,37 +306,29 @@ describe('steward-runtime-tune', () => {
     vi.useFakeTimers()
     // 3.0 is below the shed trigger (4) but above the recover ceiling (2.5) —
     // the band where neither lane should act.
-    const { implementSem } = setup(1, 3.0, { swap: 0.1, baselineCap: 4 })
+    const { implementSem } = setup(1, 3.0, { pagingPps: 0, baselineCap: 4 })
 
     await vi.advanceTimersByTimeAsync(15_000 * 4)
 
     expect(implementSem.limit).toBe(1)
   })
 
-  it('does not recover while swap is still high', async () => {
+  it('does not recover while paging is above the recover ceiling', async () => {
     vi.useFakeTimers()
-    const { implementSem } = setup(1, 0.2, { swap: 0.6, baselineCap: 4 })
+    const { implementSem } = setup(1, 0.2, { pagingPps: 200, baselineCap: 4 })
 
     await vi.advanceTimersByTimeAsync(15_000 * 4)
 
     expect(implementSem.limit).toBe(1)
   })
 
-  it('does not recover a cap that is already at or above baseline', async () => {
-    vi.useFakeTimers()
-    const { implementSem, writeChatAck } = setup(4, 0.2, { swap: 0.1, baselineCap: 4 })
-
-    await vi.advanceTimersByTimeAsync(15_000 * 4)
-
-    expect(implementSem.limit).toBe(4)
-    expect(writeChatAck).not.toHaveBeenCalled()
-  })
-
-  it('sheds then recovers when pressure spikes and clears', async () => {
+  it('does not oscillate the cap when paging alternates between bursts and clean samples', async () => {
     vi.useFakeTimers()
     const bus = new EventEmitter()
-    const implementSem = makeSem(4)
-    let swap = 0.94
+    const implementSem = makeSem(1)
+    let pagingPps = 600
+    let counter = 0
+    let lastSampleMs = Date.now()
     const stop = startStewardRuntimeTune({
       bus,
       implementSem,
@@ -317,7 +336,56 @@ describe('steward-runtime-tune', () => {
       log: vi.fn(),
       writeChatAck: vi.fn().mockResolvedValue(undefined) as ReturnType<typeof vi.fn> & ((text: string) => Promise<void>),
       readLoadPerCore: () => 0.2,
-      readSwapPressure: async () => swap,
+      readPagingCounter: async () => {
+        const now = Date.now()
+        counter += ((now - lastSampleMs) / 1000) * pagingPps
+        lastSampleMs = now
+        return counter
+      },
+    })
+    disposers.push(stop)
+
+    const limits = [implementSem.limit]
+    for (const rate of [600, 0, 600, 0, 600, 0]) {
+      pagingPps = rate
+      await vi.advanceTimersByTimeAsync(15_000)
+      limits.push(implementSem.limit)
+    }
+
+    const capChanges = limits.filter((limit, index) => index > 0 && limit !== limits[index - 1]).length
+    expect(capChanges).toBeLessThanOrEqual(1)
+  })
+
+  it('does not recover a cap that is already at or above baseline', async () => {
+    vi.useFakeTimers()
+    const { implementSem, writeChatAck } = setup(4, 0.2, { pagingPps: 0, baselineCap: 4 })
+
+    await vi.advanceTimersByTimeAsync(15_000 * 4)
+
+    expect(implementSem.limit).toBe(4)
+    expect(writeChatAck).not.toHaveBeenCalled()
+  })
+
+  it('sheds then recovers when paging spikes and clears', async () => {
+    vi.useFakeTimers()
+    const bus = new EventEmitter()
+    const implementSem = makeSem(4)
+    let pagingPps = 5_000
+    let counter = 0
+    let lastSampleMs = Date.now()
+    const stop = startStewardRuntimeTune({
+      bus,
+      implementSem,
+      baselineCap: 4,
+      log: vi.fn(),
+      writeChatAck: vi.fn().mockResolvedValue(undefined) as ReturnType<typeof vi.fn> & ((text: string) => Promise<void>),
+      readLoadPerCore: () => 0.2,
+      readPagingCounter: async () => {
+        const now = Date.now()
+        counter += ((now - lastSampleMs) / 1000) * pagingPps
+        lastSampleMs = now
+        return counter
+      },
     })
     disposers.push(stop)
 
@@ -327,8 +395,8 @@ describe('steward-runtime-tune', () => {
 
     // Pressure clears — the whole point of the recover lane is that no human
     // has to notice this happened.
-    swap = 0.05
-    await vi.advanceTimersByTimeAsync(15_000 * 5)
+    pagingPps = 0
+    await vi.advanceTimersByTimeAsync(15_000 * 9)
     expect(implementSem.limit).toBe(4)
   })
 })
