@@ -349,7 +349,7 @@ describe('triage workflow — optimised data access', () => {
     expect(spy).toHaveBeenCalledOnce()
   })
 
-  it('listNonDoneTasks returns newest-first; reversed gives oldest-first display order', async () => {
+  it('renders the newest graph rows in the same oldest-first order as before', async () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
@@ -370,8 +370,13 @@ describe('triage workflow — optimised data access', () => {
     expect(result.map((t) => t.id)).not.toContain(excluded.id)
     // Results must be newest-first (DESC created_at)
     expect(result.map((t) => t.id)).toEqual([t3.id, t2.id, t1.id])
-    // Reversing gives oldest-first — same as the pre-optimisation display order
-    expect([...result].reverse().map((t) => t.id)).toEqual([t1.id, t2.id, t3.id])
+    const { buildTaskGraph } = await import('../../../workflows/triage-workflow')
+    expect(buildTaskGraph([...result].reverse())).toBe(
+      `${t1.id} | ${t1.status} | oldest task\n` +
+        `${t2.id} | ${t2.status} | middle task\n` +
+        `${t3.id} | ${t3.status} | newest task`,
+    )
+    expect(buildTaskGraph([])).toBe('(no other tasks)')
   })
 
   it('filterExistingTaskIds returns [] without querying when ids is empty', async () => {

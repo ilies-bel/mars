@@ -1467,6 +1467,37 @@ export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
 }
 
 /**
+ * Return the newest non-done tasks other than `excludeId`, capped at `limit`.
+ * The triage workflow reverses this descending result before rendering it so
+ * its prompt preserves listTasks' historic oldest-first display order.
+ */
+export const listNonDoneTasks = async (
+  excludeId: string,
+  limit: number,
+): Promise<Task[]> => {
+  await ensureQueueSchema()
+  const r = await resolveQueueClient().execute({
+    sql: `${TASK_SEL} WHERE t.status <> 'done' AND t.id <> ? ORDER BY t.created_at DESC LIMIT ?`,
+    args: [excludeId, limit],
+  })
+  return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
+}
+
+/** Return only task ids that currently exist. */
+export const filterExistingTaskIds = async (
+  ids: readonly string[],
+): Promise<string[]> => {
+  if (ids.length === 0) return []
+
+  await ensureQueueSchema()
+  const r = await resolveQueueClient().execute({
+    sql: 'SELECT id FROM tasks WHERE id = ANY(?::text[])',
+    args: [ids],
+  })
+  return r.rows.map((row) => (row as { id: string }).id)
+}
+
+/**
  * Paginated task listing. Returns up to `limit` rows (ordered by priority
  * DESC, created_at ASC) alongside the total row count matching the optional
  * status filter. When `limit` is undefined all matching rows are returned

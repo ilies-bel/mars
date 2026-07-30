@@ -48,6 +48,7 @@ export type DbInValue =
   | bigint
   | boolean
   | Uint8Array
+  | readonly string[]
 
 /** A result row, keyed by column name. */
 export type DbRow = Record<string, unknown>

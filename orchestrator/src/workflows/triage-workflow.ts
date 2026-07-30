@@ -49,7 +49,7 @@ export interface TriageServices {
 // before passing it in so the rendered order is oldest-first (matching the
 // pre-optimisation behaviour where listTasks returned ASC and slice(-30)
 // produced the same 30 newest rows).
-const buildTaskGraph = (tasks: readonly Task[]): string => {
+export const buildTaskGraph = (tasks: readonly Task[]): string => {
   const rows = tasks.map((t) => {
     const preview = String(t.prompt).replace(/\s+/g, ' ').slice(0, PROMPT_PREVIEW_CHARS)
     return `${t.id} | ${t.status} | ${preview}`

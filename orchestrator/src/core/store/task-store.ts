@@ -41,6 +41,8 @@ import {
   getTask as queueGetTask,
   listTasks as queueListTasks,
   listTasksPaged as queueListTasksPaged,
+  listNonDoneTasks as queueListNonDoneTasks,
+  filterExistingTaskIds as queueFilterExistingTaskIds,
   updateTask as queueUpdateTask,
   setTaskPriority as queueSetTaskPriority,
   addPendingReviewBlockers as queueAddPendingReviewBlockers,
@@ -491,6 +493,8 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     getTask: (id) => queueGetTask(id),
     listTasks: (status) => queueListTasks(status),
     listTasksPaged: (status, limit) => queueListTasksPaged(status, limit),
+    listNonDoneTasks: (excludeId, limit) => queueListNonDoneTasks(excludeId, limit),
+    filterExistingTaskIds: (ids) => queueFilterExistingTaskIds(ids),
     // Arc.createOrigin is the origin write funnel; pass `store` so persistence
     // routes through this seam rather than the process-wide default.
     enqueueTask: (prompt, plan, opts) =>
@@ -571,26 +575,6 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
         `${TASK_SEL} WHERE t.kind = 'fix' AND t.status = 'done' AND t.fix_for_task_id IS NOT NULL`,
       )
       return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
-    },
-
-    listNonDoneTasks: async (excludeId, limit) => {
-      const c = guardClient()
-      const r = await c.execute({
-        sql: `${TASK_SEL} WHERE t.status <> 'done' AND t.id <> ? ORDER BY t.created_at DESC LIMIT ?`,
-        args: [excludeId, limit],
-      })
-      return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
-    },
-
-    filterExistingTaskIds: async (ids) => {
-      if (ids.length === 0) return []
-      const c = guardClient()
-      const placeholders = ids.map(() => '?').join(', ')
-      const r = await c.execute({
-        sql: `SELECT id FROM tasks WHERE id IN (${placeholders})`,
-        args: [...ids],
-      })
-      return r.rows.map((row) => (row as unknown as { id: string }).id)
     },
 
     // ── Transcripts ────────────────────────────────────────────────────────
