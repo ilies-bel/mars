@@ -1542,6 +1542,12 @@ export interface DropTaskResult {
    * GONE — not null-ed — by the time dropTask returns (ADR-0049).
    */
   cascadedFixTaskIds: string[]
+  /**
+   * Number of `merge_jobs` rows deleted as part of this drop (includes rows
+   * for the task itself and any cascade-deleted fix tasks). Zero when the task
+   * never reached the merge stage.
+   */
+  mergeJobsDeleted: number
 }
 
 /**

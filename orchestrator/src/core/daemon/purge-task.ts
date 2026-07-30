@@ -102,6 +102,7 @@ export const corePurgeTask = async (
       previousStatus: 'failed',
       edgesRemoved: { incoming: 0, outgoing: 0 },
       cascadedFixTaskIds: [],
+      mergeJobsDeleted: 0,
     }
   }
   if (task.status !== 'failed' && task.status !== 'done' && task.status !== 'dropped') {

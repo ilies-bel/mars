@@ -1800,6 +1800,11 @@ export class Arc {
     // remains best-effort and is intentionally separated from the DB transaction.
     const orphanedDeps: { depId: string; originId: string }[] = []
 
+    // Accumulates the count of merge_jobs rows deleted across the origin task
+    // and any cascade-deleted fix tasks. Initialised outside the atomic so the
+    // return value type is DropTaskResult (not the Awaited<> of the closure).
+    let mergeJobsDeleted = 0
+
     const result = await this.store.atomic(async (scope) => {
       const before = await scope.execute({
         sql: `SELECT status FROM tasks WHERE id = ?`,
@@ -2101,11 +2106,29 @@ export class Arc {
           sql: `DELETE FROM self_heal_attempts WHERE fix_task_id = ?`,
           args: [fixId],
         })
+        // merge_jobs.task_id has no ON DELETE CASCADE — explicit delete required
+        // before the tasks row disappears or the FK fires (same class of bug as
+        // task_progress above). Count is accumulated into mergeJobsDeleted below.
+        const fixMergeJobsDel = await scope.execute({
+          sql: `DELETE FROM merge_jobs WHERE task_id = ?`,
+          args: [fixId],
+        })
+        mergeJobsDeleted += Number(fixMergeJobsDel.rowsAffected ?? 0)
         await scope.execute({
           sql: `DELETE FROM tasks WHERE id = ?`,
           args: [fixId],
         })
       }
+
+      // merge_jobs.task_id has no ON DELETE CASCADE — delete before the tasks
+      // row is removed. Explicit delete keeps cleanup visible in the summary
+      // line ("merge-jobs=N") and avoids silently discarding merge history on
+      // future delete paths that should not cascade.
+      const originMergeJobsDel = await scope.execute({
+        sql: `DELETE FROM merge_jobs WHERE task_id = ?`,
+        args: [id],
+      })
+      mergeJobsDeleted += Number(originMergeJobsDel.rowsAffected ?? 0)
 
       await scope.execute({
         sql: `DELETE FROM tasks WHERE id = ?`,
@@ -2117,6 +2140,7 @@ export class Arc {
         previousStatus,
         edgesRemoved: { incoming: incomingCount, outgoing: outgoingCount },
         cascadedFixTaskIds,
+        mergeJobsDeleted,
       }
     })
 
