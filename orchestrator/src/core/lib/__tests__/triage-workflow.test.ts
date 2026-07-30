@@ -225,3 +225,234 @@ describe('triage workflow', () => {
   })
 
 })
+
+// ── Optimised data access: skip-path and store-method tests ─────────────────
+//
+// These tests verify the lazy-fetch optimisation introduced in the triage
+// refactor:
+//  • has-blockers and structured-spec skips must NOT call listNonDoneTasks.
+//  • trivial-graph fires when listNonDoneTasks returns [].
+//  • Rule precedence: has-blockers wins when a task satisfies both rules.
+//  • listNonDoneTasks returns newest-first; reversed gives the pre-change
+//    display order (oldest-first).
+//  • filterExistingTaskIds drops unknown ids and is not called when the LLM
+//    returns an empty blockerTaskIds list; it receives at most MAX_BLOCKERS ids.
+
+describe('triage workflow — optimised data access', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+    vi.doUnmock('../git/claude')
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('has-blockers skip does not call listNonDoneTasks', async () => {
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const a = await queue.enqueueTask('task with pre-declared blocker')
+    const b = await queue.enqueueTask('prerequisite task')
+    await queue.addBlockers(a.id, [b.id])
+    // Extra task ensures the graph would be non-trivial if fetched
+    await queue.enqueueTask('unrelated background task')
+
+    const { createTaskStore, getCompositionRootClient } = await import(
+      '../../../core/store/task-store'
+    )
+    const store = createTaskStore(getCompositionRootClient())
+    const spy = vi.spyOn(store, 'listNonDoneTasks')
+
+    const triage = await import('../../../workflows/triage-workflow')
+    const result = await triage.runTriage(a.id, store)
+
+    expect(result.triageSkipReason).toBe('has-blockers')
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('structured-spec skip does not call listNonDoneTasks', async () => {
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    // Extra task ensures the graph would be non-trivial if fetched
+    await queue.enqueueTask('unrelated background task')
+    const task = await queue.enqueueTask('implement X', undefined, {
+      spec: {
+        files: ['src/foo.ts'],
+        verifyCmd: null,
+        doneCriteria: ['foo is implemented'],
+        taskType: 'auto' as const,
+      },
+    })
+
+    const { createTaskStore, getCompositionRootClient } = await import(
+      '../../../core/store/task-store'
+    )
+    const store = createTaskStore(getCompositionRootClient())
+    const spy = vi.spyOn(store, 'listNonDoneTasks')
+
+    const triage = await import('../../../workflows/triage-workflow')
+    const result = await triage.runTriage(task.id, store)
+
+    expect(result.triageSkipReason).toBe('structured-spec')
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('has-blockers wins when task satisfies both has-blockers and structured-spec', async () => {
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const blocker = await queue.enqueueTask('prerequisite')
+    // Task carries BOTH a structured spec AND a pre-existing blocker edge
+    const task = await queue.enqueueTask('implement X', undefined, {
+      spec: {
+        files: ['src/foo.ts'],
+        verifyCmd: null,
+        doneCriteria: ['foo is done'],
+        taskType: 'auto' as const,
+      },
+    })
+    await queue.addBlockers(task.id, [blocker.id])
+
+    const triage = await import('../../../workflows/triage-workflow')
+    const result = await triage.runTriage(task.id)
+
+    // has-blockers fires first (higher precedence than structured-spec)
+    expect(result.triageSkipReason).toBe('has-blockers')
+    expect(result.blockerCount).toBe(1)
+  })
+
+  it('trivial-graph fires when listNonDoneTasks returns []', async () => {
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    // Lone task — open graph (excluding self) is empty
+    const task = await queue.enqueueTask('lone free-prose task')
+
+    const { createTaskStore, getCompositionRootClient } = await import(
+      '../../../core/store/task-store'
+    )
+    const store = createTaskStore(getCompositionRootClient())
+    const spy = vi.spyOn(store, 'listNonDoneTasks')
+
+    const triage = await import('../../../workflows/triage-workflow')
+    const result = await triage.runTriage(task.id, store)
+
+    expect(result.triageSkipReason).toBe('trivial-graph')
+    // listNonDoneTasks WAS called (trivial-graph requires it)
+    expect(spy).toHaveBeenCalledOnce()
+  })
+
+  it('listNonDoneTasks returns newest-first; reversed gives oldest-first display order', async () => {
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+
+    const t1 = await queue.enqueueTask('oldest task')
+    const t2 = await queue.enqueueTask('middle task')
+    const t3 = await queue.enqueueTask('newest task')
+    const excluded = await queue.enqueueTask('task being triaged (excluded)')
+
+    const { createTaskStore, getCompositionRootClient } = await import(
+      '../../../core/store/task-store'
+    )
+    const store = createTaskStore(getCompositionRootClient())
+
+    const result = await store.listNonDoneTasks(excluded.id, 30)
+
+    // Excluded task must not appear in results
+    expect(result.map((t) => t.id)).not.toContain(excluded.id)
+    // Results must be newest-first (DESC created_at)
+    expect(result.map((t) => t.id)).toEqual([t3.id, t2.id, t1.id])
+    // Reversing gives oldest-first — same as the pre-optimisation display order
+    expect([...result].reverse().map((t) => t.id)).toEqual([t1.id, t2.id, t3.id])
+  })
+
+  it('filterExistingTaskIds returns [] without querying when ids is empty', async () => {
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+
+    const { createTaskStore, getCompositionRootClient } = await import(
+      '../../../core/store/task-store'
+    )
+    const store = createTaskStore(getCompositionRootClient())
+    const result = await store.filterExistingTaskIds([])
+    expect(result).toEqual([])
+  })
+
+  it('filterExistingTaskIds drops unknown ids and preserves known ones', async () => {
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const t1 = await queue.enqueueTask('task 1')
+    const t2 = await queue.enqueueTask('task 2')
+
+    const { createTaskStore, getCompositionRootClient } = await import(
+      '../../../core/store/task-store'
+    )
+    const store = createTaskStore(getCompositionRootClient())
+
+    const result = await store.filterExistingTaskIds([t1.id, 'nonexistent-id', t2.id])
+    expect(result).toHaveLength(2)
+    expect(result).toContain(t1.id)
+    expect(result).toContain(t2.id)
+    expect(result).not.toContain('nonexistent-id')
+  })
+
+  it('filterExistingTaskIds is not called when LLM returns empty blockerTaskIds', async () => {
+    setClaudeStub({
+      exitCode: 0,
+      stdout: envelope({ actionable: true, reason: 'all good', blockerTaskIds: [] }),
+    })
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    await queue.enqueueTask('background task')
+    const task = await queue.enqueueTask('main task')
+
+    const { createTaskStore, getCompositionRootClient } = await import(
+      '../../../core/store/task-store'
+    )
+    const store = createTaskStore(getCompositionRootClient())
+    const spy = vi.spyOn(store, 'filterExistingTaskIds')
+
+    const triage = await import('../../../workflows/triage-workflow')
+    await triage.runTriage(task.id, store)
+
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('filterExistingTaskIds receives at most MAX_BLOCKERS (10) ids', async () => {
+    // LLM returns 15 blocker ids; the workflow pre-slices to MAX_BLOCKERS=10
+    const manyBlockerIds = Array.from({ length: 15 }, (_, i) => `fake-blocker-${i}`)
+    setClaudeStub({
+      exitCode: 0,
+      stdout: envelope({ actionable: false, reason: 'many deps', blockerTaskIds: manyBlockerIds }),
+    })
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    await queue.enqueueTask('background task')
+    const task = await queue.enqueueTask('main task')
+
+    const { createTaskStore, getCompositionRootClient } = await import(
+      '../../../core/store/task-store'
+    )
+    const store = createTaskStore(getCompositionRootClient())
+    const spy = vi.spyOn(store, 'filterExistingTaskIds')
+
+    const triage = await import('../../../workflows/triage-workflow')
+    await triage.runTriage(task.id, store)
+
+    expect(spy).toHaveBeenCalledOnce()
+    const [receivedIds] = spy.mock.calls[0]!
+    expect(receivedIds.length).toBeLessThanOrEqual(10)
+  })
+})

@@ -44,14 +44,16 @@ export interface TriageServices {
   traceStore: TraceEventStore
 }
 
-const buildTaskGraph = (tasks: readonly Task[], excludeId: string): string => {
-  const rows = tasks
-    .filter((t) => t.id !== excludeId && t.status !== 'done')
-    .slice(-TASK_GRAPH_LIMIT)
-    .map((t) => {
-      const preview = String(t.prompt).replace(/\s+/g, ' ').slice(0, PROMPT_PREVIEW_CHARS)
-      return `${t.id} | ${t.status} | ${preview}`
-    })
+// Pure formatter: the query (listNonDoneTasks) already guarantees the tasks
+// are non-done and exclude the triaged task. Callers reverse the DESC result
+// before passing it in so the rendered order is oldest-first (matching the
+// pre-optimisation behaviour where listTasks returned ASC and slice(-30)
+// produced the same 30 newest rows).
+const buildTaskGraph = (tasks: readonly Task[]): string => {
+  const rows = tasks.map((t) => {
+    const preview = String(t.prompt).replace(/\s+/g, ' ').slice(0, PROMPT_PREVIEW_CHARS)
+    return `${t.id} | ${t.status} | ${preview}`
+  })
   return rows.length === 0 ? '(no other tasks)' : rows.join('\n')
 }
 
@@ -119,33 +121,13 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
       const task = await store.getTask(input.taskId)
       if (!task) throw new Error(`task ${input.taskId} not found`)
 
-      const allTasks = await store.listTasks()
-      const knownIds = new Set(allTasks.map((t) => t.id))
-      const taskGraph = buildTaskGraph(allTasks, task.id)
-
       const traceStore = ctx.services.traceStore
 
-      // Skip the LLM call when the answer is already obvious from existing
-      // task structure. Three rules (any one is sufficient):
-      //   has-blockers   — author declared explicit blocker edges; respect them.
-      //   structured-spec — task carries files + done-criteria; scope is known.
-      //   trivial-graph  — open graph is empty or has ≤ TRIVIAL_GRAPH_SIZE tasks;
-      //                    nothing meaningful to be blocked by.
-      const openTasks = allTasks.filter((t) => t.id !== task.id && t.status !== 'done')
-      const existingBlockers = await store.listBlockers(task.id)
-
-      const triageSkipReason: string | null = (() => {
-        if (existingBlockers.length > 0) return 'has-blockers'
-        if (
-          task.spec !== null &&
-          task.spec.files.length > 0 &&
-          task.spec.doneCriteria.length > 0
-        ) return 'structured-spec'
-        if (openTasks.length <= TRIVIAL_GRAPH_SIZE) return 'trivial-graph'
-        return null
-      })()
-
-      if (triageSkipReason !== null) {
+      // Helper shared by all three skip paths.
+      const skipWith = async (
+        reason: string,
+        blockerCount: number,
+      ): Promise<TriageResult> => {
         await traceStore
           ?.record({
             kind: 'log_line',
@@ -153,23 +135,51 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
             originId: input.taskId,
             payload: {
               level: 'info',
-              msg: `triage skipped: ${triageSkipReason}`,
+              msg: `triage skipped: ${reason}`,
               source: 'workflow',
-              fields: { skipReason: triageSkipReason },
+              fields: { skipReason: reason },
             },
           })
           .catch(() => undefined)
-
         await store.promoteDraftToQueued(task.id)
-
         return {
           taskId: task.id,
           actionable: true,
-          blockerCount: existingBlockers.length,
-          reason: `triage skipped: ${triageSkipReason}`,
-          triageSkipReason,
+          blockerCount,
+          reason: `triage skipped: ${reason}`,
+          triageSkipReason: reason,
         }
       }
+
+      // ── Skip rule 1: has-blockers ────────────────────────────────────────
+      // Author declared explicit blocker edges; no graph query needed at all.
+      const existingBlockers = await store.listBlockers(task.id)
+      if (existingBlockers.length > 0) {
+        return skipWith('has-blockers', existingBlockers.length)
+      }
+
+      // ── Skip rule 2: structured-spec ─────────────────────────────────────
+      // Task carries files + done-criteria; scope is known without graph context.
+      if (
+        task.spec !== null &&
+        task.spec.files.length > 0 &&
+        task.spec.doneCriteria.length > 0
+      ) {
+        return skipWith('structured-spec', 0)
+      }
+
+      // ── Skip rule 3: trivial-graph ───────────────────────────────────────
+      // Fetch only the rows we need for the task graph.  If none come back the
+      // graph is empty (≤ TRIVIAL_GRAPH_SIZE = 0) and there is nothing to be
+      // blocked by, so we skip immediately.
+      const graphTasks = await store.listNonDoneTasks(task.id, TASK_GRAPH_LIMIT)
+      if (graphTasks.length <= TRIVIAL_GRAPH_SIZE) {
+        return skipWith('trivial-graph', 0)
+      }
+
+      // listNonDoneTasks returns newest-first (DESC); reverse to render
+      // oldest-first, matching the pre-optimisation display order.
+      const taskGraph = buildTaskGraph([...graphTasks].reverse())
 
       const r = await runWorkerWithSpan({
         worker: Workers.Triager,
@@ -189,9 +199,15 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
 
       const parsed = triageJsonSchema.parse(parseClaudeJsonResult(r.stdout))
 
-      const filteredBlockers = parsed.blockerTaskIds
-        .filter((id) => id !== task.id && knownIds.has(id))
+      // Pre-filter before querying so filterExistingTaskIds never receives more
+      // than MAX_BLOCKERS ids.
+      const candidateBlockers = parsed.blockerTaskIds
+        .filter((id) => id !== task.id)
         .slice(0, MAX_BLOCKERS)
+      const filteredBlockers =
+        candidateBlockers.length > 0
+          ? await store.filterExistingTaskIds(candidateBlockers)
+          : []
 
       await store.clearBlockers(task.id)
       await store.addBlockers(task.id, filteredBlockers)

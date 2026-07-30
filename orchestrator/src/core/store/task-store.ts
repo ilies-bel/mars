@@ -196,6 +196,19 @@ export interface DomainTaskStore {
     status?: TaskStatus,
     limit?: number,
   ): Promise<{ tasks: Task[]; total: number }>
+  /**
+   * Return up to `limit` non-done tasks excluding `excludeId`, ordered
+   * newest-first (`ORDER BY created_at DESC`).  Callers that need oldest-first
+   * display order should reverse the result.
+   */
+  listNonDoneTasks(excludeId: string, limit: number): Promise<Task[]>
+  /**
+   * Return the subset of `ids` that refer to existing task rows.  Returns `[]`
+   * without issuing a query when `ids` is empty.  Callers must pre-filter and
+   * slice `ids` to at most `MAX_BLOCKERS` before calling so the query never
+   * receives more than that many ids.
+   */
+  filterExistingTaskIds(ids: readonly string[]): Promise<string[]>
   enqueueTask(
     prompt: string,
     plan?: TaskPlan,
@@ -558,6 +571,26 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
         `${TASK_SEL} WHERE t.kind = 'fix' AND t.status = 'done' AND t.fix_for_task_id IS NOT NULL`,
       )
       return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
+    },
+
+    listNonDoneTasks: async (excludeId, limit) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `${TASK_SEL} WHERE t.status <> 'done' AND t.id <> ? ORDER BY t.created_at DESC LIMIT ?`,
+        args: [excludeId, limit],
+      })
+      return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
+    },
+
+    filterExistingTaskIds: async (ids) => {
+      if (ids.length === 0) return []
+      const c = guardClient()
+      const placeholders = ids.map(() => '?').join(', ')
+      const r = await c.execute({
+        sql: `SELECT id FROM tasks WHERE id IN (${placeholders})`,
+        args: [...ids],
+      })
+      return r.rows.map((row) => (row as unknown as { id: string }).id)
     },
 
     // ── Transcripts ────────────────────────────────────────────────────────
