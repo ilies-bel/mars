@@ -202,7 +202,8 @@ const remerge: Command = {
 
 const purge: Command = {
   path: 'purge',
-  summary: 'purge tasks (worktree + branch + row)',
+  summary:
+    'purge failed/done/dropped tasks (worktree + branch + row); use mars drop for any status',
   usage: 'usage: mars purge <id> [<id> ...] [--force]',
   run: async (args, deps) => {
     const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
@@ -411,7 +412,8 @@ const sync: Command = {
 
 const drop: Command = {
   path: 'drop',
-  summary: 'delete any task entirely regardless of status',
+  summary:
+    'delete any task entirely regardless of status; use mars purge for terminal tasks only',
   usage: 'usage: mars drop <id> [--force]',
   run: async (args, deps) => {
     const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))

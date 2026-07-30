@@ -162,7 +162,7 @@ describe('corePurgeTask — dropped terminal status', () => {
 
   // ── queued (in-flight) remains blocked ────────────────────────────────────
 
-  it('still refuses an in-flight (queued) task', async () => {
+  it('still refuses an in-flight (queued) task with a self-correcting message', async () => {
     const { q, pt } = await loadModules(repo)
 
     const task = await q.enqueueTask('queued work', undefined, {
@@ -170,9 +170,14 @@ describe('corePurgeTask — dropped terminal status', () => {
     })
     // Leave in queued status — not a terminal state.
 
+    const rejection = pt.corePurgeTask(task.id, true, 'main', repo)
+
+    // Message names the offending status.
+    await expect(rejection).rejects.toThrow(/is queued/)
+    // Message names the escape hatch so operators don't reach for raw SQL.
     await expect(
       pt.corePurgeTask(task.id, true, 'main', repo),
-    ).rejects.toThrow('refuse to purge in-flight tasks')
+    ).rejects.toThrow(/mars drop/)
 
     // Row survives.
     expect(await q.getTask(task.id)).not.toBeNull()
