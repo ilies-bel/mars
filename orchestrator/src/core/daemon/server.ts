@@ -4704,6 +4704,7 @@ export const startDaemon = async (
         const queueDepth = queuedTasks.length
         const { alerted } = await runStaleQueuedSweep({
           activeWorkerCount,
+          implementCap: sems.implement.limit,
           queueDepth,
           dispatchDecisionSummary: [],
         })

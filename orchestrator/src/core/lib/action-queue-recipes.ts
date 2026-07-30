@@ -714,6 +714,24 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
     ],
   },
 
+  'stale-queued-summary': {
+    humanSummary: (ctx) => {
+      const suppressedCount = ctx.payload['suppressedCount']
+      return typeof suppressedCount === 'number'
+        ? `${suppressedCount} stale queued task alert(s) were suppressed to keep the action queue usable.`
+        : 'Stale queued task alerts were suppressed to keep the action queue usable.'
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      suppressedCount: ctx.payload['suppressedCount'],
+      activeWorkerCount: ctx.payload['activeWorkerCount'],
+      implementCap: ctx.payload['implementCap'],
+      queueDepth: ctx.payload['queueDepth'],
+      dispatchDecisionSummary: ctx.payload['dispatchDecisionSummary'],
+    }),
+    verbs: [],
+  },
+
   'spend-control-notice': {
     humanSummary: (ctx) => {
       const direction = str(ctx.payload['direction'])
