@@ -65,7 +65,7 @@ import {
   PromptInputButton,
   PromptInputSubmit,
 } from '@/components/ai-elements/prompt-input'
-import { PaperclipIcon, MicIcon, SquareIcon, XIcon } from 'lucide-react'
+import { PaperclipIcon, MicIcon, SquareIcon, XIcon, PauseIcon } from 'lucide-react'
 import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
@@ -1625,6 +1625,14 @@ export interface ComposerProps {
   queuedNext?: { text: string; attachmentCount: number } | null
   /** Called when the user cancels the queued message chip. Should restore the text to the composer. */
   onCancelQueued?: () => void
+  /**
+   * When true, renders a Pause button beside Stop while the thread is busy.
+   * Set this only when the transport supports pause/resume; leave false (default)
+   * when the current transport has no pause capability.
+   */
+  canPause?: boolean
+  /** Called when the user clicks the Pause button. Only relevant when canPause is true. */
+  onPause?: () => void
 }
 
 /** A pending file attachment in the composer before it is uploaded. */
@@ -1652,6 +1660,8 @@ export const Composer = ({
   onQueueNext,
   queuedNext,
   onCancelQueued,
+  canPause = false,
+  onPause,
 }: ComposerProps) => {
   const [text, setText] = useState('')
   const [showPalette, setShowPalette] = useState(false)
@@ -2106,18 +2116,31 @@ export const Composer = ({
             )}
           </PromptInputTools>
 
-          {/* Show Stop while a reply streams / the thread runs; Send otherwise. */}
+          {/* Show Stop (and optionally Pause) while a reply streams / the thread runs; Send otherwise. */}
           {isBusy && !isPending ? (
-            <PromptInputButton
-              data-testid="stop-btn"
-              aria-label="Stop"
-              variant="outline"
-              className="text-destructive hover:text-destructive"
-              onClick={() => onStop?.()}
-            >
-              <SquareIcon className="size-4" />
-              Stop
-            </PromptInputButton>
+            <>
+              {canPause && (
+                <PromptInputButton
+                  data-testid="pause-btn"
+                  aria-label="Pause"
+                  variant="outline"
+                  onClick={() => onPause?.()}
+                >
+                  <PauseIcon className="size-4" />
+                  Pause
+                </PromptInputButton>
+              )}
+              <PromptInputButton
+                data-testid="stop-btn"
+                aria-label="Stop"
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={() => onStop?.()}
+              >
+                <SquareIcon className="size-4" />
+                Stop
+              </PromptInputButton>
+            </>
           ) : (
             <PromptInputSubmit
               type="button"
