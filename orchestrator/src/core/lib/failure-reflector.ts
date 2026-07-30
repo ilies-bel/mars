@@ -48,6 +48,46 @@ export interface SpawnFailureReflectorOpts {
   branch: string | null
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Admission control
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Maximum concurrent reflector agents.
+ *
+ * The reflector is spawned fire-and-forget from the failure handler, once per
+ * failing task, and does NOT pass through the daemon's worker-pool semaphores
+ * (`acquire(sems.*)` in server.ts). Without a cap of its own, a failure storm
+ * spawns one headless provider run per failure simultaneously — a 900-task
+ * backlog melted the host at ~150 concurrent `codex exec` processes, invisible
+ * to `mars daemon pause` because the pool genuinely held zero of them.
+ *
+ * Overflow is DROPPED, not queued. Reflector output is a best-effort
+ * harness-improvement draft proposal, so shedding load under a storm is the
+ * correct behaviour — queueing would only defer the same melt.
+ */
+const MAX_CONCURRENT = Number(process.env.MARS_FAILURE_REFLECTOR_MAX ?? 1)
+
+let inFlight = 0
+
+/** For test isolation ONLY. Never call in production. */
+export const _resetFailureReflectorGateForTests = (): void => {
+  inFlight = 0
+}
+
+/**
+ * Returns `true` when self-heal is disabled via
+ * `mars daemon set-flag recovery off` (sets MARS_RECOVERY_DISABLED=1
+ * in-memory).
+ *
+ * The failure handler's own kill-switch check returns early only for origin
+ * tasks (`fixForTaskId === null`); recovery-task failures fall through to the
+ * reflector spawn sites. Checking the flag here too makes the incident
+ * kill-switch actually comprehensive.
+ */
+const isRecoveryDisabled = (): boolean =>
+  process.env.MARS_RECOVERY_DISABLED === '1'
+
 interface FailureReflectorSuggestion {
   recipe: string | null
   title: string
@@ -160,10 +200,26 @@ const persistSuggestion = async (s: FailureReflectorSuggestion): Promise<void> =
  *
  * Deduplication: repeated suggestions for the same title are collapsed into
  * the existing open draft (notes appended, no new proposal row created).
+ *
+ * Admission control (see {@link MAX_CONCURRENT}): the call is suppressed when
+ * self-heal is disabled or when {@link MAX_CONCURRENT} runs are already in
+ * flight. Suppression is silent and non-fatal — the caller never awaits this.
+ *
+ * Note the gate is on concurrency only, never on the failure signature:
+ * collapsing repeat analyses is the proposal layer's job (`persistSuggestion`
+ * appends to the existing open draft), and doing it here as well would
+ * silently skip runs that carry genuinely new arc context.
  */
 export const spawnFailureReflector = async (
   opts: SpawnFailureReflectorOpts,
 ): Promise<void> => {
+  // ── Admission control ────────────────────────────────────────────────────
+  // Checked before any work so a storm costs nothing but two comparisons.
+  if (isRecoveryDisabled()) return
+  if (inFlight >= MAX_CONCURRENT) return
+
+  inFlight += 1
+
   try {
     const recipes = loadImprovementRecipes()
     const catalog = formatRecipeCatalog(recipes)
@@ -189,5 +245,7 @@ export const spawnFailureReflector = async (
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn('[failure-reflector] error (non-fatal):', err)
+  } finally {
+    inFlight -= 1
   }
 }

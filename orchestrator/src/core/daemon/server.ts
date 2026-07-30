@@ -4762,21 +4762,50 @@ export const startDaemon = async (
   }, CHAT_ARCHIVE_SWEEP_MS)
   chatArchiveSweep.unref()
 
+  // ── Subscriber drain single-flight gate ───────────────────────────────────
+  // Every subscriber drain below runs on a setInterval whose body can outlast
+  // its own period (a drain awaits provider calls and verify commands, each of
+  // which can take minutes). Unguarded, each tick stacks another concurrent
+  // drain of the SAME subscriber on top of the last.
+  //
+  // That is not merely wasteful. `drainWithStall` runs the handler BEFORE
+  // claiming the `subscriber_processed_events` row, so concurrent drains all
+  // pass the "already processed?" check and all execute the side effect; only
+  // the bookkeeping is deduped, not the work. For handlers that spawn agents
+  // this multiplies into a host-melting fan-out — the duplicate-key errors on
+  // `subscriber_processed_events_pkey` in the daemon log are the direct
+  // signature of this race.
+  //
+  // Ticks arriving while a drain is in flight are DROPPED, not queued: a drain
+  // always resumes from the durable cursor, so a skipped tick loses no work —
+  // the next one picks up exactly where this one stopped.
+  const singleFlight = (fn: () => Promise<void>): (() => void) => {
+    let running = false
+    return () => {
+      if (running) return
+      running = true
+      void fn().finally(() => {
+        running = false
+      })
+    }
+  }
+
   // ── Alert-dismisser drain ─────────────────────────────────────────────────
   // Polls the outbox for status-transition events and clears the implicated
   // task's action-queue alert(s). This keeps the "status change clears
   // alerts" invariant whole for raw-SQL status writes that bypass the
   // updateTask chokepoint. .unref() so it never holds the process open.
   const ALERT_DRAIN_MS = Number(process.env.MARS_ALERT_DRAIN_MS ?? 30_000)
-  const alertDrain = setInterval(() => {
-    void (async () => {
+  const alertDrain = setInterval(
+    singleFlight(async () => {
       try {
         await drainAlertDismissals(getCompositionRootClient(), log)
       } catch (err) {
         log(`[alert-dismisser] drain errored: ${(err as Error).message}`)
       }
-    })()
-  }, ALERT_DRAIN_MS)
+    }),
+    ALERT_DRAIN_MS,
+  )
   alertDrain.unref()
 
   // ── Action queue repopulator drain ───────────────────────────────────────────────
@@ -4786,16 +4815,17 @@ export const startDaemon = async (
   const ACTION_QUEUE_REPOPULATOR_DRAIN_MS = Number(
     process.env.MARS_ACTION_QUEUE_REPOPULATOR_DRAIN_MS ?? 30_000,
   )
-  const actionQueueRepopulatorDrain = setInterval(() => {
-    void (async () => {
+  const actionQueueRepopulatorDrain = setInterval(
+    singleFlight(async () => {
       try {
         const { processed } = await drainActionQueueRepopulations(getCompositionRootClient(), log)
         if (processed > 0) viewStreamHub.broadcast('action-queue')
       } catch (err) {
         log(`[action-queue-repopulator] drain errored: ${(err as Error).message}`)
       }
-    })()
-  }, ACTION_QUEUE_REPOPULATOR_DRAIN_MS)
+    }),
+    ACTION_QUEUE_REPOPULATOR_DRAIN_MS,
+  )
   actionQueueRepopulatorDrain.unref()
 
   // ── Blocker-resolution drain ──────────────────────────────────────────────
@@ -4805,8 +4835,8 @@ export const startDaemon = async (
   const BLOCKER_RESOLUTION_DRAIN_MS = Number(
     process.env.MARS_BLOCKER_RESOLUTION_DRAIN_MS ?? 30_000,
   )
-  const blockerResolutionDrain = setInterval(() => {
-    void (async () => {
+  const blockerResolutionDrain = setInterval(
+    singleFlight(async () => {
       try {
         const { processed } = await drainBlockerResolution(getCompositionRootClient(), log)
         if (processed > 0) {
@@ -4818,8 +4848,9 @@ export const startDaemon = async (
       } catch (err) {
         log(`[blocker-resolution] drain errored: ${(err as Error).message}`)
       }
-    })()
-  }, BLOCKER_RESOLUTION_DRAIN_MS)
+    }),
+    BLOCKER_RESOLUTION_DRAIN_MS,
+  )
   blockerResolutionDrain.unref()
 
   // ── Recovery-spawner drain ────────────────────────────────────────────────
@@ -4831,15 +4862,16 @@ export const startDaemon = async (
   const RECOVERY_SPAWNER_DRAIN_MS = Number(
     process.env.MARS_RECOVERY_SPAWNER_DRAIN_MS ?? 30_000,
   )
-  const recoverySpawnerDrain = setInterval(() => {
-    void (async () => {
+  const recoverySpawnerDrain = setInterval(
+    singleFlight(async () => {
       try {
         await drainRecoverySpawner(getCompositionRootClient(), log, handleSignatureStorm)
       } catch (err) {
         log(`[recovery-spawner] drain errored: ${(err as Error).message}`)
       }
-    })()
-  }, RECOVERY_SPAWNER_DRAIN_MS)
+    }),
+    RECOVERY_SPAWNER_DRAIN_MS,
+  )
   recoverySpawnerDrain.unref()
 
   // ── Arc-verifier drain ───────────────────────────────────────────────────
@@ -4850,15 +4882,16 @@ export const startDaemon = async (
   const ARC_VERIFIER_DRAIN_MS = Number(
     process.env.MARS_ARC_VERIFIER_DRAIN_MS ?? 30_000,
   )
-  const arcVerifierDrain = setInterval(() => {
-    void (async () => {
+  const arcVerifierDrain = setInterval(
+    singleFlight(async () => {
       try {
         await drainArcVerifier(getCompositionRootClient(), log)
       } catch (err) {
         log(`[arc-verifier] drain errored: ${(err as Error).message}`)
       }
-    })()
-  }, ARC_VERIFIER_DRAIN_MS)
+    }),
+    ARC_VERIFIER_DRAIN_MS,
+  )
   arcVerifierDrain.unref()
 
   // ── Usage snapshot sampler ────────────────────────────────────────────────
