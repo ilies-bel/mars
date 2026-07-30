@@ -299,6 +299,16 @@ export interface DomainTaskStore {
    */
   incrementArcRescueAttempts(originId: string): Promise<number>
 
+  /**
+   * Count rescue-operator tasks for the arc rooted at `originId` that are
+   * not in a terminal state (`failed` or `dropped`).
+   *
+   * Used by `maybeSpawnRescueOperator` as a secondary guard for proposal-based
+   * arcs where `arc_rescue_attempts` cannot be incremented (no task row for
+   * the proposal slug). Returns 0 when no such tasks exist.
+   */
+  countActiveRescueTasksForArc(originId: string): Promise<number>
+
   // ── Arc rollup ───────────────────────────────────────────────────────────
   /**
    * Compute the rollup status for the arc of tasks sharing `originId`.
@@ -602,6 +612,18 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
       })
       const row = r.rows[0] as unknown as { arc_rescue_attempts: number | bigint }
       return Number(row.arc_rescue_attempts)
+    },
+
+    countActiveRescueTasksForArc: async (originId) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `SELECT COUNT(*) AS n FROM tasks
+              WHERE origin_id = ?
+                AND tags_json LIKE '%rescue-operator%'
+                AND status NOT IN ('failed', 'dropped')`,
+        args: [originId],
+      })
+      return Number((r.rows[0] as unknown as { n: number | bigint }).n)
     },
 
     // ── Arc rollup ─────────────────────────────────────────────────────────

@@ -177,6 +177,7 @@ describe('createTaskStore', () => {
       'getTranscript',
       'getArcRescueAttempts',
       'incrementArcRescueAttempts',
+      'countActiveRescueTasksForArc',
       'query',
       'execute',
       'atomic',
@@ -419,6 +420,57 @@ describe('getArcRescueAttempts and incrementArcRescueAttempts', () => {
 
     await expect(store.getArcRescueAttempts(proposalSlug)).resolves.toBe(0)
     await expect(store.incrementArcRescueAttempts(proposalSlug)).resolves.toBe(0)
+  })
+
+  it('countActiveRescueTasksForArc returns 0 when no rescue tasks exist', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask('original work', undefined, { skipTriage: true })
+    await expect(store.countActiveRescueTasksForArc(task.id)).resolves.toBe(0)
+  })
+
+  it('countActiveRescueTasksForArc returns 1 after a rescue task is enqueued', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask('original work', undefined, { skipTriage: true })
+    // Enqueue a rescue-operator task for this arc
+    await store.enqueueTask('rescue prompt', undefined, {
+      skipTriage: true,
+      originId: task.id,
+      tags: ['rescue-operator'],
+    })
+    await expect(store.countActiveRescueTasksForArc(task.id)).resolves.toBe(1)
+  })
+
+  it('countActiveRescueTasksForArc excludes failed and dropped rescue tasks', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const task = await store.enqueueTask('original work', undefined, { skipTriage: true })
+    const rescue = await store.enqueueTask('rescue prompt', undefined, {
+      skipTriage: true,
+      originId: task.id,
+      tags: ['rescue-operator'],
+    })
+    await store.updateTask(rescue.id, { status: 'failed' })
+    // After the rescue task fails, count should be 0 again
+    await expect(store.countActiveRescueTasksForArc(task.id)).resolves.toBe(0)
+  })
+
+  it('countActiveRescueTasksForArc works for proposal-slug origins with no task row', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const proposalSlug = 'abc123-proposal-slug'
+    // Enqueue a task with proposal origin_id and rescue-operator tag
+    await store.enqueueTask('rescue for slice', undefined, {
+      skipTriage: true,
+      originId: proposalSlug,
+      tags: ['rescue-operator'],
+    })
+    await expect(store.countActiveRescueTasksForArc(proposalSlug)).resolves.toBe(1)
   })
 })
 

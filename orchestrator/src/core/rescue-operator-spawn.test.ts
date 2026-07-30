@@ -253,4 +253,42 @@ describe('rescue-operator-spawn', () => {
     expect(rescueTask).not.toBeNull()
     expect(rescueTask!.tags).toContain('rescue-operator')
   })
+
+  // ── (e) Proposal-based arc → no second rescue after first ─────────────────
+  // For arcs whose origin_id is a proposal slug (no task row), arc_rescue_attempts
+  // is always 0 and incrementArcRescueAttempts is a no-op. Without the secondary
+  // guard, maybeSpawnRescueOperator would spawn a new rescue on every failure.
+
+  it('(e) proposal-based arc: second call to maybeSpawnRescueOperator is a no-op', async () => {
+    const { q, rescue } = await loadModules(repo)
+
+    // Create a task whose origin_id is a proposal slug (no task row for that id).
+    const proposalSlug = 'abc123-test-proposal-slug'
+    const task = await q.enqueueTask('slice task do a thing', undefined, {
+      skipTriage: true,
+      originId: proposalSlug,
+    })
+
+    const loaded = await q.getTask(task.id)
+    if (!loaded) throw new Error('task not found')
+
+    // First rescue — should spawn
+    const first = await rescue.maybeSpawnRescueOperator({
+      failedTask: loaded,
+      failureSignature: 'code/unclassified',
+    })
+    expect(first.spawned).toBe(true)
+    expect(first.rescueTaskId).toBeDefined()
+
+    // Second rescue on the same proposal-based arc — must be a no-op
+    const second = await rescue.maybeSpawnRescueOperator({
+      failedTask: loaded,
+      failureSignature: 'code/unclassified',
+    })
+    expect(second.spawned).toBe(false)
+    expect(second.rescueTaskId).toBeUndefined()
+
+    // Still exactly one rescue task
+    expect(await countRescueTasks(q)).toBe(1)
+  })
 })

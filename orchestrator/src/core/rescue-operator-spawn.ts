@@ -64,6 +64,15 @@ export const maybeSpawnRescueOperator = async (
     return { spawned: false }
   }
 
+  // Secondary guard for proposal-based arcs (originId is a proposal slug with
+  // no task row). For these arcs, getArcRescueAttempts always returns 0 and
+  // incrementArcRescueAttempts is a no-op — so without this check, a new
+  // rescue task would be spawned on every subsequent failure, producing an
+  // infinite re-spawn loop. Count existing active rescue tasks instead.
+  if ((await store.countActiveRescueTasksForArc(originId)) >= 1) {
+    return { spawned: false }
+  }
+
   // Increment before dispatch to prevent a concurrent failure event from
   // spawning a second rescue on the same arc.
   await store.incrementArcRescueAttempts(originId)
