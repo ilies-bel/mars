@@ -15,7 +15,7 @@
  *   columns stay integers — retyping to boolean is out of scope.
  * - `REAL` → `double precision`, `BLOB` → `bytea`.
  * - `DEFAULT (unixepoch())` → `DEFAULT floor(extract(epoch from now()))::bigint`.
- * - TEXT ISO-8601 timestamps and JSON-in-TEXT columns stay `text`.
+ * - JSON-in-TEXT columns stay `text`; operational timestamps use `timestamptz`.
  *
  * Conflicts resolved here, once:
  * - `tool_promotion_attempts` uses the store version
@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0002'
+export const SCHEMA_VERSION = '0003'
 
 /** `DEFAULT (unixepoch())` translation. */
 const EPOCH_NOW = "floor(extract(epoch from now()))::bigint"
@@ -145,7 +145,7 @@ const DDL: readonly string[] = [
     followup_dedup_key   text,
     intent               text   NOT NULL DEFAULT '',
     lease_owner          text,
-    leased_at            text,
+    leased_at            timestamptz,
     lease_note           text,
     origin_session_id    text,
     workflow             text,
@@ -156,9 +156,16 @@ const DDL: readonly string[] = [
     env_restart_count    bigint NOT NULL DEFAULT 0,
     arc_rescue_attempts  bigint NOT NULL DEFAULT 0,
     requeue_anchor_ms    bigint,
-    created_at           text   NOT NULL,
-    updated_at           text   NOT NULL
+    created_at           timestamptz NOT NULL,
+    updated_at           timestamptz NOT NULL
   )`,
+  // Hard-cut existing installations from ISO-8601 text to native timestamps.
+  // The explicit USING clause intentionally rejects malformed legacy values
+  // instead of retaining a text compatibility path.
+  `ALTER TABLE tasks
+     ALTER COLUMN leased_at TYPE timestamptz USING leased_at::timestamptz,
+     ALTER COLUMN created_at TYPE timestamptz USING created_at::timestamptz,
+     ALTER COLUMN updated_at TYPE timestamptz USING updated_at::timestamptz`,
   // Backfill `requeue_anchor_ms` for databases created before this column was
   // added. IF NOT EXISTS makes this idempotent on fresh databases (where the
   // column already exists from the CREATE TABLE above).
@@ -270,12 +277,14 @@ const DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS task_progress (
     id              text   PRIMARY KEY,
     task_id         text   NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    created_at      text   NOT NULL,
+    created_at      timestamptz NOT NULL,
     author          text   NOT NULL,
     kind            text   NOT NULL CHECK (kind IN ('note','check','uncheck')),
     body            text   NOT NULL,
     criterion_index bigint
   )`,
+  `ALTER TABLE task_progress
+     ALTER COLUMN created_at TYPE timestamptz USING created_at::timestamptz`,
   `CREATE INDEX IF NOT EXISTS idx_task_progress_task_time
      ON task_progress(task_id, created_at)`,
 
@@ -360,19 +369,24 @@ const DDL: readonly string[] = [
     payload         text   NOT NULL DEFAULT '{}',
     context         text   NOT NULL DEFAULT '{}',
     raised_by       text   NOT NULL,
-    raised_at       text   NOT NULL,
-    resolved_at     text,
+    raised_at       timestamptz NOT NULL,
+    resolved_at     timestamptz,
     resolution      text,
     resolution_note text,
     root_cause      text,
     fingerprint     text,
     signature       text,
     seen_count      bigint NOT NULL DEFAULT 1,
-    last_seen_at    text,
+    last_seen_at    timestamptz,
     resolved_by     text,
     origin_task_id  text,
-    snoozed_until   text
+    snoozed_until   timestamptz
   )`,
+  `ALTER TABLE action_queue_items
+     ALTER COLUMN raised_at TYPE timestamptz USING raised_at::timestamptz,
+     ALTER COLUMN resolved_at TYPE timestamptz USING resolved_at::timestamptz,
+     ALTER COLUMN last_seen_at TYPE timestamptz USING last_seen_at::timestamptz,
+     ALTER COLUMN snoozed_until TYPE timestamptz USING snoozed_until::timestamptz`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_state
      ON action_queue_items(fingerprint, state)`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_state ON action_queue_items(state)`,
@@ -381,12 +395,14 @@ const DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS action_queue_history (
     id         text PRIMARY KEY,
     item_id    text NOT NULL REFERENCES action_queue_items(id),
-    at         text NOT NULL,
+    at         timestamptz NOT NULL,
     from_state text,
     to_state   text NOT NULL,
     "by"       text,
     note       text
   )`,
+  `ALTER TABLE action_queue_history
+     ALTER COLUMN at TYPE timestamptz USING at::timestamptz`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_history_item
      ON action_queue_history(item_id, at)`,
 
@@ -547,8 +563,10 @@ const DDL: readonly string[] = [
     streak_count        bigint  NOT NULL DEFAULT 0,
     last_task_id        text,
     tripped             boolean NOT NULL DEFAULT false,
-    updated_at          text    NOT NULL
+    updated_at          timestamptz NOT NULL
   )`,
+  `ALTER TABLE failure_signature_streak
+     ALTER COLUMN updated_at TYPE timestamptz USING updated_at::timestamptz`,
   `CREATE TABLE IF NOT EXISTS verify_gates (
     id         text PRIMARY KEY,
     scope      text NOT NULL DEFAULT '.',

@@ -383,16 +383,15 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
  *   - doneTotal: all-time completed task count.
  *   - failedOpen: tasks currently in status='failed'.
  *
- * updated_at is a TEXT ISO-8601 UTC timestamp (migration 0002 keeps it), so
- * the rolling window compares lexically against an app-format cutoff string
- * rendered from now() - interval '1 day'.
+ * updated_at is a native PostgreSQL timestamp, so the database evaluates the
+ * rolling window directly rather than relying on lexical ISO-string ordering.
  */
 export const createAggregateReader = (client: DbClient): AggregateReader => ({
   async readAggregates() {
     const r = await client.execute(`
       SELECT
         (SELECT COUNT(*) FROM tasks WHERE status = 'done'
-           AND updated_at >= to_char((now() at time zone 'utc') - interval '1 day', 'YYYY-MM-DD"T"HH24:MI:SS')) AS done_today,
+           AND updated_at >= now() - interval '1 day') AS done_today,
         (SELECT COUNT(*) FROM tasks WHERE status = 'done') AS done_total,
         (SELECT COUNT(*) FROM tasks WHERE status = 'failed' AND fix_for_task_id IS NULL) AS failed_open
     `)

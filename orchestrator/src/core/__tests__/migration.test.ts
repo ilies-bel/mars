@@ -28,4 +28,27 @@ describe('migration 0002 PostgreSQL cutover', () => {
       await db.close()
     }
   })
+
+  it('supports time-window task queries without callers casting updated_at', async () => {
+    const db = openDb(`pglite://task-timestamp-range-${randomUUID()}`)
+    try {
+      await ensureSchema(db)
+      await db.execute({
+        sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+              VALUES
+                ('recent-task', 'recent', 'queued', now() - interval '5 minutes', now() - interval '5 minutes'),
+                ('old-task', 'old', 'queued', now() - interval '2 days', now() - interval '2 days')`,
+      })
+
+      const result = await db.execute(
+        `SELECT id FROM tasks
+         WHERE updated_at > now() - interval '1 day'
+         ORDER BY id`,
+      )
+
+      expect(result.rows.map((row) => row.id)).toEqual(['recent-task'])
+    } finally {
+      await db.close()
+    }
+  })
 })

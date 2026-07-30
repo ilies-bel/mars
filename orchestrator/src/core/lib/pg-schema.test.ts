@@ -99,7 +99,9 @@ describe('ensureSchema', () => {
     expect(cols.get('id')).toBe('text')
     expect(cols.get('retry_count')).toBe('bigint')
     expect(cols.get('priority')).toBe('bigint')
-    expect(cols.get('created_at')).toBe('text') // ISO-8601 stays text (0002 §4)
+    expect(cols.get('leased_at')).toBe('timestamp with time zone')
+    expect(cols.get('created_at')).toBe('timestamp with time zone')
+    expect(cols.get('updated_at')).toBe('timestamp with time zone')
   })
 
   it('events is a bigint identity outbox with an epoch default', async () => {
@@ -195,6 +197,26 @@ describe('ensureSchema', () => {
     )
     const r = await c.execute(`SELECT "by" FROM action_queue_history WHERE id = 'h1'`)
     expect(r.rows[0].by).toBe('operator')
+  })
+
+  it('uses native timestamps for the task-adjacent operational tables', async () => {
+    const c = await freshSchemaClient()
+
+    const taskProgress = await columnsOf(c, 'task_progress')
+    const actionQueue = await columnsOf(c, 'action_queue_items')
+    const actionQueueHistory = await columnsOf(c, 'action_queue_history')
+    const failureStreak = await columnsOf(c, 'failure_signature_streak')
+    const mergeJobs = await columnsOf(c, 'merge_jobs')
+
+    expect(taskProgress.get('created_at')).toBe('timestamp with time zone')
+    for (const column of ['raised_at', 'resolved_at', 'last_seen_at', 'snoozed_until']) {
+      expect(actionQueue.get(column), `action_queue_items.${column}`).toBe('timestamp with time zone')
+    }
+    expect(actionQueueHistory.get('at')).toBe('timestamp with time zone')
+    expect(failureStreak.get('updated_at')).toBe('timestamp with time zone')
+    for (const column of ['claimed_at', 'started_at', 'finished_at', 'created_at', 'updated_at']) {
+      expect(mergeJobs.get(column), `merge_jobs.${column}`).toBe('timestamp with time zone')
+    }
   })
 
   it('ports the partial and DESC indexes', async () => {

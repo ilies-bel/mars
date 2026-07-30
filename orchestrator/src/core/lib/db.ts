@@ -25,6 +25,8 @@
  * Value normalization (both backends return identical row value types):
  * - `int8` / `numeric` → JS `number` (values here stay far below 2^53).
  * - `bytea` → `Uint8Array` (pg returns Buffer, which IS a Uint8Array).
+ * - `timestamptz` → ISO-8601 UTC strings (rather than backend-dependent
+ *   `Date` objects) so CLI and HTTP JSON keep a stable wire format.
  * - Integer 0/1 flag columns come back as plain numbers — never booleans.
  * - Input: JS booleans are serialized as 1/0 (libsql behavior; columns are
  *   INTEGER by design), `undefined` → null, `Uint8Array` → Buffer for pg.
@@ -233,6 +235,13 @@ function normalizeRow(row: DbRow): DbRow {
       // Safety net if a backend parser slips through: libsql returned numbers.
       out ??= { ...row }
       out[key] = Number(v)
+    }
+    if (v instanceof Date) {
+      // node-postgres returns Date for timestamptz while PGlite can return a
+      // string. Normalize at the DB boundary so all public row consumers keep
+      // the established ISO-8601 wire format.
+      out ??= { ...row }
+      out[key] = v.toISOString()
     }
   }
   return out ?? row
