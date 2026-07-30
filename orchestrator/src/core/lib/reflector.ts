@@ -1,4 +1,4 @@
-import { runClaudeCode } from './git/claude'
+import { runHeadlessProvider } from '../workers/providers'
 import { getRepoRoot } from '../context'
 import { createHash } from 'node:crypto'
 import {
@@ -448,10 +448,10 @@ export const runReflector = async (
 
   // No wall-clock timeout: reflect synthesis must run to completion.
   // The only way to stop it is Ctrl-C.
-  const r = await runClaudeCode({
+  const r = await runHeadlessProvider(buildPrompt(corpus), {
     cwd: getRepoRoot(),
-    prompt: buildPrompt(corpus),
-    model: 'sonnet',
+    modelTier: 'balanced',
+    disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
   })
 
   const text = collectAssistantText(r.conversation) || r.stdout

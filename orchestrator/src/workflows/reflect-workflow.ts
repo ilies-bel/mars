@@ -9,7 +9,8 @@ import {
   resolveArcDomain,
   type DeepReflectionReport,
 } from '../core/lib/deep-reflector'
-import { runClaudeCode } from '../core/lib/git/claude'
+import { WORKER_CONFIGS, WORKER_PROVIDER, providerModel } from '../core/workers'
+import { runHeadlessProvider } from '../core/workers/providers'
 import { collectAssistantText } from '../core/lib/reflector'
 import { insertMemoryPacket } from '../core/store/memory-packet-store'
 import { getRepoRoot } from '../core/context'
@@ -277,14 +278,14 @@ const analyzePatterns = (arc: DeepReflectArc, digest: ArcDigest): PatternFinding
   }
 }
 
-/** Per-Worker model pins from CLAUDE.md; used to flag drift, not to enforce. */
+/** Active provider-native model pins; used to flag drift, not to enforce. */
 const RECOMMENDED_MODELS: Record<string, string> = {
-  Coder: 'claude-sonnet-4-6',
-  Fixer: 'claude-sonnet-4-6',
-  Writer: 'claude-haiku-4-5-20251001',
-  Planner: 'claude-opus-4-7',
-  Slicer: 'claude-opus-4-7',
-  Triager: 'claude-sonnet-4-6',
+  Coder: WORKER_CONFIGS.Coder.model,
+  Fixer: WORKER_CONFIGS.Fixer.model,
+  Writer: providerModel(WORKER_PROVIDER, 'fast'),
+  Planner: WORKER_CONFIGS.Planner.model,
+  Slicer: WORKER_CONFIGS.Slicer.model,
+  Triager: WORKER_CONFIGS.Triager.model,
 }
 
 /** A step slower than this multiple of its own kind's median is an anomaly. */
@@ -294,7 +295,8 @@ const analyzeWorkflowFitness = (arc: DeepReflectArc): WorkflowFitnessFindings =>
   const modelSizing: WorkflowFitnessEntry[] = arc.stepTimeline.map((s) => ({
     step: s.stepName,
     worker: s.workerName ?? 'unknown',
-    recommended: RECOMMENDED_MODELS[s.workerName ?? ''] ?? 'claude-sonnet-4-6',
+    recommended:
+      RECOMMENDED_MODELS[s.workerName ?? ''] ?? providerModel(WORKER_PROVIDER, 'balanced'),
     durationMs: s.durationMs,
   }))
 
@@ -758,11 +760,17 @@ export const reflectWorkflow = defineWorkflow<ReflectInput, ReflectOutput, Refle
       'synthesize',
       async () => {
         const prompt = `${buildFindingsPreamble(stepFindings)}${buildArcPrompt(arc)}`
-        const model = process.env.MARS_DEEP_REFLECT_MODEL ?? 'opus'
+        const model = process.env.MARS_DEEP_REFLECT_MODEL
         const timeoutMs =
           Number(process.env.MARS_DEEP_REFLECT_TIMEOUT_MS) || 10 * 60 * 1000
 
-        const r = await runClaudeCode({ cwd: getRepoRoot(), prompt, timeoutMs, model })
+        const r = await runHeadlessProvider(prompt, {
+          cwd: getRepoRoot(),
+          ...(model !== undefined ? { model } : {}),
+          modelTier: 'flagship',
+          timeoutMs,
+          disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
+        })
         const text = collectAssistantText(r.conversation) || r.stdout
         const report = parseDeepReflectionReport(text)
 

@@ -1,15 +1,17 @@
 # mars
 
-Orchestrator that runs Claude Code in parallel git worktrees on the in-house `@mars/workflow` engine. Installable globally; works against any git repo.
+Orchestrator that runs a selected agent CLI in parallel git worktrees on the
+in-house `@mars/workflow` engine. Codex is the default; Claude Code and Gemini
+are alternative adapters. Installable globally; works against any git repo.
 
 ## How it works
 
 Each task in the queue runs through a 4-step `@mars/workflow` pipeline (one imperative function; each step a `ctx.step`):
 
 1. **setup** — `git worktree add` on a fresh `task/<id>` branch off `main`
-2. **code** — `claude -p "<prompt>"` runs headless inside the worktree
+2. **code** — the selected provider runs headless inside the worktree
 3. **verify** — typecheck → tests → lint (must all pass)
-4. **merge** — fast-forward into `main`. On conflict, the bundled **vcs-supervisor** ("Vega") agent prompt is dispatched via `claude -p` to reconcile intent and verify, then commit. If unresolvable, `git merge --abort` and the task is marked `failed`. Merges are serialized via a file lock; coding runs unlimited-parallel.
+4. **merge** — fast-forward into `main`. On conflict, the bundled **vcs-supervisor** ("Vega") agent prompt is dispatched through the same provider boundary to reconcile intent and verify, then commit. If unresolvable, `git merge --abort` and the task is marked `failed`. Merges are serialized via a file lock; coding runs unlimited-parallel.
 
 ## Install
 
@@ -61,9 +63,9 @@ Add `/.mars/` to the target repo's `.gitignore`.
 | `src/cli.ts`                    | CLI: `task add`, `list`, `run`, `where`            |
 | `src/core/context.ts`         | Resolves target repo + state paths                 |
 | `src/core/queue.ts`           | Postgres-backed task queue                         |
-| `src/core/lib/git.ts`         | All shell side-effects (git, claude, verify)       |
+| `src/core/lib/git.ts`         | Git, provider-process, and verification boundaries |
 | `src/workflows/`                | `@mars/workflow` pipelines: implement, triage, plan, slice, init |
-| `src/prompts/vcs-supervisor.md` | Bundled supervisor spec, inlined into `claude -p`  |
+| `src/prompts/vcs-supervisor.md` | Bundled supervisor spec sent through the provider adapter |
 
 ## Test reliability
 
@@ -89,13 +91,18 @@ comments.
 
 ## Prerequisites
 
-- `claude` CLI on PATH (Claude Code).
+- `codex` CLI on PATH and `codex login` completed (default provider).
+- Or an authenticated `claude` or `gemini` CLI when selecting that adapter.
 - Node `>=22.13.0`.
 
 ## Env
 
 - `INTEGRATION_BRANCH` — target branch for merges (default `main`).
 - `MARS_REPO` — target repo path (overrides cwd-based detection).
+- `MARS_WORKER_PROVIDER` — one-run provider override: `codex`, `claude`, or
+  `gemini`. Otherwise `.mars/daemon.json.defaultProvider` is used.
+- `MARS_CODEX_BIN`, `MARS_CLAUDE_BIN`, `MARS_GEMINI_BIN` — optional provider
+  binary path overrides.
 - `MARS_REFLECT_DISABLED=1` — skip per-task token/cost capture and
   short-circuit `mars reflect`. Scorers stay attached either way.
 
@@ -115,7 +122,7 @@ Use these subcommands to manage its lifecycle explicitly.
 | `start` | Fork the daemon to the background. No-op if already running. Equivalent to the legacy `--detach` flag. |
 | `stop [--force]` | Graceful shutdown: stop accepting new work, wait for in-flight tasks to finish, then exit. `--force` exits immediately and abandons in-flight tasks. No timeout — use `kill` if `stop` is hanging. |
 | `restart` | Force-stop any running daemon, then start a fresh one in the background. Exits once the new daemon is up. |
-| `kill` | Hard stop: mark every in-flight task failed and SIGKILL the daemon's process group (kills all child `claude -p` workers). Use when `stop` is hanging on stuck work. |
+| `kill` | Hard stop: mark every in-flight task failed and SIGKILL the daemon's process group (kills all child provider workers). Use when `stop` is hanging on stuck work. |
 | `status` | Print pid, startedAt, inFlight, and queue counts. |
 | `reload` | Re-read `.mars/daemon.json` and `MARS_MAX_*` env vars without restarting. |
 | `set-flag <flag> <on\|off>` | Toggle an in-memory kill-switch. Currently only `recovery` is supported: `on` suppresses fix-task/Investigator spawns; `off` re-enables them. Not persisted across restarts. |
@@ -176,14 +183,14 @@ stops with the daemon.
 ### Worker pool
 
 The daemon dispatches work through per-kind semaphores so a reconcile
-storm or a burst of `task add` calls can't spawn one worktree + `claude
--p` per row. Each cap is a positive integer; invalid values fall back to
+storm or a burst of `task add` calls can't spawn one worktree + provider
+process per row. Each cap is a positive integer; invalid values fall back to
 the default. Tune at runtime with `mars daemon reload` (re-reads the
 env vars below without restarting); a kill + restart also picks them up.
 
 - `MARS_MAX_TRIAGE` (default `8`) — concurrent triage workflows.
 - `MARS_MAX_IMPLEMENT` (default `12`) — concurrent implement workflows
-  (worktree + `claude -p`). The hardware-bound knob; raise cautiously.
+  (worktree + provider process). The hardware-bound knob; raise cautiously.
 - `MARS_MAX_REFINE` (default `6`) — concurrent `mars idea refine`
   (planner) runs.
 - `MARS_MAX_STRUCTURED_WRITE` (default `1`) — shared cap for
@@ -202,7 +209,7 @@ env vars below without restarting); a kill + restart also picks them up.
 - `MARS_MAX_SCORING` (default `2`) — concurrent post-instance Scorer runs
   (PRD 6cf85bc9). Its OWN semaphore, separate from the task dispatch pool:
   a scoring run is not a Task and never competes for an implement slot.
-  Each run is one pinned Haiku-class judge call; suppress all scoring at
+  Each run is one pinned fast-tier judge call; suppress all scoring at
   runtime with `mars daemon set-flag scoring off` (in-memory,
   `MARS_SCORING_DISABLED=1`; `MARS_REFLECT_DISABLED=1` also disables it).
 
@@ -210,11 +217,11 @@ Excess work queues into in-memory pending sets and drains as slots free
 — it is not dropped. Restarting the daemon re-reads `draft` / `queued`
 rows from the Mars database and re-pends them, so restarts are safe.
 
-Dispatched `claude -p` workers run clean-room: their env is scrubbed of
-every `CLAUDE*` session-context var inherited from the daemon's parent
-shell, and they load only `project,local` setting sources (the worktree's
-own `.claude/settings.json`) — never the host user's `~/.claude/`. MCP is
-fully disabled and session files are not persisted to disk.
+Dispatched workers inherit only the environment needed by the selected CLI.
+The Codex adapter runs `codex exec --ephemeral --json`, selects a read-only or
+workspace-write sandbox from the Worker permissions, and relies on Codex's
+cached OAuth session without exposing credentials to Mars. Provider-specific
+environment scrubbing and configuration stay inside each adapter.
 
 ### Events outbox retention
 
@@ -249,12 +256,12 @@ outbox grows unbounded.
 - `MARS_OUTBOX_LAG_WARN_THRESHOLD` — subscriber lag (in event ids) that
   triggers an action-queue warning. Default `100000`.
 
-## Observing Claude runs in Studio
+## Observing provider runs in Studio
 
-Both Claude dispatches (the `code` step and the `vcs-supervisor` invocation in
-`merge`) capture the full Claude Code conversation in two places:
+Both agent dispatches (the `code` step and the `vcs-supervisor` invocation in
+`merge`) expose their normalized event stream in two places:
 
-- **Live stream** — each parsed event from `claude -p --output-format stream-json --verbose`
+- **Live stream** — each normalized provider event
   is forwarded to the workflow's `writer.write(...)`. In Studio, while the run
   is in flight, watch the step's run-stream view to see `claude-event` /
   `vcs-supervisor-event` items arrive in real time.
@@ -262,7 +269,7 @@ Both Claude dispatches (the `code` step and the `vcs-supervisor` invocation in
   attached to the step span via
   `tracingContext.currentSpan.update({ metadata: { ... } })`. After a run
   completes, open Studio → Run history → click the step → **Metadata** tab.
-  The `code` step exposes `claudeSessionId` and `usage`; the full
+  The `code` step exposes the provider session id when available and `usage`; the full
   conversation is persisted to `task_transcripts.conversation_json` in
   the Mars database instead, which is what `mars arc reflect` and
   external skills read. The `merge` step still exposes

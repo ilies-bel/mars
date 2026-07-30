@@ -96,7 +96,7 @@ export const planWorkflow = defineWorkflow<PlanInput, RunPlanResult, PlanService
       })
       if (r.exitCode !== 0) {
         throw new Error(
-          `claude -p exited ${r.exitCode}: ${diagnoseClaudeFailure(r.stdout, r.stderr)}`,
+          `provider worker exited ${r.exitCode}: ${diagnoseClaudeFailure(r.stdout, r.stderr)}`,
         )
       }
 

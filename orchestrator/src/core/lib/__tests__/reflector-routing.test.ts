@@ -24,8 +24,8 @@ vi.mock('../../queue', async (importOriginal) => {
   }
 })
 
-// Also stub the git/claude dependency so runReflector is importable in CI.
-vi.mock('../git/claude', () => ({ runClaudeCode: vi.fn() }))
+// Also stub the provider boundary so runReflector is importable in CI.
+vi.mock('../../workers/providers', () => ({ runHeadlessProvider: vi.fn() }))
 vi.mock('../../context', () => ({
   getRepoRoot: vi.fn().mockReturnValue('/tmp'),
   resolveContext: vi.fn().mockReturnValue({ stateDir: '/tmp' }),

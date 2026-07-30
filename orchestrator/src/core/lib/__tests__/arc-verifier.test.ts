@@ -13,7 +13,7 @@
  *
  * System boundaries mocked:
  *   - raiseActionQueueItem (action-queue DB write)
- *   - runClaudeCode (Claude subprocess)
+ *   - runHeadlessProvider (selected provider subprocess)
  *   - getDefaultTaskStore (mars.db read)
  *   - createProposal / findOpenDraftByKpiTag (proposals DB write)
  */
@@ -31,9 +31,9 @@ vi.mock('../action-queue', async (importActual) => {
   return { ...actual, raiseActionQueueItem: raiseSpy }
 })
 
-// ── Mock runClaudeCode ────────────────────────────────────────────────────────
+// ── Mock provider runner ─────────────────────────────────────────────────────
 
-const runClaudeCodeMock = vi.hoisted(() =>
+const runHeadlessProviderMock = vi.hoisted(() =>
   vi.fn(async () => ({
     exitCode: 0,
     stdout: '{"ok":true,"findings":[]}',
@@ -43,7 +43,9 @@ const runClaudeCodeMock = vi.hoisted(() =>
     quotaRejected: null,
   })),
 )
-vi.mock('../git/claude', () => ({ runClaudeCode: runClaudeCodeMock }))
+vi.mock('../../workers/providers', () => ({
+  runHeadlessProvider: runHeadlessProviderMock,
+}))
 
 // ── Mock getDefaultTaskStore ──────────────────────────────────────────────────
 
@@ -143,9 +145,9 @@ describe('arc-verifier', () => {
     process.env.MARS_ARC_VERIFY_DISABLED = '1'
     const result = triggerArcVerification('origin-flagged', { cwd: '/tmp' })
     expect(result).toBe('skipped-disabled')
-    // No work was scheduled — raiseActionQueueItem and runClaudeCode are never called.
+    // No work was scheduled — neither the action queue nor provider runner is called.
     expect(raiseSpy).not.toHaveBeenCalled()
-    expect(runClaudeCodeMock).not.toHaveBeenCalled()
+    expect(runHeadlessProviderMock).not.toHaveBeenCalled()
   })
 
   // ── triggerArcVerification — dedup ──────────────────────────────────────────
@@ -170,7 +172,7 @@ describe('arc-verifier', () => {
     // Second call must return without touching the agent or action-queue.
     const result = triggerArcVerification('origin-dedup-sync', { cwd: '/tmp' })
     expect(result).toBe('skipped-dedup')
-    // We cannot assert runClaudeCode wasn't called yet (async work may still be
+    // We cannot assert the provider wasn't called yet (async work may still be
     // in-flight), but the return value proves the gate fired.
   })
 
@@ -183,7 +185,7 @@ describe('arc-verifier', () => {
       )
       const verdict = await runArcVerification('origin-in-progress', { cwd: '/tmp' })
       expect(verdict).toEqual({ ok: true, findings: [] })
-      expect(runClaudeCodeMock).not.toHaveBeenCalled()
+      expect(runHeadlessProviderMock).not.toHaveBeenCalled()
       expect(raiseSpy).not.toHaveBeenCalled()
     })
 
@@ -193,7 +195,7 @@ describe('arc-verifier', () => {
       )
       const verdict = await runArcVerification('origin-no-commits', { cwd: '/tmp' })
       expect(verdict).toEqual({ ok: true, findings: [] })
-      expect(runClaudeCodeMock).not.toHaveBeenCalled()
+      expect(runHeadlessProviderMock).not.toHaveBeenCalled()
       expect(raiseSpy).not.toHaveBeenCalled()
     })
 
@@ -203,7 +205,7 @@ describe('arc-verifier', () => {
       )
       const verdict = await runArcVerification('origin-arc-failed', { cwd: '/tmp' })
       expect(verdict).toEqual({ ok: true, findings: [] })
-      expect(runClaudeCodeMock).not.toHaveBeenCalled()
+      expect(runHeadlessProviderMock).not.toHaveBeenCalled()
       expect(raiseSpy).not.toHaveBeenCalled()
     })
 
@@ -211,7 +213,7 @@ describe('arc-verifier', () => {
 
     it('[verdict-fail] raises exactly one arc-verification-failed item on failing verdict', async () => {
       const findings = ['TypeScript errors in merged code', 'Test suite red after merge']
-      runClaudeCodeMock.mockResolvedValueOnce({
+      runHeadlessProviderMock.mockResolvedValueOnce({
         exitCode: 0,
         stdout: JSON.stringify({ ok: false, findings }),
         stderr: '',
@@ -245,7 +247,7 @@ describe('arc-verifier', () => {
     })
 
     it('[verdict-fail] does NOT raise an item when verdict is ok', async () => {
-      runClaudeCodeMock.mockResolvedValueOnce({
+      runHeadlessProviderMock.mockResolvedValueOnce({
         exitCode: 0,
         stdout: JSON.stringify({ ok: true, findings: [] }),
         stderr: '',
@@ -272,7 +274,7 @@ describe('arc-verifier', () => {
     })
 
     it('[verdict-fail] handles unparseable agent output gracefully', async () => {
-      runClaudeCodeMock.mockResolvedValueOnce({
+      runHeadlessProviderMock.mockResolvedValueOnce({
         exitCode: 0,
         stdout: 'something went wrong, not JSON',
         stderr: '',
@@ -311,7 +313,7 @@ describe('arc-verifier', () => {
         conversation: [],
         quotaRejected: null,
       }
-      runClaudeCodeMock.mockResolvedValue(failPayload)
+      runHeadlessProviderMock.mockResolvedValue(failPayload)
 
       const store = makeStore({
         status: 'arc-done',
@@ -356,7 +358,7 @@ describe('arc-verifier', () => {
 
       beforeEach(() => {
         // Static Claude check always passes so we isolate the E2E branch.
-        runClaudeCodeMock.mockResolvedValue({
+        runHeadlessProviderMock.mockResolvedValue({
           exitCode: 0,
           stdout: '{"ok":true,"findings":[]}',
           stderr: '',

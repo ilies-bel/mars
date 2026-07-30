@@ -10,15 +10,16 @@
 | --- | --- | --- |
 | Orchestrator CLI | `orchestrator/src/cli.ts` | Single entry point. All subcommands (`add`, `run`, `watch`, `init`, `plan`, `answer`, `show`, `list`, `where`, etc.). |
 | @mars/workflow registration | `orchestrator/src/core/index.ts` | Registers workflows + tools on the in-house `@mars/workflow` engine. |
-| Implement workflow | `orchestrator/src/core/workflows/implement-workflow.ts` | 4 steps: setup → claude → verify → merge. |
+| Implement workflow | `orchestrator/src/core/workflows/implement-workflow.ts` | 4 steps: setup → agent → verify → merge. |
 | Plan workflow | `orchestrator/src/core/workflows/plan-workflow.ts` | Auto-generates follow-up suggestions on draft tasks. |
 | Init workflow | `orchestrator/src/core/workflows/init-workflow.ts` | Stack detection + specialist fetch + supervisor render. |
 | Watcher daemon | `orchestrator/src/core/watcher.ts` | Polls the `tasks` table, dispatches `queued` tasks to `implementWorkflow`. |
 | Queue | `orchestrator/src/core/queue.ts` | Postgres-backed task store (embedded PG via `core/lib/db.ts`). Tables: `tasks`, `task_suggestions`. |
-| Git/claude/verify primitives | `orchestrator/src/core/lib/git.ts` | `runClaudeCode`, `createWorktree`, `verifyChanges`, `mergeBranch`, lock primitives. |
+| Provider registry | `orchestrator/src/core/workers/providers.ts` | Provider-neutral dispatch, semantic model tiers, and Claude/Codex/Gemini adapters. |
+| Git/verify primitives | `orchestrator/src/core/lib/git.ts` | Worktree, verification, merge, lock, and shared subprocess primitives. |
 | Init pipeline | `orchestrator/src/init/` | Stack detection, GitHub HTTPS fetch against `ayush-that/sub-agents.directory`, supervisor templating. |
 | UI | `ui/` | Vite + React SPA with a small Bun.serve SSE server (`ui/server/`). Reads task state via the daemon HTTP API. Read-only. |
-| Bundled prompts | `orchestrator/src/prompts/vcs-supervisor.md` | Inlined into `claude -p` for git conflict reconciliation. |
+| Bundled prompts | `orchestrator/src/prompts/vcs-supervisor.md` | Sent through the selected provider for git conflict reconciliation. |
 | Chat skill | `.claude/commands/mars/feature/chat.md` | Slash command for refining drafts. **Out of step with current code** — see "Drift" below. |
 
 ## Runtime flow
@@ -40,10 +41,10 @@
                                  │
                                  ▼
    ┌─────────────────────────────────────────────────────────────┐
-   │  2. run-claude-code                                         │
-   │     claude -p "<prompt + plan_functional + plan_technical>" │
-   │       --output-format json --dangerously-skip-permissions   │
-   │     20-min timeout. Captures session_id.                    │
+   │  2. run-agent                                               │
+   │     selected provider + provider-native model tier          │
+   │     Codex default: codex exec --ephemeral --json            │
+   │     Captures normalized events and session id if exposed.   │
    └─────────────────────────────────────────────────────────────┘
                                  │
                                  ▼
@@ -64,7 +65,7 @@
    │  → integration            │
    │                          │
    │  on conflict:            │
-   │    claude -p with        │
+   │    selected provider     │
    │    vcs-supervisor.md     │
    │    inlined; reconcile,   │
    │    re-verify, commit.    │
@@ -76,14 +77,15 @@
    └──────────────────────────┘
 ```
 
-Side effects: shell out to `git`, `claude`, project's typecheck/test/lint.
-All wrapped in `orchestrator/src/core/lib/git.ts`. No LLM SDK calls.
+Side effects: shell out to `git`, the selected agent CLI, and the project's
+typecheck/test/lint commands. Provider-specific behavior stays in
+`orchestrator/src/core/workers/providers*`. No LLM SDK calls.
 
 ### Plan workflow
 
 `orchestrator/src/core/workflows/plan-workflow.ts`
 
-Single step: `generate-plan`. Calls `claude -p` against the draft's prompt,
+Single step: `generate-plan`. Calls the Planner Worker through the selected provider,
 parses a JSON envelope (tolerating extra prose), and writes rows into the
 `task_suggestions` table.
 
@@ -199,14 +201,15 @@ Repo resolution order: `--repo` flag → `MARS_REPO` env → `git rev-parse
 
 ## LLM call boundary
 
-Every call out to a model goes through `runClaudeCode` in
-`orchestrator/src/core/lib/git.ts`:
+Every call out to a model goes through a named Worker or
+`runHeadlessProvider` in `orchestrator/src/core/workers/providers.ts`:
 
 ```ts
-runClaudeCode({ cwd, prompt, timeoutMs })
-  → spawns: claude -p "<prompt>" --output-format json
-                     --dangerously-skip-permissions
-  → returns: { exitCode, stdout, stderr, sessionId }
+runHeadlessProvider(prompt, { cwd, modelTier: 'balanced' })
+  → resolves: MARS_WORKER_PROVIDER or daemon.json.defaultProvider
+  → maps: semantic tier to a provider-native model id
+  → spawns: provider adapter (Codex default: codex exec --ephemeral --json)
+  → returns: { exitCode, stdout, stderr, sessionId, conversation }
 ```
 
 `stdout` is a JSON envelope; `result` field is the model text. Structured
@@ -214,8 +217,9 @@ output is enforced in the prompt (return strict JSON, no fences) and parsed
 with zod, tolerant of leading/trailing prose. See `parsePlannerOutput` in
 `plan-workflow.ts` for the canonical pattern.
 
-No `@ai-sdk/*` package is or will be installed. No `Agent({ model })`
-strings. No `ANTHROPIC_API_KEY`. See
+Codex authentication is owned by the CLI and checked with `codex login status`;
+Mars never reads or copies the cached OAuth credentials. No `@ai-sdk/*` package
+is installed and provider CLIs do not leak into workflow code. See
 `orchestrator/AGENTS.md` for the boundary contract.
 
 ## UI

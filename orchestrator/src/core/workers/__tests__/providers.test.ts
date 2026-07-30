@@ -1,8 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { PROVIDERS } from '../providers'
+import { PROVIDERS, PROVIDER_MODELS } from '../providers'
 import { ASK_USER_DENIED_TOOL, WORKER_CONFIGS, READ_ONLY_DENIED_TOOLS, FIXER_BACKLOG_DENIED_TOOLS } from '../index'
 
 describe('PROVIDERS registry', () => {
+  it('declares provider-native model ids for every semantic tier', () => {
+    expect(PROVIDER_MODELS.codex).toEqual({
+      flagship: 'gpt-5.6-sol',
+      balanced: 'gpt-5.6-terra',
+      fast: 'gpt-5.6-luna',
+    })
+    expect(PROVIDER_MODELS.claude.flagship).toMatch(/^claude-/)
+    expect(PROVIDER_MODELS.gemini.flagship).toMatch(/^gemini-/)
+  })
+
   it("contains the 'claude' entry", () => {
     expect(Object.keys(PROVIDERS)).toContain('claude')
   })
@@ -213,11 +223,12 @@ describe('WORKER_CONFIGS provider field', () => {
     }
   })
 
-  it("all Workers declare provider: 'claude'", () => {
+  it("all Workers use the global default provider 'codex'", () => {
     // RescueOperator (8th) added in PRD 94e2a82a; update this count if more workers are added.
     expect(workerNames).toHaveLength(8)
     for (const name of workerNames) {
-      expect(WORKER_CONFIGS[name].provider).toBe('claude')
+      expect(WORKER_CONFIGS[name].provider).toBe('codex')
+      expect(WORKER_CONFIGS[name].model).toMatch(/^gpt-5\.6-/)
     }
   })
 })

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
   detectInstallSites,
+  parseInstallRoots,
   installCommand,
   regenInstallCommand,
   installWorktreeDeps,
@@ -105,6 +106,43 @@ describe('worktree-install', () => {
       expect(sites).toHaveLength(1)
       expect(sites[0].manager).toBe('pnpm')
     })
+
+    it('limits discovery to configured repository-relative roots', async () => {
+      mkdirSync(resolve(workDir, 'landing'))
+      writeFileSync(resolve(workDir, 'landing', 'package-lock.json'), '{}')
+      mkdirSync(resolve(workDir, 'mvp', 'app'), { recursive: true })
+      writeFileSync(resolve(workDir, 'mvp', 'app', 'package-lock.json'), '{}')
+
+      const sites = await detectInstallSites(workDir, 3, ['mvp/app'])
+
+      expect(sites).toEqual([
+        {
+          dir: resolve(workDir, 'mvp', 'app'),
+          manager: 'npm',
+          lockfile: 'package-lock.json',
+        },
+      ])
+    })
+
+    it('rejects configured roots that escape the worktree', async () => {
+      await expect(
+        detectInstallSites(workDir, 3, ['../outside']),
+      ).rejects.toThrow('install root escapes worktree')
+    })
+  })
+
+  describe('parseInstallRoots', () => {
+    it('parses, trims, and deduplicates comma-separated roots', () => {
+      expect(parseInstallRoots('mvp/app, landing, mvp/app')).toEqual([
+        'mvp/app',
+        'landing',
+      ])
+    })
+
+    it('leaves install discovery unscoped when unset or blank', () => {
+      expect(parseInstallRoots(undefined)).toBeUndefined()
+      expect(parseInstallRoots('   ')).toBeUndefined()
+    })
   })
 
   describe('installWorktreeDeps', () => {
@@ -148,6 +186,33 @@ describe('worktree-install', () => {
         resolve(workDir, 'orchestrator'),
         resolve(workDir, 'ui'),
       ])
+    })
+
+    it('installs only explicitly configured roots', async () => {
+      mkdirSync(resolve(workDir, 'landing'))
+      writeFileSync(resolve(workDir, 'landing', 'package-lock.json'), '{}')
+      mkdirSync(resolve(workDir, 'mvp', 'app'), { recursive: true })
+      writeFileSync(resolve(workDir, 'mvp', 'app', 'package-lock.json'), '{}')
+      const calls: RecordedCall[] = []
+      const runner = async (cmd: string, args: readonly string[], cwd: string) => {
+        calls.push({ cmd, args, cwd })
+        return ok()
+      }
+
+      const summary = await installWorktreeDeps({
+        worktreeRoot: workDir,
+        installRoots: ['mvp/app'],
+        runner,
+      })
+
+      expect(calls).toEqual([
+        {
+          cmd: 'npm',
+          args: ['ci'],
+          cwd: resolve(workDir, 'mvp', 'app'),
+        },
+      ])
+      expect(summary.sites).toHaveLength(1)
     })
 
     it('throws WorktreeInstallError surfacing a setup:install failure when install exits non-zero', async () => {

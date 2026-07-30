@@ -1,7 +1,7 @@
 {
   "name": "mars",
   "version": "0.1.1",
-  "description": "Orchestrator that runs Claude Code in parallel git worktrees on the in-house @mars/workflow engine.",
+  "description": "Provider-agnostic agent CLI orchestrator for parallel git worktrees on the in-house @mars/workflow engine.",
   "main": "src/cli.ts",
   "bin": {
     "mars": "./bin/mars.mjs"

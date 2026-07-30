@@ -42,7 +42,7 @@ export const isPrimitiveName = (value: string): value is PrimitiveName =>
 
 /**
  * WHO executes the primitive:
- *  - 'agent'  — dispatches a Worker (`claude -p`); its tool surface is the
+ *  - 'agent'  — dispatches a Worker through its provider adapter; its tool surface is the
  *               Worker's Authorization profile (declared, code-pinned).
  *  - 'shell'  — deterministic shell-outs via runTool; its tool surface is
  *               empirical (observed `tool_invoked` trace events).
@@ -90,7 +90,7 @@ export const PRIMITIVE_CATALOG: Readonly<Record<PrimitiveName, PrimitiveCatalogE
   runAgent: {
     name: 'runAgent',
     description:
-      'Run the coder (headless claude -p) inside the worktree — kind-aware Worker routing: Coder by default, Fixer on kind:fix, plus tag-routed operator-declared Workers.',
+      'Run the coder through the selected headless provider inside the worktree — kind-aware Worker routing: Coder by default, Fixer on kind:fix, plus tag-routed operator-declared Workers.',
     phase: 'code',
     executor: 'agent',
     workerNames: ['Coder', 'Fixer'],

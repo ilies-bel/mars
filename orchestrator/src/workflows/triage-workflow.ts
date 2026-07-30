@@ -194,7 +194,7 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
       })
       if (r.exitCode !== 0) {
         throw new Error(
-          `claude -p exited ${r.exitCode}: ${diagnoseClaudeFailure(r.stdout, r.stderr)}`,
+          `provider worker exited ${r.exitCode}: ${diagnoseClaudeFailure(r.stdout, r.stderr)}`,
         )
       }
 

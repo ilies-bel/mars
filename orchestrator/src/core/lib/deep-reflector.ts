@@ -1,4 +1,4 @@
-import { runClaudeCode } from './git/claude'
+import { runHeadlessProvider } from '../workers/providers'
 import { getRepoRoot } from '../context'
 import {
   collectAssistantText,
@@ -846,12 +846,13 @@ export const runDeepReflectorArc = async (
   arc: DeepReflectArc,
   timeoutMs: number = Number(process.env.MARS_DEEP_REFLECT_TIMEOUT_MS) || 10 * 60 * 1000,
 ): Promise<DeepReflectionResult> => {
-  const model = process.env.MARS_DEEP_REFLECT_MODEL ?? 'opus'
-  const r = await runClaudeCode({
+  const model = process.env.MARS_DEEP_REFLECT_MODEL
+  const r = await runHeadlessProvider(buildArcPrompt(arc), {
     cwd: getRepoRoot(),
-    prompt: buildArcPrompt(arc),
     timeoutMs,
-    model,
+    ...(model !== undefined ? { model } : {}),
+    modelTier: 'flagship',
+    disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
   })
   const text = collectAssistantText(r.conversation) || r.stdout
   const report = parseDeepReflectionReport(text)
@@ -1061,12 +1062,13 @@ export const runSessionReflector = async (
   result: SessionArcsResult,
   timeoutMs: number = Number(process.env.MARS_DEEP_REFLECT_TIMEOUT_MS) || 10 * 60 * 1000,
 ): Promise<DeepReflectionResult> => {
-  const model = process.env.MARS_DEEP_REFLECT_MODEL ?? 'opus'
-  const r = await runClaudeCode({
+  const model = process.env.MARS_DEEP_REFLECT_MODEL
+  const r = await runHeadlessProvider(buildSessionPrompt(result), {
     cwd: getRepoRoot(),
-    prompt: buildSessionPrompt(result),
     timeoutMs,
-    model,
+    ...(model !== undefined ? { model } : {}),
+    modelTier: 'flagship',
+    disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
   })
   const text = collectAssistantText(r.conversation) || r.stdout
   const report = parseDeepReflectionReport(text)

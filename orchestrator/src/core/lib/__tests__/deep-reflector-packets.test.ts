@@ -2,7 +2,7 @@
  * Unit tests for the memory-packet emission added to runDeepReflectorArc
  * (PRD 6544c0a0, slice 5).
  *
- * The reflector (runClaudeCode) is stubbed at the system boundary.
+ * The reflector provider runner is stubbed at the system boundary.
  * insertMemoryPacket (DB write) and getTask (DB read) are also stubbed.
  *
  * Observable behaviour under test:
@@ -16,8 +16,8 @@ import type { DeepReflectArc } from '../deep-reflect-query'
 
 // ── module mocks (hoisted by Vitest before imports) ───────────────────────────
 
-vi.mock('../git/claude', () => ({
-  runClaudeCode: vi.fn(),
+vi.mock('../../workers/providers', () => ({
+  runHeadlessProvider: vi.fn(),
 }))
 
 vi.mock('../../store/memory-packet-store', () => ({
@@ -119,11 +119,11 @@ afterEach(() => {
 // ── helper: wire stubs so the happy path runs end-to-end ──────────────────────
 
 const wireHappyPath = async (opts: { workflow?: string; tags?: string[] } = {}) => {
-  const { runClaudeCode } = await import('../git/claude')
+  const { runHeadlessProvider } = await import('../../workers/providers')
   const { insertMemoryPacket } = await import('../../store/memory-packet-store')
   const { getTask } = await import('../../queue')
 
-  vi.mocked(runClaudeCode).mockResolvedValue({
+  vi.mocked(runHeadlessProvider).mockResolvedValue({
     exitCode: 0,
     stdout: FAKE_REPORT_WITH_TWO_SAVES,
     conversation: [],
@@ -159,7 +159,7 @@ const wireHappyPath = async (opts: { workflow?: string; tags?: string[] } = {}) 
     scorerResults: [],
   } as never)
 
-  return { runClaudeCode, insertMemoryPacket, getTask }
+  return { runHeadlessProvider, insertMemoryPacket, getTask }
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -248,10 +248,10 @@ describe('runDeepReflectorArc — memory packet emission', () => {
   })
 
   it('does not insert packets when the reflector exits non-zero', async () => {
-    const { runClaudeCode, insertMemoryPacket } = await wireHappyPath()
+    const { runHeadlessProvider, insertMemoryPacket } = await wireHappyPath()
     const { runDeepReflectorArc } = await import('../deep-reflector')
 
-    vi.mocked(runClaudeCode).mockResolvedValue({
+    vi.mocked(runHeadlessProvider).mockResolvedValue({
       exitCode: 1,
       stdout: FAKE_REPORT_WITH_TWO_SAVES,
       conversation: [],

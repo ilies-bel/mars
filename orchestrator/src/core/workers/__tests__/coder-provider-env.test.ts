@@ -1,12 +1,12 @@
 /**
- * MARS_WORKER_PROVIDER env override — CODER_PROVIDER acceptance tests.
+ * MARS_WORKER_PROVIDER env override — global Worker provider acceptance tests.
  *
  * The three acceptance criteria from slice 4 of PRD 3f05ebd9:
- *   (a) MARS_WORKER_PROVIDER unset → resolved Coder provider is 'claude'
- *   (b) MARS_WORKER_PROVIDER=codex → resolved Coder provider is 'codex'
+ *   (a) MARS_WORKER_PROVIDER unset → resolved provider is 'codex'
+ *   (b) MARS_WORKER_PROVIDER=claude → every built-in Worker uses Claude
  *   (c) MARS_WORKER_PROVIDER=bogus → module load throws a clear error
  *
- * Because CODER_PROVIDER is evaluated at module-load time (top-level code),
+ * Because WORKER_PROVIDER is evaluated at module-load time (top-level code),
  * each case must reload the module in a fresh cache — hence vi.resetModules()
  * before every dynamic import.
  */
@@ -26,18 +26,18 @@ afterEach(() => {
 })
 
 describe('MARS_WORKER_PROVIDER env override', () => {
-  it("(a) resolves CODER_PROVIDER to 'claude' when MARS_WORKER_PROVIDER is unset", async () => {
+  it("(a) resolves WORKER_PROVIDER to 'codex' when MARS_WORKER_PROVIDER is unset", async () => {
     delete process.env['MARS_WORKER_PROVIDER']
     vi.resetModules()
-    const { CODER_PROVIDER } = await import('..')
-    expect(CODER_PROVIDER).toBe('claude')
+    const { WORKER_PROVIDER } = await import('..')
+    expect(WORKER_PROVIDER).toBe('codex')
   })
 
-  it("(b) resolves CODER_PROVIDER to 'codex' when MARS_WORKER_PROVIDER=codex", async () => {
-    process.env['MARS_WORKER_PROVIDER'] = 'codex'
+  it("(b) resolves WORKER_PROVIDER to 'claude' when MARS_WORKER_PROVIDER=claude", async () => {
+    process.env['MARS_WORKER_PROVIDER'] = 'claude'
     vi.resetModules()
-    const { CODER_PROVIDER } = await import('..')
-    expect(CODER_PROVIDER).toBe('codex')
+    const { WORKER_PROVIDER } = await import('..')
+    expect(WORKER_PROVIDER).toBe('claude')
   })
 
   it("(c) throws a clear error when MARS_WORKER_PROVIDER is an unknown value", async () => {
@@ -49,23 +49,25 @@ describe('MARS_WORKER_PROVIDER env override', () => {
   })
 })
 
-describe('CODER_PROVIDER plumbed into WORKER_CONFIGS.Coder', () => {
-  it("WORKER_CONFIGS.Coder.provider reflects CODER_PROVIDER when MARS_WORKER_PROVIDER=gemini", async () => {
+describe('WORKER_PROVIDER plumbed into every built-in Worker', () => {
+  it('switches every Worker and translates semantic model tiers for Gemini', async () => {
     process.env['MARS_WORKER_PROVIDER'] = 'gemini'
     vi.resetModules()
-    const { CODER_PROVIDER, WORKER_CONFIGS } = await import('..')
-    expect(CODER_PROVIDER).toBe('gemini')
-    expect(WORKER_CONFIGS.Coder.provider).toBe('gemini')
+    const { WORKER_PROVIDER, WORKER_CONFIGS } = await import('..')
+    expect(WORKER_PROVIDER).toBe('gemini')
+    for (const config of Object.values(WORKER_CONFIGS)) {
+      expect(config.provider).toBe('gemini')
+      expect(config.model).toMatch(/^gemini-/)
+    }
   })
 
-  it('non-Coder Workers keep their pinned provider regardless of MARS_WORKER_PROVIDER', async () => {
+  it('uses Codex-native models for every role when Codex is selected', async () => {
     process.env['MARS_WORKER_PROVIDER'] = 'codex'
     vi.resetModules()
     const { WORKER_CONFIGS } = await import('..')
-    // Only Coder should change; all others must remain pinned to 'claude'.
-    const pinned = ['Planner', 'Slicer', 'Triager', 'Fixer', 'BehaviourVerifier', 'Scorer'] as const
-    for (const name of pinned) {
-      expect(WORKER_CONFIGS[name].provider, `${name} must stay pinned to claude`).toBe('claude')
+    for (const config of Object.values(WORKER_CONFIGS)) {
+      expect(config.provider).toBe('codex')
+      expect(config.model).toMatch(/^gpt-5\.6-/)
     }
   })
 })

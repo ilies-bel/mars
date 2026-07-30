@@ -70,9 +70,9 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--window',
   '--window-tokens',
   '--arc-tokens',
-  // mars init provider selection — choose the default agent CLI for live/PTY
-  // runs: claude (default), gemini, or codex. Persisted to .mars/daemon.json
-  // as `defaultProvider`. Headless (stream-json) runs always use Claude.
+  // mars init provider selection — choose the default agent CLI for all Worker
+  // runs: codex (default), claude, or gemini. Persisted to .mars/daemon.json
+  // as `defaultProvider` and applied on the next daemon start.
   '--provider',
   '--feedback',
   // mars memory — domain-scoped memory packet management

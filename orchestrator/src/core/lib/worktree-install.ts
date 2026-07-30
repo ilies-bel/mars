@@ -1,5 +1,5 @@
 import { stat, rm, readFile } from 'node:fs/promises'
-import { resolve, relative } from 'node:path'
+import { isAbsolute, resolve, relative } from 'node:path'
 import { acquireLock } from './git/lock'
 import { type RunSubprocessResult } from './git/claude'
 import { getStateDir } from '../context'
@@ -197,10 +197,15 @@ const detectInDir = async (dir: string): Promise<InstallSite | null> => {
 export const detectInstallSites = async (
   worktreeRoot: string,
   maxDepth = 3,
+  installRoots: readonly string[] = ['.'],
 ): Promise<InstallSite[]> => {
   const found: InstallSite[] = []
+  const visited = new Set<string>()
+  const normalizedWorktreeRoot = resolve(worktreeRoot)
 
   const walk = async (dir: string, depth: number): Promise<void> => {
+    if (visited.has(dir)) return
+    visited.add(dir)
     const site = await detectInDir(dir)
     if (site) {
       found.push(site)
@@ -225,8 +230,23 @@ export const detectInstallSites = async (
     )
   }
 
-  await walk(worktreeRoot, 0)
+  await Promise.all(
+    installRoots.map(async (configuredRoot) => {
+      const candidate = resolve(normalizedWorktreeRoot, configuredRoot)
+      const candidateRelative = relative(normalizedWorktreeRoot, candidate)
+      if (candidateRelative.startsWith('..') || isAbsolute(candidateRelative)) {
+        throw new Error(`install root escapes worktree: ${configuredRoot}`)
+      }
+      await walk(candidate, 0)
+    }),
+  )
   return found
+}
+
+export const parseInstallRoots = (raw: string | undefined): readonly string[] | undefined => {
+  if (raw === undefined || raw.trim() === '') return undefined
+  const roots = [...new Set(raw.split(',').map((root) => root.trim()).filter(Boolean))]
+  return roots.length > 0 ? roots : undefined
 }
 
 /**
@@ -602,6 +622,12 @@ export interface InstallWorktreeDepsOptions {
   runner?: InstallRunner
   log?: (line: string) => void
   timeoutMs?: number
+  /**
+   * Repository-relative roots whose dependency lockfiles should be installed.
+   * When omitted, MARS_INSTALL_ROOTS is parsed as a comma-separated list.
+   * When neither is configured, the whole worktree is scanned.
+   */
+  installRoots?: readonly string[]
   /** Optional trace context. When supplied, the default runner emits a
    *  `tool_invoked` event per install via `runTool`. Custom runners are
    *  responsible for their own tracing. */
@@ -637,10 +663,11 @@ export const installWorktreeDeps = async ({
   runner,
   log,
   timeoutMs = DEFAULT_INSTALL_TIMEOUT_MS,
+  installRoots = parseInstallRoots(process.env.MARS_INSTALL_ROOTS),
   traceCtx,
 }: InstallWorktreeDepsOptions): Promise<WorktreeInstallSummary> => {
   const effectiveRunner = runner ?? makeDefaultInstallRunner(traceCtx)
-  const sites = await detectInstallSites(worktreeRoot)
+  const sites = await detectInstallSites(worktreeRoot, 3, installRoots)
   if (sites.length === 0) {
     return { sites: [], totalDurationMs: 0 }
   }

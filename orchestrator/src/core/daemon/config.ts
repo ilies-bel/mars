@@ -90,11 +90,10 @@ export interface DaemonConfig {
    */
   autoApprovePlans: boolean
   /**
-   * The default agent provider for live/PTY runs. Persisted by `mars init
-   * --provider <name>` and read by the dispatch path for live pipeline runs.
-   * Headless (stream-json) runs always use 'claude' regardless of this setting
-   * — the field is advisory for live task dispatching only.
-   * Default: 'claude'.
+   * The default agent provider for every Worker in this daemon. Persisted by
+   * `mars init --provider <name>` and resolved before headless or PTY workers
+   * are imported. An explicit MARS_WORKER_PROVIDER env value overrides it for
+   * one daemon process. Default: 'codex'.
    */
   defaultProvider: ProviderName
   /**
@@ -129,7 +128,7 @@ const DEFAULT_SCORING: ScoringConfig = {
 
 const DEFAULT_AUTO_APPROVE_PLANS = false
 
-const DEFAULT_PROVIDER: ProviderName = 'claude'
+const DEFAULT_PROVIDER: ProviderName = 'codex'
 
 const DEFAULT_CONTROL_LEVERS: ControlLevers = { recovery: 'on', scoring: 'on' }
 

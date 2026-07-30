@@ -2,7 +2,7 @@
 
 ## Mars Framework
 
-TypeScript CLI (`mars`) + orchestrator running Claude Code in parallel
+TypeScript CLI (`mars`) + provider-agnostic orchestrator running agent CLIs in parallel
 git worktrees, read-only frontend (`ui/`), design drafts (`design/`).
 
 ## Project status
@@ -84,7 +84,7 @@ per-change and must be re-confirmed, even within the same session.
 ## Top-level directories
 
 - `orchestrator/` — the orchestrator, running on the in-house
-  `@mars/workflow` engine (`packages/workflow/`). Headless Claude Code in
+  `@mars/workflow` engine (`packages/workflow/`). Headless provider agents in
   parallel worktrees → verify → fast-forward into `main`. Conflicts go
   to `vcs-supervisor` ("Vega"). Node `>=22.13.0`.
 - `.mars/` — per-repo state (`pg/data/` — the embedded Postgres data
@@ -127,7 +127,7 @@ completion.
 ## Key concepts
 
 - **Orchestrator workflow** — 4 steps: `setup` (worktree on `task/<id>` off
-  `main`) → `code` (`claude -p`) → `verify` → `merge` (serialized via file
+  `main`) → `code` (selected provider CLI) → `verify` → `merge` (serialized via file
   lock; coding parallel).
 - **Merge target** — `main`. Override per-invocation with
   `INTEGRATION_BRANCH=<branch>`.
@@ -141,6 +141,35 @@ waiting to be shaped (kind `draft-proposal`) — appears as an action queue
 message. Pick one via `mars action-queue list` or `/mars:action-queue`; the action queue
 dispatches to the right resolver (`/mars:unblock`, `/mars:grill`, or
 terminal restart/purge — the queue is a pure projection, no operator gesture closes a row). To see pending work, run `/mars:chat` or `/mars:action-queue`.
+
+**Watch for alerts; don't wait to be asked.** Alerts (kinds `failed-task`
+and `stale-worktree`) arrive on their own schedule — a background task can
+fail minutes after you enqueued it and moved on. Check at natural
+checkpoints, not continuously: at session start, after `mars task add`,
+before reporting a batch of work as done, and whenever the user asks what
+is happening.
+
+Poll with the filtered listing — never by tailing the event stream:
+
+```
+mars action-queue list open --kind failed-task,stale-worktree
+```
+
+It prints one tab-separated line per alert (`id  priority  kind  title`)
+and nothing at all when clear, so it is cheap enough to run often. The
+daemon's SSE `/events` endpoint carries every dispatch, step transition,
+and heartbeat; tailing it into a session costs far more context for the
+same signal. Reach for `/events` only when debugging the daemon itself.
+
+The action queue is served by the daemon. If the daemon is down the
+command exits 1 with `action queue: daemon not running`, and against a
+stale `.mars/http.port` it can take minutes to say so. That is "unknown",
+not "no alerts" — report it as such rather than as a clean queue. Only
+`action queue empty` (exit 0) means there is nothing pending.
+
+When a new alert appears, surface it unprompted — id, kind, title — and
+point at `/mars:alerts` for triage. Do not restart, purge, or remove a
+worktree without the user's say-so.
 
 ## Glossary and ADRs
 
@@ -220,13 +249,13 @@ recovery-spawn path itself.
 
 - Coder runs get a deviation-rules brief: no bailing without an auto-fix
   commit, a `--blocked-by $TASK_ID` follow-up, or a `mars proposal add`.
-- **Worker models (defaults):** Coder → `claude-sonnet-4-6`, Fixer →
-  `claude-sonnet-4-6` (scoped mechanical recovery), Writer → `claude-haiku-4-5-20251001`,
-  Planner/Slicer → `claude-opus-4-7` (architectural reasoning), Triager →
-  `claude-sonnet-4-6`. Override the Coder model for the lifetime of a daemon
-  process via `MARS_WORKER_MODEL=<model>` (e.g. `MARS_WORKER_MODEL=claude-opus-4-7`
-  for a high-complexity session). Planner, Slicer, Writer, and Fixer models are
-  always pinned; only Coder is overridable. Override the Coder Provider similarly via `MARS_WORKER_PROVIDER=<claude|codex|gemini>`; other Worker classes stay pinned to Claude.
+- **Worker provider and models:** Codex is the default. `defaultProvider` in
+  `.mars/daemon.json` selects Codex, Claude, or Gemini for every Worker;
+  `MARS_WORKER_PROVIDER` is the one-daemon override. Providers translate the
+  flagship/balanced/fast tiers to native model ids. Codex uses
+  `gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna` through `codex exec` and
+  reuses the local `codex login` session. `MARS_WORKER_MODEL` overrides only
+  the Coder model.
 - To inspect live runs, open `mars ui` (read-only Kanban + trace dashboard)
   or query the daemon HTTP API: read `PORT=$(cat .mars/http.port)` first —
   the daemon binds an OS-assigned ephemeral port (see Conventions).

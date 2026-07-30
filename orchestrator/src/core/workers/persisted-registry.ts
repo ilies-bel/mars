@@ -12,6 +12,7 @@ import { resolve } from 'node:path'
 import type { ClaudeEffort, ClaudePermissionMode } from '../lib/git/claude'
 import {
   WORKER_CONFIGS,
+  WORKER_PROVIDER,
   createWorker,
   type ClaudeOutputFormat,
   type Worker,
@@ -91,9 +92,8 @@ const configToDeclaration = (
 // Build a Worker from a WorkerDeclaration via createWorker. Missing
 // WorkerConfig fields (maxContextTokens, etc.) are filled with safe
 // defaults — operator-declared workers in the registry do not carry a
-// context budget (0 = disabled). The provider defaults to 'claude' for
-// backwards-compat with registry entries written before the provider field
-// was added.
+// context budget (0 = disabled). A declaration without its own provider uses
+// the active daemon provider, matching built-in Workers.
 const declarationToWorker = (decl: WorkerDeclaration): Worker =>
   createWorker({
     name: decl.name,
@@ -106,7 +106,7 @@ const declarationToWorker = (decl: WorkerDeclaration): Worker =>
     outputFormat: decl.outputFormat,
     maxContextTokens: 0,
     runtime: decl.runtime,
-    provider: decl.provider ?? 'claude',
+    provider: decl.provider ?? WORKER_PROVIDER,
     ...(decl.tags !== undefined ? { tags: [...decl.tags] } : {}),
   })
 
