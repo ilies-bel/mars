@@ -142,6 +142,35 @@ message. Pick one via `mars action-queue list` or `/mars:action-queue`; the acti
 dispatches to the right resolver (`/mars:unblock`, `/mars:grill`, or
 terminal restart/purge — the queue is a pure projection, no operator gesture closes a row). To see pending work, run `/mars:chat` or `/mars:action-queue`.
 
+**Watch for alerts; don't wait to be asked.** Alerts (kinds `failed-task`
+and `stale-worktree`) arrive on their own schedule — a background task can
+fail minutes after you enqueued it and moved on. Check at natural
+checkpoints, not continuously: at session start, after `mars task add`,
+before reporting a batch of work as done, and whenever the user asks what
+is happening.
+
+Poll with the filtered listing — never by tailing the event stream:
+
+```
+mars action-queue list open --kind failed-task,stale-worktree
+```
+
+It prints one tab-separated line per alert (`id  priority  kind  title`)
+and nothing at all when clear, so it is cheap enough to run often. The
+daemon's SSE `/events` endpoint carries every dispatch, step transition,
+and heartbeat; tailing it into a session costs far more context for the
+same signal. Reach for `/events` only when debugging the daemon itself.
+
+The action queue is served by the daemon. If the daemon is down the
+command exits 1 with `action queue: daemon not running`, and against a
+stale `.mars/http.port` it can take minutes to say so. That is "unknown",
+not "no alerts" — report it as such rather than as a clean queue. Only
+`action queue empty` (exit 0) means there is nothing pending.
+
+When a new alert appears, surface it unprompted — id, kind, title — and
+point at `/mars:alerts` for triage. Do not restart, purge, or remove a
+worktree without the user's say-so.
+
 ## Glossary and ADRs
 
 - `CONTEXT.md` — domain glossary. Edit only via `mars glossary
