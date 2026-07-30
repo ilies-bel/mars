@@ -434,7 +434,7 @@ const AUTH = { accessToken: 'tok', accountId: 'acc', refreshToken: 'ref' }
 const threadFixture = {
   id: 't1', title: '', status: 'idle' as const, created_at: '', updated_at: '',
   origin: null, alert_item_id: null, alert_resolved: false, evaporated_at: null,
-  parent_thread_id: null, fork_idempotency_key: null,
+  parent_thread_id: null, fork_idempotency_key: null, session_id: null,
 }
 
 /** streamCodexResponse implementation that emits the given events and resolves. */
