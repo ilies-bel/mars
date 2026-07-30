@@ -71,6 +71,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
       triage: makeSem(2),
       refine: makeSem(2),
       structuredWrite: makeSem(2),
+      verify: makeSem(2),
     },
     getAcceptingWork: () => state.accepting,
     setAcceptingWork: (v) => {
@@ -224,6 +225,7 @@ describe('inline-case leaves reach live closure state', () => {
     expect(deps.sems.triage.limit).toBe(data.caps.triage)
     expect(deps.sems.refine.limit).toBe(data.caps.refine)
     expect(deps.sems.structuredWrite.limit).toBe(data.caps['structured-write'])
+    expect(deps.sems.verify.limit).toBe(data.caps.verify)
     expect(state.drained).toBe(1)
   })
 

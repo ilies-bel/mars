@@ -62,7 +62,7 @@ const makeOpts = (
 
 /** A canned reload-config response matching what the daemon sends back. */
 const reloadResponse = {
-  caps: { implement: 8, triage: 8, refine: 6, 'structured-write': 1 },
+  caps: { implement: 8, triage: 8, refine: 6, 'structured-write': 1, 'setup-install': 2, verify: 2 },
 }
 
 const readM = vi.mocked(readDaemonConfigFile)
@@ -205,5 +205,16 @@ describe('daemon set-cap', () => {
     const caps = patchArg.caps as Record<string, unknown>
     expect(caps.setupInstall).toBe(4)
     expect(caps['setup-install']).toBeUndefined()
+  })
+
+  it('writes the verify cap and reports its reloaded value', async () => {
+    await runCommandInProcess(
+      ['daemon', 'set-cap', 'verify', '1'],
+      makeOpts(() => reloadResponse),
+    )
+
+    const patchArg = patchM.mock.calls[0]?.[0] as Record<string, unknown>
+    const caps = patchArg.caps as Record<string, unknown>
+    expect(caps.verify).toBe(1)
   })
 })

@@ -61,7 +61,6 @@ import {
 } from '../../core/lib/gate-enrichment'
 import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch, type MergeResult } from '../../core/lib/git/merge'
 import { autoCommitWorktreeIfDeterministic } from '../../core/lib/git/commit-main'
-import { acquireLock } from '../../core/lib/git/lock'
 import {
   createWorker,
   pickWorkerForTags,
@@ -189,6 +188,32 @@ export interface MarsServices {
    * inject a tracker can safely omit this field.
    */
   onPid?: (pid: number) => void
+  /**
+   * Optional hook called by the `review` primitive (auto path) immediately
+   * before running `verifyChanges`. When present, the daemon:
+   *   1. Releases the implement semaphore slot so other tasks can start coding
+   *      while this task waits for a verify slot (avoids wasting implement
+   *      capacity on tasks that are just queued behind the verify cap).
+   *   2. Acquires the verify semaphore (default limit 2, MARS_MAX_VERIFY).
+   *   3. Calls `drain()` so freed implement slots are picked up immediately.
+   *
+   * When absent (scaffolded workflows, tests that don't inject the daemon
+   * plumbing), verify runs without a concurrency cap — same as before this
+   * feature was added.
+   *
+   * There is no circular dependency: coding never waits on verify, so a task
+   * blocked on the verify semaphore does not prevent the verify semaphore from
+   * being released. No deadlock is possible.
+   */
+  acquireVerifySlot?: () => Promise<void>
+  /**
+   * Optional hook called by the `review` primitive in its finally block,
+   * paired with {@link acquireVerifySlot}. Releases the verify semaphore
+   * slot so the next queued verify can proceed.
+   *
+   * When absent, this is a no-op.
+   */
+  releaseVerifySlot?: () => void
   /**
    * Hook registered by the daemon that routes merge requests through the
    * durable single-consumer merge worker. The `merge` primitive always
@@ -1740,6 +1765,14 @@ export const review = async (
         { status: 'verifying', failedPhase: null, activityDetail: 'verify' },
         store,
       )
+
+      // Acquire the daemon-level verify semaphore (MARS_MAX_VERIFY) before
+      // running the CPU-intensive test suite. This releases the implement slot
+      // first (see dispatchImplement) so other tasks can keep coding while this
+      // one waits for a free verify slot. When absent (scaffolded workflows,
+      // test contexts without the daemon plumbing), verify runs uncapped.
+      await ctx.services.acquireVerifySlot?.()
+
       // Wrap the verify body: any unexpected throw (e.g. verifyChanges rejects,
       // lock acquisition fails) must transition the task to 'failed' before
       // rethrowing, so the row never stays pinned in 'verifying' until the
@@ -1778,14 +1811,6 @@ export const review = async (
       const isMainCommitter = commiterPayload?.recipe === MAIN_COMMITER_RECIPE
       const steps = isMainCommitter ? [] : selectVerifySteps(scopes, changedFiles)
 
-      // Serialize verify runs so DB-heavy builds (embedded-PG, Gradle) do not
-      // tear down each other's database mid-suite.  This mirrors the merge
-      // serialization (.merge.lock) but uses a longer timeout because
-      // embedded-PG + Gradle suites can run for 30+ minutes.
-      const releaseVerifyLock = await acquireLock(
-        resolve(getStateDir(), '.verify.lock'),
-        60 * 60 * 1000, // 60 min ceiling — generous for slow gradle/embedded-PG suites
-      )
       let r = await verifyChanges({
         cwd: verifyCwd,
         steps,
@@ -1795,7 +1820,7 @@ export const review = async (
         // optional, so a task with zero configured task-tier steps passes.
         changedFiles: isMainCommitter ? undefined : changedFiles,
         traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
-      }).finally(() => releaseVerifyLock())
+      })
 
       // Infra-failure retry (once only): if any failed step output matches an
       // infrastructure-failure pattern (embedded-PG shutdown mid-suite, Spring
@@ -1810,17 +1835,13 @@ export const review = async (
             `[verify] task ${taskId}: infra failure detected in ${failedSteps.length} step(s) ` +
               `(embedded-PG shutdown or Spring context init); retrying once`,
           )
-          const releaseRetryLock = await acquireLock(
-            resolve(getStateDir(), '.verify.lock'),
-            60 * 60 * 1000,
-          )
           r = await verifyChanges({
             cwd: verifyCwd,
             steps,
             branch,
             integrationBranch,
             traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
-          }).finally(() => releaseRetryLock())
+          })
         }
       }
 
@@ -2054,6 +2075,10 @@ export const review = async (
           ).catch(() => {})
         }
         throw err
+      } finally {
+        // Release the daemon-level verify semaphore slot unconditionally so the
+        // next queued verify step can proceed regardless of pass/fail/throw.
+        ctx.services.releaseVerifySlot?.()
       }
     },
   })

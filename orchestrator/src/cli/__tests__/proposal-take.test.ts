@@ -181,6 +181,7 @@ describe('proposal.take RPC handler', () => {
         triage: makeSem(1),
         refine: makeSem(1),
         structuredWrite: makeSem(1),
+        verify: makeSem(1),
       },
       getAcceptingWork: () => true,
       setAcceptingWork: () => {},

@@ -31,6 +31,19 @@ export interface DaemonCaps {
   structuredWrite: number
   /** Maximum concurrent worktree dependency installs (MARS_MAX_SETUP_INSTALL). Default 2. */
   setupInstall: number
+  /**
+   * Maximum concurrent verify steps (MARS_MAX_VERIFY). Default 2.
+   *
+   * The verify step (npm test / typecheck) is CPU-intensive. Without a cap,
+   * every in-flight implement slot can run a full test suite simultaneously,
+   * multiplying load beyond what the host can sustain. This semaphore limits
+   * how many verify steps run at once, independently of the implement cap.
+   *
+   * A task waiting on this semaphore releases its implement slot first so
+   * other tasks can continue coding while verify is queued. There is no
+   * circular dependency (coding never waits on verify), so the cap is deadlock-safe.
+   */
+  verify: number
 }
 
 export interface SelfEvolveConfig {
@@ -99,6 +112,7 @@ const DEFAULTS: DaemonCaps = {
   refine: 6,
   structuredWrite: 1,
   setupInstall: 2,
+  verify: 2,
 }
 
 const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
@@ -358,6 +372,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
     refine: envInt('MARS_MAX_REFINE', DEFAULTS.refine),
     structuredWrite: envInt('MARS_MAX_STRUCTURED_WRITE', DEFAULTS.structuredWrite),
     setupInstall: envInt('MARS_MAX_SETUP_INSTALL', DEFAULTS.setupInstall),
+    verify: envInt('MARS_MAX_VERIFY', DEFAULTS.verify),
   }
 
   const envAutoTrigger = envBool(
@@ -429,6 +444,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
         c.setupInstall ?? c['setup-install'],
         envCaps.setupInstall,
       ),
+      verify: positiveInt(c.verify, envCaps.verify),
     }
     const se = parsed.selfEvolve ?? {}
     if (typeof se.autoTrigger === 'boolean') {
@@ -479,6 +495,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
       refine: fileCaps.refine ?? envCaps.refine,
       structuredWrite: fileCaps.structuredWrite ?? envCaps.structuredWrite,
       setupInstall: fileCaps.setupInstall ?? envCaps.setupInstall,
+      verify: fileCaps.verify ?? envCaps.verify,
     },
     selfEvolve: {
       autoTrigger: fileAutoTrigger ?? envAutoTrigger,

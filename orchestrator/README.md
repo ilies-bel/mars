@@ -195,6 +195,10 @@ env vars below without restarting); a kill + restart also picks them up.
   Git worktree creation is NOT gated; only the `pnpm install` portion is
   serialised. Lowering reduces peak memory; raising speeds up multi-worktree
   setup on machines with ample RAM.
+- `MARS_MAX_VERIFY` (default `2`) — concurrent verify steps. Each verify may
+  run a full typecheck and test suite, so this cap is independent of
+  `MARS_MAX_IMPLEMENT`. A task queued for verification releases its implement
+  slot, allowing other tasks to continue through setup and coding.
 - `MARS_MAX_SCORING` (default `2`) — concurrent post-instance Scorer runs
   (PRD 6cf85bc9). Its OWN semaphore, separate from the task dispatch pool:
   a scoring run is not a Task and never competes for an implement slot.

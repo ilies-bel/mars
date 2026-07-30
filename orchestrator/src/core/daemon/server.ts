@@ -845,13 +845,18 @@ export const startDaemon = async (
     'glossary-write': structuredWriteSem,
     'adr-add': structuredWriteSem,
   }
+  // Verify concurrency semaphore: caps parallel verify (npm test / typecheck)
+  // steps independently of the implement cap. Default: MARS_MAX_VERIFY (2).
+  // Acquired inside the review primitive; the implement slot is released first
+  // so other tasks can continue coding while this one waits for a verify slot.
+  const verifySem = makeSem(initialCaps.verify)
   // Install concurrency semaphore: caps parallel worktree dep-installs to
   // prevent concurrent tsup/esbuild prepare scripts from OOM-killing the process.
   // Lives in worktree-install.ts as a module-level semaphore; the daemon
   // sets the initial cap here and updates it on `reload-config`.
   setInstallSemCap(initialCaps.setupInstall)
   log(
-    `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit} setup-install=${initialCaps.setupInstall}`,
+    `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit} setup-install=${initialCaps.setupInstall} verify=${verifySem.limit}`,
   )
   if (isPaused) {
     log(
@@ -943,6 +948,12 @@ export const startDaemon = async (
     // at which point the implement slot has been released and merge tracking started.
     let releaseMergeTracking: (() => void) | null = null
     let mergeHandedOff = false
+    // Verify-slot handoff bookkeeping.
+    // `verifyHandedOff` flips to true when the review primitive calls
+    // acquireVerifySlot(), at which point the implement slot and tracking are
+    // released so other tasks can continue coding while this task is queued
+    // behind the verify semaphore (or actively running verify).
+    let verifyHandedOff = false
     log(`[implement] ${task.id} dispatching`)
     try {
       // Slice F.2: dispatch-time dirty-main check. Runs BEFORE workflow
@@ -1195,6 +1206,32 @@ export const startDaemon = async (
               })
               return awaitManualDone(runId, stepName)
             },
+            // Verify-slot hooks. The review primitive (auto path) calls
+            // acquireVerifySlot() before running verifyChanges and
+            // releaseVerifySlot() in its finally block.
+            //
+            // At the point of acquireVerifySlot:
+            //   1. The implement slot and tracker entry are released so other
+            //      tasks can start coding while this task is queued on verify.
+            //   2. drain() is called so freed implement slots are picked up.
+            //   3. The verify semaphore (verifySem, MARS_MAX_VERIFY) is acquired
+            //      — this is where the task may block until a slot is free.
+            //
+            // There is no circular dependency: coding never waits on verify, so
+            // a task blocked on verifySem cannot prevent verifySem from being
+            // released. No deadlock is possible.
+            acquireVerifySlot: async (): Promise<void> => {
+              if (!verifyHandedOff) {
+                verifyHandedOff = true
+                releaseTracking()
+                release(sems.implement)
+                void drain()
+              }
+              await acquire(verifySem)
+            },
+            releaseVerifySlot: (): void => {
+              release(verifySem)
+            },
             // Durable merge-queue hook. The merge primitive always routes git
             // merges through the single-consumer worker. At the point of
             // handoff the implement semaphore slot and tracker entry are
@@ -1209,8 +1246,13 @@ export const startDaemon = async (
             }) => {
               if (!mergeHandedOff) {
                 mergeHandedOff = true
-                releaseTracking()
-                release(sems.implement)
+                // A verify handoff already returned the implement slot and
+                // removed this task from implement tracking. Do not release
+                // either a second time when the following merge step starts.
+                if (!verifyHandedOff) {
+                  releaseTracking()
+                  release(sems.implement)
+                }
                 releaseMergeTracking = tracker.commitInFlight(task.id, 'merge')
                 void drain()
               }
@@ -1409,20 +1451,28 @@ export const startDaemon = async (
       // drain() re-arms the loop. drain() has its own internal catch, so the
       // fire-and-forget `void` here can never leak a rejection.
       //
-      // When a task was handed off to the merge queue (mergeHandedOff=true),
-      // the implement slot was already released at handoff. Only clean up merge
-      // tracking here. If the task never reached the merge step (early return,
-      // failure before merge), release the implement slot now.
+      // Three mutually-exclusive handoff states:
+      //   mergeHandedOff=true  — implement slot released at merge handoff; only
+      //                          clean up remaining merge tracking here.
+      //   verifyHandedOff=true — implement slot and tracking already released
+      //                          when the review primitive called acquireVerifySlot;
+      //                          the verify semaphore is released inside the
+      //                          review primitive's own finally block.
+      //   neither              — task never reached verify or merge; release the
+      //                          implement slot now.
       if (mergeHandedOff) {
         // TS CFA inside an async function incorrectly narrows `releaseMergeTracking`
         // to `null` here (it sees the `= null` assignment in the service closure and
         // concludes the type at this point is always null). Cast to the declared type.
         const releaseMerge = releaseMergeTracking as (() => void) | null
         if (releaseMerge !== null) releaseMerge()
-      } else {
+      } else if (!verifyHandedOff) {
         releaseTracking()
         release(sems.implement)
       }
+      // When verifyHandedOff=true the implement slot was already released inside
+      // acquireVerifySlot. The verify semaphore is released by releaseVerifySlot
+      // in the review primitive's finally block. Nothing to release here.
       void drain()
     }
   }
@@ -3333,6 +3383,7 @@ export const startDaemon = async (
       triage: sems.triage,
       refine: sems.refine,
       structuredWrite: structuredWriteSem,
+      verify: verifySem,
     },
     getAcceptingWork: () => acceptingWork,
     setAcceptingWork: (value: boolean) => {

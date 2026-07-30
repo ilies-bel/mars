@@ -208,8 +208,9 @@ const reloadConfigHandler = handler('reload-config', async (_req, deps) => {
   // Install semaphore lives in worktree-install.ts as a module-level singleton;
   // update it via the exported setter so the new cap takes effect immediately.
   setInstallSemCap(caps.setupInstall)
+  setSemLimit(deps.sems.verify, caps.verify)
   deps.log(
-    `concurrency reloaded: implement=${caps.implement} triage=${caps.triage} refine=${caps.refine} structured-write=${caps.structuredWrite} setup-install=${caps.setupInstall}`,
+    `concurrency reloaded: implement=${caps.implement} triage=${caps.triage} refine=${caps.refine} structured-write=${caps.structuredWrite} setup-install=${caps.setupInstall} verify=${caps.verify}`,
   )
   void deps.drain()
   return {
@@ -221,6 +222,7 @@ const reloadConfigHandler = handler('reload-config', async (_req, deps) => {
         refine: caps.refine,
         'structured-write': caps.structuredWrite,
         'setup-install': caps.setupInstall,
+        verify: caps.verify,
       },
     },
   }

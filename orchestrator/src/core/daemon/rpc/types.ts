@@ -57,6 +57,7 @@ export interface RpcSemaphores {
   triage: Semaphore
   refine: Semaphore
   structuredWrite: Semaphore
+  verify: Semaphore
 }
 
 /**
