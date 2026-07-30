@@ -2,6 +2,33 @@ import { describe, expect, it } from 'vitest'
 import { acquire, makeSem, release, setSemLimit } from '../server'
 
 describe('setSemLimit', () => {
+  it('re-drives queued dispatch when a cap increase creates capacity without semaphore waiters', async () => {
+    const sem = makeSem(1)
+    const queued = ['already-running', 'next', 'after-next']
+    const dispatched: string[] = []
+    const drain = (): void => {
+      while (sem.inUse < sem.limit && queued.length > 0) {
+        const taskId = queued.shift()
+        if (!taskId) break
+        void acquire(sem).then(() => dispatched.push(taskId))
+      }
+    }
+
+    // The initial drain starts one task and leaves eligible work in its own
+    // pending queue, not parked in the semaphore's waiter list.
+    drain()
+    await Promise.resolve()
+    expect(dispatched).toEqual(['already-running'])
+    expect(queued).toEqual(['next', 'after-next'])
+
+    ;(sem as typeof sem & { onLimitIncrease?: () => void }).onLimitIncrease = drain
+    setSemLimit(sem, 3)
+
+    await Promise.resolve()
+    expect(dispatched).toEqual(['already-running', 'next', 'after-next'])
+    expect(queued).toEqual([])
+  })
+
   it('wakes min(delta, waiters) waiters when raising the cap', async () => {
     const sem = makeSem(1)
     // Saturate

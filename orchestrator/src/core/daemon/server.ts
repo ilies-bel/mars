@@ -140,6 +140,8 @@ export interface Semaphore {
   limit: number
   inUse: number
   readonly waiters: Array<() => void>
+  /** Re-drive dispatch after an increased limit creates unclaimed capacity. */
+  onLimitIncrease?: () => void
 }
 
 export const makeSem = (limit: number): Semaphore => ({
@@ -168,9 +170,10 @@ export const release = (s: Semaphore): void => {
 }
 
 // Adjust the cap at runtime. Raising wakes up to `delta` waiters (mirroring
-// the hand-off in release() so a parallel acquire can't slip past). Lowering
-// never cancels in-flight work — release() simply won't hand to new acquirers
-// until inUse < limit again.
+// the hand-off in release() so a parallel acquire can't slip past), then
+// re-drives dispatch for queued work that has not reached acquire() yet.
+// Lowering never cancels in-flight work — release() simply won't hand to new
+// acquirers until inUse < limit again.
 export const setSemLimit = (s: Semaphore, newLimit: number): void => {
   if (!Number.isInteger(newLimit) || newLimit < 1) {
     throw new Error('limit must be a positive integer')
@@ -186,6 +189,7 @@ export const setSemLimit = (s: Semaphore, newLimit: number): void => {
       next()
     }
   }
+  if (delta > 0) s.onLimitIncrease?.()
 }
 
 export interface DaemonHandle {
@@ -1782,6 +1786,15 @@ export const startDaemon = async (
     } finally {
       drainRunning = false
     }
+  }
+
+  // Queued tasks only become semaphore waiters after drain selects them. A
+  // runtime cap increase must therefore re-drive drain as well as waking any
+  // existing waiters; otherwise newly available implement slots can idle until
+  // an unrelated completion or task-add event. The callback lives on each
+  // daemon-owned semaphore so every setSemLimit caller gets this behavior.
+  for (const sem of new Set([...Object.values(sems), verifySem])) {
+    sem.onLimitIncrease = () => { void drain() }
   }
 
   // Provider rate/spend-limit rejection handler.
