@@ -825,43 +825,12 @@ export const handleTaskFailureWithFixTask = async (
 
   const budget = getRetryBudget()
 
-  if (task.retryCount > budget) {
-    // Guard: do not double-prepend if failureSignature somehow already carries
-    // the prefix (defence-in-depth; the primary fix is in computeFailureSignature).
-    await markTaskFailed(
-      input.taskId,
-      failureSignature.startsWith('recovery_exhausted:')
-        ? failureSignature
-        : `recovery_exhausted:${failureSignature}`,
-    )
-    await raiseRecoveryExhaustedActionQueue({
-      taskId: input.taskId,
-      lastStep: input.failingStep,
-      retryCount: task.retryCount,
-      lastErrorSignature: failureSignature,
-      lastErrorSummary: truncatedError,
-      branch,
-      worktreePath: task.worktreePath,
-    })
-    import('./lib/failure-reflector').then(({ spawnFailureReflector }) =>
-      spawnFailureReflector({
-        taskId: input.taskId,
-        lastStep: input.failingStep,
-        lastErrorSignature: failureSignature,
-        retryCount: task.retryCount,
-        worktreePath: task.worktreePath,
-        branch,
-      }).catch((err) =>
-        // eslint-disable-next-line no-console
-        console.warn('[failure-reflector] spawn failed (non-fatal):', err),
-      ),
-    )
-    return {
-      outcome: 'failed',
-      failureSignature,
-      retryCount: task.retryCount,
-    }
-  }
+  // ── Pre-classify BEFORE the retryCount gate (Slice 3 PRD d7835017) ────────
+  // Non-code failures (orchestration, infra, connectivity) must bypass the
+  // `retryCount > budget` gate so the code recovery slot is never burned on
+  // a failure that code edits cannot fix. Classify first, apply the budget
+  // gate only to code failures below.
+  const failureCategory = classifyFailure(failureSignature)
 
   // FUTURE: unrelated-flake short-circuit goes here, BEFORE the recipe
   // lookup. When `input.failingStep === 'verify:test-failed'`, compare
@@ -948,7 +917,6 @@ export const handleTaskFailureWithFixTask = async (
   // Uses the per-(taskId, failureSignature) non-code retry counter so the code
   // recovery slot is preserved regardless of how many non-code re-queues occur.
   // After MAX_NON_CODE_RETRIES re-queues the task is escalated to the action queue.
-  const failureCategory = classifyFailure(failureSignature)
   if (failureCategory !== 'code') {
     await bumpNonCodeRetries(input.taskId, failureSignature, s)
     const nonCodeCount = await countNonCodeRetries(input.taskId, failureSignature, s)
@@ -987,6 +955,48 @@ export const handleTaskFailureWithFixTask = async (
       `[failure-handler] task ${input.taskId}: non-code failure (${failureCategory}:${failureSignature}) re-queue #${nonCodeCount}/${nonCodeCap} — no recovery slot consumed`,
     )
     return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
+  }
+
+  // ── Code-failure budget gate (Slice 3 PRD d7835017) ──────────────────────
+  // Applied ONLY after non-code paths (phantom-kill and classify) have been
+  // excluded. Non-code failures bypass this entirely so they can use the
+  // self_heal_attempts counter without burning the one-shot code-recovery slot.
+  if (task.retryCount > budget) {
+    // Guard: do not double-prepend if failureSignature somehow already carries
+    // the prefix (defence-in-depth; the primary fix is in computeFailureSignature).
+    await markTaskFailed(
+      input.taskId,
+      failureSignature.startsWith('recovery_exhausted:')
+        ? failureSignature
+        : `recovery_exhausted:${failureSignature}`,
+    )
+    await raiseRecoveryExhaustedActionQueue({
+      taskId: input.taskId,
+      lastStep: input.failingStep,
+      retryCount: task.retryCount,
+      lastErrorSignature: failureSignature,
+      lastErrorSummary: truncatedError,
+      branch,
+      worktreePath: task.worktreePath,
+    })
+    import('./lib/failure-reflector').then(({ spawnFailureReflector }) =>
+      spawnFailureReflector({
+        taskId: input.taskId,
+        lastStep: input.failingStep,
+        lastErrorSignature: failureSignature,
+        retryCount: task.retryCount,
+        worktreePath: task.worktreePath,
+        branch,
+      }).catch((err) =>
+        // eslint-disable-next-line no-console
+        console.warn('[failure-reflector] spawn failed (non-fatal):', err),
+      ),
+    )
+    return {
+      outcome: 'failed',
+      failureSignature,
+      retryCount: task.retryCount,
+    }
   }
 
   // Fix-fail-loop cap. Count every historical fix-task row for this

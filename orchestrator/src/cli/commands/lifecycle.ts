@@ -558,42 +558,9 @@ const list: Command = {
 
     const showing = tasks.length
     if (showing < total) {
-      if (statusArg === undefined) {
-        // Unfiltered truncated path: one grouped query, then a filter-first hint.
-        const breakdown = await deps.store.countTasksByStatus()
-        const parts = breakdown
-          .slice()
-          .sort((a, b) => b.count - a.count)
-          .map((r) => `${r.status} ${r.count}`)
-        let breakdownLine: string
-        const fullLine = parts.join(' · ')
-        if (fullLine.length <= 100) {
-          breakdownLine = fullLine
-        } else {
-          let line = ''
-          let kept = 0
-          for (const part of parts) {
-            const candidate = line ? `${line} · ${part}` : part
-            if (candidate.length <= 88) {
-              line = candidate
-              kept++
-            } else {
-              break
-            }
-          }
-          const remaining = parts.length - kept
-          breakdownLine = remaining > 0 ? `${line} · +${remaining} more` : line
-        }
-        deps.out(`\nShowing ${showing} of ${total} tasks`)
-        deps.out(`  ${breakdownLine}`)
-        deps.out(
-          'Narrow with `mars list --status <status>`, page with `--limit <n>`, or `--all` to dump every row.',
-        )
-      } else {
-        deps.out(
-          `\nShowing ${showing} of ${total} ${statusArg} tasks  (use --limit <n>, or --all to dump every row)`,
-        )
-      }
+      deps.out(
+        `\nShowing ${showing} of ${total} tasks  (use --limit <n> or --all to see more)`,
+      )
     } else {
       deps.out(`\n${total} task${total !== 1 ? 's' : ''} total`)
     }

@@ -37,7 +37,13 @@ export function classifyFailure(failureSignature: string): FailureCategory {
     failureSignature.endsWith('/rebase-no-in-progress-state') ||
     failureSignature.endsWith('/worktree-missing') ||
     failureSignature.endsWith('/not-fast-forward') ||
-    failureSignature.endsWith('/index-lock-contention')
+    failureSignature.endsWith('/index-lock-contention') ||
+    // setup:origin-worktree-missing fires when a recovery (fix) task cannot
+    // attach because the origin task's worktree has been removed from disk.
+    // This is always an orchestration condition (no amount of code editing
+    // fixes a missing worktree); the error class is always 'unclassified'
+    // because the OriginWorktreeMissingError message matches no errorClassRule.
+    failureSignature.startsWith('setup:origin-worktree-missing')
   ) {
     return 'orchestration'
   }
