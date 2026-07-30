@@ -166,6 +166,7 @@ describe('queue-fix-tasks', () => {
     delete process.env.MARS_REPO
     delete process.env.MARS_FIX_RETRY_BUDGET
     delete process.env.MARS_MAX_FIX_ATTEMPTS
+    delete process.env.MARS_SIGNATURE_STORM_THRESHOLD
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -862,6 +863,60 @@ describe('queue-fix-tasks', () => {
     expect(Number((descendants.rows[0] as unknown as { n: number }).n)).toBe(
       0,
     )
+    cleanup()
+  })
+
+  it('trips the signature storm breaker for repeated recovery failures and replaces later per-origin escalations with one storm', async () => {
+    process.env.MARS_SIGNATURE_STORM_THRESHOLD = '3'
+    const { q, ft, rc } = await loadModules(repo)
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
+    }
+    const cleanup = registerTestRecipe(rc, 'recovery-seed')
+    const signature = 'setup:origin-worktree-missing/unclassified'
+    const errorOutput = 'origin worktree is missing before setup can run'
+
+    const failRecovery = async (index: number) => {
+      const origin = await q.enqueueTask(`origin ${index}`, undefined, { skipTriage: true })
+      const recovery = await ft.upsertFixTask({
+        sourceTaskId: origin.id,
+        failureSignature: 'recovery-seed',
+        failingStep: 'setup',
+        truncatedError: errorOutput,
+        branch: `task/${origin.id}`,
+        recipeContext: {
+          targetPath: '/tmp/mars-storm',
+          statusOutput: errorOutput,
+          targetBranch: `task/${origin.id}`,
+          originalPrompt: origin.prompt,
+        },
+      })
+      return ft.handleTaskFailureWithFixTask({
+        taskId: recovery.fixTaskId,
+        failingStep: 'setup:origin-worktree-missing',
+        errorOutput,
+      })
+    }
+
+    expect((await failRecovery(1)).outcome).toBe('escalated')
+    expect((await failRecovery(2)).outcome).toBe('escalated')
+
+    const tripping = await failRecovery(3)
+    expect(tripping.outcome).toBe('signature-storm-tripped')
+    expect(tripping.failureSignature).toBe(signature)
+    expect(tripping.stormStreak).toBe(3)
+
+    expect((await failRecovery(4)).outcome).toBe('escalated')
+
+    const openItems = await actionQueue.listActionQueueItems('open')
+    const stormItems = openItems.filter((item) => item.kind === 'signature-storm')
+    const recoveryEscalations = openItems.filter(
+      (item) =>
+        item.kind === 'failed' &&
+        (item.payload as { failureSignature?: string }).failureSignature === signature,
+    )
+    expect(stormItems).toHaveLength(1)
+    expect(recoveryEscalations).toHaveLength(2)
     cleanup()
   })
 

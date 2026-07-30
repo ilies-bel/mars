@@ -530,7 +530,10 @@ export const handleTaskFailureWithFixTask = async (
   }
 
   // Recovery (fix-task) failures escalate to actionQueue; never spawn another
-  // recovery. See ADR 0002 — this is the rule that broke the cascade.
+  // recovery. See ADR 0002. Recovery failures still participate in the
+  // signature-storm monitor: a run of identical recovery failures is exactly
+  // the systemic incident the breaker is meant to stop from flooding the
+  // action queue.
   if (task.fixForTaskId !== null) {
     // Guard: do not double-prepend if failureSignature somehow already carries
     // the prefix (defence-in-depth against any future path that re-enters here
@@ -545,6 +548,32 @@ export const handleTaskFailureWithFixTask = async (
       failureSignature,
       failureReasonCode: failureSignature,
     }, s)
+
+    try {
+      const { recordFailureSignature } = await import('./lib/signature-storm-monitor')
+      const stormResult = await recordFailureSignature(s, input.taskId, failureSignature)
+      if (stormResult.tripped && !stormResult.alreadyTripped) {
+        return {
+          outcome: 'signature-storm-tripped',
+          failureSignature,
+          retryCount: task.retryCount,
+          stormStreak: stormResult.streak,
+        }
+      }
+      if (stormResult.tripped) {
+        return {
+          outcome: 'escalated',
+          failureSignature,
+          retryCount: task.retryCount,
+        }
+      }
+    } catch (stormErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[signature-storm] recovery task ${input.taskId} streak tracking errored (non-fatal):`,
+        stormErr,
+      )
+    }
 
     const originId = task.originId
     const actionQueueSignature = `${originId}:${failureSignature}`
