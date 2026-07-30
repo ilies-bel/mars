@@ -100,9 +100,11 @@ describe('steward-runtime-tune', () => {
   // ── load gate on the bump lane ────────────────────────────────────────────
 
   it('refuses to bump when host load per core is at the ceiling', async () => {
-    // 8.0 load/core — a saturated host. Backlog is high but adding workers
-    // would make every in-flight run slower.
-    const { bus, implementSem, log, writeChatAck } = setup(12, 8)
+    // 3.0 load/core — above the bump ceiling (1.5) but deliberately below the
+    // shed trigger (4), so this exercises the bump gate alone. A value above 4
+    // would also trip the shed lane on the start-up sample and the assertion
+    // would no longer be about bumping.
+    const { bus, implementSem, log, writeChatAck } = setup(12, 3)
 
     bus.emit('kpi.backlog.degraded', { pending: 400, cap: 12, sustainedMs: 90_000 })
     await vi.waitFor(() => expect(log).toHaveBeenCalled())
@@ -126,9 +128,11 @@ describe('steward-runtime-tune', () => {
   it('sheds implement cap when load per core is sustained high', async () => {
     vi.useFakeTimers()
     const { implementSem, writeChatAck, log } = setup(12, 10)
-    expect(implementSem.limit).toBe(12)
 
-    await vi.advanceTimersByTimeAsync(15_000)
+    // The subscriber samples once immediately on start, so advancing by 0 is
+    // enough to observe exactly one shed. Advancing a full interval would
+    // take two samples and shed twice.
+    await vi.advanceTimersByTimeAsync(0)
 
     expect(implementSem.limit).toBe(8) // floor(12 * 0.67) = 8
     expect(log.mock.calls.flat().join(' ')).toMatch(/shed implement cap/)
@@ -171,11 +175,16 @@ describe('steward-runtime-tune', () => {
       readSwapPressure: vi.fn(async () => 0),
     })
 
+    // The immediate start-up sample already ran; what the disposer must stop
+    // is every *subsequent* one.
+    await vi.advanceTimersByTimeAsync(0)
+    const callsBeforeStop = readLoadPerCore.mock.calls.length
+    expect(callsBeforeStop).toBe(1)
+
     stop()
     await vi.advanceTimersByTimeAsync(15_000 * 3)
 
-    expect(readLoadPerCore).not.toHaveBeenCalled()
-    expect(implementSem.limit).toBe(12)
+    expect(readLoadPerCore.mock.calls.length).toBe(callsBeforeStop)
   })
 
   // ── swap pressure ─────────────────────────────────────────────────────────
@@ -189,7 +198,7 @@ describe('steward-runtime-tune', () => {
     vi.useFakeTimers()
     const { implementSem, writeChatAck, log } = setup(12, 0.2, { swap: 0.94 })
 
-    await vi.advanceTimersByTimeAsync(15_000)
+    await vi.advanceTimersByTimeAsync(0)
 
     expect(implementSem.limit).toBe(8) // floor(12 * 0.67)
     expect(log.mock.calls.flat().join(' ')).toMatch(/shed implement cap .*\(swap 94% >= 80%\)/)
@@ -199,7 +208,7 @@ describe('steward-runtime-tune', () => {
     vi.useFakeTimers()
     const { writeChatAck } = setup(12, 0.2, { swap: 0.94 })
 
-    await vi.advanceTimersByTimeAsync(15_000)
+    await vi.advanceTimersByTimeAsync(0)
 
     const text = writeChatAck.mock.calls[0]![0]
     expect(text).toMatch(/swap reached 94%/)
@@ -233,13 +242,28 @@ describe('steward-runtime-tune', () => {
   it('climbs back to baseline one worker at a time once pressure clears', async () => {
     vi.useFakeTimers()
     const { implementSem } = setup(1, 0.2, { swap: 0.1, baselineCap: 4 })
-    expect(implementSem.limit).toBe(1)
 
-    await vi.advanceTimersByTimeAsync(15_000)
+    await vi.advanceTimersByTimeAsync(0) // start-up sample
     expect(implementSem.limit).toBe(2)
 
     await vi.advanceTimersByTimeAsync(15_000)
     expect(implementSem.limit).toBe(3)
+
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(implementSem.limit).toBe(4)
+  })
+
+  it('samples immediately on start rather than waiting a full interval', async () => {
+    vi.useFakeTimers()
+    // Mirrors a daemon restart onto an already-thrashing host: the cap comes
+    // up at baseline and the dispatcher starts claiming slots at once, so the
+    // first sample must not be an interval away.
+    const { implementSem, log } = setup(3, 0.2, { swap: 0.97 })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(implementSem.limit).toBe(2)
+    expect(log.mock.calls.flat().join(' ')).toMatch(/shed implement cap 3 → 2 \(swap 97%/)
   })
 
   it('stops recovering exactly at baseline, never above it', async () => {

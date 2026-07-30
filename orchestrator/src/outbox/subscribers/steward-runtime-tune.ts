@@ -222,8 +222,8 @@ export function startStewardRuntimeTune(
     })()
   })
 
-  const sampleTimer = setInterval(() => {
-    void (async () => {
+  const sample = async (): Promise<void> => {
+    {
       const load = readLoadPerCore()
       const swap = await readSwapPressure()
       const oldCap = implementSem.limit
@@ -272,7 +272,21 @@ export function startStewardRuntimeTune(
       await ack(
         `I restored implement workers from ${oldCap} to ${newCap} because host pressure cleared.`,
       )
-    })()
+    }
+  }
+
+  // Sample once immediately rather than waiting a full interval. A daemon
+  // restart brings the cap up at `baselineCap` and the dispatcher starts
+  // claiming slots straight away, so deferring the first sample leaves a
+  // window where a host already under pressure admits a full complement of
+  // work (observed 2026-07-30: a restart onto a 97%-swap host dispatched 3
+  // implement jobs before the first shed). This narrows that window to the
+  // cost of one pressure read; it does not close it entirely, since the read
+  // is async and the dispatcher may still win the race.
+  void sample()
+
+  const sampleTimer = setInterval(() => {
+    void sample()
   }, SHED_CHECK_MS)
   // Do not hold the process open for a tuning timer.
   if (typeof sampleTimer.unref === 'function') sampleTimer.unref()
