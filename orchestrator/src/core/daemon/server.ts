@@ -65,6 +65,7 @@ import { resolveManualStep, awaitManualDone } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { createScoringPool, resolveScoringLimit } from './scoring-pool'
 import { exec, resolveGitBin } from '../lib/git/internal'
+import { warnWhenRepoRootDiffersFromIntegration } from '../lib/repo-root-branch-warning'
 import { classifyInstallRoute } from './install-route'
 import { isStaleDev } from './dev-staleness'
 import {
@@ -464,6 +465,12 @@ export const startDaemon = async (
       }).catch(() => {})
     }
   }
+
+  warnWhenRepoRootDiffersFromIntegration(
+    resolveContext().repoRoot,
+    integrationBranch,
+    log,
+  )
 
   // ── Exclusive advisory startup lock ─────────────────────────────────────
   // daemon.lock holds the PID of the daemon that last passed the startup

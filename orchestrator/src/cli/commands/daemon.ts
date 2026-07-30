@@ -22,6 +22,7 @@ import {
   isDaemonAlive,
   resolveLaunchCommand,
 } from '../../core/daemon/paths'
+import { warnWhenRepoRootDiffersFromIntegration } from '../../core/lib/repo-root-branch-warning'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, isDaemonDownError } from './shared'
 
@@ -252,6 +253,11 @@ const daemonStatus: Command = {
   summary: 'print daemon pid, counts, and in-flight tasks',
   usage: 'usage: mars daemon status',
   run: async (_args, deps) => {
+    warnWhenRepoRootDiffersFromIntegration(
+      deps.ctx.repoRoot,
+      process.env.INTEGRATION_BRANCH ?? 'main',
+      deps.out,
+    )
     const liveness = await isDaemonAlive()
     if (!liveness.alive) {
       deps.err(`daemon not running (${liveness.reason})`)
