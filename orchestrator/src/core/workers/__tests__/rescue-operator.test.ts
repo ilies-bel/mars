@@ -82,7 +82,7 @@ describe('RESCUE_OPERATOR_SYSTEM_PROMPT', () => {
 
   it('lists continue as a permitted action', () => {
     expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toMatch(/\bcontinue\b/i)
-    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toContain('mars step continue')
+    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toContain('mars continue')
   })
 
   it('lists supersede as a permitted action', () => {
