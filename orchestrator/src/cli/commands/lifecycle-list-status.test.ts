@@ -39,6 +39,10 @@ interface Call {
 /**
  * Build a fake store that records what `listTasksPaged` was called with and
  * returns a canned list of task rows whose status matches the filter.
+ *
+ * `countTasksByStatus` is stubbed to return an empty array; the existing tests
+ * never reach the unfiltered-truncated path (showing == total), so it is never
+ * invoked.
  */
 const makeStore = (): { store: DomainTaskStore; calls: Call[] } => {
   const calls: Call[] = []
@@ -54,9 +58,27 @@ const makeStore = (): { store: DomainTaskStore; calls: Call[] } => {
           : [{ id: `mars-${status}-1`, status, priority: 0, prompt: `a ${status} task` }]
       return { tasks, total: tasks.length }
     },
+    countTasksByStatus: async () => [],
   } as unknown as DomainTaskStore
 
   return { store, calls }
+}
+
+/**
+ * Build a fake store where the returned page is smaller than total, so the
+ * truncated-path footer fires.
+ */
+const makeTruncatedStore = (
+  statusFilter: TaskStatus | undefined,
+  breakdown: Array<{ status: TaskStatus; count: number }>,
+): DomainTaskStore => {
+  return {
+    listTasksPaged: async () => {
+      const task = { id: 'mars-trunc-1', status: statusFilter ?? 'done', priority: 0, prompt: 'task' }
+      return { tasks: [task], total: 100 }
+    },
+    countTasksByStatus: async () => breakdown,
+  } as unknown as DomainTaskStore
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -198,5 +220,95 @@ describe('usage string documents both forms', () => {
     expect(listEntry!.usage).toContain('--status')
     // Positional form: '<status>' should appear
     expect(listEntry!.usage).toContain('<status>')
+  })
+})
+
+describe('mars list footer — unfiltered truncated path', () => {
+  it('prints per-status breakdown and filter-first hint when showing < total and no status filter', async () => {
+    const breakdown: Array<{ status: TaskStatus; count: number }> = [
+      { status: 'failed', count: 50 },
+      { status: 'done', count: 30 },
+      { status: 'blocked', count: 20 },
+    ]
+    const store = makeTruncatedStore(undefined, breakdown)
+    const r = await runCommandInProcess(['list'], {
+      store,
+      ctx: fakeCtx,
+      daemon: fakeDaemon,
+    })
+
+    expect(r.code).toBe(0)
+    const out = r.out.join('\n')
+    // Breakdown line: statuses with counts ordered by count desc
+    expect(out).toContain('failed 50')
+    expect(out).toContain('done 30')
+    expect(out).toContain('blocked 20')
+    // Filter hint must name mars list --status <status>
+    expect(out).toContain('mars list --status <status>')
+    // --limit before --all
+    expect(out).toContain('--limit <n>')
+    expect(out).toContain('--all')
+    expect(out.indexOf('--limit <n>')).toBeLessThan(out.indexOf('--all'))
+  })
+
+  it('breakdown is ordered by count descending', async () => {
+    const breakdown: Array<{ status: TaskStatus; count: number }> = [
+      { status: 'done', count: 5 },
+      { status: 'failed', count: 80 },
+      { status: 'queued', count: 15 },
+    ]
+    const store = makeTruncatedStore(undefined, breakdown)
+    const r = await runCommandInProcess(['list'], {
+      store,
+      ctx: fakeCtx,
+      daemon: fakeDaemon,
+    })
+
+    const out = r.out.join('\n')
+    const failedIdx = out.indexOf('failed 80')
+    const queuedIdx = out.indexOf('queued 15')
+    const doneIdx = out.indexOf('done 5')
+    expect(failedIdx).toBeLessThan(queuedIdx)
+    expect(queuedIdx).toBeLessThan(doneIdx)
+  })
+})
+
+describe('mars list footer — filtered truncated path', () => {
+  it('prints single-line hint without breakdown when status filter is active', async () => {
+    const store = makeTruncatedStore('failed', [])
+    const r = await runCommandInProcess(['list', '--status', 'failed'], {
+      store,
+      ctx: fakeCtx,
+      daemon: fakeDaemon,
+    })
+
+    expect(r.code).toBe(0)
+    const out = r.out.join('\n')
+    // Should mention the status in the line
+    expect(out).toContain('failed tasks')
+    // --limit must come before --all
+    expect(out).toContain('--limit <n>')
+    expect(out).toContain('--all')
+    expect(out.indexOf('--limit <n>')).toBeLessThan(out.indexOf('--all'))
+    // Must NOT print the multi-line breakdown or filter-first hint
+    expect(out).not.toContain('mars list --status <status>')
+  })
+})
+
+describe('mars list footer — non-truncated path', () => {
+  it('prints N tasks total and no hint when showing == total', async () => {
+    const { store } = makeStore()
+    const r = await runCommandInProcess(['list'], {
+      store,
+      ctx: fakeCtx,
+      daemon: fakeDaemon,
+    })
+
+    expect(r.code).toBe(0)
+    const out = r.out.join('\n')
+    expect(out).toContain('tasks total')
+    // No truncation hint of any kind
+    expect(out).not.toContain('Showing')
+    expect(out).not.toContain('--all')
   })
 })

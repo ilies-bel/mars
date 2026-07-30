@@ -41,6 +41,7 @@ import {
   getTask as queueGetTask,
   listTasks as queueListTasks,
   listTasksPaged as queueListTasksPaged,
+  countTasksByStatus as queueCountTasksByStatus,
   updateTask as queueUpdateTask,
   setTaskPriority as queueSetTaskPriority,
   addPendingReviewBlockers as queueAddPendingReviewBlockers,
@@ -196,6 +197,7 @@ export interface DomainTaskStore {
     status?: TaskStatus,
     limit?: number,
   ): Promise<{ tasks: Task[]; total: number }>
+  countTasksByStatus(): Promise<Array<{ status: TaskStatus; count: number }>>
   enqueueTask(
     prompt: string,
     plan?: TaskPlan,
@@ -468,6 +470,7 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     getTask: (id) => queueGetTask(id),
     listTasks: (status) => queueListTasks(status),
     listTasksPaged: (status, limit) => queueListTasksPaged(status, limit),
+    countTasksByStatus: () => queueCountTasksByStatus(),
     // Arc.createOrigin is the origin write funnel; pass `store` so persistence
     // routes through this seam rather than the process-wide default.
     enqueueTask: (prompt, plan, opts) =>

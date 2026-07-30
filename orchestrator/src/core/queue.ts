@@ -1514,6 +1514,26 @@ export const listTasksPaged = async (
 }
 
 /**
+ * Return the count of tasks grouped by status, ordered by count descending.
+ * Zero-count statuses are omitted (only statuses with at least one task row
+ * are returned). Used by the `mars list` footer to give the user actionable
+ * filter hints without requiring N round-trips.
+ */
+export const countTasksByStatus = async (): Promise<
+  Array<{ status: TaskStatus; count: number }>
+> => {
+  await ensureQueueSchema()
+  const client = resolveQueueClient()
+  const r = await client.execute(
+    'SELECT status, COUNT(*) AS n FROM tasks GROUP BY status ORDER BY n DESC',
+  )
+  return r.rows.map((row) => {
+    const r0 = row as unknown as { status: string; n: number | bigint }
+    return { status: r0.status as TaskStatus, count: Number(r0.n) }
+  })
+}
+
+/**
  * Reprioritize a still-queued task. Thin wrapper over the Arc aggregate's
  * {@link Arc.reprioritize} write funnel (ADR-0052 sole-writer): the priority
  * `UPDATE tasks SET …` now lives in `core/arc.ts`, the only legitimate
