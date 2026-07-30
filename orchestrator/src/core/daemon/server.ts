@@ -132,6 +132,7 @@ import { startMergeWorker, enqueueMergeJobAndAwait, type MergeWorkerHandle } fro
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
 import { startHeartbeatWriter, type HeartbeatHandle } from './heartbeat-writer'
 import { loadSpendControl, upsertSpendControl } from './spend-control/store'
+import { recordClaudeEvent } from './usage-accumulator'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -1078,6 +1079,11 @@ export const startDaemon = async (
             // Best-effort: a failed heartbeat write is non-fatal — the
             // in-memory lastActivityMs is the authoritative liveness signal.
             void updateTask(task.id, {}).catch(() => {})
+          }
+          // Accumulate token usage for the spend meter so the usage-sampler
+          // can write meaningful snapshots to `usage_snapshots`.
+          if (evt.payload !== null && typeof evt.payload === 'object') {
+            recordClaudeEvent(evt.payload as import('../lib/claude-stream').ClaudeEvent)
           }
           return
         }

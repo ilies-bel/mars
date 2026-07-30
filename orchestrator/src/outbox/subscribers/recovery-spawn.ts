@@ -10,6 +10,7 @@ import { registerSubscriberName } from '../registry.js'
 import { raiseActionQueueItem } from '../../core/lib/action-queue.js'
 import { loadSpendControl } from '../../core/daemon/spend-control/store.js'
 import { decideDispatchControl } from '../../core/daemon/spend-control/decide.js'
+import { probeSpendWindow } from '../spend-control-inputs.js'
 
 /**
  * Durable outbox subscriber that enforces exactly-one recovery per task
@@ -124,9 +125,12 @@ export async function drainRecoverySpawner(
       // land the origin as failed, and raise a task-blocked action-queue item
       // so the operator knows budget pressure prevented self-heal. This
       // preserves the origin's single recovery slot for when pressure clears.
-      const levers = await loadSpendControl(client)
+      const [levers, spendWindow] = await Promise.all([
+        loadSpendControl(client),
+        probeSpendWindow(client, false),
+      ])
       const decision = decideDispatchControl({
-        spendWindow: { usedPct: 0, wasPaused: false },
+        spendWindow,
         breaker: { open: false, reason: null, openedAt: null },
         health: { recentRecoveryFailures: 0 },
         levers,

@@ -6,6 +6,8 @@
  */
 
 import { loadSpendControl } from '../core/daemon/spend-control/store.js';
+import { getLatestUsageSnapshot } from '../core/lib/usage-snapshot-store.js';
+import { readDaemonConfigFile } from '../core/daemon/config.js';
 import type { DbClient } from '../core/lib/db.js';
 import type {
   BreakerSnapshot,
@@ -42,6 +44,54 @@ export interface SpendControlDeps {
    * `gatedByApiBreaker`).
    */
   getBreakerSnapshot?: () => BreakerSnapshot | Promise<BreakerSnapshot>;
+}
+
+/**
+ * Probe the current spend window from the DB.
+ *
+ * Reads `budget.windowTokens` from daemon.json as the configured token-budget
+ * ceiling and the most recent row from `usage_snapshots` for the current
+ * cumulative token count. Returns zero-pressure (`usedPct: 0`) when:
+ *   - no `budget.windowTokens` is configured, or
+ *   - the `usage_snapshots` table has no rows yet.
+ *
+ * @param client      DB client to read `usage_snapshots` from.
+ * @param wasPaused   Whether the previous spend-control decision was to pause.
+ *                    Callers thread this through to implement hysteresis: the
+ *                    `decideDispatchControl` function uses it to hold the paused
+ *                    state until spend drops below the resume threshold.
+ * @param opts        Override `windowTokens` for testing without daemon.json.
+ */
+export async function probeSpendWindow(
+  client: DbClient,
+  wasPaused: boolean,
+  opts?: { windowTokens?: number },
+): Promise<SpendWindow> {
+  // Resolve the configured token-budget ceiling.
+  let windowTokens: number | null = opts?.windowTokens ?? null
+  if (windowTokens === null) {
+    const config = readDaemonConfigFile()
+    const budget = config['budget']
+    if (budget !== null && typeof budget === 'object' && !Array.isArray(budget)) {
+      const wt = (budget as Record<string, unknown>)['windowTokens']
+      if (typeof wt === 'number' && Number.isFinite(wt) && wt > 0) {
+        windowTokens = wt
+      }
+    }
+  }
+  if (windowTokens === null || windowTokens <= 0) {
+    return { usedPct: 0, wasPaused }
+  }
+
+  // Read cumulative token totals from the latest usage snapshot.
+  const snapshot = await getLatestUsageSnapshot(client)
+  if (snapshot === null) {
+    return { usedPct: 0, wasPaused }
+  }
+
+  const totalTokens = snapshot.inputTokens + snapshot.outputTokens
+  const usedPct = Math.min(100, (totalTokens / windowTokens) * 100)
+  return { usedPct, wasPaused }
 }
 
 /**

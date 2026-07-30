@@ -13,8 +13,8 @@
  */
 
 import type { DbClient } from '../lib/db.js'
-import { summarizeUsage } from '../lib/claude-usage.js'
 import { insertUsageSnapshot } from '../lib/usage-snapshot-store.js'
+import { getAccumulatedTotals } from './usage-accumulator.js'
 
 /**
  * Start the periodic usage sampler. Returns the interval handle for the
@@ -32,9 +32,10 @@ export function startUsageSampler(
 
   const sample = async (): Promise<void> => {
     try {
-      // Compute token totals from an empty event list. A future slice will wire
-      // in the actual running session events once the accumulator is available.
-      const totals = summarizeUsage([])
+      // Read cumulative token totals from the in-memory accumulator. The
+      // accumulator is fed by recordClaudeEvent() calls in the daemon's
+      // onEvent handler as coder sessions stream their assistant turns.
+      const totals = getAccumulatedTotals()
       await insertUsageSnapshot(
         {
           capturedAt: new Date().toISOString(),
@@ -46,7 +47,6 @@ export function startUsageSampler(
             outputTokens: totals.outputTokens,
             cacheCreateTokens: totals.cacheCreateTokens,
             cacheReadTokens: totals.cacheReadTokens,
-            messageCount: totals.messageCount,
           },
         },
         client,
