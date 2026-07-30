@@ -42,12 +42,24 @@ const execFileAsync = promisify(execFile)
  * cores while aggregate user CPU was only ~150% — the machine was paging,
  * not computing, and every verify suite was holding 1-2 GB of PGlite.
  *
- * Swap utilisation is the honest memory signal here. `os.freemem()` is not:
- * macOS reports most RAM as non-free even when healthy (measured 0.45 GB
- * "free" of 64 GB total on a host with 44 GB genuinely available), so a
- * threshold on it would shed continuously on an idle machine. A healthy host
- * barely touches swap, which makes a high swap fraction both specific and
- * hard to misread.
+ * The honest memory signal is the *rate* of paging — neither how much swap is
+ * occupied nor `os.freemem()`.
+ *
+ * `os.freemem()` is out because macOS reports most RAM as non-free even when
+ * healthy (measured 0.45 GB "free" of 64 GB total), so a threshold on it
+ * sheds continuously on an idle machine.
+ *
+ * Swap *occupancy* is out because it is a high-water mark, not a pressure
+ * reading: pages stay parked in swap until something touches them again.
+ * Measured 2026-07-30, twenty minutes after a thrash had ended — occupancy
+ * 91% with Swapins and Swapouts both completely static across a 5-second
+ * window. Gating on occupancy pins the cap at its floor on a machine that has
+ * fully recovered, which is the same one-way ratchet the recover lane exists
+ * to prevent.
+ *
+ * Swap *activity* — the delta in `vm_stat`'s Swapins + Swapouts counters
+ * between samples — drops to zero the moment thrashing stops. That is exactly
+ * the property both the shed and the recover lane need.
  *
  * Lowering a cap never kills in-flight work: `setSemLimit` only moves the
  * ceiling, so `acquire` simply stops handing out slots until `inUse` falls
@@ -69,12 +81,15 @@ export interface StewardRuntimeTuneDeps {
    */
   readLoadPerCore?: () => number
   /**
-   * Override for testing — defaults to the host's swap utilisation as a
-   * fraction in [0, 1]. Must be injected in tests: the default shells out to
-   * `sysctl` on Darwin and reads `/proc/meminfo` on Linux, neither of which
-   * belongs in a unit test.
+   * Override for testing — returns the host's *cumulative* count of pages
+   * swapped in plus out since boot. The subscriber differences consecutive
+   * samples to get a rate; a monotonic counter is all this needs to return.
+   *
+   * Must be injected in tests: the default shells out to `vm_stat` on Darwin
+   * and reads `/proc/vmstat` on Linux, neither of which belongs in a unit
+   * test. Return `null` when the figure cannot be determined.
    */
-  readSwapPressure?: () => Promise<number>
+  readPagingCounter?: () => Promise<number | null>
 }
 
 const BUMP_FACTOR = 1.33
@@ -100,15 +115,22 @@ const LOAD_SHED_TRIGGER = 4
  */
 const LOAD_RECOVER_CEILING = 2.5
 
-/** Refuse to add workers once swap utilisation reaches this fraction. */
-const SWAP_BUMP_CEILING = 0.5
+/**
+ * Pages swapped per second above which the host counts as actively paging.
+ * Darwin pages are 16 KiB on Apple Silicon, so 500 pages/s is roughly 8 MB/s
+ * of swap traffic — well clear of incidental activity, well below a thrash
+ * (the 2026-07-30 incident sustained orders of magnitude more), and it falls
+ * to a hard zero once thrashing stops.
+ */
+const PAGING_ACTIVE_PPS = 500
 
 /**
- * Shed workers once swap utilisation reaches this fraction. A host this deep
- * into swap is paging on every allocation; admitting another 1-2 GB verify
- * suite makes every in-flight run slower.
+ * Shed once paging reaches this rate. Deliberately the same threshold as
+ * {@link PAGING_ACTIVE_PPS}: unlike load, paging is not a matter of degree —
+ * a host either is or is not swapping, and any sustained swapping while
+ * running memory-heavy jobs is already the failure.
  */
-const SWAP_SHED_TRIGGER = 0.8
+const PAGING_SHED_TRIGGER = PAGING_ACTIVE_PPS
 
 /** How often the shed and recover lanes sample host pressure. */
 const SHED_CHECK_MS = 15_000
@@ -124,39 +146,33 @@ const defaultReadLoadPerCore = (): number => {
 }
 
 /**
- * Swap utilisation in [0, 1]. Returns 0 when the figure cannot be determined
- * (unknown platform, missing `sysctl`, no swap configured) so an unreadable
+ * Cumulative pages swapped in + out since boot, or `null` when the figure
+ * cannot be determined (unknown platform, missing `vm_stat`, no swap). A
+ * `null` is treated as "no pressure known" by the caller so an unreadable
  * signal never trips a shed on its own.
  */
-const defaultReadSwapPressure = async (): Promise<number> => {
+const defaultReadPagingCounter = async (): Promise<number | null> => {
   try {
     if (platform() === 'darwin') {
-      const { stdout } = await execFileAsync('sysctl', ['-n', 'vm.swapusage'], {
-        timeout: 5_000,
-      })
-      // "total = 20480.00M  used = 19331.88M  free = 1148.12M  (encrypted)"
-      const total = /total\s*=\s*([\d.]+)M/.exec(stdout)?.[1]
-      const used = /used\s*=\s*([\d.]+)M/.exec(stdout)?.[1]
-      if (total === undefined || used === undefined) return 0
-      const totalM = Number(total)
-      if (!Number.isFinite(totalM) || totalM <= 0) return 0
-      return Number(used) / totalM
+      const { stdout } = await execFileAsync('vm_stat', [], { timeout: 5_000 })
+      // "Swapins:    1358806." / "Swapouts:   2657790."
+      const ins = /Swapins:\s+(\d+)/.exec(stdout)?.[1]
+      const outs = /Swapouts:\s+(\d+)/.exec(stdout)?.[1]
+      if (ins === undefined || outs === undefined) return null
+      return Number(ins) + Number(outs)
     }
 
     if (platform() === 'linux') {
-      const meminfo = await readFile('/proc/meminfo', 'utf8')
-      const total = /SwapTotal:\s+(\d+) kB/.exec(meminfo)?.[1]
-      const free = /SwapFree:\s+(\d+) kB/.exec(meminfo)?.[1]
-      if (total === undefined || free === undefined) return 0
-      const totalKb = Number(total)
-      if (!Number.isFinite(totalKb) || totalKb <= 0) return 0
-      return (totalKb - Number(free)) / totalKb
+      const vmstat = await readFile('/proc/vmstat', 'utf8')
+      const ins = /^pswpin (\d+)$/m.exec(vmstat)?.[1]
+      const outs = /^pswpout (\d+)$/m.exec(vmstat)?.[1]
+      if (ins === undefined || outs === undefined) return null
+      return Number(ins) + Number(outs)
     }
   } catch {
-    // An unreadable signal must not be reported as pressure.
-    return 0
+    return null
   }
-  return 0
+  return null
 }
 
 async function defaultWriteChatAck(text: string): Promise<void> {
@@ -176,8 +192,38 @@ export function startStewardRuntimeTune(
   const { bus, implementSem, baselineCap, log } = deps
   const writeChatAck = deps.writeChatAck ?? defaultWriteChatAck
   const readLoadPerCore = deps.readLoadPerCore ?? defaultReadLoadPerCore
-  const readSwapPressure = deps.readSwapPressure ?? defaultReadSwapPressure
+  const readPagingCounter = deps.readPagingCounter ?? defaultReadPagingCounter
   const maxCap = baselineCap * 2
+
+  // Paging is a rate, so it takes two samples to observe. `prev` holds the
+  // last counter reading; `pagingPps` is the most recent computed rate, which
+  // the bump lane reads because it fires on bus events rather than on the
+  // sampling interval.
+  let prev: { counter: number; atMs: number } | null = null
+  let pagingPps = 0
+
+  /**
+   * Fold a fresh counter reading into {@link pagingPps}. The first reading
+   * only establishes a baseline — there is no rate until there are two
+   * points, and reporting 0 in the meantime is the safe direction (it cannot
+   * cause a spurious shed).
+   */
+  const samplePaging = async (): Promise<void> => {
+    const counter = await readPagingCounter()
+    const atMs = Date.now()
+    if (counter === null) {
+      pagingPps = 0
+      prev = null
+      return
+    }
+    if (prev !== null && atMs > prev.atMs) {
+      const deltaPages = counter - prev.counter
+      const deltaSec = (atMs - prev.atMs) / 1000
+      // A negative delta means the counter reset (reboot); treat as no data.
+      pagingPps = deltaPages >= 0 ? deltaPages / deltaSec : 0
+    }
+    prev = { counter, atMs }
+  }
 
   const ack = async (text: string): Promise<void> => {
     try {
@@ -197,12 +243,11 @@ export function startStewardRuntimeTune(
 
       // Backlog alone does not justify more workers — check the host first.
       const load = readLoadPerCore()
-      const swap = await readSwapPressure()
-      if (load >= LOAD_BUMP_CEILING || swap >= SWAP_BUMP_CEILING) {
+      if (load >= LOAD_BUMP_CEILING || pagingPps >= PAGING_ACTIVE_PPS) {
         const reason =
           load >= LOAD_BUMP_CEILING
             ? `load/core ${load.toFixed(2)} >= ${LOAD_BUMP_CEILING}`
-            : `swap ${(swap * 100).toFixed(0)}% >= ${SWAP_BUMP_CEILING * 100}%`
+            : `paging ${Math.round(pagingPps)} pages/s >= ${PAGING_ACTIVE_PPS}`
         log(
           `[steward-tune] backlog degraded (${payload.pending} pending) but ${reason}; ` +
             `holding implement cap at ${oldCap}`,
@@ -224,13 +269,13 @@ export function startStewardRuntimeTune(
 
   const sample = async (): Promise<void> => {
     {
+      await samplePaging()
       const load = readLoadPerCore()
-      const swap = await readSwapPressure()
       const oldCap = implementSem.limit
 
       // ── shed ──────────────────────────────────────────────────────────
       const shedOnLoad = load >= LOAD_SHED_TRIGGER
-      const shedOnSwap = swap >= SWAP_SHED_TRIGGER
+      const shedOnSwap = pagingPps >= PAGING_SHED_TRIGGER
       if (shedOnLoad || shedOnSwap) {
         if (oldCap <= MIN_CAP) return
 
@@ -239,14 +284,14 @@ export function startStewardRuntimeTune(
 
         setSemLimit(implementSem, newCap)
         const detail = shedOnSwap
-          ? `swap ${(swap * 100).toFixed(0)}% >= ${SWAP_SHED_TRIGGER * 100}%`
+          ? `paging ${Math.round(pagingPps)} pages/s >= ${PAGING_SHED_TRIGGER}`
           : `load/core ${load.toFixed(2)} >= ${LOAD_SHED_TRIGGER}`
         log(`[steward-tune] shed implement cap ${oldCap} → ${newCap} (${detail})`)
 
         // Name the resource that actually tripped, so the operator does not
         // go looking at CPU when the machine is out of memory.
         const because = shedOnSwap
-          ? `swap reached ${(swap * 100).toFixed(0)}%`
+          ? `the host was swapping at ${Math.round(pagingPps)} pages/s`
           : `host load reached ${load.toFixed(1)} per core`
         await ack(
           `I reduced implement workers from ${oldCap} to ${newCap} because ${because}.`,
@@ -258,7 +303,7 @@ export function startStewardRuntimeTune(
       // Only undo a previous shed; growth above baseline stays the bump
       // lane's job, gated on backlog.
       if (oldCap >= baselineCap) return
-      if (load >= LOAD_RECOVER_CEILING || swap >= SWAP_BUMP_CEILING) return
+      if (load >= LOAD_RECOVER_CEILING || pagingPps >= PAGING_ACTIVE_PPS) return
 
       const newCap = Math.min(baselineCap, oldCap + 1)
       if (newCap === oldCap) return
@@ -267,7 +312,7 @@ export function startStewardRuntimeTune(
       log(
         `[steward-tune] recovered implement cap ${oldCap} → ${newCap} ` +
           `(load/core ${load.toFixed(2)} < ${LOAD_RECOVER_CEILING}, ` +
-          `swap ${(swap * 100).toFixed(0)}% < ${SWAP_BUMP_CEILING * 100}%, baseline ${baselineCap})`,
+          `paging ${Math.round(pagingPps)} pages/s < ${PAGING_ACTIVE_PPS}, baseline ${baselineCap})`,
       )
       await ack(
         `I restored implement workers from ${oldCap} to ${newCap} because host pressure cleared.`,
