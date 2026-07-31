@@ -186,8 +186,9 @@ describe('GET /api/action-queue (persisted view)', () => {
     expect(row).toBeDefined()
     // Persisted id (UUID) is used as the row id, not kind:entityId
     expect(row?.id).toBe('test-row-1')
-    // Persisted 'failed' kind maps to UI 'failed-task'
-    expect(row?.kind).toBe('failed-task')
+    // The persisted kind reaches the UI verbatim — the view no longer collapses
+    // every failure condition into a single 'failed-task' bucket.
+    expect(row?.kind).toBe('failed')
     // entityId extracted from payload.taskId
     expect(row?.entityId).toBe('t-failed')
     expect(row?.priority).toBe('high')
@@ -242,7 +243,9 @@ describe('GET /api/action-queue (persisted view)', () => {
     const body = await fetchQueue()
     const row = body.find((r) => r.id === 'dk-row-1')
     expect(row).toBeDefined()
-    expect(row?.kind).toBe('failed-task')
+    // daemon-killed survives as the row kind: the operator must be able to tell
+    // a daemon kill apart from an ordinary verify failure at a glance.
+    expect(row?.kind).toBe('daemon-killed')
     expect(row?.entityId).toBe('t-killed')
     // daemon-killed is preserved as errorKind so the right action menu is shown
     expect(row?.errorKind).toBe('daemon-killed')
@@ -719,10 +722,14 @@ describe('actionQueueResponseSchema resilience', () => {
 // ---------------------------------------------------------------------------
 // Eligibility at the source/API boundary: kinds must survive intact so the UI
 // can group them correctly (alerts vs blocked tasks vs proposals).
-// A failed-task must NOT arrive as 'blocked'; a draft-proposal must NOT arrive
-// as 'failed-task'. These tests pin that contract at the data layer so a
-// regression in buildActionQueueView would be caught before it mislabels items
-// in the OpeningNextMoves widget.
+//
+// "Intact" means verbatim. buildActionQueueView deliberately no longer collapses
+// the persisted vocabulary into a smaller UI one — a 'failed' row stays 'failed'
+// and a 'daemon-killed' row stays 'daemon-killed', because the operator needs to
+// see which condition raised the row. A failed task must NOT arrive as 'blocked';
+// a draft-proposal must NOT be swallowed into the failure bucket. These tests pin
+// that contract at the data layer so a regression in buildActionQueueView would be
+// caught before it mislabels items in the OpeningNextMoves widget.
 // ---------------------------------------------------------------------------
 describe('action-queue API: kind fidelity at source/UI boundary', () => {
   let repo: string
@@ -752,9 +759,9 @@ describe('action-queue API: kind fidelity at source/UI boundary', () => {
     return (await res.json()) as ActionQueueItemBody[]
   }
 
-  it('a genuinely failed task arrives with kind="failed-task" (NOT kind="blocked")', async () => {
-    // A task that failed is an alert, not a blocked task.
-    // The UI groups them as "alerts" — only possible if kind is 'failed-task'.
+  it('a genuinely failed task arrives with kind="failed" (NOT kind="blocked")', async () => {
+    // A task that failed is an alert, not a blocked task. The persisted kind is
+    // relayed verbatim — 'failed' is the wire value, and grouping keys off it.
     const c = createClient({ url: `file:${dbPath(repo)}` })
     await insertActionQueueItem(c, {
       id: 'ft-kind-1',
@@ -767,7 +774,7 @@ describe('action-queue API: kind fidelity at source/UI boundary', () => {
 
     const body = await fetchQueue()
     const row = body.find((r) => r.id === 'ft-kind-1')
-    expect(row?.kind).toBe('failed-task')
+    expect(row?.kind).toBe('failed')
     // This is NOT a blocked task — the UI must not mislabel it
     expect(row?.kind).not.toBe('blocked')
   })
@@ -862,7 +869,7 @@ describe('action-queue API: kind fidelity at source/UI boundary', () => {
     const ah = body.find((r) => r.id === 'mix-ah')
 
     // Each arrives with its own distinct kind — the UI can group accurately
-    expect(ft?.kind).toBe('failed-task')
+    expect(ft?.kind).toBe('failed')
     expect(dp?.kind).toBe('draft-proposal')
     expect(ah?.kind).toBe('awaiting-human')
 
