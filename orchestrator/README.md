@@ -105,6 +105,10 @@ comments.
   binary path overrides.
 - `MARS_REFLECT_DISABLED=1` — skip per-task token/cost capture and
   short-circuit `mars reflect`. Scorers stay attached either way.
+- `MARS_DEV_AUTORESTART=0` — on a dev install, keep the daemon-code-drift
+  restart nudge instead of automatically restarting an idle daemon after local
+  daemon-code changes. Dependency manifest changes always require the operator
+  to install dependencies and restart manually.
 
 ## Daemon
 

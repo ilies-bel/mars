@@ -67,7 +67,11 @@ import { createScoringPool, resolveScoringLimit } from './scoring-pool'
 import { exec, resolveGitBin } from '../lib/git/internal'
 import { warnWhenRepoRootDiffersFromIntegration } from '../lib/repo-root-branch-warning'
 import { classifyInstallRoute } from './install-route'
-import { hasRelevantDevDrift } from './dev-staleness'
+import {
+  decideDevStalenessAction,
+  hasDevDependencyDrift,
+  hasRelevantDevDrift,
+} from './dev-staleness'
 import {
   getDefaultTaskStore,
   getDefaultDomainTaskStore,
@@ -897,12 +901,16 @@ export const startDaemon = async (
   // root once at startup so a periodic tick can detect commits that changed
   // loaded daemon code or workflows. Unrelated auto-commits must not mark the
   // in-memory daemon stale. Gate on dev install only; prod binaries are
-  // handled by self-update.ts. On any git error, leave sourceSha null so we
-  // never surface a spurious warning.
+  // handled by self-update.ts. A stable, idle local code drift automatically
+  // restarts by default; dependency drift and disabled auto-restart keep the
+  // operator-facing nudge. On any git error, leave sourceSha null so we never
+  // surface a spurious warning.
   const sourceDir = dirname(fileURLToPath(import.meta.url))
+  const installRoute = classifyInstallRoute()
+  const devAutoRestartEnabled = process.env.MARS_DEV_AUTORESTART !== '0'
   let sourceSha: string | null = null
   let sourceRepoDir: string | null = null
-  if (classifyInstallRoute() === 'dev') {
+  if (installRoute === 'dev') {
     try {
       const { stdout: root } = await exec(resolveGitBin(), ['rev-parse', '--show-toplevel'], {
         cwd: sourceDir,
@@ -4670,24 +4678,62 @@ export const startDaemon = async (
 
   // ── Dev-install staleness check ──────────────────────────────────────────
   // Periodically compares the git HEAD at startup against the current HEAD.
-  // When they differ, marks the daemon stale so `mars daemon status` renders
-  // a restart warning, and raises a level-triggered action-queue row so the
-  // operator is notified without having to poll status. Active only for dev
-  // installs (prod is handled by self-update.ts). On any git error the check
-  // is a no-op — we never flip isStale to false once it is true. .unref() so
-  // the interval never prevents a clean shutdown. Override interval via
-  // MARS_DEV_STALENESS_CHECK_MS. The startup reconciler (code-drift-clear-sweep)
-  // resolves any open drift row left by a prior daemon so the row correctly
-  // reflects only the CURRENT daemon's state.
+  // Relevant, stable local code drift automatically restarts an idle dev
+  // daemon by default. Busy daemons, dependency manifest drift, and
+  // MARS_DEV_AUTORESTART=0 retain the level-triggered restart nudge instead.
+  // Active only for dev installs (prod is handled by self-update.ts). On any
+  // git error the check is a no-op — we never flip isStale to false once it is
+  // true. .unref() so the interval never prevents a clean shutdown. Override
+  // cadence via MARS_DEV_STALENESS_CHECK_MS. The startup reconciler
+  // (code-drift-clear-sweep) resolves open drift rows after a restart.
   const DEV_STALENESS_CHECK_MS = Number(process.env.MARS_DEV_STALENESS_CHECK_MS ?? 60_000)
+  let lastDevDriftHead: string | null = null
+  let stableDevDriftChecks = 0
   const devStalenessCheck = setInterval(() => {
     void (async () => {
       try {
         const { stdout } = await exec(resolveGitBin(), ['rev-parse', 'HEAD'], { cwd: sourceDir })
         const head = stdout.trim() || null
-        if (await hasRelevantDevDrift(sourceSha, head, classifyInstallRoute(), sourceRepoDir)) {
-          currentSha = head
-          isStale = true
+        if (!(await hasRelevantDevDrift(sourceSha, head, installRoute, sourceRepoDir))) {
+          lastDevDriftHead = null
+          stableDevDriftChecks = 0
+          return
+        }
+
+        currentSha = head
+        isStale = true
+        stableDevDriftChecks = head === lastDevDriftHead ? stableDevDriftChecks + 1 : 1
+        lastDevDriftHead = head
+        const dependencyDrift = await hasDevDependencyDrift(sourceSha, head, sourceRepoDir)
+        const action = decideDevStalenessAction({
+          sourceSha,
+          currentSha: head,
+          installRoute,
+          inFlightCount: tracker.inFlightCount(),
+          dependencyDrift,
+          stabilityCount: stableDevDriftChecks,
+          autoRestartEnabled: devAutoRestartEnabled,
+        })
+
+        if (action === 'restart') {
+          const shortSrc = sourceSha?.slice(0, 7) ?? '?'
+          const shortHead = head?.slice(0, 7) ?? '?'
+          log(`[dev-autorestart] HEAD ${shortSrc} -> ${shortHead}, restarting daemon`)
+          // Mirror the restartDaemon RPC handler. The replacement startup
+          // reconciler clears any pre-existing daemon-code-drift row.
+          const { spawn } = await import('node:child_process')
+          const { resolveLaunchCommand } = await import('./paths')
+          const { command, baseArgs } = resolveLaunchCommand()
+          const child = spawn(command, [...baseArgs, 'daemon', 'start'], {
+            detached: true,
+            stdio: 'ignore',
+          })
+          child.unref()
+          setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
+          return
+        }
+
+        if (action === 'nudge') {
           // Raise a level-triggered action-queue row so operators see the drift
           // without having to poll `mars daemon status`. Idempotent: if a row
           // with signature 'daemon-code-drift' is already open, raiseActionQueueItem
@@ -4702,8 +4748,11 @@ export const startDaemon = async (
               priority: 'high',
               title: `Daemon running stale code — ${shortSrc} → ${shortHead}`,
               body:
-                `daemon running ${shortSrc}, main is at ${shortHead} — ` +
-                `run \`mars daemon restart\` to load current verify/dispatch code`,
+                dependencyDrift
+                  ? `daemon running ${shortSrc}, main is at ${shortHead}; dependencies changed — ` +
+                    `run your package install, then \`mars daemon restart\``
+                  : `daemon running ${shortSrc}, main is at ${shortHead} — ` +
+                    `run \`mars daemon restart\` to load current verify/dispatch code`,
               payload: { sourceSha, currentSha: head },
               context: {},
               raisedBy: 'daemon:dev-staleness-check',

@@ -3,7 +3,12 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { hasRelevantDevDrift, isStaleDev } from './dev-staleness'
+import {
+  decideDevStalenessAction,
+  hasDevDependencyDrift,
+  hasRelevantDevDrift,
+  isStaleDev,
+} from './dev-staleness'
 
 const commit = (repo: string, path: string, content: string): string => {
   const file = resolve(repo, path)
@@ -17,6 +22,108 @@ const commit = (repo: string, path: string, content: string): string => {
 }
 
 describe('dev-install staleness', () => {
+  it('restarts an idle dev daemon after relevant drift has been stable', () => {
+    expect(
+      decideDevStalenessAction({
+        sourceSha: 'abc1234',
+        currentSha: 'def5678',
+        installRoute: 'dev',
+        inFlightCount: 0,
+        dependencyDrift: false,
+        stabilityCount: 2,
+        autoRestartEnabled: true,
+      }),
+    ).toBe('restart')
+  })
+
+  it('nudges instead of restarting while a task is in flight', () => {
+    expect(
+      decideDevStalenessAction({
+        sourceSha: 'abc1234',
+        currentSha: 'def5678',
+        installRoute: 'dev',
+        inFlightCount: 1,
+        dependencyDrift: false,
+        stabilityCount: 2,
+        autoRestartEnabled: true,
+      }),
+    ).toBe('nudge')
+  })
+
+  it('nudges instead of restarting when dependencies changed', () => {
+    expect(
+      decideDevStalenessAction({
+        sourceSha: 'abc1234',
+        currentSha: 'def5678',
+        installRoute: 'dev',
+        inFlightCount: 0,
+        dependencyDrift: true,
+        stabilityCount: 2,
+        autoRestartEnabled: true,
+      }),
+    ).toBe('nudge')
+  })
+
+  it.each([
+    'package.json',
+    'pnpm-lock.yaml',
+    'orchestrator/package.json',
+    'orchestrator/package-lock.json',
+  ])('detects a %s change since daemon startup', async (changedPath) => {
+    const repo = mkdtempSync(resolve(tmpdir(), 'mars-dev-staleness-test-'))
+    try {
+      execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+      const sourceSha = commit(repo, 'scratch/initial.txt', 'initial\n')
+      const headSha = commit(repo, changedPath, 'changed\n')
+
+      await expect(hasDevDependencyDrift(sourceSha, headSha, repo)).resolves.toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('never auto-restarts a prod install', () => {
+    expect(
+      decideDevStalenessAction({
+        sourceSha: 'abc1234',
+        currentSha: 'def5678',
+        installRoute: 'prod',
+        inFlightCount: 0,
+        dependencyDrift: false,
+        stabilityCount: 2,
+        autoRestartEnabled: true,
+      }),
+    ).toBe('none')
+  })
+
+  it('keeps nudge-only behaviour when auto-restart is disabled', () => {
+    expect(
+      decideDevStalenessAction({
+        sourceSha: 'abc1234',
+        currentSha: 'def5678',
+        installRoute: 'dev',
+        inFlightCount: 0,
+        dependencyDrift: false,
+        stabilityCount: 2,
+        autoRestartEnabled: false,
+      }),
+    ).toBe('nudge')
+  })
+
+  it('waits for a second stable drift check before restarting', () => {
+    expect(
+      decideDevStalenessAction({
+        sourceSha: 'abc1234',
+        currentSha: 'def5678',
+        installRoute: 'dev',
+        inFlightCount: 0,
+        dependencyDrift: false,
+        stabilityCount: 1,
+        autoRestartEnabled: true,
+      }),
+    ).toBe('none')
+  })
+
   // ── same SHA ────────────────────────────────────────────────────────────────
 
   it('returns false when both SHAs are identical (no drift)', () => {
