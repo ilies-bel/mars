@@ -57,6 +57,15 @@ describe('detectMarsEnvOverrides', () => {
     expect(active.some((e) => e.key === 'MARS_CLAUDE_BIN')).toBe(true)
   })
 
+  it('describes MARS_CODEX_BIN as a Codex worker binary override', () => {
+    const { active } = detectMarsEnvOverrides({ MARS_CODEX_BIN: '/usr/local/bin/codex' })
+    expect(active).toContainEqual({
+      key: 'MARS_CODEX_BIN',
+      value: '/usr/local/bin/codex',
+      note: 'codex worker binary path override',
+    })
+  })
+
   it('classifies MARS_WORKER_MODEL as an active override', () => {
     const { active } = detectMarsEnvOverrides({ MARS_WORKER_MODEL: 'claude-opus-4-7' })
     expect(active.some((e) => e.key === 'MARS_WORKER_MODEL')).toBe(true)

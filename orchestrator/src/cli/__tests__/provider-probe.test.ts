@@ -297,6 +297,16 @@ describe('formatProviderProbe', () => {
     expect(line).toContain('subscription')
   })
 
+  it('identifies logged-in providers as worker CLI probes', () => {
+    for (const name of ['claude', 'gemini', 'codex'] as const) {
+      expect(
+        formatProviderProbe(
+          makeResult({ name, installed: true, authed: 'yes', authDetail: 'test' }),
+        ),
+      ).toContain(`${name} worker CLI`)
+    }
+  })
+
   it('shows cross and install hint for not-installed', () => {
     const line = formatProviderProbe(
       makeResult({
@@ -311,6 +321,14 @@ describe('formatProviderProbe', () => {
     expect(line).toContain('https://ai.google.dev')
   })
 
+  it('identifies unavailable providers as worker CLI probes', () => {
+    for (const name of ['claude', 'gemini', 'codex'] as const) {
+      expect(
+        formatProviderProbe(makeResult({ name, installed: false, authed: 'unknown' })),
+      ).toContain(`${name} worker CLI`)
+    }
+  })
+
   it('shows a distinct line for installed but auth unknown', () => {
     const line = formatProviderProbe(
       makeResult({ name: 'codex', installed: true, authed: 'unknown', authDetail: '' }),
@@ -318,6 +336,14 @@ describe('formatProviderProbe', () => {
     expect(line).toContain('codex')
     // Should NOT show the install hint (the binary is present)
     expect(line).not.toContain('install:')
+  })
+
+  it('identifies providers with unknown auth as worker CLI probes', () => {
+    for (const name of ['claude', 'gemini', 'codex'] as const) {
+      expect(
+        formatProviderProbe(makeResult({ name, installed: true, authed: 'unknown' })),
+      ).toContain(`${name} worker CLI`)
+    }
   })
 
   it('api-key auth detail appears in the output', () => {

@@ -1,10 +1,10 @@
 /**
  * Provider probe — pure, injectable utilities for detecting whether each
- * agent CLI (claude, gemini, codex) is installed and authenticated.
+ * worker-provider CLI (claude, gemini, codex) is installed and authenticated.
  *
  * Used by two call sites:
- *   - `mars init`: shows paperclip-style probe results during onboarding and
- *     lets the user pick a default provider.
+ *   - `mars init`: shows paperclip-style worker CLI probe results during
+ *     onboarding and lets the user pick a default worker provider.
  *   - `mars doctor`: reports per-provider auth status alongside the other
  *     preflight checks.
  *
@@ -41,10 +41,10 @@ export interface ProviderProbeDeps {
   homeDir: string
 }
 
-/** Result of probing a single agent CLI provider. */
+/** Result of probing a single worker-provider CLI. */
 export interface ProviderProbeResult {
   name: ProviderName
-  /** Binary was found on PATH (or via MARS_<PROVIDER>_BIN override). */
+  /** Worker binary was found on PATH (or via MARS_<PROVIDER>_BIN override). */
   installed: boolean
   /**
    * Auth detection result:
@@ -76,7 +76,7 @@ const INSTALL_HINTS: Record<ProviderName, string> = {
 // ---------------------------------------------------------------------------
 
 /**
- * Probe a single provider: check if its CLI binary is on PATH (or overridden
+ * Probe a single worker provider: check if its CLI binary is on PATH (or overridden
  * by MARS_<PROVIDER>_BIN) and cheaply detect auth state from known credential
  * files or environment variables.
  *
@@ -94,7 +94,7 @@ export const probeProvider = (
 ): ProviderProbeResult => {
   const installHint = INSTALL_HINTS[name]
 
-  // Per-provider binary override: MARS_CLAUDE_BIN, MARS_GEMINI_BIN, MARS_CODEX_BIN
+  // Per-worker-provider binary override: MARS_CLAUDE_BIN, MARS_GEMINI_BIN, MARS_CODEX_BIN
   const binEnvKey = `MARS_${name.toUpperCase()}_BIN`
   const binary = deps.env[binEnvKey] ?? name
 
@@ -121,7 +121,7 @@ export const probeProvider = (
       authDetail = 'oauth'
     }
   } else {
-    // codex
+    // Codex worker authentication uses `codex login status`.
     if (installed && deps.tryRun(binary, ['login', 'status']) === 0) {
       authed = 'yes'
       authDetail = 'cli-session'
@@ -133,18 +133,18 @@ export const probeProvider = (
 
 /**
  * Format a ProviderProbeResult as a paperclip-style single line:
- *   ✓ claude — logged in (subscription)
- *   ✗ gemini — not installed (install: https://…)
- *   ? codex  — installed (auth status unknown)
+ *   ✓ claude worker CLI — logged in (subscription)
+ *   ✗ gemini worker CLI — not installed (install: https://…)
+ *   ? codex worker CLI  — installed (auth status unknown)
  */
 export const formatProviderProbe = (result: ProviderProbeResult): string => {
   if (!result.installed) {
-    return `✗ ${result.name} — not installed (install: ${result.installHint})`
+    return `✗ ${result.name} worker CLI — not installed (install: ${result.installHint})`
   }
   if (result.authed === 'yes') {
-    return `✓ ${result.name} — logged in (${result.authDetail})`
+    return `✓ ${result.name} worker CLI — logged in (${result.authDetail})`
   }
-  return `? ${result.name} — installed (auth status unknown)`
+  return `? ${result.name} worker CLI — installed (auth status unknown)`
 }
 
 // ---------------------------------------------------------------------------

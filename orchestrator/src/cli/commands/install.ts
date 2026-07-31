@@ -36,9 +36,9 @@ export { probeProvider, formatProviderProbe, realProviderProbeDeps } from './pro
  */
 const KNOWN_MARS_OVERRIDE_NOTES: ReadonlyMap<string, string> = new Map([
   ['MARS_REPO', 'repo root override'],
-  ['MARS_CLAUDE_BIN', 'claude binary path override'],
-  ['MARS_GEMINI_BIN', 'gemini binary path override'],
-  ['MARS_CODEX_BIN', 'codex binary path override'],
+  ['MARS_CLAUDE_BIN', 'claude worker binary path override'],
+  ['MARS_GEMINI_BIN', 'gemini worker binary path override'],
+  ['MARS_CODEX_BIN', 'codex worker binary path override'],
   ['MARS_WORKER_MODEL', 'worker model override (coder only)'],
   ['MARS_WORKER_PROVIDER', 'worker provider override (all workers)'],
   ['MARS_REFLECT_DISABLED', 'disables reflection tracking'],
@@ -206,7 +206,7 @@ const init: Command = {
     // Print once so users know they do not need a separate API key.
     const authNote =
       provider === 'codex'
-        ? '✓ Using your existing Codex ChatGPT OAuth session — Mars does not handle credentials'
+        ? '✓ Codex workers invoke the Codex CLI; chat reads CODEX_HOME/auth.json directly'
         : provider === 'claude'
           ? formatClaudeAuthNote(true, Boolean(process.env.ANTHROPIC_API_KEY))
           : '✓ Using your existing Gemini CLI login — Mars does not handle credentials'
@@ -231,14 +231,14 @@ const init: Command = {
 
       // Show per-provider probe results so users see what's available and
       // can decide whether to re-run with --provider <name>.
-      deps.out('  Agent providers detected:')
+      deps.out('  Worker providers detected:')
       for (const name of ['claude', 'gemini', 'codex'] as const) {
         const probe = probeProvider(name, realProviderProbeDeps)
         deps.out(`    ${formatProviderProbe(probe)}`)
       }
-      deps.out(`  Default provider: ${provider}`)
+      deps.out(`  Default worker provider: ${provider}`)
       if (provider === 'codex') {
-        deps.out("  Auth: run 'codex login' once; MARS reuses the Codex CLI session.")
+        deps.out('  Auth: Codex workers invoke the Codex CLI; chat reads CODEX_HOME/auth.json directly.')
       }
       deps.out('')
       deps.out("  Tip: run 'mars init --wizard' for step-by-step configuration.")
