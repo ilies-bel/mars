@@ -308,7 +308,9 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
               typeof item.payload.taskId === 'string' ? item.payload.taskId : null,
             stepName:
               typeof item.payload.stepName === 'string' ? item.payload.stepName : null,
-            parkedAt: item.raisedAt,
+            // Action-queue storage uses epoch milliseconds; this HTTP facet
+            // deliberately continues to expose its documented ISO timestamp.
+            parkedAt: new Date(item.raisedAt).toISOString(),
             leaseOwner:
               typeof item.payload.leaseOwner === 'string'
                 ? item.payload.leaseOwner
@@ -1133,12 +1135,13 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           taskId,
           status: typeof pld.status === 'string' ? pld.status : 'unknown',
           ageHours: typeof pld.ageHours === 'number' ? pld.ageHours : 0,
-          updatedAt:
-            typeof r0.last_seen_at === 'string'
+          updatedAt: new Date(
+            typeof r0.last_seen_at === 'number'
               ? r0.last_seen_at
-              : typeof r0.raised_at === 'string'
+              : typeof r0.raised_at === 'number'
                 ? r0.raised_at
-                : new Date().toISOString(),
+                : Date.now(),
+          ).toISOString(),
           prompt: typeof pld.prompt === 'string' ? pld.prompt : '',
           error: typeof pld.error === 'string' ? pld.error : null,
           branch: typeof pld.branch === 'string' ? pld.branch : null,

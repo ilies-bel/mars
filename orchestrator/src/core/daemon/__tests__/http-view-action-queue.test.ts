@@ -457,8 +457,8 @@ describe('buildActionQueueView — daemon-killed-batch', () => {
   it('prepends a batch row when ≥2 daemon-killed rows are visible', async () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
-        makeDaemonKilledRow('row-1', 'task-1', '2024-01-02T00:00:00.000Z'),
-        makeDaemonKilledRow('row-2', 'task-2', '2024-01-01T00:00:00.000Z'),
+        makeDaemonKilledRow('row-1', 'task-1', Date.parse('2024-01-02T00:00:00.000Z')),
+        makeDaemonKilledRow('row-2', 'task-2', Date.parse('2024-01-01T00:00:00.000Z')),
       ]),
       taskStore: makeTaskStore([
         makeTask({ id: 'task-1', failureSignature: 'daemon-killed' }),

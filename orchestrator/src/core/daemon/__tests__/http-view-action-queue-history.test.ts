@@ -292,7 +292,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
       humanDetail: {},
       verbs: [],
       resolution: {
-        resolvedAt: Date.parse('2024-01-02T00:00:00.000Z'),
+        resolvedAt: '2024-01-02T00:00:00.000Z',
         resolution: 'superseded',
         resolutionNote: 'origin-done',
         rootCause: null,

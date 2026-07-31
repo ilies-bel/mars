@@ -43,8 +43,8 @@ export interface BudgetStatus {
     kind: 'budget-window' | 'budget-arc'
     signature: string | null
     title: string
-    raisedAt: string
-    lastSeenAt: string
+    raisedAt: number
+    lastSeenAt: number
     seenCount: number
   }>
 }
@@ -208,8 +208,8 @@ export const computeBudgetStatus = async (
       kind: 'budget-window' | 'budget-arc'
       signature: string | null
       title: string
-      raised_at: string
-      last_seen_at: string
+      raised_at: number
+      last_seen_at: number
       seen_count: number
     }
     return {
@@ -217,8 +217,8 @@ export const computeBudgetStatus = async (
       kind: value.kind,
       signature: value.signature,
       title: value.title,
-      raisedAt: value.raised_at,
-      lastSeenAt: value.last_seen_at,
+      raisedAt: Number(value.raised_at),
+      lastSeenAt: Number(value.last_seen_at),
       seenCount: Number(value.seen_count),
     }
   })
