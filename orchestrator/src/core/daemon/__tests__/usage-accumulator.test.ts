@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  ACCUMULATOR_STATE_KEY,
   getAccumulatedTotals,
   recordUsageEvent,
   resetAccumulatedTotals,
@@ -159,5 +160,79 @@ describe('usage-accumulator', () => {
       'none',
     )
     expect(getAccumulatedTotals()).toEqual(ZERO)
+  })
+})
+
+// ── the defect that made this table all-zero in production ──────────────────
+//
+// The writer (runWorkerWithSpan, reached from the CommonJS user-workflow graph)
+// and the reader (usage-sampler, reached from the daemon's ESM graph) do not
+// share a module instance. Module-scoped `let` counters therefore existed
+// twice: the workflow incremented one copy, the sampler read the other, and
+// `usage_snapshots` recorded 0/0 for every run while real Codex usage
+// (input_tokens: 933252 on one observed run) streamed past.
+//
+// These tests fail against module-scoped state and pass against the
+// globalThis-keyed state.
+describe('accumulator state survives a second module instantiation', () => {
+  afterEach(() => {
+    resetAccumulatedTotals()
+    vi.resetModules()
+  })
+
+  it('a freshly re-evaluated copy of the module sees tokens the first copy recorded', async () => {
+    resetAccumulatedTotals()
+    recordUsageEvent(
+      {
+        type: 'result',
+        is_error: false,
+        usage: { input_tokens: 31_864, cached_input_tokens: 25_088, output_tokens: 118 },
+      } as unknown as ClaudeEvent,
+      'cumulative',
+    )
+
+    // Force a second, independent evaluation of the module — the same thing
+    // that happens when one graph loads it as CJS and another as ESM.
+    vi.resetModules()
+    const secondInstance = await import('../usage-accumulator.js')
+
+    expect(secondInstance.getAccumulatedTotals()).toEqual({
+      inputTokens: 6_776,
+      outputTokens: 118,
+      cacheCreateTokens: 0,
+      cacheReadTokens: 25_088,
+    })
+  })
+
+  it('writes made through a second instance are visible to the first', async () => {
+    resetAccumulatedTotals()
+    vi.resetModules()
+    const secondInstance = await import('../usage-accumulator.js')
+
+    secondInstance.recordUsageEvent(
+      {
+        type: 'result',
+        is_error: false,
+        usage: { input_tokens: 1_000, cached_input_tokens: 0, output_tokens: 40 },
+      } as unknown as ClaudeEvent,
+      'cumulative',
+    )
+
+    // The sampler reads through the ORIGINAL instance.
+    expect(getAccumulatedTotals().inputTokens).toBe(1_000)
+    expect(getAccumulatedTotals().outputTokens).toBe(40)
+  })
+
+  it('keeps its counters on a process-global slot, not in module scope', () => {
+    resetAccumulatedTotals()
+    recordUsageEvent(
+      {
+        type: 'assistant',
+        message: { usage: { input_tokens: 7, output_tokens: 3 } },
+      } as unknown as ClaudeEvent,
+      'per-request',
+    )
+    const slot = (globalThis as Record<symbol, unknown>)[ACCUMULATOR_STATE_KEY]
+    expect(slot).toMatchObject({ inputTokens: 7, outputTokens: 3 })
   })
 })
