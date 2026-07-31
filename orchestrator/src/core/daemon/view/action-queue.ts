@@ -240,6 +240,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   ((row: PersistedActionQueueRow) => { title: string; body: string }) | null
 > = {
   failed: null,
+  'steward-repeat': null,
   'cancelled-blocker-cascade': null,
   'diagnose-inconclusive': null,
   'daemon-killed': null,

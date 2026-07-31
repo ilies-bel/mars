@@ -43,6 +43,9 @@ export type ActionQueueState = 'open' | 'resolved'
 
 export const ACTION_QUEUE_KINDS = [
   'failed',
+  // Steward has already attempted an intervention for this exact target
+  // version. Further automatic fixes are suppressed until an operator acts.
+  'steward-repeat',
   'cancelled-blocker-cascade',
   'diagnose-inconclusive',
   'daemon-killed',

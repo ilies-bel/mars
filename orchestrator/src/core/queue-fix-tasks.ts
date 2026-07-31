@@ -30,6 +30,7 @@ import { isEnvironmentalSignature } from './lib/failure-kinds'
 import { classifyFailure } from './lib/failure-class'
 import { maybeSpawnRescueOperator } from './rescue-operator-spawn'
 import { recordStewardIntervention } from './steward-ledger'
+import { raiseStewardRepeatActionQueueItem, shouldStewardFire } from './steward-guard'
 
 /**
  * Maximum number of times a task can be auto-restarted for an environmental
@@ -363,6 +364,7 @@ export interface HandleTaskFailureViaTaskResult {
     | 'non-code-retry-exhausted'
     | 'requeued'
     | 'signature-storm-tripped'
+    | 'steward-repeat'
   fixTaskId?: string
   failureSignature?: string
   retryCount?: number
@@ -1216,6 +1218,25 @@ export const handleTaskFailureWithFixTask = async (
       incomingOriginalPrompt && incomingOriginalPrompt.trim().length > 0
         ? incomingOriginalPrompt
         : task.prompt ?? '',
+  }
+
+  const stewardTarget = {
+    kind: 'task',
+    id: input.taskId,
+    version: failureSignature,
+  }
+  const stewardDecision = await shouldStewardFire(stewardTarget)
+  if (!stewardDecision.fire) {
+    const actionQueueItemId = await raiseStewardRepeatActionQueueItem(
+      stewardTarget,
+      stewardDecision.reason,
+    )
+    return {
+      outcome: 'steward-repeat',
+      failureSignature,
+      retryCount: task.retryCount,
+      actionQueueItemId,
+    }
   }
 
   const result = await upsertFixTask({

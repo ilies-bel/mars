@@ -25,6 +25,7 @@ import {
 } from './workers/rescue-operator'
 import { incrementRescueAttempts } from './daemon/kpi-store.js'
 import { recordStewardIntervention } from './steward-ledger'
+import { raiseStewardRepeatActionQueueItem, shouldStewardFire } from './steward-guard'
 
 export interface MaybeSpawnRescueOperatorInput {
   failedTask: Task
@@ -61,6 +62,16 @@ export const maybeSpawnRescueOperator = async (
   // id when the origin_id column is null). For a recovery Chore, originId is the
   // root origin task's id; for a root origin task, it is the task's own id.
   const originId = failedTask.originId
+  const stewardTarget = {
+    kind: 'arc',
+    id: originId,
+    version: failureSignature,
+  }
+  const stewardDecision = await shouldStewardFire(stewardTarget)
+  if (!stewardDecision.fire) {
+    await raiseStewardRepeatActionQueueItem(stewardTarget, stewardDecision.reason)
+    return { spawned: false }
+  }
 
   // At most one rescue-operator task per Arc. getArcRescueAttempts throws when
   // passed a fix/recovery task id — always pass the origin id resolved above.

@@ -112,6 +112,19 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
     ],
   },
 
+  'steward-repeat': {
+    humanSummary: (ctx) =>
+      `Steward already tried to repair ${str(ctx.payload['targetKind'])} ${str(ctx.payload['targetId'])} at this version — review it before trying again.`,
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      targetKind: str(ctx.payload['targetKind']),
+      targetId: str(ctx.payload['targetId']),
+      targetVersion: str(ctx.payload['targetVersion']),
+    }),
+    verbs: [{ op: 'investigate', label: 'Investigate', style: 'primary' }],
+  },
+
   'cancelled-blocker-cascade': {
     humanSummary: () =>
       'A blocker task was cancelled and Mars cancelled its dependents too — review which tasks were affected.',
