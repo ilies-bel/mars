@@ -20,6 +20,13 @@ import type {
  * - SIGTERM → SIGKILL on `timeoutMs`. On timeout, stderr in both the trace and
  *   the result is suffixed with `\n[runTool: killed after <ms>ms]` so the kill
  *   is unambiguous in post-mortems.
+ * - Every child is spawned `detached: true` so it LEADS ITS OWN PROCESS GROUP,
+ *   and every kill path signals `-pid` (the whole group) rather than the direct
+ *   child. Without this, `npm test` → `vitest` → forks survived the kill: the
+ *   direct child died, the grandchildren were reparented to init and kept
+ *   burning CPU for hours (see `orphan-reaper.ts` for the incident). The group
+ *   is also swept on normal completion, so a runner that backgrounded a helper
+ *   cannot leak it.
  *
  * Severity for the trace event is derived by `deriveSeverity` in
  * `trace-events-store.ts`: zero exit → info; non-zero with `expectsFailure:
@@ -101,7 +108,33 @@ export const runTool = async (
     cwd: input.cwd,
     env: { ...process.env, ...(input.env ?? {}) },
     stdio: ['ignore', 'pipe', 'pipe'],
+    // Lead a new process group so every kill path below can signal the whole
+    // subtree (`-pid`). NOT unref'd — the caller still awaits 'close' and
+    // streams the output.
+    detached: true,
   })
+
+  /**
+   * Signal the child's entire process group, falling back to the direct child
+   * when the group is unavailable (spawn failed before a pid was assigned, or
+   * the group is already empty).
+   */
+  const signalGroup = (signal: NodeJS.Signals): void => {
+    const pid = child.pid
+    if (typeof pid === 'number') {
+      try {
+        process.kill(-pid, signal)
+        return
+      } catch {
+        // Group already gone, or never created — fall through to the child.
+      }
+    }
+    try {
+      child.kill(signal)
+    } catch {
+      // process already gone
+    }
+  }
 
   let stdout = ''
   let stderr = ''
@@ -125,21 +158,19 @@ export const runTool = async (
     spawnError?: NodeJS.ErrnoException
   }>((resolveFn) => {
     let settled = false
-    // Escalate SIGTERM → SIGKILL after the grace window. Shared by the
-    // timeout and the abort-signal paths so both kill semantics are identical.
+    // Escalate SIGTERM → SIGKILL after the grace window, signalling the whole
+    // process group both times. Shared by the timeout and the abort-signal
+    // paths so both kill semantics are identical.
+    //
+    // The escalation timer is armed unconditionally and is NOT cleared by a
+    // SIGTERM the child chooses to ignore — only by `settle` (i.e. by the
+    // process actually closing). A child that swallows SIGTERM therefore
+    // always reaches SIGKILL instead of leaving the group alive.
     const killWithGrace = (): void => {
-      try {
-        child.kill('SIGTERM')
-      } catch {
-        // process already gone
-      }
+      signalGroup('SIGTERM')
       if (!sigkillHandle) {
         sigkillHandle = setTimeout(() => {
-          try {
-            child.kill('SIGKILL')
-          } catch {
-            // process already gone
-          }
+          signalGroup('SIGKILL')
         }, SIGKILL_GRACE_MS)
       }
     }
@@ -189,6 +220,40 @@ export const runTool = async (
   })
 
   const durationMs = performance.now() - start
+
+  // Completion sweep. The direct child has closed, but a runner that forked
+  // workers or backgrounded a helper can leave descendants alive in the group;
+  // those are exactly the processes that get reparented to init and burn CPU
+  // for hours. Probe the group and, if anything survived, SIGTERM it and
+  // escalate to SIGKILL after the grace window. Not awaited (the caller must
+  // not pay the grace on every invocation) and the timer is unref'd so it can
+  // never hold the daemon's event loop open.
+  const finishedPid = child.pid
+  if (typeof finishedPid === 'number' && exitInfo.spawnError === undefined) {
+    const groupAlive = (): boolean => {
+      try {
+        process.kill(-finishedPid, 0)
+        return true
+      } catch (err) {
+        return (err as NodeJS.ErrnoException).code === 'EPERM'
+      }
+    }
+    if (groupAlive()) {
+      try {
+        process.kill(-finishedPid, 'SIGTERM')
+      } catch {
+        // group drained between the probe and the signal
+      }
+      setTimeout(() => {
+        if (!groupAlive()) return
+        try {
+          process.kill(-finishedPid, 'SIGKILL')
+        } catch {
+          // group drained during the grace window
+        }
+      }, SIGKILL_GRACE_MS).unref()
+    }
+  }
 
   // Spawn-time failures (ENOENT / EACCES) throw cleanly so the caller learns
   // about a missing binary instead of silently writing a bogus trace.

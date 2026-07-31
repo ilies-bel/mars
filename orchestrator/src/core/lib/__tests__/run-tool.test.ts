@@ -208,6 +208,73 @@ describe('runTool — capture, severity, truncation, timeout', () => {
   })
 })
 
+/**
+ * The orphan-leak regression. These spawn REAL processes, but every one of
+ * them is a bounded `setTimeout` that self-terminates within seconds, so a
+ * failing assertion cannot leave anything behind for long.
+ */
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+const settle = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms))
+
+describe('runTool — process-group containment', () => {
+  it('kills GRANDCHILDREN on timeout, not just the direct child', async () => {
+    // The leak: `npm test` -> `vitest` -> forks. Killing only the direct child
+    // left the forks reparented to init, burning CPU for hours.
+    const script = [
+      "const { spawn } = require('node:child_process');",
+      "const c = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], { stdio: 'ignore' });",
+      'console.log(c.pid);',
+      'setTimeout(() => {}, 20000);',
+    ].join('')
+    const r = await runTool(
+      {
+        tool: process.execPath,
+        argv: ['-e', script],
+        cwd: process.cwd(),
+        timeoutMs: 400,
+      },
+      nullTraceStore,
+    )
+    const grandchild = Number(r.stdout.trim())
+    expect(Number.isInteger(grandchild)).toBe(true)
+    await settle(500)
+    expect(isAlive(grandchild)).toBe(false)
+  }, 20_000)
+
+  it('escalates to SIGKILL when the child ignores SIGTERM', async () => {
+    const script = [
+      "process.on('SIGTERM', () => {});",
+      'console.log(process.pid);',
+      'setTimeout(() => {}, 20000);',
+    ].join('')
+    const r = await runTool(
+      {
+        tool: process.execPath,
+        argv: ['-e', script],
+        cwd: process.cwd(),
+        // Grace before SIGKILL is 2 s, so the run resolves after ~2.4 s.
+        timeoutMs: 400,
+      },
+      nullTraceStore,
+    )
+    const child = Number(r.stdout.trim())
+    expect(Number.isInteger(child)).toBe(true)
+    // A SIGTERM-swallowing child must not survive the kill path.
+    expect(r.exitCode).toBe(137)
+    await settle(300)
+    expect(isAlive(child)).toBe(false)
+  }, 20_000)
+})
+
 describe('truncateForTrace', () => {
   it('passes short strings through unchanged', () => {
     expect(truncateForTrace('short')).toBe('short')

@@ -313,6 +313,61 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /worktree dirty before rebase/i,
   },
   {
+    // The provider CLI itself could not be executed: `spawn` failed with
+    // ENOENT/EACCES, or the shell reported exit 127 ("command not found").
+    // `runSubprocessStreaming` surfaces the spawn failure as
+    // `spawn <cmd> ENOENT: …` on stderr with exit code 127.
+    //
+    // Whatever produces it — an unresolvable binary, a malformed argv, a
+    // mid-session uninstall — the step dies in milliseconds having done no
+    // work, and without this rule every occurrence lands in the contentless
+    // `coder-exit-nonzero` / unclassified bucket. Naming the class is the
+    // point: "the command could not be executed" is a completely different
+    // diagnosis from "the coder ran and failed".
+    //
+    // `checkProviderBin` (workers/provider-bin.ts) refuses to start the daemon
+    // when the configured provider's binary cannot be resolved at boot; this
+    // rule covers everything that still reaches a spawn failure afterwards.
+    //
+    // Deliberately narrow — an explicit spawn-failure marker or an exit code
+    // of exactly 127 in the orchestrator's own wording. A bare "command not
+    // found" is NOT matched: coder stderr routinely quotes shell output from
+    // commands the agent itself ran, and misfiling those would be worse than
+    // leaving them unclassified.
+    errorClass: 'provider-binary-missing',
+    matchFull:
+      /\bspawn\s+\S+\s+(?:ENOENT|EACCES)\b|\bcoder exited 127\b|\bexited with (?:code )?127\b/i,
+  },
+  {
+    // The commit gate could not write into the repo's shared git metadata
+    // directory. The canonical shape is:
+    //
+    //   Git cannot create '.git/worktrees/<id>/index.lock': Operation not permitted
+    //
+    // This is NOT lock contention (see index-lock-contention below, which is
+    // "File exists"): the write itself is denied. It happens when the daemon
+    // was started from a shell whose sandbox permits writes to worktree files
+    // under `.mars/worktrees/<id>/` but denies writes to
+    // `<repo>/.git/worktrees/<id>/` — a different filesystem location. Every
+    // coder then edits files and runs tests fine and fails only at commit
+    // time. Observed 79 times in a single incident, all of it landing in the
+    // generic `code/unclassified` bucket, which poisoned that bucket and
+    // tripped the signature storm breaker.
+    //
+    // MUST be checked before index-lock-contention so an EPERM on index.lock
+    // is never mistaken for a transient stale-lock condition (the operator
+    // remedies are completely different: restart the daemon from a shell with
+    // write access vs. clear a stale lock and retry).
+    //
+    // Intentionally has NO recovery recipe: no amount of code editing fixes a
+    // sandbox denial. `checkGitMetadataWritable` (git-metadata-preflight.ts)
+    // now refuses to start the daemon in this state; this rule exists so any
+    // occurrence that slips past the pre-flight is diagnosable on sight.
+    errorClass: 'git-metadata-denied',
+    matchFull:
+      /(?:index\.lock|\.git\/worktrees\/)[^\n]*(?:Operation not permitted|EPERM|Permission denied)|(?:Operation not permitted|EPERM|Permission denied)[^\n]*(?:index\.lock|\.git\/worktrees\/)/i,
+  },
+  {
     // merge:crashed when git cannot acquire the index lock because another
     // git process is running (or crashed and left a stale .git/index.lock).
     // The distinguishing signal is on the second line of the error, not the
@@ -503,6 +558,12 @@ const causeSentencesBySignature: Readonly<Record<string, CauseRenderer>> = {
   // Environmental: Claude's API was unreachable — nothing wrong with the code.
   'code:coder-exit-nonzero/api-unreachable': (taskId) =>
     `the coder couldn't reach Claude's API — nothing was wrong with the code. Retry once connectivity is back: mars restart ${taskId}`,
+  // Operator-owned: the daemon could not execute the provider CLI at all.
+  'code:coder-exit-nonzero/provider-binary-missing': (taskId) =>
+    `the command the daemon spawned for the coder could not be executed (spawn failure / exit 127) — the step did no work. Check that the provider binary resolves in the daemon's environment (or pin MARS_<PROVIDER>_BIN to an absolute path), then mars restart ${taskId}`,
+  // Operator-owned: the daemon cannot write the repo's shared git metadata.
+  'code:coder-exit-nonzero/git-metadata-denied': (taskId) =>
+    `the daemon cannot write into <repo>/.git/worktrees — every coder will fail at the commit gate. Restart the daemon from a shell with write access to that directory, then mars restart ${taskId}`,
 }
 
 /**

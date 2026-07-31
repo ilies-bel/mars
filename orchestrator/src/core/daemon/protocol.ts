@@ -142,6 +142,20 @@ export interface DaemonStatusPayload {
   }>
   counts: { draft: number; queued: number; running: number; verifying: number; merging: number; 'vega-reconciling': number }
   /**
+   * The implement concurrency cap as configured on disk vs the cap the daemon
+   * is actually enforcing. The Steward autotuner mutates the live semaphore
+   * limit (it raises on sustained backlog, and holds when machine load is too
+   * high), so the two can disagree — previously with nothing reporting it, and
+   * an operator staring at `implement: 3` in `.mars/daemon.json` while the
+   * daemon ran at 1. `reason` explains the divergence and is `null` when the
+   * two agree.
+   */
+  implementCap: {
+    configured: number
+    effective: number
+    reason: string | null
+  }
+  /**
    * Git HEAD SHA captured when the daemon process started (dev install only).
    * Null when the install is prod or when git was unavailable at startup.
    */

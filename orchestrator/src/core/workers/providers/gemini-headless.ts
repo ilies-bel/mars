@@ -7,11 +7,7 @@
 import { runSubprocessStreaming, buildWorkerEnv, type RunClaudeResult } from '../../lib/git/claude'
 import type { ClaudeEvent } from '../../lib/claude-stream'
 import type { HeadlessAdapter, HeadlessRunOpts } from '../providers'
-
-// Resolve the gemini binary path. Reads MARS_GEMINI_BIN so operators can
-// configure a specific binary location; falls back to the bare name 'gemini'
-// and lets spawn surface ENOENT cleanly if it is not on PATH.
-export const resolveGeminiBin = (): string => process.env.MARS_GEMINI_BIN?.trim() || 'gemini'
+import { providerBinPath } from '../provider-bin'
 
 /**
  * Parse a single stdout line from the gemini CLI into a ClaudeEvent-shaped
@@ -61,8 +57,10 @@ export const geminiHeadless: HeadlessAdapter = {
       }
     }
 
+    // Resolved once per process (see provider-bin.ts) and reused, so a
+    // mid-session PATH change cannot silently break every subsequent run.
     const result = await runSubprocessStreaming(
-      resolveGeminiBin(),
+      providerBinPath('gemini'),
       ['-p', prompt, '--model', opts.model ?? 'gemini-2.5-pro'],
       opts.cwd,
       async ({ stream, line }) => {

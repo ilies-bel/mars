@@ -7,11 +7,7 @@
 import { runSubprocessStreaming, buildWorkerEnv, type RunClaudeResult } from '../../lib/git/claude'
 import type { ClaudeEvent } from '../../lib/claude-stream'
 import type { HeadlessAdapter, HeadlessRunOpts } from '../providers'
-
-// Resolve the codex binary path. Reuses MARS_CODEX_BIN (the same env var
-// consumed by the chat-runner's codex-api path) so operators configure one
-// binary location for both call sites.
-const resolveCodexBin = (): string => process.env.MARS_CODEX_BIN?.trim() || 'codex'
+import { providerBinPath } from '../provider-bin'
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -110,8 +106,10 @@ export const codexHeadless: HeadlessAdapter = {
       }
     }
 
+    // Resolved once per process (see provider-bin.ts) and reused, so a
+    // mid-session PATH change cannot silently break every subsequent run.
     const result = await runSubprocessStreaming(
-      resolveCodexBin(),
+      providerBinPath('codex'),
       [
         'exec',
         '--ephemeral',

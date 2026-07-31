@@ -278,6 +278,7 @@ const daemonStatus: Command = {
       startedAt: string
       inFlight: ReadonlyArray<{ taskId: string; kind: string }>
       counts: Record<string, number>
+      implementCap: { configured: number; effective: number; reason: string | null }
       sourceSha: string | null
       currentSha: string | null
       isStale: boolean
@@ -291,6 +292,16 @@ const daemonStatus: Command = {
     deps.out(
       `counts:     draft=${data.counts.draft} queued=${data.counts.queued} running=${data.counts.running} verifying=${data.counts.verifying} merging=${data.counts.merging} vega-reconciling=${data.counts['vega-reconciling']}`,
     )
+    // Effective vs configured implement cap. The autotuner silently overrides
+    // the configured value, so always print the effective one and explain any
+    // divergence rather than letting the operator trust .mars/daemon.json.
+    const cap = data.implementCap
+    deps.out(
+      `implement:  cap=${cap.effective} (configured ${cap.configured})${
+        cap.effective === cap.configured ? '' : ' ⚠'
+      }`,
+    )
+    if (cap.reason !== null) deps.out(`            ${cap.reason}`)
     deps.out(`inFlight:   ${data.inFlight.length}`)
     for (const f of data.inFlight) deps.out(`  ${f.kind} ${f.taskId}`)
     if (data.isStale && data.sourceSha !== null && data.currentSha !== null) {

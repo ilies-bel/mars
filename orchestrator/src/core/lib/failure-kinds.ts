@@ -326,6 +326,48 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         ],
       },
 
+      {
+        // The command spawned for the coder could not be executed at all —
+        // spawn ENOENT/EACCES, or exit 127. Environmental, not a code defect:
+        // the step did no work, so a recovery fixer has nothing to fix.
+        signature: 'code:coder-exit-nonzero/provider-binary-missing',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: "The daemon could not run the coding assistant's CLI",
+        verboseReason:
+          "The code step died in milliseconds because the command spawned for the coder could not be executed (spawn failure, or exit code 127 — command not found). Nothing about the task's code is at fault. Check that the worker provider's binary resolves in the daemon's own environment — `which` in an interactive shell proves nothing about it — or pin the provider's MARS_*_BIN override to an absolute path.",
+        actions: [
+          {
+            id: 'restart-daemon',
+            label: 'Restart daemon',
+            op: 'restart-daemon',
+            needsConfirm: true,
+          },
+          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      },
+      {
+        // The commit gate was denied a write into <repo>/.git/worktrees/<id>/.
+        // Environmental and operator-owned: no code change can fix a sandbox
+        // denial, and a recovery fixer would fail for exactly the same reason,
+        // so there is no recipe and the menu offers no "fix it" option.
+        signature: 'code:coder-exit-nonzero/git-metadata-denied',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: "The daemon cannot write the repository's git metadata",
+        verboseReason:
+          "The coder edited files and ran tests successfully but could not commit: writing into <repo>/.git/worktrees/<id>/ was denied (index.lock, Operation not permitted). The daemon was started from a shell that lacks write access to the repository's shared git directory — a different location from the task worktree. Restart the daemon from a shell with write access to that directory; until then every task will fail the same way.",
+        actions: [
+          {
+            id: 'restart-daemon',
+            label: 'Restart daemon',
+            op: 'restart-daemon',
+            needsConfirm: true,
+          },
+          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      },
+
       // ── code:no-edits-made ───────────────────────────────────────────────
       {
         signature: 'code:no-edits-made/unclassified',

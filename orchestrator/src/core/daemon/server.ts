@@ -686,6 +686,78 @@ export const startDaemon = async (
     process.exit(1)
   }
 
+  // Git-metadata writability pre-flight.
+  //
+  // A daemon started from a sandboxed shell can have write access to the
+  // worktree files under `.mars/worktrees/<id>/` while being DENIED write
+  // access to the shared `<repo>/.git/worktrees/<id>/` metadata directory —
+  // a different filesystem location entirely. Coders then edit files and run
+  // tests happily and fail only at the commit gate with
+  // `Git cannot create '.git/worktrees/<id>/index.lock': Operation not
+  // permitted`. That burned 79 full-context runs for zero output before it
+  // was diagnosed. Probe it once, here, and refuse to start rather than
+  // discover it 79 times.
+  {
+    const { checkGitMetadataWritable } = await import('../lib/git-metadata-preflight')
+    const probe = checkGitMetadataWritable(resolveContext().repoRoot)
+    if (!probe.writable) {
+      log(probe.message)
+      process.exit(1)
+    }
+  }
+
+  // Worker-provider binary pre-flight (defensive hardening).
+  //
+  // Each headless adapter used to resolve its binary from PATH at spawn time
+  // with no verification at all. If the daemon's environment cannot resolve it,
+  // every coder run dies instantly with exit 127 and lands in the contentless
+  // `coder-exit-nonzero` bucket — while `which codex` in the operator's own
+  // shell keeps saying everything is fine. The check therefore has to happen
+  // here, in the daemon's own process, and it has to print the PATH the DAEMON
+  // inherited.
+  //
+  // This is a guard against a failure mode, not a fix for an observed one: the
+  // exit-127 incidents seen in production traced to the retry-after-watchdog-
+  // kill dispatch path, which is handled separately.
+  //
+  // Resolving here also warms the resolve-once cache in provider-bin.ts, so
+  // every later spawn reuses this absolute path instead of re-reading PATH.
+  {
+    const { checkProviderBin } = await import('../workers/provider-bin')
+    const { CODER_PROVIDER } = await import('../workers/index')
+    // MARS_WORKER_PROVIDER (already folded into CODER_PROVIDER) wins over the
+    // persisted defaultProvider.
+    const effectiveProvider =
+      process.env.MARS_WORKER_PROVIDER !== undefined
+        ? CODER_PROVIDER
+        : loadDaemonConfig().defaultProvider
+    const probe = checkProviderBin(effectiveProvider)
+    if (!probe.ok) {
+      log(probe.message)
+      process.exit(1)
+    }
+    log(probe.message)
+  }
+
+  // Boot-time orphan sweep. A previous daemon that was killed (or restarted)
+  // leaves its verify/test subprocesses reparented to init, where they burn
+  // CPU forever and — via the autotuner's load guard — pin the implement cap.
+  // Sweep before accepting any work so a restart is a genuine clean slate.
+  try {
+    const { sweepOrphans, formatSweepSummary } = await import('../lib/orphan-reaper')
+    const summary = await sweepOrphans({
+      repoRoot: resolveContext().repoRoot,
+      // Nothing is in flight yet at boot: every match is leaked by definition.
+      inFlightTaskIds: new Set<string>(),
+      log,
+    })
+    if (summary.reaped > 0) {
+      log(`[orphan-reaper] startup sweep: ${formatSweepSummary(summary)}`)
+    }
+  } catch (err) {
+    log(`[orphan-reaper] startup sweep failed (non-fatal): ${(err as Error).message}`)
+  }
+
   // Auto-register this repo in the global project registry so a fresh
   // single-repo setup is never stranded with an empty ~/.mars/projects.json.
   // Idempotent: no-op when the repo is already registered.
@@ -888,6 +960,17 @@ export const startDaemon = async (
       '[pause] restored persisted paused state from daemon.json — dispatch suspended. Run `mars daemon resume` to re-enable dispatch.',
     )
   }
+
+  // Why the EFFECTIVE implement cap differs from the configured one, in one
+  // operator-facing line. Written by the Steward autotuner on every cap
+  // decision (raise or hold) and surfaced by `mars daemon status`, so nobody
+  // has to reconcile `implement: 3` in .mars/daemon.json against a daemon
+  // that is actually running at 1.
+  let implementCapReason: string | null = null
+
+  /** Live set of in-flight task ids — used to protect their subprocesses. */
+  const liveInFlightTaskIds = (): ReadonlySet<string> =>
+    new Set(tracker.inFlightSnapshot().map((e) => e.taskId))
 
   // Drain single-flight gate. While `drainRunning` is true, a second call
   // sets `drainAgain` and returns; the running drain re-runs once it finishes.
@@ -2952,11 +3035,34 @@ export const startDaemon = async (
       merging: (await listTasks('merging')).length,
       'vega-reconciling': (await listTasks('vega-reconciling')).length,
     }
+    // Effective vs configured implement cap. `configured` is re-read from
+    // .mars/daemon.json at call time — the operator's complaint was seeing
+    // `implement: 3` in the file while the daemon ran at 1 with nothing
+    // reporting the discrepancy.
+    let configuredImplement = initialCaps.implement
+    try {
+      configuredImplement = loadDaemonConfig().caps.implement
+    } catch {
+      // Unreadable/edited config — fall back to the boot-time value.
+    }
+    const effectiveImplement = sems.implement.limit
+    const implementCap = {
+      configured: configuredImplement,
+      effective: effectiveImplement,
+      reason:
+        effectiveImplement === configuredImplement
+          ? null
+          : (implementCapReason ??
+            (effectiveImplement < configuredImplement
+              ? 'daemon started before the current .mars/daemon.json; run `mars daemon reload`'
+              : 'raised above the configured cap at runtime')),
+    }
     return {
       pid: process.pid,
       startedAt,
       inFlight: tracker.inFlightSnapshot(),
       counts,
+      implementCap,
       sourceSha,
       currentSha,
       isStale,
@@ -4505,6 +4611,33 @@ export const startDaemon = async (
   }, THREAD_PURGE_SWEEP_MS)
   threadPurgeSweep.unref()
 
+  // ── Orphan-subprocess sweep ──────────────────────────────────────────────
+  // Verify/test runners that outlive their task (abort, timeout, or a daemon
+  // that died before it could kill the group) get reparented to init and burn
+  // CPU indefinitely. The Steward reaps them on its own schedule here, in
+  // addition to the boot sweep and the sweep on the autotuner's hold path.
+  // .unref() so the interval never prevents a clean shutdown.
+  const ORPHAN_SWEEP_MS = Number(process.env.MARS_ORPHAN_SWEEP_MS ?? 5 * 60_000)
+  const { sweepOrphans: sweepOrphanProcesses, formatSweepSummary: formatOrphanSweep } =
+    await import('../lib/orphan-reaper')
+  const orphanSweep = setInterval(() => {
+    void (async () => {
+      try {
+        const summary = await sweepOrphanProcesses({
+          repoRoot: resolveContext().repoRoot,
+          inFlightTaskIds: liveInFlightTaskIds(),
+          log,
+        })
+        if (summary.reaped > 0) {
+          log(`[orphan-reaper] periodic sweep: ${formatOrphanSweep(summary)}`)
+        }
+      } catch (err) {
+        log(`[orphan-reaper] periodic sweep errored: ${(err as Error).message}`)
+      }
+    })()
+  }, ORPHAN_SWEEP_MS)
+  orphanSweep.unref()
+
   // ── Steward runtime-knob tuning ──────────────────────────────────────────
   // When the implement queue is backlogged (pending > cap × 0.75) for a
   // sustained window (default 60 s), emit kpi.backlog.degraded so the
@@ -4519,6 +4652,11 @@ export const startDaemon = async (
     implementSem: sems.implement,
     baselineCap: initialCaps.implement,
     log,
+    repoRoot: resolveContext().repoRoot,
+    getInFlightTaskIds: liveInFlightTaskIds,
+    recordCapDecision: (reason) => {
+      implementCapReason = reason
+    },
   })
   // Prompt health follows the same daemon event bus as the other autonomous
   // Steward capabilities. Its own autonomy lever decides whether a degraded
@@ -5030,6 +5168,7 @@ export const startDaemon = async (
     clearInterval(staleSweep)
     clearInterval(staleMergingSweep)
     clearInterval(observabilityWatchdog)
+    clearInterval(orphanSweep)
     clearInterval(dbBusyWatchdog)
     clearInterval(phantomWatchdog)
     clearInterval(observabilitySweep)

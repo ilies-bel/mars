@@ -55,7 +55,14 @@ export function classifyFailure(failureSignature: string): FailureCategory {
 
   if (
     failureSignature.startsWith('phantom-task watchdog:') ||
-    failureSignature.endsWith('/install-timeout')
+    failureSignature.endsWith('/install-timeout') ||
+    // The daemon cannot write <repo>/.git/worktrees/<id>/ — a sandbox or
+    // permission condition on the host. A recovery fixer would fail at the
+    // very same commit gate, so this must never be classified as 'code'.
+    failureSignature.endsWith('/git-metadata-denied') ||
+    // The provider CLI could not be executed (spawn ENOENT / exit 127) — the
+    // daemon's PATH, not the task's code. A fixer would never even start.
+    failureSignature.endsWith('/provider-binary-missing')
   ) {
     return 'infra'
   }

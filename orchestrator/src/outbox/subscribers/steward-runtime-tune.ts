@@ -1,11 +1,21 @@
 import type { EventEmitter } from 'node:events'
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { cpus, loadavg, platform } from 'node:os'
+import { platform } from 'node:os'
 import { promisify } from 'node:util'
 import type { Semaphore } from '../../core/daemon/server.js'
 import { setSemLimit } from '../../core/daemon/server.js'
 import { createThread, appendMessage } from '../../core/lib/chat-store.js'
+import {
+  sweepOrphans,
+  formatSweepSummary,
+  type OrphanSweepSummary,
+} from '../../core/lib/orphan-reaper.js'
+import {
+  formatPressure,
+  samplePressure,
+  type MachinePressure,
+} from '../../core/lib/machine-pressure.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -16,31 +26,71 @@ const execFileAsync = promisify(execFile)
  * ADR-0077):
  *
  *  - **bump** — a sustained implement-queue backlog raises the implement
- *    semaphore cap, bounded at 2× baseline. Gated on both host signals.
- *  - **shed** — host pressure *lowers* the cap, bounded at {@link MIN_CAP}.
- *  - **recover** — once pressure clears, the cap climbs back to
- *    `baselineCap` one worker at a time.
+ *    semaphore cap, bounded at 2× baseline. Gated on CPU capacity and on
+ *    paging.
+ *  - **shed** — sustained paging *lowers* the cap, bounded at {@link MIN_CAP}.
+ *  - **recover** — once paging clears, the cap climbs back to `baselineCap`
+ *    one worker at a time.
  *
  * The shed lane exists because backlog on its own is a misleading signal.
  * Tasks that fail fast (an API outage, a saturated host) drain the queue
  * slower than it fills, so the backlog grows — and reading that as "add more
- * workers" raises load, slows every in-flight run further, and grows the
- * backlog again. That positive feedback loop is what the gates on the bump
+ * workers" raises pressure, slows every in-flight run further, and grows the
+ * backlog again. That positive feedback loop is what the gate on the bump
  * lane and the shed lane together break.
  *
  * The recover lane exists because shed-without-recover is a one-way ratchet.
  * A single transient spike would otherwise pin the cap at its floor forever
- * on any host whose idle load never drops below the bump ceiling (observed
- * 2026-07-30: cap rode 4 → 1 and could not climb back).
+ * (observed 2026-07-30: cap rode 4 → 1 and could not climb back).
  *
- * ## Why two host signals
+ * ## The CPU guard, and why load average is not part of it
  *
- * Load average alone conflates two conditions with different correct
- * responses. On Darwin and Linux it counts processes in uninterruptible
- * sleep, so a host thrashing on swap reports the same number as a host that
- * is genuinely CPU-saturated. Observed 2026-07-30: load average 140 on 10
- * cores while aggregate user CPU was only ~150% — the machine was paging,
- * not computing, and every verify suite was holding 1-2 GB of PGlite.
+ * Raising the cap on a machine that is genuinely out of CPU only makes things
+ * worse, so the tuner holds when capacity is exhausted. The signal it uses to
+ * decide that matters enormously.
+ *
+ * The original guard compared raw `loadavg()[0] / cores` against 1.5. On a
+ * profiled machine whose cap had been pinned at 1, that number peaked around
+ * 275 on 10 cores while the CPU was 48.8 % user / 32.5 % sys / **19.1 % idle**
+ * — there was capacity to spare. The load was dominated by a corporate
+ * endpoint-security agent (155 % CPU), `fseventsd` (51 %) and Spotlight
+ * indexing ~40 worktrees of `node_modules`; Mars's own processes were a
+ * minority. Against an always-on security scanner a 1.5-per-core ceiling is
+ * never satisfiable, so the cap stayed pinned forever — and reaping orphans
+ * could not fix it, because most of the load was never Mars's to begin with.
+ *
+ * Load average is therefore consulted nowhere in this file. The CPU guard
+ * throttles on two direct measurements instead
+ * (see `core/lib/machine-pressure.ts`):
+ *
+ *   - **idle CPU %** — a safety floor. Below {@link IDLE_FLOOR_PERCENT} the
+ *     machine really is out of capacity and we hold no matter whose load it is.
+ *   - **Mars's own CPU share** — above {@link MARS_SHARE_CEILING_PERCENT} of
+ *     the box, Mars is saturating it itself and more workers will not help.
+ *
+ * Other software's CPU is reported but never, on its own, a reason to throttle.
+ *
+ * Before holding, the tuner sweeps for orphaned verify subprocesses (leaked
+ * test runners reparented to init). If the sweep reaps anything it re-samples
+ * and re-decides on the fresh numbers — the reaped CPU is gone immediately,
+ * unlike a 1-minute load average, so the second sample is honest. Every input
+ * to the decision is printed on the `[steward-tune]` line: a held cap must be
+ * explainable, and must never look authoritative while resting on noise from
+ * other software.
+ *
+ * The CPU guard gates *growth* only; it deliberately does not drive the shed
+ * lane. On a box whose idle CPU is depressed by software Mars does not own, a
+ * CPU-driven shed is exactly the one-way ratchet that pinned the cap at 1 in
+ * the first place, and `baselineCap` is the value the operator configured.
+ * Refusing to grow is the right response to a busy CPU; shrinking is not.
+ *
+ * ## Why paging still drives the shed and recover lanes
+ *
+ * Memory pressure is a different failure with a different correct response.
+ * Observed 2026-07-30: the host was paging while every verify suite held
+ * 1-2 GB of PGlite. Unlike a merely busy CPU, a thrashing host makes
+ * in-flight work arbitrarily slower and admission control is the only lever
+ * available, so the shed lane stays — on the memory signal alone.
  *
  * The honest memory signal is the *rate* of paging — neither how much swap is
  * occupied nor `os.freemem()`.
@@ -72,14 +122,23 @@ export interface StewardRuntimeTuneDeps {
   implementSem: Semaphore
   baselineCap: number
   log: (line: string) => void
+  /** Repo root, used to scope the orphan sweep to this repo's worktrees. */
+  repoRoot: string
+  /** Live in-flight task ids — their verify subprocesses are healthy. */
+  getInFlightTaskIds: () => ReadonlySet<string>
+  /**
+   * Called whenever the tuner changes (or declines to change) the implement
+   * cap, with a one-line operator-facing reason — or `null` once the cap is
+   * back in agreement with the configured value. Surfaced by
+   * `mars daemon status` as the effective-cap explanation.
+   */
+  recordCapDecision?: (reason: string | null) => void
   /** Override for testing — defaults to real chat-store writes. */
   writeChatAck?: (text: string) => Promise<void>
-  /**
-   * Override for testing — defaults to the host's 1-minute load average
-   * divided by its core count. Must be injected in tests, otherwise the
-   * result depends on whatever else is running on the machine.
-   */
-  readLoadPerCore?: () => number
+  /** Override for testing — defaults to the real orphan sweep. */
+  runOrphanSweep?: () => Promise<OrphanSweepSummary>
+  /** Override for testing — defaults to the real machine-pressure sample. */
+  readPressure?: () => Promise<MachinePressure>
   /**
    * Override for testing — returns the host's *cumulative* count of pages
    * swapped in plus out since boot. The subscriber differences consecutive
@@ -96,24 +155,20 @@ const BUMP_FACTOR = 1.33
 const SHED_FACTOR = 0.67
 
 /**
- * Refuse to add workers once 1-minute load per core reaches this. Slightly
- * above 1.0 so a fully-but-not-over-committed host can still scale up.
+ * Safety floor. Below this much idle CPU the machine is genuinely out of
+ * capacity and the tuner holds regardless of who is consuming it. Kept low
+ * precisely so that other software's load does not throttle Mars: the
+ * profiled "overloaded" machine still had 19 % idle.
  */
-const LOAD_BUMP_CEILING = 1.5
+export const IDLE_FLOOR_PERCENT = Number(process.env.MARS_TUNE_IDLE_FLOOR_PCT ?? 10)
 
 /**
- * Shed workers once 1-minute load per core reaches this. Well above the bump
- * ceiling so the two lanes cannot oscillate against each other.
+ * Ceiling on Mars's OWN share of the box. Above this, more implement workers
+ * cannot help — Mars is already the thing saturating the machine.
  */
-const LOAD_SHED_TRIGGER = 4
-
-/**
- * Restore shed capacity once load per core falls below this. Sits strictly
- * between the bump ceiling and the shed trigger: high enough that a normally
- * busy host recovers, low enough that restoring one worker cannot plausibly
- * push load straight back over {@link LOAD_SHED_TRIGGER} and re-shed.
- */
-const LOAD_RECOVER_CEILING = 2.5
+export const MARS_SHARE_CEILING_PERCENT = Number(
+  process.env.MARS_TUNE_SELF_SHARE_CEILING_PCT ?? 85,
+)
 
 /**
  * Pages swapped per second above which the host counts as actively paging.
@@ -126,23 +181,66 @@ const PAGING_ACTIVE_PPS = 500
 
 /**
  * Shed once paging reaches this rate. Deliberately the same threshold as
- * {@link PAGING_ACTIVE_PPS}: unlike load, paging is not a matter of degree —
- * a host either is or is not swapping, and any sustained swapping while
- * running memory-heavy jobs is already the failure.
+ * {@link PAGING_ACTIVE_PPS}: paging is not a matter of degree — a host either
+ * is or is not swapping, and any sustained swapping while running
+ * memory-heavy jobs is already the failure.
  */
 const PAGING_SHED_TRIGGER = PAGING_ACTIVE_PPS
 
-/** How often the shed and recover lanes sample host pressure. */
+/** How often the shed and recover lanes sample paging. */
 const SHED_CHECK_MS = 15_000
 
 /** Never shed below one worker — `setSemLimit` rejects a limit under 1. */
 const MIN_CAP = 1
 
-const defaultReadLoadPerCore = (): number => {
-  const cores = cpus().length
-  const [oneMinute] = loadavg()
-  if (oneMinute === undefined || cores < 1) return 0
-  return oneMinute / cores
+export interface CapHoldDecision {
+  hold: boolean
+  reason: 'capacity-available' | 'machine-saturated' | 'mars-saturated' | 'host-paging'
+  /** Operator-facing justification, including the numbers behind it. */
+  explanation: string
+}
+
+/**
+ * Decide whether to hold the implement cap, given one machine-pressure sample.
+ *
+ * Pure, so the rule that broke the production deadlock is unit-testable:
+ *
+ * 1. idle below the floor → hold. The box really has no capacity left.
+ * 2. Mars's own share above the ceiling → hold. More workers will not help.
+ * 3. otherwise → raise, EVEN IF the system load average is enormous. Load
+ *    average is not consulted anywhere: on the profiled machine it was ~275
+ *    while 19 % of the CPU sat idle, because it counts blocked threads from a
+ *    filesystem-event storm that Mars neither caused nor can fix.
+ *
+ * Paging is not an input here — it is a rate, so it cannot be read from a
+ * single sample. {@link startStewardRuntimeTune} applies it as an additional
+ * hold condition ahead of this one.
+ */
+export const decideCapHold = (input: {
+  pressure: MachinePressure
+  idleFloorPercent: number
+  marsShareCeilingPercent: number
+}): CapHoldDecision => {
+  const { pressure: p } = input
+  if (p.idlePercent < input.idleFloorPercent) {
+    return {
+      hold: true,
+      reason: 'machine-saturated',
+      explanation: `${p.idlePercent.toFixed(1)}% idle is below the ${input.idleFloorPercent}% floor`,
+    }
+  }
+  if (p.marsSharePercent >= input.marsShareCeilingPercent) {
+    return {
+      hold: true,
+      reason: 'mars-saturated',
+      explanation: `mars already uses ${p.marsSharePercent.toFixed(1)}% of the machine (ceiling ${input.marsShareCeilingPercent}%)`,
+    }
+  }
+  return {
+    hold: false,
+    reason: 'capacity-available',
+    explanation: `${p.idlePercent.toFixed(1)}% idle and mars at ${p.marsSharePercent.toFixed(1)}% — capacity available`,
+  }
 }
 
 /**
@@ -186,13 +284,20 @@ async function defaultWriteChatAck(text: string): Promise<void> {
  * Wire all three tuning lanes. Returns a disposer that stops the sampling
  * timer; callers that run for the lifetime of the daemon may ignore it.
  */
-export function startStewardRuntimeTune(
-  deps: StewardRuntimeTuneDeps,
-): () => void {
+export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => void {
   const { bus, implementSem, baselineCap, log } = deps
   const writeChatAck = deps.writeChatAck ?? defaultWriteChatAck
-  const readLoadPerCore = deps.readLoadPerCore ?? defaultReadLoadPerCore
+  const readPressure = deps.readPressure ?? ((): Promise<MachinePressure> => samplePressure())
   const readPagingCounter = deps.readPagingCounter ?? defaultReadPagingCounter
+  const recordCapDecision = deps.recordCapDecision ?? ((): void => {})
+  const runOrphanSweep =
+    deps.runOrphanSweep ??
+    ((): Promise<OrphanSweepSummary> =>
+      sweepOrphans({
+        repoRoot: deps.repoRoot,
+        inFlightTaskIds: deps.getInFlightTaskIds(),
+        log,
+      }))
   const maxCap = baselineCap * 2
 
   // Paging is a rate, so it takes two samples to observe. `prev` holds the
@@ -233,6 +338,27 @@ export function startStewardRuntimeTune(
     }
   }
 
+  /**
+   * The bump lane's full verdict. Paging outranks the CPU guard: a thrashing
+   * host is the wrong place to admit more memory-heavy workers however much
+   * idle CPU it reports, and unlike CPU the memory pressure is Mars's own
+   * verify suites doing it.
+   */
+  const verdictFor = (pressure: MachinePressure): CapHoldDecision => {
+    if (pagingPps >= PAGING_ACTIVE_PPS) {
+      return {
+        hold: true,
+        reason: 'host-paging',
+        explanation: `paging ${Math.round(pagingPps)} pages/s >= ${PAGING_ACTIVE_PPS}`,
+      }
+    }
+    return decideCapHold({
+      pressure,
+      idleFloorPercent: IDLE_FLOOR_PERCENT,
+      marsShareCeilingPercent: MARS_SHARE_CEILING_PERCENT,
+    })
+  }
+
   bus.on('kpi.backlog.degraded', (payload: { pending: number; cap: number; sustainedMs: number }) => {
     void (async () => {
       const oldCap = implementSem.limit
@@ -241,25 +367,48 @@ export function startStewardRuntimeTune(
         return
       }
 
-      // Backlog alone does not justify more workers — check the host first.
-      const load = readLoadPerCore()
-      if (load >= LOAD_BUMP_CEILING || pagingPps >= PAGING_ACTIVE_PPS) {
-        const reason =
-          load >= LOAD_BUMP_CEILING
-            ? `load/core ${load.toFixed(2)} >= ${LOAD_BUMP_CEILING}`
-            : `paging ${Math.round(pagingPps)} pages/s >= ${PAGING_ACTIVE_PPS}`
-        log(
-          `[steward-tune] backlog degraded (${payload.pending} pending) but ${reason}; ` +
-            `holding implement cap at ${oldCap}`,
-        )
-        return
-      }
-
       const newCap = Math.min(Math.ceil(oldCap * BUMP_FACTOR), maxCap)
       if (newCap === oldCap) return
 
+      // ── Capacity guard, with an orphan sweep on the hold path ────────────
+      let pressure = await readPressure()
+      let decision = verdictFor(pressure)
+      let sweepNote = 'no sweep needed'
+      if (decision.hold) {
+        // Before holding, reap leaked verify subprocesses — they are the one
+        // part of the load Mars can actually do something about — then decide
+        // again on a FRESH sample. Unlike a 1-minute load average, the reaped
+        // CPU is gone from the very next sample, so this re-read is honest.
+        try {
+          const summary = await runOrphanSweep()
+          sweepNote = `orphan sweep: ${formatSweepSummary(summary)}`
+          if (summary.reaped > 0) {
+            pressure = await readPressure()
+            decision = verdictFor(pressure)
+          }
+        } catch (err) {
+          sweepNote = `orphan sweep failed: ${(err as Error).message}`
+        }
+      }
+
+      // Every input to the decision is printed. A held cap must never look
+      // authoritative while resting on a number that is mostly other
+      // software's noise.
+      const evidence = `${formatPressure(pressure)}; paging ${Math.round(pagingPps)} pages/s; ${sweepNote}`
+      if (decision.hold) {
+        const reason = `holding implement cap at ${oldCap}: ${decision.explanation} [${evidence}]`
+        log(`[steward-tune] backlog degraded (${payload.pending} pending) but ${reason}`)
+        recordCapDecision(reason)
+        return
+      }
+
       setSemLimit(implementSem, newCap)
-      log(`[steward-tune] bumped implement cap ${oldCap} → ${newCap} (backlog: ${payload.pending} pending, sustained ${Math.round(payload.sustainedMs / 1000)}s)`)
+      log(
+        `[steward-tune] bumped implement cap ${oldCap} → ${newCap} (backlog: ${payload.pending} pending, sustained ${Math.round(payload.sustainedMs / 1000)}s; ${decision.explanation}; ${evidence})`,
+      )
+      recordCapDecision(
+        `steward autotune raised implement ${oldCap} → ${newCap} on sustained backlog (${decision.explanation})`,
+      )
 
       await ack(
         `I bumped implement workers from ${oldCap} to ${newCap} because backlog held above ${Math.round(payload.cap * 0.75)} for ${Math.round(payload.sustainedMs / 1000)}s.`,
@@ -268,66 +417,61 @@ export function startStewardRuntimeTune(
   })
 
   const sample = async (): Promise<void> => {
-    {
-      await samplePaging()
-      const load = readLoadPerCore()
-      const oldCap = implementSem.limit
+    await samplePaging()
+    const oldCap = implementSem.limit
 
-      // ── shed ──────────────────────────────────────────────────────────
-      const shedOnLoad = load >= LOAD_SHED_TRIGGER
-      const shedOnSwap = pagingPps >= PAGING_SHED_TRIGGER
-      if (shedOnLoad || shedOnSwap) {
-        if (oldCap <= MIN_CAP) return
+    // ── shed ──────────────────────────────────────────────────────────────
+    if (pagingPps >= PAGING_SHED_TRIGGER) {
+      if (oldCap <= MIN_CAP) return
 
-        const newCap = Math.max(MIN_CAP, Math.floor(oldCap * SHED_FACTOR))
-        if (newCap === oldCap) return
-
-        setSemLimit(implementSem, newCap)
-        const detail = shedOnSwap
-          ? `paging ${Math.round(pagingPps)} pages/s >= ${PAGING_SHED_TRIGGER}`
-          : `load/core ${load.toFixed(2)} >= ${LOAD_SHED_TRIGGER}`
-        log(`[steward-tune] shed implement cap ${oldCap} → ${newCap} (${detail})`)
-
-        // Name the resource that actually tripped, so the operator does not
-        // go looking at CPU when the machine is out of memory.
-        const because = shedOnSwap
-          ? `the host was swapping at ${Math.round(pagingPps)} pages/s`
-          : `host load reached ${load.toFixed(1)} per core`
-        await ack(
-          `I reduced implement workers from ${oldCap} to ${newCap} because ${because}.`,
-        )
-        return
-      }
-
-      // ── recover ───────────────────────────────────────────────────────
-      // Only undo a previous shed; growth above baseline stays the bump
-      // lane's job, gated on backlog.
-      if (oldCap >= baselineCap) return
-      if (load >= LOAD_RECOVER_CEILING || pagingPps >= PAGING_ACTIVE_PPS) return
-
-      const newCap = Math.min(baselineCap, oldCap + 1)
+      const newCap = Math.max(MIN_CAP, Math.floor(oldCap * SHED_FACTOR))
       if (newCap === oldCap) return
 
       setSemLimit(implementSem, newCap)
-      log(
-        `[steward-tune] recovered implement cap ${oldCap} → ${newCap} ` +
-          `(load/core ${load.toFixed(2)} < ${LOAD_RECOVER_CEILING}, ` +
-          `paging ${Math.round(pagingPps)} pages/s < ${PAGING_ACTIVE_PPS}, baseline ${baselineCap})`,
-      )
+      const detail = `paging ${Math.round(pagingPps)} pages/s >= ${PAGING_SHED_TRIGGER}`
+      log(`[steward-tune] shed implement cap ${oldCap} → ${newCap} (${detail})`)
+      recordCapDecision(`steward autotune shed implement ${oldCap} → ${newCap} (${detail})`)
+
+      // Name the resource that actually tripped, so the operator does not go
+      // looking at CPU when the machine is out of memory.
       await ack(
-        `I restored implement workers from ${oldCap} to ${newCap} because host pressure cleared.`,
+        `I reduced implement workers from ${oldCap} to ${newCap} because the host was swapping at ${Math.round(pagingPps)} pages/s.`,
       )
+      return
     }
+
+    // ── recover ───────────────────────────────────────────────────────────
+    // Only undo a previous shed; growth above baseline stays the bump lane's
+    // job, gated on backlog and the CPU guard.
+    if (oldCap >= baselineCap) return
+
+    const newCap = Math.min(baselineCap, oldCap + 1)
+    if (newCap === oldCap) return
+
+    setSemLimit(implementSem, newCap)
+    log(
+      `[steward-tune] recovered implement cap ${oldCap} → ${newCap} ` +
+        `(paging ${Math.round(pagingPps)} pages/s < ${PAGING_ACTIVE_PPS}, baseline ${baselineCap})`,
+    )
+    recordCapDecision(
+      newCap >= baselineCap
+        ? null
+        : `steward autotune restored implement ${oldCap} → ${newCap} after paging cleared`,
+    )
+    await ack(
+      `I restored implement workers from ${oldCap} to ${newCap} because host pressure cleared.`,
+    )
   }
 
-  // Sample once immediately rather than waiting a full interval. A daemon
-  // restart brings the cap up at `baselineCap` and the dispatcher starts
-  // claiming slots straight away, so deferring the first sample leaves a
-  // window where a host already under pressure admits a full complement of
-  // work (observed 2026-07-30: a restart onto a 97%-swap host dispatched 3
-  // implement jobs before the first shed). This narrows that window to the
-  // cost of one pressure read; it does not close it entirely, since the read
-  // is async and the dispatcher may still win the race.
+  // Sample once immediately rather than waiting a full interval. Paging is a
+  // rate, so no shed is possible until two readings exist — taking the first
+  // at start-up rather than an interval later means a host that is already
+  // thrashing when the daemon comes up is throttled after one interval rather
+  // than two, and a cap that came up below baseline starts climbing back at
+  // once (observed 2026-07-30: a restart onto a thrashing host dispatched 3
+  // implement jobs before the first shed). This narrows that window; it does
+  // not close it, since the read is async and the dispatcher may still win
+  // the race.
   void sample()
 
   const sampleTimer = setInterval(() => {
