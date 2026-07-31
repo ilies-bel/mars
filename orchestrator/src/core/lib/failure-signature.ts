@@ -587,6 +587,68 @@ export const isUnclassifiedSignature = (signature: string): boolean =>
   signature.endsWith(`/${UNCLASSIFIED_ERROR_CLASS}`)
 
 /**
+ * The FAMILY of a failure signature: `<gate>/<errorClass>` — the signature with
+ * every KIND segment of the failing step dropped.
+ *
+ *   `code:commit-contract/uncommitted-changes` → `code/uncommitted-changes`
+ *   `code/uncommitted-changes`                 → `code/uncommitted-changes`
+ *   `verify:has-diff/no-commits-ahead`         → `verify/no-commits-ahead`
+ *   `daemon-killed`                            → `daemon-killed/`
+ *
+ * ## Why this exists
+ *
+ * One failure reaches `computeFailureSignature` from two call sites with two
+ * step granularities, and both are legitimate:
+ *
+ *  - the INLINE path passes the fine step the primitive knows it is in
+ *    (`code:commit-contract`), which is also what gets stamped on the task's
+ *    `failure_signature` column;
+ *  - the DURABLE recovery-spawn subscriber recovers the step from the DB
+ *    (`asStepId(failure_reason) ?? asStepId(failed_phase)`). `failure_reason`
+ *    often holds a whole signature or a `recovery_failed:` reason — neither
+ *    satisfies `STEP_ID_RE` — so it falls back to the coarse `failed_phase`
+ *    (`code`) and mints `code/uncommitted-changes` for the identical failure.
+ *
+ * The two forms name the SAME failure. Anything that has to recognise "these
+ * are the same failure" — the signature-storm streak counter and the storm
+ * evidence lookup that briefs the Steward — must compare families, not exact
+ * strings, or the streak trips on one form while the evidence query looks for
+ * the other and finds nothing (observed live: a Steward dispatched blind with
+ * ~2.2 KB of real failure output sitting unread in the DB).
+ *
+ * The kind segment is what is dropped, never the error class: the class is the
+ * part every producer agrees on, while the step half is exactly the part that
+ * degrades. Widening is therefore bounded to "same gate, same error class".
+ */
+export const failureSignatureFamily = (signature: string): string => {
+  const slash = signature.indexOf('/')
+  const step = slash === -1 ? signature : signature.slice(0, slash)
+  const errorClass = slash === -1 ? '' : signature.slice(slash + 1).split('/')[0] ?? ''
+  const colon = step.indexOf(':')
+  const gate = colon === -1 ? step : step.slice(0, colon)
+  return `${gate}/${errorClass}`
+}
+
+/** True when two signatures name the same failure at different step granularities. */
+export const isSameFailureFamily = (a: string, b: string): boolean =>
+  failureSignatureFamily(a) === failureSignatureFamily(b)
+
+/**
+ * SQL twin of {@link failureSignatureFamily}: an expression that computes the
+ * family of a signature COLUMN, so a query can select every row in the family
+ * without pulling the whole `tasks` table into JS.
+ *
+ * Kept adjacent to the TS implementation on purpose — the two must agree, and
+ * `__tests__/failure-signature-family.test.ts` asserts that they do over a corpus
+ * of signatures, so a change to one that is not mirrored in the other fails.
+ *
+ * `column` is interpolated verbatim: pass a literal column name from this
+ * codebase, NEVER user input.
+ */
+export const failureSignatureFamilySql = (column: string): string =>
+  `(split_part(split_part(${column}, '/', 1), ':', 1) || '/' || split_part(${column}, '/', 2))`
+
+/**
  * Operator-facing cause sentences keyed by the full `<failingStep>/<error-class>`
  * signature. Each entry renders a one-line plain-English sentence that names
  * who owns the next action (operator vs agent) so triage doesn't have to parse
