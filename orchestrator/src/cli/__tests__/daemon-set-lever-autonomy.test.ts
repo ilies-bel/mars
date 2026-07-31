@@ -79,15 +79,15 @@ describe('daemon set-lever autonomy', () => {
     persistM.mockReturnValue(undefined)
   })
 
-  it('persists autonomy=silent for a named lever', async () => {
+  it('persists autonomy=tell for a named lever', async () => {
     const result = await runCommandInProcess(
-      ['daemon', 'set-lever', 'recovery', 'autonomy', 'silent'],
+      ['daemon', 'set-lever', 'recovery', 'autonomy', 'tell'],
       makeOpts(),
     )
 
     expect(result.code).toBe(0)
-    expect(persistM).toHaveBeenCalledWith('recovery', 'silent')
-    expect(result.out.join('\n')).toContain('lever recovery autonomy=silent')
+    expect(persistM).toHaveBeenCalledWith('recovery', 'tell')
+    expect(result.out.join('\n')).toContain('lever recovery autonomy=tell')
   })
 
   it('persists autonomy=off for a named lever', async () => {
@@ -111,14 +111,14 @@ describe('daemon set-lever autonomy', () => {
     expect(persistM).toHaveBeenCalledWith('scoring', 'ask')
   })
 
-  it('rejects an unknown autonomy value with code 2', async () => {
+  it('rejects the retired silent autonomy value with the valid set', async () => {
     const result = await runCommandInProcess(
-      ['daemon', 'set-lever', 'recovery', 'autonomy', 'maybe'],
+      ['daemon', 'set-lever', 'recovery', 'autonomy', 'silent'],
       makeOpts(),
     )
 
     expect(result.code).toBe(2)
-    expect(result.err.join('\n')).toContain("'off', 'ask', or 'silent'")
+    expect(result.err.join('\n')).toContain("'off', 'ask', or 'tell'")
     expect(persistM).not.toHaveBeenCalled()
   })
 
@@ -157,13 +157,13 @@ describe('leverSchema round-trip', () => {
     expect(entry.autonomy_level).toBe('ask')
   })
 
-  it('preserves an explicitly set autonomy_level=silent', async () => {
+  it('preserves an explicitly set autonomy_level=tell', async () => {
     const { leverSchema } = await vi.importActual<
       typeof import('../../core/daemon/config')
     >('../../core/daemon/config')
 
-    const entry = leverSchema.parse({ autonomy_level: 'silent' })
-    expect(entry.autonomy_level).toBe('silent')
+    const entry = leverSchema.parse({ autonomy_level: 'tell' })
+    expect(entry.autonomy_level).toBe('tell')
   })
 
   it('preserves an explicitly set autonomy_level=off', async () => {

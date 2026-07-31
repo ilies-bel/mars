@@ -5,14 +5,14 @@ import { resolveContext } from '../context'
 import type { ProviderName } from '../workers/providers'
 
 /** Three-position autonomy axis for each operator lever. */
-export type AutonomyLevel = 'off' | 'ask' | 'silent'
+export type AutonomyLevel = 'off' | 'ask' | 'tell'
 
 /**
  * Zod schema for a single lever entry in daemon.json's `levers` map.
  * The `autonomy_level` field defaults to `'ask'` when omitted.
  */
 export const leverSchema = z.object({
-  autonomy_level: z.enum(['off', 'ask', 'silent']).default('ask'),
+  autonomy_level: z.enum(['off', 'ask', 'tell']).default('ask'),
 })
 
 export type LeverEntry = z.infer<typeof leverSchema>
@@ -271,7 +271,9 @@ export const persistPaused = (value: boolean): void => {
 
 /**
  * Read the autonomy_level for `name` from daemon.json's `levers` map.
- * Returns `'ask'` when the lever is absent or the stored value is invalid.
+ * Returns `'ask'` when the lever is absent. A persisted invalid or retired
+ * value is rejected explicitly so an operator's autonomy choice is never
+ * silently changed to the default.
  */
 export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
   const raw = readDaemonConfigFile()
@@ -283,8 +285,20 @@ export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
   if (leverData === null || typeof leverData !== 'object' || Array.isArray(leverData)) {
     return 'ask'
   }
+  const autonomyLevel = (leverData as Record<string, unknown>).autonomy_level
+  if (autonomyLevel !== undefined && autonomyLevel !== 'off' && autonomyLevel !== 'ask' && autonomyLevel !== 'tell') {
+    const kind = autonomyLevel === 'silent' ? 'retired' : 'invalid'
+    throw new Error(
+      `daemon.json lever '${name}' has ${kind} autonomy level '${String(autonomyLevel)}'; valid levels are 'off', 'ask', or 'tell'`,
+    )
+  }
   const parsed = leverSchema.safeParse(leverData)
-  return parsed.success ? parsed.data.autonomy_level : 'ask'
+  if (!parsed.success) {
+    throw new Error(
+      `daemon.json lever '${name}' is invalid; autonomy must be 'off', 'ask', or 'tell'`,
+    )
+  }
+  return parsed.data.autonomy_level
 }
 
 /**

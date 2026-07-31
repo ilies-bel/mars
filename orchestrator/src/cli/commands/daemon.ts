@@ -469,24 +469,24 @@ const daemonSetCap: Command = {
   },
 }
 
-const VALID_AUTONOMY_LEVELS = new Set<string>(['off', 'ask', 'silent'])
+const VALID_AUTONOMY_LEVELS = new Set<string>(['off', 'ask', 'tell'])
 
 const daemonSetLever: Command = {
   path: 'daemon set-lever',
-  summary: 'set a lever property (autonomy: off|ask|silent)',
-  usage: 'usage: mars daemon set-lever <name> autonomy <off|ask|silent>',
+  summary: 'set a lever property (autonomy: off|ask|tell)',
+  usage: 'usage: mars daemon set-lever <name> autonomy <off|ask|tell>',
   run: async (args, deps) => {
     const positional = args.positional.filter((a) => !a.startsWith('--'))
     const name = positional[0]
     const prop = positional[1]
     const value = positional[2]
     if (!name || prop !== 'autonomy' || !value) {
-      deps.err('usage: mars daemon set-lever <name> autonomy <off|ask|silent>')
+      deps.err('usage: mars daemon set-lever <name> autonomy <off|ask|tell>')
       return { code: 2 }
     }
     if (!VALID_AUTONOMY_LEVELS.has(value)) {
       deps.err(
-        `mars daemon set-lever: autonomy must be 'off', 'ask', or 'silent'; got '${value}'`,
+        `mars daemon set-lever: autonomy must be 'off', 'ask', or 'tell'; got '${value}'`,
       )
       return { code: 2 }
     }
