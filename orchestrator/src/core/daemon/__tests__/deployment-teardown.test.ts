@@ -12,7 +12,7 @@
  *       4. merge     (updateTask status → 'done')
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -23,6 +23,7 @@ vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })
 
 // ── Mock the deployment registry so we control provider behaviour ─────────────
 const teardownFn = vi.fn<(id: string) => Promise<void>>()
+let resetTestDbs: (() => Promise<void>) | undefined
 
 vi.mock('../../lib/deployment/registry', () => ({
   getProvider: () => ({ teardown: teardownFn }),
@@ -48,18 +49,33 @@ const setupRepo = (): string => {
   return repo
 }
 
+let repo: string
+
+beforeAll(() => {
+  repo = setupRepo()
+})
+
+afterAll(async () => {
+  await resetTestDbs?.()
+  resetTestDbs = undefined
+  delete process.env.MARS_REPO
+  vi.resetModules()
+  rmSync(repo, { recursive: true, force: true })
+})
+
 /**
  * Reload all modules fresh (PGlite-backed; one instance per target) and
  * reset the teardownFn mock to its default (resolves). If the test wants a
  * different behaviour it MUST override AFTER calling load().
  */
 const load = async (repo: string) => {
-  vi.resetModules()
   process.env.MARS_REPO = repo
   // Reset mock AFTER resetModules so re-imported modules see the fresh spy.
   teardownFn.mockReset()
   teardownFn.mockResolvedValue(undefined)
   const q = await import('../../queue')
+  const { __resetDbRegistryForTests } = await import('../../lib/db')
+  resetTestDbs = __resetDbRegistryForTests
   await q.migrateQueueSchema()
   return q
 }
@@ -112,13 +128,6 @@ const parkAtGate = async (
 // ── Teardown behaviour tests ──────────────────────────────────────────────────
 
 describe('teardownDeploymentsForTask', () => {
-  let repo: string
-  beforeEach(() => { repo = setupRepo() })
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
   it('calls provider.teardown and stamps torn_down_at on success', async () => {
     const q = await load(repo)
     const task = await q.enqueueTask('deploy me')
@@ -188,13 +197,6 @@ describe('teardownDeploymentsForTask', () => {
 // ── validate path ─────────────────────────────────────────────────────────────
 
 describe('validate path: coreValidateTask fires teardown', () => {
-  let repo: string
-  beforeEach(() => { repo = setupRepo() })
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
   it('calls teardown exactly once on validate', async () => {
     const q = await load(repo)
     const id = await parkAtGate(q)
@@ -230,13 +232,6 @@ describe('validate path: coreValidateTask fires teardown', () => {
 // ── reject path ───────────────────────────────────────────────────────────────
 
 describe('reject path: coreRejectTask fires teardown', () => {
-  let repo: string
-  beforeEach(() => { repo = setupRepo() })
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
   it('calls teardown exactly once on reject', async () => {
     const q = await load(repo)
     const id = await parkAtGate(q)
@@ -272,13 +267,6 @@ describe('reject path: coreRejectTask fires teardown', () => {
 // ── drop path (corePurgeTask) ─────────────────────────────────────────────────
 
 describe('drop path: corePurgeTask fires teardown', () => {
-  let repo: string
-  beforeEach(() => { repo = setupRepo() })
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
   it('calls teardown exactly once on purge of a failed task', async () => {
     const q = await load(repo)
     // Create a task in a terminal state so corePurgeTask accepts it.
@@ -329,13 +317,6 @@ describe('drop path: corePurgeTask fires teardown', () => {
 // ── merge path (updateTask status → 'done') ───────────────────────────────────
 
 describe('merge path: updateTask status→done fires teardown', () => {
-  let repo: string
-  beforeEach(() => { repo = setupRepo() })
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
   it('calls teardown exactly once when a task transitions to done', async () => {
     const q = await load(repo)
     // A task with no branch skips the done-implies-merged git guard.

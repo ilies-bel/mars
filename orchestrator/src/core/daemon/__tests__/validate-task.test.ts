@@ -11,7 +11,7 @@
  * recorded pid is passed to killDevServer and the task-state transitions land.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -39,11 +39,27 @@ const setupRepo = (): string => {
   return repo
 }
 
-const load = async (repo: string) => {
+let repo: string
+let resetTestDbs: (() => Promise<void>) | undefined
+
+beforeAll(() => {
+  repo = setupRepo()
+})
+
+afterAll(async () => {
+  await resetTestDbs?.()
+  resetTestDbs = undefined
+  delete process.env.MARS_REPO
   vi.resetModules()
+  rmSync(repo, { recursive: true, force: true })
+})
+
+const load = async (repo: string) => {
   killed.length = 0
   process.env.MARS_REPO = repo
   const q = await import('../../queue')
+  const { __resetDbRegistryForTests } = await import('../../lib/db')
+  resetTestDbs = __resetDbRegistryForTests
   await q.migrateQueueSchema()
   const validate = await import('../validate-task')
   const actionQueue = await import('../../lib/action-queue')
@@ -72,15 +88,6 @@ const parkAtGate = async (
 }
 
 describe('coreValidateTask', () => {
-  let repo: string
-  beforeEach(() => {
-    repo = setupRepo()
-  })
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
   it('kills the dev server, marks validated, clears coordinates, and re-queues', async () => {
     const { q, validate } = await load(repo)
     const id = await parkAtGate(q)
@@ -108,15 +115,6 @@ describe('coreValidateTask', () => {
 })
 
 describe('coreRejectTask', () => {
-  let repo: string
-  beforeEach(() => {
-    repo = setupRepo()
-  })
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
   it('kills the dev server, fails the task (worktree preserved), and closes the row', async () => {
     const { q, validate, actionQueue } = await load(repo)
     const id = await parkAtGate(q)
