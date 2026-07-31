@@ -190,9 +190,7 @@ describe('action-queue list', () => {
 
     await runCommandInProcess(['action-queue', 'list', 'all'], opts)
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('filter=all'),
-    )
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('filter=all'), expect.anything())
   })
 
   it('outputs "action queue empty" when daemon returns empty array', async () => {
@@ -240,6 +238,24 @@ describe('action-queue list', () => {
     expect(r.code).toBe(1)
     expect(r.err.join('\n')).toContain('daemon not running')
     expect(r.out).toHaveLength(0)
+  })
+
+  it('fails promptly when the daemon request never responds for a stale port', async () => {
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+      }),
+    ))
+    writeDaemonPort(repo, FAKE_PORT)
+    const opts = await loadOpts(repo)
+
+    const startedAt = Date.now()
+    const r = await runCommandInProcess(['action-queue', 'list', 'open'], opts)
+    const elapsedMs = Date.now() - startedAt
+
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('daemon not running')
+    expect(elapsedMs).toBeLessThan(3_000)
   })
 
   it('--kind filters rows to the specified kinds and omits others', async () => {
@@ -298,7 +314,7 @@ describe('action-queue list', () => {
     const r = await runCommandInProcess(['action-queue', 'list', 'all', '--kind', 'failed-task'], opts)
 
     expect(r.code).toBe(0)
-    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('filter=all'))
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('filter=all'), expect.anything())
     expect(r.out.join('\n')).toContain('aq-f1')
   })
 
@@ -349,9 +365,7 @@ describe('bare action-queue', () => {
     const r = await runCommandInProcess(['action-queue'], opts)
 
     expect(r.code).toBe(0)
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('filter=open'),
-    )
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('filter=open'), expect.anything())
   })
 })
 
@@ -448,7 +462,7 @@ describe('action-queue show', () => {
     const r = await runCommandInProcess(['action-queue', 'show', 'aq-any-1'], opts)
 
     expect(r.code).toBe(0)
-    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('filter=all'))
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('filter=all'), expect.anything())
   })
 
   it('returns code 1 when no matching row exists', async () => {

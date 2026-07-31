@@ -28,6 +28,8 @@ const LEAN_PREVIEW = 3
 const NO_DAEMON_MSG =
   'action queue: daemon not running — run `mars daemon start` (the action queue view is served by the daemon)'
 
+const DAEMON_VIEW_TIMEOUT_MS = 2_000
+
 const readStdin = async (): Promise<string> => {
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) {
@@ -50,6 +52,7 @@ export const fetchActionQueueView = async (
 ): Promise<ActionQueueRow[]> => {
   const res = await fetch(
     `http://127.0.0.1:${port}/view/action-queue?filter=${encodeURIComponent(filter)}`,
+    { signal: AbortSignal.timeout(DAEMON_VIEW_TIMEOUT_MS) },
   )
   if (!res.ok) throw new Error(`daemon returned ${res.status}`)
   return (await res.json()) as ActionQueueRow[]
