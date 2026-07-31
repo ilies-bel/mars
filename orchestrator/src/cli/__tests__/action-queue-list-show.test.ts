@@ -240,22 +240,33 @@ describe('action-queue list', () => {
     expect(r.out).toHaveLength(0)
   })
 
-  it('fails promptly when the daemon request never responds for a stale port', async () => {
-    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) =>
-      new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
-      }),
+  it('reports a daemon-view timeout without claiming the daemon is down', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(
+      Object.assign(new Error('request timed out'), { name: 'TimeoutError' }),
     ))
     writeDaemonPort(repo, FAKE_PORT)
     const opts = await loadOpts(repo)
 
-    const startedAt = Date.now()
     const r = await runCommandInProcess(['action-queue', 'list', 'open'], opts)
-    const elapsedMs = Date.now() - startedAt
 
     expect(r.code).toBe(1)
-    expect(r.err.join('\n')).toContain('daemon not running')
-    expect(elapsedMs).toBeLessThan(3_000)
+    expect(r.err.join('\n')).toContain('daemon did not answer within 15s')
+    expect(r.err.join('\n')).not.toContain('daemon not running')
+  })
+
+  it('reports an HTTP failure from the daemon view', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+    }))
+    writeDaemonPort(repo, FAKE_PORT)
+    const opts = await loadOpts(repo)
+
+    const r = await runCommandInProcess(['action-queue', 'list', 'open'], opts)
+
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('daemon returned 500')
+    expect(r.err.join('\n')).not.toContain('daemon not running')
   })
 
   it('--kind filters rows to the specified kinds and omits others', async () => {
@@ -519,6 +530,20 @@ describe('action-queue show', () => {
 
     expect(r.code).toBe(1)
     expect(r.err.join('\n')).toContain('daemon not running')
+  })
+
+  it('reports a timeout without claiming the daemon is down', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(
+      Object.assign(new Error('request aborted'), { name: 'AbortError' }),
+    ))
+    writeDaemonPort(repo, FAKE_PORT)
+    const opts = await loadOpts(repo)
+
+    const r = await runCommandInProcess(['action-queue', 'show', 'aq-any'], opts)
+
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('daemon did not answer within 15s')
+    expect(r.err.join('\n')).not.toContain('daemon not running')
   })
 
   it('returns usage error when no id is provided', async () => {

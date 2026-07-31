@@ -30,7 +30,41 @@ const LEAN_PREVIEW = 3
 const NO_DAEMON_MSG =
   'action queue: daemon not running — run `mars daemon start` (the action queue view is served by the daemon)'
 
-const DAEMON_VIEW_TIMEOUT_MS = 2_000
+const DAEMON_VIEW_TIMEOUT_MS = 15_000
+
+const actionQueueViewErrorMessage = (err: unknown): string => {
+  if (
+    typeof err === 'object' &&
+    err !== null &&
+    'name' in err &&
+    (err.name === 'TimeoutError' || err.name === 'AbortError')
+  ) {
+    return `action queue: daemon did not answer within ${DAEMON_VIEW_TIMEOUT_MS / 1_000}s (the view may be slow or the daemon busy)`
+  }
+  if (err instanceof Error && /^daemon returned \d+$/.test(err.message)) {
+    return `action queue: ${err.message}`
+  }
+  const errCode =
+    typeof err === 'object' && err !== null && 'code' in err ? err.code : undefined
+  const causeCode =
+    typeof err === 'object' &&
+    err !== null &&
+    'cause' in err &&
+    typeof err.cause === 'object' &&
+    err.cause !== null &&
+    'code' in err.cause
+      ? err.cause.code
+      : undefined
+  const socketError = /\b(ECONNREFUSED|ECONNRESET|EPIPE|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT)\b/
+  if (
+    socketError.test(errorMessage(err)) ||
+    (typeof errCode === 'string' && socketError.test(errCode)) ||
+    (typeof causeCode === 'string' && socketError.test(causeCode))
+  ) {
+    return NO_DAEMON_MSG
+  }
+  return `action queue: unable to read daemon view: ${errorMessage(err)}`
+}
 
 const readStdin = async (): Promise<string> => {
   const chunks: Buffer[] = []
@@ -118,8 +152,8 @@ const actionQueueList: Command = {
     let rows: ActionQueueRow[]
     try {
       rows = await fetchActionQueueView(port, filter)
-    } catch {
-      deps.err(NO_DAEMON_MSG)
+    } catch (err) {
+      deps.err(actionQueueViewErrorMessage(err))
       return { code: 1 }
     }
     if (kindSet.size > 0) {
@@ -176,8 +210,8 @@ const actionQueueShow: Command = {
     let rows: ActionQueueRow[]
     try {
       rows = await fetchActionQueueView(port, 'all')
-    } catch {
-      deps.err(NO_DAEMON_MSG)
+    } catch (err) {
+      deps.err(actionQueueViewErrorMessage(err))
       return { code: 1 }
     }
     const row =
