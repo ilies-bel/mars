@@ -6,7 +6,12 @@
 
 # macOS
 .DS_Store
-/.mars/
+
+# Per-repo state. NO trailing slash — see the node_modules note below: a
+# trailing slash matches only real directories, and `.mars` is a plausible
+# symlink target (sharing one daemon's Postgres/DSN across worktrees). Stays
+# root-anchored, which IS intentional: only the repo-root `.mars` is state.
+/.mars
 /.worktrees/
 
 # DuckDB
@@ -14,10 +19,32 @@
 *.duckdb.wal
 
 # Node / build artifacts
-node_modules/
-dist/
+#
+# NO trailing slash on `node_modules` / `dist`, deliberately. In gitignore a
+# trailing slash restricts the pattern to real DIRECTORIES, and a symlink is
+# not a directory to git — it is a mode-120000 blob. Agent worktrees are
+# routinely given a module tree by symlinking `node_modules` at the repo root
+# instead of running a full install, and `node_modules/` let that symlink show
+# up as untracked: a `git add -A` in a worktree staged it (caught and amended
+# out; `git ls-files | grep -c node_modules` on main is 0, so nothing leaked).
+# Slashless matches a directory, a symlink, or a file of that name, at any
+# depth — which is what `orchestrator/.gitignore` and `ui/.gitignore` have
+# always done. Do not "tidy" the slashes back on.
+node_modules
+dist
 *.tsbuildinfo
 .vite/
+
+# Environment files. The root .gitignore never covered these — only
+# `orchestrator/.gitignore` did — so a `.env` at the repo root was fully
+# trackable. Matches at any depth, and covers `.env.local`, `.env.production`
+# and friends. The `.env.example` negation is load-bearing: two are tracked
+# (`orchestrator/`, `tools/ci-listener/`), and without it a re-add of either
+# would be silently ignored. Neither parent directory is excluded, so the
+# re-include is legal.
+.env
+.env.*
+!.env.example
 
 # Claude Code runtime — scheduled-tasks lock is a live runtime artifact
 # (pid/sessionId/timestamps), never a tracked template. Match it anywhere so
