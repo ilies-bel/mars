@@ -19,7 +19,10 @@
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
 import type { Task } from './queue'
 import type { FixRecipeContext } from './lib/fix-recipes'
-import { buildRescueOperatorPrompt } from './workers/rescue-operator'
+import {
+  buildRescueOperatorPrompt,
+  estimateRescueTriagePromptTokens,
+} from './workers/rescue-operator'
 import { incrementRescueAttempts } from './daemon/kpi-store.js'
 import { recordStewardIntervention } from './steward-ledger'
 
@@ -74,12 +77,27 @@ export const maybeSpawnRescueOperator = async (
     return { spawned: false }
   }
 
+  // The rescue task itself passes through the tight-budget triage worker
+  // before it reaches RescueOperator. Build its bounded, newest-first arc
+  // context before incrementing the guard so an assembly failure cannot leave
+  // an arc marked as rescued without a rescue task to inspect it.
+  const arcMembers = await store.listArcMembers(originId)
+  if (!arcMembers.some((task) => task.id === failedTask.id)) arcMembers.push(failedTask)
+  const prompt = buildRescueOperatorPrompt({
+    failedTaskId: failedTask.id,
+    originId,
+    failureSignature,
+    arcMembers,
+  })
+  console.info(
+    `[rescue-operator] assembled triage prompt for arc ${originId}: ` +
+      `${estimateRescueTriagePromptTokens(prompt)} estimated tokens, ${arcMembers.length} arc members`,
+  )
+
   // Increment before dispatch to prevent a concurrent failure event from
   // spawning a second rescue on the same arc.
   await store.incrementArcRescueAttempts(originId)
   await incrementRescueAttempts(store)
-
-  const prompt = buildRescueOperatorPrompt(failedTask.id, originId, failureSignature)
 
   const rescueTask = await store.enqueueTask(prompt, undefined, {
     tags: ['rescue-operator'],

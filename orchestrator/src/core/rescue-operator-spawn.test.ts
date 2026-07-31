@@ -3,6 +3,10 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import {
+  RESCUE_TRIAGE_PROMPT_TOKEN_BUDGET,
+  estimateRescueTriagePromptTokens,
+} from './workers/rescue-operator'
 
 interface QueueModule {
   enqueueTask: typeof import('./queue').enqueueTask
@@ -252,6 +256,32 @@ describe('rescue-operator-spawn', () => {
     const rescueTask = await q.getTask(result.rescueTaskId!)
     expect(rescueTask).not.toBeNull()
     expect(rescueTask!.tags).toContain('rescue-operator')
+  })
+
+  it('keeps a large arc rescue prompt below the triage worker budget before it dispatches', async () => {
+    const { q, rescue } = await loadModules(repo)
+    const rawTranscriptLikePrompt = 'full transcript material that must stay out of triage '.repeat(1_000)
+    const origin = await q.enqueueTask(rawTranscriptLikePrompt, undefined, { skipTriage: true })
+    for (let index = 0; index < 11; index += 1) {
+      await q.enqueueTask(rawTranscriptLikePrompt, undefined, {
+        skipTriage: true,
+        originId: origin.id,
+      })
+    }
+
+    const loaded = await q.getTask(origin.id)
+    if (!loaded) throw new Error('origin task not found')
+    const result = await rescue.maybeSpawnRescueOperator({
+      failedTask: loaded,
+      failureSignature: 'verify:test/unclassified',
+    })
+
+    const rescueTask = await q.getTask(result.rescueTaskId!)
+    expect(rescueTask).not.toBeNull()
+    expect(estimateRescueTriagePromptTokens(rescueTask!.prompt)).toBeLessThanOrEqual(
+      RESCUE_TRIAGE_PROMPT_TOKEN_BUDGET,
+    )
+    expect(rescueTask!.prompt).not.toContain('full transcript material that must stay out of triage')
   })
 
   // ── (e) Proposal-based arc → no second rescue after first ─────────────────
