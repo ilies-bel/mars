@@ -866,6 +866,82 @@ describe('queue-fix-tasks', () => {
     cleanup()
   })
 
+  it('re-driving an already-escalated recovery task is a no-op: the recovery_failed: prefix is never nested', async () => {
+    // Regression (fix-139f327c, 2026-07-31): the recovery-spawner drain re-drove
+    // already-terminal recovery rows every 30 s. Each pass re-entered this
+    // handler with the PREVIOUS composed reason (the `task.failed` event carries
+    // `error`, which holds it) and prepended another `recovery_failed:<sig>: `.
+    // Ten passes later `failure_reason` was ten prefixes deep and the real error
+    // had been eaten by the 500-char tail truncation. A recovery Chore is a leaf
+    // (ADR-0040): its failure escalates exactly once and the row is terminal.
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft, rc } = await loadModules(repo)
+    const actionQueue = (await import('../action-queue')) as unknown as {
+      listActionQueueItems: typeof import('../action-queue').listActionQueueItems
+    }
+    const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    const first = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'boom-original-error',
+    })
+    const recoveryId = first.fixTaskId!
+    expect(recoveryId).toBeTruthy()
+
+    // The recovery itself fails: one escalation, one prefix.
+    const escalated = await ft.handleTaskFailureWithFixTask({
+      taskId: recoveryId,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'boom-original-error',
+    })
+    expect(escalated.outcome).toBe('escalated')
+
+    const afterFirst = await q.getTask(recoveryId)
+    expect(afterFirst?.failureReason).toBe(
+      'recovery_failed:verify:typecheck/unclassified: boom-original-error',
+    )
+
+    // The sweep re-drives the terminal row, feeding the composed reason back in
+    // exactly as the `task.failed` event does.
+    const redriven = await ft.handleTaskFailureWithFixTask({
+      taskId: recoveryId,
+      failingStep: 'verify:typecheck',
+      errorOutput: afterFirst!.failureReason!,
+    })
+    expect(redriven.outcome).toBe('escalated')
+
+    const afterRedrive = await q.getTask(recoveryId)
+    // Exactly one prefix, and the original error survives verbatim.
+    expect(
+      afterRedrive?.failureReason?.match(/recovery_failed:/g)?.length,
+    ).toBe(1)
+    expect(afterRedrive?.failureReason).toBe(afterFirst?.failureReason)
+    expect(afterRedrive?.failureReason).toContain('boom-original-error')
+    expect(afterRedrive?.status).toBe('failed')
+
+    // The re-drive raised no second escalation and did not re-stamp the
+    // existing row (seenCount stays at its first-raise value).
+    const openItems = await actionQueue.listActionQueueItems('open')
+    const escalations = openItems.filter(
+      (item) =>
+        item.kind === 'failed' &&
+        (item.payload as { recoveryTaskId?: string }).recoveryTaskId ===
+          recoveryId,
+    )
+    expect(escalations).toHaveLength(1)
+    expect(escalations[0]?.seenCount).toBe(1)
+
+    // And still no fix-of-fix.
+    const descendants = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [recoveryId],
+    })
+    expect(Number((descendants.rows[0] as unknown as { n: number }).n)).toBe(0)
+    cleanup()
+  })
+
   it('trips the signature storm breaker for repeated recovery failures and replaces later per-origin escalations with one storm', async () => {
     process.env.MARS_SIGNATURE_STORM_THRESHOLD = '3'
     const { q, ft, rc } = await loadModules(repo)
