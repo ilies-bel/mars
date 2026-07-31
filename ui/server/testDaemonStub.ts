@@ -162,11 +162,20 @@ const makeStateStore = (dbPath: string): ActionQueueStateStore => {
   }
 }
 
-/** Task-store adapter over the seeded `tasks` + `task_blockers` tables. */
+/**
+ * Task-store adapter over the seeded `tasks` + `task_blockers` tables.
+ *
+ * Unlike the production loader (`listActionQueueTaskGraph` in app-services),
+ * this one ignores the supplied rows and returns every task in the fixture.
+ * The view only reads the returned tasks through id-keyed maps, so a superset
+ * is behaviourally identical; the row-scoping in production is a query-cost
+ * optimisation over a real queue, and replicating its recursive CTE here would
+ * add a second copy of that logic to keep in sync for no test-visible gain.
+ */
 const makeTaskStore = (dbPath: string): ActionQueueTaskStore => {
   const client = createClient({ url: `file:${dbPath}` })
   return {
-    listTasks: async (): Promise<TaskForActionQueue[]> => {
+    listTasksForActionQueueItems: async (): Promise<TaskForActionQueue[]> => {
       let tasks: Record<string, unknown>[] = []
       try {
         const r = await client.execute(
