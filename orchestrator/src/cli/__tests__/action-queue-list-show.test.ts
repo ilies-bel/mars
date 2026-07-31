@@ -534,9 +534,14 @@ describe('action-queue show', () => {
   })
 
   it('reports a timeout without claiming the daemon is down', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(
+    // Covers the stale-port case: a port file pointing at a dead listener makes
+    // the request hang. The abort is simulated rather than waited out —
+    // AbortSignal.timeout is a Node-internal timer that fake timers cannot
+    // advance, so a real never-resolving fetch would cost 15s of wall clock.
+    const mockFetch = vi.fn().mockRejectedValue(
       Object.assign(new Error('request aborted'), { name: 'AbortError' }),
-    ))
+    )
+    vi.stubGlobal('fetch', mockFetch)
     writeDaemonPort(repo, FAKE_PORT)
     const opts = await loadOpts(repo)
 
@@ -545,6 +550,8 @@ describe('action-queue show', () => {
     expect(r.code).toBe(1)
     expect(r.err.join('\n')).toContain('daemon did not answer within 15s')
     expect(r.err.join('\n')).not.toContain('daemon not running')
+    // A stale port must not hang forever: the request carries a timeout signal.
+    expect(mockFetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal)
   })
 
   it('returns usage error when no id is provided', async () => {
