@@ -63,6 +63,7 @@ const makeDeployStore = () => ({
   query: vi.fn().mockResolvedValue({ rows: [] }),
   execute: vi.fn().mockResolvedValue({ rows: [] }),
   batch: vi.fn().mockResolvedValue([]),
+  updateTask: vi.fn().mockResolvedValue(undefined),
   writeDeployment: vi.fn().mockResolvedValue({
     deploymentId: 'dep-abc',
     taskId: 'test-task-id',
@@ -162,6 +163,19 @@ describe('review preview-gate — remote deployment', () => {
           url: 'https://preview.example.com',
         }),
       )
+    })
+
+    it('persists the remote preview URL on the parked task', async () => {
+      const store = makeDeployStore()
+      const ctx = makeCtx(store)
+      await expect(
+        review(ctx as never, { reviewType: 'manual', worktree: fakeWorktree }),
+      ).rejects.toBeInstanceOf(WorkflowTerminalError)
+      expect(store.updateTask).toHaveBeenCalledWith('test-task-id', {
+        status: 'awaiting-validation',
+        devServerUrl: 'https://preview.example.com',
+        devServerPid: null,
+      })
     })
 
     it('raises an action-queue item with remoteUrl in the payload', async () => {

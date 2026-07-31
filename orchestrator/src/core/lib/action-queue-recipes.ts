@@ -337,6 +337,22 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
     ],
   },
 
+  'awaiting-validation-preview-gone': {
+    humanSummary: () =>
+      'A task still needs a validation decision, but its preview is no longer reachable.',
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      devServerUrl: str(ctx.payload['devServerUrl']) || str(ctx.payload['remoteUrl']),
+      previewUnavailableAt: str(ctx.payload['previewUnavailableAt']),
+      branch: str(ctx.payload['branch']),
+    }),
+    verbs: [
+      { op: 'validate', label: 'Validate & merge', style: 'primary' },
+      { op: 'reject', label: 'Reject', style: 'danger' },
+    ],
+  },
+
   'awaiting-human': {
     humanSummary: (ctx) => {
       const owner = str(ctx.payload['leaseOwner']) || 'someone'

@@ -5366,6 +5366,29 @@ export const startDaemon = async (
   }, PHANTOM_WATCHDOG_MS)
   staleQueuedWatchdog.unref()
 
+  // ── Awaiting-validation watchdog ─────────────────────────────────────────
+  // Reuse the stale-queued / phantom cadence: preview-gated tasks are parked
+  // deliberately, but a dead preview must be demoted immediately and expires
+  // after 48h so it cannot pollute the operator queue forever.
+  const { runAwaitingValidationSweep } = await import('./awaiting-validation-watchdog')
+  const awaitingValidationWatchdog = setInterval(() => {
+    void (async () => {
+      try {
+        const { demoted, failed } = await runAwaitingValidationSweep()
+        if (demoted.length > 0 || failed.length > 0) {
+          log(
+            `[awaiting-validation-watchdog] demoted ${demoted.length} dead preview(s); expired ${failed.length} task(s)`,
+          )
+          viewStreamHub.broadcast('action-queue')
+          viewStreamHub.broadcast('tasks')
+        }
+      } catch (err) {
+        log(`[awaiting-validation-watchdog] errored: ${(err as Error).message}`)
+      }
+    })()
+  }, PHANTOM_WATCHDOG_MS)
+  awaitingValidationWatchdog.unref()
+
   // ── Observability telemetry sweeper ───────────────────────────────────────
   // Periodically deletes trace_events rows older than three days so the
   // state store stays bounded across multi-day sessions. The sweep reuses

@@ -1882,13 +1882,23 @@ export const review = async (
           url: deployResult.url,
           status: 'ready',
         })
+        await manualStore.updateTask(manualTaskId, {
+          status: 'awaiting-validation',
+          devServerUrl: deployResult.url,
+          devServerPid: null,
+        })
         raiseActionQueueItem({
           kind: 'awaiting-validation',
           category: 'task',
           priority: 'normal',
           title: `Validate ${manualTaskId}`,
           body: `Remote deployment ready${deployResult.url ? `: ${deployResult.url}` : ''}.`,
-          payload: { remoteUrl: deployResult.url, branch: worktreeBranch },
+          payload: {
+            taskId: manualTaskId,
+            devServerUrl: deployResult.url,
+            remoteUrl: deployResult.url,
+            branch: worktreeBranch,
+          },
           context: { taskId: manualTaskId },
           raisedBy: 'primitive:preview-gate',
           signature: manualTaskId,

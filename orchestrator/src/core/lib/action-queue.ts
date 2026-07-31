@@ -73,6 +73,10 @@ export const ACTION_QUEUE_KINDS = [
   // 'awaiting-validation' until the operator clicks Validate (→ merge) or
   // Reject (→ failed). The row carries the dev-server URL in its payload.
   'awaiting-validation',
+  // The preview attached to an awaiting-validation task stopped responding.
+  // The task remains parked until the operator decides, but this normal-priority
+  // row must not mask live alerts.
+  'awaiting-validation-preview-gone',
   // A task has been parked in 'awaiting-human': an operator holds a worktree
   // lease and is working interactively in the task's worktree. The row carries
   // the lease owner, timestamp, and optional note in its payload. Raised on
@@ -792,6 +796,52 @@ export const patchOpenActionQueuePayload = async (
   await c.execute({
     sql: `UPDATE action_queue_items SET payload = ? WHERE id = ?`,
     args: [JSON.stringify(merged), row.id],
+  })
+  return row.id
+}
+
+/**
+ * Keep an awaiting-validation decision visible after its preview has died,
+ * without leaving a high-priority "ready" row in front of live alerts.
+ */
+export const demoteAwaitingValidationAction = async (
+  taskId: string,
+  previewUrl: string | null,
+  detectedAt: string,
+): Promise<string | null> => {
+  const c = stateClient()
+  const fingerprint = await resolvedOriginFingerprint(taskId)
+  const existing = await c.execute({
+    sql: `SELECT id, payload FROM action_queue_items
+           WHERE fingerprint = ?
+             AND state = 'open'
+             AND kind IN ('awaiting-validation', 'awaiting-validation-preview-gone')
+           ORDER BY raised_at ASC
+           LIMIT 1`,
+    args: [fingerprint],
+  })
+  if (existing.rows.length === 0) return null
+  const row = existing.rows[0] as unknown as { id: string; payload: string | null }
+  const payload = {
+    ...parseJsonObject(row.payload),
+    previewUnavailableAt: detectedAt,
+    ...(previewUrl === null ? {} : { devServerUrl: previewUrl }),
+  }
+  await c.execute({
+    sql: `UPDATE action_queue_items
+             SET kind = ?, priority = ?, title = ?, body = ?, payload = ?, last_seen_at = ?
+           WHERE id = ?`,
+    args: [
+      'awaiting-validation-preview-gone',
+      'normal',
+      `Preview unavailable for ${taskId}`,
+      previewUrl === null
+        ? 'The preview URL is missing or no longer available. Decide whether to validate from prior evidence or reject the task.'
+        : `The preview at ${previewUrl} is unreachable. Decide whether to validate from prior evidence or reject the task.`,
+      JSON.stringify(payload),
+      detectedAt,
+      row.id,
+    ],
   })
   return row.id
 }

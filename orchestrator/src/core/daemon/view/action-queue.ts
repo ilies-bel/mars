@@ -38,6 +38,7 @@ const NON_TASK_FAILURE_KINDS = new Set([
   'stale-worktree',
   'draft-proposal',
   'awaiting-validation',
+  'awaiting-validation-preview-gone',
   'awaiting-human',
   'reflect-recommended',
   'workflow-draft-pending',
@@ -930,7 +931,7 @@ export const buildActionQueueView = async ({
     // same value on the task row), so the payload is the authoritative,
     // restart-safe source the projection reads.
     const devServerUrl =
-      uiKind === 'awaiting-validation' &&
+      (uiKind === 'awaiting-validation' || uiKind === 'awaiting-validation-preview-gone') &&
       typeof row.payload.devServerUrl === 'string'
         ? row.payload.devServerUrl
         : null
