@@ -18,6 +18,7 @@ import {
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
   recoveryAttachesToOrigin,
   resolveWorkerSystemPrompt,
+  measureWorkerDispatchPrompt,
 } from '../primitives/shared'
 import { implementInputSchema } from '../implement-workflow'
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
@@ -32,6 +33,13 @@ describe('workflow verify cwd', () => {
 })
 
 describe('composePrompt — coder default', () => {
+  it('reports the late Save your work section from the production Coder composition', () => {
+    const report = measureWorkerDispatchPrompt('Coder', 'Commit the change.')
+    const save = report.sections.find((section) => section.name === '## Save your work')
+
+    expect(save?.depthPercent).toBeGreaterThan(80)
+  })
+
   it('front-loads the commit exit condition before a bare prompt', () => {
     const out = composePrompt('do the thing', null)
     expect(out.startsWith(COMMIT_EXIT_CONDITION)).toBe(true)

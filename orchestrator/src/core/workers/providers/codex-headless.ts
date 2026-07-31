@@ -25,7 +25,7 @@ const isReadOnlyRun = (opts: HeadlessRunOpts): boolean => {
 // unavoidable inlining explicit at this call site: Codex receives these as
 // ordinary user text, so the user prompt must put non-negotiable exit
 // conditions first rather than relying on system-role precedence.
-const composePrompt = (prompt: string, systemPrompt?: string): string =>
+export const composeCodexPrompt = (prompt: string, systemPrompt?: string): string =>
   systemPrompt?.trim()
     ? `<mars_system_instructions>\n${systemPrompt.trim()}\n</mars_system_instructions>\n\n${prompt}`
     : prompt
@@ -122,7 +122,7 @@ export const codexHeadless: HeadlessAdapter = {
         `model_reasoning_effort="${opts.effort ?? 'high'}"`,
         '--sandbox',
         isReadOnlyRun(opts) ? 'read-only' : 'workspace-write',
-        composePrompt(prompt, opts.systemPrompt),
+        composeCodexPrompt(prompt, opts.systemPrompt),
       ],
       opts.cwd,
       async ({ stream, line }) => {

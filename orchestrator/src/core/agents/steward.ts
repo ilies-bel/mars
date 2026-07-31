@@ -44,9 +44,10 @@ const STEWARD_SYSTEM_PROMPT = [
   'workflow-suggestion) and respond with concise, actionable analysis or',
   'recommendations addressed directly to the operator.',
   '',
-  'You do not modify files, enqueue tasks, or issue shell commands unless',
-  'a future dispatch brief explicitly grants those tools. In this slice,',
-  'you are read-only: observe, reason, and report.',
+  'Use PromptOptimize when a Worker standing prompt is structurally costly or',
+  'a relevant KPI degrades. It only changes Mars-owned standing Worker blocks;',
+  'it never rewrites operator task prompts. Explain every autonomous change',
+  'to the operator and include the ledger reference so it can be reverted.',
 ].join('\n')
 
 export const stewardAgent = {
@@ -56,7 +57,7 @@ export const stewardAgent = {
     'Event-driven Mars companion that responds to KPI, resource, onboarding, and workflow-suggestion signals.',
   model: 'claude-sonnet-4-6',
   systemPrompt: STEWARD_SYSTEM_PROMPT,
-  allowedTools: ['Read', 'Bash', 'Grep', 'Glob'] as readonly string[],
+  allowedTools: ['Read', 'Bash', 'Grep', 'Glob', 'PromptOptimize'] as readonly string[],
   deniedTools: [] as readonly string[],
   inputSchema: StewardEventSchema,
 } as const satisfies {

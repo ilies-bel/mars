@@ -18,6 +18,10 @@ describe('stewardAgent — spec shape', () => {
   it('exposes the inputSchema', () => {
     expect(typeof stewardAgent.inputSchema.parse).toBe('function')
   })
+
+  it('makes prompt optimization callable by the Steward', () => {
+    expect(stewardAgent.allowedTools).toContain('PromptOptimize')
+  })
 })
 
 describe('StewardEventSchema — parse behaviour', () => {

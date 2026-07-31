@@ -109,3 +109,35 @@ export const listStewardLedgerSince = async (
     rowToStewardLedgerEntry(row as Record<string, unknown>),
   )
 }
+
+/** Read one ledger entry for a human-requested Steward revert. */
+export const getStewardLedgerEntry = async (id: string): Promise<StewardLedgerRow | null> => {
+  await init()
+  const result = await client().execute({
+    sql: `SELECT * FROM steward_ledger WHERE id = ?`,
+    args: [id],
+  })
+  const row = result.rows[0]
+  return row ? rowToStewardLedgerEntry(row as Record<string, unknown>) : null
+}
+
+/**
+ * Mark a reverted autonomous intervention without deleting its original
+ * version key: that historical key intentionally keeps a reverted text from
+ * being immediately re-optimized again.
+ */
+export const markStewardInterventionReverted = async (id: string): Promise<void> => {
+  await init()
+  const result = await client().execute({
+    sql: `UPDATE steward_ledger
+          SET outcome = jsonb_set(
+            CASE WHEN outcome ~ '^\\{' THEN outcome::jsonb ELSE jsonb_build_object('state', outcome) END,
+            '{state}', '"reverted"'::jsonb, true
+          )::text
+          WHERE id = ?`,
+    args: [id],
+  })
+  if (result.rowsAffected !== undefined && result.rowsAffected === 0) {
+    throw new Error(`Steward ledger entry '${id}' was not found`)
+  }
+}

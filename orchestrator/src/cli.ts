@@ -418,6 +418,18 @@ Commands:
                                 and enqueues exactly one task tagged
                                 'tool-forge'. Idempotent — re-running with
                                 unchanged data is a no-op.
+  steward inspect Coder [--provider codex|claude]
+                                report the production Coder prompt's section
+                                offsets, duplicated directives, and provider
+                                assembly without changing it.
+  steward optimize Coder [--provider codex|claude]
+                                run the Steward prompt proposer. Its operator
+                                autonomy lever defaults to the shared
+                                autonomous level; use mars daemon set-lever
+                                steward_prompt_optimizer autonomy off|ask|tell
+                                to override it.
+  steward revert <ledger-entry> restore a prior Worker prompt block recorded
+                                by an autonomous Steward edit.
   action-queue                         alias for 'action-queue list open'
   action-queue list [state] [--kind <kind>] [--lean]
                                 list action queue items. state one of:

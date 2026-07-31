@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { __resetContextCacheForTests } from '../../context'
-import { readLeverAutonomyLevel } from '../config'
+import {
+  AUTONOMOUS_AUTONOMY_LEVEL,
+  STEWARD_PROMPT_OPTIMIZER_LEVER,
+  readLeverAutonomyLevel,
+} from '../config'
 
 describe('readLeverAutonomyLevel', () => {
   let tmpDir: string
@@ -29,6 +33,12 @@ describe('readLeverAutonomyLevel', () => {
 
     expect(() => readLeverAutonomyLevel('steward_runtime_tune')).toThrow(
       /retired autonomy level 'silent'.*'off', 'ask', or 'tell'/i,
+    )
+  })
+
+  it('defaults the prompt optimizer to the shared autonomous level', () => {
+    expect(readLeverAutonomyLevel(STEWARD_PROMPT_OPTIMIZER_LEVER)).toBe(
+      AUTONOMOUS_AUTONOMY_LEVEL,
     )
   })
 })

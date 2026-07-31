@@ -20,6 +20,8 @@ import {
   type Task,
 } from '../../core/queue'
 import { resolveTaskCwd } from '../../core/lib/resolve-task-cwd'
+import { readWorkerPromptOverride } from '../../core/daemon/config'
+import { composeCodexPrompt } from '../../core/workers/providers/codex-headless'
 import { TDD_WORKER_BRIEF } from '../tdd-brief'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 import type { WorkerName } from '../../core/workers'
@@ -143,7 +145,7 @@ export const COMMIT_EXIT_CONDITION = [
 
 // Mandatory detailed commit procedure appended to every implementor prompt.
 export const COMMIT_FOOTER = [
-  '## Commit procedure',
+  '## Save your work',
   '',
   'Before exiting, stage and commit every file you intend to land:',
   '',
@@ -217,8 +219,24 @@ export const CODING_DISCIPLINE = [
 ].join('\n')
 
 // Build the Coder Worker's standing Session instructions.
-export const buildCoderSystemPrompt = (): string =>
+const defaultCoderSystemPrompt = (): string =>
   [TDD_WORKER_BRIEF, CONTEXT_GATHERING_BRIEF, DEVIATION_RULES].join('\n\n')
+
+// This is the production composition seam for the persistent Steward
+// override. It applies only to Mars-owned standing instructions, never to a
+// Task's operator-authored prompt body.
+export const buildCoderSystemPrompt = (): string =>
+  readWorkerPromptOverride('Coder.system') ?? defaultCoderSystemPrompt()
+
+/** Read the baseline text for a block before any persisted Steward edit. */
+export const defaultWorkerPromptBlock = (block: 'Coder.system' | 'COMMIT_FOOTER'): string =>
+  block === 'Coder.system' ? defaultCoderSystemPrompt() : COMMIT_FOOTER
+
+/** Read the live Mars-owned block text used by the production composer. */
+export const workerPromptBlock = (block: 'Coder.system' | 'COMMIT_FOOTER'): string =>
+  block === 'Coder.system'
+    ? buildCoderSystemPrompt()
+    : readWorkerPromptOverride('COMMIT_FOOTER') ?? COMMIT_FOOTER
 
 // Standing Session instructions for the Coder Worker.
 export const CODER_SYSTEM_PROMPT = buildCoderSystemPrompt()
@@ -336,8 +354,129 @@ export const composePrompt = (
     sections.push(`## Lessons\n\n<lessons>\n${items}\n</lessons>`)
   }
   sections.push(CODING_DISCIPLINE)
-  sections.push(COMMIT_FOOTER)
+  sections.push(workerPromptBlock('COMMIT_FOOTER'))
   return sections.join('\n\n')
+}
+
+// ---------------------------------------------------------------------------
+// Worker prompt inspection
+// ---------------------------------------------------------------------------
+
+/** A section measured from the exact prompt text the selected provider receives. */
+export interface WorkerPromptSection {
+  name: string
+  channel: 'system' | 'user'
+  byteOffset: number
+  tokenOffset: number
+  depthPercent: number
+  bytes: number
+  tokens: number
+}
+
+export interface WorkerPromptMeasurement {
+  worker: WorkerName
+  provider: 'claude' | 'codex'
+  /** Exact provider transport distinction, rather than a generic "system" label. */
+  assembly: 'codex-inlined-mars-system-instructions' | 'claude-append-system-prompt'
+  totalBytes: number
+  totalTokens: number
+  boilerplateToTaskRatio: number
+  sections: WorkerPromptSection[]
+  duplicatedDirectives: string[]
+}
+
+// Tokenizers vary by provider and are not available in the standalone Mars
+// binary. This stable lexical estimate is deliberately labelled as tokens in
+// the report only alongside byte offsets; callers must not use it for model
+// billing or context-limit enforcement.
+const estimatedTokens = (text: string): number =>
+  text.trim().length === 0 ? 0 : text.trim().split(/\s+/u).length
+
+const markdownSections = (text: string, channel: 'system' | 'user'): Array<{ name: string; channel: 'system' | 'user'; start: number; text: string }> => {
+  const headings = [...text.matchAll(/^##\s+.+$/gmu)]
+  if (headings.length === 0) {
+    return [{ name: channel === 'system' ? 'Coder.system' : 'Task', channel, start: 0, text }]
+  }
+  const sections: Array<{ name: string; channel: 'system' | 'user'; start: number; text: string }> = []
+  if (headings[0]!.index! > 0) {
+    sections.push({ name: channel === 'system' ? 'Coder.system preamble' : 'Task preamble', channel, start: 0, text: text.slice(0, headings[0]!.index) })
+  }
+  for (let index = 0; index < headings.length; index += 1) {
+    const heading = headings[index]!
+    const start = heading.index!
+    const end = headings[index + 1]?.index ?? text.length
+    sections.push({ name: heading[0], channel, start, text: text.slice(start, end) })
+  }
+  return sections
+}
+
+const directiveLines = (text: string): string[] =>
+  text
+    .split('\n')
+    .map((line) => line.replace(/^[-*\d.\s#>`]+/u, '').replace(/[`*_]/gu, '').trim().toLowerCase())
+    .filter((line) => line.length >= 24 && /(?:must|never|do not|always|before|commit|verify)/u.test(line))
+
+/**
+ * Inspect a real Coder dispatch composition. It deliberately calls the same
+ * `buildCoderSystemPrompt` and `composePrompt` functions used by workflow
+ * dispatch; it is not a parallel prompt template.
+ */
+export const measureWorkerDispatchPrompt = (
+  worker: WorkerName = 'Coder',
+  taskPrompt = 'Implement the requested change.',
+  provider: 'claude' | 'codex' = 'codex',
+): WorkerPromptMeasurement => {
+  if (worker !== 'Coder') {
+    throw new Error(`prompt measurement currently supports Coder; received '${worker}'`)
+  }
+  const system = buildCoderSystemPrompt()
+  const user = composePrompt(taskPrompt, null, 'coder')
+  const inlinedPrefix = '<mars_system_instructions>\n'
+  const inlinedSuffix = '</mars_system_instructions>\n\n'
+  const wire =
+    provider === 'codex'
+      ? composeCodexPrompt(user, system)
+      : `${system}\n\n${user}`
+  const systemOffset = provider === 'codex' ? Buffer.byteLength(inlinedPrefix) : 0
+  const userOffset =
+    provider === 'codex'
+      ? Buffer.byteLength(`${inlinedPrefix}${system}${inlinedSuffix}`)
+      : Buffer.byteLength(`${system}\n\n`)
+  const totalBytes = Buffer.byteLength(wire)
+  const totalTokens = estimatedTokens(wire)
+  const systemBytes = Buffer.byteLength(system)
+  const userBytes = Buffer.byteLength(user)
+  const sections = [...markdownSections(system, 'system'), ...markdownSections(user, 'user')].map((section) => {
+    const prefix = section.channel === 'system' ? system.slice(0, section.start) : user.slice(0, section.start)
+    const byteOffset = (section.channel === 'system' ? systemOffset : userOffset) + Buffer.byteLength(prefix)
+    const tokenOffset = estimatedTokens(wire.slice(0, byteOffset))
+    const bytes = Buffer.byteLength(section.text)
+    const tokens = estimatedTokens(section.text)
+    return {
+      name: section.name,
+      channel: section.channel,
+      byteOffset,
+      tokenOffset,
+      depthPercent: totalBytes === 0 ? 0 : (byteOffset / totalBytes) * 100,
+      bytes,
+      tokens,
+    }
+  })
+  const systemDirectives = new Set(directiveLines(system))
+  const duplicatedDirectives = [...new Set(directiveLines(user).filter((line) => systemDirectives.has(line)))]
+  return {
+    worker,
+    provider,
+    assembly:
+      provider === 'codex'
+        ? 'codex-inlined-mars-system-instructions'
+        : 'claude-append-system-prompt',
+    totalBytes,
+    totalTokens,
+    boilerplateToTaskRatio: taskPrompt.trim().length === 0 ? Infinity : (systemBytes + userBytes - Buffer.byteLength(taskPrompt.trim())) / Buffer.byteLength(taskPrompt.trim()),
+    sections,
+    duplicatedDirectives,
+  }
 }
 
 // ---------------------------------------------------------------------------

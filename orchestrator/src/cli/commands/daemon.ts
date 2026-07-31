@@ -13,6 +13,7 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
   loadDaemonConfig,
+  AUTONOMY_LEVELS,
   patchDaemonConfigFile,
   persistLeverAutonomyLevel,
   readDaemonConfigFile,
@@ -469,7 +470,7 @@ const daemonSetCap: Command = {
   },
 }
 
-const VALID_AUTONOMY_LEVELS = new Set<string>(['off', 'ask', 'tell'])
+const VALID_AUTONOMY_LEVELS = new Set<string>(AUTONOMY_LEVELS)
 
 const daemonSetLever: Command = {
   path: 'daemon set-lever',

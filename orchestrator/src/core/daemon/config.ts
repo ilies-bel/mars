@@ -5,14 +5,25 @@ import { resolveContext } from '../context'
 import type { ProviderName } from '../workers/providers'
 
 /** Three-position autonomy axis for each operator lever. */
-export type AutonomyLevel = 'off' | 'ask' | 'tell'
+export const AUTONOMY_LEVELS = ['off', 'ask', 'tell'] as const
+export type AutonomyLevel = (typeof AUTONOMY_LEVELS)[number]
+
+/**
+ * The shared autonomous position. Keep this derived from the type source of
+ * truth: mars-8b5c09ce is settling the tell/silent glossary divergence.
+ */
+export const AUTONOMOUS_AUTONOMY_LEVEL: AutonomyLevel = AUTONOMY_LEVELS[2]
+
+export const STEWARD_PROMPT_OPTIMIZER_LEVER = 'steward_prompt_optimizer' as const
+
+export type WorkerPromptBlockId = 'Coder.system' | 'COMMIT_FOOTER'
 
 /**
  * Zod schema for a single lever entry in daemon.json's `levers` map.
  * The `autonomy_level` field defaults to `'ask'` when omitted.
  */
 export const leverSchema = z.object({
-  autonomy_level: z.enum(['off', 'ask', 'tell']).default('ask'),
+  autonomy_level: z.enum(AUTONOMY_LEVELS).default('ask'),
 })
 
 export type LeverEntry = z.infer<typeof leverSchema>
@@ -279,14 +290,14 @@ export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
   const raw = readDaemonConfigFile()
   const levers = raw.levers
   if (levers === null || typeof levers !== 'object' || Array.isArray(levers)) {
-    return 'ask'
+    return name === STEWARD_PROMPT_OPTIMIZER_LEVER ? AUTONOMOUS_AUTONOMY_LEVEL : 'ask'
   }
   const leverData = (levers as Record<string, unknown>)[name]
   if (leverData === null || typeof leverData !== 'object' || Array.isArray(leverData)) {
-    return 'ask'
+    return name === STEWARD_PROMPT_OPTIMIZER_LEVER ? AUTONOMOUS_AUTONOMY_LEVEL : 'ask'
   }
   const autonomyLevel = (leverData as Record<string, unknown>).autonomy_level
-  if (autonomyLevel !== undefined && autonomyLevel !== 'off' && autonomyLevel !== 'ask' && autonomyLevel !== 'tell') {
+  if (autonomyLevel !== undefined && !AUTONOMY_LEVELS.includes(autonomyLevel as AutonomyLevel)) {
     const kind = autonomyLevel === 'silent' ? 'retired' : 'invalid'
     throw new Error(
       `daemon.json lever '${name}' has ${kind} autonomy level '${String(autonomyLevel)}'; valid levels are 'off', 'ask', or 'tell'`,
@@ -299,6 +310,37 @@ export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
     )
   }
   return parsed.data.autonomy_level
+}
+
+/** Read an operator-/Steward-managed standing Worker prompt block, if any. */
+export const readWorkerPromptOverride = (block: WorkerPromptBlockId): string | null => {
+  const workerPrompts = readDaemonConfigFile().workerPrompts
+  if (workerPrompts === null || typeof workerPrompts !== 'object' || Array.isArray(workerPrompts)) {
+    return null
+  }
+  const value = (workerPrompts as Record<string, unknown>)[block]
+  return typeof value === 'string' && value.trim().length > 0 ? value : null
+}
+
+/**
+ * Persist an override for a Mars-owned standing Worker prompt block. Operator
+ * task prompts never pass through this map.
+ */
+export const persistWorkerPromptOverride = (
+  block: WorkerPromptBlockId,
+  text: string | null,
+): void => {
+  const current = readDaemonConfigFile()
+  const existing =
+    current.workerPrompts !== null &&
+    typeof current.workerPrompts === 'object' &&
+    !Array.isArray(current.workerPrompts)
+      ? (current.workerPrompts as Record<string, unknown>)
+      : {}
+  const next = { ...existing }
+  if (text === null) delete next[block]
+  else next[block] = text
+  patchDaemonConfigFile({ workerPrompts: next })
 }
 
 /**

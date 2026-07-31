@@ -47,6 +47,7 @@ import { purgeCommands } from './purge'
 import { mcpWorkerCommands } from './mcp-worker'
 import { worktreeCommands } from './worktree'
 import { budgetCommands } from './budget'
+import { stewardCommands } from './steward'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -89,6 +90,7 @@ export const allCommands: readonly Command[] = [
   ...mcpWorkerCommands,
   ...worktreeCommands,
   ...budgetCommands,
+  ...stewardCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)
