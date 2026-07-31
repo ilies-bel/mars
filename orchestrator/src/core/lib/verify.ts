@@ -1,4 +1,5 @@
 import { stat } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { exec, resolveGitBin, type TraceCtx } from './git/internal'
 
 /**
@@ -61,6 +62,20 @@ export const assertWorktreeHygieneForVerify = async (
   // 3. No stale git rebase state?  (mirrors the isRebaseInProgress check in
   //    merge.ts, which uses `git rev-parse --git-path` to resolve the correct
   //    rebase-state path even inside a linked worktree.)
+  //
+  // `--git-path` output is only ABSOLUTE inside a linked worktree
+  // (`/repo/.git/worktrees/<id>/rebase-merge`). In a plain repo it is
+  // RELATIVE — literally `.git/rebase-merge` — and `stat()` would then resolve
+  // it against the daemon's process cwd instead of `worktreePath`. That is not
+  // hypothetical: the main-committer path verifies with `cwd = repoRoot`, and
+  // when the daemon's own cwd holds a `.git` FILE (any linked worktree) the
+  // stat raises ENOTDIR rather than ENOENT, which escaped the catch below and
+  // failed verify. `verifyChanges` reports a hygiene throw under the step name
+  // `has-diff`, so this surfaced as the thoroughly misleading
+  // `verify:has-diff failed` on a branch whose diff was never even examined.
+  //
+  // Resolve against `worktreePath` (a no-op for an already-absolute path), and
+  // treat ENOTDIR exactly like ENOENT: both mean "no rebase state here".
   const { stdout: mergePathRaw } = await exec(
     git,
     ['rev-parse', '--git-path', 'rebase-merge'],
@@ -74,14 +89,15 @@ export const assertWorktreeHygieneForVerify = async (
     traceCtx,
   )
 
-  for (const rebasePath of [mergePathRaw.trim(), applyPathRaw.trim()]) {
+  for (const rawPath of [mergePathRaw.trim(), applyPathRaw.trim()]) {
+    const rebasePath = resolve(worktreePath, rawPath)
     let isDir = false
     try {
       const s = await stat(rebasePath)
       isDir = s.isDirectory()
     } catch (err: unknown) {
-      if (!isEnoent(err)) throw err
-      // ENOENT → the state dir is absent, which is the healthy case.
+      if (!isMissingPath(err)) throw err
+      // ENOENT/ENOTDIR → the state dir is absent, which is the healthy case.
     }
     if (isDir) {
       throw new Error(
@@ -98,3 +114,18 @@ const isEnoent = (err: unknown): boolean =>
   err instanceof Error &&
   'code' in err &&
   (err as NodeJS.ErrnoException).code === 'ENOENT'
+
+/**
+ * True when a `stat` failure means "nothing is at this path".
+ *
+ * ENOENT is the ordinary form. ENOTDIR is the same fact reported differently:
+ * a path component that exists but is a FILE rather than a directory — e.g.
+ * `<something>/.git/rebase-merge` where `.git` is a linked worktree's gitfile.
+ * Treating ENOTDIR as an error made a healthy tree look like it had stale
+ * rebase state.
+ */
+const isMissingPath = (err: unknown): boolean =>
+  isEnoent(err) ||
+  (err instanceof Error &&
+    'code' in err &&
+    (err as NodeJS.ErrnoException).code === 'ENOTDIR')

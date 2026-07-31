@@ -49,6 +49,12 @@ export function classifyFailure(failureSignature: string): FailureCategory {
     // Orchestration, not code: no edit to any file can restore a deleted
     // worktree, and routing it to a code fixer would burn the recovery slot.
     failureSignature.startsWith('code:worktree-missing') ||
+    // verify:worktree-missing fires when verify — the first step to actually
+    // execute on a checkpoint-resume — finds the worktree directory gone AND
+    // its branch deleted (typically a recovery that merged and cleaned up the
+    // shared worktree). Orchestration, not code: there is no tree left to
+    // verify, so a code fixer has nothing to edit.
+    failureSignature.startsWith('verify:worktree-missing') ||
     // {setup,code}:worktree-rebase-conflict fires when a task's branch cannot
     // be replayed onto the integration tip. The rebase is aborted and the
     // worktree left untouched; resolving it means reconciling two git

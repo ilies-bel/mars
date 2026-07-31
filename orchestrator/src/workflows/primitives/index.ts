@@ -2027,6 +2027,56 @@ export const review = async (
     traceStore: spanStore(trace),
     getCommandOutput: () => capturedVerifyOutput,
     fn: async (): Promise<ReviewResult> => {
+      // ── Worktree preflight: verify is a RESUME ENTRY POINT ────────────────
+      // On a checkpoint-resume both `setup` and `code` short-circuit (their
+      // records are 'completed'), so verify is the first step that actually
+      // executes — and NOTHING before it revalidates the worktree. `runAgent`
+      // has `restoreWorktreeIfMissing` for exactly this, but it lives inside
+      // the `code` step, which is precisely the step that gets skipped.
+      //
+      // Observed live on mars-a13334fd (and 3 others): its recovery merged and
+      // cleaned up the shared worktree + branch, after which every re-dispatch
+      // skipped setup and code, ran verify against a deleted directory, and
+      // failed. Because `verifyChanges` reports a hygiene throw under the step
+      // name `has-diff`, this surfaced as `verify:has-diff failed` — on a diff
+      // that was never examined — and the task re-queued forever (attempts
+      // 4 → 10 in under a minute).
+      //
+      // Re-attach from the branch when the committed work still exists; when
+      // the branch is gone too there is genuinely nothing to verify, so fail
+      // ONCE with a named, orchestration-classified signature instead of
+      // looping on a misleading one.
+      try {
+        const restored = await restoreWorktreeIfMissing({
+          taskId,
+          ref: { path: worktreePath, branch },
+          traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
+        })
+        if (restored === 'rebuilt') {
+          console.log(
+            `[verify] task ${taskId}: worktree ${worktreePath} was missing on resume; ` +
+              `re-attached from branch ${branch}`,
+          )
+        }
+      } catch (err) {
+        if (!(err instanceof ResumeWorktreeUnrecoverable)) throw err
+        const summary = err.message
+        const signature = computeFailureSignature('verify:worktree-missing', summary)
+        await updateTask(
+          taskId,
+          {
+            status: 'failed',
+            error: summary,
+            failedPhase: 'verify',
+            failureReason: 'verify:worktree-missing',
+            failureSignature: signature,
+            failureReasonCode: signature,
+          },
+          store,
+        )
+        throw new WorkflowTerminalError('resume-worktree-missing', summary)
+      }
+
       // Verify-time dirty-main check (non-fix only).
       if (kind !== 'fix') {
         try {
