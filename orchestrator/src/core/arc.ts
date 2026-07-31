@@ -66,6 +66,7 @@ import { internalBus } from '../internal-bus'
 import { getProposal } from './proposals'
 import { markTaskFailed } from './queue-retry'
 import { computeFailureSignature } from './lib/failure-signature'
+import { linkTaskToThread } from './daemon/chat-thread-tasks'
 import {
   raiseActionQueueItem,
   resolveAllRowsForTask,
@@ -417,57 +418,60 @@ export class Arc {
     const followupDedupKey = opts?.followupDedupKey ?? null
     const qa: 'auto' | 'manual' = opts?.qa === 'manual' ? 'manual' : 'auto'
     const deferrable = opts?.deferrable === true ? 1 : 0
-    await resolvedStore.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, compensates_arc_id, followup_dedup_key, qa, "deferrable", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: [
-        id,
-        promptText,
-        status,
-        plan?.functional ?? null,
-        plan?.technical ?? null,
-        authorKind,
-        authorName,
-        originId,
-        priority,
-        parentProposalId,
-        sliceIndex,
-        tagsJson,
-        kind,
-        verifyCmd,
-        taskType,
-        readFirstJson,
-        prescriptiveAction,
-        sliceKindVal,
-        subDeliverableJson,
-        intent,
-        originSessionId,
-        workflow,
-        compensatesArcId,
-        followupDedupKey,
-        qa,
-        deferrable,
-        now,
-        now,
-      ],
+    await resolvedStore.atomic(async (tx) => {
+      await tx.execute({
+        sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, compensates_arc_id, followup_dedup_key, qa, "deferrable", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          id,
+          promptText,
+          status,
+          plan?.functional ?? null,
+          plan?.technical ?? null,
+          authorKind,
+          authorName,
+          originId,
+          priority,
+          parentProposalId,
+          sliceIndex,
+          tagsJson,
+          kind,
+          verifyCmd,
+          taskType,
+          readFirstJson,
+          prescriptiveAction,
+          sliceKindVal,
+          subDeliverableJson,
+          intent,
+          originSessionId,
+          workflow,
+          compensatesArcId,
+          followupDedupKey,
+          qa,
+          deferrable,
+          now,
+          now,
+        ],
+      })
+      // Write spec.files to task_spec_files junction table.
+      if (taskSpec?.files && taskSpec.files.length > 0) {
+        for (let i = 0; i < taskSpec.files.length; i++) {
+          await tx.execute({
+            sql: `INSERT INTO task_spec_files (task_id, path, position) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+            args: [id, taskSpec.files[i], i],
+          })
+        }
+      }
+      // Write spec.doneCriteria to task_done_criteria junction table.
+      if (taskSpec?.doneCriteria && taskSpec.doneCriteria.length > 0) {
+        for (let i = 0; i < taskSpec.doneCriteria.length; i++) {
+          await tx.execute({
+            sql: `INSERT INTO task_done_criteria (task_id, criterion, position) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+            args: [id, taskSpec.doneCriteria[i], i],
+          })
+        }
+      }
+      if (opts?.chatThreadId) await linkTaskToThread(opts.chatThreadId, id, tx)
     })
-    // Write spec.files to task_spec_files junction table.
-    if (taskSpec?.files && taskSpec.files.length > 0) {
-      for (let i = 0; i < taskSpec.files.length; i++) {
-        await resolvedStore.execute({
-          sql: `INSERT INTO task_spec_files (task_id, path, position) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
-          args: [id, taskSpec.files[i], i],
-        })
-      }
-    }
-    // Write spec.doneCriteria to task_done_criteria junction table.
-    if (taskSpec?.doneCriteria && taskSpec.doneCriteria.length > 0) {
-      for (let i = 0; i < taskSpec.doneCriteria.length; i++) {
-        await resolvedStore.execute({
-          sql: `INSERT INTO task_done_criteria (task_id, criterion, position) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
-          args: [id, taskSpec.doneCriteria[i], i],
-        })
-      }
-    }
     // Supersede: if we inherited a branch + worktree from the superseded task,
     // stamp them onto the new task row so the dispatcher sees a ready worktree.
     if (inheritedBranch !== null && inheritedWorktreePath !== null) {

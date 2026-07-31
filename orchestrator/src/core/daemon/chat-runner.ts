@@ -31,6 +31,7 @@ import { integrationBranchName } from '../blocker-resolution'
 import { createProposal } from '../proposals'
 import { enqueueTask, getTask, updateTask } from '../queue'
 import { ChatMcpManager, type McpToolInfo } from './chat-mcp'
+import { listTasksForThread } from './chat-thread-tasks'
 import { runShellCommand } from './chat-shell'
 import { buildSkillsSection, discoverSkills, loadSkill } from './chat-skills'
 import { corePurgeTask } from './purge-task'
@@ -101,6 +102,33 @@ const AUDIO_MIMES = new Set(['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
+
+const CHAT_TASK_ID_RE = /\bmars-[a-f0-9]{8,}\b/g
+
+/**
+ * Legacy transcript inference is deliberately diagnostic-only. The durable
+ * `chat_thread_tasks` relation is authoritative for task links.
+ */
+const parseCreatedTaskIds = (messages: Pick<ChatMessage, 'segments'>[]): string[] => {
+  const ids: string[] = []
+  const seen = new Set<string>()
+  for (const message of messages) {
+    if (!Array.isArray(message.segments)) continue
+    for (const segment of message.segments) {
+      if (!isObject(segment) || segment.type !== 'tool_use') continue
+      const input = JSON.stringify(segment.input ?? '')
+      if (!input.includes('mars task add')) continue
+      const result = JSON.stringify(segment.result ?? '')
+      for (const match of result.matchAll(CHAT_TASK_ID_RE)) {
+        if (!seen.has(match[0])) {
+          seen.add(match[0])
+          ids.push(match[0])
+        }
+      }
+    }
+  }
+  return ids
+}
 
 /**
  * Derive a short display name for a shell command.
@@ -835,6 +863,24 @@ export class ChatRunner {
         textContent.length > 0 ? textContent : '[no output]',
         accumulatedSegments,
       )
+      // Text extraction predates the durable relation and is lossy (notably
+      // for non-shell tools). Keep it solely as a signal for unexpected drift.
+      try {
+        const [thread, linkedTasks] = await Promise.all([
+          getThread(threadId),
+          listTasksForThread(threadId),
+        ])
+        const inferredTaskIds = parseCreatedTaskIds(thread?.messages ?? [])
+        const linkedTaskIds = linkedTasks.map((link) => link.taskId)
+        if (inferredTaskIds.join('\u0000') !== linkedTaskIds.join('\u0000')) {
+          console.warn('[mars chat] task-link drift', { threadId, inferredTaskIds, linkedTaskIds })
+        }
+      } catch (err) {
+        console.warn('[mars chat] unable to check task-link drift', {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
       await setThreadStatus(threadId, 'idle')
       // Invalidation ping so the sidebar re-fetches the thread list.
       hub?.broadcast('chat')
@@ -1017,7 +1063,7 @@ export class ChatRunner {
               } else if (taskSpec.length === 0) {
                 result = { content: 'invalid override_end_grill arguments: "taskSpec" must be a non-empty string', isError: true }
               } else {
-                const task = await enqueueTask(taskSpec, undefined, { skipTriage: true })
+                const task = await enqueueTask(taskSpec, undefined, { skipTriage: true, chatThreadId: threadId })
                 await setThreadPosture(threadId, 'triage')
                 posture = 'triage'
                 await appendMessage(

@@ -62,6 +62,9 @@ const queue = vi.hoisted(() => ({
 }))
 vi.mock('../../queue', () => queue)
 
+const threadTasks = vi.hoisted(() => ({ listTasksForThread: vi.fn() }))
+vi.mock('../chat-thread-tasks', () => threadTasks)
+
 const purge = vi.hoisted(() => ({ corePurgeTask: vi.fn() }))
 vi.mock('../purge-task', () => purge)
 
@@ -110,6 +113,7 @@ describe('ChatRunner overrides', () => {
     vi.mocked(codexApi.loadCodexAuth).mockResolvedValue({ accessToken: 'token', accountId: 'account', refreshToken: 'refresh' })
     vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
     mcpMock.getTools.mockResolvedValue([])
+    threadTasks.listTasksForThread.mockResolvedValue([])
   })
 
   it('turns “just do it” in a grill into one task and returns the thread to triage', async () => {
@@ -129,7 +133,9 @@ describe('ChatRunner overrides', () => {
       'grill', 'assistant', 'Queued task-17.', expect.anything(),
     ))
     expect(queue.enqueueTask).toHaveBeenCalledTimes(1)
-    expect(queue.enqueueTask).toHaveBeenCalledWith('Rename the queue label.', undefined, { skipTriage: true })
+    expect(queue.enqueueTask).toHaveBeenCalledWith(
+      'Rename the queue label.', undefined, { skipTriage: true, chatThreadId: 'grill' },
+    )
     expect(store.posture).toBe('triage')
     expect(store.appendMessage).toHaveBeenCalledWith(
       'grill', 'assistant', expect.stringContaining('left grill posture'), expect.anything(),

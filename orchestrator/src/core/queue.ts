@@ -932,6 +932,8 @@ const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
 
 export interface EnqueueTaskOptions {
   skipTriage?: boolean
+  /** Chat thread that initiated this task; persisted atomically with the task row. */
+  chatThreadId?: string
   author?: Author
   originId?: string
   priority?: number
