@@ -508,9 +508,63 @@ export interface PostCoderStateArgs {
 
 export type PostCoderState =
   | { kind: 'dirty-no-commits'; dirtyFiles: string[] }
+  | { kind: 'dirty-with-commits'; dirtyFiles: string[]; commitsAhead: number }
   | { kind: 'clean-with-commits'; commitsAhead: number }
   | { kind: 'clean-no-work' }
   | { kind: 'error'; error: string }
+
+/**
+ * Failing-step id stamped when the coder violates its commit contract by
+ * leaving the worktree dirty. Grammar per `STEP_ID_RE` in
+ * `core/lib/failure-signature.ts` so the durable recovery-spawn path can
+ * recompute the same signature from `failure_reason`.
+ */
+export const CODE_COMMIT_CONTRACT_STEP = 'code:commit-contract'
+
+/**
+ * Full failure signature for a coder that left uncommitted work behind.
+ * `<step>/<error-class>` where the class is the pre-existing
+ * `uncommitted-changes` slug (same class `merge:preflight/uncommitted-changes`
+ * binds to) — the step half is what makes the two distinguishable.
+ */
+export const CODE_COMMIT_CONTRACT_SIGNATURE = `${CODE_COMMIT_CONTRACT_STEP}/uncommitted-changes`
+
+/**
+ * First line of the commit-contract failure output. Contains
+ * "has uncommitted changes", which is what `classifyError` keys the
+ * `uncommitted-changes` slug off — keep the phrase intact when editing.
+ */
+export const codeCommitContractSummary = (
+  taskId: string,
+  fileCount: number,
+): string =>
+  `task ${taskId} worktree has uncommitted changes after the code step: coder left ${fileCount} path(s) uncommitted`
+
+/**
+ * Full failure output for the commit-contract gate: the summary line, the
+ * offending file list, and the worktree location so the retained tree is
+ * inspected in the right context.
+ */
+export const codeCommitContractFailure = (args: {
+  taskId: string
+  worktreePath: string
+  branch: string
+  integrationBranch: string
+  dirtyFiles: string[]
+  commitsAhead: number
+}): string =>
+  [
+    codeCommitContractSummary(args.taskId, args.dirtyFiles.length),
+    '',
+    `The coder committed ${args.commitsAhead} commit(s) onto ${args.branch} but did not commit these path(s):`,
+    ...args.dirtyFiles.map((f) => `  ${f}`),
+    '',
+    `Worktree: ${args.worktreePath}`,
+    `Branch: ${args.branch} (integration branch: ${args.integrationBranch})`,
+    '',
+    'Every path the coder touched must be committed before the code step ends —',
+    'an uncommitted path never reaches verify and blocks the rebase at merge.',
+  ].join('\n')
 
 // Parse `git status --porcelain=v1` into a list of paths.
 const parsePorcelainPaths = (raw: string): string[] => {
@@ -582,11 +636,19 @@ export const detectPostCoderState = async (
     return { kind: 'error', error: `git status failed: ${message}` }
   }
 
+  // Dirtiness is classified FIRST: a tree with uncommitted paths is dirty
+  // whether or not the coder also produced commits. Reading `commitsAhead`
+  // first (the pre-2026-07 shape) collapsed "committed some work, left the
+  // rest uncommitted" into `clean-with-commits`, which passed the code step,
+  // passed verify's has-diff gate, and only blew up at the rebase as
+  // `merge/unclassified` (task fix-30ac0aaa).
+  if (dirtyFiles.length > 0) {
+    return commitsAhead > 0
+      ? { kind: 'dirty-with-commits', dirtyFiles, commitsAhead }
+      : { kind: 'dirty-no-commits', dirtyFiles }
+  }
   if (commitsAhead > 0) {
     return { kind: 'clean-with-commits', commitsAhead }
   }
-  if (dirtyFiles.length === 0) {
-    return { kind: 'clean-no-work' }
-  }
-  return { kind: 'dirty-no-commits', dirtyFiles }
+  return { kind: 'clean-no-work' }
 }

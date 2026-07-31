@@ -103,6 +103,9 @@ import {
   recoveryAttachesToOrigin,
   resolveWorkerSystemPrompt,
   BLOCKERS_ABORT_MESSAGE,
+  CODE_COMMIT_CONTRACT_SIGNATURE,
+  CODE_COMMIT_CONTRACT_STEP,
+  codeCommitContractFailure,
   CODER_EXIT_NONZERO_ABORT_MESSAGE,
   CODER_UNCOMMITTED_ABORT_MESSAGE,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
@@ -1094,7 +1097,10 @@ export const runAgent = async (
         integrationBranch,
         traceCtx: buildPhaseCtx(trace, taskId, 'code'),
       })
-      if (postState.kind === 'dirty-no-commits') {
+      if (
+        postState.kind === 'dirty-no-commits' ||
+        postState.kind === 'dirty-with-commits'
+      ) {
         const addR = await runTool(
           {
             tool: 'git',
@@ -1316,6 +1322,85 @@ export const runAgent = async (
     }
   }
 
+  // --- Coder commit contract -----------------------------------------------
+  // Post-condition on the `code` step: the coder must hand over a CLEAN
+  // worktree. The branch above covers "committed nothing, left everything
+  // dirty" (deterministic auto-commit, or a terminal failure when that
+  // fails). This branch covers the shape that used to slip through: the coder
+  // committed SOME work and left other paths uncommitted. That tree passed
+  // code, passed verify (has-diff only counts commits), and first surfaced two
+  // steps later as `merge/unclassified` — a generic bucket that named neither
+  // the cause nor the responsible step, and that feeds the signature-storm
+  // circuit breaker. Fail here instead, where the step and the retained
+  // worktree match the actual defect.
+  //
+  // No auto-commit on this path (unlike dirty-no-commits): once the coder has
+  // committed deliberately, a blind `git add -A` would sweep whatever it chose
+  // to leave out — debris or half-finished work — into the merge. The contract
+  // violation is the coder's to fix.
+  //
+  // Deliberately NOT asserted here: that the branch is ahead of
+  // `integrationBranch`. Zero commits ahead is a legitimate terminal state —
+  // verify's has-diff gate passes it on purpose (a task that correctly
+  // concluded there was nothing to do, or whose work already landed upstream;
+  // see the 2026-05-29 main-committer incident documented in
+  // `core/lib/git/verify.ts`). Asserting it here would re-fail exactly the
+  // no-op runs that gate was fixed to accept. The clean-tree assertion has no
+  // such exemption and applies to every path.
+  if (postState?.kind === 'dirty-with-commits') {
+    const errorMsg = codeCommitContractFailure({
+      taskId,
+      worktreePath,
+      branch,
+      integrationBranch,
+      dirtyFiles: postState.dirtyFiles,
+      commitsAhead: postState.commitsAhead,
+    })
+    console.log(
+      `[post-coder] task ${taskId}: commit contract violated — ${postState.commitsAhead} commit(s) ahead of ${integrationBranch} but ${postState.dirtyFiles.length} path(s) left uncommitted`,
+    )
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: errorMsg,
+        failedPhase: 'code',
+        // `failure_reason` doubles as the fine-grained failing step for the
+        // durable recovery-spawn subscriber (`asStepId(task.failureReason)`),
+        // so it must stay a bare step id — the prose lives in `error`.
+        failureReason: CODE_COMMIT_CONTRACT_STEP,
+        failureSignature: CODE_COMMIT_CONTRACT_SIGNATURE,
+        failureReasonCode: CODE_COMMIT_CONTRACT_SIGNATURE,
+      },
+      store,
+    )
+    await handleTaskFailureWithFixTask({
+      taskId,
+      failingStep: CODE_COMMIT_CONTRACT_STEP,
+      errorOutput: errorMsg,
+      branch,
+      store,
+      recipeContext: {
+        targetPath: worktreePath,
+        statusOutput: postState.dirtyFiles.join('\n'),
+        targetBranch: branch,
+        originalPrompt: '',
+      },
+    }).catch((err) => {
+      console.error(
+        `[post-coder] task ${taskId}: commit-contract recovery spawn errored:`,
+        err,
+      )
+    })
+    throw new WorkflowTerminalError(
+      'coder-uncommitted',
+      CODER_UNCOMMITTED_ABORT_MESSAGE(taskId),
+    )
+  }
+
+  // Emitted only for runs that survive every post-coder gate above, matching
+  // the existing terminal-failure branches (auto-commit-failed, commit
+  // contract), which throw before reaching this point.
   await trace.traceStore
     .record({
       kind: 'post-coder-commit',
@@ -2601,6 +2686,16 @@ export const merge = async (
 
         if (m.aborted) {
           const errorMsg = `merge aborted by vcs-supervisor; worktree retained at ${worktreePath}\n${m.output.slice(0, 1000)}`
+          // Classify from the WRAPPED message, not the raw mergeBranch output:
+          // the wrapper line is what lands in `error` and what the durable
+          // recovery-spawn path re-classifies. Stamping the signature here (it
+          // used to be left unset) means the abort reason — e.g. the pre-rebase
+          // dirty-worktree guard's `rebase-dirty-worktree` — is on the row from
+          // the first write, instead of degrading to `merge/unclassified`.
+          const abortSignature = computeFailureSignature(
+            'merge:vcs-supervisor-aborted',
+            errorMsg,
+          )
           await updateTask(
             taskId,
             {
@@ -2608,7 +2703,8 @@ export const merge = async (
               error: errorMsg,
               failedPhase: 'merge',
               failureReason: 'merge:vcs-supervisor-aborted',
-              failureReasonCode: 'merge:vcs-supervisor-aborted',
+              failureSignature: abortSignature,
+              failureReasonCode: abortSignature,
             },
             store,
           )

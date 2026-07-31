@@ -301,8 +301,16 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     // /rebase-no-in-progress-state. The correct resolution is to restart the
     // task (re-provisions the worktree from scratch), not to spawn a code-fix
     // recovery.
+    //
+    // matchFull, not match: the merge primitive prefixes the sentinel with
+    // "merge aborted by vcs-supervisor; worktree retained at <path>", and the
+    // durable recovery-spawn path re-classifies from that stored `error`. Under
+    // first-line-only matching the sentinel was invisible there and the failure
+    // degraded to `merge/unclassified` (task fix-30ac0aaa) — a generic bucket
+    // that also feeds the signature-storm circuit breaker. Matching the whole
+    // body keeps the named slug reachable from every call site.
     errorClass: 'rebase-dirty-worktree',
-    match: /worktree dirty before rebase/i,
+    matchFull: /worktree dirty before rebase/i,
   },
   {
     // merge:crashed when git cannot acquire the index lock because another

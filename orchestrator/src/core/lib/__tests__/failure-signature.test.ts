@@ -406,14 +406,38 @@ describe('matchFull rules are checked against full output', () => {
   })
 
   it('classifyError returns rebase-dirty-worktree only when the sentinel string is present', () => {
-    // Confirm the rule is first-line anchored: a generic "dirty" string without
-    // the sentinel does not trigger the new class.
+    // The rule keys on the sentinel, not on the word "dirty": a generic
+    // message without the sentinel does not trigger the class.
     expect(
       classifyError('worktree dirty before rebase: cannot start rebase with uncommitted/untracked files'),
     ).toBe('rebase-dirty-worktree')
     expect(
       classifyError('generic dirty worktree message'),
     ).not.toBe('rebase-dirty-worktree')
+  })
+
+  it('classifies the dirty-worktree sentinel even when the merge primitive prefixes it', () => {
+    // Regression: task fix-30ac0aaa. The merge primitive stores the sentinel
+    // one line down, behind "merge aborted by vcs-supervisor; worktree
+    // retained at <path>". Under first-line-only matching the classifier saw
+    // only the wrapper and the failure degraded to `merge/unclassified` — a
+    // generic bucket that names neither the cause nor the step, and that feeds
+    // the signature-storm circuit breaker. The rule is matchFull so the
+    // sentinel stays reachable from the wrapped form too.
+    const wrapped = [
+      'merge aborted by vcs-supervisor; worktree retained at .mars/worktrees/mars-8e7b69eb',
+      'worktree dirty before rebase: cannot start rebase with uncommitted/untracked files',
+      ' M orchestrator/src/core/lib/derived-row-actions.ts',
+    ].join('\n')
+    expect(classifyError(wrapped)).toBe('rebase-dirty-worktree')
+    // Both the inline stamp (fine-grained step) and the degraded
+    // recovery-spawn path (coarse `failed_phase`) land on a named class.
+    expect(
+      computeFailureSignature('merge:vcs-supervisor-aborted', wrapped),
+    ).toBe('merge:vcs-supervisor-aborted/rebase-dirty-worktree')
+    expect(computeFailureSignature('merge', wrapped)).toBe(
+      'merge/rebase-dirty-worktree',
+    )
   })
 
 })
