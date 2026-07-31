@@ -366,6 +366,99 @@ export const provisionCommitterWorktree = async (
   return worktree
 }
 
+/**
+ * Thrown by {@link restoreWorktreeIfMissing} when a resumed run's worktree
+ * directory is gone AND its branch no longer exists, so there is nothing left
+ * on disk or in git to resume from. The task must be restarted from setup —
+ * the caller stamps a named failure signature rather than letting the run
+ * spawn into a non-existent directory.
+ */
+export class ResumeWorktreeUnrecoverable extends Error {
+  readonly taskId: string
+  readonly expectedPath: string
+  readonly expectedBranch: string
+  constructor(args: { taskId: string; expectedPath: string; expectedBranch: string }) {
+    super(
+      `worktree for resumed task ${args.taskId} is unrecoverable: directory ${args.expectedPath} ` +
+        `is absent and branch '${args.expectedBranch}' no longer exists`,
+    )
+    this.name = 'ResumeWorktreeUnrecoverable'
+    this.taskId = args.taskId
+    this.expectedPath = args.expectedPath
+    this.expectedBranch = args.expectedBranch
+  }
+}
+
+export type RestoreWorktreeOutcome = 'present' | 'rebuilt'
+
+/**
+ * Guarantee that a resumed run's worktree directory actually exists on disk
+ * before anything is spawned inside it.
+ *
+ * WHY THIS EXISTS. Checkpoint-resume replays a run with `runId = task.id`, so
+ * a completed `setup` step short-circuits and the worktree ref is
+ * reconstituted from the task row (`resolveWorktree`). Nothing on that path
+ * revalidates the directory. If the worktree was removed while the task was
+ * parked — a recovery task that shares the origin's worktree merging and
+ * cleaning it up, an operator drop, a prune — the resumed `code` step spawns
+ * the provider CLI with `cwd` pointing at a deleted directory. Node reports
+ * that as `spawn <bin> ENOENT` → exit 127 in a few milliseconds, which reads
+ * as "command not found" and is bucketed as a contentless coder-exit-nonzero.
+ * The binary was never the problem and the retry could never succeed.
+ *
+ * Repair mirrors {@link attachToOriginWorktree}: if the branch still exists,
+ * the committed work is intact and the worktree is re-attached in place with
+ * `git worktree add <path> <branch>`, so the resumed coder picks up exactly
+ * where it stopped. If the branch is gone too, nothing can be resumed and
+ * {@link ResumeWorktreeUnrecoverable} is thrown for the caller to surface as a
+ * named failure.
+ *
+ * @returns `'present'` when the directory was already there (the overwhelmingly
+ *          common case — one `existsSync` and no git calls), `'rebuilt'` when
+ *          it had to be re-attached from the branch.
+ * @throws {ResumeWorktreeUnrecoverable} when directory and branch are both gone.
+ */
+export const restoreWorktreeIfMissing = async (args: {
+  taskId: string
+  ref: WorktreeRef
+  traceCtx?: TraceCtx
+}): Promise<RestoreWorktreeOutcome> => {
+  const { taskId, ref } = args
+  const { path, branch } = ref
+
+  if (await pathExists(path)) return 'present'
+
+  const ctx: TraceCtx | undefined = args.traceCtx
+    ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'setup' }
+    : undefined
+
+  // Drop stale registrations so `git worktree add` is not refused with
+  // "already registered" for a path that no longer exists on disk.
+  await execProbe(
+    resolveGitBin(),
+    ['worktree', 'prune'],
+    { cwd: repoRoot(), timeout: WORKTREE_GIT_TIMEOUT_MS },
+    ctx,
+  ).catch(() => {})
+
+  if (!(await branchExists(branch, ctx))) {
+    throw new ResumeWorktreeUnrecoverable({
+      taskId,
+      expectedPath: path,
+      expectedBranch: branch,
+    })
+  }
+
+  await mkdir(resolve(path, '..'), { recursive: true })
+  await exec(
+    resolveGitBin(),
+    ['worktree', 'add', path, branch],
+    { cwd: repoRoot() },
+    ctx,
+  )
+  return 'rebuilt'
+}
+
 export const resolveSha = async (
   ref: string,
   traceCtx?: TraceCtx,

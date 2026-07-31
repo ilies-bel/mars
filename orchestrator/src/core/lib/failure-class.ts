@@ -43,7 +43,12 @@ export function classifyFailure(failureSignature: string): FailureCategory {
     // This is always an orchestration condition (no amount of code editing
     // fixes a missing worktree); the error class is always 'unclassified'
     // because the OriginWorktreeMissingError message matches no errorClassRule.
-    failureSignature.startsWith('setup:origin-worktree-missing')
+    failureSignature.startsWith('setup:origin-worktree-missing') ||
+    // code:worktree-missing fires when a resumed run's worktree directory is
+    // gone AND its branch no longer exists, so there is nothing to re-attach.
+    // Orchestration, not code: no edit to any file can restore a deleted
+    // worktree, and routing it to a code fixer would burn the recovery slot.
+    failureSignature.startsWith('code:worktree-missing')
   ) {
     return 'orchestration'
   }
