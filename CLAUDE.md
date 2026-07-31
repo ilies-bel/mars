@@ -22,7 +22,7 @@ direct.
 
 **General rule:** run `mars workflow list` to see every available
 pipeline. Each is a runbook with declared execution modes and Step
-guides, renderable via `mars workflow validate <name>`. Pick the
+guides, renderable via `mars workflow render <name>`. Pick the
 pipeline whose shape fits the work and select it at enqueue with
 `--workflow <name>`.
 
