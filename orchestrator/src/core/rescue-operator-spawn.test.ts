@@ -39,6 +39,20 @@ const setupRepo = (): string => {
   return repo
 }
 
+/**
+ * The `db.ts` instance belonging to the CURRENT test's module registry.
+ *
+ * `loadModules` calls `vi.resetModules()`, so every test gets its own `db.ts`
+ * with its own client registry and its own embedded-PG/PGlite instance pointed
+ * at that test's temp repo. Nothing closed them, so `afterEach`'s `rmSync`
+ * deleted the data directory out from under a still-open database — surfacing
+ * later as `could not open file "base/5/..."` / `could not create directory
+ * "base/5": File exists` on whichever test happened to run next. That made the
+ * file flaky independently of what is being asserted. Captured here so
+ * `afterEach` can close the right registry before deleting the directory.
+ */
+let currentDb: { __resetDbRegistryForTests: () => Promise<void> } | null = null
+
 const loadModules = async (
   repo: string,
 ): Promise<{
@@ -50,6 +64,9 @@ const loadModules = async (
 }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
+  currentDb = (await import('./lib/db')) as unknown as {
+    __resetDbRegistryForTests: () => Promise<void>
+  }
   const q = (await import('./queue')) as unknown as QueueModule
   await q.ensureQueueSchema()
   const ft = (await import('./queue-fix-tasks')) as unknown as FixTasksModule
@@ -102,9 +119,12 @@ describe('rescue-operator-spawn', () => {
     repo = setupRepo()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.MARS_REPO
     delete process.env.MARS_FIX_RETRY_BUDGET
+    // Close this test's database BEFORE deleting its directory — see currentDb.
+    await currentDb?.__resetDbRegistryForTests()
+    currentDb = null
     rmSync(repo, { recursive: true, force: true })
   })
 
