@@ -94,21 +94,6 @@ const toEpochMillis = (value: unknown, fallback = 0): number => {
 }
 
 /**
- * Normalise timestamps from modern epoch-millisecond rows and the ISO strings
- * still used by a few backwards-compatibility fixtures.
- */
-const toEpochMillis = (value: unknown, fallback = 0): number => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string') {
-    const numeric = Number(value)
-    if (Number.isFinite(numeric)) return numeric
-    const parsed = Date.parse(value)
-    if (Number.isFinite(parsed)) return parsed
-  }
-  return fallback
-}
-
-/**
  * Discover which columns a seeded table actually has, so a single SELECT can
  * be built that references only present columns (the integration tests seed
  * partial / legacy schemas — querying an absent column throws). Returns an
