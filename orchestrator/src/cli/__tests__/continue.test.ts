@@ -56,6 +56,16 @@ describe('mars continue --help', () => {
     expect(result.status).toBe(0)
     expect(result.stdout).toContain('restart')
   })
+
+  it('explains which failures resume work and which ones restart instead', () => {
+    const result = runCli(['continue', '--help'])
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toMatch(/code-phase failure[\s\S]*salvage checkpoint/i)
+    expect(result.stdout).toMatch(/Degraded-to-restart[\s\S]*degradedToRestart: true/i)
+    expect(result.stdout).toMatch(/Refuses \(non-zero exit\)[\s\S]*in-flight recovery/i)
+    expect(result.stdout).not.toMatch(/failed in the 'code' phase.*no verifiable artefact/i)
+  })
 })
 
 describe('mars continue — no task id', () => {

@@ -76,9 +76,24 @@ export class PreviewRegistry {
 
     const { pid, child } = entry
 
-    try {
-      process.kill(pid, 'SIGTERM')
-    } catch {
+    // Signal the whole process group. `spawn` used `shell: true, detached: true`,
+    // so the child leads a group containing the shell AND whatever it started;
+    // signalling only the shell's pid leaves the real server orphaned.
+    const signalGroup = (signal: NodeJS.Signals): boolean => {
+      try {
+        process.kill(-pid, signal)
+        return true
+      } catch {
+        try {
+          process.kill(pid, signal)
+          return true
+        } catch {
+          return false
+        }
+      }
+    }
+
+    if (!signalGroup('SIGTERM')) {
       // Process already gone — nothing to clean up.
       return
     }
@@ -104,12 +119,9 @@ export class PreviewRegistry {
       // SIGKILL delivery is not observable as a Node.js event.
       timer = setTimeout(() => {
         child.removeListener('exit', done)
-        try {
-          process.kill(pid, 'SIGKILL')
-        } catch {
-          // best-effort: process may have exited between the timeout firing
-          // and this kill call.
-        }
+        // Escalate on the GROUP: a leader that ignored SIGTERM, or a surviving
+        // descendant, must not keep the group alive.
+        signalGroup('SIGKILL')
         resolvePromise()
       }, 5_000)
     })

@@ -10,7 +10,7 @@ A single operator (the repo owner) running an AFK agent fleet against their own 
 
 ## Product Purpose
 
-Mars runs Claude Code as parallel workers in git worktrees (code → verify → merge). The UI is its mission-control surface: a live topology of tasks/proposals and their blocker edges, an action queue of everything needing a human, an event stream, and KPI trends. Success: the operator can answer "what needs me right now" in under five seconds, and can trust that what the screen shows IS the state (the queue is a pure projection of entity state — ADR-0048).
+Mars runs the operator's selected agent CLI as parallel workers in git worktrees (code → verify → merge), with Codex as the default provider. The UI is its mission-control surface: a live topology of tasks/proposals and their blocker edges, an action queue of everything needing a human, an event stream, and KPI trends. Success: the operator can answer "what needs me right now" in under five seconds, and can trust that what the screen shows IS the state (the queue is a pure projection of entity state — ADR-0048).
 
 ## Brand Personality
 

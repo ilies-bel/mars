@@ -37,6 +37,8 @@ import {
   clearMessageFeedback,
   fetchChatHistory,
   fetchCodexAuthState,
+  fetchProjectMeta,
+  fetchSessionAdrs,
   refreshCodexAuth,
   ApiError,
   type AttachmentInfo,
@@ -65,11 +67,11 @@ import {
   PromptInputButton,
   PromptInputSubmit,
 } from '@/components/ai-elements/prompt-input'
-import { PaperclipIcon, MicIcon, SquareIcon, XIcon } from 'lucide-react'
+import { PaperclipIcon, MicIcon, SquareIcon, XIcon, PauseIcon } from 'lucide-react'
 import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
 import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
-import { WhatHappenedTodayView } from '@/widgets/chat/WhatHappenedTodayView'
+import { ChatHero, type HeroDelta } from '@/widgets/chat/ChatHero'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
 import {
@@ -80,13 +82,16 @@ import {
 } from '@/widgets/chat/queueThreads'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
+import { startThreadFromAlert } from '@/entities/alerts/api'
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
 import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
-import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle, pickTopAlert, topRowsByPriority } from './chatPageUtils'
+import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
 import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
+import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
+import { useTasks } from '@/hooks/useTasks'
 import { SkeletonList } from '@/components/Skeleton'
 
 // ---------------------------------------------------------------------------
@@ -1622,6 +1627,14 @@ export interface ComposerProps {
   queuedNext?: { text: string; attachmentCount: number } | null
   /** Called when the user cancels the queued message chip. Should restore the text to the composer. */
   onCancelQueued?: () => void
+  /**
+   * When true, renders a Pause button beside Stop while the thread is busy.
+   * Set this only when the transport supports pause/resume; leave false (default)
+   * when the current transport has no pause capability.
+   */
+  canPause?: boolean
+  /** Called when the user clicks the Pause button. Only relevant when canPause is true. */
+  onPause?: () => void
 }
 
 /** A pending file attachment in the composer before it is uploaded. */
@@ -1649,6 +1662,8 @@ export const Composer = ({
   onQueueNext,
   queuedNext,
   onCancelQueued,
+  canPause = false,
+  onPause,
 }: ComposerProps) => {
   const [text, setText] = useState('')
   const [showPalette, setShowPalette] = useState(false)
@@ -1989,6 +2004,7 @@ export const Composer = ({
         <input
           ref={fileInputRef}
           type="file"
+          data-testid="file-input"
           accept="image/*,audio/*,video/*"
           multiple
           className="hidden"
@@ -2102,18 +2118,31 @@ export const Composer = ({
             )}
           </PromptInputTools>
 
-          {/* Show Stop while a reply streams / the thread runs; Send otherwise. */}
+          {/* Show Stop (and optionally Pause) while a reply streams / the thread runs; Send otherwise. */}
           {isBusy && !isPending ? (
-            <PromptInputButton
-              data-testid="stop-btn"
-              aria-label="Stop"
-              variant="outline"
-              className="text-destructive hover:text-destructive"
-              onClick={() => onStop?.()}
-            >
-              <SquareIcon className="size-4" />
-              Stop
-            </PromptInputButton>
+            <>
+              {canPause && (
+                <PromptInputButton
+                  data-testid="pause-btn"
+                  aria-label="Pause"
+                  variant="outline"
+                  onClick={() => onPause?.()}
+                >
+                  <PauseIcon className="size-4" />
+                  Pause
+                </PromptInputButton>
+              )}
+              <PromptInputButton
+                data-testid="stop-btn"
+                aria-label="Stop"
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={() => onStop?.()}
+              >
+                <SquareIcon className="size-4" />
+                Stop
+              </PromptInputButton>
+            </>
           ) : (
             <PromptInputSubmit
               type="button"
@@ -2451,9 +2480,44 @@ export const ChatPage = () => {
   )
   const [query, setQuery] = useState<string>(() => readAqStateFromUrl().q)
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
-  // Client-only "What happened today?" release-notes stream. Shown in place of
-  // the hero empty state; cleared when the user navigates to any thread/item.
+  // Client-only "What happened today?" delta view. Shown inline (no modal) in
+  // place of the hero empty state; cleared when the user navigates to any
+  // thread/item. Also triggered by the idle-return hook when the operator comes
+  // back after 5+ minutes away so they see a summary without any blocking dialog.
   const [whatHappenedActive, setWhatHappenedActive] = useState(false)
+  // Placeholder delta — replaced by a real API fetch in a later slice. Kept
+  // here so ChatHero renders with an empty state until the data layer lands.
+  const [heroDelta] = useState<HeroDelta>({
+    merges: [],
+    recoveries: [],
+    recipes: [],
+    throttles: [],
+    evaporated: [],
+  })
+
+  // Idle-return detection: when the page becomes visible again after being
+  // hidden for 5+ minutes, show the delta inline so the operator sees a recap
+  // without any modal blocking the composer. Replaces the old #/release-notes
+  // hash-triggered modal flow.
+  const hiddenAtRef = useRef<number | null>(null)
+  useEffect(() => {
+    const IDLE_MS = 5 * 60 * 1000 // 5 minutes
+    const onVisibilityChange = () => {
+      if (typeof document === 'undefined') return
+      if (document.hidden) {
+        hiddenAtRef.current = Date.now()
+      } else if (hiddenAtRef.current !== null) {
+        const elapsed = Date.now() - hiddenAtRef.current
+        hiddenAtRef.current = null
+        if (elapsed >= IDLE_MS && !selectedThreadId && !selectedQueueItemId) {
+          setWhatHappenedActive(true)
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ---------------------------------------------------------------------------
   // Responsive breakpoints
@@ -2480,8 +2544,8 @@ export const ChatPage = () => {
     if (isMdScreen) setSidebarOpen(false)
   }, [isMdScreen])
 
-  // Capture the epoch ms when this ChatPage first mounts so the ContextRail
-  // can highlight tasks that appeared during this session.
+  // Capture the epoch ms when this ChatPage first mounts so the right rail can
+  // keep its tasks and ADRs scoped to this operator session.
   const sessionStartedAt = useRef(Date.now()).current
   const qc = useQueryClient()
 
@@ -2490,6 +2554,21 @@ export const ChatPage = () => {
   // longer surfaces the action queue.
   const { items: queueItems } = useActionQueue()
   const { items: historyItems } = useActionQueueHistory()
+
+  // Task snapshot used to surface blocked tasks that are not yet projected into
+  // the action queue (e.g. tasks waiting on a blocker that hasn't failed yet).
+  const { snapshot: taskSnapshot } = useTasks()
+
+  const sessionTaskIds = useMemo(
+    () =>
+      taskSnapshot
+        ? Object.values(taskSnapshot.columns)
+            .flat()
+            .filter((task) => Date.parse(task.createdAt) >= sessionStartedAt)
+            .map((task) => task.id)
+        : [],
+    [taskSnapshot, sessionStartedAt],
+  )
 
   // Threads at the root so a deep-linked queue item can resolve to its merged
   // alert-origin conversation. React Query dedupes this against the sidebar's
@@ -2509,6 +2588,26 @@ export const ChatPage = () => {
     staleTime: 30_000,
   })
   const activeIsStreaming = activeThreadDetail?.thread.status !== 'idle'
+
+  const threadAttachments = useMemo(
+    () =>
+      activeThreadDetail?.messages.flatMap((message) =>
+        message.segments.filter((segment): segment is ChatSegmentAttachment => segment.type === 'attachment'),
+      ) ?? [],
+    [activeThreadDetail],
+  )
+
+  const { data: sessionAdrs = [] } = useQuery({
+    queryKey: ['project-adrs', projectId, sessionStartedAt],
+    queryFn: () => fetchSessionAdrs(sessionStartedAt, projectId ?? undefined),
+    staleTime: 30_000,
+  })
+
+  const { data: projectMeta = { vision: null, theme: null } } = useQuery({
+    queryKey: ['project-context', projectId],
+    queryFn: () => fetchProjectMeta(projectId ?? undefined),
+    staleTime: 120_000,
+  })
 
   // Live buffer lifted from ChatConversation for the ContextRail activity panel.
   // Resets to null whenever the selected thread changes (ChatConversation remounts
@@ -2565,12 +2664,6 @@ export const ChatPage = () => {
   const handleSelectThread = useCallback((id: string) => {
     setSelectedThreadId(id || null)
     setSelectedQueueItemId(null)
-    setWhatHappenedActive(false)
-  }, [])
-
-  const handleSelectQueueItem = useCallback((id: string) => {
-    setSelectedQueueItemId(id)
-    setSelectedThreadId(null)
     setWhatHappenedActive(false)
   }, [])
 
@@ -2646,12 +2739,44 @@ export const ChatPage = () => {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['codex-auth'] }),
   })
 
-  // Seeded opening message: top queue item's humanSummary, or a fallback
-  // when the queue is empty. Shown as the first message in the chat feed
-  // before the user starts any thread.
-  const openingText =
-    pickTopAlert(queueItems)?.humanSummary ||
-    "Nothing's pressing right now — what would you like to work on?"
+  // Tracks the thread opened inline beneath the opening block when the user
+  // clicks a next-move chip. Kept separate from selectedThreadId so the
+  // opening block is never unmounted.
+  const [activeSubjectThreadId, setActiveSubjectThreadId] = useState<string | null>(null)
+
+  // Opens a Subject inline when a chip is picked. Arc-failed rows (alerts)
+  // reuse the daemon-deduped thread via startThreadFromAlert; other rows get
+  // a fresh generic thread.
+  const handleOpenSubject = useCallback(async (row: ActionQueueItem) => {
+    let threadId: string
+    if (row.kind === 'arc-failed') {
+      const result = await startThreadFromAlert(row.entityId)
+      threadId = result.threadId
+    } else {
+      const thread = await createChatThread(projectId)
+      threadId = thread.id
+      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+    }
+    setActiveSubjectThreadId(threadId)
+  }, [projectId, qc])
+
+  // Seeded opening message: when actionable items exist show a compact,
+  // grouped queue summary so the operator sees real pending work at a glance.
+  // Supplement action-queue rows with tasks that have status 'blocked' and are
+  // not already represented by a queue item (matched by entityId). This ensures
+  // the opening never falsely claims "nothing's pressing" when blocked tasks
+  // are waiting for attention.
+  const blockedTaskRows: DisplayRow[] = (taskSnapshot?.columns.in_progress ?? [])
+    .filter((t) => t.status === 'blocked')
+    .filter((t) => !queueItems.some((q) => q.entityId === t.id))
+    .map((t) => ({
+      id: t.id,
+      kind: 'blocked',
+      title: t.title,
+      humanSummary: 'Waiting on a blocker task.',
+    }))
+  const openingRows: DisplayRow[] = [...queueItems, ...blockedTaskRows]
+  const hasActionableItems = openingRows.length > 0
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -2796,7 +2921,7 @@ export const ChatPage = () => {
             )}
           </>
         ) : whatHappenedActive ? (
-          <WhatHappenedTodayView onBack={() => setWhatHappenedActive(false)} />
+          <ChatHero delta={heroDelta} onBack={() => setWhatHappenedActive(false)} />
         ) : (
           // Seeded feed: Mars speaks first. No hero screen — the feed is
           // already populated on first paint.
@@ -2807,27 +2932,59 @@ export const ChatPage = () => {
                 className="flex flex-col gap-1"
               >
                 <span className="font-mono text-[11px] text-primary">mars</span>
-                <p className="font-mono text-[14px] text-foreground">
-                  {openingText}
-                </p>
-                {!selectedThreadId && (
+                {!selectedThreadId && hasActionableItems ? (
                   <OpeningNextMoves
-                    rows={topRowsByPriority(queueItems, 3)}
-                    onPick={(row) => handleSelectQueueItem(row.id)}
+                    rows={openingRows}
+                    onPick={(row) => {
+                      if (row.kind === 'blocked') {
+                        // Blocked tasks are not in the action queue; navigate to
+                        // the task detail page so the operator can inspect the
+                        // blocker chain and decide what to do next.
+                        window.location.hash = taskHash(row.id, 'chat')
+                        return
+                      }
+                      // Real queue rows open their Subject inline, in the same
+                      // scroll, so the opening block is never unmounted.
+                      const item = queueItems.find((q) => q.id === row.id)
+                      if (item) void handleOpenSubject(item)
+                    }}
                   />
+                ) : (
+                  <p className="font-mono text-[14px] text-foreground">
+                    Nothing&apos;s pressing right now — what would you like to
+                    work on?
+                  </p>
                 )}
               </div>
+              {activeSubjectThreadId && (
+                <div
+                  data-testid="active-subject"
+                  data-thread-id={activeSubjectThreadId}
+                  className="mt-4 flex flex-col"
+                >
+                  <ChatConversation
+                    key={activeSubjectThreadId}
+                    threadId={activeSubjectThreadId}
+                    projectId={projectId}
+                    onPrefillConsumed={() => {}}
+                    onInsertPrompt={handleInsertPrompt}
+                    onLiveBufferChange={setActiveLiveBuffer}
+                  />
+                </div>
+              )}
             </div>
-            <div className="flex justify-center px-6 pb-6">
-              <HeroComposer
-                onSend={(msg, files, clearState) =>
-                  createAndSend({ message: msg, files }, { onSuccess: () => clearState() })
-                }
-                isPending={isCreatingThread}
-                prefill={prefill}
-                onPrefillConsumed={() => setPrefill(undefined)}
-              />
-            </div>
+            {!activeSubjectThreadId && (
+              <div className="flex justify-center px-6 pb-6">
+                <HeroComposer
+                  onSend={(msg, files, clearState) =>
+                    createAndSend({ message: msg, files }, { onSuccess: () => clearState() })
+                  }
+                  isPending={isCreatingThread}
+                  prefill={prefill}
+                  onPrefillConsumed={() => setPrefill(undefined)}
+                />
+              </div>
+            )}
             {sendError && (
               <p
                 role="alert"
@@ -2843,6 +3000,10 @@ export const ChatPage = () => {
 
       <ContextRail
         projectId={projectId}
+        tasks={sessionTaskIds}
+        files={threadAttachments}
+        adrs={sessionAdrs}
+        meta={projectMeta}
         threadId={selectedThreadId ?? undefined}
         activeThreadId={selectedThreadId ?? undefined}
         threadDetail={activeThreadDetail}

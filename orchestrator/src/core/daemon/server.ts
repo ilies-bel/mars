@@ -65,8 +65,9 @@ import { resolveManualStep, awaitManualDone } from '@mars/workflow'
 import { scanRecoveryBlockerEdges } from '../lib/blocker-invariant'
 import { createScoringPool, resolveScoringLimit } from './scoring-pool'
 import { exec, resolveGitBin } from '../lib/git/internal'
+import { warnWhenRepoRootDiffersFromIntegration } from '../lib/repo-root-branch-warning'
 import { classifyInstallRoute } from './install-route'
-import { isStaleDev } from './dev-staleness'
+import { hasRelevantDevDrift } from './dev-staleness'
 import {
   getDefaultTaskStore,
   getDefaultDomainTaskStore,
@@ -97,7 +98,20 @@ import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, typ
 import { RETENTION_MAX_ROWS_DEFAULT } from '../lib/retention-prune'
 import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForProcessExit } from './paths'
-import { applyControlLevers, loadDaemonConfig } from './config'
+import {
+  applyControlLevers,
+  loadDaemonConfig,
+  persistPaused,
+  readPersistedPaused,
+} from './config'
+import { createPauseController } from './pause-state'
+import {
+  createStormBreaker,
+  stormEscalationSignature,
+  type StormEscalation,
+  type StormStewardOutcome,
+  type StormStewardReport,
+} from './storm-breaker'
 import { setInstallSemCap } from '../lib/worktree-install'
 import { probeDuckDBLock } from './duckdb-lock'
 import {
@@ -116,6 +130,7 @@ import {
   createTaskFlightTracker,
   type DispatchKind,
 } from './task-flight-tracker'
+import { registerDispatchHint } from './dispatch-hint'
 import { rpcRegistry, dispatchRpc } from './rpc/registry'
 import type { DaemonDeps } from './rpc/types'
 import { PreviewRegistry } from './preview-registry'
@@ -127,6 +142,10 @@ import { startMergeWorker, enqueueMergeJobAndAwait, type MergeWorkerHandle } fro
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
 import { startHeartbeatWriter, type HeartbeatHandle } from './heartbeat-writer'
 import { loadSpendControl, upsertSpendControl } from './spend-control/store'
+import { getLatestUsageSnapshot } from '../lib/usage-snapshot-store'
+import { computeBudgetPressure, getBudgetPressureConfig } from '../lib/budget-pressure'
+import { deleteDeferral, upsertDeferral } from '../lib/deferral-store'
+import { shouldDeferDispatch } from '../lib/dispatch-gate'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -134,6 +153,8 @@ export interface Semaphore {
   limit: number
   inUse: number
   readonly waiters: Array<() => void>
+  /** Re-drive dispatch after an increased limit creates unclaimed capacity. */
+  onLimitIncrease?: () => void
 }
 
 export const makeSem = (limit: number): Semaphore => ({
@@ -162,9 +183,10 @@ export const release = (s: Semaphore): void => {
 }
 
 // Adjust the cap at runtime. Raising wakes up to `delta` waiters (mirroring
-// the hand-off in release() so a parallel acquire can't slip past). Lowering
-// never cancels in-flight work — release() simply won't hand to new acquirers
-// until inUse < limit again.
+// the hand-off in release() so a parallel acquire can't slip past), then
+// re-drives dispatch for queued work that has not reached acquire() yet.
+// Lowering never cancels in-flight work — release() simply won't hand to new
+// acquirers until inUse < limit again.
 export const setSemLimit = (s: Semaphore, newLimit: number): void => {
   if (!Number.isInteger(newLimit) || newLimit < 1) {
     throw new Error('limit must be a positive integer')
@@ -180,6 +202,7 @@ export const setSemLimit = (s: Semaphore, newLimit: number): void => {
       next()
     }
   }
+  if (delta > 0) s.onLimitIncrease?.()
 }
 
 export interface DaemonHandle {
@@ -455,6 +478,12 @@ export const startDaemon = async (
     }
   }
 
+  warnWhenRepoRootDiffersFromIntegration(
+    resolveContext().repoRoot,
+    integrationBranch,
+    log,
+  )
+
   // ── Exclusive advisory startup lock ─────────────────────────────────────
   // daemon.lock holds the PID of the daemon that last passed the startup
   // guards. A second concurrent start finds a live PID here and refuses
@@ -630,12 +659,11 @@ export const startDaemon = async (
   // so external observers can detect a stale/dead daemon. The handle is
   // stopped in shutdown() below.
   //
-  // Before overwriting the row, read the previous last_beat_ts so we can
-  // compute the outage gap (how long the daemon was offline). That gap is
-  // written to prev_gap_ms and used by elapsed-time watchdogs to rebase
-  // task deadlines instead of killing tasks that were only stalled by
-  // the downtime.
+  // Carry forward the persisted dispatch-uptime counter. It advances only
+  // while this live daemon can dispatch, so re-queue ceilings naturally
+  // exclude pauses and time between daemon processes.
   let heartbeatPrevGapMs = 0
+  let heartbeatDispatchUptimeMs = 0
   try {
     const { readDaemonHeartbeat } = await import('./heartbeat-writer').then(
       () => import('../store/state-store'),
@@ -643,6 +671,7 @@ export const startDaemon = async (
     const prevHb = await readDaemonHeartbeat(dbClient)
     if (prevHb) {
       heartbeatPrevGapMs = Math.max(0, Date.now() - prevHb.lastBeatTs)
+      heartbeatDispatchUptimeMs = prevHb.dispatchUptimeMs
     }
   } catch {
     // Non-fatal: if reading the previous row fails we simply assume no gap.
@@ -652,6 +681,7 @@ export const startDaemon = async (
     heartbeatHandle = await startHeartbeatWriter({
       db: dbClient,
       prevGapMs: heartbeatPrevGapMs,
+      dispatchUptimeMs: heartbeatDispatchUptimeMs,
     })
     log('[heartbeat] writer started')
   } catch (err) {
@@ -666,6 +696,78 @@ export const startDaemon = async (
   } catch {
     log('git binary not found on PATH; refusing to start')
     process.exit(1)
+  }
+
+  // Git-metadata writability pre-flight.
+  //
+  // A daemon started from a sandboxed shell can have write access to the
+  // worktree files under `.mars/worktrees/<id>/` while being DENIED write
+  // access to the shared `<repo>/.git/worktrees/<id>/` metadata directory —
+  // a different filesystem location entirely. Coders then edit files and run
+  // tests happily and fail only at the commit gate with
+  // `Git cannot create '.git/worktrees/<id>/index.lock': Operation not
+  // permitted`. That burned 79 full-context runs for zero output before it
+  // was diagnosed. Probe it once, here, and refuse to start rather than
+  // discover it 79 times.
+  {
+    const { checkGitMetadataWritable } = await import('../lib/git-metadata-preflight')
+    const probe = checkGitMetadataWritable(resolveContext().repoRoot)
+    if (!probe.writable) {
+      log(probe.message)
+      process.exit(1)
+    }
+  }
+
+  // Worker-provider binary pre-flight (defensive hardening).
+  //
+  // Each headless adapter used to resolve its binary from PATH at spawn time
+  // with no verification at all. If the daemon's environment cannot resolve it,
+  // every coder run dies instantly with exit 127 and lands in the contentless
+  // `coder-exit-nonzero` bucket — while `which codex` in the operator's own
+  // shell keeps saying everything is fine. The check therefore has to happen
+  // here, in the daemon's own process, and it has to print the PATH the DAEMON
+  // inherited.
+  //
+  // This is a guard against a failure mode, not a fix for an observed one: the
+  // exit-127 incidents seen in production traced to the retry-after-watchdog-
+  // kill dispatch path, which is handled separately.
+  //
+  // Resolving here also warms the resolve-once cache in provider-bin.ts, so
+  // every later spawn reuses this absolute path instead of re-reading PATH.
+  {
+    const { checkProviderBin } = await import('../workers/provider-bin')
+    const { WORKER_PROVIDER } = await import('../workers/index')
+    // MARS_WORKER_PROVIDER (already folded into WORKER_PROVIDER) wins over the
+    // persisted defaultProvider.
+    const effectiveProvider =
+      process.env.MARS_WORKER_PROVIDER !== undefined
+        ? WORKER_PROVIDER
+        : loadDaemonConfig().defaultProvider
+    const probe = checkProviderBin(effectiveProvider)
+    if (!probe.ok) {
+      log(probe.message)
+      process.exit(1)
+    }
+    log(probe.message)
+  }
+
+  // Boot-time orphan sweep. A previous daemon that was killed (or restarted)
+  // leaves its verify/test subprocesses reparented to init, where they burn
+  // CPU forever and — via the autotuner's load guard — pin the implement cap.
+  // Sweep before accepting any work so a restart is a genuine clean slate.
+  try {
+    const { sweepOrphans, formatSweepSummary } = await import('../lib/orphan-reaper')
+    const summary = await sweepOrphans({
+      repoRoot: resolveContext().repoRoot,
+      // Nothing is in flight yet at boot: every match is leaked by definition.
+      inFlightTaskIds: new Set<string>(),
+      log,
+    })
+    if (summary.reaped > 0) {
+      log(`[orphan-reaper] startup sweep: ${formatSweepSummary(summary)}`)
+    }
+  } catch (err) {
+    log(`[orphan-reaper] startup sweep failed (non-fatal): ${(err as Error).message}`)
   }
 
   // Auto-register this repo in the global project registry so a fresh
@@ -789,15 +891,21 @@ export const startDaemon = async (
   const tracker = createTaskFlightTracker()
   const startedAt = new Date().toISOString()
 
-  // Dev-install source staleness detection. Capture the git HEAD SHA once at
-  // startup so a periodic tick can detect when main has advanced while the
-  // daemon keeps running the old in-memory code. Gate on dev install only;
-  // prod binaries are handled by self-update.ts. On any git error, leave
-  // sourceSha null so we never surface a spurious warning.
+  // Dev-install source staleness detection. Capture the git HEAD SHA and repo
+  // root once at startup so a periodic tick can detect commits that changed
+  // loaded daemon code or workflows. Unrelated auto-commits must not mark the
+  // in-memory daemon stale. Gate on dev install only; prod binaries are
+  // handled by self-update.ts. On any git error, leave sourceSha null so we
+  // never surface a spurious warning.
   const sourceDir = dirname(fileURLToPath(import.meta.url))
   let sourceSha: string | null = null
+  let sourceRepoDir: string | null = null
   if (classifyInstallRoute() === 'dev') {
     try {
+      const { stdout: root } = await exec(resolveGitBin(), ['rev-parse', '--show-toplevel'], {
+        cwd: sourceDir,
+      })
+      sourceRepoDir = root.trim() || null
       const { stdout } = await exec(resolveGitBin(), ['rev-parse', 'HEAD'], { cwd: sourceDir })
       sourceSha = stdout.trim() || null
     } catch {
@@ -813,11 +921,41 @@ export const startDaemon = async (
   // refused. Flipped by `shutdown { drain: true }` so in-flight tasks
   // finish without any new work landing on top of them.
   let acceptingWork = true
-  // When true, the dispatch loop is suspended by an operator `mars daemon pause`.
-  // Unlike acceptingWork=false (shutdown), tasks added while paused still reach
-  // the pending sets so resume immediately dispatches them. In-flight tasks
-  // continue to completion. Does NOT survive a daemon restart.
-  let isPaused = false
+  // The ONE authoritative dispatch-pause state, with the reason recorded on it
+  // ('operator' | 'storm' | 'quota'). Unlike acceptingWork=false (shutdown),
+  // tasks added while paused still reach the pending sets so resume dispatches
+  // them immediately; in-flight tasks continue to completion. The storm
+  // breaker's durable `tripped` row is reconciled against this state at
+  // startup and cleared alongside it on resume, so the two cannot drift.
+  //
+  // Every transition also re-publishes dispatch-enabled to the heartbeat
+  // writer, so the heartbeat can never disagree with the pause state — that
+  // side-effect used to live in a hand-rolled `setDaemonPaused` next to the
+  // old `isPaused` boolean and is now owned by the controller.
+  const pause = createPauseController({
+    onChange: (state) => {
+      heartbeatHandle?.setDispatchEnabled(acceptingWork && !state.paused)
+      log(
+        state.paused
+          ? `[pause] dispatch paused (reason=${state.reason}${
+              state.detail !== null ? `: ${state.detail}` : ''
+            })`
+          : '[pause] dispatch resumed',
+      )
+    },
+  })
+  // An OPERATOR pause is persisted to daemon.json so the intent survives a
+  // daemon auto-respawn (ADR-0058): a new process coming up unpaused could
+  // trigger a merge-step git reset --hard on uncommitted operator work. It is
+  // restored first, so it wins the first-cause slot over a storm pause
+  // restored later from the breaker's durable `tripped` flag.
+  const restoredOperatorPause = readPersistedPaused()
+  if (restoredOperatorPause) {
+    pause.pause('operator', 'restored from daemon.json')
+  }
+  // Heartbeat startup deliberately begins with dispatch disabled: initialization
+  // work is not a period in which queued tasks can make progress.
+  heartbeatHandle?.setDispatchEnabled(acceptingWork && !pause.isPaused())
 
   // Per-kind concurrency caps. glossary-write and adr-add share one pool
   // because they both contend on the same merge lock downstream — a second
@@ -837,14 +975,35 @@ export const startDaemon = async (
     'glossary-write': structuredWriteSem,
     'adr-add': structuredWriteSem,
   }
+  // Verify concurrency semaphore: caps parallel verify (npm test / typecheck)
+  // steps independently of the implement cap. Default: MARS_MAX_VERIFY (2).
+  // Acquired inside the review primitive; the implement slot is released first
+  // so other tasks can continue coding while this one waits for a verify slot.
+  const verifySem = makeSem(initialCaps.verify)
   // Install concurrency semaphore: caps parallel worktree dep-installs to
   // prevent concurrent tsup/esbuild prepare scripts from OOM-killing the process.
   // Lives in worktree-install.ts as a module-level semaphore; the daemon
   // sets the initial cap here and updates it on `reload-config`.
   setInstallSemCap(initialCaps.setupInstall)
   log(
-    `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit} setup-install=${initialCaps.setupInstall}`,
+    `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit} setup-install=${initialCaps.setupInstall} verify=${verifySem.limit}`,
   )
+  if (restoredOperatorPause) {
+    log(
+      '[pause] restored persisted paused state from daemon.json — dispatch suspended. Run `mars daemon resume` to re-enable dispatch.',
+    )
+  }
+
+  // Why the EFFECTIVE implement cap differs from the configured one, in one
+  // operator-facing line. Written by the Steward autotuner on every cap
+  // decision (raise or hold) and surfaced by `mars daemon status`, so nobody
+  // has to reconcile `implement: 3` in .mars/daemon.json against a daemon
+  // that is actually running at 1.
+  let implementCapReason: string | null = null
+
+  /** Live set of in-flight task ids — used to protect their subprocesses. */
+  const liveInFlightTaskIds = (): ReadonlySet<string> =>
+    new Set(tracker.inFlightSnapshot().map((e) => e.taskId))
 
   // Drain single-flight gate. While `drainRunning` is true, a second call
   // sets `drainAgain` and returns; the running drain re-runs once it finishes.
@@ -921,6 +1080,30 @@ export const startDaemon = async (
   const dispatchImplement = async (task: Task): Promise<void> => {
     if (tracker.isInFlight(task.id)) return
     tracker.removePending(task.id, 'implement')
+    const usageSnapshot = await getLatestUsageSnapshot(dbClient)
+    const deferral = shouldDeferDispatch(
+      task,
+      usageSnapshot,
+      getBudgetPressureConfig(),
+    )
+    if (deferral.defer) {
+      const targetWindowEnd =
+        typeof usageSnapshot?.rawJson.nextResetAt === 'string'
+          ? usageSnapshot.rawJson.nextResetAt
+          : null
+      await upsertDeferral({
+        taskId: task.id,
+        reason: deferral.reason ?? 'usage pressure requires deferral',
+        targetWindowEnd,
+        pressure: usageSnapshot === null
+          ? 'ok'
+          : computeBudgetPressure(usageSnapshot, getBudgetPressureConfig()),
+      }, dbClient)
+      tracker.unclaim(task.id, 'implement')
+      log(`[implement] ${task.id} deferred: ${deferral.reason}`)
+      return
+    }
+    await deleteDeferral(task.id, dbClient)
     await acquire(sems.implement)
     // commitInFlight records the inFlight entry AND clears the matching claim
     // in one step (claim-clears-after-commit); see dispatchTriage.
@@ -930,6 +1113,12 @@ export const startDaemon = async (
     // at which point the implement slot has been released and merge tracking started.
     let releaseMergeTracking: (() => void) | null = null
     let mergeHandedOff = false
+    // Verify-slot handoff bookkeeping.
+    // `verifyHandedOff` flips to true when the review primitive calls
+    // acquireVerifySlot(), at which point the implement slot and tracking are
+    // released so other tasks can continue coding while this task is queued
+    // behind the verify semaphore (or actively running verify).
+    let verifyHandedOff = false
     log(`[implement] ${task.id} dispatching`)
     try {
       // Slice F.2: dispatch-time dirty-main check. Runs BEFORE workflow
@@ -985,7 +1174,15 @@ export const startDaemon = async (
       // The setup-worktree step's own updateTask is still present — on a
       // checkpoint resume where setup is already done it is the only place the
       // status is set to 'running', so both writes are load-bearing.
-      await updateTask(task.id, { status: 'running' }).catch((err) => {
+      await updateTask(task.id, {
+        status: 'running',
+        // Persist the cumulative dispatch uptime once, at the beginning of a
+        // re-queue episode. Subsequent re-dispatches retain the same anchor so
+        // real retry churn continues to consume its original budget.
+        ...(task.requeueDispatchUptimeMs === null || task.requeueDispatchUptimeMs === undefined
+          ? { requeueDispatchUptimeMs: heartbeatHandle?.getDispatchUptimeMs() ?? null }
+          : {}),
+      }).catch((err) => {
         log(
           `[implement] ${task.id} eager-running update failed (non-fatal): ${
             err instanceof Error ? err.message : String(err)
@@ -1067,6 +1264,11 @@ export const startDaemon = async (
             // in-memory lastActivityMs is the authoritative liveness signal.
             void updateTask(task.id, {}).catch(() => {})
           }
+          // Token usage is NOT accumulated here: this bus event carries no
+          // provider, and where usage lives on a stream is a per-provider fact
+          // (assistant events for Claude, one terminal `turn.completed` for
+          // Codex). The spend meter is fed from runWorkerWithSpan, which knows
+          // the Worker's Provider — see recordUsageEvent.
           return
         }
         if (evt.event === 'vcs-supervisor-event') return
@@ -1177,6 +1379,32 @@ export const startDaemon = async (
               })
               return awaitManualDone(runId, stepName)
             },
+            // Verify-slot hooks. The review primitive (auto path) calls
+            // acquireVerifySlot() before running verifyChanges and
+            // releaseVerifySlot() in its finally block.
+            //
+            // At the point of acquireVerifySlot:
+            //   1. The implement slot and tracker entry are released so other
+            //      tasks can start coding while this task is queued on verify.
+            //   2. drain() is called so freed implement slots are picked up.
+            //   3. The verify semaphore (verifySem, MARS_MAX_VERIFY) is acquired
+            //      — this is where the task may block until a slot is free.
+            //
+            // There is no circular dependency: coding never waits on verify, so
+            // a task blocked on verifySem cannot prevent verifySem from being
+            // released. No deadlock is possible.
+            acquireVerifySlot: async (): Promise<void> => {
+              if (!verifyHandedOff) {
+                verifyHandedOff = true
+                releaseTracking()
+                release(sems.implement)
+                void drain()
+              }
+              await acquire(verifySem)
+            },
+            releaseVerifySlot: (): void => {
+              release(verifySem)
+            },
             // Durable merge-queue hook. The merge primitive always routes git
             // merges through the single-consumer worker. At the point of
             // handoff the implement semaphore slot and tracker entry are
@@ -1191,8 +1419,13 @@ export const startDaemon = async (
             }) => {
               if (!mergeHandedOff) {
                 mergeHandedOff = true
-                releaseTracking()
-                release(sems.implement)
+                // A verify handoff already returned the implement slot and
+                // removed this task from implement tracking. Do not release
+                // either a second time when the following merge step starts.
+                if (!verifyHandedOff) {
+                  releaseTracking()
+                  release(sems.implement)
+                }
                 releaseMergeTracking = tracker.commitInFlight(task.id, 'merge')
                 void drain()
               }
@@ -1263,6 +1496,10 @@ export const startDaemon = async (
             // step already marked it failed and raised an operator action-queue item.
             // Suppress both the re-update and the `task.completed` emit.
             log(`[implement] ${task.id} failed: origin worktree missing; recovery cannot attach (action-queue item raised)`)
+            return
+
+          case 'origin-terminal':
+            log(`[implement] ${task.id} dropped: its Chore origin already reached a terminal state`)
             return
 
           case 'await-human': {
@@ -1340,6 +1577,14 @@ export const startDaemon = async (
             // The setup step already marked this fix task failed and raised an item.
             log(`[implement] ${task.id} origin-worktree-missing abort (exception path); task already marked failed, item raised`)
             break
+          case 'resume-worktree-missing':
+            // The code step's resume preflight already marked this task failed
+            // with the code:worktree-missing signature.
+            log(`[implement] ${task.id} resume-worktree-missing abort (exception path); task already marked failed`)
+            break
+          case 'origin-terminal':
+            log(`[implement] ${task.id} origin-terminal abort (exception path); Chore already dropped`)
+            break
           case 'coder-exit-nonzero':
           case 'coder-uncommitted':
             // The code step already marked this task failed and spawned recovery.
@@ -1391,20 +1636,28 @@ export const startDaemon = async (
       // drain() re-arms the loop. drain() has its own internal catch, so the
       // fire-and-forget `void` here can never leak a rejection.
       //
-      // When a task was handed off to the merge queue (mergeHandedOff=true),
-      // the implement slot was already released at handoff. Only clean up merge
-      // tracking here. If the task never reached the merge step (early return,
-      // failure before merge), release the implement slot now.
+      // Three mutually-exclusive handoff states:
+      //   mergeHandedOff=true  — implement slot released at merge handoff; only
+      //                          clean up remaining merge tracking here.
+      //   verifyHandedOff=true — implement slot and tracking already released
+      //                          when the review primitive called acquireVerifySlot;
+      //                          the verify semaphore is released inside the
+      //                          review primitive's own finally block.
+      //   neither              — task never reached verify or merge; release the
+      //                          implement slot now.
       if (mergeHandedOff) {
         // TS CFA inside an async function incorrectly narrows `releaseMergeTracking`
         // to `null` here (it sees the `= null` assignment in the service closure and
         // concludes the type at this point is always null). Cast to the declared type.
         const releaseMerge = releaseMergeTracking as (() => void) | null
         if (releaseMerge !== null) releaseMerge()
-      } else {
+      } else if (!verifyHandedOff) {
         releaseTracking()
         release(sems.implement)
       }
+      // When verifyHandedOff=true the implement slot was already released inside
+      // acquireVerifySlot. The verify semaphore is released by releaseVerifySlot
+      // in the review primitive's finally block. Nothing to release here.
       void drain()
     }
   }
@@ -1454,6 +1707,12 @@ export const startDaemon = async (
           if (!removed) return false
           await writeGlossaryFile(path, nextDoc)
         },
+        enqueueMerge: async (mergeArgs) =>
+          enqueueMergeJobAndAwait({
+            store: getDefaultMergeJobStore(),
+            bus,
+            ...mergeArgs,
+          }),
       })
       if (outcome.kind === 'aborted') {
         log(
@@ -1504,6 +1763,12 @@ export const startDaemon = async (
             body: req.body,
           })
         },
+        enqueueMerge: async (mergeArgs) =>
+          enqueueMergeJobAndAwait({
+            store: getDefaultMergeJobStore(),
+            bus,
+            ...mergeArgs,
+          }),
       })
       if (outcome.kind === 'aborted') {
         log(`[adr-add] "${req.title}" -> aborted: ${outcome.reason}`)
@@ -1619,7 +1884,7 @@ export const startDaemon = async (
   // the running drain re-enters once it finishes — no double-pick races.
   drain = async (): Promise<void> => {
     if (!acceptingWork) return
-    if (isPaused) return
+    if (pause.isPaused()) return
     if (drainRunning) {
       drainAgain = true
       return
@@ -1704,6 +1969,15 @@ export const startDaemon = async (
     }
   }
 
+  // Queued tasks only become semaphore waiters after drain selects them. A
+  // runtime cap increase must therefore re-drive drain as well as waking any
+  // existing waiters; otherwise newly available implement slots can idle until
+  // an unrelated completion or task-add event. The callback lives on each
+  // daemon-owned semaphore so every setSemLimit caller gets this behavior.
+  for (const sem of new Set([...Object.values(sems), verifySem])) {
+    sem.onLimitIncrease = () => { void drain() }
+  }
+
   // Provider rate/spend-limit rejection handler.
   //
   // Called from dispatchImplement (result path AND catch path) whenever the
@@ -1711,7 +1985,8 @@ export const startDaemon = async (
   // extraction.
   //
   // Contract:
-  // - Sets isPaused=true so drain() is a no-op until resume fires.
+  // - Pauses dispatch with reason 'quota' so drain() is a no-op until resume
+  //   fires and `mars daemon status` can name the cause.
   // - Raises exactly ONE level-triggered 'provider-rate-limited' action-queue
   //   row (idempotent raises bump seen_count, so a burst of rejections produces
   //   one row, not one per task).
@@ -1720,12 +1995,6 @@ export const startDaemon = async (
   //   even when the API does not supply a reset timestamp.
   // - Best-effort only — a DB hiccup must not crash the daemon.
   const handleQuotaRejection = async (resetsAt: number): Promise<void> => {
-    if (isPaused) {
-      // Already paused (burst of concurrent rejections). The timer already
-      // running will resume. Do not raise a second action-queue row.
-      return
-    }
-    isPaused = true
     const FALLBACK_PAUSE_MS = 30 * 60_000 // 30 min when resetsAt is unknown
     const JITTER_MS = 60_000 // 60-second cushion past resetsAt
     const nowMs = Date.now()
@@ -1734,9 +2003,15 @@ export const startDaemon = async (
         ? Math.max(resetsAt * 1000 + JITTER_MS, nowMs + 5_000)
         : nowMs + FALLBACK_PAUSE_MS
     const resumeIso = new Date(resumeMs).toISOString()
+    if (!pause.pause('quota', `provider rate/spend limit; auto-resume at ${resumeIso}`)) {
+      // Already paused (burst of concurrent rejections, or a storm). The timer
+      // already running will resume. Do not raise a second action-queue row.
+      return
+    }
     log(`[quota] dispatch paused; will auto-resume at ${resumeIso}`)
     const resumeTimer = setTimeout(() => {
-      isPaused = false
+      if (pause.get().reason !== 'quota') return
+      pause.resume()
       log(`[quota] dispatch resumed after rate-limit window`)
       viewStreamHub.broadcast('tasks')
       void drain()
@@ -1770,44 +2045,342 @@ export const startDaemon = async (
 
   // ── Signature-storm circuit breaker ──────────────────────────────────────
   // Called by the recovery-spawner when the all-gate consecutive-failure-
-  // signature circuit breaker first trips. Mirrors handleQuotaRejection:
-  //  - Sets isPaused=true so drain() is a no-op until the operator resumes.
-  //  - Spawns the steward (investigateWorktree) exactly once on the last
-  //    failing task's worktree to diagnose/fix the systemic root cause.
-  //  - Broadcasts the action-queue view so the UI reflects the new row
-  //    (the row itself was already raised inside recordFailureSignature).
-  //  - Best-effort only — a hiccup here must not crash the daemon.
+  // signature circuit breaker first trips, and at startup when the durable
+  // `tripped` flag says a previous daemon tripped it.
+  //
+  // The state machine (pause, resume invariant, crash/hang fallback, Steward
+  // attempt budget, operator escalation) lives in `./storm-breaker` so it is
+  // unit-testable without booting a daemon. This file supplies only the
+  // side-effecting halves: running the Steward on a real worktree, writing the
+  // ledger, and raising the escalation row.
   //
   // Idempotency: the persistent `tripped` flag in `failure_signature_streak`
   // ensures `handleTaskFailureWithFixTask` returns `signature-storm-tripped`
   // exactly once per episode; subsequent calls return `alreadyTripped=true`
   // so the subscriber never calls this handler again for the same storm.
-  // The `isPaused` guard provides a secondary in-process safety net.
-  const handleSignatureStorm = ({
-    signature,
-    streak,
-    lastTaskId,
-  }: {
+  // The pause-state guard provides a secondary in-process safety net.
+
+  /** Gather the tasks that failed with this signature, newest first. */
+  const collectStormContext = async (
+    signature: string,
+    lastTaskId: string,
+  ): Promise<{
+    affectedTaskIds: string[]
+    failureExcerpts: Array<{
+      taskId: string
+      signature: string
+      excerpt: string
+      usable: boolean
+    }>
+    /** How many excerpts carry real captured output rather than status padding. */
+    usableEvidenceCount: number
+  }> => {
+    const { assessStormExcerpt } = await import('../agents/steward')
+    const affectedTaskIds: string[] = []
+    const failureExcerpts: Array<{
+      taskId: string
+      signature: string
+      excerpt: string
+      usable: boolean
+    }> = []
+    let usableEvidenceCount = 0
+    try {
+      const store = await getDefaultTaskStore()
+      const rows = await store.execute({
+        sql: `SELECT id, failure_signature, failure_reason, error
+                FROM tasks
+               WHERE failure_signature = ? OR failure_reason_code = ?
+               ORDER BY updated_at DESC
+               LIMIT 5`,
+        args: [signature, signature],
+      })
+      for (const raw of rows.rows) {
+        const row = raw as unknown as {
+          id: string
+          failure_signature: string | null
+          failure_reason: string | null
+          error: string | null
+        }
+        affectedTaskIds.push(row.id)
+        // Guard the brief: `error` is not always captured output. A sweep that
+        // re-drives already-failed tasks can overwrite it with a repeated
+        // `recovery_failed:<sig>:` chain, and `slice(-2_000)` of that is pure
+        // padding. Attach the assessment's verdict instead of pretending.
+        const assessment = assessStormExcerpt(row.error?.slice(-2_000))
+        if (assessment.usable) usableEvidenceCount += 1
+        failureExcerpts.push({
+          taskId: row.id,
+          signature: row.failure_signature ?? row.failure_reason ?? signature,
+          excerpt: assessment.excerpt,
+          usable: assessment.usable,
+        })
+      }
+    } catch (err) {
+      log(
+        `[signature-storm] failure-context lookup failed (non-fatal): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    }
+    if (!affectedTaskIds.includes(lastTaskId)) affectedTaskIds.unshift(lastTaskId)
+    if (failureExcerpts.length > 0 && usableEvidenceCount === 0) {
+      log(
+        `[signature-storm] no usable failure output for "${signature}" — the Steward brief will say so explicitly`,
+      )
+    }
+    return { affectedTaskIds, failureExcerpts, usableEvidenceCount }
+  }
+
+  /**
+   * Wake the write-capable Steward on its own worktree and let it land a fix.
+   *
+   * ALWAYS returns a terminal report — `fixed`, `no-op`, or `failed` — which
+   * the breaker records in `steward_ledger` and uses to resume dispatch. The
+   * previous shape returned `Promise<void>` while its doc comment claimed it
+   * "returns true when the run succeeded", so the success signal was dropped
+   * on the floor: resume happened as a side effect buried on the success path,
+   * and every other outcome (including a non-zero exit, which WAS detected)
+   * reached nothing but a log line and a 30-minute wait.
+   *
+   * `fixed` vs `no-op` is decided by the branch, not by the agent's prose: a
+   * run that exits clean but leaves zero commits ahead of the integration
+   * branch produced nothing, and must be recorded as such.
+   */
+  const runStormSteward = async (trip: {
+    signature: string
+    streak: number
+    lastTaskId: string
+  }): Promise<StormStewardReport> => {
+    const { signature, streak, lastTaskId } = trip
+    const { StewardEventSchema, renderStewardStormBrief, stewardAgent, STEWARD_STORM_TIMEOUT_MS } =
+      await import('../agents/steward')
+    const { createWorktree } = await import('../lib/git/worktree')
+    const { runClaudeCode } = await import('../lib/git/claude')
+    const {
+      findOpenActionQueueItemIdBySignature,
+      patchActionQueuePayloadById,
+      setActionQueueState,
+    } = await import('../lib/action-queue')
+
+    const rowId = await findOpenActionQueueItemIdBySignature(
+      'signature-storm',
+      `signature-storm:${signature}`,
+    ).catch(() => null)
+
+    const { affectedTaskIds, failureExcerpts, usableEvidenceCount } = await collectStormContext(
+      signature,
+      lastTaskId,
+    )
+    const evidenceUsable = usableEvidenceCount > 0
+    const brief = StewardEventSchema.parse({
+      kind: 'signature-storm',
+      signature,
+      streak,
+      affectedTaskIds,
+      failureExcerpts,
+    })
+    if (brief.kind !== 'signature-storm') {
+      return {
+        outcome: 'failed',
+        stewardId: null,
+        branch: null,
+        worktree: null,
+        rationale: 'storm brief failed to parse as a signature-storm event',
+        commitSha: null,
+        evidenceUsable,
+      }
+    }
+
+    const stewardId = `steward-storm-${Date.now().toString(36)}`
+    const worktree = await createWorktree({ taskId: stewardId, integrationBranch })
+    log(
+      `[signature-storm] steward ${stewardId} dispatched write-capable on ${worktree.branch} for "${signature}"`,
+    )
+    if (rowId !== null) {
+      await patchActionQueuePayloadById(rowId, {
+        steward: {
+          id: stewardId,
+          branch: worktree.branch,
+          worktree: worktree.path,
+          startedAt: new Date().toISOString(),
+          affectedTaskIds,
+        },
+      }).catch(() => false)
+    }
+
+    const result = await runClaudeCode({
+      cwd: worktree.path,
+      prompt: renderStewardStormBrief(brief),
+      systemPrompt: stewardAgent.systemPrompt,
+      model: stewardAgent.model,
+      // Write-capable: the whole point of this dispatch is landing a fix.
+      permissionMode: 'acceptEdits',
+      timeoutMs: STEWARD_STORM_TIMEOUT_MS,
+    })
+
+    let report = ''
+    let modelErrored = false
+    for (const event of result.conversation) {
+      if (event.type === 'result') {
+        if (event.is_error === true) modelErrored = true
+        if (typeof event.result === 'string') report = event.result
+      }
+    }
+    const ranClean = result.exitCode === 0 && !modelErrored && result.quotaRejected === null
+
+    // Did the run actually land anything? A clean exit with an empty branch is
+    // a no-op, and the operator must be able to tell the two apart.
+    const landed = await countStewardCommits(worktree.path)
+
+    const outcome: StormStewardOutcome = !ranClean
+      ? 'failed'
+      : landed.commits > 0
+        ? 'fixed'
+        : 'no-op'
+    const rationale = !ranClean
+      ? `steward ${stewardId} run failed (exit=${result.exitCode}, modelError=${modelErrored}, quotaRejected=${
+          result.quotaRejected !== null
+        })${report ? `; last report: ${report.slice(0, 2_000)}` : ''}`
+      : landed.commits > 0
+        ? report.slice(0, 4_000) ||
+          `steward ${stewardId} landed ${landed.commits} commit(s) on ${worktree.branch} without a closing report`
+        : `steward ${stewardId} exited clean but left ZERO commits on ${worktree.branch}` +
+          `${evidenceUsable ? '' : ' — insufficient evidence to diagnose: no affected task recorded usable failure output'}` +
+          `${report ? `; it reported: ${report.slice(0, 2_000)}` : ' and produced no report'}`
+
+    log(`[signature-storm] steward ${stewardId} outcome=${outcome} on ${worktree.branch}`)
+    if (rowId !== null) {
+      // Patch the EXISTING signature-keyed row by id — raising again would
+      // only bump seen_count and leave the payload stale.
+      await patchActionQueuePayloadById(rowId, {
+        steward: {
+          id: stewardId,
+          branch: worktree.branch,
+          worktree: worktree.path,
+          finishedAt: new Date().toISOString(),
+          outcome,
+          commits: landed.commits,
+          evidence: evidenceUsable ? 'usable' : 'insufficient',
+          report: report.slice(0, 4_000),
+          affectedTaskIds,
+        },
+      }).catch(() => false)
+      if (outcome === 'fixed') {
+        await setActionQueueState(rowId, 'resolved', {
+          resolution: 'steward-fixed',
+          note: `steward ${stewardId} landed a fix on ${worktree.branch}; dispatch auto-resumed`,
+          by: 'daemon:signature-storm-steward',
+        }).catch(() => {})
+      }
+      // A no-op / failed run deliberately leaves the row OPEN: dispatch resumes
+      // immediately, but the operator still owns an unfixed systemic failure.
+    }
+
+    return {
+      outcome,
+      stewardId,
+      branch: worktree.branch,
+      worktree: worktree.path,
+      rationale,
+      commitSha: landed.headSha,
+      evidenceUsable,
+    }
+  }
+
+  /** Commits the Steward landed on its own branch, plus that branch's head sha. */
+  const countStewardCommits = async (
+    worktreePath: string,
+  ): Promise<{ commits: number; headSha: string | null }> => {
+    try {
+      const { execProbe, resolveGitBin } = await import('../lib/git/internal')
+      const counted = await execProbe(
+        resolveGitBin(),
+        ['rev-list', '--count', `${integrationBranch}..HEAD`],
+        { cwd: worktreePath, timeout: 15_000 },
+      )
+      if (counted.exitCode !== 0) return { commits: 0, headSha: null }
+      const commits = Number.parseInt(counted.stdout.trim(), 10)
+      if (!Number.isFinite(commits) || commits <= 0) return { commits: 0, headSha: null }
+      const head = await execProbe(resolveGitBin(), ['rev-parse', 'HEAD'], {
+        cwd: worktreePath,
+        timeout: 15_000,
+      })
+      return {
+        commits,
+        headSha: head.exitCode === 0 ? head.stdout.trim() || null : null,
+      }
+    } catch (err) {
+      log(
+        `[signature-storm] steward commit probe failed (treated as no-op): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+      return { commits: 0, headSha: null }
+    }
+  }
+
+  /**
+   * Raise the urgent operator row for a signature whose Steward budget is
+   * spent. Reuses the `signature-storm` kind (so it lands in the same triage
+   * lane) under a distinct dedup key, so repeats bump `seen_count` instead of
+   * inserting a sibling per re-trip.
+   */
+  const raiseStormEscalation = async (escalation: StormEscalation): Promise<void> => {
+    const { raiseActionQueueItem } = await import('../lib/action-queue')
+    await raiseActionQueueItem({
+      kind: 'signature-storm',
+      category: 'daemon',
+      priority: 'urgent',
+      title: `Signature storm UNRESOLVED — ${escalation.attempts} Steward attempts failed on ${escalation.signature}`,
+      body:
+        `The failure signature '${escalation.signature}' keeps tripping the circuit breaker and ` +
+        `${escalation.attempts} write-capable Steward dispatch(es) produced no fix ` +
+        `(last outcome: ${escalation.lastOutcome}).\n\n` +
+        `Mars has stopped auto-dispatching Stewards for this signature and will NOT pause dispatch ` +
+        `for it again — cycling pause/Steward/resume against a cause the Steward cannot reach only ` +
+        `burns worktrees. Tasks keep dispatching and will keep failing with this signature until you ` +
+        `fix the shared cause.\n\n` +
+        `Last Steward rationale:\n${escalation.lastRationale.slice(0, 2_000)}\n\n` +
+        `Inspect \`.mars/watch.log\` and the steward_ledger rows for target '${escalation.signature}'.`,
+      payload: {
+        signature: escalation.signature,
+        streak: escalation.streak,
+        stewardAttempts: escalation.attempts,
+        stewardOutcome: escalation.lastOutcome,
+        lastTaskId: escalation.lastTaskId,
+      },
+      context: {},
+      raisedBy: 'daemon:signature-storm-steward',
+      signature: stormEscalationSignature(escalation.signature),
+    })
+  }
+
+  const stormBreaker = createStormBreaker({
+    log,
+    pause,
+    clearBreakerFlag: async () => {
+      const { resetFailureSignatureStreak } = await import('../lib/signature-storm-monitor')
+      await resetFailureSignatureStreak(await getDefaultTaskStore())
+    },
+    onResumed: () => {
+      viewStreamHub.broadcast('tasks')
+      viewStreamHub.broadcast('action-queue')
+      void drain()
+    },
+    runSteward: (trip) => runStormSteward(trip),
+    recordLedger: async (entry) => {
+      const { recordStewardIntervention } = await import('../steward-ledger')
+      return recordStewardIntervention(entry)
+    },
+    raiseEscalation: (escalation) => raiseStormEscalation(escalation),
+  })
+
+  const handleSignatureStorm = (trip: {
     signature: string
     streak: number
     lastTaskId: string
   }): void => {
-    if (isPaused) {
-      // Already paused (e.g. concurrent storm or quota rejection). The
-      // action-queue row is already up; no duplicate side-effects needed.
-      log(
-        `[signature-storm] already paused — storm for "${signature}" x${streak} noted (no-op)`,
-      )
-      return
-    }
-    isPaused = true
-    log(
-      `[signature-storm] dispatch paused — "${signature}" failed ${streak} consecutive tasks; steward dispatched for ${lastTaskId}`,
-    )
-    // Spawn the steward fire-and-forget. investigateWorktree is a one-active-
-    // investigation-per-id guard; a second call for the same id returns
-    // immediately with "(investigation already in progress)".
-    void investigateWorktree(lastTaskId)
+    stormBreaker.onTrip(trip)
     viewStreamHub.broadcast('action-queue')
     viewStreamHub.broadcast('tasks')
   }
@@ -1817,6 +2390,19 @@ export const startDaemon = async (
     if (tracker.isInFlight(e.taskId)) return
     tracker.enqueuePending(e.taskId, 'triage')
     void drain()
+  })
+
+  // Dispatch hint for tasks the orchestrator creates for ITSELF mid-flight
+  // (rescue-operators for dead-ended arcs). Those writers live in `core/` and
+  // have no reference to this bus, so without this seam their rows sat
+  // unscheduled until the `reseed-dispatch` reconciler ran — i.e. until the next
+  // daemon restart. See core/daemon/dispatch-hint.ts.
+  //
+  // Deliberately delegates to the two bus handlers above rather than touching
+  // the tracker directly, so the pending-set push + `drain()` sequence that
+  // AGENTS.md mandates has exactly one implementation.
+  const unregisterDispatchHint = registerDispatchHint((taskId, kind) => {
+    bus.emit(kind === 'triage' ? 'task.added' : 'task.queued', { taskId })
   })
 
   // refine is user-initiated and rare; let it push directly through its sem
@@ -1844,7 +2430,9 @@ export const startDaemon = async (
 
   // Signature-storm streak reset: a successful task completion clears the
   // consecutive-failure streak so a future storm (same or different signature)
-  // can trip independently. Does NOT resume the queue — resume is manual.
+  // can trip independently. When dispatch is paused BECAUSE of that storm, the
+  // reset also lifts the pause — leaving one half cleared is exactly the drift
+  // this pause state exists to prevent.
   // Best-effort: a DB hiccup must not affect the dispatch path.
   bus.on('task.completed', (e: { taskId: string; status?: string }) => {
     if (e.status !== 'done') return
@@ -1854,6 +2442,9 @@ export const startDaemon = async (
         const storeForReset = await getDefaultTaskStore()
         await resetFailureSignatureStreak(storeForReset)
         log(`[signature-storm] streak reset after successful task ${e.taskId}`)
+        if (pause.get().reason === 'storm') {
+          await stormBreaker.resume(`successful task ${e.taskId}`)
+        }
       } catch (err) {
         log(
           `[signature-storm] streak reset failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
@@ -2564,7 +3155,8 @@ export const startDaemon = async (
     log(
       `[drop] ${id} (was ${result.previousStatus}; force=${force}, ` +
         `incoming=${result.edgesRemoved.incoming}, outgoing=${result.edgesRemoved.outgoing}, ` +
-        `cascadedFix=${result.cascadedFixTaskIds.length}, worktree=${worktreeRemoved}, branch=${branchDeleteResult})`,
+        `cascadedFix=${result.cascadedFixTaskIds.length}, worktree=${worktreeRemoved}, branch=${branchDeleteResult}, ` +
+        `merge-jobs=${result.mergeJobsDeleted})`,
     )
     if (liveInFlight) {
       // The worker still holds an inFlight slot; force-clearing it here lets
@@ -2817,15 +3409,38 @@ export const startDaemon = async (
       merging: (await listTasks('merging')).length,
       'vega-reconciling': (await listTasks('vega-reconciling')).length,
     }
+    // Effective vs configured implement cap. `configured` is re-read from
+    // .mars/daemon.json at call time — the operator's complaint was seeing
+    // `implement: 3` in the file while the daemon ran at 1 with nothing
+    // reporting the discrepancy.
+    let configuredImplement = initialCaps.implement
+    try {
+      configuredImplement = loadDaemonConfig().caps.implement
+    } catch {
+      // Unreadable/edited config — fall back to the boot-time value.
+    }
+    const effectiveImplement = sems.implement.limit
+    const implementCap = {
+      configured: configuredImplement,
+      effective: effectiveImplement,
+      reason:
+        effectiveImplement === configuredImplement
+          ? null
+          : (implementCapReason ??
+            (effectiveImplement < configuredImplement
+              ? 'daemon started before the current .mars/daemon.json; run `mars daemon reload`'
+              : 'raised above the configured cap at runtime')),
+    }
     return {
       pid: process.pid,
       startedAt,
       inFlight: tracker.inFlightSnapshot(),
       counts,
+      implementCap,
       sourceSha,
       currentSha,
       isStale,
-      isPaused,
+      pause: pause.get(),
     }
   }
 
@@ -2863,7 +3478,7 @@ export const startDaemon = async (
         const { execFile } = await import('node:child_process')
         const { promisify } = await import('node:util')
         const { getRepoRoot } = await import('../context')
-        const { runClaudeCode } = await import('../lib/git/claude')
+        const { runHeadlessProvider } = await import('../workers/providers')
         const { getTask } = await import('../queue')
         const { patchOpenActionQueuePayload } = await import('../lib/action-queue')
 
@@ -2945,12 +3560,11 @@ export const startDaemon = async (
             )
             const investigatePrompt = promptParts.join('\n')
 
-            const result = await runClaudeCode({
+            const result = await runHeadlessProvider(investigatePrompt, {
               cwd: worktreePath,
-              prompt: investigatePrompt,
-              model: 'claude-haiku-4-5-20251001',
-              // Read-only: use default permission mode so no file edits are allowed.
+              modelTier: 'fast',
               permissionMode: 'default',
+              disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
             })
 
             // Extract the final text from the conversation. Prefer the 'result'
@@ -3006,7 +3620,7 @@ export const startDaemon = async (
         const { promisify } = await import('node:util')
         const { existsSync } = await import('node:fs')
         const { getRepoRoot } = await import('../context')
-        const { runClaudeCode } = await import('../lib/git/claude')
+        const { runHeadlessProvider } = await import('../workers/providers')
         const { getTask } = await import('../queue')
         const { patchOpenActionQueuePayload, supersedeActionQueueItemsForOrigin } = await import('../lib/action-queue')
 
@@ -3089,12 +3703,11 @@ export const startDaemon = async (
             'reshaping. A short paragraph — this is a triage aid, not a fix.',
         )
 
-        const result = await runClaudeCode({
+        const result = await runHeadlessProvider(promptParts.join('\n'), {
           cwd,
-          prompt: promptParts.join('\n'),
-          model: 'claude-sonnet-4-6',
-          // Read-only: default permission mode disallows file edits.
+          modelTier: 'balanced',
           permissionMode: 'default',
+          disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
         })
 
         let diagnosis = '(no diagnosis generated)'
@@ -3303,17 +3916,36 @@ export const startDaemon = async (
       triage: sems.triage,
       refine: sems.refine,
       structuredWrite: structuredWriteSem,
+      verify: verifySem,
     },
     getAcceptingWork: () => acceptingWork,
     setAcceptingWork: (value: boolean) => {
       acceptingWork = value
+      heartbeatHandle?.setDispatchEnabled(acceptingWork && !pause.isPaused())
     },
-    getIsPaused: () => isPaused,
-    setIsPaused: (value: boolean) => {
-      isPaused = value
+    getPauseState: () => pause.get(),
+    pauseDispatch: (reason, detail) => pause.pause(reason, detail),
+    // Operator resume clears BOTH halves of a storm pause (in-memory pause and
+    // the durable breaker flag); every other reason is a plain clear.
+    resumeDispatch: () => {
+      if (pause.get().reason === 'storm') {
+        void stormBreaker.resume('operator resume')
+        return
+      }
+      pause.resume()
+    },
+    // Persist ONLY the operator pause to daemon.json (ADR-0058) so a daemon
+    // auto-respawn does not come up dispatching against work the operator
+    // deliberately stopped.
+    persistIsPaused: (value: boolean) => {
+      persistPaused(value)
     },
     drain: () => drain(),
     shutdown: (force?: boolean) => shutdown(force),
+    resetSignatureStorm: async () => {
+      const { resetFailureSignatureStreak } = await import('../lib/signature-storm-monitor')
+      await resetFailureSignatureStreak(getCompositionRootClient())
+    },
     paths: { socketPath, pidFile, httpPortFile },
     handleAdd,
     setTaskPriority,
@@ -3345,6 +3977,14 @@ export const startDaemon = async (
     handleStepDone,
     handleStepReset,
     appendProgress,
+    appendMcpWorkerAudit: async ({ toolName, taskId, argsJson, ok, errorMessage }) => {
+      await dbClient.execute({
+        sql: `INSERT INTO mcp_worker_audit
+                (tool_name, task_id, args_json, ok, error_message)
+              VALUES (?, ?, ?::jsonb, ?, ?)`,
+        args: [toolName, taskId, JSON.stringify(argsJson), ok, errorMessage],
+      })
+    },
     handlePreviewSpawn: (taskId, cmd, cwd) => previewRegistry.spawn(taskId, cmd, cwd),
     handlePreviewStatus: (taskId) => previewRegistry.status(taskId),
     handlePreviewTeardown: (taskId) => previewRegistry.teardown(taskId),
@@ -3606,7 +4246,7 @@ export const startDaemon = async (
     chatRunner,
     chatStreamHub,
     restartTask: async (id) => {
-      const result = await coreRestart(id, new Set(['failed', 'vega-reconciling', 'merging']), makeWorkflowStore())
+      const result = await coreRestart(id, new Set(['failed', 'done', 'vega-reconciling', 'merging']), makeWorkflowStore())
       if (result.status === 'queued') {
         bus.emit('task.queued', { taskId: id })
       }
@@ -3671,6 +4311,11 @@ export const startDaemon = async (
     rejectTask: async (id) => {
       const { coreRejectTask } = await import('./validate-task')
       await coreRejectTask(id)
+    },
+    landWork: async (id) => {
+      const { landWorkForTask } = await import('./land-work')
+      await landWorkForTask(id)
+      bus.emit('task.queued', { taskId: id })
     },
     investigateWorktree,
     diagnoseFailure,
@@ -3852,6 +4497,52 @@ export const startDaemon = async (
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
 
+  // ── Storm-breaker ⇄ pause-state reconcile ────────────────────────────────
+  // The breaker's `tripped` flag is durable (the `failure_signature_streak`
+  // singleton row); the pause is in-memory. A daemon that came up with
+  // `tripped=true` used to dispatch happily while the DB still said the fleet
+  // was stormed — the exact drift that made `mars daemon status` report PAUSED
+  // with nothing on disk to explain it. Restore the pause WITH its reason
+  // ('storm') and re-arm the bounded fallback so the restart cannot leave
+  // dispatch dead forever either.
+  //
+  // Awaited deliberately, BEFORE reconcile() triggers the first drain(), so
+  // queued tasks cannot dispatch through the gap during an active storm.
+  //
+  // Single source of truth: `tripped` drives both "never re-raise the action-
+  // queue row" (recordFailureSignature's alreadyTripped guard) and "keep the
+  // queue paused" (here). Note the operator pause restored from daemon.json
+  // above already holds the first-cause slot when both are set — one resume
+  // then clears the pause and this flag together.
+  //
+  // Resume path: `mars daemon resume` clears `tripped` and zeroes the streak,
+  // so the NEXT restart does NOT re-pause a queue the operator unblocked.
+  try {
+    const { readSignatureStormState } = await import('../lib/signature-storm-monitor')
+    const stormState = await readSignatureStormState(getCompositionRootClient())
+    if (stormState.tripped) {
+      const sig = stormState.signature ?? 'unknown'
+      if (pause.pause('storm', `signature storm: ${sig} x${stormState.streak} (restored at startup)`)) {
+        log(`[signature-storm] breaker was tripped on "${sig}" — dispatch restored to paused`)
+      } else {
+        log(
+          `[signature-storm] breaker was tripped on "${sig}" — dispatch already paused (reason=${pause.get().reason})`,
+        )
+      }
+      // Armed in both branches: whichever cause holds the pause, the durable
+      // breaker flag must not be able to wedge dispatch indefinitely. No
+      // Steward is in flight after a restart, so this is exactly the
+      // "nobody is going to report an outcome" case the fallback exists for.
+      stormBreaker.armFallback(sig)
+    }
+  } catch (err) {
+    log(
+      `[signature-storm] startup breaker reconcile failed (non-fatal): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    )
+  }
+
   // Boot reconcile after server is listening (so any reconcile-driven dispatch
   // is fully wired) — fire-and-forget; errors logged inside.
   void reconcile().catch((err) => log(`[reconcile] failed: ${(err as Error).message}`))
@@ -4017,7 +4708,7 @@ export const startDaemon = async (
       try {
         const { stdout } = await exec(resolveGitBin(), ['rev-parse', 'HEAD'], { cwd: sourceDir })
         const head = stdout.trim() || null
-        if (isStaleDev(sourceSha, head, classifyInstallRoute())) {
+        if (await hasRelevantDevDrift(sourceSha, head, classifyInstallRoute(), sourceRepoDir)) {
           currentSha = head
           isStale = true
           // Raise a level-triggered action-queue row so operators see the drift
@@ -4068,14 +4759,15 @@ export const startDaemon = async (
   //
   // Re-queue loop defence (mars-c11be862 post-mortem, 2026-07-02): before
   // re-seeding any queued task, we check its retry duration. A task retrying
-  // longer than MARS_REQUEUE_MAX_RETRY_MS (default 2 h) without completing is
+  // longer than MARS_REQUEUE_MAX_RETRY_MS of dispatch uptime (default 2 h)
+  // without completing is
   // escalated to 'failed' + an operator action-queue item rather than re-seeded.
   // Retry count and elapsed time are logged for any task that has been attempted
   // at least once so the state is visible before the bound is reached.
   // See orchestrator/src/core/daemon/requeue-ceiling.ts for the ceiling logic.
   const POLL_FALLBACK_MS = Number(process.env.MARS_DRAIN_POLL_MS ?? 30_000)
   const pollFallback = setInterval(() => {
-    if (!acceptingWork || isPaused || drainRunning || tracker.inFlightCount() > 0) return
+    if (!acceptingWork || pause.isPaused() || drainRunning || tracker.inFlightCount() > 0) return
     void (async () => {
       try {
         const [drafts, queued] = await Promise.all([
@@ -4094,7 +4786,13 @@ export const startDaemon = async (
         const wfStore = makeWFStore()
         for (const t of queued) {
           if (tracker.isInFlight(t.id)) continue
-          const escalated = await checkAndEscalateRequeueCeiling(t, wfStore, log, Date.now(), heartbeatPrevGapMs)
+          const escalated = await checkAndEscalateRequeueCeiling(
+            t,
+            wfStore,
+            log,
+            Date.now(),
+            heartbeatHandle?.getDispatchUptimeMs(),
+          )
           if (!escalated) tracker.enqueuePending(t.id, 'implement')
         }
         log(
@@ -4324,6 +5022,33 @@ export const startDaemon = async (
   }, THREAD_PURGE_SWEEP_MS)
   threadPurgeSweep.unref()
 
+  // ── Orphan-subprocess sweep ──────────────────────────────────────────────
+  // Verify/test runners that outlive their task (abort, timeout, or a daemon
+  // that died before it could kill the group) get reparented to init and burn
+  // CPU indefinitely. The Steward reaps them on its own schedule here, in
+  // addition to the boot sweep and the sweep on the autotuner's hold path.
+  // .unref() so the interval never prevents a clean shutdown.
+  const ORPHAN_SWEEP_MS = Number(process.env.MARS_ORPHAN_SWEEP_MS ?? 5 * 60_000)
+  const { sweepOrphans: sweepOrphanProcesses, formatSweepSummary: formatOrphanSweep } =
+    await import('../lib/orphan-reaper')
+  const orphanSweep = setInterval(() => {
+    void (async () => {
+      try {
+        const summary = await sweepOrphanProcesses({
+          repoRoot: resolveContext().repoRoot,
+          inFlightTaskIds: liveInFlightTaskIds(),
+          log,
+        })
+        if (summary.reaped > 0) {
+          log(`[orphan-reaper] periodic sweep: ${formatOrphanSweep(summary)}`)
+        }
+      } catch (err) {
+        log(`[orphan-reaper] periodic sweep errored: ${(err as Error).message}`)
+      }
+    })()
+  }, ORPHAN_SWEEP_MS)
+  orphanSweep.unref()
+
   // ── Steward runtime-knob tuning ──────────────────────────────────────────
   // When the implement queue is backlogged (pending > cap × 0.75) for a
   // sustained window (default 60 s), emit kpi.backlog.degraded so the
@@ -4338,7 +5063,17 @@ export const startDaemon = async (
     implementSem: sems.implement,
     baselineCap: initialCaps.implement,
     log,
+    repoRoot: resolveContext().repoRoot,
+    getInFlightTaskIds: liveInFlightTaskIds,
+    recordCapDecision: (reason) => {
+      implementCapReason = reason
+    },
   })
+  // Prompt health follows the same daemon event bus as the other autonomous
+  // Steward capabilities. Its own autonomy lever decides whether a degraded
+  // prompt is merely proposed or changed.
+  const { startStewardPromptOptimization } = await import('../steward-prompt-optimizer')
+  startStewardPromptOptimization(bus)
   const backlogCheck = setInterval(() => {
     const pending = tracker.pendingCount('implement')
     const threshold = Math.floor(sems.implement.limit * 0.75)
@@ -4570,6 +5305,7 @@ export const startDaemon = async (
         const queueDepth = queuedTasks.length
         const { alerted } = await runStaleQueuedSweep({
           activeWorkerCount,
+          implementCap: sems.implement.limit,
           queueDepth,
           dispatchDecisionSummary: [],
         })
@@ -4695,21 +5431,50 @@ export const startDaemon = async (
   }, CHAT_ARCHIVE_SWEEP_MS)
   chatArchiveSweep.unref()
 
+  // ── Subscriber drain single-flight gate ───────────────────────────────────
+  // Every subscriber drain below runs on a setInterval whose body can outlast
+  // its own period (a drain awaits provider calls and verify commands, each of
+  // which can take minutes). Unguarded, each tick stacks another concurrent
+  // drain of the SAME subscriber on top of the last.
+  //
+  // That is not merely wasteful. `drainWithStall` runs the handler BEFORE
+  // claiming the `subscriber_processed_events` row, so concurrent drains all
+  // pass the "already processed?" check and all execute the side effect; only
+  // the bookkeeping is deduped, not the work. For handlers that spawn agents
+  // this multiplies into a host-melting fan-out — the duplicate-key errors on
+  // `subscriber_processed_events_pkey` in the daemon log are the direct
+  // signature of this race.
+  //
+  // Ticks arriving while a drain is in flight are DROPPED, not queued: a drain
+  // always resumes from the durable cursor, so a skipped tick loses no work —
+  // the next one picks up exactly where this one stopped.
+  const singleFlight = (fn: () => Promise<void>): (() => void) => {
+    let running = false
+    return () => {
+      if (running) return
+      running = true
+      void fn().finally(() => {
+        running = false
+      })
+    }
+  }
+
   // ── Alert-dismisser drain ─────────────────────────────────────────────────
   // Polls the outbox for status-transition events and clears the implicated
   // task's action-queue alert(s). This keeps the "status change clears
   // alerts" invariant whole for raw-SQL status writes that bypass the
   // updateTask chokepoint. .unref() so it never holds the process open.
   const ALERT_DRAIN_MS = Number(process.env.MARS_ALERT_DRAIN_MS ?? 30_000)
-  const alertDrain = setInterval(() => {
-    void (async () => {
+  const alertDrain = setInterval(
+    singleFlight(async () => {
       try {
         await drainAlertDismissals(getCompositionRootClient(), log)
       } catch (err) {
         log(`[alert-dismisser] drain errored: ${(err as Error).message}`)
       }
-    })()
-  }, ALERT_DRAIN_MS)
+    }),
+    ALERT_DRAIN_MS,
+  )
   alertDrain.unref()
 
   // ── Action queue repopulator drain ───────────────────────────────────────────────
@@ -4719,16 +5484,17 @@ export const startDaemon = async (
   const ACTION_QUEUE_REPOPULATOR_DRAIN_MS = Number(
     process.env.MARS_ACTION_QUEUE_REPOPULATOR_DRAIN_MS ?? 30_000,
   )
-  const actionQueueRepopulatorDrain = setInterval(() => {
-    void (async () => {
+  const actionQueueRepopulatorDrain = setInterval(
+    singleFlight(async () => {
       try {
         const { processed } = await drainActionQueueRepopulations(getCompositionRootClient(), log)
         if (processed > 0) viewStreamHub.broadcast('action-queue')
       } catch (err) {
         log(`[action-queue-repopulator] drain errored: ${(err as Error).message}`)
       }
-    })()
-  }, ACTION_QUEUE_REPOPULATOR_DRAIN_MS)
+    }),
+    ACTION_QUEUE_REPOPULATOR_DRAIN_MS,
+  )
   actionQueueRepopulatorDrain.unref()
 
   // ── Blocker-resolution drain ──────────────────────────────────────────────
@@ -4738,8 +5504,8 @@ export const startDaemon = async (
   const BLOCKER_RESOLUTION_DRAIN_MS = Number(
     process.env.MARS_BLOCKER_RESOLUTION_DRAIN_MS ?? 30_000,
   )
-  const blockerResolutionDrain = setInterval(() => {
-    void (async () => {
+  const blockerResolutionDrain = setInterval(
+    singleFlight(async () => {
       try {
         const { processed } = await drainBlockerResolution(getCompositionRootClient(), log)
         if (processed > 0) {
@@ -4751,8 +5517,9 @@ export const startDaemon = async (
       } catch (err) {
         log(`[blocker-resolution] drain errored: ${(err as Error).message}`)
       }
-    })()
-  }, BLOCKER_RESOLUTION_DRAIN_MS)
+    }),
+    BLOCKER_RESOLUTION_DRAIN_MS,
+  )
   blockerResolutionDrain.unref()
 
   // ── Recovery-spawner drain ────────────────────────────────────────────────
@@ -4764,15 +5531,16 @@ export const startDaemon = async (
   const RECOVERY_SPAWNER_DRAIN_MS = Number(
     process.env.MARS_RECOVERY_SPAWNER_DRAIN_MS ?? 30_000,
   )
-  const recoverySpawnerDrain = setInterval(() => {
-    void (async () => {
+  const recoverySpawnerDrain = setInterval(
+    singleFlight(async () => {
       try {
         await drainRecoverySpawner(getCompositionRootClient(), log, handleSignatureStorm)
       } catch (err) {
         log(`[recovery-spawner] drain errored: ${(err as Error).message}`)
       }
-    })()
-  }, RECOVERY_SPAWNER_DRAIN_MS)
+    }),
+    RECOVERY_SPAWNER_DRAIN_MS,
+  )
   recoverySpawnerDrain.unref()
 
   // ── Arc-verifier drain ───────────────────────────────────────────────────
@@ -4783,29 +5551,35 @@ export const startDaemon = async (
   const ARC_VERIFIER_DRAIN_MS = Number(
     process.env.MARS_ARC_VERIFIER_DRAIN_MS ?? 30_000,
   )
-  const arcVerifierDrain = setInterval(() => {
-    void (async () => {
+  const arcVerifierDrain = setInterval(
+    singleFlight(async () => {
       try {
         await drainArcVerifier(getCompositionRootClient(), log)
       } catch (err) {
         log(`[arc-verifier] drain errored: ${(err as Error).message}`)
       }
-    })()
-  }, ARC_VERIFIER_DRAIN_MS)
+    }),
+    ARC_VERIFIER_DRAIN_MS,
+  )
   arcVerifierDrain.unref()
+
+  // ── Usage snapshot sampler ────────────────────────────────────────────────
+  const { startUsageSampler } = await import('./usage-sampler')
+  const usageSamplerInterval = startUsageSampler(getCompositionRootClient(), log)
+  usageSamplerInterval.unref()
 
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
-    heartbeatHandle?.stop()
     clearInterval(pollFallback)
     clearInterval(githubUpdatePoll)
     clearInterval(devStalenessCheck)
     clearInterval(staleSweep)
     clearInterval(staleMergingSweep)
     clearInterval(observabilityWatchdog)
+    clearInterval(orphanSweep)
     clearInterval(dbBusyWatchdog)
     clearInterval(phantomWatchdog)
     clearInterval(observabilitySweep)
@@ -4816,11 +5590,20 @@ export const startDaemon = async (
     clearInterval(blockerResolutionDrain)
     clearInterval(recoverySpawnerDrain)
     clearInterval(arcVerifierDrain)
+    clearInterval(usageSamplerInterval)
+    // Drop the dispatch hint before the tracker is torn down, so a writer that
+    // creates a task during shutdown does not fan out into a dead tracker.
+    unregisterDispatchHint()
     stopEndpointProbe()
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.
     acceptingWork = false
+    heartbeatHandle?.setDispatchEnabled(false)
+    await heartbeatHandle?.flush().catch((err) => {
+      log(`[heartbeat] final flush failed (non-fatal): ${(err as Error).message}`)
+    })
+    heartbeatHandle?.stop()
     tracker.clearPending()
     log(`shutting down (force=${force}, inFlight=${tracker.inFlightCount()})`)
 

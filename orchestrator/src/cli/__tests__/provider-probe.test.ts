@@ -239,37 +239,31 @@ describe('probeProvider — codex', () => {
     expect(invoked[0]).toBe('/usr/local/bin/codex-custom')
   })
 
-  it('detects auth from ~/.codex/auth.json', () => {
+  it('detects auth through codex login status', () => {
+    const calls: Array<{ cmd: string; args: readonly string[] }> = []
     const result = probeProvider(
       'codex',
       makeDeps({
-        tryRun: () => 0,
-        fileReadable: (p) => p.includes('.codex') && p.includes('auth.json'),
-        homeDir: '/home/user',
-        env: {},
+        tryRun: (cmd, args) => {
+          calls.push({ cmd, args })
+          return 0
+        },
       }),
     )
     expect(result.authed).toBe('yes')
-    expect(result.authDetail).toBeTruthy()
+    expect(result.authDetail).toBe('cli-session')
+    expect(calls).toEqual([
+      { cmd: 'codex', args: ['--version'] },
+      { cmd: 'codex', args: ['login', 'status'] },
+    ])
   })
 
-  it('detects auth from CODEX_HOME/auth.json', () => {
+  it('returns authed=unknown when codex login status is non-zero', () => {
     const result = probeProvider(
       'codex',
       makeDeps({
-        tryRun: () => 0,
-        fileReadable: (p) => p.startsWith('/custom-codex-home'),
-        homeDir: '/home/user',
-        env: { CODEX_HOME: '/custom-codex-home' },
+        tryRun: (_cmd, args) => args[0] === '--version' ? 0 : 1,
       }),
-    )
-    expect(result.authed).toBe('yes')
-  })
-
-  it('returns authed=unknown when no codex auth file exists', () => {
-    const result = probeProvider(
-      'codex',
-      makeDeps({ tryRun: () => 0, fileReadable: () => false, env: {} }),
     )
     expect(result.authed).toBe('unknown')
   })

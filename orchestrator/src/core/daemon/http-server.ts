@@ -21,6 +21,7 @@ import type { RestartTaskError } from './restart-task'
 import { SelfUpdateError, SELF_UPDATE_ERRORS } from './self-update'
 import type { ViewStreamHub } from './view/stream-hub'
 import type { LoadCorpusOptions } from '../lib/reflect-query'
+import type { ProposalSource } from '../proposals'
 import type { AppServices } from '../app-services'
 import {
   getSetting,
@@ -44,6 +45,7 @@ import {
   assembleDelta,
   clampWywaDeltaLimit,
 } from './view/wywa-delta'
+import { listStewardLedgerSince } from '../steward-ledger'
 import type { ChatRunner, AttachmentInfo } from './chat-runner'
 import type { ChatStreamHub, SeqChunk } from './chat-stream-hub'
 import { getRepoRoot } from '../context'
@@ -281,7 +283,7 @@ export interface DraftFeature {
   problem: string
   solution: string
   status: string
-  source: 'reflection' | 'human' | 'planner'
+  source: ProposalSource
   createdAt: number
   updatedAt: number
   acceptanceCount: number
@@ -353,6 +355,13 @@ export interface HttpServerDeps {
    * row. Throws when the task is not awaiting validation.
    */
   rejectTask: (id: string) => Promise<void>
+  /**
+   * Fast-forward (or cherry-pick) a task branch's ahead commits onto the
+   * integration branch, then resolve the worktree-ahead action-queue row.
+   * Throws when the task is not found (code: 'NOT_FOUND') or there are no
+   * commits ahead (code: 'NO_COMMITS_AHEAD').
+   */
+  landWork: (id: string) => Promise<void>
   /**
    * Run a cheap Haiku investigation over the worktree diff, persist the result
    * onto the actionQueue item payload, and return the explanation text. Read-only:
@@ -464,6 +473,12 @@ export interface HttpServerDeps {
    */
   getLatestDeployment?: (taskId: string) => Promise<import('../store/task-store').TaskDeployment | null>
   getLiveAgentsRoster?: () => import('./live-agents-roster').AgentRosterEntry[]
+  /**
+   * Returns the live implement-semaphore state the Steward page displays.
+   * Optional — when absent the endpoint still serves DB-derived data and
+   * marks liveCap / isPaused as -1 / false (daemon not wired up yet).
+   */
+  getStewardRuntimeState?: () => { liveCap: number; baselineCap: number; isPaused: boolean }
 }
 
 export interface HttpServerHandle {
@@ -542,6 +557,7 @@ type EntityOp =
   | 'promote'
   | 'validate'
   | 'reject'
+  | 'land-work'
 
 const TRACE_EVENT_KIND_SET = new Set<TraceEventKind>(TRACE_EVENT_KINDS)
 const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
@@ -651,6 +667,7 @@ const handleEventsRequest = async (
  *   POST /actions/restart-daemon       → re-exec the daemon
  *   POST /actions/run-reflect          → run reflect flow + clear reflect-recommended row
  *   POST /actions/enable-auto-reflect  → set autoTrigger=true + clear reflect-recommended row
+ *   POST /actions/land-work/:id        → merge ahead commits onto integration branch
  *
  * The server uses an OS-assigned port (port 0). Callers discover the port via
  * the returned {@link HttpServerHandle}, which the daemon also writes to
@@ -669,6 +686,7 @@ export const startHttpServer = async (
     promote: deps.promoteProposal,
     validate: deps.validateTask,
     reject: deps.rejectTask,
+    'land-work': deps.landWork,
   }
 
   // Track live sockets so close() can force-end long-lived connections (e.g.
@@ -1264,6 +1282,20 @@ export const startHttpServer = async (
       return
     }
 
+    // GET /view/steward — four-lane capability summary for the Steward page:
+    // runtimeTuning (executing), workflowPatches (built/never invoked),
+    // signatureStorm (live, currently tripped), agentSpec (declared/unbuilt).
+    // Live semaphore state is injected by the daemon via getStewardRuntimeState.
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/steward') {
+      const runtime = deps.getStewardRuntimeState?.() ?? { liveCap: -1, baselineCap: -1, isPaused: false }
+      deps.appServices
+        .viewSteward(runtime)
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/scorer-trend?workflow=<kind>&window=N — per-workflow Scorer
     // score trend (median + p90 over a trailing window, never a bare mean)
     // plus recent scorer_results rows (PRD 6cf85bc9). This is the queryable
@@ -1419,9 +1451,10 @@ export const startHttpServer = async (
     }
 
     // GET /view/wywa-delta?since=<ISO>&limit=<n> — unified "while you were away"
-    // delta assembled from five existing stores: merged arcs (release notes),
+    // delta assembled from six existing stores: merged arcs (release notes),
     // recovery_spawned trace events, auto-recipe runs, throttled chat threads, and
-    // evaporated chat threads. Newest-first, capped at `limit` (default 30, max 100)
+    // evaporated chat threads, and Steward interventions. Newest-first, capped at
+    // `limit` (default 30, max 100)
     // with `andMore` count. Pure read; no draining gate.
     if (req.method === 'GET' && req.url && req.url.startsWith('/view/wywa-delta')) {
       const parsedUrl = new URL(req.url, 'http://localhost')
@@ -1443,8 +1476,9 @@ export const startHttpServer = async (
         import('../lib/chat-store.js').then((m) =>
           Promise.all([m.listEvaporatedThreads(), m.listThreads()]),
         ),
+        listStewardLedgerSince(since ?? '0001-01-01T00:00:00.000Z'),
       ])
-        .then(([releaseNotes, recoveryEvents, autoRuns, [evaporatedRaw, allThreads]]) => {
+        .then(([releaseNotes, recoveryEvents, autoRuns, [evaporatedRaw, allThreads], stewardLedger]) => {
           const throttledThreads = allThreads
             .filter((t) => t.status === 'throttled')
             .map((t) => ({ id: t.id, updatedAt: t.updated_at }))
@@ -1463,6 +1497,7 @@ export const startHttpServer = async (
             autoRuns,
             throttledThreads,
             evaporatedThreads,
+            stewardLedger,
             since,
             limit,
           })
@@ -1880,13 +1915,17 @@ export const startHttpServer = async (
             sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
             return
           }
-          const schema = z.object({ goal: z.string(), idempotencyKey: z.string() })
+          const schema = z.object({
+            goal: z.string(),
+            idempotencyKey: z.string(),
+            files: z.array(z.object({ path: z.string(), note: z.string().optional() })).optional(),
+          })
           const result = schema.safeParse(parsed)
           if (!result.success) {
-            sendJson(res, 400, { ok: false, error: 'body must be { goal: string, idempotencyKey: string }' })
+            sendJson(res, 400, { ok: false, error: 'body must be { goal: string, idempotencyKey: string, files?: {path:string;note?:string}[] }' })
             return
           }
-          forkThread({ sourceThreadId, goal: result.data.goal, idempotencyKey: result.data.idempotencyKey })
+          forkThread({ sourceThreadId, goal: result.data.goal, idempotencyKey: result.data.idempotencyKey, files: result.data.files })
             .then(({ thread }) => {
               deps.viewStreamHub?.broadcast('chat')
               sendJson(res, 200, { threadId: thread.id })

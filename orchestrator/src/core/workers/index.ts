@@ -1,5 +1,5 @@
-// Worker registry — one auditable location for the per-stage pinned
-// `claude -p` configuration. Each named Worker bundles the model, effort,
+// Worker registry — one auditable location for per-stage provider-native
+// configuration. Each named Worker bundles the model tier, effort,
 // permission posture, bare mode, and denied tools that the stage runs
 // under. Workflow authors call `worker.run(prompt, { cwd, ... })`
 // instead of assembling claude flags ad-hoc.
@@ -25,8 +25,14 @@ import {
   type RunClaudeResult,
 } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
-import type { ProviderName } from './providers'
-import { PROVIDERS } from './providers'
+import type { ProviderModelTier, ProviderName } from './providers'
+import {
+  PROVIDERS,
+  PROVIDER_MODELS,
+  resolveProviderName,
+  reportsContextOccupancy,
+} from './providers'
+import { contextGuardMode } from '../lib/claude-usage'
 import { runPtySession } from './run-pty-session'
 import {
   RESCUE_OPERATOR_SYSTEM_PROMPT,
@@ -38,6 +44,33 @@ import {
 // operator via the action queue (kind='coder-question'). Read-only workers
 // carry this in their disallowedTools so they cannot stall on operator input.
 export const ASK_USER_DENIED_TOOL = 'Bash(mars task ask*)' as const
+
+// Full built-in tool surface of the agent CLIs the orchestrator dispatches.
+// Denying every entry is the ONLY way the provider surface can express "answer
+// from the prompt, take no actions" — neither `claude -p` nor `codex exec`
+// exposes a first-class no-tools switch (codex's `--sandbox read-only` still
+// permits reads, greps, and shell commands). Pinned as an explicit list rather
+// than derived so a new built-in tool shows up as a diff here instead of
+// silently re-opening the surface.
+export const NO_TOOL_USE_DENIED_TOOLS: readonly string[] = [
+  'Agent',
+  'Bash',
+  'BashOutput',
+  'Edit',
+  'ExitPlanMode',
+  'Glob',
+  'Grep',
+  'KillShell',
+  'NotebookEdit',
+  'Read',
+  'SlashCommand',
+  'Task',
+  'TodoWrite',
+  'WebFetch',
+  'WebSearch',
+  'Write',
+  ASK_USER_DENIED_TOOL,
+] as const
 
 // Mutation tools denied for read-only Workers (Planner, Slicer, Triager,
 // BehaviourVerifier, Scorer). A confused agent dispatched into one of those
@@ -71,7 +104,7 @@ export type WorkerName =
   | 'Scorer'
   | 'RescueOperator'
 
-// Execution runtime for a Worker. 'headless' runs via `claude -p` in a
+// Execution runtime for a Worker. 'headless' runs via the selected provider's
 // non-interactive subprocess (current default for all built-in Workers).
 // 'pty' drives the agent under node-pty — non-attachable (no operator terminal
 // access; the operator reads traces/logs after the fact). No dispatch logic
@@ -85,7 +118,7 @@ export type ClaudeOutputFormat = 'stream-json' | 'json' | 'text'
 // run().
 //
 // This interface is the single auditable contract: every field a dispatched
-// `claude -p` invocation can be configured with appears here. A workflow
+// provider invocation can be configured with appears here. A workflow
 // author who reads WORKER_CONFIGS sees the entire role-pinned posture
 // (model, fallback model, effort, permission mode, agent, system prompt
 // shape, allow/deny lists, tool list, output format, bare mode) without
@@ -93,8 +126,8 @@ export type ClaudeOutputFormat = 'stream-json' | 'json' | 'text'
 //
 // `systemPrompt` and `appendSystemPrompt` are mutually exclusive. The
 // Worker factory throws at construction time if both are pinned — the
-// underlying `claude -p` flags `--system-prompt` and
-// `--append-system-prompt` cannot both be set on one invocation.
+// underlying agent CLI's mutually exclusive system-prompt modes cannot both
+// be set on one invocation.
 export interface WorkerConfig {
   readonly name: string
   readonly model: string
@@ -122,24 +155,32 @@ export interface WorkerConfig {
   // Workers leave this undefined and rely on the default tool surface;
   // tightly-scoped roles may pin a narrow list.
   readonly tools?: readonly string[]
-  // Wire format for claude -p's streamed output. Defaults to stream-json
-  // (the only format the orchestrator's event reader currently parses).
+  // Normalized wire format for streamed provider output.
   readonly outputFormat: ClaudeOutputFormat
-  // Per-Worker context token budget. Compared against the LATEST assistant
-  // event's input-side token count (input + cache_read + cache_creation) on
-  // each turn; 0 = disabled. Set intentionally below the model's real context
-  // window to kill a run before Claude Code auto-compacts. A compression-
-  // induced kill is treated as a FAILURE (reason: context-exhausted) and
-  // routed through the normal recovery flow.
+  // Per-Worker context token budget; 0 = disabled. Enforced on two sides:
+  //
+  //   input — before dispatch, the estimated prompt cost is compared against
+  //           this value and an impossible run fails fast
+  //           (assertPromptFitsContextBudget). Applies to EVERY provider.
+  //   in-run — for a provider that reports context occupancy (see
+  //           reportsContextOccupancy) the LATEST assistant event's input-side
+  //           token count (input + cache_read + cache_creation) is compared
+  //           each turn, warning at 80% and killing at 100%. A provider that
+  //           reports only cumulative spend is skipped here: comparing spend
+  //           against a window aborts runs nowhere near the limit.
+  //
+  // Set intentionally below the model's real context window to kill a run
+  // before the provider auto-compacts, and above HARNESS_CONTEXT_FLOOR_TOKENS
+  // so the budget is reachable at all. A compression-induced kill is treated
+  // as a FAILURE (reason: context-exhausted) and routed through the normal
+  // recovery flow.
   readonly maxContextTokens: number
   // Execution runtime for this Worker. All built-in Workers use 'headless'
-  // (dispatched via `claude -p` in a non-interactive subprocess). 'pty' is the
+  // (dispatched via the selected CLI in a non-interactive subprocess). 'pty' is the
   // node-pty harness — non-attachable; the operator reads traces/logs after the
   // fact. No dispatch logic branches on this field yet.
   readonly runtime: WorkerRuntime
-  // Agent CLI Provider that drives this Worker. Names an entry in the PROVIDERS
-  // registry (currently only 'claude'). Dispatch behaviour is unchanged — the
-  // field is read but not yet branched on; future slices will wire it up.
+  // Agent CLI Provider that drives this Worker. Names an entry in PROVIDERS.
   readonly provider: ProviderName
   // Tags this Worker handles. pickWorkerForTags returns this Worker when the
   // task's tag list intersects this set. Workers with no tags entry are never
@@ -160,6 +201,70 @@ export interface WorkerConfig {
 // MARS_CONTEXT_TOKEN_BUDGET globally overrides all per-worker defaults
 // (useful to tighten or loosen the budget at runtime without editing code).
 // Returns 0 (disabled) when neither the env var nor the override is positive.
+/**
+ * Fixed context every dispatched agent harness occupies BEFORE the task prompt
+ * is even read: the composed system prompt, the built-in tool schemas, any
+ * injected MCP server schemas, and the worktree's own instruction files. It is
+ * the floor a per-worker `maxContextTokens` has to clear to mean anything — a
+ * budget below it kills the run on its first turn while the worker is still
+ * booting, rejecting work that has not overflowed anything.
+ *
+ * 60k is the conservative end of what a headless Claude Code run reports as
+ * baseline occupancy with the codegraph + mars-worker MCP servers injected.
+ * It is a sanity lower bound for BUDGET VALUES, not a runtime deduction: the
+ * pre-flight check below compares the prompt against the raw budget so a
+ * generous budget is never silently shrunk.
+ */
+export const HARNESS_CONTEXT_FLOOR_TOKENS = 60_000
+
+/**
+ * Rough token cost of a prompt. Four characters per token is the standard
+ * English-text approximation and errs slightly LOW on code-heavy prompts,
+ * which is the right direction for a guard that must not reject work it
+ * should have run.
+ */
+export const estimatePromptTokens = (prompt: string): number =>
+  Math.ceil(prompt.length / 4)
+
+/**
+ * Pre-flight context check. Runs before a Worker dispatches anything, on every
+ * provider and both runtimes: if the prompt alone cannot fit the Worker's
+ * context budget, the run is hopeless and burning a full agent invocation to
+ * discover that mid-way is pure waste.
+ *
+ * This is the INPUT-side half of budget enforcement and is the only half that
+ * exists for a provider which cannot report context occupancy (codex, gemini —
+ * see reportsContextOccupancy). Throws with an actionable message; a budget of
+ * 0 disables the check along with the rest of the budget machinery.
+ */
+export const assertPromptFitsContextBudget = (
+  config: WorkerConfig,
+  prompt: string,
+): void => {
+  if (config.maxContextTokens <= 0) return
+  const estimated = estimatePromptTokens(prompt)
+  if (estimated <= config.maxContextTokens) return
+  throw new Error(
+    `Worker ${config.name}: prompt does not fit the context budget — ` +
+      `~${estimated} estimated prompt tokens vs maxContextTokens=${config.maxContextTokens}. ` +
+      `Shrink what the caller embeds in the prompt (fewer/shorter artifacts, diffs, or task-graph rows), ` +
+      `or raise this Worker's maxContextTokens in WORKER_CONFIGS ` +
+      `(MARS_CONTEXT_TOKEN_BUDGET raises it for every Worker at once).`,
+  )
+}
+
+/**
+ * True when a Worker denies the entire built-in tool surface, i.e. it is meant
+ * to answer from its prompt alone. Such a Worker must not receive MCP servers
+ * either: `--disallowedTools` cannot name `mcp__*` tools, so an injected
+ * codegraph / mars-worker server would hand back exactly the repo-browsing
+ * surface the deny-list removed.
+ */
+export const deniesAllToolUse = (config: WorkerConfig): boolean => {
+  const denied = new Set(config.disallowedTools)
+  return NO_TOOL_USE_DENIED_TOOLS.every((tool) => denied.has(tool))
+}
+
 export const resolveWorkerMaxContextTokens = (override?: number): number => {
   const fromEnv = parseInt(process.env.MARS_CONTEXT_TOKEN_BUDGET ?? '0', 10)
   if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv
@@ -191,7 +296,8 @@ export interface RunOptions {
    * The task id this invocation is dispatched for. Forwarded to
    * {@link runClaudeCode} so the worker env is stamped with
    * `MARS_MCP_TASK_ID` and the mars-worker MCP server is injected into the
-   * inline `--mcp-config` JSON.
+   * inline `--mcp-config` JSON. Withheld for a Worker that denies the whole
+   * tool surface — see {@link deniesAllToolUse}.
    */
   readonly taskId?: string
 }
@@ -202,16 +308,11 @@ export interface Worker {
   run(prompt: string, options: RunOptions): Promise<RunClaudeResult>
 }
 
-const CLAUDE_OPUS_MODEL = 'claude-opus-4-7'
-const CLAUDE_SONNET_MODEL = 'claude-sonnet-4-6'
-const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
-
 // codegraph nudge appended to the system prompt of the workers that benefit
 // most from the pre-indexed code knowledge graph (Planner, Slicer, Coder).
 // The codegraph MCP server is registered in the repo-root `.mcp.json`, so the
-// `codegraph_*` tools are available to every dispatched `claude -p` run that
-// reads project MCP config (which they all do — see claudeStreamArgs'
-// --strict-mcp-config + --setting-sources project,local). The nudge steers the
+// `codegraph_*` tools are available to provider runs whose adapter loads
+// project MCP config. The nudge steers the
 // worker toward the graph before it falls back to broad file-scanning, which
 // is what cuts tool calls and context churn.
 // Exported so tests can pin the exact blast radius (which Workers carry the
@@ -219,34 +320,23 @@ const CLAUDE_HAIKU_MODEL = 'claude-haiku-4-5-20251001'
 export const CODEGRAPH_NUDGE =
   'A pre-indexed code knowledge graph is available via the `codegraph_*` MCP tools (codegraph_explore, codegraph_search, codegraph_callers, codegraph_callees, codegraph_impact, codegraph_node, codegraph_files, codegraph_status). Before broad file-scanning (rg/fd/Glob across the tree), consult codegraph to locate symbols, trace call graphs, and assess blast radius — it is faster and cheaper than reading files to reconstruct structure. Fall back to direct file reads when the graph lacks the detail you need.'
 
-// Resolve the effective model for the Coder Worker. When `MARS_WORKER_MODEL`
-// is set, it overrides the pinned default — useful for one-off sessions that
-// need Opus reasoning (e.g. a complex architectural migration) without editing
-// code. The env var is read at process start and affects every Coder run for
-// the lifetime of that daemon process; there is no per-task override.
-// Planner/Slicer are NOT affected — they always use their pinned Opus model
-// for cost/safety reasons. Fixer uses Sonnet (same as Coder) because recovery
-// briefs are scoped mechanical work, not architectural reasoning.
-export const CODER_MODEL: string =
-  process.env.MARS_WORKER_MODEL ?? CLAUDE_SONNET_MODEL
+// One provider owns an entire daemon run. `mars daemon start` resolves the
+// persisted `.mars/daemon.json` choice into MARS_WORKER_PROVIDER before any
+// workflow imports this registry. An explicit env value remains the one-run
+// override. Codex is the hard default for new and unconfigured repositories.
+export const WORKER_PROVIDER: ProviderName = resolveProviderName()
 
-// Resolve the effective provider for the Coder Worker. When `MARS_WORKER_PROVIDER`
-// is set, it overrides the pinned default — useful for running Coder sessions
-// under Codex or Gemini without editing code. The env var is read at process
-// start and affects every Coder run for the lifetime of that daemon process.
-// All other Workers (Planner, Slicer, Fixer, Triager, BehaviourVerifier, Scorer)
-// stay pinned to Claude.
-const KNOWN_PROVIDERS: readonly ProviderName[] = ['claude', 'codex', 'gemini'] as const
-const _rawProvider = process.env.MARS_WORKER_PROVIDER
-if (
-  _rawProvider !== undefined &&
-  !(KNOWN_PROVIDERS as readonly string[]).includes(_rawProvider)
-) {
-  throw new Error(
-    `Unknown MARS_WORKER_PROVIDER '${_rawProvider}' — known: ${KNOWN_PROVIDERS.join(', ')}`,
-  )
-}
-export const CODER_PROVIDER: ProviderName = (_rawProvider as ProviderName | undefined) ?? 'claude'
+export const providerModel = (
+  provider: ProviderName,
+  tier: ProviderModelTier,
+): string => PROVIDER_MODELS[provider][tier]
+
+// The explicit model override remains Coder-only. Every other role selects a
+// semantic tier, then the Provider translates that tier to a native model id.
+// This prevents switches such as Claude -> Codex from accidentally passing a
+// Claude model slug to `codex exec`.
+export const CODER_MODEL: string =
+  process.env.MARS_WORKER_MODEL ?? providerModel(WORKER_PROVIDER, 'balanced')
 
 // Day-one defaults agreed in the grill for PRD 948691d0. The Coder runs on
 // sonnet / high effort / bypassPermissions with the full tool surface (no
@@ -257,8 +347,9 @@ export const CODER_PROVIDER: ProviderName = (_rawProvider as ProviderName | unde
 // Fixer also layers backlog-mutation denials so a no-commit Session cannot
 // refile its task as a loose end.
 // Planner, Slicer, and Triager are read-only synthesis stages: default
-// permissions, Edit/Write/NotebookEdit denied. Triager runs on sonnet /
-// medium effort. Bare mode is disabled because
+// permissions, Edit/Write/NotebookEdit denied. Triager goes further — fast
+// tier, low effort, and the whole tool surface denied; see its entry below.
+// Bare mode is disabled because
 // the locally installed claude CLI 2.1.142 fails authentication when --bare
 // is set (returns "Not logged in") even though keychain auth is valid in
 // non-bare invocations.
@@ -267,11 +358,15 @@ export const CODER_PROVIDER: ProviderName = (_rawProvider as ProviderName | unde
 // before Claude Code would auto-compact. The 80% warn fires at 144k tokens
 // (well inside the window); the kill fires at 180k — leaving 20k of headroom
 // before the model's 200k limit so compaction never gets a chance to trigger.
-// Triager gets a tighter budget (50k) as a belt-and-suspenders guard given its
-// focused read-only synthesis role.
+// Every budget must clear HARNESS_CONTEXT_FLOOR_TOKENS: the old 50k values for
+// Triager and Scorer sat BELOW the harness's own baseline occupancy, so the
+// moment the guard was actually enforced it would have killed those runs
+// before they read a single line of their prompt. 100k leaves ~40k of genuine
+// working room above the floor for the two focused read-only roles, and still
+// sits far enough under the 200k window that compaction never triggers.
 const CODER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(180_000)
 const GENEROUS_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(180_000)
-const TRIAGER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(50_000)
+const FOCUSED_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(100_000)
 
 export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Coder: {
@@ -285,12 +380,12 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: CODER_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: CODER_PROVIDER,
+    provider: WORKER_PROVIDER,
     tags: ['coder'],
   },
   Planner: {
     name: 'Planner',
-    model: CLAUDE_OPUS_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'flagship'),
     effort: 'high',
     permissionMode: 'default',
     bare: false,
@@ -299,12 +394,12 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['planner'],
   },
   Slicer: {
     name: 'Slicer',
-    model: CLAUDE_OPUS_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'flagship'),
     effort: 'high',
     permissionMode: 'default',
     bare: false,
@@ -313,25 +408,33 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['slicer'],
   },
+  // Triager: a classification call, not a reasoning task. It is handed a task
+  // prompt plus a rendered task-graph and must answer with one JSON verdict.
+  // Pinned to the FAST tier at low effort — the tier, not a native model id, so
+  // whichever provider the daemon runs (Codex by default) resolves its own
+  // cheapest model. Denied the ENTIRE tool surface (NO_TOOL_USE_DENIED_TOOLS):
+  // it answers from the prompt it is given and must never browse the repo.
+  // Running it as a full agentic loop with repo access made it the single
+  // largest source of wasted spend (1,303 runs / ~31M tokens in production).
   Triager: {
     name: 'Triager',
-    model: CLAUDE_SONNET_MODEL,
-    effort: 'medium',
+    model: providerModel(WORKER_PROVIDER, 'fast'),
+    effort: 'low',
     permissionMode: 'default',
     bare: false,
-    disallowedTools: READ_ONLY_DENIED_TOOLS,
+    disallowedTools: NO_TOOL_USE_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    maxContextTokens: TRIAGER_CONTEXT_TOKENS,
+    maxContextTokens: FOCUSED_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['triager'],
   },
   Fixer: {
     name: 'Fixer',
-    model: CLAUDE_SONNET_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'balanced'),
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,
@@ -339,7 +442,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['fixer'],
   },
   // Behaviour-verify Worker: exercises the live dev server booted by the
@@ -355,15 +458,15 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   // operator has provisioned them; this worker carries none by default.
   BehaviourVerifier: {
     name: 'BehaviourVerifier',
-    model: CLAUDE_SONNET_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'balanced'),
     effort: 'medium',
     permissionMode: 'bypassPermissions',
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    maxContextTokens: resolveWorkerMaxContextTokens(100_000),
+    maxContextTokens: FOCUSED_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['behaviour-verifier'],
   },
   // Scorer Worker (PRD 6cf85bc9): the record-only post-instance quality judge.
@@ -378,15 +481,15 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   // MARS_WORKER_MODEL (only Coder is).
   Scorer: {
     name: 'Scorer',
-    model: CLAUDE_HAIKU_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'fast'),
     effort: 'medium',
     permissionMode: 'default',
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    maxContextTokens: resolveWorkerMaxContextTokens(50_000),
+    maxContextTokens: FOCUSED_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['scorer'],
   },
   // RescueOperator Worker: court of last resort for a dead-ended Arc.
@@ -401,7 +504,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   // guard in rescue-operator-spawn.ts). See PRD 94e2a82a.
   RescueOperator: {
     name: 'RescueOperator',
-    model: CLAUDE_SONNET_MODEL,
+    model: providerModel(WORKER_PROVIDER, 'balanced'),
     effort: 'high',
     permissionMode: 'bypassPermissions',
     bare: false,
@@ -410,13 +513,13 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     outputFormat: 'stream-json',
     maxContextTokens: GENEROUS_CONTEXT_TOKENS,
     runtime: 'headless',
-    provider: 'claude',
+    provider: WORKER_PROVIDER,
     tags: ['rescue-operator'],
   },
 } as const
 
-// Construction-time guard. `claude -p` cannot accept both --system-prompt
-// and --append-system-prompt on the same invocation, and silently letting
+// Construction-time guard. A Worker cannot pin both system-prompt modes;
+// silently letting
 // a Worker pin both would mean one is dropped at dispatch with no audit
 // trail. Throwing at module-load surfaces the misconfiguration where the
 // operator can fix it.
@@ -438,13 +541,45 @@ export const createWorker = (config: WorkerConfig): Worker => buildWorker(config
 
 const buildWorker = (config: WorkerConfig): Worker => {
   assertSystemPromptShape(config)
+  const provider = PROVIDERS[config.provider]
+  // In-run context-overflow handling (warn at 80%, abort at 100%) reads the
+  // provider's usage stream as occupancy. Only a per-request provider reports
+  // occupancy, so the budget is threaded to the adapter ONLY for those; for a
+  // cumulative-usage provider it would compare turn SPEND against a context
+  // window and abort runs that are nowhere near the limit. Those providers are
+  // covered on the input side by assertPromptFitsContextBudget above.
+  const meteredContextBudget = reportsContextOccupancy(provider.headless)
+    ? config.maxContextTokens
+    : 0
+  const guardMode = contextGuardMode(
+    provider.headless.capabilities.usageSemantics,
+    config.maxContextTokens,
+  )
   return {
     config,
     runtime: config.runtime,
-    run: (prompt, options) =>
-      config.runtime === 'pty'
+    // `async` so a pre-flight rejection surfaces as a rejected promise rather
+    // than a synchronous throw — callers hold `run()` to the Promise contract.
+    run: async (prompt, options) => {
+      assertPromptFitsContextBudget(config, prompt)
+      // Say out loud, once per dispatch, that the configured ceiling is NOT
+      // armed in-run on this provider. Silently withholding the budget (which
+      // is what a cumulative provider requires — its numbers are spend, not
+      // occupancy) would leave the operator believing a ceiling is enforced
+      // when nothing can abort the run mid-way. The same fact is stamped on
+      // every span as `contextGuard` so it is queryable, not just logged.
+      if (guardMode === 'in-run-inapplicable') {
+        console.warn(
+          `[mars] Worker ${config.name} on provider ${config.provider}: in-run context ceiling NOT enforced ` +
+            `(maxContextTokens=${config.maxContextTokens}). ${config.provider} reports ` +
+            `'${provider.headless.capabilities.usageSemantics}' usage — context occupancy is never observable ` +
+            `mid-run, so no turn can be compared against the window. Enforced instead: the pre-flight prompt-fit ` +
+            `check (input side) and the window/arc token ceilings ('mars budget'), which bound SPEND after each run.`,
+        )
+      }
+      return config.runtime === 'pty'
         ? runPtySession({
-            provider: PROVIDERS[config.provider],
+            provider,
             prompt,
             cwd: options.cwd,
             sessionId: options.sessionId,
@@ -458,7 +593,7 @@ const buildWorker = (config: WorkerConfig): Worker => {
             agent: config.agent,
             appendSystemPrompt: config.appendSystemPrompt,
           })
-        : PROVIDERS[config.provider].headless.run(prompt, {
+        : provider.headless.run(prompt, {
             cwd: options.cwd,
             sessionId: options.sessionId,
             onEvent: options.onEvent,
@@ -469,12 +604,16 @@ const buildWorker = (config: WorkerConfig): Worker => {
             bare: config.bare,
             agent: config.agent,
             disallowedTools: config.disallowedTools,
-            maxContextTokens: config.maxContextTokens,
+            maxContextTokens: meteredContextBudget,
             mcpServers: config.mcpConfig,
             externalAbort: options.externalAbort,
             onPid: options.onPid,
-            taskId: options.taskId,
-          }),
+            // Passing a taskId is what injects the mars-worker (and, with it,
+            // codegraph) MCP servers. A Worker that denies the whole tool
+            // surface must not get them back through MCP — see deniesAllToolUse.
+            taskId: deniesAllToolUse(config) ? undefined : options.taskId,
+          })
+    },
   }
 }
 
@@ -497,7 +636,7 @@ export const getWorker = (name: WorkerName): Worker => Workers[name]
  * Iterates through the registered Workers and returns the first one whose
  * `config.tags` set intersects with the task's tag list. When no Worker
  * claims any of the task's tags, the function falls through to the
- * **default headless Worker** — the Coder, running via `claude -p` with
+ * **default headless Worker** — the Coder, running via the selected provider with
  * full tool surface and bypassPermissions. This fallback guarantees every
  * task gets a runner even when no tag-specific Worker is registered.
  *

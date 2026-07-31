@@ -19,7 +19,8 @@ import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget'
 import { applyControlLevers, loadDaemonConfig } from '../config'
 import { setSemLimit } from '../server'
 import { setInstallSemCap } from '../../lib/worktree-install'
-import { updateTask } from '../../queue'
+import { updateTask, getTask, listBlockers } from '../../queue'
+import { Arc } from '../../arc'
 import type { DaemonRequest, DaemonResponse } from '../protocol'
 import type { DaemonDeps, RpcHandler } from './types'
 
@@ -207,8 +208,9 @@ const reloadConfigHandler = handler('reload-config', async (_req, deps) => {
   // Install semaphore lives in worktree-install.ts as a module-level singleton;
   // update it via the exported setter so the new cap takes effect immediately.
   setInstallSemCap(caps.setupInstall)
+  setSemLimit(deps.sems.verify, caps.verify)
   deps.log(
-    `concurrency reloaded: implement=${caps.implement} triage=${caps.triage} refine=${caps.refine} structured-write=${caps.structuredWrite} setup-install=${caps.setupInstall}`,
+    `concurrency reloaded: implement=${caps.implement} triage=${caps.triage} refine=${caps.refine} structured-write=${caps.structuredWrite} setup-install=${caps.setupInstall} verify=${caps.verify}`,
   )
   void deps.drain()
   return {
@@ -220,6 +222,7 @@ const reloadConfigHandler = handler('reload-config', async (_req, deps) => {
         refine: caps.refine,
         'structured-write': caps.structuredWrite,
         'setup-install': caps.setupInstall,
+        verify: caps.verify,
       },
     },
   }
@@ -501,6 +504,17 @@ const taskCheckHandler = handler('task.check', async (req, deps) => {
   return { ok: true, data: entry }
 })
 
+const mcpAuditAppendHandler = handler('mcp.audit.append', async (req, deps) => {
+  await deps.appendMcpWorkerAudit({
+    toolName: req.toolName,
+    taskId: req.taskId,
+    argsJson: req.argsJson,
+    ok: req.ok,
+    errorMessage: req.errorMessage,
+  })
+  return { ok: true }
+})
+
 const spendControlShowHandler = handler('spend-control.show', async (_req, deps) => {
   const levers = await deps.handleSpendControlShow()
   return { ok: true, data: levers }
@@ -555,21 +569,72 @@ const spendControlSetHandler = handler('spend-control.set', async (req, deps) =>
 })
 
 const pauseHandler = handler('pause', async (_req, deps) => {
-  deps.setIsPaused(true)
+  // First cause wins: when the storm breaker or a quota rejection already
+  // paused dispatch, an operator pause does not overwrite that reason —
+  // status keeps naming the real cause, and one resume clears it.
+  deps.pauseDispatch('operator')
+  const state = deps.getPauseState()
+  // Persist so the pause survives a daemon restart. The operator asked for a
+  // stopped queue; a respawn must not silently resume it.
+  deps.persistIsPaused(true)
   deps.log(
-    `daemon paused; dispatch suspended (inFlight=${deps.tracker.inFlightCount()})`,
+    `daemon paused; dispatch suspended (reason=${state.reason}, inFlight=${deps.tracker.inFlightCount()})`,
   )
   return {
     ok: true,
-    data: { paused: true, inFlight: deps.tracker.inFlightCount() },
+    data: {
+      paused: true,
+      reason: state.reason,
+      inFlight: deps.tracker.inFlightCount(),
+    },
   }
 })
 
 const resumeHandler = handler('resume', async (_req, deps) => {
-  deps.setIsPaused(false)
+  const previous = deps.getPauseState()
+  deps.resumeDispatch()
+  deps.persistIsPaused(false)
+  // Clear the persisted signature-storm tripped flag so a subsequent daemon
+  // restart does not re-pause a queue the operator deliberately resumed.
+  // `resumeDispatch` already clears it for a pause whose reason IS 'storm';
+  // this covers the case where an earlier cause (operator, quota) won the
+  // pause slot while the breaker tripped underneath it, leaving the durable
+  // flag armed with nothing in memory pointing at it. Idempotent when no
+  // storm was active: the UPDATE is a no-op when the row has tripped=false
+  // or does not exist.
+  await deps.resetSignatureStorm()
   void deps.drain()
-  deps.log('daemon resumed; dispatch re-enabled')
-  return { ok: true, data: { paused: false } }
+  deps.log(
+    `daemon resumed; dispatch re-enabled (cleared reason=${previous.reason ?? 'none'})`,
+  )
+  return { ok: true, data: { paused: false, clearedReason: previous.reason } }
+})
+
+const taskContextForWorkerHandler = handler('task.contextForWorker', async (req, _deps) => {
+  const task = await getTask(req.id)
+  if (!task) {
+    return { ok: false, error: `task.contextForWorker: task '${req.id}' not found` }
+  }
+  const [progressEntries, blockerIds] = await Promise.all([
+    Arc.listProgress(req.id),
+    listBlockers(req.id),
+  ])
+  const doneCriteria = task.spec?.doneCriteria ?? []
+  const checklist = Arc.deriveChecklist(progressEntries, doneCriteria)
+  return {
+    ok: true,
+    data: {
+      id: task.id,
+      title: task.intent,
+      prompt: task.prompt,
+      files: Array.from(task.spec?.files ?? []),
+      verify: task.spec?.verifyCmd ?? null,
+      done: checklist.map((c) => ({ text: c.criterion, checked: c.checked })),
+      taskType: task.spec?.taskType ?? 'auto',
+      status: task.status,
+      blockers: blockerIds,
+    },
+  }
 })
 
 /**
@@ -615,6 +680,8 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   killHandler,
   taskNoteHandler,
   taskCheckHandler,
+  mcpAuditAppendHandler,
+  taskContextForWorkerHandler,
   previewSpawnHandler,
   previewStatusHandler,
   previewTeardownHandler,

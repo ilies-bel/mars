@@ -3,13 +3,14 @@ import { z } from 'zod'
 import { getTask } from '../core/queue'
 import { createProposal } from '../core/proposals'
 import { Workers } from '../core/workers'
-import { parseClaudeJsonResult } from '../core/lib/claude-json'
+import { parseWorkerJsonResult } from '../core/lib/worker-json'
 import { getRepoRoot } from '../core/context'
 import { type DomainTaskStore as TaskStore, getDefaultTaskStore } from '../core/store/task-store'
 import { createQueueWorkflowStore } from './queue-workflow-store'
 import { type TraceEventStore } from '../core/lib/trace-events-store'
 import { nullTraceStore } from '../core/lib/run-tool'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
+import { diagnoseClaudeFailure } from '../core/lib/claude-stream'
 
 const planInputSchema = z.object({
   taskId: z.string(),
@@ -51,8 +52,8 @@ Spec to analyze:
 
 ${spec}`
 
-const parsePlannerOutput = (claudeStdout: string): z.infer<typeof plannerOutputSchema> =>
-  plannerOutputSchema.parse(parseClaudeJsonResult(claudeStdout))
+const parsePlannerOutput = (stdout: string): z.infer<typeof plannerOutputSchema> =>
+  plannerOutputSchema.parse(parseWorkerJsonResult(Workers.Planner.config.provider, stdout))
 
 export interface RunPlanResult {
   taskId: string
@@ -95,7 +96,7 @@ export const planWorkflow = defineWorkflow<PlanInput, RunPlanResult, PlanService
       })
       if (r.exitCode !== 0) {
         throw new Error(
-          `claude -p exited ${r.exitCode}: ${(r.stderr || r.stdout).slice(0, 500)}`,
+          `provider worker exited ${r.exitCode}: ${diagnoseClaudeFailure(r.stdout, r.stderr)}`,
         )
       }
 

@@ -61,6 +61,11 @@ import {
 import { resolveContext } from '../../core/context'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
 import {
+  handleTaskFailureWithFixTask,
+  type HandleTaskFailureViaTaskInput,
+  type HandleTaskFailureViaTaskResult,
+} from '../../core/queue-fix-tasks'
+import {
   resolveTaskId,
   resolveTrace,
   resolveWorktree,
@@ -335,6 +340,11 @@ export interface BehaviourVerifyDeps {
     criteria: readonly string[],
     opts: { taskId: string; worktreeDir: string; logDir: string },
   ) => Promise<CriterionResult[]>
+  /**
+   * Called inline on a behavioural FAIL to spawn a recovery fix-task — mirrors
+   * the static `verify` primitive's inline `handleTaskFailureWithFixTask` call.
+   */
+  handleTaskFailure: (input: HandleTaskFailureViaTaskInput) => Promise<HandleTaskFailureViaTaskResult>
 }
 
 const defaultGetDiff = async (worktreePath: string, integrationBranch: string): Promise<string> => {
@@ -358,6 +368,7 @@ const defaultDeps: BehaviourVerifyDeps = {
   raiseActionQueueItem,
   getDiff: defaultGetDiff,
   runBrowserCheck: (boot, criteria, opts) => runBrowserCheck(boot, criteria, opts),
+  handleTaskFailure: handleTaskFailureWithFixTask,
 }
 
 /** Per-call domain options for {@link behaviourVerify}. All fields default. */
@@ -692,6 +703,9 @@ export const behaviourVerify = async (
   // Mutable slot populated inside `fn` so `getExtraPayload` (called after fn
   // completes) can reflect the actual run outcome in the step trace.
   let stepResult: BehaviourVerifyResult | null = null
+  // Set to true inside `fn` on a FAIL verdict so `getExtraPayload` can tag
+  // the trace outcome correctly even after the throw that follows.
+  let behaviourFailed = false
 
   return await runNonLlmStepWithSpan({
     stepName: BEHAVIOUR_VERIFY_STEP_NAME,
@@ -706,7 +720,9 @@ export const behaviourVerify = async (
       // ran we tag it with the actual outcome.
       behaviourVerifyOutcome: boot === null
         ? 'unverifiable:no-preview-command'
-        : (stepResult !== null ? `browser-check:${stepResult.outcome}` : 'browser-check:pending'),
+        : behaviourFailed
+          ? 'browser-check:fail'
+          : (stepResult !== null ? `browser-check:${stepResult.outcome}` : 'browser-check:pending'),
       bootPlan: boot,
       verdicts: stepResult?.verdicts ?? null,
       artifacts: stepResult?.artifacts ?? [],
@@ -751,6 +767,41 @@ export const behaviourVerify = async (
         durationMs,
       })
 
+      const fold = foldVerdicts(verdicts)
+
+      if (fold.decision === 'fail') {
+        behaviourFailed = true
+        const devServerLogPath = join(logDir, `${taskId}-server.log`)
+        const evidenceBlock = buildFailEvidenceBlock({
+          failed: fold.failed,
+          criteria: [...criteria],
+          url: boot.url,
+          artifactsDir,
+          devServerLogPath,
+          logTail: '',
+        })
+        await deps.handleTaskFailure({
+          taskId,
+          failingStep: BEHAVIOUR_VERIFY_FAILING_STEP,
+          errorOutput: evidenceBlock,
+          store,
+        })
+        throw new Error(evidenceBlock.split('\n')[0])
+      }
+
+      if (fold.decision === 'pass') {
+        stepResult = {
+          outcome: 'pass',
+          reason: null,
+          verdicts,
+          artifacts,
+          devServerLogPath: join(logDir, `${taskId}-server.log`),
+          bootPlan: boot,
+        }
+        return stepResult
+      }
+
+      // fold.decision === 'unverifiable'
       stepResult = await cantVerify('no-exercisable-criteria', {
         verdicts,
         artifacts,

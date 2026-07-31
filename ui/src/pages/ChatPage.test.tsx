@@ -1274,92 +1274,85 @@ describe('Slash-palette keyboard navigation', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Attachment segment — grouping and rendering
+// Attachment segment — mapping and rendering
+// (groupMessageSegments was replaced by chatMessageToUIMessage in the
+// AI-Elements migration; these tests use the current public API.)
 // ---------------------------------------------------------------------------
 
-describe('groupMessageSegments – attachment segment', () => {
-  it('passes an attachment segment through as-is', () => {
+describe('chatMessageToUIMessage – attachment segment', () => {
+  it('maps an attachment segment to a data-attachment part', () => {
     const msg = makeMsg([
       { type: 'attachment', path: 'uploads/img.png', mimeType: 'image/png', name: 'img.png' },
     ])
-    const out = groupMessageSegments(msg)
-    expect(out).toHaveLength(1)
-    expect(out[0]!.kind).toBe('attachment')
+    const out = chatMessageToUIMessage(msg)
+    expect(out.parts).toHaveLength(1)
+    expect(out.parts[0]!.type).toBe('data-attachment')
   })
 
-  it('flushes any open tool group when an attachment is encountered', () => {
+  it('emits a tool part followed by a data-attachment part', () => {
     const msg = makeMsg([
       { type: 'tool_use', toolName: 'Bash', input: {}, status: 'complete' as const, isError: false },
       { type: 'attachment', path: 'uploads/clip.mp4', mimeType: 'video/mp4', name: 'clip.mp4' },
     ])
-    const out = groupMessageSegments(msg)
-    expect(out).toHaveLength(2)
-    expect(out[0]!.kind).toBe('tool_group')
-    expect(out[1]!.kind).toBe('attachment')
+    const out = chatMessageToUIMessage(msg)
+    expect(out.parts).toHaveLength(2)
+    expect(out.parts[0]!.type).toBe('tool-Bash')
+    expect(out.parts[1]!.type).toBe('data-attachment')
   })
 
-  it('preserves attachment in a mixed message: text → attachment → text', () => {
+  it('maps a mixed message: text → attachment → text', () => {
     const msg = makeMsg([
       { type: 'text', text: 'here is a file' },
       { type: 'attachment', path: 'uploads/note.m4a', mimeType: 'audio/mp4', name: 'note.m4a' },
       { type: 'text', text: 'end' },
     ])
-    const out = groupMessageSegments(msg)
-    expect(out).toHaveLength(3)
-    expect(out[0]!.kind).toBe('text')
-    expect(out[1]!.kind).toBe('attachment')
-    expect(out[2]!.kind).toBe('text')
+    const out = chatMessageToUIMessage(msg)
+    expect(out.parts).toHaveLength(3)
+    expect(out.parts[0]!.type).toBe('text')
+    expect(out.parts[1]!.type).toBe('data-attachment')
+    expect(out.parts[2]!.type).toBe('text')
   })
 })
 
-describe('ChatMessageBubble – attachment rendering', () => {
-  it('renders an image attachment as <img> with the correct src', () => {
-    const msg = makeMsg([
-      { type: 'attachment', path: 'uploads/photo.jpg', mimeType: 'image/jpeg', name: 'photo.jpg' },
-    ])
+describe('AttachmentDisplay – attachment rendering', () => {
+  it('renders an image attachment as a linked image with the correct src', () => {
+    const seg: ChatSegmentAttachment = { type: 'attachment', path: 'uploads/photo.jpg', mimeType: 'image/jpeg', name: 'photo.jpg' }
     const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+      createElement(AttachmentDisplay, { attachment: seg }),
     )
     expect(html).toContain('attachment-image')
-    expect(html).toContain('/api/chat-uploads/uploads%2Fphoto.jpg')
+    expect(html).toContain('/api/chat/uploads/uploads%2Fphoto.jpg')
     expect(html).toContain('alt="photo.jpg"')
   })
 
   it('renders an audio attachment as <audio> with controls', () => {
-    const msg = makeMsg([
-      { type: 'attachment', path: 'uploads/voice.mp3', mimeType: 'audio/mpeg', name: 'voice.mp3' },
-    ])
+    const seg: ChatSegmentAttachment = { type: 'attachment', path: 'uploads/voice.mp3', mimeType: 'audio/mpeg', name: 'voice.mp3' }
     const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+      createElement(AttachmentDisplay, { attachment: seg }),
     )
     expect(html).toContain('attachment-audio')
     expect(html).toContain('<audio')
     expect(html).toContain('controls')
-    expect(html).toContain('/api/chat-uploads/uploads%2Fvoice.mp3')
+    expect(html).toContain('/api/chat/uploads/uploads%2Fvoice.mp3')
   })
 
   it('renders a video attachment as <video> with controls', () => {
-    const msg = makeMsg([
-      { type: 'attachment', path: 'uploads/clip.webm', mimeType: 'video/webm', name: 'clip.webm' },
-    ])
+    const seg: ChatSegmentAttachment = { type: 'attachment', path: 'uploads/clip.webm', mimeType: 'video/webm', name: 'clip.webm' }
     const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+      createElement(AttachmentDisplay, { attachment: seg }),
     )
     expect(html).toContain('attachment-video')
     expect(html).toContain('<video')
     expect(html).toContain('controls')
-    expect(html).toContain('/api/chat-uploads/uploads%2Fclip.webm')
+    expect(html).toContain('/api/chat/uploads/uploads%2Fclip.webm')
   })
 
-  it('renders an unknown mime type as a download link', () => {
-    const msg = makeMsg([
-      { type: 'attachment', path: 'uploads/data.csv', mimeType: 'text/csv', name: 'data.csv' },
-    ])
+  it('renders an unknown mime type as a link to the file', () => {
+    const seg: ChatSegmentAttachment = { type: 'attachment', path: 'uploads/data.csv', mimeType: 'text/csv', name: 'data.csv' }
     const html = renderToStaticMarkup(
-      createElement(ChatMessageBubble, { msg, onDiscuss: () => {} }),
+      createElement(AttachmentDisplay, { attachment: seg }),
     )
-    expect(html).toContain('attachment-file')
-    expect(html).toContain('href="/api/chat-uploads/uploads%2Fdata.csv"')
-    expect(html).toContain('download')
+    expect(html).toContain('attachment-other')
+    expect(html).toContain('href="/api/chat/uploads/uploads%2Fdata.csv"')
   })
 })

@@ -20,8 +20,10 @@ import {
 } from '../rescue-operator'
 import {
   WORKER_CONFIGS,
+  WORKER_PROVIDER,
   Workers,
   pickWorkerForTags,
+  providerModel,
   type Worker,
   type WorkerName,
 } from '..'
@@ -65,7 +67,12 @@ const makeWorkerStub = (
 // Minimal fake Task as received by runRescueOperator
 const fakeTask = (overrides?: Partial<Pick<Task, 'id' | 'prompt' | 'worktreePath'>>): Pick<Task, 'id' | 'prompt' | 'worktreePath'> => ({
   id: 'mars-rescue-test-01',
-  prompt: buildRescueOperatorPrompt('mars-origin-01', 'mars-origin-01', 'verify:typecheck'),
+  prompt: buildRescueOperatorPrompt({
+    failedTaskId: 'mars-origin-01',
+    originId: 'mars-origin-01',
+    failureSignature: 'verify:typecheck',
+    arcMembers: [],
+  }),
   worktreePath: '/tmp/fake-worktree',
   ...overrides,
 })
@@ -82,7 +89,7 @@ describe('RESCUE_OPERATOR_SYSTEM_PROMPT', () => {
 
   it('lists continue as a permitted action', () => {
     expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toMatch(/\bcontinue\b/i)
-    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toContain('mars step continue')
+    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toContain('mars continue')
   })
 
   it('lists supersede as a permitted action', () => {
@@ -136,8 +143,10 @@ describe('WORKER_CONFIGS.RescueOperator', () => {
     expect(WORKER_CONFIGS.RescueOperator.permissionMode).toBe('bypassPermissions')
   })
 
-  it('runs on Sonnet with high effort (same posture as Fixer)', () => {
-    expect(WORKER_CONFIGS.RescueOperator.model).toBe('claude-sonnet-4-6')
+  it('runs on the provider balanced tier with high effort (same posture as Fixer)', () => {
+    expect(WORKER_CONFIGS.RescueOperator.model).toBe(
+      providerModel(WORKER_PROVIDER, 'balanced'),
+    )
     expect(WORKER_CONFIGS.RescueOperator.effort).toBe('high')
   })
 
@@ -175,16 +184,27 @@ describe('pickWorkerForTags — rescue-operator routing', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildRescueOperatorPrompt', () => {
-  it('embeds the failed task id, origin id, and failure signature', () => {
-    const prompt = buildRescueOperatorPrompt('mars-failed-01', 'mars-origin-01', 'verify:typecheck')
-    expect(prompt).toContain('mars-failed-01')
-    expect(prompt).toContain('mars-origin-01')
-    expect(prompt).toContain('verify:typecheck')
-  })
+  it('keeps the ten newest structured arc failures and explicitly elides older members', () => {
+    const prompt = buildRescueOperatorPrompt({
+      failedTaskId: 'mars-failed-12',
+      originId: 'mars-origin-01',
+      failureSignature: 'verify:typecheck',
+      arcMembers: Array.from({ length: 12 }, (_, index) => ({
+        id: `mars-failed-${String(index + 1).padStart(2, '0')}`,
+        status: 'failed' as const,
+        failureSignature: `verify:failure-${index + 1}`,
+        failureReason: `failure reason ${index + 1}`,
+        createdAt: `2026-01-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+        prompt: 'raw task prompt must not be inlined',
+      })),
+    })
 
-  it('mentions the three permitted actions', () => {
-    const prompt = buildRescueOperatorPrompt('id', 'oid', 'sig')
-    expect(prompt).toMatch(/restart|continue|supersede/i)
+    expect(prompt).toContain('mars-failed-12')
+    expect(prompt).toContain('mars-failed-03')
+    expect(prompt).not.toContain('mars-failed-02')
+    expect(prompt).toContain('2 older members omitted')
+    expect(prompt).toContain('verify:failure-12 | failure reason 12')
+    expect(prompt).not.toContain('raw task prompt must not be inlined')
   })
 })
 
@@ -287,14 +307,20 @@ describe('runRescueOperator — integration', () => {
     }
   })
 
-  it('falls back to stdout when onEvent carries no text content', async () => {
-    // Worker that emits no assistant events but puts verdict in stdout
+  it('reads a Codex stdout stream when onEvent carries no text content', async () => {
+    // Worker that emits no assistant events but returns a Codex NDJSON stream.
     const worker: Worker = {
       config: WORKER_CONFIGS.RescueOperator,
       runtime: 'headless',
       run: async (): Promise<RunClaudeResult> => ({
         exitCode: 0,
-        stdout: '{"action":"restart","reasoning":"from stdout"}',
+        stdout: JSON.stringify({
+          type: 'item.completed',
+          item: {
+            type: 'agent_message',
+            text: '{"action":"restart","reasoning":"from stdout"}',
+          },
+        }),
         stderr: '',
         sessionId: null,
         conversation: [],

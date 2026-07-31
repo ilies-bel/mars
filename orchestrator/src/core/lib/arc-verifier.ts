@@ -2,7 +2,7 @@
  * Arc-outcome verifier (ADR-XXXX).
  *
  * After the last task of an arc merges into the integration branch the daemon
- * fires a cheap headless Claude (haiku tier) agent against main that:
+ * fires the selected provider's fast-tier headless agent against main that:
  *   1. Re-runs each task's verifyCmd where present.
  *   2. Spot-checks the arc's done criteria against the actual merged diff.
  *   3. Returns a structured verdict { ok, findings[] }.
@@ -26,14 +26,11 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { getDefaultTaskStore, type ArcStatusOptions } from '../store/task-store.js'
 import { raiseActionQueueItem } from './action-queue.js'
-import { runClaudeCode } from './git/claude.js'
+import { runHeadlessProvider } from '../workers/providers.js'
 import { collectAssistantText } from './reflector.js'
 import { createProposal, findOpenDraftByKpiTag } from '../proposals.js'
 
 const execFileAsync = promisify(execFile)
-
-/** Haiku-tier model: cheap, fast, sufficient for spot-check evaluation. */
-const VERIFIER_MODEL = 'claude-haiku-4-5-20251001'
 
 /** Maximum characters to include from the merged diff sent to the verifier. */
 const DIFF_SIZE_CAP = 8_000
@@ -229,9 +226,13 @@ function parseVerdict(text: string): ArcVerificationVerdict {
 }
 
 /**
- * Emit a Reflector draft proposal (source: 'reflection') describing a missing
- * arc E2E environment, deduped by `fingerprint` via the `kpi_tag` column.
+ * Emit a draft proposal (source: 'arc-verifier') describing a missing arc E2E
+ * environment, deduped by `fingerprint` via the `kpi_tag` column.
  * Best-effort: errors are swallowed so a DB hiccup never fails the arc.
+ *
+ * The source is `arc-verifier`, NOT `reflection`: these rows come from arc
+ * verification, not from the reflector, and sharing one value made it
+ * impossible to tell from the data which subsystem wrote a proposal.
  *
  * Called when no live E2E environment is available for this arc.
  */
@@ -245,7 +246,7 @@ async function emitArcE2eProposalIfNew(
   const existing = await findOpenDraftByKpiTag(fingerprint).catch(() => null)
   if (existing !== null) return
   await createProposal(`Set up E2E environment for arc ${originId}`, {
-    source: 'reflection',
+    source: 'arc-verifier',
     author: { kind: 'agent', name: 'arc-verifier' },
     problem,
     solution,
@@ -323,13 +324,13 @@ export async function runArcVerification(
   // Get the merged diff (best-effort; empty string if git fails).
   const diff = await getMergedDiff(arcStatus.landedCommits, opts.cwd)
 
-  // Build the verifier prompt and call the haiku agent.
+  // Build the verifier prompt and call the provider's fast-tier agent.
   const prompt = buildVerifierPrompt(originId, arcTaskData, verifyCmdResults, diff)
-  const agentResult = await runClaudeCode({
+  const agentResult = await runHeadlessProvider(prompt, {
     cwd: opts.cwd,
-    prompt,
-    model: VERIFIER_MODEL,
+    modelTier: 'fast',
     timeoutMs: 120_000,
+    disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
   })
   const rawText = collectAssistantText(agentResult.conversation) || agentResult.stdout
   let verdict = parseVerdict(rawText)

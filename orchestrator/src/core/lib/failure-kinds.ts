@@ -31,7 +31,10 @@
  *   3. The `lookupFailureKind` function picks it up automatically.
  */
 
-import { firstNonBlankLine } from './failure-signature'
+import {
+  firstNonBlankLine,
+  stripRecoveryFailedPrefixes,
+} from './failure-signature'
 import { hasRecipe } from './fix-recipes'
 import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
 
@@ -68,6 +71,9 @@ import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
  * - `reject`                   — reject a task parked at the preview gate: kill
  *                                its dev server and fail the task (worktree
  *                                preserved); nothing merges (per-task).
+ * - `land-work`                 — fast-forward (or cherry-pick) a task branch's
+ *                                ahead commits onto the integration branch, then
+ *                                resolve the worktree-ahead action-queue row.
  */
 export type ActionOp =
   | 'restart'
@@ -84,6 +90,7 @@ export type ActionOp =
   | 'reject'
   | 'run-reflect'
   | 'enable-auto-reflect'
+  | 'land-work'
 
 /**
  * The auto-encodable check families of the gate-enrichment pipeline
@@ -317,6 +324,48 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         verboseReason:
           "The code step failed because the coder process could not connect to Claude's API (network or DNS error) — the task code was not at fault. The task has been re-queued and will retry once connectivity is restored.",
         actions: [
+          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      },
+
+      {
+        // The command spawned for the coder could not be executed at all —
+        // spawn ENOENT/EACCES, or exit 127. Environmental, not a code defect:
+        // the step did no work, so a recovery fixer has nothing to fix.
+        signature: 'code:coder-exit-nonzero/provider-binary-missing',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: "The daemon could not run the coding assistant's CLI",
+        verboseReason:
+          "The code step died in milliseconds because the command spawned for the coder could not be executed (spawn failure, or exit code 127 — command not found). Nothing about the task's code is at fault. Check that the worker provider's binary resolves in the daemon's own environment — `which` in an interactive shell proves nothing about it — or pin the provider's MARS_*_BIN override to an absolute path.",
+        actions: [
+          {
+            id: 'restart-daemon',
+            label: 'Restart daemon',
+            op: 'restart-daemon',
+            needsConfirm: true,
+          },
+          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
+          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+        ],
+      },
+      {
+        // The commit gate was denied a write into <repo>/.git/worktrees/<id>/.
+        // Environmental and operator-owned: no code change can fix a sandbox
+        // denial, and a recovery fixer would fail for exactly the same reason,
+        // so there is no recipe and the menu offers no "fix it" option.
+        signature: 'code:coder-exit-nonzero/git-metadata-denied',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: "The daemon cannot write the repository's git metadata",
+        verboseReason:
+          "The coder edited files and ran tests successfully but could not commit: writing into <repo>/.git/worktrees/<id>/ was denied (index.lock, Operation not permitted). The daemon was started from a shell that lacks write access to the repository's shared git directory — a different location from the task worktree. Restart the daemon from a shell with write access to that directory; until then every task will fail the same way.",
+        actions: [
+          {
+            id: 'restart-daemon',
+            label: 'Restart daemon',
+            op: 'restart-daemon',
+            needsConfirm: true,
+          },
           { id: 'restart', label: 'Restart from scratch', op: 'restart' },
           { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
         ],
@@ -684,15 +733,13 @@ export const unknownFailureKind = (
 ): FailureKind => {
   const errorHead = firstNonBlankLine(capturedError)
 
-  // Derive the step family as the substring before the first ':'.
-  // This tolerates both 'code:coder-exit-nonzero' and bare 'code' (e.g. from
-  // signature 'code/unclassified') landing on the same label, following the
-  // same shape as failingStepFromSignature's '/' split above.
-  const colonIdx = failingStep.indexOf(':')
-  const family = colonIdx === -1 ? failingStep : failingStep.slice(0, colonIdx)
-
   // Map the step family to a plain-English label. Raw step ids must not appear
   // in warmTitle or verboseReason — the technical id belongs in details/traces.
+  // Derive the family as the substring before the first colon so both the bare
+  // form (e.g. `code`) and the qualified form (e.g. `code:coder-exit-nonzero`)
+  // resolve to the same label — matching the shape of failingStepFromSignature.
+  const colonIdx = failingStep.indexOf(':')
+  const family = colonIdx === -1 ? failingStep : failingStep.slice(0, colonIdx)
   const groupLabel = STEP_FAMILY_LABELS[family] ?? GENERIC_FAILURE_LABEL
 
   return {
@@ -787,7 +834,11 @@ export const failedTaskTitle = (args: {
   }
 
   const reason = unknownFailureKind('unknown', capturedError).warmTitle
-  const head = firstNonBlankLine(capturedError)
+  // The captured text may be a composed recovery reason
+  // (`recovery_failed:<sig>: <error>`, potentially nested). Strip those
+  // prefixes with the sanctioned helper so the title shows the real error
+  // rather than a stack of bookkeeping prefixes.
+  const head = stripRecoveryFailedPrefixes(firstNonBlankLine(capturedError))
   if (head.length === 0) return `${reason}${idPart}`
   const clipped =
     head.length > TITLE_ERROR_HEAD_MAX

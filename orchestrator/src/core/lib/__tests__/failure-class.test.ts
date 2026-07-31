@@ -49,6 +49,20 @@ describe('classifyFailure — orchestration', () => {
       'orchestration',
     )
   })
+
+  it('classifies setup:origin-worktree-missing/unclassified as orchestration', () => {
+    // A recovery task whose origin worktree is gone cannot be fixed by code
+    // edits; it is a pure orchestration condition.
+    expect(
+      classifyFailure('setup:origin-worktree-missing/unclassified'),
+    ).toBe<FailureCategory>('orchestration')
+  })
+
+  it('classifies any setup:origin-worktree-missing/* variant as orchestration', () => {
+    expect(
+      classifyFailure('setup:origin-worktree-missing/some-other-class'),
+    ).toBe<FailureCategory>('orchestration')
+  })
 })
 
 describe('classifyFailure — infra', () => {

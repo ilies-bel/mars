@@ -15,12 +15,12 @@ import { createInterface } from 'node:readline'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { ClaudeEvent } from './claude-stream'
-import { emptyUsageTotals, summarizeUsage } from './claude-usage'
-import type { UsageTotals } from './claude-usage'
+import { emptyUsageTotals, summarizeUsage, summarizeUsageForSemantics } from './claude-usage'
+import type { UsageTotals, ProviderUsageSemantics } from './claude-usage'
 import type { ProviderName } from '../workers/providers'
 
 export interface UsageSourceContext {
-  /** In-memory conversation events. Non-empty for headless claude (--stream-json). */
+  /** In-memory conversation events. Non-empty for any headless run. */
   readonly conversation: readonly ClaudeEvent[]
   /** Session ID for this run, used to locate persisted logs. */
   readonly sessionId: string | null
@@ -28,24 +28,34 @@ export interface UsageSourceContext {
   readonly cwd: string
   /** Agent CLI provider that produced this run. */
   readonly provider: ProviderName
+  /**
+   * How this provider reports usage on its event stream. Decides WHERE in the
+   * conversation the token numbers live; without it the resolver read the
+   * per-request (assistant) shape for every provider and returned zeros for
+   * codex, whose only usage block rides the terminal `turn.completed` event.
+   */
+  readonly semantics: ProviderUsageSemantics
 }
 
+/** True when a totals record carries at least one non-zero token bucket. */
+const hasTokens = (totals: UsageTotals): boolean =>
+  totals.inputTokens + totals.outputTokens + totals.cacheCreateTokens + totals.cacheReadTokens > 0
+
 /**
- * Provider-agnostic usage resolver. Returns UsageTotals from the most
- * authoritative source available:
- *   - claude with in-memory events → summarize conversation
- *   - claude with empty conversation → read session JSONL from ~/.claude/projects/
- *   - codex                         → parse PTY raw log for usage lines
- *   - gemini                        → parse PTY raw log for usage lines
+ * Provider-agnostic usage resolver. Reads the in-memory event stream FIRST,
+ * using the provider's own usage semantics, and only falls back to a persisted
+ * log when the stream carried no usage at all (the pty runtime emits no
+ * events, and a run killed before its first usage block has none either):
+ *   - claude → session JSONL under ~/.claude/projects/
+ *   - codex / gemini → the PTY raw log under <cwd>/.mars/pty/
  */
 export const resolveUsage = async (ctx: UsageSourceContext): Promise<UsageTotals> => {
-  if (ctx.provider === 'claude') {
-    if (ctx.conversation.length > 0) return summarizeUsage(ctx.conversation)
-    if (ctx.sessionId !== null) {
-      const fromFile = await claudeSessionJsonlAdapter(ctx.sessionId)
-      if (fromFile !== null) return fromFile
-    }
-    return emptyUsageTotals()
+  const fromStream = summarizeUsageForSemantics(ctx.semantics, ctx.conversation)
+  if (hasTokens(fromStream)) return fromStream
+
+  if (ctx.provider === 'claude' && ctx.sessionId !== null) {
+    const fromFile = await claudeSessionJsonlAdapter(ctx.sessionId)
+    if (fromFile !== null) return fromFile
   }
   if (ctx.provider === 'codex' && ctx.sessionId !== null) {
     return codexPtyLogAdapter(join(ctx.cwd, '.mars', 'pty', `${ctx.sessionId}.log`))
@@ -53,8 +63,7 @@ export const resolveUsage = async (ctx: UsageSourceContext): Promise<UsageTotals
   if (ctx.provider === 'gemini' && ctx.sessionId !== null) {
     return geminiPtyLogAdapter(join(ctx.cwd, '.mars', 'pty', `${ctx.sessionId}.log`))
   }
-  // Unknown provider or no session ID — best effort from whatever conversation we have
-  return summarizeUsage(ctx.conversation)
+  return emptyUsageTotals()
 }
 
 /**

@@ -14,17 +14,65 @@
  * `CodexApiError` kinds, never HTTP details.
  */
 
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile, rename } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 // ── Endpoint + OAuth constants ────────────────────────────────────────────────
 
-const CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses'
+const DEFAULT_BASE_URL = 'https://chatgpt.com/backend-api/codex'
 const OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token'
 /** OAuth client id of the Codex CLI's ChatGPT app — required for token refresh. */
 const CODEX_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
+
+// ── Env-driven config ─────────────────────────────────────────────────────────
+
+const _env = (key: string): string | undefined => {
+  const raw = process.env[key]
+  return raw !== undefined && raw.trim().length > 0 ? raw.trim() : undefined
+}
+
+const _numericEnv = (key: string, fallback: number): number => {
+  const raw = _env(key)
+  if (raw === undefined) return fallback
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+/** Resolved chat-connector tunables. Env-driven so operators can tune without a rebuild. */
+export interface CodexOAuthConfig {
+  /** Base URL for Codex API requests (the `/responses` suffix is appended internally). */
+  baseUrl: string
+  /** Model identifier forwarded to the Responses API. */
+  model: string
+  /** Reasoning effort passed to the API (`'high'` by default — the current hardcoded value). */
+  effort: string
+  /** Upper bound on model↔tool round-trips within one chat turn. */
+  maxToolTurns: number
+  /** Per-run wall-clock timeout in milliseconds. */
+  requestTimeoutMs: number
+}
+
+/**
+ * Resolve chat-connector tunables from env, falling back to the current
+ * hardcoded defaults so behaviour is unchanged when no vars are set.
+ *
+ * | Env var                       | Default                             |
+ * |-------------------------------|-------------------------------------|
+ * | MARS_CODEX_BASE_URL           | https://chatgpt.com/backend-api/codex |
+ * | MARS_CHAT_MODEL               | gpt-5.5                             |
+ * | MARS_CHAT_EFFORT              | high                                |
+ * | MARS_CHAT_MAX_TOOL_TURNS      | 40                                  |
+ * | MARS_CHAT_REQUEST_TIMEOUT_MS  | 600_000 (10 min)                    |
+ */
+export const resolveCodexOAuthConfig = (): CodexOAuthConfig => ({
+  baseUrl: (_env('MARS_CODEX_BASE_URL') ?? DEFAULT_BASE_URL).replace(/\/$/, ''),
+  model: _env('MARS_CHAT_MODEL') ?? 'gpt-5.5',
+  effort: _env('MARS_CHAT_EFFORT') ?? 'high',
+  maxToolTurns: _numericEnv('MARS_CHAT_MAX_TOOL_TURNS', 40),
+  requestTimeoutMs: _numericEnv('MARS_CHAT_REQUEST_TIMEOUT_MS', 10 * 60 * 1000),
+})
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -79,6 +127,29 @@ const authFilePath = (): string =>
   join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'auth.json')
 
 /**
+ * Recover `chatgpt_account_id` from the access token's own claims.
+ *
+ * `auth.json` does not always carry a top-level `tokens.account_id` — the id is
+ * always present in the JWT payload, so a missing field is not a broken login
+ * and must not force the user through `codex login` again.
+ */
+const decodeAccountId = (token: string): string | null => {
+  try {
+    const part = token.split('.')[1]
+    if (!part) return null
+    const json = Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')
+    const payload = JSON.parse(json) as unknown
+    if (typeof payload !== 'object' || payload === null) return null
+    const auth = (payload as Record<string, unknown>)['https://api.openai.com/auth']
+    if (typeof auth !== 'object' || auth === null) return null
+    const id = (auth as Record<string, unknown>).chatgpt_account_id
+    return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Load the OAuth credentials the Codex CLI persisted via `codex login`.
  * Throws `CodexApiError('auth')` when the file is missing or incomplete so
  * callers route straight to the re-authenticate path.
@@ -98,8 +169,12 @@ export const loadCodexAuth = async (): Promise<CodexAuth> => {
   }
   const tokens = (parsed as { tokens?: Record<string, unknown> }).tokens
   const accessToken = typeof tokens?.access_token === 'string' ? tokens.access_token : null
-  const accountId = typeof tokens?.account_id === 'string' ? tokens.account_id : null
-  if (!accessToken || !accountId) {
+  if (!accessToken) {
+    throw new CodexApiError('auth', 'Codex credentials are incomplete — run `codex login`.')
+  }
+  const accountId =
+    (typeof tokens?.account_id === 'string' ? tokens.account_id : null) ?? decodeAccountId(accessToken)
+  if (!accountId) {
     throw new CodexApiError('auth', 'Codex credentials are incomplete — run `codex login`.')
   }
   return {
@@ -110,10 +185,24 @@ export const loadCodexAuth = async (): Promise<CodexAuth> => {
 }
 
 /**
- * Exchange the stored refresh token for a fresh access token and persist the
- * rotated credentials back to `auth.json` (so the Codex CLI and future daemon
- * runs both see them). Throws `CodexApiError('auth')` when refresh fails —
- * the user must `codex login` again.
+ * Exchange the stored refresh token for a fresh access token, persist the
+ * rotated credentials back to `auth.json` atomically, and return the refreshed
+ * `CodexAuth` for the current process.
+ *
+ * Persistence rules (ADR-0088, operator decision — option a):
+ *
+ *   1. **Atomic write**: credentials are written to a temp file in the same
+ *      directory, then `rename()`d over `auth.json` so a crash or concurrent
+ *      `codex` CLI refresh can never observe a half-written file.
+ *   2. **Only server-issued refresh tokens are persisted**: when the OAuth
+ *      response omits `refresh_token`, the in-memory fallback (`auth.refreshToken`)
+ *      is still used for this process, but the on-disk `refresh_token` is left
+ *      exactly as it was.
+ *   3. **Best-effort**: a failed write (unwritable path, full disk, …) is
+ *      silently swallowed — the in-memory tokens remain valid for the run.
+ *
+ * Throws `CodexApiError('auth')` when the token exchange itself fails — the
+ * user must run `codex login` again.
  */
 export const refreshCodexAuth = async (auth: CodexAuth): Promise<CodexAuth> => {
   if (!auth.refreshToken) {
@@ -137,30 +226,39 @@ export const refreshCodexAuth = async (auth: CodexAuth): Promise<CodexAuth> => {
   if (!res.ok) {
     throw new CodexApiError('auth', 'Codex token refresh was rejected — run `codex login`.', res.status)
   }
-  const body = (await res.json()) as { access_token?: string; refresh_token?: string; id_token?: string }
+  const body = (await res.json()) as { access_token?: string; refresh_token?: string }
   if (typeof body.access_token !== 'string') {
     throw new CodexApiError('auth', 'Codex token refresh returned no access token — run `codex login`.')
   }
+
+  // The server-issued refresh token, or null if the server did not return one.
+  const serverRefreshToken = typeof body.refresh_token === 'string' ? body.refresh_token : null
+
   const refreshed: CodexAuth = {
     accessToken: body.access_token,
     accountId: auth.accountId,
-    refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : auth.refreshToken,
+    // In-memory: fall back to the existing token so the process stays authenticated.
+    refreshToken: serverRefreshToken ?? auth.refreshToken,
   }
-  // Best-effort persistence — an unwritable auth.json only costs a refresh next run.
+
+  // Best-effort atomic persistence — an unwritable auth.json only costs a refresh next run.
   try {
     const path = authFilePath()
     const onDisk = JSON.parse(await readFile(path, 'utf8')) as { tokens?: Record<string, unknown> }
     onDisk.tokens = {
       ...onDisk.tokens,
       access_token: refreshed.accessToken,
-      refresh_token: refreshed.refreshToken,
-      ...(typeof body.id_token === 'string' ? { id_token: body.id_token } : {}),
+      // Only update refresh_token when the server explicitly issued a new one.
+      ...(serverRefreshToken !== null ? { refresh_token: serverRefreshToken } : {}),
     }
     ;(onDisk as Record<string, unknown>).last_refresh = new Date().toISOString()
-    await writeFile(path, JSON.stringify(onDisk, null, 2))
+    const tmp = join(dirname(path), `.auth-tmp-${randomUUID()}.json`)
+    await writeFile(tmp, JSON.stringify(onDisk, null, 2))
+    await rename(tmp, path)
   } catch {
     // ignore — the in-memory tokens are still valid for this run
   }
+
   return refreshed
 }
 
@@ -176,9 +274,10 @@ const RATE_LIMIT_RE = /(rate.?limit|usage.?limit|quota|too many requests)/i
  * callers can distinguish user stops from provider failures.
  */
 export const streamCodexResponse = async (opts: StreamCodexResponseOpts): Promise<void> => {
+  const { baseUrl, effort } = resolveCodexOAuthConfig()
   let res: Response
   try {
-    res = await fetch(CODEX_RESPONSES_URL, {
+    res = await fetch(`${baseUrl}/responses`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${opts.auth.accessToken}`,
@@ -196,7 +295,7 @@ export const streamCodexResponse = async (opts: StreamCodexResponseOpts): Promis
         tools: opts.tools,
         tool_choice: 'auto',
         parallel_tool_calls: false,
-        reasoning: { effort: 'high', summary: 'auto' },
+        reasoning: { effort, summary: 'auto' },
         store: false,
         stream: true,
         include: [],

@@ -15,6 +15,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { EventEmitter } from 'node:events'
 
 interface ActionQueueModule {
   raiseActionQueueItem: typeof import('../../lib/action-queue').raiseActionQueueItem
@@ -27,6 +28,10 @@ interface QueueModule {
   migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
 }
 
+interface ReconcileModule {
+  runStartupReconcile: typeof import('../startup-reconcile').runStartupReconcile
+}
+
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-code-drift-test-'))
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
@@ -34,14 +39,24 @@ const setupRepo = (): string => {
   return repo
 }
 
-const loadModules = async (repo: string): Promise<{ actionQueue: ActionQueueModule }> => {
+const loadModules = async (
+  repo: string,
+): Promise<{ actionQueue: ActionQueueModule; reconcile: ReconcileModule }> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const q = (await import('../../queue')) as unknown as QueueModule
   await q.migrateQueueSchema()
   const actionQueue = (await import('../../lib/action-queue')) as unknown as ActionQueueModule
-  return { actionQueue }
+  const reconcile = (await import('../startup-reconcile')) as unknown as ReconcileModule
+  return { actionQueue, reconcile }
 }
+
+const startupDeps = () => ({
+  log: (_line: string): void => {},
+  bus: new EventEmitter(),
+  traceStore: null,
+  handleProposalSlice: null,
+})
 
 /** Simulate what the staleness interval does when drift is detected. */
 const raiseDrift = async (
@@ -110,8 +125,8 @@ describe('daemon-code-drift action-queue rows', () => {
 
   // ── Restart clears the row ────────────────────────────────────────────────
 
-  it('resolves the open drift row when supersedeActionQueueItemsBySignature is called (simulates restart)', async () => {
-    const { actionQueue } = await loadModules(repo)
+  it('resolves the open drift row during daemon startup reconciliation', async () => {
+    const { actionQueue, reconcile } = await loadModules(repo)
 
     const id = await raiseDrift(actionQueue)
 
@@ -119,15 +134,9 @@ describe('daemon-code-drift action-queue rows', () => {
     const beforeRestart = await actionQueue.getActionQueueItem(id)
     expect(beforeRestart?.state).toBe('open')
 
-    // Simulate the startup reconciler clearing the row
-    const cleared = await actionQueue.supersedeActionQueueItemsBySignature(
-      'daemon-code-drift',
-      'daemon-code-drift',
-      'daemon-restarted',
-      'daemon:restart',
-    )
-    expect(cleared).toHaveLength(1)
-    expect(cleared[0]).toBe(id)
+    // Restart the daemon: its complete startup reconciliation clears stale alerts.
+    const summary = await reconcile.runStartupReconcile(startupDeps())
+    expect(summary.codeDriftAlertsCleared).toBe(1)
 
     const afterRestart = await actionQueue.getActionQueueItem(id)
     expect(afterRestart?.state).toBe('resolved')

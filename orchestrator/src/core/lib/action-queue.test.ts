@@ -20,6 +20,7 @@ import { resolve } from 'node:path'
 interface ActionQueueModule {
   raiseActionQueueItem: typeof import('./action-queue').raiseActionQueueItem
   listActionQueueItems: typeof import('./action-queue').listActionQueueItems
+  listVisibleActionQueueItems: typeof import('./action-queue').listVisibleActionQueueItems
   getActionQueueItem: typeof import('./action-queue').getActionQueueItem
   setActionQueueState: typeof import('./action-queue').setActionQueueState
   setRecoveryFindings: typeof import('./action-queue').setRecoveryFindings
@@ -65,6 +66,18 @@ describe('action-queue', () => {
   afterEach(() => {
     delete process.env.MARS_REPO
     rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('lists only action items that are currently visible to an operator', async () => {
+    const actionQueue = await loadModule(repo)
+    const visibleId = await actionQueue.raiseActionQueueItem(baseItem({ signature: 'visible' }))
+    const resolvedId = await actionQueue.raiseActionQueueItem(baseItem({ signature: 'resolved' }))
+    await actionQueue.setActionQueueState(resolvedId, 'resolved')
+
+    const visible = await actionQueue.listVisibleActionQueueItems()
+
+    expect(visible.map((item) => item.id)).toEqual([visibleId])
+    expect(visible[0]?.history).toEqual([])
   })
 
   it('inserts a new item with seen_count=1, state=open, fingerprint=sha1(kind:signature)', async () => {

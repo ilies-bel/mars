@@ -1,10 +1,12 @@
 /**
- * Release-notes feed — arc-grouped landed tasks.
+ * Release-notes feed — arc-grouped landed tasks, plus the hero-delta feed.
  *
- * Provides a pure function {@link buildReleaseNotes} that can be unit-tested
- * without a DB, mirroring the placement pattern of events.ts. The daemon owns
- * the actual query (via its own view/release-notes module) and the UI server
- * proxies to the daemon's /view/release-notes endpoint.
+ * Provides two pure functions testable without a DB:
+ *   - {@link buildReleaseNotes}  — arc-grouped landed-task feed
+ *   - {@link buildHeroDelta}     — recipe auto-run hero feed lines
+ *
+ * The daemon owns the actual queries (via its own view/release-notes module)
+ * and the UI server proxies to the daemon's endpoints.
  */
 
 /**
@@ -144,4 +146,126 @@ export const buildReleaseNotes = (
   })
 
   return entries.slice(0, RELEASE_NOTES_LIMIT)
+}
+
+// ── Hero-delta: grouped activity since the last visit ─────────────────────────
+
+/**
+ * One recipe auto-run event, as emitted by the orchestrator and stored in the
+ * events table under kind='recipe-autorun'.
+ */
+export interface RecipeAutorunEvent {
+  recipeId: string
+  failureKind: string
+  targetTaskId: string
+  at: string
+}
+
+/** One hero-delta feed line for a recipe auto-run. */
+export interface HeroDeltaEntry {
+  kind: 'recipe-autorun'
+  text: string
+}
+
+/** A task that fully landed (status done) since the last visit. */
+export interface MergeEntry {
+  kind: 'merge'
+  taskId: string
+  title: string
+  at: string
+}
+
+/** A recovery (fix/diagnose) task that completed since the last visit. */
+export interface RecoveryEntry {
+  kind: 'recovery'
+  taskId: string
+  originTaskId: string
+  title: string
+  at: string
+}
+
+/** A thread that was throttled (rate-limited) since the last visit. */
+export interface ThrottleEntry {
+  kind: 'throttle'
+  taskId: string
+  reason: string
+  at: string
+}
+
+/** A projection Thread whose alert resolved and the row evaporated. */
+export interface EvaporatedEntry {
+  kind: 'evaporated'
+  threadId: string
+  title: string
+  at: string
+}
+
+/**
+ * Hero-delta: grouped activity since the last visit.
+ *
+ * Five sections surface distinct event categories:
+ *   - merges        — tasks that landed (done) since last visit
+ *   - recoveries    — recovery tasks that completed
+ *   - recipes       — recipe auto-run events (taught recipes that fired)
+ *   - throttles     — threads that were rate-limited
+ *   - evaporated    — projection Threads whose alert was resolved
+ *
+ * The `entries` field is kept for backward compatibility with consumers that
+ * read only the recipe auto-run feed (e.g. WhatHappenedTodayView).
+ */
+export interface HeroDelta {
+  merges: MergeEntry[]
+  recoveries: RecoveryEntry[]
+  /** Recipe auto-run events. Same data as `entries`; prefer this field. */
+  recipes: HeroDeltaEntry[]
+  throttles: ThrottleEntry[]
+  evaporated: EvaporatedEntry[]
+  /**
+   * @deprecated Use `recipes` instead. Kept for backward compatibility with
+   * consumers that only read the recipe auto-run feed.
+   */
+  entries: HeroDeltaEntry[]
+}
+
+const MONTH_ABBREVS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+] as const
+
+function formatAutorunDate(iso: string): string {
+  const d = new Date(iso)
+  const month = MONTH_ABBREVS[d.getUTCMonth()] ?? 'Jan'
+  return `${month} ${d.getUTCDate()}`
+}
+
+/**
+ * Build the hero-delta feed.
+ *
+ * Pure function — no I/O. Recipe auto-run events are mapped to feed lines;
+ * the other sections (merges, recoveries, throttles, evaporated) are passed
+ * in pre-built by the caller from the relevant DB queries.
+ *
+ * Each recipe event produces one plain-English feed line:
+ *   "Coder was killed by {failureKind} on task {targetTaskId} — auto-continued
+ *    per your teach on {date}"
+ */
+export const buildHeroDelta = (
+  events: RecipeAutorunEvent[],
+  merges: MergeEntry[] = [],
+  recoveries: RecoveryEntry[] = [],
+  throttles: ThrottleEntry[] = [],
+  evaporated: EvaporatedEntry[] = [],
+): HeroDelta => {
+  const recipes: HeroDeltaEntry[] = events.map((e) => ({
+    kind: 'recipe-autorun' as const,
+    text: `Coder was killed by ${e.failureKind} on task ${e.targetTaskId} — auto-continued per your teach on ${formatAutorunDate(e.at)}`,
+  }))
+  return {
+    merges,
+    recoveries,
+    recipes,
+    throttles,
+    evaporated,
+    entries: recipes,
+  }
 }

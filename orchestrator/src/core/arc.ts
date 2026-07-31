@@ -37,6 +37,7 @@ import {
   type Task,
   type TaskPlan,
   type TaskStatus,
+  type TaskDropReason,
   type TaskKind,
   type TaskTag,
   type EnqueueTaskOptions,
@@ -415,8 +416,9 @@ export class Arc {
     const compensatesArcId = opts?.compensatesArcId ?? null
     const followupDedupKey = opts?.followupDedupKey ?? null
     const qa: 'auto' | 'manual' = opts?.qa === 'manual' ? 'manual' : 'auto'
+    const deferrable = opts?.deferrable === true ? 1 : 0
     await resolvedStore.execute({
-      sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, compensates_arc_id, followup_dedup_key, qa, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, task_type, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, compensates_arc_id, followup_dedup_key, qa, "deferrable", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         promptText,
@@ -443,6 +445,7 @@ export class Arc {
         compensatesArcId,
         followupDedupKey,
         qa,
+        deferrable,
         now,
         now,
       ],
@@ -782,7 +785,7 @@ export class Arc {
   static async setTaskStatus(
     taskId: string,
     newStatus: TaskStatus,
-    extras?: { error?: string; result?: unknown; dropReason?: string },
+    extras?: { error?: string; result?: unknown; dropReason?: TaskDropReason },
     store?: DomainTaskStore,
   ): Promise<void> {
     const now = new Date().toISOString()
@@ -879,7 +882,7 @@ export class Arc {
     extras?: {
       error?: string
       result?: unknown
-      dropReason?: string
+      dropReason?: TaskDropReason
       failureReason?: string | null
       failureReasonCode?: string | null
       failureSignature?: string | null
@@ -892,6 +895,7 @@ export class Arc {
     await updateTask(taskId, {
       status: to,
       ...(extras?.error !== undefined ? { error: extras.error } : {}),
+      ...(extras?.dropReason !== undefined ? { dropReason: extras.dropReason } : {}),
       ...(failureReason !== undefined ? { failureReason } : {}),
       ...(extras?.failureReasonCode !== undefined
         ? { failureReasonCode: extras.failureReasonCode }
@@ -1798,6 +1802,11 @@ export class Arc {
     // remains best-effort and is intentionally separated from the DB transaction.
     const orphanedDeps: { depId: string; originId: string }[] = []
 
+    // Accumulates the count of merge_jobs rows deleted across the origin task
+    // and any cascade-deleted fix tasks. Initialised outside the atomic so the
+    // return value type is DropTaskResult (not the Awaited<> of the closure).
+    let mergeJobsDeleted = 0
+
     const result = await this.store.atomic(async (scope) => {
       const before = await scope.execute({
         sql: `SELECT status FROM tasks WHERE id = ?`,
@@ -2099,11 +2108,29 @@ export class Arc {
           sql: `DELETE FROM self_heal_attempts WHERE fix_task_id = ?`,
           args: [fixId],
         })
+        // merge_jobs.task_id has no ON DELETE CASCADE — explicit delete required
+        // before the tasks row disappears or the FK fires (same class of bug as
+        // task_progress above). Count is accumulated into mergeJobsDeleted below.
+        const fixMergeJobsDel = await scope.execute({
+          sql: `DELETE FROM merge_jobs WHERE task_id = ?`,
+          args: [fixId],
+        })
+        mergeJobsDeleted += Number(fixMergeJobsDel.rowsAffected ?? 0)
         await scope.execute({
           sql: `DELETE FROM tasks WHERE id = ?`,
           args: [fixId],
         })
       }
+
+      // merge_jobs.task_id has no ON DELETE CASCADE — delete before the tasks
+      // row is removed. Explicit delete keeps cleanup visible in the summary
+      // line ("merge-jobs=N") and avoids silently discarding merge history on
+      // future delete paths that should not cascade.
+      const originMergeJobsDel = await scope.execute({
+        sql: `DELETE FROM merge_jobs WHERE task_id = ?`,
+        args: [id],
+      })
+      mergeJobsDeleted += Number(originMergeJobsDel.rowsAffected ?? 0)
 
       await scope.execute({
         sql: `DELETE FROM tasks WHERE id = ?`,
@@ -2115,6 +2142,7 @@ export class Arc {
         previousStatus,
         edgesRemoved: { incoming: incomingCount, outgoing: outgoingCount },
         cascadedFixTaskIds,
+        mergeJobsDeleted,
       }
     })
 
@@ -2152,7 +2180,7 @@ export class Arc {
   static async dropTasksForProposal(
     taskStore: DomainTaskStore,
     ids: string[],
-    dropReason: string,
+    dropReason: TaskDropReason,
   ): Promise<void> {
     for (const id of ids) {
       await taskStore.atomic(async (scope) => {
@@ -2200,7 +2228,7 @@ export class Arc {
   static async dropProposalSlices(
     taskStore: DomainTaskStore,
     proposalId: string,
-    dropReason: string,
+    dropReason: TaskDropReason,
   ): Promise<void> {
     const orphanRows = await taskStore.query({
       sql: `SELECT id FROM tasks WHERE parent_proposal_id = ?`,
@@ -2943,10 +2971,9 @@ export class Arc {
         actionQueueItemsClosed,
       }
     }
-    if (origin.status === 'done') {
-      // True idempotent no-op: origin is already in the desired terminal state.
-      // An already-done origin has no open failed-task action-queue row, so
-      // actionQueueItemsClosed is 0 here (the supersede above was a no-op).
+    if (origin.status === 'done' || origin.status === 'failed' || origin.status === 'dropped') {
+      // Terminal origin rows are absorbing.  The Chore contributes to the
+      // stateless Arc rollup; it must not resurrect or overwrite the origin.
       return {
         originTaskId,
         originFlipped: false,

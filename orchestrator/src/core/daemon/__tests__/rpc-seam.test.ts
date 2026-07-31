@@ -20,6 +20,7 @@ import { makeSem } from '../server'
 import type { DaemonDeps } from '../rpc/types'
 import type { DaemonRequest } from '../protocol'
 import type { TaskFlightTracker } from '../task-flight-tracker'
+import { createPauseController, type PauseController } from '../pause-state'
 
 /** A no-op tracker stub exposing the methods the leaves under test touch. */
 const fakeTracker = (overrides: Partial<TaskFlightTracker> = {}): TaskFlightTracker =>
@@ -42,9 +43,25 @@ const fakeTracker = (overrides: Partial<TaskFlightTracker> = {}): TaskFlightTrac
  */
 const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
   deps: DaemonDeps
-  state: { accepting: boolean; paused: boolean; drained: number; shutdownCalls: boolean[] }
+  state: {
+    accepting: boolean
+    pause: PauseController
+    persisted: boolean | null
+    drained: number
+    shutdownCalls: boolean[]
+    stormResets: number
+  }
 } => {
-  const state = { accepting: true, paused: false, drained: 0, shutdownCalls: [] as boolean[] }
+  const state = {
+    accepting: true,
+    // The real controller — the seam's job is threading pause REASON through,
+    // so a boolean stub would not exercise what changed.
+    pause: createPauseController(),
+    persisted: null as boolean | null,
+    drained: 0,
+    shutdownCalls: [] as boolean[],
+    stormResets: 0,
+  }
   const notImpl = (name: string) => () => {
     throw new Error(`unexpected call to ${name}`)
   }
@@ -57,20 +74,28 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
       triage: makeSem(2),
       refine: makeSem(2),
       structuredWrite: makeSem(2),
+      verify: makeSem(2),
     },
     getAcceptingWork: () => state.accepting,
     setAcceptingWork: (v) => {
       state.accepting = v
     },
-    getIsPaused: () => state.paused,
-    setIsPaused: (v) => {
-      state.paused = v
+    getPauseState: () => state.pause.get(),
+    pauseDispatch: (reason, detail) => state.pause.pause(reason, detail),
+    resumeDispatch: () => {
+      state.pause.resume()
+    },
+    persistIsPaused: (v) => {
+      state.persisted = v
     },
     drain: async () => {
       state.drained += 1
     },
     shutdown: async (force) => {
       state.shutdownCalls.push(force === true)
+    },
+    resetSignatureStorm: async () => {
+      state.stormResets += 1
     },
     paths: { socketPath: '/tmp/x.sock', pidFile: '/tmp/x.pid', httpPortFile: '/tmp/x.port' },
     handleAdd: notImpl('handleAdd') as DaemonDeps['handleAdd'],
@@ -103,6 +128,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     handleStepDone: notImpl('handleStepDone') as DaemonDeps['handleStepDone'],
     handleStepReset: notImpl('handleStepReset') as DaemonDeps['handleStepReset'],
     appendProgress: notImpl('appendProgress') as DaemonDeps['appendProgress'],
+    appendMcpWorkerAudit: notImpl('appendMcpWorkerAudit') as DaemonDeps['appendMcpWorkerAudit'],
     handlePreviewSpawn: notImpl('handlePreviewSpawn') as DaemonDeps['handlePreviewSpawn'],
     handlePreviewStatus: notImpl('handlePreviewStatus') as DaemonDeps['handlePreviewStatus'],
     handlePreviewTeardown: notImpl('handlePreviewTeardown') as DaemonDeps['handlePreviewTeardown'],
@@ -118,10 +144,11 @@ describe('RPC registry', () => {
   it('registers exactly one leaf per protocol op, no duplicates', () => {
     // Every handler op is unique (buildRpcRegistry throws on dup).
     expect(() => buildRpcRegistry(allRpcHandlers)).not.toThrow()
-    // Spot-check the count matches the 44-op protocol surface
+    // Spot-check the count matches the 47-op protocol surface
     // (38 + preview.spawn + preview.status + preview.teardown + merge.cancel
-    //  + spend-control.show + spend-control.set).
-    expect(rpcRegistry.size).toBe(44)
+    //  + spend-control.show + spend-control.set + apply-lever + task.contextForWorker
+    //  + mcp.audit.append).
+    expect(rpcRegistry.size).toBe(47)
   })
 
   it('rejects duplicate ops', () => {
@@ -156,6 +183,25 @@ describe('dispatchRpc routing', () => {
     const res = await dispatchRpc(rpcRegistry, { op: 'status' }, deps)
     expect(res).toEqual({ ok: true, data: payload })
     expect(deps.handleStatus).toHaveBeenCalledOnce()
+  })
+
+  it('mcp.audit.append persists the worker mutation evidence through the daemon seam', async () => {
+    const appendMcpWorkerAudit = vi.fn().mockResolvedValue(undefined)
+    const { deps } = makeDeps({
+      appendMcpWorkerAudit: appendMcpWorkerAudit as DaemonDeps['appendMcpWorkerAudit'],
+    })
+    const audit = {
+      toolName: 'mars_task_note',
+      taskId: 'mars-audit-001',
+      argsJson: { body: '[redacted]' },
+      ok: false,
+      errorMessage: 'daemon unavailable',
+    }
+
+    const result = await dispatchRpc(rpcRegistry, { op: 'mcp.audit.append', ...audit }, deps)
+
+    expect(result).toEqual({ ok: true })
+    expect(appendMcpWorkerAudit).toHaveBeenCalledWith(audit)
   })
 
   it('task.priority routes through deps.setTaskPriority (C1 Arc path)', async () => {
@@ -204,6 +250,7 @@ describe('inline-case leaves reach live closure state', () => {
     expect(deps.sems.triage.limit).toBe(data.caps.triage)
     expect(deps.sems.refine.limit).toBe(data.caps.refine)
     expect(deps.sems.structuredWrite.limit).toBe(data.caps['structured-write'])
+    expect(deps.sems.verify.limit).toBe(data.caps.verify)
     expect(state.drained).toBe(1)
   })
 
@@ -228,32 +275,63 @@ describe('inline-case leaves reach live closure state', () => {
 })
 
 describe('pause / resume', () => {
-  it('pause sets isPaused and returns inFlight count', async () => {
+  it('pause records reason=operator, persists it, and returns inFlight count', async () => {
     const { deps, state } = makeDeps({ tracker: fakeTracker({ inFlightCount: () => 3 }) })
-    expect(state.paused).toBe(false)
+    expect(state.pause.isPaused()).toBe(false)
+    expect(state.persisted).toBeNull()
     const res = await dispatchRpc(rpcRegistry, { op: 'pause' }, deps)
-    expect(res).toEqual({ ok: true, data: { paused: true, inFlight: 3 } })
-    expect(state.paused).toBe(true)
+    expect(res).toEqual({
+      ok: true,
+      data: { paused: true, reason: 'operator', inFlight: 3 },
+    })
+    expect(state.pause.get().reason).toBe('operator')
+    // persistIsPaused must be called so the pause survives a daemon restart
+    expect(state.persisted).toBe(true)
   })
 
-  it('resume clears isPaused and kicks drain', async () => {
+  it('pause does NOT overwrite an existing storm pause — first cause wins', async () => {
     const { deps, state } = makeDeps()
-    // Start paused
-    state.paused = true
+    state.pause.pause('storm', 'code/api-unreachable x3')
+    const res = await dispatchRpc(rpcRegistry, { op: 'pause' }, deps)
+    expect(res).toEqual({
+      ok: true,
+      data: { paused: true, reason: 'storm', inFlight: 0 },
+    })
+    expect(state.pause.get().detail).toBe('code/api-unreachable x3')
+  })
+
+  it('resume clears the pause, reports the cleared reason, and kicks drain', async () => {
+    const { deps, state } = makeDeps()
+    state.pause.pause('storm')
     const res = await dispatchRpc(rpcRegistry, { op: 'resume' }, deps)
-    expect(res).toEqual({ ok: true, data: { paused: false } })
-    expect(state.paused).toBe(false)
+    expect(res).toEqual({ ok: true, data: { paused: false, clearedReason: 'storm' } })
+    expect(state.pause.isPaused()).toBe(false)
+    // persistIsPaused(false) must be called so the daemon does not come back paused
+    expect(state.persisted).toBe(false)
     // drain() was called once by resumeHandler
     expect(state.drained).toBe(1)
   })
 
+  it('resume calls resetSignatureStorm to clear the persisted tripped flag', async () => {
+    // Ensures a subsequent daemon restart does not re-pause a queue the
+    // operator deliberately resumed (the signature-storm two-lifetime bug fix).
+    // Deliberately an OPERATOR pause: `resumeDispatch` only clears the durable
+    // breaker flag for a pause whose reason is 'storm', so the handler must
+    // clear it unconditionally to cover a breaker that tripped underneath an
+    // earlier cause.
+    const { deps, state } = makeDeps()
+    state.pause.pause('operator')
+    await dispatchRpc(rpcRegistry, { op: 'resume' }, deps)
+    expect(state.stormResets).toBe(1)
+  })
+
   it('pause → task add (work-spawning op) is still accepted while paused', async () => {
     // Pause only stops dispatch, not DB mutations. Work-spawning ops remain
-    // accepted (acceptingWork=true; only isPaused=true prevents drain).
+    // accepted (acceptingWork=true; only the pause state prevents drain).
     const task = { id: 't1' }
     const handleAdd = vi.fn().mockResolvedValue(task) as DaemonDeps['handleAdd']
     const { deps, state } = makeDeps({ handleAdd })
-    state.paused = true
+    state.pause.pause('operator')
     // acceptingWork is still true — the DRAINING gate must not trigger
     const res = await dispatchRpc(
       rpcRegistry,
@@ -264,7 +342,7 @@ describe('pause / resume', () => {
     expect(handleAdd).toHaveBeenCalledOnce()
   })
 
-  it('status includes isPaused=true while paused', async () => {
+  it('status surfaces the pause reason, not just the fact of a pause', async () => {
     const payload = {
       pid: 1,
       startedAt: 'now',
@@ -273,14 +351,21 @@ describe('pause / resume', () => {
       sourceSha: null,
       currentSha: null,
       isStale: false,
-      isPaused: true,
+      pause: {
+        paused: true,
+        reason: 'storm' as const,
+        since: '2026-07-31T00:00:00.000Z',
+        detail: 'signature storm: code/api-unreachable x3',
+      },
     }
     const { deps } = makeDeps({
       handleStatus: vi.fn().mockResolvedValue(payload) as DaemonDeps['handleStatus'],
     })
     const res = await dispatchRpc(rpcRegistry, { op: 'status' }, deps)
     expect(res.ok).toBe(true)
-    expect((res as { ok: true; data: typeof payload }).data.isPaused).toBe(true)
+    const data = (res as { ok: true; data: typeof payload }).data
+    expect(data.pause.paused).toBe(true)
+    expect(data.pause.reason).toBe('storm')
   })
 })
 

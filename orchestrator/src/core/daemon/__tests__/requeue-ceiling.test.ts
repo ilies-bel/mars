@@ -47,6 +47,7 @@ interface CeilingModule {
     store: WorkflowStore,
     log: (msg: string) => void,
     nowMs?: number,
+    dispatchUptimeMs?: number,
   ) => Promise<boolean>
   REQUEUE_MAX_RETRY_MS: number
 }
@@ -182,6 +183,80 @@ describe('checkAndEscalateRequeueCeiling', () => {
     expect(reloaded?.status).toBe('queued')
   })
 
+  it('does not escalate after a pause lasting ten times the bound', async () => {
+    const { q, ceiling } = await loadModules(repo, { maxRetryMs: 100 })
+    const task = await q.enqueueTask('paused task', undefined, { skipTriage: true })
+    await q.updateTask(task.id, {
+      retryCount: 1,
+      requeueDispatchUptimeMs: 1_000,
+    })
+    const fresh = await q.getTask(task.id)
+    const store = makeMockStore([
+      makeStepRecord(task.id, 'code', 1, 'failed', 1_000),
+    ])
+
+    // A live daemon dispatched for 10ms, then remained paused for 1,000ms
+    // (10× the bound) before resuming. Its persisted uptime counter remains
+    // at 1,010, so the ceiling sees only the 10 eligible milliseconds.
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      fresh!,
+      store,
+      makeSilentLog(),
+      2_010,
+      1_010,
+    )
+
+    expect(escalated).toBe(false)
+    expect((await q.getTask(task.id))?.status).toBe('queued')
+  })
+
+  it('escalates a dense retry loop during continuous dispatch uptime as retry-churn', async () => {
+    const { q, ceiling } = await loadModules(repo, { maxRetryMs: 100 })
+    const task = await q.enqueueTask('hot loop task', undefined, { skipTriage: true })
+    await q.updateTask(task.id, {
+      retryCount: 5,
+      requeueDispatchUptimeMs: 1_000,
+    })
+    const fresh = await q.getTask(task.id)
+    const store = makeMockStore([
+      makeStepRecord(task.id, 'code', 5, 'failed', 1_000),
+    ])
+
+    const escalated = await ceiling.checkAndEscalateRequeueCeiling(
+      fresh!,
+      store,
+      makeSilentLog(),
+      1_200,
+      1_200,
+    )
+
+    expect(escalated).toBe(true)
+    expect((await q.getTask(task.id))?.failureReasonCode).toBe('requeue-retry-churn')
+  })
+
+  it('never classifies a one-retry task as retry-churn despite a large elapsed span', async () => {
+    const { q, ceiling } = await loadModules(repo, { maxRetryMs: 100 })
+    const task = await q.enqueueTask('sparse retry task', undefined, { skipTriage: true })
+    await q.updateTask(task.id, {
+      retryCount: 1,
+      requeueDispatchUptimeMs: 1_000,
+    })
+    const fresh = await q.getTask(task.id)
+    const store = makeMockStore([
+      makeStepRecord(task.id, 'code', 5, 'failed', 1_000),
+    ])
+
+    await ceiling.checkAndEscalateRequeueCeiling(
+      fresh!,
+      store,
+      makeSilentLog(),
+      2_000,
+      2_000,
+    )
+
+    expect((await q.getTask(task.id))?.failureReasonCode).not.toBe('requeue-retry-churn')
+  })
+
   // ── (b) Retry count + elapsed time are surfaced ────────────────────────────
 
   it('logs attempt count and elapsed time for every retrying task', async () => {
@@ -213,7 +288,7 @@ describe('checkAndEscalateRequeueCeiling', () => {
     // The log must mention the attempt count.
     expect(messages.some((m) => m.includes('attempt 3'))).toBe(true)
     // The log must mention elapsed time (in minutes).
-    expect(messages.some((m) => /\d+m elapsed/.test(m))).toBe(true)
+    expect(messages.some((m) => /\d+m dispatch uptime elapsed/.test(m))).toBe(true)
   })
 
   // ── (c) Time-based backstop escalates past the wall-clock bound ───────────
@@ -240,9 +315,11 @@ describe('checkAndEscalateRequeueCeiling', () => {
       updatedAt: 0,
     })
     await store.putStep(makeStepRecord(t.id, 'setup-worktree', 3, 'failed'))
+    await q.updateTask(t.id, { retryCount: 3 })
+    const retrying = await q.getTask(t.id)
 
     const escalated = await ceiling.checkAndEscalateRequeueCeiling(
-      t,
+      retrying!,
       store,
       makeSilentLog(),
       // nowMs well past any possible retryStartMs anchor so elapsedMs > 0
@@ -412,8 +489,9 @@ describe('checkAndEscalateRequeueCeiling', () => {
     expect(escalated).toBe(true)
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('failed')
-    // With attempt=1 and spanMs=0, density = 1.0/min ≥ floor → retry-churn.
-    expect(reloaded?.failureReasonCode).toBe('requeue-retry-churn')
+    // One retry cannot be retry churn, even where a single step has a dense
+    // timestamp window.
+    expect(reloaded?.failureReasonCode).toBe('requeue-queue-starvation')
   })
 
   // ── Fresh task (no step records) is never escalated ────────────────────────
@@ -460,15 +538,18 @@ describe('checkAndEscalateRequeueCeiling', () => {
       t,
       store,
       makeSilentLog(),
-      anchorMs + 90,
+      anchorMs + 90, // 90% of 100 ms bound → above 80% WARN_RATIO threshold
     )
 
     expect(escalated).toBe(false)
+
     const reloaded = await q.getTask(t.id)
     expect(reloaded?.status).toBe('queued')
 
     const items = await aq.listActionQueueItems('open')
-    const warning = items.find((i) => i.signature === `requeue-warning:${t.id}`)
+    const warning = items.find(
+      (i) => i.signature === `requeue-warning:${t.id}`,
+    )
     expect(warning).toBeDefined()
     expect(warning?.kind).toBe('requeue-warning')
     expect(warning?.priority).toBe('low')
@@ -495,11 +576,13 @@ describe('checkAndEscalateRequeueCeiling', () => {
       t,
       store,
       makeSilentLog(),
-      anchorMs + 50,
+      anchorMs + 50, // 50% of bound — below 80% threshold
     )
 
     const items = await aq.listActionQueueItems('open')
-    const warning = items.find((i) => i.signature === `requeue-warning:${t.id}`)
+    const warning = items.find(
+      (i) => i.signature === `requeue-warning:${t.id}`,
+    )
     expect(warning).toBeUndefined()
   })
 
@@ -515,11 +598,13 @@ describe('checkAndEscalateRequeueCeiling', () => {
     // Fixture: attempt=5, startedAt=0 → spanMs=0 → density=5/1=5 ≥ 1/min.
     const { q, aq, ceiling } = await loadModules(repo, { maxRetryMs: 0 })
     const t = await q.enqueueTask('churn task', undefined, { skipTriage: true })
+    await q.updateTask(t.id, { retryCount: 5 })
+    const retrying = await q.getTask(t.id)
     const steps = [makeStepRecord('run-1', 'code', 5, 'failed', 0)]
     const store = makeMockStore(steps)
 
     const escalated = await ceiling.checkAndEscalateRequeueCeiling(
-      t,
+      retrying!,
       store,
       makeSilentLog(),
       Date.now() + 1,

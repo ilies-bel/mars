@@ -24,19 +24,30 @@ import {
   type RecipeHumanDetail,
   type RecipeVerb,
 } from '../../lib/action-queue-recipes'
-import { isActionQueueKind } from '../../lib/action-queue'
+import { isActionQueueKind, type ActionQueueKind } from '../../lib/action-queue'
 
-export type DerivedActionQueueKind =
-  | 'failed-task'
-  | 'stale-worktree'
-  | 'draft-proposal'
-  | 'awaiting-validation'
-  | 'awaiting-human'
-  | 'reflect-recommended'
-  | 'workflow-draft-pending'
-  | 'scorer-suggested'
-  | 'tool-promotion'
+/**
+ * The display kind is the persisted action-queue kind. It is deliberately not
+ * collapsed into a smaller UI vocabulary: operators need to distinguish the
+ * condition that raised each row.
+ */
+export type DerivedActionQueueKind = string
 export type DerivedActionQueueFilter = 'open' | 'all'
+
+const NON_TASK_FAILURE_KINDS = new Set([
+  'stale-worktree',
+  'draft-proposal',
+  'awaiting-validation',
+  'awaiting-human',
+  'reflect-recommended',
+  'workflow-draft-pending',
+  'scorer-suggested',
+  'tool-promotion',
+  'hitl-slice-needs-operator',
+])
+
+/** Preserves the former failure-specific enrichment without changing labels. */
+const isTaskFailureKind = (kind: string): boolean => !NON_TASK_FAILURE_KINDS.has(kind)
 
 /** Resolution metadata carried by resolved rows in history responses. */
 export interface ActionQueueResolutionMeta {
@@ -165,6 +176,26 @@ export interface ActionQueueRow {
    * process. Null on every other row kind.
    */
   logPath?: string | null
+  /**
+   * Coder stall diagnostics captured just before the hard timeout fired
+   * (slice 5 of PRD d23b2704). Populated for `task-blocked` rows when the
+   * failing task row carries a non-null `stall_diagnostics` blob. Null on
+   * every other row kind and on legacy rows that predate the capture.
+   */
+  stallDiagnostics?: unknown | null
+  /**
+   * Live worker-pool snapshot computed at action-queue raise time (slice 6
+   * of PRD d23b2704). Lets the operator answer "was the pool saturated, was
+   * the provider hung, or did the coder itself die" from the first look at
+   * the alert. Null on every other row kind.
+   */
+  poolSnapshot?: {
+    activeWorkerCount: number
+    queuedCount: number
+    runningCount: number
+    blockedCount: number
+    recentDispatchDecisions: string[]
+  } | null
 }
 
 /** Raw actionQueue row shape as persisted in `action_queue_items`. */
@@ -187,6 +218,197 @@ export interface PersistedActionQueueRow {
   rootCause?: string | null
   resolvedBy?: string | null
 }
+
+const formatOperationalDuration = (milliseconds: number): string => {
+  const minutes = Math.max(0, Math.round(milliseconds / 60_000))
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return remainingMinutes === 0
+    ? `${hours} hr`
+    : `${hours} hr ${remainingMinutes} min`
+}
+
+/**
+ * Copy owned by operational alerts rather than a failed task's FailureKind.
+ *
+ * The explicit Record is intentional: a new ActionQueueKind cannot land
+ * without choosing whether it needs a specialised renderer (and adding one)
+ * or deliberately preserving its persisted copy. That keeps a new operational
+ * alert from silently falling back to the generic task-failure message.
+ */
+const OPERATIONAL_ALERT_COPY: Record<
+  ActionQueueKind,
+  ((row: PersistedActionQueueRow) => { title: string; body: string }) | null
+> = {
+  failed: null,
+  'steward-repeat': null,
+  'cancelled-blocker-cascade': null,
+  'diagnose-inconclusive': null,
+  'daemon-killed': null,
+  'coder-question': null,
+  'daemon-died': (row) => {
+    const pid = typeof row.payload.pid === 'number' ? row.payload.pid : 'unknown'
+    const detectedAt =
+      typeof row.payload.crashDetectedAt === 'string'
+        ? row.payload.crashDetectedAt
+        : row.lastSeenAt
+    return {
+      title: `Daemon pid ${pid} exited unexpectedly; restarted at ${detectedAt}`,
+      body:
+        `The daemon crash was detected at ${detectedAt} and the current daemon has already respawned. ` +
+        `There is no task transcript for this daemon-level alert. Inspect \`.mars/watch.log\` for the crash, then run \`mars list\` to find interrupted tasks.`,
+    }
+  },
+  'stale-worktree': null,
+  'worktree-ahead': null,
+  'prerequisite-failed': null,
+  'draft-proposal': null,
+  'slices-dropped': null,
+  'hitl-slice-needs-operator': null,
+  'awaiting-validation': null,
+  'awaiting-human': null,
+  'behaviour-unverified': null,
+  'subscriber-stalled': (row) => {
+    const rawSubscriber =
+      typeof row.payload.subscriberId === 'string'
+        ? row.payload.subscriberId
+        : (row.signature?.replace(/^subscriber-stalled:/, '') ?? 'unknown subscriber')
+    const pidMatch = rawSubscriber.match(/^(.*):(\d+)$/)
+    const subscriber = pidMatch
+      ? `${pidMatch[1]} (pid ${pidMatch[2]})`
+      : rawSubscriber
+    const raisedAt = Date.parse(row.raisedAt)
+    const lastSeenAt = Date.parse(row.lastSeenAt)
+    const stalledFor =
+      Number.isFinite(raisedAt) && Number.isFinite(lastSeenAt)
+        ? formatOperationalDuration(Math.max(0, lastSeenAt - raisedAt))
+        : 'an unknown duration'
+    return {
+      title: `Subscriber ${subscriber} is stalled for ${stalledFor}`,
+      body:
+        `Subscriber ${subscriber} has not advanced for ${stalledFor}. There is no task transcript for this subscriber-level alert. ` +
+        `Inspect \`.mars/watch.log\` and the subscriber cursor before restarting the daemon.`,
+    }
+  },
+  'observability-store-oversize': null,
+  'orphaned-origin': null,
+  'phantom-task': (row) => {
+    const taskId =
+      typeof row.payload.taskId === 'string' ? row.payload.taskId : (row.signature ?? 'unknown task')
+    const status =
+      typeof row.payload.previousStatus === 'string' ? row.payload.previousStatus : 'running'
+    const age =
+      typeof row.payload.ageMinutes === 'number'
+        ? `${row.payload.ageMinutes} min`
+        : 'an unknown duration'
+    const reason = typeof row.payload.reason === 'string' ? row.payload.reason : 'watchdog timeout'
+    return {
+      title: `Task ${taskId} is stuck in ${status} for ${age}`,
+      body:
+        `Task ${taskId} was auto-failed by the phantom-task watchdog (${reason}). ` +
+        `Inspect task ${taskId} and its worktree or log, then restart it with \`mars restart ${taskId}\` when the cause is clear.`,
+    }
+  },
+  'outbox-lag': null,
+  'reflect-recommended': null,
+  'plan-approval': null,
+  'done-with-unmerged-commits': null,
+  'api-outage': null,
+  'daemon-code-drift': null,
+  'workflow-install-drift': null,
+  'provider-rate-limited': null,
+  'gate-broken': (row) => {
+    const verdict =
+      typeof row.payload.verdict === 'string'
+        ? row.payload.verdict
+        : (row.signature?.replace(/^gate-broken:/, '') ?? 'unknown verdict')
+    const gate =
+      typeof row.payload.gate === 'string'
+        ? row.payload.gate
+        : (verdict.match(/^verify:([^/]+)/)?.[1] ?? 'unknown')
+    const streak = typeof row.payload.streak === 'number' ? ` (${row.payload.streak} tasks)` : ''
+    return {
+      title: `Gate ${gate} is failing with \`${verdict}\`${streak}`,
+      body:
+        `The ${gate} gate repeatedly produced \`${verdict}\`. Recovery is suppressed while it is broken. ` +
+        `Inspect \`.mars/watch.log\`, fix or disable the gate, then restart the affected tasks.`,
+    }
+  },
+  'workflow-draft-pending': null,
+  'gate-enrichment': null,
+  'budget-window': null,
+  'budget-arc': null,
+  'scorer-suggested': null,
+  'promotion-decision': null,
+  'tool-promotion': null,
+  'arc-verification-failed': null,
+  'signature-storm': (row) => {
+    const signature =
+      typeof row.payload.signature === 'string'
+        ? row.payload.signature
+        : (row.signature?.replace(/^signature-storm(?:-unresolved)?:/, '') ?? 'unknown signature')
+    const streak = typeof row.payload.streak === 'number' ? row.payload.streak : 'multiple'
+    // The escalation row shares this kind under a distinct dedup key: the
+    // Steward budget for this signature is spent, so Mars has stopped pausing
+    // for it. Saying "dispatch is paused" there would be a lie.
+    const attempts =
+      typeof row.payload.stewardAttempts === 'number' ? row.payload.stewardAttempts : null
+    if (attempts !== null) {
+      return {
+        title: `${attempts} Steward attempts failed on \`${signature}\`; Mars has stopped auto-pausing for it`,
+        body:
+          `The same failure signature keeps tripping the circuit breaker and every write-capable Steward ` +
+          `dispatch produced no fix. Mars will not pause dispatch for this signature again — cycling ` +
+          `pause/Steward/resume against a cause the Steward cannot reach only burns worktrees. Tasks keep ` +
+          `dispatching and keep failing until the shared cause is fixed. Inspect \`.mars/watch.log\` and the ` +
+          `\`steward_ledger\` rows for target '${signature}'.`,
+      }
+    }
+    return {
+      title: `${streak} tasks failed with \`${signature}\`; dispatch is paused`,
+      body:
+        `The same failure signature is recurring across tasks, so dispatch is paused. ` +
+        `There is no single task transcript for this incident. Dispatch resumes as soon as the Steward reports ` +
+        `an outcome (fix, no-op, or failure), or on the bounded crash/hang fallback. ` +
+        `Inspect \`.mars/watch.log\`, correct the shared cause, then run \`mars daemon resume\` to resume immediately.`,
+    }
+  },
+  'gate-enrichment-stale': null,
+  'env-incident': null,
+  'stale-queued': (row) => {
+    const taskId =
+      typeof row.payload.taskId === 'string' ? row.payload.taskId : (row.signature ?? 'unknown task')
+    const age =
+      typeof row.payload.queuedAgeMs === 'number'
+        ? formatOperationalDuration(row.payload.queuedAgeMs)
+        : 'an unknown duration'
+    return {
+      title: `Task ${taskId} has been queued for ${age}`,
+      body:
+        `Task ${taskId} is still queued after ${age}; inspect it with \`mars list\` and check \`.mars/watch.log\` for dispatcher decisions. ` +
+        `No task transcript exists until dispatch starts.`,
+    }
+  },
+  'stale-queued-summary': (row) => {
+    const suppressed =
+      typeof row.payload.suppressedCount === 'number' ? row.payload.suppressedCount : 'Additional'
+    const queueDepth = typeof row.payload.queueDepth === 'number' ? ` Queue depth is ${row.payload.queueDepth}.` : ''
+    return {
+      title: `${suppressed} queued tasks were suppressed from the alert list`,
+      body:
+        `The watchdog limited this sweep to individual alerts for the oldest tasks.${queueDepth} ` +
+        `Run \`mars action-queue list open --kind stale-queued\` to see the surfaced tasks; there is no transcript for this aggregate alert.`,
+    }
+  },
+  'spend-control-notice': null,
+  'requeue-warning': null,
+}
+
+const renderOperationalAlertCopy = (
+  row: PersistedActionQueueRow,
+): { title: string; body: string } | null =>
+  isActionQueueKind(row.kind) ? OPERATIONAL_ALERT_COPY[row.kind]?.(row) ?? null : null
 
 /** Narrow task shape `buildActionQueueView` needs — a subset of the queue Task. */
 export interface TaskForActionQueue {
@@ -243,7 +465,10 @@ export interface ActionQueueStateStore {
  * The daemon builds this from queue.ts + a task_blockers query.
  */
 export interface ActionQueueTaskStore {
-  listTasks(): Promise<TaskForActionQueue[]>
+  /** Loads only the task graph required by the supplied visible queue rows. */
+  listTasksForActionQueueItems(
+    rows: readonly PersistedActionQueueRow[],
+  ): Promise<TaskForActionQueue[]>
 }
 
 export interface BuildActionQueueViewParams {
@@ -261,6 +486,30 @@ export interface BuildActionQueueHistoryViewParams {
   repoRoot: string
   limit?: number
   cursor?: string | null
+}
+
+/** Extract the task, proposal, worktree, or synthetic entity an action row represents. */
+export const getActionQueueEntityId = (row: PersistedActionQueueRow): string => {
+  if (row.kind === 'stale-worktree') {
+    if (typeof row.context.taskId === 'string') return row.context.taskId
+  }
+  if (row.kind === 'draft-proposal') {
+    if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+  }
+  if (row.kind === 'scorer-suggested') {
+    if (typeof row.payload.scorerId === 'string') return row.payload.scorerId
+  }
+  if (row.kind === 'slices-dropped') {
+    if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+  }
+  if (row.kind === 'reflect-recommended') return row.signature ?? row.id
+  if (row.kind === 'workflow-draft-pending') {
+    if (typeof row.payload.workflowName === 'string') return row.payload.workflowName
+    return row.signature ?? row.id
+  }
+  if (typeof row.payload.taskId === 'string') return row.payload.taskId
+  if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
+  return row.signature ?? row.id
 }
 
 /**
@@ -394,9 +643,12 @@ export const buildActionQueueView = async ({
   repoRoot,
   filter: _filter,
 }: BuildActionQueueViewParams): Promise<ActionQueueRow[]> => {
+  const profileStart = performance.now()
   const persistedRows = await stateStore.listOpenActionQueueItems()
+  const persistedRowsLoadedAt = performance.now()
 
-  const allTasks = await taskStore.listTasks()
+  const allTasks = await taskStore.listTasksForActionQueueItems(persistedRows)
+  const taskGraphLoadedAt = performance.now()
   const taskById = new Map(allTasks.map((t) => [t.id, t]))
   const blockingMap = new Map<string, string[]>()
   for (const t of allTasks) {
@@ -416,52 +668,6 @@ export const buildActionQueueView = async ({
       arr.push(t.id)
       fixForTaskMap.set(t.fixForTaskId, arr)
     }
-  }
-
-  // Map a persisted ActionQueueKind to the ActionQueueRow `kind` vocabulary.
-  const toUiKind = (k: string): DerivedActionQueueKind => {
-    if (k === 'stale-worktree') return 'stale-worktree'
-    if (k === 'draft-proposal') return 'draft-proposal'
-    if (k === 'awaiting-validation') return 'awaiting-validation'
-    if (k === 'awaiting-human') return 'awaiting-human'
-    if (k === 'reflect-recommended') return 'reflect-recommended'
-    if (k === 'workflow-draft-pending') return 'workflow-draft-pending'
-    if (k === 'scorer-suggested') return 'scorer-suggested'
-    if (k === 'tool-promotion') return 'tool-promotion'
-    return 'failed-task'
-  }
-
-  // Extract the entity id (task id, worktree id, proposal id, or scorer id)
-  // from a row.
-  const extractEntityId = (row: PersistedActionQueueRow): string => {
-    if (row.kind === 'stale-worktree') {
-      if (typeof row.context.taskId === 'string') return row.context.taskId
-    }
-    if (row.kind === 'draft-proposal') {
-      if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
-    }
-    if (row.kind === 'scorer-suggested') {
-      if (typeof row.payload.scorerId === 'string') return row.payload.scorerId
-    }
-    // slices-dropped is keyed to a proposal, not a task — surface the proposal id
-    // rather than falling back to the opaque row id.
-    if (row.kind === 'slices-dropped') {
-      if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
-    }
-    // reflect-recommended is not task-keyed — use its dedup signature.
-    if (row.kind === 'reflect-recommended') {
-      return row.signature ?? row.id
-    }
-    // workflow-draft-pending is keyed to the workflow name, not a task.
-    if (row.kind === 'workflow-draft-pending') {
-      if (typeof row.payload.workflowName === 'string') return row.payload.workflowName
-      return row.signature ?? row.id
-    }
-    if (typeof row.payload.taskId === 'string') return row.payload.taskId
-    if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
-    // Synthetic / non-task-keyed items (e.g. observability-store-oversize,
-    // subscriber-stalled) carry a dedup signature but no task id in payload.
-    return row.signature ?? row.id
   }
 
   const toUiPriority = (p: string): 'high' | 'normal' | 'low' => {
@@ -493,8 +699,9 @@ export const buildActionQueueView = async ({
   const rows: ActionQueueRow[] = []
 
   for (const row of persistedRows) {
-    const uiKind = toUiKind(row.kind)
-    const entityId = extractEntityId(row)
+    const uiKind = row.kind
+    const isTaskFailure = isTaskFailureKind(row.kind)
+    const entityId = getActionQueueEntityId(row)
     const errorKind = toErrorKind(row.kind)
 
     // For failed-task rows, actions come from the FailureKind registry so
@@ -502,7 +709,7 @@ export const buildActionQueueView = async ({
     // For stale-worktree, draft-proposal, and hitl-slice-needs-operator rows,
     // the non-failure derived-row action menu is the authority.
     let actions: { id: string; label: string; op: string }[]
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const sig = taskById.get(entityId)?.failureSignature ?? null
       const fk =
         sig !== null
@@ -522,7 +729,7 @@ export const buildActionQueueView = async ({
 
     // DAG enrichment for task-backed rows.
     let dag: ActionQueueRow['dag'] = null
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
         const blockers = task.blockedBy.map(toNode)
@@ -672,24 +879,32 @@ export const buildActionQueueView = async ({
         ? row.payload.failureReasonCode
         : null
 
-    // For failed-task rows, derive title and body from the failure-kind
-    // registry rather than from the persisted row strings (see failedRowCopy).
-    // hitl-slice-needs-operator rows carry their own operator-facing title/body
-    // set by the slicer; skip the failure-registry lookup so the persisted
-    // copy (e.g. "HITL: End-to-end smoke against a real cluster") is shown
-    // instead of the generic failure copy.
+    // Task-failure rows derive their title and body from the failure-kind
+    // registry rather than from the persisted row strings (see failedRowCopy,
+    // which decides per kind whether the registry or the raiser owns the copy).
+    // Non-task kinds (hitl-slice-needs-operator, draft-proposal, …) are
+    // excluded outright: their persisted copy is the only copy there is.
     let title = row.title
     let body = row.body
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const copy = failedRowCopy(row, taskById.get(entityId), entityId)
       title = copy.title
       body = copy.body
     }
 
+    // Operational rows are not task-failure rows, even when they name a task.
+    // Their renderer owns the diagnosis and pointer instead of the FailureKind
+    // fallback, which only understands a task's failure signature.
+    const operationalCopy = renderOperationalAlertCopy(row)
+    if (operationalCopy !== null) {
+      title = operationalCopy.title
+      body = operationalCopy.body
+    }
+
     // Propagate fixForTaskId so the UI can render an "origin" link on recovery rows.
     // hitl-slice-needs-operator items are not task-backed, so no fixForTaskId.
     const fixForTaskId =
-      uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator'
+      isTaskFailure
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 
@@ -697,7 +912,7 @@ export const buildActionQueueView = async ({
     // follow fixForTaskId to the origin task; for origin tasks, use their own prompt.
     // This lets the operator see what was being attempted, not just that recovery failed.
     let arcGoal: string | null = null
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
         const originTask = task.fixForTaskId
@@ -773,6 +988,34 @@ export const buildActionQueueView = async ({
           }
         : null
 
+    // Extract stall diagnostics and pool snapshot for task-blocked rows
+    // (slice 6 of PRD d23b2704). Both fields fall back to null on legacy rows
+    // and on every other row kind, so pre-existing consumers never crash.
+    const stallDiagnostics: unknown | null =
+      isTaskFailure && row.payload.stallDiagnostics !== undefined
+        ? (row.payload.stallDiagnostics ?? null)
+        : null
+    const poolSnapshot: ActionQueueRow['poolSnapshot'] = (() => {
+      if (!isTaskFailure) return null
+      const snap = row.payload.poolSnapshot
+      if (
+        typeof snap !== 'object' ||
+        snap === null ||
+        typeof (snap as Record<string, unknown>).activeWorkerCount !== 'number'
+      )
+        return null
+      const s = snap as Record<string, unknown>
+      return {
+        activeWorkerCount: s.activeWorkerCount as number,
+        queuedCount: typeof s.queuedCount === 'number' ? s.queuedCount : 0,
+        runningCount: typeof s.runningCount === 'number' ? s.runningCount : 0,
+        blockedCount: typeof s.blockedCount === 'number' ? s.blockedCount : 0,
+        recentDispatchDecisions: Array.isArray(s.recentDispatchDecisions)
+          ? (s.recentDispatchDecisions as string[])
+          : [],
+      }
+    })()
+
     const recipeFields = buildRecipeFields(row, entityId, title, body)
 
     rows.push({
@@ -796,6 +1039,8 @@ export const buildActionQueueView = async ({
       toolPromotionDetail,
       previewUrl,
       logPath,
+      stallDiagnostics,
+      poolSnapshot,
       humanSummary: recipeFields.humanSummary,
       humanDetail: recipeFields.humanDetail,
       verbs: recipeFields.verbs,
@@ -876,6 +1121,17 @@ export const buildActionQueueView = async ({
     })
   }
 
+  if (process.env.MARS_ACTION_QUEUE_VIEW_PROFILE === '1') {
+    const finishedAt = performance.now()
+    console.info(
+      `[action-queue-view] visible_rows=${persistedRows.length} task_graph_rows=${allTasks.length} ` +
+        `visible_rows_ms=${(persistedRowsLoadedAt - profileStart).toFixed(1)} ` +
+        `task_graph_ms=${(taskGraphLoadedAt - persistedRowsLoadedAt).toFixed(1)} ` +
+        `derive_ms=${(finishedAt - taskGraphLoadedAt).toFixed(1)} ` +
+        `total_ms=${(finishedAt - profileStart).toFixed(1)}`,
+    )
+  }
+
   return filtered
 }
 
@@ -901,7 +1157,7 @@ export const buildActionQueueHistoryView = async ({
   const { items: persistedRows, nextCursor } =
     await stateStore.listResolvedActionQueueItems({ limit, cursor })
 
-  const allTasks = await taskStore.listTasks()
+  const allTasks = await taskStore.listTasksForActionQueueItems(persistedRows)
   const taskById = new Map(allTasks.map((t) => [t.id, t]))
   const blockingMap = new Map<string, string[]>()
   for (const t of allTasks) {
@@ -918,39 +1174,6 @@ export const buildActionQueueHistoryView = async ({
       arr.push(t.id)
       fixForTaskMap.set(t.fixForTaskId, arr)
     }
-  }
-
-  const toUiKind = (k: string): DerivedActionQueueKind => {
-    if (k === 'stale-worktree') return 'stale-worktree'
-    if (k === 'draft-proposal') return 'draft-proposal'
-    if (k === 'awaiting-validation') return 'awaiting-validation'
-    if (k === 'awaiting-human') return 'awaiting-human'
-    if (k === 'reflect-recommended') return 'reflect-recommended'
-    if (k === 'workflow-draft-pending') return 'workflow-draft-pending'
-    if (k === 'scorer-suggested') return 'scorer-suggested'
-    if (k === 'tool-promotion') return 'tool-promotion'
-    return 'failed-task'
-  }
-
-  const extractEntityId = (row: PersistedActionQueueRow): string => {
-    if (row.kind === 'stale-worktree') {
-      if (typeof row.context.taskId === 'string') return row.context.taskId
-    }
-    if (row.kind === 'draft-proposal') {
-      if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
-    }
-    if (row.kind === 'scorer-suggested') {
-      if (typeof row.payload.scorerId === 'string') return row.payload.scorerId
-    }
-    if (row.kind === 'slices-dropped') {
-      if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
-    }
-    if (row.kind === 'reflect-recommended') {
-      return row.signature ?? row.id
-    }
-    if (typeof row.payload.taskId === 'string') return row.payload.taskId
-    if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
-    return row.signature ?? row.id
   }
 
   const toUiPriority = (p: string): 'high' | 'normal' | 'low' => {
@@ -979,13 +1202,14 @@ export const buildActionQueueHistoryView = async ({
   const rows: ActionQueueRow[] = []
 
   for (const row of persistedRows) {
-    const uiKind = toUiKind(row.kind)
-    const entityId = extractEntityId(row)
+    const uiKind = row.kind
+    const isTaskFailure = isTaskFailureKind(row.kind)
+    const entityId = getActionQueueEntityId(row)
     const errorKind = toErrorKind(row.kind)
 
     // DAG enrichment (same as live view).
     let dag: ActionQueueRow['dag'] = null
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
         const blockers = task.blockedBy.map(toNode)
@@ -1127,20 +1351,26 @@ export const buildActionQueueHistoryView = async ({
     // identical rule to the live view (see failedRowCopy).
     let title = row.title
     let body = row.body
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const copy = failedRowCopy(row, taskById.get(entityId), entityId)
       title = copy.title
       body = copy.body
     }
 
+    const operationalCopy = renderOperationalAlertCopy(row)
+    if (operationalCopy !== null) {
+      title = operationalCopy.title
+      body = operationalCopy.body
+    }
+
     const fixForTaskId =
-      uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator'
+      isTaskFailure
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 
     // Derive the arc goal from the origin task's prompt (same logic as the live view).
     let arcGoal: string | null = null
-    if (uiKind === 'failed-task' && row.kind !== 'hitl-slice-needs-operator') {
+    if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
         const originTask = task.fixForTaskId

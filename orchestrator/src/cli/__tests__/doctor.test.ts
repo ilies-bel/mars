@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { runCommandInProcess, makeFakeDaemon } from '../test-adapter'
 import { runDoctorChecks, type DoctorProbes } from '../../cli/commands/doctor'
+import type { ProviderProbeDeps } from '../../cli/commands/provider-probe'
 import type { DomainTaskStore } from '../../core/store/task-store'
 import type { OrchestratorContext } from '../../core/context'
 
@@ -70,6 +71,13 @@ const passingProbes = (overrides?: Partial<DoctorProbes>): DoctorProbes => ({
   ...overrides,
 })
 
+const providerProbeDeps = (): ProviderProbeDeps => ({
+  tryRun: () => 0,
+  fileReadable: () => false,
+  env: {},
+  homeDir: '/tmp/mars-doctor-provider-test',
+})
+
 // ---------------------------------------------------------------------------
 // runDoctorChecks — unit tests against the probe interface
 // ---------------------------------------------------------------------------
@@ -112,6 +120,46 @@ describe('runDoctorChecks — claude CLI', () => {
     const results = await runDoctorChecks(passingProbes(), null)
     const check = results.find((r) => r.label === 'claude CLI')
     expect(check?.status).toBe('PASS')
+  })
+})
+
+describe('runDoctorChecks — selected Codex provider', () => {
+  it('does not require Claude when Codex is selected and authenticated', async () => {
+    const probes = passingProbes({
+      tryRun(cmd) {
+        if (cmd === 'claude') return null
+        return 0
+      },
+    })
+    const results = await runDoctorChecks(
+      probes,
+      null,
+      providerProbeDeps(),
+      'codex',
+    )
+
+    expect(results.find((r) => r.label === 'codex CLI')?.status).toBe('PASS')
+    expect(results.find((r) => r.label === 'claude CLI')?.status).toBe('WARN')
+    expect(results.some((r) => r.status === 'FAIL')).toBe(false)
+  })
+
+  it("fails with an actionable OAuth message when 'codex login status' fails", async () => {
+    const probes = passingProbes({
+      tryRun(cmd, args) {
+        if (cmd === 'codex' && args[0] === 'login') return 1
+        return 0
+      },
+    })
+    const results = await runDoctorChecks(
+      probes,
+      null,
+      providerProbeDeps(),
+      'codex',
+    )
+
+    const check = results.find((r) => r.label === 'codex CLI')
+    expect(check?.status).toBe('FAIL')
+    expect(check?.message).toContain('codex login')
   })
 })
 

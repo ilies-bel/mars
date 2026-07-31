@@ -1,5 +1,5 @@
 import type { WorkflowStore } from '@mars/workflow'
-import { getTask, hasIncompleteBlockers, removeBlocker, updateTask } from '../queue'
+import { getTask, hasIncompleteBlockers, removeBlocker, TERMINAL_TASK_STATUSES, updateTask } from '../queue'
 import { supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
 import { getDefaultTaskStore } from '../store/task-store'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
@@ -276,6 +276,12 @@ export const coreRestartTask = async (
   // invariant (status='queued' requires ALL blockers to be 'done').
   const hasBlockers = await hasIncompleteBlockers(id)
   const resultStatus: 'queued' | 'blocked' = hasBlockers ? 'blocked' : 'queued'
+  // This is the only operator path that may leave a terminal task state.
+  // The audited store seam creates the database-authorized transition; no
+  // general update or ad-hoc transitional status can bypass the invariant.
+  if (TERMINAL_TASK_STATUSES.has(task.status)) {
+    await taskStore.reopenTerminalTask(id, 'mars restart')
+  }
   // Clear all failure markers so a requeued task is never mistakenly tagged as
   // daemon-killed (or any other failure). A non-terminal task (queued/blocked)
   // must not carry a non-empty failureSignature — the daemon-killed sweep keys
@@ -296,6 +302,7 @@ export const coreRestartTask = async (
     // a previous `mars continue` call would anchor the ceiling to the
     // operator's continue time rather than the current run's start.
     requeueAnchorMs: null,
+    requeueDispatchUptimeMs: null,
     // When remerge set workflow to 'remerge' for routing purposes, a
     // subsequent restart must clear it so the next dispatch runs the full
     // pipeline (setup → code → verify → merge) rather than the remerge

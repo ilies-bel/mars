@@ -112,6 +112,19 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
     ],
   },
 
+  'steward-repeat': {
+    humanSummary: (ctx) =>
+      `Steward already tried to repair ${str(ctx.payload['targetKind'])} ${str(ctx.payload['targetId'])} at this version — review it before trying again.`,
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      targetKind: str(ctx.payload['targetKind']),
+      targetId: str(ctx.payload['targetId']),
+      targetVersion: str(ctx.payload['targetVersion']),
+    }),
+    verbs: [{ op: 'investigate', label: 'Investigate', style: 'primary' }],
+  },
+
   'cancelled-blocker-cascade': {
     humanSummary: () =>
       'A blocker task was cancelled and Mars cancelled its dependents too — review which tasks were affected.',
@@ -216,7 +229,7 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
       leaseOwned: ctx.payload['leaseOwned'],
     }),
     verbs: [
-      { op: 'land', label: 'Land commits onto integration branch', style: 'primary' },
+      { op: 'land-work', label: 'Land work', style: 'primary' },
       { op: 'prune-worktree', label: 'Discard unmerged work', style: 'danger' },
     ],
   },
@@ -381,6 +394,24 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
       behindBy: ctx.payload['behindBy'],
     }),
     verbs: [{ op: 'restart-daemon', label: 'Restart engine', style: 'primary' }],
+  },
+
+  'workflow-install-drift': {
+    humanSummary: (ctx) => {
+      const missing = Array.isArray(ctx.payload['missingKinds'])
+        ? ctx.payload['missingKinds'].filter((kind): kind is string => typeof kind === 'string')
+        : []
+      return missing.length === 1
+        ? `The "${missing[0]}" Workflow is not installed, so tasks routed to it cannot dispatch.`
+        : 'Some built-in Workflows are not installed, so tasks routed to them cannot dispatch.'
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      missingKinds: ctx.payload['missingKinds'],
+      fixCommand: str(ctx.payload['fixCommand']),
+    }),
+    verbs: [],
   },
 
   'subscriber-stalled': {
@@ -714,6 +745,24 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
     ],
   },
 
+  'stale-queued-summary': {
+    humanSummary: (ctx) => {
+      const suppressedCount = ctx.payload['suppressedCount']
+      return typeof suppressedCount === 'number'
+        ? `${suppressedCount} stale queued task alert(s) were suppressed to keep the action queue usable.`
+        : 'Stale queued task alerts were suppressed to keep the action queue usable.'
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      suppressedCount: ctx.payload['suppressedCount'],
+      activeWorkerCount: ctx.payload['activeWorkerCount'],
+      implementCap: ctx.payload['implementCap'],
+      queueDepth: ctx.payload['queueDepth'],
+      dispatchDecisionSummary: ctx.payload['dispatchDecisionSummary'],
+    }),
+    verbs: [],
+  },
+
   'spend-control-notice': {
     humanSummary: (ctx) => {
       const direction = str(ctx.payload['direction'])
@@ -732,13 +781,17 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
   'requeue-warning': {
     humanSummary: (ctx) => {
       const diag = ctx.payload['diagnostics'] as Record<string, unknown> | undefined
-      return `Task is approaching the requeue ceiling (predicted class: ${str(diag?.['class'])}).`
+      const kind = str(diag?.['class'])
+      return `Task is approaching the requeue ceiling (predicted class: ${kind}).`
     },
     humanDetail: (ctx) => {
       const diag = ctx.payload['diagnostics'] as Record<string, unknown> | undefined
       return {
         raisedAt: ctx.raisedAt,
         predictedClass: str(diag?.['class']),
+        maxAttempt: diag?.['maxAttempt'],
+        elapsedMs: diag?.['elapsedMs'],
+        boundMs: diag?.['boundMs'],
       }
     },
     verbs: [],
@@ -766,6 +819,35 @@ export const lookupRecipe = (kind: ActionQueueKind): Recipe => {
  */
 export const registeredKinds = (): ActionQueueKind[] =>
   Object.keys(REGISTRY) as ActionQueueKind[]
+
+/**
+ * Render the plain-language copy for an operational event without involving an
+ * LLM. Notices carry only a kind and payload, so this adapter supplies the
+ * recipe context fields that are conventionally embedded in that payload.
+ */
+export const humanSummary = (
+  kind: ActionQueueKind,
+  payload: Record<string, unknown>,
+): string => {
+  const entityId =
+    str(payload['entityId']) ||
+    str(payload['taskId']) ||
+    str(payload['proposalId']) ||
+    kind
+  const context = payload['context']
+  return lookupRecipe(kind).humanSummary({
+    kind,
+    entityId,
+    payload,
+    context:
+      typeof context === 'object' && context !== null && !Array.isArray(context)
+        ? context as Record<string, unknown>
+        : {},
+    title: str(payload['title']),
+    body: str(payload['body']),
+    raisedAt: str(payload['raisedAt']),
+  })
+}
 
 /**
  * Human-friendly Mars opening message used when the action queue is empty.

@@ -12,6 +12,7 @@
  */
 
 import type { ClaudeEvent } from '../lib/claude-stream'
+import { readWorkerOutputText } from '../lib/worker-json'
 import type { Task } from '../queue'
 import type { Worker } from '.'
 
@@ -50,7 +51,7 @@ export const RESCUE_OPERATOR_SYSTEM_PROMPT =
   'issue, temporary resource limit) and a fresh run from scratch is ' +
   'likely to succeed.\n' +
   '\n' +
-  '2. **continue** — Run `mars step continue <task-id>`.\n' +
+  '2. **continue** — Run `mars continue <task-id>`.\n' +
   '   Use when the worktree contains salvageable partial work and ' +
   'resuming from the existing worktree is the right approach.\n' +
   '\n' +
@@ -98,22 +99,88 @@ export const RESCUE_OPERATOR_DENIED_TOOLS: readonly string[] = [
 // ---------------------------------------------------------------------------
 
 /**
+ * The rescue task is triaged by Workers.Triager before Workers.RescueOperator
+ * ever receives it. Keep its user prompt comfortably below Triager's 50k
+ * context budget, leaving room for the triage system prompt and tool output.
+ * This is an estimate rather than a provider tokenizer count; the bounded
+ * fields below make the actual assembled prompt far smaller in practice.
+ */
+export const RESCUE_TRIAGE_PROMPT_TOKEN_BUDGET = 40_000
+
+const CHARS_PER_TOKEN = 4
+const MAX_ARC_MEMBERS_IN_PROMPT = 10
+const MAX_MEMBER_ID_CHARS = 256
+const MAX_FAILURE_SIGNATURE_CHARS = 500
+const MAX_FAILURE_REASON_CHARS = 2_000
+
+export type RescueArcMember = Pick<
+  Task,
+  'id' | 'status' | 'failureSignature' | 'failureReason' | 'createdAt'
+> & {
+  /** Accepted solely to make it explicit that raw prompts are never rendered. */
+  readonly prompt?: string
+}
+
+export interface RescueOperatorPromptInput {
+  failedTaskId: string
+  originId: string
+  failureSignature: string
+  arcMembers: readonly RescueArcMember[]
+}
+
+const boundedText = (value: string | null | undefined, limit: number): string => {
+  const text = (value ?? '(none)').replace(/\s+/g, ' ').trim()
+  return text.length <= limit ? text : `${text.slice(0, limit)}…[truncated]`
+}
+
+export const estimateRescueTriagePromptTokens = (text: string): number =>
+  Math.ceil(text.length / CHARS_PER_TOKEN)
+
+/**
  * Build the per-invocation user prompt for a rescue-operator task.
  * Called by maybeSpawnRescueOperator when enqueueing the rescue task.
- * The failure context is embedded here so the agent has it in its
- * initial turn without needing to fetch it separately.
+ *
+ * The task will first pass through the 50k-token Triager. To keep that
+ * boundary safe, include only deterministic, bounded arc summaries — never
+ * raw task prompts or transcripts. Members are newest-first so a budgeted
+ * view retains the most recent failure evidence.
  */
-export const buildRescueOperatorPrompt = (
-  failedTaskId: string,
-  originId: string,
-  failureSignature: string,
-): string =>
-  `[rescue-operator] Arc ${originId} has dead-ended.\n` +
-  `Failed task: ${failedTaskId}\n` +
-  `Failure signature: ${failureSignature}\n\n` +
-  `Inspect the task, worktree, and git history, then choose and execute ` +
-  `exactly one of the three permitted actions (restart, continue, or supersede). ` +
-  `Emit the JSON verdict as the last line of your output.`
+export const buildRescueOperatorPrompt = (input: RescueOperatorPromptInput): string => {
+  const members = [...input.arcMembers]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+    .slice(0, MAX_ARC_MEMBERS_IN_PROMPT)
+  const omittedMembers = Math.max(0, input.arcMembers.length - members.length)
+  const prompt =
+    `[rescue-operator] Arc ${boundedText(input.originId, MAX_MEMBER_ID_CHARS)} has dead-ended.\n` +
+    `Failed task: ${boundedText(input.failedTaskId, MAX_MEMBER_ID_CHARS)}\n` +
+    `Failure signature: ${boundedText(input.failureSignature, MAX_FAILURE_SIGNATURE_CHARS)}\n\n` +
+    `Arc context is partial: ${omittedMembers} older members omitted. ` +
+    `Members below are newest first and contain structured failure summaries only. ` +
+    `Raw task prompts and transcripts are not inlined; inspect a task id or its worktree selectively if needed.\n\n` +
+    `Arc members (id | status | failure_signature | failure_reason):\n` +
+    (members.length === 0
+      ? '(no persisted arc members found)\n'
+      : members
+          .map(
+            (member) =>
+              `${boundedText(member.id, MAX_MEMBER_ID_CHARS)} | ${boundedText(member.status, 64)} | ` +
+              `${boundedText(member.failureSignature, MAX_FAILURE_SIGNATURE_CHARS)} | ` +
+              `${boundedText(member.failureReason, MAX_FAILURE_REASON_CHARS)}`,
+          )
+          .join('\n') + '\n') +
+    `\nInspect the task, worktree, and git history, then choose and execute ` +
+    `exactly one of the three permitted actions (restart, continue, or supersede). ` +
+    `Emit the JSON verdict as the last line of your output.`
+
+  const estimatedTokens = estimateRescueTriagePromptTokens(prompt)
+  if (estimatedTokens > RESCUE_TRIAGE_PROMPT_TOKEN_BUDGET) {
+    throw new Error(
+      `rescue-operator triage prompt for arc ${input.originId} remains over budget ` +
+        `after truncation: ${estimatedTokens}/${RESCUE_TRIAGE_PROMPT_TOKEN_BUDGET} estimated tokens`,
+    )
+  }
+  return prompt
+}
 
 // ---------------------------------------------------------------------------
 // Verdict parser
@@ -202,11 +269,11 @@ export const runRescueOperator = async (
     },
   })
 
-  // Prefer verdict from the event stream; fall back to raw stdout for providers
-  // that write text output there (e.g. Gemini, Codex headless adapters).
+  // Prefer verdict from the live event stream, then re-read complete stdout
+  // through this Worker's configured provider adapter.
   const verdict =
     parseRescueVerdict(textChunks.join('\n')) ??
-    parseRescueVerdict(result.stdout ?? '')
+    parseRescueVerdict(readWorkerOutputText(worker.config.provider, result.stdout ?? '') ?? '')
 
   if (verdict === null) {
     throw new Error(

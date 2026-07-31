@@ -56,10 +56,13 @@ export interface ContinueResult {
  * `note` for the CLI to display.
  *
  * Refusal set:
+ *   - task is not in `'failed'` status
+ *   - in-flight recovery exists     — wait for it to complete first
+ *
+ * Degraded-to-restart set:
  *   - `failedPhase === null`        — failure before any phase was recorded
  *   - no branch / worktreePath      — worktree was never created
  *   - worktree path missing on disk — worktree was created but is gone
- *   - in-flight recovery exists     — wait for it to complete first
  *
  * Intentionally has no dependency on the daemon's event bus — the caller is
  * responsible for emitting `task.queued` after this resolves.
@@ -122,6 +125,11 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
     return { degradedToRestart: true, note }
   }
 
+  // `failed` is terminal and general queue updates intentionally cannot leave
+  // a terminal state. Continue is an explicit operator action, so reopen it
+  // through the audited store seam before applying resume metadata below.
+  await store.reopenTerminalTask(id, 'mars continue')
+
   // Code-phase resume: the coder was killed mid-implementation with the
   // worktree intact. Auto-commit any dangling diff as a wip/salvage
   // checkpoint so the resuming coder starts on a clean base and the partial
@@ -158,7 +166,12 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
     // time from this operator-initiated resume, not from the original run's
     // first step (which may be hours or days old — the journal is preserved
     // by design for checkpoint-resume).
-    await updateTask(id, { status: 'queued', error: null, requeueAnchorMs: Date.now() })
+    await updateTask(id, {
+      status: 'queued',
+      error: null,
+      requeueAnchorMs: Date.now(),
+      requeueDispatchUptimeMs: null,
+    }, store)
     return { degradedToRestart: false, codePhaseResume: true }
   }
 
@@ -171,6 +184,7 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
     status: 'queued',
     error: null,
     requeueAnchorMs: Date.now(),
-  })
+    requeueDispatchUptimeMs: null,
+  }, store)
   return { degradedToRestart: false }
 }

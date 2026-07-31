@@ -41,7 +41,10 @@ import {
   getTask as queueGetTask,
   listTasks as queueListTasks,
   listTasksPaged as queueListTasksPaged,
+  listNonDoneTasks as queueListNonDoneTasks,
+  filterExistingTaskIds as queueFilterExistingTaskIds,
   updateTask as queueUpdateTask,
+  reopenTerminalTask as queueReopenTerminalTask,
   setTaskPriority as queueSetTaskPriority,
   addPendingReviewBlockers as queueAddPendingReviewBlockers,
   clearBlockers as queueClearBlockers,
@@ -183,6 +186,16 @@ export interface Scope {
 }
 
 /**
+ * The small, prompt-free task projection shared by arc-level operations.
+ * Keeping arc enumeration on this shape prevents diagnostic flows from
+ * accidentally loading every task prompt or transcript-sized failure blob.
+ */
+export type ArcMember = Pick<
+  Task,
+  'id' | 'branch' | 'status' | 'failureSignature' | 'failureReason' | 'createdAt'
+>
+
+/**
  * Typed domain interface over mars.db (tasks side). Every domain method mirrors
  * the corresponding queue.ts export. In addition, the generic SQL escape
  * hatches (`query`, `execute`, `batch`, `atomic`) and the `arcStatus` rollup
@@ -196,12 +209,26 @@ export interface DomainTaskStore {
     status?: TaskStatus,
     limit?: number,
   ): Promise<{ tasks: Task[]; total: number }>
+  /**
+   * Return up to `limit` non-done tasks excluding `excludeId`, ordered
+   * newest-first (`ORDER BY created_at DESC`).  Callers that need oldest-first
+   * display order should reverse the result.
+   */
+  listNonDoneTasks(excludeId: string, limit: number): Promise<Task[]>
+  /**
+   * Return the subset of `ids` that refer to existing task rows.  Returns `[]`
+   * without issuing a query when `ids` is empty.  Callers must pre-filter and
+   * slice `ids` to at most `MAX_BLOCKERS` before calling so the query never
+   * receives more than that many ids.
+   */
+  filterExistingTaskIds(ids: readonly string[]): Promise<string[]>
   enqueueTask(
     prompt: string,
     plan?: TaskPlan,
     opts?: EnqueueTaskOptions,
   ): Promise<Task>
   updateTask(id: string, patch: UpdateTaskPatch): Promise<void>
+  reopenTerminalTask(id: string, reason: string): Promise<void>
   dropTask(id: string): Promise<DropTaskResult>
   setTaskPriority(id: string, priority: number): Promise<Task>
   insertReflectionTask(corpusSize: number): Promise<string>
@@ -262,13 +289,10 @@ export interface DomainTaskStore {
    * List every task sharing the given `origin_id`
    * (i.e. all arc members including the origin itself).
    *
-   * Used by {@link coreArcPurge} for its all-or-nothing pre-check and
-   * purge loop. Replaces the direct `resolveQueueClient().execute()` call
-   * in daemon/arc-purge.ts.
+   * Returns a prompt-free summary suitable for arc-level operations. Used by
+   * {@link coreArcPurge}, arc verification, and rescue prompt assembly.
    */
-  listArcMembers(
-    originId: string,
-  ): Promise<Array<{ id: string; branch: string | null }>>
+  listArcMembers(originId: string): Promise<ArcMember[]>
 
   /**
    * List every done fix task with a non-null `fix_for_task_id`
@@ -298,6 +322,16 @@ export interface DomainTaskStore {
    * identify an origin task (i.e. its `fix_for_task_id` is non-null).
    */
   incrementArcRescueAttempts(originId: string): Promise<number>
+
+  /**
+   * Count rescue-operator tasks for the arc rooted at `originId` that are
+   * not in a terminal state (`failed` or `dropped`).
+   *
+   * Used by `maybeSpawnRescueOperator` as a secondary guard for proposal-based
+   * arcs where `arc_rescue_attempts` cannot be incremented (no task row for
+   * the proposal slug). Returns 0 when no such tasks exist.
+   */
+  countActiveRescueTasksForArc(originId: string): Promise<number>
 
   // ── Arc rollup ───────────────────────────────────────────────────────────
   /**
@@ -468,6 +502,8 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     getTask: (id) => queueGetTask(id),
     listTasks: (status) => queueListTasks(status),
     listTasksPaged: (status, limit) => queueListTasksPaged(status, limit),
+    listNonDoneTasks: (excludeId, limit) => queueListNonDoneTasks(excludeId, limit),
+    filterExistingTaskIds: (ids) => queueFilterExistingTaskIds(ids),
     // Arc.createOrigin is the origin write funnel; pass `store` so persistence
     // routes through this seam rather than the process-wide default.
     enqueueTask: (prompt, plan, opts) =>
@@ -478,6 +514,7 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     // rich atomic event set (terminal pairs, blocked, under_investigation) are
     // preserved; a status-only patch is exactly Arc.transition's funnel.
     updateTask: (id, patch) => queueUpdateTask(id, patch),
+    reopenTerminalTask: (id, reason) => queueReopenTerminalTask(id, reason, store),
     dropTask: (id) => Arc.load(id, store).drop(),
     setTaskPriority: (id, priority) => queueSetTaskPriority(id, priority),
     insertReflectionTask: (corpusSize) =>
@@ -533,12 +570,27 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     listArcMembers: async (originId) => {
       const c = guardClient()
       const r = await c.execute({
-        sql: `SELECT id, branch FROM tasks WHERE origin_id = ?`,
+        sql: `SELECT id, branch, status, failure_signature, failure_reason, created_at
+              FROM tasks WHERE origin_id = ? ORDER BY created_at DESC`,
         args: [originId],
       })
       return r.rows.map((row) => {
-        const r0 = row as unknown as { id: string; branch: string | null }
-        return { id: r0.id, branch: r0.branch }
+        const r0 = row as unknown as {
+          id: string
+          branch: string | null
+          status: TaskStatus
+          failure_signature: string | null
+          failure_reason: string | null
+          created_at: string
+        }
+        return {
+          id: r0.id,
+          branch: r0.branch,
+          status: r0.status,
+          failureSignature: r0.failure_signature,
+          failureReason: r0.failure_reason,
+          createdAt: r0.created_at,
+        }
       })
     },
 
@@ -602,6 +654,18 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
       })
       const row = r.rows[0] as unknown as { arc_rescue_attempts: number | bigint }
       return Number(row.arc_rescue_attempts)
+    },
+
+    countActiveRescueTasksForArc: async (originId) => {
+      const c = guardClient()
+      const r = await c.execute({
+        sql: `SELECT COUNT(*) AS n FROM tasks
+              WHERE origin_id = ?
+                AND tags_json LIKE '%rescue-operator%'
+                AND status NOT IN ('failed', 'dropped')`,
+        args: [originId],
+      })
+      return Number((r.rows[0] as unknown as { n: number | bigint }).n)
     },
 
     // ── Arc rollup ─────────────────────────────────────────────────────────

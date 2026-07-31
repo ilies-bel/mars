@@ -36,6 +36,7 @@ export const makeHttpServerDeps = (
   snoozeItem: async () => {},
   purgeTask: async () => {},
   pruneWorktree: async () => {},
+  landWork: async () => {},
   dismissProposal: async () => {},
   promoteProposal: async () => {},
   validateTask: async () => {},

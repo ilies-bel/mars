@@ -7,13 +7,13 @@
  *   3. failing verdict → exactly one arc-verification-failed AQ item
  *   4. kill-switch flag suppresses all runs
  *   5. arc E2E pass — always CAN'T-VERIFY (no live surface):
- *      - origin task with done criteria → Reflector draft proposal emitted (source='reflection')
- *      - origin task with no done criteria → Reflector draft proposal emitted
+ *      - origin task with done criteria → draft proposal emitted (source='arc-verifier')
+ *      - origin task with no done criteria → arc-verifier draft proposal emitted
  *      - fingerprint already exists → no duplicate proposal created
  *
  * System boundaries mocked:
  *   - raiseActionQueueItem (action-queue DB write)
- *   - runClaudeCode (Claude subprocess)
+ *   - runHeadlessProvider (selected provider subprocess)
  *   - getDefaultTaskStore (mars.db read)
  *   - createProposal / findOpenDraftByKpiTag (proposals DB write)
  */
@@ -31,9 +31,9 @@ vi.mock('../action-queue', async (importActual) => {
   return { ...actual, raiseActionQueueItem: raiseSpy }
 })
 
-// ── Mock runClaudeCode ────────────────────────────────────────────────────────
+// ── Mock provider runner ─────────────────────────────────────────────────────
 
-const runClaudeCodeMock = vi.hoisted(() =>
+const runHeadlessProviderMock = vi.hoisted(() =>
   vi.fn(async () => ({
     exitCode: 0,
     stdout: '{"ok":true,"findings":[]}',
@@ -43,7 +43,9 @@ const runClaudeCodeMock = vi.hoisted(() =>
     quotaRejected: null,
   })),
 )
-vi.mock('../git/claude', () => ({ runClaudeCode: runClaudeCodeMock }))
+vi.mock('../../workers/providers', () => ({
+  runHeadlessProvider: runHeadlessProviderMock,
+}))
 
 // ── Mock getDefaultTaskStore ──────────────────────────────────────────────────
 
@@ -143,9 +145,9 @@ describe('arc-verifier', () => {
     process.env.MARS_ARC_VERIFY_DISABLED = '1'
     const result = triggerArcVerification('origin-flagged', { cwd: '/tmp' })
     expect(result).toBe('skipped-disabled')
-    // No work was scheduled — raiseActionQueueItem and runClaudeCode are never called.
+    // No work was scheduled — neither the action queue nor provider runner is called.
     expect(raiseSpy).not.toHaveBeenCalled()
-    expect(runClaudeCodeMock).not.toHaveBeenCalled()
+    expect(runHeadlessProviderMock).not.toHaveBeenCalled()
   })
 
   // ── triggerArcVerification — dedup ──────────────────────────────────────────
@@ -170,7 +172,7 @@ describe('arc-verifier', () => {
     // Second call must return without touching the agent or action-queue.
     const result = triggerArcVerification('origin-dedup-sync', { cwd: '/tmp' })
     expect(result).toBe('skipped-dedup')
-    // We cannot assert runClaudeCode wasn't called yet (async work may still be
+    // We cannot assert the provider wasn't called yet (async work may still be
     // in-flight), but the return value proves the gate fired.
   })
 
@@ -183,7 +185,7 @@ describe('arc-verifier', () => {
       )
       const verdict = await runArcVerification('origin-in-progress', { cwd: '/tmp' })
       expect(verdict).toEqual({ ok: true, findings: [] })
-      expect(runClaudeCodeMock).not.toHaveBeenCalled()
+      expect(runHeadlessProviderMock).not.toHaveBeenCalled()
       expect(raiseSpy).not.toHaveBeenCalled()
     })
 
@@ -193,7 +195,7 @@ describe('arc-verifier', () => {
       )
       const verdict = await runArcVerification('origin-no-commits', { cwd: '/tmp' })
       expect(verdict).toEqual({ ok: true, findings: [] })
-      expect(runClaudeCodeMock).not.toHaveBeenCalled()
+      expect(runHeadlessProviderMock).not.toHaveBeenCalled()
       expect(raiseSpy).not.toHaveBeenCalled()
     })
 
@@ -203,7 +205,7 @@ describe('arc-verifier', () => {
       )
       const verdict = await runArcVerification('origin-arc-failed', { cwd: '/tmp' })
       expect(verdict).toEqual({ ok: true, findings: [] })
-      expect(runClaudeCodeMock).not.toHaveBeenCalled()
+      expect(runHeadlessProviderMock).not.toHaveBeenCalled()
       expect(raiseSpy).not.toHaveBeenCalled()
     })
 
@@ -211,7 +213,7 @@ describe('arc-verifier', () => {
 
     it('[verdict-fail] raises exactly one arc-verification-failed item on failing verdict', async () => {
       const findings = ['TypeScript errors in merged code', 'Test suite red after merge']
-      runClaudeCodeMock.mockResolvedValueOnce({
+      runHeadlessProviderMock.mockResolvedValueOnce({
         exitCode: 0,
         stdout: JSON.stringify({ ok: false, findings }),
         stderr: '',
@@ -245,7 +247,7 @@ describe('arc-verifier', () => {
     })
 
     it('[verdict-fail] does NOT raise an item when verdict is ok', async () => {
-      runClaudeCodeMock.mockResolvedValueOnce({
+      runHeadlessProviderMock.mockResolvedValueOnce({
         exitCode: 0,
         stdout: JSON.stringify({ ok: true, findings: [] }),
         stderr: '',
@@ -272,7 +274,7 @@ describe('arc-verifier', () => {
     })
 
     it('[verdict-fail] handles unparseable agent output gracefully', async () => {
-      runClaudeCodeMock.mockResolvedValueOnce({
+      runHeadlessProviderMock.mockResolvedValueOnce({
         exitCode: 0,
         stdout: 'something went wrong, not JSON',
         stderr: '',
@@ -311,7 +313,7 @@ describe('arc-verifier', () => {
         conversation: [],
         quotaRejected: null,
       }
-      runClaudeCodeMock.mockResolvedValue(failPayload)
+      runHeadlessProviderMock.mockResolvedValue(failPayload)
 
       const store = makeStore({
         status: 'arc-done',
@@ -336,7 +338,7 @@ describe('arc-verifier', () => {
     // ── arc E2E pass — always CAN'T-VERIFY (no live surface) ─────────────────
     //
     // After the static Claude spot-check, runArcVerification always emits a
-    // Reflector draft proposal (source='reflection') because no per-task preview
+    // arc-verifier draft proposal (source='arc-verifier') because no per-task preview
     // command exists (removed in PRD f354b404 slice 1). The arc is never failed
     // for this infrastructure gap.
 
@@ -356,7 +358,7 @@ describe('arc-verifier', () => {
 
       beforeEach(() => {
         // Static Claude check always passes so we isolate the E2E branch.
-        runClaudeCodeMock.mockResolvedValue({
+        runHeadlessProviderMock.mockResolvedValue({
           exitCode: 0,
           stdout: '{"ok":true,"findings":[]}',
           stderr: '',
@@ -367,7 +369,7 @@ describe('arc-verifier', () => {
         findOpenDraftByKpiTagMock.mockResolvedValue(null)
       })
 
-      it('[e2e-has-criteria] emits Reflector draft proposal (source=reflection) when origin task has done criteria', async () => {
+      it('[e2e-has-criteria] emits an arc-verifier draft proposal (source=arc-verifier) when origin task has done criteria', async () => {
         getDefaultTaskStoreMock.mockResolvedValue(
           makeE2eStore('origin-e2e-criteria', { doneCriteria: ['Feature works'] }),
         )
@@ -376,15 +378,15 @@ describe('arc-verifier', () => {
 
         // Static check passes, no live surface → verdict unchanged.
         expect(verdict).toEqual({ ok: true, findings: [] })
-        // A Reflector draft proposal was emitted.
+        // An arc-verifier draft proposal was emitted.
         expect(createProposalMock).toHaveBeenCalledOnce()
         const proposalOpts = (createProposalMock.mock.calls as unknown as Array<[string, { source: string }]>)[0][1]
-        expect(proposalOpts.source).toBe('reflection')
+        expect(proposalOpts.source).toBe('arc-verifier')
         // No AQ item — arc is not failed.
         expect(raiseSpy).not.toHaveBeenCalled()
       })
 
-      it('[e2e-no-criteria] emits Reflector draft proposal when origin task has no done criteria', async () => {
+      it('[e2e-no-criteria] emits an arc-verifier draft proposal when origin task has no done criteria', async () => {
         getDefaultTaskStoreMock.mockResolvedValue(
           makeE2eStore('origin-e2e-no-criteria', { doneCriteria: [] }),
         )
@@ -393,7 +395,7 @@ describe('arc-verifier', () => {
 
         expect(verdict).toEqual({ ok: true, findings: [] })
         expect(createProposalMock).toHaveBeenCalledOnce()
-        expect(((createProposalMock.mock.calls as unknown as Array<[string, { source: string }]>)[0][1]).source).toBe('reflection')
+        expect(((createProposalMock.mock.calls as unknown as Array<[string, { source: string }]>)[0][1]).source).toBe('arc-verifier')
         expect(raiseSpy).not.toHaveBeenCalled()
       })
 

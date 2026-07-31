@@ -24,9 +24,18 @@ import {
  *     superseded (the lightweight `subscriber.unstalled` recovery).
  *
  * Side effects run at-most-once per (subscriber, event) via `processedOnce`.
- * The side effect is idempotent (it only touches OPEN rows), so the
- * Phase-2-after-commit shape that cross-DB deployments force is benign: a
- * crash between the dedup commit and a re-run just replays a no-op.
+ * The dedup row is claimed BEFORE the handler runs, so the claim is exclusive
+ * against a concurrent drain of the same subscriber; a handler that throws
+ * releases it so the retry contract above still holds.
+ *
+ * Do NOT reorder this to run the handler first. That shape deduped only the
+ * bookkeeping — concurrent drains all passed the "already processed?" check
+ * and all executed the side effect. It was survivable while every handler was
+ * idempotent (they only touched OPEN rows), but it is not a property the
+ * contract can assume: `arc-verifier` shells out and the failure-reflector
+ * path spawns headless agents. Under a failure storm that fan-out melted the
+ * host. The interval callers are additionally single-flighted in server.ts;
+ * this claim is the correctness guarantee, that gate is the pressure relief.
  */
 
 /** Consecutive-failure threshold before a stalled actionQueue row is raised. */
@@ -45,22 +54,23 @@ const stallKey = (subscriberId: string, eventId: number): string =>
   `${subscriberId}:${eventId}`
 
 /**
- * Read-only check of the at-most-once dedup table: has this (subscriber,
- * event) pair already been successfully processed? Used to skip re-running a
- * counting side effect on a re-drain without claiming the slot (the claim
- * happens only after a fresh successful handler run).
+ * Release a claim taken by {@link drainWithStall} when the handler then threw.
+ *
+ * The ADR-0032 retry contract requires that a failed handler leave the dedup
+ * slot unclaimed, so the next drain retries the same event. Because the claim
+ * is now taken BEFORE the handler runs (to make it exclusive against a
+ * concurrent drain), a handler failure has to undo it explicitly.
  */
-async function alreadyProcessed(
+async function releaseClaim(
   client: DbClient,
   subscriberId: string,
   eventId: number,
-): Promise<boolean> {
-  const r = await client.execute({
-    sql: `SELECT 1 FROM subscriber_processed_events
-           WHERE subscriber_id = ? AND event_id = ? LIMIT 1`,
+): Promise<void> {
+  await client.execute({
+    sql: `DELETE FROM subscriber_processed_events
+           WHERE subscriber_id = ? AND event_id = ?`,
     args: [subscriberId, eventId],
   })
-  return r.rows.length > 0
 }
 
 const stallSignature = (subscriberId: string, eventId: number): string =>
@@ -92,23 +102,40 @@ export async function drainWithStall(
   for (const event of pending) {
     const key = stallKey(subscriberId, event.id)
     try {
-      // At-most-once with retry-on-failure. Read the dedup slot first: if the
-      // side effect already succeeded for this (subscriber, event), skip it
-      // — re-running would double-apply a counting side effect (e.g. bump an
-      // actionQueue row's seen_count). If not yet processed, run the handler; only
-      // on success claim the dedup slot. A handler that THROWS leaves the
-      // slot unclaimed, so the next drain retries (and the cursor stays put
-      // below) — that retry path is what the stall contract depends on.
-      const already = await alreadyProcessed(client, subscriberId, event.id)
-      if (!already) {
-        const did = await handle(event)
-        await processedOnce({
-          client,
-          subscriberId,
-          eventId: event.id,
-          sideEffect: async (_tx) => {},
-        })
-        if (did) processed++
+      // At-most-once with retry-on-failure. CLAIM FIRST, then run the side
+      // effect. `processedOnce` inserts the dedup row inside a transaction and
+      // reports ran=false when it already exists, so the claim is atomic
+      // against a concurrent drain of the same subscriber.
+      //
+      // The previous shape ran `handle()` first and claimed afterwards. That
+      // deduped only the BOOKKEEPING: two concurrent drains both read "not yet
+      // processed", both executed the side effect, and one then lost the
+      // insert race. For handlers that merely touch OPEN action-queue rows
+      // that is harmless, but for handlers that spawn agents or shell out it
+      // multiplies without bound — the failure-reflector fan-out that melted
+      // the host came through exactly this door.
+      //
+      // A handler that THROWS releases the claim below, so the next drain
+      // retries it (and the cursor stays put) — the retry path the ADR-0032
+      // stall contract depends on is preserved.
+      const claim = await processedOnce({
+        client,
+        subscriberId,
+        eventId: event.id,
+        sideEffect: async (_tx) => {},
+      })
+      if (claim.ran) {
+        try {
+          const did = await handle(event)
+          if (did) processed++
+        } catch (err) {
+          await releaseClaim(client, subscriberId, event.id).catch(() => {
+            // Best-effort: if the release fails the event is simply not
+            // retried. Losing a retry is strictly safer than holding the
+            // cursor against a slot we can no longer clear.
+          })
+          throw err
+        }
       }
       // Success — clear any stall counter and close a stalled row if one was
       // raised for this event (subscriber.unstalled recovery).

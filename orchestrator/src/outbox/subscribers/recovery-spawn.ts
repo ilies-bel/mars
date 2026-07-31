@@ -2,14 +2,18 @@ import type { DbClient } from '../../core/lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
-import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks.js'
-import { getTask, updateTask } from '../../core/queue.js'
+import {
+  handleTaskFailureWithFixTask,
+  hasUsableWorktree,
+} from '../../core/queue-fix-tasks.js'
+import { getTask, reopenTerminalTask, updateTask } from '../../core/queue.js'
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
 import { asStepId, UNKNOWN_STEP_ID } from '../../core/lib/failure-signature.js'
 import { registerSubscriberName } from '../registry.js'
 import { raiseActionQueueItem } from '../../core/lib/action-queue.js'
 import { loadSpendControl } from '../../core/daemon/spend-control/store.js'
 import { decideDispatchControl } from '../../core/daemon/spend-control/decide.js'
+import { probeSpendWindow } from '../spend-control-inputs.js'
 
 /**
  * Durable outbox subscriber that enforces exactly-one recovery per task
@@ -102,6 +106,58 @@ export async function drainRecoverySpawner(
       const task = await getTask(taskId)
       if (!task) return false
 
+      // A failure event describes a particular terminal episode. Once an
+      // operator has continued/restarted that task, the old event must not
+      // attach a recovery to the new queued episode.
+      if (task.status !== 'failed') return false
+
+      // `failure_reason` doubles as the fine-grained failing step (`verify:<gate>`)
+      // stamped by the primitives; `asStepId` rejects prose so terminal paths that
+      // write a sentence fall back to `failed_phase` / UNKNOWN_STEP_ID. See the
+      // longer note at the second use below.
+      const failingStep =
+        asStepId(task.failureReason) ?? asStepId(task.failedPhase) ?? UNKNOWN_STEP_ID
+
+      // ── A failed RECOVERY task is terminal (ADR-0040) ────────────────────────
+      // A recovery Chore is a leaf: it is never re-run, so there is nothing to
+      // reopen it FOR. Reopening it here was a live self-feeding loop — the
+      // reopen flipped the row to `queued`, the escalation immediately wrote it
+      // back to `failed`, that status change emitted a NEW `task.failed` carrying
+      // the composed reason, and the next 30 s drain fed that reason straight
+      // back in: one more `recovery_failed:` prefix, one more action-queue row
+      // and one more rescue-operator spawn every tick, forever. Escalate without
+      // reopening; the handler's escalate-once gate makes a repeat call a no-op.
+      if (task.fixForTaskId !== null) {
+        await handleTaskFailureWithFixTask({
+          taskId,
+          failingStep,
+          errorOutput: error,
+          qaNote: note,
+        })
+        return true
+      }
+
+      // Failures that happen before setup have no origin worktree for a fix
+      // task to reuse. Route them directly through the shared escalation before
+      // spend-control or outage gates can produce a less actionable notice.
+      if (!(await hasUsableWorktree(task))) {
+        await handleTaskFailureWithFixTask({
+          taskId,
+          failingStep,
+          errorOutput: error,
+          qaNote: note,
+        })
+        return true
+      }
+
+      // `failed` is terminal: general queue writes (including Arc's
+      // recovery → blocked batch) are deliberately forbidden from leaving
+      // it. Recovery is the one explicit automated reopen path, so record the
+      // audited reopen before handing the now-queued origin to the recovery
+      // handler. This also lets environmental paths legitimately re-queue it.
+      // Only ORIGIN tasks reach here — a failed recovery returned above.
+      await reopenTerminalTask(taskId, 'recovery-spawner')
+
       // If the API circuit breaker is open — or was opened within a 60 s grace
       // window — this failure is environmental, not a code or verify bug. Skip
       // the fix-task insert and re-queue the origin so it retries once the
@@ -124,9 +180,12 @@ export async function drainRecoverySpawner(
       // land the origin as failed, and raise a task-blocked action-queue item
       // so the operator knows budget pressure prevented self-heal. This
       // preserves the origin's single recovery slot for when pressure clears.
-      const levers = await loadSpendControl(client)
+      const [levers, spendWindow] = await Promise.all([
+        loadSpendControl(client),
+        probeSpendWindow(client, false),
+      ])
       const decision = decideDispatchControl({
-        spendWindow: { usedPct: 0, wasPaused: false },
+        spendWindow,
         breaker: { open: false, reason: null, openedAt: null },
         health: { recentRecoveryFailures: 0 },
         levers,
@@ -174,8 +233,7 @@ export async function drainRecoverySpawner(
       // prose to `failure_reason`; `asStepId` returns null for those, falling
       // back to `failed_phase` (also validated) or `UNKNOWN_STEP_ID` so no
       // prose ever reaches `computeFailureSignature` as the step half.
-      const failingStep =
-        asStepId(task.failureReason) ?? asStepId(task.failedPhase) ?? UNKNOWN_STEP_ID
+      // (Resolved once, above the recovery-leaf branch.)
 
       // Gate meta-monitor suppression AND signature-storm circuit breaker both
       // live INSIDE handleTaskFailureWithFixTask (the shared chokepoint) so they

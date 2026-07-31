@@ -102,11 +102,12 @@ export const corePurgeTask = async (
       previousStatus: 'failed',
       edgesRemoved: { incoming: 0, outgoing: 0 },
       cascadedFixTaskIds: [],
+      mergeJobsDeleted: 0,
     }
   }
   if (task.status !== 'failed' && task.status !== 'done' && task.status !== 'dropped') {
     throw new Error(
-      `task ${id} is ${task.status}; refuse to purge in-flight tasks`,
+      `task ${id} is ${task.status}; 'purge' only accepts failed/done/dropped tasks. Use 'mars drop ${id} --force' to delete a task in any status.`,
     )
   }
 

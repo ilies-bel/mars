@@ -195,9 +195,9 @@ export type RequeueBreachClass = {
  * no side effects or DB calls.
  *
  * Priority order:
- * 1. High attempt density → `retry-churn`
+ * 1. High attempt density AND more than two retries → `retry-churn`
  * 2. High blocked-wait ratio → `blocked-wait`
- * 3. Very few attempts with zero blocked wait → `queue-starvation`
+ * 3. Very few retries with zero blocked wait → `queue-starvation`
  * 4. Otherwise → `long-running`
  *
  * @param t           - The task being evaluated (used for diagnostics labels).
@@ -218,7 +218,7 @@ export const classifyRequeueBreach = (
   const density = window != null ? computeAttemptDensity(window) : 0
   const attemptCount = window?.attemptCount ?? 0
 
-  if (density >= DENSITY_FLOOR_PER_MIN) {
+  if (t.retryCount > 2 && density >= DENSITY_FLOOR_PER_MIN) {
     return {
       kind: 'retry-churn',
       reason:

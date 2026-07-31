@@ -64,7 +64,7 @@ const makeStateStore = (
 const makeTaskStore = (
   tasks: TaskForActionQueue[] = [],
 ): ActionQueueTaskStore => ({
-  listTasks: async () => tasks,
+  listTasksForActionQueueItems: async () => tasks,
 })
 
 const BASE_PARAMS = {
@@ -907,5 +907,88 @@ describe('buildActionQueueView — hitl-slice-needs-operator row', () => {
     // 'diagnose-failure' which is only on the failed-task failure-kind registry path.
     const ops = rows[0]!.actions.map((a) => a.op)
     expect(ops).not.toContain('diagnose-failure')
+  })
+})
+
+// ── Operational alerts: kind-specific diagnostics ───────────────────────────
+
+describe('buildActionQueueView — operational alert copy', () => {
+  it('describes each operational condition with its own actionable title and body', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({
+          id: 'storm',
+          kind: 'signature-storm',
+          signature: 'signature-storm:code/unclassified',
+          payload: { signature: 'code/unclassified', streak: 6 },
+        }),
+        makeRow({
+          id: 'gate',
+          kind: 'gate-broken',
+          signature: 'gate-broken:verify:test/test-assertion-error',
+          payload: { gate: 'test', verdict: 'verify:test/test-assertion-error', streak: 3 },
+        }),
+        makeRow({
+          id: 'daemon',
+          kind: 'daemon-died',
+          signature: 'daemon-died',
+          payload: { pid: 4242, crashDetectedAt: '2026-07-31T09:00:00.000Z' },
+        }),
+        makeRow({
+          id: 'subscriber',
+          kind: 'subscriber-stalled',
+          signature: 'subscriber-stalled:recovery-spawner:69097',
+          raisedAt: '2026-07-31T08:55:00.000Z',
+          lastSeenAt: '2026-07-31T09:00:00.000Z',
+          payload: {},
+        }),
+        makeRow({
+          id: 'stale',
+          kind: 'stale-queued',
+          signature: 'mars-stale',
+          payload: { taskId: 'mars-stale', queuedAgeMs: 12 * 60_000 },
+        }),
+        makeRow({
+          id: 'summary',
+          kind: 'stale-queued-summary',
+          signature: 'summary',
+          payload: { suppressedCount: 22, queueDepth: 42 },
+        }),
+        makeRow({
+          id: 'phantom',
+          kind: 'phantom-task',
+          signature: 'mars-phantom',
+          payload: {
+            taskId: 'mars-phantom',
+            previousStatus: 'verifying',
+            reason: 'ceiling',
+            ageMinutes: 31,
+          },
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+    })
+
+    const byId = new Map(rows.map((row) => [row.id, row]))
+    expect(byId.get('storm')!.title).toContain('6 tasks failed with `code/unclassified`')
+    expect(byId.get('storm')!.body).toContain('mars daemon resume')
+    expect(byId.get('gate')!.title).toContain('Gate test')
+    expect(byId.get('gate')!.body).toContain('verify:test/test-assertion-error')
+    expect(byId.get('daemon')!.title).toContain('pid 4242')
+    expect(byId.get('daemon')!.body).toContain('.mars/watch.log')
+    expect(byId.get('subscriber')!.title).toContain('recovery-spawner (pid 69097)')
+    expect(byId.get('subscriber')!.body).toContain('5 min')
+    expect(byId.get('stale')!.title).toContain('mars-stale has been queued for 12 min')
+    expect(byId.get('stale')!.body).toContain('mars-stale')
+    expect(byId.get('summary')!.title).toContain('22 queued tasks were suppressed')
+    expect(byId.get('summary')!.body).toContain('mars action-queue list open --kind stale-queued')
+    expect(byId.get('phantom')!.title).toContain('mars-phantom is stuck in verifying for 31 min')
+    expect(byId.get('phantom')!.body).toContain('mars-phantom')
+
+    for (const row of rows) {
+      expect(row.title).not.toBe('A pipeline step did not complete')
+      expect(row.body).not.toContain('See the transcript for details')
+    }
   })
 })

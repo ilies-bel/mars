@@ -61,6 +61,44 @@ export async function startWorkerMcpServer(
     send({ jsonrpc: '2.0', id, result })
   }
 
+  const withAudit = async <T>(
+    toolName: string,
+    args: Record<string, unknown>,
+    auditTaskId: string,
+    fn: () => Promise<T>,
+  ): Promise<T> => {
+    const argsJson = Object.fromEntries(
+      Object.entries(args).map(([key, value]) => [
+        key,
+        typeof value === 'string' ? '[redacted]' : value,
+      ]),
+    )
+    let result: T
+    try {
+      result = await fn()
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      await deps.sendRequest({
+        op: 'mcp.audit.append',
+        toolName,
+        taskId: auditTaskId,
+        argsJson,
+        ok: false,
+        errorMessage,
+      })
+      throw err
+    }
+    await deps.sendRequest({
+      op: 'mcp.audit.append',
+      toolName,
+      taskId: auditTaskId,
+      argsJson,
+      ok: true,
+      errorMessage: null,
+    })
+    return result
+  }
+
   const rl = createInterface({ input, crlfDelay: Infinity })
 
   for await (const line of rl) {
@@ -130,6 +168,16 @@ export async function startWorkerMcpServer(
                 additionalProperties: false,
               },
             },
+            {
+              name: 'mars_task_context',
+              description:
+                'Fetch structured context for the current task: id, title, prompt, files, verify command, done criteria with check state, task type, status, and blocker ids',
+              inputSchema: {
+                type: 'object',
+                properties: {},
+                additionalProperties: false,
+              },
+            },
           ],
         })
         break
@@ -148,12 +196,14 @@ export async function startWorkerMcpServer(
             break
           }
           try {
-            await deps.sendRequest({
-              op: 'task.note',
-              id: taskId,
-              body: parsed.data.body,
-              author: 'mcp-worker',
-            })
+            await withAudit('mars_task_note', parsed.data, taskId, () =>
+              deps.sendRequest({
+                op: 'task.note',
+                id: taskId,
+                body: parsed.data.body,
+                author: 'mcp-worker',
+              }),
+            )
             respond(id, { content: [{ type: 'text', text: 'Note appended' }] })
           } catch (err) {
             respond(id, {
@@ -171,18 +221,38 @@ export async function startWorkerMcpServer(
             break
           }
           try {
-            await deps.sendRequest({
-              op: 'task.check',
-              id: taskId,
-              criterionIndex: parsed.data.index,
-              uncheck: !!parsed.data.uncheck,
-              author: 'mcp-worker',
-            })
+            await withAudit('mars_task_check', parsed.data, taskId, () =>
+              deps.sendRequest({
+                op: 'task.check',
+                id: taskId,
+                criterionIndex: parsed.data.index,
+                uncheck: !!parsed.data.uncheck,
+                author: 'mcp-worker',
+              }),
+            )
             const verb = parsed.data.uncheck ? 'unchecked' : 'checked'
             respond(id, { content: [{ type: 'text', text: `Criterion ${parsed.data.index} ${verb}` }] })
           } catch (err) {
             respond(id, {
               content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+              isError: true,
+            })
+          }
+        } else if (toolName === 'mars_task_context') {
+          try {
+            const data = await deps.sendRequest({
+              op: 'task.contextForWorker',
+              id: taskId,
+            })
+            respond(id, { content: [{ type: 'text', text: JSON.stringify(data) }] })
+          } catch (err) {
+            respond(id, {
+              content: [
+                {
+                  type: 'text',
+                  text: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                },
+              ],
               isError: true,
             })
           }

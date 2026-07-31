@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Tests for thread sidebar scanability improvements:
  *   - Relative timestamps on each row
@@ -9,15 +10,120 @@
  * directly. DOM-level tests render ThreadSidebar via renderToStaticMarkup with
  * a pre-seeded QueryClient — effects never run, so only the initial render
  * is exercised.
+ *
+ * Interactive tests (handleOpenSubject) use createRoot + act to exercise
+ * user interactions that require a live DOM.
  */
 
 import { describe, it, expect } from 'bun:test'
-import { createElement } from 'react'
+import { vi, beforeEach, afterEach } from 'vitest'
+import { createElement, act } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ThreadSidebar } from './ChatPage'
+import { ThreadSidebar, ChatPage } from './ChatPage'
 import { relativeTime, smartTitle } from './chatPageUtils'
-import type { ChatThread } from '@/shared/schemas'
+import type { ChatThread, ActionQueueItem } from '@/shared/schemas'
+
+// ---------------------------------------------------------------------------
+// window.matchMedia stub (happy-dom doesn't implement it)
+// ---------------------------------------------------------------------------
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: (query: string) => ({
+    matches: true,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }),
+})
+
+// ---------------------------------------------------------------------------
+// Module mocks — hoisted by vitest before imports execute.
+// ---------------------------------------------------------------------------
+
+const mockStartThreadFromAlert = vi.fn()
+
+vi.mock('@/entities/alerts/api', () => ({
+  startThreadFromAlert: (...args: unknown[]) => mockStartThreadFromAlert(...args),
+  fetchAlerts: vi.fn().mockResolvedValue([]),
+  useAlerts: () => ({ alerts: [], error: null }),
+  useStartThreadFromAlert: () => ({ mutate: vi.fn(), isPending: false }),
+}))
+
+const mockUseActionQueue = vi.fn()
+
+vi.mock('@/entities/actionQueue/useActionQueue', () => ({
+  useActionQueue: () => mockUseActionQueue(),
+}))
+
+vi.mock('@/entities/actionQueue/useActionQueueHistory', () => ({
+  useActionQueueHistory: () => ({
+    items: [],
+    nextCursor: null,
+    isLoadingMore: false,
+    loadMore: vi.fn(),
+    error: null,
+    projectsError: null,
+    projectsEmpty: false,
+  }),
+}))
+
+vi.mock('@/shared/useFocusedProject', () => ({
+  useFocusedProjectId: () => null,
+  useFocusedProject: () => ({
+    focusedProjectId: null,
+    projectsSettled: true,
+    projectsError: null,
+    projects: [],
+    setFocusedProjectId: vi.fn(),
+  }),
+}))
+
+vi.mock('@/shared/api', () => ({
+  fetchChatThreads: vi.fn().mockResolvedValue([]),
+  fetchChatThread: vi.fn().mockResolvedValue(null),
+  fetchChatHistory: vi.fn().mockResolvedValue([]),
+  fetchCodexAuthState: vi.fn().mockResolvedValue(null),
+  refreshCodexAuth: vi.fn().mockResolvedValue(null),
+  fetchGlossary: vi.fn().mockResolvedValue([]),
+  fetchSkills: vi.fn().mockResolvedValue([]),
+  fetchAdrs: vi.fn().mockResolvedValue([]),
+  fetchVision: vi.fn().mockResolvedValue(null),
+  fetchChatConfig: vi.fn().mockResolvedValue(null),
+  createChatThread: vi.fn().mockResolvedValue({
+    id: 'new-thread-1',
+    title: null,
+    status: 'idle',
+    createdAt: '',
+    updatedAt: '',
+    messageCount: 0,
+  }),
+  postChatMessage: vi.fn().mockResolvedValue(undefined),
+  uploadAttachment: vi.fn().mockResolvedValue({
+    id: 'u1',
+    path: '/uploads/u1',
+    mimeType: 'image/png',
+    name: 'f.png',
+  }),
+  renameChatThread: vi.fn().mockResolvedValue(undefined),
+  deleteChatThread: vi.fn().mockResolvedValue(undefined),
+  stopChatThread: vi.fn().mockResolvedValue(undefined),
+  setMessageFeedback: vi.fn().mockResolvedValue(undefined),
+  clearMessageFeedback: vi.fn().mockResolvedValue(undefined),
+  invokeAction: vi.fn().mockResolvedValue(undefined),
+  ApiError: class ApiError extends Error {
+    kind: string
+    constructor(kind: string, message: string) {
+      super(message)
+      this.kind = kind
+    }
+  },
+}))
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,6 +177,29 @@ const renderSidebarPending = (): string => {
     ),
   )
 }
+
+const makeQc = () =>
+  new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
+
+const makeArcFailedItem = (overrides: Partial<ActionQueueItem> = {}): ActionQueueItem =>
+  ({
+    id: 'q-arc-1',
+    kind: 'arc-failed',
+    entityId: 'arc-xyz-123',
+    priority: 'high',
+    title: 'Arc failed: deploy-prod',
+    body: 'The arc failed at step 3.',
+    at: '2026-01-01T00:00:00.000Z',
+    dag: null,
+    errorKind: 'arc-failed',
+    actions: [],
+    diagnosis: null,
+    failureReasonCode: null,
+    humanSummary: 'Deploy arc got stuck.',
+    verbs: [],
+    decisions: [],
+    ...overrides,
+  } as ActionQueueItem)
 
 // ---------------------------------------------------------------------------
 // relativeTime — pure function
@@ -203,5 +332,120 @@ describe('ThreadSidebar – pending state', () => {
     // The empty-state paragraph uses data-testid="empty-rail"
     expect(html).toContain('data-testid="empty-rail"')
     expect(html).not.toContain('aria-busy="true"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ChatPage — handleOpenSubject: chip pick opens a Subject inline
+// ---------------------------------------------------------------------------
+
+describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
+  let container: HTMLDivElement
+  let root: ReturnType<typeof createRoot>
+
+  beforeEach(() => {
+    mockStartThreadFromAlert.mockResolvedValue({ threadId: 'subject-thread-123' })
+    mockUseActionQueue.mockReturnValue({
+      items: [],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+    vi.clearAllMocks()
+  })
+
+  it('clicking an arc-failed chip calls startThreadFromAlert and sets the active subject thread', async () => {
+    const arcItem = makeArcFailedItem()
+    mockUseActionQueue.mockReturnValue({
+      items: [arcItem],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+
+    await act(async () => {
+      root.render(
+        createElement(QueryClientProvider, { client: makeQc() },
+          createElement(ChatPage),
+        ),
+      )
+    })
+
+    // Chip should be visible in the opening next-moves
+    const chip = container.querySelector('[data-testid="next-move-chip"]')
+    expect(chip).not.toBeNull()
+
+    // Click the chip — triggers handleOpenSubject
+    await act(async () => {
+      chip!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      // Allow the async startThreadFromAlert promise to resolve
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // startThreadFromAlert should have been called with the arc entityId
+    expect(mockStartThreadFromAlert).toHaveBeenCalledWith('arc-xyz-123')
+
+    // The active subject div should now exist with the returned thread id
+    const subject = container.querySelector('[data-testid="active-subject"]')
+    expect(subject).not.toBeNull()
+    expect(subject?.getAttribute('data-thread-id')).toBe('subject-thread-123')
+
+    // Opening block must remain visible — no unmount
+    const opening = container.querySelector('[data-testid="mars-opening-message"]')
+    expect(opening).not.toBeNull()
+  })
+
+  it('repeated clicks on the same arc-failed chip call startThreadFromAlert each time (daemon deduplicates)', async () => {
+    const arcItem = makeArcFailedItem()
+    mockUseActionQueue.mockReturnValue({
+      items: [arcItem],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+    // Both calls return the same thread (daemon dedup)
+    mockStartThreadFromAlert.mockResolvedValue({ threadId: 'subject-thread-123' })
+
+    await act(async () => {
+      root.render(
+        createElement(QueryClientProvider, { client: makeQc() },
+          createElement(ChatPage),
+        ),
+      )
+    })
+
+    const chip = container.querySelector('[data-testid="next-move-chip"]')
+    expect(chip).not.toBeNull()
+
+    // First click
+    await act(async () => {
+      chip!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // Second click on the same chip
+    await act(async () => {
+      chip!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mockStartThreadFromAlert).toHaveBeenCalledTimes(2)
+
+    // The active subject still shows the (same) thread id
+    const subject = container.querySelector('[data-testid="active-subject"]')
+    expect(subject?.getAttribute('data-thread-id')).toBe('subject-thread-123')
   })
 })

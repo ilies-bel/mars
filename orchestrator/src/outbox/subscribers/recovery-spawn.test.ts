@@ -68,6 +68,10 @@ interface SpendControlStoreModule {
   upsertSpendControl: typeof import('../../core/daemon/spend-control/store').upsertSpendControl
 }
 
+interface ContinueTaskModule {
+  coreContinueTask: typeof import('../../core/daemon/continue-task').coreContinueTask
+}
+
 interface Loaded {
   q: QueueModule
   aq: ActionQueueModule
@@ -78,6 +82,7 @@ interface Loaded {
   pub: PublisherModule
   cb: CircuitBreakerModule
   sc: SpendControlStoreModule
+  continueTask: ContinueTaskModule
   client: DbClient
 }
 
@@ -128,7 +133,10 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   const sc = (await import(
     '../../core/daemon/spend-control/store'
   )) as unknown as SpendControlStoreModule
-  return { q, aq, ft, rc, rs, gm, pub, cb, sc, client: q.resolveQueueClient() }
+  const continueTask = (await import(
+    '../../core/daemon/continue-task'
+  )) as unknown as ContinueTaskModule
+  return { q, aq, ft, rc, rs, gm, pub, cb, sc, continueTask, client: q.resolveQueueClient() }
 }
 
 /**
@@ -184,14 +192,18 @@ describe('recovery-spawn outbox subscriber', () => {
   it('spawns exactly one recovery task for a single task.failed event', async () => {
     const { q, ft, rc, rs, pub, client } = await loadModules(repo)
 
-    // Enqueue the origin task and set its failedPhase so the subscriber can
-    // compute a deterministic failure signature.
+    // A durable task.failed event is only recoverable while its origin is
+    // still terminal. Give the failed task a usable worktree, as production
+    // recovery does, so this exercises the failed → recovery-blocked path.
     const t1 = await q.enqueueTask('implement feature X', undefined, {
       skipTriage: true,
     })
-    // failedPhase='verify' + error matching 'no-commits-ahead' rule
-    // → computeFailureSignature('verify', error) = 'verify/no-commits-ahead'
-    await q.updateTask(t1.id, { failedPhase: 'verify' })
+    await q.updateTask(t1.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      branch: `task/${t1.id}`,
+      worktreePath: repo,
+    })
 
     const signature = 'verify/no-commits-ahead'
     const cleanup = registerTestRecipe(rc, signature)
@@ -225,13 +237,150 @@ describe('recovery-spawn outbox subscriber', () => {
     cleanup()
   })
 
+  it('does not block a task continued before its pending failure event drains', async () => {
+    const { q, rs, continueTask, client } = await loadModules(repo)
+    const task = await q.enqueueTask('resume without stale recovery', undefined, {
+      skipTriage: true,
+    })
+
+    // Subscribe before the failure so its event remains pending while the
+    // operator continues the task.
+    await rs.ensureRecoverySpawner(client)
+    await q.updateTask(task.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      branch: `task/${task.id}`,
+      worktreePath: repo,
+      error: 'no commits ahead of integration branch',
+    })
+
+    await continueTask.coreContinueTask(task.id)
+    await rs.drainRecoverySpawner(client)
+
+    expect((await q.getTask(task.id))?.status).toBe('queued')
+    const recoveries = await client.execute({
+      sql: 'SELECT id FROM tasks WHERE fix_for_task_id = ?',
+      args: [task.id],
+    })
+    expect(recoveries.rows).toHaveLength(0)
+  })
+
+  it('escalates a pre-setup failure without spawning a recovery task', async () => {
+    const { q, aq, rs, client } = await loadModules(repo)
+    const origin = await q.enqueueTask('triage this task', undefined, {
+      skipTriage: true,
+    })
+
+    await rs.ensureRecoverySpawner(client)
+    await q.updateTask(origin.id, {
+      status: 'failed',
+      failedPhase: 'code',
+      failureReason: 'triage',
+      error: 'triage workflow failed: claude -p exited 1',
+    })
+
+    const { processed } = await rs.drainRecoverySpawner(client)
+    expect(processed).toBe(1)
+
+    const recoveries = await client.execute({
+      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+      args: [origin.id],
+    })
+    expect(recoveries.rows).toHaveLength(0)
+
+    const items = await aq.listActionQueueItems('open')
+    expect(
+      items.filter(
+        (item) =>
+          item.originTaskId === origin.id &&
+          (item.payload as Record<string, unknown>).taskId === origin.id,
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('never reopens a failed recovery task, so the escalation cannot re-drive itself', async () => {
+    // Regression (fix-139f327c, 2026-07-31). The drain used to reopen EVERY
+    // terminal row through the audited reopen seam, including recovery Chores.
+    // For a recovery that closed the loop: reopen → `queued`, escalation writes
+    // it back to `failed`, that status change emits a NEW task.failed carrying
+    // the composed reason, the next 30 s drain feeds it back in. Ten passes
+    // later `failure_reason` was ten `recovery_failed:` prefixes deep with the
+    // real error truncated away, and each pass had re-raised the action-queue
+    // row and re-spawned the rescue operator. A recovery Chore is a leaf
+    // (ADR-0040) and is never re-run, so it must never be reopened.
+    const { q, ft, rc, rs, client } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'seed-recovery')
+    const origin = await q.enqueueTask('origin work', undefined, {
+      skipTriage: true,
+    })
+    const { fixTaskId } = await ft.upsertFixTask({
+      sourceTaskId: origin.id,
+      failureSignature: 'seed-recovery',
+      failingStep: 'code',
+      truncatedError: 'coder left 1 path(s) uncommitted',
+      branch: `task/${origin.id}`,
+      recipeContext: {
+        targetPath: repo,
+        statusOutput: 'coder left 1 path(s) uncommitted',
+        targetBranch: `task/${origin.id}`,
+        originalPrompt: origin.prompt,
+      },
+    })
+
+    // Subscribe first so the failure written below is the one event we drain.
+    await rs.ensureRecoverySpawner(client)
+    await q.updateTask(fixTaskId, {
+      status: 'failed',
+      failedPhase: 'code',
+      failureReason: 'code',
+      branch: `task/${origin.id}`,
+      worktreePath: repo,
+      error: 'coder left 1 path(s) uncommitted',
+    })
+
+    const { processed } = await rs.drainRecoverySpawner(client)
+    expect(processed).toBe(1)
+
+    const recovery = await q.getTask(fixTaskId)
+    expect(recovery?.status).toBe('failed')
+    expect(recovery?.failureReason?.match(/recovery_failed:/g)).toHaveLength(1)
+    // The captured process output survives: `error` is never overwritten with
+    // the derived reason (that erased the real output the Steward brief reads).
+    expect(recovery?.error).toBe('coder left 1 path(s) uncommitted')
+
+    // The terminal recovery row was never reopened …
+    const reopens = await client.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_terminal_reopens WHERE task_id = ?`,
+      args: [fixTaskId],
+    })
+    expect(Number((reopens.rows[0] as unknown as { n: number }).n)).toBe(0)
+
+    // … so the escalation emitted no second task.failed to feed the next drain.
+    const failedEvents = await client.execute({
+      sql: `SELECT COUNT(*) AS n FROM events
+             WHERE type = 'task.failed' AND payload LIKE ?`,
+      args: [`%${fixTaskId}%`],
+    })
+    expect(Number((failedEvents.rows[0] as unknown as { n: number }).n)).toBe(1)
+
+    // A second drain has nothing left to do — the loop is broken, not throttled.
+    expect((await rs.drainRecoverySpawner(client)).processed).toBe(0)
+
+    cleanup()
+  })
+
   it('spawns zero additional recovery tasks when the same event is replayed (cursor already advanced)', async () => {
     const { q, ft, rc, rs, pub, client } = await loadModules(repo)
 
     const t1 = await q.enqueueTask('implement feature Y', undefined, {
       skipTriage: true,
     })
-    await q.updateTask(t1.id, { failedPhase: 'verify' })
+    await q.updateTask(t1.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      branch: `task/${t1.id}`,
+      worktreePath: repo,
+    })
 
     const signature = 'verify/no-commits-ahead'
     const cleanup = registerTestRecipe(rc, signature)
@@ -334,11 +483,57 @@ describe('recovery-spawn outbox subscriber', () => {
     expect(originItems.length).toBeGreaterThanOrEqual(1)
   })
 
+  it('does not launch a rescue task when a recovery cannot find its origin worktree', async () => {
+    const { q, ft, rs, pub, client } = await loadModules(repo)
+    const origin = await q.enqueueTask('implement feature Z', undefined, {
+      skipTriage: true,
+    })
+    const recovery = await ft.upsertFixTask({
+      sourceTaskId: origin.id,
+      failureSignature: 'verify/no-commits-ahead',
+      failingStep: 'verify:has-diff',
+      truncatedError: 'no commits ahead of integration branch',
+      branch: null,
+      recipeContext: {
+        targetPath: '',
+        statusOutput: 'no commits ahead',
+        targetBranch: 'main',
+        originalPrompt: origin.prompt,
+      },
+    })
+
+    await q.updateTask(recovery.fixTaskId, {
+      status: 'failed',
+      failedPhase: 'code',
+      failureReason: 'setup:origin-worktree-missing',
+      error: 'origin worktree is missing',
+    })
+    await rs.ensureRecoverySpawner(client)
+    await publish(pub, client, 'task.failed', {
+      taskId: recovery.fixTaskId,
+      error: 'origin worktree is missing',
+    })
+
+    await rs.drainRecoverySpawner(client)
+
+    const followUps = await client.execute({
+      sql: `SELECT id FROM tasks WHERE id NOT IN (?, ?)`,
+      args: [origin.id, recovery.fixTaskId],
+    })
+    expect(followUps.rows).toHaveLength(0)
+  })
+
   it('requeues the origin task and spares the recovery slot when the circuit breaker is open', async () => {
     const { q, cb, rs, pub, client } = await loadModules(repo)
 
     const t1 = await q.enqueueTask('implement feature amid outage', undefined, {
       skipTriage: true,
+    })
+    const worktreePath = resolve(repo, '.mars', 'worktrees', t1.id)
+    mkdirSync(worktreePath, { recursive: true })
+    await q.updateTask(t1.id, {
+      branch: `task/${t1.id}`,
+      worktreePath,
     })
     // Move the task to failed so the requeue is observable (status 'queued' → 'failed' → 'queued').
     await q.updateTask(t1.id, { status: 'failed', failedPhase: 'code', error: 'api connection refused' })
@@ -375,7 +570,12 @@ describe('recovery-spawn outbox subscriber', () => {
     const t1 = await q.enqueueTask('implement feature (no outage)', undefined, {
       skipTriage: true,
     })
-    await q.updateTask(t1.id, { failedPhase: 'verify' })
+    await q.updateTask(t1.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      branch: `task/${t1.id}`,
+      worktreePath: repo,
+    })
 
     const signature = 'verify/no-commits-ahead'
     const cleanup = registerTestRecipe(rc, signature)
@@ -412,6 +612,12 @@ describe('recovery-spawn outbox subscriber', () => {
 
     const t1 = await q.enqueueTask('feature with suppressed recovery', undefined, {
       skipTriage: true,
+    })
+    const worktreePath = resolve(repo, '.mars', 'worktrees', t1.id)
+    mkdirSync(worktreePath, { recursive: true })
+    await q.updateTask(t1.id, {
+      branch: `task/${t1.id}`,
+      worktreePath,
     })
     // Pre-set to failed (mirrors production: the event is emitted FROM the
     // status transition to failed, so the task is already failed at drain time).
@@ -458,7 +664,12 @@ describe('recovery-spawn outbox subscriber', () => {
       skipTriage: true,
     })
     // Default spend-control levers have suppressRecovery=false; no upsert needed.
-    await q.updateTask(t1.id, { failedPhase: 'verify' })
+    await q.updateTask(t1.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      branch: `task/${t1.id}`,
+      worktreePath: repo,
+    })
 
     const signature = 'verify/no-commits-ahead'
     const cleanup = registerTestRecipe(rc, signature)
@@ -536,6 +747,8 @@ describe('verify-gate meta-monitor suppression', () => {
       failureReason: VERIFY_STEP,
       failureSignature: VERDICT,
       error: GATE_ERROR,
+      branch: `task/${t.id}`,
+      worktreePath: repo,
     })
     await rs.drainRecoverySpawner(client)
     return t.id

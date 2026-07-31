@@ -12,28 +12,39 @@ import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import {
+  loadDaemonConfig,
+  AUTONOMY_LEVELS,
   patchDaemonConfigFile,
   persistLeverAutonomyLevel,
   readDaemonConfigFile,
 } from '../../core/daemon/config'
 import type { AutonomyLevel } from '../../core/daemon/config'
+import { describePauseState } from '../../core/daemon/pause-state'
+import type { DispatchPauseState } from '../../core/daemon/pause-state'
 import {
   daemonPaths,
   isDaemonAlive,
   resolveLaunchCommand,
 } from '../../core/daemon/paths'
+import { warnWhenRepoRootDiffersFromIntegration } from '../../core/lib/repo-root-branch-warning'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, isDaemonDownError } from './shared'
 
 const spawnDetached = (deps: CommandDeps): void => {
   const { command, baseArgs } = resolveLaunchCommand()
+  const workerProvider =
+    process.env.MARS_WORKER_PROVIDER ?? loadDaemonConfig().defaultProvider
   const child = spawn(
     command,
     [...baseArgs, '--repo', deps.ctx.repoRoot, 'daemon', 'start', '--foreground'],
     {
       detached: true,
       stdio: 'ignore',
-      env: { ...process.env, MARS_REPO: deps.ctx.repoRoot },
+      env: {
+        ...process.env,
+        MARS_REPO: deps.ctx.repoRoot,
+        MARS_WORKER_PROVIDER: workerProvider,
+      },
     },
   )
   child.unref()
@@ -151,10 +162,12 @@ const daemonReload: Command = {
           triage: number
           refine: number
           'structured-write': number
+          'setup-install': number
+          verify: number
         }
       }
       deps.out(
-        `concurrency reloaded: implement=${data.caps.implement} triage=${data.caps.triage} refine=${data.caps.refine} structured-write=${data.caps['structured-write']}`,
+        `concurrency reloaded: implement=${data.caps.implement} triage=${data.caps.triage} refine=${data.caps.refine} structured-write=${data.caps['structured-write']} setup-install=${data.caps['setup-install']} verify=${data.caps.verify}`,
       )
     } catch (err) {
       const msg = errorMessage(err)
@@ -209,9 +222,9 @@ const daemonPause: Command = {
     try {
       const data = (await deps.daemon.sendRequest(
         { op: 'pause' },
-      )) as { paused: boolean; inFlight: number }
+      )) as { paused: boolean; reason: string | null; inFlight: number }
       deps.out(
-        `daemon paused: dispatch suspended (${data.inFlight} task(s) in flight). Run \`mars daemon resume\` to resume.`,
+        `daemon paused (reason: ${data.reason ?? 'operator'}): dispatch suspended (${data.inFlight} task(s) in flight). Run \`mars daemon resume\` to resume.`,
       )
     } catch (err) {
       const msg = errorMessage(err)
@@ -231,8 +244,15 @@ const daemonResume: Command = {
   usage: 'usage: mars daemon resume',
   run: async (_args, deps) => {
     try {
-      await deps.daemon.sendRequest({ op: 'resume' })
-      deps.out('daemon resumed: dispatch re-enabled')
+      const data = (await deps.daemon.sendRequest({ op: 'resume' })) as {
+        paused: boolean
+        clearedReason: string | null
+      }
+      deps.out(
+        data.clearedReason !== null
+          ? `daemon resumed: dispatch re-enabled (cleared ${data.clearedReason} pause)`
+          : 'daemon resumed: dispatch re-enabled (was not paused)',
+      )
     } catch (err) {
       const msg = errorMessage(err)
       if (isDaemonDownError(msg)) {
@@ -250,6 +270,11 @@ const daemonStatus: Command = {
   summary: 'print daemon pid, counts, and in-flight tasks',
   usage: 'usage: mars daemon status',
   run: async (_args, deps) => {
+    warnWhenRepoRootDiffersFromIntegration(
+      deps.ctx.repoRoot,
+      process.env.INTEGRATION_BRANCH ?? 'main',
+      deps.out,
+    )
     const liveness = await isDaemonAlive()
     if (!liveness.alive) {
       deps.err(`daemon not running (${liveness.reason})`)
@@ -262,19 +287,33 @@ const daemonStatus: Command = {
       startedAt: string
       inFlight: ReadonlyArray<{ taskId: string; kind: string }>
       counts: Record<string, number>
+      implementCap: { configured: number; effective: number; reason: string | null }
       sourceSha: string | null
       currentSha: string | null
       isStale: boolean
-      isPaused: boolean
+      pause: DispatchPauseState
     }
-    if (data.isPaused) {
-      deps.out('⏸ PAUSED — dispatch suspended; run `mars daemon resume` to resume')
+    const pauseLine = describePauseState(data.pause)
+    if (pauseLine !== null) {
+      deps.out(
+        `⏸ PAUSED (${pauseLine}) — dispatch suspended; run \`mars daemon resume\` to resume`,
+      )
     }
     deps.out(`pid:        ${data.pid}`)
     deps.out(`startedAt:  ${data.startedAt}`)
     deps.out(
       `counts:     draft=${data.counts.draft} queued=${data.counts.queued} running=${data.counts.running} verifying=${data.counts.verifying} merging=${data.counts.merging} vega-reconciling=${data.counts['vega-reconciling']}`,
     )
+    // Effective vs configured implement cap. The autotuner silently overrides
+    // the configured value, so always print the effective one and explain any
+    // divergence rather than letting the operator trust .mars/daemon.json.
+    const cap = data.implementCap
+    deps.out(
+      `implement:  cap=${cap.effective} (configured ${cap.configured})${
+        cap.effective === cap.configured ? '' : ' ⚠'
+      }`,
+    )
+    if (cap.reason !== null) deps.out(`            ${cap.reason}`)
     deps.out(`inFlight:   ${data.inFlight.length}`)
     for (const f of data.inFlight) deps.out(`  ${f.kind} ${f.taskId}`)
     if (data.isStale && data.sourceSha !== null && data.currentSha !== null) {
@@ -286,6 +325,25 @@ const daemonStatus: Command = {
   },
 }
 
+const daemonUsage: Command = {
+  path: 'daemon usage',
+  summary: 'print the latest usage snapshot as JSON',
+  usage: 'usage: mars daemon usage',
+  run: async (_args, deps) => {
+    const { migrateQueueSchema, resolveQueueClient } = await import('../../core/queue')
+    await migrateQueueSchema()
+    const client = resolveQueueClient()
+    const { getLatestUsageSnapshot } = await import('../../core/lib/usage-snapshot-store')
+    const row = await getLatestUsageSnapshot(client)
+    if (!row) {
+      deps.err('no usage snapshot available')
+      return { code: 1 }
+    }
+    deps.out(JSON.stringify(row))
+    return { code: 0 }
+  },
+}
+
 const daemonStart: Command = {
   path: 'daemon start',
   summary: 'start the daemon (detached, or --foreground)',
@@ -293,6 +351,7 @@ const daemonStart: Command = {
   run: async (args, deps) => {
     const foreground = args.positional.includes('--foreground')
     if (foreground) {
+      process.env.MARS_WORKER_PROVIDER ??= loadDaemonConfig().defaultProvider
       const { logFile } = daemonPaths()
       const writeBootLog = (msg: string): void => {
         try {
@@ -373,6 +432,7 @@ const CAP_NAME_MAP: Readonly<Record<string, string>> = {
   refine: 'refine',
   'structured-write': 'structuredWrite',
   'setup-install': 'setupInstall',
+  verify: 'verify',
 }
 
 const daemonSetCap: Command = {
@@ -414,10 +474,12 @@ const daemonSetCap: Command = {
           triage: number
           refine: number
           'structured-write': number
+          'setup-install': number
+          verify: number
         }
       }
       deps.out(
-        `concurrency reloaded: implement=${data.caps.implement} triage=${data.caps.triage} refine=${data.caps.refine} structured-write=${data.caps['structured-write']}`,
+        `concurrency reloaded: implement=${data.caps.implement} triage=${data.caps.triage} refine=${data.caps.refine} structured-write=${data.caps['structured-write']} setup-install=${data.caps['setup-install']} verify=${data.caps.verify}`,
       )
     } catch (err) {
       const msg = errorMessage(err)
@@ -431,24 +493,24 @@ const daemonSetCap: Command = {
   },
 }
 
-const VALID_AUTONOMY_LEVELS = new Set<string>(['off', 'ask', 'silent'])
+const VALID_AUTONOMY_LEVELS = new Set<string>(AUTONOMY_LEVELS)
 
 const daemonSetLever: Command = {
   path: 'daemon set-lever',
-  summary: 'set a lever property (autonomy: off|ask|silent)',
-  usage: 'usage: mars daemon set-lever <name> autonomy <off|ask|silent>',
+  summary: 'set a lever property (autonomy: off|ask|tell)',
+  usage: 'usage: mars daemon set-lever <name> autonomy <off|ask|tell>',
   run: async (args, deps) => {
     const positional = args.positional.filter((a) => !a.startsWith('--'))
     const name = positional[0]
     const prop = positional[1]
     const value = positional[2]
     if (!name || prop !== 'autonomy' || !value) {
-      deps.err('usage: mars daemon set-lever <name> autonomy <off|ask|silent>')
+      deps.err('usage: mars daemon set-lever <name> autonomy <off|ask|tell>')
       return { code: 2 }
     }
     if (!VALID_AUTONOMY_LEVELS.has(value)) {
       deps.err(
-        `mars daemon set-lever: autonomy must be 'off', 'ask', or 'silent'; got '${value}'`,
+        `mars daemon set-lever: autonomy must be 'off', 'ask', or 'tell'; got '${value}'`,
       )
       return { code: 2 }
     }
@@ -644,10 +706,10 @@ const daemonGroup: Command = {
   path: 'daemon',
   summary: 'daemon subcommands',
   usage:
-    'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control> [flags]',
+    'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control|usage> [flags]',
   run: (_args, deps) => {
     deps.err(
-      'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control> [flags]',
+      'usage: mars daemon <start|stop|restart|kill|status|reload|set-flag|set-cap|set-lever|pause|resume|spend-control|usage> [flags]',
     )
     return { code: 2 }
   },
@@ -666,5 +728,6 @@ export const daemonCommands: readonly Command[] = [
   daemonPause,
   daemonResume,
   daemonSpendControl,
+  daemonUsage,
   daemonGroup,
 ]

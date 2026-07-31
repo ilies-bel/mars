@@ -2,7 +2,7 @@
 
 ## Mars Framework
 
-TypeScript CLI (`mars`) + orchestrator running Claude Code in parallel
+TypeScript CLI (`mars`) + provider-agnostic orchestrator running agent CLIs in parallel
 git worktrees, read-only frontend (`ui/`), design drafts (`design/`).
 
 ## Project status
@@ -22,7 +22,7 @@ direct.
 
 **General rule:** run `mars workflow list` to see every available
 pipeline. Each is a runbook with declared execution modes and Step
-guides, renderable via `mars workflow validate <name>`. Pick the
+guides, renderable via `mars workflow render <name>`. Pick the
 pipeline whose shape fits the work and select it at enqueue with
 `--workflow <name>`.
 
@@ -84,7 +84,7 @@ per-change and must be re-confirmed, even within the same session.
 ## Top-level directories
 
 - `orchestrator/` — the orchestrator, running on the in-house
-  `@mars/workflow` engine (`packages/workflow/`). Headless Claude Code in
+  `@mars/workflow` engine (`packages/workflow/`). Headless provider agents in
   parallel worktrees → verify → fast-forward into `main`. Conflicts go
   to `vcs-supervisor` ("Vega"). Node `>=22.13.0`.
 - `.mars/` — per-repo state (`pg/data/` — the embedded Postgres data
@@ -127,7 +127,7 @@ completion.
 ## Key concepts
 
 - **Orchestrator workflow** — 4 steps: `setup` (worktree on `task/<id>` off
-  `main`) → `code` (`claude -p`) → `verify` → `merge` (serialized via file
+  `main`) → `code` (selected provider CLI) → `verify` → `merge` (serialized via file
   lock; coding parallel).
 - **Merge target** — `main`. Override per-invocation with
   `INTEGRATION_BRANCH=<branch>`.
@@ -141,6 +141,39 @@ waiting to be shaped (kind `draft-proposal`) — appears as an action queue
 message. Pick one via `mars action-queue list` or `/mars:action-queue`; the action queue
 dispatches to the right resolver (`/mars:unblock`, `/mars:grill`, or
 terminal restart/purge — the queue is a pure projection, no operator gesture closes a row). To see pending work, run `/mars:chat` or `/mars:action-queue`.
+
+**Watch for alerts; don't wait to be asked.** Alerts (kinds `failed`
+and `stale-queued`) arrive on their own schedule — a background task can
+fail minutes after you enqueued it and moved on. Check at natural
+checkpoints, not continuously: at session start, after `mars task add`,
+before reporting a batch of work as done, and whenever the user asks what
+is happening.
+
+Poll with the filtered listing — never by tailing the event stream:
+
+```
+mars action-queue list open --kind failed,stale-queued
+```
+
+It prints one tab-separated line per alert (`id  priority  kind  title`)
+and nothing at all when clear, so it is cheap enough to run often. The
+`GET /events` endpoint is a cursor-paginated JSON trace query (the response
+includes `events` and `nextCursor`), useful for after-the-fact inspection of
+a task's trace. The daemon's SSE channel is `GET /view/stream`; it sends
+payload-free, typed invalidation pings, so clients learn that a view changed
+and re-fetch rather than receiving event contents. Do not pull either HTTP
+surface into a session for routine alert-watching; use the filtered listing
+above.
+
+The action queue is served by the daemon. If the daemon is down the
+command exits 1 with `action queue: daemon not running`, and against a
+stale `.mars/http.port` it can take minutes to say so. That is "unknown",
+not "no alerts" — report it as such rather than as a clean queue. Only
+`action queue empty` (exit 0) means there is nothing pending.
+
+When a new alert appears, surface it unprompted — id, kind, title — and
+point at `/mars:alerts` for triage. Do not restart, purge, or remove a
+worktree without the user's say-so.
 
 ## Glossary and ADRs
 
@@ -220,13 +253,13 @@ recovery-spawn path itself.
 
 - Coder runs get a deviation-rules brief: no bailing without an auto-fix
   commit, a `--blocked-by $TASK_ID` follow-up, or a `mars proposal add`.
-- **Worker models (defaults):** Coder → `claude-sonnet-4-6`, Fixer →
-  `claude-sonnet-4-6` (scoped mechanical recovery), Writer → `claude-haiku-4-5-20251001`,
-  Planner/Slicer → `claude-opus-4-7` (architectural reasoning), Triager →
-  `claude-sonnet-4-6`. Override the Coder model for the lifetime of a daemon
-  process via `MARS_WORKER_MODEL=<model>` (e.g. `MARS_WORKER_MODEL=claude-opus-4-7`
-  for a high-complexity session). Planner, Slicer, Writer, and Fixer models are
-  always pinned; only Coder is overridable. Override the Coder Provider similarly via `MARS_WORKER_PROVIDER=<claude|codex|gemini>`; other Worker classes stay pinned to Claude.
+- **Worker provider and models:** Codex is the default. `defaultProvider` in
+  `.mars/daemon.json` selects Codex, Claude, or Gemini for every Worker;
+  `MARS_WORKER_PROVIDER` is the one-daemon override. Providers translate the
+  flagship/balanced/fast tiers to native model ids. Codex uses
+  `gpt-5.6-sol` / `gpt-5.6-terra` / `gpt-5.6-luna` through `codex exec` and
+  reuses the local `codex login` session. `MARS_WORKER_MODEL` overrides only
+  the Coder model.
 - To inspect live runs, open `mars ui` (read-only Kanban + trace dashboard)
   or query the daemon HTTP API: read `PORT=$(cat .mars/http.port)` first —
   the daemon binds an OS-assigned ephemeral port (see Conventions).
@@ -234,6 +267,13 @@ recovery-spawn path itself.
   fix-task / Investigator spawns in-memory (not persisted across daemon
   restarts). Toggle off during failure storms (e.g. quota cascades) to stop
   the self-heal cycle while you diagnose.
+- **Pause / resume:** `mars daemon pause` suspends dispatch and **is persisted
+  to `.mars/daemon.json`** so the paused state survives a daemon auto-respawn.
+  A restarted daemon will come up paused and log `[pause] restored persisted
+  paused state` at startup. Run `mars daemon resume` to re-enable dispatch;
+  this also clears the persisted flag. Unlike `set-flag`, pause IS persisted
+  because the data-loss risk of silently un-pausing outweighs the surprise of
+  a restarted daemon still being paused.
 
 ## Conventions
 
@@ -245,6 +285,28 @@ recovery-spawn path itself.
   `orchestrator/docs/implement-pipeline.md`; the `mastra` skill no longer
   applies to this repo.
 - Never commit `.env`, `.mars/`, or `node_modules`.
+- **Deleting tasks: `purge` vs `drop`.** `mars purge <id>` only accepts
+  terminal tasks (`failed`/`done`/`dropped`) — it refuses anything it
+  considers in-flight, and `queued` counts as in-flight. `mars drop <id>
+  [--force]` deletes a task in **any** status. Both clean up properly:
+  they remove the worktree, the branch, and the task's blocker edges,
+  reporting e.g. `worktree=absent; branch=absent; edges=1in/0out`.
+  **Never delete task rows with raw SQL.** Deleting a row out from under
+  its dependents leaves the `task_blockers` edges dangling and strands
+  every dependent in `blocked` forever; deleting an origin whose recovery
+  task still points at it produces a
+  `setup:origin-worktree-missing` cascade (this has already happened once
+  at a scale of 170 tasks). Bulk deletes are slow (~1-3 s each) — run them
+  backgrounded in batches, never as one foreground command.
+- **Never `git stash`.** `refs/stash` lives in the common git dir, so every
+  worktree in this repo shares one stack addressed by shifting positions
+  (`stash@{0}`, `stash@{1}`) — and the orchestrator's own checkpoints used to
+  live there, so a `pop` can hand you another task's uncommitted work. To park
+  changes temporarily, restore individual paths with `git checkout <ref> --
+  <paths>` (e.g. `git checkout $(git merge-base HEAD origin/main) -- <file>`),
+  commit a wip commit on your own branch, or work in a scratch clone. The
+  orchestrator checkpoints to per-task refs (`refs/mars/checkpoint/<task-id>`,
+  see `orchestrator/src/core/lib/git/checkpoint.ts`), never to the stash.
 - Never `cd`. Bash CWD persists across tool calls, and `mars` resolves
   the repo from CWD upward — once shifted into `.mars/worktrees/<id>/`,
   every later `mars` call silently binds to that worktree's `.mars/` and
@@ -321,6 +383,18 @@ Enqueue the moment you spot one — **one `mars task add` per item**, no
 batching, no MEMORY.md, no markdown TODOs. Only concrete, actionable work
 the user has seen. If user says "skip", drop it. At stopping points
 ("looks good", "ship it"), do a final sweep as a safety net.
+
+**An operational error is a loose end.** Whenever a `mars` command is
+rejected, a verb turns out to be the wrong one, a flag does not exist, a
+query returns something the docs did not predict, or a manual workaround
+is needed to get unstuck — **file a task for it in the same breath as
+fixing it**. Do not settle for repairing the immediate symptom and
+explaining the lesson in chat: chat is discarded, the next session
+re-learns it the hard way, and the workaround silently becomes tribal
+knowledge. The task should capture the surprising behaviour, the correct
+invocation, and where the guardrail belongs (a CLAUDE.md convention, a
+clearer CLI error message, or a code fix). Update this file in the same
+change when the lesson is a durable convention rather than a bug.
 
 Each task prompt must stand alone. Include:
 

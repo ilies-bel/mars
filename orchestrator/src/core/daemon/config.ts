@@ -5,14 +5,25 @@ import { resolveContext } from '../context'
 import type { ProviderName } from '../workers/providers'
 
 /** Three-position autonomy axis for each operator lever. */
-export type AutonomyLevel = 'off' | 'ask' | 'silent'
+export const AUTONOMY_LEVELS = ['off', 'ask', 'tell'] as const
+export type AutonomyLevel = (typeof AUTONOMY_LEVELS)[number]
+
+/**
+ * The shared autonomous position. Keep this derived from the type source of
+ * truth: mars-8b5c09ce is settling the tell/silent glossary divergence.
+ */
+export const AUTONOMOUS_AUTONOMY_LEVEL: AutonomyLevel = AUTONOMY_LEVELS[2]
+
+export const STEWARD_PROMPT_OPTIMIZER_LEVER = 'steward_prompt_optimizer' as const
+
+export type WorkerPromptBlockId = 'Coder.system' | 'COMMIT_FOOTER'
 
 /**
  * Zod schema for a single lever entry in daemon.json's `levers` map.
  * The `autonomy_level` field defaults to `'ask'` when omitted.
  */
 export const leverSchema = z.object({
-  autonomy_level: z.enum(['off', 'ask', 'silent']).default('ask'),
+  autonomy_level: z.enum(AUTONOMY_LEVELS).default('ask'),
 })
 
 export type LeverEntry = z.infer<typeof leverSchema>
@@ -22,6 +33,7 @@ export type ControlLeverValue = 'on' | 'off'
 export interface ControlLevers {
   recovery: ControlLeverValue
   scoring: ControlLeverValue
+  autoReflect: ControlLeverValue
 }
 
 export interface DaemonCaps {
@@ -31,6 +43,19 @@ export interface DaemonCaps {
   structuredWrite: number
   /** Maximum concurrent worktree dependency installs (MARS_MAX_SETUP_INSTALL). Default 2. */
   setupInstall: number
+  /**
+   * Maximum concurrent verify steps (MARS_MAX_VERIFY). Default 2.
+   *
+   * The verify step (npm test / typecheck) is CPU-intensive. Without a cap,
+   * every in-flight implement slot can run a full test suite simultaneously,
+   * multiplying load beyond what the host can sustain. This semaphore limits
+   * how many verify steps run at once, independently of the implement cap.
+   *
+   * A task waiting on this semaphore releases its implement slot first so
+   * other tasks can continue coding while verify is queued. There is no
+   * circular dependency (coding never waits on verify), so the cap is deadlock-safe.
+   */
+  verify: number
 }
 
 export interface SelfEvolveConfig {
@@ -77,11 +102,10 @@ export interface DaemonConfig {
    */
   autoApprovePlans: boolean
   /**
-   * The default agent provider for live/PTY runs. Persisted by `mars init
-   * --provider <name>` and read by the dispatch path for live pipeline runs.
-   * Headless (stream-json) runs always use 'claude' regardless of this setting
-   * — the field is advisory for live task dispatching only.
-   * Default: 'claude'.
+   * The default agent provider for every Worker in this daemon. Persisted by
+   * `mars init --provider <name>` and resolved before headless or PTY workers
+   * are imported. An explicit MARS_WORKER_PROVIDER env value overrides it for
+   * one daemon process. Default: 'codex'.
    */
   defaultProvider: ProviderName
   /**
@@ -99,6 +123,7 @@ const DEFAULTS: DaemonCaps = {
   refine: 6,
   structuredWrite: 1,
   setupInstall: 2,
+  verify: 2,
 }
 
 const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
@@ -115,9 +140,13 @@ const DEFAULT_SCORING: ScoringConfig = {
 
 const DEFAULT_AUTO_APPROVE_PLANS = false
 
-const DEFAULT_PROVIDER: ProviderName = 'claude'
+const DEFAULT_PROVIDER: ProviderName = 'codex'
 
-const DEFAULT_CONTROL_LEVERS: ControlLevers = { recovery: 'on', scoring: 'on' }
+const DEFAULT_CONTROL_LEVERS: ControlLevers = {
+  recovery: 'on',
+  scoring: 'on',
+  autoReflect: 'on',
+}
 
 const VALID_PROVIDER_NAMES = new Set<string>(['claude', 'gemini', 'codex'])
 
@@ -225,21 +254,98 @@ export const patchDaemonConfigFile = (
 }
 
 /**
+ * Read the persisted `paused` flag from daemon.json.
+ *
+ * Returns `true` when `mars daemon pause` was called and the flag was written
+ * before the daemon exited. Returns `false` (the safe default) when the field
+ * is absent, non-boolean, or the file is missing or invalid.
+ *
+ * The flag is intentionally persisted so that an operator who pauses the daemon
+ * to work directly in the primary checkout does not lose that intent across an
+ * auto-respawn (which used to silently un-pause and could trigger a hard-reset
+ * of uncommitted operator work — ADR-0058).
+ */
+export const readPersistedPaused = (): boolean => {
+  const raw = readDaemonConfigFile()
+  return raw.paused === true
+}
+
+/**
+ * Persist the `paused` flag to `daemon.json` so it survives a daemon restart.
+ *
+ * When `value` is `false`, the key is removed from the file (equivalent to
+ * absent / default-false) rather than written as `false`, keeping the file
+ * minimal. Uses `patchDaemonConfigFile` so all other keys are preserved.
+ */
+export const persistPaused = (value: boolean): void => {
+  if (value) {
+    patchDaemonConfigFile({ paused: true })
+  } else {
+    patchDaemonConfigFile({ paused: null })
+  }
+}
+
+/**
  * Read the autonomy_level for `name` from daemon.json's `levers` map.
- * Returns `'ask'` when the lever is absent or the stored value is invalid.
+ * Returns `'ask'` when the lever is absent. A persisted invalid or retired
+ * value is rejected explicitly so an operator's autonomy choice is never
+ * silently changed to the default.
  */
 export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
   const raw = readDaemonConfigFile()
   const levers = raw.levers
   if (levers === null || typeof levers !== 'object' || Array.isArray(levers)) {
-    return 'ask'
+    return name === STEWARD_PROMPT_OPTIMIZER_LEVER ? AUTONOMOUS_AUTONOMY_LEVEL : 'ask'
   }
   const leverData = (levers as Record<string, unknown>)[name]
   if (leverData === null || typeof leverData !== 'object' || Array.isArray(leverData)) {
-    return 'ask'
+    return name === STEWARD_PROMPT_OPTIMIZER_LEVER ? AUTONOMOUS_AUTONOMY_LEVEL : 'ask'
+  }
+  const autonomyLevel = (leverData as Record<string, unknown>).autonomy_level
+  if (autonomyLevel !== undefined && !AUTONOMY_LEVELS.includes(autonomyLevel as AutonomyLevel)) {
+    const kind = autonomyLevel === 'silent' ? 'retired' : 'invalid'
+    throw new Error(
+      `daemon.json lever '${name}' has ${kind} autonomy level '${String(autonomyLevel)}'; valid levels are 'off', 'ask', or 'tell'`,
+    )
   }
   const parsed = leverSchema.safeParse(leverData)
-  return parsed.success ? parsed.data.autonomy_level : 'ask'
+  if (!parsed.success) {
+    throw new Error(
+      `daemon.json lever '${name}' is invalid; autonomy must be 'off', 'ask', or 'tell'`,
+    )
+  }
+  return parsed.data.autonomy_level
+}
+
+/** Read an operator-/Steward-managed standing Worker prompt block, if any. */
+export const readWorkerPromptOverride = (block: WorkerPromptBlockId): string | null => {
+  const workerPrompts = readDaemonConfigFile().workerPrompts
+  if (workerPrompts === null || typeof workerPrompts !== 'object' || Array.isArray(workerPrompts)) {
+    return null
+  }
+  const value = (workerPrompts as Record<string, unknown>)[block]
+  return typeof value === 'string' && value.trim().length > 0 ? value : null
+}
+
+/**
+ * Persist an override for a Mars-owned standing Worker prompt block. Operator
+ * task prompts never pass through this map.
+ */
+export const persistWorkerPromptOverride = (
+  block: WorkerPromptBlockId,
+  text: string | null,
+): void => {
+  const current = readDaemonConfigFile()
+  const existing =
+    current.workerPrompts !== null &&
+    typeof current.workerPrompts === 'object' &&
+    !Array.isArray(current.workerPrompts)
+      ? (current.workerPrompts as Record<string, unknown>)
+      : {}
+  const next = { ...existing }
+  if (text === null) delete next[block]
+  else next[block] = text
+  patchDaemonConfigFile({ workerPrompts: next })
 }
 
 /**
@@ -281,6 +387,9 @@ export const readControlLevers = (): ControlLevers => {
     }
     if (record.scoring === 'on' || record.scoring === 'off') {
       result.scoring = record.scoring
+    }
+    if (record.autoReflect === 'on' || record.autoReflect === 'off') {
+      result.autoReflect = record.autoReflect
     }
   }
   return result
@@ -326,6 +435,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
     refine: envInt('MARS_MAX_REFINE', DEFAULTS.refine),
     structuredWrite: envInt('MARS_MAX_STRUCTURED_WRITE', DEFAULTS.structuredWrite),
     setupInstall: envInt('MARS_MAX_SETUP_INSTALL', DEFAULTS.setupInstall),
+    verify: envInt('MARS_MAX_VERIFY', DEFAULTS.verify),
   }
 
   const envAutoTrigger = envBool(
@@ -397,6 +507,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
         c.setupInstall ?? c['setup-install'],
         envCaps.setupInstall,
       ),
+      verify: positiveInt(c.verify, envCaps.verify),
     }
     const se = parsed.selfEvolve ?? {}
     if (typeof se.autoTrigger === 'boolean') {
@@ -447,6 +558,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
       refine: fileCaps.refine ?? envCaps.refine,
       structuredWrite: fileCaps.structuredWrite ?? envCaps.structuredWrite,
       setupInstall: fileCaps.setupInstall ?? envCaps.setupInstall,
+      verify: fileCaps.verify ?? envCaps.verify,
     },
     selfEvolve: {
       autoTrigger: fileAutoTrigger ?? envAutoTrigger,

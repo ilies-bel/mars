@@ -40,9 +40,14 @@ const KNOWN_MARS_OVERRIDE_NOTES: ReadonlyMap<string, string> = new Map([
   ['MARS_GEMINI_BIN', 'gemini binary path override'],
   ['MARS_CODEX_BIN', 'codex binary path override'],
   ['MARS_WORKER_MODEL', 'worker model override (coder only)'],
-  ['MARS_WORKER_PROVIDER', 'worker provider override (coder only)'],
+  ['MARS_WORKER_PROVIDER', 'worker provider override (all workers)'],
   ['MARS_REFLECT_DISABLED', 'disables reflection tracking'],
   ['MARS_RECOVERY_DISABLED', 'disables failure recovery'],
+  ['MARS_CODEX_BASE_URL', 'chat connector base URL override (default: https://chatgpt.com/backend-api/codex)'],
+  ['MARS_CHAT_MODEL', 'chat model override (default: gpt-5.5)'],
+  ['MARS_CHAT_EFFORT', 'chat reasoning effort override (default: high)'],
+  ['MARS_CHAT_MAX_TOOL_TURNS', 'chat max tool turns per run override (default: 40)'],
+  ['MARS_CHAT_REQUEST_TIMEOUT_MS', 'chat per-run wall-clock timeout override in ms (default: 600000)'],
 ])
 
 /**
@@ -131,8 +136,8 @@ const init: Command = {
     const skipDoctor = boolFlags.has('--skip-doctor')
 
     // ── Provider selection ────────────────────────────────────────────────
-    // --provider <name> selects the default agent CLI for live/PTY runs.
-    // Defaults to 'claude'. Persisted to .mars/daemon.json after init.
+    // --provider <name> selects the default agent CLI for all Worker runs.
+    // Defaults to 'codex'. Persisted to .mars/daemon.json after init.
     const VALID_PROVIDERS = new Set<string>(['claude', 'gemini', 'codex'])
     const providerRaw = args.flags['--provider']
     if (providerRaw !== undefined && !VALID_PROVIDERS.has(providerRaw)) {
@@ -141,7 +146,7 @@ const init: Command = {
       )
       return { code: 1 }
     }
-    const provider: ProviderName = (providerRaw as ProviderName | undefined) ?? 'claude'
+    const provider: ProviderName = (providerRaw as ProviderName | undefined) ?? 'codex'
 
     // ── Already-initialized idempotent check ─────────────────────────────
     // Preserve an existing .mars without re-running the wizard. --force bypasses
@@ -170,21 +175,24 @@ const init: Command = {
     }
 
     // ── Preflight doctor checks ───────────────────────────────────────────
-    // Fail fast on hard failures (claude, git, Node version). WARN-only checks
+    // Fail fast on hard failures (selected provider, git, Node version). WARN-only checks
     // (codegraph, daemon, DB) are printed but do not block. Pass --skip-doctor
     // to bypass entirely (e.g. in CI or when the environment is pre-validated).
-    let claudeAvailable = true
     if (!skipDoctor) {
       const { runDoctorChecks, realProbes } = await import('./doctor')
       // Pass null for pgDsnPath — the daemon hasn't provisioned a DB yet
       // before init runs.
-      const checks = await runDoctorChecks(realProbes, null)
+      const checks = await runDoctorChecks(
+        realProbes,
+        null,
+        realProviderProbeDeps,
+        provider,
+      )
       const failures = checks.filter((c) => c.status === 'FAIL')
       const warns = checks.filter((c) => c.status === 'WARN')
       if (warns.length > 0) {
         for (const w of warns) deps.out(`[mars init] WARN ${w.label}: ${w.message}`)
       }
-      claudeAvailable = !failures.some((f) => f.label === 'claude CLI')
       if (failures.length > 0) {
         deps.err('[mars init] preflight failed — fix the following before running init:')
         for (const f of failures) deps.err(`  FAIL ${f.label}: ${f.message}`)
@@ -196,7 +204,12 @@ const init: Command = {
 
     // ── Auth reuse note ───────────────────────────────────────────────────
     // Print once so users know they do not need a separate API key.
-    const authNote = formatClaudeAuthNote(claudeAvailable, Boolean(process.env.ANTHROPIC_API_KEY))
+    const authNote =
+      provider === 'codex'
+        ? '✓ Using your existing Codex ChatGPT OAuth session — Mars does not handle credentials'
+        : provider === 'claude'
+          ? formatClaudeAuthNote(true, Boolean(process.env.ANTHROPIC_API_KEY))
+          : '✓ Using your existing Gemini CLI login — Mars does not handle credentials'
     if (authNote) deps.out(`[mars init] ${authNote}`)
 
     // ── TTY routing (ADR-0058, updated) ───────────────────────────────────
@@ -224,8 +237,8 @@ const init: Command = {
         deps.out(`    ${formatProviderProbe(probe)}`)
       }
       deps.out(`  Default provider: ${provider}`)
-      if (provider === 'claude') {
-        deps.out("  Tip: 'mars init --provider gemini' to use Gemini CLI instead.")
+      if (provider === 'codex') {
+        deps.out("  Auth: run 'codex login' once; MARS reuses the Codex CLI session.")
       }
       deps.out('')
       deps.out("  Tip: run 'mars init --wizard' for step-by-step configuration.")
@@ -291,8 +304,8 @@ const init: Command = {
     for (const w of result.written ?? []) deps.out(`  ${w}`)
 
     // ── Persist provider choice ───────────────────────────────────────────
-    // Write defaultProvider to .mars/daemon.json so the live dispatch path
-    // and chat runner pick it up on subsequent runs. This is a best-effort
+    // Write defaultProvider to .mars/daemon.json so every Worker dispatch path
+    // picks it up on subsequent daemon runs. This is a best-effort
     // write — a failure is non-fatal (daemon.json is optional; missing = defaults).
     try {
       const { patchDaemonConfigFile } = await import('../../core/daemon/config')
@@ -311,10 +324,6 @@ const init: Command = {
     deps.out(`  Files:    ${(result.written ?? []).length} written`)
     deps.out(`  Provider: ${provider}`)
     deps.out('  Daemon:   will auto-start on first use')
-    if (provider !== 'claude') {
-      deps.out(`  Note:     headless (background) runs currently use Claude;`)
-      deps.out(`            ${provider} is used for live/PTY runs only.`)
-    }
     deps.out(sep)
     deps.out('')
     deps.out('Next commands:')

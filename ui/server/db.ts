@@ -23,7 +23,22 @@ export interface ProgressTask extends Task {
   cluster: Cluster
 }
 
-type ProposalSource = 'reflection' | 'human' | 'planner'
+type ProposalSource =
+  | 'reflection'
+  | 'arc-verifier'
+  | 'human'
+  | 'planner'
+  | 'skill-forge'
+  | 'failure-reflector'
+
+const PROPOSAL_SOURCES: readonly string[] = [
+  'reflection',
+  'arc-verifier',
+  'human',
+  'planner',
+  'skill-forge',
+  'failure-reflector',
+]
 
 /**
  * Minimal proposal representation used as a DAG node in the Topology view.
@@ -194,10 +209,10 @@ const rowToTask = (row: TaskRow): Task => {
   }
 }
 
-const normaliseSource = (raw: unknown): ProposalSource => {
-  if (raw === 'reflection' || raw === 'planner' || raw === 'human') return raw
-  return 'human'
-}
+const normaliseSource = (raw: unknown): ProposalSource =>
+  typeof raw === 'string' && PROPOSAL_SOURCES.includes(raw)
+    ? (raw as ProposalSource)
+    : 'human'
 
 /**
  * Maps a task to its Progress-tab cluster, or `null` if the task is out of

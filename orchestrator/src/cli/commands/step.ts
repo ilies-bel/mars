@@ -62,6 +62,11 @@ const stepDone: Command = {
     if (task.status !== 'awaiting-human') {
       if (task.status === 'running') {
         deps.err(`step is auto — nothing to complete (task ${id} is currently running)`)
+      } else if (task.status === 'awaiting-validation') {
+        deps.err(
+          `task ${id} is awaiting-validation; use 'mars validate ${id}' to approve it ` +
+            `or 'mars reject ${id}' to reject it`,
+        )
       } else {
         deps.err(
           `task ${id} is ${task.status}; 'mars step done' only applies to an 'awaiting-human' task`,

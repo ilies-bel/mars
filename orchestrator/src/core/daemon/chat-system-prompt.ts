@@ -6,8 +6,15 @@
  * run so edits take effect on the next message with no daemon restart.
  *
  * The resolved prompt is sent as the `instructions` field of the Codex
- * Responses API request. Nothing is injected ahead of it; the runner appends
- * the `.claude/skills` index (see chat-skills.ts) after it.
+ * Responses API request (see codex-api.ts). Nothing is injected ahead of it;
+ * the runner appends the `.claude/skills` index (see chat-skills.ts) after it.
+ *
+ * `instructions` is the one part of the request that is identical turn after
+ * turn, and therefore the only part a prefix cache could ever reuse. Nothing
+ * volatile (run ids, timestamps, thread state) may be interpolated into it. At
+ * ~400 tokens this prompt is currently below the provider's ~1024-token
+ * caching minimum, so no hits are expected today — weigh that before changing
+ * its size.
  */
 
 import { readFile } from 'node:fs/promises'
@@ -16,6 +23,7 @@ import { join } from 'node:path'
 import { DESTRUCTIVE_MARS_VERBS, SAFE_MARS_VERBS } from '../lib/chat-mars-verbs'
 import { getSetting, ONBOARDING_OPERATOR_NAME_KEY, ONBOARDING_VISION_KEY } from '../lib/settings'
 import { resolveStateClient } from '../store/state-client'
+import { CHAT_ONBOARDING_PROMPT } from './chat-onboarding-prompt'
 
 export const CHAT_SYSTEM_PROMPT = `You are Mars. Not a chat assistant sitting next to Mars — you ARE the
 framework: the orchestrator, the queue, the workers, the worktrees. When
@@ -58,10 +66,20 @@ first and wait for the operator's next message before executing the real
 command. Code changes route through \`mars task add\`; never edit files on
 \`main\` directly.
 
+Hardness rubric: enter grill posture when the ask is any of:
+- term-defining
+- cross-cutting
+- scope-ambiguous
+- contradicts an ADR
+
+When the rubric applies while in triage, call \`set_posture\` with
+\`{"posture":"grill"}\` before you investigate or ask the next question. A
+concrete small ask stays in triage and is enqueued directly with \`mars task add\`.
+
 Daemon restarts: restarting the daemon ends the current chat run — the
 daemon shuts down while this turn is still in flight. Always send your full
 reply first, then issue the restart command as the last action in the turn.
-If you run \`mars daemon restart\` mid-reply the turn will be cut short.`
+If you run \`mars daemon restart\` mid-reply the turn will be cut short.${CHAT_ONBOARDING_PROMPT}`
 
 export interface ResolvedChatSystemPrompt {
   prompt: string

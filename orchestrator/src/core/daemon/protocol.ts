@@ -2,6 +2,7 @@ import type { Socket } from 'node:net'
 import type { Author } from '../author'
 import type { Task, TaskPlan, TaskTag, TaskSpec } from '../queue'
 import type { RunInitOptions, RunInitResult } from '../../workflows/init-workflow'
+import type { DispatchPauseState } from './pause-state'
 
 export type DaemonRequest =
   | {
@@ -94,6 +95,22 @@ export type DaemonRequest =
   | { op: 'resume' }
   | { op: 'task.note'; id: string; body: string; author?: string }
   | { op: 'task.check'; id: string; criterionIndex: number; uncheck?: boolean; author?: string }
+  /** Append an evidence row for a mutation made through the worker MCP server. */
+  | {
+      op: 'mcp.audit.append'
+      toolName: string
+      taskId: string
+      argsJson: Record<string, unknown>
+      ok: boolean
+      errorMessage: string | null
+    }
+  /**
+   * Read the worker-safe context for a task. Returns only fields relevant to
+   * the dispatched agent: id, title, prompt, files, verify cmd, done criteria
+   * with check state, task type, status, and blocker ids. No internal counters,
+   * auth tokens, or raw DB rows are returned.
+   */
+  | { op: 'task.contextForWorker'; id: string }
   // Preview-process management: spawn a detached stack process whose
   // stdout/stderr are teed to `.mars/previews/<taskId>.log`, query its
   // current status, or tear it down (SIGTERM → SIGKILL fallback).
@@ -135,6 +152,20 @@ export interface DaemonStatusPayload {
   }>
   counts: { draft: number; queued: number; running: number; verifying: number; merging: number; 'vega-reconciling': number }
   /**
+   * The implement concurrency cap as configured on disk vs the cap the daemon
+   * is actually enforcing. The Steward autotuner mutates the live semaphore
+   * limit (it raises on sustained backlog, and holds when machine load is too
+   * high), so the two can disagree — previously with nothing reporting it, and
+   * an operator staring at `implement: 3` in `.mars/daemon.json` while the
+   * daemon ran at 1. `reason` explains the divergence and is `null` when the
+   * two agree.
+   */
+  implementCap: {
+    configured: number
+    effective: number
+    reason: string | null
+  }
+  /**
    * Git HEAD SHA captured when the daemon process started (dev install only).
    * Null when the install is prod or when git was unavailable at startup.
    */
@@ -151,11 +182,14 @@ export interface DaemonStatusPayload {
    */
   isStale: boolean
   /**
-   * True when the operator has called `mars daemon pause` and the dispatch
-   * loop is suspended. In-flight tasks continue; no new work is dispatched.
-   * Cleared by `mars daemon resume`. Does NOT survive a daemon restart.
+   * The daemon's ONE dispatch-pause state, carrying the reason dispatch is
+   * suspended ('operator' | 'storm' | 'quota') so status can say WHY rather
+   * than just that it is paused. In-flight tasks continue; no new work is
+   * dispatched. Cleared by `mars daemon resume` — which also clears the
+   * signature-storm breaker when that is what paused dispatch. A `storm`
+   * pause is restored at startup from the durable breaker flag.
    */
-  isPaused: boolean
+  pause: DispatchPauseState
 }
 
 const NEWLINE = 0x0a

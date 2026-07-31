@@ -29,7 +29,7 @@ const swallowEpipe = (err: NodeJS.ErrnoException): void => {
 process.stdout.on('error', swallowEpipe)
 process.stderr.on('error', swallowEpipe)
 
-const usage = `mars — orchestrator for parallel Claude Code task workflows
+const usage = `mars — provider-agnostic orchestrator for parallel agent task workflows
 
 Usage:
   mars [--repo <path>] <command> [args]
@@ -40,9 +40,10 @@ Commands:
                                 .mcp.json, workflow templates, and databases.
                                 On success, prints 'mars ui --repo <root>' to launch
                                 the read-only Kanban + trace dashboard.
-  update [--yes] [--verbose]
+  update [--force] [--yes | --accept-all] [--verbose]
                                 refresh the framework-owned files an existing
-                                repo received from 'mars init' (CLAUDE.md) and
+                                repo received from 'mars init' (CLAUDE.md,
+                                .mcp.json, .gitignore) and
                                 reconcile the user-owned workflow scaffolds in
                                 .mars/workflows/. Workflow files are NEVER
                                 silently overwritten (ADR-0057): an identical
@@ -51,7 +52,8 @@ Commands:
                                 prompts accept/skip, and a workflow the user
                                 removed from the init manifest is left
                                 untouched. --yes runs non-interactively and
-                                defaults to skip-on-conflict (for CI).
+                                defaults to skip-on-conflict (for CI). Existing
+                                harness files require --force to overwrite.
   task add ("<prompt>" | @<file> | --prompt-file <path> | -)
                                 enqueue a runnable task directly (status='queued',
                                 skips triage; can be picked up by agent runners).
@@ -99,7 +101,7 @@ Commands:
                                 is detected from env/git when omitted: human if
                                 running interactively, agent if MARS_AGENT_NAME
                                 or CLAUDE_CODE/CLAUDECODE is set.
-  proposal list [--source reflection|human|planner] [--status <status>]
+  proposal list [--source <source>] [--status <status>]
                                 list proposals; filter by source and/or status
   proposal show <id>            show a proposal from the Mars database
   proposal delete <id>          remove a proposal row from the Mars database
@@ -157,6 +159,10 @@ Commands:
                                 workflow advances to the next step (auto steps
                                 run immediately; the next manual step parks
                                 awaiting input)
+  validate <id> [<id> ...]      approve preview-gated task(s) and re-queue them
+                                for merge via the running daemon.
+  reject <id> [<id> ...]        reject preview-gated task(s), preserving their
+                                worktrees and marking them failed.
   release <id>                  release a leased worktree without merging;
                                 the worktree is preserved for inspection.
                                 Use --abort to exit without merging.
@@ -174,12 +180,11 @@ Commands:
                                 --limit <n> shows n rows; --all shows every
                                 matching task.
   continue <id> [<id> ...]      resume failed task(s) on their existing
-                                worktree+branch, jumping straight into the
-                                failed phase (verify or merge). Refuses if a
-                                task is not 'failed', has no recorded
-                                failed_phase, failed in the 'code' phase, or
-                                lost its worktree on disk — use 'mars restart'
-                                instead. Stops on the first error.
+                                worktree+branch. Code-phase failures preserve
+                                and resume prior work; pre-setup or missing-
+                                worktree failures degrade safely to restart.
+                                Refuses only non-failed tasks or tasks with an
+                                in-flight recovery. Stops on the first error.
   merge cancel <jobId>          cancel an active merge job by id. Marks the job
                                 canceled in the database and, if the merge worker
                                 is currently processing it, aborts the in-flight
@@ -261,7 +266,7 @@ Commands:
                                 finish (--force exits immediately and abandons
                                 in-flight). 'restart' stops then starts fresh.
                                 'kill' SIGKILLs the daemon's process group,
-                                terminating every child claude -p worker, and
+                                terminating every child provider worker, and
                                 marks in-flight tasks failed. 'status' (also
                                 --status) prints inFlight + queue counts.
                                 'reload' re-reads .mars/daemon.json (falling
@@ -416,6 +421,18 @@ Commands:
                                 and enqueues exactly one task tagged
                                 'tool-forge'. Idempotent — re-running with
                                 unchanged data is a no-op.
+  steward inspect Coder [--provider codex|claude]
+                                report the production Coder prompt's section
+                                offsets, duplicated directives, and provider
+                                assembly without changing it.
+  steward optimize Coder [--provider codex|claude]
+                                run the Steward prompt proposer. Its operator
+                                autonomy lever defaults to the shared
+                                autonomous level; use mars daemon set-lever
+                                steward_prompt_optimizer autonomy off|ask|tell
+                                to override it.
+  steward revert <ledger-entry> restore a prior Worker prompt block recorded
+                                by an autonomous Steward edit.
   action-queue                         alias for 'action-queue list open'
   action-queue list [state] [--kind <kind>] [--lean]
                                 list action queue items. state one of:
@@ -633,10 +650,11 @@ Flags:
   --wizard-off       skip the wizard on a terminal
   --skip-doctor      bypass the automatic preflight check (claude/git/Node).
                      Use in CI or when the environment is already validated.`,
-  update: `mars update [--yes] [--verbose]
+  update: `mars update [--force] [--yes | --accept-all] [--verbose]
 
 Re-run init in update-mode on an existing repo. Refreshes the
-framework-owned files (root CLAUDE.md) by force, then reconciles the
+framework-owned files (root CLAUDE.md, .mcp.json, .gitignore) only with
+--force, then reconciles the
 user-owned workflow scaffolds under .mars/workflows/ WITHOUT clobbering
 them (ADR-0057).
 
@@ -653,6 +671,8 @@ The init manifest is refreshed on completion so subsequent updates keep
 recognising your owned workflows.
 
 Flags:
+  --force            overwrite existing framework-owned harness files:
+                     CLAUDE.md, .mcp.json, and .gitignore
   --yes, -y          non-interactive (CI): never prompt. Diverged owned
                      workflows default to skip-on-conflict — your version
                      is kept. (--no-edit is an accepted alias.)
@@ -731,7 +751,7 @@ Subcommands:
       and git when omitted (agent if MARS_AGENT_NAME/CLAUDE_CODE is set,
       otherwise human with git user.email). Use --author to override,
       e.g. --author agent:vega.
-  list [--source reflection|human|planner] [--status <status>]
+  list [--source <source>] [--status <status>]
       List proposals. Filter by source and/or status.
   show <id>
       Show a proposal from the Mars database. <id> accepts a full id or a unique prefix.
@@ -788,9 +808,8 @@ Flags:
   --all        Show every matching row (overrides --limit)`,
   continue: `mars continue <id> [<id> ...]
 
-Resume failed task(s) on their existing worktree+branch, jumping
-straight into the failed phase (verify or merge). Reuses every commit
-the worker already landed on the task branch.
+Resume failed task(s) on their existing worktree+branch. Reuses every
+commit the worker already landed on the task branch.
 
 Accepts one or more ids; processes them in order and stops on the first
 error (the failing id is printed to stderr and exit is non-zero).
@@ -799,10 +818,17 @@ Flags: none in v1.
 
 Refuses (non-zero exit) when:
   - the task is not in 'failed' status
-  - the task has no recorded failed_phase (legacy row)
-  - the task failed in the 'code' phase (no verifiable artefact)
-  - the branch or worktree is missing on disk
-In those cases reach for 'mars restart <id>' to start over from setup.`,
+  - an in-flight recovery (fix-task) already exists for the task
+
+Code-phase resume: a code-phase failure with its worktree still on disk
+is continuable. Any dangling changes are auto-committed as a salvage
+checkpoint, then the coder resumes with a banner explaining that prior
+work is preserved.
+
+Degraded-to-restart: a pre-setup failure, legacy row without a recorded
+failed_phase, missing branch/worktree path, or worktree missing on disk
+silently delegates to restart instead of exiting non-zero. The response
+reports 'degradedToRestart: true' and prints a note explaining why.`,
   restart: `mars restart <id> [<id> ...]
 
 Re-queue failed, done, merging, or vega-reconciling task(s) from setup.
@@ -936,7 +962,7 @@ Subcommands:
   restart            force-stop any running daemon, then start a fresh one
                      in the background. Exits 0 when the new daemon is up.
   kill               hard stop: mark every in-flight task failed and SIGKILL
-                     the daemon's process group (kills all child claude -p
+                     the daemon's process group (kills all child provider
                      workers). Use when 'stop' is hanging on stuck work.
   status             print pid, startedAt, inFlight, and queue counts.
                      Equivalent to the legacy --status flag form.
@@ -1350,7 +1376,24 @@ Subcommands:
       Signal step completion on a live task. The workflow advances to
       the next step: auto steps run immediately; the next manual step
       parks awaiting input. If the verify step fails, fix inside the
-      worktree and run 'step done' again.`,
+      worktree and run 'step done' again. Preview-gated tasks use
+      'mars validate' or 'mars reject' instead.`,
+  validate: `mars validate <task-id> [<task-id> ...]
+
+Approve one or more tasks parked at the preview gate. Each task must be in
+'awaiting-validation' status. Mars calls the running daemon's validate action;
+the daemon tears down the preview and re-queues the task for its merge
+continuation.
+
+Requires a running daemon.`,
+  reject: `mars reject <task-id> [<task-id> ...]
+
+Reject one or more tasks parked at the preview gate. Each task must be in
+'awaiting-validation' status. Mars calls the running daemon's reject action;
+the daemon tears down the preview, marks the task failed, and preserves its
+worktree for inspection.
+
+Requires a running daemon.`,
   release: `mars release <id>
 
 Release a leased worktree. The worktree is preserved for inspection.

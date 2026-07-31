@@ -11,6 +11,7 @@ import {
   type TraceCtx,
 } from './internal'
 import { acquireLock } from './lock'
+import { captureCheckpoint, discardWorkingTreeChanges } from './checkpoint'
 import {
   runSubprocessStreaming,
   resolveClaudeBin,
@@ -1018,32 +1019,43 @@ export const mergeBranch = async ({
           //      undoes that decision. This really happened: edits made directly
           //      on the integration checkout vanished mid-session, twice.
           //
-          // For (b) we stash instead of resetting. That still leaves a clean tree
-          // — so the dispatch-time dirty-main guard does not park the queue — but
-          // the work survives in `git stash list` and can be restored with
-          // `git stash pop`.
-          let preservedByStash = false
+          // For (b) we checkpoint instead of resetting. That still leaves a
+          // clean tree — so the dispatch-time dirty-main guard does not park the
+          // queue — but the work survives as a commit object on this merge's own
+          // `refs/mars/checkpoint/<key>` ref, recoverable by name.
+          //
+          // NOT `git stash`: `refs/stash` is shared by every linked worktree and
+          // addressed by shifting positions, so a parallel task's `stash pop`
+          // could swallow the operator's edits. A checkpoint ref is per-merge and
+          // is restored by object id.
+          let preservedByCheckpoint = false
           if (operatorEditsPresent) {
             try {
-              const stash = await gexec(
-                [
-                  'stash',
-                  'push',
-                  '--include-untracked',
-                  '-m',
-                  `mars: preserved operator edits displaced by merge of ${finalTaskSha.slice(0, 9)}`,
-                ],
-                repoRoot(),
-              )
-              preservedByStash = true
-              output +=
-                `\n[mergeBranch] PRESERVED operator edits on ${integrationBranch} by stashing them ` +
-                `(recover with 'git stash pop'): ${stash.stdout.trim().slice(0, 200)}`
-            } catch (stashErr: unknown) {
-              const m = stashErr instanceof Error ? stashErr.message : String(stashErr)
-              // Could not stash — leave the tree exactly as it is. A dirty tree
-              // parks the queue, which is annoying; destroying the edits is worse.
-              output += `\n[mergeBranch] could not stash operator edits, leaving tree untouched: ${m.slice(0, 300)}`
+              const key = `merge/${traceCtx?.taskId ?? branch}`
+              const checkpoint = await captureCheckpoint({
+                cwd: repoRoot(),
+                key,
+                message: `mars: preserved operator edits displaced by merge of ${finalTaskSha.slice(0, 9)}`,
+                traceCtx: mergeCtx,
+              })
+              if (checkpoint === null) {
+                // Nothing capturable (ignored-only dirt): leave the tree alone.
+                output += `\n[mergeBranch] operator edits are ignored-only; leaving tree untouched`
+              } else {
+                await discardWorkingTreeChanges({ cwd: repoRoot(), traceCtx: mergeCtx })
+                preservedByCheckpoint = true
+                output +=
+                  `\n[mergeBranch] PRESERVED operator edits on ${integrationBranch} as checkpoint ${checkpoint.ref} ` +
+                  `(${checkpoint.sha.slice(0, 9)}; recover with 'git cherry-pick -n ${checkpoint.sha}'): ` +
+                  `${checkpoint.files.join(', ').slice(0, 200)}`
+              }
+            } catch (checkpointErr: unknown) {
+              const m =
+                checkpointErr instanceof Error ? checkpointErr.message : String(checkpointErr)
+              // Could not checkpoint — leave the tree exactly as it is. A dirty
+              // tree parks the queue, which is annoying; destroying the edits is
+              // worse.
+              output += `\n[mergeBranch] could not checkpoint operator edits, leaving tree untouched: ${m.slice(0, 300)}`
             }
           } else {
             // Attempt to restore the integration checkout to the current HEAD
@@ -1056,12 +1068,12 @@ export const mergeBranch = async ({
               output += `\n[mergeBranch] restore-to-HEAD failed: ${m.slice(0, 300)}`
             }
           }
-          // A successful stash leaves the tree clean and the merge already
+          // A successful checkpoint leaves the tree clean and the merge already
           // landed via update-ref, so there is nothing left to report as a
           // failure. Every other path still returns 'merge-left-dirty-tree' so
           // the normal failure handling runs and we never claim success over a
           // tree we could not clean.
-          if (!preservedByStash) {
+          if (!preservedByCheckpoint) {
             return {
               merged: false,
               conflictResolved,

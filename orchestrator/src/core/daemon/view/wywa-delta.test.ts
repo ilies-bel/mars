@@ -41,6 +41,7 @@ const baseInput = {
   autoRuns: [],
   throttledThreads: [],
   evaporatedThreads: [],
+  stewardLedger: [],
   since: null,
   limit: DEFAULT_WYWA_LIMIT,
 } as const
@@ -164,6 +165,103 @@ describe('assembleDelta — evaporated-thread events', () => {
       kind: 'evaporated-thread',
       summary: 'Idle thread thread-2 evaporated',
     })
+  })
+})
+
+describe('assembleDelta — Steward interventions', () => {
+  it('shows each intervention since the cursor as one steward entry', () => {
+    const result = assembleDelta({
+      ...baseInput,
+      since: '2026-07-10T00:00:00.000Z',
+      stewardLedger: [
+        {
+          id: 'ledger-1',
+          ts: '2026-07-11T09:00:00.000Z',
+          targetKind: 'task',
+          targetId: 'task-1',
+          targetVersion: 'v1',
+          recipeId: 'fix-tests',
+          rationale: 'tests failed',
+          outcome: 'fixed',
+          commitSha: '1234567890abcdef',
+        },
+        {
+          id: 'ledger-2',
+          ts: '2026-07-12T09:00:00.000Z',
+          targetKind: 'workflow',
+          targetId: 'default',
+          targetVersion: 'v2',
+          recipeId: 'raise-cap',
+          rationale: 'queue grew',
+          outcome: 'applied',
+          commitSha: null,
+        },
+        {
+          id: 'ledger-3',
+          ts: '2026-07-13T09:00:00.000Z',
+          targetKind: 'prompt',
+          targetId: 'coder',
+          targetVersion: 'v3',
+          recipeId: 'tighten-prompt',
+          rationale: 'quality dipped',
+          outcome: 'improved',
+          commitSha: 'abcdef1234567890',
+        },
+        {
+          id: 'older-ledger',
+          ts: '2026-07-09T09:00:00.000Z',
+          targetKind: 'task',
+          targetId: 'old-task',
+          targetVersion: 'v1',
+          recipeId: 'old-recipe',
+          rationale: 'old',
+          outcome: 'fixed',
+          commitSha: null,
+        },
+      ],
+    })
+
+    expect(result.events).toHaveLength(3)
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'steward:ledger-1',
+          kind: 'steward',
+          type: 'steward',
+          summary: 'Steward task task-1: fix-tests — fixed (1234567)',
+        }),
+        expect.objectContaining({ id: 'steward:ledger-2', kind: 'steward', type: 'steward' }),
+        expect.objectContaining({
+          id: 'steward:ledger-3',
+          kind: 'steward',
+          type: 'steward',
+          summary: 'Steward prompt coder: tighten-prompt — improved (abcdef1)',
+        }),
+      ]),
+    )
+  })
+
+  it('does not create duplicate entries when overlapping reads include the same ledger row', () => {
+    const intervention = {
+      id: 'ledger-duplicate',
+      ts: '2026-07-11T09:00:00.000Z',
+      targetKind: 'task',
+      targetId: 'task-1',
+      targetVersion: 'v1',
+      recipeId: 'fix-tests',
+      rationale: 'tests failed',
+      outcome: 'fixed',
+      commitSha: '1234567890abcdef',
+    }
+
+    const result = assembleDelta({
+      ...baseInput,
+      stewardLedger: [intervention, intervention],
+    })
+
+    expect(result.events).toEqual([
+      expect.objectContaining({ id: 'steward:ledger-duplicate', kind: 'steward', type: 'steward' }),
+    ])
   })
 })
 

@@ -16,7 +16,13 @@ import {
   readDaemonHttpPort,
 } from './daemonHttp.ts'
 import { DAEMON_ERROR } from '../src/shared/daemonErrors.ts'
-import { createProjectContextCache, type ProjectContextEntry } from './projectContext.ts'
+import {
+  createProjectContextCache,
+  readProjectAdr,
+  readProjectMeta,
+  readSessionAdrs,
+  type ProjectContextEntry,
+} from './projectContext.ts'
 import { probeDaemonHealth } from './projectHealth.ts'
 import { resolveRepo, UnknownProjectError } from './repo.ts'
 import { handleProjectStart, handleProjectRestart } from './spawnDaemon.ts'
@@ -384,6 +390,41 @@ export const startServer = async (
         if (path === '/api/adrs' && req.method === 'GET') {
           const r = await proxyGet(ctx.stateDir, '/view/adrs')
           return jsonResponse(r.status, r.body)
+        }
+
+        // GET /api/project/adrs?since=<epoch-ms> — ADR files authored during
+        // the current browser session. Unlike /api/adrs this is a filesystem
+        // view, so it includes a safe, directly linkable project-relative path.
+        if (path === '/api/project/adrs' && req.method === 'GET') {
+          const since = Number(url.searchParams.get('since'))
+          return jsonResponse(200, { adrs: readSessionAdrs(ctx, Number.isFinite(since) ? since : 0) })
+        }
+
+        if (path.startsWith('/api/project/adrs/') && req.method === 'GET') {
+          const adrPath = decodeURIComponent(path.slice('/api/project/adrs/'.length))
+          const content = readProjectAdr(ctx, adrPath)
+          return content === null
+            ? jsonResponse(404, { error: 'ADR not found' })
+            : new Response(content, { headers: { 'Content-Type': 'text/markdown; charset=utf-8' } })
+        }
+
+        // GET /api/project/context — product vision and theme for the rail.
+        if (path === '/api/project/context' && req.method === 'GET') {
+          return jsonResponse(200, readProjectMeta(ctx))
+        }
+
+        if (path === '/api/project/meta/vision' && req.method === 'GET') {
+          const content = readProjectMeta(ctx).vision
+          return content === null
+            ? jsonResponse(404, { error: 'Project vision not found' })
+            : new Response(content, { headers: { 'Content-Type': 'text/markdown; charset=utf-8' } })
+        }
+
+        if (path === '/api/project/meta/theme' && req.method === 'GET') {
+          const content = readProjectMeta(ctx).theme
+          return content === null
+            ? jsonResponse(404, { error: 'Project theme not found' })
+            : new Response(content, { headers: { 'Content-Type': 'text/markdown; charset=utf-8' } })
         }
 
         // GET /api/vision — return raw VISION.md content for the focused project.

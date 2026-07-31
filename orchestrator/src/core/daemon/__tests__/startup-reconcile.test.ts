@@ -86,6 +86,27 @@ describe('runStartupReconcile — orphaned-blocked scan', () => {
     expect(summary.orphanedBlockedRequeued).toBe(1)
   })
 
+  it('drops a failed Chore when its origin had already succeeded', async () => {
+    const { q, reconcile } = await loadModules(repo)
+    const origin = await q.enqueueTask('successful origin', undefined, { skipTriage: true })
+    const chore = await q.enqueueTask('stale Chore', undefined, { skipTriage: true })
+    await q.updateTask(origin.id, { status: 'done' })
+    await q.updateTask(chore.id, { status: 'failed' })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET kind = 'fix', fix_for_task_id = ?, origin_id = ? WHERE id = ?`,
+      args: [origin.id, origin.id, chore.id],
+    })
+
+    const summary = await reconcile.runStartupReconcile(makeDeps())
+
+    expect((await q.getTask(origin.id))?.status).toBe('done')
+    expect(await q.getTask(chore.id)).toMatchObject({
+      status: 'dropped',
+      dropReason: 'origin-succeeded',
+    })
+    expect(summary.terminalOriginChoresDropped).toBe(1)
+  })
+
   it('leaves a blocked task blocked when it still has a live (non-done) blocker', async () => {
     const { q, reconcile } = await loadModules(repo)
 

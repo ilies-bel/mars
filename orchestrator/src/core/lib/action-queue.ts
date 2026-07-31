@@ -43,6 +43,9 @@ export type ActionQueueState = 'open' | 'resolved'
 
 export const ACTION_QUEUE_KINDS = [
   'failed',
+  // Steward has already attempted an intervention for this exact target
+  // version. Further automatic fixes are suppressed until an operator acts.
+  'steward-repeat',
   'cancelled-blocker-cascade',
   'diagnose-inconclusive',
   'daemon-killed',
@@ -139,6 +142,12 @@ export const ACTION_QUEUE_KINDS = [
   // daemon runs current code). One row per daemon lifetime — idempotent raises
   // bump seen_count rather than inserting siblings.
   'daemon-code-drift',
+  // A bundled Workflow kind has no corresponding `.mars/workflows/<kind>-workflow.js`
+  // file. There is intentionally no dispatch fallback (ADR-0067), so tasks
+  // routed to the missing kind would otherwise fail only when dispatched.
+  // Level-triggered: one singleton row lists every missing kind, is updated on
+  // each startup reconcile, and closes once all bundled Workflows are present.
+  'workflow-install-drift',
   // The provider (Claude API) rejected dispatched runs due to rate or spend
   // limits. Level-triggered (ADR-0048): exactly one row per rate-limit episode;
   // idempotent raises bump seen_count. Cleared when the operator acknowledges
@@ -245,11 +254,20 @@ export const ACTION_QUEUE_KINDS = [
   // and dispatchDecisionSummary so the operator can diagnose pool saturation
   // vs. dispatcher stall. Cleared automatically once the task leaves 'queued'.
   'stale-queued',
+  // A stale-queued sweep found more stalled tasks than it may surface as
+  // individual action items. The body names the suppressed count; unlike a
+  // per-task alert, this aggregate row has no task action.
+  'stale-queued-summary',
   // The spend controller transitioned between paused/allowed states. Emitted
   // so the operator sees why dispatch slowed without diving into logs. One row
   // per transition direction (signature-keyed 'spend-control:<direction>');
   // level-triggered (ADR-0048): the row exists while the state holds.
   'spend-control-notice',
+  // A task is approaching the requeue ceiling (elapsed >= WARN_RATIO * bound).
+  // Level-triggered (ADR-0048): one row per task, signature-keyed
+  // 'requeue-warning:<taskId>'; idempotent re-raises bump seen_count. The task
+  // is NOT failed — this is an early warning. Cleared automatically when the
+  // task completes or is escalated past the hard ceiling.
   'requeue-warning',
 ] as const
 
@@ -804,6 +822,30 @@ export const patchActionQueuePayloadById = async (
 }
 
 /**
+ * Resolve the id of the single OPEN row for a (kind, signature) pair, or null
+ * when none is open. Signature-keyed rows are level-triggered singletons — a
+ * repeat raise bumps `seen_count` on the same row — so callers that need to
+ * annotate or close "the row I raised earlier" must address it BY ID rather
+ * than raising again, which would only bump the counter and leave the payload
+ * stale. Used by the signature-storm handler to patch and resolve its own row.
+ */
+export const findOpenActionQueueItemIdBySignature = async (
+  kind: ActionQueueKind,
+  signature: string,
+): Promise<string | null> => {
+  const c = stateClient()
+  const r = await c.execute({
+    sql: `SELECT id FROM action_queue_items
+           WHERE kind = ? AND signature = ? AND state = 'open'
+           ORDER BY raised_at ASC
+           LIMIT 1`,
+    args: [kind, signature],
+  })
+  if (r.rows.length === 0) return null
+  return (r.rows[0] as unknown as { id: string }).id
+}
+
+/**
  * Default live-task lookup: dynamically imports `getTask` from the queue
  * module and returns `{ status }` for the task. Returns `null` when the task
  * is not found or when the queue DB is unavailable (non-fatal degradation).
@@ -896,6 +938,24 @@ export const listActionQueueItems = async (
   }
 
   return fetchByState(state)
+}
+
+/**
+ * Read the rows an operator can act on without loading resolution history.
+ *
+ * The action-queue view only needs the current projection, so joining each
+ * row to `action_queue_history` would turn a small visible list into an N+1
+ * scan over every historical item. History has its own paged reader.
+ */
+export const listVisibleActionQueueItems = async (): Promise<ActionQueueItem[]> => {
+  const c = stateClient()
+  const r = await c.execute(`SELECT * FROM action_queue_items
+    WHERE state = 'open'
+      AND (snoozed_until IS NULL OR snoozed_until <= CURRENT_TIMESTAMP)
+    ORDER BY raised_at DESC`)
+  return r.rows.map((row) =>
+    rowToActionQueueItem(row as unknown as Record<string, unknown>, []),
+  )
 }
 
 const isTerminal = (state: ActionQueueState): boolean =>
@@ -1017,6 +1077,8 @@ export type SupersedeReason =
   | 'hitl-orphan-no-slice-task'
   /** daemon-code-drift row cleared because the daemon restarted and is now running current code. */
   | 'daemon-restarted'
+  /** workflow-install-drift row cleared because every bundled Workflow is installed. */
+  | 'workflow-install-restored'
   /** workflow-draft-pending row cleared because the operator approved the draft. */
   | 'workflow-approved'
   /** gate-enrichment row cleared because the operator approved or retired the candidate (ADR-0048 entity mutation). */

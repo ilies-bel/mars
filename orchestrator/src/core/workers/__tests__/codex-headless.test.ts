@@ -17,7 +17,7 @@ vi.mock('../../lib/git/claude', () => ({
   resolveClaudeBin: vi.fn(),
 }))
 
-import { parseCodexEventLine, codexHeadless } from '../providers/codex-headless'
+import { parseCodexEventLine, readCodexOutput, codexHeadless } from '../providers/codex-headless'
 import { runSubprocessStreaming, resolveClaudeBin } from '../../lib/git/claude'
 
 // ---------------------------------------------------------------------------
@@ -81,6 +81,32 @@ describe('parseCodexEventLine — normalisation', () => {
   })
 })
 
+describe('readCodexOutput', () => {
+  it('reads an NDJSON event stream, skipping blank and trailing partial lines', () => {
+    const output = [
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }),
+      '',
+      JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'agent_message', text: '{"actionable":true}' },
+      }),
+      JSON.stringify({ type: 'turn.completed' }),
+      '{"type":"item.completed"',
+    ].join('\n')
+
+    expect(readCodexOutput(output)).toEqual([
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: '{"actionable":true}' }],
+        },
+      },
+      { type: 'result', is_error: false },
+    ])
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Shared mock setup — simulates two codex JSONL events: one agent_message
 // and one turn.completed.
@@ -121,20 +147,21 @@ afterEach(() => {
 })
 
 // ---------------------------------------------------------------------------
-// Acceptance criterion (a): argv starts with exec --json --model, no -p flag
+// Acceptance criterion (a): argv uses ephemeral codex exec JSON mode, no -p flag
 // ---------------------------------------------------------------------------
 
 describe('codexHeadless.run — (a) argv shape', () => {
-  it("first four argv entries are ['exec', '--json', '--model', <model>]", async () => {
+  it("starts with ['exec', '--ephemeral', '--json', '--model', <model>]", async () => {
     await codexHeadless.run('build the feature', { cwd: '/tmp', model: 'o4-mini', effort: 'high' })
 
     const callArgs = vi.mocked(runSubprocessStreaming).mock.calls[0]
     const argv = callArgs[1] as readonly string[]
 
     expect(argv[0]).toBe('exec')
-    expect(argv[1]).toBe('--json')
-    expect(argv[2]).toBe('--model')
-    expect(argv[3]).toBe('o4-mini')
+    expect(argv[1]).toBe('--ephemeral')
+    expect(argv[2]).toBe('--json')
+    expect(argv[3]).toBe('--model')
+    expect(argv[4]).toBe('o4-mini')
   })
 
   it('does not contain the -p flag anywhere in argv', async () => {
@@ -153,12 +180,42 @@ describe('codexHeadless.run — (a) argv shape', () => {
     expect(argv[sandboxIdx + 1]).toBe('workspace-write')
   })
 
+  it('uses a read-only sandbox for read-only Workers', async () => {
+    await codexHeadless.run('inspect only', {
+      cwd: '/tmp',
+      disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
+    })
+
+    const argv = vi.mocked(runSubprocessStreaming).mock.calls[0][1] as readonly string[]
+    const sandboxIdx = argv.indexOf('--sandbox')
+    expect(argv[sandboxIdx + 1]).toBe('read-only')
+  })
+
   it('appends the prompt as the final argv entry', async () => {
     const prompt = 'implement the codex adapter'
     await codexHeadless.run(prompt, { cwd: '/tmp', model: 'o4-mini' })
 
     const argv = vi.mocked(runSubprocessStreaming).mock.calls[0][1] as readonly string[]
     expect(argv[argv.length - 1]).toBe(prompt)
+  })
+
+  it('prepends the resolved system instructions to the submitted prompt', async () => {
+    await codexHeadless.run('do the task', {
+      cwd: '/tmp',
+      systemPrompt: 'Use the code graph first.',
+    })
+
+    const argv = vi.mocked(runSubprocessStreaming).mock.calls[0][1] as readonly string[]
+    expect(argv.at(-1)).toContain('<mars_system_instructions>')
+    expect(argv.at(-1)).toContain('Use the code graph first.')
+    expect(argv.at(-1)).toContain('do the task')
+  })
+
+  it("defaults to the current flagship Codex model when no model is supplied", async () => {
+    await codexHeadless.run('task', { cwd: '/tmp' })
+    const argv = vi.mocked(runSubprocessStreaming).mock.calls[0][1] as readonly string[]
+    const modelIdx = argv.indexOf('--model')
+    expect(argv[modelIdx + 1]).toBe('gpt-5.6-sol')
   })
 
   it('uses opts.effort in the -c flag, defaulting to "high"', async () => {
@@ -271,6 +328,17 @@ describe('codexHeadless.run — (d) null signals', () => {
     const result = await codexHeadless.run('task', { cwd: '/tmp', model: 'gpt-5.5' })
     expect(result.exitCode).toBe(1)
   })
+
+  it('does not treat terminal cumulative usage as a live context measurement', async () => {
+    const result = await codexHeadless.run('task', {
+      cwd: '/tmp',
+      model: 'gpt-5.5',
+      maxContextTokens: 40,
+    })
+
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).not.toContain('context budget exhausted')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -278,9 +346,12 @@ describe('codexHeadless.run — (d) null signals', () => {
 // ---------------------------------------------------------------------------
 
 describe('codexHeadless capabilities', () => {
-  it('exposes contextTokenMetering: false, quotaRejected: false, sessionId: false', () => {
+  it("exposes usageSemantics: 'cumulative' and no quota-rejection or session-id signals", () => {
     const { capabilities } = codexHeadless
-    expect(capabilities.contextTokenMetering).toBe(false)
+    // Codex reports usage ONCE, on turn.completed, as total spend for the
+    // turn. Declaring it 'cumulative' is what stops the orchestrator reading
+    // that number as context occupancy.
+    expect(capabilities.usageSemantics).toBe('cumulative')
     expect(capabilities.quotaRejected).toBe(false)
     expect(capabilities.sessionId).toBe(false)
   })

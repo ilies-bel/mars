@@ -7,6 +7,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
+import { resolve } from 'node:path'
 import { resolveProposalId, getProposal } from '../../core/proposals'
 import { readMaybeFile } from '../args'
 import type { TaskStatus } from '../../core/queue'
@@ -202,7 +203,8 @@ const remerge: Command = {
 
 const purge: Command = {
   path: 'purge',
-  summary: 'purge tasks (worktree + branch + row)',
+  summary:
+    'purge failed/done/dropped tasks (worktree + branch + row); use mars drop for any status',
   usage: 'usage: mars purge <id> [<id> ...] [--force]',
   run: async (args, deps) => {
     const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
@@ -212,16 +214,22 @@ const purge: Command = {
       return { code: 2 }
     }
     const force = flagSet.has('--force')
+    let succeeded = 0
+    let failed = 0
     for (const id of ids) {
       try {
         await deps.daemon.sendRequest({ op: 'purge', id, force })
+        deps.out(`purged ${id}`)
+        succeeded++
       } catch (err) {
         deps.err(`${id}: ${errorMessage(err)}`)
-        return { code: 1 }
+        failed++
       }
-      deps.out(`purged ${id}`)
     }
-    return { code: 0 }
+    if (ids.length > 1) {
+      deps.out(`purge complete: ${succeeded} succeeded, ${failed} failed`)
+    }
+    return { code: failed > 0 ? 1 : 0 }
   },
 }
 
@@ -411,15 +419,15 @@ const sync: Command = {
 
 const drop: Command = {
   path: 'drop',
-  summary: 'delete any task entirely regardless of status',
-  usage: 'usage: mars drop <id> [--force]',
+  summary:
+    'delete any task entirely regardless of status; use mars purge for terminal tasks only',
+  usage: 'usage: mars drop <id> [<id> ...] [--force]',
   run: async (args, deps) => {
     const flagSet = new Set(args.positional.filter((a) => a.startsWith('--')))
-    const positionals = args.positional.filter((a) => !a.startsWith('--'))
-    const id = positionals[0]
-    if (!id) {
+    const ids = args.positional.filter((a) => !a.startsWith('--'))
+    if (ids.length === 0) {
       deps.err(
-        `usage: mars drop <id> [--force]\n\n` +
+        `usage: mars drop <id> [<id> ...] [--force]\n\n` +
           `Delete any task entirely (worktree+branch+row) regardless of\n` +
           `status. Clears every task_blockers row mentioning <id> on either\n` +
           `side, and nulls out any sibling row's fix_for_task_id that\n` +
@@ -433,25 +441,38 @@ const drop: Command = {
       return { code: 2 }
     }
     const force = flagSet.has('--force')
-    const data = (await deps.daemon.sendRequest({ op: 'drop', id, force })) as {
-      taskId: string
-      previousStatus: string
-      edgesRemoved: { incoming: number; outgoing: number }
-      cascadedFixTaskIds: string[]
-      worktreeRemoved: boolean
-      branchDeleted: boolean
+    let succeeded = 0
+    let failed = 0
+    for (const id of ids) {
+      try {
+        const data = (await deps.daemon.sendRequest({ op: 'drop', id, force })) as {
+          taskId: string
+          previousStatus: string
+          edgesRemoved: { incoming: number; outgoing: number }
+          cascadedFixTaskIds: string[]
+          worktreeRemoved: boolean
+          branchDeleted: boolean
+        }
+        const parts = [
+          `dropped ${data.taskId} (was ${data.previousStatus})`,
+          `worktree=${data.worktreeRemoved ? 'removed' : 'absent'}`,
+          `branch=${data.branchDeleted ? 'deleted' : 'absent'}`,
+          `edges=${data.edgesRemoved.incoming}in/${data.edgesRemoved.outgoing}out`,
+        ]
+        if (data.cascadedFixTaskIds.length > 0) {
+          parts.push(`cascaded fix tasks: ${data.cascadedFixTaskIds.join(', ')}`)
+        }
+        deps.out(parts.join('; '))
+        succeeded++
+      } catch (err) {
+        deps.err(`${id}: ${errorMessage(err)}`)
+        failed++
+      }
     }
-    const parts = [
-      `dropped ${data.taskId} (was ${data.previousStatus})`,
-      `worktree=${data.worktreeRemoved ? 'removed' : 'absent'}`,
-      `branch=${data.branchDeleted ? 'deleted' : 'absent'}`,
-      `edges=${data.edgesRemoved.incoming}in/${data.edgesRemoved.outgoing}out`,
-    ]
-    if (data.cascadedFixTaskIds.length > 0) {
-      parts.push(`cascaded fix tasks: ${data.cascadedFixTaskIds.join(', ')}`)
+    if (ids.length > 1) {
+      deps.out(`drop complete: ${succeeded} succeeded, ${failed} failed`)
     }
-    deps.out(parts.join('; '))
-    return { code: 0 }
+    return { code: failed > 0 ? 1 : 0 }
   },
 }
 
@@ -500,13 +521,28 @@ const LIST_DEFAULT_LIMIT = 10
 const list: Command = {
   path: 'list',
   summary: 'list tasks (optionally filtered by status)',
-  usage: 'usage: mars list [<status>] [--limit <n>] [--all]',
+  usage: 'usage: mars list [<status> | --status <status>] [--limit <n>] [--all]',
   run: async (args, deps) => {
     // Separate boolean flags from positional status arg.
     const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
     const positionals = args.positional.filter((a) => !a.startsWith('--'))
 
-    const statusArg = positionals[0]
+    const flagStatus = args.flags['--status']
+    const positionalStatus = positionals[0]
+
+    // Reject conflicting forms supplied simultaneously with different values.
+    if (
+      flagStatus !== undefined &&
+      positionalStatus !== undefined &&
+      flagStatus !== positionalStatus
+    ) {
+      deps.err(
+        `conflicting status values: --status '${flagStatus}' vs positional '${positionalStatus}'; use one form only`,
+      )
+      return { code: 2 }
+    }
+
+    const statusArg = flagStatus ?? positionalStatus
     if (statusArg !== undefined && !VALID_TASK_STATUSES.has(statusArg)) {
       deps.err(
         `unknown status '${statusArg}'; valid values: ${[...VALID_TASK_STATUSES].join(', ')}`,
@@ -557,9 +593,11 @@ const list: Command = {
 const update: Command = {
   path: 'update',
   summary: 'refresh framework files; diff (never clobber) user-owned workflows',
-  usage: 'usage: mars update [--yes | --accept-all] [--verbose]',
+  usage: 'usage: mars update [--force] [--yes | --accept-all] [--verbose]',
   run: async (args, deps) => {
+    const { existsSync } = await import('node:fs')
     const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
+    const force = boolFlags.has('--force')
     const yes =
       boolFlags.has('--yes') ||
       args.positional.includes('-y') ||
@@ -574,18 +612,36 @@ const update: Command = {
       return { code: 2 }
     }
 
+    // Update mutates these repository-owned harness files. Check before the
+    // daemon-routed init or workflow reconciliation so a missing --force never
+    // leaves the repository half-updated.
+    if (!force) {
+      const existingHarnesses = ['CLAUDE.md', '.mcp.json', '.gitignore'].filter(
+        (rel) => existsSync(resolve(deps.ctx.repoRoot, rel)),
+      )
+      if (existingHarnesses.length > 0) {
+        deps.err(
+          `refusing to overwrite existing harness files (pass --force to replace):\n${existingHarnesses
+            .map((rel) => `  - ${rel}`)
+            .join('\n')}`,
+        )
+        return { code: 1 }
+      }
+    }
+
     // Phase 1: refresh the framework-owned files (CLAUDE.md, …) via the
-    // daemon-routed init workflow with force overwrite. Its scaffold-workflows
-    // step never clobbers user-owned workflows (it runs force:false) — those
-    // are reconciled in phase 2. Running init through the daemon preserves the
-    // single-writer guard so the manifest is never corrupted by a concurrent
-    // write.
+    // daemon-routed init workflow. `--force` is the only authorization for an
+    // existing harness; a fresh harness needs no overwrite permission. Its
+    // scaffold-workflows step never clobbers user-owned workflows (it runs
+    // force:false) — those are reconciled in phase 2. Running init through the
+    // daemon preserves the single-writer guard so the manifest is never
+    // corrupted by a concurrent write.
     type InitResult = Awaited<
       ReturnType<typeof import('../../workflows/init-workflow').runInit>
     >
     const initResult = (await deps.daemon.sendRequest({
       op: 'init',
-      opts: { force: true, dryRun: false, verbose },
+      opts: { force, dryRun: false, verbose },
     })) as InitResult
 
     if (
@@ -614,13 +670,10 @@ const update: Command = {
       out: (s: string): void => deps.out(s),
     })
 
-    const created = result.records.filter((r) => r.outcome === 'created')
-    const accepted = result.records.filter((r) => r.outcome === 'accepted')
-    const skipped = result.records.filter((r) => r.outcome === 'skipped')
-    const untouched = result.records.filter((r) => r.outcome === 'untouched')
+    const { created, updated, kept, unowned } = result.summary
     deps.out(
-      `workflows: ${created.length} created, ${accepted.length} updated, ` +
-        `${skipped.length} kept, ${untouched.length} unowned`,
+      `workflows: ${created} created, ${updated} updated, ` +
+        `${kept} kept, ${unowned} unowned`,
     )
     return { code: 0 }
   },

@@ -208,6 +208,55 @@ function taskBlockedActionQueueRaiser(client: DbClient): Subscriber {
         }
       }
 
+      // Slice 6: load stall_diagnostics from the task row (best-effort — null on any error).
+      let stallDiagnostics: unknown | null = null
+      try {
+        const taskDiagRow = await client.execute({
+          sql: `SELECT stall_diagnostics FROM tasks WHERE id = ?`,
+          args: [p.taskId],
+        })
+        if (taskDiagRow.rows.length > 0) {
+          const raw = (taskDiagRow.rows[0] as unknown as { stall_diagnostics: string | null }).stall_diagnostics
+          if (raw) stallDiagnostics = JSON.parse(raw)
+        }
+      } catch {
+        // Non-fatal: proceed without diagnostics.
+      }
+
+      // Slice 6: compute a live pool snapshot from task status counts.
+      let poolSnapshot: {
+        activeWorkerCount: number
+        queuedCount: number
+        runningCount: number
+        blockedCount: number
+        recentDispatchDecisions: string[]
+      } = {
+        activeWorkerCount: 0,
+        queuedCount: 0,
+        runningCount: 0,
+        blockedCount: 0,
+        recentDispatchDecisions: [],
+      }
+      try {
+        const countRows = await client.execute(
+          `SELECT status, COUNT(*) AS n FROM tasks WHERE status IN ('queued', 'running', 'blocked') GROUP BY status`,
+        )
+        const counts: Record<string, number> = {}
+        for (const row of countRows.rows as unknown as Array<{ status: string; n: number | bigint }>) {
+          counts[row.status] = Number(row.n)
+        }
+        const runningCount = counts['running'] ?? 0
+        poolSnapshot = {
+          activeWorkerCount: runningCount,
+          queuedCount: counts['queued'] ?? 0,
+          runningCount,
+          blockedCount: counts['blocked'] ?? 0,
+          recentDispatchDecisions: [],
+        }
+      } catch {
+        // Non-fatal: keep zero-valued snapshot.
+      }
+
       // Route through the single raise path (ADR-0051).
       // raiseActionQueueItem calls resolveOriginIdForTask(originTaskId) internally
       // so fix/descendant tasks collapse onto their arc root. We pass originTaskId
@@ -222,6 +271,8 @@ function taskBlockedActionQueueRaiser(client: DbClient): Subscriber {
           taskId: p.taskId,
           failureSignature: p.failureSignature,
           failingStep: p.failingStep,
+          stallDiagnostics,
+          poolSnapshot,
         },
         context: {},
         raisedBy: 'outbox:action-queue-raiser:task.blocked',

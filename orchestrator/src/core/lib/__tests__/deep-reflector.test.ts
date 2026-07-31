@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { parseDeepReflectionReport, runDeepReflectorArc, buildArcPrompt, capConversation } from '../deep-reflector'
+import {
+  parseDeepReflectionReport,
+  runDeepReflectorArc,
+  buildArcPrompt,
+  capConversation,
+  allocateConversationBudgets,
+} from '../deep-reflector'
 import type { DeepReflectArc } from '../deep-reflect-query'
 import type { ClaudeEvent } from '../claude-stream'
 
@@ -536,6 +542,145 @@ describe('buildArcPrompt — prompt size cap and elision markers', () => {
 
     expect(prompt).toContain('"environmentalFailure":true')
     expect(prompt).toContain('rate_limit_event')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prompt capping must never hand the analyst invalid JSON
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Pull every embedded `conversationJson` blob out of an assembled arc prompt.
+ * Each conversation is serialized with a non-indenting `JSON.stringify`, so it
+ * occupies exactly one line directly under its header.
+ */
+const extractConversationJson = (prompt: string): string[] => {
+  const lines = prompt.split('\n')
+  const out: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    if (/^Conversation for .+ \(ClaudeEvent\[\] JSON;/.test(lines[i])) {
+      out.push(lines[i + 1] ?? '')
+    }
+  }
+  return out
+}
+
+/** Pull every embedded `Task metadata:` JSON document out of an arc prompt. */
+const extractMetadataJson = (prompt: string): string[] => {
+  const out: string[] = []
+  const blocks = prompt.split('\nTask metadata:\n').slice(1)
+  for (const block of blocks) {
+    // The pretty-printed object ends at the first line that is exactly '}'.
+    const lines = block.split('\n')
+    const end = lines.indexOf('}')
+    out.push(lines.slice(0, end + 1).join('\n'))
+  }
+  return out
+}
+
+describe('buildArcPrompt — capping never emits invalid JSON', () => {
+  it('keeps the embedded conversation JSON parseable for an oversized transcript', () => {
+    // ~8 MB of raw transcript for a single task — far past the 400 KB cap.
+    const conversation: ClaudeEvent[] = []
+    for (let i = 0; i < 1600; i++) {
+      conversation.push(readCallEvent(`r${i}`, `file-${i % 10}.ts`))
+      conversation.push(largeResultEvent(`r${i}`, 5000))
+    }
+
+    const arc = makeArc([makeTaskEntry('mars-oversized', conversation)])
+    const prompt = buildArcPrompt(arc)
+
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThanOrEqual(400 * 1024)
+
+    const blobs = extractConversationJson(prompt)
+    expect(blobs).toHaveLength(1)
+    // The load-bearing assertion: the cap fired, and what survived still parses.
+    expect(prompt).toContain('middle events elided')
+    const parsed = JSON.parse(blobs[0]) as unknown
+    expect(Array.isArray(parsed)).toBe(true)
+  })
+
+  it('keeps every task metadata document parseable when free-text fields are oversized', () => {
+    const task = makeTaskEntry('mars-fat-meta', [readCallEvent('r1')])
+    const arc = makeArc([
+      {
+        ...task,
+        // Free-text fields big enough to trip the per-field caps. A naive
+        // byte-slice through these would cut the surrounding JSON in half.
+        prompt: 'P'.repeat(200_000),
+        error: 'E'.repeat(100_000),
+        verifyOutput: 'V'.repeat(200_000),
+        transcriptNotes: ['N'.repeat(50_000)],
+      },
+    ])
+    const prompt = buildArcPrompt(arc)
+
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThanOrEqual(400 * 1024)
+    for (const doc of extractMetadataJson(prompt)) {
+      expect(() => JSON.parse(doc)).not.toThrow()
+    }
+    for (const blob of extractConversationJson(prompt)) {
+      expect(() => JSON.parse(blob)).not.toThrow()
+    }
+  })
+
+  it('gives every task a share of the budget instead of letting one transcript take it all', () => {
+    // One pathological transcript alongside four ordinary ones.
+    const fat: ClaudeEvent[] = []
+    for (let i = 0; i < 1600; i++) {
+      fat.push(readCallEvent(`f${i}`))
+      fat.push(largeResultEvent(`f${i}`, 5000))
+    }
+    const modest = (seed: string): ClaudeEvent[] => {
+      const evts: ClaudeEvent[] = []
+      for (let i = 0; i < 40; i++) {
+        evts.push(readCallEvent(`${seed}${i}`))
+        evts.push(largeResultEvent(`${seed}${i}`, 400))
+      }
+      return evts
+    }
+
+    const arc = makeArc([
+      makeTaskEntry('mars-fat', fat),
+      makeTaskEntry('mars-a', modest('a')),
+      makeTaskEntry('mars-b', modest('b')),
+      makeTaskEntry('mars-c', modest('c')),
+      makeTaskEntry('mars-d', modest('d')),
+    ])
+    const prompt = buildArcPrompt(arc)
+
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThanOrEqual(400 * 1024)
+
+    const blobs = extractConversationJson(prompt)
+    expect(blobs).toHaveLength(5)
+    const eventCounts = blobs.map((b) => (JSON.parse(b) as unknown[]).length)
+    // Not starved: every small task keeps its whole conversation.
+    for (const count of eventCounts.slice(1)) expect(count).toBe(80)
+    // And the pathological one was capped rather than swallowing the prompt.
+    expect(eventCounts[0]).toBeLessThan(3200)
+    expect(eventCounts[0]).toBeGreaterThan(0)
+  })
+})
+
+describe('allocateConversationBudgets', () => {
+  it('hands a small transcript its surplus back to the larger ones', () => {
+    // 100 KB total, one 1 KB task and one 500 KB task.
+    const sizes = [1_000, 500_000]
+    const budgets = allocateConversationBudgets(sizes, 100_000)
+    expect(budgets[0]).toBeGreaterThanOrEqual(1_000)
+    // The small task consumed only 1 KB, so the big one gets the other ~99 KB.
+    expect(budgets[1]).toBeGreaterThan(90_000)
+    const consumed = sizes.reduce((sum, size, i) => sum + Math.min(size, budgets[i]), 0)
+    expect(consumed).toBeLessThanOrEqual(100_000)
+  })
+
+  it('never exceeds the single-task ceiling even with one task and a huge pool', () => {
+    const [budget] = allocateConversationBudgets([10_000_000], 10_000_000)
+    expect(budget).toBe(150 * 1024)
+  })
+
+  it('returns all-zero budgets when nothing is left over', () => {
+    expect(allocateConversationBudgets([5_000, 5_000], -1)).toEqual([0, 0])
   })
 })
 

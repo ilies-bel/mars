@@ -269,57 +269,6 @@ describe('unknownFailureKind — plain-English fallback (no raw step ids, no jar
   })
 })
 
-describe('unknownFailureKind — triage family and colon-less step family coverage', () => {
-  it('triage:crashed maps to the triage label', () => {
-    const kind = unknownFailureKind('triage:crashed', '')
-    expect(kind.warmTitle).toBe('The task could not be triaged')
-    expect(kind.warmTitle).not.toContain('triage:crashed')
-  })
-
-  it('triage:crashed/unclassified maps to the same triage label', () => {
-    // The failingStep extracted from signature 'triage:crashed/unclassified' is
-    // 'triage:crashed', which has family 'triage'.
-    const kind = unknownFailureKind('triage:crashed', '')
-    expect(kind.warmTitle).toBe('The task could not be triaged')
-  })
-
-  it('bare code (colon-less) maps to the same label as code:coder-exit-nonzero', () => {
-    const bareCode = unknownFailureKind('code', '')
-    const withColon = unknownFailureKind('code:coder-exit-nonzero', '')
-    expect(bareCode.warmTitle).toBe(withColon.warmTitle)
-    expect(bareCode.warmTitle).toMatch(/coder/i)
-  })
-
-  it('code:coder-exit-nonzero maps to the coder label', () => {
-    const kind = unknownFailureKind('code:coder-exit-nonzero', '')
-    expect(kind.warmTitle).toBe('The coder did not complete successfully')
-    expect(kind.warmTitle).not.toContain('code:coder-exit-nonzero')
-  })
-
-  it('unrecognised family still hits the generic fallback', () => {
-    const kind = unknownFailureKind('xyzzy:warp', '')
-    expect(kind.warmTitle).toBe('A pipeline step did not complete')
-    expect(kind.warmTitle).not.toContain('xyzzy:warp')
-  })
-
-  // Verify that warmTitle never leaks technical step ids (colon-containing forms
-  // are the primary risk; single-word families like 'code' naturally appear as
-  // ordinary English substrings in the label text so the substring check only
-  // applies to forms that include a colon).
-  it.each([
-    ['verify:test', ''],
-    ['setup:install', ''],
-    ['code:coder-exit-nonzero', ''],
-    ['merge:preflight', ''],
-    ['triage:crashed', ''],
-    ['xyzzy:warp', ''],
-  ])('warmTitle for %s contains no colon and does not contain the raw failingStep', (step, err) => {
-    const kind = unknownFailureKind(step, err)
-    expect(kind.warmTitle).not.toContain(':')
-    expect(kind.warmTitle).not.toContain(step)
-  })
-})
-
 describe('new catalog entries for previously-unmatched signatures', () => {
   it('setup:install/unclassified is registered with a plain-English warm title', () => {
     const entry = lookupFailureKind('setup:install/unclassified')
@@ -507,6 +456,19 @@ describe('failedTaskTitle', () => {
     )
   })
 
+  it('strips composed recovery_failed prefixes off the error head', () => {
+    // failure_reason / error can carry `recovery_failed:<sig>: ` prefixes,
+    // sometimes nested. The title must show the real error underneath.
+    expect(
+      failedTaskTitle({
+        signature: null,
+        taskId: 'task-1',
+        capturedError:
+          'recovery_failed:verify:test/test-assertion-error: recovery_failed:verify:test/test-assertion-error: expected 2 to be 3',
+      }),
+    ).toBe('A pipeline step did not complete: expected 2 to be 3 [task task-1]')
+  })
+
   it('clips a very long error head so the row stays scannable', () => {
     const title = failedTaskTitle({
       signature: null,
@@ -551,5 +513,61 @@ describe('isGenericFailureLabel', () => {
       false,
     )
     expect(isGenericFailureLabel('Plan review: 3 slices for PRD p-1')).toBe(false)
+  })
+})
+
+describe('unknownFailureKind — triage family and colon-less step forms', () => {
+  it('triage:crashed maps to the triage plain-English label', () => {
+    const kind = unknownFailureKind('triage:crashed', '')
+    expect(kind.warmTitle).toBe('The task could not be triaged')
+  })
+
+  it('bare "code" (no colon) maps to the same label as "code:coder-exit-nonzero"', () => {
+    const bareKind = unknownFailureKind('code', '')
+    const qualifiedKind = unknownFailureKind('code:coder-exit-nonzero', '')
+    expect(bareKind.warmTitle).toBe(qualifiedKind.warmTitle)
+    expect(bareKind.warmTitle).toMatch(/coder/i)
+  })
+
+  it('unrecognised family still hits the generic fallback', () => {
+    const kind = unknownFailureKind('xyzzy:warp', '')
+    expect(kind.warmTitle).toBe('A pipeline step did not complete')
+  })
+
+  it('no warmTitle contains a colon', () => {
+    const cases = [
+      'triage:crashed',
+      'triage:unclassified',
+      'code',
+      'code:coder-exit-nonzero',
+      'verify:lint',
+      'setup:install',
+      'merge:preflight',
+      'xyzzy:unknown',
+    ]
+    for (const step of cases) {
+      const kind = unknownFailureKind(step, '')
+      expect(kind.warmTitle).not.toContain(':')
+    }
+  })
+
+  it('no warmTitle contains the raw qualified failingStep string (the colon-bearing form)', () => {
+    // When the step has a colon the full technical id (e.g. "triage:crashed")
+    // must not appear verbatim in the warmTitle. Bare family names (e.g. "code")
+    // are common English words that naturally appear inside labels like "coder",
+    // so this assertion is scoped to the qualified form only.
+    const qualifiedCases = [
+      'triage:crashed',
+      'triage:unclassified',
+      'code:coder-exit-nonzero',
+      'verify:lint',
+      'setup:install',
+      'merge:preflight',
+      'xyzzy:unknown',
+    ]
+    for (const step of qualifiedCases) {
+      const kind = unknownFailureKind(step, '')
+      expect(kind.warmTitle).not.toContain(step)
+    }
   })
 })

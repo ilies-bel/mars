@@ -48,6 +48,10 @@ mock.module('@/entities/kpi/useKpis', () => ({
   useKpis: () => ({ data: undefined, isLoading: false, error: null }),
 }))
 
+mock.module('@/entities/frameworkUpdate/useFrameworkUpdate', () => ({
+  useFrameworkUpdate: () => ({ update: null, error: null, isPending: false }),
+}))
+
 const { ProgressPage } = await import('./ProgressPage')
 
 // ---------------------------------------------------------------------------

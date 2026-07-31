@@ -56,6 +56,34 @@ describe('ensureSchema', () => {
     expect(r.rows).toEqual([{ version: SCHEMA_VERSION }])
   })
 
+  it('creates the worker MCP audit table with durable mutation evidence fields', async () => {
+    const c = await freshSchemaClient()
+    const cols = await columnsOf(c, 'mcp_worker_audit')
+    expect(Object.fromEntries(cols)).toMatchObject({
+      id: 'bigint',
+      tool_name: 'text',
+      task_id: 'text',
+      args_json: 'jsonb',
+      ok: 'boolean',
+      error_message: 'text',
+      created_at: 'timestamp with time zone',
+    })
+
+    const inserted = await c.execute(
+      `INSERT INTO mcp_worker_audit (tool_name, task_id, args_json, ok, error_message)
+       VALUES ('mars_task_note', 'mars-audit-001', '{"body":"[redacted]"}', false, 'daemon unavailable')
+       RETURNING tool_name, task_id, args_json, ok, error_message, created_at`,
+    )
+    expect(inserted.rows[0]).toMatchObject({
+      tool_name: 'mars_task_note',
+      task_id: 'mars-audit-001',
+      args_json: { body: '[redacted]' },
+      ok: false,
+      error_message: 'daemon unavailable',
+    })
+    expect(inserted.rows[0].created_at).toBeTruthy()
+  })
+
   it('two concurrent calls both resolve without a deadlock error', async () => {
     // Verify that SCHEMA_ADVISORY_LOCK_KEY is exported and is a number —
     // it is the constant every process uses to name the advisory lock.
@@ -99,7 +127,9 @@ describe('ensureSchema', () => {
     expect(cols.get('id')).toBe('text')
     expect(cols.get('retry_count')).toBe('bigint')
     expect(cols.get('priority')).toBe('bigint')
-    expect(cols.get('created_at')).toBe('text') // ISO-8601 stays text (0002 §4)
+    expect(cols.get('leased_at')).toBe('timestamp with time zone')
+    expect(cols.get('created_at')).toBe('timestamp with time zone')
+    expect(cols.get('updated_at')).toBe('timestamp with time zone')
   })
 
   it('events is a bigint identity outbox with an epoch default', async () => {
@@ -197,6 +227,26 @@ describe('ensureSchema', () => {
     expect(r.rows[0].by).toBe('operator')
   })
 
+  it('uses native timestamps for the task-adjacent operational tables', async () => {
+    const c = await freshSchemaClient()
+
+    const taskProgress = await columnsOf(c, 'task_progress')
+    const actionQueue = await columnsOf(c, 'action_queue_items')
+    const actionQueueHistory = await columnsOf(c, 'action_queue_history')
+    const failureStreak = await columnsOf(c, 'failure_signature_streak')
+    const mergeJobs = await columnsOf(c, 'merge_jobs')
+
+    expect(taskProgress.get('created_at')).toBe('timestamp with time zone')
+    for (const column of ['raised_at', 'resolved_at', 'last_seen_at', 'snoozed_until']) {
+      expect(actionQueue.get(column), `action_queue_items.${column}`).toBe('timestamp with time zone')
+    }
+    expect(actionQueueHistory.get('at')).toBe('timestamp with time zone')
+    expect(failureStreak.get('updated_at')).toBe('timestamp with time zone')
+    for (const column of ['claimed_at', 'started_at', 'finished_at', 'created_at', 'updated_at']) {
+      expect(mergeJobs.get(column), `merge_jobs.${column}`).toBe('timestamp with time zone')
+    }
+  })
+
   it('ports the partial and DESC indexes', async () => {
     const c = await freshSchemaClient()
     const r = await c.execute(
@@ -215,6 +265,7 @@ describe('ensureSchema', () => {
       'idx_proposals_fingerprint', 'idx_scorer_results_scorer_task',
       'idx_promotion_ledger_workflow', 'idx_memory_packets_domain_salience',
       'idx_action_queue_fingerprint_state', 'idx_action_queue_state',
+      'idx_action_queue_open_snoozed_until',
       'idx_action_queue_history_item', 'idx_kpi_snapshots_taken_at',
       'idx_self_heal_attempts_parent_signature',
       'idx_self_heal_attempts_fix_task', 'idx_tool_promotion_status',

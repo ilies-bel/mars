@@ -70,6 +70,24 @@ describe('coreRestartTask — vega-reconciling and merging are normal restart ta
 
   // ── vega-reconciling ──────────────────────────────────────────────────────
 
+  it('restarts an explicitly selected done task without weakening terminal immutability', async () => {
+    const { q, restart } = await loadModules(repo)
+
+    const task = await q.enqueueTask('completed task selected for rerun', undefined, {
+      skipTriage: true,
+    })
+    await q.updateTask(task.id, { status: 'done' })
+
+    const result = await restart.coreRestartTask(
+      task.id,
+      RESTART_ALLOWED,
+      new InMemoryStore(),
+    )
+
+    expect(result.status).toBe('queued')
+    expect((await q.getTask(task.id))?.status).toBe('queued')
+  })
+
   it('restarts a vega-reconciling task without force', async () => {
     const { q, restart } = await loadModules(repo)
 

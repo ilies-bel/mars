@@ -2,7 +2,7 @@
  * Tests for defaultProvider persistence in daemon.json.
  *
  * Exercises the round-trip: patchDaemonConfigFile({ defaultProvider }) → loadDaemonConfig()
- * and verifies that invalid values are rejected and the default ('claude') is
+ * and verifies that invalid values are rejected and the default ('codex') is
  * applied when the field is absent.
  *
  * Uses a real temp directory so config write/read IO is exercised end-to-end,
@@ -30,12 +30,12 @@ afterEach(() => {
 })
 
 describe('loadDaemonConfig — defaultProvider', () => {
-  it("defaults to 'claude' when daemon.json has no defaultProvider field", async () => {
+  it("defaults to 'codex' when daemon.json has no defaultProvider field", async () => {
     const { vi } = await import('vitest')
     vi.resetModules()
     const { loadDaemonConfig } = await import('../../core/daemon/config')
     const cfg = loadDaemonConfig()
-    expect(cfg.defaultProvider).toBe('claude')
+    expect(cfg.defaultProvider).toBe('codex')
   })
 
   it("persists and reads back 'gemini'", async () => {
@@ -65,14 +65,14 @@ describe('loadDaemonConfig — defaultProvider', () => {
     expect(cfg.defaultProvider).toBe('claude')
   })
 
-  it("falls back to 'claude' when an invalid provider name is in daemon.json", async () => {
+  it("falls back to 'codex' when an invalid provider name is in daemon.json", async () => {
     const { vi } = await import('vitest')
     vi.resetModules()
     const { patchDaemonConfigFile, loadDaemonConfig } = await import('../../core/daemon/config')
     // Write an unknown provider string directly
     patchDaemonConfigFile({ defaultProvider: 'unknown-llm' })
     const cfg = loadDaemonConfig()
-    expect(cfg.defaultProvider).toBe('claude')
+    expect(cfg.defaultProvider).toBe('codex')
   })
 
   it('preserves other config fields when patching defaultProvider', async () => {

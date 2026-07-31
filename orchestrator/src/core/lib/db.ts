@@ -25,6 +25,8 @@
  * Value normalization (both backends return identical row value types):
  * - `int8` / `numeric` → JS `number` (values here stay far below 2^53).
  * - `bytea` → `Uint8Array` (pg returns Buffer, which IS a Uint8Array).
+ * - `timestamptz` → ISO-8601 UTC strings (rather than backend-dependent
+ *   `Date` objects) so CLI and HTTP JSON keep a stable wire format.
  * - Integer 0/1 flag columns come back as plain numbers — never booleans.
  * - Input: JS booleans are serialized as 1/0 (libsql behavior; columns are
  *   INTEGER by design), `undefined` → null, `Uint8Array` → Buffer for pg.
@@ -48,6 +50,7 @@ export type DbInValue =
   | bigint
   | boolean
   | Uint8Array
+  | readonly string[]
 
 /** A result row, keyed by column name. */
 export type DbRow = Record<string, unknown>
@@ -232,6 +235,13 @@ function normalizeRow(row: DbRow): DbRow {
       // Safety net if a backend parser slips through: libsql returned numbers.
       out ??= { ...row }
       out[key] = Number(v)
+    }
+    if (v instanceof Date) {
+      // node-postgres returns Date for timestamptz while PGlite can return a
+      // string. Normalize at the DB boundary so all public row consumers keep
+      // the established ISO-8601 wire format.
+      out ??= { ...row }
+      out[key] = v.toISOString()
     }
   }
   return out ?? row
@@ -620,6 +630,29 @@ export function openDb(target: string): DbClient {
   }
   registry.set(key, entry)
   return entry.client
+}
+
+/**
+ * Close every open database connection in the registry and clear the registry.
+ *
+ * Used exclusively by the test suite before `vi.resetModules()` so that PGlite
+ * WASM memory is freed rather than orphaned. Calling this in production code is
+ * a mistake — production uses a long-lived singleton pool that must not be torn
+ * down between requests.
+ *
+ * Safe to call when the registry is empty (no-op).
+ */
+export async function closeAllDbs(): Promise<void> {
+  const entries = [...registry.entries()]
+  for (const [key, entry] of entries) {
+    registry.delete(key)
+    try {
+      await entry.backend.end()
+    } catch {
+      // Best-effort: an already-crashed PGlite instance may throw on close.
+    }
+  }
+  schemaReadyByTarget.clear()
 }
 
 /**

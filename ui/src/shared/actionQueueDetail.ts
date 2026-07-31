@@ -325,36 +325,13 @@ export const humanizePhase = (phase: string | null): string | null => {
   return PHASE_LABELS[phase] ?? phase
 }
 
-/** Kinds the UI labels distinctly in the Origins tree badge. */
-export const originKindLabel = (kind: string): string => {
-  if (kind === 'proposal') return 'PROPOSAL'
-  if (kind === 'prd') return 'PRD'
-  if (kind === 'fix') return 'FIX'
-  return 'TASK'
-}
-
 /**
- * Short display label for an action-queue row kind. Used in both the sidebar
- * row kind badge and the detail panel header badge so the label is authoritative
- * in one place for all four kinds (including `arc-failed`).
+ * One-line "why now" subtitle — the most actionable reason an operator should
+ * act on a failed-task card. Priority: diagnosis text → errorKind (when
+ * distinct from kind) → failureReasonCode → arc reason → body first line
+ * (when non-generic).
  */
-export const kindBadgeLabel = (kind: string): string => {
-  if (kind === 'arc-failed') return 'arc failed'
-  if (kind === 'failed-task') return 'failed'
-  if (kind === 'stale-worktree') return 'stale wt'
-  if (kind === 'draft-proposal') return 'draft'
-  if (kind === 'awaiting-validation') return 'validate'
-  return kind
-}
-
-export function whyNowText(item: {
-  diagnosis?: { text: string } | null | undefined
-  errorKind: string
-  kind: string
-  failureReasonCode?: string | null
-  body: string
-  reason?: string
-}): string | null {
+export function whyNowText(item: { diagnosis?: { text: string } | null | undefined; errorKind: string; kind: string; failureReasonCode?: string | null; body: string; reason?: string }): string | null {
   if (item.diagnosis?.text) {
     const line = item.diagnosis.text.split('\n')[0]
     return line.length > 100 ? `${line.slice(0, 100)}…` : line
@@ -377,4 +354,26 @@ export function whyNowText(item: {
     return line.length > 100 ? `${line.slice(0, 100)}…` : line
   }
   return null
+}
+
+/** Kinds the UI labels distinctly in the Origins tree badge. */
+export const originKindLabel = (kind: string): string => {
+  if (kind === 'proposal') return 'PROPOSAL'
+  if (kind === 'prd') return 'PRD'
+  if (kind === 'fix') return 'FIX'
+  return 'TASK'
+}
+
+/**
+ * Short display label for an action-queue row kind. Used in both the sidebar
+ * row kind badge and the detail panel header badge so the label is authoritative
+ * in one place for all four kinds (including `arc-failed`).
+ */
+export const kindBadgeLabel = (kind: string): string => {
+  if (kind === 'arc-failed') return 'arc failed'
+  if (kind === 'failed-task') return 'failed'
+  if (kind === 'stale-worktree') return 'stale wt'
+  if (kind === 'draft-proposal') return 'draft'
+  if (kind === 'awaiting-validation') return 'validate'
+  return kind
 }

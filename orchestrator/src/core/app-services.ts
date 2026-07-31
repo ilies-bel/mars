@@ -43,7 +43,7 @@ import {
 import { buildSessionsView } from './daemon/view/sessions'
 import { listTerminalEvents } from './daemon/view/terminal-events'
 import { listReleaseNotes } from './daemon/view/release-notes'
-import { getProposal } from './proposals'
+import { getProposal, isProposalSource } from './proposals'
 import { MARS_VERSION } from '../version'
 import { classifyInstallRoute } from './daemon/install-route'
 import { listAlerts, showAlert, type Alert, type AlertSources } from './lib/alert'
@@ -77,7 +77,12 @@ import {
 } from './daemon/kpi-store'
 import type { TraceEventStore } from './lib/trace-events-store'
 import type { Proposal } from './proposals'
-import type { ActionQueueRow, DerivedActionQueueFilter } from './daemon/view/action-queue'
+import type {
+  ActionQueueRow,
+  DerivedActionQueueFilter,
+  PersistedActionQueueRow,
+  TaskForActionQueue,
+} from './daemon/view/action-queue'
 import type { TerminalEvent } from './daemon/view/terminal-events'
 import type { ReleaseNoteEntry } from './daemon/view/release-notes'
 import type { Session } from './daemon/view/sessions'
@@ -235,6 +240,39 @@ export interface AppServices {
   viewChatThreads: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
   viewChatThread: (id: string) => Promise<{ thread: import('./lib/chat-store').ChatThreadApiView; messages: import('./lib/chat-store').ChatMessageApiView[] } | null>
   viewChatHistory: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
+  viewSteward: (runtime: { liveCap: number; baselineCap: number; isPaused: boolean }) => Promise<{
+    runtimeTuning: {
+      acks: Array<{ text: string; timestamp: string; pair: { from: number; to: number } | null }>
+      liveCap: number
+      baselineCap: number
+      ceiling: number
+      bumpFactor: number
+      thresholdFactor: number
+      sustainMs: number
+      checkMs: number
+    }
+    workflowPatches: {
+      rows: Array<{ id: string; workflow_path: string; unified_diff: string; rationale: string; status: string; created_at: string }>
+      hasCallers: boolean
+    }
+    signatureStorm: {
+      current_signature: string | null
+      streak_count: number
+      last_task_id: string | null
+      tripped: boolean
+      updated_at: string | null
+      signatureStormAqCount: number
+      tripThreshold: number
+      isPaused: boolean
+    }
+    agentSpec: {
+      name: string
+      model: string
+      allowedTools: readonly string[]
+      eventVariants: string[]
+      dispatchSites: number
+    }
+  }>
 }
 
 /**
@@ -851,6 +889,65 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return alerts[0] ?? null
   }
 
+  const listActionQueueTaskGraph = async (
+    rows: readonly PersistedActionQueueRow[],
+  ): Promise<TaskForActionQueue[]> => {
+    const { getActionQueueEntityId } = await import('./daemon/view/action-queue')
+    const entityIds = [...new Set(rows.map(getActionQueueEntityId))]
+    if (entityIds.length === 0) return []
+
+    const c = getCompositionRootClient()
+    const result = await c.execute({
+      sql: `WITH input_ids(id) AS (
+              SELECT unnest(?::text[])
+            ), related_ids(id) AS (
+              SELECT id FROM input_ids
+              UNION
+              SELECT t.fix_for_task_id
+                FROM tasks t JOIN input_ids i ON t.id = i.id
+               WHERE t.fix_for_task_id IS NOT NULL
+              UNION
+              SELECT b.task_id
+                FROM task_blockers b JOIN input_ids i ON b.blocker_task_id = i.id
+              UNION
+              SELECT b.blocker_task_id
+                FROM task_blockers b JOIN input_ids i ON b.task_id = i.id
+              UNION
+              SELECT t.id
+                FROM tasks t JOIN input_ids i ON t.fix_for_task_id = i.id
+            )
+            SELECT t.id, t.status, t.prompt, t.failure_signature, t.branch,
+                   t.updated_at, t.parent_proposal_id, t.fix_for_task_id,
+                   t.lease_owner, t.leased_at, t.lease_note,
+                   COALESCE(array_agg(b.blocker_task_id)
+                     FILTER (WHERE b.blocker_task_id IS NOT NULL), '{}') AS blocked_by
+              FROM tasks t
+              JOIN related_ids r ON r.id = t.id
+              LEFT JOIN task_blockers b ON b.task_id = t.id
+             GROUP BY t.id, t.status, t.prompt, t.failure_signature, t.branch,
+                      t.updated_at, t.parent_proposal_id, t.fix_for_task_id,
+                      t.lease_owner, t.leased_at, t.lease_note`,
+      args: [entityIds],
+    })
+    return result.rows.map((row) => {
+      const task = row as Record<string, unknown>
+      return {
+        id: task.id as string,
+        status: task.status as string,
+        prompt: task.prompt as string,
+        blockedBy: (task.blocked_by as string[]) ?? [],
+        parentProposalId: (task.parent_proposal_id as string | null) ?? null,
+        failureSignature: (task.failure_signature as string | null) ?? null,
+        branch: (task.branch as string | null) ?? null,
+        updatedAt: task.updated_at as string,
+        fixForTaskId: (task.fix_for_task_id as string | null) ?? null,
+        leaseOwner: (task.lease_owner as string | null) ?? null,
+        leasedAt: (task.leased_at as string | null) ?? null,
+        leaseNote: (task.lease_note as string | null) ?? null,
+      }
+    })
+  }
+
   const listNotices: AppServices['listNotices'] = async () => {
     const { listOpenNotices } = await import('./lib/notice-store')
     return listOpenNotices()
@@ -863,22 +960,14 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
 
   const viewActionQueue: AppServices['viewActionQueue'] = async (filter) => {
     const { buildActionQueueView } = await import('./daemon/view/action-queue')
-    const { listActionQueueItems } = await import('./lib/action-queue')
-    const { listTasks: qListTasks } = await import('./queue')
-    const getQueueClient = getCompositionRootClient
+    const { listVisibleActionQueueItems } = await import('./lib/action-queue')
 
     await runCompositionRootMigrations()
 
     // Build the state store adapter.
     const stateStore = {
       listOpenActionQueueItems: async () => {
-        const now = new Date()
-        const items = (await listActionQueueItems('all')).filter(
-          (item) =>
-            item.state === 'open' &&
-            (item.snoozedUntil === null ||
-              new Date(item.snoozedUntil) <= now),
-        )
+        const items = await listVisibleActionQueueItems()
         return items.map((item) => ({
           id: item.id,
           kind: item.kind as string,
@@ -898,51 +987,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
 
     // Build the task store adapter: tasks + blocker info + parentProposalId.
     const taskStore = {
-      listTasks: async () => {
-        const tasks = await qListTasks()
-        const c = getQueueClient()
-        // Build blockedBy map from task_blockers.
-        let blockedByMap = new Map<string, string[]>()
-        let proposalMap = new Map<string, string | null>()
-        try {
-          const blockersResult = await c.execute(
-            `SELECT task_id, blocker_task_id FROM task_blockers`,
-          )
-          for (const row of blockersResult.rows) {
-            const r = row as unknown as { task_id: string; blocker_task_id: string }
-            const arr = blockedByMap.get(r.task_id) ?? []
-            arr.push(r.blocker_task_id)
-            blockedByMap.set(r.task_id, arr)
-          }
-        } catch {
-          // task_blockers may not exist on a fresh repo — empty map.
-        }
-        try {
-          const proposalResult = await c.execute(
-            `SELECT id, parent_proposal_id FROM tasks WHERE parent_proposal_id IS NOT NULL`,
-          )
-          for (const row of proposalResult.rows) {
-            const r = row as unknown as { id: string; parent_proposal_id: string | null }
-            proposalMap.set(r.id, r.parent_proposal_id)
-          }
-        } catch {
-          // Tolerate missing column on legacy repos.
-        }
-        return tasks.map((t) => ({
-          id: t.id,
-          status: t.status,
-          prompt: t.prompt,
-          blockedBy: blockedByMap.get(t.id) ?? [],
-          parentProposalId: proposalMap.get(t.id) ?? null,
-          failureSignature: t.failureSignature,
-          branch: t.branch,
-          updatedAt: t.updatedAt,
-          fixForTaskId: t.fixForTaskId ?? null,
-          leaseOwner: t.leaseOwner,
-          leasedAt: t.leasedAt,
-          leaseNote: t.leaseNote,
-        }))
-      },
+      listTasksForActionQueueItems: listActionQueueTaskGraph,
     }
 
     return buildActionQueueView({
@@ -959,8 +1004,6 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   }) => {
     const { buildActionQueueHistoryView } = await import('./daemon/view/action-queue')
     const { listResolvedActionQueueItems } = await import('./lib/action-queue')
-    const { listTasks: qListTasks } = await import('./queue')
-    const getQueueClient = getCompositionRootClient
 
     await runCompositionRootMigrations()
 
@@ -995,50 +1038,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     }
 
     const taskStore = {
-      listTasks: async () => {
-        const tasks = await qListTasks()
-        const c = getQueueClient()
-        let blockedByMap = new Map<string, string[]>()
-        let proposalMap = new Map<string, string | null>()
-        try {
-          const blockersResult = await c.execute(
-            `SELECT task_id, blocker_task_id FROM task_blockers`,
-          )
-          for (const row of blockersResult.rows) {
-            const r = row as unknown as { task_id: string; blocker_task_id: string }
-            const arr = blockedByMap.get(r.task_id) ?? []
-            arr.push(r.blocker_task_id)
-            blockedByMap.set(r.task_id, arr)
-          }
-        } catch {
-          // task_blockers may not exist on a fresh repo — empty map.
-        }
-        try {
-          const proposalResult = await c.execute(
-            `SELECT id, parent_proposal_id FROM tasks WHERE parent_proposal_id IS NOT NULL`,
-          )
-          for (const row of proposalResult.rows) {
-            const r = row as unknown as { id: string; parent_proposal_id: string | null }
-            proposalMap.set(r.id, r.parent_proposal_id)
-          }
-        } catch {
-          // Tolerate missing column on legacy repos.
-        }
-        return tasks.map((t) => ({
-          id: t.id,
-          status: t.status,
-          prompt: t.prompt,
-          blockedBy: blockedByMap.get(t.id) ?? [],
-          parentProposalId: proposalMap.get(t.id) ?? null,
-          failureSignature: t.failureSignature,
-          branch: t.branch,
-          updatedAt: t.updatedAt,
-          fixForTaskId: t.fixForTaskId ?? null,
-          leaseOwner: t.leaseOwner,
-          leasedAt: t.leasedAt,
-          leaseNote: t.leaseNote,
-        }))
-      },
+      listTasksForActionQueueItems: listActionQueueTaskGraph,
     }
 
     return buildActionQueueHistoryView({
@@ -1091,8 +1091,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       for (const row of r.rows) {
         const r0 = row as unknown as Record<string, unknown>
         const src = r0.source
-        const source: DraftFeature['source'] =
-          src === 'reflection' || src === 'planner' || src === 'human' ? src : 'human'
+        const source: DraftFeature['source'] = isProposalSource(src) ? src : 'human'
         drafts.push({
           id: r0.id as string,
           title: (r0.title as string | null) ?? '',
@@ -1311,6 +1310,118 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return { skills }
   }
 
+  const viewSteward: AppServices['viewSteward'] = async (runtime) => {
+    const client = getCompositionRootClient()
+
+    // 1. Runtime tuning acks — chat_threads WHERE title = 'Steward: runtime tuning'
+    //    joined to chat_messages WHERE kind = 'acknowledgment', newest first.
+    let acks: Array<{ text: string; timestamp: string; pair: { from: number; to: number } | null }> = []
+    try {
+      const acksResult = await client.execute(
+        `SELECT m.content, m.created_at
+           FROM chat_messages m
+           JOIN chat_threads t ON t.id = m.thread_id
+          WHERE t.title = 'Steward: runtime tuning'
+            AND m.kind = 'acknowledgment'
+          ORDER BY m.created_at DESC`,
+      )
+      acks = acksResult.rows.map((row) => {
+        const r = row as unknown as { content: string; created_at: string }
+        const text = r.content
+        // Parse "from N to M" pattern defensively — free text; null on mismatch.
+        const m = /from (\d+) to (\d+)/.exec(text)
+        const pair = m ? { from: Number(m[1]), to: Number(m[2]) } : null
+        return { text, timestamp: r.created_at, pair }
+      })
+    } catch {
+      // Degrade gracefully on fresh repos without chat tables.
+    }
+
+    // 2. Workflow patch proposals — zero rows today; table may not exist.
+    let patchRows: Array<{ id: string; workflow_path: string; unified_diff: string; rationale: string; status: string; created_at: string }> = []
+    try {
+      const patchResult = await client.execute(
+        `SELECT id, workflow_path, unified_diff, rationale, status, created_at
+           FROM workflow_patch_proposals
+          ORDER BY created_at DESC`,
+      )
+      patchRows = patchResult.rows.map((row) => {
+        const r = row as unknown as { id: string; workflow_path: string; unified_diff: string; rationale: string; status: string; created_at: string }
+        return { id: r.id, workflow_path: r.workflow_path, unified_diff: r.unified_diff, rationale: r.rationale, status: r.status, created_at: String(r.created_at) }
+      })
+    } catch {
+      // Table absent on fresh repos.
+    }
+
+    // 3. Signature storm — singleton row id=1 plus action_queue_items count.
+    let streakRow: { current_signature: string | null; streak_count: number; last_task_id: string | null; tripped: boolean; updated_at: string | null } | null = null
+    try {
+      const streakResult = await client.execute(
+        `SELECT current_signature, streak_count, last_task_id, tripped, updated_at
+           FROM failure_signature_streak WHERE id = 1`,
+      )
+      if (streakResult.rows.length > 0) {
+        const r = streakResult.rows[0] as unknown as { current_signature: string | null; streak_count: number | bigint; last_task_id: string | null; tripped: boolean | number; updated_at: string | null }
+        streakRow = {
+          current_signature: r.current_signature,
+          streak_count: Number(r.streak_count),
+          last_task_id: r.last_task_id,
+          tripped: Boolean(r.tripped),
+          updated_at: r.updated_at,
+        }
+      }
+    } catch {
+      // Table absent on fresh repos.
+    }
+
+    let signatureStormAqCount = 0
+    try {
+      const countResult = await client.execute(
+        `SELECT COUNT(*) AS cnt FROM action_queue_items WHERE kind = 'signature-storm'`,
+      )
+      const r = countResult.rows[0] as unknown as { cnt: number | bigint } | undefined
+      signatureStormAqCount = Number(r?.cnt ?? 0)
+    } catch {
+      // action_queue_items may not exist.
+    }
+
+    const { SIGNATURE_STORM_TRIP_THRESHOLD } = await import('./lib/signature-storm-monitor')
+
+    return {
+      runtimeTuning: {
+        acks,
+        liveCap: runtime.liveCap,
+        baselineCap: runtime.baselineCap,
+        ceiling: runtime.baselineCap * 2,
+        bumpFactor: 1.33,
+        thresholdFactor: 0.75,
+        sustainMs: Number(process.env.MARS_BACKLOG_SUSTAIN_MS ?? 60_000),
+        checkMs: Number(process.env.MARS_BACKLOG_CHECK_MS ?? 10_000),
+      },
+      workflowPatches: {
+        rows: patchRows,
+        hasCallers: false,
+      },
+      signatureStorm: {
+        current_signature: streakRow?.current_signature ?? null,
+        streak_count: streakRow?.streak_count ?? 0,
+        last_task_id: streakRow?.last_task_id ?? null,
+        tripped: streakRow?.tripped ?? false,
+        updated_at: streakRow?.updated_at ?? null,
+        signatureStormAqCount,
+        tripThreshold: SIGNATURE_STORM_TRIP_THRESHOLD,
+        isPaused: runtime.isPaused,
+      },
+      agentSpec: {
+        name: 'steward',
+        model: 'claude-sonnet-4-6',
+        allowedTools: ['Read', 'Bash', 'Grep', 'Glob', 'PromptOptimize'],
+        eventVariants: ['kpi-degraded', 'resource-load', 'onboarding', 'workflow-suggestion'],
+        dispatchSites: 0,
+      },
+    }
+  }
+
   return {
     viewActionQueue,
     viewActionQueueHistory,
@@ -1350,5 +1461,6 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewChatThreads,
     viewChatThread,
     viewChatHistory,
+    viewSteward,
   }
 }

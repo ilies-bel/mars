@@ -2,11 +2,17 @@
  * Integration tests for the reflector's fingerprint-based dedup logic.
  *
  * These tests exercise the observable behaviour of persistSuggestions and
- * applyVerdicts through the SQLite DB (a real system boundary) rather than
- * mocking internal collaborators. Pattern mirrors proposals-migration.test.ts.
+ * applyVerdicts through the real proposals store (a real system boundary)
+ * rather than mocking internal collaborators.
+ *
+ * The store is the embedded PostgreSQL database (ADR-0034), reached through the
+ * `core/proposals` module — the public seam. These tests used to read a
+ * `.mars/mars.db` SQLite file directly with `@libsql/client`; that file has not
+ * been the live store since the Postgres cut, so the reads silently returned
+ * zero rows and the suite was red for reasons unrelated to the behaviour under
+ * test. Assert through the module instead of poking the storage engine.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createClient } from '@libsql/client'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -19,31 +25,22 @@ const setupRepo = (): string => {
   return repo
 }
 
-const countProposals = async (url: string): Promise<number> => {
-  const c = createClient({ url })
-  const r = await c.execute(`SELECT COUNT(*) AS n FROM proposals`)
-  c.close()
-  return Number((r.rows[0] as unknown as { n: number | bigint }).n)
+const countProposals = async (): Promise<number> => {
+  const { listProposals } = await import('../../proposals')
+  return (await listProposals()).length
 }
 
-const getProposalNotes = async (url: string, fingerprint: string): Promise<string> => {
-  const c = createClient({ url })
-  const r = await c.execute({
-    sql: `SELECT notes FROM proposals WHERE fingerprint = ?`,
-    args: [fingerprint],
-  })
-  c.close()
-  if (r.rows.length === 0) return ''
-  return (r.rows[0] as unknown as { notes: string }).notes ?? ''
+const getProposalNotes = async (fingerprint: string): Promise<string> => {
+  const { findOpenReflectionDraftByFingerprint } = await import('../../proposals')
+  const found = await findOpenReflectionDraftByFingerprint(fingerprint)
+  return found?.notes ?? ''
 }
 
 describe('reflector persist dedup', () => {
   let repo: string
-  let stateDbUrl: string
 
   beforeEach(() => {
     repo = setupRepo()
-    stateDbUrl = `file:${repo}/.mars/mars.db`
     process.env.MARS_REPO = repo
     vi.resetModules()
   })
@@ -72,7 +69,7 @@ describe('reflector persist dedup', () => {
       'source-task-1',
     )
 
-    expect(await countProposals(stateDbUrl)).toBe(1)
+    expect(await countProposals()).toBe(1)
   })
 
   it('second call with same rootCauseKey appends evidence and creates no new proposal', async () => {
@@ -90,7 +87,7 @@ describe('reflector persist dedup', () => {
     }
 
     await persistSuggestions([suggestion], 'source-task-1')
-    expect(await countProposals(stateDbUrl)).toBe(1)
+    expect(await countProposals()).toBe(1)
 
     // Second run: same root cause, new affected tasks
     await persistSuggestions(
@@ -106,7 +103,7 @@ describe('reflector persist dedup', () => {
     )
 
     // Still only 1 proposal — no duplicate created
-    expect(await countProposals(stateDbUrl)).toBe(1)
+    expect(await countProposals()).toBe(1)
 
     // The fingerprint is deterministic: sha256('reflection:typecheck_failure:').slice(0,32)
     const { createHash } = await import('node:crypto')
@@ -116,7 +113,7 @@ describe('reflector persist dedup', () => {
       .slice(0, 32)
 
     // Notes should contain the newly appended evidence
-    const notes = await getProposalNotes(stateDbUrl, fingerprint)
+    const notes = await getProposalNotes(fingerprint)
     expect(notes).toMatch(/task-c/)
   })
 
@@ -149,7 +146,7 @@ describe('reflector persist dedup', () => {
       'source-task-1',
     )
 
-    expect(await countProposals(stateDbUrl)).toBe(2)
+    expect(await countProposals()).toBe(2)
   })
 
   it('suggestion without rootCauseKey always creates a new proposal (no dedup)', async () => {
@@ -170,7 +167,7 @@ describe('reflector persist dedup', () => {
     await persistSuggestions([bare], 'source-task-2')
 
     // No fingerprint → no dedup → two rows
-    expect(await countProposals(stateDbUrl)).toBe(2)
+    expect(await countProposals()).toBe(2)
   })
 
   it('applyVerdicts save path routes through the same fingerprint dedup', async () => {
@@ -192,7 +189,7 @@ describe('reflector persist dedup', () => {
 
     const first = await applyVerdicts([verdictedSuggestion], 'src-task-1')
     expect(first.saved).toBe(1)
-    expect(await countProposals(stateDbUrl)).toBe(1)
+    expect(await countProposals()).toBe(1)
 
     // Second run with same rootCauseKey — should append, not create
     const second = await applyVerdicts(
@@ -209,6 +206,6 @@ describe('reflector persist dedup', () => {
     // Still counts as "saved" from applyVerdicts perspective (dedup is transparent)
     expect(second.saved).toBe(1)
     // But no new row was created
-    expect(await countProposals(stateDbUrl)).toBe(1)
+    expect(await countProposals()).toBe(1)
   })
 })

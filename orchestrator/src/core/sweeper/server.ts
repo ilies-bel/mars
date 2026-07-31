@@ -2,6 +2,7 @@ import type { FixRecipeContext } from '../lib/fix-recipes'
 import { getRetryBudget } from '../lib/retry-budget'
 import { getDefaultTaskStore } from '../store/task-store'
 import { countFixTaskAttempts, upsertFixTask } from '../queue-fix-tasks'
+import { recordStewardIntervention } from '../steward-ledger'
 
 export interface SweepCandidate {
   /** The parent task that needs self-healing. */
@@ -96,6 +97,15 @@ export const sweepOne = async (
     truncatedError: candidate.truncatedError,
     branch: candidate.branch,
     recipeContext: candidate.recipeContext,
+  })
+
+  await recordStewardIntervention({
+    targetKind: 'task',
+    targetId: candidate.taskId,
+    targetVersion: candidate.failureSignature,
+    recipeId: candidate.failureSignature,
+    rationale: `Sweeper ${result.created ? 'created' : 'reused'} a recovery after ${candidate.failingStep}.`,
+    outcome: result.created ? 'recovery-created' : 'recovery-reused',
   })
 
   return { kind: 'enqueued', fixTaskId: result.fixTaskId }

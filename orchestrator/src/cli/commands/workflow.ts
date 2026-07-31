@@ -20,11 +20,11 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { basename, resolve } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-import { dirname as _dirname } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import type { Command } from '../command'
 import { PRIMITIVE_DESCRIPTORS } from '../../workflows/primitives/opts-descriptors'
+import { planWorkflowCopies } from '../../init/scaffold-workflows'
 import {
   readWorkflowProvenance,
   stampAgentDraft,
@@ -43,28 +43,14 @@ import { errorMessage } from './shared'
 const kindFromFilename = (filename: string): string =>
   filename.replace(/-workflow\.js$/, '')
 
-/** Absolute path to the bundled workflow templates directory. */
-const bundledTemplatesDir = (): string =>
-  resolve(
-    _dirname(fileURLToPath(import.meta.url)),
-    '..',
-    '..',
-    'init',
-    'templates',
-    'workflows',
-  )
-
 /** Map of kind → absolute bundled template path, for all bundled `.js` templates. */
-const bundledKinds = (): Map<string, string> => {
-  const dir = bundledTemplatesDir()
-  const result = new Map<string, string>()
-  if (!existsSync(dir)) return result
-  for (const name of readdirSync(dir)) {
-    if (!name.endsWith('.js')) continue
-    result.set(kindFromFilename(name), resolve(dir, name))
-  }
-  return result
-}
+const bundledKinds = (repoRoot: string): Map<string, string> =>
+  new Map(
+    planWorkflowCopies(repoRoot).map((workflow) => [
+      kindFromFilename(basename(workflow.src)),
+      workflow.src,
+    ]),
+  )
 
 /** Absolute path to the user's `.mars/workflows/` directory. */
 const userWorkflowsDir = (stateDir: string): string =>
@@ -99,8 +85,8 @@ interface WorkflowEntry {
  * Build the full list of workflow entries visible in this repo. Combines
  * bundled kinds with on-disk files; classifies each by its source.
  */
-const resolveWorkflowEntries = (stateDir: string): WorkflowEntry[] => {
-  const bundled = bundledKinds()
+const resolveWorkflowEntries = (repoRoot: string, stateDir: string): WorkflowEntry[] => {
+  const bundled = bundledKinds(repoRoot)
   const userFiles = userWorkflowFiles(stateDir)
 
   const seen = new Set<string>()
@@ -222,7 +208,7 @@ const workflowList: Command = {
   summary: 'list workflow kinds with their active source (local read)',
   usage: 'usage: mars workflow list',
   run: async (_args, deps) => {
-    const entries = resolveWorkflowEntries(deps.ctx.stateDir)
+    const entries = resolveWorkflowEntries(deps.ctx.repoRoot, deps.ctx.stateDir)
     const kinds = entries.map((e) => e.kind)
     const lastRuns = await queryLastRunTimestamps(deps.store, kinds)
 
@@ -260,7 +246,7 @@ const workflowShow: Command = {
       return { code: 1 }
     }
 
-    const entries = resolveWorkflowEntries(deps.ctx.stateDir)
+    const entries = resolveWorkflowEntries(deps.ctx.repoRoot, deps.ctx.stateDir)
     const entry = entries.find((e) => e.kind === kind)
 
     if (entry === undefined) {
@@ -546,7 +532,7 @@ const workflowAuthor: Command = {
       )
       return { code: 1 }
     }
-    if (bundledKinds().has(name)) {
+    if (bundledKinds(deps.ctx.repoRoot).has(name)) {
       deps.err(
         `'${name}' is a reserved bundled workflow kind — authoring it would rewire the default pipeline. Pick a new name; scaffold the defaults with \`mars update\`.`,
       )

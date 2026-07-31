@@ -8,15 +8,14 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('DEVIATION_RULES — pre-existing-failure baseline', () => {
-  it('baselines via `git checkout <ref> -- <file>`, never `git stash`', () => {
-    // `refs/stash` is shared by every linked worktree in this repo, so a
-    // `pop` can hand the agent another task's work (data-loss incident
-    // 2026-07-28). The brief must offer the path-restore pattern instead —
-    // and must only mention stash to ban it.
-    expect(DEVIATION_RULES).toContain('git checkout $(git merge-base HEAD origin/main) --')
-    expect(DEVIATION_RULES).not.toContain('git stash --include-untracked')
-    expect(DEVIATION_RULES).not.toContain('git stash pop')
-    expect(DEVIATION_RULES).toMatch(/`git stash` \(banned in this repo/)
+  it('baselines via `git checkout <merge-base>` and never tells the agent to stash', () => {
+    // `refs/stash` is shared by every linked worktree in this repo and is
+    // addressed by position, so instructing coders to stash/pop is exactly how
+    // one task's uncommitted work ends up in another task's tree (data-loss
+    // incident 2026-07-28). The brief must offer the checkout-based baseline.
+    expect(DEVIATION_RULES).toContain('git checkout $(git merge-base HEAD origin/main)')
+    expect(DEVIATION_RULES).not.toMatch(/git stash (push|pop|--include-untracked)/)
+    expect(DEVIATION_RULES).toContain('Never use `git stash`')
   })
 
   it('references the merge base so the agent knows what to compare against', () => {

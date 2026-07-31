@@ -20,6 +20,8 @@ import {
   type Task,
 } from '../../core/queue'
 import { resolveTaskCwd } from '../../core/lib/resolve-task-cwd'
+import { readWorkerPromptOverride } from '../../core/daemon/config'
+import { composeCodexPrompt } from '../../core/workers/providers/codex-headless'
 import { TDD_WORKER_BRIEF } from '../tdd-brief'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 import type { WorkerName } from '../../core/workers'
@@ -140,7 +142,15 @@ export const AWAIT_HUMAN_MESSAGE = (taskId: string, stepName: string): string =>
 // Prompt briefs + system-prompt assembly
 // ---------------------------------------------------------------------------
 
-// Mandatory footer appended to every implementor prompt.
+// Mandatory exit condition placed before every implementor prompt. It is
+// deliberately user-role text: Codex has no system-instruction argument.
+export const COMMIT_EXIT_CONDITION = [
+  '## Commit exit condition',
+  '',
+  'This run is not complete until `git rev-list --count main..HEAD` returns greater than `0`. Commit before you exit.',
+].join('\n')
+
+// Mandatory detailed commit procedure appended to every implementor prompt.
 export const COMMIT_FOOTER = [
   '## Save your work',
   '',
@@ -153,19 +163,7 @@ export const COMMIT_FOOTER = [
   '',
   '`git add` alone is not enough — staged-but-uncommitted changes are invisible to verify and the merge step. You must run `git commit`.',
   '',
-  'Then, as the final action before exiting, self-check that the commit landed on your branch. Run:',
-  '',
-  '```',
-  'git rev-list --count HEAD ^$(git merge-base HEAD @{upstream} 2>/dev/null || git rev-parse origin/main 2>/dev/null || echo HEAD)',
-  '```',
-  '',
-  'or, more simply, count commits since branching off integration:',
-  '',
-  '```',
-  'git rev-list --count $(git rev-parse --abbrev-ref HEAD)@{u}..HEAD 2>/dev/null || git rev-list --count main..HEAD',
-  '```',
-  '',
-  'The number MUST be greater than `0`. If it prints `0`, you have not committed your work — re-run `git commit` and re-check. Do not exit while this number is `0`; the verify step rejects such runs with `verify:has-diff/no-commits-ahead`, which means the agent did not commit.',
+  'Then, as the final action before exiting, run the commit exit-condition command above. If it prints `0`, you have not committed your work — re-run `git commit` and re-check. Do not exit while it is `0`; the verify step rejects such runs with `verify:has-diff/no-commits-ahead`, which means the agent did not commit.',
   '',
   'A separate failure mode, `verify:dirty-main`, means the merge target was already dirty before your branch landed. That is an operator-owned condition, not your responsibility.',
   '',
@@ -200,7 +198,7 @@ export const DEVIATION_RULES = [
   '  1. STOP. Do not silently expand scope.',
   '  2. Run `mars task add "<self-contained prompt>" --blocked-by $TASK_ID` to create a follow-up. Set the parent (this task) as a blocker so the parent waits for the new work.',
   '  3. For deferred refactors / observed cleanups that should NOT block this slice, run `mars proposal add "<observation>"` so the loose end is captured but parked in the proposal backlog.',
-  '  4. Commit whatever in-scope work is already complete, then exit. The orchestrator will re-dispatch this task once the new blocker resolves.',
+  '  4. Stop after filing the follow-up. The orchestrator will re-dispatch this task once the new blocker resolves.',
   '',
   '**Scope boundary.** Only fix issues your changes touch. Pre-existing warnings, linting errors, or failures in unrelated files are out of scope — file them with `mars proposal add "<observation>"` if interesting; do NOT fix them inline.',
   '',
@@ -210,7 +208,7 @@ export const DEVIATION_RULES = [
   '',
   '**Rule 6 — Prove pre-existing test failures against the merge base.** If the test suite ends with failures you believe are pre-existing (inherited from the merge base and unrelated to your change), you MUST prove this claim before asserting `tests pass`:',
   '',
-  '  1. Reproduce the failure against the merge base WITHOUT `git stash` (banned in this repo — `refs/stash` is shared by every worktree, so a `pop` can hand you another task\'s work). Restore just the files under test to the baseline, run the suite, then restore your own version: `git checkout $(git merge-base HEAD origin/main) -- <file> && npx vitest run <failing-file>; git checkout HEAD -- <file>`. Committing a wip commit first and running the suite against the merge base in a scratch checkout also works.',
+  '  1. Restore the file(s) to their merge-base content with `git checkout $(git merge-base HEAD origin/main) -- <file>`, run `npx vitest run <failing-file>`, then restore your version with `git checkout HEAD -- <file>` (or re-apply your edit). **Never use `git stash`** — `refs/stash` is shared by every worktree in this repo and is addressed by position, so a `stash pop` here can silently swallow another task\'s work.',
   '  2. Quote BOTH result summaries verbatim in your final message: the branch-tip run result and the merge-base baseline run result.',
   '  3. If the baseline check cannot be run (checkout conflict, missing merge base, harness restriction), your final message MUST use the literal phrase `pre-existing UNVERIFIED` instead of `tests pass`.',
   '',
@@ -228,8 +226,24 @@ export const CODING_DISCIPLINE = [
 ].join('\n')
 
 // Build the Coder Worker's standing Session instructions.
-export const buildCoderSystemPrompt = (): string =>
+const defaultCoderSystemPrompt = (): string =>
   [TDD_WORKER_BRIEF, CONTEXT_GATHERING_BRIEF, DEVIATION_RULES].join('\n\n')
+
+// This is the production composition seam for the persistent Steward
+// override. It applies only to Mars-owned standing instructions, never to a
+// Task's operator-authored prompt body.
+export const buildCoderSystemPrompt = (): string =>
+  readWorkerPromptOverride('Coder.system') ?? defaultCoderSystemPrompt()
+
+/** Read the baseline text for a block before any persisted Steward edit. */
+export const defaultWorkerPromptBlock = (block: 'Coder.system' | 'COMMIT_FOOTER'): string =>
+  block === 'Coder.system' ? defaultCoderSystemPrompt() : COMMIT_FOOTER
+
+/** Read the live Mars-owned block text used by the production composer. */
+export const workerPromptBlock = (block: 'Coder.system' | 'COMMIT_FOOTER'): string =>
+  block === 'Coder.system'
+    ? buildCoderSystemPrompt()
+    : readWorkerPromptOverride('COMMIT_FOOTER') ?? COMMIT_FOOTER
 
 // Standing Session instructions for the Coder Worker.
 export const CODER_SYSTEM_PROMPT = buildCoderSystemPrompt()
@@ -328,7 +342,7 @@ export const composePrompt = (
 ): string => {
   // Diagnose Chore short-circuit: the prompt arrives fully composed.
   if (kind === 'diagnose') return prompt.trim()
-  const sections: string[] = [prompt.trim()]
+  const sections: string[] = [COMMIT_EXIT_CONDITION, prompt.trim()]
   if (plan?.functional?.trim()) {
     sections.push(`## Functional plan\n\n${plan.functional.trim()}`)
   }
@@ -347,8 +361,129 @@ export const composePrompt = (
     sections.push(`## Lessons\n\n<lessons>\n${items}\n</lessons>`)
   }
   sections.push(CODING_DISCIPLINE)
-  sections.push(COMMIT_FOOTER)
+  sections.push(workerPromptBlock('COMMIT_FOOTER'))
   return sections.join('\n\n')
+}
+
+// ---------------------------------------------------------------------------
+// Worker prompt inspection
+// ---------------------------------------------------------------------------
+
+/** A section measured from the exact prompt text the selected provider receives. */
+export interface WorkerPromptSection {
+  name: string
+  channel: 'system' | 'user'
+  byteOffset: number
+  tokenOffset: number
+  depthPercent: number
+  bytes: number
+  tokens: number
+}
+
+export interface WorkerPromptMeasurement {
+  worker: WorkerName
+  provider: 'claude' | 'codex'
+  /** Exact provider transport distinction, rather than a generic "system" label. */
+  assembly: 'codex-inlined-mars-system-instructions' | 'claude-append-system-prompt'
+  totalBytes: number
+  totalTokens: number
+  boilerplateToTaskRatio: number
+  sections: WorkerPromptSection[]
+  duplicatedDirectives: string[]
+}
+
+// Tokenizers vary by provider and are not available in the standalone Mars
+// binary. This stable lexical estimate is deliberately labelled as tokens in
+// the report only alongside byte offsets; callers must not use it for model
+// billing or context-limit enforcement.
+const estimatedTokens = (text: string): number =>
+  text.trim().length === 0 ? 0 : text.trim().split(/\s+/u).length
+
+const markdownSections = (text: string, channel: 'system' | 'user'): Array<{ name: string; channel: 'system' | 'user'; start: number; text: string }> => {
+  const headings = [...text.matchAll(/^##\s+.+$/gmu)]
+  if (headings.length === 0) {
+    return [{ name: channel === 'system' ? 'Coder.system' : 'Task', channel, start: 0, text }]
+  }
+  const sections: Array<{ name: string; channel: 'system' | 'user'; start: number; text: string }> = []
+  if (headings[0]!.index! > 0) {
+    sections.push({ name: channel === 'system' ? 'Coder.system preamble' : 'Task preamble', channel, start: 0, text: text.slice(0, headings[0]!.index) })
+  }
+  for (let index = 0; index < headings.length; index += 1) {
+    const heading = headings[index]!
+    const start = heading.index!
+    const end = headings[index + 1]?.index ?? text.length
+    sections.push({ name: heading[0], channel, start, text: text.slice(start, end) })
+  }
+  return sections
+}
+
+const directiveLines = (text: string): string[] =>
+  text
+    .split('\n')
+    .map((line) => line.replace(/^[-*\d.\s#>`]+/u, '').replace(/[`*_]/gu, '').trim().toLowerCase())
+    .filter((line) => line.length >= 24 && /(?:must|never|do not|always|before|commit|verify)/u.test(line))
+
+/**
+ * Inspect a real Coder dispatch composition. It deliberately calls the same
+ * `buildCoderSystemPrompt` and `composePrompt` functions used by workflow
+ * dispatch; it is not a parallel prompt template.
+ */
+export const measureWorkerDispatchPrompt = (
+  worker: WorkerName = 'Coder',
+  taskPrompt = 'Implement the requested change.',
+  provider: 'claude' | 'codex' = 'codex',
+): WorkerPromptMeasurement => {
+  if (worker !== 'Coder') {
+    throw new Error(`prompt measurement currently supports Coder; received '${worker}'`)
+  }
+  const system = buildCoderSystemPrompt()
+  const user = composePrompt(taskPrompt, null, 'coder')
+  const inlinedPrefix = '<mars_system_instructions>\n'
+  const inlinedSuffix = '</mars_system_instructions>\n\n'
+  const wire =
+    provider === 'codex'
+      ? composeCodexPrompt(user, system)
+      : `${system}\n\n${user}`
+  const totalBytes = Buffer.byteLength(wire)
+  const totalTokens = estimatedTokens(wire)
+  const sections = [...markdownSections(system, 'system'), ...markdownSections(user, 'user')].map((section) => {
+    const wirePrefix =
+      section.channel === 'system'
+        ? provider === 'codex'
+          ? `${inlinedPrefix}${system.slice(0, section.start)}`
+          : system.slice(0, section.start)
+        : provider === 'codex'
+          ? `${inlinedPrefix}${system}${inlinedSuffix}${user.slice(0, section.start)}`
+          : `${system}\n\n${user.slice(0, section.start)}`
+    const byteOffset = Buffer.byteLength(wirePrefix)
+    const tokenOffset = estimatedTokens(wirePrefix)
+    const bytes = Buffer.byteLength(section.text)
+    const tokens = estimatedTokens(section.text)
+    return {
+      name: section.name,
+      channel: section.channel,
+      byteOffset,
+      tokenOffset,
+      depthPercent: totalBytes === 0 ? 0 : (byteOffset / totalBytes) * 100,
+      bytes,
+      tokens,
+    }
+  })
+  const systemDirectives = new Set(directiveLines(system))
+  const duplicatedDirectives = [...new Set(directiveLines(user).filter((line) => systemDirectives.has(line)))]
+  return {
+    worker,
+    provider,
+    assembly:
+      provider === 'codex'
+        ? 'codex-inlined-mars-system-instructions'
+        : 'claude-append-system-prompt',
+    totalBytes,
+    totalTokens,
+    boilerplateToTaskRatio: taskPrompt.trim().length === 0 ? Infinity : (totalBytes - Buffer.byteLength(taskPrompt.trim())) / Buffer.byteLength(taskPrompt.trim()),
+    sections,
+    duplicatedDirectives,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -380,9 +515,63 @@ export interface PostCoderStateArgs {
 
 export type PostCoderState =
   | { kind: 'dirty-no-commits'; dirtyFiles: string[] }
+  | { kind: 'dirty-with-commits'; dirtyFiles: string[]; commitsAhead: number }
   | { kind: 'clean-with-commits'; commitsAhead: number }
   | { kind: 'clean-no-work' }
   | { kind: 'error'; error: string }
+
+/**
+ * Failing-step id stamped when the coder violates its commit contract by
+ * leaving the worktree dirty. Grammar per `STEP_ID_RE` in
+ * `core/lib/failure-signature.ts` so the durable recovery-spawn path can
+ * recompute the same signature from `failure_reason`.
+ */
+export const CODE_COMMIT_CONTRACT_STEP = 'code:commit-contract'
+
+/**
+ * Full failure signature for a coder that left uncommitted work behind.
+ * `<step>/<error-class>` where the class is the pre-existing
+ * `uncommitted-changes` slug (same class `merge:preflight/uncommitted-changes`
+ * binds to) — the step half is what makes the two distinguishable.
+ */
+export const CODE_COMMIT_CONTRACT_SIGNATURE = `${CODE_COMMIT_CONTRACT_STEP}/uncommitted-changes`
+
+/**
+ * First line of the commit-contract failure output. Contains
+ * "has uncommitted changes", which is what `classifyError` keys the
+ * `uncommitted-changes` slug off — keep the phrase intact when editing.
+ */
+export const codeCommitContractSummary = (
+  taskId: string,
+  fileCount: number,
+): string =>
+  `task ${taskId} worktree has uncommitted changes after the code step: coder left ${fileCount} path(s) uncommitted`
+
+/**
+ * Full failure output for the commit-contract gate: the summary line, the
+ * offending file list, and the worktree location so the retained tree is
+ * inspected in the right context.
+ */
+export const codeCommitContractFailure = (args: {
+  taskId: string
+  worktreePath: string
+  branch: string
+  integrationBranch: string
+  dirtyFiles: string[]
+  commitsAhead: number
+}): string =>
+  [
+    codeCommitContractSummary(args.taskId, args.dirtyFiles.length),
+    '',
+    `The coder committed ${args.commitsAhead} commit(s) onto ${args.branch} but did not commit these path(s):`,
+    ...args.dirtyFiles.map((f) => `  ${f}`),
+    '',
+    `Worktree: ${args.worktreePath}`,
+    `Branch: ${args.branch} (integration branch: ${args.integrationBranch})`,
+    '',
+    'Every path the coder touched must be committed before the code step ends —',
+    'an uncommitted path never reaches verify and blocks the rebase at merge.',
+  ].join('\n')
 
 // Parse `git status --porcelain=v1` into a list of paths.
 const parsePorcelainPaths = (raw: string): string[] => {
@@ -454,11 +643,19 @@ export const detectPostCoderState = async (
     return { kind: 'error', error: `git status failed: ${message}` }
   }
 
+  // Dirtiness is classified FIRST: a tree with uncommitted paths is dirty
+  // whether or not the coder also produced commits. Reading `commitsAhead`
+  // first (the pre-2026-07 shape) collapsed "committed some work, left the
+  // rest uncommitted" into `clean-with-commits`, which passed the code step,
+  // passed verify's has-diff gate, and only blew up at the rebase as
+  // `merge/unclassified` (task fix-30ac0aaa).
+  if (dirtyFiles.length > 0) {
+    return commitsAhead > 0
+      ? { kind: 'dirty-with-commits', dirtyFiles, commitsAhead }
+      : { kind: 'dirty-no-commits', dirtyFiles }
+  }
   if (commitsAhead > 0) {
     return { kind: 'clean-with-commits', commitsAhead }
   }
-  if (dirtyFiles.length === 0) {
-    return { kind: 'clean-no-work' }
-  }
-  return { kind: 'dirty-no-commits', dirtyFiles }
+  return { kind: 'clean-no-work' }
 }

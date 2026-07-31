@@ -18,6 +18,27 @@ const initRepo = (path: string): void => {
 const gitOutput = (cwd: string, args: readonly string[]): string =>
   execFileSync('git', [...args], { cwd, encoding: 'utf8' }).trim()
 
+/**
+ * Build a real-merge shim for `enqueueMerge` that calls `mergeBranch` directly.
+ * This lets the E2E tests exercise the full write-commit-merge path without a
+ * running merge-worker daemon.
+ */
+const realMergeShim = async (args: {
+  taskId: string
+  branch: string
+  worktreePath: string
+  integrationBranch: string
+}) => {
+  const { mergeBranch } = await import('../git/merge')
+  const result = await mergeBranch({
+    branch: args.branch,
+    worktreePath: args.worktreePath,
+    integrationBranch: args.integrationBranch,
+    lockTimeoutMs: 30_000,
+  })
+  return { status: 'done' as const, result }
+}
+
 describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
   let repo: string
 
@@ -35,12 +56,38 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
+  it('routes merge through the injected enqueueMerge and not inline mergeBranch', async () => {
+    const { runStructuredWrite } = await import('../structured-write')
+
+    let enqueueMergeCalled = false
+    const outcome = await runStructuredWrite({
+      kind: 'glossary',
+      commitMessage: 'docs(glossary): add Order term',
+      enqueueMerge: async (args) => {
+        enqueueMergeCalled = true
+        return realMergeShim(args)
+      },
+      mutate: async (worktreePath) => {
+        await writeFile(
+          resolve(worktreePath, 'CONTEXT.md'),
+          '# Project Context\n\n## Language\n\n**Order**:\nA request to buy something.\n',
+          'utf8',
+        )
+      },
+    })
+
+    // Merge must be routed through enqueueMerge, not a direct mergeBranch call.
+    expect(enqueueMergeCalled).toBe(true)
+    expect(outcome.kind).toBe('merged')
+  })
+
   it('writes, commits, and merges into the integration branch', async () => {
     const { runStructuredWrite } = await import('../structured-write')
 
     const outcome = await runStructuredWrite({
       kind: 'glossary',
       commitMessage: 'docs(glossary): add Order term',
+      enqueueMerge: realMergeShim,
       mutate: async (worktreePath) => {
         await writeFile(
           resolve(worktreePath, 'CONTEXT.md'),
@@ -94,6 +141,7 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
     const outcome = await runStructuredWrite({
       kind: 'glossary',
       commitMessage: 'should not be applied',
+      enqueueMerge: realMergeShim,
       mutate: async () => false,
     })
 
@@ -109,5 +157,53 @@ describe('runStructuredWrite (end-to-end against a real temp repo)', () => {
     // No leftover worktree.
     const worktreeList = gitOutput(repo, ['worktree', 'list', '--porcelain'])
     expect(worktreeList.match(/^worktree /gm) ?? []).toHaveLength(1)
+  })
+
+  it('aborts gracefully when the integration branch has uncommitted operator edits — no stash invoked', async () => {
+    const { runStructuredWrite } = await import('../structured-write')
+
+    // Make an uncommitted change on the integration checkout.
+    writeFileSync(resolve(repo, 'README'), 'PRECIOUS UNCOMMITTED WORK\n')
+    const statusBefore = gitOutput(repo, ['status', '--porcelain', '--untracked-files=no'])
+    expect(statusBefore).not.toBe('')
+
+    let enqueueMergeCalled = false
+    const outcome = await runStructuredWrite({
+      kind: 'glossary',
+      commitMessage: 'should not be committed',
+      enqueueMerge: async (args) => {
+        enqueueMergeCalled = true
+        return realMergeShim(args)
+      },
+      mutate: async (worktreePath) => {
+        await writeFile(
+          resolve(worktreePath, 'CONTEXT.md'),
+          '# Context\n',
+          'utf8',
+        )
+      },
+    })
+
+    // Must abort — dirty main should never proceed to merge.
+    expect(outcome.kind).toBe('aborted')
+    if (outcome.kind === 'aborted') {
+      expect(outcome.reason).toContain('uncommitted changes')
+    }
+
+    // enqueueMerge must NOT have been called — the write aborted before reaching the merge step.
+    expect(enqueueMergeCalled).toBe(false)
+
+    // The operator's uncommitted work must NOT have been stashed.
+    const stashList = gitOutput(repo, ['stash', 'list'])
+    expect(stashList).toBe('')
+
+    // The uncommitted change must still be present on the integration checkout.
+    const statusAfter = gitOutput(repo, ['status', '--porcelain', '--untracked-files=no'])
+    expect(statusAfter).not.toBe('')
+
+    // Integration HEAD must not have moved.
+    const headAfter = gitOutput(repo, ['rev-parse', 'integration'])
+    const headBefore = gitOutput(repo, ['rev-parse', 'integration'])
+    expect(headAfter).toBe(headBefore)
   })
 })

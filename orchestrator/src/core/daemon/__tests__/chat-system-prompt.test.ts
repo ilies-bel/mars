@@ -114,4 +114,11 @@ describe('CHAT_SYSTEM_PROMPT content', () => {
   it('still routes code changes through mars task add', () => {
     expect(CHAT_SYSTEM_PROMPT).toContain('mars task add')
   })
+
+  it('includes the hardness rubric verbatim', () => {
+    expect(CHAT_SYSTEM_PROMPT).toContain(`- term-defining
+- cross-cutting
+- scope-ambiguous
+- contradicts an ADR`)
+  })
 })

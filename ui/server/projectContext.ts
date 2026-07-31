@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { TaskDb, StateDb } from './db.ts'
 import { resolveRepo } from './repo.ts'
 import type { RepoContext } from './repo.ts'
@@ -10,6 +12,63 @@ export interface ProjectContextEntry {
   db: TaskDb
   stateDb: StateDb
   hub: SseHub
+}
+
+export interface ProjectAdrEntry {
+  number: number
+  title: string
+  slug: string
+  path: string
+}
+
+export interface ProjectMeta {
+  vision: string | null
+  theme: string | null
+}
+
+/** ADR files written during one browser session, newest decision first. */
+export const readSessionAdrs = (
+  ctx: RepoContext,
+  sessionStartedAt: number,
+): ProjectAdrEntry[] => {
+  const adrDir = join(ctx.repoRoot, 'docs', 'adr')
+  if (!existsSync(adrDir)) return []
+
+  return readdirSync(adrDir)
+    .filter((filename) => filename.endsWith('.md'))
+    .map((filename) => ({ filename, stat: statSync(join(adrDir, filename)) }))
+    .filter(({ stat }) => stat.isFile() && stat.mtimeMs >= sessionStartedAt)
+    .map(({ filename }) => {
+      const match = filename.match(/^(\d+)-(.*)\.md$/)
+      if (!match) return null
+      const [, number, slug] = match
+      return {
+        number: Number(number),
+        title: slug.replace(/-/g, ' '),
+        slug,
+        path: `docs/adr/${filename}`,
+      }
+    })
+    .filter((adr): adr is ProjectAdrEntry => adr !== null)
+    .sort((a, b) => b.number - a.number)
+}
+
+/** Product context is optional so new projects can grow it through chat. */
+export const readProjectMeta = (ctx: RepoContext): ProjectMeta => {
+  const readOptional = (filename: string): string | null => {
+    const path = join(ctx.repoRoot, filename)
+    return existsSync(path) ? readFileSync(path, 'utf8') : null
+  }
+
+  return { vision: readOptional('VISION.md'), theme: readOptional('THEME.md') }
+}
+
+/** Returns a project-owned ADR only when its requested path stays in docs/adr. */
+export const readProjectAdr = (ctx: RepoContext, path: string): string | null => {
+  const filename = basename(path)
+  if (path !== `docs/adr/${filename}` || !filename.endsWith('.md')) return null
+  const adrPath = join(ctx.repoRoot, 'docs', 'adr', filename)
+  return existsSync(adrPath) ? readFileSync(adrPath, 'utf8') : null
 }
 
 /**

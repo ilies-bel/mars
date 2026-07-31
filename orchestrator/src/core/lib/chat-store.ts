@@ -12,6 +12,8 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { resolveStateClient } from '../store/state-client'
+import { humanSummary } from './action-queue-recipes'
+import type { NoticeRow } from './notice-store'
 
 const stateClient = resolveStateClient
 
@@ -33,9 +35,21 @@ export const ChatMessageKindSchema = z.enum(['validation', 'acknowledgment'])
 export type ChatMessageKind = z.infer<typeof ChatMessageKindSchema>
 
 export type ThreadStatus = 'idle' | 'running' | 'throttled'
+export type ChatPosture = 'triage' | 'grill'
 export type AttentionStatus = 'generating' | 'ready' | 'drafting' | 'idle'
 export type MessageRole = 'user' | 'assistant'
 export type FeedbackRating = 'up' | 'down'
+
+/**
+ * A deterministic Mars-authored feed entry. The persistence adapter currently
+ * stores this as an assistant message, preserving the chat transport's
+ * user/assistant transcript contract.
+ */
+export interface ChatMessageDraft {
+  author: 'mars'
+  role: 'notice'
+  body: string
+}
 
 export interface ChatFeedback {
   message_id: string
@@ -50,6 +64,7 @@ export interface ChatThread {
   id: string
   title: string
   status: ThreadStatus
+  posture: ChatPosture
   created_at: string
   updated_at: string
   /** 'alert' for proactive alert-origin threads; null for user-created threads. */
@@ -66,6 +81,12 @@ export interface ChatThread {
   evaporated_at: string | null
   parent_thread_id: string | null
   fork_idempotency_key: string | null
+  /**
+   * Per-thread agent session id stamped at creation time. Each thread starts a
+   * fresh agent context so context does not bleed across Subjects (slice 6 of
+   * PRD 76347e15). Null for threads created before this column was introduced.
+   */
+  session_id: string | null
 }
 
 export interface ChatMessage {
@@ -143,6 +164,15 @@ export const computeAttentionStatus = (
   if (status === 'idle' && lastMessageRole === 'assistant') return 'ready'
   if (status === 'idle' && lastMessageRole === 'user') return 'drafting'
   return 'idle'
+}
+
+/** Render a Notice into the Mars voice used by the continuous chat feed. */
+export function noticeToChatMessage(notice: NoticeRow): ChatMessageDraft {
+  return {
+    author: 'mars',
+    role: 'notice',
+    body: humanSummary(notice.kind, notice.payload),
+  }
 }
 
 /** Convert a stored thread to its API view shape. */
@@ -242,6 +272,58 @@ export interface AlertSegment {
   goal?: string
 }
 
+// ── Fork-seed segment types ───────────────────────────────────────────────────
+
+/** Segment type referencing a task created during a thread. */
+export interface TaskRefSegment {
+  type: 'task_ref'
+  taskId: string
+}
+
+/** Segment type referencing an ADR cited during a thread. */
+export interface AdrRefSegment {
+  type: 'adr_ref'
+  ref: string
+}
+
+/** Segment type referencing a glossary term cited during a thread. */
+export interface GlossaryRefSegment {
+  type: 'glossary_ref'
+  ref: string
+}
+
+/** Segment type referencing an artifact surfaced during a thread. */
+export interface ArtifactRefSegment {
+  type: 'artifact_ref'
+  ref: string
+}
+
+/**
+ * Opening seed segment inserted as the first assistant message in a forked
+ * thread. Carries compact context distilled from the source thread.
+ */
+export interface ForkSeedSegment {
+  type: 'fork_seed'
+  goalSummary: string
+  transcriptSummary: string
+  artifactRefs: string[]
+  taskIds: string[]
+  adrRefs: string[]
+  glossaryRefs: string[]
+  files: Array<{ path: string; note?: string }>
+}
+
+/** Structured context seeded into a forked thread's opening assistant message. */
+export interface ForkSeed {
+  goalSummary: string
+  transcriptSummary: string
+  artifactRefs: string[]
+  taskIds: string[]
+  adrRefs: string[]
+  glossaryRefs: string[]
+  files: Array<{ path: string; note?: string }>
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const now = (): string => new Date().toISOString()
@@ -250,6 +332,7 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   id: row.id as string,
   title: row.title as string,
   status: row.status as ThreadStatus,
+  posture: row.posture === 'grill' ? 'grill' : 'triage',
   created_at: row.created_at as string,
   updated_at: row.updated_at as string,
   origin: (row.origin as string | null) ?? null,
@@ -258,6 +341,7 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   evaporated_at: (row.evaporated_at as string | null) ?? null,
   parent_thread_id: (row.parent_thread_id as string | null) ?? null,
   fork_idempotency_key: (row.fork_idempotency_key as string | null) ?? null,
+  session_id: (row.session_id as string | null) ?? null,
 })
 
 const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
@@ -284,17 +368,19 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
 export const createThread = async (title?: string): Promise<ChatThread> => {
   const c = stateClient()
   const id = randomUUID()
+  const sessionId = randomUUID()
   const ts = now()
   const threadTitle = title ?? ''
   await c.execute({
-    sql: `INSERT INTO chat_threads (id, title, status, created_at, updated_at)
-          VALUES (?, ?, 'idle', ?, ?)`,
-    args: [id, threadTitle, ts, ts],
+    sql: `INSERT INTO chat_threads (id, title, status, session_id, created_at, updated_at)
+          VALUES (?, ?, 'idle', ?, ?, ?)`,
+    args: [id, threadTitle, sessionId, ts, ts],
   })
   return {
     id,
     title: threadTitle,
     status: 'idle',
+    posture: 'triage',
     created_at: ts,
     updated_at: ts,
     origin: null,
@@ -303,6 +389,88 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
     evaporated_at: null,
     parent_thread_id: null,
     fork_idempotency_key: null,
+    session_id: sessionId,
+  }
+}
+
+/**
+ * Build a compact seed from a source thread's transcript.
+ *
+ * Scans `chat_messages.segments` for structured reference types
+ * (`task_ref`, `adr_ref`, `glossary_ref`, `artifact_ref`) and collects
+ * unique values. `transcriptSummary` is a plain concatenation of all
+ * message content, capped at 2000 characters. No LLM call is made here.
+ *
+ * @param sourceThreadId - The thread to derive context from.
+ * @param files          - Operator-supplied file references to embed in the seed.
+ */
+export const buildForkSeed = async (
+  sourceThreadId: string,
+  files?: Array<{ path: string; note?: string }>,
+): Promise<ForkSeed> => {
+  const c = stateClient()
+
+  const threadResult = await c.execute({
+    sql: `SELECT title FROM chat_threads WHERE id = ?`,
+    args: [sourceThreadId],
+  })
+  const goalSummary =
+    threadResult.rows.length > 0
+      ? ((threadResult.rows[0] as Record<string, unknown>).title as string)
+      : ''
+
+  const msgResult = await c.execute({
+    sql: `SELECT content, segments FROM chat_messages WHERE thread_id = ? ORDER BY created_at ASC, seq ASC`,
+    args: [sourceThreadId],
+  })
+
+  const taskIds: string[] = []
+  const adrRefs: string[] = []
+  const glossaryRefs: string[] = []
+  const artifactRefs: string[] = []
+  const contentParts: string[] = []
+
+  for (const row of msgResult.rows as unknown as Array<Record<string, unknown>>) {
+    contentParts.push(row.content as string)
+
+    const rawSegments = row.segments as string | null
+    if (rawSegments == null) continue
+
+    let segs: unknown[]
+    try {
+      const parsed: unknown = JSON.parse(rawSegments)
+      if (!Array.isArray(parsed)) continue
+      segs = parsed
+    } catch {
+      continue
+    }
+
+    for (const seg of segs) {
+      if (typeof seg !== 'object' || seg === null) continue
+      const s = seg as Record<string, unknown>
+      if (s['type'] === 'task_ref' && typeof s['taskId'] === 'string') {
+        if (!taskIds.includes(s['taskId'])) taskIds.push(s['taskId'])
+      } else if (s['type'] === 'adr_ref' && typeof s['ref'] === 'string') {
+        if (!adrRefs.includes(s['ref'])) adrRefs.push(s['ref'])
+      } else if (s['type'] === 'glossary_ref' && typeof s['ref'] === 'string') {
+        if (!glossaryRefs.includes(s['ref'])) glossaryRefs.push(s['ref'])
+      } else if (s['type'] === 'artifact_ref' && typeof s['ref'] === 'string') {
+        if (!artifactRefs.includes(s['ref'])) artifactRefs.push(s['ref'])
+      }
+    }
+  }
+
+  const full = contentParts.join('\n')
+  const transcriptSummary = full.length > 2000 ? `${full.slice(0, 2000)}…` : full
+
+  return {
+    goalSummary,
+    transcriptSummary,
+    artifactRefs,
+    taskIds,
+    adrRefs,
+    glossaryRefs,
+    files: files ?? [],
   }
 }
 
@@ -312,10 +480,17 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
  * repeated calls with the same (sourceThreadId, idempotencyKey) return the
  * existing child thread. The fork is always a plain human thread
  * (`origin=null`, `alert_item_id=null`) regardless of the source's origin.
+ *
+ * On first creation, inserts one assistant message carrying a `fork_seed`
+ * segment so the operator opening the child thread sees source context
+ * immediately. The idempotent-repeat path skips this insertion.
  */
-export const forkThread = async (
-  opts: { sourceThreadId: string; goal: string; idempotencyKey: string },
-): Promise<{ thread: ChatThread; deduped: boolean }> => {
+export const forkThread = async (opts: {
+  sourceThreadId: string
+  goal: string
+  idempotencyKey: string
+  files?: Array<{ path: string; note?: string }>
+}): Promise<{ thread: ChatThread; deduped: boolean }> => {
   const c = stateClient()
   const existing = await c.execute({
     sql: `SELECT * FROM chat_threads
@@ -326,19 +501,26 @@ export const forkThread = async (
     return { thread: rowToThread(existing.rows[0] as Record<string, unknown>), deduped: true }
   }
   const id = randomUUID()
+  const sessionId = randomUUID()
   const ts = now()
   await c.execute({
     sql: `INSERT INTO chat_threads
-            (id, title, status, created_at, updated_at, origin, alert_item_id,
+            (id, title, status, session_id, created_at, updated_at, origin, alert_item_id,
              alert_resolved, parent_thread_id, fork_idempotency_key)
-          VALUES (?, ?, 'idle', ?, ?, NULL, NULL, 0, ?, ?)`,
-    args: [id, opts.goal, ts, ts, opts.sourceThreadId, opts.idempotencyKey],
+          VALUES (?, ?, 'idle', ?, ?, ?, NULL, NULL, 0, ?, ?)`,
+    args: [id, opts.goal, sessionId, ts, ts, opts.sourceThreadId, opts.idempotencyKey],
   })
+
+  const seed = await buildForkSeed(opts.sourceThreadId, opts.files)
+  const forkSeedSegment: ForkSeedSegment = { type: 'fork_seed', ...seed }
+  await appendMessage(id, 'assistant', seed.goalSummary || opts.goal, [forkSeedSegment])
+
   return {
     thread: {
       id,
       title: opts.goal,
       status: 'idle',
+      posture: 'triage',
       created_at: ts,
       updated_at: ts,
       origin: null,
@@ -347,6 +529,7 @@ export const forkThread = async (
       evaporated_at: null,
       parent_thread_id: opts.sourceThreadId,
       fork_idempotency_key: opts.idempotencyKey,
+      session_id: sessionId,
     },
     deduped: false,
   }
@@ -600,6 +783,15 @@ export const setThreadStatus = async (id: string, status: ThreadStatus): Promise
   })
 }
 
+/** Persist the chat agent's conversation mode for a thread. */
+export const setThreadPosture = async (id: string, posture: ChatPosture): Promise<void> => {
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE chat_threads SET posture = ?, updated_at = ? WHERE id = ?`,
+    args: [posture, now(), id],
+  })
+}
+
 /**
  * Mark a thread as evaporated by stamping `evaporated_at` with the current
  * ISO-8601 timestamp. Idempotent: if the thread is already evaporated, the
@@ -749,13 +941,14 @@ export const startThreadFromAlert = async (
 
   const c = stateClient()
   const threadId = randomUUID()
+  const sessionId = randomUUID()
   const msgId = randomUUID()
   const ts = now()
   await c.execute({
     sql: `INSERT INTO chat_threads
-            (id, title, status, created_at, updated_at, origin, alert_item_id, alert_resolved)
-          VALUES (?, ?, 'idle', ?, ?, 'alert', ?, 0)`,
-    args: [threadId, title, ts, ts, arcId],
+            (id, title, status, session_id, created_at, updated_at, origin, alert_item_id, alert_resolved)
+          VALUES (?, ?, 'idle', ?, ?, ?, 'alert', ?, 0)`,
+    args: [threadId, title, sessionId, ts, ts, arcId],
   })
   // Persist one assistant message with the alert segment (the seed card).
   await c.execute({
@@ -767,6 +960,7 @@ export const startThreadFromAlert = async (
     id: threadId,
     title,
     status: 'idle',
+    posture: 'triage',
     created_at: ts,
     updated_at: ts,
     origin: 'alert',
@@ -775,6 +969,7 @@ export const startThreadFromAlert = async (
     evaporated_at: null,
     parent_thread_id: null,
     fork_idempotency_key: null,
+    session_id: sessionId,
   }
 }
 

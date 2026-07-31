@@ -7,7 +7,7 @@ import { parseClaudeSessionIds } from './lib/claude-session-ids'
 import type { Author, AuthorKind } from './author'
 import { openDb, type DbClient, type DbInValue, type DbStatement } from './lib/db'
 import { ensureSchema } from './lib/pg-schema'
-import { buildEventInsert } from './lib/outbox'
+import { buildEventInsert, withWriteTx } from './lib/outbox'
 import { Arc } from './arc'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
 import { raiseActionQueueItem } from './lib/action-queue'
@@ -44,6 +44,22 @@ export type TaskStatus =
   | 'blocked'
   | 'under_investigation'
 
+/** Why a Chore or operator deliberately terminally dropped a task. */
+export type TaskDropReason =
+  | 'origin-succeeded'
+  | 'superseded'
+  | 'arc-rescued'
+  | 'purged'
+  | 'slicer-rollback'
+  | 'reslice'
+  | 'slicer-preflight'
+
+export const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set([
+  'done',
+  'failed',
+  'dropped',
+])
+
 /**
  * Transient lifecycle phase between a freshly-promoted task (draft → triaging)
  * and dispatch-eligible (`'queued'`). Triaging tasks are visible to readers
@@ -78,7 +94,7 @@ export const isDispatchableStatus = (status: TaskStatus): boolean =>
 
 /**
  * Thrown by {@link updateTask} when a caller attempts to move a task out of a
- * terminal status (`'done'` or `'dropped'`). Terminal tasks are immutable —
+ * terminal status. Terminal tasks are immutable —
  * any status write that bypasses this guard would silently corrupt lifecycle
  * invariants tracked by subscribers (Invalidator, daemon dispatcher, UI).
  */
@@ -297,7 +313,7 @@ export interface Task {
   claudeSessionIds: string[]
   error: string | null
   author: Author | null
-  dropReason: string | null
+  dropReason: TaskDropReason | null
   failureReason: string | null
   /**
    * Typed catalog code (e.g. `verify:typecheck`) for the failure. Companion
@@ -306,6 +322,11 @@ export interface Task {
    * rows landed before slice G.
    */
   failureReasonCode: string | null
+  /**
+   * JSON-encoded coder stall diagnostics captured before a hard timeout kill.
+   * Contains stderr tail, exit code, done-signal state, and elapsed time.
+   * Null on non-stalled tasks and legacy rows.
+   */
   stallDiagnostics: string | null
   retryCount: number
   /**
@@ -477,12 +498,19 @@ export interface Task {
    * rows and legacy rows created before this column was added).
    */
   requeueAnchorMs?: number | null
+  /** Cumulative dispatch uptime at the first dispatch of this re-queue episode. */
+  requeueDispatchUptimeMs?: number | null
   /**
    * Structured QA report persisted by behaviour-verify. Contains per-criterion
    * verdicts, screenshot paths, and timing data. Null when no behaviour-verify
    * has run or on legacy rows.
    */
   qaReport?: QaReport | null
+  /**
+   * When true, the usage-aware scheduler may defer this task to a cheaper
+   * window. Set at enqueue via `mars task add --deferrable`. Defaults to
+   * false for all rows.
+   */
   deferrable: boolean
   createdAt: string
   updatedAt: string
@@ -738,6 +766,7 @@ SELECT
   t.compensates_arc_id,
   t.qa,
   t.requeue_anchor_ms,
+  t.requeue_dispatch_uptime_ms,
   t.qa_report_json,
   t.deferrable,
   t.created_at, t.updated_at
@@ -784,7 +813,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     claudeSessionIds: parseClaudeSessionIds(row.claude_session_ids),
     error: (row.error as string | null) ?? null,
     author,
-    dropReason: (row.drop_reason as string | null) ?? null,
+    dropReason: (row.drop_reason as TaskDropReason | null) ?? null,
     failureReason: (row.failure_reason as string | null) ?? null,
     failureReasonCode: (row.failure_reason_code as string | null) ?? null,
     stallDiagnostics: (row.stall_diagnostics as string | null) ?? null,
@@ -821,6 +850,10 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
       row.requeue_anchor_ms === null || row.requeue_anchor_ms === undefined
         ? null
         : Number(row.requeue_anchor_ms),
+    requeueDispatchUptimeMs:
+      row.requeue_dispatch_uptime_ms === null || row.requeue_dispatch_uptime_ms === undefined
+        ? null
+        : Number(row.requeue_dispatch_uptime_ms),
     qaReport: parseQaReport(row.qa_report_json),
     deferrable: Number(row.deferrable ?? 0) === 1,
     createdAt: row.created_at as string,
@@ -953,6 +986,10 @@ export interface EnqueueTaskOptions {
    * identified by this `origin_id`. Stored in `compensates_arc_id`. Only set
    * by the force-purge path — do not use this for recovery tasks.
    */
+  /**
+   * When true, the usage-aware scheduler may defer this task to a cheaper
+   * window. Defaults to false.
+   */
   deferrable?: boolean
   compensatesArcId?: string
   /**
@@ -1033,8 +1070,11 @@ export const updateTask = async (
       | 'envRestartCount'
       | 'workflow'
       | 'requeueAnchorMs'
+      | 'requeueDispatchUptimeMs'
       | 'stallDiagnostics'
     > & {
+      /** Typed explanation persisted when a task is deliberately dropped. */
+      dropReason?: TaskDropReason | null
       /**
        * Typed catalog code for the failure (e.g. `verify:main-dirty`).
        * Companion to the legacy free-text `failureReason`; either can be
@@ -1084,7 +1124,7 @@ export const updateTask = async (
     patch.status !== undefined &&
     previousStatus !== null &&
     patch.status !== previousStatus &&
-    (previousStatus === 'done' || previousStatus === 'dropped')
+    TERMINAL_TASK_STATUSES.has(previousStatus as TaskStatus)
   ) {
     throw new IllegalTransitionError(id, previousStatus, patch.status)
   }
@@ -1199,6 +1239,10 @@ export const updateTask = async (
     fields.push('error = ?')
     args.push(patch.error)
   }
+  if (patch.dropReason !== undefined) {
+    fields.push('drop_reason = ?')
+    args.push(patch.dropReason)
+  }
   if (patch.failedPhase !== undefined) {
     fields.push('failed_phase = ?')
     args.push(patch.failedPhase)
@@ -1271,6 +1315,10 @@ export const updateTask = async (
     fields.push('requeue_anchor_ms = ?')
     args.push(patch.requeueAnchorMs)
   }
+  if (patch.requeueDispatchUptimeMs !== undefined) {
+    fields.push('requeue_dispatch_uptime_ms = ?')
+    args.push(patch.requeueDispatchUptimeMs)
+  }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())
   args.push(id)
@@ -1306,7 +1354,7 @@ export const updateTask = async (
       eventStmts.push(
         buildEventInsert('task.dropped', {
           taskId: id,
-          dropReason: patch.failureReason ?? '',
+          dropReason: patch.dropReason ?? patch.failureReason ?? '',
         }),
         buildEventInsert('task.terminal', { taskId: id, reason: 'dropped' }),
       )
@@ -1426,6 +1474,51 @@ export const updateTask = async (
   }
 }
 
+/**
+ * The sole audited seam for an operator to reopen a terminal task.  General
+ * task updates cannot use this capability: the database trigger consumes the
+ * audit record in the same transaction as this transition.
+ */
+export const reopenTerminalTask = async (
+  id: string,
+  reason: string,
+  store?: TaskStore,
+): Promise<void> => {
+  const task = await getTask(id, store)
+  if (task === null) throw new Error(`task ${id} not found`)
+  if (!TERMINAL_TASK_STATUSES.has(task.status)) {
+    throw new IllegalTransitionError(id, task.status, 'queued')
+  }
+  const now = new Date().toISOString()
+  const statements: DbStatement[] = [
+    {
+      sql: `INSERT INTO task_terminal_reopens (task_id, reason, reopened_by, reopened_at)
+            VALUES (?, ?, 'operator', ?)`,
+      args: [id, reason, now],
+    },
+    {
+      sql: `UPDATE tasks SET status = 'queued', updated_at = ?, error = NULL,
+              failure_reason = NULL, failure_signature = NULL, failure_reason_code = NULL
+            WHERE id = ?`,
+      args: [now, id],
+    },
+    buildEventInsert('task.queued', { taskId: id }),
+    {
+      sql: `UPDATE task_terminal_reopens SET consumed_at = ?
+            WHERE task_id = ? AND consumed_at IS NULL`,
+      args: [now, id],
+    },
+  ]
+  if (store) {
+    await store.batch(statements, 'write')
+  } else {
+    await ensureQueueSchema()
+    await withWriteTx(resolveQueueClient(), async (tx) => {
+      for (const statement of statements) await tx.execute(statement)
+    })
+  }
+}
+
 export const getTask = async (id: string, store?: TaskStore): Promise<Task | null> => {
   const stmt = { sql: `${TASK_SEL} WHERE t.id = ?`, args: [id] }
   let r
@@ -1450,6 +1543,37 @@ export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
         `${TASK_SEL} ORDER BY t.priority DESC, t.created_at ASC`,
       )
   return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
+}
+
+/**
+ * Return the newest non-done tasks other than `excludeId`, capped at `limit`.
+ * The triage workflow reverses this descending result before rendering it so
+ * its prompt preserves listTasks' historic oldest-first display order.
+ */
+export const listNonDoneTasks = async (
+  excludeId: string,
+  limit: number,
+): Promise<Task[]> => {
+  await ensureQueueSchema()
+  const r = await resolveQueueClient().execute({
+    sql: `${TASK_SEL} WHERE t.status <> 'done' AND t.id <> ? ORDER BY t.created_at DESC LIMIT ?`,
+    args: [excludeId, limit],
+  })
+  return r.rows.map((row) => rowToTask(row as unknown as Record<string, unknown>))
+}
+
+/** Return only task ids that currently exist. */
+export const filterExistingTaskIds = async (
+  ids: readonly string[],
+): Promise<string[]> => {
+  if (ids.length === 0) return []
+
+  await ensureQueueSchema()
+  const r = await resolveQueueClient().execute({
+    sql: 'SELECT id FROM tasks WHERE id = ANY(?::text[])',
+    args: [ids],
+  })
+  return r.rows.map((row) => (row as { id: string }).id)
 }
 
 /**
@@ -1528,6 +1652,12 @@ export interface DropTaskResult {
    * GONE — not null-ed — by the time dropTask returns (ADR-0049).
    */
   cascadedFixTaskIds: string[]
+  /**
+   * Number of `merge_jobs` rows deleted as part of this drop (includes rows
+   * for the task itself and any cascade-deleted fix tasks). Zero when the task
+   * never reached the merge stage.
+   */
+  mergeJobsDeleted: number
 }
 
 /**

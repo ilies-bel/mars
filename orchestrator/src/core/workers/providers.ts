@@ -11,11 +11,39 @@ import {
   type ClaudeEffort,
   type ClaudePermissionMode,
 } from '../lib/git/claude'
-import type { ClaudeEvent } from '../lib/claude-stream'
+import { readClaudeOutput, type ClaudeEvent } from '../lib/claude-stream'
+import type { ProviderUsageSemantics } from '../lib/claude-usage'
 import { codexHeadless } from './providers/codex-headless'
 import { geminiHeadless } from './providers/gemini-headless'
 
 export type ProviderName = 'claude' | 'gemini' | 'codex'
+
+export type ProviderModelTier = 'flagship' | 'balanced' | 'fast'
+
+export interface ProviderModels {
+  readonly flagship: string
+  readonly balanced: string
+  readonly fast: string
+}
+
+/** Provider-native model ids behind MARS's semantic worker tiers. */
+export const PROVIDER_MODELS: Readonly<Record<ProviderName, ProviderModels>> = {
+  claude: {
+    flagship: 'claude-opus-4-7',
+    balanced: 'claude-sonnet-4-6',
+    fast: 'claude-haiku-4-5-20251001',
+  },
+  gemini: {
+    flagship: 'gemini-2.5-pro',
+    balanced: 'gemini-2.5-pro',
+    fast: 'gemini-2.5-flash',
+  },
+  codex: {
+    flagship: 'gpt-5.6-sol',
+    balanced: 'gpt-5.6-terra',
+    fast: 'gpt-5.6-luna',
+  },
+} as const
 
 // Runtime options forwarded to HeadlessAdapter.run when the orchestrator
 // dispatches a headless (non-interactive subprocess) invocation. Mirrors
@@ -58,18 +86,49 @@ export type HeadlessRunOpts = Readonly<{
 // fast at runtime rather than silently falling back to an unintended path.
 //
 // The `capabilities` descriptor advertises which result fields the adapter
-// populates so dispatch logic can branch without inspecting the return value
-// at runtime. All three flags are true for the Claude adapter because
-// runClaudeCode extracts the session_id, detects quota-rejection, and tracks
-// context token usage.
+// populates, and HOW its usage numbers must be read, so dispatch and telemetry
+// logic can branch without inspecting the return value at runtime.
+//
+// `usageSemantics` is the load-bearing one: a provider that reports cumulative
+// turn spend (codex) must never have that number read as context occupancy —
+// see ProviderUsageSemantics in ../lib/claude-usage.
 export interface HeadlessAdapter {
   run(prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult>
+  /** Decode this provider's complete stdout into normalized stream events. */
+  readOutput(stdout: string): ClaudeEvent[]
   readonly capabilities: {
-    readonly contextTokenMetering: boolean
+    readonly usageSemantics: ProviderUsageSemantics
     readonly quotaRejected: boolean
     readonly sessionId: boolean
   }
 }
+
+export type RunHeadlessProviderOpts = Omit<HeadlessRunOpts, 'model'> & {
+  readonly provider?: ProviderName
+  readonly model?: string
+  readonly modelTier?: ProviderModelTier
+  readonly timeoutMs?: number
+}
+
+/**
+ * True when this provider can report current context occupancy, and therefore
+ * when in-run context-overflow handling (warn at 80%, abort at 100% of a
+ * worker's maxContextTokens) is meaningful. A provider that reports only
+ * cumulative spend — or nothing at all — must be skipped by that logic; its
+ * budget is enforced on the INPUT side by the pre-flight prompt check in
+ * ../workers (see estimatePromptTokens).
+ */
+export const reportsContextOccupancy = (adapter: HeadlessAdapter): boolean =>
+  adapter.capabilities.usageSemantics === 'per-request'
+
+/**
+ * The usage semantics of a Provider by name. The single lookup every telemetry
+ * call site uses to decide HOW to read a run's token numbers — reading the
+ * per-request (assistant-event) shape unconditionally is what made every Codex
+ * run report zero tokens everywhere.
+ */
+export const usageSemanticsOf = (provider: ProviderName): ProviderUsageSemantics =>
+  PROVIDERS[provider].headless.capabilities.usageSemantics
 
 // Runtime options forwarded to spawnArgv when the orchestrator launches
 // a Provider process. Named fields instead of a plain record so callers
@@ -145,8 +204,8 @@ export interface Provider {
   readonly isReady?: (strippedBuffer: string) => boolean
   // Headless dispatch adapter. Required on every Provider so buildWorker's
   // headless branch can call it uniformly. Providers that do not yet have a
-  // real headless implementation (gemini, codex) supply a stub that rejects —
-  // their adapter slices land this in a later PRD slice.
+  // real headless implementation must fail explicitly rather than silently
+  // falling back to a different provider.
   readonly headless: HeadlessAdapter
 }
 
@@ -240,17 +299,19 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       buf.includes('❯') &&
       /bypass permissions|shift\+tab to cycle|Haiku|Sonnet|Opus/i.test(buf),
     // Headless adapter: delegates directly to runClaudeCode so the headless
-    // dispatch path is bit-identical to the pre-seam behaviour. All three
-    // capability flags are true because runClaudeCode extracts the session_id,
-    // detects quota-rejection, and tracks context token usage.
+    // dispatch path is bit-identical to the pre-seam behaviour. runClaudeCode
+    // extracts the session_id and detects quota-rejection, and Claude Code
+    // stamps per-request usage on every assistant event — so the latest one is
+    // genuine context occupancy ('per-request').
     headless: {
       capabilities: {
-        contextTokenMetering: true,
+        usageSemantics: 'per-request',
         quotaRejected: true,
         sessionId: true,
       },
       run: (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> =>
         runClaudeCode({ prompt, ...opts }),
+      readOutput: readClaudeOutput,
     },
   },
   gemini: {
@@ -311,3 +372,52 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     headless: codexHeadless,
   },
 } as const
+
+const KNOWN_PROVIDER_NAMES: readonly ProviderName[] = ['claude', 'codex', 'gemini']
+
+export const resolveProviderName = (
+  raw: string | undefined = process.env.MARS_WORKER_PROVIDER,
+): ProviderName => {
+  if (raw === undefined || raw.trim() === '') return 'codex'
+  if (!(KNOWN_PROVIDER_NAMES as readonly string[]).includes(raw)) {
+    throw new Error(
+      `Unknown MARS_WORKER_PROVIDER '${raw}' — known: ${KNOWN_PROVIDER_NAMES.join(', ')}`,
+    )
+  }
+  return raw as ProviderName
+}
+
+/**
+ * Provider-neutral entry point for one-off headless model calls outside a
+ * named Worker. It applies the global provider, translates semantic model
+ * tiers, and owns wall-clock cancellation so callers never shell out to a
+ * provider CLI directly.
+ */
+export const runHeadlessProvider = async (
+  prompt: string,
+  opts: RunHeadlessProviderOpts,
+): Promise<RunClaudeResult> => {
+  const providerName = opts.provider ?? resolveProviderName()
+  const provider = PROVIDERS[providerName]
+  const abort = new AbortController()
+  const onExternalAbort = (): void => abort.abort()
+  if (opts.externalAbort?.aborted) abort.abort()
+  else opts.externalAbort?.addEventListener('abort', onExternalAbort, { once: true })
+
+  const timeout =
+    opts.timeoutMs !== undefined && opts.timeoutMs > 0
+      ? setTimeout(() => abort.abort(), opts.timeoutMs)
+      : undefined
+
+  try {
+    const { provider: _provider, modelTier = 'balanced', timeoutMs: _timeoutMs, ...runOpts } = opts
+    return await provider.headless.run(prompt, {
+      ...runOpts,
+      model: opts.model ?? PROVIDER_MODELS[providerName][modelTier],
+      externalAbort: abort.signal,
+    })
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+    opts.externalAbort?.removeEventListener('abort', onExternalAbort)
+  }
+}

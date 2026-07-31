@@ -46,6 +46,8 @@ import {
   removeWorktree,
   attachToOriginWorktree,
   OriginWorktreeMissingError,
+  restoreWorktreeIfMissing,
+  ResumeWorktreeUnrecoverable,
   type WorktreeRef,
 } from '../../core/lib/git/worktree'
 import {
@@ -61,7 +63,6 @@ import {
 } from '../../core/lib/gate-enrichment'
 import { mergeBranch, checkMergeTargetStatus, isZeroCommitBranch, type MergeResult } from '../../core/lib/git/merge'
 import { autoCommitWorktreeIfDeterministic } from '../../core/lib/git/commit-main'
-import { acquireLock } from '../../core/lib/git/lock'
 import {
   createWorker,
   pickWorkerForTags,
@@ -76,7 +77,8 @@ import {
   WorktreeInstallError,
 } from '../../core/lib/worktree-install'
 import { extractLastStreamText, type ClaudeEvent } from '../../core/lib/claude-stream'
-import { getTask, hasIncompleteBlockers, updateTask } from '../../core/queue'
+import { readWorkerOutputText } from '../../core/lib/worker-json'
+import { getTask, hasIncompleteBlockers, TERMINAL_TASK_STATUSES, updateTask } from '../../core/queue'
 import { Arc } from '../../core/arc'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
 import { computeFailureSignature } from '../../core/lib/failure-signature'
@@ -84,7 +86,12 @@ import { resolveOriginIdForTask } from '../../core/lib/origin'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
 import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
-import { summarizeUsage } from '../../core/lib/claude-usage'
+import {
+  summarizeUsage,
+  summarizeUsageForSemantics,
+  buildContextTokenSignals,
+} from '../../core/lib/claude-usage'
+import { usageSemanticsOf } from '../../core/workers/providers'
 import { recordSignals } from '../../core/lib/reflect-signals'
 import {
   resolveTaskDomains,
@@ -103,6 +110,9 @@ import {
   recoveryAttachesToOrigin,
   resolveWorkerSystemPrompt,
   BLOCKERS_ABORT_MESSAGE,
+  CODE_COMMIT_CONTRACT_SIGNATURE,
+  CODE_COMMIT_CONTRACT_STEP,
+  codeCommitContractFailure,
   CODER_EXIT_NONZERO_ABORT_MESSAGE,
   CODER_UNCOMMITTED_ABORT_MESSAGE,
   CODER_UNCOMMITTED_SIGNATURE,
@@ -190,6 +200,32 @@ export interface MarsServices {
    * inject a tracker can safely omit this field.
    */
   onPid?: (pid: number) => void
+  /**
+   * Optional hook called by the `review` primitive (auto path) immediately
+   * before running `verifyChanges`. When present, the daemon:
+   *   1. Releases the implement semaphore slot so other tasks can start coding
+   *      while this task waits for a verify slot (avoids wasting implement
+   *      capacity on tasks that are just queued behind the verify cap).
+   *   2. Acquires the verify semaphore (default limit 2, MARS_MAX_VERIFY).
+   *   3. Calls `drain()` so freed implement slots are picked up immediately.
+   *
+   * When absent (scaffolded workflows, tests that don't inject the daemon
+   * plumbing), verify runs without a concurrency cap — same as before this
+   * feature was added.
+   *
+   * There is no circular dependency: coding never waits on verify, so a task
+   * blocked on the verify semaphore does not prevent the verify semaphore from
+   * being released. No deadlock is possible.
+   */
+  acquireVerifySlot?: () => Promise<void>
+  /**
+   * Optional hook called by the `review` primitive in its finally block,
+   * paired with {@link acquireVerifySlot}. Releases the verify semaphore
+   * slot so the next queued verify can proceed.
+   *
+   * When absent, this is a no-op.
+   */
+  releaseVerifySlot?: () => void
   /**
    * Hook registered by the daemon that routes merge requests through the
    * durable single-consumer merge worker. The `merge` primitive always
@@ -492,6 +528,20 @@ export const setupWorktree = async (
       )
     }
     const origin = await getTask(originTaskId, store)
+    if (origin !== null && TERMINAL_TASK_STATUSES.has(origin.status)) {
+      await updateTask(
+        taskId,
+        {
+          status: 'dropped',
+          dropReason: origin.status === 'done' ? 'origin-succeeded' : 'arc-rescued',
+        },
+        store,
+      )
+      throw new WorkflowTerminalError(
+        'origin-terminal',
+        `Chore ${taskId} was dropped because origin ${originTaskId} is already ${origin.status}`,
+      )
+    }
     const originBranch = origin?.branch ?? null
     const originWorktreePath = origin?.worktreePath ?? null
     try {
@@ -591,8 +641,9 @@ export const setupWorktree = async (
         isMainCommiterFix,
       )
       // A main-commiter recovery MUST carry the integration branch's dirty
-      // state into its fresh worktree (stash push on repoRoot → pop in the
-      // worktree) so the committer coder sees the files it is meant to commit.
+      // state into its fresh worktree (checkpoint capture on repoRoot → apply
+      // by object id in the worktree, see `core/lib/git/checkpoint.ts`) so the
+      // committer coder sees the files it is meant to commit.
       // The generic createWorktree() branches off the clean integration tip
       // and leaves the dirty state stranded on the integration checkout —
       // every downstream task then fails verify:main-dirty forever.
@@ -797,7 +848,7 @@ export interface RunAgentResult {
 }
 
 /**
- * Run the coder (headless `claude -p`) inside the worktree. Mirrors the former
+ * Run the coder through the selected headless provider inside the worktree. Mirrors the former
  * `run-claude-code` step body: sweeps stray debris from a prior failed attempt
  * (gated on 0 commits ahead), composes the full prompt, picks the worker
  * (kind-aware: fix → Fixer; else tag-routed including registry workers), runs
@@ -855,6 +906,47 @@ export const runAgent = async (
 
   const worktreePath = worktree.path
   const branch = worktree.branch
+
+  // ── Resume preflight: the worktree must actually exist ────────────────────
+  // On a checkpoint-resume (a watchdog-killed task being retried, `mars
+  // continue`, any re-dispatch with runId=task.id) the completed `setup` step
+  // short-circuits and `resolveWorktree` hands back the path recorded on the
+  // task row WITHOUT revalidating it. If that directory was removed while the
+  // task was parked, every spawn below runs with a dead `cwd` and Node reports
+  // `spawn <bin> ENOENT` → exit 127 in ~20ms, which looks exactly like a
+  // missing provider binary and buckets as a contentless coder-exit-nonzero.
+  // Re-attach the worktree from its branch when possible so the retry gets a
+  // real working directory; fail with a NAMED signature when it cannot be.
+  try {
+    const restored = await restoreWorktreeIfMissing({
+      taskId,
+      ref: { path: worktreePath, branch },
+      traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+    })
+    if (restored === 'rebuilt') {
+      console.log(
+        `[resume] task ${taskId}: worktree ${worktreePath} was missing on resume; ` +
+          `re-attached from branch ${branch}`,
+      )
+    }
+  } catch (err) {
+    if (!(err instanceof ResumeWorktreeUnrecoverable)) throw err
+    const summary = err.message
+    const missingSignature = computeFailureSignature('code:worktree-missing', summary)
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: summary,
+        failedPhase: 'code',
+        failureReason: 'code:worktree-missing',
+        failureSignature: missingSignature,
+        failureReasonCode: missingSignature,
+      },
+      store,
+    )
+    throw new WorkflowTerminalError('resume-worktree-missing', summary)
+  }
 
   // Sweep stray untracked files from a prior failed attempt BEFORE the agent
   // runs (gated on 0 commits ahead so real committed work is preserved).
@@ -920,6 +1012,10 @@ export const runAgent = async (
     model !== undefined && model !== selectedWorker.config.model
       ? createWorker({ ...selectedWorker.config, model })
       : selectedWorker
+  // How the selected Worker's Provider reports usage. Every token read below
+  // (post-coder telemetry, reflect signals) goes through it — the assistant
+  // shape is Claude's alone.
+  const coderSemantics = usageSemanticsOf(worker.config.provider)
 
   // Generate a fresh random invocation token per coder/recovery dispatch so
   // concurrent and rapid-resume runs NEVER collide on the same Claude session
@@ -1055,7 +1151,10 @@ export const runAgent = async (
         integrationBranch,
         traceCtx: buildPhaseCtx(trace, taskId, 'code'),
       })
-      if (postState.kind === 'dirty-no-commits') {
+      if (
+        postState.kind === 'dirty-no-commits' ||
+        postState.kind === 'dirty-with-commits'
+      ) {
         const addR = await runTool(
           {
             tool: 'git',
@@ -1143,6 +1242,7 @@ export const runAgent = async (
   // Classifier failures (`error`) stay best-effort: log and fall through, so a
   // transient git hiccup never blocks an otherwise-good run.
   let postState: Awaited<ReturnType<typeof detectPostCoderState>> | null = null
+  let commitSource: 'self' | 'corrected' | 'net' | 'no-work' | 'unknown' = 'unknown'
   try {
     postState = await detectPostCoderState({
       worktreePath,
@@ -1154,6 +1254,8 @@ export const runAgent = async (
         `[post-coder] task ${taskId}: classifier error: ${postState.error}`,
       )
     }
+    if (postState.kind === 'clean-with-commits') commitSource = 'self'
+    if (postState.kind === 'clean-no-work') commitSource = 'no-work'
   } catch (err) {
     console.warn(
       `[post-coder] task ${taskId}: classifier threw, continuing:`,
@@ -1167,6 +1269,55 @@ export const runAgent = async (
       `[post-coder] task ${taskId}: dirty tree with 0 commits ahead of ${integrationBranch} — coder left ${postState.dirtyFiles.length} uncommitted path(s):\n  ${dirtyList}`,
     )
 
+    // A clean process exit with a dirty worktree is a recoverable instruction
+    // adherence failure, not a reason to immediately take authorship of the
+    // change. Give the same Coder one short, worktree-backed correction turn
+    // first. Codex exec is ephemeral, so this deliberately starts a second
+    // process; the worktree is the continuation state.
+    const correction = await runWorkerWithSpan({
+      worker,
+      prompt: `Your previous pass left uncommitted changes in these paths:\n  ${dirtyList}\n\nCommit them now. Do not make unrelated changes.`,
+      runOptions: {
+        cwd: worktreePath,
+        systemPrompt: resolveWorkerSystemPrompt(primaryTag),
+        onEvent: async (event) => emit?.(event),
+        onPid: ctx.services.onPid,
+      },
+      traceStore: spanStore(trace),
+      stepName: 'commit-correction',
+      workflowInstanceId: trace.workflowInstanceId,
+      originId,
+      taskId,
+      phase: 'code',
+    })
+
+    try {
+      const correctedState = await detectPostCoderState({
+        worktreePath,
+        integrationBranch,
+        traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+      })
+      if (correctedState.kind === 'clean-with-commits') {
+        postState = correctedState
+        commitSource = 'corrected'
+        console.log(
+          `[post-coder] task ${taskId}: coder committed ${correctedState.commitsAhead} change(s) on corrective turn`,
+        )
+      } else if (correctedState.kind === 'error') {
+        console.warn(`[post-coder] task ${taskId}: corrective classifier error: ${correctedState.error}`)
+      } else {
+        postState = correctedState
+        console.warn(
+          `[post-coder] task ${taskId}: corrective commit turn exited ${correction.exitCode} without a commit; using the auto-commit net`,
+        )
+      }
+    } catch (err) {
+      console.warn(`[post-coder] task ${taskId}: corrective classifier threw; using the auto-commit net:`, err)
+    }
+  }
+
+  if (postState?.kind === 'dirty-no-commits') {
+    const dirtyList = postState.dirtyFiles.join('\n  ')
     const autoResult = await autoCommitWorktreeIfDeterministic({
       worktreePath,
       dirtyFiles: postState.dirtyFiles,
@@ -1174,6 +1325,7 @@ export const runAgent = async (
     })
 
     if (autoResult.committed) {
+      commitSource = 'net'
       console.log(
         `[post-coder] task ${taskId}: auto-committed ${postState.dirtyFiles.length} path(s) as ${autoResult.sha.slice(0, 8)}`,
       )
@@ -1229,7 +1381,106 @@ export const runAgent = async (
     }
   }
 
-  const usage = summarizeUsage(r.conversation)
+  // --- Coder commit contract -----------------------------------------------
+  // Post-condition on the `code` step: the coder must hand over a CLEAN
+  // worktree. The branch above covers "committed nothing, left everything
+  // dirty" (deterministic auto-commit, or a terminal failure when that
+  // fails). This branch covers the shape that used to slip through: the coder
+  // committed SOME work and left other paths uncommitted. That tree passed
+  // code, passed verify (has-diff only counts commits), and first surfaced two
+  // steps later as `merge/unclassified` — a generic bucket that named neither
+  // the cause nor the responsible step, and that feeds the signature-storm
+  // circuit breaker. Fail here instead, where the step and the retained
+  // worktree match the actual defect.
+  //
+  // No auto-commit on this path (unlike dirty-no-commits): once the coder has
+  // committed deliberately, a blind `git add -A` would sweep whatever it chose
+  // to leave out — debris or half-finished work — into the merge. The contract
+  // violation is the coder's to fix.
+  //
+  // Deliberately NOT asserted here: that the branch is ahead of
+  // `integrationBranch`. Zero commits ahead is a legitimate terminal state —
+  // verify's has-diff gate passes it on purpose (a task that correctly
+  // concluded there was nothing to do, or whose work already landed upstream;
+  // see the 2026-05-29 main-committer incident documented in
+  // `core/lib/git/verify.ts`). Asserting it here would re-fail exactly the
+  // no-op runs that gate was fixed to accept. The clean-tree assertion has no
+  // such exemption and applies to every path.
+  if (postState?.kind === 'dirty-with-commits') {
+    const errorMsg = codeCommitContractFailure({
+      taskId,
+      worktreePath,
+      branch,
+      integrationBranch,
+      dirtyFiles: postState.dirtyFiles,
+      commitsAhead: postState.commitsAhead,
+    })
+    console.log(
+      `[post-coder] task ${taskId}: commit contract violated — ${postState.commitsAhead} commit(s) ahead of ${integrationBranch} but ${postState.dirtyFiles.length} path(s) left uncommitted`,
+    )
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: errorMsg,
+        failedPhase: 'code',
+        // `failure_reason` doubles as the fine-grained failing step for the
+        // durable recovery-spawn subscriber (`asStepId(task.failureReason)`),
+        // so it must stay a bare step id — the prose lives in `error`.
+        failureReason: CODE_COMMIT_CONTRACT_STEP,
+        failureSignature: CODE_COMMIT_CONTRACT_SIGNATURE,
+        failureReasonCode: CODE_COMMIT_CONTRACT_SIGNATURE,
+      },
+      store,
+    )
+    await handleTaskFailureWithFixTask({
+      taskId,
+      failingStep: CODE_COMMIT_CONTRACT_STEP,
+      errorOutput: errorMsg,
+      branch,
+      store,
+      recipeContext: {
+        targetPath: worktreePath,
+        statusOutput: postState.dirtyFiles.join('\n'),
+        targetBranch: branch,
+        originalPrompt: '',
+      },
+    }).catch((err) => {
+      console.error(
+        `[post-coder] task ${taskId}: commit-contract recovery spawn errored:`,
+        err,
+      )
+    })
+    throw new WorkflowTerminalError(
+      'coder-uncommitted',
+      CODER_UNCOMMITTED_ABORT_MESSAGE(taskId),
+    )
+  }
+
+  // Emitted only for runs that survive every post-coder gate above, matching
+  // the existing terminal-failure branches (auto-commit-failed, commit
+  // contract), which throw before reaching this point.
+  await trace.traceStore
+    .record({
+      kind: 'post-coder-commit',
+      taskId,
+      originId,
+      phase: 'code',
+      payload: {
+        provider: worker.config.provider,
+        commitSource,
+        // Occupancy for a per-request provider, cumulative spend for a
+        // cumulative one, and NEITHER field for a provider that reports no
+        // usage — a hardcoded `contextTokens` read the assistant shape on
+        // every provider and stamped a fabricated 0 on every Codex run.
+        ...buildContextTokenSignals(coderSemantics, r.conversation),
+      },
+    })
+    .catch(() => {
+      // Telemetry must never change the completion result.
+    })
+
+  const usage = summarizeUsageForSemantics(coderSemantics, r.conversation)
   if (r.sessionId) {
     handle?.setTranscriptKey(r.sessionId)
     await updateTask(taskId, { claudeSessionId: r.sessionId }, store)
@@ -1354,7 +1605,10 @@ export const review = async (
       phase: 'verify',
     })
 
-    const rawOutput = extractLastStreamText(r.conversation) ?? r.stdout
+    const rawOutput =
+      extractLastStreamText(r.conversation) ??
+      readWorkerOutputText(worker.config.provider, r.stdout) ??
+      ''
     let packet: ReviewPacket
     try {
       const jsonMatch = rawOutput.match(/\{[\s\S]*\}/)
@@ -1746,6 +2000,14 @@ export const review = async (
         { status: 'verifying', failedPhase: null, activityDetail: 'verify' },
         store,
       )
+
+      // Acquire the daemon-level verify semaphore (MARS_MAX_VERIFY) before
+      // running the CPU-intensive test suite. This releases the implement slot
+      // first (see dispatchImplement) so other tasks can keep coding while this
+      // one waits for a free verify slot. When absent (scaffolded workflows,
+      // test contexts without the daemon plumbing), verify runs uncapped.
+      await ctx.services.acquireVerifySlot?.()
+
       // Wrap the verify body: any unexpected throw (e.g. verifyChanges rejects,
       // lock acquisition fails) must transition the task to 'failed' before
       // rethrowing, so the row never stays pinned in 'verifying' until the
@@ -1784,14 +2046,6 @@ export const review = async (
       const isMainCommitter = commiterPayload?.recipe === MAIN_COMMITER_RECIPE
       const steps = isMainCommitter ? [] : selectVerifySteps(scopes, changedFiles)
 
-      // Serialize verify runs so DB-heavy builds (embedded-PG, Gradle) do not
-      // tear down each other's database mid-suite.  This mirrors the merge
-      // serialization (.merge.lock) but uses a longer timeout because
-      // embedded-PG + Gradle suites can run for 30+ minutes.
-      const releaseVerifyLock = await acquireLock(
-        resolve(getStateDir(), '.verify.lock'),
-        60 * 60 * 1000, // 60 min ceiling — generous for slow gradle/embedded-PG suites
-      )
       let r = await verifyChanges({
         cwd: verifyCwd,
         steps,
@@ -1801,7 +2055,7 @@ export const review = async (
         // optional, so a task with zero configured task-tier steps passes.
         changedFiles: isMainCommitter ? undefined : changedFiles,
         traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
-      }).finally(() => releaseVerifyLock())
+      })
 
       // Infra-failure retry (once only): if any failed step output matches an
       // infrastructure-failure pattern (embedded-PG shutdown mid-suite, Spring
@@ -1816,17 +2070,13 @@ export const review = async (
             `[verify] task ${taskId}: infra failure detected in ${failedSteps.length} step(s) ` +
               `(embedded-PG shutdown or Spring context init); retrying once`,
           )
-          const releaseRetryLock = await acquireLock(
-            resolve(getStateDir(), '.verify.lock'),
-            60 * 60 * 1000,
-          )
           r = await verifyChanges({
             cwd: verifyCwd,
             steps,
             branch,
             integrationBranch,
             traceCtx: buildPhaseCtx(trace, taskId, 'verify'),
-          }).finally(() => releaseRetryLock())
+          })
         }
       }
 
@@ -1841,8 +2091,9 @@ export const review = async (
       // the committer ran. A committer task may only succeed if
       // `git status --porcelain` on the integration branch's primary checkout
       // (repoRoot, not the committer worktree) is empty. If the checkout is
-      // still dirty — e.g. because git stash refused to capture ignored files,
-      // or the committer exited without committing anything meaningful — the
+      // still dirty — e.g. because ignored files remain (a checkpoint never
+      // captures those), or the committer exited without committing anything
+      // meaningful — the
       // verify step must fail so the task escalates to the action queue for
       // operator review (non-recoverable per ADR-0040).
       //
@@ -2060,6 +2311,10 @@ export const review = async (
           ).catch(() => {})
         }
         throw err
+      } finally {
+        // Release the daemon-level verify semaphore slot unconditionally so the
+        // next queued verify step can proceed regardless of pass/fail/throw.
+        ctx.services.releaseVerifySlot?.()
       }
     },
   })
@@ -2495,6 +2750,16 @@ export const merge = async (
 
         if (m.aborted) {
           const errorMsg = `merge aborted by vcs-supervisor; worktree retained at ${worktreePath}\n${m.output.slice(0, 1000)}`
+          // Classify from the WRAPPED message, not the raw mergeBranch output:
+          // the wrapper line is what lands in `error` and what the durable
+          // recovery-spawn path re-classifies. Stamping the signature here (it
+          // used to be left unset) means the abort reason — e.g. the pre-rebase
+          // dirty-worktree guard's `rebase-dirty-worktree` — is on the row from
+          // the first write, instead of degrading to `merge/unclassified`.
+          const abortSignature = computeFailureSignature(
+            'merge:vcs-supervisor-aborted',
+            errorMsg,
+          )
           await updateTask(
             taskId,
             {
@@ -2502,7 +2767,8 @@ export const merge = async (
               error: errorMsg,
               failedPhase: 'merge',
               failureReason: 'merge:vcs-supervisor-aborted',
-              failureReasonCode: 'merge:vcs-supervisor-aborted',
+              failureSignature: abortSignature,
+              failureReasonCode: abortSignature,
             },
             store,
           )

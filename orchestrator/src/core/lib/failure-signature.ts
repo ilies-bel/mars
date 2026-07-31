@@ -301,8 +301,71 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     // /rebase-no-in-progress-state. The correct resolution is to restart the
     // task (re-provisions the worktree from scratch), not to spawn a code-fix
     // recovery.
+    //
+    // matchFull, not match: the merge primitive prefixes the sentinel with
+    // "merge aborted by vcs-supervisor; worktree retained at <path>", and the
+    // durable recovery-spawn path re-classifies from that stored `error`. Under
+    // first-line-only matching the sentinel was invisible there and the failure
+    // degraded to `merge/unclassified` (task fix-30ac0aaa) — a generic bucket
+    // that also feeds the signature-storm circuit breaker. Matching the whole
+    // body keeps the named slug reachable from every call site.
     errorClass: 'rebase-dirty-worktree',
-    match: /worktree dirty before rebase/i,
+    matchFull: /worktree dirty before rebase/i,
+  },
+  {
+    // The provider CLI itself could not be executed: `spawn` failed with
+    // ENOENT/EACCES, or the shell reported exit 127 ("command not found").
+    // `runSubprocessStreaming` surfaces the spawn failure as
+    // `spawn <cmd> ENOENT: …` on stderr with exit code 127.
+    //
+    // Whatever produces it — an unresolvable binary, a malformed argv, a
+    // mid-session uninstall — the step dies in milliseconds having done no
+    // work, and without this rule every occurrence lands in the contentless
+    // `coder-exit-nonzero` / unclassified bucket. Naming the class is the
+    // point: "the command could not be executed" is a completely different
+    // diagnosis from "the coder ran and failed".
+    //
+    // `checkProviderBin` (workers/provider-bin.ts) refuses to start the daemon
+    // when the configured provider's binary cannot be resolved at boot; this
+    // rule covers everything that still reaches a spawn failure afterwards.
+    //
+    // Deliberately narrow — an explicit spawn-failure marker or an exit code
+    // of exactly 127 in the orchestrator's own wording. A bare "command not
+    // found" is NOT matched: coder stderr routinely quotes shell output from
+    // commands the agent itself ran, and misfiling those would be worse than
+    // leaving them unclassified.
+    errorClass: 'provider-binary-missing',
+    matchFull:
+      /\bspawn\s+\S+\s+(?:ENOENT|EACCES)\b|\bcoder exited 127\b|\bexited with (?:code )?127\b/i,
+  },
+  {
+    // The commit gate could not write into the repo's shared git metadata
+    // directory. The canonical shape is:
+    //
+    //   Git cannot create '.git/worktrees/<id>/index.lock': Operation not permitted
+    //
+    // This is NOT lock contention (see index-lock-contention below, which is
+    // "File exists"): the write itself is denied. It happens when the daemon
+    // was started from a shell whose sandbox permits writes to worktree files
+    // under `.mars/worktrees/<id>/` but denies writes to
+    // `<repo>/.git/worktrees/<id>/` — a different filesystem location. Every
+    // coder then edits files and runs tests fine and fails only at commit
+    // time. Observed 79 times in a single incident, all of it landing in the
+    // generic `code/unclassified` bucket, which poisoned that bucket and
+    // tripped the signature storm breaker.
+    //
+    // MUST be checked before index-lock-contention so an EPERM on index.lock
+    // is never mistaken for a transient stale-lock condition (the operator
+    // remedies are completely different: restart the daemon from a shell with
+    // write access vs. clear a stale lock and retry).
+    //
+    // Intentionally has NO recovery recipe: no amount of code editing fixes a
+    // sandbox denial. `checkGitMetadataWritable` (git-metadata-preflight.ts)
+    // now refuses to start the daemon in this state; this rule exists so any
+    // occurrence that slips past the pre-flight is diagnosable on sight.
+    errorClass: 'git-metadata-denied',
+    matchFull:
+      /(?:index\.lock|\.git\/worktrees\/)[^\n]*(?:Operation not permitted|EPERM|Permission denied)|(?:Operation not permitted|EPERM|Permission denied)[^\n]*(?:index\.lock|\.git\/worktrees\/)/i,
   },
   {
     // merge:crashed when git cannot acquire the index lock because another
@@ -413,6 +476,69 @@ export const classifyError = (errorOutput: string): string => {
 const RECOVERY_REASON_PREFIX_RE = /^recovery_(?:exhausted|failed):/
 
 /**
+ * The one prefix a recovery-task escalation stamps onto `failure_reason` /
+ * `error`. Composed form:
+ *
+ *   `recovery_failed:<failureSignature>: <truncated error>`
+ *
+ * The signature half never contains whitespace, so `': '` is an unambiguous
+ * separator between the prefix and the error tail — that is what makes
+ * {@link stripRecoveryFailedPrefixes} exact rather than heuristic.
+ */
+export const RECOVERY_FAILED_PREFIX = 'recovery_failed:'
+
+/**
+ * True when `reason` is already a composed recovery-failure reason.
+ *
+ * Callers use this as the terminality test for a recovery task: a recovery
+ * Chore is a leaf (ADR-0040) whose failure is escalated exactly once, so a row
+ * that is `failed` AND carries this prefix has already been through the
+ * escalation and must not be re-driven.
+ */
+export const isRecoveryFailedReason = (
+  reason: string | null | undefined,
+): reason is string =>
+  typeof reason === 'string' && reason.startsWith(RECOVERY_FAILED_PREFIX)
+
+/**
+ * Remove every leading `recovery_failed:<signature>: ` segment, returning the
+ * bare error text underneath.
+ *
+ * Needed because the composed reason is written to BOTH `failure_reason` and
+ * `error`, and `error` is what the `task.failed` outbox event carries — so any
+ * path that re-enters the failure handler with a previously composed reason
+ * would otherwise prepend a second prefix, then a third, … Each pass also
+ * truncates the tail to 500 chars, so the nesting silently eats the real error
+ * instead of growing the string (observed: `failure_reason` pinned at ~542
+ * chars, ten prefixes deep, original error gone).
+ */
+export const stripRecoveryFailedPrefixes = (reason: string): string => {
+  let out = reason
+  while (out.startsWith(RECOVERY_FAILED_PREFIX)) {
+    const sep = out.indexOf(': ', RECOVERY_FAILED_PREFIX.length)
+    if (sep === -1) break
+    out = out.slice(sep + 2)
+  }
+  return out
+}
+
+/**
+ * Compose the single, never-nested recovery-failure reason for a recovery task.
+ *
+ * Idempotent by construction:
+ * `compose(sig, compose(sig, e)) === compose(sig, e)` — any prefixes already
+ * present on `errorText` are stripped before the one prefix is applied.
+ */
+export const composeRecoveryFailureReason = (
+  failureSignature: string,
+  errorText: string,
+  maxErrorChars = 500,
+): string =>
+  `${RECOVERY_FAILED_PREFIX}${failureSignature}: ${stripRecoveryFailedPrefixes(
+    errorText,
+  ).slice(0, maxErrorChars)}`
+
+/**
  * Returns the `<failingStep>/<errorClass>` failure signature.
  *
  * Idempotent: if `errorOutput` is already a composed reason string that
@@ -495,6 +621,12 @@ const causeSentencesBySignature: Readonly<Record<string, CauseRenderer>> = {
   // Environmental: Claude's API was unreachable — nothing wrong with the code.
   'code:coder-exit-nonzero/api-unreachable': (taskId) =>
     `the coder couldn't reach Claude's API — nothing was wrong with the code. Retry once connectivity is back: mars restart ${taskId}`,
+  // Operator-owned: the daemon could not execute the provider CLI at all.
+  'code:coder-exit-nonzero/provider-binary-missing': (taskId) =>
+    `the command the daemon spawned for the coder could not be executed (spawn failure / exit 127) — the step did no work. Check that the provider binary resolves in the daemon's environment (or pin MARS_<PROVIDER>_BIN to an absolute path), then mars restart ${taskId}`,
+  // Operator-owned: the daemon cannot write the repo's shared git metadata.
+  'code:coder-exit-nonzero/git-metadata-denied': (taskId) =>
+    `the daemon cannot write into <repo>/.git/worktrees — every coder will fail at the commit gate. Restart the daemon from a shell with write access to that directory, then mars restart ${taskId}`,
 }
 
 /**

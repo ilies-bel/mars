@@ -1,6 +1,6 @@
 ---
 name: alerts
-description: Show only the alert rows (failed tasks and stale worktrees) from the Mars action queue — excludes draft proposals. Use when the user says "mars alerts", "show alerts", "what alerts do I have", or invokes `/mars:alerts`.
+description: Show only the alert rows (failed tasks and stalled queued tasks) from the Mars action queue — excludes draft proposals. Use when the user says "mars alerts", "show alerts", "what alerts do I have", or invokes `/mars:alerts`.
 ---
 
 # Mars: alerts view
@@ -9,7 +9,8 @@ You are the Mars **alerts view**. You show only the two alert families from
 the action queue:
 
 - `failed` — tasks in `failed`/`dropped`; self-heal is out of options.
-- `stale-worktree` — leftover worktree dirs whose task is terminal or absent.
+- `stale-queued` — tasks waiting beyond the dispatch threshold; the worker pool
+  may be saturated or the dispatcher may be stuck.
 
 `draft-proposal` rows are **excluded** — for those, see `/mars:proposals`.
 For the full unfiltered queue, see `/mars:action-queue`.
@@ -23,7 +24,7 @@ Three resolution modes, driven by the argument shape.
 Run `mars action-queue show <argument>` (accepts a full `kind:entityId`, a bare
 entity id, or an entity-id prefix):
 
-- **Hit, and `kind` is `failed` or `stale-worktree`** → target is this row.
+- **Hit, and `kind` is `failed` or `stale-queued`** → target is this row.
   **Print the full CLI output verbatim** in a fenced block — no summarising, no
   paraphrasing, no collapsing the body or the `dag:` section. The user needs
   the raw content to decide. Then go to Step 3 (skip listing).
@@ -37,12 +38,12 @@ entity id, or an entity-id prefix):
 
 ## 1b — Argument is a filter (`open`, `all`)
 
-Run `mars action-queue list <filter> --kind failed-task,stale-worktree` and present the result per Step 2.
+Run `mars action-queue list <filter> --kind failed,stale-queued` and present the result per Step 2.
 Default when no argument is given is `open`.
 
 ## 1c — No argument: show open alerts
 
-Run `mars action-queue list open --kind failed-task,stale-worktree` and present the result per Step 2.
+Run `mars action-queue list open --kind failed,stale-queued` and present the result per Step 2.
 
 # Step 2 — Present the list
 
@@ -59,15 +60,15 @@ this template every time** — same columns, same order, same headers:
 ```
 | Id                                   | Pri    | Kind            | Title                                    |
 | ------------------------------------ | ------ | --------------- | ---------------------------------------- |
-| failed-task:mars-1a2b3c4d            | high   | failed          | Failed: rebuild the merge gate …         |
-| stale-worktree:mars-9f8e7d6c         | low    | stale-worktree  | Stale worktree: task mars-9f8e7d6c …    |
+| failed:mars-1a2b3c4d                 | high   | failed          | Failed: rebuild the merge gate …         |
+| stale-queued:mars-9f8e7d6c           | normal | stale-queued    | Task mars-9f8e7d6c has been queued …    |
 ```
 
 Column rules, applied identically on every invocation:
 
 - **Id** — the full composite `kind:entityId` from the CLI output.
 - **Pri** — `high` / `normal` / `low`. Never blank.
-- **Kind** — the raw kind label from the CLI (`failed` or `stale-worktree`).
+- **Kind** — the raw kind label from the CLI (`failed` or `stale-queued`).
 - **Title** — truncated at ~90 chars.
 
 **Default row cap — render at most 30 rows.** Take the top 30 from the
@@ -90,7 +91,7 @@ id after Step 2), you've already printed `mars action-queue show <id>`.
 
 **Inspect the row's `kind` and dispatch:**
 
-## 3a — kind `failed` (failed-task)
+## 3a — kind `failed`
 
 The row wraps a task in `failed`/`dropped` — self-heal exhausted its
 options. The `entityId` is the task id. Offer terminal actions via **one**
@@ -106,16 +107,14 @@ options. The `entityId` is the task id. Offer terminal actions via **one**
 Run the chosen verb via Bash; print whatever the CLI reports verbatim.
 Stop after the dispatch.
 
-## 3b — kind `stale-worktree`
+## 3b — kind `stale-queued`
 
-The row wraps a leftover worktree dir whose task is terminal/absent. The
-`entityId` is the worktree id. Offer terminal actions via **one**
+The row wraps a task that has waited beyond the dispatch threshold. The
+`entityId` is the task id. Offer the terminal actions via **one**
 `AskUserQuestion`:
 
-- **Remove** — `git worktree remove --force .mars/worktrees/<entityId>`.
-  Delete the leftover worktree. The row clears once the dir is gone.
-- **Inspect** — `git -C .mars/worktrees/<entityId> status`. Look before
-  removing.
+- **Restart** — `mars restart <entityId>`. Re-queue the task from setup; the
+  stale-queued row clears once it leaves `queued`.
 - **Skip** — do nothing and stop.
 
 Run the chosen verb via Bash; print whatever the CLI reports verbatim.

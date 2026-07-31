@@ -25,14 +25,12 @@ export default defineConfig({
       'src/**/*.test.tsx',
       'test/**/*.test.ts',
     ],
-    // Exclude template scaffolding and any nested worktree checkouts so a
-    // stray `agent-*` directory under src/init/templates/claude/worktrees/
-    // (a nested git checkout, has happened before) can never poison the
-    // suite by getting picked up as real tests.
+    // Exclude template scaffolding, including its nested worktree checkouts,
+    // so a stray `agent-*` checkout under src/init/templates/claude/worktrees/
+    // can never poison the suite by getting picked up as real tests.
     exclude: [
       ...configDefaults.exclude,
       '**/src/init/templates/**',
-      '**/worktrees/**',
     ],
     environment: 'node',
     // -------------------------------------------------------------------------
@@ -74,9 +72,12 @@ export default defineConfig({
     // Turn ON the Arc-invariant debug-assert seam for the whole suite (ADR-0052)
     // so every arc-mutating test exercises Arc.assertArcInvariant after commit.
     setupFiles: ['./test/setup-env.ts'],
-    // Reclaim the PGlite test clusters the suites leak into $TMPDIR. Runs once,
-    // after all workers exit, so the DB files are unlocked. See the file header
-    // for why this is necessary (per-task `verify` accumulated ~400 GB).
+    // Gives this run a private temp root (via $TMPDIR, inherited by the forks)
+    // and deletes exactly that root once every worker has exited, so the DB
+    // files are unlocked. Reclaims the PGlite clusters the suites leak without
+    // ever touching a concurrent run's fixtures. See the file header for why
+    // both halves are necessary (per-task `verify` accumulated ~400 GB; the
+    // previous shared-glob sweep had runs deleting each other's live data).
     globalSetup: ['./test/global-teardown.ts'],
   },
 })

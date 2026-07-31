@@ -135,7 +135,7 @@ describe('startWorkerMcpServer', () => {
     await serverDone
   })
 
-  it('lists mars_task_note and mars_task_check in tools/list', async () => {
+  it('lists mars_task_note, mars_task_check, and mars_task_context in tools/list', async () => {
     const { serverInput, serverOutput, serverDone } = startServer(
       { MARS_MCP_TASK_ID: 'task-abc' },
       sendRequest,
@@ -147,8 +147,8 @@ describe('startWorkerMcpServer', () => {
 
     expect(resp.id).toBe(2)
     const tools = (resp.result as Record<string, unknown>).tools as Array<Record<string, unknown>>
-    expect(tools).toHaveLength(2)
-    expect(tools.map(t => t.name)).toEqual(['mars_task_note', 'mars_task_check'])
+    expect(tools).toHaveLength(3)
+    expect(tools.map(t => t.name)).toEqual(['mars_task_note', 'mars_task_check', 'mars_task_context'])
 
     serverInput.end()
     await serverDone
@@ -177,12 +177,21 @@ describe('startWorkerMcpServer', () => {
     const result = resp.result as Record<string, unknown>
     expect(result.isError).toBeFalsy()
 
-    // The daemon received exactly one request with the right fields
-    expect(capturedRequests).toHaveLength(1)
+    // The mutation is followed by one durable audit append request.
+    expect(capturedRequests).toHaveLength(2)
     const req = capturedRequests[0]
     expect(req.op).toBe('task.note')
     expect((req as { op: 'task.note'; id: string; body: string; author?: string }).id).toBe(TASK_ID)
     expect((req as { op: 'task.note'; id: string; body: string; author?: string }).body).toBe(BODY)
+
+    expect(capturedRequests[1]).toMatchObject({
+      op: 'mcp.audit.append',
+      toolName: 'mars_task_note',
+      taskId: TASK_ID,
+      argsJson: { body: '[redacted]' },
+      ok: true,
+      errorMessage: null,
+    })
 
     serverInput.end()
     await serverDone
@@ -257,13 +266,20 @@ describe('startWorkerMcpServer', () => {
     const result = resp.result as Record<string, unknown>
     expect(result.isError).toBeFalsy()
 
-    expect(capturedRequests).toHaveLength(1)
+    expect(capturedRequests).toHaveLength(2)
     const req = capturedRequests[0] as { op: string; id: string; criterionIndex: number; uncheck: boolean; author: string }
     expect(req.op).toBe('task.check')
     expect(req.id).toBe(TASK_ID)
     expect(req.criterionIndex).toBe(2)
     expect(req.uncheck).toBe(false)
     expect(req.author).toBe('mcp-worker')
+    expect(capturedRequests[1]).toMatchObject({
+      op: 'mcp.audit.append',
+      toolName: 'mars_task_check',
+      taskId: TASK_ID,
+      argsJson: { index: 2 },
+      ok: true,
+    })
 
     serverInput.end()
     await serverDone
@@ -289,7 +305,7 @@ describe('startWorkerMcpServer', () => {
     const result = resp.result as Record<string, unknown>
     expect(result.isError).toBeFalsy()
 
-    expect(capturedRequests).toHaveLength(1)
+    expect(capturedRequests).toHaveLength(2)
     const req = capturedRequests[0] as { op: string; id: string; criterionIndex: number; uncheck: boolean }
     expect(req.op).toBe('task.check')
     expect(req.criterionIndex).toBe(3)
@@ -347,9 +363,14 @@ describe('startWorkerMcpServer', () => {
     await serverDone
   })
 
-  it('surfaces daemon errors as MCP tool errors, not process crashes', async () => {
-    const failingSendRequest = vi.fn(async (_req: DaemonRequest) => {
-      throw new Error('daemon unavailable')
+  it('audits a failed mutation before surfacing its daemon error', async () => {
+    const captured: DaemonRequest[] = []
+    const failingSendRequest = vi.fn(async (req: DaemonRequest) => {
+      captured.push(req)
+      if (req.op === 'task.note') {
+        throw new Error('daemon unavailable')
+      }
+      return { ok: true }
     })
     const { serverInput, serverOutput, serverDone } = startServer(
       { MARS_MCP_TASK_ID: 'task-abc' },
@@ -370,6 +391,120 @@ describe('startWorkerMcpServer', () => {
     expect(result.isError).toBe(true)
     const content = result.content as Array<{ type: string; text: string }>
     expect(content[0].text).toContain('daemon unavailable')
+    expect(captured).toHaveLength(2)
+    expect(captured[1]).toMatchObject({
+      op: 'mcp.audit.append',
+      toolName: 'mars_task_note',
+      taskId: 'task-abc',
+      argsJson: { body: '[redacted]' },
+      ok: false,
+      errorMessage: 'daemon unavailable',
+    })
+
+    serverInput.end()
+    await serverDone
+  })
+
+  it('audits a failed criterion change before returning its daemon error', async () => {
+    const captured: DaemonRequest[] = []
+    const failingSendRequest = vi.fn(async (req: DaemonRequest) => {
+      captured.push(req)
+      if (req.op === 'task.check') {
+        throw new Error('criterion no longer exists')
+      }
+      return { ok: true }
+    })
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: 'task-abc' },
+      failingSendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+
+    sendMsg(serverInput, {
+      jsonrpc: '2.0',
+      id: 7,
+      method: 'tools/call',
+      params: { name: 'mars_task_check', arguments: { index: 3, uncheck: true } },
+    })
+    const resp = await nextLine(serverOutput) as Record<string, unknown>
+
+    expect((resp.result as Record<string, unknown>).isError).toBe(true)
+    expect(captured).toHaveLength(2)
+    expect(captured[1]).toMatchObject({
+      op: 'mcp.audit.append',
+      toolName: 'mars_task_check',
+      taskId: 'task-abc',
+      argsJson: { index: 3, uncheck: true },
+      ok: false,
+      errorMessage: 'criterion no longer exists',
+    })
+
+    serverInput.end()
+    await serverDone
+  })
+
+  it('mars_task_context returns all worker-safe fields from the daemon response', async () => {
+    const TASK_ID = 'mars-context-test'
+    const seededContext = {
+      id: TASK_ID,
+      title: 'Implement the feature',
+      prompt: 'Add the MCP context tool to the worker server',
+      files: ['src/core/mcp/worker-server.ts', 'src/core/daemon/protocol.ts'],
+      verify: 'cd orchestrator && npx vitest run src/core/mcp',
+      done: [
+        { text: 'mars_task_context is registered', checked: true },
+        { text: 'handler returns worker-safe fields', checked: false },
+      ],
+      taskType: 'auto',
+      status: 'running',
+      blockers: ['mars-blocker-1'],
+    }
+
+    const contextSendRequest = vi.fn(async (req: DaemonRequest) => {
+      if (req.op === 'task.contextForWorker') {
+        return seededContext
+      }
+      return { ok: true }
+    })
+
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: TASK_ID },
+      contextSendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+
+    sendMsg(serverInput, {
+      jsonrpc: '2.0',
+      id: 20,
+      method: 'tools/call',
+      params: { name: 'mars_task_context', arguments: {} },
+    })
+    const resp = await nextLine(serverOutput) as Record<string, unknown>
+
+    expect(resp.id).toBe(20)
+    const result = resp.result as Record<string, unknown>
+    expect(result.isError).toBeFalsy()
+
+    const content = result.content as Array<{ type: string; text: string }>
+    const parsed = JSON.parse(content[0].text) as typeof seededContext
+
+    expect(parsed.id).toBe(seededContext.id)
+    expect(parsed.title).toBe(seededContext.title)
+    expect(parsed.prompt).toBe(seededContext.prompt)
+    expect(parsed.files).toEqual(seededContext.files)
+    expect(parsed.verify).toBe(seededContext.verify)
+    expect(parsed.done).toEqual(seededContext.done)
+    expect(parsed.taskType).toBe(seededContext.taskType)
+    expect(parsed.status).toBe(seededContext.status)
+    expect(parsed.blockers).toEqual(seededContext.blockers)
+
+    // Confirm the daemon received exactly one task.contextForWorker request with the env-bound id
+    const contextReq = contextSendRequest.mock.calls.find(
+      ([r]) => (r as DaemonRequest).op === 'task.contextForWorker',
+    )
+    expect(contextReq).toBeDefined()
+    expect((contextReq![0] as { op: string; id: string }).id).toBe(TASK_ID)
+    expect(contextSendRequest).toHaveBeenCalledOnce()
 
     serverInput.end()
     await serverDone

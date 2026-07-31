@@ -1,17 +1,14 @@
 // Gemini headless adapter — normalises the gemini CLI line-buffered stdout
 // into the orchestrator's ClaudeEvent shape so downstream readers work
-// unchanged. The adapter is deliberately minimal: context-token metering,
-// quota-rejection detection, and session-id extraction are all false/null
-// because the gemini CLI does not expose those signals.
+// unchanged. The adapter is deliberately minimal: token usage,
+// quota-rejection detection, and session-id extraction are all absent/null
+// because the gemini CLI does not expose those signals — usage semantics are
+// therefore 'none' and no token signal is reported for a gemini run.
 
 import { runSubprocessStreaming, buildWorkerEnv, type RunClaudeResult } from '../../lib/git/claude'
 import type { ClaudeEvent } from '../../lib/claude-stream'
 import type { HeadlessAdapter, HeadlessRunOpts } from '../providers'
-
-// Resolve the gemini binary path. Reads MARS_GEMINI_BIN so operators can
-// configure a specific binary location; falls back to the bare name 'gemini'
-// and lets spawn surface ENOENT cleanly if it is not on PATH.
-export const resolveGeminiBin = (): string => process.env.MARS_GEMINI_BIN?.trim() || 'gemini'
+import { providerBinPath } from '../provider-bin'
 
 /**
  * Parse a single stdout line from the gemini CLI into a ClaudeEvent-shaped
@@ -35,12 +32,20 @@ export const parseGeminiEventLine = (line: string): ClaudeEvent | null => {
   }
 }
 
+/** Read Gemini's line-buffered text output into normalized assistant events. */
+export const readGeminiOutput = (stdout: string): ClaudeEvent[] =>
+  stdout
+    .split(/\r?\n/)
+    .map((line) => parseGeminiEventLine(line))
+    .filter((event): event is ClaudeEvent => event !== null)
+
 export const geminiHeadless: HeadlessAdapter = {
   capabilities: {
-    contextTokenMetering: false,
+    usageSemantics: 'none',
     quotaRejected: false,
     sessionId: false,
   },
+  readOutput: readGeminiOutput,
 
   run: async (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> => {
     const conversation: ClaudeEvent[] = []
@@ -54,8 +59,10 @@ export const geminiHeadless: HeadlessAdapter = {
       }
     }
 
+    // Resolved once per process (see provider-bin.ts) and reused, so a
+    // mid-session PATH change cannot silently break every subsequent run.
     const result = await runSubprocessStreaming(
-      resolveGeminiBin(),
+      providerBinPath('gemini'),
       ['-p', prompt, '--model', opts.model ?? 'gemini-2.5-pro'],
       opts.cwd,
       async ({ stream, line }) => {

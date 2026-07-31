@@ -1,7 +1,7 @@
 /**
  * "While you were away" delta assembler.
  *
- * Collects activity since the release-notes last-viewed cursor from five
+ * Collects activity since the release-notes last-viewed cursor from six
  * existing stores and shapes each item into a plain-English one-liner:
  *
  *  1. Merges landed       – done arcs from the task store (release notes feed)
@@ -9,11 +9,14 @@
  *  3. Auto-recipe runs    – rows from `auto_recipe_runs`
  *  4. Throttle events     – chat threads currently in `status='throttled'`
  *  5. Evaporated threads  – chat threads whose `evaporated_at` falls after `since`
+ *  6. Steward interventions – immutable entries from the Steward ledger
  *
  * This module is a **pure assembler**: it receives pre-fetched data from the
  * route handler and performs no DB I/O itself. That makes it testable without a
  * live database and keeps the HTTP route as the only I/O boundary.
  */
+
+import type { StewardLedgerRow } from '../../steward-ledger'
 
 export type WywaEventKind =
   | 'merge'
@@ -21,10 +24,15 @@ export type WywaEventKind =
   | 'auto-recipe'
   | 'throttle'
   | 'evaporated-thread'
+  | 'steward'
 
 /** A single activity item returned by GET /view/wywa-delta. */
 export interface WywaEvent {
+  /** Stable source identifier when the event can appear in overlapping reads. */
+  id?: string
   kind: WywaEventKind
+  /** Event category supplied by sources that publish a domain-specific type. */
+  type?: 'steward'
   /** Plain-English, human-readable description. */
   summary: string
   /** ISO-8601 timestamp used for newest-first ordering. */
@@ -46,6 +54,7 @@ export interface WywaDeltaInput {
   }>
   throttledThreads: ReadonlyArray<{ id: string; updatedAt: string }>
   evaporatedThreads: ReadonlyArray<{ id: string; evaporatedAt: string }>
+  stewardLedger: ReadonlyArray<StewardLedgerRow>
   /** ISO-8601 lower bound (exclusive). Null means no lower bound. */
   since: string | null
   /** Maximum events to return (already clamped by the caller). */
@@ -123,6 +132,22 @@ export const assembleDelta = (
       kind: 'evaporated-thread',
       summary: `Idle thread ${t.id} evaporated`,
       at: t.evaporatedAt,
+    })
+  }
+
+  // 6. Steward interventions. The ledger is append-only, but overlapping
+  // cursor reads can include the same immutable row more than once.
+  const stewardLedgerIds = new Set<string>()
+  for (const intervention of input.stewardLedger) {
+    if (!after(intervention.ts, since) || stewardLedgerIds.has(intervention.id)) continue
+    stewardLedgerIds.add(intervention.id)
+    const shortCommit = intervention.commitSha?.slice(0, 7)
+    events.push({
+      id: `steward:${intervention.id}`,
+      kind: 'steward',
+      type: 'steward',
+      summary: `Steward ${intervention.targetKind} ${intervention.targetId}: ${intervention.recipeId} — ${intervention.outcome}${shortCommit ? ` (${shortCommit})` : ''}`,
+      at: intervention.ts,
     })
   }
 

@@ -160,6 +160,7 @@ describe('buildWorkerEnv', () => {
     'CMUX_CLAUDE_PID',
     'CMUX_SOCKET_PATH',
     'ANTHROPIC_API_KEY',
+    'MARS_DB_BACKEND',
   ]
 
   beforeEach(() => {
@@ -176,6 +177,7 @@ describe('buildWorkerEnv', () => {
     process.env.CMUX_CLAUDE_PID = '90743'
     process.env.CMUX_SOCKET_PATH = '/tmp/cmux.sock'
     process.env.ANTHROPIC_API_KEY = 'sk-keep'
+    process.env.MARS_DB_BACKEND = 'embedded'
   })
 
   afterEach(() => {
@@ -213,5 +215,17 @@ describe('buildWorkerEnv', () => {
     buildWorkerEnv()
     expect(process.env.CLAUDECODE).toBe('1')
     expect(process.env.CLAUDE_CODE_SESSION_ID).toBe('parent-xyz')
+  })
+
+  it('strips MARS_DB_BACKEND so the daemon backend selector cannot contaminate coder test suites', () => {
+    // Regression guard for incident 2026-07-28: a live daemon exporting
+    // MARS_DB_BACKEND=embedded propagated that value into dispatched coder
+    // workers via buildWorkerEnv().  Worker processes run `npm test` inside
+    // the task worktree; the test harness (test/setup-env.ts) unconditionally
+    // forces `pglite`, but only if the var is absent.  Stripping it here lets
+    // the harness apply its unconditional assignment cleanly.
+    // beforeEach sets MARS_DB_BACKEND = 'embedded' to simulate a daemon shell.
+    const env = buildWorkerEnv()
+    expect(env.MARS_DB_BACKEND).toBeUndefined()
   })
 })

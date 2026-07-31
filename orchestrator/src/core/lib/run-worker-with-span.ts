@@ -14,8 +14,14 @@
 // (it can be large). Session id and usage signals are always recorded so
 // lightweight queries remain accurate even when reflection is globally disabled.
 
-import { summarizeUsage, getLatestContextSize } from './claude-usage'
+import {
+  summarizeUsageForSemantics,
+  buildContextTokenSignals,
+  contextGuardMode,
+} from './claude-usage'
 import { resolveUsage } from './usage-sources'
+import { usageSemanticsOf } from '../workers/providers'
+import { recordUsageEvent } from '../daemon/usage-accumulator'
 import { isReflectDisabled } from './reflect-signals'
 import { evaluateStep } from './step-evaluators'
 import { TRANSCRIPT_CHUNK_BATCH } from './trace-events-store'
@@ -100,6 +106,13 @@ export const runWorkerWithSpan = async (
     getExtraPayload,
   } = options
 
+  // How this Worker's Provider reports usage, and therefore whether its
+  // maxContextTokens ceiling can be enforced in-run at all. Both are stamped on
+  // the span so an operator reading the trace can see which guard was armed
+  // rather than assuming the configured budget was enforced.
+  const semantics = usageSemanticsOf(worker.config.provider)
+  const guardMode = contextGuardMode(semantics, worker.config.maxContextTokens)
+
   const startedAt = Date.now()
   await safeRecord(traceStore, {
     kind: 'step_started',
@@ -110,6 +123,10 @@ export const runWorkerWithSpan = async (
       stepName,
       workflowInstanceId,
       workerName: worker.config.name,
+      provider: worker.config.provider,
+      usageSemantics: semantics,
+      contextGuard: guardMode,
+      maxContextTokens: worker.config.maxContextTokens,
       // The EXACT composed prompt sent to this step's worker (resume banner,
       // plan sections, orientation, structured spec, discipline briefs — all
       // of it). Persisted at emit time so "what did we actually ask it?" is
@@ -158,6 +175,11 @@ export const runWorkerWithSpan = async (
     onEvent: async (event) => {
       accumulatedEvents.push(event)
       pendingChunkEvents.push(event)
+      // Feed the daemon's spend meter (the source behind `usage_snapshots` and
+      // the dispatch spend-control probe) as usage streams in. Done here — the
+      // one place that knows the Worker's Provider — because WHERE usage lives
+      // on the stream is a per-provider fact.
+      recordUsageEvent(event, semantics)
       if (pendingChunkEvents.length >= TRANSCRIPT_CHUNK_BATCH) {
         await safeFlushChunk()
       }
@@ -199,12 +221,15 @@ export const runWorkerWithSpan = async (
     // partial transcript is durable even without a step_ended row.
     await safeFlushChunk()
     const msg = err instanceof Error ? err.message : String(err)
-    const partialUsage = summarizeUsage(accumulatedEvents)
-    const partialContextTokens = getLatestContextSize(accumulatedEvents)
+    const partialUsage = summarizeUsageForSemantics(semantics, accumulatedEvents)
+    const partialContextSignals = buildContextTokenSignals(semantics, accumulatedEvents)
     const failurePayload = {
       stepName,
       workflowInstanceId,
       workerName: worker.config.name,
+      provider: worker.config.provider,
+      usageSemantics: semantics,
+      contextGuard: guardMode,
       outcome: 'failed' as const,
       failureReason: msg.slice(0, 200),
       durationMs: Date.now() - startedAt,
@@ -214,7 +239,7 @@ export const runWorkerWithSpan = async (
         cacheCreateTokens: partialUsage.cacheCreateTokens,
         cacheReadTokens: partialUsage.cacheReadTokens,
         messageCount: partialUsage.messageCount,
-        contextTokens: partialContextTokens,
+        ...partialContextSignals,
       },
     }
     const failureEvalResults = evaluateStep(stepName, failurePayload)
@@ -239,8 +264,9 @@ export const runWorkerWithSpan = async (
     sessionId: result.sessionId,
     cwd: runOptions.cwd,
     provider: worker.config.provider,
+    semantics,
   })
-  const contextTokens = getLatestContextSize(result.conversation)
+  const contextSignals = buildContextTokenSignals(semantics, result.conversation)
   // Exit code 138 means the run was terminated by an external abort signal
   // (read/grep span watchdog). This is a distinct outcome from a genuine
   // task failure — the worker was killed, not broken.
@@ -274,6 +300,9 @@ export const runWorkerWithSpan = async (
     stepName,
     workflowInstanceId,
     workerName: worker.config.name,
+    provider: worker.config.provider,
+    usageSemantics: semantics,
+    contextGuard: guardMode,
     outcome,
     ...(failureReason !== undefined ? { failureReason } : {}),
     sessionId: result.sessionId ?? null,
@@ -284,7 +313,7 @@ export const runWorkerWithSpan = async (
       cacheCreateTokens: usage.cacheCreateTokens,
       cacheReadTokens: usage.cacheReadTokens,
       messageCount: usage.messageCount,
-      contextTokens,
+      ...contextSignals,
     },
     ...(getExtraPayload !== undefined ? getExtraPayload() : {}),
   }

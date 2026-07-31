@@ -9,9 +9,10 @@
  */
 
 import type { DbClient } from '../../lib/db.js'
+import { isProposalSource, type ProposalSource } from '../../proposals'
 
 export type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed' | 'Done'
-export type ProposalSource = 'reflection' | 'human' | 'planner'
+export type { ProposalSource } from '../../proposals'
 
 /**
  * Cheap aggregate counts for the Progress-tab header.
@@ -174,10 +175,8 @@ const parseJsonArray = (raw: string | null): string[] => {
   }
 }
 
-const normaliseSource = (raw: unknown): ProposalSource => {
-  if (raw === 'reflection' || raw === 'planner' || raw === 'human') return raw
-  return 'human'
-}
+const normaliseSource = (raw: unknown): ProposalSource =>
+  isProposalSource(raw) ? raw : 'human'
 
 /**
  * Build the Progress view payload: tasks in scope with their cluster tag,
@@ -383,16 +382,15 @@ export const createProgressTaskStore = (client: DbClient): ProgressTaskStore => 
  *   - doneTotal: all-time completed task count.
  *   - failedOpen: tasks currently in status='failed'.
  *
- * updated_at is a TEXT ISO-8601 UTC timestamp (migration 0002 keeps it), so
- * the rolling window compares lexically against an app-format cutoff string
- * rendered from now() - interval '1 day'.
+ * updated_at is a native PostgreSQL timestamp, so the database evaluates the
+ * rolling window directly rather than relying on lexical ISO-string ordering.
  */
 export const createAggregateReader = (client: DbClient): AggregateReader => ({
   async readAggregates() {
     const r = await client.execute(`
       SELECT
         (SELECT COUNT(*) FROM tasks WHERE status = 'done'
-           AND updated_at >= to_char((now() at time zone 'utc') - interval '1 day', 'YYYY-MM-DD"T"HH24:MI:SS')) AS done_today,
+           AND updated_at >= now() - interval '1 day') AS done_today,
         (SELECT COUNT(*) FROM tasks WHERE status = 'done') AS done_total,
         (SELECT COUNT(*) FROM tasks WHERE status = 'failed' AND fix_for_task_id IS NULL) AS failed_open
     `)

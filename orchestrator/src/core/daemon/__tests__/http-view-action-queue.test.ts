@@ -67,7 +67,7 @@ const makeStateStore = (
 })
 
 const makeTaskStore = (tasks: TaskForActionQueue[] = []): ActionQueueTaskStore => ({
-  listTasks: async () => tasks,
+  listTasksForActionQueueItems: async () => tasks,
 })
 
 // ── /buildActionQueueView: failed-task row + DAG ────────────────────────────────
@@ -84,7 +84,7 @@ describe('buildActionQueueView — failed-task row', () => {
     expect(rows).toHaveLength(1)
     const row = rows[0]!
     expect(row.id).toBe('row-1')
-    expect(row.kind).toBe('failed-task')
+    expect(row.kind).toBe('failed')
     expect(row.entityId).toBe('task-1')
     expect(row.priority).toBe('high')
     // With failureSignature: null the registry can only produce the generic
@@ -567,6 +567,7 @@ describe('GET /view/action-queue via HTTP server', () => {
   promoteProposal: async () => {},
   validateTask: async () => {},
   rejectTask: async () => {},
+  landWork: async () => {},
       investigateWorktree: async () => ({ explanation: '' }),
       diagnoseFailure: async () => ({ diagnosis: '' }),
       restartDaemon: async () => {},

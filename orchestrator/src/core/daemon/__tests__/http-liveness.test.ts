@@ -58,6 +58,7 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   promoteProposal: async () => {},
   validateTask: async () => {},
   rejectTask: async () => {},
+  landWork: async () => {},
   investigateWorktree: async () => ({ explanation: '' }),
   diagnoseFailure: async () => ({ diagnosis: '' }),
   restartDaemon: async () => {},
@@ -82,7 +83,13 @@ describe('GET /liveness', () => {
     const now = Date.now()
     const bootTs = now - 60_000   // daemon booted 60 s ago
     const lastBeatTs = now - 3_000 // last beat 3 s ago
-    vi.mocked(readDaemonHeartbeat).mockResolvedValue({ pid: 12345, bootTs, lastBeatTs, prevGapMs: 0 })
+    vi.mocked(readDaemonHeartbeat).mockResolvedValue({
+      pid: 12345,
+      bootTs,
+      lastBeatTs,
+      prevGapMs: 0,
+      dispatchUptimeMs: 0,
+    })
 
     const { startHttpServer } = await import('../http-server')
     const { port, close } = await startHttpServer(makeDeps())

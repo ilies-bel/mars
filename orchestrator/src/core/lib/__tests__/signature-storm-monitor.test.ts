@@ -47,6 +47,7 @@ interface ActionQueueModule {
 interface StormMonitorModule {
   recordFailureSignature: typeof import('../signature-storm-monitor').recordFailureSignature
   resetFailureSignatureStreak: typeof import('../signature-storm-monitor').resetFailureSignatureStreak
+  readSignatureStormState: typeof import('../signature-storm-monitor').readSignatureStormState
   SIGNATURE_STORM_TRIP_THRESHOLD: typeof import('../signature-storm-monitor').SIGNATURE_STORM_TRIP_THRESHOLD
   SIGNATURE_STORM_ACTION_QUEUE_KIND: typeof import('../signature-storm-monitor').SIGNATURE_STORM_ACTION_QUEUE_KIND
 }
@@ -234,6 +235,96 @@ describe('signature-storm-monitor — unit', () => {
     expect(fresh.alreadyTripped).toBe(false)
   })
 
+  // ── readSignatureStormState — startup pause recovery ─────────────────────
+
+  it('readSignatureStormState reports not-tripped when no row exists', async () => {
+    const { sm, client } = await loadModules(repo)
+    // No failures recorded yet — no row in DB.
+    expect((await sm.readSignatureStormState(client)).tripped).toBe(false)
+  })
+
+  it('readSignatureStormState reports not-tripped when streak is below threshold', async () => {
+    const { sm, client } = await loadModules(repo)
+    const sig = 'setup:install-failed/unclassified'
+    const K = sm.SIGNATURE_STORM_TRIP_THRESHOLD
+    // Record K-1 failures (below threshold — tripped stays false).
+    for (let i = 0; i < K - 1; i++) {
+      await sm.recordFailureSignature(client, `task-${i}`, sig)
+    }
+    expect((await sm.readSignatureStormState(client)).tripped).toBe(false)
+  })
+
+  it('readSignatureStormState reports tripped after the breaker trips', async () => {
+    const { sm, client } = await loadModules(repo)
+    const sig = 'setup:install-failed/unclassified'
+    const K = sm.SIGNATURE_STORM_TRIP_THRESHOLD
+    for (let i = 0; i < K; i++) {
+      await sm.recordFailureSignature(client, `task-${i}`, sig)
+    }
+    // The K-th call tripped the breaker — persisted tripped=true in DB.
+    expect((await sm.readSignatureStormState(client)).tripped).toBe(true)
+  })
+
+  it('readSignatureStormState reports not-tripped after resetFailureSignatureStreak (simulates resume)', async () => {
+    // This models the daemon restart scenario:
+    //   1. Storm trips → tripped=true persisted in DB.
+    //   2. Operator calls `mars daemon resume` → resetFailureSignatureStreak clears tripped.
+    //   3. Next daemon startup reads the state → not tripped → no re-pause.
+    const { sm, client } = await loadModules(repo)
+    const sig = 'setup:install-failed/unclassified'
+    const K = sm.SIGNATURE_STORM_TRIP_THRESHOLD
+
+    // Trip the breaker.
+    for (let i = 0; i < K; i++) {
+      await sm.recordFailureSignature(client, `task-${i}`, sig)
+    }
+    expect((await sm.readSignatureStormState(client)).tripped).toBe(true)
+
+    // Operator resumes → resume handler calls resetFailureSignatureStreak.
+    await sm.resetFailureSignatureStreak(client)
+
+    // Next daemon startup: tripped is cleared → no re-pause.
+    expect((await sm.readSignatureStormState(client)).tripped).toBe(false)
+  })
+
+  it('never streaks the generic code/unclassified bucket, however many tasks hit it', async () => {
+    const { sm, aq, client } = await loadModules(repo)
+    const K = sm.SIGNATURE_STORM_TRIP_THRESHOLD
+
+    for (let i = 0; i < K + 3; i++) {
+      const r = await sm.recordFailureSignature(client, `task-${i}`, 'code/unclassified')
+      expect(r.streak).toBe(0)
+      expect(r.tripped).toBe(false)
+    }
+    for (let i = 0; i < K + 3; i++) {
+      const r = await sm.recordFailureSignature(client, `vtask-${i}`, 'verify/unclassified')
+      expect(r.tripped).toBe(false)
+    }
+    expect(await countStormRows(aq)).toBe(0)
+  })
+
+  it('readSignatureStormState exposes the durable breaker state for pause reconcile', async () => {
+    const { sm, client } = await loadModules(repo)
+    const sig = 'setup:install-failed/unclassified'
+    const K = sm.SIGNATURE_STORM_TRIP_THRESHOLD
+
+    const before = await sm.readSignatureStormState(client)
+    expect(before.tripped).toBe(false)
+    expect(before.signature).toBeNull()
+
+    for (let i = 0; i < K; i++) {
+      await sm.recordFailureSignature(client, `task-${i}`, sig)
+    }
+
+    const after = await sm.readSignatureStormState(client)
+    expect(after.tripped).toBe(true)
+    expect(after.signature).toBe(sig)
+    expect(after.streak).toBe(K)
+
+    await sm.resetFailureSignatureStreak(client)
+    expect((await sm.readSignatureStormState(client)).tripped).toBe(false)
+  })
+
   it('threshold is overridable via MARS_SIGNATURE_STORM_THRESHOLD env var', async () => {
     process.env.MARS_SIGNATURE_STORM_THRESHOLD = '2'
     const { sm } = await loadModules(repo)
@@ -271,11 +362,15 @@ describe('signature-storm — integration via recovery-spawn subscriber', () => 
     rmSync(repo, { recursive: true, force: true })
   })
 
-  // Signature that classifies to 'unclassified' — mimics disk-full or any
-  // environmental failure with no registered error-class rule.
-  const STEP = 'setup'
+  // A step that carries a KIND ('install-failed') and an error with no
+  // registered error-class rule, so the signature is
+  // `setup:install-failed/unclassified` — diagnostic (the kind names the
+  // cause) even though the class is unclassified. A BARE gate plus
+  // 'unclassified' (`setup/unclassified`) is the generic bucket the breaker
+  // deliberately ignores — see the isDiagnosticSignature suite.
+  const STEP = 'setup:install-failed'
   const ENV_ERROR = 'ENOSPC: no space left on device — install failed'
-  const SIG = 'setup/unclassified'
+  const SIG = 'setup:install-failed/unclassified'
 
   /**
    * Fail a fresh origin task and drain the subscriber. Returns the task id.
@@ -584,9 +679,12 @@ describe('environmental-failure policy — no storm, no recovery-budget consumpt
     const trips: unknown[] = []
     const stormCb = (): void => { trips.push(1) }
 
-    // 'setup/unclassified' has no environmental classification in failure-kinds.ts.
-    // The ENOSPC error below produces this signature via computeFailureSignature.
-    const NON_ENV_STEP = 'setup'
+    // 'setup:install-failed/unclassified' has no environmental classification in
+    // failure-kinds.ts. The step carries a KIND ('install-failed'), which is
+    // what makes the signature diagnostic — a bare gate name plus an
+    // unclassified error (`setup/unclassified`) is the generic bucket the
+    // breaker must ignore, see the isDiagnosticSignature suite below.
+    const NON_ENV_STEP = 'setup:install-failed'
     const NON_ENV_ERROR = 'ENOSPC: no space left on device — install failed'
     const failNonEnvTask = async (index: number): Promise<void> => {
       const t = await q.enqueueTask(`non-env task ${index}`, undefined, { skipTriage: true })
@@ -625,9 +723,42 @@ describe('isDiagnosticSignature', () => {
     expect(isDiagnostic('recovery_exhausted:/unclassified/unclassified')).toBe(false)
   })
 
+  it('rejects the two most generic buckets in the system', async () => {
+    // Regression: `lastIndexOf(':')` on a colon-less signature returned -1, so
+    // `slice(0)` handed back the WHOLE string and the "kind" became the bare
+    // gate name ('code'). Both buckets therefore read as diagnostic and
+    // reliably tripped the breaker, pausing all dispatch on noise.
+    const isDiagnostic = await load()
+    expect(isDiagnostic('code/unclassified')).toBe(false)
+    expect(isDiagnostic('verify/unclassified')).toBe(false)
+    expect(isDiagnostic('setup/unclassified')).toBe(false)
+    expect(isDiagnostic('merge/unclassified')).toBe(false)
+  })
+
+  it('rejects a bare gate whose error class is the unknown sentinel', async () => {
+    const isDiagnostic = await load()
+    expect(isDiagnostic('code/unknown')).toBe(false)
+    expect(isDiagnostic('verify/unknown')).toBe(false)
+  })
+
   it('accepts signatures with a real kind even when the class is unclassified', async () => {
     const isDiagnostic = await load()
     expect(isDiagnostic('setup:origin-worktree-missing/unclassified')).toBe(true)
     expect(isDiagnostic('merge:vcs-supervisor-aborted/rebase-dirty-worktree')).toBe(true)
+  })
+
+  it('accepts a kind-bearing step with no error class at all', async () => {
+    const isDiagnostic = await load()
+    expect(isDiagnostic('setup:origin-worktree-missing')).toBe(true)
+  })
+
+  it('accepts genuinely diagnostic signatures', async () => {
+    const isDiagnostic = await load()
+    // Kind carries the diagnosis.
+    expect(isDiagnostic('code:coder-exit-nonzero/api-unreachable')).toBe(true)
+    expect(isDiagnostic('verify:has-diff/no-commits-ahead')).toBe(true)
+    // Bare gate, but the error CLASS carries the diagnosis.
+    expect(isDiagnostic('merge/uncommitted-changes')).toBe(true)
+    expect(isDiagnostic('code/api-unreachable')).toBe(true)
   })
 })

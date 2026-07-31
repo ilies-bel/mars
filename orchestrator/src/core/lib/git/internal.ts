@@ -22,6 +22,9 @@ interface ExecOpts {
   expectsFailure?: boolean
   tool?: string
   traceCtx?: TraceCtx
+  /** Env overrides merged onto process.env for this invocation only. Used by
+   *  the checkpoint helpers for `GIT_INDEX_FILE` and the pinned commit identity. */
+  env?: Record<string, string>
   /**
    * When aborted, the spawned child is SIGTERM'd then SIGKILL'd after a 2s
    * grace (see `runTool`). Forwarded verbatim to the underlying child process.
@@ -52,6 +55,7 @@ const runShell = async (
       phase: ctx?.phase ?? null,
       expectsFailure: opts.expectsFailure,
       signal: opts.signal,
+      env: opts.env,
     },
     ctx?.store ?? nullTraceStore,
   )
@@ -72,7 +76,13 @@ const runShell = async (
 export const exec = async (
   cmd: string,
   args: readonly string[],
-  opts: { cwd: string; timeout?: number; maxBuffer?: number; signal?: AbortSignal },
+  opts: {
+    cwd: string
+    timeout?: number
+    maxBuffer?: number
+    signal?: AbortSignal
+    env?: Record<string, string>
+  },
   traceCtx?: TraceCtx,
 ): Promise<{ stdout: string; stderr: string }> => {
   // `maxBuffer` is intentionally ignored — `runTool` caches the full output
@@ -83,6 +93,7 @@ export const exec = async (
     cwd: opts.cwd,
     timeoutMs: opts.timeout,
     signal: opts.signal,
+    env: opts.env,
     traceCtx,
   })
 }
@@ -93,13 +104,14 @@ export const exec = async (
 export const execProbe = async (
   cmd: string,
   args: readonly string[],
-  opts: { cwd: string; timeout?: number; signal?: AbortSignal },
+  opts: { cwd: string; timeout?: number; signal?: AbortSignal; env?: Record<string, string> },
   traceCtx?: TraceCtx,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
   runShell(cmd, args, {
     cwd: opts.cwd,
     timeoutMs: opts.timeout,
     signal: opts.signal,
+    env: opts.env,
     expectsFailure: true,
     traceCtx,
   })

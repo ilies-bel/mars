@@ -14,7 +14,17 @@ const taskStatusSchema = z.enum([
   'under_investigation',
 ])
 
-const proposalSourceSchema = z.enum(['reflection', 'human', 'planner'])
+// Mirrors ProposalSource in orchestrator/src/core/proposals.ts. Kept as a
+// literal list rather than an import so the browser bundle never pulls the
+// orchestrator's node-only modules in; add every new producer here too.
+const proposalSourceSchema = z.enum([
+  'reflection',
+  'arc-verifier',
+  'human',
+  'planner',
+  'skill-forge',
+  'failure-reflector',
+])
 
 const draftFeatureSchema = z.object({
   id: z.string(),
@@ -1202,6 +1212,22 @@ export const adrsResponseSchema = z.object({
 })
 
 export type AdrEntry = z.infer<typeof adrEntrySchema>
+
+export const projectAdrEntrySchema = adrEntrySchema.extend({
+  path: z.string(),
+})
+
+export const projectAdrsResponseSchema = z.object({
+  adrs: z.array(projectAdrEntrySchema),
+})
+
+export const projectMetaSchema = z.object({
+  vision: z.string().nullable(),
+  theme: z.string().nullable(),
+})
+
+export type ProjectAdrEntry = z.infer<typeof projectAdrEntrySchema>
+export type ProjectMeta = z.infer<typeof projectMetaSchema>
 
 // ---------------------------------------------------------------------------
 // Vision

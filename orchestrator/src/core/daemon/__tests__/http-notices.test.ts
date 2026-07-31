@@ -49,6 +49,7 @@ const makeDeps = (
   promoteProposal: async () => {},
   validateTask: async () => {},
   rejectTask: async () => {},
+  landWork: async () => {},
   investigateWorktree: async () => ({ explanation: '' }),
   diagnoseFailure: async () => ({ diagnosis: '' }),
   restartDaemon: async () => {},
@@ -101,6 +102,8 @@ describe('GET /notices', () => {
     const fixture: Notice[] = [
       {
         id: 'notice01',
+        kind: 'spend-control-notice',
+        payload: { direction: 'paused' },
         body: 'the Steward raised the concurrency limit',
         source: 'steward',
         createdAt: '2026-07-24T00:00:00.000Z',

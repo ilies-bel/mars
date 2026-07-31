@@ -3,6 +3,8 @@ import {
   buildVerifyReproHint,
   type RanVerifyStep,
 } from './lib/derive-repro-command'
+import { constants as fsConstants } from 'node:fs'
+import { access } from 'node:fs/promises'
 import { type FixRecipeContext, hasRecipe } from './lib/fix-recipes'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
 import { truncateFailure } from './lib/truncate-failure'
@@ -24,9 +26,16 @@ import {
   type UpsertFixTaskResult,
   type AttachToExistingFixTaskInput,
 } from './arc'
+import {
+  composeRecoveryFailureReason,
+  isRecoveryFailedReason,
+  stripRecoveryFailedPrefixes,
+} from './lib/failure-signature'
 import { isEnvironmentalSignature } from './lib/failure-kinds'
 import { classifyFailure } from './lib/failure-class'
 import { maybeSpawnRescueOperator } from './rescue-operator-spawn'
+import { recordStewardIntervention } from './steward-ledger'
+import { raiseStewardRepeatActionQueueItem, shouldStewardFire } from './steward-guard'
 
 /**
  * Maximum number of times a task can be auto-restarted for an environmental
@@ -48,6 +57,51 @@ export type {
 export const RECOVERY_FAILED_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 export const UNKNOWN_FAILURE_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
 export const FIX_FAIL_LOOP_ACTION_QUEUE_KIND: ActionQueueKind = 'failed'
+
+/**
+ * A recovery runs in its origin's existing worktree, so a recorded branch and
+ * an on-disk worktree are both required before a failure can be recovered.
+ */
+export const hasUsableWorktree = async (
+  task: Pick<Task, 'branch' | 'worktreePath'>,
+): Promise<boolean> => {
+  if (!task.branch?.trim() || !task.worktreePath?.trim()) return false
+  try {
+    await access(task.worktreePath, fsConstants.F_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Collapse internal whitespace and truncate a title to at most `max` characters.
+ * Titles are identity/display strings rendered in the chat sidebar and
+ * action-queue list. Unbounded values (e.g. from a raw `failingStep` that
+ * carries a multi-line error message) break grouping and the sidebar layout.
+ * Four call sites in this file use this cap — do not inline.
+ */
+const capTitle = (s: string, max = 100): string =>
+  s.replace(/\s+/g, ' ').trim().slice(0, max)
+
+/**
+ * Map a failing step to a short plain-English phrase for use in user-facing
+ * titles. Raw step ids (e.g. `verify:has-diff`, `unknown`) must NOT appear in
+ * titles — they belong in transcripts and the body/whyNow only.
+ *
+ * Uses the step family (the part before the first ':') to stay correct even
+ * when the step carries a multi-line error message instead of a structured id.
+ */
+const stepFamilyLabel = (failingStep: string): string => {
+  const colonIdx = failingStep.indexOf(':')
+  const family = colonIdx === -1 ? failingStep : failingStep.slice(0, colonIdx)
+  if (family === 'verify') return 'a verification check'
+  if (family === 'setup') return 'environment setup'
+  if (family === 'code') return 'the coder'
+  if (family === 'merge') return 'the merge step'
+  if (family === 'triage') return 'the triage step'
+  return 'a pipeline step'
+}
 
 /**
  * A verify-gate failing step is one whose name begins with `verify:` — the
@@ -73,6 +127,58 @@ export const getMaxFixAttempts = (): number => {
   const n = Number(raw)
   if (!Number.isFinite(n) || n < 0) return DEFAULT_MAX_FIX_ATTEMPTS
   return Math.floor(n)
+}
+
+const DEFAULT_MAX_NON_CODE_RETRIES = 3
+
+/**
+ * Cap on the number of non-code re-queues for a given (taskId,
+ * failureSignature) pair before the task is escalated to the action queue.
+ * Defaults to 3; override via `MARS_MAX_NON_CODE_RETRIES`.
+ */
+export const getMaxNonCodeRetries = (): number => {
+  const raw = process.env.MARS_MAX_NON_CODE_RETRIES
+  if (!raw) return DEFAULT_MAX_NON_CODE_RETRIES
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_MAX_NON_CODE_RETRIES
+  return Math.floor(n)
+}
+
+/**
+ * Count non-code re-queue attempts for a given (taskId, failureSignature)
+ * pair by reading the `non_code_requeue_attempts` ledger.
+ */
+export const countNonCodeRetries = async (
+  taskId: string,
+  failureSignature: string,
+  store?: TaskStore,
+): Promise<number> => {
+  const s = store ?? (await getDefaultTaskStore())
+  const r = await s.query({
+    sql: `SELECT COUNT(*) AS n FROM non_code_requeue_attempts
+           WHERE task_id = ?
+             AND failure_signature = ?`,
+    args: [taskId, failureSignature],
+  })
+  return Number((r.rows[0] as unknown as { n: number }).n)
+}
+
+/**
+ * Append a non-code-requeue ledger row for (taskId, failureSignature).
+ * Called by both the phantom-task-no-worktree branch and the generic
+ * non-code-failure branch before re-queuing, so both paths share one policy.
+ */
+const bumpNonCodeRetries = async (
+  taskId: string,
+  failureSignature: string,
+  store: TaskStore,
+): Promise<void> => {
+  await store.execute({
+    sql: `INSERT INTO non_code_requeue_attempts
+           (task_id, failure_signature, created_at)
+           VALUES (?, ?, ?)`,
+    args: [taskId, failureSignature, new Date().toISOString()],
+  })
 }
 
 /**
@@ -260,8 +366,10 @@ export interface HandleTaskFailureViaTaskResult {
     | 'fix-fail-loop'
     | 'gate-suppressed'
     | 'noop'
+    | 'non-code-retry-exhausted'
     | 'requeued'
     | 'signature-storm-tripped'
+    | 'steward-repeat'
   fixTaskId?: string
   failureSignature?: string
   retryCount?: number
@@ -366,7 +474,7 @@ export const handleTaskFailureWithFixTask = async (
       kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
       category: 'orchestrator',
       priority: 'high',
-      title: `Configure verify gates for task ${input.taskId}: ${input.failingStep}`,
+      title: capTitle(`Configure verify gates for task ${input.taskId}`),
       body: [
         `Task ${input.taskId} failed at ${input.failingStep}.`,
         '',
@@ -448,21 +556,76 @@ export const handleTaskFailureWithFixTask = async (
   }
 
   // Recovery (fix-task) failures escalate to actionQueue; never spawn another
-  // recovery. See ADR 0002 — this is the rule that broke the cascade.
+  // recovery. See ADR 0002. Recovery failures still participate in the
+  // signature-storm monitor: a run of identical recovery failures is exactly
+  // the systemic incident the breaker is meant to stop from flooding the
+  // action queue.
   if (task.fixForTaskId !== null) {
-    // Guard: do not double-prepend if failureSignature somehow already carries
-    // the prefix (defence-in-depth against any future path that re-enters here
-    // with a pre-composed reason string).
-    const recoveryFailureReason = failureSignature.startsWith('recovery_failed:')
-      ? `${failureSignature}: ${truncatedError.slice(0, 500)}`
-      : `recovery_failed:${failureSignature}: ${truncatedError.slice(0, 500)}`
+    // ── Escalate-once gate (ADR-0040) ────────────────────────────────────────
+    // A recovery Chore is a leaf: its failure is escalated EXACTLY once and the
+    // row is terminal from that moment. Re-entry is not hypothetical — the
+    // durable recovery-spawner drain re-drives already-terminal rows every 30 s
+    // (each escalation writes `status='failed'` again, which emits a fresh
+    // `task.failed` carrying the composed reason, which the next drain feeds
+    // straight back in). Without this gate every pass re-prefixed the reason,
+    // re-raised the escalation row, re-recorded a storm verdict and re-spawned
+    // the rescue operator. `failed` + an already-stamped `recovery_failed:`
+    // reason IS the "already escalated" fact, so no counter is needed.
+    if (task.status === 'failed' && isRecoveryFailedReason(task.failureReason)) {
+      return {
+        outcome: 'escalated',
+        failureSignature,
+        retryCount: task.retryCount,
+      }
+    }
+    // Never nest the prefix: `truncatedError` may itself be a previously
+    // composed reason (the `task.failed` event carries `error`, which used to
+    // hold the composed string), so strip before composing.
+    const capturedError = stripRecoveryFailedPrefixes(truncatedError)
+    const recoveryFailureReason = composeRecoveryFailureReason(
+      failureSignature,
+      capturedError,
+    )
     await updateTask(input.taskId, {
       status: 'failed',
-      error: recoveryFailureReason,
+      // `error` holds CAPTURED PROCESS OUTPUT and must never be overwritten
+      // with a derived status string. Writing the composed reason here erased
+      // the real failure output (observed: ~3 KB of vitest output replaced by
+      // 542 chars of `recovery_failed:` padding), and `collectStormContext`
+      // reads the tail of this column to brief the storm Steward — so the
+      // Steward was handed nothing but padding. The derived string belongs in
+      // `failure_reason` alone.
+      error: capturedError,
       failureReason: recoveryFailureReason,
       failureSignature,
       failureReasonCode: failureSignature,
     }, s)
+
+    try {
+      const { recordFailureSignature } = await import('./lib/signature-storm-monitor')
+      const stormResult = await recordFailureSignature(s, input.taskId, failureSignature)
+      if (stormResult.tripped && !stormResult.alreadyTripped) {
+        return {
+          outcome: 'signature-storm-tripped',
+          failureSignature,
+          retryCount: task.retryCount,
+          stormStreak: stormResult.streak,
+        }
+      }
+      if (stormResult.tripped) {
+        return {
+          outcome: 'escalated',
+          failureSignature,
+          retryCount: task.retryCount,
+        }
+      }
+    } catch (stormErr) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[signature-storm] recovery task ${input.taskId} streak tracking errored (non-fatal):`,
+        stormErr,
+      )
+    }
 
     const originId = task.originId
     const actionQueueSignature = `${originId}:${failureSignature}`
@@ -470,7 +633,7 @@ export const handleTaskFailureWithFixTask = async (
       kind: RECOVERY_FAILED_ACTION_QUEUE_KIND,
       category: 'orchestrator',
       priority: 'high',
-      title: `Fix and retry ${input.taskId}, or abandon ${originId}: recovery failed at ${input.failingStep}`,
+      title: capTitle(`Fix and retry ${input.taskId}, or abandon ${originId}: recovery failed during ${stepFamilyLabel(input.failingStep)}`),
       body: buildRecoveryEscalationBody({
         recoveryTaskId: input.taskId,
         originTaskId: originId,
@@ -504,18 +667,70 @@ export const handleTaskFailureWithFixTask = async (
       },
     })
 
-    // Arc dead-end: the recovery Chore itself failed — spawn a rescue-operator
-    // agent to investigate and recover the arc. Best-effort: a rescue spawn
-    // error must not block the escalation from completing.
-    try {
-      await maybeSpawnRescueOperator({ failedTask: task, failureSignature, store: s })
-    } catch (rescueErr) {
-      // eslint-disable-next-line no-console
-      console.error('[rescue-operator] spawn failed (non-fatal):', rescueErr)
+    // A recovery whose origin worktree was absent at setup has no recoverable
+    // code state. It must end at the action queue rather than spawning another
+    // operator task that would investigate the same structural dead end.
+    if (!failureSignature.startsWith('setup:origin-worktree-missing/')) {
+      // Arc dead-end: the recovery Chore itself failed — spawn a rescue-operator
+      // agent to investigate and recover the arc. Best-effort: a rescue spawn
+      // error must not block the escalation from completing.
+      try {
+        await maybeSpawnRescueOperator({ failedTask: task, failureSignature, store: s })
+      } catch (rescueErr) {
+        // eslint-disable-next-line no-console
+        console.error('[rescue-operator] spawn failed (non-fatal):', rescueErr)
+      }
     }
 
     return {
       outcome: 'escalated',
+      failureSignature,
+      retryCount: task.retryCount,
+      actionQueueItemId,
+    }
+  }
+
+  // Workflow failures are persisted as `failed` before this shared handler is
+  // called. A recovery would attach to the origin's worktree, so a task that
+  // failed before setup (or whose worktree later vanished) cannot host one.
+  // Escalate the origin directly and leave its recovery slot untouched.
+  if (task.status === 'failed' && !(await hasUsableWorktree(task))) {
+    const actionQueueItemId = await raiseActionQueueItem({
+      kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
+      category: 'orchestrator',
+      priority: 'high',
+      title: capTitle(`Task ${input.taskId} failed before it had a usable worktree`),
+      body: [
+        `Task ${input.taskId} failed at ${input.failingStep} before the orchestrator recorded a usable worktree and branch.`,
+        '',
+        'No recovery task was created because recoveries run in the origin worktree and would fail during setup.',
+        `Resolve the original failure, then restart the task: \`mars restart ${input.taskId}\`.`,
+        '',
+        'Last error output (tail-truncated):',
+        '```',
+        truncatedError,
+        '```',
+      ].join('\n'),
+      payload: {
+        taskId: input.taskId,
+        originTaskId: task.originId,
+        failingStep: input.failingStep,
+        failureSignature,
+        branch: task.branch,
+        worktreePath: task.worktreePath,
+      },
+      context: { repoRoot: process.env.MARS_REPO ?? null },
+      raisedBy: 'agent:fail-fix-handler',
+      signature: `origin-worktree-missing:${task.originId}`,
+      originTaskId: task.originId,
+      occurrence: {
+        at: new Date().toISOString(),
+        taskId: input.taskId,
+        failingStep: input.failingStep,
+      },
+    })
+    return {
+      outcome: 'failed',
       failureSignature,
       retryCount: task.retryCount,
       actionQueueItemId,
@@ -674,7 +889,7 @@ export const handleTaskFailureWithFixTask = async (
         kind: 'env-incident',
         category: 'daemon',
         priority: 'low',
-        title: `Environmental failure cap reached: ${failureSignature}`,
+        title: capTitle(`Environmental failure cap reached: ${failureSignature}`),
         body:
           `Task ${input.taskId} exceeded its environmental auto-restart cap (${MAX_ENV_RESTART_ATTEMPTS}) ` +
           `for signature '${failureSignature}'. This is an infrastructure condition ` +
@@ -743,6 +958,142 @@ export const handleTaskFailureWithFixTask = async (
 
   const budget = getRetryBudget()
 
+  // ── Pre-classify BEFORE the retryCount gate (Slice 3 PRD d7835017) ────────
+  // Non-code failures (orchestration, infra, connectivity) must bypass the
+  // `retryCount > budget` gate so the code recovery slot is never burned on
+  // a failure that code edits cannot fix. Classify first, apply the budget
+  // gate only to code failures below.
+  const failureCategory = classifyFailure(failureSignature)
+
+  // FUTURE: unrelated-flake short-circuit goes here, BEFORE the recipe
+  // lookup. When `input.failingStep === 'verify:test-failed'`, compare
+  // the failing test file paths against `task.spec?.files`; if there is
+  // zero overlap AND the same tests already fail on integrationBranch,
+  // park the source in a new `'flake-blocked'` status, raise an actionQueue
+  // item, and return without enqueueing a fix-task. Dependencies (file
+  // separately, then wire here):
+  //   - parser for failing test paths (proposal 5710b256)
+  //   - 'flake-blocked' TaskStatus + plumbing (proposal abfca8d8)
+  //   - integration-branch re-run helper (proposal b4da8c0e)
+  //   - structured failure-context plumbing on this entrypoint
+  //     (proposal adee06a6) — must extend HandleTaskFailureViaTaskInput
+  //     with spec.files + pre-computed integration re-run results,
+  //     since classifyError today only sees errorOutput.
+  // No early-out for a missing recipe. Every regular-task failure spawns a
+  // fix, even when the signature has no purpose-built recipe (ADR: uniform
+  // failure→fix spawn, supersedes ADR-0002). The recovery-spawn path resolves
+  // the signature via `getRecipeOrGeneric`, which falls back to a generic,
+  // first-principles recovery prompt — so an unrecognized signature recovers
+  // instead of dead-ending with an "unknown signature" action-queue row that
+  // stranded the worktree. Recovery (fix) failures are still escalated, not
+  // re-recovered (see the `task.fixForTaskId !== null` branch above).
+
+  // ── Phantom-kill-with-no-worktree routing (ADR-0061, updated Slice 3 PRD d7835017) ─
+  // A task killed by the phantom watchdog before setup ran has no branch or
+  // worktree for a worktree-scoped fix task to operate on — that fix is dead
+  // on arrival and burns the origin's one recovery slot for a failure that a
+  // plain re-queue solves. Detect by the watchdog's `failureReason` prefix AND
+  // the absence of both branch and worktree (both are null before setup runs).
+  //
+  // Routing: re-queue the origin from setup using the non-code retry counter so
+  // the code recovery slot is preserved. After MAX_NON_CODE_RETRIES consecutive
+  // phantom kills the task is escalated to the action queue instead of looping.
+  if (
+    task.failureReason?.startsWith('phantom-task watchdog:') &&
+    !task.worktreePath &&
+    !task.branch
+  ) {
+    await bumpNonCodeRetries(input.taskId, failureSignature, s)
+    const nonCodeCount = await countNonCodeRetries(input.taskId, failureSignature, s)
+    const nonCodeCap = getMaxNonCodeRetries()
+    if (nonCodeCount > nonCodeCap) {
+      const failureReason = `non-code-retry-exhausted:${failureSignature}`
+      await markTaskFailed(input.taskId, failureReason)
+      await raiseActionQueueItem({
+        kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
+        category: 'orchestrator',
+        priority: 'high',
+        title: `Non-code retry cap reached for ${input.taskId}: ${failureSignature}`,
+        body: `Task ${input.taskId} has been re-queued ${nonCodeCount} time(s) for a non-code failure (${failureSignature}) — the cap of ${nonCodeCap} is reached. The code recovery slot was NOT consumed. Resolve the underlying infra/orchestration condition and restart the task.`,
+        payload: { taskId: input.taskId, failureSignature, nonCodeCount, cap: nonCodeCap },
+        context: { repoRoot: process.env.MARS_REPO ?? null },
+        raisedBy: 'agent:fail-fix-handler',
+        signature: `non-code-retry-exhausted:${input.taskId}:${failureSignature}`,
+        originTaskId: task.originId,
+        occurrence: { at: new Date().toISOString(), taskId: input.taskId, failureSignature, nonCodeCount },
+      })
+      return { outcome: 'non-code-retry-exhausted', failureSignature, retryCount: task.retryCount }
+    }
+    await updateTask(
+      input.taskId,
+      {
+        status: 'queued',
+        error: null,
+        failedPhase: null,
+        failureSignature: null,
+        failureReasonCode: null,
+      },
+      s,
+    )
+    // eslint-disable-next-line no-console
+    console.log(
+      `[failure-handler] task ${input.taskId}: phantom-kill non-code re-queue #${nonCodeCount}/${nonCodeCap} (${failureSignature})`,
+    )
+    return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
+  }
+
+  // ── Non-code failure re-queue ─────────────────────────────────────────────
+  // When the failure signature is classified as non-code (connectivity,
+  // orchestration, or infra), spawning a recovery fix-task is wasteful: the
+  // fix task cannot resolve the issue by editing code and would burn the one
+  // recovery slot on a doomed repair. Re-queue the origin from setup instead.
+  // Uses the per-(taskId, failureSignature) non-code retry counter so the code
+  // recovery slot is preserved regardless of how many non-code re-queues occur.
+  // After MAX_NON_CODE_RETRIES re-queues the task is escalated to the action queue.
+  if (failureCategory !== 'code') {
+    await bumpNonCodeRetries(input.taskId, failureSignature, s)
+    const nonCodeCount = await countNonCodeRetries(input.taskId, failureSignature, s)
+    const nonCodeCap = getMaxNonCodeRetries()
+    if (nonCodeCount > nonCodeCap) {
+      const failureReason = `non-code-retry-exhausted:${failureSignature}`
+      await markTaskFailed(input.taskId, failureReason)
+      await raiseActionQueueItem({
+        kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
+        category: 'orchestrator',
+        priority: 'high',
+        title: `Non-code retry cap reached for ${input.taskId}: ${failureSignature}`,
+        body: `Task ${input.taskId} has been re-queued ${nonCodeCount} time(s) for a non-code failure (${failureSignature}) — the cap of ${nonCodeCap} is reached. The code recovery slot was NOT consumed. Resolve the underlying infra/orchestration condition and restart the task.`,
+        payload: { taskId: input.taskId, failureSignature, nonCodeCount, cap: nonCodeCap },
+        context: { repoRoot: process.env.MARS_REPO ?? null },
+        raisedBy: 'agent:fail-fix-handler',
+        signature: `non-code-retry-exhausted:${input.taskId}:${failureSignature}`,
+        originTaskId: task.originId,
+        occurrence: { at: new Date().toISOString(), taskId: input.taskId, failureSignature, nonCodeCount },
+      })
+      return { outcome: 'non-code-retry-exhausted', failureSignature, retryCount: task.retryCount }
+    }
+    await updateTask(
+      input.taskId,
+      {
+        status: 'queued',
+        error: null,
+        failedPhase: null,
+        failureSignature: null,
+        failureReasonCode: null,
+      },
+      s,
+    )
+    // eslint-disable-next-line no-console
+    console.log(
+      `[failure-handler] task ${input.taskId}: non-code failure (${failureCategory}:${failureSignature}) re-queue #${nonCodeCount}/${nonCodeCap} — no recovery slot consumed`,
+    )
+    return { outcome: 'requeued', retryCount: task.retryCount, failureSignature }
+  }
+
+  // ── Code-failure budget gate (Slice 3 PRD d7835017) ──────────────────────
+  // Applied ONLY after non-code paths (phantom-kill and classify) have been
+  // excluded. Non-code failures bypass this entirely so they can use the
+  // self_heal_attempts counter without burning the one-shot code-recovery slot.
   if (task.retryCount > budget) {
     // Guard: do not double-prepend if failureSignature somehow already carries
     // the prefix (defence-in-depth; the primary fix is in computeFailureSignature).
@@ -781,91 +1132,6 @@ export const handleTaskFailureWithFixTask = async (
     }
   }
 
-  // FUTURE: unrelated-flake short-circuit goes here, BEFORE the recipe
-  // lookup. When `input.failingStep === 'verify:test-failed'`, compare
-  // the failing test file paths against `task.spec?.files`; if there is
-  // zero overlap AND the same tests already fail on integrationBranch,
-  // park the source in a new `'flake-blocked'` status, raise an actionQueue
-  // item, and return without enqueueing a fix-task. Dependencies (file
-  // separately, then wire here):
-  //   - parser for failing test paths (proposal 5710b256)
-  //   - 'flake-blocked' TaskStatus + plumbing (proposal abfca8d8)
-  //   - integration-branch re-run helper (proposal b4da8c0e)
-  //   - structured failure-context plumbing on this entrypoint
-  //     (proposal adee06a6) — must extend HandleTaskFailureViaTaskInput
-  //     with spec.files + pre-computed integration re-run results,
-  //     since classifyError today only sees errorOutput.
-  // No early-out for a missing recipe. Every regular-task failure spawns a
-  // fix, even when the signature has no purpose-built recipe (ADR: uniform
-  // failure→fix spawn, supersedes ADR-0002). The recovery-spawn path resolves
-  // the signature via `getRecipeOrGeneric`, which falls back to a generic,
-  // first-principles recovery prompt — so an unrecognized signature recovers
-  // instead of dead-ending with an "unknown signature" action-queue row that
-  // stranded the worktree. Recovery (fix) failures are still escalated, not
-  // re-recovered (see the `task.fixForTaskId !== null` branch above).
-
-  // ── Phantom-kill-with-no-worktree routing (ADR-0061) ─────────────────────
-  // A task killed by the phantom watchdog before setup ran has no branch or
-  // worktree for a worktree-scoped fix task to operate on — that fix is dead
-  // on arrival and burns the origin's one recovery slot for a failure that a
-  // plain re-queue solves. Detect by the watchdog's `failureReason` prefix AND
-  // the absence of both branch and worktree (both are null before setup runs).
-  //
-  // Routing: re-queue the origin from setup on a fresh worker instead of
-  // spawning a fix task. This IS the recovery — retryCount++ consumes the
-  // slot. A second phantom kill reaches this point with retryCount already
-  // incremented, so the budget-exhaustion guard above fires first and
-  // escalates to the action queue without falling through here.
-  if (
-    task.failureReason?.startsWith('phantom-task watchdog:') &&
-    !task.worktreePath &&
-    !task.branch
-  ) {
-    const nextRetryCount = task.retryCount + 1
-    await updateTask(
-      input.taskId,
-      {
-        status: 'queued',
-        error: null,
-        failedPhase: null,
-        failureSignature: null,
-        failureReasonCode: null,
-        retryCount: nextRetryCount,
-      },
-      s,
-    )
-    return { outcome: 'requeued', retryCount: nextRetryCount, failureSignature }
-  }
-
-  // ── Non-code failure re-queue ─────────────────────────────────────────────
-  // When the failure signature is classified as non-code (connectivity,
-  // orchestration, or infra), spawning a recovery fix-task is wasteful: the
-  // fix task cannot resolve the issue by editing code and would burn the one
-  // recovery slot on a doomed repair. Re-queue the origin from setup instead.
-  // retryCount++ consumes the slot so the budget-exhaustion guard above still
-  // catches a persistent condition after one re-queue cycle.
-  const failureCategory = classifyFailure(failureSignature)
-  if (failureCategory !== 'code') {
-    const nextRetryCount = task.retryCount + 1
-    await updateTask(
-      input.taskId,
-      {
-        status: 'queued',
-        error: null,
-        failedPhase: null,
-        failureSignature: null,
-        failureReasonCode: null,
-        retryCount: nextRetryCount,
-      },
-      s,
-    )
-    // eslint-disable-next-line no-console
-    console.log(
-      `[failure-handler] task ${input.taskId}: non-code failure (${failureCategory}:${failureSignature}) — re-queuing instead of spawning recovery fix-task`,
-    )
-    return { outcome: 'requeued', retryCount: nextRetryCount, failureSignature }
-  }
-
   // Fix-fail-loop cap. Count every historical fix-task row for this
   // (sourceTaskId, failureSignature) pair regardless of status. When
   // the cap is hit, stop inserting new fix tasks and escalate to the
@@ -898,7 +1164,7 @@ export const handleTaskFailureWithFixTask = async (
       kind: FIX_FAIL_LOOP_ACTION_QUEUE_KIND,
       category: 'orchestrator',
       priority: 'high',
-      title: `Diagnose and retry, or abandon ${input.taskId}: fix-fail loop on ${failureSignature}`,
+      title: capTitle(`Diagnose and retry, or abandon ${input.taskId}: fix-fail loop on ${failureSignature}`),
       body: buildFixFailLoopBody({
         sourceTaskId: input.taskId,
         originTaskId: task.originId,
@@ -985,6 +1251,25 @@ export const handleTaskFailureWithFixTask = async (
         : task.prompt ?? '',
   }
 
+  const stewardTarget = {
+    kind: 'task',
+    id: input.taskId,
+    version: failureSignature,
+  }
+  const stewardDecision = await shouldStewardFire(stewardTarget)
+  if (!stewardDecision.fire) {
+    const actionQueueItemId = await raiseStewardRepeatActionQueueItem(
+      stewardTarget,
+      stewardDecision.reason,
+    )
+    return {
+      outcome: 'steward-repeat',
+      failureSignature,
+      retryCount: task.retryCount,
+      actionQueueItemId,
+    }
+  }
+
   const result = await upsertFixTask({
     sourceTaskId: input.taskId,
     failureSignature,
@@ -994,6 +1279,14 @@ export const handleTaskFailureWithFixTask = async (
     recipeContext,
     store: s,
     qaNote: input.qaNote,
+  })
+  await recordStewardIntervention({
+    targetKind: 'task',
+    targetId: input.taskId,
+    targetVersion: failureSignature,
+    recipeId: failureSignature,
+    rationale: `Recovery ${result.created ? 'created' : 'reused'} after ${input.failingStep}.`,
+    outcome: result.created ? 'recovery-created' : 'recovery-reused',
   })
 
   // No registered fix recipe → the Arc has no targeted recovery playbook; spawn

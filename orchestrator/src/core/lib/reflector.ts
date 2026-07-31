@@ -1,4 +1,4 @@
-import { runClaudeCode } from './git/claude'
+import { runHeadlessProvider } from '../workers/providers'
 import { getRepoRoot } from '../context'
 import { createHash } from 'node:crypto'
 import {
@@ -10,6 +10,7 @@ import { enqueueTask } from '../queue'
 import type { ReflectCorpus } from './reflect-query'
 import type { SelfEvolveConfig } from '../daemon/config'
 import { isReflectDisabled } from './reflect-signals'
+import { isAutoReflectDisabled } from './auto-reflect-gate'
 import { insertMemoryPacket } from '../store/memory-packet-store'
 import { loadImprovementRecipes, formatRecipeCatalog } from './improvement-recipes'
 
@@ -448,10 +449,10 @@ export const runReflector = async (
 
   // No wall-clock timeout: reflect synthesis must run to completion.
   // The only way to stop it is Ctrl-C.
-  const r = await runClaudeCode({
+  const r = await runHeadlessProvider(buildPrompt(corpus), {
     cwd: getRepoRoot(),
-    prompt: buildPrompt(corpus),
-    model: 'sonnet',
+    modelTier: 'balanced',
+    disallowedTools: ['Edit', 'Write', 'NotebookEdit'],
   })
 
   const text = collectAssistantText(r.conversation) || r.stdout
@@ -585,7 +586,7 @@ export const persistSuggestions = async (
     } else {
       await persistOneSuggestion(s)
     }
-    if (!isReflectDisabled()) {
+    if (!isAutoReflectDisabled() && !isReflectDisabled()) {
       await insertMemoryPacket({
         domain: 'general',
         text: s.prompt,
@@ -700,6 +701,98 @@ export interface VerdictedCapabilityGapSuggestion {
   /** Concrete evidence (quoted excerpts from the step trace) motivating the finding. */
   evidence: string[]
   verdict: SuggestionVerdict
+}
+
+export interface ApplyCapabilityGapVerdictsResult {
+  /** Fresh draft proposals landed for a not-yet-reported capability gap. */
+  saved: number
+  /** Findings folded into an existing open draft for the same gap — no new row. */
+  absorbed: number
+  /** Discarded ('drop' verdict). */
+  dropped: number
+  /** Ids of the proposals created by this call. */
+  proposalIds: string[]
+}
+
+/**
+ * Stable fingerprint for a capability gap: one open draft per
+ * (step, capability) pair, however many arcs report it.
+ */
+const capabilityGapFingerprint = (stepName: string, capability: string): string =>
+  createHash('sha256')
+    .update(`capability-gap:${stepName}:${capability}`)
+    .digest('hex')
+    .slice(0, 32)
+
+/**
+ * Apply save/absorb/drop verdicts to capability-gap suggestions — the third
+ * reflection output type, landed on the SAME surface as {@link applyVerdicts}:
+ * a draft proposal. That is what puts the gap in `mars proposal list` and in
+ * the action queue's `draft-proposal` rows, so an operator actually sees it.
+ *
+ * The framework never auto-installs or auto-configures the missing capability;
+ * the proposal is a request for a human decision, by design.
+ *
+ * - 'save'   → create a draft proposal, or append evidence to the open draft
+ *              already reporting the same (step, capability) pair.
+ * - 'absorb' → append evidence to the existing draft when one exists; never
+ *              creates a row. Counted as absorbed either way, mirroring
+ *              {@link applyVerdicts} semantics.
+ * - 'drop'   → discarded.
+ */
+export const applyCapabilityGapVerdicts = async (
+  suggestions: readonly VerdictedCapabilityGapSuggestion[],
+  provenance: { originArcId: string },
+): Promise<ApplyCapabilityGapVerdictsResult> => {
+  let saved = 0
+  let absorbed = 0
+  let dropped = 0
+  const proposalIds: string[] = []
+
+  for (const s of suggestions) {
+    if (s.verdict === 'drop') {
+      dropped += 1
+      continue
+    }
+
+    const fingerprint = capabilityGapFingerprint(s.stepName, s.capability)
+    const existing = await findOpenReflectionDraftByFingerprint(fingerprint)
+    const evidenceBlock = [
+      `Also observed in arc ${provenance.originArcId} (step '${s.stepName}').`,
+      ...s.evidence,
+    ].join('\n')
+
+    if (existing) {
+      await appendProposalNotes(existing.id, evidenceBlock)
+      absorbed += 1
+      continue
+    }
+    if (s.verdict === 'absorb') {
+      // Nothing to fold into: an 'absorb' verdict never creates a row.
+      absorbed += 1
+      continue
+    }
+
+    const proposal = await createProposal(
+      `Capability gap: ${s.capability} (step '${s.stepName}')`,
+      {
+        source: 'reflection',
+        author: { kind: 'agent', name: 'capability-gap' },
+        problem:
+          s.description ||
+          `Step '${s.stepName}' self-reported that it lacked ${s.capability} and could not complete its job.`,
+        solution:
+          `Decide whether to provision ${s.capability} for the '${s.stepName}' step, and wire it if so. ` +
+          `Mars never installs or configures a capability on its own — this proposal exists so the operator can make that call.`,
+        notes: [`Reported by arc ${provenance.originArcId}.`, ...s.evidence].join('\n'),
+        fingerprint,
+      },
+    )
+    proposalIds.push(proposal.id)
+    saved += 1
+  }
+
+  return { saved, absorbed, dropped, proposalIds }
 }
 
 /**

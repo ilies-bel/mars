@@ -81,6 +81,11 @@ export const pickTopAlert = (items: ActionQueueItem[]): ActionQueueItem | null =
   })[0] ?? null
 }
 
+/**
+ * Returns the top N action-queue rows sorted by priority (high first),
+ * then newest first. Used by the opening next-move chips beneath the
+ * seeded Mars message.
+ */
 export const topRowsByPriority = (items: ActionQueueItem[], n: number): ActionQueueItem[] =>
   [...items]
     .sort((a, b) => {

@@ -15,7 +15,7 @@
  *   columns stay integers — retyping to boolean is out of scope.
  * - `REAL` → `double precision`, `BLOB` → `bytea`.
  * - `DEFAULT (unixepoch())` → `DEFAULT floor(extract(epoch from now()))::bigint`.
- * - TEXT ISO-8601 timestamps and JSON-in-TEXT columns stay `text`.
+ * - JSON-in-TEXT columns stay `text`; operational timestamps use `timestamptz`.
  *
  * Conflicts resolved here, once:
  * - `tool_promotion_attempts` uses the store version
@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0002'
+export const SCHEMA_VERSION = '0005'
 
 /** `DEFAULT (unixepoch())` translation. */
 const EPOCH_NOW = "floor(extract(epoch from now()))::bigint"
@@ -145,7 +145,7 @@ const DDL: readonly string[] = [
     followup_dedup_key   text,
     intent               text   NOT NULL DEFAULT '',
     lease_owner          text,
-    leased_at            text,
+    leased_at            timestamptz,
     lease_note           text,
     origin_session_id    text,
     workflow             text,
@@ -156,13 +156,56 @@ const DDL: readonly string[] = [
     env_restart_count    bigint NOT NULL DEFAULT 0,
     arc_rescue_attempts  bigint NOT NULL DEFAULT 0,
     requeue_anchor_ms    bigint,
-    created_at           text   NOT NULL,
-    updated_at           text   NOT NULL
+    requeue_dispatch_uptime_ms bigint,
+    created_at           timestamptz NOT NULL,
+    updated_at           timestamptz NOT NULL
   )`,
+  // Hard-cut existing installations from ISO-8601 text to native timestamps.
+  // The explicit USING clause intentionally rejects malformed legacy values
+  // instead of retaining a text compatibility path.
+  `ALTER TABLE tasks
+     ALTER COLUMN leased_at TYPE timestamptz USING leased_at::timestamptz,
+     ALTER COLUMN created_at TYPE timestamptz USING created_at::timestamptz,
+     ALTER COLUMN updated_at TYPE timestamptz USING updated_at::timestamptz`,
   // Backfill `requeue_anchor_ms` for databases created before this column was
   // added. IF NOT EXISTS makes this idempotent on fresh databases (where the
   // column already exists from the CREATE TABLE above).
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requeue_anchor_ms bigint`,
+  // Snapshot of the daemon's cumulative dispatch uptime when this re-queue
+  // episode first dispatched. This lets the ceiling exclude pauses and daemon
+  // downtime without refunding previously accumulated progress time.
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requeue_dispatch_uptime_ms bigint`,
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS stall_diagnostics jsonb`,
+  // Terminal task states are absorbing.  The application preflights this
+  // invariant for a typed error, while this trigger protects every other SQL
+  // writer (including future code paths and operational scripts).
+  `CREATE TABLE IF NOT EXISTS task_terminal_reopens (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    task_id     text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    reason      text NOT NULL,
+    reopened_by text NOT NULL,
+    reopened_at timestamptz NOT NULL DEFAULT now(),
+    consumed_at timestamptz
+  )`,
+  `CREATE OR REPLACE FUNCTION reject_terminal_task_transition()
+   RETURNS trigger AS $$
+   BEGIN
+     IF OLD.status IN ('done', 'failed', 'dropped')
+        AND NEW.status IS DISTINCT FROM OLD.status
+        AND NOT EXISTS (
+          SELECT 1 FROM task_terminal_reopens
+          WHERE task_id = OLD.id AND consumed_at IS NULL
+        ) THEN
+       RAISE EXCEPTION 'terminal task % cannot transition from % to %', OLD.id, OLD.status, NEW.status
+         USING ERRCODE = 'P0001';
+     END IF;
+     RETURN NEW;
+   END;
+   $$ LANGUAGE plpgsql`,
+  `DROP TRIGGER IF EXISTS tasks_reject_terminal_transition ON tasks`,
+  `CREATE TRIGGER tasks_reject_terminal_transition
+     BEFORE UPDATE OF status ON tasks
+     FOR EACH ROW EXECUTE FUNCTION reject_terminal_task_transition()`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created
      ON tasks(priority DESC, created_at ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for
@@ -219,6 +262,18 @@ const DDL: readonly string[] = [
      ON self_heal_attempts(parent_task_id, failure_signature)`,
   `CREATE INDEX IF NOT EXISTS idx_self_heal_attempts_fix_task
      ON self_heal_attempts(fix_task_id)`,
+  // Slice 3 of PRD d7835017: per-(task_id, failure_signature) non-code requeue ledger.
+  // Separate table avoids modifying the NOT NULL + FK constraint on
+  // self_heal_attempts.fix_task_id, which is incompatible with nullable entries.
+  // self_heal_attempts remains unchanged; non-code re-queues live here only.
+  `CREATE TABLE IF NOT EXISTS non_code_requeue_attempts (
+    id                bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    task_id           text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    failure_signature text NOT NULL,
+    created_at        text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_non_code_requeue_attempts_task
+     ON non_code_requeue_attempts(task_id, failure_signature)`,
   `CREATE TABLE IF NOT EXISTS task_claude_sessions (
     task_id    text   NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     session_id text   NOT NULL,
@@ -257,12 +312,14 @@ const DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS task_progress (
     id              text   PRIMARY KEY,
     task_id         text   NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    created_at      text   NOT NULL,
+    created_at      timestamptz NOT NULL,
     author          text   NOT NULL,
     kind            text   NOT NULL CHECK (kind IN ('note','check','uncheck')),
     body            text   NOT NULL,
     criterion_index bigint
   )`,
+  `ALTER TABLE task_progress
+     ALTER COLUMN created_at TYPE timestamptz USING created_at::timestamptz`,
   `CREATE INDEX IF NOT EXISTS idx_task_progress_task_time
      ON task_progress(task_id, created_at)`,
 
@@ -347,33 +404,42 @@ const DDL: readonly string[] = [
     payload         text   NOT NULL DEFAULT '{}',
     context         text   NOT NULL DEFAULT '{}',
     raised_by       text   NOT NULL,
-    raised_at       text   NOT NULL,
-    resolved_at     text,
+    raised_at       timestamptz NOT NULL,
+    resolved_at     timestamptz,
     resolution      text,
     resolution_note text,
     root_cause      text,
     fingerprint     text,
     signature       text,
     seen_count      bigint NOT NULL DEFAULT 1,
-    last_seen_at    text,
+    last_seen_at    timestamptz,
     resolved_by     text,
     origin_task_id  text,
-    snoozed_until   text
+    snoozed_until   timestamptz
   )`,
+  `ALTER TABLE action_queue_items
+     ALTER COLUMN raised_at TYPE timestamptz USING raised_at::timestamptz,
+     ALTER COLUMN resolved_at TYPE timestamptz USING resolved_at::timestamptz,
+     ALTER COLUMN last_seen_at TYPE timestamptz USING last_seen_at::timestamptz,
+     ALTER COLUMN snoozed_until TYPE timestamptz USING snoozed_until::timestamptz`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_state
      ON action_queue_items(fingerprint, state)`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_state ON action_queue_items(state)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_queue_open_snoozed_until
+     ON action_queue_items(snoozed_until, raised_at DESC) WHERE state = 'open'`,
   // "by" is a reserved word in PostgreSQL — quoted here, and call sites must
   // quote it too (all-lowercase, so quoting does not change identity).
   `CREATE TABLE IF NOT EXISTS action_queue_history (
     id         text PRIMARY KEY,
     item_id    text NOT NULL REFERENCES action_queue_items(id),
-    at         text NOT NULL,
+    at         timestamptz NOT NULL,
     from_state text,
     to_state   text NOT NULL,
     "by"       text,
     note       text
   )`,
+  `ALTER TABLE action_queue_history
+     ALTER COLUMN at TYPE timestamptz USING at::timestamptz`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_history_item
      ON action_queue_history(item_id, at)`,
 
@@ -382,6 +448,7 @@ const DDL: readonly string[] = [
     id             text   PRIMARY KEY,
     title          text   NOT NULL DEFAULT '',
     status         text   NOT NULL DEFAULT 'idle',
+    posture        text   NOT NULL DEFAULT 'triage',
     origin         text,
     alert_item_id  text,
     alert_resolved bigint NOT NULL DEFAULT 0,
@@ -404,10 +471,10 @@ const DDL: readonly string[] = [
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS stall_diagnostics text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS "deferrable" bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
-  // Chat runs on the Codex Responses API with full transcript replay — the
-  // CLI-session binding and one-shot context seeding are gone.
-  `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS session_id`,
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS posture text NOT NULL DEFAULT 'triage'`,
   `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS context_seeded`,
+  // Codex CLI exec/resume needs a persisted session id per thread.
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS session_id text`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id
      ON chat_threads(alert_item_id)`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_evaporated_at
@@ -455,11 +522,17 @@ const DDL: readonly string[] = [
   // `acknowledged_at` stamps that gesture.
   `CREATE TABLE IF NOT EXISTS notices (
     id              text PRIMARY KEY,
+    kind            text NOT NULL,
+    payload         text NOT NULL DEFAULT '{}',
     body            text NOT NULL,
     source          text,
     created_at      text NOT NULL,
     acknowledged_at text
   )`,
+  // Existing Notice rows predate recipe-backed rendering. Keep them readable
+  // while new writes always provide their own typed kind and payload.
+  `ALTER TABLE IF EXISTS notices ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'spend-control-notice'`,
+  `ALTER TABLE IF EXISTS notices ADD COLUMN IF NOT EXISTS payload text NOT NULL DEFAULT '{}'`,
   `CREATE INDEX IF NOT EXISTS idx_notices_acknowledged_at ON notices(acknowledged_at)`,
 
   // ── settings / preferences ────────────────────────────────────────────────
@@ -535,8 +608,10 @@ const DDL: readonly string[] = [
     streak_count        bigint  NOT NULL DEFAULT 0,
     last_task_id        text,
     tripped             boolean NOT NULL DEFAULT false,
-    updated_at          text    NOT NULL
+    updated_at          timestamptz NOT NULL
   )`,
+  `ALTER TABLE failure_signature_streak
+     ALTER COLUMN updated_at TYPE timestamptz USING updated_at::timestamptz`,
   `CREATE TABLE IF NOT EXISTS verify_gates (
     id         text PRIMARY KEY,
     scope      text NOT NULL DEFAULT '.',
@@ -756,6 +831,24 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_auto_recipe_runs_ran_at
      ON auto_recipe_runs(ran_at DESC)`,
+
+  // ── Steward intervention ledger ─────────────────────────────────────────
+  // Append-only evidence for every proactive Steward action. The target
+  // version (or content hash) is part of the lookup key so a later version
+  // remains eligible for a fresh intervention.
+  `CREATE TABLE IF NOT EXISTS steward_ledger (
+    id             text        PRIMARY KEY,
+    ts             timestamptz NOT NULL,
+    target_kind    text        NOT NULL,
+    target_id      text        NOT NULL,
+    target_version text        NOT NULL,
+    recipe_id      text        NOT NULL,
+    rationale      text        NOT NULL,
+    outcome        text        NOT NULL,
+    commit_sha     text        NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_steward_ledger_target_version
+     ON steward_ledger(target_kind, target_id, target_version)`,
   // Drop the per-task preview command column: the --preview CLI flag and the
   // preview_cmd column are removed (PRD f354b404 slice 1). Existing rows have
   // the column dropped idempotently; tasks now carry no per-task preview command.
@@ -777,6 +870,9 @@ const DDL: readonly string[] = [
   // recent boot. Written by startHeartbeatWriter so elapsed-time watchdogs
   // can rebase task deadlines after a prolonged downtime.
   `ALTER TABLE IF EXISTS daemon_heartbeat ADD COLUMN IF NOT EXISTS prev_gap_ms bigint`,
+  // Cumulative milliseconds for which a live daemon had dispatch enabled.
+  // Unlike wall clock, this does not advance while paused or between boots.
+  `ALTER TABLE IF EXISTS daemon_heartbeat ADD COLUMN IF NOT EXISTS dispatch_uptime_ms bigint NOT NULL DEFAULT 0`,
 
   // ── dispatch spend controller (migration 0003) ────────────────────────────
   // Single-row operator-set control levers for the dispatch spend controller.
@@ -825,6 +921,46 @@ const DDL: readonly string[] = [
     status          text NOT NULL DEFAULT 'awaiting-human',
     created_at      timestamptz NOT NULL DEFAULT now()
   )`,
+
+  // ── usage snapshots (slice 2 of PRD 9888811c) ────────────────────────────
+  // Periodic daemon samples of token usage. Read by `mars daemon usage` and
+  // the future usage-aware scheduler. Forward-only — append rows, never mutate.
+  `CREATE TABLE IF NOT EXISTS usage_snapshots (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    captured_at   timestamptz NOT NULL DEFAULT now(),
+    input_tokens  bigint NOT NULL DEFAULT 0,
+    output_tokens bigint NOT NULL DEFAULT 0,
+    window_kind   text NOT NULL,
+    raw_json      jsonb NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_usage_snapshots_captured_at
+     ON usage_snapshots(captured_at DESC)`,
+
+  // ── worker MCP mutation audit (slice 6 of PRD 57e134df) ──────────────────
+  // One immutable row per mutation call issued by a dispatched worker. Args
+  // are redacted by the MCP server before crossing the daemon boundary.
+  `CREATE TABLE IF NOT EXISTS mcp_worker_audit (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tool_name     text        NOT NULL,
+    task_id       text        NOT NULL,
+    args_json     jsonb       NOT NULL,
+    ok            boolean     NOT NULL,
+    error_message text,
+    created_at    timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_mcp_worker_audit_task_created
+     ON mcp_worker_audit(task_id, created_at DESC)`,
+
+  // ── dispatch deferrals (slice 5 of PRD 9888811c) ─────────────────────────
+  // One current scheduling decision per task. Repeated daemon boots update the
+  // same row rather than accumulating stale copies of a deferred task.
+  `CREATE TABLE IF NOT EXISTS deferrals (
+    task_id           text PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    deferred_at       timestamptz NOT NULL,
+    reason            text NOT NULL,
+    target_window_end timestamptz,
+    pressure          text NOT NULL
+  )`,
 ]
 
 /**
@@ -838,10 +974,12 @@ export const SCHEMA_TABLES: readonly string[] = [
   'proposal_dependencies',
   'proposal_notes',
   'tasks',
+  'task_terminal_reopens',
   'task_blockers',
   'task_proposal_blockers',
   'task_acceptance',
   'self_heal_attempts',
+  'non_code_requeue_attempts',
   'task_claude_sessions',
   'task_spec_files',
   'task_done_criteria',
@@ -862,6 +1000,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'chat_feedback',
   'app_settings',
   'preferences',
+  'notices',
   'diagnoses_root_cause',
   'diagnoses_inconclusive',
   'diagnosis_involved_files',
@@ -883,11 +1022,16 @@ export const SCHEMA_TABLES: readonly string[] = [
   'workflow_step_runs',
   'learned_recipes',
   'auto_recipe_runs',
+  'steward_ledger',
   'merge_jobs',
   'task_deployments',
   'dispatch_spend_control',
   'purged_tasks_archive',
   'workflow_patch_proposals',
+  'usage_snapshots',
+  'mcp_worker_audit',
+  'daemon_heartbeat',
+  'deferrals',
 ]
 
 /**
@@ -898,6 +1042,11 @@ export const SCHEMA_TABLES: readonly string[] = [
 export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
   events: 'id',
   self_heal_attempts: 'id',
+  non_code_requeue_attempts: 'id',
+  task_terminal_reopens: 'id',
+  chat_messages: 'seq',
+  usage_snapshots: 'id',
+  mcp_worker_audit: 'id',
 }
 
 /**

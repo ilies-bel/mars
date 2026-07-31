@@ -9,6 +9,16 @@
  */
 import type { Decision } from '../src/shared/schemas.ts'
 
+const TEACH_SECONDARY: Decision['secondary'] = {
+  kind: 'teach-recipe',
+  prompt: 'Apply this automatically next time?',
+}
+
+const UNTEACHABLE_FAILURE_KINDS = new Set(['unknown', 'manual-park'])
+
+const withTeach = (d: Decision, failureKind: string): Decision =>
+  UNTEACHABLE_FAILURE_KINDS.has(failureKind) ? d : { ...d, secondary: TEACH_SECONDARY }
+
 const DECISIONS: Record<string, Decision[]> = {
   'coder-killed-by-restart': [
     { label: 'Continue', endpoint: '/api/actions', payload: { op: 'restart' } },
@@ -30,4 +40,4 @@ const DECISIONS: Record<string, Decision[]> = {
  * is returned to the client.
  */
 export const failureKindDecisions = (kind: string): Decision[] =>
-  DECISIONS[kind] ?? []
+  (DECISIONS[kind] ?? []).map((d) => withTeach(d, kind))

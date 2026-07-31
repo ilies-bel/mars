@@ -193,6 +193,23 @@ describe('mars step done — wrong-mode-step error', () => {
     expect(r.err.join('\n')).toContain('queued')
     expect(fake.calls).toHaveLength(0)
   })
+
+  it('routes preview-gated tasks to the validate and reject commands', async () => {
+    const taskId = await createTask('awaiting-validation')
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+
+    const r = await runCommandInProcess(['step', 'done', taskId], {
+      store,
+      ctx,
+      daemon: fake,
+    })
+
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain(`mars validate ${taskId}`)
+    expect(r.err.join('\n')).toContain(`mars reject ${taskId}`)
+    expect(fake.calls).toHaveLength(0)
+  })
 })
 
 // ---------------------------------------------------------------------------

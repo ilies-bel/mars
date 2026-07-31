@@ -37,14 +37,32 @@ export function classifyFailure(failureSignature: string): FailureCategory {
     failureSignature.endsWith('/rebase-no-in-progress-state') ||
     failureSignature.endsWith('/worktree-missing') ||
     failureSignature.endsWith('/not-fast-forward') ||
-    failureSignature.endsWith('/index-lock-contention')
+    failureSignature.endsWith('/index-lock-contention') ||
+    // setup:origin-worktree-missing fires when a recovery (fix) task cannot
+    // attach because the origin task's worktree has been removed from disk.
+    // This is always an orchestration condition (no amount of code editing
+    // fixes a missing worktree); the error class is always 'unclassified'
+    // because the OriginWorktreeMissingError message matches no errorClassRule.
+    failureSignature.startsWith('setup:origin-worktree-missing') ||
+    // code:worktree-missing fires when a resumed run's worktree directory is
+    // gone AND its branch no longer exists, so there is nothing to re-attach.
+    // Orchestration, not code: no edit to any file can restore a deleted
+    // worktree, and routing it to a code fixer would burn the recovery slot.
+    failureSignature.startsWith('code:worktree-missing')
   ) {
     return 'orchestration'
   }
 
   if (
     failureSignature.startsWith('phantom-task watchdog:') ||
-    failureSignature.endsWith('/install-timeout')
+    failureSignature.endsWith('/install-timeout') ||
+    // The daemon cannot write <repo>/.git/worktrees/<id>/ — a sandbox or
+    // permission condition on the host. A recovery fixer would fail at the
+    // very same commit gate, so this must never be classified as 'code'.
+    failureSignature.endsWith('/git-metadata-denied') ||
+    // The provider CLI could not be executed (spawn ENOENT / exit 127) — the
+    // daemon's PATH, not the task's code. A fixer would never even start.
+    failureSignature.endsWith('/provider-binary-missing')
   ) {
     return 'infra'
   }

@@ -16,8 +16,15 @@
  *    `daemonPaths` and `resolveLaunchCommand` return stable test values.
  *  - `node:child_process`: `spawn` is a no-op stub; we test CLI logic, not
  *    that the OS can fork a process.
+ *
+ * The branch-warning examples instead use temporary Git repositories: branch
+ * identity is the system boundary the command must accurately report.
  */
 
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { InProcessOptions } from '../test-adapter'
 import type { OrchestratorContext } from '../../core/context'
@@ -69,11 +76,35 @@ const fakeCtx: OrchestratorContext = {
 // `daemon start` never calls any store methods, so this is sufficient.
 const fakeStore = {} as never
 
-const makeOpts = (): InProcessOptions => ({
+const makeOpts = (repoRoot = fakeCtx.repoRoot): InProcessOptions => ({
   store: fakeStore,
   daemon: makeFakeDaemon(),
-  ctx: fakeCtx,
+  ctx: { ...fakeCtx, repoRoot, stateDir: `${repoRoot}/.mars` },
 })
+
+const statusPayload = {
+  pid: 5678,
+  startedAt: '2026-07-30T00:00:00.000Z',
+  inFlight: [],
+  counts: { draft: 0, queued: 0, running: 0, verifying: 0, merging: 0, 'vega-reconciling': 0 },
+  sourceSha: null,
+  currentSha: null,
+  isStale: false,
+  implementCap: { configured: 12, effective: 12, reason: null },
+  pause: { paused: false, reason: null, since: null, detail: null },
+}
+
+const createGitRepo = (branch: string): string => {
+  const repo = mkdtempSync(join(tmpdir(), 'mars-daemon-status-'))
+  execFileSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: repo })
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+  execFileSync('git', ['config', 'user.name', 'Mars Test'], { cwd: repo })
+  execFileSync('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: repo })
+  if (branch !== 'main') {
+    execFileSync('git', ['checkout', '--quiet', '-b', branch], { cwd: repo })
+  }
+  return repo
+}
 
 const isDaemonAliveM = vi.mocked(isDaemonAlive)
 const spawnM = vi.mocked(spawn)
@@ -87,6 +118,7 @@ describe('daemon start — race prevention', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    delete process.env.INTEGRATION_BRANCH
   })
 
   // Tracer bullet: the most basic observable outcome — daemon already alive.
@@ -116,6 +148,8 @@ describe('daemon start — race prevention', () => {
     expect(result.out.join('\n')).toContain('12345')
     // A child process was spawned.
     expect(spawnM).toHaveBeenCalledTimes(1)
+    const spawnOptions = spawnM.mock.calls[0]?.[2]
+    expect(spawnOptions?.env?.['MARS_WORKER_PROVIDER']).toBe('codex')
     // isDaemonAlive was called at least twice (initial check + at least one poll).
     expect(isDaemonAliveM).toHaveBeenCalledTimes(2)
   })
@@ -153,5 +187,56 @@ describe('daemon start — race prevention', () => {
     // The error message must reference the log file so the operator knows
     // where to look.
     expect(result.err.join('\n')).toMatch(/did not become ready|watch\.log/)
+  })
+
+  it('warns when the repo root branch differs from the integration branch', async () => {
+    const repo = createGitRepo('feature/x')
+    try {
+      isDaemonAliveM.mockResolvedValue({ alive: true, pid: 5678 } satisfies DaemonLiveness)
+      const result = await runCommandInProcess(
+        ['daemon', 'status'],
+        {
+          ...makeOpts(repo),
+          daemon: makeFakeDaemon(() => statusPayload),
+        },
+      )
+
+      expect(result.code).toBe(0)
+      expect(result.out).toContain(
+        "warning: repo root is on 'feature/x'; tasks merge into 'main'",
+      )
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('does not warn when the repo root is on the integration branch, including an override', async () => {
+    const mainRepo = createGitRepo('main')
+    const alternateRepo = createGitRepo('release')
+    try {
+      isDaemonAliveM.mockResolvedValue({ alive: true, pid: 5678 } satisfies DaemonLiveness)
+      const onDefaultBranch = await runCommandInProcess(
+        ['daemon', 'status'],
+        {
+          ...makeOpts(mainRepo),
+          daemon: makeFakeDaemon(() => statusPayload),
+        },
+      )
+
+      process.env.INTEGRATION_BRANCH = 'release'
+      const onOverriddenBranch = await runCommandInProcess(
+        ['daemon', 'status'],
+        {
+          ...makeOpts(alternateRepo),
+          daemon: makeFakeDaemon(() => statusPayload),
+        },
+      )
+
+      expect(onDefaultBranch.out.join('\n')).not.toContain('warning: repo root is on')
+      expect(onOverriddenBranch.out.join('\n')).not.toContain('warning: repo root is on')
+    } finally {
+      rmSync(mainRepo, { recursive: true, force: true })
+      rmSync(alternateRepo, { recursive: true, force: true })
+    }
   })
 })

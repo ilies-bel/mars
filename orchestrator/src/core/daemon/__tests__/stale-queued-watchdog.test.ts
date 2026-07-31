@@ -17,6 +17,7 @@ interface ActionQueueModule {
 interface WatchdogModule {
   runStaleQueuedSweep: typeof import('../stale-queued-watchdog').runStaleQueuedSweep
   STALE_QUEUED_KIND: typeof import('../stale-queued-watchdog').STALE_QUEUED_KIND
+  STALE_QUEUED_SUMMARY_KIND: typeof import('../stale-queued-watchdog').STALE_QUEUED_SUMMARY_KIND
   DEFAULT_STALE_QUEUED_MS: typeof import('../stale-queued-watchdog').DEFAULT_STALE_QUEUED_MS
 }
 
@@ -71,6 +72,7 @@ describe('runStaleQueuedSweep', () => {
     // Run the watchdog once
     const { alerted } = await watchdog.runStaleQueuedSweep({
       activeWorkerCount: 0,
+      implementCap: 2,
       queueDepth: 2,
       dispatchDecisionSummary: [],
       nowMs,
@@ -106,6 +108,7 @@ describe('runStaleQueuedSweep', () => {
     // First sweep — creates the alert
     await watchdog.runStaleQueuedSweep({
       activeWorkerCount: 1,
+      implementCap: 2,
       queueDepth: 1,
       dispatchDecisionSummary: [],
       nowMs,
@@ -114,6 +117,7 @@ describe('runStaleQueuedSweep', () => {
     // Second sweep — bumps seen_count, does NOT create a sibling row
     const { alerted } = await watchdog.runStaleQueuedSweep({
       activeWorkerCount: 1,
+      implementCap: 2,
       queueDepth: 1,
       dispatchDecisionSummary: [],
       nowMs: nowMs + 5 * 60_000,
@@ -137,6 +141,7 @@ describe('runStaleQueuedSweep', () => {
 
     const { alerted } = await watchdog.runStaleQueuedSweep({
       activeWorkerCount: 2,
+      implementCap: 2,
       queueDepth: 2,
       dispatchDecisionSummary: [],
       nowMs,
@@ -162,6 +167,7 @@ describe('runStaleQueuedSweep', () => {
 
     const { alerted } = await watchdog.runStaleQueuedSweep({
       activeWorkerCount: 0,
+      implementCap: 2,
       queueDepth: 1,
       dispatchDecisionSummary: [],
       nowMs,
@@ -170,5 +176,57 @@ describe('runStaleQueuedSweep', () => {
     expect(alerted).toContain(task.id)
     const items = await actionQueue.listActionQueueItems('open')
     expect(items).toHaveLength(1)
+  })
+
+  it('does not alert for aged tasks while every implement slot is occupied', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+
+    const task = await q.enqueueTask('waiting behind a full pool', undefined, { skipTriage: true })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 30 * 60_000).toISOString(), task.id],
+    })
+
+    const { alerted } = await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 2,
+      implementCap: 2,
+      queueDepth: 1,
+      dispatchDecisionSummary: [],
+      nowMs,
+    })
+
+    expect(alerted).toEqual([])
+    expect(await actionQueue.listActionQueueItems('open')).toHaveLength(0)
+  })
+
+  it('raises only the oldest stale-task alerts and a visible suppression summary', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+
+    for (let index = 0; index < 25; index += 1) {
+      const task = await q.enqueueTask(`stale work ${index}`, undefined, { skipTriage: true })
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET updated_at = ? WHERE id = ?`,
+        args: [new Date(nowMs - (index + 11) * 60_000).toISOString(), task.id],
+      })
+    }
+
+    const { alerted } = await watchdog.runStaleQueuedSweep({
+      activeWorkerCount: 0,
+      implementCap: 2,
+      queueDepth: 25,
+      dispatchDecisionSummary: [],
+      nowMs,
+    })
+
+    expect(alerted).toHaveLength(20)
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(21)
+    const summary = items.find(
+      (item) => (item.payload as Record<string, unknown>).suppressionSummary === true,
+    )
+    expect(summary?.kind).toBe(watchdog.STALE_QUEUED_SUMMARY_KIND)
+    expect(summary?.body).toContain('5 additional stale queued task alert(s)')
   })
 })

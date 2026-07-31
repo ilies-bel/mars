@@ -3,14 +3,57 @@ import {
   asStepId,
   causeForSignature,
   classifyError,
+  composeRecoveryFailureReason,
   computeFailureSignature,
   errorClassRules,
   firstNonBlankLine,
+  isRecoveryFailedReason,
   isUnclassifiedSignature,
   STEP_ID_RE,
+  stripRecoveryFailedPrefixes,
   UNCLASSIFIED_ERROR_CLASS,
   UNKNOWN_STEP_ID,
 } from '../failure-signature'
+
+describe('recovery-failure reason composition', () => {
+  const sig = 'code:commit-contract/uncommitted-changes'
+
+  it('prefixes exactly once', () => {
+    expect(composeRecoveryFailureReason(sig, 'boom')).toBe(
+      `recovery_failed:${sig}: boom`,
+    )
+  })
+
+  it('is idempotent: composing a composed reason does not nest', () => {
+    const once = composeRecoveryFailureReason(sig, 'boom')
+    expect(composeRecoveryFailureReason(sig, once)).toBe(once)
+  })
+
+  it('collapses an already-nested reason back to a single prefix', () => {
+    const nested = `recovery_failed:${sig}: recovery_failed:${sig}: recovery_failed:${sig}: boom`
+    expect(composeRecoveryFailureReason(sig, nested)).toBe(
+      `recovery_failed:${sig}: boom`,
+    )
+    expect(stripRecoveryFailedPrefixes(nested)).toBe('boom')
+  })
+
+  it('leaves a bare error untouched and multi-line output intact', () => {
+    expect(stripRecoveryFailedPrefixes('no prefix here')).toBe('no prefix here')
+    const multiline = 'FAIL a.test.ts\nAssertionError: expected 2 to be 1'
+    expect(composeRecoveryFailureReason(sig, multiline)).toBe(
+      `recovery_failed:${sig}: ${multiline}`,
+    )
+  })
+
+  it('recognises a composed reason and rejects anything else', () => {
+    expect(isRecoveryFailedReason(composeRecoveryFailureReason(sig, 'x'))).toBe(
+      true,
+    )
+    expect(isRecoveryFailedReason('recovery_exhausted:merge/x')).toBe(false)
+    expect(isRecoveryFailedReason(null)).toBe(false)
+    expect(isRecoveryFailedReason(undefined)).toBe(false)
+  })
+})
 
 describe('computeFailureSignature', () => {
   it('produces stable technical-key signatures of shape <failingStep>/<error-class>', () => {
@@ -406,14 +449,38 @@ describe('matchFull rules are checked against full output', () => {
   })
 
   it('classifyError returns rebase-dirty-worktree only when the sentinel string is present', () => {
-    // Confirm the rule is first-line anchored: a generic "dirty" string without
-    // the sentinel does not trigger the new class.
+    // The rule keys on the sentinel, not on the word "dirty": a generic
+    // message without the sentinel does not trigger the class.
     expect(
       classifyError('worktree dirty before rebase: cannot start rebase with uncommitted/untracked files'),
     ).toBe('rebase-dirty-worktree')
     expect(
       classifyError('generic dirty worktree message'),
     ).not.toBe('rebase-dirty-worktree')
+  })
+
+  it('classifies the dirty-worktree sentinel even when the merge primitive prefixes it', () => {
+    // Regression: task fix-30ac0aaa. The merge primitive stores the sentinel
+    // one line down, behind "merge aborted by vcs-supervisor; worktree
+    // retained at <path>". Under first-line-only matching the classifier saw
+    // only the wrapper and the failure degraded to `merge/unclassified` — a
+    // generic bucket that names neither the cause nor the step, and that feeds
+    // the signature-storm circuit breaker. The rule is matchFull so the
+    // sentinel stays reachable from the wrapped form too.
+    const wrapped = [
+      'merge aborted by vcs-supervisor; worktree retained at .mars/worktrees/mars-8e7b69eb',
+      'worktree dirty before rebase: cannot start rebase with uncommitted/untracked files',
+      ' M orchestrator/src/core/lib/derived-row-actions.ts',
+    ].join('\n')
+    expect(classifyError(wrapped)).toBe('rebase-dirty-worktree')
+    // Both the inline stamp (fine-grained step) and the degraded
+    // recovery-spawn path (coarse `failed_phase`) land on a named class.
+    expect(
+      computeFailureSignature('merge:vcs-supervisor-aborted', wrapped),
+    ).toBe('merge:vcs-supervisor-aborted/rebase-dirty-worktree')
+    expect(computeFailureSignature('merge', wrapped)).toBe(
+      'merge/rebase-dirty-worktree',
+    )
   })
 
 })
@@ -651,7 +718,140 @@ describe('firstNonBlankLine', () => {
     expect(firstNonBlankLine('   \n\n\t\n')).toBe('')
   })
 
+  // NOTE: the git-metadata-denied suite lives at the bottom of this file.
+
   it('strips ANSI codes', () => {
     expect(firstNonBlankLine('\x1B[31mboom\x1B[0m')).toBe('boom')
+  })
+})
+
+describe('provider-binary-missing classification', () => {
+  // "The command could not be executed" is a different diagnosis from "the
+  // coder ran and failed"; without this class both landed in the contentless
+  // coder-exit-nonzero bucket.
+  it('classifies a spawn ENOENT surfaced by runSubprocessStreaming', () => {
+    expect(classifyError('spawn codex ENOENT: spawn codex ENOENT')).toBe(
+      'provider-binary-missing',
+    )
+  })
+
+  it('classifies a spawn EACCES', () => {
+    expect(classifyError('spawn /opt/bin/codex EACCES: permission denied')).toBe(
+      'provider-binary-missing',
+    )
+  })
+
+  it("classifies the orchestrator's own exit-127 wording", () => {
+    expect(
+      classifyError('coder exited 127 before completing; worktree was clean at exit'),
+    ).toBe('provider-binary-missing')
+  })
+
+  it('produces a distinct signature instead of an unclassified coder exit', () => {
+    const sig = computeFailureSignature(
+      'code:coder-exit-nonzero',
+      'coder exited 127 before completing; spawn codex ENOENT',
+    )
+    expect(sig).toBe('code:coder-exit-nonzero/provider-binary-missing')
+    expect(isUnclassifiedSignature(sig)).toBe(false)
+  })
+
+  it('leaves an ordinary non-zero coder exit alone', () => {
+    expect(
+      classifyError('coder exited 1 before completing; worktree was clean at exit'),
+    ).toBe(UNCLASSIFIED_ERROR_CLASS)
+  })
+
+  it('does not fire on a shell "command not found" quoted inside coder output', () => {
+    expect(
+      classifyError(
+        ['coder exited 1 before completing;', 'bash: line 1: fd: command not found'].join('\n'),
+      ),
+    ).toBe(UNCLASSIFIED_ERROR_CLASS)
+  })
+
+  it('does not steal the signal-killed install class (exit 137/130/254)', () => {
+    expect(classifyError('install exited with 137')).toBe('install-timeout')
+  })
+
+  it('carries an operator-facing cause sentence', () => {
+    const cause = causeForSignature(
+      'code:coder-exit-nonzero/provider-binary-missing',
+      'mars-abc123',
+    )
+    expect(cause).not.toBeNull()
+    expect(cause).toContain('could not be executed')
+  })
+
+  it('is registered exactly once in the rule table', () => {
+    expect(
+      errorClassRules.filter((r) => r.errorClass === 'provider-binary-missing'),
+    ).toHaveLength(1)
+  })
+})
+
+describe('git-metadata-denied classification', () => {
+  // The incident: 79 consecutive coder runs failed at the commit gate with an
+  // EPERM on <repo>/.git/worktrees/<id>/index.lock, every one of them bucketed
+  // as code/unclassified — which poisoned the generic bucket and tripped the
+  // signature storm breaker.
+  const CODEX_WORDING =
+    "Git cannot create '.git/worktrees/mars-abc123/index.lock': Operation not permitted"
+
+  it('classifies the commit-gate wording', () => {
+    expect(classifyError(CODEX_WORDING)).toBe('git-metadata-denied')
+  })
+
+  it("classifies git's own fatal wording", () => {
+    expect(
+      classifyError(
+        "fatal: cannot create '.git/worktrees/mars-abc123/index.lock': Operation not permitted",
+      ),
+    ).toBe('git-metadata-denied')
+  })
+
+  it('classifies a raw EPERM report', () => {
+    expect(
+      classifyError(
+        'Error: EPERM: operation not permitted, open ".git/worktrees/x/index.lock"',
+      ),
+    ).toBe('git-metadata-denied')
+  })
+
+  it('classifies when the signal is buried below a generic lead line', () => {
+    const out = ['Command failed: git commit -m "feat: thing"', CODEX_WORDING].join('\n')
+    expect(classifyError(out)).toBe('git-metadata-denied')
+  })
+
+  it('produces a distinct signature instead of code/unclassified', () => {
+    const sig = computeFailureSignature('code:coder-exit-nonzero', CODEX_WORDING)
+    expect(sig).toBe('code:coder-exit-nonzero/git-metadata-denied')
+    expect(isUnclassifiedSignature(sig)).toBe(false)
+  })
+
+  it('does NOT swallow ordinary stale-lock contention', () => {
+    expect(
+      classifyError(
+        [
+          'Command failed: git checkout main',
+          "fatal: Unable to create '.git/index.lock': File exists.",
+        ].join('\n'),
+      ),
+    ).toBe('index-lock-contention')
+  })
+
+  it('carries an operator-facing cause sentence', () => {
+    const cause = causeForSignature(
+      'code:coder-exit-nonzero/git-metadata-denied',
+      'mars-abc123',
+    )
+    expect(cause).not.toBeNull()
+    expect(cause).toContain('.git/worktrees')
+  })
+
+  it('is registered exactly once in the rule table', () => {
+    expect(errorClassRules.filter((r) => r.errorClass === 'git-metadata-denied')).toHaveLength(
+      1,
+    )
   })
 })
