@@ -9,9 +9,10 @@
  */
 
 import type { DbClient } from '../../lib/db.js'
+import { isProposalSource, type ProposalSource } from '../../proposals'
 
 export type Cluster = 'Queued' | 'In progress' | 'Blocked' | 'Failed' | 'Done'
-export type ProposalSource = 'reflection' | 'human' | 'planner'
+export type { ProposalSource } from '../../proposals'
 
 /**
  * Cheap aggregate counts for the Progress-tab header.
@@ -174,10 +175,8 @@ const parseJsonArray = (raw: string | null): string[] => {
   }
 }
 
-const normaliseSource = (raw: unknown): ProposalSource => {
-  if (raw === 'reflection' || raw === 'planner' || raw === 'human') return raw
-  return 'human'
-}
+const normaliseSource = (raw: unknown): ProposalSource =>
+  isProposalSource(raw) ? raw : 'human'
 
 /**
  * Build the Progress view payload: tasks in scope with their cluster tag,

@@ -78,10 +78,24 @@ export interface DeepReflectionResult {
 const TOOL_RESULT_HEAD_CHARS = 400
 /** Max chars to keep at the tail of each tool_result body. */
 const TOOL_RESULT_TAIL_CHARS = 200
-/** Max bytes for each task's serialized conversation after tool_result truncation. */
+/**
+ * Hard ceiling for a SINGLE task's serialized conversation, applied on top of
+ * the shared per-task budget. Even when an arc has one task and the whole
+ * prompt cap is available, no transcript may claim more than this.
+ */
 const TASK_CONVERSATION_CAP_BYTES = 150 * 1024
 /** Max bytes for the total assembled prompt sent to the analyst. */
 const TOTAL_PROMPT_CAP_BYTES = 400 * 1024
+/** Max chars of a task's prompt embedded in its metadata block. */
+const TASK_PROMPT_CAP_CHARS = 4_000
+/** Max chars of a task's error string embedded in its metadata block. */
+const TASK_ERROR_CAP_CHARS = 2_000
+/** Max chars of raw verify output embedded per task. */
+const VERIFY_OUTPUT_CAP_CHARS = 8_000
+/** Max chars of a single transcript note embedded per task. */
+const TRANSCRIPT_NOTE_CAP_CHARS = 500
+/** Bytes held back from the block budget for the whole-block-drop notice. */
+const DROP_NOTE_RESERVE_BYTES = 512
 
 const SYNTHESIS_INSTRUCTIONS_ARC = `You are an expert post-mortem analyst for the Mars task orchestrator. You
 will be given the FULL claude -p conversations for EVERY task in a single
@@ -360,12 +374,79 @@ const truncateConversationToolResults = (conversation: ClaudeEvent[]): ClaudeEve
   })
 
 /**
+ * Truncate a free-text field (never a serialized JSON document) to `maxChars`,
+ * appending an explicit elision marker.
+ *
+ * Safe to apply to a string BEFORE it is embedded in a JSON document: the
+ * truncation happens on the value, and `JSON.stringify` re-escapes it, so the
+ * surrounding document stays syntactically valid.
+ */
+const truncateText = (text: string, maxChars: number): string =>
+  text.length <= maxChars
+    ? text
+    : `${text.slice(0, maxChars)}\n…[${text.length - maxChars} chars elided]…`
+
+/**
+ * Reduce an array to fit within `maxBytes` by dropping WHOLE elements from the
+ * middle — never by slicing the rendered string.
+ *
+ * A binary search finds the largest `k` such that first-k + last-k fits under
+ * `size`. Because only complete elements are ever removed, the rendering of
+ * the result is always structurally intact (valid JSON, whole blocks, …).
+ */
+const capArrayBySize = <T>(
+  items: readonly T[],
+  maxBytes: number,
+  size: (candidate: readonly T[]) => number,
+): { items: T[]; dropped: number; kept: number } => {
+  const total = items.length
+  // Binary search: lo ≤ hi ≤ floor(total/2) ensures head and tail never overlap.
+  let lo = 0
+  let hi = Math.floor(total / 2)
+
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2)
+    const candidate = [...items.slice(0, mid), ...items.slice(total - mid)]
+    if (size(candidate) <= maxBytes) {
+      lo = mid
+    } else {
+      hi = mid - 1
+    }
+  }
+
+  const keep = lo
+  const retained = keep > 0 ? [...items.slice(0, keep), ...items.slice(total - keep)] : []
+  return { items: retained, dropped: total - retained.length, kept: keep }
+}
+
+/** {@link capArrayBySize} measured by the array's serialized-JSON byte length. */
+const capArrayToJsonBytes = <T>(
+  items: readonly T[],
+  maxBytes: number,
+  indent?: number,
+): { items: T[]; dropped: number; kept: number } =>
+  capArrayBySize(items, maxBytes, (candidate) =>
+    Buffer.byteLength(JSON.stringify(candidate, null, indent), 'utf8'),
+  )
+
+/** {@link capArrayBySize} measured by the byte length of `blocks.join(sep)`. */
+const capBlocksByJoinedSize = (
+  blocks: readonly string[],
+  maxBytes: number,
+  sep: string,
+): { items: string[]; dropped: number; kept: number } =>
+  capArrayBySize(blocks, maxBytes, (candidate) =>
+    Buffer.byteLength(candidate.join(sep), 'utf8'),
+  )
+
+/**
  * Reduce a conversation array to fit within `maxBytes` of serialized JSON.
  *
  * Strategy: keep equal portions from the head and tail of the conversation.
- * A binary search finds the largest `k` such that first-k + last-k fits.
- * The middle `total - 2k` events are replaced with an elision note embedded
- * in the return value so the analyst knows what was dropped.
+ * Only whole ClaudeEvents are dropped, so `JSON.stringify` of the result is
+ * always parseable — the analyst can never be handed a half-written object.
+ * The middle events are replaced with an elision note returned alongside the
+ * events so the analyst knows what was dropped.
  *
  * Exported for unit testing.
  */
@@ -378,44 +459,46 @@ export const capConversation = (
   }
 
   const total = events.length
-  // Binary search: lo ≤ hi ≤ floor(total/2) ensures head and tail never overlap.
-  let lo = 0
-  let hi = Math.floor(total / 2)
-
-  while (lo < hi) {
-    const mid = Math.floor((lo + hi + 1) / 2)
-    const candidate = [...events.slice(0, mid), ...events.slice(total - mid)]
-    if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') <= maxBytes) {
-      lo = mid
-    } else {
-      hi = mid - 1
-    }
-  }
-
-  const keep = lo
-  const retained = keep > 0 ? [...events.slice(0, keep), ...events.slice(total - keep)] : []
-  const skipped = total - retained.length
+  const { items: retained, dropped, kept } = capArrayToJsonBytes(events, maxBytes)
 
   return {
     events: retained,
-    elisionNote: `[${skipped} of ${total} middle events elided to fit ${Math.round(maxBytes / 1024)}KB cap; first ${keep} and last ${keep} events retained]`,
+    elisionNote: `[${dropped} of ${total} middle events elided to fit ${Math.round(maxBytes / 1024)}KB cap; first ${kept} and last ${kept} events retained]`,
   }
 }
 
 /**
- * Truncate the final assembled prompt to at most `maxBytes` UTF-8 bytes.
- * When the cap triggers, a clear elision note is appended so the analyst
- * never assumes it received everything.
+ * Distribute `totalBytes` of conversation budget across tasks using max-min
+ * fair sharing: every task starts with an equal share, a task that needs less
+ * than its share hands the surplus back to the pool, and the surplus is
+ * re-divided among the tasks that are still over budget.
  *
- * The truncation point is estimated via character count (UTF-8 chars ≈ bytes
- * for ASCII-dominant prompts). A 5% safety margin avoids off-by-one on
- * multi-byte characters.
+ * This is what stops ONE pathological transcript from eating the whole prompt
+ * cap and starving the other tasks in the arc — it can never claim more than
+ * its fair share, no matter how large it is.
+ *
+ * Exported for unit testing.
  */
-const capPrompt = (prompt: string, maxBytes: number): string => {
-  if (Buffer.byteLength(prompt, 'utf8') <= maxBytes) return prompt
-  const note = `\n\n[PROMPT TRUNCATED: total size exceeded ${Math.round(maxBytes / 1024)}KB limit; remaining task conversations were elided. The mechanical digest per task above is complete and authoritative.]`
-  const targetChars = Math.floor((maxBytes - Buffer.byteLength(note, 'utf8')) * 0.95)
-  return prompt.slice(0, targetChars) + note
+export const allocateConversationBudgets = (
+  sizes: readonly number[],
+  totalBytes: number,
+): number[] => {
+  const budgets = new Array<number>(sizes.length).fill(0)
+  // Smallest transcripts first: they under-spend their share, and the leftover
+  // rolls forward to the larger ones.
+  const order = sizes.map((_, i) => i).sort((a, b) => sizes[a] - sizes[b])
+  let pool = Math.max(0, totalBytes)
+  let remaining = order.length
+  for (const i of order) {
+    const share = Math.max(
+      0,
+      Math.min(TASK_CONVERSATION_CAP_BYTES, Math.floor(pool / remaining)),
+    )
+    budgets[i] = share
+    pool -= Math.min(sizes[i], share)
+    remaining -= 1
+  }
+  return budgets
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -448,54 +531,44 @@ export const buildArcPrompt = (arc: DeepReflectArc): string => {
   }
   const headJson = JSON.stringify(head, null, 2)
 
-  const taskBlocks = arc.tasks
-    .map((t, idx) => {
-      const taskDigest = arcDigest.tasks[idx]
+  // 2. Build each task's "shell" — everything in the block except the
+  //    conversation JSON. Every free-text field is truncated as a STRING
+  //    before serialization, so the embedded JSON documents stay valid.
+  const shells = arc.tasks.map((t, idx) => {
+    const taskDigest = arcDigest.tasks[idx]
 
-      const meta = {
-        taskId: t.taskId,
-        status: t.status,
-        kind: t.kind,
-        fixForTaskId: t.fixForTaskId,
-        prompt: t.prompt,
-        error: t.error,
-        createdAt: t.createdAt,
-        updatedAt: t.updatedAt,
-        totals: t.totals,
-        signals: t.signals,
-        // Post-merge Scorer results (record-only quality signal, PRD
-        // 6cf85bc9) — lets arc reflection cite a quality trend as evidence.
-        scorerResults: t.scorerResults,
-        toolCallCounts: t.toolCallCounts,
-      }
-      const metaJson = JSON.stringify(meta, null, 2)
+    const meta = {
+      taskId: t.taskId,
+      status: t.status,
+      kind: t.kind,
+      fixForTaskId: t.fixForTaskId,
+      prompt: truncateText(t.prompt, TASK_PROMPT_CAP_CHARS),
+      error: t.error === null ? null : truncateText(t.error, TASK_ERROR_CAP_CHARS),
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+      totals: t.totals,
+      signals: t.signals,
+      // Post-merge Scorer results (record-only quality signal, PRD
+      // 6cf85bc9) — lets arc reflection cite a quality trend as evidence.
+      scorerResults: t.scorerResults,
+      toolCallCounts: t.toolCallCounts,
+    }
+    const metaJson = JSON.stringify(meta, null, 2)
 
-      // 2a. Truncate tool_result bodies to head+tail to reduce raw size.
-      const truncatedConvo = truncateConversationToolResults(t.conversation)
-
-      // 2b. Cap per-task conversation at TASK_CONVERSATION_CAP_BYTES.
-      const { events: cappedConvo, elisionNote } = capConversation(
-        truncatedConvo,
-        TASK_CONVERSATION_CAP_BYTES,
-      )
-      const conversationJson = JSON.stringify(cappedConvo)
-
-      const capNote = elisionNote
-        ? `\n\nConversation cap note for ${t.taskId}: ${elisionNote}`
+    const verifyBlock = t.verifyOutput
+      ? `\n\nVerify output (raw) for ${t.taskId}:\n\`\`\`\n${truncateText(t.verifyOutput, VERIFY_OUTPUT_CAP_CHARS)}\n\`\`\``
+      : `\n\n(verify output for ${t.taskId}: none recorded)`
+    const transcriptNotes =
+      t.transcriptNotes.length > 0
+        ? `\n\nTranscript notes for ${t.taskId}:\n${t.transcriptNotes
+            .map((n) => `- ${truncateText(n, TRANSCRIPT_NOTE_CAP_CHARS)}`)
+            .join('\n')}`
         : ''
+    const transcriptNote = t.hasTranscript
+      ? ''
+      : `\n\n(no on-disk JSONL transcript resolved for ${t.taskId}; conversation array is empty)`
 
-      const verifyBlock = t.verifyOutput
-        ? `\n\nVerify output (raw) for ${t.taskId}:\n\`\`\`\n${t.verifyOutput}\n\`\`\``
-        : `\n\n(verify output for ${t.taskId}: none recorded)`
-      const transcriptNotes =
-        t.transcriptNotes.length > 0
-          ? `\n\nTranscript notes for ${t.taskId}:\n${t.transcriptNotes.map((n) => `- ${n}`).join('\n')}`
-          : ''
-      const transcriptNote = t.hasTranscript
-        ? ''
-        : `\n\n(no on-disk JSONL transcript resolved for ${t.taskId}; conversation array is empty)`
-
-      return `── Task ${idx + 1} of ${arc.taskCount}: ${t.taskId} ──
+    const header = `── Task ${idx + 1} of ${arc.taskCount}: ${t.taskId} ──
 
 Task metadata:
 ${metaJson}
@@ -504,9 +577,14 @@ Mechanical digest (LLM-free) for ${t.taskId}:
 ${JSON.stringify(taskDigest)}
 
 Conversation for ${t.taskId} (ClaudeEvent[] JSON; index into this array for eventIndex):
-${conversationJson}${capNote}${verifyBlock}${transcriptNotes}${transcriptNote}`
-    })
-    .join('\n\n')
+`
+    const tail = `${verifyBlock}${transcriptNotes}${transcriptNote}`
+
+    // 2a. Truncate tool_result bodies to head+tail to reduce raw size.
+    const truncatedConvo = truncateConversationToolResults(t.conversation)
+
+    return { task: t, header, tail, truncatedConvo }
+  })
 
   // 3. Build the step timeline section interleaved with tool_invoked errors.
   //    Spans use [S<n>] labels; tool errors use [T<n>] labels. Both are sorted
@@ -553,17 +631,71 @@ ${conversationJson}${capNote}${verifyBlock}${transcriptNotes}${transcriptNote}`
       ? `Step timeline (${arc.stepTimeline.length} span(s), ${arc.toolInvokedErrors.length} tool error(s), started_at order):\n${timelineLines.join('\n')}`
       : 'Step timeline: (no step spans or tool errors recorded for this arc)'
 
-  // 4. Assemble the full prompt and apply the total size cap.
-  const fullPrompt = `${SYNTHESIS_INSTRUCTIONS_ARC}
+  // 4. Assemble the prompt within the total size cap.
+  //
+  //    The cap is enforced STRUCTURALLY, never by slicing the assembled
+  //    string: the prompt embeds one serialized ClaudeEvent[] per task, and a
+  //    byte-offset cut lands inside that blob and hands the analyst invalid
+  //    JSON. Instead the budget is spent on whole conversation events, and —
+  //    as a last resort — whole task blocks.
+  const preamble = `${SYNTHESIS_INSTRUCTIONS_ARC}
 
 Arc metadata:
 ${headJson}
 
 ${timelineSection}
 
-${taskBlocks}`
+`
+  const fixedBytes =
+    Buffer.byteLength(preamble, 'utf8') +
+    shells.reduce(
+      // +2 for the '\n\n' separator that joins the blocks.
+      (sum, s) => sum + Buffer.byteLength(`${s.header}${s.tail}`, 'utf8') + 2,
+      0,
+    )
 
-  return capPrompt(fullPrompt, TOTAL_PROMPT_CAP_BYTES)
+  // Per-task conversation budget: max-min fair sharing of whatever the fixed
+  // sections leave behind, so one pathological transcript cannot starve the
+  // rest of the arc.
+  const conversationSizes = shells.map((s) =>
+    Buffer.byteLength(JSON.stringify(s.truncatedConvo), 'utf8'),
+  )
+  const budgets = allocateConversationBudgets(
+    conversationSizes,
+    TOTAL_PROMPT_CAP_BYTES - fixedBytes,
+  )
+
+  const taskBlockList = shells.map((s, idx) => {
+    const { events: cappedConvo, elisionNote } = capConversation(
+      s.truncatedConvo,
+      budgets[idx],
+    )
+    const capNote = elisionNote
+      ? `\n\nConversation cap note for ${s.task.taskId}: ${elisionNote}`
+      : ''
+    return `${s.header}${JSON.stringify(cappedConvo)}${capNote}${s.tail}`
+  })
+
+  // Safety net: when the fixed sections alone blow the cap (a very wide arc,
+  // or huge metadata), drop WHOLE task blocks from the middle rather than
+  // cutting one in half.
+  const budgetForBlocks = TOTAL_PROMPT_CAP_BYTES - Buffer.byteLength(preamble, 'utf8')
+  const joined = taskBlockList.join('\n\n')
+  if (Buffer.byteLength(joined, 'utf8') <= budgetForBlocks) {
+    return `${preamble}${joined}`
+  }
+
+  const total = taskBlockList.length
+  // Reserve room for the drop note itself so appending it cannot re-breach the cap.
+  const { items: keptBlocks } = capBlocksByJoinedSize(
+    taskBlockList,
+    budgetForBlocks - DROP_NOTE_RESERVE_BYTES,
+    '\n\n',
+  )
+  const dropNote = `\n\n[PROMPT CAP: ${total - keptBlocks.length} of ${total} task block(s) dropped WHOLE to fit the ${Math.round(
+    TOTAL_PROMPT_CAP_BYTES / 1024,
+  )}KB limit; no conversation was cut mid-document. The arc metadata and the mechanical digest for the retained tasks are complete and authoritative.]`
+  return `${preamble}${keptBlocks.join('\n\n')}${dropNote}`
 }
 
 const parseDissonantCalls = (raw: unknown): DissonantCall[] => {
@@ -1000,19 +1132,6 @@ export const buildSessionPrompt = (result: SessionArcsResult): string => {
     }
   })
 
-  // Group step runs by arc origin ID for readability.
-  const taskToOrigin = new Map<string, string>()
-  for (const arc of result.arcs) {
-    for (const t of arc.tasks) taskToOrigin.set(t.taskId, arc.originId)
-  }
-
-  const stepRunsByArc: Record<string, typeof result.stepRuns> = {}
-  for (const sr of result.stepRuns) {
-    const origin = taskToOrigin.get(sr.taskId) ?? sr.taskId
-    stepRunsByArc[origin] = stepRunsByArc[origin] ?? []
-    stepRunsByArc[origin].push(sr)
-  }
-
   const sessionMeta = {
     sessionId: result.sessionId,
     arcCount: result.arcs.length,
@@ -1026,29 +1145,67 @@ export const buildSessionPrompt = (result: SessionArcsResult): string => {
     ),
   }
 
-  const arcsJson = JSON.stringify(arcsSummary, null, 2)
-  const stepRunsJson = JSON.stringify(stepRunsByArc, null, 2)
   const sessionMetaJson = JSON.stringify(sessionMeta, null, 2)
 
-  const fullPrompt = `${SYNTHESIS_INSTRUCTIONS_SESSION}
+  // Group step runs by arc origin ID for readability.
+  const taskToOrigin = new Map<string, string>()
+  for (const arc of result.arcs) {
+    for (const t of arc.tasks) taskToOrigin.set(t.taskId, arc.originId)
+  }
+  const groupStepRuns = (
+    runs: readonly SessionArcsResult['stepRuns'][number][],
+  ): Record<string, SessionArcsResult['stepRuns'][number][]> => {
+    const byArc: Record<string, SessionArcsResult['stepRuns'][number][]> = {}
+    for (const sr of runs) {
+      const origin = taskToOrigin.get(sr.taskId) ?? sr.taskId
+      byArc[origin] = byArc[origin] ?? []
+      byArc[origin].push(sr)
+    }
+    return byArc
+  }
+
+  const render = (
+    arcs: typeof arcsSummary,
+    stepRuns: readonly SessionArcsResult['stepRuns'][number][],
+    elisionNote: string,
+  ): string => `${SYNTHESIS_INSTRUCTIONS_SESSION}
 
 Session metadata:
 ${sessionMetaJson}
 
-Arc summaries (${result.arcs.length} arc(s)):
-${arcsJson}
+Arc summaries (${arcs.length} of ${arcsSummary.length} arc(s)):
+${JSON.stringify(arcs, null, 2)}
 
 Workflow step records by arc (workflow_step_runs — retry counts, durations, errors):
-${stepRunsJson}`
+${JSON.stringify(groupStepRuns(stepRuns), null, 2)}${elisionNote}`
 
-  // Apply total size cap.
-  if (Buffer.byteLength(fullPrompt, 'utf8') <= SESSION_PROMPT_CAP_BYTES) {
-    return fullPrompt
-  }
-  const capBytes = SESSION_PROMPT_CAP_BYTES
-  const encoded = Buffer.from(fullPrompt, 'utf8')
-  const truncated = encoded.subarray(0, capBytes).toString('utf8')
-  return truncated + `\n…[prompt truncated at ${capBytes} bytes]`
+  const full = render(arcsSummary, result.stepRuns, '')
+  if (Buffer.byteLength(full, 'utf8') <= SESSION_PROMPT_CAP_BYTES) return full
+
+  // Over cap: reduce STRUCTURALLY — drop whole arcs and whole step-run records
+  // from the middle — never by slicing the serialized JSON, which would hand
+  // the analyst a syntactically invalid document.
+  const fixedBytes = Buffer.byteLength(render([], [], ''), 'utf8') + DROP_NOTE_RESERVE_BYTES
+  const available = Math.max(0, SESSION_PROMPT_CAP_BYTES - fixedBytes)
+  const { items: keptArcs } = capArrayToJsonBytes(
+    arcsSummary,
+    Math.floor(available * 0.6),
+    2,
+  )
+  const keptOrigins = new Set(keptArcs.map((a) => a.originId))
+  const relevantRuns = result.stepRuns.filter(
+    (sr) => keptOrigins.has(taskToOrigin.get(sr.taskId) ?? sr.taskId),
+  )
+  const { items: keptRuns } = capArrayToJsonBytes(
+    relevantRuns,
+    Math.floor(available * 0.4),
+    2,
+  )
+
+  const note = `\n\n[PROMPT CAP: ${arcsSummary.length - keptArcs.length} of ${arcsSummary.length} arc summaries and ${result.stepRuns.length - keptRuns.length} of ${result.stepRuns.length} step records were dropped WHOLE to fit the ${Math.round(
+    SESSION_PROMPT_CAP_BYTES / 1024,
+  )}KB limit; every JSON document above is complete. Do NOT assume you saw the full session.]`
+  return render(keptArcs, keptRuns, note)
 }
 
 /**

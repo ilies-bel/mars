@@ -226,9 +226,13 @@ function parseVerdict(text: string): ArcVerificationVerdict {
 }
 
 /**
- * Emit a Reflector draft proposal (source: 'reflection') describing a missing
- * arc E2E environment, deduped by `fingerprint` via the `kpi_tag` column.
+ * Emit a draft proposal (source: 'arc-verifier') describing a missing arc E2E
+ * environment, deduped by `fingerprint` via the `kpi_tag` column.
  * Best-effort: errors are swallowed so a DB hiccup never fails the arc.
+ *
+ * The source is `arc-verifier`, NOT `reflection`: these rows come from arc
+ * verification, not from the reflector, and sharing one value made it
+ * impossible to tell from the data which subsystem wrote a proposal.
  *
  * Called when no live E2E environment is available for this arc.
  */
@@ -242,7 +246,7 @@ async function emitArcE2eProposalIfNew(
   const existing = await findOpenDraftByKpiTag(fingerprint).catch(() => null)
   if (existing !== null) return
   await createProposal(`Set up E2E environment for arc ${originId}`, {
-    source: 'reflection',
+    source: 'arc-verifier',
     author: { kind: 'agent', name: 'arc-verifier' },
     problem,
     solution,

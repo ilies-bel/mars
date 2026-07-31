@@ -43,7 +43,7 @@ import {
 import { buildSessionsView } from './daemon/view/sessions'
 import { listTerminalEvents } from './daemon/view/terminal-events'
 import { listReleaseNotes } from './daemon/view/release-notes'
-import { getProposal } from './proposals'
+import { getProposal, isProposalSource } from './proposals'
 import { MARS_VERSION } from '../version'
 import { classifyInstallRoute } from './daemon/install-route'
 import { listAlerts, showAlert, type Alert, type AlertSources } from './lib/alert'
@@ -1091,8 +1091,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       for (const row of r.rows) {
         const r0 = row as unknown as Record<string, unknown>
         const src = r0.source
-        const source: DraftFeature['source'] =
-          src === 'reflection' || src === 'planner' || src === 'human' ? src : 'human'
+        const source: DraftFeature['source'] = isProposalSource(src) ? src : 'human'
         drafts.push({
           id: r0.id as string,
           title: (r0.title as string | null) ?? '',

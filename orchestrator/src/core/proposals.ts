@@ -6,7 +6,26 @@ import { withTransaction, type DbClient } from './lib/db.js'
 import { ensureSchema } from './lib/pg-schema.js'
 import type { EventName, EventPayload } from '../bus/events.js'
 
-export type ProposalSource = 'reflection' | 'human' | 'planner' | 'skill-forge' | 'failure-reflector'
+/**
+ * Which subsystem produced a proposal. One value per producer — `source` is
+ * the only column that answers "who wrote this row", so two subsystems sharing
+ * a value makes the field useless for exactly the question it exists to answer.
+ *
+ * - `reflection`        — the reflector (`mars reflect`, `mars arc reflect`,
+ *                         and the reflection-family auto-triggers).
+ * - `arc-verifier`      — the arc-outcome verifier (`core/lib/arc-verifier.ts`).
+ * - `failure-reflector` — the per-failure reflector.
+ * - `skill-forge`       — the skill forge.
+ * - `planner`           — the planner.
+ * - `human`             — an operator, via the CLI or UI.
+ */
+export type ProposalSource =
+  | 'reflection'
+  | 'arc-verifier'
+  | 'human'
+  | 'planner'
+  | 'skill-forge'
+  | 'failure-reflector'
 
 export interface Proposal {
   id: string
@@ -88,28 +107,30 @@ export const generateProposalId = (title: string): string => {
   return `${prefix}-${slugify(title)}`
 }
 
-const VALID_SOURCES: readonly ProposalSource[] = [
+export const VALID_SOURCES: readonly ProposalSource[] = [
   'reflection',
+  'arc-verifier',
   'human',
   'planner',
   'skill-forge',
   'failure-reflector',
 ]
 
-const isValidSource = (raw: unknown): raw is ProposalSource =>
-  raw === 'reflection' ||
-  raw === 'planner' ||
-  raw === 'human' ||
-  raw === 'skill-forge' ||
-  raw === 'failure-reflector'
+/**
+ * Type guard over the canonical producer list. Exported so every reader
+ * narrows against the SAME set — a reader that hardcodes a subset silently
+ * rewrites unknown producers to 'human' and loses the provenance.
+ */
+export const isProposalSource = (raw: unknown): raw is ProposalSource =>
+  typeof raw === 'string' && (VALID_SOURCES as readonly string[]).includes(raw)
 
 const normaliseSource = (raw: unknown): ProposalSource => {
-  if (isValidSource(raw)) return raw
+  if (isProposalSource(raw)) return raw
   return 'human'
 }
 
 const assertValidSource = (raw: unknown): ProposalSource => {
-  if (isValidSource(raw)) return raw
+  if (isProposalSource(raw)) return raw
   throw new Error(
     `invalid proposal source '${String(raw)}'; expected one of ${VALID_SOURCES.join(', ')}`,
   )

@@ -21,6 +21,7 @@ import type { RestartTaskError } from './restart-task'
 import { SelfUpdateError, SELF_UPDATE_ERRORS } from './self-update'
 import type { ViewStreamHub } from './view/stream-hub'
 import type { LoadCorpusOptions } from '../lib/reflect-query'
+import type { ProposalSource } from '../proposals'
 import type { AppServices } from '../app-services'
 import {
   getSetting,
@@ -281,7 +282,7 @@ export interface DraftFeature {
   problem: string
   solution: string
   status: string
-  source: 'reflection' | 'human' | 'planner'
+  source: ProposalSource
   createdAt: number
   updatedAt: number
   acceptanceCount: number
