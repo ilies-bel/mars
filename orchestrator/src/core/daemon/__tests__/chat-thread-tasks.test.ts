@@ -1,32 +1,47 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { resolve } from 'node:path'
 
-import { openDb, type DbClient } from '../../lib/db.js'
-import { linkTaskToThread, listTasksForThread } from '../chat-thread-tasks.js'
+const setupRepo = (): string => {
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-chat-thread-tasks-'))
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  return repo
+}
 
 describe('chat thread task links', () => {
-  let tempDir: string
-  let client: DbClient
+  let repo: string
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), 'mars-chat-thread-tasks-'))
-    client = openDb(join(tempDir, 'state'))
+    repo = setupRepo()
   })
 
   afterEach(async () => {
-    await client.close()
-    rmSync(tempDir, { recursive: true, force: true })
+    delete process.env.MARS_REPO
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
   })
 
-  it('keeps the two tasks created from a thread in creation order', async () => {
-    await linkTaskToThread('thread-17', 'mars-11111111', client)
-    await linkTaskToThread('thread-17', 'mars-22222222', client)
+  it('lists the two tasks created from a chat thread in creation order', async () => {
+    process.env.MARS_REPO = repo
+    const queue = await import('../../queue.js')
+    const { listTasksForThread } = await import('../chat-thread-tasks.js')
+    await queue.migrateQueueSchema()
 
-    expect((await listTasksForThread('thread-17', client)).map(({ taskId }) => taskId)).toEqual([
-      'mars-11111111',
-      'mars-22222222',
+    const first = await queue.enqueueTask('First request from the operator.', undefined, {
+      skipTriage: true,
+      chatThreadId: 'thread-17',
+    })
+    const second = await queue.enqueueTask('Second request from the operator.', undefined, {
+      skipTriage: true,
+      chatThreadId: 'thread-17',
+    })
+
+    expect((await listTasksForThread('thread-17', queue.resolveQueueClient())).map(({ taskId }) => taskId)).toEqual([
+      first.id,
+      second.id,
     ])
   })
 })
