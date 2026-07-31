@@ -45,6 +45,7 @@ import {
   assembleDelta,
   clampWywaDeltaLimit,
 } from './view/wywa-delta'
+import { listStewardLedgerSince } from '../steward-ledger'
 import type { ChatRunner, AttachmentInfo } from './chat-runner'
 import type { ChatStreamHub, SeqChunk } from './chat-stream-hub'
 import { getRepoRoot } from '../context'
@@ -1450,9 +1451,10 @@ export const startHttpServer = async (
     }
 
     // GET /view/wywa-delta?since=<ISO>&limit=<n> — unified "while you were away"
-    // delta assembled from five existing stores: merged arcs (release notes),
+    // delta assembled from six existing stores: merged arcs (release notes),
     // recovery_spawned trace events, auto-recipe runs, throttled chat threads, and
-    // evaporated chat threads. Newest-first, capped at `limit` (default 30, max 100)
+    // evaporated chat threads, and Steward interventions. Newest-first, capped at
+    // `limit` (default 30, max 100)
     // with `andMore` count. Pure read; no draining gate.
     if (req.method === 'GET' && req.url && req.url.startsWith('/view/wywa-delta')) {
       const parsedUrl = new URL(req.url, 'http://localhost')
@@ -1474,8 +1476,9 @@ export const startHttpServer = async (
         import('../lib/chat-store.js').then((m) =>
           Promise.all([m.listEvaporatedThreads(), m.listThreads()]),
         ),
+        listStewardLedgerSince(since ?? '0001-01-01T00:00:00.000Z'),
       ])
-        .then(([releaseNotes, recoveryEvents, autoRuns, [evaporatedRaw, allThreads]]) => {
+        .then(([releaseNotes, recoveryEvents, autoRuns, [evaporatedRaw, allThreads], stewardLedger]) => {
           const throttledThreads = allThreads
             .filter((t) => t.status === 'throttled')
             .map((t) => ({ id: t.id, updatedAt: t.updated_at }))
@@ -1494,6 +1497,7 @@ export const startHttpServer = async (
             autoRuns,
             throttledThreads,
             evaporatedThreads,
+            stewardLedger,
             since,
             limit,
           })
