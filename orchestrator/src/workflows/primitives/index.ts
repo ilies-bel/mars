@@ -50,6 +50,7 @@ import {
   ResumeWorktreeUnrecoverable,
   syncWorktreeToIntegration,
   WorktreeRebaseConflictError,
+  type WorktreeConflictPolicy,
   type WorktreeRef,
 } from '../../core/lib/git/worktree'
 import {
@@ -432,8 +433,8 @@ export const spanStore = (trace: PrimitiveTraceArgs): TraceEventStore | undefine
 // ---------------------------------------------------------------------------
 
 /**
- * Bring a task's worktree up to date with the integration branch, escalating a
- * conflict to the operator instead of proceeding on stale code.
+ * Bring a task's worktree up to date with the integration branch before
+ * anything runs inside it.
  *
  * THE DEFECT THIS CLOSES. `mars restart` deliberately preserves `task/<id>`
  * whenever the branch carries unmerged commits (deleting it would destroy the
@@ -453,27 +454,49 @@ export const spanStore = (trace: PrimitiveTraceArgs): TraceEventStore | undefine
  *     checkpoint-resume (`mars continue`, a watchdog retry), where the completed
  *     `setup` step short-circuits entirely.
  *
- * On conflict the rebase has already been aborted and any uncommitted work
- * restored (see `syncWorktreeToIntegration`), so nothing is lost and the
- * worktree is never half-rebased. The task is failed with a NAMED,
- * `orchestration`-classified signature so the single recovery slot is not burnt
- * on a code fixer that cannot see a git conflict, and an operator item is
- * raised naming the branch, the integration branch and the checkpoint ref.
+ * CONFLICT POLICY — and why it is keyed on the dispatch path, not on how
+ * valuable the commits look. I cannot tell "genuinely valuable unique commits"
+ * from "superseded auto-commits" safely: a `chore(auto-commit)` subject is only
+ * evidence about WHO committed (the orchestrator rescuing a coder's edits), not
+ * about whether the diff matters, and judging that needs intent the git
+ * metadata does not carry. So the rule is blunt and derived from what each
+ * dispatch path has already promised:
+ *
+ *   - the task carves its OWN branch at setup → `'recreate'`. `mars restart`
+ *     already means "run this from scratch": it deletes the run journal, nulls
+ *     `branch`/`worktreePath`, and keeps `task/<id>` purely as an archive.
+ *     Parking the tip on `refs/mars/parked/<id>-<sha>` honours that archive
+ *     obligation without dragging a superseded partial turn forward.
+ *   - a recovery attached to its ORIGIN's worktree, a main-commiter worktree
+ *     carrying migrated dirty state, or a checkpoint-resume → `'escalate'`.
+ *     In all three the existing commits ARE the premise of the run, so the
+ *     task is failed with a NAMED, `orchestration`-classified signature (the
+ *     single recovery slot is not burnt on a code fixer that cannot see a git
+ *     conflict) and an operator item is raised.
+ *
+ * `'recreate'` is a SUCCESS path: it records no failure signature, so a fleet
+ * of stale branches cannot trip the signature-storm breaker and pause dispatch.
+ * It is also idempotent — afterwards the branch IS the integration tip, so a
+ * repeat pass short-circuits at `already-current`. Both properties matter: 24
+ * of the ~65 active tasks currently carry a divergent branch and will be
+ * restarted together.
  */
 const ensureWorktreeCurrent = async (args: {
   taskId: string
   ref: WorktreeRef
   integrationBranch: string
   phase: 'setup' | 'code'
+  onConflict: WorktreeConflictPolicy
   traceCtx?: TraceCtx
   store: TaskStore
 }): Promise<void> => {
-  const { taskId, ref, integrationBranch, phase, store } = args
+  const { taskId, ref, integrationBranch, phase, onConflict, store } = args
   try {
     const outcome = await syncWorktreeToIntegration({
       taskId,
       ref,
       integrationBranch,
+      onConflict,
       traceCtx: args.traceCtx,
     })
     if (outcome.kind === 'rebased') {
@@ -485,6 +508,9 @@ const ensureWorktreeCurrent = async (args: {
             : `; uncommitted work parked on ${outcome.checkpointRef} and restored`),
       )
     }
+    // `recreated` is logged (loudly, with the parked ref and the recovery
+    // command) by syncWorktreeToIntegration itself, and is deliberately NOT a
+    // failure: no status write, no signature, no action-queue row.
   } catch (err) {
     if (!(err instanceof WorktreeRebaseConflictError)) throw err
     const reason = `${phase}:worktree-rebase-conflict`
@@ -802,11 +828,19 @@ export const setupWorktree = async (
       // restarted task ended up verifying against source dozens of commits
       // behind the integration branch. Replay it onto the tip BEFORE deps are
       // installed, so the install below reads the current manifests.
+      //
+      // Only a task that carves its OWN branch may recreate on conflict. A
+      // recovery attached to its origin's worktree exists to continue THAT
+      // work in place, and a main-commiter worktree carries the integration
+      // checkout's migrated dirty state — resetting either onto the tip would
+      // destroy the premise of the run, so both escalate instead.
       await ensureWorktreeCurrent({
         taskId,
         ref,
         integrationBranch,
         phase: 'setup',
+        onConflict:
+          attachesToOrigin || isMainCommiterFix ? 'escalate' : 'recreate',
         traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
         store,
       })
@@ -1098,11 +1132,17 @@ export const runAgent = async (
   // the only hook guaranteed to run before the coder on `mars continue` / a
   // watchdog retry. It is a single `merge-base --is-ancestor` probe when setup
   // already synced and the integration branch has not advanced since.
+  //
+  // `escalate`, never `recreate`: by the time the code step runs, the branch's
+  // commits are the run's own prior progress — `resumeFromCodePhase` literally
+  // tells the coder "prior progress is already in this worktree, review
+  // `git log -p` and continue". Resetting it here would silently gut that.
   await ensureWorktreeCurrent({
     taskId,
     ref: { path: worktreePath, branch },
     integrationBranch,
     phase: 'code',
+    onConflict: 'escalate',
     traceCtx: buildPhaseCtx(trace, taskId, 'code'),
     store,
   })

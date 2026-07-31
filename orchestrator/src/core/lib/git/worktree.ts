@@ -518,6 +518,59 @@ export class WorktreeRebaseConflictError extends Error {
   }
 }
 
+/**
+ * Ref namespace holding the pre-recreate tip of a task branch that could not be
+ * replayed onto the integration tip. Like `refs/mars/checkpoint`, and unlike
+ * `refs/stash`, it is per-task, addressed by name, and never a stack — so no
+ * task can consume another's parked history.
+ */
+export const PARKED_REF_PREFIX = 'refs/mars/parked'
+
+/**
+ * Ref for a parked branch tip: `refs/mars/parked/<taskId>-<shortSha>`.
+ *
+ * The sha is part of the name so a task that is recreated more than once parks
+ * each tip under its own ref instead of clobbering the previous one. Flat (not
+ * nested under a per-task directory) so `<taskId>` and `<taskId>/<sha>` can
+ * never collide as a git D/F conflict.
+ */
+export const parkedRefFor = (taskId: string, sha: string): string => {
+  const safe = taskId
+    .replace(/[^A-Za-z0-9._-]/g, '-')
+    .replace(/^\.+/, '')
+    .replace(/\.lock$/i, '-lock')
+  if (safe.length === 0) throw new Error(`parked key '${taskId}' has no usable characters`)
+  return `${PARKED_REF_PREFIX}/${safe}-${sha.slice(0, 9)}`
+}
+
+export interface ParkedCommit {
+  shortSha: string
+  subject: string
+}
+
+/**
+ * What to do when replaying the task branch onto the integration tip conflicts.
+ *
+ * `'escalate'` — abort, restore the tree exactly as found, throw
+ * {@link WorktreeRebaseConflictError}. Correct wherever the branch's existing
+ * commits ARE the premise of the run: a recovery (`kind:'fix'`) attached to its
+ * origin's worktree to continue that work in place, a main-commiter worktree
+ * carrying the integration checkout's migrated dirty state, or a
+ * checkpoint-resume whose prompt tells the coder "prior progress is already in
+ * this worktree". Recreating under any of those silently guts the premise.
+ *
+ * `'recreate'` — park the old tip on `refs/mars/parked/<id>-<sha>` and reset the
+ * branch onto the integration tip, so the coder redoes the work against current
+ * source. Correct on the setup path for a task that carves its OWN branch,
+ * because that is what `mars restart` already means: it deletes the run journal
+ * so the pipeline starts at step 0, nulls `branch`/`worktreePath`, and keeps
+ * `task/<id>` only as an ARCHIVE (its own action-queue copy says "preserved to
+ * avoid losing committed work … cherry-pick or purge"). Reusing that archive as
+ * the live work branch was the original defect; parking it on a ref honours the
+ * archive obligation without dragging superseded commits forward.
+ */
+export type WorktreeConflictPolicy = 'escalate' | 'recreate'
+
 export type WorktreeSyncOutcome =
   | { kind: 'already-current' }
   | {
@@ -527,6 +580,19 @@ export type WorktreeSyncOutcome =
       /** Task-branch tip after the replay (contains the integration tip). */
       to: string
       /** Checkpoint ref the uncommitted work was parked on, or null. */
+      checkpointRef: string | null
+    }
+  | {
+      kind: 'recreated'
+      /** Task-branch tip before the reset — reachable forever via `parkedRef`. */
+      from: string
+      /** The integration tip the branch now points at. */
+      to: string
+      /** Ref anchoring the pre-reset tip. Never null on this outcome. */
+      parkedRef: string
+      /** The commits that were on the branch and are now only on `parkedRef`. */
+      parkedCommits: ParkedCommit[]
+      /** Checkpoint ref holding the uncommitted work, or null if the tree was clean. */
       checkpointRef: string | null
     }
 
@@ -560,26 +626,95 @@ export type WorktreeSyncOutcome =
  *     ref (NEVER `git stash` — `refs/stash` is shared by every linked worktree
  *     here and is addressed by shifting positions, so a parallel task's pop can
  *     swallow it) and only then clean the tree;
- *  4. rebase; on conflict `git rebase --abort` and restore the checkpoint, so
- *     the worktree is byte-for-byte what it was and never half-rebased;
+ *  4. rebase; on conflict `git rebase --abort` FIRST, so the worktree is never
+ *     left half-rebased, and only then apply `onConflict`;
  *  5. restore the checkpoint on the success path too.
  *
- * Committed work on `task/<id>` survives either way: a successful rebase
- * replays every commit onto the new base, and a conflict aborts back to the
- * original tip. The checkpoint ref is retained after a restore (see
- * `checkpoint.ts`) so the pre-sync state stays recoverable by name.
+ * CONFLICT. `onConflict` decides — see {@link WorktreeConflictPolicy}. Under
+ * `'escalate'` the tree is restored byte-for-byte and
+ * {@link WorktreeRebaseConflictError} is thrown. Under `'recreate'` the old tip
+ * is anchored on `refs/mars/parked/<id>-<sha>` and the branch is reset onto the
+ * integration tip; the uncommitted work stays anchored on the checkpoint ref
+ * (it is NOT re-applied onto a base it was never written against). Both are
+ * lossless — every commit and every captured file remains reachable by ref name
+ * — and neither can leave a rebase in progress.
  *
- * @throws {WorktreeRebaseConflictError} when the replay conflicts. The caller
- *   owns escalation — this repo routes conflicts to the `vcs-supervisor`, and a
- *   conflict here is an operator-owned condition, not a code defect.
+ * WHY `'recreate'` MUST NOT FAIL THE TASK. Measured on the live repo, 24 of the
+ * ~65 active tasks carry a divergent branch, every one of them `ahead` 1-2 and
+ * `behind` up to 335. That is the normal population, not an edge case: three
+ * consecutive conflicts trip the signature-storm breaker
+ * (`SIGNATURE_STORM_TRIP_THRESHOLD`) and PAUSE ALL DISPATCH, which is strictly
+ * worse for the operator than the stale-code bug this module fixes. `'recreate'`
+ * is a SUCCESS path — it records no failure signature, so it cannot storm — and
+ * it is idempotent: afterwards the branch IS the integration tip, so a second
+ * pass short-circuits at `already-current`.
+ *
+ * @throws {WorktreeRebaseConflictError} when the replay conflicts and
+ *   `onConflict` is `'escalate'`.
  */
+/**
+ * True when `cwd` has a rebase in progress (`rebase-merge/` or `rebase-apply/`
+ * under the worktree's git dir). Mirrors the identical probe in `merge.ts`.
+ */
+const isRebaseInProgress = async (
+  git: string,
+  cwd: string,
+  ctx: TraceCtx | undefined,
+): Promise<boolean> => {
+  for (const which of ['rebase-merge', 'rebase-apply']) {
+    const r = await execProbe(
+      git,
+      ['rev-parse', '--git-path', which],
+      { cwd },
+      ctx,
+    ).catch(() => null)
+    if (r === null || r.exitCode !== 0) continue
+    const dir = r.stdout.trim()
+    // `--git-path` resolves relative to the worktree's git dir, but git may
+    // return a relative path — resolve it against cwd before probing.
+    if (dir.length > 0 && (await pathExists(resolve(cwd, dir)))) return true
+  }
+  return false
+}
+
+/**
+ * `<shortSha> <subject>` for every commit on HEAD that is not in `baseSha`.
+ * Best-effort: a failure here must never block the reset it merely annotates.
+ */
+const readCommitsAhead = async (
+  git: string,
+  cwd: string,
+  baseSha: string,
+  ctx: TraceCtx | undefined,
+): Promise<ParkedCommit[]> => {
+  const r = await execProbe(
+    git,
+    ['log', '--format=%h%x09%s', `${baseSha}..HEAD`],
+    { cwd },
+    ctx,
+  ).catch(() => null)
+  if (r === null || r.exitCode !== 0) return []
+  return r.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const tab = line.indexOf('\t')
+      return tab === -1
+        ? { shortSha: line, subject: '' }
+        : { shortSha: line.slice(0, tab), subject: line.slice(tab + 1) }
+    })
+}
+
 export const syncWorktreeToIntegration = async (args: {
   taskId: string
   ref: WorktreeRef
   integrationBranch: string
+  /** Conflict policy. Defaults to `'escalate'` — the caller opts into recreate. */
+  onConflict?: WorktreeConflictPolicy
   traceCtx?: TraceCtx
 }): Promise<WorktreeSyncOutcome> => {
-  const { taskId, ref, integrationBranch } = args
+  const { taskId, ref, integrationBranch, onConflict = 'escalate' } = args
   const { path, branch } = ref
   const ctx: TraceCtx | undefined = args.traceCtx
     ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'setup' }
@@ -627,9 +762,76 @@ export const syncWorktreeToIntegration = async (args: {
 
   const rebase = await execProbe(git, ['rebase', integrationSha], { cwd: path }, ctx)
   if (rebase.exitCode !== 0) {
-    // Never leave a half-rebased worktree behind: abort unconditionally, then
-    // put the parked work back so the tree is exactly what we found.
+    // Never leave a half-rebased worktree behind. This runs before the policy
+    // branch because BOTH outcomes require a settled tree.
     await execProbe(git, ['rebase', '--abort'], { cwd: path }, ctx).catch(() => {})
+
+    // Confirm the abort actually settled. `--abort` exits non-zero when no
+    // rebase was in progress (a rebase can fail before creating any state —
+    // see the same guard in mergeBranch), which is harmless. What is NOT
+    // harmless is rebase state SURVIVING the abort: `reset --hard` would then
+    // repoint the branch while leaving the worktree mid-rebase. Refuse to
+    // recreate in that case and fall through to escalate, which touches
+    // nothing.
+    const rebaseStillInProgress = await isRebaseInProgress(git, path, ctx)
+
+    if (onConflict === 'recreate' && !rebaseStillInProgress) {
+      // Read the commits we are about to move off the branch BEFORE moving it,
+      // so the log/report can name them. `%h\t%s` keeps parsing trivial.
+      const parkedCommits = await readCommitsAhead(git, path, integrationSha, ctx)
+
+      // Anchor the old tip under this task's own ref. `-m` writes a reflog
+      // entry, so `git reflog <ref>` explains where it came from months later.
+      const parkedRef = parkedRefFor(taskId, from)
+      await exec(
+        git,
+        [
+          'update-ref',
+          '-m',
+          `mars: parked ${branch} tip before recreating off ${integrationBranch}`,
+          parkedRef,
+          from,
+        ],
+        { cwd: repoRoot() },
+        ctx,
+      )
+
+      // Move the branch onto the integration tip. HEAD is on `branch`, so this
+      // repoints the branch itself; `clean -fd` drops untracked stragglers but
+      // (no `-x`) leaves ignored files like node_modules alone.
+      await exec(git, ['reset', '--hard', integrationSha], { cwd: path }, ctx)
+      await exec(git, ['clean', '-fd'], { cwd: path }, ctx)
+
+      // Deliberately NOT restoring the checkpoint: the uncommitted work was
+      // written against the old base, and re-applying it onto a tip that
+      // conflicts with the very commits it accompanied would hand the coder a
+      // mangled tree. It stays reachable on the checkpoint ref instead.
+      console.warn(
+        `[worktree-sync] task ${taskId}: ${branch} conflicts with ${integrationBranch}; ` +
+          `RECREATED off the integration tip so the coder works against current source. ` +
+          `Nothing was destroyed — ${parkedCommits.length} commit(s) parked on ${parkedRef} ` +
+          `(${from.slice(0, 9)})` +
+          (checkpoint === null
+            ? ''
+            : `, uncommitted work on ${checkpoint.ref} (${checkpoint.sha.slice(0, 9)})`) +
+          `. Inspect: git -C ${repoRoot()} log ${integrationBranch}..${parkedRef}` +
+          `. Recover: git -C ${path} cherry-pick -n ${parkedRef}; git -C ${path} cherry-pick --quit` +
+          (parkedCommits.length === 0
+            ? ''
+            : `. Parked: ${parkedCommits.map((c) => `${c.shortSha} ${c.subject}`).join(' | ').slice(0, 500)}`),
+      )
+
+      return {
+        kind: 'recreated',
+        from,
+        to: integrationSha,
+        parkedRef,
+        parkedCommits,
+        checkpointRef: checkpoint?.ref ?? null,
+      }
+    }
+
+    // 'escalate': put the parked work back so the tree is exactly what we found.
     if (checkpoint !== null) {
       await restoreCheckpoint({ cwd: path, checkpoint, traceCtx: ctx }).catch(
         (restoreErr: unknown) => {
