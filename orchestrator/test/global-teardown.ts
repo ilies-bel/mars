@@ -34,14 +34,21 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /**
- * Prefix for the per-run temp roots. Deliberately distinct from the `mars-`
- * fixture prefixes: only a run root is ever a candidate for the abandoned-root
- * sweep below, and fixtures live nested one level inside a root.
+ * Prefix for the per-run temp roots.
+ *
+ * Deliberately does NOT start with `mars-` or `usage-src-`. Those are the two
+ * prefixes the previous blanket sweep matched, and older checkouts of this repo
+ * still run that sweep — a stale worktree, a consumer install, or simply the
+ * daemon dispatching tasks off a pre-fix `main`. A root named `mars-vt-*` is a
+ * `mars-*` match born during their run, so their teardown deletes it and takes
+ * this run's entire fixture tree with it (observed: nine concurrent daemon
+ * suites wiping the root within seconds of creation). Staying outside their
+ * glob makes this run's root invisible to them.
  *
  * Kept short so the absolute paths beneath it stay well clear of the 104-byte
  * unix-socket path limit on macOS, which a `MARS_DB_BACKEND=embedded` run needs.
  */
-const RUN_ROOT_PREFIX = 'mars-vt-'
+const RUN_ROOT_PREFIX = 'vt-mars-'
 
 /** Env var carrying this run's private temp root from `setup()` to `teardown()`. */
 const RUN_ROOT_ENV = '__MARS_TEST_RUN_ROOT'
