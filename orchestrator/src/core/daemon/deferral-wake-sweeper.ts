@@ -2,6 +2,7 @@ import type { Task } from '../queue.js'
 import { getBudgetPressureConfig } from '../lib/budget-pressure.js'
 import { deleteDeferral, listDeferrals } from '../lib/deferral-store.js'
 import { shouldDeferDispatch } from '../lib/dispatch-gate.js'
+import { raiseActionQueueItem } from '../lib/action-queue.js'
 import type { UsageSnapshotRow } from '../lib/usage-snapshot-store.js'
 
 const DEFERRAL_WAKE_INTERVAL_MS = 30_000
@@ -51,6 +52,24 @@ export function startDeferralWakeSweeper(
         if (decision.defer) continue
 
         await deleteDeferral(row.taskId)
+        await raiseActionQueueItem({
+          kind: 'scheduling-decision',
+          category: 'daemon',
+          priority: 'normal',
+          title: `Woke deferred task ${row.taskId}`,
+          body: row.reason,
+          payload: {
+            taskId: row.taskId,
+            decision: 'woken',
+            reason: row.reason,
+            pressure: row.pressure,
+            targetWindowEnd: row.targetWindowEnd,
+            canRunNow: true,
+          },
+          context: {},
+          raisedBy: 'deferral-wake-sweeper',
+          signature: `${row.taskId}:woken:${row.targetWindowEnd ?? 'null'}`,
+        })
         opts.pendingImplement.add(row.taskId)
         await opts.drain()
       }

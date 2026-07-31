@@ -1,4 +1,5 @@
 import { resolveQueueClient } from '../queue.js'
+import { raiseActionQueueItem } from './action-queue.js'
 import type { BudgetPressure } from './budget-pressure.js'
 import type { DbClient } from './db.js'
 
@@ -35,6 +36,24 @@ export const upsertDeferral = async (
       row.targetWindowEnd,
       row.pressure,
     ],
+  })
+  await raiseActionQueueItem({
+    kind: 'scheduling-decision',
+    category: 'daemon',
+    priority: 'normal',
+    title: `Deferred task ${row.taskId}`,
+    body: row.reason,
+    payload: {
+      taskId: row.taskId,
+      decision: 'deferred',
+      reason: row.reason,
+      pressure: row.pressure,
+      targetWindowEnd: row.targetWindowEnd,
+      canRunNow: false,
+    },
+    context: {},
+    raisedBy: 'usage-scheduler:deferral',
+    signature: `${row.taskId}:deferred:${row.targetWindowEnd ?? 'null'}`,
   })
 }
 

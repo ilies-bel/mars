@@ -263,6 +263,10 @@ export const ACTION_QUEUE_KINDS = [
   // per transition direction (signature-keyed 'spend-control:<direction>');
   // level-triggered (ADR-0048): the row exists while the state holds.
   'spend-control-notice',
+  // A usage-aware scheduler deferred queued work or released it once provider
+  // pressure cleared. These durable rows make the dispatch decision visible in
+  // chat and the existing action-queue projections.
+  'scheduling-decision',
   // A task is approaching the requeue ceiling (elapsed >= WARN_RATIO * bound).
   // Level-triggered (ADR-0048): one row per task, signature-keyed
   // 'requeue-warning:<taskId>'; idempotent re-raises bump seen_count. The task

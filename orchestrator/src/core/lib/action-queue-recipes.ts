@@ -778,6 +778,24 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
     }),
     verbs: [],
   },
+  'scheduling-decision': {
+    humanSummary: (ctx) => {
+      const taskId = str(ctx.payload['taskId']) || ctx.entityId
+      return ctx.payload['decision'] === 'woken'
+        ? `Usage pressure cleared, so Mars can run ${taskId} now.`
+        : `Mars deferred ${taskId} until provider usage pressure clears.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      taskId: str(ctx.payload['taskId']),
+      decision: str(ctx.payload['decision']),
+      reason: str(ctx.payload['reason']),
+      pressure: str(ctx.payload['pressure']),
+      targetWindowEnd: ctx.payload['targetWindowEnd'],
+      canRunNow: ctx.payload['canRunNow'],
+    }),
+    verbs: [],
+  },
   'requeue-warning': {
     humanSummary: (ctx) => {
       const diag = ctx.payload['diagnostics'] as Record<string, unknown> | undefined
