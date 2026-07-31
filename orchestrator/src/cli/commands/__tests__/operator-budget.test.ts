@@ -124,7 +124,7 @@ describe('mars operator status', () => {
             VALUES (?, ?, 'step_ended', ?, ?)`,
       args: [
         'operator-budget-status-event',
-        Date.now(),
+        Date.parse('2026-07-31T21:53:48.275Z'),
         task.id,
         JSON.stringify({
           usageSignals: {

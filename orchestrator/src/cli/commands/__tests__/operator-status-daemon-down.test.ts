@@ -60,7 +60,7 @@ describe('mars operator status when the daemon is down', () => {
             VALUES (?, ?, 'step_ended', ?, ?)`,
       args: [
         'operator-status-daemon-down-event',
-        Date.now(),
+        Date.parse('2026-07-31T21:53:48.275Z'),
         task.id,
         JSON.stringify({
           usageSignals: {
