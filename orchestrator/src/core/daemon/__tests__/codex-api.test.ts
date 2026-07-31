@@ -21,6 +21,7 @@ import { join } from 'node:path'
 import {
   loadCodexAuth,
   refreshCodexAuth,
+  resolveCodexAuthFilePath,
   resolveCodexOAuthConfig,
   CodexApiError,
 } from '../codex-api'
@@ -91,6 +92,15 @@ describe('resolveCodexOAuthConfig', () => {
   it('falls back to the default when MARS_CHAT_REQUEST_TIMEOUT_MS is zero or negative', () => {
     vi.stubEnv('MARS_CHAT_REQUEST_TIMEOUT_MS', '0')
     expect(resolveCodexOAuthConfig().requestTimeoutMs).toBe(10 * 60 * 1000)
+  })
+})
+
+describe('resolveCodexAuthFilePath', () => {
+  it('uses an injected CODEX_HOME and otherwise falls back to the injected home directory', () => {
+    expect(resolveCodexAuthFilePath({ CODEX_HOME: '/custom/codex' }, '/home/mars')).toBe(
+      '/custom/codex/auth.json',
+    )
+    expect(resolveCodexAuthFilePath({}, '/home/mars')).toBe('/home/mars/.codex/auth.json')
   })
 })
 

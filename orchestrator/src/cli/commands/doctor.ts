@@ -11,7 +11,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Command } from '../command'
 import {
@@ -20,6 +20,7 @@ import {
   type ProviderProbeDeps,
 } from './provider-probe'
 import { loadDaemonConfig } from '../../core/daemon/config'
+import { resolveCodexAuthFilePath } from '../../core/daemon/codex-api'
 import {
   resolveProviderName,
   type ProviderName,
@@ -64,6 +65,8 @@ export interface DoctorProbes {
   }>
   /** Whether `path` exists and is readable. */
   fileReadable(path: string): boolean
+  /** Read a UTF-8 text file, or return null when it cannot be read. */
+  readTextFile(path: string): string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +117,13 @@ export const realProbes: DoctorProbes = {
   fileReadable(path) {
     return existsSync(path)
   },
+  readTextFile(path) {
+    try {
+      return readFileSync(path, 'utf8')
+    } catch {
+      return null
+    }
+  },
 }
 
 // ---------------------------------------------------------------------------
@@ -137,19 +147,20 @@ export const runDoctorChecks = async (
   const results: CheckResult[] = []
 
   // 1. Selected provider CLI — hard dependency; must be installed, runnable,
-  // and (for Codex, whose status command is authoritative) OAuth-authenticated.
+  // and (for Codex, whose status command is authoritative) authenticated for
+  // worker runs.
   const binEnvKey = `MARS_${selectedProvider.toUpperCase()}_BIN`
   const providerBin = providerProbeDeps.env[binEnvKey] ?? selectedProvider
   const providerCode = probes.tryRun(providerBin, ['--version'])
   if (providerCode === null) {
     results.push({
-      label: `${selectedProvider} CLI`,
+      label: `${selectedProvider} worker CLI`,
       status: 'FAIL',
       message: `selected provider not found on PATH (install: ${probeProvider(selectedProvider, providerProbeDeps).installHint})`,
     })
   } else if (providerCode !== 0) {
     results.push({
-      label: `${selectedProvider} CLI`,
+      label: `${selectedProvider} worker CLI`,
       status: 'FAIL',
       message: `found but '${providerBin} --version' exited ${providerCode} — check the selected provider installation`,
     })
@@ -158,22 +169,53 @@ export const runDoctorChecks = async (
     probes.tryRun(providerBin, ['login', 'status']) !== 0
   ) {
     results.push({
-      label: 'codex CLI',
+      label: 'codex worker CLI',
       status: 'FAIL',
-      message: "not authenticated — run 'codex login' to create the ChatGPT OAuth session",
+      message: "not authenticated for worker runs — run 'codex login'",
     })
   } else {
     results.push({
-      label: `${selectedProvider} CLI`,
+      label: `${selectedProvider} worker CLI`,
       status: 'PASS',
       message:
         selectedProvider === 'codex'
-          ? 'found and authenticated (ChatGPT OAuth)'
+          ? 'found and authenticated for worker runs'
           : 'found and runnable',
     })
   }
 
-  // 2. git — hard dependency.
+  // 2. Chat credentials are independent of the selected worker provider.
+  const authPath = resolveCodexAuthFilePath(
+    providerProbeDeps.env,
+    providerProbeDeps.homeDir,
+  )
+  const authText = probes.readTextFile(authPath)
+  let hasChatCredentials = false
+  if (authText !== null) {
+    try {
+      const parsed = JSON.parse(authText) as { tokens?: { access_token?: unknown } }
+      hasChatCredentials =
+        typeof parsed.tokens?.access_token === 'string' &&
+        parsed.tokens.access_token.length > 0
+    } catch {
+      // The result below deliberately reports no credential contents.
+    }
+  }
+  results.push(
+    hasChatCredentials
+      ? {
+          label: 'chat credentials',
+          status: 'PASS',
+          message: 'Codex auth.json contains an access token',
+        }
+      : {
+          label: 'chat credentials',
+          status: 'FAIL',
+          message: 'Codex auth.json is missing or invalid — run codex login',
+        },
+  )
+
+  // 3. git — hard dependency.
   const gitCode = probes.tryRun('git', ['--version'])
   if (gitCode === null) {
     results.push({ label: 'git', status: 'FAIL', message: 'not found on PATH' })
@@ -181,7 +223,7 @@ export const runDoctorChecks = async (
     results.push({ label: 'git', status: 'PASS', message: 'found' })
   }
 
-  // 3. Node.js version — must be >= 22.13.0.
+  // 4. Node.js version — must be >= 22.13.0.
   const rawVer = probes.nodeVersion.replace(/^v/, '')
   const [majStr, minStr = '0', patStr = '0'] = rawVer.split('.')
   const maj = Number.parseInt(majStr ?? '0', 10)
@@ -201,7 +243,7 @@ export const runDoctorChecks = async (
     results.push({ label: 'Node.js', status: 'PASS', message: probes.nodeVersion })
   }
 
-  // 4. codegraph — soft dependency (ADR-0062); WARN-only if absent.
+  // 5. codegraph — soft dependency (ADR-0062); WARN-only if absent.
   const codegraphCode = probes.tryRun('codegraph', ['--version'])
   if (codegraphCode === null) {
     results.push({
@@ -213,7 +255,7 @@ export const runDoctorChecks = async (
     results.push({ label: 'codegraph', status: 'PASS', message: 'found' })
   }
 
-  // 5. Daemon status — WARN if not running (auto-starts on first task add);
+  // 6. Daemon status — WARN if not running (auto-starts on first task add);
   //    WARN if running but stale (dev install drifted from HEAD).
   const dl = await probes.daemonLiveness()
   if (!dl.alive) {
@@ -238,7 +280,7 @@ export const runDoctorChecks = async (
     })
   }
 
-  // 6. database — the daemon provisions the embedded PostgreSQL server and
+  // 7. database — the daemon provisions the embedded PostgreSQL server and
   //    publishes its DSN to `.mars/pg.dsn`; WARN when the DSN is not
   //    published (daemon down / repo never started). Skip entirely when
   //    pgDsnPath is null (called from init).
@@ -258,25 +300,25 @@ export const runDoctorChecks = async (
     }
   }
 
-  // 7–8. Non-selected agent CLIs are WARN-only alternatives.
+  // 8–9. Non-selected agent CLIs are WARN-only alternatives.
   for (const name of ['claude', 'gemini', 'codex'] as const) {
     if (name === selectedProvider) continue
     const probe = probeProvider(name, providerProbeDeps)
     if (!probe.installed) {
       results.push({
-        label: `${name} CLI`,
+        label: `${name} worker CLI`,
         status: 'WARN',
-        message: `not installed — optional alternative agent provider (install: ${probe.installHint})`,
+        message: `not installed — optional alternative worker provider (install: ${probe.installHint})`,
       })
     } else if (probe.authed === 'yes') {
       results.push({
-        label: `${name} CLI`,
+        label: `${name} worker CLI`,
         status: 'PASS',
         message: `found and logged in (${probe.authDetail})`,
       })
     } else {
       results.push({
-        label: `${name} CLI`,
+        label: `${name} worker CLI`,
         status: 'WARN',
         message: 'installed but auth status unknown — run the CLI once to authenticate',
       })

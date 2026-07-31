@@ -569,8 +569,9 @@ Commands:
                                 available===true; silent otherwise. Exits 0
                                 always.
   where                         print resolved repo + state directory
-  doctor                        preflight: verify claude CLI, git, Node, codegraph,
-                                daemon status, database. Exits non-zero on FAIL.
+  doctor                        preflight: verify worker-provider CLI, Codex chat
+                                auth.json credentials, git, Node, codegraph, daemon,
+                                and database. Exits non-zero on FAIL.
                                 'mars init' runs this automatically (--skip-doctor
                                 to bypass).
   help                          show this message
@@ -648,7 +649,8 @@ Flags:
   --yes, -y          non-interactive: skip the wizard, take defaults
   --wizard           force the wizard (even off a terminal)
   --wizard-off       skip the wizard on a terminal
-  --skip-doctor      bypass the automatic preflight check (claude/git/Node).
+  --skip-doctor      bypass the automatic preflight check (worker CLI, Codex
+                     chat credentials, git, Node).
                      Use in CI or when the environment is already validated.`,
   update: `mars update [--force] [--yes | --accept-all] [--verbose]
 
@@ -1462,7 +1464,9 @@ healthy before running tasks. Prints one PASS/WARN/FAIL line per check.
 Exits non-zero when any check returns FAIL.
 
 Checks:
-  PASS/FAIL  claude CLI    found on PATH and 'claude --version' exits 0
+  PASS/FAIL  worker-provider CLI  selected worker binary is runnable and,
+                                  for Codex workers, authenticated
+  PASS/FAIL  chat credentials     Codex auth.json has a chat access token
   PASS/FAIL  git           found on PATH
   PASS/FAIL  Node.js       version >= 22.13.0
   PASS/WARN  codegraph     optional code-intelligence binary (ADR-0062)
@@ -1470,7 +1474,7 @@ Checks:
   PASS/WARN  database      embedded PostgreSQL DSN published (.mars/pg.dsn)
 
 'mars init' runs the same checks automatically (pass --skip-doctor to
-bypass) and fails fast on claude/git/Node FAIL items.`,
+bypass) and fails fast on worker CLI/chat credentials/git/Node FAIL items.`,
   'task add': `mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [flags]
 
 Enqueue a runnable task directly (status='queued'; skips triage). Agent

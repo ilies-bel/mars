@@ -68,6 +68,9 @@ const passingProbes = (overrides?: Partial<DoctorProbes>): DoctorProbes => ({
   fileReadable(_path) {
     return true
   },
+  readTextFile(_path) {
+    return JSON.stringify({ tokens: { access_token: 'test-access-token' } })
+  },
   ...overrides,
 })
 
@@ -98,7 +101,7 @@ describe('runDoctorChecks — claude CLI', () => {
       },
     })
     const results = await runDoctorChecks(probes, null)
-    const check = results.find((r) => r.label === 'claude CLI')
+    const check = results.find((r) => r.label === 'claude worker CLI')
     expect(check?.status).toBe('FAIL')
     expect(check?.message).toContain('not found')
   })
@@ -111,19 +114,42 @@ describe('runDoctorChecks — claude CLI', () => {
       },
     })
     const results = await runDoctorChecks(probes, null)
-    const check = results.find((r) => r.label === 'claude CLI')
+    const check = results.find((r) => r.label === 'claude worker CLI')
     expect(check?.status).toBe('FAIL')
     expect(check?.message).toContain('exited 1')
   })
 
   it('PASS when claude --version exits 0', async () => {
     const results = await runDoctorChecks(passingProbes(), null)
-    const check = results.find((r) => r.label === 'claude CLI')
+    const check = results.find((r) => r.label === 'claude worker CLI')
     expect(check?.status).toBe('PASS')
   })
 })
 
 describe('runDoctorChecks — selected Codex provider', () => {
+  it('checks the configured worker binary independently of valid chat credentials', async () => {
+    const results = await runDoctorChecks(
+      passingProbes({
+        tryRun(cmd) {
+          return cmd === '/custom/codex-worker' ? null : 0
+        },
+      }),
+      null,
+      {
+        ...providerProbeDeps(),
+        env: { MARS_CODEX_BIN: '/custom/codex-worker' },
+      },
+      'codex',
+    )
+
+    expect(results.find((r) => r.label === 'codex worker CLI')).toMatchObject({
+      status: 'FAIL',
+    })
+    expect(results.find((r) => r.label === 'chat credentials')).toMatchObject({
+      status: 'PASS',
+    })
+  })
+
   it('does not require Claude when Codex is selected and authenticated', async () => {
     const probes = passingProbes({
       tryRun(cmd) {
@@ -138,8 +164,8 @@ describe('runDoctorChecks — selected Codex provider', () => {
       'codex',
     )
 
-    expect(results.find((r) => r.label === 'codex CLI')?.status).toBe('PASS')
-    expect(results.find((r) => r.label === 'claude CLI')?.status).toBe('WARN')
+    expect(results.find((r) => r.label === 'codex worker CLI')?.status).toBe('PASS')
+    expect(results.find((r) => r.label === 'claude worker CLI')?.status).toBe('WARN')
     expect(results.some((r) => r.status === 'FAIL')).toBe(false)
   })
 
@@ -157,9 +183,63 @@ describe('runDoctorChecks — selected Codex provider', () => {
       'codex',
     )
 
-    const check = results.find((r) => r.label === 'codex CLI')
+    const check = results.find((r) => r.label === 'codex worker CLI')
     expect(check?.status).toBe('FAIL')
     expect(check?.message).toContain('codex login')
+  })
+})
+
+describe('runDoctorChecks — chat credentials', () => {
+  it('PASSes for a readable auth.json with a non-empty access token', async () => {
+    const readPaths: string[] = []
+    const results = await runDoctorChecks(
+      passingProbes({
+        readTextFile(path) {
+          readPaths.push(path)
+          return JSON.stringify({ tokens: { access_token: 'secret-token' } })
+        },
+      }),
+      null,
+      { ...providerProbeDeps(), env: { CODEX_HOME: '/custom/codex-home' } },
+    )
+
+    const check = results.find((r) => r.label === 'chat credentials')
+    expect(check).toMatchObject({ status: 'PASS' })
+    expect(readPaths).toEqual(['/custom/codex-home/auth.json'])
+    expect(check?.message).not.toContain('secret-token')
+  })
+
+  it.each([
+    ['missing', null],
+    ['malformed', '{not-json'],
+    ['missing token', JSON.stringify({ tokens: {} })],
+    ['empty token', JSON.stringify({ tokens: { access_token: '' } })],
+  ])('FAILs with the login remedy for a %s auth file', async (_state, authFile) => {
+    const results = await runDoctorChecks(
+      passingProbes({ readTextFile: () => authFile }),
+      null,
+    )
+
+    expect(results.find((r) => r.label === 'chat credentials')).toMatchObject({
+      status: 'FAIL',
+      message: expect.stringContaining('run codex login'),
+    })
+  })
+
+  it('uses the injected home directory when CODEX_HOME is not set', async () => {
+    const readPaths: string[] = []
+    await runDoctorChecks(
+      passingProbes({
+        readTextFile(path) {
+          readPaths.push(path)
+          return JSON.stringify({ tokens: { access_token: 'token' } })
+        },
+      }),
+      null,
+      providerProbeDeps(),
+    )
+
+    expect(readPaths).toEqual(['/tmp/mars-doctor-provider-test/.codex/auth.json'])
   })
 })
 

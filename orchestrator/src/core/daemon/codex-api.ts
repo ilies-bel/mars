@@ -123,8 +123,18 @@ export interface StreamCodexResponseOpts {
 
 // ── Auth file ─────────────────────────────────────────────────────────────────
 
-const authFilePath = (): string =>
-  join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'auth.json')
+export const resolveCodexAuthFilePath = (
+  env: NodeJS.ProcessEnv = process.env,
+  homeDir: string = homedir(),
+): string => {
+  const codexHome = env.CODEX_HOME
+  return join(
+    typeof codexHome === 'string' && codexHome.length > 0
+      ? codexHome
+      : join(homeDir, '.codex'),
+    'auth.json',
+  )
+}
 
 /**
  * Recover `chatgpt_account_id` from the access token's own claims.
@@ -157,7 +167,7 @@ const decodeAccountId = (token: string): string | null => {
 export const loadCodexAuth = async (): Promise<CodexAuth> => {
   let raw: string
   try {
-    raw = await readFile(authFilePath(), 'utf8')
+    raw = await readFile(resolveCodexAuthFilePath(), 'utf8')
   } catch {
     throw new CodexApiError('auth', 'Codex credentials not found — run `codex login`.')
   }
@@ -243,7 +253,7 @@ export const refreshCodexAuth = async (auth: CodexAuth): Promise<CodexAuth> => {
 
   // Best-effort atomic persistence — an unwritable auth.json only costs a refresh next run.
   try {
-    const path = authFilePath()
+    const path = resolveCodexAuthFilePath()
     const onDisk = JSON.parse(await readFile(path, 'utf8')) as { tokens?: Record<string, unknown> }
     onDisk.tokens = {
       ...onDisk.tokens,
