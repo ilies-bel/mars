@@ -19,6 +19,7 @@ const {
   mockListMergedWorkers,
   mockRecordSignals,
   mockRaiseActionQueueItem,
+  mockSyncWorktreeToIntegration,
 } = vi.hoisted(() => ({
   mockUpdateTask: vi.fn().mockResolvedValue(undefined),
   mockHandleTaskFailureWithFixTask: vi.fn().mockResolvedValue({ outcome: 'fix-task-spawned' }),
@@ -31,7 +32,19 @@ const {
   mockListMergedWorkers: vi.fn().mockReturnValue([]),
   mockRecordSignals: vi.fn().mockResolvedValue(undefined),
   mockRaiseActionQueueItem: vi.fn().mockResolvedValue(undefined),
+  mockSyncWorktreeToIntegration: vi.fn().mockResolvedValue({ kind: 'already-current' }),
 }))
+
+// `runAgent`'s preflight replays the task branch onto the integration tip
+// before the coder runs. It resolves the integration branch in the REAL repo
+// root (`repoRoot()`), which is meaningless for the standalone temp repos these
+// tests build, so it is stubbed to the already-current no-op. Worktree currency
+// has its own cover in `core/lib/git/__tests__/worktree-integration-currency.test.ts`;
+// this file is about the post-coder commit contract.
+vi.mock('../../../core/lib/git/worktree', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../../../core/lib/git/worktree')>()
+  return { ...orig, syncWorktreeToIntegration: mockSyncWorktreeToIntegration }
+})
 
 vi.mock('../../../core/queue', async (importOriginal) => {
   const orig = await importOriginal<typeof import('../../../core/queue')>()
@@ -280,7 +293,10 @@ describe('auto-commit fast path for coder-left-uncommitted', () => {
       payload: expect.objectContaining({
         provider: expect.any(String),
         commitSource: 'self',
-        contextTokens: 1234,
+        // The default provider (Codex) reports CUMULATIVE spend, not
+        // per-request context occupancy, so `buildContextTokenSignals` emits
+        // `cumulativeTokens` — never a fabricated `contextTokens`.
+        cumulativeTokens: 1234,
       }),
     }))
   })
@@ -379,12 +395,95 @@ describe('coder commit contract (code step post-condition)', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('fails the code step when the coder commits but leaves a tracked file modified', async () => {
-    // The fix-30ac0aaa shape: real commits AND leftover uncommitted edits.
-    // Used to be classified `clean-with-commits`, sail through verify, and
-    // blow up at the rebase as `merge/unclassified`.
+  it('recovers — does NOT fail — when the coder commits then leaves a tracked file modified', async () => {
+    // The fix-30ac0aaa / fix-ec2f6c04 shape: the coder committed once, kept
+    // working, and left more paths dirty. This used to be a terminal
+    // `code:commit-contract/uncommitted-changes` failure — the single largest
+    // source of task failures on the live queue, and what tripped the
+    // signature-storm circuit breaker. It now takes the same corrective-turn +
+    // auto-commit escalation as a coder that committed nothing.
     commitFeature()
     writeFileSync(resolve(repo, 'README'), 'edited but never committed\n')
+
+    const ctx = makeCtx('test-auto', makeStore())
+    const result = await runAgent(ctx, {
+      worktree: { path: repo, branch: 'task/test-auto' },
+    })
+
+    expect(result).toHaveProperty('sessionId', 'sess-1')
+    expect(mockUpdateTask).not.toHaveBeenCalledWith(
+      'test-auto',
+      expect.objectContaining({ status: 'failed' }),
+      expect.anything(),
+    )
+    expect(mockHandleTaskFailureWithFixTask).not.toHaveBeenCalled()
+    expect(mockRaiseActionQueueItem).not.toHaveBeenCalled()
+
+    // The coder's own commit is untouched and the leftover path rides on a
+    // clearly-attributed orchestrator commit on top of it.
+    const subjects = gitLogSubjects(repo)
+    expect(subjects).toHaveLength(2)
+    expect(subjects[1]).toBe('feat: committed slice')
+    expect(subjects[0]).toMatch(/^chore\(auto-commit\): task test-auto — /)
+    expect(subjects[0]).toContain('1 path(s)')
+    // The worktree is clean, so nothing is left to block the merge rebase.
+    expect(
+      execFileSync('git', ['status', '--porcelain'], { cwd: repo }).toString().trim(),
+    ).toBe('')
+  })
+
+  it('gives the coder a corrective turn first and keeps its commit when it takes it', async () => {
+    commitFeature()
+    writeFileSync(resolve(repo, 'README'), 'edited but never committed\n')
+    mockRunWorkerWithSpan
+      .mockReset()
+      .mockResolvedValueOnce(cleanCoderResult())
+      .mockImplementationOnce(async () => {
+        execFileSync('git', ['add', '-A'], { cwd: repo })
+        execFileSync('git', ['commit', '-q', '-m', 'chore: commit the leftovers'], {
+          cwd: repo,
+        })
+        return cleanCoderResult()
+      })
+
+    await runAgent(makeCtx('test-auto', makeStore()), {
+      worktree: { path: repo, branch: 'task/test-auto' },
+    })
+
+    // No auto-commit was needed: the coder took authorship on the correction.
+    expect(gitLogSubjects(repo)).toEqual([
+      'chore: commit the leftovers',
+      'feat: committed slice',
+    ])
+  })
+
+  it('recovers when the coder commits and the only leftover dirt is untracked', async () => {
+    commitFeature()
+    writeFileSync(resolve(repo, 'scratch.ts'), 'export const scratch = true\n')
+
+    const ctx = makeCtx('test-auto', makeStore())
+    await runAgent(ctx, { worktree: { path: repo, branch: 'task/test-auto' } })
+
+    expect(mockHandleTaskFailureWithFixTask).not.toHaveBeenCalled()
+    expect(gitLogSubjects(repo)[0]).toMatch(/^chore\(auto-commit\):/)
+    expect(
+      execFileSync('git', ['log', '-1', '--format=%H', '--', 'scratch.ts'], {
+        cwd: repo,
+      })
+        .toString()
+        .trim(),
+    ).not.toBe('')
+  })
+
+  it('still fails terminally when the coder committed and the auto-commit net is refused', async () => {
+    // The genuinely terminal case survives: nothing landed, nothing can land
+    // without an operator. It carries the ONE registered signature so the
+    // action queue names it and self-heal finds its recipe.
+    commitFeature()
+    writeFileSync(resolve(repo, 'README'), 'edited but never committed\n')
+    const hooksDir = resolve(repo, '.git', 'hooks')
+    execFileSync('mkdir', ['-p', hooksDir])
+    writeFileSync(resolve(hooksDir, 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
 
     const ctx = makeCtx('test-auto', makeStore())
     await expect(
@@ -396,37 +495,46 @@ describe('coder commit contract (code step post-condition)', () => {
       expect.objectContaining({
         status: 'failed',
         failedPhase: 'code',
-        failureReason: 'code:commit-contract',
-        failureSignature: 'code:commit-contract/uncommitted-changes',
-        failureReasonCode: 'code:commit-contract/uncommitted-changes',
+        failureReason: 'code',
+        failureSignature: 'code/uncommitted-changes',
+        failureReasonCode: 'orchestration:coder-left-uncommitted-unfixable',
       }),
       expect.anything(),
     )
-
-    // The failure names the offending file, and the step it blames is `code`.
-    const [failureArgs] = mockHandleTaskFailureWithFixTask.mock.calls.at(-1) ?? []
-    expect(failureArgs).toMatchObject({
-      taskId: 'test-auto',
-      failingStep: 'code:commit-contract',
-    })
-    expect(failureArgs.errorOutput).toContain('README')
-
-    // Nothing was swept into a commit behind the coder's back.
+    expect(mockRaiseActionQueueItem).toHaveBeenCalledTimes(1)
+    // The coder's own commit is untouched; nothing was swept in.
     expect(gitLogSubjects(repo)).toEqual(['feat: committed slice'])
   })
 
-  it('fails the code step when the only leftover dirt is untracked', async () => {
+  it('refuses to auto-commit a secret-or-state path and fails instead', async () => {
+    // `git add -A` honours .gitignore, but this temp repo has none — the guard
+    // is what stops `.env` / `.mars/` / `node_modules` from ever being swept
+    // into a task branch.
     commitFeature()
-    writeFileSync(resolve(repo, 'scratch.ts'), 'export const scratch = true\n')
+    writeFileSync(resolve(repo, '.env'), 'API_KEY=super-secret\n')
 
     const ctx = makeCtx('test-auto', makeStore())
     await expect(
       runAgent(ctx, { worktree: { path: repo, branch: 'task/test-auto' } }),
     ).rejects.toBeInstanceOf(WorkflowTerminalError)
 
-    const [failureArgs] = mockHandleTaskFailureWithFixTask.mock.calls.at(-1) ?? []
-    expect(failureArgs.failingStep).toBe('code:commit-contract')
-    expect(failureArgs.errorOutput).toContain('scratch.ts')
+    expect(mockUpdateTask).toHaveBeenCalledWith(
+      'test-auto',
+      expect.objectContaining({
+        status: 'failed',
+        failureSignature: 'code/uncommitted-changes',
+      }),
+      expect.anything(),
+    )
+    // The secret never entered the index or a commit.
+    expect(gitLogSubjects(repo)).toEqual(['feat: committed slice'])
+    expect(
+      execFileSync('git', ['log', '--all', '--format=%H', '--', '.env'], { cwd: repo })
+        .toString()
+        .trim(),
+    ).toBe('')
+    const [raiseArgs] = mockRaiseActionQueueItem.mock.calls.at(-1) ?? []
+    expect(raiseArgs.body).toContain('dotenv file')
   })
 
   it('passes a clean worktree that is ahead of the integration branch', async () => {
@@ -445,27 +553,32 @@ describe('coder commit contract (code step post-condition)', () => {
   it('measures the branch against the INTEGRATION_BRANCH override, not main', async () => {
     // `INTEGRATION_BRANCH` arrives as the workflow input's `integrationBranch`
     // (startDaemon reads the env var and threads it through), so the same
-    // worktree must classify differently depending on the merge target.
+    // worktree must be measured against the merge target that was passed in.
+    // Asserted through the terminal path (a rejecting pre-commit hook), which
+    // is the only place the resolved branch and commit count are reported.
     commitFeature()
     // The release line already contains the commit; `main` does not.
     execFileSync('git', ['branch', 'release/next', 'task/test-auto'], { cwd: repo })
     writeFileSync(resolve(repo, 'README'), 'edited but never committed\n')
+    const hooksDir = resolve(repo, '.git', 'hooks')
+    execFileSync('mkdir', ['-p', hooksDir])
+    writeFileSync(resolve(hooksDir, 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
 
     const ctx = makeCtx('test-auto', makeStore())
-    // Against the override the branch is 0 commits ahead, so this is the
-    // pre-existing dirty-no-commits shape and the auto-commit path handles it.
-    await runAgent(ctx, {
-      worktree: { path: repo, branch: 'task/test-auto' },
-      integrationBranch: 'release/next',
-    })
-    expect(mockHandleTaskFailureWithFixTask).not.toHaveBeenCalled()
+    // Against the override the branch is 0 commits ahead of `release/next`.
+    await expect(
+      runAgent(ctx, {
+        worktree: { path: repo, branch: 'task/test-auto' },
+        integrationBranch: 'release/next',
+      }),
+    ).rejects.toBeInstanceOf(WorkflowTerminalError)
+    let update = mockUpdateTask.mock.calls.at(-1)?.[1] as { error: string }
+    expect(mockUpdateTask.mock.calls.at(-1)?.[0]).toBe('test-auto')
+    expect(update.error).toContain('integration branch: release/next')
+    expect(update.error).toContain('committed 0 commit(s)')
 
-    // Against `main` the very same tree is 1 commit ahead — the contract gate
-    // owns it. Had the comparison been hardcoded to `main`, the run above
-    // would have taken this branch instead.
-    execFileSync('git', ['reset', '-q', '--hard', 'HEAD~1'], { cwd: repo })
-    execFileSync('git', ['reset', '-q', '--hard', 'release/next'], { cwd: repo })
-    writeFileSync(resolve(repo, 'README'), 'edited but never committed\n')
+    // Against `main` the very same tree is 1 commit ahead. Had the comparison
+    // been hardcoded to `main`, the run above would have reported 1 too.
     vi.clearAllMocks()
     mockRunWorkerWithSpan.mockResolvedValue(cleanCoderResult())
     mockUpdateTask.mockResolvedValue(undefined)
@@ -478,12 +591,13 @@ describe('coder commit contract (code step post-condition)', () => {
     mockFetchLessonsForTask.mockResolvedValue([])
     mockListMergedWorkers.mockReturnValue([])
     mockRecordSignals.mockResolvedValue(undefined)
+    mockRaiseActionQueueItem.mockResolvedValue(undefined)
 
     await expect(
       runAgent(ctx, { worktree: { path: repo, branch: 'task/test-auto' } }),
     ).rejects.toBeInstanceOf(WorkflowTerminalError)
-    const [failureArgs] = mockHandleTaskFailureWithFixTask.mock.calls.at(-1) ?? []
-    expect(failureArgs.failingStep).toBe('code:commit-contract')
-    expect(failureArgs.errorOutput).toContain('integration branch: main')
+    update = mockUpdateTask.mock.calls.at(-1)?.[1] as { error: string }
+    expect(update.error).toContain('integration branch: main')
+    expect(update.error).toContain('committed 1 commit(s)')
   })
 })

@@ -31,6 +31,7 @@ const {
   mockFetchLessonsForTask,
   mockListMergedWorkers,
   mockRecordSignals,
+  mockSyncWorktreeToIntegration,
 } = vi.hoisted(() => ({
   mockUpdateTask: vi.fn().mockResolvedValue(undefined),
   mockHandleTaskFailureWithFixTask: vi.fn().mockResolvedValue({ outcome: 'fix-task-spawned' }),
@@ -42,7 +43,19 @@ const {
   mockFetchLessonsForTask: vi.fn().mockResolvedValue([]),
   mockListMergedWorkers: vi.fn().mockReturnValue([]),
   mockRecordSignals: vi.fn().mockResolvedValue(undefined),
+  mockSyncWorktreeToIntegration: vi.fn().mockResolvedValue({ kind: 'already-current' }),
 }))
+
+// `runAgent`'s preflight replays the task branch onto the integration tip
+// before the coder runs. It resolves the integration branch against the REAL
+// repo root (`repoRoot()`), which is meaningless for the standalone temp repos
+// these tests build — every run aborted with a rebase conflict before reaching
+// the coder-exit handler under test. Worktree currency has its own cover in
+// `core/lib/git/__tests__/worktree-integration-currency.test.ts`.
+vi.mock('../../../core/lib/git/worktree', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../../../core/lib/git/worktree')>()
+  return { ...orig, syncWorktreeToIntegration: mockSyncWorktreeToIntegration }
+})
 
 vi.mock('../../../core/queue', async (importOriginal) => {
   const orig = await importOriginal<typeof import('../../../core/queue')>()

@@ -101,7 +101,10 @@ export const CODER_EXIT_NONZERO_ABORT_MESSAGE = (
 ): string => `coder for task ${taskId} exited ${exitCode} before completing`
 
 // Thrown by the code step when the coder exits 0 but leaves real work
-// UNCOMMITTED on the branch (dirty tree, 0 commits ahead of integration).
+// UNCOMMITTED on the branch — either shape, `dirty-no-commits` (committed
+// nothing at all) or `dirty-with-commits` (committed once, then kept working
+// and left the rest dirty) — AND neither the corrective coder turn nor the
+// orchestrator's deterministic auto-commit net could land it.
 // Without this the dirty-no-commits worktree falls straight through: verify's
 // has-diff gate reads 0 commits ahead and PASSES it as a benign no-op, then the
 // merge step rebases an empty branch and dispatches the vcs-supervisor with a
@@ -113,14 +116,24 @@ export const CODER_EXIT_NONZERO_ABORT_MESSAGE = (
 // Catching it here, at the earliest point, converts the silent fall-through into
 // one cheap recovery whose only job is to commit the work already in the tree.
 export const CODER_UNCOMMITTED_ABORT_MESSAGE = (taskId: string): string =>
-  `coder for task ${taskId} left uncommitted work (dirty tree, 0 commits ahead)`
+  `coder for task ${taskId} left uncommitted work the auto-commit net could not land`
+
+/**
+ * Failing-step id stamped on `failure_reason` for the coder-left-uncommitted
+ * terminal path. `failure_reason` doubles as the fine-grained failing step for
+ * the durable recovery-spawn subscriber (`asStepId(task.failureReason)`), which
+ * recomputes the signature as `computeFailureSignature(step, error)`. It must
+ * therefore be the bare step id whose combination with the error text lands on
+ * {@link CODER_UNCOMMITTED_SIGNATURE} — the prose lives in `error`.
+ */
+export const CODER_UNCOMMITTED_STEP = 'code'
 
 // Structured failure signature stamped on the task when the coder left work
 // uncommitted AND the orchestrator's deterministic auto-commit was refused.
 // Registered in both `failure-kinds.ts` (operator-facing copy + action menu)
 // and `fix-recipes.ts` (the recovery prompt), so the action queue can name the
 // failure and self-heal knows how to fix it.
-export const CODER_UNCOMMITTED_SIGNATURE = 'code/uncommitted-changes'
+export const CODER_UNCOMMITTED_SIGNATURE = `${CODER_UNCOMMITTED_STEP}/uncommitted-changes`
 
 // Thrown by the code step when the provider rejects the run due to a rate or
 // spend limit (NOT a code failure). The task is re-queued with its worktree
@@ -527,56 +540,50 @@ export type PostCoderState =
   | { kind: 'error'; error: string }
 
 /**
- * Failing-step id stamped when the coder violates its commit contract by
- * leaving the worktree dirty. Grammar per `STEP_ID_RE` in
- * `core/lib/failure-signature.ts` so the durable recovery-spawn path can
- * recompute the same signature from `failure_reason`.
- */
-export const CODE_COMMIT_CONTRACT_STEP = 'code:commit-contract'
-
-/**
- * Full failure signature for a coder that left uncommitted work behind.
- * `<step>/<error-class>` where the class is the pre-existing
- * `uncommitted-changes` slug (same class `merge:preflight/uncommitted-changes`
- * binds to) — the step half is what makes the two distinguishable.
- */
-export const CODE_COMMIT_CONTRACT_SIGNATURE = `${CODE_COMMIT_CONTRACT_STEP}/uncommitted-changes`
-
-/**
- * First line of the commit-contract failure output. Contains
+ * First line of the coder-left-uncommitted failure output. Contains
  * "has uncommitted changes", which is what `classifyError` keys the
- * `uncommitted-changes` slug off — keep the phrase intact when editing.
+ * `uncommitted-changes` slug off — keep the phrase intact when editing, or the
+ * signature stops resolving to {@link CODER_UNCOMMITTED_SIGNATURE} and the
+ * failure degrades to `unclassified`.
  */
-export const codeCommitContractSummary = (
+export const coderUncommittedSummary = (
   taskId: string,
   fileCount: number,
 ): string =>
   `task ${taskId} worktree has uncommitted changes after the code step: coder left ${fileCount} path(s) uncommitted`
 
 /**
- * Full failure output for the commit-contract gate: the summary line, the
- * offending file list, and the worktree location so the retained tree is
- * inspected in the right context.
+ * Full failure output for the terminal coder-left-uncommitted path: the
+ * summary line, the offending file list, why the auto-commit net could not
+ * land it, and the worktree location so the retained tree is inspected in the
+ * right context.
+ *
+ * Reaching this text means BOTH recovery stages were exhausted — the coder got
+ * one corrective commit turn and the deterministic `git add -A && git commit`
+ * was refused. It is not emitted for a merely-dirty worktree.
  */
-export const codeCommitContractFailure = (args: {
+export const coderUncommittedFailure = (args: {
   taskId: string
   worktreePath: string
   branch: string
   integrationBranch: string
   dirtyFiles: string[]
   commitsAhead: number
+  autoCommitReason: string
 }): string =>
   [
-    codeCommitContractSummary(args.taskId, args.dirtyFiles.length),
+    coderUncommittedSummary(args.taskId, args.dirtyFiles.length),
     '',
-    `The coder committed ${args.commitsAhead} commit(s) onto ${args.branch} but did not commit these path(s):`,
+    `The coder committed ${args.commitsAhead} commit(s) onto ${args.branch} and left these path(s) uncommitted:`,
     ...args.dirtyFiles.map((f) => `  ${f}`),
+    '',
+    `A corrective coder turn ran first and did not commit them; the orchestrator's deterministic auto-commit was then refused: ${args.autoCommitReason}`,
     '',
     `Worktree: ${args.worktreePath}`,
     `Branch: ${args.branch} (integration branch: ${args.integrationBranch})`,
     '',
-    'Every path the coder touched must be committed before the code step ends —',
-    'an uncommitted path never reaches verify and blocks the rebase at merge.',
+    'An uncommitted path never reaches verify and blocks the rebase at merge, so',
+    'the blocker has to be cleared and the work landed before this task retries.',
   ].join('\n')
 
 // Parse `git status --porcelain=v1` into a list of paths.

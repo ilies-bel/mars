@@ -98,12 +98,20 @@ export interface SecretPathHit {
 
 /**
  * Checks whether a single repo-relative file path matches a secret-or-state
- * shape that must never be auto-committed by the salvage chore:
+ * shape that must never be auto-committed — by the dirty-main salvage chore or
+ * by the code step's coder-left-uncommitted auto-commit net
+ * (`autoCommitWorktreeIfDeterministic`), which shares this guard:
  *
  * - Dotenv files: exactly `.env`, or any name whose basename starts with
  *   `.env.` (e.g. `.env.local`, `.env.production`).
  * - Per-repo state directory: any path that is exactly `.mars` or starts
  *   with `.mars/`.
+ * - Dependency directories: any path with a `node_modules` segment.
+ *
+ * `node_modules/` and `/.mars/` are gitignored in this repo, so `git add -A`
+ * already skips them; the guard is the belt to that braces — a consumer repo
+ * with a thinner `.gitignore`, or a path force-added by an agent, must not be
+ * able to sweep dependencies or per-repo state into an auto-commit.
  *
  * Returns a `SecretPathHit` when the path matches, or `null` when safe.
  */
@@ -116,6 +124,15 @@ export function checkSecretPath(filePath: string): SecretPathHit | null {
 
   if (filePath === '.mars' || filePath.startsWith('.mars/')) {
     return { filePath, reason: 'per-repo state directory' }
+  }
+
+  if (
+    filePath === 'node_modules' ||
+    filePath.startsWith('node_modules/') ||
+    filePath.includes('/node_modules/') ||
+    filePath.endsWith('/node_modules')
+  ) {
+    return { filePath, reason: 'dependency directory' }
   }
 
   return null
