@@ -14,6 +14,8 @@ import {
   lookupFailureKind,
   unknownFailureKind,
   failingStepFromSignature,
+  failedTaskTitle,
+  isGenericFailureLabel,
 } from '../../lib/failure-kinds'
 import { derivedRowActions } from '../../lib/derived-row-actions'
 import {
@@ -511,6 +513,85 @@ export const getActionQueueEntityId = (row: PersistedActionQueueRow): string => 
 }
 
 /**
+ * Append ` [task <id8>]` to a purpose-built title when the row is backed by a
+ * task and does not already name it, so two rows of the same kind stay
+ * distinguishable. Non-task-backed rows (daemon-code-drift, plan-approval,
+ * signature-storm) are returned untouched — their entity id is not a task id.
+ */
+/**
+ * The persisted kinds that ARE a task's structured failure row, and whose
+ * operator copy therefore belongs to the failure-kind registry rather than to
+ * whoever raised the row. Every other kind that lands in the `failed-task`
+ * bucket is a situational alert with its own purpose-built copy.
+ */
+const REGISTRY_TITLED_KINDS: ReadonlySet<string> = new Set([
+  'failed',
+  'daemon-killed',
+])
+
+const tagWithTask = (title: string, taskId: string | null): string => {
+  if (taskId === null || taskId.length === 0) return title
+  const short = taskId.slice(0, 8)
+  return title.includes(short) ? title : `${title} [task ${short}]`
+}
+
+/**
+ * Derive the operator-facing title and body of a row that lands in the
+ * `failed-task` bucket.
+ *
+ * `toUiKind` funnels every unrecognised kind into `failed-task`, so this
+ * bucket holds two very different things and they are treated differently:
+ *
+ *  - **{@link REGISTRY_TITLED_KINDS}** — structured task failures. Their
+ *    canonical copy lives in the failure-kind registry, and
+ *    {@link failedTaskTitle} renders it with the failure signature and the
+ *    failed task's short id so a queue of sixteen failures reads as sixteen
+ *    distinct rows. Registration in the registry — NOT recipe presence —
+ *    decides the reason: `daemon-killed` is registered with a warmTitle but
+ *    has `recipe: null` and must still render it. When such a row's task
+ *    carries no signature at all, a persisted title the raiser wrote on
+ *    purpose beats the generic label and is kept.
+ *  - **every other kind** (daemon-code-drift, plan-approval, signature-storm,
+ *    requeue-ceiling, hitl-slice-needs-operator, …) — purpose-built alerts
+ *    whose raiser already wrote specific operator copy ("Daemon running stale
+ *    code — a1b2c3d → e4f5g6h"). Derived failure copy must never overwrite
+ *    it; the row is only tagged with its task id when it has one.
+ *
+ * Shared by the live view and the history view so the two can never drift.
+ */
+const failedRowCopy = (
+  row: PersistedActionQueueRow,
+  task: TaskForActionQueue | undefined,
+  entityId: string,
+): { title: string; body: string } => {
+  const signature = task?.failureSignature ?? null
+  const capturedError = task?.lastErrorOutput ?? ''
+  const persistedIsGeneric =
+    row.title.trim().length === 0 || isGenericFailureLabel(row.title)
+
+  // Keep the raiser's copy unless it says nothing the derived copy would not.
+  if (
+    !REGISTRY_TITLED_KINDS.has(row.kind) ||
+    (signature === null && !persistedIsGeneric)
+  ) {
+    return {
+      title: tagWithTask(row.title, task === undefined ? null : entityId),
+      body: row.body,
+    }
+  }
+
+  const kind = signature !== null ? lookupFailureKind(signature) : null
+  return {
+    title: failedTaskTitle({ signature, taskId: entityId, capturedError }),
+    body:
+      kind !== null
+        ? kind.verboseReason
+        : unknownFailureKind(failingStepFromSignature(signature), capturedError)
+            .verboseReason,
+  }
+}
+
+/**
  * Build recipe fields (humanSummary, humanDetail, verbs) for a row.
  * Falls back to generic copy when the kind has no registered recipe
  * (e.g. a future kind added before a recipe is written).
@@ -798,45 +879,17 @@ export const buildActionQueueView = async ({
         ? row.payload.failureReasonCode
         : null
 
-    // For failed-task rows, derive title and body from the Failure kind registry
-    // rather than from the persisted row strings — the registry provides warm,
-    // human-readable copy keyed to the failure's actual cause.
-    // hitl-slice-needs-operator rows carry their own operator-facing title/body
-    // set by the slicer; skip the failure-registry lookup so the persisted
-    // copy (e.g. "HITL: End-to-end smoke against a real cluster") is shown
-    // instead of the generic "A pipeline step did not complete" fallback.
-    //
-    // The discriminator is registration in the failure-kind registry
-    // (lookupFailureKind returns non-null), NOT recipe presence. A kind like
-    // daemon-killed is registered with a warmTitle but has recipe: null; it must
-    // still render its warmTitle rather than "no recipe for <sig>".
-    // Rows whose signature is NOT in the registry lead with "no recipe for <sig>"
-    // so the operator immediately sees WHAT failed without digging into transcripts.
+    // Task-failure rows derive their title and body from the failure-kind
+    // registry rather than from the persisted row strings (see failedRowCopy,
+    // which decides per kind whether the registry or the raiser owns the copy).
+    // Non-task kinds (hitl-slice-needs-operator, draft-proposal, …) are
+    // excluded outright: their persisted copy is the only copy there is.
     let title = row.title
     let body = row.body
     if (isTaskFailure) {
-      const failedTask = taskById.get(entityId)
-      const sig = failedTask?.failureSignature ?? null
-      if (sig !== null) {
-        const fk = lookupFailureKind(sig)
-        if (fk !== null) {
-          // Registered signature — use the registry's warm title and verbose reason.
-          title = fk.warmTitle
-          body = fk.verboseReason
-        } else {
-          // Unregistered signature: lead with it so the operator immediately knows
-          // what failed without digging into transcripts.
-          title = `no recipe for ${sig}`
-          body = unknownFailureKind(
-            failingStepFromSignature(sig),
-            failedTask?.lastErrorOutput ?? '',
-          ).verboseReason
-        }
-      } else {
-        const ufk = unknownFailureKind('unknown', failedTask?.lastErrorOutput ?? '')
-        title = ufk.warmTitle
-        body = ufk.verboseReason
-      }
+      const copy = failedRowCopy(row, taskById.get(entityId), entityId)
+      title = copy.title
+      body = copy.body
     }
 
     // Operational rows are not task-failure rows, even when they name a task.
@@ -1294,31 +1347,14 @@ export const buildActionQueueHistoryView = async ({
         ? row.payload.failureReasonCode
         : null
 
-    // Title / body from the failure-kind registry for failed-task rows.
-    // Registered signatures use fk.warmTitle/fk.verboseReason; unregistered ones
-    // lead with "no recipe for <sig>" (same rule as the live view).
+    // Title / body from the failure-kind registry for failed-task rows —
+    // identical rule to the live view (see failedRowCopy).
     let title = row.title
     let body = row.body
     if (isTaskFailure) {
-      const failedTask = taskById.get(entityId)
-      const sig = failedTask?.failureSignature ?? null
-      if (sig !== null) {
-        const fk = lookupFailureKind(sig)
-        if (fk !== null) {
-          title = fk.warmTitle
-          body = fk.verboseReason
-        } else {
-          title = `no recipe for ${sig}`
-          body = unknownFailureKind(
-            failingStepFromSignature(sig),
-            failedTask?.lastErrorOutput ?? '',
-          ).verboseReason
-        }
-      } else {
-        const ufk = unknownFailureKind('unknown', failedTask?.lastErrorOutput ?? '')
-        title = ufk.warmTitle
-        body = ufk.verboseReason
-      }
+      const copy = failedRowCopy(row, taskById.get(entityId), entityId)
+      title = copy.title
+      body = copy.body
     }
 
     const operationalCopy = renderOperationalAlertCopy(row)

@@ -109,6 +109,13 @@ export const CODER_EXIT_NONZERO_ABORT_MESSAGE = (
 export const CODER_UNCOMMITTED_ABORT_MESSAGE = (taskId: string): string =>
   `coder for task ${taskId} left uncommitted work (dirty tree, 0 commits ahead)`
 
+// Structured failure signature stamped on the task when the coder left work
+// uncommitted AND the orchestrator's deterministic auto-commit was refused.
+// Registered in both `failure-kinds.ts` (operator-facing copy + action menu)
+// and `fix-recipes.ts` (the recovery prompt), so the action queue can name the
+// failure and self-heal knows how to fix it.
+export const CODER_UNCOMMITTED_SIGNATURE = 'code/uncommitted-changes'
+
 // Thrown by the code step when the provider rejects the run due to a rate or
 // spend limit (NOT a code failure). The task is re-queued with its worktree
 // intact; no recovery fix-task is spawned. The daemon catches this sentinel to

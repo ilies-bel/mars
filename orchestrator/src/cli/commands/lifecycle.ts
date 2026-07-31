@@ -780,7 +780,9 @@ const release: Command = {
       )
       if (gitResult.status === 0 && (gitResult.stdout ?? '').trim() !== '') {
         deps.err(`worktree ${worktreePath} has uncommitted changes`)
-        deps.err('commit or discard your changes before releasing the lease')
+        deps.err(
+          'commit your changes before releasing the lease, or restore individual paths with `git checkout <ref> -- <paths>` (never `git stash` — the stash is shared by every worktree in this repo)',
+        )
         return { code: 1 }
       }
     }

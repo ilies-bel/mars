@@ -416,8 +416,12 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    // title and body come from the single Failure kind record keyed on signature
-    expect(row!.title).toBe('The changes did not pass type-checking')
+    // title and body come from the single Failure kind record keyed on
+    // signature; the title also carries the signature and the failed task's
+    // short id so a queue of failures is triageable row by row.
+    expect(row!.title).toBe(
+      'verify:typecheck/typecheck-cannot-find-name — The changes did not pass type-checking [task T-typech]',
+    )
     expect(row!.body).toBe(
       'The verify step failed because the code references a name that is not in scope (TS2304).',
     )
@@ -474,9 +478,10 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    // No failureSignature → unknownFailureKind('unknown', ...) provides title.
+    // No failureSignature and no captured error → the generic wording, which
+    // is the genuine last resort. It still names the task.
     // The fallback emits plain-English text — no raw step ids ('unknown').
-    expect(row!.title).toBe('A pipeline step did not complete')
+    expect(row!.title).toBe('A pipeline step did not complete [task T-unknow]')
     // Body is the verboseReason from unknownFailureKind.
     expect(row!.body).toContain('A pipeline step did not complete')
     // Payload's failureReasonCode mirrors the synthesised unknown signature.
@@ -560,8 +565,11 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    // title and body from Failure kind registry
-    expect(row!.title).toBe('The coder took too long')
+    // title and body from Failure kind registry, with the signature and the
+    // task id folded into the title
+    expect(row!.title).toBe(
+      'code:timeout/install-timeout — The coder took too long [task T-droppe]',
+    )
     expect(row!.body).toContain('SIGKILL / exit 137')
     // payload's failureReasonCode mirrors the resolved signature
     expect(row!.payload['failureReasonCode']).toBe('code:timeout/install-timeout')
@@ -704,13 +712,18 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    expect(row!.title).toBe('The coding environment could not be set up')
+    // The warm reason still comes from the registry, prefixed by the signature
+    // and suffixed with the task id so sibling failures stay distinguishable.
+    expect(row!.title).toBe(
+      'setup:install/install-frozen-lockfile — The coding environment could not be set up [task T-setup-]',
+    )
   })
 
-  it("task with unregistered signature 'verify:test/unclassified' produces a plain-English verification title", async () => {
+  it("task with unregistered signature 'verify:test/unclassified' produces a plain-English verification reason", async () => {
     // verify:test/unclassified is intentionally not in the registry (each test
     // failure has a unique root cause). The fallback maps verify:* steps to a
-    // human-readable title with no raw step id.
+    // human-readable reason; the signature itself leads the title so the
+    // operator can tell one unclassified verify failure from another.
     const { q, actionQueue, rep, pub } = await loadModules(repo)
     const client = q.resolveQueueClient()
     const taskId = 'T-verify-test-unclassified'
@@ -727,8 +740,9 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    expect(row!.title).toBe('A verification check did not pass')
-    expect(row!.title).not.toContain('verify:test')
+    expect(row!.title).toBe(
+      'verify:test/unclassified — A verification check did not pass (no failure-kind record) [task T-verify]',
+    )
   })
 
   // ── Purge-drop orphan guard ───────────────────────────────────────────────

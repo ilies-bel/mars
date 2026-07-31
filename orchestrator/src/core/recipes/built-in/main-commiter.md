@@ -37,7 +37,8 @@ your CWD; do not change directory.
      partial-staging that completes a clear unit of work).
   2. **Safe to park.** Scratch files matching common ignore patterns that
      slipped through (build artifacts, editor swap files, `.DS_Store`,
-     local-only debug edits, unstaged temporary prints).
+     local-only debug edits, unstaged temporary prints) — nothing anyone
+     would want back.
   3. **Ambiguous.** Anything else — see the explicit list below.
 - On **safe to commit**: run `git add -A && git commit -m "<descriptive message>"` (or
   `git add` specific files then `git commit -m "..."` when only a subset

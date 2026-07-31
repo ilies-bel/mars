@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   FAILURE_KINDS,
+  GENERIC_FAILURE_LABEL,
   WORKTREE_MISSING_ACTIONS,
+  failedTaskTitle,
+  isGenericFailureLabel,
   lookupFailureKind,
   unknownFailureKind,
 } from '../failure-kinds'
@@ -398,6 +401,118 @@ describe('new catalog entries for previously-unmatched signatures', () => {
     // Must have restart (to re-provision the worktree) and purge
     expect(entry!.actions.some((a) => a.op === 'restart')).toBe(true)
     expect(entry!.actions.some((a) => a.op === 'purge')).toBe(true)
+  })
+
+  it('registers verify:test/test-assertion-error and links it to its recovery recipe', () => {
+    const entry = lookupFailureKind('verify:test/test-assertion-error')
+    expect(entry).not.toBeNull()
+    expect(entry!.warmTitle).toBe('The changes did not pass the tests')
+    // A recipe of the same signature exists in fix-recipes.ts, so the record
+    // must reference it — an operator seeing this row must not be told there
+    // is no recipe when self-heal knows exactly how to fix it.
+    expect(entry!.recipe).toBe('verify:test/test-assertion-error')
+  })
+
+  it('registers code/uncommitted-changes and links it to its recovery recipe', () => {
+    const entry = lookupFailureKind('code/uncommitted-changes')
+    expect(entry).not.toBeNull()
+    expect(entry!.warmTitle).toMatch(/uncommitted/i)
+    expect(entry!.verboseReason).toMatch(/automatic commit was refused|pre-commit/i)
+    expect(entry!.recipe).toBe('code/uncommitted-changes')
+  })
+})
+
+describe('failedTaskTitle', () => {
+  it('leads with the signature and tags the task for a registered signature', () => {
+    expect(
+      failedTaskTitle({
+        signature: 'verify:typecheck/typecheck-cannot-find-name',
+        taskId: 'mars-c6cab686',
+      }),
+    ).toBe(
+      'verify:typecheck/typecheck-cannot-find-name — The changes did not pass type-checking [task mars-c6c]',
+    )
+  })
+
+  it('still leads with the signature when no failure-kind record exists, and says so', () => {
+    const title = failedTaskTitle({
+      signature: 'verify:test/unclassified',
+      taskId: 'task-1234567890',
+    })
+    expect(title).toContain('verify:test/unclassified')
+    expect(title).toContain('(no failure-kind record)')
+    expect(title).toContain('[task task-123]')
+  })
+
+  it('falls back to the captured error head when there is no signature', () => {
+    expect(
+      failedTaskTitle({
+        signature: null,
+        taskId: 'abcdefgh12345',
+        capturedError: '\n\n  ENOSPC: no space left on device\nsecond line\n',
+      }),
+    ).toBe(
+      'A pipeline step did not complete: ENOSPC: no space left on device [task abcdefgh]',
+    )
+  })
+
+  it('strips composed recovery_failed prefixes off the error head', () => {
+    // failure_reason / error can carry `recovery_failed:<sig>: ` prefixes,
+    // sometimes nested. The title must show the real error underneath.
+    expect(
+      failedTaskTitle({
+        signature: null,
+        taskId: 'task-1',
+        capturedError:
+          'recovery_failed:verify:test/test-assertion-error: recovery_failed:verify:test/test-assertion-error: expected 2 to be 3',
+      }),
+    ).toBe('A pipeline step did not complete: expected 2 to be 3 [task task-1]')
+  })
+
+  it('clips a very long error head so the row stays scannable', () => {
+    const title = failedTaskTitle({
+      signature: null,
+      taskId: 'task-1',
+      capturedError: 'x'.repeat(400),
+    })
+    expect(title.length).toBeLessThan(160)
+    expect(title).toContain('…')
+  })
+
+  it('emits the bare generic label only when nothing at all is known', () => {
+    expect(failedTaskTitle({ signature: null })).toBe(
+      'A pipeline step did not complete',
+    )
+    expect(failedTaskTitle({ signature: null, taskId: 'task-1' })).toBe(
+      'A pipeline step did not complete [task task-1]',
+    )
+  })
+
+  it('gives two failures with different signatures two different titles', () => {
+    const a = failedTaskTitle({
+      signature: 'verify:test/test-assertion-error',
+      taskId: 'aaaaaaaa',
+    })
+    const b = failedTaskTitle({
+      signature: 'code/uncommitted-changes',
+      taskId: 'bbbbbbbb',
+    })
+    expect(a).not.toBe(b)
+  })
+})
+
+describe('isGenericFailureLabel', () => {
+  it('recognises the synthesised group labels', () => {
+    expect(isGenericFailureLabel(GENERIC_FAILURE_LABEL)).toBe(true)
+    expect(isGenericFailureLabel('A verification check did not pass')).toBe(true)
+    expect(isGenericFailureLabel('  The changes could not be merged  ')).toBe(true)
+  })
+
+  it('does not claim purpose-built operator copy is generic', () => {
+    expect(isGenericFailureLabel('Daemon running stale code — a1b2c3d → e4f5g6h')).toBe(
+      false,
+    )
+    expect(isGenericFailureLabel('Plan review: 3 slices for PRD p-1')).toBe(false)
   })
 })
 

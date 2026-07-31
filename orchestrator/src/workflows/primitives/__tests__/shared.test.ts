@@ -11,10 +11,11 @@ describe('DEVIATION_RULES — pre-existing-failure baseline', () => {
   it('baselines via `git checkout <merge-base>` and never tells the agent to stash', () => {
     // `refs/stash` is shared by every linked worktree in this repo and is
     // addressed by position, so instructing coders to stash/pop is exactly how
-    // one task's uncommitted work ends up in another task's tree. The brief
-    // must offer the checkout-based baseline instead.
+    // one task's uncommitted work ends up in another task's tree (data-loss
+    // incident 2026-07-28). The brief must offer the checkout-based baseline.
     expect(DEVIATION_RULES).toContain('git checkout $(git merge-base HEAD origin/main)')
     expect(DEVIATION_RULES).not.toMatch(/git stash (push|pop|--include-untracked)/)
+    expect(DEVIATION_RULES).toContain('Never use `git stash`')
   })
 
   it('references the merge base so the agent knows what to compare against', () => {
@@ -29,7 +30,7 @@ describe('DEVIATION_RULES — pre-existing-failure baseline', () => {
   })
 
   it('instructs the agent to run the failing test file against the baseline', () => {
-    // The rule must reference running a test against the baseline, not just stashing.
+    // The rule must reference running a test against the baseline, not just restoring files.
     const hasVitest = DEVIATION_RULES.includes('npx vitest run')
     const hasMergeBase = DEVIATION_RULES.includes('merge-base') || DEVIATION_RULES.toLowerCase().includes('merge base')
     expect(hasVitest).toBe(true)

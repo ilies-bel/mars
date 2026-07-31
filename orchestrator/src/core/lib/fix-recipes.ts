@@ -828,6 +828,89 @@ const typecheckTypeMismatchRecipe: FixRecipe = {
   },
 }
 
+/**
+ * `code/uncommitted-changes` — the coder exited cleanly but left real work
+ * uncommitted in the worktree, AND the orchestrator's own deterministic
+ * auto-commit (`autoCommitWorktreeIfDeterministic`, a plain
+ * `git add -A && git commit`) was refused.
+ *
+ * The policy this recipe implements — and must not contradict — is a strict
+ * two-stage escalation, not two competing behaviours:
+ *
+ *   1. The code step ALWAYS tries the deterministic auto-commit first. When it
+ *      succeeds the pipeline continues to verify as if the coder had
+ *      committed; no failure, no recovery, no recipe.
+ *   2. Only when that commit is REFUSED does the code step fail the task with
+ *      this signature. So by the time this recipe runs, `git add -A && git
+ *      commit` has already been tried once and rejected — re-running it blind
+ *      is the one thing guaranteed not to work.
+ *
+ * The recovery is therefore diagnostic: find what refused the commit, remove
+ * that blocker, and land the work that is already on disk. Recovery tasks
+ * attach to the ORIGIN worktree, so the uncommitted files are right there in
+ * the agent's own cwd.
+ */
+const coderLeftUncommittedRecipe: FixRecipe = {
+  signature: 'code/uncommitted-changes',
+  title: (ctx) =>
+    `Commit the work the coder left uncommitted on ${ctx.targetBranch || 'the task branch'}`,
+  buildPrompt: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    const countCmd = `git rev-list --count ${integration}..HEAD`
+    const evidence =
+      ctx.statusOutput.length > 0
+        ? ctx.statusOutput
+        : '(no dirty-file list or auto-commit error captured)'
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task prompt (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `# Recovery run — the coder's work was never committed`,
+      '',
+      `The coder for branch ${ctx.targetBranch} exited cleanly but left its changes UNCOMMITTED (dirty tree, 0 commits ahead of ${integration}). The orchestrator then ran its own deterministic \`git add -A && git commit\` on the worktree and git REFUSED it. That is why you are here.`,
+      '',
+      `You are attached to the origin task's worktree at ${ctx.targetPath} on branch \`${ctx.targetBranch}\` — the uncommitted work is in your own cwd. Do NOT redo the task from scratch: the change already exists on disk, it just is not committed.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `STEP 1 — re-check first. Run \`git status --porcelain\` and \`${countCmd}\`.`,
+      ` - If the tree is clean AND \`${countCmd}\` prints a non-zero integer, the work already landed: do NOT touch any file, exit successfully.`,
+      ` - Otherwise proceed to STEP 2 with the CURRENT state, not the snapshot below.`,
+      '',
+      `STEP 2 — find out what refused the commit. The orchestrator already tried the naive \`git add -A && git commit\`, so re-running it unchanged will fail the same way. Read the captured auto-commit error at the bottom of this prompt and match it to a cause:`,
+      ` (a) **a pre-commit hook rejected the commit** — read \`.git/hooks/pre-commit\` (or the husky/lefthook config), run the hook's checks yourself, and FIX what it is complaining about (lint, format, typecheck). Never bypass it with \`--no-verify\`.`,
+      ` (b) **nothing was stageable** — every dirty path is ignored or excluded, so \`git add -A\` staged an empty set. Decide honestly whether any of it is real work: if yes, add the path explicitly (\`git add -f <path>\` only when the ignore rule is genuinely wrong) or fix \`.gitignore\`; if it is all build output or scratch, remove those files so the tree is clean.`,
+      ` (c) **git could not identify the committer** — set \`user.name\`/\`user.email\` locally for this worktree and retry.`,
+      ` (d) **an index lock or interrupted operation** — resolve the stale state (no in-progress rebase/merge, no \`.git/index.lock\` held by a live process) and retry.`,
+      '',
+      `STEP 3 — commit the work. Use \`git add -A && git commit -m "<message naming what actually changed>"\`. Never \`git commit -am\`: it skips untracked files and silently drops new modules (the 2026-07-20 data-loss incident). Then re-run \`${countCmd}\` — it MUST print a non-zero integer before you exit.`,
+      '',
+      `## Never stash`,
+      '',
+      `\`git stash\` is BANNED in this repository. \`refs/stash\` lives in the common git dir and is shared by every linked worktree, addressed by shifting position (\`stash@{0}\`, \`stash@{1}\`), so a \`pop\` can hand you another task's uncommitted work — this caused a real data-loss incident on 2026-07-28. To park something you must not commit, restore the individual paths instead: \`git checkout ${integration} -- <paths>\` (or \`git checkout $(git merge-base HEAD ${integration}) -- <paths>\`).`,
+      '',
+      `If the dirty state is genuinely un-committable — it contains secrets, or it spans unrelated subsystems no single honest commit message covers — do NOT guess and do NOT delete it. Raise a high-priority item via \`mars action-queue raise --from -\` naming the paths and why, then exit.`,
+      '',
+      ...sourcePromptSection,
+      `Task worktree (your cwd): ${ctx.targetPath}`,
+      `Task branch: ${ctx.targetBranch}`,
+      `Integration branch: ${integration}`,
+      '',
+      'Dirty paths and the auto-commit error captured at failure time (may be stale — re-check before acting):',
+      '```',
+      evidence,
+      '```',
+      '',
+      `Save your work: the commit IS the deliverable. The orchestrator does not commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 const testNoSuiteFoundRecipe: FixRecipe = {
   signature: 'verify:test/test-no-suite-found',
   title: (ctx) =>
@@ -1264,6 +1347,7 @@ const recipeList: readonly FixRecipe[] = [
   typecheckTypeMismatchRecipe,
   testAssertionErrorRecipe,
   testNoSuiteFoundRecipe,
+  coderLeftUncommittedRecipe,
 ]
 
 /**
