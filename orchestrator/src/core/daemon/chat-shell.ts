@@ -46,9 +46,11 @@ export const buildSeatbeltProfile = (cwd: string): string => {
 }
 
 /**
- * Execute a chat shell tool from the repository root. On macOS the command is
- * constrained by Seatbelt; other hosts retain the direct shell fallback until
- * an equivalent confinement mechanism is available.
+ * Execute a chat shell tool from the repository root. On Darwin,
+ * `sandbox-exec` is the default OS boundary: it permits reads and confines
+ * writes to the repository and its Mars state directory. Other hosts retain a
+ * direct-shell fallback, with a warning, until an equivalent confinement
+ * mechanism is available.
  */
 export const runShellCommand = (
   command: string,

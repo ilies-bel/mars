@@ -690,23 +690,25 @@ describe('ChatRunner state machine', () => {
 
   // ── Tool loop ─────────────────────────────────────────────────────────────
 
-  it('executes a shell call and feeds the output back into the next request', async () => {
+  it('executes a git rev-list shell call and feeds the output back into the next request', async () => {
     mockStream
-      .mockImplementationOnce(streamEmitting(functionCallEvent('call-1', 'echo hi'), completedEvent(10, 5)))
-      .mockImplementationOnce(streamEmitting(messageEvent('It printed hi.'), completedEvent(20, 7)))
-    mockShell.mockResolvedValue({ exitCode: 0, stdout: 'hi\n', stderr: '' })
+      .mockImplementationOnce(streamEmitting(functionCallEvent('call-1', 'git rev-list --count HEAD'), completedEvent(10, 5)))
+      .mockImplementationOnce(streamEmitting(messageEvent('The revision count is 2.'), completedEvent(20, 7)))
+    mockShell.mockResolvedValue({ exitCode: 0, stdout: '2\n', stderr: '' })
 
     const runner = new ChatRunner()
-    await runner.sendMessage('t1', 'run echo', '/repo', undefined)
+    await runner.sendMessage('t1', 'count revisions', '/repo', undefined)
     await new Promise((r) => setTimeout(r, 20))
+
+    expect(mockShell).toHaveBeenCalledWith('git rev-list --count HEAD', '/repo', expect.any(AbortSignal))
 
     // The second request replays the call and its output.
     const secondInput = mockStream.mock.calls[1][0].input
     expect(secondInput).toContainEqual(
-      { type: 'function_call', name: 'shell', arguments: JSON.stringify({ command: 'echo hi' }), call_id: 'call-1' },
+      { type: 'function_call', name: 'shell', arguments: JSON.stringify({ command: 'git rev-list --count HEAD' }), call_id: 'call-1' },
     )
     expect(secondInput).toContainEqual(
-      { type: 'function_call_output', call_id: 'call-1', output: JSON.stringify({ stdout: 'hi\n', stderr: '', exitCode: 0 }) },
+      { type: 'function_call_output', call_id: 'call-1', output: JSON.stringify({ stdout: '2\n', stderr: '', exitCode: 0 }) },
     )
 
     // Persisted segments include tool_use, tool_result, final text, and ONE

@@ -2,6 +2,16 @@ import { execFileSync } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildSeatbeltProfile, runShellCommand } from '../chat-shell'
 
+const sandboxExecUsable = (() => {
+  if (process.platform !== 'darwin') return false
+  try {
+    execFileSync('/usr/bin/sandbox-exec', ['-p', '(version 1) (allow default)', '/usr/bin/true'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+})()
+
 describe('chat shell confinement', () => {
   it('escapes repository paths before interpolating them into the Seatbelt profile', () => {
     const profile = buildSeatbeltProfile('/tmp/repo with spaces/"quoted") (allow default) ("')
@@ -88,15 +98,20 @@ describe('chat shell confinement', () => {
     }
   })
 
-  const sandboxExecUsable = (() => {
-    if (process.platform !== 'darwin') return false
-    try {
-      execFileSync('/usr/bin/sandbox-exec', ['-p', '(version 1) (allow default)', '/usr/bin/true'], { stdio: 'ignore' })
-      return true
-    } catch {
-      return false
-    }
-  })()
+  it.skipIf(process.platform === 'darwin' && !sandboxExecUsable)(
+    'executes a git rev-list shell-tool request',
+    async () => {
+      const result = await runShellCommand(
+        'git rev-list --count HEAD',
+        process.cwd(),
+        new AbortController().signal,
+      )
+
+      expect(result.exitCode).toBe(0)
+      expect(result.stderr).toBe('')
+      expect(result.stdout).toMatch(/^\d+\n$/)
+    },
+  )
 
   it.skipIf(!sandboxExecUsable)('permits repository writes but denies an outside write after &&', async () => {
     const { existsSync } = await import('node:fs')
