@@ -136,6 +136,7 @@ import {
   type DispatchKind,
 } from './task-flight-tracker'
 import { registerDispatchHint } from './dispatch-hint'
+import { setWorkerLivenessProbe } from '../lib/worker-liveness'
 import { rpcRegistry, dispatchRpc } from './rpc/registry'
 import type { DaemonDeps } from './rpc/types'
 import { PreviewRegistry } from './preview-registry'
@@ -895,6 +896,23 @@ export const startDaemon = async (
   // is: claim (drain-driven kinds) → await acquire → commitInFlight → run →
   // release(), where release() is the closure commitInFlight returns.
   const tracker = createTaskFlightTracker()
+
+  // Publish the tracker's in-flight knowledge as the process-wide worker
+  // liveness signal. The tracker is the ONLY authoritative record of which
+  // tasks this daemon actually has a worker process for — `tasks.status`
+  // carries no pid and no heartbeat — so modules that must distinguish a
+  // live worker from a zombie row (lib/main-dirty.ts's main-committer attach
+  // path) read it through this seam. A `claimed` task counts as alive: the
+  // claim is taken before `await acquire(sem)` and is only cleared by
+  // `commitInFlight`, so the claim covers the await-acquire gap during which
+  // no in-flight entry exists yet.
+  setWorkerLivenessProbe(
+    (taskId) =>
+      tracker.isInFlight(taskId) ||
+      tracker.isClaimed(taskId, 'implement') ||
+      tracker.isClaimed(taskId, 'triage'),
+  )
+
   const startedAt = new Date().toISOString()
 
   // Dev-install source staleness detection. Capture the git HEAD SHA and repo
@@ -5647,6 +5665,10 @@ export const startDaemon = async (
     // Drop the dispatch hint before the tracker is torn down, so a writer that
     // creates a task during shutdown does not fan out into a dead tracker.
     unregisterDispatchHint()
+    // Same reasoning for the liveness probe: once this daemon stops
+    // dispatching, its tracker no longer describes reality, and an in-process
+    // caller must fall back to 'unknown' rather than read a frozen map.
+    setWorkerLivenessProbe(null)
     stopEndpointProbe()
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the

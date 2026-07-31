@@ -20,6 +20,7 @@
  * reporting clean here is the documented fallback now.
  */
 import { runTool, type TraceCtx } from './run-tool'
+import { probeWorkerLiveness } from './worker-liveness'
 import { attachToExistingFixTask } from '../queue-fix-tasks'
 import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store'
 import { Arc } from '../arc'
@@ -479,7 +480,7 @@ export const serialiseMainCommiterPayload = (
 ): string => JSON.stringify(payload)
 
 /**
- * Status set `findActiveMainCommitter` uses to locate a committer that can
+ * Status set `resolveActiveMainCommitter` uses to locate a committer that can
  * still accept new sources (i.e. an in-flight committer). 'done' is NOT
  * included here — a done committer can no longer unblock dependents (done
  * tasks do not transition back), so attaching a new source to one would
@@ -502,23 +503,81 @@ const ACTIVE_COMMITTER_STATUSES = [
 ] as const
 
 /**
+ * Grace window applied ONLY to the zombie-committer check, and only when the
+ * daemon reports the committer as not-in-flight.
+ *
+ * This is deliberately NOT a work timeout. Liveness is the primary signal: a
+ * committer that is genuinely working is in the daemon's flight tracker and is
+ * classified `alive` no matter how many minutes it has been running, because
+ * the tracker entry — not row age — is what the check reads. The grace only
+ * suppresses the narrow transition races where the row already says `running`
+ * but the tracker entry is momentarily absent (the dispatcher's eager
+ * `status='running'` write racing `commitInFlight`, or a slot handoff). Sixty
+ * seconds is orders of magnitude larger than either window.
+ */
+const COMMITTER_ZOMBIE_GRACE_MS = 60_000
+
+/**
+ * The committer statuses that imply a worker process. Only these are subject
+ * to the zombie check.
+ *
+ * `queued` and `blocked` are excluded because they legitimately have no
+ * process — a queued committer is waiting for a dispatch slot, and the
+ * `queued-committer-reseed` reconciler owns its staleness. `verifying`,
+ * `merging` and `vega-reconciling` are excluded because those phases hand the
+ * task between semaphore slots (verify slot, merge queue), so a transiently
+ * absent tracker entry is expected there and each has its own startup-recovery
+ * step. Narrow on purpose: the only status a vanished worker strands forever
+ * with no other recovery path is `running`.
+ */
+const PROCESS_BACKED_COMMITTER_STATUSES = new Set(['running'])
+
+/**
+ * How `resolveActiveMainCommitter` classified the newest matching committer.
+ *
+ * - `none`   — no committer in an attachable status for this branch.
+ * - `alive`  — safe to attach; the committer can still reach `done` and
+ *              unblock its dependents.
+ * - `zombie` — the row claims a process-backed status but this daemon holds no
+ *              worker for it. Attaching would convert a transient condition
+ *              into a permanent, queue-wide deadlock, because every later task
+ *              attaches too. Must be reaped and replaced.
+ */
+export type ActiveMainCommitterResolution =
+  | { kind: 'none' }
+  | { kind: 'alive'; id: string; status: string }
+  | { kind: 'zombie'; id: string; status: string }
+
+/**
  * Look up the most recently created `main-commiter` recovery task whose
- * `integrationBranch` matches. Dedup is branch-keyed: parallel integration
- * branches each get their own committer, and all tasks on the same branch
- * share one active committer.
+ * `integrationBranch` matches, and classify whether it is safe to attach to.
+ *
+ * Dedup is branch-keyed: parallel integration branches each get their own
+ * committer, and all tasks on the same branch share one active committer.
  *
  * Done committers are NOT included — a done task cannot be reactivated, so
  * attaching a new source to it would create a phantom blocker. A new dirty
  * episode on the same branch always spawns a fresh committer.
  * Failed committers are excluded — see ACTIVE_COMMITTER_STATUSES.
+ *
+ * LIVENESS. A `running` row is a claim, not a fact. When the daemon restarts
+ * mid-run it kills the worker process but the row keeps saying `running`
+ * forever, and every subsequent task that hits dirty-main used to attach to
+ * that corpse — 2026-07-30 incident: 23 tasks parked behind one dead committer,
+ * 0 queued / 43 blocked, surviving two daemon restarts. So a committer in a
+ * process-backed status is only `alive` when the daemon positively reports a
+ * worker for it (see `lib/worker-liveness.ts`). Outside a daemon the probe
+ * answers `'unknown'` and the committer is treated as alive — a process that
+ * does not own the workers has no standing to declare one dead.
  */
-export const findActiveMainCommitter = async (
+export const resolveActiveMainCommitter = async (
   integrationBranch: string,
   store: TaskStore,
-): Promise<{ id: string; status: string } | null> => {
+  nowMs: number = Date.now(),
+): Promise<ActiveMainCommitterResolution> => {
   const placeholders = ACTIVE_COMMITTER_STATUSES.map(() => '?').join(',')
   const r = await store.query({
-    sql: `SELECT id, status FROM tasks
+    sql: `SELECT id, status, updated_at FROM tasks
            WHERE kind = 'fix'
              AND status IN (${placeholders})
              AND recovery_payload::jsonb ->> 'recipe' = ?
@@ -527,9 +586,78 @@ export const findActiveMainCommitter = async (
            LIMIT 1`,
     args: [...ACTIVE_COMMITTER_STATUSES, MAIN_COMMITER_RECIPE, integrationBranch],
   })
-  if (r.rows.length === 0) return null
-  const row = r.rows[0] as unknown as { id: string; status: string }
-  return { id: row.id, status: row.status }
+  if (r.rows.length === 0) return { kind: 'none' }
+  const row = r.rows[0] as unknown as {
+    id: string
+    status: string
+    updated_at: string | Date | null
+  }
+
+  if (!PROCESS_BACKED_COMMITTER_STATUSES.has(row.status)) {
+    return { kind: 'alive', id: row.id, status: row.status }
+  }
+  if (probeWorkerLiveness(row.id) !== 'dead') {
+    return { kind: 'alive', id: row.id, status: row.status }
+  }
+  // Not in flight. Apply the race-suppressing grace before declaring it dead.
+  const updatedMs =
+    row.updated_at instanceof Date
+      ? row.updated_at.getTime()
+      : Date.parse(String(row.updated_at ?? ''))
+  if (Number.isFinite(updatedMs) && nowMs - updatedMs <= COMMITTER_ZOMBIE_GRACE_MS) {
+    return { kind: 'alive', id: row.id, status: row.status }
+  }
+  return { kind: 'zombie', id: row.id, status: row.status }
+}
+
+/**
+ * Failure signature stamped on a committer reaped because its worker vanished.
+ * Distinct from a committer that ran and failed on its own merits — this one
+ * never got the chance.
+ */
+export const COMMITTER_WORKER_VANISHED_CODE = 'main-commiter:worker-vanished'
+
+/**
+ * Reap a zombie committer through the audited task seam.
+ *
+ * Transitions the row `running` -> `failed`. This is the ONLY safe reaping
+ * gesture: deleting the row would strand every dependent on a dangling
+ * `task_blockers` edge, and leaving it `running` is what caused the deadlock in
+ * the first place. `failed` is the state the rest of the machinery already
+ * knows how to resolve —
+ *
+ *  - the daemon's on-failure handler raises the aggregated committer
+ *    action-queue row and runs `releaseMainCommitterDependents` (which keeps
+ *    dependents blocked while the branch is still dirty, as it must be here);
+ *  - `reparentStrandedDependentsOntoNewCommitter`, which the fresh-spawn path
+ *    below always calls, then moves every dependent still blocked on this
+ *    now-`failed` committer onto the replacement;
+ *  - the `failed-committer-dependent-release` startup reconciler is the
+ *    backstop if the daemon dies between the two.
+ *
+ * `running` is not a terminal status, so this transition does not touch the
+ * `reject_terminal_task_transition` trigger.
+ */
+const reapZombieCommitter = async (
+  committerTaskId: string,
+  status: string,
+  integrationBranch: string,
+): Promise<void> => {
+  const { updateTask } = await import('../queue')
+  await updateTask(committerTaskId, {
+    status: 'failed',
+    failedPhase: 'code',
+    failureReason: COMMITTER_WORKER_VANISHED_CODE,
+    failureReasonCode: COMMITTER_WORKER_VANISHED_CODE,
+    failureSignature: COMMITTER_WORKER_VANISHED_CODE,
+    error:
+      `main-commiter for ${integrationBranch} was left in status=${status} with no worker process ` +
+      `(daemon restart or worker crash). Reaped so its dependents are not parked behind it forever; ` +
+      `a fresh committer has been spawned to take over.`,
+  })
+  console.warn(
+    `[main-dirty] reaped zombie main-commiter ${committerTaskId} (status=${status}, no worker process) on ${integrationBranch}`,
+  )
 }
 
 /**
@@ -550,6 +678,12 @@ export interface MainCommitterResolution {
   spawned: boolean
   /** Status of the existing committer when attaching ('failed' is also possible per dedup rules). */
   attachedToStatus: string | null
+  /**
+   * Set to the id of a committer that was reaped as a zombie (process-backed
+   * status, no worker) immediately before this fresh spawn. `null` on every
+   * ordinary spawn/attach. Surfaced so callers can log the replacement.
+   */
+  reapedZombieCommitterId: string | null
 }
 
 export interface SpawnOrAttachInput {
@@ -582,6 +716,16 @@ export interface SpawnOrAttachInput {
  * failed committer is never reused — done means the work was completed (a new
  * dirty episode requires a fresh committer), and failed is a dead-end.
  *
+ * Attach requires LIVENESS, not just an attachable status. Serializing every
+ * dirty-main task behind one committer is correct and deliberate — but only
+ * while that committer can still finish. A committer whose worker process is
+ * gone can never reach `done`, so parking behind it is permanent, and because
+ * every later task parks behind it too, the deadlock is self-amplifying and
+ * survives daemon restarts. When `resolveActiveMainCommitter` reports a zombie
+ * this function reaps it to `failed` and falls through to the fresh-spawn
+ * branch, whose `reparentStrandedDependentsOntoNewCommitter` call moves the
+ * corpse's dependents onto the replacement. Recover and replace — never park.
+ *
  * The new fix-task row is inserted directly (not via `upsertFixTask`)
  * because the catalog-driven recipe path is signature-agnostic — there is
  * no entry for `verify:main-dirty` in the legacy `recipes` map in
@@ -608,8 +752,9 @@ export const spawnOrAttachMainCommitter = async (
   // Look for an ACTIVE (non-done, non-failed) committer for this integration
   // branch. Branch-keyed dedup means: one active committer per branch at a
   // time, shared by all tasks that hit dirty-main on that branch.
-  const existing = await findActiveMainCommitter(input.integrationBranch, s)
-  if (existing) {
+  const existing = await resolveActiveMainCommitter(input.integrationBranch, s)
+
+  if (existing.kind === 'alive') {
     await attachToExistingFixTask({
       sourceTaskId: input.sourceTaskId,
       fixTaskId: existing.id,
@@ -625,10 +770,21 @@ export const spawnOrAttachMainCommitter = async (
       fixTaskId: existing.id,
       spawned: false,
       attachedToStatus: existing.status,
+      reapedZombieCommitterId: null,
     }
   }
 
-  // No active committer for this branch — spawn fresh. Done committers are
+  // Zombie: the committer's row still claims a process-backed status but its
+  // worker is gone. Reap it to `failed` through the audited seam FIRST, so the
+  // fresh spawn below sees a dead-end committer it can reparent dependents off
+  // of, then continue into the ordinary fresh-spawn path.
+  let reapedZombieCommitterId: string | null = null
+  if (existing.kind === 'zombie') {
+    await reapZombieCommitter(existing.id, existing.status, input.integrationBranch)
+    reapedZombieCommitterId = existing.id
+  }
+
+  // No attachable committer for this branch — spawn fresh. Done committers are
   // intentionally NOT reused: a done committer proves main was clean when it
   // verified, but re-detecting dirt means a genuinely new dirty episode that
   // needs a fresh committer.
@@ -641,9 +797,16 @@ export const spawnOrAttachMainCommitter = async (
     sourceOriginId: input.sourceOriginId,
     traceStore: input.traceStore,
   })
+  // Moves every dependent still `blocked` on a FAILED committer for this branch
+  // — including the zombie just reaped — onto the replacement.
   await Arc.reparentStrandedDependentsOntoNewCommitter(
     fixTaskId,
     input.integrationBranch,
   )
-  return { fixTaskId, spawned: true, attachedToStatus: null }
+  return {
+    fixTaskId,
+    spawned: true,
+    attachedToStatus: null,
+    reapedZombieCommitterId,
+  }
 }
