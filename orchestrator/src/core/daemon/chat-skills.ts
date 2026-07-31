@@ -91,14 +91,20 @@ export const loadSkill = async (repoRoot: string, name: string): Promise<LoadedS
 
 /**
  * Render the skill index appended to the chat instructions. Empty string when
- * no skills are available (the section header is not emitted for nothing).
+ * no skills are available in triage; grill posture retains its instructions
+ * even when this repo has no discoverable skills.
  */
-export const buildSkillsSection = (skills: readonly SkillInfo[]): string => {
-  if (skills.length === 0) return ''
-  return [
+export const buildSkillsSection = (skills: readonly SkillInfo[], posture: 'triage' | 'grill' = 'triage'): string => {
+  const lines = [
     'Skills: reusable runbooks for common Mars operations. When a request',
     'matches one, call the `skill` tool with its name FIRST and follow the',
     'loaded instructions for the rest of the turn. Available skills:',
     ...skills.map((s) => `- ${s.name}: ${s.description}`),
-  ].join('\n')
+  ]
+  if (posture === 'grill') {
+    lines.push(
+      'Grill posture is active: use the glossary, ADR, and PRD tools when the conversation reaches those decisions.',
+    )
+  }
+  return skills.length > 0 || posture === 'grill' ? lines.join('\n') : ''
 }

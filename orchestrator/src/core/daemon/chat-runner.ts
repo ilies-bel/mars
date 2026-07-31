@@ -33,9 +33,11 @@ import { buildSkillsSection, discoverSkills, loadSkill } from './chat-skills'
 import {
   appendMessage,
   getThread,
+  setThreadPosture,
   setThreadStatus,
   updateThreadTitle,
   type AlertSegment,
+  type ChatPosture,
   type ChatMessage,
 } from '../lib/chat-store'
 import type { ViewStreamHub } from './view/stream-hub'
@@ -263,8 +265,27 @@ const SKILL_TOOL: FunctionToolDef = {
   },
 }
 
+/** Lets the agent turn a hard request into a persistent grill conversation. */
+const SET_POSTURE_TOOL: FunctionToolDef = {
+  type: 'function',
+  name: 'set_posture',
+  description:
+    'Switch this conversation to grill posture when the current request is hard. ' +
+    'Only `grill` is valid. Use it before exploring a term-defining, cross-cutting, scope-ambiguous, or ADR-conflicting ask.',
+  strict: false,
+  parameters: {
+    type: 'object',
+    properties: {
+      posture: { type: 'string', enum: ['grill'], description: 'The posture to enter.' },
+    },
+    required: ['posture'],
+    additionalProperties: false,
+  },
+}
+
 /** The built-in function tools the chat agent gets, in the order sent to the API. */
 export const CHAT_TOOLS: FunctionToolDef[] = [SHELL_TOOL, READ_FILE_TOOL, WRITE_FILE_TOOL, SKILL_TOOL]
+const TRIAGE_TOOLS: FunctionToolDef[] = [...CHAT_TOOLS, SET_POSTURE_TOOL]
 
 /** Cap on MCP tool output fed back to the model (codegraph_explore returns verbatim source). */
 const MCP_OUTPUT_CHAR_CAP = 20_000
@@ -277,7 +298,7 @@ const MCP_DESCRIPTION_CHAR_CAP = 2_000
  * names are the only dispatch key. Exported for unit testing.
  */
 export const buildMcpToolDefs = (mcpTools: readonly McpToolInfo[]): FunctionToolDef[] => {
-  const taken = new Set(CHAT_TOOLS.map((t) => t.name))
+  const taken = new Set([...CHAT_TOOLS, SET_POSTURE_TOOL].map((t) => t.name))
   const defs: FunctionToolDef[] = []
   for (const t of mcpTools) {
     if (taken.has(t.name)) continue
@@ -539,7 +560,7 @@ export class ChatRunner {
       model: resolveCodexOAuthConfig().model,
       systemPrompt: resolved.prompt,
       systemPromptSource: resolved.source,
-      builtinTools: CHAT_TOOLS.map((t) => ({ name: t.name, description: t.description })),
+      builtinTools: TRIAGE_TOOLS.map((t) => ({ name: t.name, description: t.description })),
       skills,
       mcpServers,
     }
@@ -742,6 +763,7 @@ export class ChatRunner {
   ): Promise<void> {
     const cfg = resolveCodexOAuthConfig()
     const accumulatedSegments: ChatSegment[] = []
+    let posture: ChatPosture = 'triage'
     const broadcastSegment = (seg: ChatSegment): void => {
       if (seg.type === 'text' && seg.text.length === 0) return
       accumulatedSegments.push(seg)
@@ -791,6 +813,7 @@ export class ChatRunner {
         this.chatStreamHub?.finishRun(threadId)
         return
       }
+      posture = threadData.thread.posture
 
       const hasMessages = threadData.messages.length > 0
 
@@ -864,10 +887,14 @@ export class ChatRunner {
           discoverSkills(repoRoot),
           this.mcp.getTools(repoRoot),
         ])
-        const skillsSection = buildSkillsSection(skills)
-        const instructions = skillsSection.length > 0 ? `${resolvedPrompt.prompt}\n\n${skillsSection}` : resolvedPrompt.prompt
-        const tools = [...CHAT_TOOLS, ...buildMcpToolDefs(mcpTools)]
-        const mcpToolNames = new Set(tools.slice(CHAT_TOOLS.length).map((t) => t.name))
+        const mcpDefs = buildMcpToolDefs(mcpTools)
+        const mcpToolNames = new Set(mcpDefs.map((t) => t.name))
+        const instructionsForPosture = (): string => {
+          const skillsSection = buildSkillsSection(skills, posture)
+          return skillsSection.length > 0 ? `${resolvedPrompt.prompt}\n\n${skillsSection}` : resolvedPrompt.prompt
+        }
+        const toolsForPosture = (): FunctionToolDef[] =>
+          posture === 'grill' ? [...CHAT_TOOLS, ...mcpDefs] : TRIAGE_TOOLS
         let auth: CodexAuth = await loadCodexAuth()
         let authRetried = false
 
@@ -885,9 +912,9 @@ export class ChatRunner {
               await streamCodexResponse({
                 auth,
                 model: cfg.model,
-                instructions,
+                instructions: instructionsForPosture(),
                 input,
-                tools,
+                tools: toolsForPosture(),
                 signal: abort.signal,
                 onEvent: (event) => {
                   for (const seg of parseEventToSegments(event)) {
@@ -925,7 +952,24 @@ export class ChatRunner {
           for (const call of pendingCalls) {
             const args = isObject(call.input) ? call.input : {}
             let result: { content: unknown; isError: boolean }
-            if (mcpToolNames.has(call.tool)) {
+            if (call.tool === 'set_posture') {
+              if (args.posture !== 'grill') {
+                result = { content: 'invalid set_posture arguments: only "grill" is supported', isError: true }
+              } else if (posture === 'grill') {
+                result = { content: 'grill posture is already active', isError: false }
+              } else {
+                await setThreadPosture(threadId, 'grill')
+                posture = 'grill'
+                await appendMessage(
+                  threadId,
+                  'assistant',
+                  'System: This conversation is now in grill posture. I can use glossary, ADR, and PRD tools as we shape the work.',
+                  [{ type: 'system', message: 'Grill posture enabled.' }],
+                )
+                hub?.broadcast('chat')
+                result = { content: 'grill posture enabled', isError: false }
+              }
+            } else if (posture === 'grill' && mcpToolNames.has(call.tool)) {
               const r = await this.mcp.call(repoRoot, call.tool, args)
               result = { content: truncate(r.text, MCP_OUTPUT_CHAR_CAP), isError: r.isError }
             } else {

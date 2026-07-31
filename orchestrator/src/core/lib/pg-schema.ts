@@ -448,6 +448,7 @@ const DDL: readonly string[] = [
     id             text   PRIMARY KEY,
     title          text   NOT NULL DEFAULT '',
     status         text   NOT NULL DEFAULT 'idle',
+    posture        text   NOT NULL DEFAULT 'triage',
     origin         text,
     alert_item_id  text,
     alert_resolved bigint NOT NULL DEFAULT 0,
@@ -470,6 +471,7 @@ const DDL: readonly string[] = [
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS stall_diagnostics text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS "deferrable" bigint NOT NULL DEFAULT 0`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
+  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS posture text NOT NULL DEFAULT 'triage'`,
   `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS context_seeded`,
   // Codex CLI exec/resume needs a persisted session id per thread.
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS session_id text`,

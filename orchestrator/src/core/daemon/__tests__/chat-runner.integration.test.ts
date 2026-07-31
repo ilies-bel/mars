@@ -109,6 +109,7 @@ const makeThreadFixture = (id: string) => ({
     id,
     title: '',
     status: 'idle' as const,
+    posture: 'triage' as const,
     created_at: '',
     updated_at: '',
     origin: null,

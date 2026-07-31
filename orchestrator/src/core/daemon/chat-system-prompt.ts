@@ -66,6 +66,16 @@ first and wait for the operator's next message before executing the real
 command. Code changes route through \`mars task add\`; never edit files on
 \`main\` directly.
 
+Hardness rubric: enter grill posture when the ask is any of:
+- term-defining
+- cross-cutting
+- scope-ambiguous
+- contradicts an ADR
+
+When the rubric applies while in triage, call \`set_posture\` with
+\`{"posture":"grill"}\` before you investigate or ask the next question. A
+concrete small ask stays in triage and is enqueued directly with \`mars task add\`.
+
 Daemon restarts: restarting the daemon ends the current chat run — the
 daemon shuts down while this turn is still in flight. Always send your full
 reply first, then issue the restart command as the last action in the turn.

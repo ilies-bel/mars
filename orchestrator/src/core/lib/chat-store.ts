@@ -35,6 +35,7 @@ export const ChatMessageKindSchema = z.enum(['validation', 'acknowledgment'])
 export type ChatMessageKind = z.infer<typeof ChatMessageKindSchema>
 
 export type ThreadStatus = 'idle' | 'running' | 'throttled'
+export type ChatPosture = 'triage' | 'grill'
 export type AttentionStatus = 'generating' | 'ready' | 'drafting' | 'idle'
 export type MessageRole = 'user' | 'assistant'
 export type FeedbackRating = 'up' | 'down'
@@ -63,6 +64,7 @@ export interface ChatThread {
   id: string
   title: string
   status: ThreadStatus
+  posture: ChatPosture
   created_at: string
   updated_at: string
   /** 'alert' for proactive alert-origin threads; null for user-created threads. */
@@ -330,6 +332,7 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   id: row.id as string,
   title: row.title as string,
   status: row.status as ThreadStatus,
+  posture: row.posture === 'grill' ? 'grill' : 'triage',
   created_at: row.created_at as string,
   updated_at: row.updated_at as string,
   origin: (row.origin as string | null) ?? null,
@@ -377,6 +380,7 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
     id,
     title: threadTitle,
     status: 'idle',
+    posture: 'triage',
     created_at: ts,
     updated_at: ts,
     origin: null,
@@ -516,6 +520,7 @@ export const forkThread = async (opts: {
       id,
       title: opts.goal,
       status: 'idle',
+      posture: 'triage',
       created_at: ts,
       updated_at: ts,
       origin: null,
@@ -778,6 +783,15 @@ export const setThreadStatus = async (id: string, status: ThreadStatus): Promise
   })
 }
 
+/** Persist the chat agent's conversation mode for a thread. */
+export const setThreadPosture = async (id: string, posture: ChatPosture): Promise<void> => {
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE chat_threads SET posture = ?, updated_at = ? WHERE id = ?`,
+    args: [posture, now(), id],
+  })
+}
+
 /**
  * Mark a thread as evaporated by stamping `evaporated_at` with the current
  * ISO-8601 timestamp. Idempotent: if the thread is already evaporated, the
@@ -946,6 +960,7 @@ export const startThreadFromAlert = async (
     id: threadId,
     title,
     status: 'idle',
+    posture: 'triage',
     created_at: ts,
     updated_at: ts,
     origin: 'alert',
