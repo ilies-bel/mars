@@ -92,14 +92,14 @@ describe('ChatMcpManager', () => {
     await writeRepo(fakeConfig)
     manager = new ChatMcpManager()
     const tools = await manager.getTools(repoRoot)
-    expect(tools).toEqual([
+    expect(tools).toEqual(expect.arrayContaining([
       {
         server: 'fake',
         name: 'echo_tool',
         description: 'Echo the message back.',
         inputSchema: { type: 'object', properties: { msg: { type: 'string' } }, required: ['msg'] },
       },
-    ])
+    ]))
   })
 
   it('routes a tool call to the owning server and returns its text', async () => {
@@ -118,9 +118,11 @@ describe('ChatMcpManager', () => {
     expect(result.text).toContain('unknown MCP tool')
   })
 
-  it('yields no tools when the repo has no .mcp.json', async () => {
+  it('keeps daemon-owned tools when the repo has no .mcp.json', async () => {
     manager = new ChatMcpManager()
-    expect(await manager.getTools(repoRoot)).toEqual([])
+    expect(await manager.getTools(repoRoot)).toContainEqual(
+      expect.objectContaining({ name: 'promote_proposal_from_thread' }),
+    )
   })
 
   it('skips a server whose command cannot be spawned', async () => {
@@ -128,7 +130,9 @@ describe('ChatMcpManager', () => {
       mcpServers: { ghost: { type: 'stdio', command: '/nonexistent/binary-xyz' } },
     }), 'utf8')
     manager = new ChatMcpManager()
-    expect(await manager.getTools(repoRoot)).toEqual([])
+    expect(await manager.getTools(repoRoot)).toContainEqual(
+      expect.objectContaining({ name: 'promote_proposal_from_thread' }),
+    )
   })
 
   it('describe reports connected servers with tools and failed ones without', async () => {

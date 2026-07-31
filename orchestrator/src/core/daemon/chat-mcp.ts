@@ -23,6 +23,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
+import { promoteProposalFromThread } from './promote-from-thread'
 
 export interface McpServerConfig {
   name: string
@@ -37,6 +38,21 @@ export interface McpToolInfo {
   description: string
   inputSchema: Record<string, unknown>
 }
+
+/** Daemon-owned tools that share the same function surface as configured MCP tools. */
+const LOCAL_CHAT_TOOLS: readonly McpToolInfo[] = [{
+  server: 'mars-chat',
+  name: 'promote_proposal_from_thread',
+  description: 'Promote a settled grill conversation into a PRD-ready proposal and return the thread to triage.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      threadId: { type: 'string', description: 'The settled grill thread to promote.' },
+    },
+    required: ['threadId'],
+    additionalProperties: false,
+  },
+}]
 
 /** Handshake + list must complete within this budget or the server is skipped. */
 const CONNECT_TIMEOUT_MS = 15_000
@@ -232,7 +248,7 @@ export class ChatMcpManager {
   /** Names of every tool currently reachable for `repoRoot`. */
   async getTools(repoRoot: string): Promise<McpToolInfo[]> {
     const conns = await this.ensureConnections(repoRoot)
-    return Array.from(conns.values()).flatMap((c) => c.tools)
+    return [...LOCAL_CHAT_TOOLS, ...Array.from(conns.values()).flatMap((c) => c.tools)]
   }
 
   /**
@@ -260,6 +276,18 @@ export class ChatMcpManager {
 
   /** Invoke `tool`; never throws — failures come back as isError text. */
   async call(repoRoot: string, tool: string, args: Record<string, unknown>): Promise<{ text: string; isError: boolean }> {
+    if (tool === 'promote_proposal_from_thread') {
+      const threadId = typeof args.threadId === 'string' ? args.threadId.trim() : ''
+      if (threadId.length === 0) {
+        return { text: 'promote_proposal_from_thread requires a non-empty threadId', isError: true }
+      }
+      try {
+        const proposal = await promoteProposalFromThread(threadId)
+        return { text: `promoted proposal ${proposal.id}`, isError: false }
+      } catch (err) {
+        return { text: err instanceof Error ? err.message : String(err), isError: true }
+      }
+    }
     const conns = await this.ensureConnections(repoRoot)
     for (const [name, conn] of conns) {
       if (!conn.tools.some((t) => t.name === tool)) continue

@@ -57,6 +57,9 @@ one task and returns the thread to triage. If a follow-up reveals that a small
 task already enqueued in triage is actually hard, call
 \`override_reshape_as_proposal\` with its id and a fresh proposal title; it
 replaces the task with a proposal that cites the original ask.
+When every grill rubric item is addressed and the operator has no open
+questions, call \`promote_proposal_from_thread\` with the current thread id.
+It synthesises and promotes the PRD, then returns the conversation to triage.
 
 Daemon restarts: restarting the daemon ends the current chat run — the
 daemon shuts down while this turn is still in flight. Always send your full
