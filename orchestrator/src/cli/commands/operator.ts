@@ -19,16 +19,24 @@
 
 import type { Command } from '../command'
 import { readControlLevers, writeControlLever } from '../../core/daemon/config'
+import {
+  computeBudgetStatus,
+  parseDurationToMs,
+  parsePositiveInt,
+  writeBudgetConfig,
+} from '../../core/lib/spend-meter'
+import { renderBudgetStatus } from './budget'
 import { errorMessage, isDaemonDownError } from './shared'
 
 const operatorStatus: Command = {
   path: 'operator status',
   summary: 'print current operator control lever values',
   usage: 'usage: mars operator status',
-  run: (_args, deps) => {
+  run: async (_args, deps) => {
     const levers = readControlLevers()
     deps.out(`recovery: ${levers.recovery}`)
     deps.out(`scoring: ${levers.scoring}`)
+    renderBudgetStatus(await computeBudgetStatus(deps.store), deps.out)
     return { code: 0 }
   },
 }
@@ -36,13 +44,33 @@ const operatorStatus: Command = {
 const operatorSet: Command = {
   path: 'operator set',
   summary: 'set a control lever and apply it immediately',
-  usage: 'usage: mars operator set <lever> <on|off>',
+  usage: 'usage: mars operator set <lever> <value>',
   run: async (args, deps) => {
     const positional = args.positional.filter((a) => !a.startsWith('--'))
     const lever = positional[0]
     const value = positional[1]
     if (!lever || !value) {
-      deps.err('usage: mars operator set <lever> <on|off>')
+      deps.err('usage: mars operator set <lever> <value>')
+      return { code: 2 }
+    }
+    try {
+      if (lever === 'budget-window') {
+        writeBudgetConfig({ windowMs: parseDurationToMs(value) })
+        deps.out(`budget-window: ${value}`)
+        return { code: 0 }
+      }
+      if (lever === 'budget-window-tokens') {
+        writeBudgetConfig({ windowTokens: parsePositiveInt(value, 'budget-window-tokens') })
+        deps.out(`budget-window-tokens: ${value}`)
+        return { code: 0 }
+      }
+      if (lever === 'budget-arc-tokens') {
+        writeBudgetConfig({ arcTokens: parsePositiveInt(value, 'budget-arc-tokens') })
+        deps.out(`budget-arc-tokens: ${value}`)
+        return { code: 0 }
+      }
+    } catch (err) {
+      deps.err(`mars operator set: ${errorMessage(err)}`)
       return { code: 2 }
     }
     const validLevers = ['recovery', 'scoring'] as const
