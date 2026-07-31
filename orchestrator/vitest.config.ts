@@ -25,14 +25,12 @@ export default defineConfig({
       'src/**/*.test.tsx',
       'test/**/*.test.ts',
     ],
-    // Exclude template scaffolding and any nested worktree checkouts so a
-    // stray `agent-*` directory under src/init/templates/claude/worktrees/
-    // (a nested git checkout, has happened before) can never poison the
-    // suite by getting picked up as real tests.
+    // Exclude template scaffolding, including its nested worktree checkouts,
+    // so a stray `agent-*` checkout under src/init/templates/claude/worktrees/
+    // can never poison the suite by getting picked up as real tests.
     exclude: [
       ...configDefaults.exclude,
       '**/src/init/templates/**',
-      '**/worktrees/**',
     ],
     environment: 'node',
     // -------------------------------------------------------------------------

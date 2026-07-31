@@ -56,6 +56,34 @@ describe('ensureSchema', () => {
     expect(r.rows).toEqual([{ version: SCHEMA_VERSION }])
   })
 
+  it('creates the worker MCP audit table with durable mutation evidence fields', async () => {
+    const c = await freshSchemaClient()
+    const cols = await columnsOf(c, 'mcp_worker_audit')
+    expect(Object.fromEntries(cols)).toMatchObject({
+      id: 'bigint',
+      tool_name: 'text',
+      task_id: 'text',
+      args_json: 'jsonb',
+      ok: 'boolean',
+      error_message: 'text',
+      created_at: 'timestamp with time zone',
+    })
+
+    const inserted = await c.execute(
+      `INSERT INTO mcp_worker_audit (tool_name, task_id, args_json, ok, error_message)
+       VALUES ('mars_task_note', 'mars-audit-001', '{"body":"[redacted]"}', false, 'daemon unavailable')
+       RETURNING tool_name, task_id, args_json, ok, error_message, created_at`,
+    )
+    expect(inserted.rows[0]).toMatchObject({
+      tool_name: 'mars_task_note',
+      task_id: 'mars-audit-001',
+      args_json: { body: '[redacted]' },
+      ok: false,
+      error_message: 'daemon unavailable',
+    })
+    expect(inserted.rows[0].created_at).toBeTruthy()
+  })
+
   it('two concurrent calls both resolve without a deadlock error', async () => {
     // Verify that SCHEMA_ADVISORY_LOCK_KEY is exported and is a number —
     // it is the constant every process uses to name the advisory lock.

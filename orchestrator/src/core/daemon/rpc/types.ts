@@ -222,6 +222,14 @@ export interface DaemonDeps {
     stepName: string,
   ): Promise<{ nextStep: string; queued: boolean; cleared: string[] }>
   appendProgress(params: AppendProgressParams): Promise<ProgressEntry>
+  /** Persist one worker-MCP mutation audit row. */
+  appendMcpWorkerAudit(params: {
+    toolName: string
+    taskId: string
+    argsJson: Record<string, unknown>
+    ok: boolean
+    errorMessage: string | null
+  }): Promise<void>
 
   // ── Preview-process registry (preview.spawn / preview.status / preview.teardown) ──
   handlePreviewSpawn(

@@ -128,6 +128,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     handleStepDone: notImpl('handleStepDone') as DaemonDeps['handleStepDone'],
     handleStepReset: notImpl('handleStepReset') as DaemonDeps['handleStepReset'],
     appendProgress: notImpl('appendProgress') as DaemonDeps['appendProgress'],
+    appendMcpWorkerAudit: notImpl('appendMcpWorkerAudit') as DaemonDeps['appendMcpWorkerAudit'],
     handlePreviewSpawn: notImpl('handlePreviewSpawn') as DaemonDeps['handlePreviewSpawn'],
     handlePreviewStatus: notImpl('handlePreviewStatus') as DaemonDeps['handlePreviewStatus'],
     handlePreviewTeardown: notImpl('handlePreviewTeardown') as DaemonDeps['handlePreviewTeardown'],
@@ -143,10 +144,11 @@ describe('RPC registry', () => {
   it('registers exactly one leaf per protocol op, no duplicates', () => {
     // Every handler op is unique (buildRpcRegistry throws on dup).
     expect(() => buildRpcRegistry(allRpcHandlers)).not.toThrow()
-    // Spot-check the count matches the 46-op protocol surface
+    // Spot-check the count matches the 47-op protocol surface
     // (38 + preview.spawn + preview.status + preview.teardown + merge.cancel
-    //  + spend-control.show + spend-control.set + apply-lever + task.contextForWorker).
-    expect(rpcRegistry.size).toBe(46)
+    //  + spend-control.show + spend-control.set + apply-lever + task.contextForWorker
+    //  + mcp.audit.append).
+    expect(rpcRegistry.size).toBe(47)
   })
 
   it('rejects duplicate ops', () => {
@@ -181,6 +183,25 @@ describe('dispatchRpc routing', () => {
     const res = await dispatchRpc(rpcRegistry, { op: 'status' }, deps)
     expect(res).toEqual({ ok: true, data: payload })
     expect(deps.handleStatus).toHaveBeenCalledOnce()
+  })
+
+  it('mcp.audit.append persists the worker mutation evidence through the daemon seam', async () => {
+    const appendMcpWorkerAudit = vi.fn().mockResolvedValue(undefined)
+    const { deps } = makeDeps({
+      appendMcpWorkerAudit: appendMcpWorkerAudit as DaemonDeps['appendMcpWorkerAudit'],
+    })
+    const audit = {
+      toolName: 'mars_task_note',
+      taskId: 'mars-audit-001',
+      argsJson: { body: '[redacted]' },
+      ok: false,
+      errorMessage: 'daemon unavailable',
+    }
+
+    const result = await dispatchRpc(rpcRegistry, { op: 'mcp.audit.append', ...audit }, deps)
+
+    expect(result).toEqual({ ok: true })
+    expect(appendMcpWorkerAudit).toHaveBeenCalledWith(audit)
   })
 
   it('task.priority routes through deps.setTaskPriority (C1 Arc path)', async () => {

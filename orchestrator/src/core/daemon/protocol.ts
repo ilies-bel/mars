@@ -95,6 +95,15 @@ export type DaemonRequest =
   | { op: 'resume' }
   | { op: 'task.note'; id: string; body: string; author?: string }
   | { op: 'task.check'; id: string; criterionIndex: number; uncheck?: boolean; author?: string }
+  /** Append an evidence row for a mutation made through the worker MCP server. */
+  | {
+      op: 'mcp.audit.append'
+      toolName: string
+      taskId: string
+      argsJson: Record<string, unknown>
+      ok: boolean
+      errorMessage: string | null
+    }
   /**
    * Read the worker-safe context for a task. Returns only fields relevant to
    * the dispatched agent: id, title, prompt, files, verify cmd, done criteria

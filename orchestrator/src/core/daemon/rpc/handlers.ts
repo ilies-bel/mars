@@ -504,6 +504,17 @@ const taskCheckHandler = handler('task.check', async (req, deps) => {
   return { ok: true, data: entry }
 })
 
+const mcpAuditAppendHandler = handler('mcp.audit.append', async (req, deps) => {
+  await deps.appendMcpWorkerAudit({
+    toolName: req.toolName,
+    taskId: req.taskId,
+    argsJson: req.argsJson,
+    ok: req.ok,
+    errorMessage: req.errorMessage,
+  })
+  return { ok: true }
+})
+
 const spendControlShowHandler = handler('spend-control.show', async (_req, deps) => {
   const levers = await deps.handleSpendControlShow()
   return { ok: true, data: levers }
@@ -669,6 +680,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   killHandler,
   taskNoteHandler,
   taskCheckHandler,
+  mcpAuditAppendHandler,
   taskContextForWorkerHandler,
   previewSpawnHandler,
   previewStatusHandler,

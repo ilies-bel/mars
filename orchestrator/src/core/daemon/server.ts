@@ -3848,6 +3848,14 @@ export const startDaemon = async (
     handleStepDone,
     handleStepReset,
     appendProgress,
+    appendMcpWorkerAudit: async ({ toolName, taskId, argsJson, ok, errorMessage }) => {
+      await dbClient.execute({
+        sql: `INSERT INTO mcp_worker_audit
+                (tool_name, task_id, args_json, ok, error_message)
+              VALUES (?, ?, ?::jsonb, ?, ?)`,
+        args: [toolName, taskId, JSON.stringify(argsJson), ok, errorMessage],
+      })
+    },
     handlePreviewSpawn: (taskId, cmd, cwd) => previewRegistry.spawn(taskId, cmd, cwd),
     handlePreviewStatus: (taskId) => previewRegistry.status(taskId),
     handlePreviewTeardown: (taskId) => previewRegistry.teardown(taskId),

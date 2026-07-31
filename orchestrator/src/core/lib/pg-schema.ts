@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0004'
+export const SCHEMA_VERSION = '0005'
 
 /** `DEFAULT (unixepoch())` translation. */
 const EPOCH_NOW = "floor(extract(epoch from now()))::bigint"
@@ -927,6 +927,21 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_usage_snapshots_captured_at
      ON usage_snapshots(captured_at DESC)`,
+
+  // ── worker MCP mutation audit (slice 6 of PRD 57e134df) ──────────────────
+  // One immutable row per mutation call issued by a dispatched worker. Args
+  // are redacted by the MCP server before crossing the daemon boundary.
+  `CREATE TABLE IF NOT EXISTS mcp_worker_audit (
+    id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tool_name     text        NOT NULL,
+    task_id       text        NOT NULL,
+    args_json     jsonb       NOT NULL,
+    ok            boolean     NOT NULL,
+    error_message text,
+    created_at    timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_mcp_worker_audit_task_created
+     ON mcp_worker_audit(task_id, created_at DESC)`,
 ]
 
 /**
@@ -940,10 +955,12 @@ export const SCHEMA_TABLES: readonly string[] = [
   'proposal_dependencies',
   'proposal_notes',
   'tasks',
+  'task_terminal_reopens',
   'task_blockers',
   'task_proposal_blockers',
   'task_acceptance',
   'self_heal_attempts',
+  'non_code_requeue_attempts',
   'task_claude_sessions',
   'task_spec_files',
   'task_done_criteria',
@@ -964,6 +981,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'chat_feedback',
   'app_settings',
   'preferences',
+  'notices',
   'diagnoses_root_cause',
   'diagnoses_inconclusive',
   'diagnosis_involved_files',
@@ -992,6 +1010,8 @@ export const SCHEMA_TABLES: readonly string[] = [
   'purged_tasks_archive',
   'workflow_patch_proposals',
   'usage_snapshots',
+  'mcp_worker_audit',
+  'daemon_heartbeat',
 ]
 
 /**
@@ -1002,6 +1022,11 @@ export const SCHEMA_TABLES: readonly string[] = [
 export const IDENTITY_COLUMNS: Readonly<Record<string, string>> = {
   events: 'id',
   self_heal_attempts: 'id',
+  non_code_requeue_attempts: 'id',
+  task_terminal_reopens: 'id',
+  chat_messages: 'seq',
+  usage_snapshots: 'id',
+  mcp_worker_audit: 'id',
 }
 
 /**
