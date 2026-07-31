@@ -24,6 +24,14 @@ export const StormFailureExcerptSchema = z.object({
   signature: z.string(),
   /** Truncated tail of the task's recorded error output. */
   excerpt: z.string(),
+  /**
+   * False when the recorded text is not captured output at all — empty, or
+   * derived status text (a `recovery_failed:<sig>:` chain repeated until
+   * truncation). A brief that presents padding as evidence is worse than one
+   * that admits it has none: the Steward cannot diagnose, cannot tell that it
+   * cannot diagnose, and exits having done nothing.
+   */
+  usable: z.boolean().default(true),
 })
 
 export type StormFailureExcerpt = z.infer<typeof StormFailureExcerptSchema>
@@ -101,11 +109,72 @@ export const STEWARD_STORM_TOOLS: readonly string[] = [
   'Write',
 ]
 
-/** Wall-clock ceiling for one storm Steward run (20 minutes). */
-export const STEWARD_STORM_TIMEOUT_MS = 20 * 60_000
+/**
+ * Wall-clock ceiling for one storm Steward run (10 minutes).
+ *
+ * Dispatch is PAUSED for the whole run, so this budget IS the worst-case dead
+ * queue for a healthy Steward — the single largest controllable component of
+ * a storm's cost. Ten minutes is enough for a diagnose-and-fix pass over a
+ * systemic failure; a Steward that needs longer is almost certainly chasing a
+ * cause that wants a human. When it expires, `runClaudeCode` returns exit 124,
+ * the daemon records a `failed` ledger outcome, and dispatch resumes at once
+ * rather than waiting out the crash/hang fallback.
+ */
+export const STEWARD_STORM_TIMEOUT_MS = 10 * 60_000
 
 /** Cap on a single failure excerpt so the brief stays small. */
 const EXCERPT_MAX_CHARS = 1_500
+
+/**
+ * Status text the orchestrator itself synthesises, which can end up in a
+ * task's `error` column instead of captured output. A chain of these repeated
+ * until truncation carries zero diagnostic content.
+ */
+const STATUS_ECHO_TOKEN = /(?:recovery_failed|recovery_exhausted|requeue_ceiling)[^\s:]*:\s*/g
+
+/** Shortest remainder that could plausibly be real captured output. */
+const MIN_DIAGNOSTIC_CHARS = 40
+
+export type StormEvidenceVerdict = 'ok' | 'empty' | 'status-echo'
+
+export interface StormEvidenceAssessment {
+  usable: boolean
+  verdict: StormEvidenceVerdict
+  /** What to put in the brief — the real output, or an explicit admission. */
+  excerpt: string
+}
+
+/**
+ * Decide whether a task's recorded error text is usable evidence.
+ *
+ * This exists because a live storm woke the Steward with a brief whose every
+ * excerpt was `recovery_failed:<sig>: recovery_failed:<sig>: …` repeated to
+ * the truncation limit — a sweep had overwritten `error` with derived status
+ * text. The Steward had nothing to work from and silently produced nothing.
+ * Saying "no usable output was captured" out loud is strictly better than
+ * passing padding off as evidence.
+ */
+export const assessStormExcerpt = (raw: string | null | undefined): StormEvidenceAssessment => {
+  const text = (raw ?? '').trim()
+  if (text.length === 0) {
+    return { usable: false, verdict: 'empty', excerpt: '(no error output was recorded for this task)' }
+  }
+  const stripped = text.replace(STATUS_ECHO_TOKEN, '').trim()
+  if (stripped.length < MIN_DIAGNOSTIC_CHARS || stripped.length < text.length * 0.25) {
+    return {
+      usable: false,
+      verdict: 'status-echo',
+      excerpt:
+        '(no usable output was captured — the recorded text is derived orchestrator status ' +
+        `(\`recovery_failed:\`/\`recovery_exhausted:\` chain), not the failing command's output)`,
+    }
+  }
+  return { usable: true, verdict: 'ok', excerpt: text }
+}
+
+/** True when at least one excerpt in the brief carries real captured output. */
+export const hasUsableStormEvidence = (event: StewardStormEvent): boolean =>
+  event.failureExcerpts.some((excerpt) => excerpt.usable)
 
 /**
  * Render the storm brief the Steward receives as its prompt. Everything the
@@ -133,13 +202,31 @@ export const renderStewardStormBrief = (event: StewardStormEvent): string => {
     lines.push('## Failure excerpts', '')
     for (const excerpt of event.failureExcerpts) {
       lines.push(
-        `### ${excerpt.taskId} (${excerpt.signature})`,
+        `### ${excerpt.taskId} (${excerpt.signature})${excerpt.usable ? '' : ' — NO USABLE EVIDENCE'}`,
         '```',
         excerpt.excerpt.slice(0, EXCERPT_MAX_CHARS),
         '```',
         '',
       )
     }
+  }
+
+  if (!hasUsableStormEvidence(event)) {
+    lines.push(
+      '## ⚠ No usable failure output was captured',
+      '',
+      'Not one affected task recorded real command output — every excerpt above',
+      'is empty or derived orchestrator status text. You are being asked to',
+      'diagnose a systemic failure with no evidence attached.',
+      '',
+      'Go looking before you guess: `.mars/watch.log`, the affected branches and',
+      'worktrees, and the failing step named in the signature are all reachable',
+      'from here. If that turns up nothing actionable, do NOT invent a fix —',
+      'report exactly "insufficient evidence to diagnose", name what evidence',
+      'you would have needed, and stop. An honest empty result resumes dispatch',
+      'immediately; a silent one used to hold the whole queue down.',
+      '',
+    )
   }
 
   lines.push(
@@ -157,7 +244,10 @@ export const renderStewardStormBrief = (event: StewardStormEvent): string => {
     '   whether dispatch is safe to resume.',
     '',
     'If you cannot fix it, say so explicitly and name the single next action a',
-    'human must take. Do not stop at an explanation of the diff.',
+    'human must take. Do not stop at an explanation of the diff. Whatever you',
+    'conclude, a zero-commit run is recorded as a no-op in the Steward ledger —',
+    'so an unfixable storm should end with a plain statement of why, not with',
+    'silence.',
   )
 
   return lines.join('\n')

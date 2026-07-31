@@ -344,13 +344,31 @@ const OPERATIONAL_ALERT_COPY: Record<
     const signature =
       typeof row.payload.signature === 'string'
         ? row.payload.signature
-        : (row.signature?.replace(/^signature-storm:/, '') ?? 'unknown signature')
+        : (row.signature?.replace(/^signature-storm(?:-unresolved)?:/, '') ?? 'unknown signature')
     const streak = typeof row.payload.streak === 'number' ? row.payload.streak : 'multiple'
+    // The escalation row shares this kind under a distinct dedup key: the
+    // Steward budget for this signature is spent, so Mars has stopped pausing
+    // for it. Saying "dispatch is paused" there would be a lie.
+    const attempts =
+      typeof row.payload.stewardAttempts === 'number' ? row.payload.stewardAttempts : null
+    if (attempts !== null) {
+      return {
+        title: `${attempts} Steward attempts failed on \`${signature}\`; Mars has stopped auto-pausing for it`,
+        body:
+          `The same failure signature keeps tripping the circuit breaker and every write-capable Steward ` +
+          `dispatch produced no fix. Mars will not pause dispatch for this signature again — cycling ` +
+          `pause/Steward/resume against a cause the Steward cannot reach only burns worktrees. Tasks keep ` +
+          `dispatching and keep failing until the shared cause is fixed. Inspect \`.mars/watch.log\` and the ` +
+          `\`steward_ledger\` rows for target '${signature}'.`,
+      }
+    }
     return {
       title: `${streak} tasks failed with \`${signature}\`; dispatch is paused`,
       body:
         `The same failure signature is recurring across tasks, so dispatch is paused. ` +
-        `There is no single task transcript for this incident. Inspect \`.mars/watch.log\`, correct the shared cause, then run \`mars daemon resume\`.`,
+        `There is no single task transcript for this incident. Dispatch resumes as soon as the Steward reports ` +
+        `an outcome (fix, no-op, or failure), or on the bounded crash/hang fallback. ` +
+        `Inspect \`.mars/watch.log\`, correct the shared cause, then run \`mars daemon resume\` to resume immediately.`,
     }
   },
   'gate-enrichment-stale': null,
