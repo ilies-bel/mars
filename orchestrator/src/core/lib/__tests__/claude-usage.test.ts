@@ -131,7 +131,13 @@ describe('getLatestContextSize', () => {
     expect(getLatestContextSize(events)).toBe(0)
   })
 
-  it('reads the final context size reported by a Codex turn.completed event', () => {
+  it('IGNORES a Codex turn.completed usage block — that is spend, not occupancy', () => {
+    // This assertion is deliberately the inverse of what it used to be. Reading
+    // the terminal result event as context size is the defect: Codex reports
+    // usage once, on turn.completed, as CUMULATIVE spend for the whole turn.
+    // Treating it as occupancy produced `289216/50000` and ctx% above 300%,
+    // and tripped context-overflow handling on runs nowhere near a limit.
+    // Cumulative spend is read by getCumulativeTokenSpend instead.
     const events: ClaudeEvent[] = [
       { type: 'assistant', message: { content: [] } },
       {
@@ -144,7 +150,8 @@ describe('getLatestContextSize', () => {
       },
     ]
 
-    expect(getLatestContextSize(events)).toBe(182_500)
+    expect(getLatestContextSize(events)).toBe(0)
+    expect(getCumulativeTokenSpend(events)).toBe(182_500)
   })
 
   it('returns input_tokens alone when no cache tokens are present', () => {

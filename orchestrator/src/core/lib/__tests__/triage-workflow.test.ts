@@ -398,7 +398,7 @@ describe('triage workflow', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    await queue.enqueueTask('another task keeps the graph non-trivial')
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('Codex triage fixture')
 
     const triage = await import('../../../workflows/triage-workflow')
@@ -436,7 +436,7 @@ describe('triage workflow', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    await queue.enqueueTask('background task')
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('task whose triage fails')
 
     const triage = await import('../../../workflows/triage-workflow')
@@ -485,8 +485,8 @@ describe('triage workflow — optimised data access', () => {
     const a = await queue.enqueueTask('task with pre-declared blocker')
     const b = await queue.enqueueTask('prerequisite task')
     await queue.addBlockers(a.id, [b.id])
-    // Extra task ensures the graph would be non-trivial if fetched
-    await queue.enqueueTask('unrelated background task')
+    // Enough tasks that the graph would be non-trivial if fetched
+    await fillGraph(queue, busyGraph)
 
     const { createTaskStore, getCompositionRootClient } = await import(
       '../../../core/store/task-store'
@@ -505,8 +505,8 @@ describe('triage workflow — optimised data access', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    // Extra task ensures the graph would be non-trivial if fetched
-    await queue.enqueueTask('unrelated background task')
+    // Enough tasks that the graph would be non-trivial if fetched
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('implement X', undefined, {
       spec: {
         files: ['src/foo.ts'],
@@ -644,7 +644,7 @@ describe('triage workflow — optimised data access', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    await queue.enqueueTask('background task')
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('main task')
 
     const { createTaskStore, getCompositionRootClient } = await import(
@@ -669,7 +669,7 @@ describe('triage workflow — optimised data access', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    await queue.enqueueTask('background task')
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('main task')
 
     const { createTaskStore, getCompositionRootClient } = await import(

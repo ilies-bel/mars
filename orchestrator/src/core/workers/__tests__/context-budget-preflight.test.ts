@@ -166,7 +166,9 @@ describe('Triager is pinned as a cheap classification call', () => {
     expect(deniesAllToolUse(WORKER_CONFIGS.Triager)).toBe(true)
     expect(deniesAllToolUse(WORKER_CONFIGS.Coder)).toBe(false)
 
-    const adapter = PROVIDERS.claude.headless as {
+    // Stub whichever provider the daemon actually runs the Triager on —
+    // Codex by default — not a hardcoded one.
+    const adapter = PROVIDERS[WORKER_PROVIDER].headless as {
       run: (prompt: string, opts: HeadlessRunOpts) => Promise<RunClaudeResult>
     }
     const original = adapter.run
