@@ -68,6 +68,10 @@ interface SpendControlStoreModule {
   upsertSpendControl: typeof import('../../core/daemon/spend-control/store').upsertSpendControl
 }
 
+interface ContinueTaskModule {
+  coreContinueTask: typeof import('../../core/daemon/continue-task').coreContinueTask
+}
+
 interface Loaded {
   q: QueueModule
   aq: ActionQueueModule
@@ -78,6 +82,7 @@ interface Loaded {
   pub: PublisherModule
   cb: CircuitBreakerModule
   sc: SpendControlStoreModule
+  continueTask: ContinueTaskModule
   client: DbClient
 }
 
@@ -128,7 +133,10 @@ const loadModules = async (repo: string): Promise<Loaded> => {
   const sc = (await import(
     '../../core/daemon/spend-control/store'
   )) as unknown as SpendControlStoreModule
-  return { q, aq, ft, rc, rs, gm, pub, cb, sc, client: q.resolveQueueClient() }
+  const continueTask = (await import(
+    '../../core/daemon/continue-task'
+  )) as unknown as ContinueTaskModule
+  return { q, aq, ft, rc, rs, gm, pub, cb, sc, continueTask, client: q.resolveQueueClient() }
 }
 
 /**
@@ -184,14 +192,18 @@ describe('recovery-spawn outbox subscriber', () => {
   it('spawns exactly one recovery task for a single task.failed event', async () => {
     const { q, ft, rc, rs, pub, client } = await loadModules(repo)
 
-    // Enqueue the origin task and set its failedPhase so the subscriber can
-    // compute a deterministic failure signature.
+    // A durable task.failed event is only recoverable while its origin is
+    // still terminal. Give the failed task a usable worktree, as production
+    // recovery does, so this exercises the failed → recovery-blocked path.
     const t1 = await q.enqueueTask('implement feature X', undefined, {
       skipTriage: true,
     })
-    // failedPhase='verify' + error matching 'no-commits-ahead' rule
-    // → computeFailureSignature('verify', error) = 'verify/no-commits-ahead'
-    await q.updateTask(t1.id, { failedPhase: 'verify' })
+    await q.updateTask(t1.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      branch: `task/${t1.id}`,
+      worktreePath: repo,
+    })
 
     const signature = 'verify/no-commits-ahead'
     const cleanup = registerTestRecipe(rc, signature)
@@ -223,6 +235,34 @@ describe('recovery-spawn outbox subscriber', () => {
     expect(fixRows.rows).toHaveLength(1)
 
     cleanup()
+  })
+
+  it('does not block a task continued before its pending failure event drains', async () => {
+    const { q, rs, continueTask, client } = await loadModules(repo)
+    const task = await q.enqueueTask('resume without stale recovery', undefined, {
+      skipTriage: true,
+    })
+
+    // Subscribe before the failure so its event remains pending while the
+    // operator continues the task.
+    await rs.ensureRecoverySpawner(client)
+    await q.updateTask(task.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      branch: `task/${task.id}`,
+      worktreePath: repo,
+      error: 'no commits ahead of integration branch',
+    })
+
+    await continueTask.coreContinueTask(task.id)
+    await rs.drainRecoverySpawner(client)
+
+    expect((await q.getTask(task.id))?.status).toBe('queued')
+    const recoveries = await client.execute({
+      sql: 'SELECT id FROM tasks WHERE fix_for_task_id = ?',
+      args: [task.id],
+    })
+    expect(recoveries.rows).toHaveLength(0)
   })
 
   it('escalates a pre-setup failure without spawning a recovery task', async () => {
@@ -264,7 +304,12 @@ describe('recovery-spawn outbox subscriber', () => {
     const t1 = await q.enqueueTask('implement feature Y', undefined, {
       skipTriage: true,
     })
-    await q.updateTask(t1.id, { failedPhase: 'verify' })
+    await q.updateTask(t1.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      branch: `task/${t1.id}`,
+      worktreePath: repo,
+    })
 
     const signature = 'verify/no-commits-ahead'
     const cleanup = registerTestRecipe(rc, signature)
@@ -454,7 +499,12 @@ describe('recovery-spawn outbox subscriber', () => {
     const t1 = await q.enqueueTask('implement feature (no outage)', undefined, {
       skipTriage: true,
     })
-    await q.updateTask(t1.id, { failedPhase: 'verify' })
+    await q.updateTask(t1.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      branch: `task/${t1.id}`,
+      worktreePath: repo,
+    })
 
     const signature = 'verify/no-commits-ahead'
     const cleanup = registerTestRecipe(rc, signature)
@@ -543,7 +593,12 @@ describe('recovery-spawn outbox subscriber', () => {
       skipTriage: true,
     })
     // Default spend-control levers have suppressRecovery=false; no upsert needed.
-    await q.updateTask(t1.id, { failedPhase: 'verify' })
+    await q.updateTask(t1.id, {
+      status: 'failed',
+      failedPhase: 'verify',
+      branch: `task/${t1.id}`,
+      worktreePath: repo,
+    })
 
     const signature = 'verify/no-commits-ahead'
     const cleanup = registerTestRecipe(rc, signature)
@@ -621,6 +676,8 @@ describe('verify-gate meta-monitor suppression', () => {
       failureReason: VERIFY_STEP,
       failureSignature: VERDICT,
       error: GATE_ERROR,
+      branch: `task/${t.id}`,
+      worktreePath: repo,
     })
     await rs.drainRecoverySpawner(client)
     return t.id

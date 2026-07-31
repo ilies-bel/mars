@@ -6,7 +6,7 @@ import {
   handleTaskFailureWithFixTask,
   hasUsableWorktree,
 } from '../../core/queue-fix-tasks.js'
-import { getTask, updateTask } from '../../core/queue.js'
+import { getTask, reopenTerminalTask, updateTask } from '../../core/queue.js'
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
 import { asStepId, UNKNOWN_STEP_ID } from '../../core/lib/failure-signature.js'
 import { registerSubscriberName } from '../registry.js'
@@ -106,6 +106,11 @@ export async function drainRecoverySpawner(
       const task = await getTask(taskId)
       if (!task) return false
 
+      // A failure event describes a particular terminal episode. Once an
+      // operator has continued/restarted that task, the old event must not
+      // attach a recovery to the new queued episode.
+      if (task.status !== 'failed') return false
+
       // Failures that happen before setup have no origin worktree for a fix
       // task to reuse. Route them directly through the shared escalation before
       // spend-control or outage gates can produce a less actionable notice.
@@ -124,6 +129,13 @@ export async function drainRecoverySpawner(
         })
         return true
       }
+
+      // `failed` is terminal: general queue writes (including Arc's
+      // recovery → blocked batch) are deliberately forbidden from leaving
+      // it. Recovery is the one explicit automated reopen path, so record the
+      // audited reopen before handing the now-queued origin to the recovery
+      // handler. This also lets environmental paths legitimately re-queue it.
+      await reopenTerminalTask(taskId, 'recovery-spawner')
 
       // If the API circuit breaker is open — or was opened within a 60 s grace
       // window — this failure is environmental, not a code or verify bug. Skip
