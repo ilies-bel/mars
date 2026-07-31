@@ -310,11 +310,15 @@ describe('signature-storm — integration via recovery-spawn subscriber', () => 
     rmSync(repo, { recursive: true, force: true })
   })
 
-  // Signature that classifies to 'unclassified' — mimics disk-full or any
-  // environmental failure with no registered error-class rule.
-  const STEP = 'setup'
+  // A step that carries a KIND ('install-failed') and an error with no
+  // registered error-class rule, so the signature is
+  // `setup:install-failed/unclassified` — diagnostic (the kind names the
+  // cause) even though the class is unclassified. A BARE gate plus
+  // 'unclassified' (`setup/unclassified`) is the generic bucket the breaker
+  // deliberately ignores — see the isDiagnosticSignature suite.
+  const STEP = 'setup:install-failed'
   const ENV_ERROR = 'ENOSPC: no space left on device — install failed'
-  const SIG = 'setup/unclassified'
+  const SIG = 'setup:install-failed/unclassified'
 
   /**
    * Fail a fresh origin task and drain the subscriber. Returns the task id.
