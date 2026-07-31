@@ -116,6 +116,7 @@ import {
   createTaskFlightTracker,
   type DispatchKind,
 } from './task-flight-tracker'
+import { registerDispatchHint } from './dispatch-hint'
 import { rpcRegistry, dispatchRpc } from './rpc/registry'
 import type { DaemonDeps } from './rpc/types'
 import { PreviewRegistry } from './preview-registry'
@@ -1817,6 +1818,19 @@ export const startDaemon = async (
     if (tracker.isInFlight(e.taskId)) return
     tracker.enqueuePending(e.taskId, 'triage')
     void drain()
+  })
+
+  // Dispatch hint for tasks the orchestrator creates for ITSELF mid-flight
+  // (rescue-operators for dead-ended arcs). Those writers live in `core/` and
+  // have no reference to this bus, so without this seam their rows sat
+  // unscheduled until the `reseed-dispatch` reconciler ran — i.e. until the next
+  // daemon restart. See core/daemon/dispatch-hint.ts.
+  //
+  // Deliberately delegates to the two bus handlers above rather than touching
+  // the tracker directly, so the pending-set push + `drain()` sequence that
+  // AGENTS.md mandates has exactly one implementation.
+  const unregisterDispatchHint = registerDispatchHint((taskId, kind) => {
+    bus.emit(kind === 'triage' ? 'task.added' : 'task.queued', { taskId })
   })
 
   // refine is user-initiated and rare; let it push directly through its sem
@@ -4816,6 +4830,9 @@ export const startDaemon = async (
     clearInterval(blockerResolutionDrain)
     clearInterval(recoverySpawnerDrain)
     clearInterval(arcVerifierDrain)
+    // Drop the dispatch hint before the tracker is torn down, so a writer that
+    // creates a task during shutdown does not fan out into a dead tracker.
+    unregisterDispatchHint()
     stopEndpointProbe()
     // Once shutdown starts, stop dispatching new work even if drain wasn't
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
