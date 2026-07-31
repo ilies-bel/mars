@@ -13,6 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -211,11 +212,59 @@ describe('updateWorkflows — ADR-0057 ownership', () => {
       out: (s) => out.push(s),
     })
     expect(res.records.every((r) => r.outcome === 'created')).toBe(true)
+    expect(res.summary).toEqual({
+      created: res.records.length,
+      updated: 0,
+      kept: 0,
+      unowned: 0,
+    })
     expect(existsSync(destOf('task-workflow.js'))).toBe(true)
     // Created files are recorded as owned in the manifest.
     expect(readOwnedWorkflowPaths(stateDir)).toContain(
       `${WORKFLOWS_DEST_REL}/task-workflow.js`,
     )
+  })
+
+  it('reports filesystem reconciliation outcomes in its summary', async () => {
+    const [identical, accepted, skipped, unowned, ...missing] =
+      planWorkflowCopies(repoRoot)
+    expect(unowned).toBeDefined()
+    mkdirSync(resolve(repoRoot, WORKFLOWS_DEST_REL), { recursive: true })
+    copyFileSync(identical!.src, identical!.dest)
+    writeFileSync(accepted!.dest, '// apply this update\n', 'utf8')
+    const keptContent = '// preserve this workflow\n'
+    writeFileSync(skipped!.dest, keptContent, 'utf8')
+    const unownedContent = '// user-owned outside the manifest\n'
+    writeFileSync(unowned!.dest, unownedContent, 'utf8')
+    writeInitManifest(stateDir, [accepted!.rel, skipped!.rel])
+
+    const answers = ['y', 'n']
+    const res = await updateWorkflows({
+      repoRoot,
+      stateDir,
+      yes: false,
+      acceptAll: false,
+      readLine: async () => answers.shift()!,
+      out: () => {},
+    })
+
+    expect(res.summary).toEqual({
+      created: missing.length,
+      updated: 1,
+      kept: 1,
+      unowned: 1,
+    })
+    expect(readFileSync(identical!.dest, 'utf8')).toBe(
+      readFileSync(identical!.src, 'utf8'),
+    )
+    expect(readFileSync(accepted!.dest, 'utf8')).toBe(
+      readFileSync(accepted!.src, 'utf8'),
+    )
+    expect(readFileSync(skipped!.dest, 'utf8')).toBe(keptContent)
+    expect(readFileSync(unowned!.dest, 'utf8')).toBe(unownedContent)
+    for (const copy of missing) {
+      expect(readFileSync(copy.dest, 'utf8')).toBe(readFileSync(copy.src, 'utf8'))
+    }
   })
 
   it('silently refreshes an identical file (unchanged, no prompt)', async () => {
@@ -493,7 +542,9 @@ describe('mars update — command wiring (in-process)', () => {
     expect(initCall?.opts.force).toBe(true)
     // Phase 2 scaffolded the workflows fresh.
     expect(existsSync(destOf('task-workflow.js'))).toBe(true)
-    expect(r.out.join('\n')).toContain('workflows:')
+    expect(r.out.join('\n')).toContain(
+      `workflows: ${planWorkflowCopies(repoRoot).length} created, 0 updated, 0 kept, 0 unowned`,
+    )
   })
 
   it('under --yes never clobbers a diverged owned workflow', async () => {

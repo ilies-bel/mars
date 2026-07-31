@@ -37,6 +37,13 @@ export interface WorkflowUpdateRecord {
 
 export interface UpdateWorkflowsResult {
   records: WorkflowUpdateRecord[]
+  /** Operator-facing tally derived from the reconciliation records. */
+  summary: {
+    created: number
+    updated: number
+    kept: number
+    unowned: number
+  }
 }
 
 export interface UpdateWorkflowsOptions {
@@ -156,7 +163,19 @@ export const updateWorkflows = async (
     }
   }
 
-  return { records }
+  return {
+    records,
+    summary: records.reduce(
+      (summary, record) => {
+        if (record.outcome === 'created') summary.created += 1
+        if (record.outcome === 'accepted') summary.updated += 1
+        if (record.outcome === 'skipped') summary.kept += 1
+        if (record.outcome === 'untouched') summary.unowned += 1
+        return summary
+      },
+      { created: 0, updated: 0, kept: 0, unowned: 0 },
+    ),
+  }
 }
 
 /** Production readline-backed {@link LineReader}. */

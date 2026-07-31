@@ -670,13 +670,10 @@ const update: Command = {
       out: (s: string): void => deps.out(s),
     })
 
-    const created = result.records.filter((r) => r.outcome === 'created')
-    const accepted = result.records.filter((r) => r.outcome === 'accepted')
-    const skipped = result.records.filter((r) => r.outcome === 'skipped')
-    const untouched = result.records.filter((r) => r.outcome === 'untouched')
+    const { created, updated, kept, unowned } = result.summary
     deps.out(
-      `workflows: ${created.length} created, ${accepted.length} updated, ` +
-        `${skipped.length} kept, ${untouched.length} unowned`,
+      `workflows: ${created} created, ${updated} updated, ` +
+        `${kept} kept, ${unowned} unowned`,
     )
     return { code: 0 }
   },
