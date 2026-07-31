@@ -56,6 +56,51 @@ describe('ensureSchema', () => {
     expect(r.rows).toEqual([{ version: SCHEMA_VERSION }])
   })
 
+  it('creates chat threads without provider-session columns', async () => {
+    const c = await freshSchemaClient()
+    const columns = await columnsOf(c, 'chat_threads')
+
+    expect(columns.has('session_id')).toBe(false)
+    expect(columns.has('context_seeded')).toBe(false)
+  })
+
+  it('removes provider-session columns from legacy chat threads without losing rows', async () => {
+    const c = openDb(freshKey())
+    try {
+      await __execSchemaBatch(c, [
+        `CREATE TABLE chat_threads (
+          id text PRIMARY KEY,
+          title text NOT NULL,
+          status text NOT NULL,
+          posture text NOT NULL,
+          origin text,
+          alert_item_id text,
+          alert_resolved bigint NOT NULL,
+          evaporated_at text,
+          session_id text,
+          context_seeded bigint,
+          created_at text NOT NULL,
+          updated_at text NOT NULL
+        )`,
+        {
+          sql: `INSERT INTO chat_threads
+                  (id, title, status, posture, alert_resolved, session_id, context_seeded, created_at, updated_at)
+                VALUES ('legacy-thread', 'Keep me', 'idle', 'triage', 0, 'obsolete', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+        },
+      ])
+
+      await ensureSchema(c)
+
+      const columns = await columnsOf(c, 'chat_threads')
+      expect(columns.has('session_id')).toBe(false)
+      expect(columns.has('context_seeded')).toBe(false)
+      const row = await c.execute(`SELECT id, title FROM chat_threads WHERE id = 'legacy-thread'`)
+      expect(row.rows).toEqual([{ id: 'legacy-thread', title: 'Keep me' }])
+    } finally {
+      await c.close()
+    }
+  })
+
   it('creates the worker MCP audit table with durable mutation evidence fields', async () => {
     const c = await freshSchemaClient()
     const cols = await columnsOf(c, 'mcp_worker_audit')

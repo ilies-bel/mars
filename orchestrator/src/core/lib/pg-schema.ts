@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0006'
+export const SCHEMA_VERSION = '0007'
 
 /** `DEFAULT (unixepoch())` translation. */
 const EPOCH_NOW = "floor(extract(epoch from now()))::bigint"
@@ -492,8 +492,7 @@ const DDL: readonly string[] = [
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS evaporated_at text`,
   `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS posture text NOT NULL DEFAULT 'triage'`,
   `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS context_seeded`,
-  // Codex CLI exec/resume needs a persisted session id per thread.
-  `ALTER TABLE IF EXISTS chat_threads ADD COLUMN IF NOT EXISTS session_id text`,
+  `ALTER TABLE IF EXISTS chat_threads DROP COLUMN IF EXISTS session_id`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_alert_item_id
      ON chat_threads(alert_item_id)`,
   `CREATE INDEX IF NOT EXISTS idx_chat_threads_evaporated_at

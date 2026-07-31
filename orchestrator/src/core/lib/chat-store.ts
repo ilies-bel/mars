@@ -81,12 +81,6 @@ export interface ChatThread {
   evaporated_at: string | null
   parent_thread_id: string | null
   fork_idempotency_key: string | null
-  /**
-   * Per-thread agent session id stamped at creation time. Each thread starts a
-   * fresh agent context so context does not bleed across Subjects (slice 6 of
-   * PRD 76347e15). Null for threads created before this column was introduced.
-   */
-  session_id: string | null
 }
 
 export interface ChatMessage {
@@ -341,7 +335,6 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   evaporated_at: (row.evaporated_at as string | null) ?? null,
   parent_thread_id: (row.parent_thread_id as string | null) ?? null,
   fork_idempotency_key: (row.fork_idempotency_key as string | null) ?? null,
-  session_id: (row.session_id as string | null) ?? null,
 })
 
 const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
@@ -368,13 +361,12 @@ const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
 export const createThread = async (title?: string): Promise<ChatThread> => {
   const c = stateClient()
   const id = randomUUID()
-  const sessionId = randomUUID()
   const ts = now()
   const threadTitle = title ?? ''
   await c.execute({
-    sql: `INSERT INTO chat_threads (id, title, status, session_id, created_at, updated_at)
-          VALUES (?, ?, 'idle', ?, ?, ?)`,
-    args: [id, threadTitle, sessionId, ts, ts],
+    sql: `INSERT INTO chat_threads (id, title, status, created_at, updated_at)
+          VALUES (?, ?, 'idle', ?, ?)`,
+    args: [id, threadTitle, ts, ts],
   })
   return {
     id,
@@ -389,7 +381,6 @@ export const createThread = async (title?: string): Promise<ChatThread> => {
     evaporated_at: null,
     parent_thread_id: null,
     fork_idempotency_key: null,
-    session_id: sessionId,
   }
 }
 
@@ -501,14 +492,13 @@ export const forkThread = async (opts: {
     return { thread: rowToThread(existing.rows[0] as Record<string, unknown>), deduped: true }
   }
   const id = randomUUID()
-  const sessionId = randomUUID()
   const ts = now()
   await c.execute({
     sql: `INSERT INTO chat_threads
-            (id, title, status, session_id, created_at, updated_at, origin, alert_item_id,
+            (id, title, status, created_at, updated_at, origin, alert_item_id,
              alert_resolved, parent_thread_id, fork_idempotency_key)
-          VALUES (?, ?, 'idle', ?, ?, ?, NULL, NULL, 0, ?, ?)`,
-    args: [id, opts.goal, sessionId, ts, ts, opts.sourceThreadId, opts.idempotencyKey],
+          VALUES (?, ?, 'idle', ?, ?, NULL, NULL, 0, ?, ?)`,
+    args: [id, opts.goal, ts, ts, opts.sourceThreadId, opts.idempotencyKey],
   })
 
   const seed = await buildForkSeed(opts.sourceThreadId, opts.files)
@@ -529,7 +519,6 @@ export const forkThread = async (opts: {
       evaporated_at: null,
       parent_thread_id: opts.sourceThreadId,
       fork_idempotency_key: opts.idempotencyKey,
-      session_id: sessionId,
     },
     deduped: false,
   }
@@ -711,30 +700,6 @@ export const updateThreadTitle = async (id: string, title: string): Promise<void
     sql: `UPDATE chat_threads SET title = ?, updated_at = ? WHERE id = ?`,
     args: [title, now(), id],
   })
-}
-
-/**
- * Persist the Codex CLI session id on a thread so the next turn can resume it.
- */
-export const setThreadSession = async (threadId: string, sessionId: string): Promise<void> => {
-  const c = stateClient()
-  await c.execute({
-    sql: `UPDATE chat_threads SET session_id = ?, updated_at = ? WHERE id = ?`,
-    args: [sessionId, now(), threadId],
-  })
-}
-
-/**
- * Read the persisted Codex CLI session id for a thread (null when unset).
- */
-export const getThreadSession = async (threadId: string): Promise<string | null> => {
-  const c = stateClient()
-  const result = await c.execute({
-    sql: `SELECT session_id FROM chat_threads WHERE id = ?`,
-    args: [threadId],
-  })
-  const row = result.rows[0]
-  return row && typeof row.session_id === 'string' ? row.session_id : null
 }
 
 /**
@@ -941,14 +906,13 @@ export const startThreadFromAlert = async (
 
   const c = stateClient()
   const threadId = randomUUID()
-  const sessionId = randomUUID()
   const msgId = randomUUID()
   const ts = now()
   await c.execute({
     sql: `INSERT INTO chat_threads
-            (id, title, status, session_id, created_at, updated_at, origin, alert_item_id, alert_resolved)
-          VALUES (?, ?, 'idle', ?, ?, ?, 'alert', ?, 0)`,
-    args: [threadId, title, sessionId, ts, ts, arcId],
+            (id, title, status, created_at, updated_at, origin, alert_item_id, alert_resolved)
+          VALUES (?, ?, 'idle', ?, ?, 'alert', ?, 0)`,
+    args: [threadId, title, ts, ts, arcId],
   })
   // Persist one assistant message with the alert segment (the seed card).
   await c.execute({
@@ -969,7 +933,6 @@ export const startThreadFromAlert = async (
     evaporated_at: null,
     parent_thread_id: null,
     fork_idempotency_key: null,
-    session_id: sessionId,
   }
 }
 
