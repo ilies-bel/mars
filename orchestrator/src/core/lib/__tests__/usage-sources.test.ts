@@ -264,11 +264,64 @@ describe('resolveUsage dispatch', () => {
       sessionId: null,
       cwd: '/tmp',
       provider: 'claude',
+      semantics: 'per-request',
     })
 
     expect(result.inputTokens).toBe(100)
     expect(result.outputTokens).toBe(50)
     expect(result.messageCount).toBe(1)
+  })
+
+  it('reads the terminal turn.completed usage for a cumulative provider', async () => {
+    // The zero-row defect: codex carries usage ONLY here, so reading the
+    // assistant shape (as every caller used to) returned zeros for every run.
+    const result = await resolveUsage({
+      conversation: [
+        { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } },
+        {
+          type: 'result',
+          is_error: false,
+          usage: {
+            input_tokens: 31_864,
+            cached_input_tokens: 25_088,
+            cache_write_input_tokens: 0,
+            output_tokens: 118,
+            reasoning_output_tokens: 0,
+          },
+        },
+      ],
+      sessionId: null,
+      cwd: '/tmp',
+      provider: 'codex',
+      semantics: 'cumulative',
+    })
+
+    expect(result.inputTokens).toBe(6_776)
+    expect(result.cacheReadTokens).toBe(25_088)
+    expect(result.outputTokens).toBe(118)
+    expect(result.messageCount).toBe(1)
+  })
+
+  it('falls back to the codex PTY log only when the stream carried no usage', async () => {
+    const dir = makeTmpDir()
+    const sessionId = 'codex-sess-fallback'
+    const logDir = join(dir, '.mars', 'pty')
+    mkdirSync(logDir, { recursive: true })
+    writeFileSync(
+      join(logDir, `${sessionId}.log`),
+      'Usage: 1,000 tokens (input: 800, output: 200, cached: 0, reasoning: 0)\n',
+    )
+
+    // A stream WITH usage wins over the log — no double source of truth.
+    const fromStream = await resolveUsage({
+      conversation: [{ type: 'result', is_error: false, usage: { input_tokens: 40, output_tokens: 2 } }],
+      sessionId,
+      cwd: dir,
+      provider: 'codex',
+      semantics: 'cumulative',
+    })
+    expect(fromStream.inputTokens).toBe(40)
+    expect(fromStream.outputTokens).toBe(2)
   })
 
   it('routes codex to PTY log adapter', async () => {
@@ -286,6 +339,7 @@ describe('resolveUsage dispatch', () => {
       sessionId,
       cwd: dir,
       provider: 'codex',
+      semantics: 'cumulative',
     })
 
     expect(result.inputTokens).toBe(800)
@@ -307,6 +361,7 @@ describe('resolveUsage dispatch', () => {
       sessionId,
       cwd: dir,
       provider: 'gemini',
+      semantics: 'none',
     })
 
     expect(result.inputTokens).toBe(600)
@@ -319,6 +374,7 @@ describe('resolveUsage dispatch', () => {
       sessionId: null,
       cwd: '/tmp',
       provider: 'codex',
+      semantics: 'cumulative',
     })
     expect(result).toEqual(emptyUsageTotals())
   })
@@ -329,6 +385,7 @@ describe('resolveUsage dispatch', () => {
       sessionId: null,
       cwd: '/tmp',
       provider: 'claude',
+      semantics: 'per-request',
     })
     expect(result).toEqual(emptyUsageTotals())
   })

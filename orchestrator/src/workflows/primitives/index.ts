@@ -86,7 +86,12 @@ import { resolveOriginIdForTask } from '../../core/lib/origin'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
 import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
-import { getLatestContextSize, summarizeUsage } from '../../core/lib/claude-usage'
+import {
+  summarizeUsage,
+  summarizeUsageForSemantics,
+  buildContextTokenSignals,
+} from '../../core/lib/claude-usage'
+import { usageSemanticsOf } from '../../core/workers/providers'
 import { recordSignals } from '../../core/lib/reflect-signals'
 import {
   resolveTaskDomains,
@@ -1006,6 +1011,10 @@ export const runAgent = async (
     model !== undefined && model !== selectedWorker.config.model
       ? createWorker({ ...selectedWorker.config, model })
       : selectedWorker
+  // How the selected Worker's Provider reports usage. Every token read below
+  // (post-coder telemetry, reflect signals) goes through it — the assistant
+  // shape is Claude's alone.
+  const coderSemantics = usageSemanticsOf(worker.config.provider)
 
   // Generate a fresh random invocation token per coder/recovery dispatch so
   // concurrent and rapid-resume runs NEVER collide on the same Claude session
@@ -1454,14 +1463,18 @@ export const runAgent = async (
       payload: {
         provider: worker.config.provider,
         commitSource,
-        contextTokens: getLatestContextSize(r.conversation),
+        // Occupancy for a per-request provider, cumulative spend for a
+        // cumulative one, and NEITHER field for a provider that reports no
+        // usage — a hardcoded `contextTokens` read the assistant shape on
+        // every provider and stamped a fabricated 0 on every Codex run.
+        ...buildContextTokenSignals(coderSemantics, r.conversation),
       },
     })
     .catch(() => {
       // Telemetry must never change the completion result.
     })
 
-  const usage = summarizeUsage(r.conversation)
+  const usage = summarizeUsageForSemantics(coderSemantics, r.conversation)
   if (r.sessionId) {
     handle?.setTranscriptKey(r.sessionId)
     await updateTask(taskId, { claudeSessionId: r.sessionId }, store)

@@ -134,7 +134,6 @@ import { startMergeWorker, enqueueMergeJobAndAwait, type MergeWorkerHandle } fro
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
 import { startHeartbeatWriter, type HeartbeatHandle } from './heartbeat-writer'
 import { loadSpendControl, upsertSpendControl } from './spend-control/store'
-import { recordClaudeEvent } from './usage-accumulator'
 import { getLatestUsageSnapshot } from '../lib/usage-snapshot-store'
 import { computeBudgetPressure, getBudgetPressureConfig } from '../lib/budget-pressure'
 import { deleteDeferral, upsertDeferral } from '../lib/deferral-store'
@@ -1257,11 +1256,11 @@ export const startDaemon = async (
             // in-memory lastActivityMs is the authoritative liveness signal.
             void updateTask(task.id, {}).catch(() => {})
           }
-          // Accumulate token usage for the spend meter so the usage-sampler
-          // can write meaningful snapshots to `usage_snapshots`.
-          if (evt.payload !== null && typeof evt.payload === 'object') {
-            recordClaudeEvent(evt.payload as import('../lib/claude-stream').ClaudeEvent)
-          }
+          // Token usage is NOT accumulated here: this bus event carries no
+          // provider, and where usage lives on a stream is a per-provider fact
+          // (assistant events for Claude, one terminal `turn.completed` for
+          // Codex). The spend meter is fed from runWorkerWithSpan, which knows
+          // the Worker's Provider — see recordUsageEvent.
           return
         }
         if (evt.event === 'vcs-supervisor-event') return

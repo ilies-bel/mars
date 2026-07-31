@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   emptyUsageTotals,
   summarizeUsage,
+  summarizeUsageForSemantics,
   getLatestContextSize,
   getCumulativeTokenSpend,
+  extractCumulativeUsage,
   buildContextTokenSignals,
+  contextGuardMode,
 } from '../claude-usage'
 import type { ClaudeEvent } from '../claude-stream'
 
@@ -151,6 +154,7 @@ describe('getLatestContextSize', () => {
     ]
 
     expect(getLatestContextSize(events)).toBe(0)
+    // Anthropic spelling: input_tokens EXCLUDES the cache buckets, so they add.
     expect(getCumulativeTokenSpend(events)).toBe(182_500)
   })
 
@@ -221,7 +225,11 @@ describe('getCumulativeTokenSpend', () => {
     expect(getCumulativeTokenSpend([{ type: 'result', is_error: false }])).toBe(0)
   })
 
-  it('sums every token bucket on the terminal result event (codex spelling)', () => {
+  it('does not double-count codex cached input, which is a SUBSET of input_tokens', () => {
+    // codex reports `input_tokens` as the TOTAL prompt token count and
+    // `cached_input_tokens` as the share of it served from cache (upstream
+    // codex derives non_cached_input = input_tokens - cached_input_tokens the
+    // same way). Adding both inflates every codex run's spend.
     const events: ClaudeEvent[] = [
       codexTurnCompleted({
         input_tokens: 200_000,
@@ -229,7 +237,44 @@ describe('getCumulativeTokenSpend', () => {
         output_tokens: 9_216,
       }),
     ]
-    expect(getCumulativeTokenSpend(events)).toBe(289_216)
+    expect(getCumulativeTokenSpend(events)).toBe(209_216)
+  })
+
+  it('carves cached and cache-write out of codex input so the buckets stay disjoint', () => {
+    // Shape captured from a real codex-cli 0.145.0 `codex exec --json` run.
+    const totals = extractCumulativeUsage([
+      codexTurnCompleted({
+        input_tokens: 31_864,
+        cached_input_tokens: 25_088,
+        cache_write_input_tokens: 0,
+        output_tokens: 118,
+        reasoning_output_tokens: 0,
+      }),
+    ])
+    expect(totals).toEqual({
+      inputTokens: 6_776,
+      outputTokens: 118,
+      cacheCreateTokens: 0,
+      cacheReadTokens: 25_088,
+      messageCount: 1,
+    })
+  })
+
+  it('treats codex reasoning_output_tokens as part of output_tokens, not an addition', () => {
+    const totals = extractCumulativeUsage([
+      codexTurnCompleted({
+        input_tokens: 100,
+        cached_input_tokens: 0,
+        output_tokens: 40,
+        reasoning_output_tokens: 30,
+      }),
+    ])
+    expect(totals.outputTokens).toBe(40)
+  })
+
+  it('returns empty totals when no result event carries usage', () => {
+    expect(extractCumulativeUsage([])).toEqual(emptyUsageTotals())
+    expect(extractCumulativeUsage([assistantWithContext(500)])).toEqual(emptyUsageTotals())
   })
 
   it('also accepts the Anthropic cache_* spelling', () => {
@@ -274,11 +319,74 @@ describe('buildContextTokenSignals', () => {
         output_tokens: 9_216,
       }),
     ])
-    expect(signals).toEqual({ cumulativeTokens: 289_216 })
+    expect(signals).toEqual({ cumulativeTokens: 209_216 })
     expect(signals.contextTokens).toBeUndefined()
   })
 
   it('a provider reporting no usage gets neither field', () => {
     expect(buildContextTokenSignals('none', [assistantWithContext(300)])).toEqual({})
+  })
+})
+
+describe('summarizeUsageForSemantics', () => {
+  it('reads assistant events for a per-request provider', () => {
+    const totals = summarizeUsageForSemantics('per-request', [
+      assistant({ input_tokens: 100, output_tokens: 25 }),
+      assistant({ input_tokens: 50, output_tokens: 12 }),
+    ])
+    expect(totals.inputTokens).toBe(150)
+    expect(totals.outputTokens).toBe(37)
+    expect(totals.messageCount).toBe(2)
+  })
+
+  it('reads the terminal result event for a cumulative provider', () => {
+    // The codex conversation: assistant events carry TEXT ONLY. Reading them
+    // (as every caller did before) is where `usage_snapshots`'s wall of zeros
+    // came from.
+    const totals = summarizeUsageForSemantics('cumulative', [
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } },
+      codexTurnCompleted({
+        input_tokens: 31_864,
+        cached_input_tokens: 25_088,
+        output_tokens: 118,
+      }),
+    ])
+    expect(totals.inputTokens).toBe(6_776)
+    expect(totals.cacheReadTokens).toBe(25_088)
+    expect(totals.outputTokens).toBe(118)
+  })
+
+  it('never counts a result event for a per-request provider (no double count)', () => {
+    const totals = summarizeUsageForSemantics('per-request', [
+      assistant({ input_tokens: 100, output_tokens: 25 }),
+      { type: 'result', usage: { input_tokens: 100, output_tokens: 25 } },
+    ])
+    expect(totals.inputTokens).toBe(100)
+    expect(totals.outputTokens).toBe(25)
+  })
+
+  it('returns zeros for a provider that reports no usage', () => {
+    expect(
+      summarizeUsageForSemantics('none', [assistant({ input_tokens: 10, output_tokens: 5 })]),
+    ).toEqual(emptyUsageTotals())
+  })
+})
+
+describe('contextGuardMode', () => {
+  it('arms the in-run ceiling only for a per-request provider', () => {
+    expect(contextGuardMode('per-request', 200_000)).toBe('in-run-enforced')
+  })
+
+  it('declares the in-run ceiling INAPPLICABLE for a cumulative provider', () => {
+    // Not "enforced" and not silently "disabled": codex cannot report
+    // occupancy at all, so an operator must be able to see that no mid-run
+    // ceiling exists rather than assume the configured budget is armed.
+    expect(contextGuardMode('cumulative', 200_000)).toBe('in-run-inapplicable')
+    expect(contextGuardMode('none', 200_000)).toBe('in-run-inapplicable')
+  })
+
+  it('reports disabled when the worker configures no budget', () => {
+    expect(contextGuardMode('per-request', 0)).toBe('disabled')
+    expect(contextGuardMode('cumulative', 0)).toBe('disabled')
   })
 })

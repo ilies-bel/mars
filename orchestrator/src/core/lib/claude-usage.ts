@@ -89,30 +89,99 @@ export const getLatestContextSize = (events: readonly ClaudeEvent[]): number => 
   return 0
 }
 
-// Returns total token SPEND for the run as reported by a 'cumulative'
-// provider: the usage block on the terminal result event, summed across every
-// token bucket it names (both the codex `cached_input_tokens` spelling and the
-// Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens`
-// spellings are accepted so the helper is not tied to one wire format).
-//
-// This is money spent, NOT context occupancy — it must never be compared
-// against a context window. Returns 0 when no result event carries usage.
-export const getCumulativeTokenSpend = (events: readonly ClaudeEvent[]): number => {
+/**
+ * Decompose the usage block on the terminal result event of a 'cumulative'
+ * provider into {@link UsageTotals}. Returns zeros (messageCount 0) when no
+ * result event carries usage.
+ *
+ * Two wire formats are accepted, and they nest DIFFERENTLY — reading one with
+ * the other's rules double-counts:
+ *
+ *   codex (`turn.completed`)  — `input_tokens` is the TOTAL prompt token count.
+ *     `cached_input_tokens` and `cache_write_input_tokens` are SUBSETS of it
+ *     describing how those input tokens were served (upstream codex derives
+ *     `non_cached_input = input_tokens - cached_input_tokens` the same way),
+ *     and `reasoning_output_tokens` is a subset of `output_tokens`.
+ *     Verified against codex-cli 0.145.0: a real `codex exec --json` run
+ *     reported `input_tokens: 31864, cached_input_tokens: 25088,
+ *     cache_write_input_tokens: 0, output_tokens: 118`.
+ *   Anthropic (`result`)      — `input_tokens` EXCLUDES the cache buckets;
+ *     `cache_read_input_tokens` / `cache_creation_input_tokens` are additive.
+ *
+ * The codex spelling is detected by the presence of `cached_input_tokens` or
+ * `cache_write_input_tokens`; the cache buckets are then carved OUT of
+ * `inputTokens` so the four buckets stay disjoint and summing them (or
+ * weighting them, as the spend meter does) never counts a token twice.
+ */
+export const extractCumulativeUsage = (events: readonly ClaudeEvent[]): UsageTotals => {
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i]
     if (event.type !== 'result') continue
     const usage = event.usage
     if (!isObject(usage)) continue
-    return (
-      numberOr(usage.input_tokens) +
-      numberOr(usage.cached_input_tokens) +
-      numberOr(usage.cache_read_input_tokens) +
-      numberOr(usage.cache_creation_input_tokens) +
-      numberOr(usage.output_tokens) +
-      numberOr(usage.reasoning_output_tokens)
-    )
+    const isCodexSpelling =
+      'cached_input_tokens' in usage || 'cache_write_input_tokens' in usage
+    const cacheReadTokens = isCodexSpelling
+      ? numberOr(usage.cached_input_tokens)
+      : numberOr(usage.cache_read_input_tokens)
+    const cacheCreateTokens = isCodexSpelling
+      ? numberOr(usage.cache_write_input_tokens)
+      : numberOr(usage.cache_creation_input_tokens)
+    const rawInput = numberOr(usage.input_tokens)
+    return {
+      inputTokens: isCodexSpelling
+        ? Math.max(0, rawInput - cacheReadTokens - cacheCreateTokens)
+        : rawInput,
+      outputTokens: isCodexSpelling
+        ? numberOr(usage.output_tokens)
+        : numberOr(usage.output_tokens) + numberOr(usage.reasoning_output_tokens),
+      cacheCreateTokens,
+      cacheReadTokens,
+      // One terminal usage block describes one completed run.
+      messageCount: 1,
+    }
   }
-  return 0
+  return emptyUsageTotals()
+}
+
+// Returns total token SPEND for the run as reported by a 'cumulative'
+// provider: every disjoint bucket of the terminal usage block, summed.
+//
+// This is money spent, NOT context occupancy — it must never be compared
+// against a context window. Returns 0 when no result event carries usage.
+export const getCumulativeTokenSpend = (events: readonly ClaudeEvent[]): number => {
+  const totals = extractCumulativeUsage(events)
+  return (
+    totals.inputTokens +
+    totals.outputTokens +
+    totals.cacheCreateTokens +
+    totals.cacheReadTokens
+  )
+}
+
+/**
+ * Token totals for a run, read the way the PROVIDER reports them.
+ *
+ * This is the one place that decides where usage lives on an event stream:
+ * per-request providers carry it on every assistant event, cumulative
+ * providers carry it once on the terminal result event, and a 'none' provider
+ * carries none at all. Every consumer of run-level token counts (the spend
+ * meter's step_ended signals, the daemon usage accumulator behind
+ * `usage_snapshots`, reflect signals) must go through here — reading only the
+ * assistant shape is what made every Codex run report zero tokens.
+ */
+export const summarizeUsageForSemantics = (
+  semantics: ProviderUsageSemantics,
+  events: readonly ClaudeEvent[],
+): UsageTotals => {
+  switch (semantics) {
+    case 'per-request':
+      return summarizeUsage(events)
+    case 'cumulative':
+      return extractCumulativeUsage(events)
+    case 'none':
+      return emptyUsageTotals()
+  }
 }
 
 /**
@@ -133,6 +202,33 @@ export const getCumulativeTokenSpend = (events: readonly ClaudeEvent[]): number 
 export interface ContextTokenSignals {
   contextTokens?: number
   cumulativeTokens?: number
+}
+
+/**
+ * Whether a run's `maxContextTokens` ceiling is actually armed IN-RUN, and if
+ * not, why. Stamped on every worker span so "is the ceiling enforced?" is an
+ * observable fact rather than an assumption:
+ *
+ *   'in-run-enforced'    — per-request provider: occupancy is observable on
+ *                          every turn, so the run is warned at 80% and killed
+ *                          at 100% of the budget.
+ *   'in-run-inapplicable' — cumulative / no-usage provider: occupancy is NOT
+ *                          observable at all (codex reports one cumulative
+ *                          spend block, and only after the turn has ended), so
+ *                          nothing can abort the run on occupancy. The budget
+ *                          still gates the run on the INPUT side (pre-flight
+ *                          prompt fit) and spend is still ceilinged after the
+ *                          fact by the window/arc budgets.
+ *   'disabled'            — the worker configures no budget at all.
+ */
+export type ContextGuardMode = 'in-run-enforced' | 'in-run-inapplicable' | 'disabled'
+
+export const contextGuardMode = (
+  semantics: ProviderUsageSemantics,
+  maxContextTokens: number,
+): ContextGuardMode => {
+  if (!(maxContextTokens > 0)) return 'disabled'
+  return semantics === 'per-request' ? 'in-run-enforced' : 'in-run-inapplicable'
 }
 
 export const buildContextTokenSignals = (
