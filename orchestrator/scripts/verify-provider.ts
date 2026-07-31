@@ -26,6 +26,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
+import { verificationOutcome } from './verify-provider-output'
 
 // ── Locate repo root ────────────────────────────────────────────────────────
 
@@ -204,10 +205,20 @@ if (!finalStatus) {
 let commitSha = 'none'
 
 if (finalStatus === 'done') {
-  // `mars` embeds the task ID in commit messages when it fast-forwards the branch
+  // Search main for the unique marker rather than the task id: successful
+  // fast-forward merges preserve the Coder's commit message, which need not
+  // contain the task id.
   const gitLog = spawnSync(
     'git',
-    ['log', 'main', `--grep=${taskId}`, '--fixed-strings', '--format=%H', '-1'],
+    [
+      'log',
+      'main',
+      `-S${marker}`,
+      '--format=%H',
+      '-1',
+      '--',
+      'scratch/verify-provider.txt',
+    ],
     { encoding: 'utf8', cwd: repoRoot },
   )
   const sha = (gitLog.stdout ?? '').trim()
@@ -216,6 +227,6 @@ if (finalStatus === 'done') {
 
 // ── Print summary and exit ────────────────────────────────────────────────────
 
-const outcome = finalStatus === 'done' ? 'PASS' : 'FAIL'
+const outcome = verificationOutcome(finalStatus as 'done' | 'failed', commitSha)
 console.log(`provider=${provider} commit=${commitSha} status=${finalStatus} outcome=${outcome}`)
 process.exit(outcome === 'PASS' ? 0 : 1)
