@@ -44,6 +44,7 @@ import {
   type AlertSegment,
   type ChatPosture,
   type ChatMessage,
+  type CompactionSegment,
 } from '../lib/chat-store'
 import type { ViewStreamHub } from './view/stream-hub'
 import type { ChatStreamHub } from './chat-stream-hub'
@@ -474,10 +475,35 @@ const renderAlertText = (seg: AlertSegment): string => {
   return lines.join('\n')
 }
 
+const findCompactionSegment = (segments: readonly unknown[]): CompactionSegment | undefined =>
+  segments.find((segment): segment is CompactionSegment => {
+    if (!isObject(segment) || segment.type !== 'compaction') return false
+    return typeof segment.summary === 'string'
+      && Array.isArray(segment.taskIds) && segment.taskIds.every((value) => typeof value === 'string')
+      && Array.isArray(segment.adrRefs) && segment.adrRefs.every((value) => typeof value === 'string')
+      && Array.isArray(segment.glossaryRefs) && segment.glossaryRefs.every((value) => typeof value === 'string')
+      && Array.isArray(segment.artifactRefs) && segment.artifactRefs.every((value) => typeof value === 'string')
+  })
+
 /** Convert one persisted chat message into its Responses input items. */
-const messageToItems = (msg: ChatMessage): ResponseInputItem[] => {
+export const messageToApiInput = (msg: ChatMessage): ResponseInputItem[] => {
   const role: 'user' | 'assistant' = msg.role
   const segs = Array.isArray(msg.segments) ? (msg.segments as unknown[]) : []
+  const checkpoint = findCompactionSegment(segs)
+  if (checkpoint) {
+    const refs = [
+      ...checkpoint.taskIds.map((id) => `task: ${id}`),
+      ...checkpoint.adrRefs.map((ref) => `ADR: ${ref}`),
+      ...checkpoint.glossaryRefs.map((ref) => `glossary: ${ref}`),
+      ...checkpoint.artifactRefs.map((ref) => `artifact: ${ref}`),
+    ]
+    const text = [
+      '[Compaction checkpoint: earlier transcript]',
+      checkpoint.summary,
+      refs.length > 0 ? `Structured references:\n${refs.join('\n')}` : '',
+    ].filter((part) => part.length > 0).join('\n\n')
+    return [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] }]
+  }
   if (segs.length === 0) {
     if (msg.content.trim().length === 0) return []
     return [{ type: 'message', role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text: msg.content }] }]
@@ -525,7 +551,18 @@ const messageToItems = (msg: ChatMessage): ResponseInputItem[] => {
  * transcript exceeds `MAX_TRANSCRIPT_CHARS`. Exported for unit testing.
  */
 export const buildApiInput = (messages: readonly ChatMessage[]): ResponseInputItem[] => {
-  const perMessage = messages.map(messageToItems)
+  let checkpointIndex = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const segments = messages[i]?.segments
+    if (Array.isArray(segments) && findCompactionSegment(segments)) {
+      checkpointIndex = i
+      break
+    }
+  }
+
+  const checkpointItems = checkpointIndex >= 0 ? messageToApiInput(messages[checkpointIndex]!) : []
+  const replayTail = checkpointIndex >= 0 ? messages.slice(checkpointIndex + 1) : messages
+  const perMessage = replayTail.map(messageToApiInput)
   const kept: ResponseInputItem[][] = []
   let chars = 0
   for (let i = perMessage.length - 1; i >= 0; i--) {
@@ -535,7 +572,7 @@ export const buildApiInput = (messages: readonly ChatMessage[]): ResponseInputIt
     kept.unshift(items)
     chars += size
   }
-  return kept.flat()
+  return [...checkpointItems, ...kept.flat()]
 }
 
 /** Exponential backoff delays for throttled retries (ms). */

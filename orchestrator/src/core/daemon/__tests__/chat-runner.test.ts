@@ -279,6 +279,34 @@ describe('buildApiInput', () => {
     const last = input.at(-1) as { content: Array<{ text: string }> }
     expect(last.content[0].text).toBe('latest')
   })
+
+  it('replays the newest compaction checkpoint and its tail, not earlier messages', () => {
+    const checkpoint = {
+      type: 'compaction',
+      summary: 'The operator chose the safe rollout.',
+      coveredThrough: 'old-2',
+      messageCount: 2,
+      taskIds: ['mars-123'],
+      adrRefs: ['ADR-0042'],
+      glossaryRefs: ['rollout'],
+      artifactRefs: ['docs/plan.md'],
+    }
+
+    const input = buildApiInput([
+      msg('user', 'discarded early context'),
+      msg('assistant', 'discarded answer'),
+      msg('assistant', checkpoint.summary, [checkpoint]),
+      msg('user', 'What remains?'),
+    ])
+
+    expect(input).toHaveLength(2)
+    const checkpointItem = input[0] as { role: string; content: Array<{ text: string }> }
+    expect(checkpointItem.role).toBe('assistant')
+    expect(checkpointItem.content[0]?.text).toContain('The operator chose the safe rollout.')
+    expect(checkpointItem.content[0]?.text).toContain('task: mars-123')
+    const tail = input[1] as { role: string; content: Array<{ text: string }> }
+    expect(tail.content[0]?.text).toBe('What remains?')
+  })
 })
 
 // ── Tool dispatcher tests ─────────────────────────────────────────────────────

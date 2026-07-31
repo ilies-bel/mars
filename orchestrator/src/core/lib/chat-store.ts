@@ -307,6 +307,21 @@ export interface ForkSeedSegment {
   files: Array<{ path: string; note?: string }>
 }
 
+/**
+ * Replay checkpoint inserted after compacting an inactive transcript. The
+ * underlying messages remain intact; this segment only changes replay.
+ */
+export interface CompactionSegment {
+  type: 'compaction'
+  summary: string
+  coveredThrough: string
+  messageCount: number
+  taskIds: string[]
+  adrRefs: string[]
+  glossaryRefs: string[]
+  artifactRefs: string[]
+}
+
 /** Structured context seeded into a forked thread's opening assistant message. */
 export interface ForkSeed {
   goalSummary: string
@@ -318,9 +333,61 @@ export interface ForkSeed {
   files: Array<{ path: string; note?: string }>
 }
 
+/** Structured references retained when prose transcript content is compacted. */
+export interface StructuredChatRefs {
+  taskIds: string[]
+  adrRefs: string[]
+  glossaryRefs: string[]
+  artifactRefs: string[]
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const now = (): string => new Date().toISOString()
+
+/**
+ * Collect the durable structured references carried by persisted segments.
+ * Accepts DB-shaped JSON strings as well as already-parsed message segments so
+ * both fork seeds and compaction checkpoints preserve the same references.
+ */
+export const collectStructuredChatRefs = (
+  messages: ReadonlyArray<{ segments: unknown | null }>,
+): StructuredChatRefs => {
+  const taskIds: string[] = []
+  const adrRefs: string[] = []
+  const glossaryRefs: string[] = []
+  const artifactRefs: string[] = []
+
+  for (const message of messages) {
+    let segments: unknown
+    if (typeof message.segments === 'string') {
+      try {
+        segments = JSON.parse(message.segments) as unknown
+      } catch {
+        continue
+      }
+    } else {
+      segments = message.segments
+    }
+    if (!Array.isArray(segments)) continue
+
+    for (const segment of segments) {
+      if (typeof segment !== 'object' || segment === null || Array.isArray(segment)) continue
+      const value = segment as Record<string, unknown>
+      if (value['type'] === 'task_ref' && typeof value['taskId'] === 'string') {
+        if (!taskIds.includes(value['taskId'])) taskIds.push(value['taskId'])
+      } else if (value['type'] === 'adr_ref' && typeof value['ref'] === 'string') {
+        if (!adrRefs.includes(value['ref'])) adrRefs.push(value['ref'])
+      } else if (value['type'] === 'glossary_ref' && typeof value['ref'] === 'string') {
+        if (!glossaryRefs.includes(value['ref'])) glossaryRefs.push(value['ref'])
+      } else if (value['type'] === 'artifact_ref' && typeof value['ref'] === 'string') {
+        if (!artifactRefs.includes(value['ref'])) artifactRefs.push(value['ref'])
+      }
+    }
+  }
+
+  return { taskIds, adrRefs, glossaryRefs, artifactRefs }
+}
 
 const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   id: row.id as string,
@@ -415,41 +482,15 @@ export const buildForkSeed = async (
     args: [sourceThreadId],
   })
 
-  const taskIds: string[] = []
-  const adrRefs: string[] = []
-  const glossaryRefs: string[] = []
-  const artifactRefs: string[] = []
   const contentParts: string[] = []
 
   for (const row of msgResult.rows as unknown as Array<Record<string, unknown>>) {
     contentParts.push(row.content as string)
-
-    const rawSegments = row.segments as string | null
-    if (rawSegments == null) continue
-
-    let segs: unknown[]
-    try {
-      const parsed: unknown = JSON.parse(rawSegments)
-      if (!Array.isArray(parsed)) continue
-      segs = parsed
-    } catch {
-      continue
-    }
-
-    for (const seg of segs) {
-      if (typeof seg !== 'object' || seg === null) continue
-      const s = seg as Record<string, unknown>
-      if (s['type'] === 'task_ref' && typeof s['taskId'] === 'string') {
-        if (!taskIds.includes(s['taskId'])) taskIds.push(s['taskId'])
-      } else if (s['type'] === 'adr_ref' && typeof s['ref'] === 'string') {
-        if (!adrRefs.includes(s['ref'])) adrRefs.push(s['ref'])
-      } else if (s['type'] === 'glossary_ref' && typeof s['ref'] === 'string') {
-        if (!glossaryRefs.includes(s['ref'])) glossaryRefs.push(s['ref'])
-      } else if (s['type'] === 'artifact_ref' && typeof s['ref'] === 'string') {
-        if (!artifactRefs.includes(s['ref'])) artifactRefs.push(s['ref'])
-      }
-    }
   }
+
+  const refs = collectStructuredChatRefs(
+    msgResult.rows as unknown as Array<{ segments: unknown | null }>,
+  )
 
   const full = contentParts.join('\n')
   const transcriptSummary = full.length > 2000 ? `${full.slice(0, 2000)}…` : full
@@ -457,10 +498,7 @@ export const buildForkSeed = async (
   return {
     goalSummary,
     transcriptSummary,
-    artifactRefs,
-    taskIds,
-    adrRefs,
-    glossaryRefs,
+    ...refs,
     files: files ?? [],
   }
 }
