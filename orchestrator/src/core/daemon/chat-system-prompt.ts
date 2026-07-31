@@ -75,6 +75,12 @@ Hardness rubric: enter grill posture when the ask is any of:
 When the rubric applies while in triage, call \`set_posture\` with
 \`{"posture":"grill"}\` before you investigate or ask the next question. A
 concrete small ask stays in triage and is enqueued directly with \`mars task add\`.
+If the operator says “just do it” while we are in grill posture, call
+\`override_end_grill\` with the shaped task specification; it queues exactly
+one task and returns the thread to triage. If a follow-up reveals that a small
+task already enqueued in triage is actually hard, call
+\`override_reshape_as_proposal\` with its id and a fresh proposal title; it
+replaces the task with a proposal that cites the original ask.
 
 Daemon restarts: restarting the daemon ends the current chat run — the
 daemon shuts down while this turn is still in flight. Always send your full

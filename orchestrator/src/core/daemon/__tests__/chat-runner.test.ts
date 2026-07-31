@@ -792,9 +792,9 @@ describe('ChatRunner state machine', () => {
 
       expect(mockShell).not.toHaveBeenCalled()
 
-      // Triage exposes the transition tool alongside its four built-ins.
+      // Triage exposes its transition and reshape overrides alongside four built-ins.
       const firstOpts = mockStream.mock.calls[0][0]
-      expect(firstOpts.tools.map((t) => t.name)).toEqual(['shell', 'read_file', 'write_file', 'skill', 'set_posture'])
+      expect(firstOpts.tools.map((t) => t.name)).toEqual(['shell', 'read_file', 'write_file', 'skill', 'set_posture', 'override_reshape_as_proposal'])
       expect(firstOpts.instructions).toContain('TEST_SYSTEM_PROMPT')
       expect(firstOpts.instructions).toContain('- diagnose: Diagnose a task.')
 
@@ -822,7 +822,7 @@ describe('ChatRunner state machine', () => {
     expect(config.model).toBe('gpt-5.5')
     expect(config.systemPrompt).toBe('TEST_SYSTEM_PROMPT')
     expect(config.systemPromptSource).toBe('built-in')
-    expect(config.builtinTools.map((t) => t.name)).toEqual(['shell', 'read_file', 'write_file', 'skill', 'set_posture'])
+    expect(config.builtinTools.map((t) => t.name)).toEqual(['shell', 'read_file', 'write_file', 'skill', 'set_posture', 'override_reshape_as_proposal'])
     expect(config.skills).toEqual([{ name: 'task', description: 'Enqueue.' }])
     expect(config.mcpServers).toEqual([
       { name: 'codegraph', command: 'codegraph serve --mcp', status: 'connected', tools: [{ name: 'codegraph_search', description: 'Find.' }] },
@@ -853,7 +853,7 @@ describe('ChatRunner state machine', () => {
 
     // The MCP tool rides after the built-ins in the advertised tool list.
     const firstOpts = mockStream.mock.calls[0][0]
-    expect(firstOpts.tools.map((t) => t.name)).toEqual(['shell', 'read_file', 'write_file', 'skill', 'codegraph_search'])
+    expect(firstOpts.tools.map((t) => t.name)).toEqual(['shell', 'read_file', 'write_file', 'skill', 'override_end_grill', 'codegraph_search'])
 
     // Dispatch went to the bridge, not the shell or the built-in dispatcher.
     expect(mcpMock.call).toHaveBeenCalledWith('/repo', 'codegraph_search', { query: 'enqueue' })
@@ -882,7 +882,7 @@ describe('ChatRunner state machine', () => {
     await new Promise((r) => setTimeout(r, 20))
 
     const names = mockStream.mock.calls[0][0].tools.map((t) => t.name)
-    expect(names).toEqual(['shell', 'read_file', 'write_file', 'skill', 'codegraph_status'])
+    expect(names).toEqual(['shell', 'read_file', 'write_file', 'skill', 'override_end_grill', 'codegraph_status'])
   })
 
   // ── Transcript replay ─────────────────────────────────────────────────────

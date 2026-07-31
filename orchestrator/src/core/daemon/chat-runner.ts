@@ -27,9 +27,13 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
+import { integrationBranchName } from '../blocker-resolution'
 import { buildWorkerEnv, runSubprocessStreaming } from '../lib/git/claude'
+import { createProposal } from '../proposals'
+import { enqueueTask, getTask, updateTask } from '../queue'
 import { ChatMcpManager, type McpToolInfo } from './chat-mcp'
 import { buildSkillsSection, discoverSkills, loadSkill } from './chat-skills'
+import { corePurgeTask } from './purge-task'
 import {
   appendMessage,
   getThread,
@@ -283,9 +287,46 @@ const SET_POSTURE_TOOL: FunctionToolDef = {
   },
 }
 
+/** Lets the agent turn a shaped grill draft into an ordinary queued task. */
+const OVERRIDE_END_GRILL_TOOL: FunctionToolDef = {
+  type: 'function',
+  name: 'override_end_grill',
+  description:
+    'End grill posture and enqueue the current, shaped task specification. ' +
+    'Use this when the operator says “just do it”.',
+  strict: false,
+  parameters: {
+    type: 'object',
+    properties: {
+      taskSpec: { type: 'string', description: 'The complete task prompt shaped in this grill thread.' },
+    },
+    required: ['taskSpec'],
+    additionalProperties: false,
+  },
+}
+
+/** Lets the agent replace a prematurely-enqueued task with a fresh proposal. */
+const OVERRIDE_RESHAPE_AS_PROPOSAL_TOOL: FunctionToolDef = {
+  type: 'function',
+  name: 'override_reshape_as_proposal',
+  description:
+    'Purge an enqueued task that follow-up has revealed to be hard, then create a new proposal. ' +
+    'Use this only when the original task is no longer the right unit of work.',
+  strict: false,
+  parameters: {
+    type: 'object',
+    properties: {
+      originalTaskId: { type: 'string', description: 'The id of the enqueued task to replace.' },
+      proposalDraft: { type: 'string', description: 'The title for the fresh proposal.' },
+    },
+    required: ['originalTaskId', 'proposalDraft'],
+    additionalProperties: false,
+  },
+}
+
 /** The built-in function tools the chat agent gets, in the order sent to the API. */
 export const CHAT_TOOLS: FunctionToolDef[] = [SHELL_TOOL, READ_FILE_TOOL, WRITE_FILE_TOOL, SKILL_TOOL]
-const TRIAGE_TOOLS: FunctionToolDef[] = [...CHAT_TOOLS, SET_POSTURE_TOOL]
+const TRIAGE_TOOLS: FunctionToolDef[] = [...CHAT_TOOLS, SET_POSTURE_TOOL, OVERRIDE_RESHAPE_AS_PROPOSAL_TOOL]
 
 /** Cap on MCP tool output fed back to the model (codegraph_explore returns verbatim source). */
 const MCP_OUTPUT_CHAR_CAP = 20_000
@@ -298,7 +339,7 @@ const MCP_DESCRIPTION_CHAR_CAP = 2_000
  * names are the only dispatch key. Exported for unit testing.
  */
 export const buildMcpToolDefs = (mcpTools: readonly McpToolInfo[]): FunctionToolDef[] => {
-  const taken = new Set([...CHAT_TOOLS, SET_POSTURE_TOOL].map((t) => t.name))
+  const taken = new Set([...TRIAGE_TOOLS, OVERRIDE_END_GRILL_TOOL].map((t) => t.name))
   const defs: FunctionToolDef[] = []
   for (const t of mcpTools) {
     if (taken.has(t.name)) continue
@@ -894,7 +935,7 @@ export class ChatRunner {
           return skillsSection.length > 0 ? `${resolvedPrompt.prompt}\n\n${skillsSection}` : resolvedPrompt.prompt
         }
         const toolsForPosture = (): FunctionToolDef[] =>
-          posture === 'grill' ? [...CHAT_TOOLS, ...mcpDefs] : TRIAGE_TOOLS
+          posture === 'grill' ? [...CHAT_TOOLS, OVERRIDE_END_GRILL_TOOL, ...mcpDefs] : TRIAGE_TOOLS
         let auth: CodexAuth = await loadCodexAuth()
         let authRetried = false
 
@@ -968,6 +1009,57 @@ export class ChatRunner {
                 )
                 hub?.broadcast('chat')
                 result = { content: 'grill posture enabled', isError: false }
+              }
+            } else if (call.tool === 'override_end_grill') {
+              const taskSpec = typeof args.taskSpec === 'string' ? args.taskSpec.trim() : ''
+              if (posture !== 'grill') {
+                result = { content: 'override_end_grill is only available in grill posture', isError: true }
+              } else if (taskSpec.length === 0) {
+                result = { content: 'invalid override_end_grill arguments: "taskSpec" must be a non-empty string', isError: true }
+              } else {
+                const task = await enqueueTask(taskSpec, undefined, { skipTriage: true })
+                await setThreadPosture(threadId, 'triage')
+                posture = 'triage'
+                await appendMessage(
+                  threadId,
+                  'assistant',
+                  `System: I left grill posture and queued task ${task.id}.`,
+                  [{ type: 'system', message: `Grill override queued task ${task.id}.` }],
+                )
+                hub?.broadcast('chat')
+                result = { content: `queued task ${task.id}; grill posture ended`, isError: false }
+              }
+            } else if (call.tool === 'override_reshape_as_proposal') {
+              const originalTaskId = typeof args.originalTaskId === 'string' ? args.originalTaskId : ''
+              const proposalDraft = typeof args.proposalDraft === 'string' ? args.proposalDraft.trim() : ''
+              if (posture !== 'triage') {
+                result = { content: 'override_reshape_as_proposal is only available in triage posture', isError: true }
+              } else if (originalTaskId.length === 0 || proposalDraft.length === 0) {
+                result = { content: 'invalid override_reshape_as_proposal arguments: "originalTaskId" and "proposalDraft" must be non-empty strings', isError: true }
+              } else {
+                const original = await getTask(originalTaskId)
+                if (!original) {
+                  result = { content: `task ${originalTaskId} not found`, isError: true }
+                } else if (original.status !== 'queued') {
+                  result = { content: `task ${originalTaskId} is ${original.status}; only queued tasks can be reshaped`, isError: true }
+                } else {
+                  // A newly enqueued task has no worker-owned worktree yet. Mark it
+                  // terminal before using the canonical purge path, preserving the
+                  // same lifecycle cleanup and audit semantics as `mars purge`.
+                  await updateTask(originalTaskId, { status: 'dropped', dropReason: 'superseded' })
+                  await corePurgeTask(originalTaskId, false, integrationBranchName(), repoRoot)
+                  const proposal = await createProposal(proposalDraft, {
+                    notes: `Reshaped from task ${originalTaskId}. Original ask: ${original.prompt}`,
+                  })
+                  await appendMessage(
+                    threadId,
+                    'assistant',
+                    `System: I replaced task ${originalTaskId} with proposal ${proposal.id}.`,
+                    [{ type: 'system', message: `Task ${originalTaskId} reshaped as proposal ${proposal.id}.` }],
+                  )
+                  hub?.broadcast('chat')
+                  result = { content: `purged task ${originalTaskId}; created proposal ${proposal.id}`, isError: false }
+                }
               }
             } else if (posture === 'grill' && mcpToolNames.has(call.tool)) {
               const r = await this.mcp.call(repoRoot, call.tool, args)
