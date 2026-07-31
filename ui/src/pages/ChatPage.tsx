@@ -40,6 +40,7 @@ import {
   fetchProjectMeta,
   fetchSessionAdrs,
   refreshCodexAuth,
+  invokeAction,
   ApiError,
   type AttachmentInfo,
 } from '@/shared/api'
@@ -73,12 +74,13 @@ import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { ChatHero, type HeroDelta } from '@/widgets/chat/ChatHero'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
-import { QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
+import { PROCESS_LEVEL_OPS, QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
+import { SidebarFilters, type SidebarFiltersValue } from '@/widgets/chat/SidebarFilters'
 import {
-  filterOpen,
-  filterThreadsByTitle,
+  filterSidebarThreads,
   isResolvedSelection,
   sortByUrgencyThenAge,
+  type ThreadListFilters,
 } from '@/widgets/chat/queueThreads'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useActionQueueHistory } from '@/entities/actionQueue/useActionQueueHistory'
@@ -2186,8 +2188,10 @@ interface ThreadSidebarProps {
   selectedId: string | null
   projectId?: string
   onSelect: (id: string) => void
-  query?: string
-  onQueryChange?: (q: string) => void
+  filters: ThreadListFilters
+  onFiltersChange: (filters: ThreadListFilters) => void
+  selectedItem: ActionQueueItem | null
+  onFastAction: (action: 'restart') => void
 }
 
 /** How long a deleted thread stays undoable before the delete is sent. */
@@ -2213,8 +2217,10 @@ export const ThreadSidebar = ({
   selectedId,
   projectId,
   onSelect,
-  query = '',
-  onQueryChange,
+  filters,
+  onFiltersChange,
+  selectedItem,
+  onFastAction,
 }: ThreadSidebarProps) => {
   const qc = useQueryClient()
 
@@ -2288,8 +2294,7 @@ export const ThreadSidebar = ({
   // Computed above startDelete so the delete handler can advance the selection
   // to the next thread in this exact sorted order.
   const visibleThreads = (data ?? []).filter((t) => !hiddenIds.includes(t.id))
-  const openThreads = filterOpen(visibleThreads)
-  const threads = sortByUrgencyThenAge(filterThreadsByTitle(openThreads, query))
+  const threads = sortByUrgencyThenAge(filterSidebarThreads(visibleThreads, filters))
 
   const startDelete = useCallback(
     (thread: ChatThread) => {
@@ -2363,16 +2368,12 @@ export const ThreadSidebar = ({
         >
           + New thread
         </button>
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => onQueryChange?.(e.target.value)}
-          placeholder="Search…"
-          aria-label="Search threads"
-          data-testid="thread-search"
-          className="mt-2 w-full border border-primary/30 bg-background px-2 py-1 font-mono text-[12px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-        />
       </div>
+      <SidebarFilters
+        value={{ ...filters, selectedItem } satisfies SidebarFiltersValue}
+        onChange={({ selectedItem: _selectedItem, ...nextFilters }) => onFiltersChange(nextFilters)}
+        onFastAction={onFastAction}
+      />
       <div className="flex-1 min-h-0 overflow-y-auto px-1 py-1 space-y-0.5">
         {isPending ? (
           <SkeletonList
@@ -2385,7 +2386,7 @@ export const ThreadSidebar = ({
             className="px-2 py-3 font-mono text-[10px] text-primary/40"
             data-testid="empty-rail"
           >
-            {query.trim() ? 'No matches' : "You're all clear"}
+            {filters.query.trim() ? 'No matches' : "You're all clear"}
           </p>
         ) : null}
         {threads.map((t) => (
@@ -2479,7 +2480,11 @@ export const ChatPage = () => {
   const [selectedQueueItemId, setSelectedQueueItemId] = useState<string | null>(
     () => readAqStateFromUrl().item,
   )
-  const [query, setQuery] = useState<string>(() => readAqStateFromUrl().q)
+  const [sidebarFilters, setSidebarFilters] = useState<ThreadListFilters>(() => ({
+    query: readAqStateFromUrl().q,
+    kind: 'all',
+    origin: 'all',
+  }))
   const [prefill, setPrefill] = useState<string | undefined>(undefined)
   // Client-only "What happened today?" delta view. Shown inline (no modal) in
   // place of the hero empty state; cleared when the user navigates to any
@@ -2630,12 +2635,12 @@ export const ChatPage = () => {
   useEffect(() => {
     if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
     urlWriteTimerRef.current = setTimeout(() => {
-      writeAqStateToUrl({ item: selectedQueueItemId, kind: 'all', q: query, thread: selectedThreadId, project: projectId ?? null })
+      writeAqStateToUrl({ item: selectedQueueItemId, kind: 'all', q: sidebarFilters.query, thread: selectedThreadId, project: projectId ?? null })
     }, 300)
     return () => {
       if (urlWriteTimerRef.current !== null) clearTimeout(urlWriteTimerRef.current)
     }
-  }, [selectedQueueItemId, query, selectedThreadId])
+  }, [selectedQueueItemId, sidebarFilters.query, selectedThreadId])
 
   // Sync thread selection from the URL on `hashchange` so a cross-page
   // navigation (e.g. pulling an Alert into a thread from the Bell, which sets
@@ -2732,6 +2737,23 @@ export const ChatPage = () => {
     )
   }, [selectedQueueItemId, queueItems, historyItems])
 
+  const selectedSidebarItem = useMemo(() => {
+    const thread = (threadsData ?? []).find((candidate) => candidate.id === selectedThreadId)
+    if (!thread?.alertItemId) return null
+    return queueItems.find((item) => item.id === thread.alertItemId) ?? null
+  }, [queueItems, selectedThreadId, threadsData])
+
+  const restartSelectedThread = useCallback((action: 'restart') => {
+    const item = selectedSidebarItem
+    const restart = item?.actions.find((candidate) => candidate.op === action)
+    if (!item || !restart) return
+    const entityId = PROCESS_LEVEL_OPS.has(restart.op) ? undefined : item.entityId
+    void invokeAction(restart.op, entityId).then(() => {
+      void qc.invalidateQueries({ queryKey: ['action-queue'] })
+      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+    })
+  }, [qc, selectedSidebarItem])
+
   // "Resolved" when the pinned row vanished from the live queue (and isn't a
   // history selection) — the projection evaporated via entity mutation.
   const queueSelectionResolved =
@@ -2812,8 +2834,10 @@ export const ChatPage = () => {
           selectedId={selectedThreadId}
           projectId={projectId}
           onSelect={handleSelectThread}
-          query={query}
-          onQueryChange={setQuery}
+          filters={sidebarFilters}
+          onFiltersChange={setSidebarFilters}
+          selectedItem={selectedSidebarItem}
+          onFastAction={restartSelectedThread}
         />
       )}
 
@@ -2835,8 +2859,10 @@ export const ChatPage = () => {
                 handleSelectThread(id)
                 setSidebarOpen(false)
               }}
-              query={query}
-              onQueryChange={setQuery}
+              filters={sidebarFilters}
+              onFiltersChange={setSidebarFilters}
+              selectedItem={selectedSidebarItem}
+              onFastAction={restartSelectedThread}
             />
           </div>
         </>

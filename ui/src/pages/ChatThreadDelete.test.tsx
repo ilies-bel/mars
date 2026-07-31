@@ -70,7 +70,15 @@ const mount = async (onSelect: (id: string) => void = () => {}, selectedId: stri
   await act(async () => {
     root.render(
       <QueryClientProvider client={qc}>
-        <ThreadSidebar selectedId={selectedId} projectId={undefined} onSelect={onSelect} />
+        <ThreadSidebar
+          selectedId={selectedId}
+          projectId={undefined}
+          onSelect={onSelect}
+          filters={{ query: '', kind: 'all', origin: 'all' }}
+          onFiltersChange={() => {}}
+          selectedItem={null}
+          onFastAction={() => {}}
+        />
       </QueryClientProvider>,
     )
   })

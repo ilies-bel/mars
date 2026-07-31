@@ -157,6 +157,10 @@ const renderSidebar = (threads: ChatThread[]): string => {
       createElement(ThreadSidebar, {
         selectedId: null,
         onSelect: () => {},
+        filters: { query: '', kind: 'all', origin: 'all' },
+        onFiltersChange: () => {},
+        selectedItem: null,
+        onFastAction: () => {},
       }),
     ),
   )
@@ -175,6 +179,10 @@ const renderSidebarPending = (): string => {
       createElement(ThreadSidebar, {
         selectedId: null,
         onSelect: () => {},
+        filters: { query: '', kind: 'all', origin: 'all' },
+        onFiltersChange: () => {},
+        selectedItem: null,
+        onFastAction: () => {},
       }),
     ),
   )

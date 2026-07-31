@@ -7,6 +7,7 @@
  */
 
 import type { ActionQueueItem, ChatThread } from '@/shared/schemas'
+import { filterByQuery } from '@/pages/ActionQueuePageFilters'
 
 // ---------------------------------------------------------------------------
 // Open-thread filter — drops resolved projections
@@ -57,6 +58,12 @@ export function sortByUrgencyThenAge(threads: ChatThread[]): ChatThread[] {
  */
 export type KindFilter = 'all' | 'alerts' | 'drafts'
 
+export interface ThreadListFilters {
+  query: string
+  kind: 'all' | 'failed-task' | 'draft-proposal'
+  origin: 'all' | 'alerts' | 'operator'
+}
+
 /**
  * Draft-proposal rows carry the full multi-paragraph PRD body in `item.title`.
  * A queue row must show only a scannable headline: the first sentence
@@ -85,9 +92,19 @@ export function draftRowHeadline(title: string): string {
  * "New thread" placeholder so a search for "new" still finds them.
  */
 export function filterThreadsByTitle(threads: ChatThread[], query: string): ChatThread[] {
-  const q = query.trim().toLowerCase()
-  if (!q) return threads
-  return threads.filter((t) => (t.title || 'New thread').toLowerCase().includes(q))
+  return filterByQuery(threads, query, (thread) => `${thread.title || 'New thread'}\n${thread.alertItemId ?? ''}`)
+}
+
+/** Applies the chat sidebar's open, query, failure-kind, and origin scopes. */
+export function filterSidebarThreads(threads: ChatThread[], filters: ThreadListFilters): ChatThread[] {
+  return filterThreadsByTitle(filterOpen(threads), filters.query).filter((thread) => {
+    const kind = thread.alertItemId?.split(':')[0] ?? null
+    const matchesKind = filters.kind === 'all' || kind === filters.kind
+    const matchesOrigin =
+      filters.origin === 'all' ||
+      (filters.origin === 'alerts' ? thread.origin === 'alert' : thread.origin !== 'alert')
+    return matchesKind && matchesOrigin
+  })
 }
 
 /**
