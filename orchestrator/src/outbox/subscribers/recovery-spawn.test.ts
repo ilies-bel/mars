@@ -298,6 +298,77 @@ describe('recovery-spawn outbox subscriber', () => {
     ).toHaveLength(1)
   })
 
+  it('never reopens a failed recovery task, so the escalation cannot re-drive itself', async () => {
+    // Regression (fix-139f327c, 2026-07-31). The drain used to reopen EVERY
+    // terminal row through the audited reopen seam, including recovery Chores.
+    // For a recovery that closed the loop: reopen → `queued`, escalation writes
+    // it back to `failed`, that status change emits a NEW task.failed carrying
+    // the composed reason, the next 30 s drain feeds it back in. Ten passes
+    // later `failure_reason` was ten `recovery_failed:` prefixes deep with the
+    // real error truncated away, and each pass had re-raised the action-queue
+    // row and re-spawned the rescue operator. A recovery Chore is a leaf
+    // (ADR-0040) and is never re-run, so it must never be reopened.
+    const { q, ft, rc, rs, client } = await loadModules(repo)
+    const cleanup = registerTestRecipe(rc, 'seed-recovery')
+    const origin = await q.enqueueTask('origin work', undefined, {
+      skipTriage: true,
+    })
+    const { fixTaskId } = await ft.upsertFixTask({
+      sourceTaskId: origin.id,
+      failureSignature: 'seed-recovery',
+      failingStep: 'code',
+      truncatedError: 'coder left 1 path(s) uncommitted',
+      branch: `task/${origin.id}`,
+      recipeContext: {
+        targetPath: repo,
+        statusOutput: 'coder left 1 path(s) uncommitted',
+        targetBranch: `task/${origin.id}`,
+        originalPrompt: origin.prompt,
+      },
+    })
+
+    // Subscribe first so the failure written below is the one event we drain.
+    await rs.ensureRecoverySpawner(client)
+    await q.updateTask(fixTaskId, {
+      status: 'failed',
+      failedPhase: 'code',
+      failureReason: 'code',
+      branch: `task/${origin.id}`,
+      worktreePath: repo,
+      error: 'coder left 1 path(s) uncommitted',
+    })
+
+    const { processed } = await rs.drainRecoverySpawner(client)
+    expect(processed).toBe(1)
+
+    const recovery = await q.getTask(fixTaskId)
+    expect(recovery?.status).toBe('failed')
+    expect(recovery?.failureReason?.match(/recovery_failed:/g)).toHaveLength(1)
+    // The captured process output survives: `error` is never overwritten with
+    // the derived reason (that erased the real output the Steward brief reads).
+    expect(recovery?.error).toBe('coder left 1 path(s) uncommitted')
+
+    // The terminal recovery row was never reopened …
+    const reopens = await client.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_terminal_reopens WHERE task_id = ?`,
+      args: [fixTaskId],
+    })
+    expect(Number((reopens.rows[0] as unknown as { n: number }).n)).toBe(0)
+
+    // … so the escalation emitted no second task.failed to feed the next drain.
+    const failedEvents = await client.execute({
+      sql: `SELECT COUNT(*) AS n FROM events
+             WHERE type = 'task.failed' AND payload LIKE ?`,
+      args: [`%${fixTaskId}%`],
+    })
+    expect(Number((failedEvents.rows[0] as unknown as { n: number }).n)).toBe(1)
+
+    // A second drain has nothing left to do — the loop is broken, not throttled.
+    expect((await rs.drainRecoverySpawner(client)).processed).toBe(0)
+
+    cleanup()
+  })
+
   it('spawns zero additional recovery tasks when the same event is replayed (cursor already advanced)', async () => {
     const { q, ft, rc, rs, pub, client } = await loadModules(repo)
 

@@ -869,23 +869,33 @@ describe('queue-fix-tasks', () => {
   it('re-driving an already-escalated recovery task is a no-op: the recovery_failed: prefix is never nested', async () => {
     // Regression (fix-139f327c, 2026-07-31): the recovery-spawner drain re-drove
     // already-terminal recovery rows every 30 s. Each pass re-entered this
-    // handler with the PREVIOUS composed reason (the `task.failed` event carries
-    // `error`, which holds it) and prepended another `recovery_failed:<sig>: `.
-    // Ten passes later `failure_reason` was ten prefixes deep and the real error
-    // had been eaten by the 500-char tail truncation. A recovery Chore is a leaf
-    // (ADR-0040): its failure escalates exactly once and the row is terminal.
+    // handler with the PREVIOUS composed reason (the escalation wrote it to
+    // `error`, and the `task.failed` event carries `error`) and prepended
+    // another `recovery_failed:<sig>: `. Ten passes later `failure_reason` was
+    // ten prefixes deep, and — worse — `error` had been overwritten with the
+    // same padding, destroying the captured process output the storm Steward
+    // brief reads. A recovery Chore is a leaf (ADR-0040): its failure escalates
+    // exactly once, the row is terminal, and `error` is never a derived string.
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft, rc } = await loadModules(repo)
     const actionQueue = (await import('../action-queue')) as unknown as {
       listActionQueueItems: typeof import('../action-queue').listActionQueueItems
     }
-    const cleanup = registerTestRecipe(rc, 'verify:typecheck/unclassified')
+    const signature = 'verify:typecheck/test-assertion-error'
+    const cleanup = registerTestRecipe(rc, signature)
     const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    // Captured process output, the way a real verify failure arrives.
+    const capturedOutput = [
+      'FAIL src/thing.test.ts > does the thing',
+      'AssertionError: expected 2 to be 1',
+      ' ❯ src/thing.test.ts:41:7',
+    ].join('\n')
 
     const first = await ft.handleTaskFailureWithFixTask({
       taskId: t.id,
       failingStep: 'verify:typecheck',
-      errorOutput: 'boom-original-error',
+      errorOutput: capturedOutput,
     })
     const recoveryId = first.fixTaskId!
     expect(recoveryId).toBeTruthy()
@@ -894,17 +904,19 @@ describe('queue-fix-tasks', () => {
     const escalated = await ft.handleTaskFailureWithFixTask({
       taskId: recoveryId,
       failingStep: 'verify:typecheck',
-      errorOutput: 'boom-original-error',
+      errorOutput: capturedOutput,
     })
     expect(escalated.outcome).toBe('escalated')
 
     const afterFirst = await q.getTask(recoveryId)
     expect(afterFirst?.failureReason).toBe(
-      'recovery_failed:verify:typecheck/unclassified: boom-original-error',
+      `recovery_failed:${signature}: ${capturedOutput}`,
     )
+    // `error` keeps the captured output verbatim — it is NOT the derived string.
+    expect(afterFirst?.error).toBe(capturedOutput)
 
     // The sweep re-drives the terminal row, feeding the composed reason back in
-    // exactly as the `task.failed` event does.
+    // exactly as the `task.failed` event did.
     const redriven = await ft.handleTaskFailureWithFixTask({
       taskId: recoveryId,
       failingStep: 'verify:typecheck',
@@ -918,7 +930,8 @@ describe('queue-fix-tasks', () => {
       afterRedrive?.failureReason?.match(/recovery_failed:/g)?.length,
     ).toBe(1)
     expect(afterRedrive?.failureReason).toBe(afterFirst?.failureReason)
-    expect(afterRedrive?.failureReason).toContain('boom-original-error')
+    expect(afterRedrive?.failureReason).toContain('AssertionError')
+    expect(afterRedrive?.error).toBe(capturedOutput)
     expect(afterRedrive?.status).toBe('failed')
 
     // The re-drive raised no second escalation and did not re-stamp the

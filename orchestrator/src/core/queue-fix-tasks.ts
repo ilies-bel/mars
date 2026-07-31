@@ -29,6 +29,7 @@ import {
 import {
   composeRecoveryFailureReason,
   isRecoveryFailedReason,
+  stripRecoveryFailedPrefixes,
 } from './lib/failure-signature'
 import { isEnvironmentalSignature } from './lib/failure-kinds'
 import { classifyFailure } from './lib/failure-class'
@@ -576,15 +577,23 @@ export const handleTaskFailureWithFixTask = async (
       }
     }
     // Never nest the prefix: `truncatedError` may itself be a previously
-    // composed reason (the `task.failed` event carries `error`, which holds the
-    // composed string), so strip before composing.
+    // composed reason (the `task.failed` event carries `error`, which used to
+    // hold the composed string), so strip before composing.
+    const capturedError = stripRecoveryFailedPrefixes(truncatedError)
     const recoveryFailureReason = composeRecoveryFailureReason(
       failureSignature,
-      truncatedError,
+      capturedError,
     )
     await updateTask(input.taskId, {
       status: 'failed',
-      error: recoveryFailureReason,
+      // `error` holds CAPTURED PROCESS OUTPUT and must never be overwritten
+      // with a derived status string. Writing the composed reason here erased
+      // the real failure output (observed: ~3 KB of vitest output replaced by
+      // 542 chars of `recovery_failed:` padding), and `collectStormContext`
+      // reads the tail of this column to brief the storm Steward — so the
+      // Steward was handed nothing but padding. The derived string belongs in
+      // `failure_reason` alone.
+      error: capturedError,
       failureReason: recoveryFailureReason,
       failureSignature,
       failureReasonCode: failureSignature,
