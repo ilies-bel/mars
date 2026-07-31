@@ -39,6 +39,7 @@ import { PRIMITIVE_NAMES } from '@/entities/primitive/types'
 import { primitiveHash, studioHash, taskHash } from '@/shared/routing'
 import { relativeTime } from '@/shared/time'
 import { SkeletonList } from '@/components/Skeleton'
+import { StewardLedgerPanel } from './StewardLedgerPanel'
 
 // ── Pure model ────────────────────────────────────────────────────────────────
 
@@ -524,6 +525,7 @@ export const PrimitiveDetailDrawer = ({
                   </>
                 )}
               </section>
+              <StewardLedgerPanel targetKind="primitive" targetId={name} />
             </>
           )}
         </div>

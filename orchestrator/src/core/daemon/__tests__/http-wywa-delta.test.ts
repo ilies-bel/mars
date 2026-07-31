@@ -321,3 +321,70 @@ describe('GET /view/wywa-delta — chat thread events', () => {
 // Note: limit + andMore cap behaviour is verified at the pure-function level in
 // orchestrator/src/core/daemon/view/wywa-delta.test.ts (assembleDelta unit tests)
 // without requiring PGlite initialisation or an HTTP round-trip.
+
+// ── Steward ledger ───────────────────────────────────────────────────────────
+
+describe('GET /view/steward-ledger', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('returns newest-first evidence scoped to one target', async () => {
+    const { httpServer } = await loadModules(repo)
+    const ledger = await import('../../steward-ledger.js')
+    await ledger.recordStewardIntervention({
+      targetKind: 'task',
+      targetId: 'task-7',
+      targetVersion: 'verify:v1',
+      recipeId: 'repair-verify',
+      rationale: 'The first failure needed repair.',
+      outcome: 'recovered',
+      ts: '2026-07-01T09:00:00.000Z',
+    })
+    await ledger.recordStewardIntervention({
+      targetKind: 'task',
+      targetId: 'task-7',
+      targetVersion: 'verify:v2',
+      recipeId: 'repair-verify',
+      rationale: 'The latest failure needed repair.',
+      outcome: 'merged',
+      commitSha: 'abc123',
+      ts: '2026-07-02T09:00:00.000Z',
+    })
+    await ledger.recordStewardIntervention({
+      targetKind: 'task',
+      targetId: 'task-other',
+      targetVersion: 'verify:v1',
+      recipeId: 'repair-verify',
+      rationale: 'Must not appear in this target timeline.',
+      outcome: 'recovered',
+      ts: '2026-07-03T09:00:00.000Z',
+    })
+
+    const { port, close } = await httpServer.startHttpServer(makeDeps())
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${port}/view/steward-ledger?targetKind=task&targetId=task-7`,
+      )
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as {
+        ok: boolean
+        entries: Array<{ targetId: string; targetVersion: string; commitSha: string | null }>
+      }
+      expect(body.ok).toBe(true)
+      expect(body.entries.map((entry) => entry.targetId)).toEqual(['task-7', 'task-7'])
+      expect(body.entries.map((entry) => entry.targetVersion)).toEqual(['verify:v2', 'verify:v1'])
+      expect(body.entries[0]?.commitSha).toBe('abc123')
+    } finally {
+      await close()
+    }
+  })
+})

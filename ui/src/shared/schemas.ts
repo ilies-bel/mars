@@ -1277,6 +1277,28 @@ export const autoRecipeRunsResponseSchema = z.object({
 export type LearnedRecipe = z.infer<typeof learnedRecipeSchema>
 export type AutoRecipeRun = z.infer<typeof autoRecipeRunSchema>
 
+// ── Steward ledger ──────────────────────────────────────────────────────────
+
+/** Immutable record of one proactive Steward intervention. */
+export const stewardLedgerEntrySchema = z.object({
+  id: z.string(),
+  ts: z.string(),
+  targetKind: z.string(),
+  targetId: z.string(),
+  targetVersion: z.string(),
+  recipeId: z.string(),
+  rationale: z.string(),
+  outcome: z.string(),
+  commitSha: z.string().nullable(),
+})
+
+export const stewardLedgerResponseSchema = z.object({
+  ok: z.boolean(),
+  entries: z.array(stewardLedgerEntrySchema),
+})
+
+export type StewardLedgerEntry = z.infer<typeof stewardLedgerEntrySchema>
+
 // ── While-you-were-away delta ─────────────────────────────────────────────────
 
 /** One activity item returned by GET /view/wywa-delta. */

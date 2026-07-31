@@ -5,6 +5,7 @@ import {
   actionQueueResponseSchema,
   adrsResponseSchema,
   autoRecipeRunsResponseSchema,
+  stewardLedgerResponseSchema,
   wywaDeltaResponseSchema,
   chatConfigSchema,
   chatThreadDetailSchema,
@@ -33,6 +34,7 @@ import {
   type ActionQueueItem,
   type AdrEntry,
   type AutoRecipeRun,
+  type StewardLedgerEntry,
   type WywaDeltaResponse,
   type ChatConfig,
   type ChatThread,
@@ -1008,6 +1010,19 @@ export const fetchAutoRecipeRuns = async (opts?: { since?: string; limit?: numbe
   return json.autoRecipeRuns
 }
 
+/** Fetch Steward's immutable intervention history, optionally for one target. */
+export const fetchStewardLedger = async (
+  targetKind?: string,
+  targetId?: string,
+): Promise<StewardLedgerEntry[]> => {
+  const params: string[] = []
+  if (targetKind) params.push(`targetKind=${encodeURIComponent(targetKind)}`)
+  if (targetId) params.push(`targetId=${encodeURIComponent(targetId)}`)
+  const qs = params.length > 0 ? `?${params.join('&')}` : ''
+  const json = await fetchJson(`/api/steward-ledger${qs}`, stewardLedgerResponseSchema)
+  return json.entries
+}
+
 /**
  * Fetch the unified "while you were away" delta from the daemon — merges,
  * recoveries, auto-recipes, throttle events, and evaporated threads — all
@@ -1052,6 +1067,7 @@ export type {
   ReleaseNoteSpec,
   SessionOutcome,
   Skill,
+  StewardLedgerEntry,
   StaleWorktree,
   StaleWorktreesPayload,
   TraceEvent,

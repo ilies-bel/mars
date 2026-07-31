@@ -487,6 +487,13 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/steward-ledger?targetKind=<kind>&targetId=<id> — proxy the
+        // daemon-owned, append-only intervention evidence into the UI.
+        if (path === '/api/steward-ledger' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, `/view/steward-ledger${url.search}`)
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/wywa-delta?since=<ISO>&limit=<n> — unified "while you were away"
         // delta (merges, recoveries, auto-recipes, throttle events, evaporated threads).
         if (path === '/api/wywa-delta' && req.method === 'GET') {

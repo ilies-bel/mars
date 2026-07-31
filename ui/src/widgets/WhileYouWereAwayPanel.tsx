@@ -20,6 +20,7 @@ import type { ReleaseNoteEntry, WywaDeltaResponse } from '@/shared/schemas'
 import { fetchWywaDelta, getReleaseNotesCursor } from '@/shared/api'
 import { useUnseenReleaseNotes } from '@/shared/useUnseenReleaseNotes'
 import { releaseNotesHash } from '@/shared/routing'
+import { StewardLedgerPanel } from './StewardLedgerPanel'
 
 /** Maximum delta events listed before collapsing into "and N more". */
 export const MAX_VISIBLE_ENTRIES = 8
@@ -93,6 +94,17 @@ export const WhileYouWereAwayPanel = ({ projectId }: WhileYouWereAwayPanelProps)
         >
           Release notes
         </a>
+        <a
+          href="#steward-ledger"
+          data-testid="steward-ledger-link"
+          onClick={(event) => {
+            event.preventDefault()
+            document.getElementById('steward-ledger')?.scrollIntoView({ behavior: 'smooth' })
+          }}
+          className="font-mono text-[11px] text-primary/60 underline underline-offset-2 hover:text-foreground"
+        >
+          See timeline
+        </a>
       </div>
       {visible.length > 0 && (
         <ul className="mt-3 flex flex-col gap-1">
@@ -112,6 +124,7 @@ export const WhileYouWereAwayPanel = ({ projectId }: WhileYouWereAwayPanelProps)
           and {overflow} more
         </p>
       )}
+      <StewardLedgerPanel />
     </section>
   )
 }

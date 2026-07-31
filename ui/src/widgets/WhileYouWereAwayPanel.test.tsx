@@ -147,6 +147,19 @@ describe('WhileYouWereAwayPanel', () => {
     expect(html).toContain(`href="${releaseNotesHash()}"`)
   })
 
+  it('links to the Steward intervention timeline', () => {
+    mockUnseen = []
+    mockDelta = {
+      ok: true,
+      events: [{ kind: 'merge', summary: 'Merged: Z', at: '2026-06-01T00:00:00.000Z' }],
+      andMore: 0,
+    }
+    const html = renderToStaticMarkup(<WhileYouWereAwayPanel projectId="p" />)
+
+    expect(html).toContain('See timeline')
+    expect(html).toContain('href="#steward-ledger"')
+  })
+
   it('shows the panel (via unseenEntries) even when the delta is empty', () => {
     mockUnseen = [makeEntry(1)]
     mockDelta = { ok: true, events: [], andMore: 0 }

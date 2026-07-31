@@ -45,7 +45,7 @@ import {
   assembleDelta,
   clampWywaDeltaLimit,
 } from './view/wywa-delta'
-import { listStewardLedgerSince } from '../steward-ledger'
+import { listStewardLedgerFor, listStewardLedgerSince } from '../steward-ledger'
 import type { ChatRunner, AttachmentInfo } from './chat-runner'
 import type { ChatStreamHub, SeqChunk } from './chat-stream-hub'
 import { getRepoRoot } from '../context'
@@ -1446,6 +1446,27 @@ export const startHttpServer = async (
       import('../lib/learned-recipes.js')
         .then((m) => m.listAutoRecipeRuns({ since, limit }))
         .then((runs) => sendJson(res, 200, { ok: true, autoRecipeRuns: runs }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/steward-ledger?targetKind=<kind>&targetId=<id> — immutable
+    // Steward intervention evidence, newest first. Supplying a target pair
+    // scopes the result to that exact task/arc/primitive; omitting both reads
+    // the full ledger for the global timeline.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/steward-ledger')) {
+      const parsed = new URL(req.url, 'http://localhost')
+      const targetKind = parsed.searchParams.get('targetKind')
+      const targetId = parsed.searchParams.get('targetId')
+      if ((targetKind === null) !== (targetId === null)) {
+        sendJson(res, 400, { error: 'targetKind and targetId must be supplied together' })
+        return
+      }
+      const entries = targetKind !== null && targetId !== null
+        ? listStewardLedgerFor(targetKind, targetId)
+        : listStewardLedgerSince('0001-01-01T00:00:00.000Z')
+      entries
+        .then((rows) => sendJson(res, 200, { ok: true, entries: rows }))
         .catch((err: unknown) => sendError(res, err))
       return
     }

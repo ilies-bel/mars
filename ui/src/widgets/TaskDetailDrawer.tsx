@@ -31,6 +31,7 @@ import { FallbackSurface } from '@/components/FallbackSurface'
 import { CopyButton } from '@/components/CopyButton'
 import { SkeletonBlock } from '@/components/Skeleton'
 import { OriginTree } from './OriginTree'
+import { StewardLedgerPanel } from './StewardLedgerPanel'
 
 /** A single step execution span — one step_started event paired with its step_ended (if any). */
 export interface StepSpan {
@@ -1910,6 +1911,10 @@ export const TaskDetailDrawer = ({
           className="flex-1 overflow-y-auto p-4"
         >
           <TaskDetailBody task={state.task} onNavigate={navigate} currentId={currentId} currentStep={currentStep} />
+          <StewardLedgerPanel
+            targetKind={isProposal ? 'arc' : 'task'}
+            targetId={currentId}
+          />
         </div>
       ) : null}
     </aside>
