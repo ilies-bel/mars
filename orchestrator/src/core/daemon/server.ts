@@ -1084,7 +1084,7 @@ export const startDaemon = async (
   }
 
   const scheduleArcVerification = (originId: string) => {
-    if (!acceptingWork || isPaused) return 'skipped-paused' as const
+    if (!acceptingWork || pause.isPaused()) return 'skipped-paused' as const
     if (sems.arcVerify.inUse + pendingArcVerifications.size >= sems.arcVerify.limit) {
       log(`[arc-verifier] ${originId}: shedding verification; pool is at capacity`)
       return 'skipped-capacity' as const
