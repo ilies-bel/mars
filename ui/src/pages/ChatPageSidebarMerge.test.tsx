@@ -42,6 +42,7 @@ const PLAIN_THREAD: ChatThread = {
 const renderPage = (
   items: ActionQueueItem[],
   threads: ChatThread[],
+  needsCodexAuth = false,
 ): string => {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
@@ -49,6 +50,7 @@ const renderPage = (
   qc.setQueryData(['action-queue', null], items)
   qc.setQueryData(['action-queue-history', null], { rows: [], nextCursor: null })
   qc.setQueryData(['chat-threads', undefined], threads)
+  if (needsCodexAuth) qc.setQueryData(['codex-auth', undefined], { needsAuth: true })
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <ChatPage />
@@ -57,6 +59,16 @@ const renderPage = (
 }
 
 describe('ChatPage sidebar – conversation threads only', () => {
+  it('tells operators to complete the terminal Codex login before retrying chat', () => {
+    const html = renderPage([], [], true)
+
+    expect(html).toContain('data-testid="codex-auth-banner"')
+    expect(html).toContain('run codex login')
+    expect(html).toMatch(/retry/i)
+    expect(html).toContain('>Retry<')
+    expect(html).not.toContain('Re-authenticate')
+  })
+
   it('renders conversation threads in the sidebar', () => {
     const html = renderPage([], [PLAIN_THREAD])
     expect(html).toContain('regular conversation title')

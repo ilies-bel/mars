@@ -2810,13 +2810,13 @@ export const ChatPage = () => {
           data-testid="codex-auth-banner"
           className="flex items-center gap-3 border-b border-warn/40 bg-warn/10 px-4 py-2 font-mono text-[11px] text-warn"
         >
-          <span>Codex sign-in required — all threads are paused.</span>
+          <span>Codex login required — run codex login in your terminal, then retry.</span>
           <button
             type="button"
             className="ml-auto border border-warn/40 px-2 py-0.5 text-[10px] uppercase hover:bg-warn/10 active:scale-[0.97]"
             onClick={() => retryCodexAuth()}
           >
-            Re-authenticate
+            Retry
           </button>
         </div>
       )}
