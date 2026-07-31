@@ -69,9 +69,8 @@ vi.mock('../chat-mcp', () => ({
   },
 }))
 
-vi.mock('../../lib/git/claude', () => ({
-  buildWorkerEnv: vi.fn(() => ({})),
-  runSubprocessStreaming: vi.fn(),
+vi.mock('../chat-shell', () => ({
+  runShellCommand: vi.fn(),
 }))
 
 vi.mock('../../lib/chat-store', () => ({
@@ -84,21 +83,18 @@ vi.mock('../../lib/chat-store', () => ({
 // Import mocked modules after vi.mock declarations (hoisting order matters).
 const codexApi = await import('../codex-api')
 const chatSkills = await import('../chat-skills')
-const { runSubprocessStreaming } = await import('../../lib/git/claude')
+const { runShellCommand } = await import('../chat-shell')
 const chatStore = await import('../../lib/chat-store')
 
 const mockStream = codexApi.streamCodexResponse as unknown as MockInstance<
   (opts: StreamCodexResponseOpts) => Promise<void>
 >
 const mockLoadAuth = codexApi.loadCodexAuth as unknown as MockInstance<() => Promise<unknown>>
-const mockShell = runSubprocessStreaming as unknown as MockInstance<
+const mockShell = runShellCommand as unknown as MockInstance<
   (
-    cmd: string,
-    args: readonly string[],
+    command: string,
     cwd: string,
-    onLine?: unknown,
     signal?: AbortSignal,
-    env?: NodeJS.ProcessEnv,
   ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
 >
 
@@ -118,7 +114,6 @@ const makeThreadFixture = (id: string) => ({
     evaporated_at: null,
     parent_thread_id: null,
     fork_idempotency_key: null,
-    session_id: null,
   },
   messages: [],
   feedbacks: new Map(),

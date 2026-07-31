@@ -1,0 +1,26 @@
+import { describe, expect, it } from 'vitest'
+import { toThreadApiView, type ChatThread } from '../chat-store'
+
+describe('toThreadApiView', () => {
+  it('returns a session-free chat thread API view', () => {
+    const thread: ChatThread = {
+      id: 'thread-1',
+      title: 'Test chat',
+      status: 'idle',
+      posture: 'triage',
+      created_at: '2026-08-01T12:00:00.000Z',
+      updated_at: '2026-08-01T12:00:00.000Z',
+      origin: null,
+      alert_item_id: null,
+      alert_resolved: false,
+      evaporated_at: null,
+      parent_thread_id: null,
+      fork_idempotency_key: null,
+    }
+
+    const view = toThreadApiView(thread)
+
+    expect(view).not.toHaveProperty('sessionId')
+    expect(view).not.toHaveProperty('contextSeeded')
+  })
+})

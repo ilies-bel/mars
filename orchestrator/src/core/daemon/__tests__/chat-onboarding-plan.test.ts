@@ -43,7 +43,7 @@ vi.mock('../chat-mcp', () => ({
   },
 }))
 
-vi.mock('../../lib/git/claude', () => ({ buildWorkerEnv: vi.fn(() => ({})), runSubprocessStreaming: vi.fn() }))
+vi.mock('../chat-shell', () => ({ runShellCommand: vi.fn() }))
 
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: '', kind: 'acknowledgment', backing_entity_id: null }),
@@ -54,21 +54,21 @@ vi.mock('../../lib/chat-store', () => ({
 
 const codexApi = await import('../codex-api')
 const chatSkills = await import('../chat-skills')
-const { runSubprocessStreaming } = await import('../../lib/git/claude')
+const { runShellCommand } = await import('../chat-shell')
 const chatStore = await import('../../lib/chat-store')
 
 const mockStream = codexApi.streamCodexResponse as unknown as MockInstance<
   (opts: StreamCodexResponseOpts) => Promise<void>
 >
-const mockShell = runSubprocessStreaming as unknown as MockInstance<
-  (cmd: string, args: readonly string[], cwd: string) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+const mockShell = runShellCommand as unknown as MockInstance<
+  (command: string, cwd: string, signal?: AbortSignal) => Promise<{ exitCode: number; stdout: string; stderr: string }>
 >
 
 const makeThreadFixture = (id: string) => ({
   thread: {
     id, title: '', status: 'idle' as const, posture: 'triage' as const, created_at: '', updated_at: '', origin: null,
     alert_item_id: null, alert_resolved: false, evaporated_at: null, parent_thread_id: null,
-    fork_idempotency_key: null, session_id: null,
+    fork_idempotency_key: null,
   },
   messages: [],
   feedbacks: new Map(),
@@ -93,9 +93,9 @@ describe('chat onboarding first-slice queue offer', () => {
     vi.mocked(chatSkills.discoverSkills).mockResolvedValue([])
     mcpMock.getTools.mockResolvedValue([])
     vi.mocked(chatStore.getThread).mockImplementation(async (id) => makeThreadFixture(id))
-    mockShell.mockImplementation(async (_cmd, args) => ({
+    mockShell.mockImplementation(async (command) => ({
       exitCode: 0,
-      stdout: args[1]?.startsWith('mars task add') ? 'queued mars-task-101' : 'vision set',
+      stdout: command.startsWith('mars task add') ? 'queued mars-task-101' : 'vision set',
       stderr: '',
     }))
   })
@@ -119,12 +119,12 @@ describe('chat onboarding first-slice queue offer', () => {
     expect(firstAssistant[2]).toContain('What to build:')
     expect(firstAssistant[2]).toContain('Verification:')
     expect(firstAssistant[2]).toMatch(/Reply "go" to queue this/)
-    expect(mockShell.mock.calls.map(([, args]) => args[1])).toEqual(['mars vision set "Build a project dashboard"'])
+    expect(mockShell.mock.calls.map(([command]) => command)).toEqual(['mars vision set "Build a project dashboard"'])
 
     await runner.sendMessage('onboarding-go', 'go', '/repo', undefined)
     await vi.waitFor(() => expect(mockShell).toHaveBeenCalledTimes(2))
 
-    expect(mockShell.mock.calls.map(([, args]) => args[1])).toEqual([
+    expect(mockShell.mock.calls.map(([command]) => command)).toEqual([
       'mars vision set "Build a project dashboard"',
       'mars task add "Create the project dashboard\n\nShow the current work on a single dashboard.\n\nVerify: npx vitest run src/dashboard.test.ts"',
     ])
@@ -144,7 +144,7 @@ describe('chat onboarding first-slice queue offer', () => {
     await runner.sendMessage('onboarding-no-go', reply, '/repo', undefined)
     await vi.waitFor(() => expect(vi.mocked(chatStore.appendMessage).mock.calls.filter((call) => call[1] === 'assistant')).toHaveLength(2))
 
-    expect(mockShell.mock.calls.map(([, args]) => args[1])).toEqual(['mars vision set "Build a project dashboard"'])
-    expect(mockShell.mock.calls.map(([, args]) => args[1])).not.toContain(expect.stringMatching(/^mars task add/))
+    expect(mockShell.mock.calls.map(([command]) => command)).toEqual(['mars vision set "Build a project dashboard"'])
+    expect(mockShell.mock.calls.map(([command]) => command)).not.toContain(expect.stringMatching(/^mars task add/))
   })
 })

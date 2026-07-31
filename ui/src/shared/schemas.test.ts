@@ -6,8 +6,8 @@
  * sentinel. Each test uses a minimal realistic payload matching what the
  * daemon's buildActionQueueView emits.
  */
-import { describe, expect, it } from 'vitest'
-import { actionQueueResponseSchema } from './schemas'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import { actionQueueResponseSchema, chatThreadSchema, type ChatThread } from './schemas'
 
 // Minimal base fields shared across all item kinds.
 const base = {
@@ -95,5 +95,27 @@ describe('actionQueueResponseSchema — known kinds parse correctly', () => {
     expect(kinds).toContain('reflect-recommended')
     expect(kinds).toContain('scorer-suggested')
     expect(kinds).toContain('failed-task')
+  })
+})
+
+describe('chatThreadSchema — session-free contract', () => {
+  it('drops legacy provider-session fields from a chat thread payload', () => {
+    const thread = chatThreadSchema.parse({
+      id: 'thread-1',
+      title: 'Test chat',
+      status: 'idle',
+      createdAt: '2026-08-01T12:00:00.000Z',
+      updatedAt: '2026-08-01T12:00:00.000Z',
+      sessionId: 'provider-session-1',
+      contextSeeded: true,
+    })
+
+    expect(thread).not.toHaveProperty('sessionId')
+    expect(thread).not.toHaveProperty('contextSeeded')
+  })
+
+  it('infers a chat thread without provider-session fields', () => {
+    expectTypeOf<ChatThread>().not.toHaveProperty('sessionId')
+    expectTypeOf<ChatThread>().not.toHaveProperty('contextSeeded')
   })
 })

@@ -175,7 +175,7 @@ describe('parseEventToSegments', () => {
     ])
   })
 
-  it('returns [] for thread.started (session capture happens outside the parser)', () => {
+  it('returns [] for thread.started', () => {
     expect(parseEventToSegments({ type: 'thread.started', thread_id: 't_1' })).toEqual([])
   })
 
@@ -433,8 +433,6 @@ vi.mock('../chat-shell', () => ({
 vi.mock('../../lib/chat-store', () => ({
   appendMessage: vi.fn().mockResolvedValue({ id: 'msg-1', content: '', role: 'user', thread_id: 't1', segments: null, created_at: '' }),
   getThread: vi.fn(),
-  getThreadSession: vi.fn().mockResolvedValue(null),
-  setThreadSession: vi.fn().mockResolvedValue(undefined),
   setThreadStatus: vi.fn().mockResolvedValue(undefined),
   updateThreadTitle: vi.fn().mockResolvedValue(undefined),
 }))
@@ -465,7 +463,7 @@ const threadFixture = {
   id: 't1', title: '', status: 'idle' as const, created_at: '', updated_at: '',
   posture: 'triage' as const,
   origin: null, alert_item_id: null, alert_resolved: false, evaporated_at: null,
-  parent_thread_id: null, fork_idempotency_key: null, session_id: null,
+  parent_thread_id: null, fork_idempotency_key: null,
 }
 
 /** streamCodexResponse implementation that emits the given events and resolves. */
