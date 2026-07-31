@@ -1,5 +1,5 @@
 /**
- * Behavioural tests for the `daemon start` race-prevention fix.
+ * Behavioural tests for daemon start and restart safety.
  *
  * The TOCTOU gap: `isDaemonAlive()` only reports true once the socket is
  * connectable, but `spawnDetached` used to return immediately — before the
@@ -12,8 +12,8 @@
  * suite verifies the three observable outcomes through the public CLI seam.
  *
  * System boundaries mocked:
- *  - `../../core/daemon/paths`: `isDaemonAlive` is controllable per-test;
- *    `daemonPaths` and `resolveLaunchCommand` return stable test values.
+ *  - `../../core/daemon/paths`: `isDaemonAlive` is controllable per-test and
+ *    `resolveLaunchCommand` is stable.
  *  - `node:child_process`: `spawn` is a no-op stub; we test CLI logic, not
  *    that the OS can fork a process.
  *
@@ -22,32 +22,27 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { InProcessOptions } from '../test-adapter'
-import type { OrchestratorContext } from '../../core/context'
+import { __resetContextCacheForTests, type OrchestratorContext } from '../../core/context'
 import type { DaemonLiveness } from '../../core/daemon/paths'
 
 // ── Mock declarations (must precede the imports they intercept) ──────────────
 
-vi.mock('../../core/daemon/paths', () => ({
-  isDaemonAlive: vi.fn(),
-  daemonPaths: vi.fn(() => ({
-    socket: '/tmp/mars-test-daemon.sock',
-    pidFile: '/tmp/mars-test-daemon.pid',
-    logFile: '/tmp/mars-test-daemon/watch.log',
-    httpPortFile: '/tmp/mars-test-daemon/http.port',
-    runningMarker: '/tmp/mars-test-daemon/running.json',
-    crashMarker: '/tmp/mars-test-daemon/crash.json',
-    lockFile: '/tmp/mars-test-daemon/daemon.lock',
-  })),
-  resolveLaunchCommand: vi.fn(() => ({
-    command: process.execPath,
-    baseArgs: ['-e', 'process.exit(0)'],
-  })),
-}))
+vi.mock('../../core/daemon/paths', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../core/daemon/paths')>()
+  return {
+    ...actual,
+    isDaemonAlive: vi.fn(),
+    resolveLaunchCommand: vi.fn(() => ({
+      command: process.execPath,
+      baseArgs: ['-e', 'process.exit(0)'],
+    })),
+  }
+})
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()
@@ -56,6 +51,30 @@ vi.mock('node:child_process', async (importOriginal) => {
     spawn: vi.fn(() => ({ unref: vi.fn(), pid: 99999 })),
   }
 })
+
+// The pause-respawn regression boots the real daemon lifecycle, but Unix
+// sockets are unavailable in the Vitest sandbox. Keep the transport boundary
+// inert; the test observes daemon startup through its public handle and logs.
+vi.mock('node:net', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:net')>()
+  const { EventEmitter } = await import('node:events')
+  class StubServer extends EventEmitter {
+    listen(_path: string, callback: () => void): this {
+      callback()
+      return this
+    }
+
+    close(callback: () => void): this {
+      callback()
+      return this
+    }
+  }
+  return { ...actual, createServer: () => new StubServer() }
+})
+
+vi.mock('../../core/daemon/http-server', () => ({
+  startHttpServer: async () => ({ port: 0, close: async () => {} }),
+}))
 
 // Must import the mocked versions so vi.mocked() can type them.
 import { isDaemonAlive } from '../../core/daemon/paths'
@@ -111,7 +130,7 @@ const spawnM = vi.mocked(spawn)
 
 // ── Test suite ────────────────────────────────────────────────────────────────
 
-describe('daemon start — race prevention', () => {
+describe('daemon start and restart safety', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -170,6 +189,65 @@ describe('daemon start — race prevention', () => {
     expect(pidIn(r2.out)).toBe('7777')
     // Neither spawns a new process.
     expect(spawnM).not.toHaveBeenCalled()
+  })
+
+  it('restores a persisted pause after the daemon is killed and restarted', async () => {
+    const repo = mkdtempSync('/tmp/mars-daemon-pause-respawn-')
+    const originalEnv = {
+      MARS_REPO: process.env.MARS_REPO,
+      MARS_DB_BACKEND: process.env.MARS_DB_BACKEND,
+      MARS_DISABLE_DUCKDB: process.env.MARS_DISABLE_DUCKDB,
+      MARS_DRAIN_POLL_MS: process.env.MARS_DRAIN_POLL_MS,
+      MARS_USAGE_SAMPLE_SEC: process.env.MARS_USAGE_SAMPLE_SEC,
+      MARS_WORKER_PROVIDER: process.env.MARS_WORKER_PROVIDER,
+      MARS_CODEX_BIN: process.env.MARS_CODEX_BIN,
+    }
+    const logs: string[] = []
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+    let first: { stop: (force?: boolean) => Promise<void> } | undefined
+    let replacement: { stop: (force?: boolean) => Promise<void> } | undefined
+
+    try {
+      execFileSync('git', ['init', '--quiet', '--initial-branch=main'], { cwd: repo })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+      execFileSync('git', ['config', 'user.name', 'Mars Test'], { cwd: repo })
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'initial'], { cwd: repo })
+      mkdirSync(join(repo, '.mars'), { recursive: true })
+      process.env.MARS_REPO = repo
+      process.env.MARS_DB_BACKEND = 'pglite'
+      process.env.MARS_DISABLE_DUCKDB = '1'
+      process.env.MARS_DRAIN_POLL_MS = '3600000'
+      process.env.MARS_USAGE_SAMPLE_SEC = '3600'
+      process.env.MARS_WORKER_PROVIDER = 'codex'
+      process.env.MARS_CODEX_BIN = '/usr/bin/true'
+      __resetContextCacheForTests()
+
+      const { startDaemon } = await import('../../core/daemon/server')
+      const { persistPaused } = await import('../../core/daemon/config')
+      first = await startDaemon({ log: (line) => logs.push(line) })
+      // This is the synchronous side effect completed by the pause RPC before
+      // it acknowledges success. The force-stop below models a killed process.
+      persistPaused(true)
+      // Force-stop models a killed process: no graceful resume runs, so only
+      // daemon.json can carry the operator's intent into the replacement.
+      await first.stop(true)
+      first = undefined
+
+      replacement = await startDaemon({ log: (line) => logs.push(line) })
+      expect(logs).toContain(
+        '[pause] restored persisted paused state from daemon.json — dispatch suspended. Run `mars daemon resume` to re-enable dispatch.',
+      )
+    } finally {
+      await replacement?.stop(true)
+      await first?.stop(true)
+      exitSpy.mockRestore()
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      __resetContextCacheForTests()
+      rmSync(repo, { recursive: true, force: true })
+    }
   })
 
   // Timeout path: daemon never becomes alive within the deadline.

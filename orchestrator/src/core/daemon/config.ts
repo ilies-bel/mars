@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { z } from 'zod'
 import { resolveContext } from '../context'
@@ -185,28 +185,14 @@ export const daemonConfigPath = (): string =>
  * losing other configured values. Safe to call from the daemon process.
  */
 export const persistSelfEvolveAutoTrigger = (autoTrigger: boolean): void => {
-  const path = daemonConfigPath()
-  let existing: Record<string, unknown> = {}
-  try {
-    const raw = readFileSync(path, 'utf8')
-    const parsed = JSON.parse(raw) as unknown
-    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      existing = parsed as Record<string, unknown>
-    }
-  } catch {
-    // File absent or invalid — start fresh.
-  }
+  const existing = readDaemonConfigFile()
   const existingSe =
     existing.selfEvolve !== null &&
     typeof existing.selfEvolve === 'object' &&
     !Array.isArray(existing.selfEvolve)
       ? (existing.selfEvolve as Record<string, unknown>)
       : {}
-  writeFileSync(
-    path,
-    JSON.stringify({ ...existing, selfEvolve: { ...existingSe, autoTrigger } }, null, 2),
-    'utf8',
-  )
+  patchDaemonConfigFile({ selfEvolve: { ...existingSe, autoTrigger } })
 }
 
 /**
@@ -229,7 +215,7 @@ export const readDaemonConfigFile = (): Record<string, unknown> => {
 
 /**
  * Merge-patch write helper for `.mars/daemon.json`: shallow-merges `patch`
- * into the existing top-level object and writes the result back, preserving
+ * into the existing top-level object and writes the result back atomically, preserving
  * every key the patch does not name (caps, selfEvolve, budget, …). A `null`
  * value in `patch` removes that top-level key. Creates the state dir / file
  * when absent. Consumers that poll the file (e.g. the spend sweep) pick the
@@ -249,7 +235,26 @@ export const patchDaemonConfigFile = (
   }
   const path = daemonConfigPath()
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  // A pause is an incident-control boundary: do not truncate daemon.json in
+  // place. A SIGKILL between truncate and write used to leave the next daemon
+  // with unreadable config, which looks exactly like an absent `paused` key.
+  // Flush the replacement before atomically publishing it, then flush the
+  // directory entry so a fast respawn sees the committed file.
+  const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`
+  writeFileSync(tmpPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  const tmpFd = openSync(tmpPath, 'r')
+  try {
+    fsyncSync(tmpFd)
+  } finally {
+    closeSync(tmpFd)
+  }
+  renameSync(tmpPath, path)
+  const dirFd = openSync(dirname(path), 'r')
+  try {
+    fsyncSync(dirFd)
+  } finally {
+    closeSync(dirFd)
+  }
   return next
 }
 

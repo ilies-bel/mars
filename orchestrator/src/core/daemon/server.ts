@@ -161,6 +161,29 @@ import { startDeferralWakeSweeper } from './deferral-wake-sweeper'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
+/**
+ * Re-exec the daemon against the repository this process already serves.
+ *
+ * Auto-restart paths cannot rely on the child inheriting a useful working
+ * directory: foreground daemons may have been launched with `--repo` from
+ * elsewhere. Pinning both the command argument and environment keeps the
+ * replacement reading the same daemon.json, including an operator pause.
+ */
+const spawnReplacementDaemon = async (): Promise<void> => {
+  const [{ spawn }, { resolveLaunchCommand }] = await Promise.all([
+    import('node:child_process'),
+    import('./paths'),
+  ])
+  const { command, baseArgs } = resolveLaunchCommand()
+  const { repoRoot } = resolveContext()
+  const child = spawn(command, [...baseArgs, '--repo', repoRoot, 'daemon', 'start'], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, MARS_REPO: repoRoot },
+  })
+  child.unref()
+}
+
 export interface Semaphore {
   limit: number
   inUse: number
@@ -4373,14 +4396,7 @@ export const startDaemon = async (
     restartDaemon: async () => {
       // Re-exec a detached `mars daemon start` and let this process drain +
       // exit. Spawned detached so it survives our shutdown.
-      const { spawn } = await import('node:child_process')
-      const { resolveLaunchCommand } = await import('./paths')
-      const { command, baseArgs } = resolveLaunchCommand()
-      const child = spawn(command, [...baseArgs, 'daemon', 'start'], {
-        detached: true,
-        stdio: 'ignore',
-      })
-      child.unref()
+      await spawnReplacementDaemon()
       log(`restart-daemon requested; spawned replacement, draining self`)
       // Trigger our own graceful shutdown after the response flushes.
       setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
@@ -4476,14 +4492,7 @@ export const startDaemon = async (
           inFlightCount: () => tracker.inFlightCount(),
           installRoute: classifyInstallRoute,
           restartDaemon: async () => {
-            const { spawn } = await import('node:child_process')
-            const { resolveLaunchCommand } = await import('./paths')
-            const { command, baseArgs } = resolveLaunchCommand()
-            const child = spawn(command, [...baseArgs, 'daemon', 'start'], {
-              detached: true,
-              stdio: 'ignore',
-            })
-            child.unref()
+            await spawnReplacementDaemon()
             log('self-update complete; spawned replacement daemon, draining self')
             setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
           },
@@ -4806,14 +4815,7 @@ export const startDaemon = async (
           log(`[dev-autorestart] HEAD ${shortSrc} -> ${shortHead}, restarting daemon`)
           // Mirror the restartDaemon RPC handler. The replacement startup
           // reconciler clears any pre-existing daemon-code-drift row.
-          const { spawn } = await import('node:child_process')
-          const { resolveLaunchCommand } = await import('./paths')
-          const { command, baseArgs } = resolveLaunchCommand()
-          const child = spawn(command, [...baseArgs, 'daemon', 'start'], {
-            detached: true,
-            stdio: 'ignore',
-          })
-          child.unref()
+          await spawnReplacementDaemon()
           setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
           return
         }
@@ -5258,17 +5260,11 @@ export const startDaemon = async (
           () => {
             // Mirror the restartDaemon RPC handler: spawn a replacement, then
             // gracefully shut down this process after a brief flush delay.
-            void import('node:child_process').then(({ spawn }) =>
-              import('./paths').then(({ resolveLaunchCommand }) => {
-                const { command, baseArgs } = resolveLaunchCommand()
-                const child = spawn(command, [...baseArgs, 'daemon', 'start'], {
-                  detached: true,
-                  stdio: 'ignore',
-                })
-                child.unref()
-                setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100)
-              }),
-            )
+            void spawnReplacementDaemon()
+              .then(() => setTimeout(() => process.kill(process.pid, 'SIGTERM'), 100))
+              .catch((err: unknown) =>
+                log(`[db-busy-watchdog] replacement spawn failed: ${(err as Error).message}`),
+              )
           },
           dbBusyStage,
         )
