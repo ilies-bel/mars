@@ -570,8 +570,8 @@ const loadForegroundSlice = async (
       const taskCreatedMs = new Date(taskCreatedAt).getTime()
       let bestDelta = Infinity
       for (const row of r.rows) {
-        const r0 = row as unknown as { timestamp: string }
-        const ts = new Date(r0.timestamp).getTime()
+        const r0 = row as unknown as { timestamp: number }
+        const ts = r0.timestamp
         const delta = Math.abs(ts - taskCreatedMs)
         if (delta < bestDelta) {
           bestDelta = delta
@@ -773,7 +773,7 @@ export const loadDeepReflectArc = async (
   })
 
   const stepTimeline: ArcSpanEntry[] = timelineRows.rows.map((row) => {
-    const r0 = row as unknown as { timestamp: string; phase: string | null; payload: string }
+    const r0 = row as unknown as { timestamp: number; phase: string | null; payload: string }
     let payload: Record<string, unknown> = {}
     try {
       payload = JSON.parse(r0.payload) as Record<string, unknown>
@@ -799,11 +799,11 @@ export const loadDeepReflectArc = async (
 
     // Derive start time: span ended at `timestamp`, ran for `durationMs` ms.
     // When durationMs is ≤ 0 (orphan sweep fills −1), fall back to the end timestamp.
-    const endedMs = new Date(r0.timestamp).getTime()
+    const endedMs = r0.timestamp
     const startedAt =
       durationMs > 0
         ? new Date(endedMs - durationMs).toISOString()
-        : r0.timestamp
+        : new Date(r0.timestamp).toISOString()
 
     return {
       startedAt,
@@ -833,7 +833,7 @@ export const loadDeepReflectArc = async (
 
   const toolInvokedErrors: ArcToolError[] = toolErrorRows.rows.map((row) => {
     const r0 = row as unknown as {
-      timestamp: string
+      timestamp: number
       task_id: string | null
       phase: string | null
       payload: string
@@ -845,7 +845,7 @@ export const loadDeepReflectArc = async (
       /* ignore malformed payload */
     }
     return {
-      timestamp: r0.timestamp,
+      timestamp: new Date(r0.timestamp).toISOString(),
       taskId: r0.task_id ?? null,
       phase: r0.phase ?? null,
       tool: typeof payload.tool === 'string' ? payload.tool : 'unknown',

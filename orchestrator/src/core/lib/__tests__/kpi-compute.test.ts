@@ -35,7 +35,7 @@ const TASKS_DDL = `
 const TRACE_EVENTS_DDL = `
   CREATE TABLE IF NOT EXISTS trace_events (
     id        TEXT PRIMARY KEY,
-    timestamp TEXT NOT NULL,
+    timestamp BIGINT NOT NULL,
     kind      TEXT NOT NULL,
     severity  TEXT NOT NULL DEFAULT 'info',
     task_id   TEXT,
@@ -110,7 +110,7 @@ const insertSignal = async (
   await store.execute({
     sql: `INSERT INTO trace_events (id, timestamp, kind, task_id, payload)
           VALUES (?, ?, 'step_ended', ?, ?)`,
-    args: [randomUUID(), '2026-01-04T12:00:01Z', opts.taskId, payload],
+    args: [randomUUID(), Date.parse('2026-01-04T12:00:01Z'), opts.taskId, payload],
   })
 }
 
@@ -139,7 +139,7 @@ const insertOriginSignal = async (
   await store.execute({
     sql: `INSERT INTO trace_events (id, timestamp, kind, task_id, origin_id, payload)
           VALUES (?, ?, 'step_ended', NULL, ?, ?)`,
-    args: [randomUUID(), '2026-01-04T12:00:01Z', opts.originId, payload],
+    args: [randomUUID(), Date.parse('2026-01-04T12:00:01Z'), opts.originId, payload],
   })
 }
 
@@ -585,7 +585,7 @@ describe('computeCostPerArcDistribution — Path 3: origin-level Planner/Slicer 
     await store.execute({
       sql: `INSERT INTO trace_events (id, timestamp, kind, task_id, origin_id, payload)
             VALUES (?, ?, 'step_ended', ?, ?, ?)`,
-      args: [randomUUID(), '2026-01-04T12:00:01Z', 'dedup-arc', 'dedup-arc', payload],
+      args: [randomUUID(), Date.parse('2026-01-04T12:00:01Z'), 'dedup-arc', 'dedup-arc', payload],
     })
 
     const result = await computeCostPerArcDistribution(store, WINDOW)

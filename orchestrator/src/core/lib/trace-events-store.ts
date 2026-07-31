@@ -58,8 +58,8 @@ const TRACE_EVENT_PHASE_SET: ReadonlySet<string> = new Set(TRACE_EVENT_PHASES)
 /** Row shape returned by `query`. */
 export interface TraceEvent {
   id: string
-  /** ISO-8601 timestamp. */
-  timestamp: string
+  /** Epoch-millisecond timestamp. */
+  timestamp: number
   kind: TraceEventKind
   severity: TraceEventSeverity
   taskId: string | null
@@ -83,8 +83,8 @@ export interface TraceEventFilter {
   kind?: readonly TraceEventKind[]
   severity?: readonly TraceEventSeverity[]
   phase?: readonly TraceEventPhase[]
-  sinceIso?: string
-  untilIso?: string
+  sinceMs?: number
+  untilMs?: number
   /**
    * Substring match against the serialized payload JSON. `ILIKE` with
    * `%q%` wrappers — case-insensitive, preserving the old SQLite LIKE
@@ -296,7 +296,7 @@ const rowToEvent = (row: Record<string, unknown>): TraceEvent => {
         : null
   return {
     id: row.id as string,
-    timestamp: row.timestamp as string,
+    timestamp: Number(row.timestamp),
     kind,
     severity,
     taskId: (row.task_id as string | null) ?? null,
@@ -307,7 +307,7 @@ const rowToEvent = (row: Record<string, unknown>): TraceEvent => {
 }
 
 interface CursorPayload {
-  ts: string
+  ts: number
   id: string
 }
 
@@ -323,7 +323,7 @@ const decodeCursor = (cursor: string): CursorPayload | null => {
       typeof parsed === 'object' &&
       'ts' in parsed &&
       'id' in parsed &&
-      typeof (parsed as { ts: unknown }).ts === 'string' &&
+      typeof (parsed as { ts: unknown }).ts === 'number' &&
       typeof (parsed as { id: unknown }).id === 'string'
     ) {
       return { ts: (parsed as CursorPayload).ts, id: (parsed as CursorPayload).id }
@@ -367,7 +367,7 @@ export const openTraceEventStore = async (
               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         args: [
           randomUUID(),
-          new Date().toISOString(),
+          Date.now(),
           event.kind,
           severity,
           event.taskId ?? null,
@@ -402,13 +402,13 @@ export const openTraceEventStore = async (
         where.push(`phase IN (${filter.phase.map(() => '?').join(', ')})`)
         args.push(...filter.phase)
       }
-      if (filter.sinceIso !== undefined) {
+      if (filter.sinceMs !== undefined) {
         where.push('timestamp >= ?')
-        args.push(filter.sinceIso)
+        args.push(filter.sinceMs)
       }
-      if (filter.untilIso !== undefined) {
+      if (filter.untilMs !== undefined) {
         where.push('timestamp <= ?')
-        args.push(filter.untilIso)
+        args.push(filter.untilMs)
       }
       if (filter.q !== undefined && filter.q !== '') {
         // ILIKE preserves the old SQLite LIKE case-insensitivity. We wrap

@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { __resetDbRegistryForTests, openDb, type DbClient } from './db.js'
+import { __execSchemaBatch, __resetDbRegistryForTests, openDb, type DbClient } from './db.js'
 import {
   ensureSchema,
   IDENTITY_COLUMNS,
@@ -150,6 +150,40 @@ describe('ensureSchema', () => {
     await expect(
       c.execute(`INSERT INTO events (id, type, payload) VALUES (999, 'c', '{}')`),
     ).rejects.toThrow()
+  })
+
+  it('stores trace event timestamps as epoch milliseconds', async () => {
+    const c = await freshSchemaClient()
+    const cols = await columnsOf(c, 'trace_events')
+
+    expect(cols.get('timestamp')).toBe('bigint')
+  })
+
+  it('converts existing trace event timestamps to epoch milliseconds', async () => {
+    const c = openDb(freshKey())
+    try {
+      await __execSchemaBatch(c, [`CREATE TABLE trace_events (
+        id text PRIMARY KEY,
+        timestamp text NOT NULL,
+        kind text NOT NULL,
+        severity text NOT NULL DEFAULT 'info',
+        task_id text,
+        origin_id text,
+        phase text,
+        payload text NOT NULL DEFAULT '{}'
+      )`, {
+        sql: `INSERT INTO trace_events (id, timestamp, kind)
+              VALUES ('legacy', '1970-01-01T00:00:01.234Z', 'step_started')`,
+      }])
+
+      await ensureSchema(c)
+
+      const row = await c.execute(`SELECT timestamp FROM trace_events WHERE id = 'legacy'`)
+      expect(row.rows[0].timestamp).toBe(1234)
+      expect((await columnsOf(c, 'trace_events')).get('timestamp')).toBe('bigint')
+    } finally {
+      await c.close()
+    }
   })
 
   it('task_blockers keeps state CHECK, provenance, and composite PK', async () => {

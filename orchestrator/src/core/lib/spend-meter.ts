@@ -120,14 +120,14 @@ export const computeBudgetStatus = async (
   const window =
     config.windowMs !== null && config.windowTokens !== null
       ? await (async () => {
-          const sinceIso = new Date(now.getTime() - config.windowMs!).toISOString()
+          const sinceMs = now.getTime() - config.windowMs!
           const spendResult = await store.query({
             sql: `SELECT COALESCE(SUM(${weightedTokens}), 0) AS weighted_tokens
                   FROM trace_events te
                   WHERE te.kind = 'step_ended'
                     AND te.timestamp >= ?
                     AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL`,
-            args: [sinceIso],
+            args: [sinceMs],
           })
           const spendTokens = Number(
             (spendResult.rows[0] as { weighted_tokens?: number } | undefined)?.weighted_tokens ?? 0,
@@ -145,7 +145,7 @@ export const computeBudgetStatus = async (
                   GROUP BY COALESCE(te.origin_id, te.task_id)
                   ORDER BY weighted_tokens DESC
                   LIMIT 5`,
-            args: [sinceIso],
+            args: [sinceMs],
           })
           return {
             windowMs: config.windowMs!,

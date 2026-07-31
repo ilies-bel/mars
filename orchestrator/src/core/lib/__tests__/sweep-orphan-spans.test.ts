@@ -43,8 +43,8 @@ describe('sweepOrphanRunningSpans — daemon-crash orphan', () => {
     // severity derives from outcome=killed → warn (watchdog-killed convention)
     expect(endedAfter[0].severity).toBe('warn')
     // end time is set (the step_ended timestamp)
-    expect(typeof endedAfter[0].timestamp).toBe('string')
-    expect(endedAfter[0].timestamp.length).toBeGreaterThan(0)
+    expect(typeof endedAfter[0].timestamp).toBe('number')
+    expect(endedAfter[0].timestamp).toBeGreaterThan(0)
     // step identity fields are preserved
     expect(endedAfter[0].payload.workflowInstanceId).toBe('wf-orphan-001')
     expect(endedAfter[0].payload.stepName).toBe('run-claude-code')

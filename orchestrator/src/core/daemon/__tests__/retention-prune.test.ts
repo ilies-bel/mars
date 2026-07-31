@@ -19,8 +19,8 @@ import {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-function makeTs(offsetDays: number): string {
-  return new Date(Date.now() - offsetDays * 24 * 60 * 60 * 1000).toISOString()
+function makeTs(offsetDays: number): number {
+  return Date.now() - offsetDays * 24 * 60 * 60 * 1000
 }
 
 type LibsqlClient = ReturnType<typeof openLibsql>
@@ -29,7 +29,7 @@ async function setupTables(client: LibsqlClient): Promise<void> {
   await client.execute(`
     CREATE TABLE IF NOT EXISTS trace_events (
       id        TEXT PRIMARY KEY,
-      timestamp TEXT NOT NULL,
+      timestamp BIGINT NOT NULL,
       kind      TEXT NOT NULL DEFAULT 'test',
       severity  TEXT NOT NULL DEFAULT 'info',
       task_id   TEXT,
@@ -59,7 +59,7 @@ async function setupTables(client: LibsqlClient): Promise<void> {
 async function seedTraceEvent(
   client: LibsqlClient,
   id: string,
-  timestamp: string,
+  timestamp: number,
   kind = 'test',
 ): Promise<void> {
   await client.execute({
@@ -168,7 +168,7 @@ describe('pruneRetention', () => {
     // deterministic (newest last).
     const base = Date.now()
     for (let i = 0; i < 8; i++) {
-      const ts = new Date(base - (8 - i) * 1000).toISOString()
+      const ts = base - (8 - i) * 1000
       await seedTraceEvent(client, `row-${i}`, ts)
     }
     client.close()
@@ -285,7 +285,7 @@ describe('pruneRetention', () => {
     const client = openLibsql({ url: `file:${dbPath}` })
     const base = Date.now()
     for (let i = 0; i < 5000; i++) {
-      const ts = new Date(base - (5000 - i) * 1000).toISOString()
+      const ts = base - (5000 - i) * 1000
       await client.execute({
         sql: `INSERT INTO trace_events (id, timestamp, kind, severity, payload)
               VALUES (?, ?, 'log_line', 'info', '{}')`,

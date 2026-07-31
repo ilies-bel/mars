@@ -26,9 +26,7 @@ export const pruneObservability = async (
     if (maxAgeDays === 0) {
       result = await client.execute('DELETE FROM trace_events')
     } else {
-      const cutoff = new Date(
-        Date.now() - maxAgeDays * 24 * 60 * 60 * 1000,
-      ).toISOString()
+      const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000
       result = await client.execute({
         sql: 'DELETE FROM trace_events WHERE timestamp < ?',
         args: [cutoff],

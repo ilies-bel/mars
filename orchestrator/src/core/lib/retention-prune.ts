@@ -154,9 +154,7 @@ export async function pruneRetention(
     // ── Pass 1: trace_events by age ────────────────────────────────────────
     let traceEventsByAge = 0
     if (maxAgeDays > 0) {
-      const cutoff = new Date(
-        Date.now() - maxAgeDays * 24 * 60 * 60 * 1000,
-      ).toISOString()
+      const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000
       const r = await client.execute({
         // PK-based IN subquery: LIMIT on the inner SELECT bounds each batch
         // (DELETE has no LIMIT of its own).
@@ -176,9 +174,7 @@ export async function pruneRetention(
     // events. Info-level log_lines are never written (filtered in record()).
     let traceEventsByLogLineAge = 0
     if (maxLogLineAgeDays > 0) {
-      const logLineCutoff = new Date(
-        Date.now() - maxLogLineAgeDays * 24 * 60 * 60 * 1000,
-      ).toISOString()
+      const logLineCutoff = Date.now() - maxLogLineAgeDays * 24 * 60 * 60 * 1000
       const r = await client.execute({
         sql: `DELETE FROM trace_events
               WHERE id IN (

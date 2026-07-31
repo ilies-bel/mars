@@ -261,7 +261,7 @@ describe('loadDeepReflectArc — foreground session slice', () => {
             VALUES (?, ?, 'cli-invocation', 'info', ?)`,
       args: [
         'cli-inv-foreground-abc123',
-        anchorIso,
+        anchorMs,
         JSON.stringify({
           originSessionId: sessionId,
           command: 'task add',

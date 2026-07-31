@@ -295,8 +295,8 @@ describe('runWorkerWithSpan — failed worker run', () => {
     // severity is warn, not error — watchdog kill is a problem but not a hard task failure
     expect(ended.severity).toBe('warn')
     // end time is always set (non-null) — the timestamp on the step_ended event
-    expect(typeof ended.timestamp).toBe('string')
-    expect(ended.timestamp.length).toBeGreaterThan(0)
+    expect(typeof ended.timestamp).toBe('number')
+    expect(ended.timestamp).toBeGreaterThan(0)
     // no failureReason on killed sessions
     expect(ended.payload.failureReason).toBeUndefined()
     // session id is preserved even on killed sessions

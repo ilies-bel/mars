@@ -72,7 +72,7 @@ const insertStarted = async (
   await client.execute({
     sql: `INSERT INTO trace_events (id, timestamp, kind, severity, task_id, origin_id, phase, payload)
           VALUES (?, ?, 'step_started', 'info', ?, NULL, ?, ?)`,
-    args: [randomUUID(), opts.timestamp, opts.taskId, opts.phase, JSON.stringify(payload)],
+    args: [randomUUID(), Date.parse(opts.timestamp), opts.taskId, opts.phase, JSON.stringify(payload)],
   })
 }
 
@@ -102,7 +102,7 @@ const insertEnded = async (
           VALUES (?, ?, 'step_ended', ?, ?, NULL, ?, ?)`,
     args: [
       randomUUID(),
-      opts.timestamp,
+      Date.parse(opts.timestamp),
       severity,
       opts.taskId,
       opts.phase,
@@ -124,7 +124,7 @@ const insertToolInvoked = async (
   await client.execute({
     sql: `INSERT INTO trace_events (id, timestamp, kind, severity, task_id, origin_id, phase, payload)
           VALUES (?, ?, 'tool_invoked', 'info', NULL, NULL, ?, ?)`,
-    args: [randomUUID(), opts.timestamp, opts.phase, JSON.stringify(payload)],
+    args: [randomUUID(), Date.parse(opts.timestamp), opts.phase, JSON.stringify(payload)],
   })
 }
 

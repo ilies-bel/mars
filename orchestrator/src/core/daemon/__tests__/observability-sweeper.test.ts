@@ -8,7 +8,7 @@ import { OBSERVABILITY_RETENTION_DAYS, sweepObservability } from '../observabili
 const seedEvent = async (
   client: ReturnType<typeof openLibsql>,
   id: string,
-  timestamp: string,
+  timestamp: number,
 ): Promise<void> => {
   await client.execute({
     sql: 'INSERT INTO trace_events (id, timestamp, kind, severity, payload) VALUES (?, ?, ?, ?, ?)',
@@ -28,7 +28,7 @@ describe('sweepObservability', () => {
     await client.execute(`
       CREATE TABLE IF NOT EXISTS trace_events (
         id        TEXT PRIMARY KEY,
-        timestamp TEXT NOT NULL,
+        timestamp BIGINT NOT NULL,
         kind      TEXT NOT NULL,
         severity  TEXT NOT NULL DEFAULT 'info',
         task_id   TEXT,
@@ -48,8 +48,8 @@ describe('sweepObservability', () => {
     // Seed two old rows (4 days ago) and one recent row (1 day ago)
     const oldTs = new Date(
       Date.now() - (OBSERVABILITY_RETENTION_DAYS + 1) * 24 * 60 * 60 * 1000,
-    ).toISOString()
-    const recentTs = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
+    ).getTime()
+    const recentTs = Date.now() - 1 * 24 * 60 * 60 * 1000
 
     const client = openLibsql({ url: `file:${dbPath}` })
     await seedEvent(client, 'old-1', oldTs)
@@ -73,7 +73,7 @@ describe('sweepObservability', () => {
   })
 
   it('returns zero when there are no rows older than three days', async () => {
-    const recentTs = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
+    const recentTs = Date.now() - 1 * 24 * 60 * 60 * 1000
 
     const client = openLibsql({ url: `file:${dbPath}` })
     await seedEvent(client, 'recent-1', recentTs)

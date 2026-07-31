@@ -670,7 +670,7 @@ export const upsertTranscript = async (
       sql: `INSERT INTO trace_events
               (id, timestamp, kind, severity, task_id, phase, payload)
             VALUES (?, ?, 'step_ended', 'info', ?, 'code', ?)`,
-      args: [id, now, input.taskId, JSON.stringify(payloadObj)],
+      args: [id, Date.now(), input.taskId, JSON.stringify(payloadObj)],
     })
   }
 }
@@ -699,7 +699,7 @@ export const getTranscript = async (
     args: [taskId],
   })
   if (r.rows.length === 0) return null
-  const row = r.rows[0] as unknown as { timestamp: string; payload: string }
+  const row = r.rows[0] as unknown as { timestamp: number; payload: string }
   let payload: Record<string, unknown> = {}
   try {
     payload = JSON.parse(row.payload) as Record<string, unknown>
@@ -712,7 +712,7 @@ export const getTranscript = async (
     conversationJson,
     verifyOutput: (payload.verifyOutput as string | null | undefined) ?? null,
     bytes: conversationJson.length,
-    recordedAt: row.timestamp,
+    recordedAt: new Date(row.timestamp).toISOString(),
   }
 }
 

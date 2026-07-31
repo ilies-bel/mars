@@ -46,7 +46,7 @@ export const listTaskSignals = async (taskId: string): Promise<TaskSignalRow[]> 
     args: [taskId],
   })
   return r.rows.flatMap((row) => {
-    const r0 = row as unknown as { task_id: string; timestamp: string; payload: string }
+    const r0 = row as unknown as { task_id: string; timestamp: number; payload: string }
     let payload: Record<string, unknown> = {}
     try {
       payload = JSON.parse(r0.payload) as Record<string, unknown>
@@ -64,7 +64,7 @@ export const listTaskSignals = async (taskId: string): Promise<TaskSignalRow[]> 
         cacheCreateTokens: Number(usageSignals.cacheCreateTokens ?? 0),
         cacheReadTokens: Number(usageSignals.cacheReadTokens ?? 0),
         messageCount: Number(usageSignals.messageCount ?? 0),
-        recordedAt: r0.timestamp,
+        recordedAt: new Date(r0.timestamp).toISOString(),
       },
     ]
   })

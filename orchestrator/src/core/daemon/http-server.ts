@@ -606,9 +606,9 @@ const parseEventsFilter = (params: URLSearchParams): TraceEventFilter => {
   const phases = filterPhases(params.getAll('phase'))
   if (phases.length > 0) filter.phase = phases
   const since = params.get('since')
-  if (since) filter.sinceIso = since
+  if (since) filter.sinceMs = Date.parse(since)
   const until = params.get('until')
-  if (until) filter.untilIso = until
+  if (until) filter.untilMs = Date.parse(until)
   const q = params.get('q')
   if (q) filter.q = q
   const cursor = params.get('cursor')
@@ -1467,7 +1467,7 @@ export const startHttpServer = async (
         deps.appServices.viewReleaseNotes(),
         deps.traceStore.query({
           kind: ['recovery_spawned'],
-          ...(since !== null ? { sinceIso: since } : {}),
+          ...(since !== null ? { sinceMs: Date.parse(since) } : {}),
           limit: 200,
         }),
         import('../lib/learned-recipes.js').then((m) =>

@@ -387,8 +387,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
               ? endEvent.payload.outcome
               : 'completed'
             : 'running',
-          startedAt: s.timestamp,
-          endedAt: endEvent ? endEvent.timestamp : null,
+          startedAt: new Date(s.timestamp).toISOString(),
+          endedAt: endEvent ? new Date(endEvent.timestamp).toISOString() : null,
           durationMs:
             endEvent && typeof endEvent.payload.durationMs === 'number'
               ? endEvent.payload.durationMs
@@ -470,8 +470,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         workerName:
           typeof s.payload.workerName === 'string' ? s.payload.workerName : null,
         status,
-        startedAt: s.timestamp,
-        endedAt: endEvent ? endEvent.timestamp : null,
+        startedAt: new Date(s.timestamp).toISOString(),
+        endedAt: endEvent ? new Date(endEvent.timestamp).toISOString() : null,
         durationMs:
           endEvent && typeof endEvent.payload.durationMs === 'number'
             ? endEvent.payload.durationMs
@@ -751,7 +751,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         if (tool === null) continue
         const current = byTool.get(tool)
         if (current) current.count += 1
-        else byTool.set(tool, { count: 1, lastInvokedAt: e.timestamp })
+        else byTool.set(tool, { count: 1, lastInvokedAt: new Date(e.timestamp).toISOString() })
       }
       observedTools = [...byTool.entries()]
         .map(([tool, v]) => ({ tool, count: v.count, lastInvokedAt: v.lastInvokedAt }))
@@ -802,8 +802,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
                 ? endEvent.payload.outcome
                 : 'completed'
               : 'running',
-            startedAt: s.timestamp,
-            endedAt: endEvent ? endEvent.timestamp : null,
+            startedAt: new Date(s.timestamp).toISOString(),
+            endedAt: endEvent ? new Date(endEvent.timestamp).toISOString() : null,
             durationMs:
               endEvent && typeof endEvent.payload.durationMs === 'number'
                 ? endEvent.payload.durationMs

@@ -65,7 +65,7 @@ const insertStarted = async (
           VALUES (?, ?, 'step_started', 'info', ?, NULL, ?, ?)`,
     args: [
       randomUUID(),
-      opts.timestamp,
+      Date.parse(opts.timestamp),
       opts.taskId,
       opts.phase ?? null,
       JSON.stringify(payload),
@@ -122,7 +122,7 @@ const insertEnded = async (
           VALUES (?, ?, 'step_ended', ?, ?, NULL, ?, ?)`,
     args: [
       randomUUID(),
-      opts.timestamp,
+      Date.parse(opts.timestamp),
       severity,
       opts.taskId,
       opts.phase ?? null,

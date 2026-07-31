@@ -171,7 +171,7 @@ const insertStepEndedEvent = async (
   await store.execute({
     sql: `INSERT INTO trace_events (id, kind, task_id, timestamp, payload)
           VALUES (?, 'step_ended', ?, ?, ?)`,
-    args: [randomUUID(), taskId, timestamp, payload],
+    args: [randomUUID(), taskId, Date.parse(timestamp), payload],
   })
 }
 

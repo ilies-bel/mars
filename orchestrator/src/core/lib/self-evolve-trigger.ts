@@ -234,7 +234,7 @@ export interface ReflectRecommendedResult {
  */
 const computeTaskTokenSpend = async (
   store: TaskStore,
-  windowStart: string,
+  windowStart: number,
 ): Promise<Array<{ taskId: string; weightedTokens: number }>> => {
   // HAVING may not reference a SELECT alias on PostgreSQL — the aggregate
   // expression is repeated verbatim.
@@ -301,9 +301,8 @@ const evaluateWorthiness = async (
   store: TaskStore,
   cfg: ReturnType<typeof loadDaemonConfig>,
 ): Promise<ReflectWorthinessEvidence> => {
-  const windowStart = new Date(
-    Date.now() - DETECTOR_WINDOW_DAYS * 24 * 60 * 60 * 1000,
-  ).toISOString()
+  const windowStartMs = Date.now() - DETECTOR_WINDOW_DAYS * 24 * 60 * 60 * 1000
+  const windowStartIso = new Date(windowStartMs).toISOString()
 
   // Detector 1: KPI drift (same logic as runSelfEvolveTrigger, but always runs)
   let kpiDrift: Array<{ kpi: string; deltaPct: number }> = []
@@ -318,11 +317,11 @@ const evaluateWorthiness = async (
   }
 
   // Detector 2: failure signature clusters
-  const failureClusters = await detectFailureClusters(store, windowStart)
+  const failureClusters = await detectFailureClusters(store, windowStartIso)
 
   // Detector 3: token spend spike (any task ≥ 2× window median)
   let tokenSpike: ReflectWorthinessEvidence['tokenSpike'] = null
-  const taskSpend = await computeTaskTokenSpend(store, windowStart)
+  const taskSpend = await computeTaskTokenSpend(store, windowStartMs)
   if (taskSpend.length >= 2) {
     const sorted = [...taskSpend].sort((a, b) => a.weightedTokens - b.weightedTokens)
     const mid = Math.floor(sorted.length / 2)

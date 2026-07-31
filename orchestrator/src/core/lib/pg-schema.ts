@@ -326,7 +326,7 @@ const DDL: readonly string[] = [
   // ── observability (no FK to tasks on purpose: events outlive tasks) ───────
   `CREATE TABLE IF NOT EXISTS trace_events (
     id        text PRIMARY KEY,
-    timestamp text NOT NULL,
+    timestamp bigint NOT NULL,
     kind      text NOT NULL,
     severity  text NOT NULL DEFAULT 'info',
     task_id   text,
@@ -334,6 +334,25 @@ const DDL: readonly string[] = [
     phase     text,
     payload   text NOT NULL DEFAULT '{}'
   )`,
+  // Older installations stored ISO-8601 text. Guard the conversion so fresh
+  // bigint tables remain a no-op while existing indexes are rebuilt against
+  // the numeric column type by PostgreSQL.
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1
+         FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'trace_events'
+          AND column_name = 'timestamp'
+          AND data_type = 'text'
+     ) THEN
+       ALTER TABLE trace_events
+         ALTER COLUMN timestamp TYPE bigint
+         USING (EXTRACT(EPOCH FROM timestamp::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_trace_events_task_time
      ON trace_events (task_id, timestamp)`,
   `CREATE INDEX IF NOT EXISTS idx_trace_events_time_desc

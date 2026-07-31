@@ -87,7 +87,7 @@ describe('assembleDelta — failure-recovered events', () => {
     const result = assembleDelta({
       ...baseInput,
       recoveryEvents: [
-        { timestamp: '2026-07-20T11:00:00.000Z', taskId: 'fix-1', originId: 'arc-abc' },
+        { timestamp: Date.parse('2026-07-20T11:00:00.000Z'), taskId: 'fix-1', originId: 'arc-abc' },
       ],
     })
     expect(result.events[0]).toMatchObject({
@@ -100,7 +100,7 @@ describe('assembleDelta — failure-recovered events', () => {
     const result = assembleDelta({
       ...baseInput,
       recoveryEvents: [
-        { timestamp: '2026-07-20T11:00:00.000Z', taskId: 'fix-1', originId: null },
+        { timestamp: Date.parse('2026-07-20T11:00:00.000Z'), taskId: 'fix-1', originId: null },
       ],
     })
     expect(result.events[0]?.summary).toContain('fix-1')
@@ -110,7 +110,7 @@ describe('assembleDelta — failure-recovered events', () => {
     const result = assembleDelta({
       ...baseInput,
       recoveryEvents: [
-        { timestamp: '2026-07-20T11:00:00.000Z', taskId: null, originId: null },
+        { timestamp: Date.parse('2026-07-20T11:00:00.000Z'), taskId: null, originId: null },
       ],
     })
     expect(result.events[0]?.summary).toContain('A task failed')

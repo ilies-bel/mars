@@ -85,7 +85,7 @@ const insertSpanEnded = async (
           VALUES (?, ?, 'step_ended', ?, ?, ?, ?, ?)`,
     args: [
       randomUUID(),
-      opts.timestamp,
+      Date.parse(opts.timestamp),
       severity,
       opts.originId,
       opts.originId,

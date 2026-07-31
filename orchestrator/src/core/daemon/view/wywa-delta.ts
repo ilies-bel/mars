@@ -42,7 +42,7 @@ export interface WywaEvent {
 export interface WywaDeltaInput {
   releaseNotes: ReadonlyArray<{ title: string; landedAt: string }>
   recoveryEvents: ReadonlyArray<{
-    timestamp: string
+    timestamp: number
     taskId: string | null
     originId: string | null
   }>
@@ -96,12 +96,13 @@ export const assembleDelta = (
 
   // 2. Failed and recovered (recovery_spawned trace events)
   for (const ev of input.recoveryEvents) {
-    if (!after(ev.timestamp, since)) continue
+    const timestamp = new Date(ev.timestamp).toISOString()
+    if (!after(timestamp, since)) continue
     const ref = ev.originId ?? ev.taskId
     const summary = ref
       ? `Task ${ref} failed and recovered`
       : 'A task failed and recovered'
-    events.push({ kind: 'failure-recovered', summary, at: ev.timestamp })
+    events.push({ kind: 'failure-recovered', summary, at: timestamp })
   }
 
   // 3. Auto-recipe runs

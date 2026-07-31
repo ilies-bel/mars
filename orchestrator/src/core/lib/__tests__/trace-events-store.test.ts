@@ -173,7 +173,7 @@ describe('openTraceEventStore — record + query roundtrip', () => {
       })
       expect(typeof e.id).toBe('string')
       expect(e.id.length).toBeGreaterThan(0)
-      expect(typeof e.timestamp).toBe('string')
+      expect(typeof e.timestamp).toBe('number')
     } finally {
       await store.close()
     }
@@ -339,11 +339,12 @@ describe('openTraceEventStore — filters', () => {
         'task_failed',
       ])
 
-      const future = new Date(Date.now() + 60_000).toISOString()
-      const past = new Date(Date.now() - 60_000).toISOString()
-      const inWindow = await store.query({ sinceIso: past, untilIso: future })
+      const future = Date.now() + 60_000
+      const past = Date.now() - 60_000
+      const inWindow = await store.query({ sinceMs: past, untilMs: future })
       expect(inWindow).toHaveLength(4)
-      const outOfWindow = await store.query({ sinceIso: future })
+      expect(typeof inWindow[0]?.timestamp).toBe('number')
+      const outOfWindow = await store.query({ sinceMs: future })
       expect(outOfWindow).toHaveLength(0)
     } finally {
       await store.close()

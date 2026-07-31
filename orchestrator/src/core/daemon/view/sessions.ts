@@ -67,7 +67,7 @@ export async function buildSessionsView(
       workflowInstanceId:
         typeof e.payload.workflowInstanceId === 'string' ? e.payload.workflowInstanceId : '',
       outcome: 'running',
-      endedAt: e.timestamp,
+      endedAt: new Date(e.timestamp).toISOString(),
       durationMs: null,
       arcId: e.originId ?? e.taskId,
     }))
@@ -80,7 +80,7 @@ export async function buildSessionsView(
     workflowInstanceId:
       typeof e.payload.workflowInstanceId === 'string' ? e.payload.workflowInstanceId : '',
     outcome: typeof e.payload.outcome === 'string' ? e.payload.outcome : 'failed',
-    endedAt: e.timestamp,
+    endedAt: new Date(e.timestamp).toISOString(),
     durationMs: typeof e.payload.durationMs === 'number' ? e.payload.durationMs : null,
     arcId: e.originId ?? e.taskId,
   }))

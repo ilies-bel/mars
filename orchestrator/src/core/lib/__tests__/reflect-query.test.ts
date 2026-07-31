@@ -33,7 +33,7 @@ const TASKS_DDL = `
 const TRACE_EVENTS_DDL = `
   CREATE TABLE IF NOT EXISTS trace_events (
     id        TEXT PRIMARY KEY,
-    timestamp TEXT NOT NULL,
+    timestamp BIGINT NOT NULL,
     kind      TEXT NOT NULL,
     severity  TEXT NOT NULL DEFAULT 'info',
     task_id   TEXT,
@@ -119,7 +119,7 @@ const insertSignal = async (
     sql: `INSERT OR REPLACE INTO trace_events
             (id, timestamp, kind, severity, task_id, payload)
           VALUES (?, ?, 'step_ended', 'info', ?, ?)`,
-    args: [`test-${opts.taskId}-${opts.stepId}`, '2026-01-01T00:00:01Z', opts.taskId, payload],
+    args: [`test-${opts.taskId}-${opts.stepId}`, Date.parse('2026-01-01T00:00:01Z'), opts.taskId, payload],
   })
 }
 
@@ -149,7 +149,7 @@ const insertToolInvokedError = async (
           VALUES (?, ?, 'tool_invoked', 'error', ?, ?)`,
     args: [
       opts.id,
-      opts.timestamp ?? '2026-01-01T00:00:02Z',
+      Date.parse(opts.timestamp ?? '2026-01-01T00:00:02Z'),
       opts.taskId,
       payload,
     ],

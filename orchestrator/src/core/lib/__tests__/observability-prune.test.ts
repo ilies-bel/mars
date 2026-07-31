@@ -18,7 +18,7 @@ const tmpDbPath = (): string => {
 const TRACE_DDL = `
   CREATE TABLE IF NOT EXISTS trace_events (
     id        TEXT PRIMARY KEY,
-    timestamp TEXT NOT NULL,
+    timestamp BIGINT NOT NULL,
     kind      TEXT NOT NULL,
     severity  TEXT NOT NULL DEFAULT 'info',
     task_id   TEXT,
@@ -33,9 +33,8 @@ const INSERT_ROW = `
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
-/** ISO timestamp offset from now by `offsetMs` milliseconds (negative = past). */
-const isoOffset = (offsetMs: number): string =>
-  new Date(Date.now() + offsetMs).toISOString()
+/** Epoch-millisecond timestamp offset from now (negative = past). */
+const timestampOffset = (offsetMs: number): number => Date.now() + offsetMs
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -49,9 +48,9 @@ describe('pruneObservability — age-based deletion', () => {
       await client.execute(TRACE_DDL)
 
       // 4 days old — should be pruned at default 3-day threshold
-      const oldTs = isoOffset(-4 * 24 * 60 * 60 * 1000)
+      const oldTs = timestampOffset(-4 * 24 * 60 * 60 * 1000)
       // 1 hour old — should survive
-      const recentTs = isoOffset(-60 * 60 * 1000)
+      const recentTs = timestampOffset(-60 * 60 * 1000)
 
       await client.execute({
         sql: INSERT_ROW,
@@ -90,7 +89,7 @@ describe('pruneObservability — age-based deletion', () => {
     const client = openLibsql({ url: `file:${dbPath}` })
     try {
       await client.execute(TRACE_DDL)
-      const ts = isoOffset(-60 * 60 * 1000) // 1 hour ago
+      const ts = timestampOffset(-60 * 60 * 1000) // 1 hour ago
       await client.execute({
         sql: INSERT_ROW,
         args: ['r1', ts, 'step_started', 'info', null, null, null, '{}'],
@@ -114,8 +113,8 @@ describe('pruneObservability — wipe all (maxAgeDays = 0)', () => {
     try {
       await client.execute(TRACE_DDL)
 
-      const oldTs = isoOffset(-10 * 24 * 60 * 60 * 1000)
-      const recentTs = isoOffset(-60 * 60 * 1000)
+      const oldTs = timestampOffset(-10 * 24 * 60 * 60 * 1000)
+      const recentTs = timestampOffset(-60 * 60 * 1000)
 
       await client.execute({
         sql: INSERT_ROW,
@@ -149,7 +148,7 @@ describe('pruneObservability — wipe all (maxAgeDays = 0)', () => {
 describe('pruneObservability — PostgreSQL retention', () => {
   it('removes bulky expired rows without relying on SQLite page accounting', async () => {
     const dbPath = tmpDbPath()
-    const oldTs = isoOffset(-4 * 24 * 60 * 60 * 1000)
+    const oldTs = timestampOffset(-4 * 24 * 60 * 60 * 1000)
 
     // Seed enough rows with bulk payloads to grow the file across many pages.
     // 500 rows × ~500 bytes each ≈ 250 KB; at SQLite's default 4 096 B/page
@@ -218,7 +217,7 @@ describe('pruneObservability — edge cases', () => {
     const daemonConn = openLibsql({ url: `file:${dbPath}` })
     try {
       await daemonConn.execute(TRACE_DDL)
-      const ts = isoOffset(-5 * 24 * 60 * 60 * 1000)
+      const ts = timestampOffset(-5 * 24 * 60 * 60 * 1000)
       await daemonConn.execute({
         sql: INSERT_ROW,
         args: ['d1', ts, 'task_failed', 'error', null, null, null, '{}'],

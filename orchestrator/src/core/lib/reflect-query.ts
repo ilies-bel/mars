@@ -373,10 +373,10 @@ export const loadRecentTaskCorpus = async (
   // Window-level rate-limit rejection count. These log_line events carry the
   // structured payload as fields.payload; they have no task_id so we query
   // by time window instead.
-  const windowStart = sinceIso
-    ? sinceIso
-    : (taskRows.rows[taskRows.rows.length - 1] as unknown as Record<string, unknown>)
-        .created_at as string
+  const windowStart = Date.parse(
+    sinceIso ?? (taskRows.rows[taskRows.rows.length - 1] as unknown as Record<string, unknown>)
+      .created_at as string,
+  )
   const rateLimitRow = await queue.query({
     sql: `SELECT COUNT(*) AS count
             FROM trace_events
