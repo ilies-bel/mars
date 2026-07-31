@@ -50,15 +50,15 @@ const seedActionQueueItems = async (stateDbPath: string): Promise<void> => {
       payload TEXT NOT NULL DEFAULT '{}',
       context TEXT NOT NULL DEFAULT '{}',
       raised_by TEXT NOT NULL,
-      raised_at TEXT NOT NULL,
-      resolved_at TEXT,
+      raised_at INTEGER NOT NULL,
+      resolved_at INTEGER,
       resolution TEXT,
       resolution_note TEXT,
       root_cause TEXT,
       fingerprint TEXT,
       signature TEXT,
       seen_count INTEGER NOT NULL DEFAULT 1,
-      last_seen_at TEXT,
+      last_seen_at INTEGER,
       resolved_by TEXT
     )
   `)
@@ -88,7 +88,7 @@ const insertStaleWorktreeItem = async (
     error = null,
     state = 'open',
   } = opts
-  const now = new Date().toISOString()
+  const now = Date.now()
   const fp = `origin-${taskId}`
   const payload = JSON.stringify({ ageHours, status, branch, prompt, error })
   const context = JSON.stringify({ taskId })

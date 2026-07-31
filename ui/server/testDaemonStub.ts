@@ -640,12 +640,14 @@ const viewProposals = async (
         taskId,
         status: typeof pld.status === 'string' ? pld.status : 'unknown',
         ageHours: typeof pld.ageHours === 'number' ? pld.ageHours : 0,
-        updatedAt:
-          typeof r0.last_seen_at === 'string'
-            ? r0.last_seen_at
-            : typeof r0.raised_at === 'string'
-              ? r0.raised_at
-              : new Date().toISOString(),
+        // `last_seen_at` / `raised_at` are epoch milliseconds; the alert
+        // carries an ISO-8601 string. Mirrors `viewTodo` in app-services.
+        // The old `typeof === 'string'` guards silently fell through to
+        // "now" for every alert once the columns became epoch integers —
+        // both arms were `string`, so no type error surfaced it.
+        updatedAt: new Date(
+          toEpochMillis(r0.last_seen_at, toEpochMillis(r0.raised_at, Date.now())),
+        ).toISOString(),
         prompt: typeof pld.prompt === 'string' ? pld.prompt : '',
         error: typeof pld.error === 'string' ? pld.error : null,
         branch: typeof pld.branch === 'string' ? pld.branch : null,
