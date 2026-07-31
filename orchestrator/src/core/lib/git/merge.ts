@@ -1045,8 +1045,10 @@ export const mergeBranch = async ({
                 await discardWorkingTreeChanges({ cwd: repoRoot(), traceCtx: mergeCtx })
                 preservedByCheckpoint = true
                 output +=
-                  `\n[mergeBranch] PRESERVED operator edits on ${integrationBranch} as checkpoint ${checkpoint.ref} ` +
-                  `(${checkpoint.sha.slice(0, 9)}; recover with 'git cherry-pick -n ${checkpoint.sha}'): ` +
+                  `\n[mergeBranch] PRESERVED operator edits on ${integrationBranch} as checkpoint ref ${checkpoint.ref} ` +
+                  `(${checkpoint.sha.slice(0, 9)}). Recover them with: ` +
+                  `git -C ${repoRoot()} cherry-pick -n ${checkpoint.ref}; git -C ${repoRoot()} cherry-pick --quit ` +
+                  `(the --quit clears the sequencer state left by -n; index and worktree are kept). Files: ` +
                   `${checkpoint.files.join(', ').slice(0, 200)}`
               }
             } catch (checkpointErr: unknown) {

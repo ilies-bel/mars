@@ -108,7 +108,8 @@ export class CheckpointRestoreError extends Error {
   constructor(checkpoint: Checkpoint, targetPath: string, detail: string) {
     super(
       `failed to restore checkpoint ${checkpoint.ref} (${checkpoint.sha.slice(0, 9)}) into ${targetPath}: ${detail}. ` +
-        `The work is NOT lost — recover it with: git -C ${targetPath} cherry-pick -n ${checkpoint.sha}`,
+        `The work is NOT lost — it is anchored on ${checkpoint.ref}. Recover it with: ` +
+        `git -C ${targetPath} cherry-pick -n ${checkpoint.ref}; git -C ${targetPath} cherry-pick --quit`,
     )
     this.name = 'CheckpointRestoreError'
     this.checkpoint = checkpoint
