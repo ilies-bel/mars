@@ -75,6 +75,7 @@ describe('SidebarFilters', () => {
         <SidebarFilters
           value={{
             ...filters,
+            query: 'unrelated search',
             selectedItem: {
               id: 'failed-task:mars-123',
               kind: 'failed-task',

@@ -21,12 +21,15 @@ interface SidebarFiltersProps {
  * queue's search and scope vocabulary without bringing back a second page.
  */
 export const SidebarFilters = ({ value, onChange, onFastAction }: SidebarFiltersProps) => {
-  const selectedMatchesQuery = value.selectedItem !== null && filterByQuery(
-    [value.selectedItem],
-    value.query,
-    (item) => `${item.title}\n${subtitleFor(item)}\n${whyNowText(item) ?? ''}`,
-  ).length > 0
-  const canRestart = selectedMatchesQuery && value.selectedItem?.actions.some((action) => action.op === 'restart')
+  const selected = value.selectedItem
+  const restartContext = selected === null
+    ? null
+    : filterByQuery(
+      [selected],
+      value.query,
+      (item) => `${item.title}\n${subtitleFor(item)}\n${whyNowText(item) ?? ''}`,
+    ).map((item) => whyNowText(item) ?? subtitleFor(item))[0] ?? subtitleFor(selected)
+  const canRestart = selected?.actions.some((action) => action.op === 'restart')
 
   return (
     <div className="space-y-2 border-b border-primary/30 px-2 py-2">
@@ -78,6 +81,7 @@ export const SidebarFilters = ({ value, onChange, onFastAction }: SidebarFilters
           <button
             type="button"
             data-testid="restart-selected"
+            title={restartContext ? `Restart: ${restartContext}` : 'Restart selected thread'}
             className="ml-auto border border-highlight/50 px-1.5 py-0.5 font-mono text-[10px] uppercase text-highlight hover:bg-highlight/10"
             onClick={() => onFastAction('restart')}
           >
