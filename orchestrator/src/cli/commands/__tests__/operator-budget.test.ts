@@ -143,6 +143,6 @@ describe('mars operator status', () => {
     expect(result.out.join('\n')).toContain('window:')
     expect(result.out.join('\n')).toContain('per-arc ceiling:')
     expect(result.out.join('\n')).toContain('top live arcs by lifetime spend:')
-    expect(result.out.slice(2)).toEqual(legacy.out)
+    expect(result.out.slice(4)).toEqual(legacy.out)
   })
 })

@@ -52,6 +52,8 @@ describe('mars operator status when the daemon is down', () => {
     ]) {
       await runCommandInProcess(['operator', 'set', lever, value], { ...deps, daemon })
     }
+    const { persistPaused } = await import('../../../core/daemon/config')
+    persistPaused(true)
     const task = await deps.store.enqueueTask('record budget spend while daemon is down')
     await deps.store.execute({
       sql: `INSERT INTO trace_events (id, timestamp, kind, task_id, payload)
@@ -83,7 +85,7 @@ describe('mars operator status when the daemon is down', () => {
       'recovery: off',
       'scoring: off',
       'auto-reflect: off',
-      'dispatch: on  in-flight: unavailable (daemon down)',
+      'dispatch: paused  in-flight: unavailable (daemon down)',
       'window:  900.0k / 5.0M weighted tokens over 4h (18.0% — good)',
       '  top contributing arcs:',
       `    ${task.id}  900.0k`,

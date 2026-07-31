@@ -18,7 +18,7 @@
  */
 
 import type { Command } from '../command'
-import { loadDaemonConfig, writeControlLever } from '../../core/daemon/config'
+import { loadDaemonConfig, readPersistedPaused, writeControlLever } from '../../core/daemon/config'
 import { isDaemonAlive } from '../../core/daemon/paths'
 import {
   computeBudgetStatus,
@@ -40,7 +40,9 @@ const operatorStatus: Command = {
     deps.out(`scoring: ${levers.scoring}`)
     deps.out(`auto-reflect: ${levers.autoReflect}`)
     if (!liveness.alive) {
-      deps.out('dispatch: on  in-flight: unavailable (daemon down)')
+      deps.out(
+        `dispatch: ${readPersistedPaused() ? 'paused' : 'on'}  in-flight: unavailable (daemon down)`,
+      )
     } else {
       const status = (await deps.daemon.sendRequest({ op: 'status' })) as {
         inFlight: ReadonlyArray<unknown>
