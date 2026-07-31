@@ -1,3 +1,4 @@
+import { checkSecretPath } from '../dirty-main-salvage'
 import { exec, execProbe, resolveGitBin, type TraceCtx } from './internal'
 
 export interface CommitMainArgs {
@@ -44,6 +45,8 @@ export const commitMain = async (args: CommitMainArgs): Promise<CommitMainResult
 // ---------------------------------------------------------------------------
 
 export interface AutoCommitArgs {
+  /** Task whose code step left the worktree dirty — named in the commit. */
+  taskId: string
   worktreePath: string
   dirtyFiles: string[]
   traceCtx?: TraceCtx
@@ -51,23 +54,57 @@ export interface AutoCommitArgs {
 
 export type AutoCommitResult =
   | { committed: true; sha: string }
-  | { committed: false; reason: string }
+  /**
+   * `unsafe-path` — the guard refused before touching the index (nothing was
+   * staged, nothing committed). `git` — `git add`/`git commit` itself failed.
+   * The caller stamps the same failure signature either way but reports the
+   * distinction, because an operator resolves them differently.
+   */
+  | { committed: false; refusal: 'unsafe-path' | 'git'; reason: string }
 
 /**
- * Attempt a deterministic `git add -A && git commit` inside the worktree.
+ * Attempt a deterministic `git add -A && git commit` inside the worktree, on
+ * behalf of a coder that ended its run with work still uncommitted.
+ *
+ * Guarded: every dirty path is checked against {@link checkSecretPath} FIRST,
+ * and a single match aborts the whole commit (all-or-nothing) before anything
+ * is staged. `git add -A` honours `.gitignore`, so build output and
+ * dependencies listed there are already excluded; the guard covers the shapes
+ * that must never land even if a repo forgot to ignore them.
  *
  * Returns `{committed: true, sha}` on success so the pipeline can continue
- * to verify as if the coder had committed. Returns `{committed: false, reason}`
- * when the commit itself fails (pre-commit hook rejection, empty staged set,
- * etc.) — the caller decides what to do next.
+ * to verify as if the coder had committed. Returns
+ * `{committed: false, refusal, reason}` when the guard trips or the commit
+ * fails (pre-commit hook rejection, empty staged set, etc.) — the caller
+ * decides what to do next.
  */
 export const autoCommitWorktreeIfDeterministic = async (
   args: AutoCommitArgs,
 ): Promise<AutoCommitResult> => {
   const git = resolveGitBin()
-  const { worktreePath, dirtyFiles, traceCtx } = args
+  const { taskId, worktreePath, dirtyFiles, traceCtx } = args
   const count = dirtyFiles.length
-  const message = `chore(auto-commit): coder finished but did not commit — ${count} path(s)`
+
+  for (const filePath of dirtyFiles) {
+    const hit = checkSecretPath(filePath)
+    if (hit) {
+      return {
+        committed: false,
+        refusal: 'unsafe-path',
+        reason: `refusing to auto-commit: ${hit.filePath} is a ${hit.reason} and must never be committed`,
+      }
+    }
+  }
+
+  const subject = `chore(auto-commit): task ${taskId} — coder finished but did not commit — ${count} path(s)`
+  const body = [
+    `The coder for task ${taskId} ended the code step with ${count} path(s) still`,
+    'uncommitted. The orchestrator committed them on the agent\'s behalf so the',
+    'work reaches verify and the merge rebase. The agent did NOT author this',
+    'commit and did not choose its contents.',
+    '',
+    ...dirtyFiles.map((f) => `  ${f}`),
+  ].join('\n')
 
   const addResult = await execProbe(
     git,
@@ -76,17 +113,25 @@ export const autoCommitWorktreeIfDeterministic = async (
     traceCtx,
   )
   if (addResult.exitCode !== 0) {
-    return { committed: false, reason: `git add -A failed: ${addResult.stderr.trim()}` }
+    return {
+      committed: false,
+      refusal: 'git',
+      reason: `git add -A failed: ${addResult.stderr.trim()}`,
+    }
   }
 
   const commitResult = await execProbe(
     git,
-    ['commit', '-m', message],
+    ['commit', '-m', subject, '-m', body],
     { cwd: worktreePath },
     traceCtx,
   )
   if (commitResult.exitCode !== 0) {
-    return { committed: false, reason: `git commit failed: ${commitResult.stderr.trim()}` }
+    return {
+      committed: false,
+      refusal: 'git',
+      reason: `git commit failed: ${commitResult.stderr.trim()}`,
+    }
   }
 
   const { stdout } = await exec(

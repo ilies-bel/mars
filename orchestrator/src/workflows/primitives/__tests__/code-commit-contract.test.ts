@@ -4,7 +4,10 @@
  * Regression cover for task fix-30ac0aaa: a coder that committed some work and
  * left other paths uncommitted was classified `clean-with-commits`, passed the
  * code step, passed verify (has-diff only counts commits), and first surfaced
- * two steps later as `merge/unclassified`.
+ * two steps later as `merge/unclassified`. It is still classified
+ * `dirty-with-commits` here — but the code step now recovers it (corrective
+ * turn, then the auto-commit net) instead of failing the task; see
+ * `auto-commit-uncommitted.test.ts` for the end-to-end behaviour.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -14,9 +17,9 @@ import { resolve } from 'node:path'
 
 import {
   detectPostCoderState,
-  codeCommitContractFailure,
-  CODE_COMMIT_CONTRACT_STEP,
-  CODE_COMMIT_CONTRACT_SIGNATURE,
+  coderUncommittedFailure,
+  CODER_UNCOMMITTED_STEP,
+  CODER_UNCOMMITTED_SIGNATURE,
 } from '../shared'
 import { computeFailureSignature } from '../../../core/lib/failure-signature'
 
@@ -61,7 +64,7 @@ describe('coder commit contract', () => {
     }
   })
 
-  it('fails a worktree with unstaged modifications and names the offending files', async () => {
+  it('classifies unstaged modifications alongside commits and names the offending files', async () => {
     writeFileSync(resolve(repo, 'feature.ts'), 'export const b = 2\n')
     commitAll('feat: real work')
     // The shape that used to slip through: committed work AND a leftover
@@ -78,26 +81,30 @@ describe('coder commit contract', () => {
     expect(state.dirtyFiles).toEqual(['tracked.ts'])
     expect(state.commitsAhead).toBe(1)
 
-    const errorOutput = codeCommitContractFailure({
+    const errorOutput = coderUncommittedFailure({
       taskId: 'mars-1234abcd',
       worktreePath: repo,
       branch: 'task/X',
       integrationBranch: 'main',
       dirtyFiles: state.dirtyFiles,
       commitsAhead: state.commitsAhead,
+      autoCommitReason: 'git commit failed: pre-commit hook rejected',
     })
     // The offending file list rides along in the failure reason.
     expect(errorOutput).toContain('tracked.ts')
     expect(errorOutput).toContain(repo)
+    expect(errorOutput).toContain('pre-commit hook rejected')
     // The stamped signature and the one the durable recovery-spawn path
-    // recomputes from (failing step, error output) must agree.
-    expect(computeFailureSignature(CODE_COMMIT_CONTRACT_STEP, errorOutput)).toBe(
-      CODE_COMMIT_CONTRACT_SIGNATURE,
+    // recomputes from (failing step, error output) must agree — and it must be
+    // the ONE signature that failure-kinds.ts and fix-recipes.ts register.
+    expect(computeFailureSignature(CODER_UNCOMMITTED_STEP, errorOutput)).toBe(
+      CODER_UNCOMMITTED_SIGNATURE,
     )
-    expect(CODE_COMMIT_CONTRACT_SIGNATURE).not.toMatch(/unclassified/)
+    expect(CODER_UNCOMMITTED_SIGNATURE).toBe('code/uncommitted-changes')
+    expect(CODER_UNCOMMITTED_SIGNATURE).not.toMatch(/unclassified/)
   })
 
-  it('fails a worktree carrying staged-but-uncommitted changes', async () => {
+  it('classifies staged-but-uncommitted changes as dirty', async () => {
     writeFileSync(resolve(repo, 'feature.ts'), 'export const b = 2\n')
     commitAll('feat: real work')
     writeFileSync(resolve(repo, 'staged.ts'), 'export const c = 3\n')
@@ -114,7 +121,7 @@ describe('coder commit contract', () => {
     }
   })
 
-  it('fails a worktree whose only dirt is untracked files', async () => {
+  it('classifies a worktree whose only dirt is untracked files as dirty', async () => {
     writeFileSync(resolve(repo, 'feature.ts'), 'export const b = 2\n')
     commitAll('feat: real work')
     mkdirSync(resolve(repo, 'src'), { recursive: true })
@@ -178,20 +185,21 @@ describe('coder commit contract', () => {
     expect(againstMain.commitsAhead).toBe(2)
     expect(againstRelease.dirtyFiles).toEqual(['tracked.ts'])
 
-    const errorOutput = codeCommitContractFailure({
+    const errorOutput = coderUncommittedFailure({
       taskId: 'mars-1234abcd',
       worktreePath: repo,
       branch: 'task/X',
       integrationBranch: 'release/next',
       dirtyFiles: againstRelease.dirtyFiles,
       commitsAhead: againstRelease.commitsAhead,
+      autoCommitReason: 'git commit failed: nothing to commit',
     })
     // The override is named in the failure reason, and the signature is the
     // same specific one regardless of which branch is the merge target.
     expect(errorOutput).toContain('release/next')
     expect(errorOutput).not.toContain('integration branch: main')
-    expect(computeFailureSignature(CODE_COMMIT_CONTRACT_STEP, errorOutput)).toBe(
-      CODE_COMMIT_CONTRACT_SIGNATURE,
+    expect(computeFailureSignature(CODER_UNCOMMITTED_STEP, errorOutput)).toBe(
+      CODER_UNCOMMITTED_SIGNATURE,
     )
   })
 })

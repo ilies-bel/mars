@@ -112,12 +112,11 @@ import {
   recoveryAttachesToOrigin,
   resolveWorkerSystemPrompt,
   BLOCKERS_ABORT_MESSAGE,
-  CODE_COMMIT_CONTRACT_SIGNATURE,
-  CODE_COMMIT_CONTRACT_STEP,
-  codeCommitContractFailure,
+  coderUncommittedFailure,
   CODER_EXIT_NONZERO_ABORT_MESSAGE,
   CODER_UNCOMMITTED_ABORT_MESSAGE,
   CODER_UNCOMMITTED_SIGNATURE,
+  CODER_UNCOMMITTED_STEP,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
   MAIN_DIRTY_VERIFY_MESSAGE,
   MAIN_DIRTY_MERGE_MESSAGE,
@@ -1423,10 +1422,54 @@ export const runAgent = async (
     )
   }
 
-  if (postState?.kind === 'dirty-no-commits') {
+  // --- Coder commit contract -----------------------------------------------
+  // Post-condition on the `code` step: the coder must hand over a CLEAN
+  // worktree. TWO shapes violate it and they are the SAME defect, so they get
+  // the SAME two-stage escalation:
+  //
+  //   `dirty-no-commits`   — the coder committed nothing at all.
+  //   `dirty-with-commits` — the coder committed once, kept working, and left
+  //                          the rest dirty.
+  //
+  // Until 2026-07 only the first shape was recoverable; the second failed the
+  // task outright as `code:commit-contract/uncommitted-changes`, on the theory
+  // that a coder which had already committed deliberately chose to leave the
+  // rest out. Live evidence says otherwise: that signature became the single
+  // largest source of task failures and tripped the signature-storm circuit
+  // breaker, and the leftover paths were ordinary source and test files the
+  // coder simply never got around to committing. Failing a task for it throws
+  // away a worktree full of good work over a missing `git commit`.
+  //
+  // The escalation is the one `fix-recipes.ts` already documents for
+  // `code/uncommitted-changes`, now applied to both shapes:
+  //
+  //   1. One corrective coder turn — the coder gets to commit its own work
+  //      rather than have the orchestrator take authorship of it.
+  //   2. A guarded, deterministic `git add -A && git commit` net, attributed to
+  //      the orchestrator (`chore(auto-commit): task <id> — …`) so history
+  //      never implies the agent committed it.
+  //
+  // Only when BOTH fail is the task terminal — the guard refused an unsafe
+  // path (`.env`, `.mars/`, `node_modules`), or git itself rejected the commit
+  // (pre-commit hook, nothing stageable). That case keeps the registered
+  // `code/uncommitted-changes` signature, which failure-kinds.ts and
+  // fix-recipes.ts both know how to name and recover.
+  //
+  // Deliberately NOT asserted here: that the branch is ahead of
+  // `integrationBranch`. Zero commits ahead is a legitimate terminal state —
+  // verify's has-diff gate passes it on purpose (a task that correctly
+  // concluded there was nothing to do, or whose work already landed upstream;
+  // see the 2026-05-29 main-committer incident documented in
+  // `core/lib/git/verify.ts`). The clean-tree assertion has no such exemption
+  // and applies to every path.
+  if (postState?.kind === 'dirty-no-commits' || postState?.kind === 'dirty-with-commits') {
     const dirtyList = postState.dirtyFiles.join('\n  ')
+    const committedNote =
+      postState.kind === 'dirty-with-commits'
+        ? `${postState.commitsAhead} commit(s) ahead of ${integrationBranch}`
+        : `0 commits ahead of ${integrationBranch}`
     console.log(
-      `[post-coder] task ${taskId}: dirty tree with 0 commits ahead of ${integrationBranch} — coder left ${postState.dirtyFiles.length} uncommitted path(s):\n  ${dirtyList}`,
+      `[post-coder] task ${taskId}: dirty tree with ${committedNote} — coder left ${postState.dirtyFiles.length} uncommitted path(s):\n  ${dirtyList}`,
     )
 
     // A clean process exit with a dirty worktree is a recoverable instruction
@@ -1434,9 +1477,13 @@ export const runAgent = async (
     // change. Give the same Coder one short, worktree-backed correction turn
     // first. Codex exec is ephemeral, so this deliberately starts a second
     // process; the worktree is the continuation state.
+    const alreadyCommittedLine =
+      postState.kind === 'dirty-with-commits'
+        ? `You already made ${postState.commitsAhead} commit(s) on this branch, but these paths were left out.\n\n`
+        : ''
     const correction = await runWorkerWithSpan({
       worker,
-      prompt: `Your previous pass left uncommitted changes in these paths:\n  ${dirtyList}\n\nCommit them now. Do not make unrelated changes.`,
+      prompt: `${alreadyCommittedLine}Your previous pass left uncommitted changes in these paths:\n  ${dirtyList}\n\nCommit them now. Do not make unrelated changes.`,
       runOptions: {
         cwd: worktreePath,
         systemPrompt: resolveWorkerSystemPrompt(primaryTag),
@@ -1476,9 +1523,14 @@ export const runAgent = async (
     }
   }
 
-  if (postState?.kind === 'dirty-no-commits') {
+  // Stage 2 — the deterministic net. Runs for both dirty shapes, so a coder
+  // that committed once and left the rest dirty is no longer terminal.
+  if (postState?.kind === 'dirty-no-commits' || postState?.kind === 'dirty-with-commits') {
     const dirtyList = postState.dirtyFiles.join('\n  ')
+    const commitsAhead =
+      postState.kind === 'dirty-with-commits' ? postState.commitsAhead : 0
     const autoResult = await autoCommitWorktreeIfDeterministic({
+      taskId,
       worktreePath,
       dirtyFiles: postState.dirtyFiles,
       traceCtx: buildPhaseCtx(trace, taskId, 'code'),
@@ -1487,16 +1539,37 @@ export const runAgent = async (
     if (autoResult.committed) {
       commitSource = 'net'
       console.log(
-        `[post-coder] task ${taskId}: auto-committed ${postState.dirtyFiles.length} path(s) as ${autoResult.sha.slice(0, 8)}`,
+        `[post-coder] task ${taskId}: auto-committed ${postState.dirtyFiles.length} path(s) as ${autoResult.sha.slice(0, 8)} (on top of ${commitsAhead} coder commit(s))`,
       )
     } else {
+      // Genuinely terminal: the guard refused an unsafe path, or git rejected
+      // the commit. Either way nothing landed and nothing can land without an
+      // operator, so this keeps failing — with the ONE registered signature.
+      const errorMsg = coderUncommittedFailure({
+        taskId,
+        worktreePath,
+        branch,
+        integrationBranch,
+        dirtyFiles: postState.dirtyFiles,
+        commitsAhead,
+        autoCommitReason: autoResult.reason,
+      })
+      console.log(
+        `[post-coder] task ${taskId}: auto-commit refused (${autoResult.refusal}) — ${autoResult.reason}`,
+      )
       await updateTask(
         taskId,
         {
           status: 'failed',
-          error: `coder exited cleanly but left ${postState.dirtyFiles.length} uncommitted path(s) — auto-commit failed: ${autoResult.reason}`,
+          error: errorMsg,
           failedPhase: 'code',
-          failureReason: 'coder-left-uncommitted',
+          // `failure_reason` doubles as the fine-grained failing step for the
+          // durable recovery-spawn subscriber (`asStepId(task.failureReason)`),
+          // which recomputes the signature from it. It must stay the bare step
+          // id that, combined with the "has uncommitted changes" phrase in
+          // `error`, recomputes to CODER_UNCOMMITTED_SIGNATURE — the prose
+          // lives in `error`.
+          failureReason: CODER_UNCOMMITTED_STEP,
           failureReasonCode: 'orchestration:coder-left-uncommitted-unfixable',
           // Stamp the structured signature so the action queue can name this
           // failure (failure-kinds.ts) and self-heal can find its recipe
@@ -1512,8 +1585,9 @@ export const runAgent = async (
         priority: 'high',
         title: `Auto-commit failed for task ${taskId}: coder left uncommitted work`,
         body: [
-          `Task ${taskId} coder exited cleanly but left ${postState.dirtyFiles.length} uncommitted path(s) (0 commits ahead of ${integrationBranch}).`,
-          `Deterministic auto-commit was attempted but failed: ${autoResult.reason}`,
+          `Task ${taskId} coder exited cleanly but left ${postState.dirtyFiles.length} uncommitted path(s) (${commitsAhead} commit(s) ahead of ${integrationBranch}).`,
+          'A corrective coder turn ran first and did not commit them.',
+          `Deterministic auto-commit was then attempted and refused (${autoResult.refusal}): ${autoResult.reason}`,
           '',
           'Dirty files:',
           `  ${dirtyList}`,
@@ -1526,6 +1600,8 @@ export const runAgent = async (
           taskId,
           worktreePath,
           dirtyFiles: postState.dirtyFiles,
+          commitsAhead,
+          autoCommitRefusal: autoResult.refusal,
           autoCommitReason: autoResult.reason,
         },
         context: { repoRoot: process.env.MARS_REPO ?? null },
@@ -1539,82 +1615,6 @@ export const runAgent = async (
       })
       throw new WorkflowTerminalError('coder-uncommitted', CODER_UNCOMMITTED_ABORT_MESSAGE(taskId))
     }
-  }
-
-  // --- Coder commit contract -----------------------------------------------
-  // Post-condition on the `code` step: the coder must hand over a CLEAN
-  // worktree. The branch above covers "committed nothing, left everything
-  // dirty" (deterministic auto-commit, or a terminal failure when that
-  // fails). This branch covers the shape that used to slip through: the coder
-  // committed SOME work and left other paths uncommitted. That tree passed
-  // code, passed verify (has-diff only counts commits), and first surfaced two
-  // steps later as `merge/unclassified` — a generic bucket that named neither
-  // the cause nor the responsible step, and that feeds the signature-storm
-  // circuit breaker. Fail here instead, where the step and the retained
-  // worktree match the actual defect.
-  //
-  // No auto-commit on this path (unlike dirty-no-commits): once the coder has
-  // committed deliberately, a blind `git add -A` would sweep whatever it chose
-  // to leave out — debris or half-finished work — into the merge. The contract
-  // violation is the coder's to fix.
-  //
-  // Deliberately NOT asserted here: that the branch is ahead of
-  // `integrationBranch`. Zero commits ahead is a legitimate terminal state —
-  // verify's has-diff gate passes it on purpose (a task that correctly
-  // concluded there was nothing to do, or whose work already landed upstream;
-  // see the 2026-05-29 main-committer incident documented in
-  // `core/lib/git/verify.ts`). Asserting it here would re-fail exactly the
-  // no-op runs that gate was fixed to accept. The clean-tree assertion has no
-  // such exemption and applies to every path.
-  if (postState?.kind === 'dirty-with-commits') {
-    const errorMsg = codeCommitContractFailure({
-      taskId,
-      worktreePath,
-      branch,
-      integrationBranch,
-      dirtyFiles: postState.dirtyFiles,
-      commitsAhead: postState.commitsAhead,
-    })
-    console.log(
-      `[post-coder] task ${taskId}: commit contract violated — ${postState.commitsAhead} commit(s) ahead of ${integrationBranch} but ${postState.dirtyFiles.length} path(s) left uncommitted`,
-    )
-    await updateTask(
-      taskId,
-      {
-        status: 'failed',
-        error: errorMsg,
-        failedPhase: 'code',
-        // `failure_reason` doubles as the fine-grained failing step for the
-        // durable recovery-spawn subscriber (`asStepId(task.failureReason)`),
-        // so it must stay a bare step id — the prose lives in `error`.
-        failureReason: CODE_COMMIT_CONTRACT_STEP,
-        failureSignature: CODE_COMMIT_CONTRACT_SIGNATURE,
-        failureReasonCode: CODE_COMMIT_CONTRACT_SIGNATURE,
-      },
-      store,
-    )
-    await handleTaskFailureWithFixTask({
-      taskId,
-      failingStep: CODE_COMMIT_CONTRACT_STEP,
-      errorOutput: errorMsg,
-      branch,
-      store,
-      recipeContext: {
-        targetPath: worktreePath,
-        statusOutput: postState.dirtyFiles.join('\n'),
-        targetBranch: branch,
-        originalPrompt: '',
-      },
-    }).catch((err) => {
-      console.error(
-        `[post-coder] task ${taskId}: commit-contract recovery spawn errored:`,
-        err,
-      )
-    })
-    throw new WorkflowTerminalError(
-      'coder-uncommitted',
-      CODER_UNCOMMITTED_ABORT_MESSAGE(taskId),
-    )
   }
 
   // Emitted only for runs that survive every post-coder gate above, matching
