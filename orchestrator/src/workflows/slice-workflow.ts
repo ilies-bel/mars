@@ -9,7 +9,7 @@ import { enqueueTask, updateTask } from '../core/queue'
 import { Arc } from '../core/arc'
 import { type DomainTaskStore, getDefaultTaskStore } from '../core/store/task-store'
 import { Workers } from '../core/workers'
-import { parseClaudeJsonResult } from '../core/lib/claude-json'
+import { parseWorkerJsonResult } from '../core/lib/worker-json'
 import { getRepoRoot } from '../core/context'
 import { listActionQueueItems, raiseActionQueueItem } from '../core/lib/action-queue'
 import { type TraceEventStore } from '../core/lib/trace-events-store'
@@ -306,10 +306,8 @@ the following feedback from the operator:
 ${resliceFeedback}
 ` : ''}`
 
-const parseSlicerOutput = (
-  claudeStdout: string,
-): z.infer<typeof slicerOutputSchema> =>
-  slicerOutputSchema.parse(parseClaudeJsonResult(claudeStdout))
+const parseSlicerOutput = (stdout: string): z.infer<typeof slicerOutputSchema> =>
+  slicerOutputSchema.parse(parseWorkerJsonResult(Workers.Slicer.config.provider, stdout))
 
 // ---------------------------------------------------------------------------
 // Action quality guard — regex anti-pattern detector
@@ -1214,7 +1212,9 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
       }).catch(() => null)
       if (!rr || rr.exitCode !== 0) return { hasDependency: false }
       try {
-        return directionVerdictSchema.parse(parseClaudeJsonResult(rr.stdout))
+        return directionVerdictSchema.parse(
+          parseWorkerJsonResult(Workers.Slicer.config.provider, rr.stdout),
+        )
       } catch {
         return { hasDependency: false }
       }
@@ -1274,7 +1274,9 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
       }).catch(() => null)
       if (!rr || rr.exitCode !== 0) return null
       try {
-        return actionRepromptSchema.parse(parseClaudeJsonResult(rr.stdout))
+        return actionRepromptSchema.parse(
+          parseWorkerJsonResult(Workers.Slicer.config.provider, rr.stdout),
+        )
           .prescriptiveAction
       } catch {
         return null

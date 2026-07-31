@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { getTask } from '../core/queue'
 import { createProposal } from '../core/proposals'
 import { Workers } from '../core/workers'
-import { parseClaudeJsonResult } from '../core/lib/claude-json'
+import { parseWorkerJsonResult } from '../core/lib/worker-json'
 import { getRepoRoot } from '../core/context'
 import { type DomainTaskStore as TaskStore, getDefaultTaskStore } from '../core/store/task-store'
 import { createQueueWorkflowStore } from './queue-workflow-store'
@@ -52,8 +52,8 @@ Spec to analyze:
 
 ${spec}`
 
-const parsePlannerOutput = (claudeStdout: string): z.infer<typeof plannerOutputSchema> =>
-  plannerOutputSchema.parse(parseClaudeJsonResult(claudeStdout))
+const parsePlannerOutput = (stdout: string): z.infer<typeof plannerOutputSchema> =>
+  plannerOutputSchema.parse(parseWorkerJsonResult(Workers.Planner.config.provider, stdout))
 
 export interface RunPlanResult {
   taskId: string

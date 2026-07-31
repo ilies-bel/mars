@@ -40,6 +40,7 @@ import { PROVIDERS } from '../providers'
 const PTY_TEST_HEADLESS_STUB = {
   capabilities: { contextTokenMetering: false, quotaRejected: false, sessionId: false },
   run: (): Promise<never> => Promise.reject(new Error('headless not exercised in pty tests')),
+  readOutput: () => [],
 } as const
 
 const makeFakeHandle = (): PtyHandle & { _exitListeners: Array<(code: number, signal: number) => void> } => {

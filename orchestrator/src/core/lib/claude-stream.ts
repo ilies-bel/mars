@@ -83,6 +83,33 @@ export const parseClaudeStreamLine = (line: string): ClaudeEvent | null => {
   return trimEvent(parsed as ClaudeEvent)
 }
 
+/** Read Claude's newline-delimited event stream into normalized events. */
+export const readClaudeOutput = (stdout: string): ClaudeEvent[] => {
+  const events = stdout
+    .split(/\r?\n/)
+    .map((line) => parseClaudeStreamLine(line))
+    .filter((event): event is ClaudeEvent => event !== null)
+
+  if (events.length > 0) return events
+
+  // Claude's non-stream JSON mode returns one result envelope without a
+  // `type` field. Normalize it here so callers never need a Claude fallback.
+  const trimmed = stdout.trim()
+  if (!trimmed) return []
+  try {
+    const envelope = JSON.parse(trimmed) as Record<string, unknown>
+    return [
+      {
+        type: 'result',
+        result: typeof envelope.result === 'string' ? envelope.result : trimmed,
+        is_error: envelope.is_error === true,
+      },
+    ]
+  } catch {
+    return []
+  }
+}
+
 /**
  * Detect whether the event stream represents a provider rate/spend-limit
  * rejection — the global environmental condition that must NOT consume a

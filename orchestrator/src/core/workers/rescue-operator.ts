@@ -12,6 +12,7 @@
  */
 
 import type { ClaudeEvent } from '../lib/claude-stream'
+import { readWorkerOutputText } from '../lib/worker-json'
 import type { Task } from '../queue'
 import type { Worker } from '.'
 
@@ -202,11 +203,11 @@ export const runRescueOperator = async (
     },
   })
 
-  // Prefer verdict from the event stream; fall back to raw stdout for providers
-  // that write text output there (e.g. Gemini, Codex headless adapters).
+  // Prefer verdict from the live event stream, then re-read complete stdout
+  // through this Worker's configured provider adapter.
   const verdict =
     parseRescueVerdict(textChunks.join('\n')) ??
-    parseRescueVerdict(result.stdout ?? '')
+    parseRescueVerdict(readWorkerOutputText(worker.config.provider, result.stdout ?? '') ?? '')
 
   if (verdict === null) {
     throw new Error(

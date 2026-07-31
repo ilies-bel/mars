@@ -35,12 +35,20 @@ export const parseGeminiEventLine = (line: string): ClaudeEvent | null => {
   }
 }
 
+/** Read Gemini's line-buffered text output into normalized assistant events. */
+export const readGeminiOutput = (stdout: string): ClaudeEvent[] =>
+  stdout
+    .split(/\r?\n/)
+    .map((line) => parseGeminiEventLine(line))
+    .filter((event): event is ClaudeEvent => event !== null)
+
 export const geminiHeadless: HeadlessAdapter = {
   capabilities: {
     contextTokenMetering: false,
     quotaRejected: false,
     sessionId: false,
   },
+  readOutput: readGeminiOutput,
 
   run: async (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> => {
     const conversation: ClaudeEvent[] = []

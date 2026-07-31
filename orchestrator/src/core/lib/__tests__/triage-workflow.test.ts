@@ -17,6 +17,8 @@ interface ClaudeStub {
   stderr?: string
 }
 
+const originalProvider = process.env.MARS_WORKER_PROVIDER
+
 const setClaudeStub = (stub: ClaudeStub): void => {
   vi.doMock('../git/claude', async () => {
     const actual = await vi.importActual<typeof import('../git/claude')>('../git/claude')
@@ -33,6 +35,28 @@ const setClaudeStub = (stub: ClaudeStub): void => {
   })
 }
 
+const setCodexStub = (stub: ClaudeStub): void => {
+  vi.doMock('../git/claude', async () => {
+    const actual = await vi.importActual<typeof import('../git/claude')>('../git/claude')
+    return {
+      ...actual,
+      runSubprocessStreaming: vi.fn(async (
+        _command: string,
+        _args: readonly string[],
+        _cwd: string,
+        onLine?: (event: { stream: 'stdout' | 'stderr'; line: string }) => void | Promise<void>,
+      ) => {
+        if (onLine) {
+          for (const line of stub.stdout.split('\n')) {
+            await onLine({ stream: 'stdout', line })
+          }
+        }
+        return { exitCode: stub.exitCode, stdout: stub.stdout, stderr: stub.stderr ?? '' }
+      }),
+    }
+  })
+}
+
 const envelope = (jsonResult: unknown): string =>
   JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
@@ -42,12 +66,15 @@ describe('triage workflow', () => {
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../git/claude')
     delete process.env.MARS_REPO
+    if (originalProvider === undefined) delete process.env.MARS_WORKER_PROVIDER
+    else process.env.MARS_WORKER_PROVIDER = originalProvider
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -224,6 +251,46 @@ describe('triage workflow', () => {
     expect(reloaded?.status).toBe('queued')
   })
 
+  it('triages a Codex NDJSON response through the configured provider reader', async () => {
+    process.env.MARS_WORKER_PROVIDER = 'codex'
+    setCodexStub({
+      exitCode: 0,
+      stdout: [
+        JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }),
+        '',
+        JSON.stringify({
+          type: 'item.completed',
+          item: {
+            type: 'agent_message',
+            text: JSON.stringify({
+              actionable: true,
+              reason: 'ready',
+              blockerTaskIds: [],
+            }),
+          },
+        }),
+        JSON.stringify({ type: 'turn.completed' }),
+        '{"type":"item.completed"',
+      ].join('\n'),
+    })
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    await queue.enqueueTask('another task keeps the graph non-trivial')
+    const task = await queue.enqueueTask('Codex triage fixture')
+
+    const triage = await import('../../../workflows/triage-workflow')
+    const result = await triage.runTriage(task.id)
+
+    expect(result).toMatchObject({
+      taskId: task.id,
+      actionable: true,
+      blockerCount: 0,
+      reason: 'ready',
+    })
+    expect((await queue.getTask(task.id))?.status).toBe('queued')
+  })
+
   it('reports the tail error instead of successful SessionStart hook events', async () => {
     const successfulHook = JSON.stringify({
       type: 'system',
@@ -277,12 +344,15 @@ describe('triage workflow — optimised data access', () => {
   beforeEach(() => {
     repo = setupRepo()
     process.env.MARS_REPO = repo
+    process.env.MARS_WORKER_PROVIDER = 'claude'
   })
 
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('../git/claude')
     delete process.env.MARS_REPO
+    if (originalProvider === undefined) delete process.env.MARS_WORKER_PROVIDER
+    else process.env.MARS_WORKER_PROVIDER = originalProvider
     rmSync(repo, { recursive: true, force: true })
   })
 

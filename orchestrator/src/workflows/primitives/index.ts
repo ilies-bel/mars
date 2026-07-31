@@ -75,6 +75,7 @@ import {
   WorktreeInstallError,
 } from '../../core/lib/worktree-install'
 import { extractLastStreamText, type ClaudeEvent } from '../../core/lib/claude-stream'
+import { readWorkerOutputText } from '../../core/lib/worker-json'
 import { getTask, hasIncompleteBlockers, updateTask } from '../../core/queue'
 import { Arc } from '../../core/arc'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
@@ -1373,7 +1374,10 @@ export const review = async (
       phase: 'verify',
     })
 
-    const rawOutput = extractLastStreamText(r.conversation) ?? r.stdout
+    const rawOutput =
+      extractLastStreamText(r.conversation) ??
+      readWorkerOutputText(worker.config.provider, r.stdout) ??
+      ''
     let packet: ReviewPacket
     try {
       const jsonMatch = rawOutput.match(/\{[\s\S]*\}/)

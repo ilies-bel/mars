@@ -75,12 +75,20 @@ export const parseCodexEventLine = (line: string): ClaudeEvent | null => {
   return null
 }
 
+/** Read Codex's NDJSON stdout, ignoring blank and incomplete trailing lines. */
+export const readCodexOutput = (stdout: string): ClaudeEvent[] =>
+  stdout
+    .split(/\r?\n/)
+    .map((line) => parseCodexEventLine(line))
+    .filter((event): event is ClaudeEvent => event !== null)
+
 export const codexHeadless: HeadlessAdapter = {
   capabilities: {
     contextTokenMetering: false,
     quotaRejected: false,
     sessionId: false,
   },
+  readOutput: readCodexOutput,
 
   run: async (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> => {
     const conversation: ClaudeEvent[] = []

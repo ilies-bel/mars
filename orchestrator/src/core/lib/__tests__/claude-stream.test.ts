@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { parseClaudeStreamLine, extractLastStreamText, extractAgentToolCalls } from '../claude-stream'
+import {
+  parseClaudeStreamLine,
+  readClaudeOutput,
+  extractLastStreamText,
+  extractAgentToolCalls,
+} from '../claude-stream'
 
 describe('parseClaudeStreamLine', () => {
   it('returns null for blank lines', () => {
@@ -111,6 +116,19 @@ describe('parseClaudeStreamLine', () => {
       subtype: 'success',
       session_id: 's1',
     })
+  })
+})
+
+describe('readClaudeOutput', () => {
+  it('reads a single Claude result object', () => {
+    const output = JSON.stringify({
+      result: '{"actionable":true}',
+      is_error: false,
+    })
+
+    expect(readClaudeOutput(output)).toEqual([
+      { type: 'result', result: '{"actionable":true}', is_error: false },
+    ])
   })
 })
 

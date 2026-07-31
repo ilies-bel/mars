@@ -17,7 +17,7 @@ vi.mock('../../lib/git/claude', () => ({
   resolveClaudeBin: vi.fn(),
 }))
 
-import { parseCodexEventLine, codexHeadless } from '../providers/codex-headless'
+import { parseCodexEventLine, readCodexOutput, codexHeadless } from '../providers/codex-headless'
 import { runSubprocessStreaming, resolveClaudeBin } from '../../lib/git/claude'
 
 // ---------------------------------------------------------------------------
@@ -78,6 +78,32 @@ describe('parseCodexEventLine — normalisation', () => {
     expect(parseCodexEventLine('')).toBeNull()
     expect(parseCodexEventLine('   ')).toBeNull()
     expect(parseCodexEventLine('not json')).toBeNull()
+  })
+})
+
+describe('readCodexOutput', () => {
+  it('reads an NDJSON event stream, skipping blank and trailing partial lines', () => {
+    const output = [
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }),
+      '',
+      JSON.stringify({
+        type: 'item.completed',
+        item: { type: 'agent_message', text: '{"actionable":true}' },
+      }),
+      JSON.stringify({ type: 'turn.completed' }),
+      '{"type":"item.completed"',
+    ].join('\n')
+
+    expect(readCodexOutput(output)).toEqual([
+      {
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: '{"actionable":true}' }],
+        },
+      },
+      { type: 'result', is_error: false },
+    ])
   })
 })
 

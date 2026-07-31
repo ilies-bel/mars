@@ -291,14 +291,20 @@ describe('runRescueOperator — integration', () => {
     }
   })
 
-  it('falls back to stdout when onEvent carries no text content', async () => {
-    // Worker that emits no assistant events but puts verdict in stdout
+  it('reads a Codex stdout stream when onEvent carries no text content', async () => {
+    // Worker that emits no assistant events but returns a Codex NDJSON stream.
     const worker: Worker = {
       config: WORKER_CONFIGS.RescueOperator,
       runtime: 'headless',
       run: async (): Promise<RunClaudeResult> => ({
         exitCode: 0,
-        stdout: '{"action":"restart","reasoning":"from stdout"}',
+        stdout: JSON.stringify({
+          type: 'item.completed',
+          item: {
+            type: 'agent_message',
+            text: '{"action":"restart","reasoning":"from stdout"}',
+          },
+        }),
         stderr: '',
         sessionId: null,
         conversation: [],

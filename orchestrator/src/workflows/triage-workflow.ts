@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { type Task } from '../core/queue'
 import { type DomainTaskStore, getDefaultDomainTaskStore } from '../core/store/task-store'
 import { Workers } from '../core/workers'
-import { parseClaudeJsonResult } from '../core/lib/claude-json'
+import { parseWorkerJsonResult } from '../core/lib/worker-json'
 import { getRepoRoot } from '../core/context'
 import { createQueueWorkflowStore } from './queue-workflow-store'
 import { type TraceEventStore } from '../core/lib/trace-events-store'
@@ -198,7 +198,9 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
         )
       }
 
-      const parsed = triageJsonSchema.parse(parseClaudeJsonResult(r.stdout))
+      const parsed = triageJsonSchema.parse(
+        parseWorkerJsonResult(Workers.Triager.config.provider, r.stdout),
+      )
 
       // Pre-filter before querying so filterExistingTaskIds never receives more
       // than MAX_BLOCKERS ids.

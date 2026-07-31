@@ -11,7 +11,7 @@ import {
   type ClaudeEffort,
   type ClaudePermissionMode,
 } from '../lib/git/claude'
-import type { ClaudeEvent } from '../lib/claude-stream'
+import { readClaudeOutput, type ClaudeEvent } from '../lib/claude-stream'
 import { codexHeadless } from './providers/codex-headless'
 import { geminiHeadless } from './providers/gemini-headless'
 
@@ -91,6 +91,8 @@ export type HeadlessRunOpts = Readonly<{
 // context token usage.
 export interface HeadlessAdapter {
   run(prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult>
+  /** Decode this provider's complete stdout into normalized stream events. */
+  readOutput(stdout: string): ClaudeEvent[]
   readonly capabilities: {
     readonly contextTokenMetering: boolean
     readonly quotaRejected: boolean
@@ -285,6 +287,7 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       },
       run: (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> =>
         runClaudeCode({ prompt, ...opts }),
+      readOutput: readClaudeOutput,
     },
   },
   gemini: {
