@@ -1,8 +1,34 @@
 /**
  * Unit / integration tests for runReflectRecommendedDetector.
  *
- * Each test gets a fresh git repo + mars.db so module-level singletons are
- * reset between tests (via vi.resetModules inside loadContext).
+ * Each test gets a fresh git repo + `.mars/` state dir so module-level
+ * singletons are reset between tests (via vi.resetModules inside loadContext).
+ *
+ * ## Store seam
+ *
+ * The detector READS through the store handed to it via `opts.store` but WRITES
+ * through `action-queue.ts`'s module-level `stateClient()` (=
+ * `resolveStateClient()`), which it cannot be handed. In production those are
+ * the same object: `resolveStateClient()` and `resolveQueueClient()` both call
+ * `openDb(resolveDbTarget())`, and `openDb` keys one client per target per
+ * process. A test therefore only observes the detector's writes if it seeds and
+ * asserts through that same resolver.
+ *
+ * Two things break that, and this suite used to do both:
+ *
+ *  1. Opening a bespoke client for `file:<repo>/.mars/mars.db`. Under
+ *     `MARS_DB_BACKEND=pglite` `openDb` keys on the target string, so
+ *     `pglite:<repo>/.mars/mars.db` is a *different* in-memory database from
+ *     the `pglite:<repo>/.mars` every production resolver opens. Assertions
+ *     then counted rows in an empty DB and silently saw 0.
+ *  2. Importing the client factory at the top of the file. `openDb`'s registry
+ *     is module-scoped, so a client built from the pre-`vi.resetModules()`
+ *     module graph lands in a different registry than the one the module under
+ *     test uses — a different PGlite instance even for an identical target.
+ *
+ * So: everything DB-related is imported *inside* `loadContext`, after
+ * `vi.resetModules()`, and the store wraps `resolveStateClient()`. No hand-
+ * rolled DDL either — `openDb` bootstraps the canonical schema on first use.
  *
  * Acceptance criteria verified here:
  *  1. Detector fires on KPI drift when autoTrigger=false → raises row
@@ -15,115 +41,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { openLibsql } from '../libsql.js'
-import { createTaskStore, type DomainTaskStore as TaskStore } from '../../store/task-store.js'
-
-// ---------------------------------------------------------------------------
-// DDL — minimal schema for the tests
-// ---------------------------------------------------------------------------
-
-const KPI_SNAPSHOTS_DDL = `
-  CREATE TABLE IF NOT EXISTS kpi_snapshots (
-    id TEXT PRIMARY KEY,
-    taken_at TEXT NOT NULL,
-    window_start TEXT NOT NULL,
-    window_end TEXT NOT NULL,
-    cost_per_arc_sample_count INTEGER NOT NULL DEFAULT 0,
-    cost_per_arc_low_confidence INTEGER NOT NULL DEFAULT 0,
-    failure_rate_sample_count INTEGER NOT NULL DEFAULT 0,
-    failure_rate_low_confidence INTEGER NOT NULL DEFAULT 0,
-    autonomous_completion_rate_sample_count INTEGER NOT NULL DEFAULT 0,
-    autonomous_completion_rate_low_confidence INTEGER NOT NULL DEFAULT 0,
-    recovery_success_rate_sample_count INTEGER NOT NULL DEFAULT 0,
-    recovery_success_rate_low_confidence INTEGER NOT NULL DEFAULT 0,
-    cost_per_arc_p50 REAL,
-    cost_per_arc_p90 REAL,
-    failure_rate REAL,
-    autonomous_completion_rate REAL,
-    recovery_success_rate REAL
-  )
-`
-
-const TASKS_DDL = `
-  CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    prompt TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'queued',
-    priority INTEGER NOT NULL DEFAULT 1,
-    failure_signature TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )
-`
-
-const TRACE_EVENTS_DDL = `
-  CREATE TABLE IF NOT EXISTS trace_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind TEXT NOT NULL,
-    task_id TEXT,
-    timestamp TEXT NOT NULL,
-    payload TEXT NOT NULL DEFAULT '{}'
-  )
-`
-
-const ACTION_QUEUE_DDL = `
-  CREATE TABLE IF NOT EXISTS action_queue_items (
-    id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL,
-    category TEXT NOT NULL,
-    priority TEXT NOT NULL,
-    state TEXT NOT NULL DEFAULT 'open',
-    title TEXT NOT NULL,
-    body TEXT NOT NULL DEFAULT '',
-    payload TEXT NOT NULL DEFAULT '{}',
-    context TEXT NOT NULL DEFAULT '{}',
-    raised_by TEXT NOT NULL,
-    raised_at TEXT NOT NULL,
-    resolved_at TEXT,
-    resolution TEXT,
-    resolution_note TEXT,
-    root_cause TEXT,
-    fingerprint TEXT,
-    signature TEXT,
-    seen_count INTEGER NOT NULL DEFAULT 1,
-    last_seen_at TEXT,
-    resolved_by TEXT,
-    origin_task_id TEXT
-  )
-`
-
-const ACTION_QUEUE_HISTORY_DDL = `
-  CREATE TABLE IF NOT EXISTS action_queue_history (
-    id TEXT PRIMARY KEY,
-    item_id TEXT NOT NULL,
-    at TEXT NOT NULL,
-    from_state TEXT,
-    to_state TEXT NOT NULL,
-    by TEXT,
-    note TEXT
-  )
-`
-
-const PROPOSALS_DDL = `
-  CREATE TABLE IF NOT EXISTS proposals (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    problem TEXT NOT NULL DEFAULT '',
-    solution TEXT NOT NULL DEFAULT '',
-    out_of_scope TEXT NOT NULL DEFAULT '',
-    notes TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'draft',
-    source TEXT NOT NULL DEFAULT 'human',
-    author TEXT,
-    kpi_tag TEXT,
-    fingerprint TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-  )
-`
+import type { DomainTaskStore as TaskStore } from '../../store/task-store.js'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -147,23 +69,17 @@ const loadContext = async (repo: string): Promise<TestContext> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
 
-  const dbPath = resolve(repo, '.mars', 'mars.db')
-  const client = openLibsql({ url: `file:${dbPath}` })
+  // Imported here, not at the top of the file: see the "Store seam" note in the
+  // header. These must come from the post-reset module graph so the test shares
+  // `openDb`'s client registry with the module under test.
+  const { resolveStateClient } = await import('../../store/state-client.js')
+  const { createTaskStore } = await import('../../store/task-store.js')
 
-  await client.execute(KPI_SNAPSHOTS_DDL)
-  await client.execute(TASKS_DDL)
-  await client.execute(TRACE_EVENTS_DDL)
-  await client.execute(ACTION_QUEUE_DDL)
-  await client.execute(ACTION_QUEUE_HISTORY_DDL)
-  await client.execute(PROPOSALS_DDL)
-
-  // Index required by action-queue.ts
-  await client.execute(
-    `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_state
-       ON action_queue_items(fingerprint, state)`,
-  )
-
-  const store = createTaskStore(client)
+  // The very client `action-queue.ts` writes through. `openDb` applies the
+  // canonical schema on first use, so no fixture DDL is needed (and none may be
+  // added: a hand-rolled `CREATE TABLE IF NOT EXISTS` would silently no-op
+  // against the real schema and give a false sense of control over the shape).
+  const store = createTaskStore(resolveStateClient())
 
   const { runReflectRecommendedDetector } = await import('../self-evolve-trigger.js')
 
@@ -250,9 +166,12 @@ const insertStepEndedEvent = async (
       messageCount: 1,
     },
   })
+  // `trace_events.id` is `text PRIMARY KEY` with no default — the canonical
+  // schema expects the writer to mint it.
   await store.execute({
-    sql: `INSERT INTO trace_events (kind, task_id, timestamp, payload) VALUES ('step_ended', ?, ?, ?)`,
-    args: [taskId, timestamp, payload],
+    sql: `INSERT INTO trace_events (id, kind, task_id, timestamp, payload)
+          VALUES (?, 'step_ended', ?, ?, ?)`,
+    args: [randomUUID(), taskId, timestamp, payload],
   })
 }
 
@@ -404,11 +323,15 @@ describe('runReflectRecommendedDetector', () => {
     expect(first.raised).toBe(true)
     expect(await ctx.countOpenReflectRows()).toBe(1)
 
-    // Second: remove the tasks (simulate no condition) by marking them done;
-    // SQL update to 'done' so they're no longer 'failed' — the cluster query only counts 'failed'.
+    // Second: make the condition lapse the way it lapses in production — the
+    // cluster ages out of the detector's rolling window. (Flipping the tasks to
+    // 'done' instead would be rejected by the tasks_reject_terminal_transition
+    // trigger: terminal states are absorbing, so 'failed' tasks never become
+    // 'done' without a task_terminal_reopens grant.)
+    const wayBack = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString()
     await ctx.store.execute({
-      sql: `UPDATE tasks SET status = 'done' WHERE failure_signature = 'code/oom'`,
-      args: [],
+      sql: `UPDATE tasks SET created_at = ? WHERE failure_signature = 'code/oom'`,
+      args: [wayBack],
     })
 
     // No KPI snapshots exist either, so all detectors should be quiet.
