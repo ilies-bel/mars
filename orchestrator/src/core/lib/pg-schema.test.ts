@@ -129,6 +129,19 @@ describe('ensureSchema', () => {
     expect(inserted.rows[0].created_at).toBeTruthy()
   })
 
+  it('normalizes obsolete rejected proposal rows to dismissed during schema bootstrap', async () => {
+    const c = await freshSchemaClient()
+    await c.execute(
+      `INSERT INTO proposals (id, status, created_at, updated_at)
+       VALUES ('legacy-rejected', 'rejected', 1, 1)`,
+    )
+
+    await ensureSchema(c)
+
+    const r = await c.execute(`SELECT status FROM proposals WHERE id = 'legacy-rejected'`)
+    expect(r.rows).toEqual([{ status: 'dismissed' }])
+  })
+
   it('two concurrent calls both resolve without a deadlock error', async () => {
     // Verify that SCHEMA_ADVISORY_LOCK_KEY is exported and is a number —
     // it is the constant every process uses to name the advisory lock.

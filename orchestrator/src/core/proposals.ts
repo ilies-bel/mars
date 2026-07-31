@@ -27,6 +27,17 @@ export type ProposalSource =
   | 'skill-forge'
   | 'failure-reflector'
 
+export const PROPOSAL_STATUSES = [
+  'draft',
+  'prd-ready',
+  'slicing',
+  'sliced',
+  'taken',
+  'dismissed',
+] as const
+
+export type ProposalStatus = (typeof PROPOSAL_STATUSES)[number]
+
 export interface Proposal {
   id: string
   title: string
@@ -34,7 +45,7 @@ export interface Proposal {
   solution: string
   outOfScope: string
   notes: string
-  status: string
+  status: ProposalStatus
   source: ProposalSource
   author: Author | null
   createdAt: number
@@ -129,6 +140,16 @@ const normaliseSource = (raw: unknown): ProposalSource => {
   return 'human'
 }
 
+const isProposalStatus = (raw: unknown): raw is ProposalStatus =>
+  typeof raw === 'string' && (PROPOSAL_STATUSES as readonly string[]).includes(raw)
+
+const assertValidProposalStatus = (raw: unknown): ProposalStatus => {
+  if (isProposalStatus(raw)) return raw
+  throw new Error(
+    `invalid proposal status '${String(raw)}'; expected one of ${PROPOSAL_STATUSES.join(', ')}`,
+  )
+}
+
 const assertValidSource = (raw: unknown): ProposalSource => {
   if (isProposalSource(raw)) return raw
   throw new Error(
@@ -153,7 +174,7 @@ const rowToProposal = (
     solution: (row.solution as string | null) ?? '',
     outOfScope: (row.out_of_scope as string | null) ?? '',
     notes: (row.notes as string | null) ?? '',
-    status: (row.status as string | null) ?? 'draft',
+    status: assertValidProposalStatus((row.status as string | null) ?? 'draft'),
     source: normaliseSource(row.source),
     author,
     createdAt: Number(row.created_at ?? 0),
@@ -323,7 +344,7 @@ export const getProposal = async (
  * ADR-0008 planning-graph edge writer. Adds `proposal_dependencies` rows so
  * `proposalId` waits on each `blockerId`. Mirrors `addBlockers` in queue.ts:
  * the subject and every blocker id must already exist, self-edges are
- * rejected (a proposal cannot block itself), duplicates are de-duped, and the
+ * refused (a proposal cannot block itself), duplicates are de-duped, and the
  * insert is `ON CONFLICT DO NOTHING` so re-adding an existing edge is a no-op.
  * Ids are resolved through `resolveProposalId` so prefixes work like every
  * other proposal verb.
@@ -498,6 +519,7 @@ export const setProposalField = async (
   value: string,
 ): Promise<Proposal> => {
   await initProposals()
+  if (field === 'status') assertValidProposalStatus(value)
   const resolved = await resolveProposalId(idOrPrefix)
   if (resolved.kind === 'ambiguous') {
     throw new Error(
@@ -736,9 +758,9 @@ export const deleteProposal = async (idOrPrefix: string): Promise<string> => {
   return id
 }
 
-// Direct DB write — rejection is a pure status flip with no side effects
+// Direct DB write — dismissal is a pure status flip with no side effects
 // (no worktree, no merge), so it does not need to go through the daemon.
-export const rejectProposal = async (
+export const dismissProposal = async (
   idOrPrefix: string,
 ): Promise<Proposal> => {
   await initProposals()
@@ -776,13 +798,13 @@ export const rejectProposal = async (
     const current = await getProposal(id)
     if (!current) throw new Error(`proposal ${id} not found`)
     throw new Error(
-      `proposal ${id} is '${current.status}'; only draft proposals can be rejected`,
+      `proposal ${id} is '${current.status}'; only draft proposals can be dismissed`,
     )
   }
   await emitProposalBusEvent('proposal.dismissed', { proposalId: id })
   const updated = await getProposal(id)
   if (!updated) {
-    throw new Error(`proposal ${id} disappeared after rejection`)
+    throw new Error(`proposal ${id} disappeared after dismissal`)
   }
   return updated
 }

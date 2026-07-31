@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process'
 interface ProposalsMod {
   createProposal: typeof import('../proposals').createProposal
   promoteProposal: typeof import('../proposals').promoteProposal
-  rejectProposal: typeof import('../proposals').rejectProposal
+  dismissProposal: typeof import('../proposals').dismissProposal
   markProposalSliced: typeof import('../proposals').markProposalSliced
   claimProposalForSlicing: typeof import('../proposals').claimProposalForSlicing
   initProposals: typeof import('../proposals').initProposals
@@ -92,7 +92,7 @@ describe('proposal bus events', () => {
   it('dismissing a proposal emits proposal.dismissed with proposalId', async () => {
     const { p, q } = await loadMods(repo)
     const proposal = await p.createProposal('Proposal to dismiss', { source: 'human' })
-    await p.rejectProposal(proposal.id)
+    await p.dismissProposal(proposal.id)
 
     const events = await getEvents(q, 'proposal.dismissed')
     expect(events).toHaveLength(1)

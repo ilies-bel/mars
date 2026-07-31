@@ -333,7 +333,7 @@ describe('proposal take — integration: task creation behavior', () => {
     expect(afterProposal?.status).toBe('sliced')
   })
 
-  it('requires prd-ready status — draft proposal is rejected by claimProposalForSlicing', async () => {
+  it('requires prd-ready status — draft proposal is refused by claimProposalForSlicing', async () => {
     vi.resetModules()
     process.env.MARS_REPO = repo
 

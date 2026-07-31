@@ -137,7 +137,7 @@ describe('POST /actions/dismiss/:id', () => {
     }
   })
 
-  it('wires dismissProposal through rejectProposal on a real proposal', async () => {
+  it('wires dismissProposal through dismissProposal on a real proposal', async () => {
     const { proposals, httpServer } = await loadModules(repo)
 
     const proposal = await proposals.createProposal('A draft to dismiss', {
@@ -148,7 +148,7 @@ describe('POST /actions/dismiss/:id', () => {
     const { port, close } = await httpServer.startHttpServer(
       makeDeps({
         dismissProposal: async (id) => {
-          await proposals.rejectProposal(id)
+          await proposals.dismissProposal(id)
         },
       }),
     )

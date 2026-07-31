@@ -4283,8 +4283,8 @@ export const startDaemon = async (
       await removeWorktree({ path, branch: `task/${id}` }, true, true)
     },
     dismissProposal: async (id) => {
-      const { rejectProposal } = await import('../proposals')
-      await rejectProposal(id)
+      const { dismissProposal } = await import('../proposals')
+      await dismissProposal(id)
     },
     promoteProposal: async (id) => {
       await promoteProposal(id)

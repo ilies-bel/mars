@@ -116,7 +116,7 @@ Examples:
   for it — which wins?"*
 - *"The operator dismisses a stale-worktree alert, then the same worktree
   becomes stale again two days later — is that one alert or two?"*
-- *"If the user can both 'cancel' and 'reject' a proposal, what's the
+- *"If the user can both 'cancel' and 'dismiss' a proposal, what's the
   operational difference?"*
 
 ### Cross-reference with code
@@ -245,7 +245,7 @@ Those are `to-prd`'s job. The only writes you may issue here are
   conversation when understanding is shared and hand off.
 - Do not call `mars proposal set`, `mars proposal add-user-story`,
   `mars proposal remove-user-story`, `mars proposal promote`, or `mars proposal
-  reject`. The conversation phase writes nothing to the proposals table.
+  dismiss`. The conversation phase writes nothing to the proposals table.
 - Do not batch questions. One question per turn, with your recommended
   answer, and wait for the user's reply before moving on.
 - Do not ask the user for facts the codebase already encodes — explore

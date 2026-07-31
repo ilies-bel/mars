@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0007'
+export const SCHEMA_VERSION = '0008'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -72,6 +72,10 @@ const DDL: readonly string[] = [
     created_at        bigint NOT NULL,
     updated_at        bigint NOT NULL
   )`,
+  // Proposal dismissal has always stored this terminal state. Normalize the
+  // short-lived, incompatible `rejected` value before proposal readers apply
+  // the closed lifecycle type.
+  `UPDATE proposals SET status = 'dismissed' WHERE status = 'rejected'`,
   `CREATE INDEX IF NOT EXISTS idx_proposals_fingerprint
      ON proposals(fingerprint) WHERE fingerprint IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS proposal_user_stories (

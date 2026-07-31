@@ -117,8 +117,8 @@ Commands:
                                 the proposal's status from 'draft' to 'prd-ready'.
                                 The slicer creates one task per vertical slice
                                 separately; this verb does NOT enqueue a task.
-  proposal reject <id>          reject a draft proposal (flips status to
-                                'rejected'; no tasks are dispatched)
+  proposal dismiss <id>         dismiss a draft proposal (flips status to
+                                'dismissed'; no tasks are dispatched)
   proposal slice <id>           decompose a 'prd-ready' proposal into N
                                 tracer-bullet vertical-slice tasks (one per
                                 user-observable behaviour) and queue them with
@@ -771,8 +771,8 @@ Subcommands:
       Decompose a 'prd-ready' proposal into N tracer-bullet vertical-slice tasks
       and queue them with blockers wired between dependent slices. Flips the
       proposal's status to 'sliced'.
-  reject <id>
-      Mark a draft proposal as 'rejected' so it stops surfacing in reflection
+  dismiss <id>
+      Mark a draft proposal as 'dismissed' so it stops surfacing in reflection
       follow-ups.
   ship-summary <id> [--json]
       Print the arc-completion summary for a proposal: title, overall arc state
@@ -1444,7 +1444,7 @@ confirmation.
 Valid verbs (DESTRUCTIVE_MARS_VERBS):
   dismiss          dismiss a scorer suggestion
   purge            delete a task (worktree + branch + row)
-  reject           reject a draft proposal
+  reject           reject a preview-gated task
   prune-worktree   prune done/dropped worktrees
 
 Any verb not in the list above causes a usage error (exit 2, message to

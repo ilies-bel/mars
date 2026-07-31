@@ -329,7 +329,7 @@ export interface HttpServerDeps {
   /** Remove a leftover worktree by its id (terminal/absent task). */
   pruneWorktree: (id: string) => Promise<void>
   /**
-   * Reject a draft proposal: flip its status from `draft` → `dismissed` and
+   * Dismiss a draft proposal: flip its status from `draft` → `dismissed` and
    * emit `proposal.dismissed`, which causes the action-queue projection to drop
    * the row. Throws when the proposal has dependent tasks (let the error
    * propagate to the existing `sendError` path so the UI surfaces it).
@@ -661,7 +661,7 @@ const handleEventsRequest = async (
  *   POST /actions/unblock/:id    → phantom-recover a blocked task
  *   POST /actions/purge/:id      → drop a task + worktree
  *   POST /actions/prune-worktree/:id → remove a stale worktree
- *   POST /actions/dismiss/:id    → reject a draft proposal (draft → dismissed)
+ *   POST /actions/dismiss/:id    → dismiss a draft proposal (draft → dismissed)
  *   POST /actions/validate/:id   → approve a preview-gated task (→ merge)
  *   POST /actions/reject/:id     → reject a preview-gated task (→ failed)
  *   POST /actions/restart-daemon       → re-exec the daemon

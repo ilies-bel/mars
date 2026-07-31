@@ -160,8 +160,8 @@ Then act on the answer:
 - **No, keep shaping** → tell the user to run `/mars:grill <id>` again
   to revisit specific branches. Do not re-interview here. The action queue row
   correctly stays — the proposal is still a draft. End your turn.
-- **No, abandon** → `mars proposal reject <id>` and end with one line:
-  `Rejected <id>.` Rejecting also moves the proposal out of `draft`, so
+- **No, abandon** → `mars proposal dismiss <id>` and end with one line:
+  `Dismissed <id>.` Dismissing also moves the proposal out of `draft`, so
   the action queue row clears on the next read.
 
 If the promote (or reject) command fails, surface the error verbatim in

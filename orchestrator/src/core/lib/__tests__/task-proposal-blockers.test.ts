@@ -19,7 +19,7 @@ interface Queue {
 
 interface Proposals {
   createProposal: typeof import('../../proposals').createProposal
-  rejectProposal: typeof import('../../proposals').rejectProposal
+  dismissProposal: typeof import('../../proposals').dismissProposal
   deleteProposal: typeof import('../../proposals').deleteProposal
   getProposal: typeof import('../../proposals').getProposal
   initProposals: typeof import('../../proposals').initProposals
@@ -152,7 +152,7 @@ describe('task_proposal_blockers (ADR-0015 task->idea cross-graph edge)', () => 
     const idea = await p.createProposal('blocking idea')
     await q.addProposalBlockers(dependent.id, [idea.id])
 
-    await expect(p.rejectProposal(idea.id)).rejects.toThrow(
+    await expect(p.dismissProposal(idea.id)).rejects.toThrow(
       new RegExp(
         `cannot be dismissed.*${dependent.id}`,
       ),
@@ -181,7 +181,7 @@ describe('task_proposal_blockers (ADR-0015 task->idea cross-graph edge)', () => 
     const idea = await p.createProposal('blocking idea')
     await q.addProposalBlockers(dependent.id, [idea.id])
     await q.removeProposalBlocker(dependent.id, idea.id)
-    const dismissed = await p.rejectProposal(idea.id)
+    const dismissed = await p.dismissProposal(idea.id)
     expect(dismissed.status).toBe('dismissed')
   })
 })

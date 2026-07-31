@@ -1,6 +1,6 @@
 ---
 name: proposals
-description: Show Mars draft proposals and act on a single one — grill (shape into PRD), promote, reject, or delete. Lists drafts only; the action queue lives in `/mars:action-queue` and alerts live in `/mars:alerts`. Use when the user says "mars proposals", "show proposals", "refine a proposal", "what proposals do I have", or invokes `/mars:proposals`.
+description: Show Mars draft proposals and act on a single one — grill (shape into PRD), promote, dismiss, or delete. Lists drafts only; the action queue lives in `/mars:action-queue` and alerts live in `/mars:alerts`. Use when the user says "mars proposals", "show proposals", "refine a proposal", "what proposals do I have", or invokes `/mars:proposals`.
 ---
 
 # Mars: proposals router
@@ -101,7 +101,7 @@ is shown. Then offer the four draft-side actions via **one**
   to `prd-ready`. Only valid once the proposal is already shaped (has
   problem / solution / user stories). Slicing creates the underlying
   tasks separately; this verb does not enqueue.
-- **Reject** — `mars proposal reject <id>`. Flips status to `dismissed`
+- **Dismiss** — `mars proposal dismiss <id>`. Flips status to `dismissed`
   while keeping the row for history. Use when the proposal is no longer
   worth pursuing.
 - **Delete** — `mars proposal delete <id>`. Hard delete; cascades

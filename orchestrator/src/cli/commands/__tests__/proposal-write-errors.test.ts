@@ -56,6 +56,55 @@ afterEach(() => {
 })
 
 describe('proposal write commands', () => {
+  it('dismisses a draft proposal and reports the dismissed status through the CLI', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const { createProposal } = await import('../../../core/proposals')
+    const { makeFakeDaemon } = await import('../../test-adapter')
+    const proposal = await createProposal('Dismiss through the CLI')
+    const opts = { store, ctx, daemon: makeFakeDaemon() }
+
+    const dismissed = await run(['proposal', 'dismiss', proposal.id], opts)
+    const shown = await run(['proposal', 'show', proposal.id], opts)
+
+    expect(dismissed.code).toBe(0)
+    expect(dismissed.out).toEqual([`dismissed ${proposal.id}`])
+    expect(dismissed.err).toEqual([
+      expect.stringContaining(`proposal ${proposal.id} dismissed;`),
+    ])
+    expect(shown.code).toBe(0)
+    expect(shown.out).toContain('status:     dismissed')
+  })
+
+  it('refuses to write the retired rejected proposal status', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const { createProposal } = await import('../../../core/proposals')
+    const { makeFakeDaemon } = await import('../../test-adapter')
+    const proposal = await createProposal('Reject status is retired')
+
+    const result = await run(
+      ['proposal', 'set', proposal.id, 'status', 'rejected'],
+      { store, ctx, daemon: makeFakeDaemon() },
+    )
+
+    expect(result.code).toBe(1)
+    expect(result.out).toEqual([])
+    expect(result.err.join('\n')).toMatch(/invalid proposal status.*rejected/i)
+  })
+
+  it('does not keep proposal reject as an alias for dismiss', async () => {
+    const { store, ctx } = await loadStoreAndCtx()
+    const { makeFakeDaemon } = await import('../../test-adapter')
+
+    const result = await run(
+      ['proposal', 'reject', 'any-id'],
+      { store, ctx, daemon: makeFakeDaemon() },
+    )
+
+    expect(result.code).toBe(2)
+    expect(result.err.join('\n')).toMatch(/Lifecycle:.*dismiss/i)
+    expect(result.err.join('\n')).not.toMatch(/\breject\b/i)
+  })
+
   it('reports a successful field update to stdout with exit code 0', async () => {
     const { store, ctx } = await loadStoreAndCtx()
     const { createProposal } = await import('../../../core/proposals')

@@ -14,7 +14,7 @@ import {
   setProposalField,
   addProposalUserStory,
   removeProposalUserStory,
-  rejectProposal,
+  dismissProposal,
   deleteProposal,
   listProposals,
   addProposalDependencies,
@@ -383,22 +383,22 @@ const proposalSlice: Command = {
   },
 }
 
-const proposalReject: Command = {
-  path: 'proposal reject',
-  summary: 'reject a proposal',
-  usage: 'usage: mars proposal reject <id>',
+const proposalDismiss: Command = {
+  path: 'proposal dismiss',
+  summary: 'dismiss a proposal',
+  usage: 'usage: mars proposal dismiss <id>',
   run: async (args, deps) => {
     const id = args.positional[0]
     if (!id) {
-      deps.err('usage: mars proposal reject <id>')
+      deps.err('usage: mars proposal dismiss <id>')
       return { code: 2 }
     }
     try {
-      const idea = await rejectProposal(id)
-      deps.out(`rejected ${idea.id}`)
+      const idea = await dismissProposal(id)
+      deps.out(`dismissed ${idea.id}`)
       if (!(await isDaemonReachable(deps.ctx.stateDir))) {
         deps.err(
-          `proposal ${idea.id} rejected; the action-queue row will clear when the daemon next runs (daemon not running — run \`mars daemon start\`).`,
+          `proposal ${idea.id} dismissed; the action-queue row will clear when the daemon next runs (daemon not running — run \`mars daemon start\`).`,
         )
       }
     } catch (error: unknown) {
@@ -882,7 +882,7 @@ const proposalGroupUsage = `usage: mars proposal <subcommand>
 
   CRUD:      add  list  show  set  delete
   PRD:       add-user-story  remove-user-story
-  Lifecycle: promote  slice  approve  take  reslice  reject
+  Lifecycle: promote  slice  approve  take  reslice  dismiss
   Blockers:  block  unblock  blockers  block-task  unblock-task  task-blockers
   Reports:   ship-summary`
 
@@ -907,7 +907,7 @@ export const proposalCommands: readonly Command[] = [
   proposalTake,
   proposalApprove,
   proposalReslice,
-  proposalReject,
+  proposalDismiss,
   proposalDelete,
   proposalList,
   proposalBlock,

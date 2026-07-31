@@ -39,7 +39,7 @@ import {
   resolveProposalId,
   promoteProposal,
   deleteProposal,
-  rejectProposal,
+  dismissProposal,
   addProposalDependencies,
   listProposalDependencies,
   removeProposalDependency,
@@ -105,7 +105,7 @@ export interface DomainStateStore {
   resolveProposalId(idOrPrefix: string): Promise<ProposalIdResolution>
   promoteProposal(idOrPrefix: string): Promise<Proposal>
   deleteProposal(idOrPrefix: string): Promise<string>
-  rejectProposal(idOrPrefix: string): Promise<Proposal>
+  dismissProposal(idOrPrefix: string): Promise<Proposal>
   addProposalDependencies(
     idOrPrefix: string,
     dependsOn: readonly string[],
@@ -163,7 +163,7 @@ export const createStateStore = (client: DbClient | null): DomainStateStore => {
     resolveProposalId: (idOrPrefix) => resolveProposalId(idOrPrefix),
     promoteProposal: (idOrPrefix) => promoteProposal(idOrPrefix),
     deleteProposal: (idOrPrefix) => deleteProposal(idOrPrefix),
-    rejectProposal: (idOrPrefix) => rejectProposal(idOrPrefix),
+    dismissProposal: (idOrPrefix) => dismissProposal(idOrPrefix),
     addProposalDependencies: (idOrPrefix, dependsOn) =>
       addProposalDependencies(idOrPrefix, dependsOn),
     listProposalDependencies: (idOrPrefix) =>

@@ -62,7 +62,7 @@ import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
  *                                the daemon-killed signature in one request.
  * - `copy`                     — client-side only; the UI copies `hint` verbatim
  *                                to the clipboard. Must NEVER reach the daemon.
- * - `dismiss`                  — reject a draft proposal: flips its status from
+ * - `dismiss`                  — dismiss a draft proposal: flips its status from
  *                                `draft` → `dismissed` and drops the action-queue
  *                                row.
  * - `validate`                 — approve a task parked at the preview gate: kill
