@@ -176,12 +176,11 @@ Commands:
                                 --limit <n> shows n rows; --all shows every
                                 matching task.
   continue <id> [<id> ...]      resume failed task(s) on their existing
-                                worktree+branch, jumping straight into the
-                                failed phase (verify or merge). Refuses if a
-                                task is not 'failed', has no recorded
-                                failed_phase, failed in the 'code' phase, or
-                                lost its worktree on disk — use 'mars restart'
-                                instead. Stops on the first error.
+                                worktree+branch. Code-phase failures preserve
+                                and resume prior work; pre-setup or missing-
+                                worktree failures degrade safely to restart.
+                                Refuses only non-failed tasks or tasks with an
+                                in-flight recovery. Stops on the first error.
   merge cancel <jobId>          cancel an active merge job by id. Marks the job
                                 canceled in the database and, if the merge worker
                                 is currently processing it, aborts the in-flight
@@ -805,9 +804,8 @@ Flags:
   --all        Show every matching row (overrides --limit)`,
   continue: `mars continue <id> [<id> ...]
 
-Resume failed task(s) on their existing worktree+branch, jumping
-straight into the failed phase (verify or merge). Reuses every commit
-the worker already landed on the task branch.
+Resume failed task(s) on their existing worktree+branch. Reuses every
+commit the worker already landed on the task branch.
 
 Accepts one or more ids; processes them in order and stops on the first
 error (the failing id is printed to stderr and exit is non-zero).
@@ -816,10 +814,17 @@ Flags: none in v1.
 
 Refuses (non-zero exit) when:
   - the task is not in 'failed' status
-  - the task has no recorded failed_phase (legacy row)
-  - the task failed in the 'code' phase (no verifiable artefact)
-  - the branch or worktree is missing on disk
-In those cases reach for 'mars restart <id>' to start over from setup.`,
+  - an in-flight recovery (fix-task) already exists for the task
+
+Code-phase resume: a code-phase failure with its worktree still on disk
+is continuable. Any dangling changes are auto-committed as a salvage
+checkpoint, then the coder resumes with a banner explaining that prior
+work is preserved.
+
+Degraded-to-restart: a pre-setup failure, legacy row without a recorded
+failed_phase, missing branch/worktree path, or worktree missing on disk
+silently delegates to restart instead of exiting non-zero. The response
+reports 'degradedToRestart: true' and prints a note explaining why.`,
   restart: `mars restart <id> [<id> ...]
 
 Re-queue failed, done, merging, or vega-reconciling task(s) from setup.
