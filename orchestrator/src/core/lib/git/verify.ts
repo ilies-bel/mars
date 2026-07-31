@@ -750,10 +750,30 @@ export const selectVerifySteps = (
 }
 
 /**
- * The files a task changed between the integration branch and its task
- * branch, as repo-root-relative slash-separated paths. Empty on any git
- * failure so verification still runs (the root floor) rather than
- * crashing the verify step.
+ * The files a task changed on its own branch, as repo-root-relative
+ * slash-separated paths. Empty on any git failure so verification still
+ * runs (the root floor) rather than crashing the verify step.
+ *
+ * THREE dots, deliberately. `git diff A...B` diffs from the merge-base of
+ * A and B to B — "what did B change since it forked" — which is the only
+ * question this function is asking. Two-dot `A..B` is plain `git diff A B`:
+ * it compares the two TIPS, so as soon as the task branch falls behind the
+ * integration branch (the normal state here — tasks code in parallel while
+ * `main` keeps moving) the output also contains every file the INTEGRATION
+ * branch changed since the fork, rendered as reversals of work the task
+ * never touched. Measured on this repo, a branch 1 commit ahead / 88 behind
+ * reported 218 files under two-dot vs the 23 it actually changed.
+ *
+ * The consequence is not cosmetic: this list feeds {@link selectVerifySteps},
+ * which layers on a verify scope for every scope whose subtree contains a
+ * changed file. Over-reporting makes verify run test suites for scopes the
+ * task never went near (an `orchestrator/`-only task pulling in `ui/`), where
+ * failures have nothing to do with the task. The same two-dot trap has also
+ * produced misleading `--stat` output during merges, where `main`'s newer
+ * commits show up as deletions.
+ *
+ * Two-dot is still correct for "how far ahead is B" (`rev-list --count A..B`)
+ * and for ranges on a single linear history — do not blanket-convert those.
  */
 export const getChangedFiles = async (
   cwd: string,
@@ -764,7 +784,7 @@ export const getChangedFiles = async (
   try {
     const { stdout } = await exec(
       resolveGitBin(),
-      ['diff', '--name-only', `${integrationBranch}..${branch}`],
+      ['diff', '--name-only', `${integrationBranch}...${branch}`],
       { cwd },
       traceCtx,
     )
