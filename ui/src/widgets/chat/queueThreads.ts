@@ -65,7 +65,7 @@ export interface ThreadListFilters {
 }
 
 /** Operational action-queue rows, excluding draft proposals. */
-export function isAlertQueueItem(item: Pick<ActionQueueItem, 'kind'>): boolean {
+export function isAlertQueueItem(item: { kind: string }): boolean {
   return item.kind !== 'draft-proposal'
 }
 
