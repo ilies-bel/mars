@@ -122,6 +122,11 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
     return { degradedToRestart: true, note }
   }
 
+  // `failed` is terminal and general queue updates intentionally cannot leave
+  // a terminal state. Continue is an explicit operator action, so reopen it
+  // through the audited store seam before applying resume metadata below.
+  await store.reopenTerminalTask(id, 'mars continue')
+
   // Code-phase resume: the coder was killed mid-implementation with the
   // worktree intact. Auto-commit any dangling diff as a wip/salvage
   // checkpoint so the resuming coder starts on a clean base and the partial
@@ -163,7 +168,7 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
       error: null,
       requeueAnchorMs: Date.now(),
       requeueDispatchUptimeMs: null,
-    })
+    }, store)
     return { degradedToRestart: false, codePhaseResume: true }
   }
 
@@ -177,6 +182,6 @@ export const coreContinueTask = async (id: string): Promise<ContinueResult> => {
     error: null,
     requeueAnchorMs: Date.now(),
     requeueDispatchUptimeMs: null,
-  })
+  }, store)
   return { degradedToRestart: false }
 }
