@@ -48,7 +48,15 @@ export function classifyFailure(failureSignature: string): FailureCategory {
     // gone AND its branch no longer exists, so there is nothing to re-attach.
     // Orchestration, not code: no edit to any file can restore a deleted
     // worktree, and routing it to a code fixer would burn the recovery slot.
-    failureSignature.startsWith('code:worktree-missing')
+    failureSignature.startsWith('code:worktree-missing') ||
+    // {setup,code}:worktree-rebase-conflict fires when a task's branch cannot
+    // be replayed onto the integration tip. The rebase is aborted and the
+    // worktree left untouched; resolving it means reconciling two git
+    // histories, which is exactly what the vcs-supervisor / operator does.
+    // Routing it to a code fixer would burn the single recovery slot on an
+    // agent that cannot even see the conflict.
+    failureSignature.startsWith('setup:worktree-rebase-conflict') ||
+    failureSignature.startsWith('code:worktree-rebase-conflict')
   ) {
     return 'orchestration'
   }

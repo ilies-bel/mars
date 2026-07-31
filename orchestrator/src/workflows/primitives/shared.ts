@@ -86,6 +86,12 @@ export const CONTEXT_EXHAUSTED_ABORT_MESSAGE = (taskId: string): string =>
 export const ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE = (taskId: string): string =>
   `recovery ${taskId} aborted: origin worktree is missing and cannot be attached`
 
+// Thrown when a task's worktree cannot be brought up to date with the
+// integration branch because replaying its branch conflicts. The rebase is
+// aborted and the worktree left exactly as found.
+export const WORKTREE_REBASE_CONFLICT_ABORT_MESSAGE = (taskId: string): string =>
+  `task ${taskId} aborted: its worktree cannot be replayed onto the integration branch (conflict); nothing was discarded`
+
 // Thrown by the code step when the coder process exits non-zero before doing
 // any work (e.g. claude rejecting a bad --session-id). Without this the empty
 // worktree would pass verify and merge as a false "done".
