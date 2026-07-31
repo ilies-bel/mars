@@ -29,6 +29,7 @@ import {
 import { isEnvironmentalSignature } from './lib/failure-kinds'
 import { classifyFailure } from './lib/failure-class'
 import { maybeSpawnRescueOperator } from './rescue-operator-spawn'
+import { recordStewardIntervention } from './steward-ledger'
 
 /**
  * Maximum number of times a task can be auto-restarted for an environmental
@@ -1226,6 +1227,14 @@ export const handleTaskFailureWithFixTask = async (
     recipeContext,
     store: s,
     qaNote: input.qaNote,
+  })
+  await recordStewardIntervention({
+    targetKind: 'task',
+    targetId: input.taskId,
+    targetVersion: failureSignature,
+    recipeId: failureSignature,
+    rationale: `Recovery ${result.created ? 'created' : 'reused'} after ${input.failingStep}.`,
+    outcome: result.created ? 'recovery-created' : 'recovery-reused',
   })
 
   // No registered fix recipe → the Arc has no targeted recovery playbook; spawn

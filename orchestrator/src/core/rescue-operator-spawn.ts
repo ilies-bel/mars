@@ -21,6 +21,7 @@ import type { Task } from './queue'
 import type { FixRecipeContext } from './lib/fix-recipes'
 import { buildRescueOperatorPrompt } from './workers/rescue-operator'
 import { incrementRescueAttempts } from './daemon/kpi-store.js'
+import { recordStewardIntervention } from './steward-ledger'
 
 export interface MaybeSpawnRescueOperatorInput {
   failedTask: Task
@@ -83,6 +84,14 @@ export const maybeSpawnRescueOperator = async (
   const rescueTask = await store.enqueueTask(prompt, undefined, {
     tags: ['rescue-operator'],
     originId,
+  })
+  await recordStewardIntervention({
+    targetKind: 'arc',
+    targetId: originId,
+    targetVersion: failureSignature,
+    recipeId: 'rescue-operator',
+    rationale: `No automatic recovery remained after ${failedTask.id} failed.`,
+    outcome: 'rescue-operator-enqueued',
   })
 
   return { spawned: true, rescueTaskId: rescueTask.id }

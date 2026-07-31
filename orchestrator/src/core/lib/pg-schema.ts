@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0003'
+export const SCHEMA_VERSION = '0004'
 
 /** `DEFAULT (unixepoch())` translation. */
 const EPOCH_NOW = "floor(extract(epoch from now()))::bigint"
@@ -821,6 +821,24 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_auto_recipe_runs_ran_at
      ON auto_recipe_runs(ran_at DESC)`,
+
+  // ── Steward intervention ledger ─────────────────────────────────────────
+  // Append-only evidence for every proactive Steward action. The target
+  // version (or content hash) is part of the lookup key so a later version
+  // remains eligible for a fresh intervention.
+  `CREATE TABLE IF NOT EXISTS steward_ledger (
+    id             text        PRIMARY KEY,
+    ts             timestamptz NOT NULL,
+    target_kind    text        NOT NULL,
+    target_id      text        NOT NULL,
+    target_version text        NOT NULL,
+    recipe_id      text        NOT NULL,
+    rationale      text        NOT NULL,
+    outcome        text        NOT NULL,
+    commit_sha     text        NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_steward_ledger_target_version
+     ON steward_ledger(target_kind, target_id, target_version)`,
   // Drop the per-task preview command column: the --preview CLI flag and the
   // preview_cmd column are removed (PRD f354b404 slice 1). Existing rows have
   // the column dropped idempotently; tasks now carry no per-task preview command.
@@ -965,6 +983,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'workflow_step_runs',
   'learned_recipes',
   'auto_recipe_runs',
+  'steward_ledger',
   'merge_jobs',
   'task_deployments',
   'dispatch_spend_control',
