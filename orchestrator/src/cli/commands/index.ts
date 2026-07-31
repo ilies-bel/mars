@@ -48,12 +48,14 @@ import { mcpWorkerCommands } from './mcp-worker'
 import { worktreeCommands } from './worktree'
 import { budgetCommands } from './budget'
 import { stewardCommands } from './steward'
+import { previewValidationCommands } from './preview-validation'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
   ...proposalCommands,
   ...lifecycleCommands,
   ...stepCommands,
+  ...previewValidationCommands,
   ...workerCommands,
   ...glossaryCommands,
   ...adrCommands,

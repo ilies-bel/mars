@@ -159,6 +159,10 @@ Commands:
                                 workflow advances to the next step (auto steps
                                 run immediately; the next manual step parks
                                 awaiting input)
+  validate <id> [<id> ...]      approve preview-gated task(s) and re-queue them
+                                for merge via the running daemon.
+  reject <id> [<id> ...]        reject preview-gated task(s), preserving their
+                                worktrees and marking them failed.
   release <id>                  release a leased worktree without merging;
                                 the worktree is preserved for inspection.
                                 Use --abort to exit without merging.
@@ -1372,7 +1376,24 @@ Subcommands:
       Signal step completion on a live task. The workflow advances to
       the next step: auto steps run immediately; the next manual step
       parks awaiting input. If the verify step fails, fix inside the
-      worktree and run 'step done' again.`,
+      worktree and run 'step done' again. Preview-gated tasks use
+      'mars validate' or 'mars reject' instead.`,
+  validate: `mars validate <task-id> [<task-id> ...]
+
+Approve one or more tasks parked at the preview gate. Each task must be in
+'awaiting-validation' status. Mars calls the running daemon's validate action;
+the daemon tears down the preview and re-queues the task for its merge
+continuation.
+
+Requires a running daemon.`,
+  reject: `mars reject <task-id> [<task-id> ...]
+
+Reject one or more tasks parked at the preview gate. Each task must be in
+'awaiting-validation' status. Mars calls the running daemon's reject action;
+the daemon tears down the preview, marks the task failed, and preserves its
+worktree for inspection.
+
+Requires a running daemon.`,
   release: `mars release <id>
 
 Release a leased worktree. The worktree is preserved for inspection.
