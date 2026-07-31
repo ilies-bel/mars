@@ -8,6 +8,7 @@ import {
   stewardLedgerResponseSchema,
   wywaDeltaResponseSchema,
   chatConfigSchema,
+  chatConversationResponseSchema,
   chatThreadDetailSchema,
   chatThreadsResponseSchema,
   eventsResponseSchema,
@@ -36,6 +37,7 @@ import {
   type StewardLedgerEntry,
   type WywaDeltaResponse,
   type ChatConfig,
+  type ChatConversationEntry,
   type ChatThread,
   type ChatThreadDetail,
   type Decision,
@@ -651,6 +653,15 @@ export const dismissTodoItem = async (
 export const fetchChatThreads = async (projectId?: string): Promise<ChatThread[]> => {
   const json = await fetchJson(appendProject('/api/chat/threads', projectId), chatThreadsResponseSchema)
   return json.threads
+}
+
+/** List every persisted message in the global Subject conversation order. */
+export const fetchChatConversation = async (projectId?: string): Promise<ChatConversationEntry[]> => {
+  const json = await fetchJson(
+    appendProject('/api/chat/conversation', projectId),
+    chatConversationResponseSchema,
+  )
+  return json.entries
 }
 
 /**

@@ -240,6 +240,7 @@ export interface AppServices {
   viewChatThreads: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
   viewChatThread: (id: string) => Promise<{ thread: import('./lib/chat-store').ChatThreadApiView; messages: import('./lib/chat-store').ChatMessageApiView[] } | null>
   viewChatHistory: () => Promise<{ threads: import('./lib/chat-store').ChatThreadApiView[] }>
+  viewChatConversation: () => Promise<{ entries: import('./lib/chat-store').ChatConversationEntryApiView[] }>
   viewSteward: (runtime: { liveCap: number; baselineCap: number; isPaused: boolean }) => Promise<{
     runtimeTuning: {
       acks: Array<{ text: string; timestamp: string; pair: { from: number; to: number } | null }>
@@ -1259,6 +1260,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return { threads: threads.map((t) => toThreadApiView(t, t.last_message_role)) }
   }
 
+  const viewChatConversation: AppServices['viewChatConversation'] = async () => {
+    const { listConversationEntries } = await import('./lib/chat-store')
+    return { entries: await listConversationEntries() }
+  }
+
   const listKpis: AppServices['listKpis'] = () => defaultListKpis()
 
   const listKpisSeries: AppServices['listKpisSeries'] = (limit) =>
@@ -1464,6 +1470,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewChatThreads,
     viewChatThread,
     viewChatHistory,
+    viewChatConversation,
     viewSteward,
   }
 }

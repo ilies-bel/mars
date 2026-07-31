@@ -29,6 +29,38 @@ vi.mock('../codex-api', async (importOriginal) => {
   }
 })
 
+describe('GET /view/chat/conversation', () => {
+  it('serves the chronological cross-subject conversation projection', async () => {
+    const { startHttpServer } = await import('../http-server')
+    server = await startHttpServer({
+      chatRunner: new ChatRunner(),
+      restartTask: async () => {}, remergeTask: async () => {}, unblockTask: async () => {},
+      purgeTask: async () => {}, pruneWorktree: async () => {}, dismissProposal: async () => {},
+      promoteProposal: async () => {}, validateTask: async () => {}, rejectTask: async () => {},
+      landWork: async () => {}, investigateWorktree: async () => ({ explanation: '' }),
+      diagnoseFailure: async () => ({ diagnosis: '' }), restartDaemon: async () => {},
+      restartAllDaemonKilled: async () => [], isAcceptingWork: () => true, inFlightCount: () => 0,
+      selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }),
+      enableAutoReflect: async () => {}, stepDone: async () => ({ next: null as string | null }),
+      snoozeItem: async () => {}, recipeCatalog: nullRecipeCatalog, traceStore: nullTraceStore,
+      appServices: stubAppServices({
+        viewChatConversation: async () => ({ entries: [{
+          id: 'message-1', threadId: 'subject-1', subjectId: 'subject-1', subjectTitle: 'A subject', subjectClosed: false,
+          role: 'assistant', content: 'Persisted narration', segments: [], createdAt: '2026-01-01T00:00:00.000Z',
+          kind: 'acknowledgment', backingEntityId: null,
+        }] }),
+      }),
+    })
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/view/chat/conversation`)
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ entries: [expect.objectContaining({
+      subjectTitle: 'A subject', content: 'Persisted narration',
+    })] })
+  })
+})
+
 // Mock skill discovery so the run reaches the API layer without real fs I/O
 // (the assertions below only wait a single setImmediate turn).
 vi.mock('../chat-skills', async (importOriginal) => {

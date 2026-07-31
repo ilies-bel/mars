@@ -1739,6 +1739,13 @@ export const startHttpServer = async (
         .catch((err: unknown) => sendError(res, err))
       return
     }
+    if (req.method === 'GET' && req.url === '/view/chat/conversation') {
+      deps.appServices
+        .viewChatConversation()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
     if (req.method === 'GET' && req.url === '/view/codex-auth') {
       sendJson(res, 200, { needsAuth: deps.chatRunner.isAuthFailed() })
       return

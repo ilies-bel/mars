@@ -1116,6 +1116,26 @@ export const chatThreadDetailSchema = z.object({
   messages: z.array(chatMessageSchema),
 })
 
+/** One persisted message in the cross-Subject conversation projection. */
+export const chatConversationEntrySchema = z.object({
+  id: z.string(),
+  threadId: z.string(),
+  subjectId: z.string(),
+  subjectTitle: z.string(),
+  subjectClosed: z.boolean(),
+  role: z.enum(['user', 'assistant']),
+  /** Durable plain text used when this message predates typed segments. */
+  content: z.string(),
+  segments: z.array(z.unknown()).optional().default([]),
+  createdAt: z.string(),
+  kind: z.enum(['validation', 'acknowledgment']),
+  backingEntityId: z.string().nullable(),
+})
+
+export const chatConversationResponseSchema = z.object({
+  entries: z.array(chatConversationEntrySchema),
+})
+
 export type ChatSegmentAlertAction = z.infer<typeof chatSegmentAlertActionSchema>
 export type AlertVerb = z.infer<typeof alertVerbSchema>
 export type AlertHumanDetail = z.infer<typeof alertHumanDetailSchema>
@@ -1133,6 +1153,8 @@ export type ChatMessage = z.infer<typeof chatMessageSchema>
 export type ChatThread = z.infer<typeof chatThreadSchema>
 export type ChatThreadsResponse = z.infer<typeof chatThreadsResponseSchema>
 export type ChatThreadDetail = z.infer<typeof chatThreadDetailSchema>
+export type ChatConversationEntry = z.infer<typeof chatConversationEntrySchema>
+export type ChatConversationResponse = z.infer<typeof chatConversationResponseSchema>
 
 // ---------------------------------------------------------------------------
 // Chat agent configuration (GET /api/chat/config)

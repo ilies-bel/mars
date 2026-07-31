@@ -770,6 +770,11 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        if (path === '/api/chat/conversation' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/chat/conversation')
+          return jsonResponse(r.status, r.body)
+        }
+
         if (path === '/api/chat/history' && req.method === 'GET') {
           const r = await proxyGet(ctx.stateDir, '/view/chat/history')
           return jsonResponse(r.status, r.body)

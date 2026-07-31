@@ -142,6 +142,26 @@ export interface ChatMessageApiView {
 }
 
 /**
+ * A persisted message in the continuous conversation projection. Unlike a
+ * thread detail message it retains `content`, so records written before typed
+ * segments existed still have an honest text representation for the UI.
+ */
+export interface ChatConversationEntryApiView {
+  id: string
+  threadId: string
+  /** Subject identity (the backing chat thread). */
+  subjectId: string
+  subjectTitle: string
+  subjectClosed: boolean
+  role: MessageRole
+  content: string
+  segments: unknown[]
+  createdAt: string
+  kind: ChatMessageKind
+  backingEntityId: string | null
+}
+
+/**
  * Compute the attention status for a thread given its run status and the role
  * of the most recent message. This is a pure function — no side effects.
  *
@@ -589,6 +609,37 @@ export const listThreads = async (): Promise<ThreadPreview[]> => {
     last_message: (row.last_message as string | null) ?? null,
     last_message_role: (row.last_message_role as string | null) ?? null,
   }))
+}
+
+/**
+ * List the persisted conversation across every Subject in the one global
+ * insertion order. `chat_messages.seq` is deliberately the sole sort key: it
+ * is the ordering the persistence layer assigned, even when timestamps tie.
+ */
+export const listConversationEntries = async (): Promise<ChatConversationEntryApiView[]> => {
+  const c = stateClient()
+  const result = await c.execute(`
+    SELECT m.*, t.title AS subject_title, t.evaporated_at AS subject_evaporated_at
+      FROM chat_messages m
+      JOIN chat_threads t ON t.id = m.thread_id
+     ORDER BY m.seq ASC
+  `)
+  return (result.rows as unknown as Record<string, unknown>[]).map((row) => {
+    const message = rowToMessage(row)
+    return {
+      id: message.id,
+      threadId: message.thread_id,
+      subjectId: message.thread_id,
+      subjectTitle: row.subject_title as string,
+      subjectClosed: row.subject_evaporated_at != null,
+      role: message.role,
+      content: message.content,
+      segments: Array.isArray(message.segments) ? message.segments : [],
+      createdAt: message.created_at,
+      kind: message.kind,
+      backingEntityId: message.backing_entity_id,
+    }
+  })
 }
 
 /**

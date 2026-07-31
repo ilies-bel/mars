@@ -27,6 +27,7 @@ import { isStaticToolUIPart, type ToolUIPart } from 'ai'
 import { applyLiveEvent, emptyLiveBuffer, type LiveBuffer } from '@/shared/chatBuffer'
 import {
   fetchChatThreads,
+  fetchChatConversation,
   fetchChatThread,
   createChatThread,
   postChatMessage,
@@ -92,6 +93,7 @@ import { formatDuration } from '@/shared/time'
 import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
 import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
 import { PastSubjectsColumn } from '@/widgets/chat/PastSubjectsColumn'
+import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
 import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
 import { useTasks } from '@/hooks/useTasks'
 import { SkeletonList } from '@/components/Skeleton'
@@ -1070,6 +1072,7 @@ const ChatConversation = ({
         attachments && attachments.length > 0 ? { body: { attachments } } : undefined,
       )
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+      void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
     },
     [sendMessage, qc],
   )
@@ -1102,6 +1105,7 @@ const ChatConversation = ({
     void stop()
     void qc.invalidateQueries({ queryKey: ['chat-thread', threadId] })
     void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+    void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
   }, [stop, qc, threadId])
 
   // Direct retry: resubmit the last real user message without touching the
@@ -2591,6 +2595,13 @@ export const ChatPage = () => {
     staleTime: 30_000,
   })
 
+  // The conversation endpoint is the persisted portion of Mars's single
+  // chronological conversation, rendered as a timeline below the past Subjects.
+  const { data: conversationEntries = [] } = useQuery({
+    queryKey: ['chat-conversation', projectId],
+    queryFn: () => fetchChatConversation(projectId),
+  })
+
   // Thread detail for the active thread, shared with ContextRail so the Focus
   // panel can display the title and status. React Query dedupes this against
   // ChatConversation's identical query — no extra network request.
@@ -2709,6 +2720,7 @@ export const ChatPage = () => {
     onSuccess: (thread) => {
       void qc.invalidateQueries({ queryKey: ['chat-threads'] })
       void qc.invalidateQueries({ queryKey: ['chat-thread', thread.id] })
+      void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
       setSelectedThreadId(thread.id)
       setSelectedQueueItemId(null)
     },
@@ -2767,6 +2779,7 @@ export const ChatPage = () => {
   // clicks a next-move chip. Kept separate from selectedThreadId so the
   // opening block is never unmounted.
   const [activeSubjectThreadId, setActiveSubjectThreadId] = useState<string | null>(null)
+  const activeConversationThreadId = selectedThreadId ?? activeSubjectThreadId
 
   // Opens a Subject inline when a chip is picked. Arc-failed rows (alerts)
   // reuse the daemon-deduped thread via startThreadFromAlert; other rows get
@@ -2875,17 +2888,7 @@ export const ChatPage = () => {
             </button>
           </div>
         )}
-        {selectedThreadId ? (
-          <ChatConversation
-            key={selectedThreadId}
-            threadId={selectedThreadId}
-            projectId={projectId}
-            prefill={prefill}
-            onPrefillConsumed={() => setPrefill(undefined)}
-            onInsertPrompt={handleInsertPrompt}
-            onLiveBufferChange={setActiveLiveBuffer}
-          />
-        ) : queueSelectionResolved ? (
+        {queueSelectionResolved ? (
           <div
             data-testid="resolved-pane"
             className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
@@ -2985,24 +2988,31 @@ export const ChatPage = () => {
                 )}
               </div>
               <PastSubjectsColumn pastThreads={pastThreads} projectId={projectId} />
-              {activeSubjectThreadId && (
+              <div className="mt-6">
+                <ConversationTimeline
+                  entries={conversationEntries}
+                  activeThreadId={activeConversationThreadId}
+                />
+              </div>
+              {activeConversationThreadId && (
                 <div
                   data-testid="active-subject"
-                  data-thread-id={activeSubjectThreadId}
+                  data-thread-id={activeConversationThreadId}
                   className="mt-4 flex flex-col"
                 >
                   <ChatConversation
-                    key={activeSubjectThreadId}
-                    threadId={activeSubjectThreadId}
+                    key={activeConversationThreadId}
+                    threadId={activeConversationThreadId}
                     projectId={projectId}
-                    onPrefillConsumed={() => {}}
+                    prefill={prefill}
+                    onPrefillConsumed={() => setPrefill(undefined)}
                     onInsertPrompt={handleInsertPrompt}
                     onLiveBufferChange={setActiveLiveBuffer}
                   />
                 </div>
               )}
             </div>
-            {!activeSubjectThreadId && (
+            {!activeConversationThreadId && (
               <div className="flex justify-center px-6 pb-6">
                 <HeroComposer
                   onSend={(msg, files, clearState) =>
