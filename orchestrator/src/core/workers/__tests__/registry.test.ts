@@ -158,13 +158,16 @@ describe('Planner / Slicer / Triager pinned config', () => {
     })
   }
 
-  it('Planner and Slicer use the flagship tier; Triager uses balanced', () => {
+  it('Planner and Slicer use the flagship tier; Triager uses fast on low effort', () => {
     expect(WORKER_CONFIGS.Planner.model).toBe(providerModel(WORKER_PROVIDER, 'flagship'))
     expect(WORKER_CONFIGS.Planner.effort).toBe('high')
     expect(WORKER_CONFIGS.Slicer.model).toBe(providerModel(WORKER_PROVIDER, 'flagship'))
     expect(WORKER_CONFIGS.Slicer.effort).toBe('high')
-    expect(WORKER_CONFIGS.Triager.model).toBe(providerModel(WORKER_PROVIDER, 'balanced'))
-    expect(WORKER_CONFIGS.Triager.effort).toBe('medium')
+    // Triage is a classification call, not a reasoning task: cheapest tier,
+    // lowest effort. Asserted as the TIER, so the pin follows whichever
+    // provider the daemon runs. See WORKER_CONFIGS.Triager for the rationale.
+    expect(WORKER_CONFIGS.Triager.model).toBe(providerModel(WORKER_PROVIDER, 'fast'))
+    expect(WORKER_CONFIGS.Triager.effort).toBe('low')
   })
 
 

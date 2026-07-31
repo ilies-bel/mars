@@ -60,6 +60,23 @@ const setCodexStub = (stub: ClaudeStub): void => {
 const envelope = (jsonResult: unknown): string =>
   JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
 
+// Must match TRIVIAL_GRAPH_SIZE in src/workflows/triage-workflow.ts. An open
+// graph with at most this many OTHER non-done tasks short-circuits the LLM.
+const TRIVIAL_GRAPH_SIZE = 5
+
+// Enqueue `count` filler tasks so the open graph is big enough for the
+// trivial-graph rule NOT to fire and LLM triage to run.
+const fillGraph = async (
+  queue: { enqueueTask: (prompt: string) => Promise<{ id: string }> },
+  count: number,
+): Promise<void> => {
+  for (let i = 0; i < count; i++) {
+    await queue.enqueueTask(`filler task ${i}`)
+  }
+}
+
+const busyGraph = TRIVIAL_GRAPH_SIZE + 1
+
 describe('triage workflow', () => {
   let repo: string
 
@@ -90,11 +107,13 @@ describe('triage workflow', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('implement X')
 
     const triage = await import('../../../workflows/triage-workflow')
     const result = await triage.runTriage(task.id)
 
+    expect(result.triageSkipReason).toBeUndefined()
     expect(result.actionable).toBe(true)
     expect(result.blockerCount).toBe(0)
     const reloaded = await queue.getTask(task.id)
@@ -106,6 +125,7 @@ describe('triage workflow', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
+    await fillGraph(queue, busyGraph)
     const a = await queue.enqueueTask('depends on b')
     const b = await queue.enqueueTask('prerequisite')
 
@@ -134,6 +154,7 @@ describe('triage workflow', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
+    await fillGraph(queue, busyGraph)
     const a = await queue.enqueueTask('thing')
 
     vi.resetModules()
@@ -186,9 +207,9 @@ describe('triage workflow', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    // One extra task so open graph is non-empty (> TRIVIAL_GRAPH_SIZE=0), ensuring
-    // the structured-spec rule fires rather than trivial-graph.
-    await queue.enqueueTask('other task')
+    // Enough other tasks that the graph is NOT trivial, so the structured-spec
+    // rule is what fires rather than trivial-graph.
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('implement X', undefined, {
       spec: {
         files: ['src/foo.ts'],
@@ -224,6 +245,107 @@ describe('triage workflow', () => {
     expect(reloaded?.status).toBe('queued')
   })
 
+  // ── trivial-graph threshold: boundary + verdict equivalence ───────────────
+  //
+  // The short-circuit is only safe if it lands on the SAME classification the
+  // LLM would have produced. These tests pin both halves of that claim:
+  // the skip fires exactly up to the threshold, and the outcome it writes is
+  // byte-for-byte the outcome of an LLM verdict of "actionable, no blockers"
+  // on the very same graph.
+
+  for (const otherTasks of [0, 1, TRIVIAL_GRAPH_SIZE - 1, TRIVIAL_GRAPH_SIZE]) {
+    it(`skips LLM with ${otherTasks} other open task(s) (at or below the threshold)`, async () => {
+      // No Claude stub — if the LLM were called the run would fail outright.
+      vi.resetModules()
+      const queue = await import('../../queue')
+      await queue.migrateQueueSchema()
+      await fillGraph(queue, otherTasks)
+      const task = await queue.enqueueTask('free-prose task')
+
+      const triage = await import('../../../workflows/triage-workflow')
+      const result = await triage.runTriage(task.id)
+
+      expect(result.triageSkipReason).toBe('trivial-graph')
+      expect(result.actionable).toBe(true)
+      expect(result.blockerCount).toBe(0)
+      expect(await queue.listBlockers(task.id)).toEqual([])
+      expect((await queue.getTask(task.id))?.status).toBe('queued')
+    })
+  }
+
+  it(`runs LLM triage at ${TRIVIAL_GRAPH_SIZE + 1} other open tasks (just past the threshold)`, async () => {
+    setClaudeStub({
+      exitCode: 0,
+      stdout: envelope({ actionable: true, reason: 'fine', blockerTaskIds: [] }),
+    })
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    await fillGraph(queue, TRIVIAL_GRAPH_SIZE + 1)
+    const task = await queue.enqueueTask('free-prose task')
+
+    const triage = await import('../../../workflows/triage-workflow')
+    const result = await triage.runTriage(task.id)
+
+    expect(result.triageSkipReason).toBeUndefined()
+  })
+
+  it('the skipped verdict equals the LLM verdict on the same trivial graph', async () => {
+    // Same graph shape, run twice: once through the short-circuit, once through
+    // the LLM path with the verdict the LLM returns for a graph that holds no
+    // candidate blockers. Task state and triage result must match.
+    vi.resetModules()
+    let queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    await fillGraph(queue, TRIVIAL_GRAPH_SIZE)
+    const skipped = await queue.enqueueTask('do the thing')
+
+    let triage = await import('../../../workflows/triage-workflow')
+    const skippedResult = await triage.runTriage(skipped.id)
+    const skippedStatus = (await queue.getTask(skipped.id))?.status
+    const skippedBlockers = await queue.listBlockers(skipped.id)
+
+    // Now the LLM path, on a graph one task larger so the short-circuit does
+    // not fire, with the verdict such a graph yields.
+    vi.resetModules()
+    setClaudeStub({
+      exitCode: 0,
+      stdout: envelope({ actionable: true, reason: 'nothing blocks it', blockerTaskIds: [] }),
+    })
+    queue = await import('../../queue')
+    await fillGraph(queue, 1)
+    const judged = await queue.enqueueTask('do the thing')
+    triage = await import('../../../workflows/triage-workflow')
+    const judgedResult = await triage.runTriage(judged.id)
+
+    expect(judgedResult.triageSkipReason).toBeUndefined()
+    expect(skippedResult.triageSkipReason).toBe('trivial-graph')
+    // The classification itself — actionable, no blockers, promoted to queued —
+    // is identical. Only the reason string (and the token bill) differ.
+    expect(skippedResult.actionable).toBe(judgedResult.actionable)
+    expect(skippedResult.blockerCount).toBe(judgedResult.blockerCount)
+    expect(skippedStatus).toBe((await queue.getTask(judged.id))?.status)
+    expect(skippedBlockers).toEqual(await queue.listBlockers(judged.id))
+  })
+
+  it('an explicitly declared blocker still wins over the trivial-graph skip', async () => {
+    // has-blockers is checked first, so raising the threshold cannot swallow an
+    // operator-declared prerequisite in a small graph.
+    vi.resetModules()
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const a = await queue.enqueueTask('needs b first')
+    const b = await queue.enqueueTask('b')
+    await queue.addBlockers(a.id, [b.id])
+
+    const triage = await import('../../../workflows/triage-workflow')
+    const result = await triage.runTriage(a.id)
+
+    expect(result.triageSkipReason).toBe('has-blockers')
+    expect(await queue.listBlockers(a.id)).toEqual([b.id])
+    expect((await queue.getTask(a.id))?.status).toBe('draft')
+  })
+
   it('runs LLM triage for free-prose tasks in a busy graph', async () => {
     setClaudeStub({
       exitCode: 0,
@@ -236,9 +358,9 @@ describe('triage workflow', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    // One extra task keeps the graph non-empty (> TRIVIAL_GRAPH_SIZE=0) so none
+    // TRIVIAL_GRAPH_SIZE + 1 other open tasks: past the short-circuit, so none
     // of the skip rules fire and the LLM path executes normally.
-    await queue.enqueueTask('other task')
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('free-prose task')
 
     const triage = await import('../../../workflows/triage-workflow')
@@ -276,7 +398,7 @@ describe('triage workflow', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    await queue.enqueueTask('another task keeps the graph non-trivial')
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('Codex triage fixture')
 
     const triage = await import('../../../workflows/triage-workflow')
@@ -314,7 +436,7 @@ describe('triage workflow', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    await queue.enqueueTask('background task')
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('task whose triage fails')
 
     const triage = await import('../../../workflows/triage-workflow')
@@ -363,8 +485,8 @@ describe('triage workflow — optimised data access', () => {
     const a = await queue.enqueueTask('task with pre-declared blocker')
     const b = await queue.enqueueTask('prerequisite task')
     await queue.addBlockers(a.id, [b.id])
-    // Extra task ensures the graph would be non-trivial if fetched
-    await queue.enqueueTask('unrelated background task')
+    // Enough tasks that the graph would be non-trivial if fetched
+    await fillGraph(queue, busyGraph)
 
     const { createTaskStore, getCompositionRootClient } = await import(
       '../../../core/store/task-store'
@@ -383,8 +505,8 @@ describe('triage workflow — optimised data access', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    // Extra task ensures the graph would be non-trivial if fetched
-    await queue.enqueueTask('unrelated background task')
+    // Enough tasks that the graph would be non-trivial if fetched
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('implement X', undefined, {
       spec: {
         files: ['src/foo.ts'],
@@ -522,7 +644,7 @@ describe('triage workflow — optimised data access', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    await queue.enqueueTask('background task')
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('main task')
 
     const { createTaskStore, getCompositionRootClient } = await import(
@@ -547,7 +669,7 @@ describe('triage workflow — optimised data access', () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
-    await queue.enqueueTask('background task')
+    await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('main task')
 
     const { createTaskStore, getCompositionRootClient } = await import(

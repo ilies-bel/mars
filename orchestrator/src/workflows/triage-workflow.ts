@@ -15,13 +15,36 @@ const TASK_GRAPH_LIMIT = 30
 const PROMPT_PREVIEW_CHARS = 200
 
 /**
- * Maximum number of other non-done tasks in the graph for triage to consider
- * the graph "trivially small". When the open graph has at most this many
- * other tasks there is nothing meaningful to be blocked by, so the LLM call
- * is skipped. Set to 0 (skip only when the graph is completely empty — no
- * other non-done tasks exist that could plausibly block the new task).
+ * Maximum number of other non-done tasks in the open graph for triage to
+ * consider the graph "trivially small" and skip the LLM call.
+ *
+ * The graph size counted here is the row count from
+ * `listNonDoneTasks(task.id, TASK_GRAPH_LIMIT)` — the non-done tasks other than
+ * the one being triaged, capped at the number the prompt can render. That set
+ * is also the ONLY thing the LLM can legitimately return: `blockerTaskIds` is
+ * filtered against existing ids and the self-id before it is written, so a
+ * verdict can only ever name a member of this set. (The threshold sits well
+ * below TASK_GRAPH_LIMIT, so the cap never distorts the comparison.)
+ *
+ * Set to 5. Rationale:
+ *  - 0 (the previous value) means "skip only when the graph is empty", i.e.
+ *    never in practice. It fired the LLM for every single task — 1,303 runs
+ *    and ~31M tokens in production for a question a rule can answer.
+ *  - The skip verdict (`actionable: true`, no new blocker edges) matches the
+ *    LLM's verdict whenever the LLM would have found no blocker among the
+ *    candidates. With ≤ 5 other open tasks the operator has the whole queue in
+ *    view and declares real prerequisites explicitly with `--blocked-by`,
+ *    which the `has-blockers` rule (checked first) already honours.
+ *  - Above ~5 the graph is large enough that a genuine unwritten-prerequisite
+ *    relation the operator did not declare becomes plausible, which is exactly
+ *    the judgement worth paying an LLM for.
+ *
+ * Note this rule, at ANY value including the old 0, gives up the non-graph
+ * axis of the verdict (a task that needs a user decision before it can start).
+ * Raising the threshold does not change that trade-off; it only widens the
+ * range over which the blocker-detection axis is answered by rule.
  */
-const TRIVIAL_GRAPH_SIZE = 0
+const TRIVIAL_GRAPH_SIZE = 5
 
 const triageInputSchema = z.object({
   taskId: z.string(),
@@ -170,9 +193,9 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
       }
 
       // ── Skip rule 3: trivial-graph ───────────────────────────────────────
-      // Fetch only the rows we need for the task graph.  If none come back the
-      // graph is empty (≤ TRIVIAL_GRAPH_SIZE = 0) and there is nothing to be
-      // blocked by, so we skip immediately.
+      // Fetch only the rows we need for the task graph. When at most
+      // TRIVIAL_GRAPH_SIZE come back there is nothing meaningful to be blocked
+      // by, so we skip immediately rather than pay for an LLM call.
       const graphTasks = await store.listNonDoneTasks(task.id, TASK_GRAPH_LIMIT)
       if (graphTasks.length <= TRIVIAL_GRAPH_SIZE) {
         return skipWith('trivial-graph', 0)

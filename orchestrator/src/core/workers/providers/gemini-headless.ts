@@ -1,8 +1,9 @@
 // Gemini headless adapter — normalises the gemini CLI line-buffered stdout
 // into the orchestrator's ClaudeEvent shape so downstream readers work
-// unchanged. The adapter is deliberately minimal: context-token metering,
-// quota-rejection detection, and session-id extraction are all false/null
-// because the gemini CLI does not expose those signals.
+// unchanged. The adapter is deliberately minimal: token usage,
+// quota-rejection detection, and session-id extraction are all absent/null
+// because the gemini CLI does not expose those signals — usage semantics are
+// therefore 'none' and no token signal is reported for a gemini run.
 
 import { runSubprocessStreaming, buildWorkerEnv, type RunClaudeResult } from '../../lib/git/claude'
 import type { ClaudeEvent } from '../../lib/claude-stream'
@@ -40,6 +41,7 @@ export const readGeminiOutput = (stdout: string): ClaudeEvent[] =>
 
 export const geminiHeadless: HeadlessAdapter = {
   capabilities: {
+    usageSemantics: 'none',
     quotaRejected: false,
     sessionId: false,
   },

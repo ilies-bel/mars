@@ -61,6 +61,39 @@ describe('ctx% evaluator', () => {
   })
 })
 
+describe('ctx% evaluator — provider-blind readings are refused', () => {
+  it('reports nothing when contextTokens is absent (provider cannot report occupancy)', () => {
+    // A cumulative-usage provider (codex) or a no-usage provider (gemini)
+    // never emits contextTokens. The evaluator must stay silent rather than
+    // report a fabricated 0%.
+    const results = evaluateStep('run-claude-code', makePayload({ inputTokens: 500 }))
+    expect(results.find((r) => r.label === 'ctx%')).toBeUndefined()
+  })
+
+  it('never derives ctx% from cumulativeTokens', () => {
+    // The production bug: 289,216 cumulative codex tokens read as occupancy
+    // against a 200k window reported >140%, tripping context-overflow handling
+    // on a run nowhere near the limit.
+    const results = evaluateStep('run-claude-code', makePayload({ cumulativeTokens: 289_216 }))
+    expect(results.find((r) => r.label === 'ctx%')).toBeUndefined()
+  })
+})
+
+describe('spend evaluator', () => {
+  it('reports cumulative token spend as spend, not as a percentage', () => {
+    const results = evaluateStep('run-claude-code', makePayload({ cumulativeTokens: 289_216 }))
+    const spend = results.find((r) => r.label === 'spend')
+    expect(spend).toBeDefined()
+    expect(spend!.value).toBe('289.2k tok')
+    expect(spend!.warn).toBe(false)
+  })
+
+  it('reports nothing for a per-request provider (contextTokens only)', () => {
+    const results = evaluateStep('run-claude-code', makePayload({ contextTokens: 100_000 }))
+    expect(results.find((r) => r.label === 'spend')).toBeUndefined()
+  })
+})
+
 describe('out/in evaluator', () => {
   it('computes output/input ratio from cumulative inputTokens and outputTokens', () => {
     const results = evaluateStep(

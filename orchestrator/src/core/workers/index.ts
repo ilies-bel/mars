@@ -26,7 +26,12 @@ import {
 } from '../lib/git/claude'
 import type { ClaudeEvent } from '../lib/claude-stream'
 import type { ProviderModelTier, ProviderName } from './providers'
-import { PROVIDERS, PROVIDER_MODELS, resolveProviderName } from './providers'
+import {
+  PROVIDERS,
+  PROVIDER_MODELS,
+  resolveProviderName,
+  reportsContextOccupancy,
+} from './providers'
 import { runPtySession } from './run-pty-session'
 import {
   RESCUE_OPERATOR_SYSTEM_PROMPT,
@@ -38,6 +43,33 @@ import {
 // operator via the action queue (kind='coder-question'). Read-only workers
 // carry this in their disallowedTools so they cannot stall on operator input.
 export const ASK_USER_DENIED_TOOL = 'Bash(mars task ask*)' as const
+
+// Full built-in tool surface of the agent CLIs the orchestrator dispatches.
+// Denying every entry is the ONLY way the provider surface can express "answer
+// from the prompt, take no actions" — neither `claude -p` nor `codex exec`
+// exposes a first-class no-tools switch (codex's `--sandbox read-only` still
+// permits reads, greps, and shell commands). Pinned as an explicit list rather
+// than derived so a new built-in tool shows up as a diff here instead of
+// silently re-opening the surface.
+export const NO_TOOL_USE_DENIED_TOOLS: readonly string[] = [
+  'Agent',
+  'Bash',
+  'BashOutput',
+  'Edit',
+  'ExitPlanMode',
+  'Glob',
+  'Grep',
+  'KillShell',
+  'NotebookEdit',
+  'Read',
+  'SlashCommand',
+  'Task',
+  'TodoWrite',
+  'WebFetch',
+  'WebSearch',
+  'Write',
+  ASK_USER_DENIED_TOOL,
+] as const
 
 // Mutation tools denied for read-only Workers (Planner, Slicer, Triager,
 // BehaviourVerifier, Scorer). A confused agent dispatched into one of those
@@ -124,12 +156,23 @@ export interface WorkerConfig {
   readonly tools?: readonly string[]
   // Normalized wire format for streamed provider output.
   readonly outputFormat: ClaudeOutputFormat
-  // Per-Worker context token budget. Compared against the LATEST assistant
-  // event's input-side token count (input + cache_read + cache_creation) on
-  // each turn; 0 = disabled. Set intentionally below the model's real context
-  // window to kill a run before the provider auto-compacts. A compression-
-  // induced kill is treated as a FAILURE (reason: context-exhausted) and
-  // routed through the normal recovery flow.
+  // Per-Worker context token budget; 0 = disabled. Enforced on two sides:
+  //
+  //   input — before dispatch, the estimated prompt cost is compared against
+  //           this value and an impossible run fails fast
+  //           (assertPromptFitsContextBudget). Applies to EVERY provider.
+  //   in-run — for a provider that reports context occupancy (see
+  //           reportsContextOccupancy) the LATEST assistant event's input-side
+  //           token count (input + cache_read + cache_creation) is compared
+  //           each turn, warning at 80% and killing at 100%. A provider that
+  //           reports only cumulative spend is skipped here: comparing spend
+  //           against a window aborts runs nowhere near the limit.
+  //
+  // Set intentionally below the model's real context window to kill a run
+  // before the provider auto-compacts, and above HARNESS_CONTEXT_FLOOR_TOKENS
+  // so the budget is reachable at all. A compression-induced kill is treated
+  // as a FAILURE (reason: context-exhausted) and routed through the normal
+  // recovery flow.
   readonly maxContextTokens: number
   // Execution runtime for this Worker. All built-in Workers use 'headless'
   // (dispatched via the selected CLI in a non-interactive subprocess). 'pty' is the
@@ -157,6 +200,70 @@ export interface WorkerConfig {
 // MARS_CONTEXT_TOKEN_BUDGET globally overrides all per-worker defaults
 // (useful to tighten or loosen the budget at runtime without editing code).
 // Returns 0 (disabled) when neither the env var nor the override is positive.
+/**
+ * Fixed context every dispatched agent harness occupies BEFORE the task prompt
+ * is even read: the composed system prompt, the built-in tool schemas, any
+ * injected MCP server schemas, and the worktree's own instruction files. It is
+ * the floor a per-worker `maxContextTokens` has to clear to mean anything — a
+ * budget below it kills the run on its first turn while the worker is still
+ * booting, rejecting work that has not overflowed anything.
+ *
+ * 60k is the conservative end of what a headless Claude Code run reports as
+ * baseline occupancy with the codegraph + mars-worker MCP servers injected.
+ * It is a sanity lower bound for BUDGET VALUES, not a runtime deduction: the
+ * pre-flight check below compares the prompt against the raw budget so a
+ * generous budget is never silently shrunk.
+ */
+export const HARNESS_CONTEXT_FLOOR_TOKENS = 60_000
+
+/**
+ * Rough token cost of a prompt. Four characters per token is the standard
+ * English-text approximation and errs slightly LOW on code-heavy prompts,
+ * which is the right direction for a guard that must not reject work it
+ * should have run.
+ */
+export const estimatePromptTokens = (prompt: string): number =>
+  Math.ceil(prompt.length / 4)
+
+/**
+ * Pre-flight context check. Runs before a Worker dispatches anything, on every
+ * provider and both runtimes: if the prompt alone cannot fit the Worker's
+ * context budget, the run is hopeless and burning a full agent invocation to
+ * discover that mid-way is pure waste.
+ *
+ * This is the INPUT-side half of budget enforcement and is the only half that
+ * exists for a provider which cannot report context occupancy (codex, gemini —
+ * see reportsContextOccupancy). Throws with an actionable message; a budget of
+ * 0 disables the check along with the rest of the budget machinery.
+ */
+export const assertPromptFitsContextBudget = (
+  config: WorkerConfig,
+  prompt: string,
+): void => {
+  if (config.maxContextTokens <= 0) return
+  const estimated = estimatePromptTokens(prompt)
+  if (estimated <= config.maxContextTokens) return
+  throw new Error(
+    `Worker ${config.name}: prompt does not fit the context budget — ` +
+      `~${estimated} estimated prompt tokens vs maxContextTokens=${config.maxContextTokens}. ` +
+      `Shrink what the caller embeds in the prompt (fewer/shorter artifacts, diffs, or task-graph rows), ` +
+      `or raise this Worker's maxContextTokens in WORKER_CONFIGS ` +
+      `(MARS_CONTEXT_TOKEN_BUDGET raises it for every Worker at once).`,
+  )
+}
+
+/**
+ * True when a Worker denies the entire built-in tool surface, i.e. it is meant
+ * to answer from its prompt alone. Such a Worker must not receive MCP servers
+ * either: `--disallowedTools` cannot name `mcp__*` tools, so an injected
+ * codegraph / mars-worker server would hand back exactly the repo-browsing
+ * surface the deny-list removed.
+ */
+export const deniesAllToolUse = (config: WorkerConfig): boolean => {
+  const denied = new Set(config.disallowedTools)
+  return NO_TOOL_USE_DENIED_TOOLS.every((tool) => denied.has(tool))
+}
+
 export const resolveWorkerMaxContextTokens = (override?: number): number => {
   const fromEnv = parseInt(process.env.MARS_CONTEXT_TOKEN_BUDGET ?? '0', 10)
   if (Number.isInteger(fromEnv) && fromEnv > 0) return fromEnv
@@ -188,7 +295,8 @@ export interface RunOptions {
    * The task id this invocation is dispatched for. Forwarded to
    * {@link runClaudeCode} so the worker env is stamped with
    * `MARS_MCP_TASK_ID` and the mars-worker MCP server is injected into the
-   * inline `--mcp-config` JSON.
+   * inline `--mcp-config` JSON. Withheld for a Worker that denies the whole
+   * tool surface — see {@link deniesAllToolUse}.
    */
   readonly taskId?: string
 }
@@ -238,8 +346,9 @@ export const CODER_MODEL: string =
 // Fixer also layers backlog-mutation denials so a no-commit Session cannot
 // refile its task as a loose end.
 // Planner, Slicer, and Triager are read-only synthesis stages: default
-// permissions, Edit/Write/NotebookEdit denied. Triager runs on sonnet /
-// medium effort. Bare mode is disabled because
+// permissions, Edit/Write/NotebookEdit denied. Triager goes further — fast
+// tier, low effort, and the whole tool surface denied; see its entry below.
+// Bare mode is disabled because
 // the locally installed claude CLI 2.1.142 fails authentication when --bare
 // is set (returns "Not logged in") even though keychain auth is valid in
 // non-bare invocations.
@@ -248,11 +357,15 @@ export const CODER_MODEL: string =
 // before Claude Code would auto-compact. The 80% warn fires at 144k tokens
 // (well inside the window); the kill fires at 180k — leaving 20k of headroom
 // before the model's 200k limit so compaction never gets a chance to trigger.
-// Triager gets a tighter budget (50k) as a belt-and-suspenders guard given its
-// focused read-only synthesis role.
+// Every budget must clear HARNESS_CONTEXT_FLOOR_TOKENS: the old 50k values for
+// Triager and Scorer sat BELOW the harness's own baseline occupancy, so the
+// moment the guard was actually enforced it would have killed those runs
+// before they read a single line of their prompt. 100k leaves ~40k of genuine
+// working room above the floor for the two focused read-only roles, and still
+// sits far enough under the 200k window that compaction never triggers.
 const CODER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(180_000)
 const GENEROUS_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(180_000)
-const TRIAGER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(50_000)
+const FOCUSED_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(100_000)
 
 export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Coder: {
@@ -297,15 +410,23 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     provider: WORKER_PROVIDER,
     tags: ['slicer'],
   },
+  // Triager: a classification call, not a reasoning task. It is handed a task
+  // prompt plus a rendered task-graph and must answer with one JSON verdict.
+  // Pinned to the FAST tier at low effort — the tier, not a native model id, so
+  // whichever provider the daemon runs (Codex by default) resolves its own
+  // cheapest model. Denied the ENTIRE tool surface (NO_TOOL_USE_DENIED_TOOLS):
+  // it answers from the prompt it is given and must never browse the repo.
+  // Running it as a full agentic loop with repo access made it the single
+  // largest source of wasted spend (1,303 runs / ~31M tokens in production).
   Triager: {
     name: 'Triager',
-    model: providerModel(WORKER_PROVIDER, 'balanced'),
-    effort: 'medium',
+    model: providerModel(WORKER_PROVIDER, 'fast'),
+    effort: 'low',
     permissionMode: 'default',
     bare: false,
-    disallowedTools: READ_ONLY_DENIED_TOOLS,
+    disallowedTools: NO_TOOL_USE_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    maxContextTokens: TRIAGER_CONTEXT_TOKENS,
+    maxContextTokens: FOCUSED_CONTEXT_TOKENS,
     runtime: 'headless',
     provider: WORKER_PROVIDER,
     tags: ['triager'],
@@ -342,7 +463,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    maxContextTokens: resolveWorkerMaxContextTokens(100_000),
+    maxContextTokens: FOCUSED_CONTEXT_TOKENS,
     runtime: 'headless',
     provider: WORKER_PROVIDER,
     tags: ['behaviour-verifier'],
@@ -365,7 +486,7 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     bare: false,
     disallowedTools: READ_ONLY_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    maxContextTokens: resolveWorkerMaxContextTokens(50_000),
+    maxContextTokens: FOCUSED_CONTEXT_TOKENS,
     runtime: 'headless',
     provider: WORKER_PROVIDER,
     tags: ['scorer'],
@@ -419,13 +540,26 @@ export const createWorker = (config: WorkerConfig): Worker => buildWorker(config
 
 const buildWorker = (config: WorkerConfig): Worker => {
   assertSystemPromptShape(config)
+  const provider = PROVIDERS[config.provider]
+  // In-run context-overflow handling (warn at 80%, abort at 100%) reads the
+  // provider's usage stream as occupancy. Only a per-request provider reports
+  // occupancy, so the budget is threaded to the adapter ONLY for those; for a
+  // cumulative-usage provider it would compare turn SPEND against a context
+  // window and abort runs that are nowhere near the limit. Those providers are
+  // covered on the input side by assertPromptFitsContextBudget above.
+  const meteredContextBudget = reportsContextOccupancy(provider.headless)
+    ? config.maxContextTokens
+    : 0
   return {
     config,
     runtime: config.runtime,
-    run: (prompt, options) =>
-      config.runtime === 'pty'
+    // `async` so a pre-flight rejection surfaces as a rejected promise rather
+    // than a synchronous throw — callers hold `run()` to the Promise contract.
+    run: async (prompt, options) => {
+      assertPromptFitsContextBudget(config, prompt)
+      return config.runtime === 'pty'
         ? runPtySession({
-            provider: PROVIDERS[config.provider],
+            provider,
             prompt,
             cwd: options.cwd,
             sessionId: options.sessionId,
@@ -439,7 +573,7 @@ const buildWorker = (config: WorkerConfig): Worker => {
             agent: config.agent,
             appendSystemPrompt: config.appendSystemPrompt,
           })
-        : PROVIDERS[config.provider].headless.run(prompt, {
+        : provider.headless.run(prompt, {
             cwd: options.cwd,
             sessionId: options.sessionId,
             onEvent: options.onEvent,
@@ -450,12 +584,16 @@ const buildWorker = (config: WorkerConfig): Worker => {
             bare: config.bare,
             agent: config.agent,
             disallowedTools: config.disallowedTools,
-            maxContextTokens: config.maxContextTokens,
+            maxContextTokens: meteredContextBudget,
             mcpServers: config.mcpConfig,
             externalAbort: options.externalAbort,
             onPid: options.onPid,
-            taskId: options.taskId,
-          }),
+            // Passing a taskId is what injects the mars-worker (and, with it,
+            // codegraph) MCP servers. A Worker that denies the whole tool
+            // surface must not get them back through MCP — see deniesAllToolUse.
+            taskId: deniesAllToolUse(config) ? undefined : options.taskId,
+          })
+    },
   }
 }
 

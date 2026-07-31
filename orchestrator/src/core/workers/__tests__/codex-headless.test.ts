@@ -346,8 +346,12 @@ describe('codexHeadless.run — (d) null signals', () => {
 // ---------------------------------------------------------------------------
 
 describe('codexHeadless capabilities', () => {
-  it('exposes no unsupported quota-rejection or session-id signals', () => {
+  it("exposes usageSemantics: 'cumulative' and no quota-rejection or session-id signals", () => {
     const { capabilities } = codexHeadless
+    // Codex reports usage ONCE, on turn.completed, as total spend for the
+    // turn. Declaring it 'cumulative' is what stops the orchestrator reading
+    // that number as context occupancy.
+    expect(capabilities.usageSemantics).toBe('cumulative')
     expect(capabilities.quotaRejected).toBe(false)
     expect(capabilities.sessionId).toBe(false)
   })
