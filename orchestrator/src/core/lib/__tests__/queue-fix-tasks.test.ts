@@ -1621,15 +1621,27 @@ describe('phantom-kill routing', () => {
 
     const t = await q.enqueueTask('do some work', undefined, { skipTriage: true })
 
-    // Phantom kill AFTER setup: branch and worktree_path are populated.
+    // Phantom kill AFTER setup: branch and worktree_path are populated AND the
+    // worktree really exists on disk. `hasUsableWorktree` stats the recorded
+    // path before allowing a recovery spawn, so a path that was never created
+    // would route to the worktree-missing escalation instead of the fix-task
+    // path this test is about.
+    //
+    // The row is deliberately left NON-terminal. A `failed` task cannot move to
+    // `blocked` — the tasks trigger rejects it — so every caller that reaches
+    // the spawn path enters non-terminal: the workflow primitives call the
+    // handler mid-run, and the recovery spawner reopens the origin through the
+    // audited seam first. Only the pre-setup escalation runs against a `failed`
+    // row, and that path is covered by the two tests above.
+    const worktreePath = resolve(repo, '.mars', 'worktrees', t.id)
+    mkdirSync(worktreePath, { recursive: true })
     await q.resolveQueueClient().execute({
-      sql: `UPDATE tasks SET status = 'failed',
-              failure_reason = ?, failure_reason_code = ?,
+      sql: `UPDATE tasks SET failure_reason = ?, failure_reason_code = ?,
               failed_phase = 'code',
               error = 'Task auto-failed by phantom-task watchdog (reason: dead-pid, age: 5 min)',
-              branch = 'task/some-branch', worktree_path = '/tmp/some-worktree'
+              branch = 'task/some-branch', worktree_path = ?
             WHERE id = ?`,
-      args: ['phantom-task watchdog: dead-pid', 'phantom-task:dead-pid', t.id],
+      args: ['phantom-task watchdog: dead-pid', 'phantom-task:dead-pid', worktreePath, t.id],
     })
 
     const r = await ft.handleTaskFailureWithFixTask({
