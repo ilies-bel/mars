@@ -81,6 +81,18 @@ const parseJsonObj = (raw: unknown): Record<string, unknown> => {
   }
 }
 
+/** Normalise modern epoch timestamps and legacy ISO fixture values. */
+const toEpochMillis = (value: unknown, fallback = 0): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const numeric = Number(value)
+    if (Number.isFinite(numeric)) return numeric
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return fallback
+}
+
 /**
  * Discover which columns a seeded table actually has, so a single SELECT can
  * be built that references only present columns (the integration tests seed
@@ -104,18 +116,21 @@ const tableColumns = async (
 /** State-store adapter over the seeded `action_queue_items` table. */
 const makeStateStore = (dbPath: string): ActionQueueStateStore => {
   const client = createClient({ url: `file:${dbPath}` })
-  const mapRow = (row: Record<string, unknown>): PersistedActionQueueRow => ({
-    id: row.id as string,
-    kind: row.kind as string,
-    priority: row.priority as string,
-    title: (row.title as string) ?? '',
-    body: (row.body as string) ?? '',
-    payload: parseJsonObj(row.payload),
-    context: parseJsonObj(row.context),
-    raisedAt: (row.raised_at as string) ?? '',
-    lastSeenAt: (row.last_seen_at as string) ?? (row.raised_at as string) ?? '',
-    signature: (row.signature as string | null) ?? null,
-  })
+  const mapRow = (row: Record<string, unknown>): PersistedActionQueueRow => {
+    const raisedAt = toEpochMillis(row.raised_at)
+    return {
+      id: row.id as string,
+      kind: row.kind as string,
+      priority: row.priority as string,
+      title: (row.title as string) ?? '',
+      body: (row.body as string) ?? '',
+      payload: parseJsonObj(row.payload),
+      context: parseJsonObj(row.context),
+      raisedAt,
+      lastSeenAt: toEpochMillis(row.last_seen_at, raisedAt),
+      signature: (row.signature as string | null) ?? null,
+    }
+  }
   return {
     listOpenActionQueueItems: async () => {
       try {
@@ -143,7 +158,7 @@ const makeStateStore = (dbPath: string): ActionQueueStateStore => {
           const r0 = row as unknown as Record<string, unknown>
           return {
             ...mapRow(r0),
-            resolvedAt: (r0.resolved_at as string | null) ?? null,
+            resolvedAt: r0.resolved_at === null ? null : toEpochMillis(r0.resolved_at),
             resolution: (r0.resolution as string | null) ?? null,
             resolutionNote: (r0.resolution_note as string | null) ?? null,
             rootCause: (r0.root_cause as string | null) ?? null,
@@ -153,7 +168,9 @@ const makeStateStore = (dbPath: string): ActionQueueStateStore => {
         const lim = limit ?? 50
         const page = rows.slice(0, lim)
         const nextCursor =
-          rows.length > lim ? (page[page.length - 1]?.resolvedAt ?? null) : null
+          rows.length > lim && page[page.length - 1]?.resolvedAt !== null
+            ? String(page[page.length - 1]!.resolvedAt)
+            : null
         return { items: page, nextCursor }
       } catch {
         return { items: [], nextCursor: null }
@@ -689,8 +706,8 @@ const viewStepSpans = async (
               ? endEvent.payload.outcome
               : 'completed'
             : 'running',
-          startedAt: s.timestamp,
-          endedAt: endEvent ? endEvent.timestamp : null,
+          startedAt: new Date(s.timestamp).toISOString(),
+          endedAt: endEvent ? new Date(endEvent.timestamp).toISOString() : null,
           durationMs:
             endEvent && typeof endEvent.payload.durationMs === 'number'
               ? endEvent.payload.durationMs

@@ -129,6 +129,8 @@ describe('GET /api/step-spans', () => {
     const body = (await res.json()) as StepSpansBody
     expect(body.spans).toHaveLength(1)
     expect(body.spans[0]!.taskId).toBe('task-x')
+    expect(body.spans[0]!.startedAt).toEqual(expect.any(String))
+    expect(Number.isNaN(Date.parse(body.spans[0]!.startedAt))).toBe(false)
   })
 
   it('returns an empty spans array when no trace events exist for the originId', async () => {
