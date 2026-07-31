@@ -85,12 +85,12 @@ const createSchema = async (path: string): Promise<Client> => {
     payload TEXT NOT NULL DEFAULT '{}',
     context TEXT NOT NULL DEFAULT '{}',
     raised_by TEXT NOT NULL DEFAULT 'test',
-    raised_at TEXT NOT NULL,
-    last_seen_at TEXT,
+    raised_at INTEGER NOT NULL,
+    last_seen_at INTEGER,
     seen_count INTEGER NOT NULL DEFAULT 1,
     fingerprint TEXT,
     signature TEXT,
-    resolved_at TEXT,
+    resolved_at INTEGER,
     resolution TEXT,
     resolution_note TEXT,
     root_cause TEXT,
@@ -109,10 +109,11 @@ const insertActionQueueItem = async (
     body?: string
     payload?: Record<string, unknown>
     context?: Record<string, unknown>
-    raisedAt?: string
+    /** Epoch milliseconds, matching the `raised_at` bigint column. */
+    raisedAt?: number
   },
 ): Promise<void> => {
-  const now = opts.raisedAt ?? new Date().toISOString()
+  const now = opts.raisedAt ?? Date.now()
   await c.execute({
     sql: `INSERT INTO action_queue_items (id, kind, priority, title, body, payload, context, raised_at, last_seen_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -239,8 +240,8 @@ describe('GET /api/action-queue (persisted view)', () => {
       args: [
         'row-no-task',
         'Observability store oversize',
-        new Date().toISOString(),
-        new Date().toISOString(),
+        Date.now(),
+        Date.now(),
         'observability-store-oversize',
       ],
     })
