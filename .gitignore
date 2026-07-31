@@ -87,7 +87,6 @@ hs_err_pid*
 # are docs/assets/*.png (subdirectory), which are unaffected.
 failed-tasks-*
 /*.png
-/scratch/
 
 # Defensive: SqliteStore undefined-path artifacts (see PRD; validation lives in packages/workflow/src/store-sqlite.ts)
 /orchestrator/undefined
