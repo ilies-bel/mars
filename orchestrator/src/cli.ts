@@ -40,9 +40,10 @@ Commands:
                                 .mcp.json, workflow templates, and databases.
                                 On success, prints 'mars ui --repo <root>' to launch
                                 the read-only Kanban + trace dashboard.
-  update [--yes] [--verbose]
+  update [--force] [--yes | --accept-all] [--verbose]
                                 refresh the framework-owned files an existing
-                                repo received from 'mars init' (CLAUDE.md) and
+                                repo received from 'mars init' (CLAUDE.md,
+                                .mcp.json, .gitignore) and
                                 reconcile the user-owned workflow scaffolds in
                                 .mars/workflows/. Workflow files are NEVER
                                 silently overwritten (ADR-0057): an identical
@@ -51,7 +52,8 @@ Commands:
                                 prompts accept/skip, and a workflow the user
                                 removed from the init manifest is left
                                 untouched. --yes runs non-interactively and
-                                defaults to skip-on-conflict (for CI).
+                                defaults to skip-on-conflict (for CI). Existing
+                                harness files require --force to overwrite.
   task add ("<prompt>" | @<file> | --prompt-file <path> | -)
                                 enqueue a runnable task directly (status='queued',
                                 skips triage; can be picked up by agent runners).
@@ -633,10 +635,11 @@ Flags:
   --wizard-off       skip the wizard on a terminal
   --skip-doctor      bypass the automatic preflight check (claude/git/Node).
                      Use in CI or when the environment is already validated.`,
-  update: `mars update [--yes] [--verbose]
+  update: `mars update [--force] [--yes | --accept-all] [--verbose]
 
 Re-run init in update-mode on an existing repo. Refreshes the
-framework-owned files (root CLAUDE.md) by force, then reconciles the
+framework-owned files (root CLAUDE.md, .mcp.json, .gitignore) only with
+--force, then reconciles the
 user-owned workflow scaffolds under .mars/workflows/ WITHOUT clobbering
 them (ADR-0057).
 
@@ -653,6 +656,8 @@ The init manifest is refreshed on completion so subsequent updates keep
 recognising your owned workflows.
 
 Flags:
+  --force            overwrite existing framework-owned harness files:
+                     CLAUDE.md, .mcp.json, and .gitignore
   --yes, -y          non-interactive (CI): never prompt. Diverged owned
                      workflows default to skip-on-conflict — your version
                      is kept. (--no-edit is an accepted alias.)

@@ -7,6 +7,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
+import { resolve } from 'node:path'
 import { resolveProposalId, getProposal } from '../../core/proposals'
 import { readMaybeFile } from '../args'
 import type { TaskStatus } from '../../core/queue'
@@ -592,9 +593,11 @@ const list: Command = {
 const update: Command = {
   path: 'update',
   summary: 'refresh framework files; diff (never clobber) user-owned workflows',
-  usage: 'usage: mars update [--yes | --accept-all] [--verbose]',
+  usage: 'usage: mars update [--force] [--yes | --accept-all] [--verbose]',
   run: async (args, deps) => {
+    const { existsSync } = await import('node:fs')
     const boolFlags = new Set(args.positional.filter((a) => a.startsWith('--')))
+    const force = boolFlags.has('--force')
     const yes =
       boolFlags.has('--yes') ||
       args.positional.includes('-y') ||
@@ -609,18 +612,36 @@ const update: Command = {
       return { code: 2 }
     }
 
+    // Update mutates these repository-owned harness files. Check before the
+    // daemon-routed init or workflow reconciliation so a missing --force never
+    // leaves the repository half-updated.
+    if (!force) {
+      const existingHarnesses = ['CLAUDE.md', '.mcp.json', '.gitignore'].filter(
+        (rel) => existsSync(resolve(deps.ctx.repoRoot, rel)),
+      )
+      if (existingHarnesses.length > 0) {
+        deps.err(
+          `refusing to overwrite existing harness files (pass --force to replace):\n${existingHarnesses
+            .map((rel) => `  - ${rel}`)
+            .join('\n')}`,
+        )
+        return { code: 1 }
+      }
+    }
+
     // Phase 1: refresh the framework-owned files (CLAUDE.md, …) via the
-    // daemon-routed init workflow with force overwrite. Its scaffold-workflows
-    // step never clobbers user-owned workflows (it runs force:false) — those
-    // are reconciled in phase 2. Running init through the daemon preserves the
-    // single-writer guard so the manifest is never corrupted by a concurrent
-    // write.
+    // daemon-routed init workflow. `--force` is the only authorization for an
+    // existing harness; a fresh harness needs no overwrite permission. Its
+    // scaffold-workflows step never clobbers user-owned workflows (it runs
+    // force:false) — those are reconciled in phase 2. Running init through the
+    // daemon preserves the single-writer guard so the manifest is never
+    // corrupted by a concurrent write.
     type InitResult = Awaited<
       ReturnType<typeof import('../../workflows/init-workflow').runInit>
     >
     const initResult = (await deps.daemon.sendRequest({
       op: 'init',
-      opts: { force: true, dryRun: false, verbose },
+      opts: { force, dryRun: false, verbose },
     })) as InitResult
 
     if (

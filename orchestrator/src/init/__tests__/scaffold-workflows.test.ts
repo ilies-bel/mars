@@ -412,12 +412,74 @@ describe('mars update — command wiring (in-process)', () => {
 
   const stubStore = {} as unknown as DomainTaskStore
 
+  it('refuses to overwrite an existing harness before reconciling workflows', async () => {
+    const harness = resolve(repoRoot, 'CLAUDE.md')
+    writeFileSync(harness, '# local harness\n', 'utf8')
+    writeFileSync(resolve(repoRoot, '.mcp.json'), '{"local":true}\n', 'utf8')
+    writeFileSync(resolve(repoRoot, '.gitignore'), 'local-only\n', 'utf8')
+    const fake = makeFakeDaemon()
+
+    const r = await runCommandInProcess(['update'], {
+      store: stubStore,
+      ctx: fakeCtx(),
+      daemon: fake,
+    })
+
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('CLAUDE.md')
+    expect(r.err.join('\n')).toContain('.mcp.json')
+    expect(r.err.join('\n')).toContain('.gitignore')
+    expect(r.err.join('\n')).toContain('--force')
+    expect(readFileSync(harness, 'utf8')).toBe('# local harness\n')
+    expect(fake.calls).toEqual([])
+    expect(existsSync(destOf('task-workflow.js'))).toBe(false)
+  })
+
+  it('treats --yes as non-interactive rather than permission to overwrite', async () => {
+    const harness = resolve(repoRoot, '.gitignore')
+    writeFileSync(harness, 'local-only\n', 'utf8')
+    const fake = makeFakeDaemon()
+
+    const r = await runCommandInProcess(['update', '--yes'], {
+      store: stubStore,
+      ctx: fakeCtx(),
+      daemon: fake,
+    })
+
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('.gitignore')
+    expect(readFileSync(harness, 'utf8')).toBe('local-only\n')
+    expect(fake.calls).toEqual([])
+  })
+
+  it('with --force sends the overwrite request before updating workflows', async () => {
+    const harness = resolve(repoRoot, 'CLAUDE.md')
+    writeFileSync(harness, '# local harness\n', 'utf8')
+    const fake = makeFakeDaemon((req) => {
+      if (req.op === 'init' && req.opts.force) {
+        writeFileSync(harness, '# bundled harness\n', 'utf8')
+        return { status: 'ok', message: 'ok', written: ['CLAUDE.md'] }
+      }
+      return {}
+    })
+
+    const r = await runCommandInProcess(['update', '--force', '--yes'], {
+      store: stubStore,
+      ctx: fakeCtx(),
+      daemon: fake,
+    })
+
+    expect(r.code).toBe(0)
+    expect(readFileSync(harness, 'utf8')).toBe('# bundled harness\n')
+    expect(fake.calls).toHaveLength(1)
+  })
+
   it('routes `update` via dispatch and scaffolds missing workflows', async () => {
     // Daemon stands in for phase-1 init (force refresh of framework files).
     const fake = makeFakeDaemon((req) =>
       req.op === 'init' ? { status: 'ok', message: 'ok', written: ['CLAUDE.md'] } : {},
     )
-    const r = await runCommandInProcess(['update', '--yes'], {
+    const r = await runCommandInProcess(['update', '--force', '--yes'], {
       store: stubStore,
       ctx: fakeCtx(),
       daemon: fake,
