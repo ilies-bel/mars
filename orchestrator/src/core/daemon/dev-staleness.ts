@@ -1,11 +1,7 @@
-/**
- * Staleness comparison for the dev-install daemon. A daemon started on
- * commit A is "stale" once main advances to commit B — it keeps running
- * the old in-memory code with no indication to the operator.
- *
- * This is a pure comparison; the git I/O lives in server.ts so the
- * function remains synchronous and trivially testable.
- */
+import { execProbe, resolveGitBin } from '../lib/git/internal'
+
+/** Paths whose committed contents can alter daemon behaviour after startup. */
+const DAEMON_CODE_PATHS = ['orchestrator/src', 'packages/workflow', '.mars/workflows']
 
 /**
  * Return true when the daemon's running source has drifted from the current
@@ -27,4 +23,25 @@ export const isStaleDev = (
   if (installRoute !== 'dev') return false
   if (sourceSha === null || currentSha === null) return false
   return sourceSha !== currentSha
+}
+
+/**
+ * Return whether commits since daemon startup changed code or workflows the
+ * daemon can execute. Commits outside this set (such as UI auto-commits) do
+ * not make an in-memory daemon stale.
+ */
+export const hasRelevantDevDrift = async (
+  sourceSha: string | null,
+  currentSha: string | null,
+  installRoute: 'dev' | 'prod',
+  repoDir: string | null,
+): Promise<boolean> => {
+  if (!isStaleDev(sourceSha, currentSha, installRoute) || repoDir === null) return false
+
+  const result = await execProbe(
+    resolveGitBin(),
+    ['diff', '--quiet', `${sourceSha}..${currentSha}`, '--', ...DAEMON_CODE_PATHS],
+    { cwd: repoDir },
+  )
+  return result.exitCode === 1
 }

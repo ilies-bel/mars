@@ -67,7 +67,7 @@ import { createScoringPool, resolveScoringLimit } from './scoring-pool'
 import { exec, resolveGitBin } from '../lib/git/internal'
 import { warnWhenRepoRootDiffersFromIntegration } from '../lib/repo-root-branch-warning'
 import { classifyInstallRoute } from './install-route'
-import { isStaleDev } from './dev-staleness'
+import { hasRelevantDevDrift } from './dev-staleness'
 import {
   getDefaultTaskStore,
   getDefaultDomainTaskStore,
@@ -807,15 +807,21 @@ export const startDaemon = async (
   const tracker = createTaskFlightTracker()
   const startedAt = new Date().toISOString()
 
-  // Dev-install source staleness detection. Capture the git HEAD SHA once at
-  // startup so a periodic tick can detect when main has advanced while the
-  // daemon keeps running the old in-memory code. Gate on dev install only;
-  // prod binaries are handled by self-update.ts. On any git error, leave
-  // sourceSha null so we never surface a spurious warning.
+  // Dev-install source staleness detection. Capture the git HEAD SHA and repo
+  // root once at startup so a periodic tick can detect commits that changed
+  // loaded daemon code or workflows. Unrelated auto-commits must not mark the
+  // in-memory daemon stale. Gate on dev install only; prod binaries are
+  // handled by self-update.ts. On any git error, leave sourceSha null so we
+  // never surface a spurious warning.
   const sourceDir = dirname(fileURLToPath(import.meta.url))
   let sourceSha: string | null = null
+  let sourceRepoDir: string | null = null
   if (classifyInstallRoute() === 'dev') {
     try {
+      const { stdout: root } = await exec(resolveGitBin(), ['rev-parse', '--show-toplevel'], {
+        cwd: sourceDir,
+      })
+      sourceRepoDir = root.trim() || null
       const { stdout } = await exec(resolveGitBin(), ['rev-parse', 'HEAD'], { cwd: sourceDir })
       sourceSha = stdout.trim() || null
     } catch {
@@ -4180,7 +4186,7 @@ export const startDaemon = async (
       try {
         const { stdout } = await exec(resolveGitBin(), ['rev-parse', 'HEAD'], { cwd: sourceDir })
         const head = stdout.trim() || null
-        if (isStaleDev(sourceSha, head, classifyInstallRoute())) {
+        if (await hasRelevantDevDrift(sourceSha, head, classifyInstallRoute(), sourceRepoDir)) {
           currentSha = head
           isStale = true
           // Raise a level-triggered action-queue row so operators see the drift
