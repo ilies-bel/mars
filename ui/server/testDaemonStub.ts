@@ -158,7 +158,10 @@ const makeStateStore = (dbPath: string): ActionQueueStateStore => {
           const r0 = row as unknown as Record<string, unknown>
           return {
             ...mapRow(r0),
-            resolvedAt: r0.resolved_at === null ? null : toEpochMillis(r0.resolved_at),
+            // Nullish (not strict-null) guard: a column absent from the seeded
+            // fixture arrives as `undefined`, which must stay `null` rather
+            // than normalising to epoch 0.
+            resolvedAt: r0.resolved_at == null ? null : toEpochMillis(r0.resolved_at),
             resolution: (r0.resolution as string | null) ?? null,
             resolutionNote: (r0.resolution_note as string | null) ?? null,
             rootCause: (r0.root_cause as string | null) ?? null,
@@ -167,10 +170,9 @@ const makeStateStore = (dbPath: string): ActionQueueStateStore => {
         })
         const lim = limit ?? 50
         const page = rows.slice(0, lim)
+        const lastResolvedAt = page[page.length - 1]?.resolvedAt
         const nextCursor =
-          rows.length > lim && page[page.length - 1]?.resolvedAt !== null
-            ? String(page[page.length - 1]!.resolvedAt)
-            : null
+          rows.length > lim && lastResolvedAt != null ? String(lastResolvedAt) : null
         return { items: page, nextCursor }
       } catch {
         return { items: [], nextCursor: null }
