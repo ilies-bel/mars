@@ -33,7 +33,7 @@ describe('classifyFailure — orchestration', () => {
   })
 
   it('classifies /worktree-missing as orchestration', () => {
-    expect(classifyFailure('verify:has-diff/worktree-missing')).toBe<FailureCategory>(
+    expect(classifyFailure('verify:worktree-hygiene/worktree-missing')).toBe<FailureCategory>(
       'orchestration',
     )
   })
@@ -123,7 +123,7 @@ describe('isNonCodeFailure', () => {
   })
 
   it('returns true for orchestration signatures', () => {
-    expect(isNonCodeFailure('verify:has-diff/worktree-missing')).toBe(true)
+    expect(isNonCodeFailure('verify:worktree-hygiene/worktree-missing')).toBe(true)
     expect(isNonCodeFailure('merge:preflight/not-fast-forward')).toBe(true)
   })
 

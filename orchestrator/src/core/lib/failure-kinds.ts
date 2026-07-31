@@ -390,8 +390,16 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
           'The verify step found no commits ahead of the integration branch; the coder made changes but did not commit them.',
         actions: DEFAULT_ACTIONS,
       },
+
+      // ── verify:worktree-hygiene ──────────────────────────────────────────
+      // The pre-verify hygiene probe, reported under its OWN step name. These
+      // were `verify:has-diff/*` until the probe stopped borrowing the
+      // has-diff label: a missing worktree, a drifted branch and stale rebase
+      // state are all conditions in which the diff was never examined at all,
+      // so filing them as diff verdicts made every one of them read as "the
+      // coder produced nothing".
       {
-        signature: 'verify:has-diff/worktree-missing',
+        signature: 'verify:worktree-hygiene/worktree-missing',
         staticEncodable: notEncodable('environmental'),
         warmTitle: 'Task worktree disappeared before verify could run',
         verboseReason:
@@ -399,7 +407,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: WORKTREE_MISSING_ACTIONS,
       },
       {
-        signature: 'verify:has-diff/branch-drift',
+        signature: 'verify:worktree-hygiene/branch-drift',
         staticEncodable: notEncodable('environmental'),
         warmTitle: 'Verify aborted: task worktree is on the wrong branch',
         verboseReason:
@@ -407,11 +415,41 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: WORKTREE_MISSING_ACTIONS,
       },
       {
-        signature: 'verify:has-diff/stale-rebase-state',
+        signature: 'verify:worktree-hygiene/stale-rebase-state',
         staticEncodable: notEncodable('environmental'),
         warmTitle: 'Verify aborted: stale rebase state in task worktree',
         verboseReason:
           'The verify hygiene check detected a stale git rebase state directory (rebase-merge or rebase-apply) in the task worktree, left over from a previously interrupted rebase. This is an infrastructure condition, not a coder error — the task can be restarted.',
+        actions: WORKTREE_MISSING_ACTIONS,
+      },
+      // ── verify:worktree-missing ──────────────────────────────────────────
+      // The verify-step resume preflight found the worktree directory gone and
+      // its branch deleted — almost always because a recovery sharing the
+      // ORIGIN's worktree merged and cleanup reclaimed it (see
+      // `findLiveWorktreeDependents`, which now prevents that).
+      //
+      // MUST be `environmental`. It is a per-task, expected, self-limiting
+      // condition, and `isEnvironmentalSignature` is what keeps such a
+      // condition from feeding the signature-storm streak: without it, one
+      // reclaimed worktree affecting three tasks reads as a systemic storm and
+      // PAUSES THE WHOLE QUEUE — which is exactly what happened. Environmental
+      // also buys the right remedy: auto-restart (restart nulls
+      // branch/worktreePath, so setup carves a fresh worktree), with an
+      // `env-incident` row rather than a pause once the cap is hit.
+      {
+        signature: 'verify:worktree-missing/unclassified',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'Task worktree was reclaimed before verify could run',
+        verboseReason:
+          "The verify step found the task's worktree directory gone and its branch deleted, so there was nothing left to verify in place. This usually means a recovery sharing the worktree merged and cleanup reclaimed it. Infrastructure, not a coder error — the task is restarted onto a fresh worktree.",
+        actions: WORKTREE_MISSING_ACTIONS,
+      },
+      {
+        signature: 'verify:worktree-hygiene/unclassified',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'Verify aborted: the task worktree failed its health check',
+        verboseReason:
+          'The pre-verify hygiene probe rejected the task worktree for a reason with no registered error class. The diff was never inspected, so this is not a statement about the coder’s work.',
         actions: WORKTREE_MISSING_ACTIONS,
       },
       {

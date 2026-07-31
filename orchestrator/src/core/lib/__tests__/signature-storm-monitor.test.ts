@@ -574,7 +574,7 @@ describe('signature-storm — integration via recovery-spawn subscriber', () => 
  *     the origin task's one recovery slot (no fix-task spawned).
  *  3. N consecutive NON-environmental failures MUST still trip the breaker.
  *
- * The environmental signature under test is `verify:has-diff/worktree-missing`:
+ * The environmental signature under test is `verify:worktree-hygiene/worktree-missing`:
  * the worktree was pruned before verify could run (daemon restart incident).
  * Its failure-kinds registry entry carries `staticEncodable: notEncodable('environmental')`.
  */
@@ -601,7 +601,7 @@ describe('environmental-failure policy — no storm, no recovery-budget consumpt
   const ENV_FAILING_STEP = 'verify:has-diff'
   const ENV_ERROR = 'worktree path /tmp/mars-abc123 no longer exists (daemon restarted mid-flight)'
   // This is the full signature computeFailureSignature produces for the above inputs.
-  const ENV_SIGNATURE = 'verify:has-diff/worktree-missing'
+  const ENV_SIGNATURE = 'verify:worktree-hygiene/worktree-missing'
 
   /**
    * Fail a fresh origin task with the environmental signature and drain.

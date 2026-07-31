@@ -88,6 +88,7 @@ import { computeFailureSignature } from '../../core/lib/failure-signature'
 import { resolveOriginIdForTask } from '../../core/lib/origin'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
+import { findLiveWorktreeDependents } from '../../core/lib/worktree-dependents'
 import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
 import {
   summarizeUsage,
@@ -467,12 +468,26 @@ export const spanStore = (trace: PrimitiveTraceArgs): TraceEventStore | undefine
  *     `branch`/`worktreePath`, and keeps `task/<id>` purely as an archive.
  *     Parking the tip on `refs/mars/parked/<id>-<sha>` honours that archive
  *     obligation without dragging a superseded partial turn forward.
- *   - a recovery attached to its ORIGIN's worktree, a main-commiter worktree
- *     carrying migrated dirty state, or a checkpoint-resume → `'escalate'`.
- *     In all three the existing commits ARE the premise of the run, so the
- *     task is failed with a NAMED, `orchestration`-classified signature (the
- *     single recovery slot is not burnt on a code fixer that cannot see a git
- *     conflict) and an operator item is raised.
+ *   - a recovery attached to its ORIGIN's worktree, or a checkpoint-resume →
+ *     `'reconcile'`. The existing commits ARE the premise of the run, so they
+ *     must not be reset — but they must not be a dead end either. The live
+ *     conflict goes to the vcs-supervisor, the agent this repo already uses for
+ *     exactly this at merge time; only if Vega cannot finish does the task fail
+ *     with a NAMED, `orchestration`-classified signature (the single recovery
+ *     slot is not burnt on a code fixer that cannot see a git conflict) and an
+ *     operator item.
+ *   - a main-commiter worktree → `'escalate'`. It is carved off the integration
+ *     tip, so it is current by construction and cannot reach this at all.
+ *
+ * WHY NOT A "VALUABLE VS SUPERSEDED COMMITS" TEST for the recovery case. The
+ * proposal was to recreate when the origin's only commits are orchestrator
+ * `chore(auto-commit)` turns. The live case that motivated this refutes it:
+ * `fix-ec2f6c04`'s origin `mars-76fef59f` was described as carrying an
+ * auto-commit partial turn, but its one unique commit is
+ * `fix(ui): preserve persisted action queue kinds` — a deliberate coder commit,
+ * conflicting in a single test file. An auto-commit subject records WHO
+ * committed (the orchestrator rescuing a coder's uncommitted edits), never
+ * whether the diff matters, so the signal would have discarded real work.
  *
  * `'recreate'` is a SUCCESS path: it records no failure signature, so a fleet
  * of stale branches cannot trip the signature-storm breaker and pause dispatch.
@@ -508,9 +523,19 @@ const ensureWorktreeCurrent = async (args: {
             : `; uncommitted work parked on ${outcome.checkpointRef} and restored`),
       )
     }
+    if (outcome.kind === 'reconciled') {
+      console.log(
+        `[worktree-sync] task ${taskId}: vcs-supervisor reconciled ${ref.branch} onto ` +
+          `${integrationBranch} (${outcome.from.slice(0, 9)} -> ${outcome.to.slice(0, 9)})` +
+          (outcome.vegaSessionId === null
+            ? ''
+            : `; vega session ${outcome.vegaSessionId}`),
+      )
+    }
     // `recreated` is logged (loudly, with the parked ref and the recovery
-    // command) by syncWorktreeToIntegration itself, and is deliberately NOT a
-    // failure: no status write, no signature, no action-queue row.
+    // command) by syncWorktreeToIntegration itself. Neither it nor `reconciled`
+    // is a failure: no status write, no signature, no action-queue row — so
+    // neither can feed the signature-storm breaker.
   } catch (err) {
     if (!(err instanceof WorktreeRebaseConflictError)) throw err
     const reason = `${phase}:worktree-rebase-conflict`
@@ -829,18 +854,27 @@ export const setupWorktree = async (
       // behind the integration branch. Replay it onto the tip BEFORE deps are
       // installed, so the install below reads the current manifests.
       //
-      // Only a task that carves its OWN branch may recreate on conflict. A
-      // recovery attached to its origin's worktree exists to continue THAT
-      // work in place, and a main-commiter worktree carries the integration
-      // checkout's migrated dirty state — resetting either onto the tip would
-      // destroy the premise of the run, so both escalate instead.
+      // Only a task that carves its OWN branch may recreate on conflict.
+      //
+      // A recovery attached to its origin's worktree exists to continue THAT
+      // work in place, so its commits must not be reset — but escalating was a
+      // dead end: the recovery could never start, so it failed, and its origin
+      // sat blocked behind a permanently-failed blocker. It reconciles instead,
+      // handing the live conflict to the vcs-supervisor and only escalating if
+      // Vega cannot finish.
+      //
+      // A main-commiter worktree is carved off the integration tip and is
+      // therefore current by construction; it keeps the conservative default.
       await ensureWorktreeCurrent({
         taskId,
         ref,
         integrationBranch,
         phase: 'setup',
-        onConflict:
-          attachesToOrigin || isMainCommiterFix ? 'escalate' : 'recreate',
+        onConflict: isMainCommiterFix
+          ? 'escalate'
+          : attachesToOrigin
+            ? 'reconcile'
+            : 'recreate',
         traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
         store,
       })
@@ -1133,16 +1167,18 @@ export const runAgent = async (
   // watchdog retry. It is a single `merge-base --is-ancestor` probe when setup
   // already synced and the integration branch has not advanced since.
   //
-  // `escalate`, never `recreate`: by the time the code step runs, the branch's
+  // `reconcile`, never `recreate`: by the time the code step runs, the branch's
   // commits are the run's own prior progress — `resumeFromCodePhase` literally
   // tells the coder "prior progress is already in this worktree, review
-  // `git log -p` and continue". Resetting it here would silently gut that.
+  // `git log -p` and continue". Resetting it here would silently gut that, so
+  // a conflict goes to the vcs-supervisor and only escalates if it cannot be
+  // reconciled.
   await ensureWorktreeCurrent({
     taskId,
     ref: { path: worktreePath, branch },
     integrationBranch,
     phase: 'code',
-    onConflict: 'escalate',
+    onConflict: 'reconcile',
     traceCtx: buildPhaseCtx(trace, taskId, 'code'),
     store,
   })
@@ -3089,12 +3125,35 @@ export const merge = async (
           )
         }
 
-        await removeWorktree(
-          { path: worktreePath, branch },
-          true,
-          false,
-          buildPhaseCtx(trace, taskId, 'merge'),
-        )
+        // Do NOT reclaim a worktree another live task is standing on. A
+        // recovery shares its ORIGIN's directory and branch
+        // (`attachToOriginWorktree`), so removing them here when the recovery
+        // merged pulled the tree out from under a row that was still
+        // dispatchable — the origin then re-dispatched into a deleted
+        // directory (mars-a13334fd did it ten times in under a minute). Keep
+        // both when anyone non-terminal still references them; the sweeper
+        // (`mars worktree clean` / worktree-prune) reclaims them later, once
+        // every referencing row is terminal.
+        const dependents = await findLiveWorktreeDependents({
+          taskId,
+          worktreePath,
+          branch,
+          store,
+        })
+        if (dependents.length > 0) {
+          console.log(
+            `[merge] task ${taskId} merged; PRESERVING worktree ${worktreePath} and branch ${branch} — ` +
+              `still referenced by ${dependents.length} non-terminal task(s): ` +
+              dependents.map((d) => `${d.id}(${d.status})`).join(', '),
+          )
+        } else {
+          await removeWorktree(
+            { path: worktreePath, branch },
+            true,
+            false,
+            buildPhaseCtx(trace, taskId, 'merge'),
+          )
+        }
         await updateTask(taskId, { status: 'done', failedPhase: null }, store)
 
         return {

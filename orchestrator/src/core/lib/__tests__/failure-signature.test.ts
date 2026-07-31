@@ -172,10 +172,10 @@ describe('computeFailureSignature', () => {
     // This is the exact output produced by captureHasDiff in git/verify.ts when
     // the worktree directory has been pruned (e.g. by a daemon restart).
     const sig = computeFailureSignature(
-      'verify:has-diff',
-      'has-diff: worktree path /Users/user/.mars/worktrees/mars-6220813b no longer exists',
+      'verify:worktree-hygiene',
+      'worktree path /Users/user/.mars/worktrees/mars-6220813b no longer exists',
     )
-    expect(sig).toBe('verify:has-diff/worktree-missing')
+    expect(sig).toBe('verify:worktree-hygiene/worktree-missing')
   })
 
   it('leaves genuine empty-diff errors as unclassified (worktree present, no commits)', () => {
@@ -183,7 +183,7 @@ describe('computeFailureSignature', () => {
       'verify:has-diff',
       'git rev-list failed: fatal: not a git repository (or any of the parent directories): .git',
     )
-    expect(sig).not.toBe('verify:has-diff/worktree-missing')
+    expect(sig).not.toBe('verify:has-diff/no-commits-ahead')
   })
 })
 
@@ -525,7 +525,7 @@ describe('causeForSignature', () => {
 
   it('renders an infrastructure-owned cause for the worktree-missing signature naming daemon restart + restart', () => {
     const cause = causeForSignature(
-      'verify:has-diff/worktree-missing',
+      'verify:worktree-hygiene/worktree-missing',
       'mars-1234abcd',
     )
     expect(cause).not.toBeNull()
