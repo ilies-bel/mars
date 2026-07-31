@@ -29,6 +29,10 @@ describe('RECONCILERS registry', () => {
       'orphaned-chat-run-sweep',
       'dead-thread-eviction',
       'blocker-drift-repair',
+      // Fail origins stranded in `blocked` behind their own failed recovery
+      // before anything re-seeds dispatch or re-queues orphaned-blocked rows.
+      'stranded-origin-recovery-repair',
+      'terminal-origin-chore-repair',
       'merge-jobs-startup-reconcile',
       'orphaned-blocked-scan',
       'recovery-done-propagation',

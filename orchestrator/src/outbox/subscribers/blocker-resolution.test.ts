@@ -371,6 +371,245 @@ describe('blocker-resolution: main-committer done must re-queue parked tasks, no
   )
 })
 
+// Regression: an origin whose one-shot recovery FAILS must end in `failed`,
+// never `blocked`.
+//
+// Incident (measured live, 17 origins): a recovery Chore failed, the escalation
+// row was raised correctly, but nothing ever transitioned the origin. It sat in
+// `blocked` behind the one blocker edge that can never reach `done` (a recovery
+// is a leaf and is never re-run — ADR-0040). `blocked` is not terminal, so
+// `mars purge` refused it and `mars restart` refused it: permanently stranded.
+//
+// CLAUDE.md § Blockers / ADR-0040: "if it fails for any reason … the origin goes
+// to `failed` with one actionable action queue item and the operator resolves it
+// explicitly (e.g. `mars restart`)."
+// ---------------------------------------------------------------------------
+describe('blocker-resolution: a failed recovery must fail its origin, not strand it in blocked', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-dead-recovery-test-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo })
+    execFileSync('git', ['config', 'user.name', 'test'], { cwd: repo })
+    mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_FIX_RETRY_BUDGET
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  /**
+   * Build the exact live shape: an origin parked in `blocked` behind its own
+   * failed recovery Chore. The edge is inserted with raw SQL because
+   * `addBlockers` rejects any edge touching a recovery task (ADR-0040 leaf
+   * guard) — the origin→recovery edge is written by the recovery-spawn path.
+   */
+  const strandOriginOnFailedRecovery = async (
+    q: QueueModule,
+    originPrompt = 'implement-feature',
+  ): Promise<{ originId: string; recoveryId: string }> => {
+    const qc = q.resolveQueueClient()
+    const origin = await q.enqueueTask(originPrompt, undefined, { skipTriage: true })
+    const recoveryId = `fix-${origin.id.slice(0, 8)}`
+    const now = new Date().toISOString()
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, failure_reason, failure_signature, created_at, updated_at)
+            VALUES (?, 'fix the code', 'failed', 'fix', 'agent', 'recovery-spawn', ?, 0, ?, 3, ?, ?, ?, ?)`,
+      args: [
+        recoveryId,
+        origin.id,
+        origin.id,
+        'recovery_failed:code/agent-nonzero-exit: boom',
+        'code/agent-nonzero-exit',
+        now,
+        now,
+      ],
+    })
+    await qc.execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
+            VALUES (?, ?, 'confirmed', ?)`,
+      args: [origin.id, recoveryId, now],
+    })
+    await qc.execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [origin.id],
+    })
+    return { originId: origin.id, recoveryId }
+  }
+
+  it('drains task.terminal { reason: failed } for a recovery and fails its origin', async () => {
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+    const { originId, recoveryId } = await strandOriginOnFailedRecovery(q)
+
+    expect((await q.getTask(originId))?.status).toBe('blocked')
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: recoveryId, reason: 'failed' })
+    const { processed } = await sub.drainBlockerResolution(qc)
+
+    expect(processed).toBeGreaterThan(0)
+    const originAfter = await q.getTask(originId)
+    // The whole point: terminal, so `mars restart` / `mars purge` accept it.
+    expect(originAfter?.status).toBe('failed')
+    expect(originAfter?.status).not.toBe('blocked')
+    expect(originAfter?.failureReason).toContain('origin_recovery_failed:')
+    expect(originAfter?.failureReason).toContain(recoveryId)
+  })
+
+  it('does not cascade the failure to the origin’s own dependents', async () => {
+    // CLAUDE.md: "A blocker that ends in `failed` leaves its dependents waiting
+    // in `blocked` … the failure does not cascade down the chain."
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+    const { originId, recoveryId } = await strandOriginOnFailedRecovery(q)
+
+    const dep = await q.enqueueTask('downstream-of-origin', undefined, { skipTriage: true })
+    await q.addBlockers(dep.id, [originId])
+    await qc.execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [dep.id],
+    })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: recoveryId, reason: 'failed' })
+    await sub.drainBlockerResolution(qc)
+
+    expect((await q.getTask(originId))?.status).toBe('failed')
+    // Dependent keeps waiting — it must NOT be failed along with the origin.
+    expect((await q.getTask(dep.id))?.status).toBe('blocked')
+  })
+
+  it('leaves a task blocked on an ordinary (non-recovery) failed blocker alone', async () => {
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+    const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+    const blocker = await q.enqueueTask('ordinary-prerequisite', undefined, {
+      skipTriage: true,
+    })
+    await q.addBlockers(dep.id, [blocker.id])
+    await qc.execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [dep.id],
+    })
+    await qc.execute({
+      sql: `UPDATE tasks SET status = 'failed' WHERE id = ?`,
+      args: [blocker.id],
+    })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: blocker.id, reason: 'failed' })
+    const { processed } = await sub.drainBlockerResolution(qc)
+
+    expect(processed).toBe(0)
+    expect((await q.getTask(dep.id))?.status).toBe('blocked')
+  })
+
+  it('startup reconcile sweep heals origins stranded before the live path existed', async () => {
+    // The 17 live rows were stranded with no pending outbox event to replay, so
+    // the subscriber alone cannot reach them — the boot sweep must.
+    const { q } = await loadModules(repo)
+    const a = await strandOriginOnFailedRecovery(q, 'stranded-one')
+    const b = await strandOriginOnFailedRecovery(q, 'stranded-two')
+
+    const { failOriginsStrandedOnFailedRecovery } = await import(
+      '../../core/daemon/reconcile-blocker-drift'
+    )
+
+    const failed = await failOriginsStrandedOnFailedRecovery()
+    expect(failed.sort()).toEqual([a.originId, b.originId].sort())
+    expect((await q.getTask(a.originId))?.status).toBe('failed')
+    expect((await q.getTask(b.originId))?.status).toBe('failed')
+
+    // Idempotent: a second boot finds nothing left to repair.
+    expect(await failOriginsStrandedOnFailedRecovery()).toEqual([])
+  })
+
+  it('leaves a source task parked behind a failed main-committer alone', async () => {
+    // A main-committer cleans the integration branch; it does not carry the
+    // source task's work. Its failure is owned by the dead-committer release
+    // path, which RE-QUEUES the source once main is clean — failing it here
+    // would kill work that path intends to resume.
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+    const src = await q.enqueueTask('source-behind-committer', undefined, {
+      skipTriage: true,
+    })
+    const committerId = `fix-mc-${src.id.slice(0, 6)}`
+    const now = new Date().toISOString()
+    await qc.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, author_kind, author_name, fix_for_task_id, retry_count, origin_id, priority, recovery_payload, created_at, updated_at)
+            VALUES (?, 'clean main', 'failed', 'fix', 'agent', 'main-commiter-spawn', ?, 0, ?, 3, ?, ?, ?)`,
+      args: [
+        committerId,
+        src.id,
+        src.id,
+        JSON.stringify({ recipe: 'main-commiter', integrationBranch: 'main' }),
+        now,
+        now,
+      ],
+    })
+    await qc.execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at)
+            VALUES (?, ?, 'confirmed', ?)`,
+      args: [src.id, committerId, now],
+    })
+    await qc.execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [src.id],
+    })
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: committerId, reason: 'failed' })
+    await sub.drainBlockerResolution(qc)
+
+    expect((await q.getTask(src.id))?.status).toBe('blocked')
+
+    const { failOriginsStrandedOnFailedRecovery } = await import(
+      '../../core/daemon/reconcile-blocker-drift'
+    )
+    expect(await failOriginsStrandedOnFailedRecovery()).toEqual([])
+    expect((await q.getTask(src.id))?.status).toBe('blocked')
+  })
+
+  it('an origin failed by its dead recovery never spawns a second recovery', async () => {
+    // The repair emits task.failed for the ORIGIN. By then the origin's recovery
+    // is terminal, so the outstanding-fix dedup no longer suppresses a spawn —
+    // without the recovery-spawner gate this would hand the origin a SECOND
+    // recovery and restart the strand cycle.
+    const { q, sub, pub } = await loadModules(repo)
+    const qc = q.resolveQueueClient()
+    const { originId, recoveryId } = await strandOriginOnFailedRecovery(q)
+
+    const spawner = (await import('./recovery-spawn')) as unknown as {
+      ensureRecoverySpawner: typeof import('./recovery-spawn').ensureRecoverySpawner
+      drainRecoverySpawner: typeof import('./recovery-spawn').drainRecoverySpawner
+    }
+
+    await sub.ensureBlockerResolutionSubscriber(qc)
+    await spawner.ensureRecoverySpawner(qc)
+
+    await pub.publishWithRetry(qc, 'task.terminal', { taskId: recoveryId, reason: 'failed' })
+    await sub.drainBlockerResolution(qc)
+    expect((await q.getTask(originId))?.status).toBe('failed')
+
+    // Drain the recovery-spawner over the origin's own task.failed event.
+    await spawner.drainRecoverySpawner(qc)
+
+    const fixes = await qc.execute({
+      sql: `SELECT id FROM tasks WHERE fix_for_task_id = ?`,
+      args: [originId],
+    })
+    expect(fixes.rows.length).toBe(1)
+    expect((fixes.rows[0] as unknown as { id: string }).id).toBe(recoveryId)
+    // And the origin stays terminal — never reopened into a new episode.
+    expect((await q.getTask(originId))?.status).toBe('failed')
+  })
+})
+
 // Regression: mars-f109e203 — late recovery success must resurrect its origin to done.
 //
 // Incident (2026-07-06, origin mars-50e3b511 / recovery fix-a2b92b18):

@@ -246,6 +246,45 @@ export interface BlockedDependentRow {
   retry_count: number | null
 }
 
+export interface FailStrandedOriginOutcome {
+  originTaskId: string
+  recoveryTaskId: string
+  outcome: 'failed' | 'noop'
+}
+
+export interface FailStrandedOriginResult {
+  recoveryTaskId: string
+  outcomes: FailStrandedOriginOutcome[]
+}
+
+/**
+ * The `failure_reason` prefix stamped on an ORIGIN that was failed because its
+ * own (leaf, one-shot) recovery Chore failed — ADR-0040 / CLAUDE.md § Blockers:
+ * "if [the recovery] fails for any reason … the origin goes to `failed` with one
+ * actionable action queue item and the operator resolves it explicitly".
+ *
+ * Composed form: `origin_recovery_failed:<recoveryTaskId>`.
+ *
+ * The prefix is load-bearing, not cosmetic: the recovery-spawner subscriber uses
+ * it to recognise that this origin's single recovery slot is already spent and
+ * must NOT be re-driven into a second recovery (which would violate the
+ * exactly-one-recovery rule and re-open the strand loop from the other side).
+ */
+export const ORIGIN_RECOVERY_FAILED_PREFIX = 'origin_recovery_failed:'
+
+/** Compose the origin's failure reason for a dead recovery. */
+export const composeOriginRecoveryFailedReason = (recoveryTaskId: string): string =>
+  `${ORIGIN_RECOVERY_FAILED_PREFIX}${recoveryTaskId}`
+
+/**
+ * True when `reason` is an origin-failed-by-dead-recovery reason. Used as the
+ * "this origin's recovery slot is spent" discriminant.
+ */
+export const isOriginRecoveryFailedReason = (
+  reason: string | null | undefined,
+): reason is string =>
+  typeof reason === 'string' && reason.startsWith(ORIGIN_RECOVERY_FAILED_PREFIX)
+
 export const RECOVERY_EXHAUSTED_FAILURE_REASON = 'recovery_exhausted_at_unblock'
 
 export const ORPHANED_ORIGIN_FAILURE_REASON = 'orphaned_origin_at_unblock'

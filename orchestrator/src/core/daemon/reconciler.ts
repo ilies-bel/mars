@@ -69,6 +69,14 @@ export interface ReconcileSummary {
   /** Action-queue items raised (or bumped) for unclean daemon exits. */
   daemonDiedAlerts: number
   blockerDriftRepaired: number
+  /**
+   * Origins flipped from `blocked` to `failed` because the one recovery Chore
+   * they were waiting on had itself failed (ADR-0040: a recovery is a leaf and
+   * is never re-run, so the edge can never resolve). Heals rows stranded before
+   * the live path existed, or by a crash between the recovery's failure and the
+   * blocker-resolution subscriber draining.
+   */
+  strandedOriginsFailed: number
   /** Chores dropped because their origin had already reached a terminal state. */
   terminalOriginChoresDropped: number
   /** Tasks flipped from blocked→queued because they had zero live blocker edges. */
@@ -180,6 +188,7 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   daemonKilledAlerts: 0,
   daemonDiedAlerts: 0,
   blockerDriftRepaired: 0,
+  strandedOriginsFailed: 0,
   terminalOriginChoresDropped: 0,
   orphanedBlockedRequeued: 0,
   runningRequeued: 0,

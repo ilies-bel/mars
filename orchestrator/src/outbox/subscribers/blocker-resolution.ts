@@ -34,11 +34,23 @@ export async function ensureBlockerResolutionSubscriber(client: DbClient): Promi
 }
 
 /**
- * Drain all pending `task.terminal { reason: 'done' }` events and unblock any
- * dependents whose every blocker is now `done`. Implements the ADR-0032 stall
- * contract via {@link drainWithStall}: a handler failure blocks the cursor on
- * the failing event and raises a `subscriber-stalled` action-queue item after
- * K consecutive failures.
+ * Drain all pending `task.terminal` events and settle whatever was waiting on
+ * the completing task:
+ *
+ *  - `reason: 'done'`  → unblock any dependent whose every blocker is now
+ *    `done` (`Arc.unblockByCompletion`).
+ *  - `reason: 'failed'` → when the failing task is a recovery Chore, fail the
+ *    ORIGIN it was spawned for (`Arc.failStrandedOriginOnRecoveryFailure`).
+ *    A recovery is a leaf that is never re-run (ADR-0040), so its origin's one
+ *    blocker edge can never resolve; leaving the origin in `blocked` stranded
+ *    it permanently — `blocked` is not terminal, so neither `mars purge` nor
+ *    `mars restart` would accept it. Only the origin↔its-own-recovery edge is
+ *    settled here: an ordinary failed blocker still leaves its dependents
+ *    waiting in `blocked` (unchanged behaviour).
+ *
+ * Implements the ADR-0032 stall contract via {@link drainWithStall}: a handler
+ * failure blocks the cursor on the failing event and raises a
+ * `subscriber-stalled` action-queue item after K consecutive failures.
  *
  * @returns The number of events that resulted in at least one state change.
  */
@@ -53,6 +65,18 @@ export async function drainBlockerResolution(
     handle: async (event: BusEvent<EventName>) => {
       if (event.type !== 'task.terminal') return false
       const payload = event.payload as { taskId: string; reason: string }
+
+      if (payload.reason === 'failed') {
+        const dead = await Arc.failStrandedOriginOnRecoveryFailure(payload.taskId)
+        const failed = dead.outcomes.filter((o) => o.outcome === 'failed')
+        for (const o of failed) {
+          log?.(
+            `origin ${o.originTaskId} failed: its recovery ${o.recoveryTaskId} failed (ADR-0040 leaf)`,
+          )
+        }
+        return failed.length > 0
+      }
+
       if (payload.reason !== 'done') return false
 
       const result = await Arc.unblockByCompletion(payload.taskId)
