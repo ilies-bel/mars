@@ -1,3 +1,5 @@
+// @vitest-environment happy-dom
+
 /**
  * Behaviour tests for SseInvalidator — the component that bridges the
  * daemon's SSE bus to React Query so the Progress tab updates in place
@@ -27,15 +29,65 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { QueryClient } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { setSseConnected } from './sseStatus'
+import { SseInvalidator } from './SseInvalidator'
 
 // ---------------------------------------------------------------------------
 // React Query invalidation mechanism
 // ---------------------------------------------------------------------------
 
 describe('SseInvalidator – React Query invalidation mechanism', () => {
+  it('refreshes past Subjects after a chat update', async () => {
+    vi.useFakeTimers()
+    const listeners = new Map<string, EventListener[]>()
+
+    class MockEventSource {
+      onerror: (() => void) | null = null
+
+      constructor(_url: string) {}
+
+      addEventListener(type: string, listener: EventListener) {
+        listeners.set(type, [...(listeners.get(type) ?? []), listener])
+      }
+
+      close() {}
+    }
+
+    vi.stubGlobal('EventSource', MockEventSource)
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+    qc.setQueryData(['chat-history', undefined], [])
+
+    await act(async () => {
+      root.render(
+        createElement(
+          QueryClientProvider,
+          { client: qc },
+          createElement(SseInvalidator),
+        ),
+      )
+    })
+
+    for (const listener of listeners.get('chat') ?? []) listener(new Event('chat'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(150)
+    })
+
+    expect(qc.getQueryState(['chat-history', undefined])?.isInvalidated).toBe(true)
+
+    await act(async () => root.unmount())
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
   it('marks the progress cache stale when invalidateQueries is called', async () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
