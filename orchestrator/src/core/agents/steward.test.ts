@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  assessStormExcerpt,
+  hasUsableStormEvidence,
   stewardAgent,
   StewardEventSchema,
   renderStewardStormBrief,
+  STEWARD_STORM_TIMEOUT_MS,
   STEWARD_STORM_TOOLS,
   type StewardStormEvent,
 } from './steward'
@@ -156,6 +159,108 @@ describe('signature-storm dispatch — write-capable, not a read-only explainer'
     const rendered = renderStewardStormBrief(empty)
     expect(rendered).toContain('(none recorded)')
     expect(rendered).not.toContain('## Failure excerpts')
+  })
+})
+
+describe('storm evidence — "no evidence" must not masquerade as evidence', () => {
+  // A sweep that re-drives already-failed tasks overwrote `tasks.error` with a
+  // repeated `recovery_failed:<sig>:` chain. The Steward woke with a brief made
+  // entirely of that padding, had nothing to diagnose, and silently produced
+  // nothing. The brief has to be able to say "I have no evidence".
+  const statusEcho =
+    'recovery_failed:code/uncommitted-changes: '.repeat(12) +
+    'recovery_exhausted:code/uncommitted-changes:'
+
+  it('treats a recovery-status chain as unusable', () => {
+    const assessed = assessStormExcerpt(statusEcho)
+    expect(assessed.usable).toBe(false)
+    expect(assessed.verdict).toBe('status-echo')
+    expect(assessed.excerpt).toContain('no usable output was captured')
+  })
+
+  it('treats empty and whitespace-only error text as unusable', () => {
+    expect(assessStormExcerpt(null).verdict).toBe('empty')
+    expect(assessStormExcerpt('').verdict).toBe('empty')
+    expect(assessStormExcerpt('   \n  ').verdict).toBe('empty')
+  })
+
+  it('passes real captured output through untouched', () => {
+    const real =
+      'FAIL src/core/daemon/__tests__/http-events.test.ts\n' +
+      ' × responds 200 with the event page\n' +
+      '   → expected 500 to be 200 // Object.is equality\n' +
+      '   at src/core/daemon/__tests__/http-events.test.ts:41:24'
+    const assessed = assessStormExcerpt(real)
+    expect(assessed.usable).toBe(true)
+    expect(assessed.verdict).toBe('ok')
+    expect(assessed.excerpt).toBe(real)
+  })
+
+  it('keeps real output usable even when a status prefix is attached to it', () => {
+    const mixed =
+      'recovery_failed:verify/unclassified: ' +
+      'Error: ENOSPC: no space left on device, write\n    at WriteStream._write (node:internal/fs/streams:425:5)'
+    expect(assessStormExcerpt(mixed).usable).toBe(true)
+  })
+
+  it('tells the Steward out loud when nothing usable was captured', () => {
+    const blind = StewardEventSchema.parse({
+      kind: 'signature-storm',
+      signature: 'code/uncommitted-changes',
+      streak: 3,
+      affectedTaskIds: ['fix-139f327c'],
+      failureExcerpts: [
+        {
+          taskId: 'fix-139f327c',
+          signature: 'code/uncommitted-changes',
+          excerpt: assessStormExcerpt(statusEcho).excerpt,
+          usable: false,
+        },
+      ],
+    }) as StewardStormEvent
+
+    expect(hasUsableStormEvidence(blind)).toBe(false)
+    const rendered = renderStewardStormBrief(blind)
+    expect(rendered).toContain('NO USABLE EVIDENCE')
+    expect(rendered).toContain('No usable failure output was captured')
+    expect(rendered).toContain('insufficient evidence to diagnose')
+  })
+
+  it('omits the no-evidence banner when at least one excerpt is real', () => {
+    const sighted = StewardEventSchema.parse({
+      kind: 'signature-storm',
+      signature: 'code/uncommitted-changes',
+      streak: 3,
+      affectedTaskIds: ['mars-95f2318e'],
+      failureExcerpts: [
+        {
+          taskId: 'mars-95f2318e',
+          signature: 'code/uncommitted-changes',
+          excerpt: 'error: Your local changes to the following files would be overwritten by merge',
+          usable: true,
+        },
+      ],
+    }) as StewardStormEvent
+
+    expect(hasUsableStormEvidence(sighted)).toBe(true)
+    expect(renderStewardStormBrief(sighted)).not.toContain('No usable failure output was captured')
+  })
+
+  it('defaults excerpts to usable so a caller cannot silently drop the flag', () => {
+    const parsed = StewardEventSchema.parse({
+      kind: 'signature-storm',
+      signature: 'x/y',
+      streak: 3,
+      affectedTaskIds: [],
+      failureExcerpts: [{ taskId: 't', signature: 'x/y', excerpt: 'boom' }],
+    }) as StewardStormEvent
+    expect(parsed.failureExcerpts[0].usable).toBe(true)
+  })
+})
+
+describe('storm Steward budget', () => {
+  it('bounds one run at 10 minutes — dispatch is paused for its whole duration', () => {
+    expect(STEWARD_STORM_TIMEOUT_MS).toBe(10 * 60_000)
   })
 })
 
