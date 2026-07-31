@@ -35,8 +35,8 @@ const makeRow = (
   body: 'Legacy persisted body',
   payload: { taskId: 'task-1' },
   context: {},
-  raisedAt: '2024-01-01T00:00:00.000Z',
-  lastSeenAt: '2024-01-01T00:00:00.000Z',
+  raisedAt: Date.parse('2024-01-01T00:00:00.000Z'),
+  lastSeenAt: Date.parse('2024-01-01T00:00:00.000Z'),
   ...overrides,
 })
 
@@ -961,8 +961,8 @@ describe('buildActionQueueView — operational alert copy', () => {
           id: 'subscriber',
           kind: 'subscriber-stalled',
           signature: 'subscriber-stalled:recovery-spawner:69097',
-          raisedAt: '2026-07-31T08:55:00.000Z',
-          lastSeenAt: '2026-07-31T09:00:00.000Z',
+          raisedAt: Date.parse('2026-07-31T08:55:00.000Z'),
+          lastSeenAt: Date.parse('2026-07-31T09:00:00.000Z'),
           payload: {},
         }),
         makeRow({

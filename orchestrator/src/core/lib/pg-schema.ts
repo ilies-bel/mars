@@ -40,8 +40,8 @@ import { __execSchemaBatch } from './db.js'
 /** Bumped when the canonical DDL changes shape. */
 export const SCHEMA_VERSION = '0007'
 
-/** `DEFAULT (unixepoch())` translation. */
-const EPOCH_NOW = "floor(extract(epoch from now()))::bigint"
+/** Current epoch time in milliseconds for bigint operational timestamps. */
+const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
 
 /**
  * The complete DDL, in dependency order (FK targets first). Every statement
@@ -423,24 +423,76 @@ const DDL: readonly string[] = [
     payload         text   NOT NULL DEFAULT '{}',
     context         text   NOT NULL DEFAULT '{}',
     raised_by       text   NOT NULL,
-    raised_at       timestamptz NOT NULL,
-    resolved_at     timestamptz,
+    raised_at       bigint NOT NULL DEFAULT ${EPOCH_NOW},
+    resolved_at     bigint,
     resolution      text,
     resolution_note text,
     root_cause      text,
     fingerprint     text,
     signature       text,
     seen_count      bigint NOT NULL DEFAULT 1,
-    last_seen_at    timestamptz,
+    last_seen_at    bigint,
     resolved_by     text,
     origin_task_id  text,
-    snoozed_until   timestamptz
+    snoozed_until   bigint
   )`,
+  // Existing installations may have either the original text columns or the
+  // interim timestamptz form. Convert both to epoch milliseconds; fresh bigint
+  // columns are intentionally skipped so this remains safe at every startup.
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'action_queue_items'
+          AND column_name = 'raised_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE action_queue_items
+         ALTER COLUMN raised_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM raised_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'action_queue_items'
+          AND column_name = 'resolved_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE action_queue_items
+         ALTER COLUMN resolved_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM resolved_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'action_queue_items'
+          AND column_name = 'last_seen_at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE action_queue_items
+         ALTER COLUMN last_seen_at TYPE bigint
+         USING (EXTRACT(EPOCH FROM last_seen_at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'action_queue_items'
+          AND column_name = 'snoozed_until' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE action_queue_items
+         ALTER COLUMN snoozed_until TYPE bigint
+         USING (EXTRACT(EPOCH FROM snoozed_until::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `ALTER TABLE action_queue_items
-     ALTER COLUMN raised_at TYPE timestamptz USING raised_at::timestamptz,
-     ALTER COLUMN resolved_at TYPE timestamptz USING resolved_at::timestamptz,
-     ALTER COLUMN last_seen_at TYPE timestamptz USING last_seen_at::timestamptz,
-     ALTER COLUMN snoozed_until TYPE timestamptz USING snoozed_until::timestamptz`,
+     ALTER COLUMN raised_at SET DEFAULT ${EPOCH_NOW}`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_state
      ON action_queue_items(fingerprint, state)`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_state ON action_queue_items(state)`,
@@ -451,14 +503,25 @@ const DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS action_queue_history (
     id         text PRIMARY KEY,
     item_id    text NOT NULL REFERENCES action_queue_items(id),
-    at         timestamptz NOT NULL,
+    at         bigint NOT NULL,
     from_state text,
     to_state   text NOT NULL,
     "by"       text,
     note       text
   )`,
-  `ALTER TABLE action_queue_history
-     ALTER COLUMN at TYPE timestamptz USING at::timestamptz`,
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'action_queue_history'
+          AND column_name = 'at' AND data_type <> 'bigint'
+     ) THEN
+       ALTER TABLE action_queue_history
+         ALTER COLUMN at TYPE bigint
+         USING (EXTRACT(EPOCH FROM at::timestamptz) * 1000)::bigint;
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_history_item
      ON action_queue_history(item_id, at)`,
 

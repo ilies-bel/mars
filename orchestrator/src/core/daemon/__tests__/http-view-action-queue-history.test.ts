@@ -42,9 +42,9 @@ const makeResolvedRow = (
   body: 'Some error occurred',
   payload: { taskId: 'task-1' },
   context: {},
-  raisedAt: '2024-01-01T00:00:00.000Z',
-  lastSeenAt: '2024-01-01T00:00:00.000Z',
-  resolvedAt: '2024-01-02T00:00:00.000Z',
+  raisedAt: Date.parse('2024-01-01T00:00:00.000Z'),
+  lastSeenAt: Date.parse('2024-01-01T00:00:00.000Z'),
+  resolvedAt: Date.parse('2024-01-02T00:00:00.000Z'),
   resolution: 'superseded',
   resolutionNote: 'origin-done',
   rootCause: null,
@@ -182,9 +182,9 @@ describe('buildActionQueueHistoryView — resolved row shape', () => {
     // The store returns rows newest-first (ORDER BY resolved_at DESC).
     // buildActionQueueHistoryView must not reorder them.
     const rows = [
-      makeResolvedRow({ id: 'newest', resolvedAt: '2024-01-03T00:00:00.000Z' }),
-      makeResolvedRow({ id: 'middle', resolvedAt: '2024-01-02T00:00:00.000Z', payload: { taskId: 'task-1' } }),
-      makeResolvedRow({ id: 'oldest', resolvedAt: '2024-01-01T00:00:00.000Z', payload: { taskId: 'task-1' } }),
+      makeResolvedRow({ id: 'newest', resolvedAt: Date.parse('2024-01-03T00:00:00.000Z') }),
+      makeResolvedRow({ id: 'middle', resolvedAt: Date.parse('2024-01-02T00:00:00.000Z'), payload: { taskId: 'task-1' } }),
+      makeResolvedRow({ id: 'oldest', resolvedAt: Date.parse('2024-01-01T00:00:00.000Z'), payload: { taskId: 'task-1' } }),
     ]
 
     const result = await buildActionQueueHistoryView({
@@ -206,7 +206,7 @@ describe('buildActionQueueHistoryView — resolved row shape', () => {
     const rows = Array.from({ length: 5 }, (_, i) =>
       makeResolvedRow({
         id: `row-${i}`,
-        resolvedAt: `2024-01-0${5 - i}T00:00:00.000Z`,
+        resolvedAt: Date.parse(`2024-01-0${5 - i}T00:00:00.000Z`),
         payload: { taskId: 'task-1' },
       }),
     )
@@ -292,7 +292,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
       humanDetail: {},
       verbs: [],
       resolution: {
-        resolvedAt: '2024-01-02T00:00:00.000Z',
+        resolvedAt: Date.parse('2024-01-02T00:00:00.000Z'),
         resolution: 'superseded',
         resolutionNote: 'origin-done',
         rootCause: null,

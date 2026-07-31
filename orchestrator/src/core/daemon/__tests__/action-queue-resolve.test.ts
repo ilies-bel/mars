@@ -120,6 +120,7 @@ describe('setActionQueueState resolved — task.dropped-derived rows', () => {
     const resolved = await actionQueue.getActionQueueItem(row!.id)
     expect(resolved?.state).toBe('resolved')
     expect(resolved?.resolvedAt).not.toBeNull()
+    expect(typeof resolved?.resolvedAt).toBe('number')
     expect(resolved?.resolution).not.toBeNull()
   })
 

@@ -226,7 +226,7 @@ export const raiseAggregatedMainCommiterFailureRow = async (
     signature: `main-commiter:${recoveryTaskId}`,
     originTaskId: fix.origin_id,
     occurrence: {
-      at: new Date().toISOString(),
+      at: Date.now(),
       recoveryTaskId,
       dependentCount: n,
     },

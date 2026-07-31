@@ -42,8 +42,8 @@ const makeRow = (
   body: 'Some error occurred',
   payload: { taskId: 'task-1' },
   context: {},
-  raisedAt: '2024-01-01T00:00:00.000Z',
-  lastSeenAt: '2024-01-01T00:00:00.000Z',
+  raisedAt: Date.parse('2024-01-01T00:00:00.000Z'),
+  lastSeenAt: Date.parse('2024-01-01T00:00:00.000Z'),
   ...overrides,
 })
 
@@ -425,7 +425,7 @@ describe('buildActionQueueView — draft-proposal row', () => {
 // ── Daemon-killed-batch synthesis ────────────────────────────────────────────
 
 describe('buildActionQueueView — daemon-killed-batch', () => {
-  const makeDaemonKilledRow = (id: string, taskId: string, at: string): PersistedActionQueueRow => ({
+  const makeDaemonKilledRow = (id: string, taskId: string, at: number): PersistedActionQueueRow => ({
     id,
     kind: 'daemon-killed',
     priority: 'high',
@@ -440,7 +440,7 @@ describe('buildActionQueueView — daemon-killed-batch', () => {
   it('does NOT prepend a batch row when fewer than 2 daemon-killed rows', async () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
-        makeDaemonKilledRow('row-1', 'task-1', '2024-01-01T00:00:00.000Z'),
+        makeDaemonKilledRow('row-1', 'task-1', Date.parse('2024-01-01T00:00:00.000Z')),
       ]),
       taskStore: makeTaskStore([
         makeTask({ id: 'task-1', failureSignature: 'daemon-killed' }),

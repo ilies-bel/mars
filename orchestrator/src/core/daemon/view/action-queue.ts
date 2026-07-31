@@ -207,12 +207,12 @@ export interface PersistedActionQueueRow {
   body: string
   payload: Record<string, unknown>
   context: Record<string, unknown>
-  raisedAt: string
-  lastSeenAt: string
+  raisedAt: number
+  lastSeenAt: number
   /** The item's dedup signature, used as the entity-id fallback. */
   signature?: string | null
   /** Resolution fields — populated on resolved rows, absent/null on open rows. */
-  resolvedAt?: string | null
+  resolvedAt?: number | null
   resolution?: string | null
   resolutionNote?: string | null
   rootCause?: string | null
@@ -252,7 +252,7 @@ const OPERATIONAL_ALERT_COPY: Record<
     const detectedAt =
       typeof row.payload.crashDetectedAt === 'string'
         ? row.payload.crashDetectedAt
-        : row.lastSeenAt
+        : new Date(row.lastSeenAt).toISOString()
     return {
       title: `Daemon pid ${pid} exited unexpectedly; restarted at ${detectedAt}`,
       body:
@@ -278,12 +278,9 @@ const OPERATIONAL_ALERT_COPY: Record<
     const subscriber = pidMatch
       ? `${pidMatch[1]} (pid ${pidMatch[2]})`
       : rawSubscriber
-    const raisedAt = Date.parse(row.raisedAt)
-    const lastSeenAt = Date.parse(row.lastSeenAt)
-    const stalledFor =
-      Number.isFinite(raisedAt) && Number.isFinite(lastSeenAt)
-        ? formatOperationalDuration(Math.max(0, lastSeenAt - raisedAt))
-        : 'an unknown duration'
+    const stalledFor = formatOperationalDuration(
+      Math.max(0, row.lastSeenAt - row.raisedAt),
+    )
     return {
       title: `Subscriber ${subscriber} is stalled for ${stalledFor}`,
       body:
@@ -612,7 +609,7 @@ const buildRecipeFields = (
   if (!isActionQueueKind(kind)) {
     return {
       humanSummary: title || body || `Action required (kind: ${kind})`,
-      humanDetail: { raisedAt: row.raisedAt, entityId },
+      humanDetail: { raisedAt: new Date(row.raisedAt).toISOString(), entityId },
       verbs: [
         { op: 'dismiss', label: 'Dismiss', style: 'default' },
         { op: 'snooze', label: 'Snooze', style: 'default' },
@@ -627,7 +624,7 @@ const buildRecipeFields = (
     context: row.context,
     title,
     body,
-    raisedAt: row.raisedAt,
+    raisedAt: new Date(row.raisedAt).toISOString(),
   }
   return {
     humanSummary: recipe.humanSummary(ctx),
@@ -851,7 +848,7 @@ export const buildActionQueueView = async ({
           task?.updatedAt ??
           (typeof row.payload.updatedAt === 'string'
             ? row.payload.updatedAt
-            : row.lastSeenAt),
+            : new Date(row.lastSeenAt).toISOString()),
         branch:
           typeof row.payload.branch === 'string'
             ? row.payload.branch
@@ -1031,7 +1028,7 @@ export const buildActionQueueView = async ({
       priority: toUiPriority(row.priority),
       title,
       body,
-      at: row.lastSeenAt,
+      at: new Date(row.lastSeenAt).toISOString(),
       dag,
       errorKind,
       actions,
@@ -1320,7 +1317,7 @@ export const buildActionQueueHistoryView = async ({
           task?.updatedAt ??
           (typeof row.payload.updatedAt === 'string'
             ? row.payload.updatedAt
-            : row.lastSeenAt),
+            : new Date(row.lastSeenAt).toISOString()),
         branch:
           typeof row.payload.branch === 'string'
             ? row.payload.branch
@@ -1390,7 +1387,7 @@ export const buildActionQueueHistoryView = async ({
     const resolution: ActionQueueResolutionMeta | null =
       row.resolvedAt
         ? {
-            resolvedAt: row.resolvedAt,
+            resolvedAt: new Date(row.resolvedAt).toISOString(),
             resolution: row.resolution ?? null,
             resolutionNote: row.resolutionNote ?? null,
             rootCause: row.rootCause ?? null,
@@ -1407,7 +1404,7 @@ export const buildActionQueueHistoryView = async ({
       priority: toUiPriority(row.priority),
       title,
       body,
-      at: row.lastSeenAt,
+      at: new Date(row.lastSeenAt).toISOString(),
       dag,
       errorKind,
       actions: [], // Resolved rows are read-only; no actions.

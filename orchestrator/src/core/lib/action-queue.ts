@@ -319,11 +319,11 @@ export interface ActionQueueResolution {
   note: string | null
   rootCause: string | null
   resolvedBy: string | null
-  resolvedAt: string
+  resolvedAt: number
 }
 
 export interface ActionQueueHistoryEntry {
-  at: string
+  at: number
   fromState: ActionQueueState | null
   toState: ActionQueueState
   by: string | null
@@ -341,12 +341,12 @@ export interface ActionQueueItem {
   payload: Record<string, unknown>
   context: Record<string, unknown>
   raisedBy: string
-  raisedAt: string
-  lastSeenAt: string
+  raisedAt: number
+  lastSeenAt: number
   seenCount: number
   fingerprint: string
   signature: string | null
-  resolvedAt: string | null
+  resolvedAt: number | null
   resolution: string | null
   resolutionDetails: ActionQueueResolution | null
   resolutionNote: string | null
@@ -365,11 +365,11 @@ export interface ActionQueueItem {
    */
   liveTaskStatus: string | null
   /**
-   * ISO-8601 timestamp until which this item is snoozed. While snoozed,
+   * Epoch-millisecond timestamp until which this item is snoozed. While snoozed,
    * the item is excluded from the open view and chat. `null` means not
    * snoozed. Once the timestamp is in the past the item reappears.
    */
-  snoozedUntil: string | null
+  snoozedUntil: number | null
 }
 
 export interface SetActionQueueStateOptions {
@@ -447,7 +447,7 @@ const loadHistory = async (
           ? 'resolved'
           : null
     return {
-      at: (r2.at as string | null) ?? '',
+      at: Number(r2.at ?? 0),
       fromState,
       toState: toState(r2.to_state),
       by: (r2.by as string | null) ?? null,
@@ -470,7 +470,7 @@ const insertHistory = async (
     args: [
       randomUUID(),
       itemId,
-      new Date().toISOString(),
+      Date.now(),
       fromState,
       toStateValue,
       by,
@@ -484,7 +484,7 @@ const rowToActionQueueItem = (
   history: ActionQueueHistoryEntry[],
 ): ActionQueueItem => {
   const state = toState(row.state)
-  const resolvedAt = (row.resolved_at as string | null) ?? null
+  const resolvedAt = row.resolved_at == null ? null : Number(row.resolved_at)
   const resolution = (row.resolution as string | null) ?? null
   const resolutionNote = (row.resolution_note as string | null) ?? null
   const rootCause = (row.root_cause as string | null) ?? null
@@ -496,7 +496,7 @@ const rowToActionQueueItem = (
           note: resolutionNote,
           rootCause,
           resolvedBy,
-          resolvedAt: resolvedAt ?? '',
+          resolvedAt: resolvedAt ?? 0,
         }
       : null
   return {
@@ -510,9 +510,8 @@ const rowToActionQueueItem = (
     payload: parseJsonObject(row.payload as string | null),
     context: parseJsonObject(row.context as string | null),
     raisedBy: row.raised_by as string,
-    raisedAt: row.raised_at as string,
-    lastSeenAt:
-      (row.last_seen_at as string | null) ?? (row.raised_at as string),
+    raisedAt: Number(row.raised_at),
+    lastSeenAt: Number(row.last_seen_at ?? row.raised_at),
     seenCount: Number(row.seen_count ?? 1),
     fingerprint: (row.fingerprint as string | null) ?? '',
     signature: (row.signature as string | null) ?? null,
@@ -524,7 +523,7 @@ const rowToActionQueueItem = (
     history,
     originTaskId: (row.origin_task_id as string | null) ?? null,
     liveTaskStatus: null,
-    snoozedUntil: (row.snoozed_until as string | null) ?? null,
+    snoozedUntil: row.snoozed_until == null ? null : Number(row.snoozed_until),
   }
 }
 
@@ -661,7 +660,7 @@ export const raiseActionQueueItem = async (
   const fingerprint = resolvedOriginId
     ? computeOriginFingerprint(resolvedOriginId)
     : computeFingerprint(item.kind, item.signature)
-  const now = new Date().toISOString()
+  const now = Date.now()
 
   const existing = await c.execute({
     sql: `SELECT id, payload FROM action_queue_items
@@ -955,8 +954,8 @@ export const listVisibleActionQueueItems = async (): Promise<ActionQueueItem[]> 
   const c = stateClient()
   const r = await c.execute(`SELECT * FROM action_queue_items
     WHERE state = 'open'
-      AND (snoozed_until IS NULL OR snoozed_until <= CURRENT_TIMESTAMP)
-    ORDER BY raised_at DESC`)
+      AND (snoozed_until IS NULL OR snoozed_until <= ?)
+    ORDER BY raised_at DESC`, [Date.now()])
   return r.rows.map((row) =>
     rowToActionQueueItem(row as unknown as Record<string, unknown>, []),
   )
@@ -997,10 +996,10 @@ export const setActionQueueState = async (
   const currentState = (
     cur.rows[0] as unknown as { state: ActionQueueState }
   ).state
-  const now = new Date().toISOString()
+  const now = Date.now()
 
   const sets: string[] = ['state = ?']
-  const args: Array<string | null> = [state]
+  const args: Array<string | number | null> = [state]
 
   if (isTerminal(state)) {
     sets.push('resolved_at = ?')
@@ -1371,13 +1370,13 @@ export interface ResolvedActionQueuePage {
 }
 
 /** Encode a (resolvedAt, id) pair into an opaque cursor token. */
-const encodeHistoryCursor = (resolvedAt: string, id: string): string =>
+const encodeHistoryCursor = (resolvedAt: number, id: string): string =>
   Buffer.from(JSON.stringify({ resolvedAt, id }), 'utf8').toString('base64url')
 
 /** Decode a cursor token; returns null for malformed input. */
 const decodeHistoryCursor = (
   cursor: string,
-): { resolvedAt: string; id: string } | null => {
+): { resolvedAt: number; id: string } | null => {
   try {
     const raw = Buffer.from(cursor, 'base64url').toString('utf8')
     const parsed = JSON.parse(raw) as unknown
@@ -1386,10 +1385,10 @@ const decodeHistoryCursor = (
       typeof parsed === 'object' &&
       'resolvedAt' in parsed &&
       'id' in parsed &&
-      typeof (parsed as Record<string, unknown>).resolvedAt === 'string' &&
+      typeof (parsed as Record<string, unknown>).resolvedAt === 'number' &&
       typeof (parsed as Record<string, unknown>).id === 'string'
     ) {
-      return parsed as { resolvedAt: string; id: string }
+      return parsed as { resolvedAt: number; id: string }
     }
     return null
   } catch {
@@ -1448,7 +1447,7 @@ export const listResolvedActionQueueItems = async ({
   const nextCursor =
     hasMore && lastRow
       ? encodeHistoryCursor(
-          lastRow.resolved_at as string,
+          Number(lastRow.resolved_at),
           lastRow.id as string,
         )
       : null
@@ -1501,7 +1500,7 @@ export const snoozeActionQueueItem = async (
 
   await c.execute({
     sql: `UPDATE action_queue_items SET snoozed_until = ? WHERE id = ?`,
-    args: [untilDate.toISOString(), resolvedId],
+    args: [untilDate.getTime(), resolvedId],
   })
 }
 
@@ -1539,6 +1538,6 @@ export const resolveAllRowsForTask = async (
                       AND signature = ?
                       AND origin_task_id IS NULL))
              AND state = 'open'`,
-    args: [new Date().toISOString(), taskId, taskId, taskId],
+    args: [Date.now(), taskId, taskId, taskId],
   })
 }

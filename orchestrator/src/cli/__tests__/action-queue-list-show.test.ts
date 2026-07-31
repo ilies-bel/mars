@@ -94,8 +94,8 @@ const makePersistedRow = (id: string, kind: string): PersistedActionQueueRow => 
   body: '',
   payload: {},
   context: {},
-  raisedAt: '2026-07-30T12:00:00.000Z',
-  lastSeenAt: '2026-07-30T12:00:00.000Z',
+  raisedAt: Date.parse('2026-07-30T12:00:00.000Z'),
+  lastSeenAt: Date.parse('2026-07-30T12:00:00.000Z'),
 })
 
 beforeEach(() => {

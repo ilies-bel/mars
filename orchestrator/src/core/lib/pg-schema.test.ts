@@ -231,6 +231,76 @@ describe('ensureSchema', () => {
     }
   })
 
+  it('converts existing action-queue timestamps to epoch milliseconds', async () => {
+    const c = openDb(freshKey())
+    try {
+      await __execSchemaBatch(c, [`CREATE TABLE action_queue_items (
+        id text PRIMARY KEY,
+        kind text NOT NULL,
+        category text NOT NULL,
+        priority text NOT NULL,
+        state text NOT NULL DEFAULT 'open',
+        title text NOT NULL,
+        body text NOT NULL DEFAULT '',
+        payload text NOT NULL DEFAULT '{}',
+        context text NOT NULL DEFAULT '{}',
+        raised_by text NOT NULL,
+        raised_at text NOT NULL,
+        resolved_at text,
+        resolution text,
+        resolution_note text,
+        root_cause text,
+        fingerprint text,
+        signature text,
+        seen_count bigint NOT NULL DEFAULT 1,
+        last_seen_at text,
+        resolved_by text,
+        origin_task_id text,
+        snoozed_until text
+      )`, `CREATE TABLE action_queue_history (
+        id text PRIMARY KEY,
+        item_id text NOT NULL REFERENCES action_queue_items(id),
+        at text NOT NULL,
+        from_state text,
+        to_state text NOT NULL,
+        "by" text,
+        note text
+      )`, {
+        sql: `INSERT INTO action_queue_items (
+                id, kind, category, priority, title, raised_by, raised_at,
+                resolved_at, last_seen_at, snoozed_until
+              ) VALUES (
+                'legacy', 'failed', 'orchestrator', 'high', 'Legacy', 'daemon',
+                '1970-01-01T00:00:01.234Z', '1970-01-01T00:00:02.345Z',
+                '1970-01-01T00:00:03.456Z', '1970-01-01T00:00:04.567Z'
+              )`,
+      }, {
+        sql: `INSERT INTO action_queue_history (id, item_id, at, to_state)
+              VALUES ('legacy-history', 'legacy', '1970-01-01T00:00:05.678Z', 'open')`,
+      }])
+
+      await ensureSchema(c)
+
+      const item = await c.execute(`SELECT raised_at, resolved_at, last_seen_at, snoozed_until
+                                      FROM action_queue_items WHERE id = 'legacy'`)
+      expect(item.rows[0]).toEqual({
+        raised_at: 1234,
+        resolved_at: 2345,
+        last_seen_at: 3456,
+        snoozed_until: 4567,
+      })
+      const history = await c.execute(`SELECT at FROM action_queue_history WHERE id = 'legacy-history'`)
+      expect(history.rows[0].at).toBe(5678)
+      const itemColumns = await columnsOf(c, 'action_queue_items')
+      for (const column of ['raised_at', 'resolved_at', 'last_seen_at', 'snoozed_until']) {
+        expect(itemColumns.get(column)).toBe('bigint')
+      }
+      expect((await columnsOf(c, 'action_queue_history')).get('at')).toBe('bigint')
+    } finally {
+      await c.close()
+    }
+  })
+
   it('task_blockers keeps state CHECK, provenance, and composite PK', async () => {
     const c = await freshSchemaClient()
     const cols = await columnsOf(c, 'task_blockers')
@@ -295,18 +365,18 @@ describe('ensureSchema', () => {
     await c.execute(
       `INSERT INTO action_queue_items (id, kind, category, priority, title, raised_by, raised_at)
        VALUES ('i1', 'k', 'c', 'high', 'T', 'daemon', ?)`,
-      [new Date().toISOString()],
+      [Date.now()],
     )
     await c.execute(
       `INSERT INTO action_queue_history (id, item_id, at, to_state, "by")
        VALUES ('h1', 'i1', ?, 'open', 'operator')`,
-      [new Date().toISOString()],
+      [Date.now()],
     )
     const r = await c.execute(`SELECT "by" FROM action_queue_history WHERE id = 'h1'`)
     expect(r.rows[0].by).toBe('operator')
   })
 
-  it('uses native timestamps for the task-adjacent operational tables', async () => {
+  it('uses bigint epoch milliseconds for action-queue operational timestamps', async () => {
     const c = await freshSchemaClient()
 
     const taskProgress = await columnsOf(c, 'task_progress')
@@ -317,9 +387,9 @@ describe('ensureSchema', () => {
 
     expect(taskProgress.get('created_at')).toBe('timestamp with time zone')
     for (const column of ['raised_at', 'resolved_at', 'last_seen_at', 'snoozed_until']) {
-      expect(actionQueue.get(column), `action_queue_items.${column}`).toBe('timestamp with time zone')
+      expect(actionQueue.get(column), `action_queue_items.${column}`).toBe('bigint')
     }
-    expect(actionQueueHistory.get('at')).toBe('timestamp with time zone')
+    expect(actionQueueHistory.get('at')).toBe('bigint')
     expect(failureStreak.get('updated_at')).toBe('timestamp with time zone')
     for (const column of ['claimed_at', 'started_at', 'finished_at', 'created_at', 'updated_at']) {
       expect(mergeJobs.get(column), `merge_jobs.${column}`).toBe('timestamp with time zone')
