@@ -16,6 +16,13 @@ export type WorkflowTerminalKind =
   | 'blockers-abort'
   | 'context-exhausted'
   | 'origin-worktree-missing'
+  /**
+   * A resumed run's own worktree directory is gone and its branch no longer
+   * exists, so the run cannot be re-attached. Distinct from
+   * `origin-worktree-missing`, which is a recovery (fix) task failing to
+   * attach to a DIFFERENT task's worktree.
+   */
+  | 'resume-worktree-missing'
   | 'origin-terminal'
   | 'coder-exit-nonzero'
   | 'coder-uncommitted'

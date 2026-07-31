@@ -46,6 +46,8 @@ import {
   removeWorktree,
   attachToOriginWorktree,
   OriginWorktreeMissingError,
+  restoreWorktreeIfMissing,
+  ResumeWorktreeUnrecoverable,
   type WorktreeRef,
 } from '../../core/lib/git/worktree'
 import {
@@ -897,6 +899,47 @@ export const runAgent = async (
 
   const worktreePath = worktree.path
   const branch = worktree.branch
+
+  // ── Resume preflight: the worktree must actually exist ────────────────────
+  // On a checkpoint-resume (a watchdog-killed task being retried, `mars
+  // continue`, any re-dispatch with runId=task.id) the completed `setup` step
+  // short-circuits and `resolveWorktree` hands back the path recorded on the
+  // task row WITHOUT revalidating it. If that directory was removed while the
+  // task was parked, every spawn below runs with a dead `cwd` and Node reports
+  // `spawn <bin> ENOENT` → exit 127 in ~20ms, which looks exactly like a
+  // missing provider binary and buckets as a contentless coder-exit-nonzero.
+  // Re-attach the worktree from its branch when possible so the retry gets a
+  // real working directory; fail with a NAMED signature when it cannot be.
+  try {
+    const restored = await restoreWorktreeIfMissing({
+      taskId,
+      ref: { path: worktreePath, branch },
+      traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+    })
+    if (restored === 'rebuilt') {
+      console.log(
+        `[resume] task ${taskId}: worktree ${worktreePath} was missing on resume; ` +
+          `re-attached from branch ${branch}`,
+      )
+    }
+  } catch (err) {
+    if (!(err instanceof ResumeWorktreeUnrecoverable)) throw err
+    const summary = err.message
+    const missingSignature = computeFailureSignature('code:worktree-missing', summary)
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: summary,
+        failedPhase: 'code',
+        failureReason: 'code:worktree-missing',
+        failureSignature: missingSignature,
+        failureReasonCode: missingSignature,
+      },
+      store,
+    )
+    throw new WorkflowTerminalError('resume-worktree-missing', summary)
+  }
 
   // Sweep stray untracked files from a prior failed attempt BEFORE the agent
   // runs (gated on 0 commits ahead so real committed work is preserved).

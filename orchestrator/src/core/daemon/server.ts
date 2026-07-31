@@ -1437,6 +1437,11 @@ export const startDaemon = async (
             // The setup step already marked this fix task failed and raised an item.
             log(`[implement] ${task.id} origin-worktree-missing abort (exception path); task already marked failed, item raised`)
             break
+          case 'resume-worktree-missing':
+            // The code step's resume preflight already marked this task failed
+            // with the code:worktree-missing signature.
+            log(`[implement] ${task.id} resume-worktree-missing abort (exception path); task already marked failed`)
+            break
           case 'origin-terminal':
             log(`[implement] ${task.id} origin-terminal abort (exception path); Chore already dropped`)
             break

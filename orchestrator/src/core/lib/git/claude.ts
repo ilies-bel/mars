@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { parseClaudeStreamLine, extractQuotaRejected, type ClaudeEvent } from '../claude-stream'
 import { getLatestContextSize } from '../claude-usage'
@@ -123,16 +124,34 @@ export const runSubprocessStreaming = (
       resolveFn(result)
     }
     // A spawn failure (e.g. ENOENT for a missing binary, EACCES) emits
-    // 'error' on the ChildProcess and never fires 'close'. Without this
-    // listener Node treats it as an unhandled 'error' event and crashes
-    // the entire daemon process.
+    // 'error' on the ChildProcess. Without this listener Node treats it as an
+    // unhandled 'error' event and crashes the entire daemon process.
+    //
+    // ENOENT IS AMBIGUOUS. Node raises the SAME `spawn <cmd> ENOENT` error for
+    // two completely different causes:
+    //   (a) the executable is not on PATH  → genuinely "command not found";
+    //   (b) `options.cwd` does not exist   → the binary is fine; the working
+    //       directory was deleted out from under the dispatch.
+    // Case (b) is what a resumed run hits when its worktree was removed while
+    // the task was parked, and the raw message sends every reader hunting a
+    // PATH problem that does not exist. Probe the cwd and name the real cause
+    // so the failure is diagnosable instead of contentless.
     child.on('error', (err: NodeJS.ErrnoException) => {
       if (typeof child.pid === 'number') liveChildPids.delete(child.pid)
       const detail = err.code ? `${err.code}: ${err.message}` : err.message
+      let diagnosis = `spawn ${cmd} ${detail}`
+      if (err.code === 'ENOENT' && !existsSync(cwd)) {
+        diagnosis =
+          `spawn failed: working directory does not exist: ${cwd} ` +
+          `(command '${cmd}' was never executed; this is NOT a PATH or missing-binary problem) — ${detail}`
+      } else if (err.code === 'ENOENT') {
+        diagnosis = `spawn failed: command not found: '${cmd}' (cwd ${cwd} exists) — ${detail}`
+      }
       settle({
         exitCode: err.code === 'ENOENT' ? 127 : 1,
         stdout,
-        stderr: stderr + (stderr.endsWith('\n') || stderr.length === 0 ? '' : '\n') + `spawn ${cmd} ${detail}`,
+        stderr:
+          stderr + (stderr.endsWith('\n') || stderr.length === 0 ? '' : '\n') + diagnosis,
       })
     })
     child.on('close', (code) => {
