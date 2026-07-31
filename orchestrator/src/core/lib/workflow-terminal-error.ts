@@ -23,6 +23,13 @@ export type WorkflowTerminalKind =
    * attach to a DIFFERENT task's worktree.
    */
   | 'resume-worktree-missing'
+  /**
+   * A task's worktree could not be brought up to date with the integration
+   * branch because replaying its branch conflicts. The rebase was aborted and
+   * the worktree left exactly as found — an operator-owned git condition, not
+   * a code defect, so no recovery fixer is spawned.
+   */
+  | 'worktree-rebase-conflict'
   | 'origin-terminal'
   | 'coder-exit-nonzero'
   | 'coder-uncommitted'

@@ -475,6 +475,195 @@ export const restoreWorktreeIfMissing = async (args: {
   return 'rebuilt'
 }
 
+/**
+ * Thrown by {@link syncWorktreeToIntegration} when replaying the task branch
+ * onto the integration tip conflicts. The rebase has been aborted and any
+ * uncommitted work restored, so the worktree is left EXACTLY as it was found —
+ * never half-rebased, never emptied.
+ */
+export class WorktreeRebaseConflictError extends Error {
+  readonly taskId: string
+  readonly worktreePath: string
+  readonly branch: string
+  readonly integrationBranch: string
+  /** Combined stdout+stderr of the failed `git rebase`, truncated. */
+  readonly rebaseOutput: string
+  /** Checkpoint ref holding the uncommitted work, or null when the tree was clean. */
+  readonly checkpointRef: string | null
+
+  constructor(args: {
+    taskId: string
+    worktreePath: string
+    branch: string
+    integrationBranch: string
+    rebaseOutput: string
+    checkpointRef: string | null
+  }) {
+    super(
+      `cannot bring worktree for task ${args.taskId} up to date: replaying ${args.branch} onto ` +
+        `${args.integrationBranch} conflicts. The rebase was aborted and the worktree left ` +
+        `untouched at ${args.worktreePath}; no commit and no uncommitted change was discarded` +
+        (args.checkpointRef === null
+          ? ''
+          : ` (uncommitted work is also anchored on ${args.checkpointRef})`) +
+        `.\n${args.rebaseOutput}`,
+    )
+    this.name = 'WorktreeRebaseConflictError'
+    this.taskId = args.taskId
+    this.worktreePath = args.worktreePath
+    this.branch = args.branch
+    this.integrationBranch = args.integrationBranch
+    this.rebaseOutput = args.rebaseOutput
+    this.checkpointRef = args.checkpointRef
+  }
+}
+
+export type WorktreeSyncOutcome =
+  | { kind: 'already-current' }
+  | {
+      kind: 'rebased'
+      /** Task-branch tip before the replay. */
+      from: string
+      /** Task-branch tip after the replay (contains the integration tip). */
+      to: string
+      /** Checkpoint ref the uncommitted work was parked on, or null. */
+      checkpointRef: string | null
+    }
+
+/**
+ * Guarantee that a task's worktree contains the current integration tip before
+ * anything runs inside it.
+ *
+ * WHY THIS EXISTS. `createWorktree` only branches off `integrationBranch` when
+ * the branch does NOT already exist; when `task/<id>` is already present it
+ * does a bare `git worktree add <path> <branch>`, which checks out the branch
+ * at whatever SHA it was left at. `mars restart` deliberately preserves
+ * `task/<id>` whenever it carries unmerged commits (it is the archive that
+ * keeps a failed attempt's work from being deleted), so a restart-then-dispatch
+ * cycle re-attached the OLD tip: worktrees were observed 46-89 commits behind
+ * `main`. The `code` step then ran against superseded source and `verify`
+ * re-failed on assertions that had already been fixed on `main` — the restarted
+ * task could never drain, no matter how many times it was restarted.
+ * `attachToOriginWorktree` inherits the same staleness, so a stale origin
+ * poisoned its recovery too.
+ *
+ * WHAT IT DOES. Replays the task branch onto the integration tip with the same
+ * `git rebase` the merge step already uses (`mergeBranch` Step 1), so a synced
+ * worktree is by construction fast-forwardable at merge time.
+ *
+ * SAFETY. Uncommitted work is never destroyed:
+ *  1. resolve the integration tip once, by SHA, so a concurrent advance cannot
+ *     make the ancestry check and the rebase disagree;
+ *  2. short-circuit when the tip is already an ancestor of HEAD (the common
+ *     case — one `merge-base --is-ancestor` probe and nothing else);
+ *  3. park uncommitted work on this task's own `refs/mars/checkpoint/setup-<id>`
+ *     ref (NEVER `git stash` — `refs/stash` is shared by every linked worktree
+ *     here and is addressed by shifting positions, so a parallel task's pop can
+ *     swallow it) and only then clean the tree;
+ *  4. rebase; on conflict `git rebase --abort` and restore the checkpoint, so
+ *     the worktree is byte-for-byte what it was and never half-rebased;
+ *  5. restore the checkpoint on the success path too.
+ *
+ * Committed work on `task/<id>` survives either way: a successful rebase
+ * replays every commit onto the new base, and a conflict aborts back to the
+ * original tip. The checkpoint ref is retained after a restore (see
+ * `checkpoint.ts`) so the pre-sync state stays recoverable by name.
+ *
+ * @throws {WorktreeRebaseConflictError} when the replay conflicts. The caller
+ *   owns escalation — this repo routes conflicts to the `vcs-supervisor`, and a
+ *   conflict here is an operator-owned condition, not a code defect.
+ */
+export const syncWorktreeToIntegration = async (args: {
+  taskId: string
+  ref: WorktreeRef
+  integrationBranch: string
+  traceCtx?: TraceCtx
+}): Promise<WorktreeSyncOutcome> => {
+  const { taskId, ref, integrationBranch } = args
+  const { path, branch } = ref
+  const ctx: TraceCtx | undefined = args.traceCtx
+    ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'setup' }
+    : undefined
+  const git = resolveGitBin()
+
+  // Pin the target by SHA. `integrationBranch` honours INTEGRATION_BRANCH via
+  // the caller; resolving it once means the ancestry probe below and the rebase
+  // are talking about the same commit even if the branch advances mid-setup.
+  const integrationSha = (
+    await exec(
+      git,
+      ['rev-parse', `${integrationBranch}^{commit}`],
+      { cwd: repoRoot() },
+      ctx,
+    )
+  ).stdout.trim()
+
+  // Cheap short-circuit: a freshly-carved worktree (and any branch that has
+  // already been rebased) is already current. Exit 0 = ancestor.
+  const ancestry = await execProbe(
+    git,
+    ['merge-base', '--is-ancestor', integrationSha, 'HEAD'],
+    { cwd: path },
+    ctx,
+  )
+  if (ancestry.exitCode === 0) return { kind: 'already-current' }
+
+  const from = (
+    await exec(git, ['rev-parse', 'HEAD'], { cwd: path }, ctx)
+  ).stdout.trim()
+
+  // Park uncommitted work BEFORE touching the tree. `git rebase` refuses to
+  // start on a dirty tree, and the point of this step is to leave nothing
+  // behind. A null checkpoint means there was nothing capturable.
+  const checkpoint = await captureCheckpoint({
+    cwd: path,
+    key: `setup-${taskId}`,
+    message: `mars: park uncommitted work before replaying ${branch} onto ${integrationBranch}`,
+    traceCtx: ctx,
+  })
+  if (checkpoint !== null) {
+    await discardWorkingTreeChanges({ cwd: path, traceCtx: ctx })
+  }
+
+  const rebase = await execProbe(git, ['rebase', integrationSha], { cwd: path }, ctx)
+  if (rebase.exitCode !== 0) {
+    // Never leave a half-rebased worktree behind: abort unconditionally, then
+    // put the parked work back so the tree is exactly what we found.
+    await execProbe(git, ['rebase', '--abort'], { cwd: path }, ctx).catch(() => {})
+    if (checkpoint !== null) {
+      await restoreCheckpoint({ cwd: path, checkpoint, traceCtx: ctx }).catch(
+        (restoreErr: unknown) => {
+          // The work is still anchored on the checkpoint ref; the error message
+          // below names it, so this is recoverable rather than lost.
+          console.error(
+            `[worktree-sync] task ${taskId}: could not restore ${checkpoint.ref} after aborting the rebase:`,
+            restoreErr,
+          )
+        },
+      )
+    }
+    throw new WorktreeRebaseConflictError({
+      taskId,
+      worktreePath: path,
+      branch,
+      integrationBranch,
+      rebaseOutput: `${rebase.stdout}${rebase.stderr}`.trim().slice(0, 2000),
+      checkpointRef: checkpoint?.ref ?? null,
+    })
+  }
+
+  if (checkpoint !== null) {
+    // Throws CheckpointRestoreError (naming the ref + recovery command) rather
+    // than silently handing the coder a tree that lost its uncommitted state.
+    await restoreCheckpoint({ cwd: path, checkpoint, traceCtx: ctx })
+  }
+
+  const to = (
+    await exec(git, ['rev-parse', 'HEAD'], { cwd: path }, ctx)
+  ).stdout.trim()
+  return { kind: 'rebased', from, to, checkpointRef: checkpoint?.ref ?? null }
+}
+
 export const resolveSha = async (
   ref: string,
   traceCtx?: TraceCtx,

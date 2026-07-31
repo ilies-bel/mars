@@ -1582,6 +1582,12 @@ export const startDaemon = async (
             // with the code:worktree-missing signature.
             log(`[implement] ${task.id} resume-worktree-missing abort (exception path); task already marked failed`)
             break
+          case 'worktree-rebase-conflict':
+            // ensureWorktreeCurrent already marked this task failed with the
+            // {setup,code}:worktree-rebase-conflict signature and raised an
+            // operator item. The rebase was aborted; the worktree is intact.
+            log(`[implement] ${task.id} worktree-rebase-conflict abort (exception path); task already marked failed, item raised`)
+            break
           case 'origin-terminal':
             log(`[implement] ${task.id} origin-terminal abort (exception path); Chore already dropped`)
             break

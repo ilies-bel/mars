@@ -48,6 +48,8 @@ import {
   OriginWorktreeMissingError,
   restoreWorktreeIfMissing,
   ResumeWorktreeUnrecoverable,
+  syncWorktreeToIntegration,
+  WorktreeRebaseConflictError,
   type WorktreeRef,
 } from '../../core/lib/git/worktree'
 import {
@@ -120,6 +122,7 @@ import {
   MAIN_DIRTY_VERIFY_MESSAGE,
   MAIN_DIRTY_MERGE_MESSAGE,
   ORIGIN_WORKTREE_MISSING_ABORT_MESSAGE,
+  WORKTREE_REBASE_CONFLICT_ABORT_MESSAGE,
   AWAIT_HUMAN_MESSAGE,
   QUOTA_REJECTED_ABORT_MESSAGE,
 } from './shared'
@@ -426,6 +429,134 @@ export const spanStore = (trace: PrimitiveTraceArgs): TraceEventStore | undefine
   trace.traceStore === nullTraceStore ? undefined : trace.traceStore
 
 // ---------------------------------------------------------------------------
+// worktree currency
+// ---------------------------------------------------------------------------
+
+/**
+ * Bring a task's worktree up to date with the integration branch, escalating a
+ * conflict to the operator instead of proceeding on stale code.
+ *
+ * THE DEFECT THIS CLOSES. `mars restart` deliberately preserves `task/<id>`
+ * whenever the branch carries unmerged commits (deleting it would destroy the
+ * failed attempt's work). `createWorktree` then re-attaches that preserved
+ * branch AT ITS OLD TIP rather than branching off the integration tip, so a
+ * restarted task re-ran `code` and `verify` against superseded source —
+ * worktrees were measured 46-89 commits behind `main`, and `verify` re-failed
+ * on assertions `main` had already fixed. No number of restarts could drain
+ * such a task. Recovery (`kind:'fix'`) tasks attach to the ORIGIN's worktree,
+ * so a stale origin poisoned its recovery for free.
+ *
+ * Called from two places, because they cover disjoint dispatch paths and the
+ * second is a `merge-base --is-ancestor` no-op whenever the first ran:
+ *   - `setupWorktree`, before deps are installed, so the install sees current
+ *     manifests — this is the path a restarted task takes;
+ *   - `runAgent`'s preflight, which is the ONLY guaranteed pre-`code` hook on a
+ *     checkpoint-resume (`mars continue`, a watchdog retry), where the completed
+ *     `setup` step short-circuits entirely.
+ *
+ * On conflict the rebase has already been aborted and any uncommitted work
+ * restored (see `syncWorktreeToIntegration`), so nothing is lost and the
+ * worktree is never half-rebased. The task is failed with a NAMED,
+ * `orchestration`-classified signature so the single recovery slot is not burnt
+ * on a code fixer that cannot see a git conflict, and an operator item is
+ * raised naming the branch, the integration branch and the checkpoint ref.
+ */
+const ensureWorktreeCurrent = async (args: {
+  taskId: string
+  ref: WorktreeRef
+  integrationBranch: string
+  phase: 'setup' | 'code'
+  traceCtx?: TraceCtx
+  store: TaskStore
+}): Promise<void> => {
+  const { taskId, ref, integrationBranch, phase, store } = args
+  try {
+    const outcome = await syncWorktreeToIntegration({
+      taskId,
+      ref,
+      integrationBranch,
+      traceCtx: args.traceCtx,
+    })
+    if (outcome.kind === 'rebased') {
+      console.log(
+        `[worktree-sync] task ${taskId}: replayed ${ref.branch} onto ${integrationBranch} ` +
+          `(${outcome.from.slice(0, 9)} -> ${outcome.to.slice(0, 9)})` +
+          (outcome.checkpointRef === null
+            ? ''
+            : `; uncommitted work parked on ${outcome.checkpointRef} and restored`),
+      )
+    }
+  } catch (err) {
+    if (!(err instanceof WorktreeRebaseConflictError)) throw err
+    const reason = `${phase}:worktree-rebase-conflict`
+    const summary = err.message
+    const signature = computeFailureSignature(reason, summary)
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: summary,
+        // `FailedPhase` has no 'setup' member; the setup step's own
+        // origin-worktree-missing escalation reports 'code' for the same
+        // reason. The phase-specific detail lives in `failureReason`.
+        failedPhase: 'code',
+        failureReason: reason,
+        failureSignature: signature,
+        failureReasonCode: signature,
+      },
+      store,
+    )
+    await raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'high',
+      title: `Task ${taskId}: branch ${err.branch} conflicts with ${err.integrationBranch}`,
+      body: [
+        `Task ${taskId}'s worktree is behind ${err.integrationBranch} and its branch ${err.branch} cannot be replayed onto the current tip — the rebase conflicts.`,
+        '',
+        'Nothing was discarded. The rebase was aborted, so the worktree at',
+        `  ${err.worktreePath}`,
+        'is byte-for-byte what it was: every commit on the branch is intact, and any uncommitted change was restored' +
+          (err.checkpointRef === null
+            ? '.'
+            : ` (it is also anchored on ${err.checkpointRef}).`),
+        '',
+        'The task was NOT allowed to continue on stale code: running it would re-verify against source that ' +
+          `${err.integrationBranch} has already moved past, which is how a restarted task fails forever.`,
+        '',
+        'Resolve explicitly — reconcile the conflict in the worktree and',
+        `\`git -C ${err.worktreePath} rebase ${err.integrationBranch}\`, then \`mars restart ${taskId}\`;`,
+        `or \`mars purge --force ${taskId}\` if the branch's work is no longer wanted.`,
+        '',
+        'Rebase output:',
+        err.rebaseOutput,
+      ].join('\n'),
+      payload: {
+        taskId,
+        branch: err.branch,
+        integrationBranch: err.integrationBranch,
+        worktreePath: err.worktreePath,
+        checkpointRef: err.checkpointRef,
+        failureReason: reason,
+      },
+      context: { repoRoot: process.env.MARS_REPO ?? null },
+      raisedBy: `agent:${phase}-worktree-sync`,
+      signature: `${taskId}:${reason}`,
+      originTaskId: taskId,
+    }).catch((raiseErr) => {
+      console.error(
+        `[worktree-sync] task ${taskId} rebase-conflict escalation errored:`,
+        raiseErr,
+      )
+    })
+    throw new WorkflowTerminalError(
+      'worktree-rebase-conflict',
+      WORKTREE_REBASE_CONFLICT_ABORT_MESSAGE(taskId),
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
 // setupWorktree
 // ---------------------------------------------------------------------------
 
@@ -665,6 +796,21 @@ export const setupWorktree = async (
         { branch: ref.branch, worktreePath: ref.path },
         store,
       )
+
+      // The worktree exists — but existing is not the same as CURRENT. A
+      // preserved `task/<id>` branch (restart) or an attached origin worktree
+      // (recovery) starts at whatever tip it was left at, which is how a
+      // restarted task ended up verifying against source dozens of commits
+      // behind the integration branch. Replay it onto the tip BEFORE deps are
+      // installed, so the install below reads the current manifests.
+      await ensureWorktreeCurrent({
+        taskId,
+        ref,
+        integrationBranch,
+        phase: 'setup',
+        traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
+        store,
+      })
 
       // Capture the integration HEAD sha at setup time (non-fatal).
       try {
@@ -947,6 +1093,20 @@ export const runAgent = async (
     )
     throw new WorkflowTerminalError('resume-worktree-missing', summary)
   }
+
+  // ── Currency preflight: the worktree must contain the integration tip ─────
+  // A checkpoint-resume short-circuits the completed `setup` step, so this is
+  // the only hook guaranteed to run before the coder on `mars continue` / a
+  // watchdog retry. It is a single `merge-base --is-ancestor` probe when setup
+  // already synced and the integration branch has not advanced since.
+  await ensureWorktreeCurrent({
+    taskId,
+    ref: { path: worktreePath, branch },
+    integrationBranch,
+    phase: 'code',
+    traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+    store,
+  })
 
   // Sweep stray untracked files from a prior failed attempt BEFORE the agent
   // runs (gated on 0 commits ahead so real committed work is preserved).
