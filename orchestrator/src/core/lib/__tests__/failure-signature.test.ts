@@ -3,14 +3,57 @@ import {
   asStepId,
   causeForSignature,
   classifyError,
+  composeRecoveryFailureReason,
   computeFailureSignature,
   errorClassRules,
   firstNonBlankLine,
+  isRecoveryFailedReason,
   isUnclassifiedSignature,
   STEP_ID_RE,
+  stripRecoveryFailedPrefixes,
   UNCLASSIFIED_ERROR_CLASS,
   UNKNOWN_STEP_ID,
 } from '../failure-signature'
+
+describe('recovery-failure reason composition', () => {
+  const sig = 'code:commit-contract/uncommitted-changes'
+
+  it('prefixes exactly once', () => {
+    expect(composeRecoveryFailureReason(sig, 'boom')).toBe(
+      `recovery_failed:${sig}: boom`,
+    )
+  })
+
+  it('is idempotent: composing a composed reason does not nest', () => {
+    const once = composeRecoveryFailureReason(sig, 'boom')
+    expect(composeRecoveryFailureReason(sig, once)).toBe(once)
+  })
+
+  it('collapses an already-nested reason back to a single prefix', () => {
+    const nested = `recovery_failed:${sig}: recovery_failed:${sig}: recovery_failed:${sig}: boom`
+    expect(composeRecoveryFailureReason(sig, nested)).toBe(
+      `recovery_failed:${sig}: boom`,
+    )
+    expect(stripRecoveryFailedPrefixes(nested)).toBe('boom')
+  })
+
+  it('leaves a bare error untouched and multi-line output intact', () => {
+    expect(stripRecoveryFailedPrefixes('no prefix here')).toBe('no prefix here')
+    const multiline = 'FAIL a.test.ts\nAssertionError: expected 2 to be 1'
+    expect(composeRecoveryFailureReason(sig, multiline)).toBe(
+      `recovery_failed:${sig}: ${multiline}`,
+    )
+  })
+
+  it('recognises a composed reason and rejects anything else', () => {
+    expect(isRecoveryFailedReason(composeRecoveryFailureReason(sig, 'x'))).toBe(
+      true,
+    )
+    expect(isRecoveryFailedReason('recovery_exhausted:merge/x')).toBe(false)
+    expect(isRecoveryFailedReason(null)).toBe(false)
+    expect(isRecoveryFailedReason(undefined)).toBe(false)
+  })
+})
 
 describe('computeFailureSignature', () => {
   it('produces stable technical-key signatures of shape <failingStep>/<error-class>', () => {
