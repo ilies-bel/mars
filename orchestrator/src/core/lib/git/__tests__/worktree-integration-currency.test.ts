@@ -90,7 +90,7 @@ const stageRestartedTaskOnStaleBranch = async (opts: {
   // 1. setup carves the worktree off main and the coder commits into it.
   await createWorktree({ taskId: opts.taskId, integrationBranch: 'main' })
   if (opts.conflicting === true) {
-    writeFileSync(resolve(worktreePath, 'shared.txt'), 'coder version\n')
+    writeFileSync(resolve(worktreePath, 'shared.txt'), `coder version ${opts.taskId}\n`)
     git(['add', 'shared.txt'], worktreePath)
   } else {
     writeFileSync(resolve(worktreePath, 'feature.ts'), 'export const feature = 1\n')
@@ -101,9 +101,14 @@ const stageRestartedTaskOnStaleBranch = async (opts: {
   // 2. The task fails verify. Meanwhile main advances — including the very fix
   //    the task's verify needs.
   for (let i = 0; i < opts.mainCommits; i++) {
+    // Content must be unique per (task, step): if a later task's advance
+    // restored a byte-identical shared.txt, the rebase would apply cleanly and
+    // the conflict fixture would silently stop conflicting.
     writeFileSync(
       resolve(repoRoot, 'shared.txt'),
-      opts.conflicting === true ? `main version ${i}\n` : `base\nmain change ${i}\n`,
+      opts.conflicting === true
+        ? `main version ${opts.taskId} ${i}\n`
+        : `base\nmain change ${i}\n`,
     )
     git(['add', 'shared.txt'], repoRoot)
     git(['commit', '-m', `fix(tests): landed on main #${i}`], repoRoot)
@@ -296,7 +301,9 @@ describe('syncWorktreeToIntegration — conflict is escalated, never silently re
     expect(git(['rev-parse', ref.branch], repoRoot).trim()).toBe(tipBefore)
     expect(git(['rev-parse', '--abbrev-ref', 'HEAD'], ref.path).trim()).toBe(ref.branch)
     expect(git(['status', '--porcelain'], ref.path).trim()).toBe('')
-    expect(readFileSync(resolve(ref.path, 'shared.txt'), 'utf-8')).toBe('coder version\n')
+    expect(readFileSync(resolve(ref.path, 'shared.txt'), 'utf-8')).toBe(
+      'coder version mars-conflict1\n',
+    )
   })
 
   it('restores uncommitted work after aborting, and names the checkpoint ref', async () => {
@@ -334,5 +341,204 @@ describe('syncWorktreeToIntegration — conflict is escalated, never silently re
     expect(
       git(['rev-parse', '--verify', err.checkpointRef as string], repoRoot).trim(),
     ).toMatch(/^[0-9a-f]{40}$/)
+  })
+})
+
+/**
+ * Escalating on conflict is correct where the branch's commits ARE the run's
+ * premise, but it is catastrophic as the NORMAL path. Measured live: 24 of the
+ * ~65 active tasks carry a divergent branch (every one `ahead` 1-2, `behind` up
+ * to 335). Three consecutive identical failure signatures trip the
+ * signature-storm breaker and pause ALL dispatch — which is exactly what
+ * happened. On the setup path for a task that carves its own branch, recreate
+ * off the tip instead: the coder redoes a partial turn against current source,
+ * and the old tip is parked on a per-task ref so nothing is destroyed.
+ */
+describe('syncWorktreeToIntegration — recreate-on-conflict (setup, own branch)', () => {
+  it('recreates off the integration tip instead of failing', async () => {
+    const { syncWorktreeToIntegration } = await import('../worktree')
+    const ref = await stageRestartedTaskOnStaleBranch({
+      taskId: 'mars-recreate1',
+      mainCommits: 2,
+      conflicting: true,
+    })
+    const mainSha = git(['rev-parse', 'main'], repoRoot).trim()
+
+    const outcome = await syncWorktreeToIntegration({
+      taskId: 'mars-recreate1',
+      ref,
+      integrationBranch: 'main',
+      onConflict: 'recreate',
+    })
+
+    expect(outcome.kind).toBe('recreated')
+    // The branch IS the integration tip now, so the coder works on current
+    // source and the merge step can fast-forward.
+    expect(git(['rev-parse', ref.branch], repoRoot).trim()).toBe(mainSha)
+    expect(countAhead('main', ref.branch)).toBe(0)
+    expect(readFileSync(resolve(ref.path, 'shared.txt'), 'utf-8')).toBe(
+      'main version mars-recreate1 1\n',
+    )
+    // No rebase left in progress, tree clean.
+    expect(git(['status', '--porcelain'], ref.path).trim()).toBe('')
+  })
+
+  it('destroys nothing: the old tip and its commits stay reachable on a parked ref', async () => {
+    const { syncWorktreeToIntegration, PARKED_REF_PREFIX } = await import('../worktree')
+    const ref = await stageRestartedTaskOnStaleBranch({
+      taskId: 'mars-recreate2',
+      mainCommits: 2,
+      conflicting: true,
+    })
+    const oldTip = git(['rev-parse', ref.branch], repoRoot).trim()
+
+    const outcome = await syncWorktreeToIntegration({
+      taskId: 'mars-recreate2',
+      ref,
+      integrationBranch: 'main',
+      onConflict: 'recreate',
+    })
+
+    expect(outcome.kind).toBe('recreated')
+    if (outcome.kind !== 'recreated') return
+    expect(outcome.parkedRef.startsWith(`${PARKED_REF_PREFIX}/mars-recreate2-`)).toBe(true)
+    expect(outcome.from).toBe(oldTip)
+
+    // The ref points at the exact pre-reset tip, so every commit that was on
+    // the branch is still reachable by name — not dangling, not GC-eligible.
+    expect(git(['rev-parse', outcome.parkedRef], repoRoot).trim()).toBe(oldTip)
+    expect(outcome.parkedCommits).toHaveLength(1)
+    expect(outcome.parkedCommits[0]?.subject).toBe(
+      'chore(auto-commit): coder finished but did not commit',
+    )
+    // And the work is recoverable exactly as the log line advertises.
+    expect(git(['log', '--format=%s', `main..${outcome.parkedRef}`], repoRoot).trim()).toBe(
+      'chore(auto-commit): coder finished but did not commit',
+    )
+    expect(
+      git(['show', `${outcome.parkedRef}:shared.txt`], repoRoot),
+    ).toBe('coder version mars-recreate2\n')
+  })
+
+  it('anchors uncommitted work on the checkpoint ref rather than replaying it onto a base it was never written against', async () => {
+    const { syncWorktreeToIntegration } = await import('../worktree')
+    const ref = await stageRestartedTaskOnStaleBranch({
+      taskId: 'mars-recreate3',
+      mainCommits: 2,
+      conflicting: true,
+    })
+    writeFileSync(resolve(ref.path, 'app.ts'), 'export const app = 7 // wip\n')
+
+    const outcome = await syncWorktreeToIntegration({
+      taskId: 'mars-recreate3',
+      ref,
+      integrationBranch: 'main',
+      onConflict: 'recreate',
+    })
+
+    expect(outcome.kind).toBe('recreated')
+    if (outcome.kind !== 'recreated') return
+    expect(outcome.checkpointRef).toBe('refs/mars/checkpoint/setup-mars-recreate3')
+
+    // The coder gets a clean tree at the integration tip...
+    expect(git(['status', '--porcelain'], ref.path).trim()).toBe('')
+    expect(readFileSync(resolve(ref.path, 'app.ts'), 'utf-8')).toBe('export const app = 1\n')
+    // ...and the wip edit is not lost — it is a named, reachable commit object.
+    expect(
+      git(['show', `${outcome.checkpointRef}:app.ts`], repoRoot),
+    ).toBe('export const app = 7 // wip\n')
+    // Still never the shared stash stack.
+    expect(git(['for-each-ref', '--format=%(refname)', 'refs/stash'], repoRoot).trim()).toBe('')
+  })
+
+  it('still prefers a clean rebase — recreate is the conflict path only', async () => {
+    const { syncWorktreeToIntegration } = await import('../worktree')
+    const ref = await stageRestartedTaskOnStaleBranch({
+      taskId: 'mars-recreate4',
+      mainCommits: 3,
+      conflicting: false,
+    })
+
+    const outcome = await syncWorktreeToIntegration({
+      taskId: 'mars-recreate4',
+      ref,
+      integrationBranch: 'main',
+      onConflict: 'recreate',
+    })
+
+    // No conflict → the strictly more preserving path wins and the commit is
+    // carried forward rather than parked.
+    expect(outcome.kind).toBe('rebased')
+    expect(countAhead('main', ref.branch)).toBe(1)
+    expect(readFileSync(resolve(ref.path, 'feature.ts'), 'utf-8')).toBe(
+      'export const feature = 1\n',
+    )
+  })
+
+  it('is idempotent — a second pass short-circuits instead of re-parking', async () => {
+    const { syncWorktreeToIntegration } = await import('../worktree')
+    const ref = await stageRestartedTaskOnStaleBranch({
+      taskId: 'mars-recreate5',
+      mainCommits: 2,
+      conflicting: true,
+    })
+
+    const first = await syncWorktreeToIntegration({
+      taskId: 'mars-recreate5',
+      ref,
+      integrationBranch: 'main',
+      onConflict: 'recreate',
+    })
+    expect(first.kind).toBe('recreated')
+
+    // setup then code both call this; the second must not park a second ref.
+    const second = await syncWorktreeToIntegration({
+      taskId: 'mars-recreate5',
+      ref,
+      integrationBranch: 'main',
+      onConflict: 'recreate',
+    })
+    expect(second).toEqual({ kind: 'already-current' })
+
+    const parked = git(
+      ['for-each-ref', '--format=%(refname)', 'refs/mars/parked'],
+      repoRoot,
+    )
+      .split('\n')
+      .filter((l) => l.includes('mars-recreate5'))
+    expect(parked).toHaveLength(1)
+  })
+
+  it('cannot trip the signature-storm breaker: N consecutive stale tasks all resolve without failing', async () => {
+    const { syncWorktreeToIntegration } = await import('../worktree')
+
+    // The breaker trips on 3 consecutive identical failure signatures across
+    // DIFFERENT tasks (SIGNATURE_STORM_TRIP_THRESHOLD = 3). Drive more than
+    // that through the conflict path back to back; every one must succeed, so
+    // no signature is ever recorded and dispatch is never paused.
+    const outcomes: string[] = []
+    for (const taskId of ['mars-storm1', 'mars-storm2', 'mars-storm3', 'mars-storm4']) {
+      const ref = await stageRestartedTaskOnStaleBranch({
+        taskId,
+        mainCommits: 2,
+        conflicting: true,
+      })
+      const outcome = await syncWorktreeToIntegration({
+        taskId,
+        ref,
+        integrationBranch: 'main',
+        onConflict: 'recreate',
+      })
+      outcomes.push(outcome.kind)
+      // Each task ends up on current source, ready for its coder.
+      expect(countAhead('main', ref.branch)).toBe(0)
+    }
+
+    expect(outcomes).toEqual(['recreated', 'recreated', 'recreated', 'recreated'])
+    // Every one of them left its history parked and recoverable.
+    const parked = git(['for-each-ref', '--format=%(refname)', 'refs/mars/parked'], repoRoot)
+    for (const taskId of ['mars-storm1', 'mars-storm2', 'mars-storm3', 'mars-storm4']) {
+      expect(parked).toContain(taskId)
+    }
   })
 })
