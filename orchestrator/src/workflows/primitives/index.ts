@@ -88,6 +88,7 @@ import { computeFailureSignature } from '../../core/lib/failure-signature'
 import { resolveOriginIdForTask } from '../../core/lib/origin'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
+import { findLiveWorktreeDependents } from '../../core/lib/worktree-dependents'
 import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
 import {
   summarizeUsage,
@@ -3124,12 +3125,35 @@ export const merge = async (
           )
         }
 
-        await removeWorktree(
-          { path: worktreePath, branch },
-          true,
-          false,
-          buildPhaseCtx(trace, taskId, 'merge'),
-        )
+        // Do NOT reclaim a worktree another live task is standing on. A
+        // recovery shares its ORIGIN's directory and branch
+        // (`attachToOriginWorktree`), so removing them here when the recovery
+        // merged pulled the tree out from under a row that was still
+        // dispatchable — the origin then re-dispatched into a deleted
+        // directory (mars-a13334fd did it ten times in under a minute). Keep
+        // both when anyone non-terminal still references them; the sweeper
+        // (`mars worktree clean` / worktree-prune) reclaims them later, once
+        // every referencing row is terminal.
+        const dependents = await findLiveWorktreeDependents({
+          taskId,
+          worktreePath,
+          branch,
+          store,
+        })
+        if (dependents.length > 0) {
+          console.log(
+            `[merge] task ${taskId} merged; PRESERVING worktree ${worktreePath} and branch ${branch} — ` +
+              `still referenced by ${dependents.length} non-terminal task(s): ` +
+              dependents.map((d) => `${d.id}(${d.status})`).join(', '),
+          )
+        } else {
+          await removeWorktree(
+            { path: worktreePath, branch },
+            true,
+            false,
+            buildPhaseCtx(trace, taskId, 'merge'),
+          )
+        }
         await updateTask(taskId, { status: 'done', failedPhase: null }, store)
 
         return {

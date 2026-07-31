@@ -422,6 +422,28 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
           'The verify hygiene check detected a stale git rebase state directory (rebase-merge or rebase-apply) in the task worktree, left over from a previously interrupted rebase. This is an infrastructure condition, not a coder error — the task can be restarted.',
         actions: WORKTREE_MISSING_ACTIONS,
       },
+      // ── verify:worktree-missing ──────────────────────────────────────────
+      // The verify-step resume preflight found the worktree directory gone and
+      // its branch deleted — almost always because a recovery sharing the
+      // ORIGIN's worktree merged and cleanup reclaimed it (see
+      // `findLiveWorktreeDependents`, which now prevents that).
+      //
+      // MUST be `environmental`. It is a per-task, expected, self-limiting
+      // condition, and `isEnvironmentalSignature` is what keeps such a
+      // condition from feeding the signature-storm streak: without it, one
+      // reclaimed worktree affecting three tasks reads as a systemic storm and
+      // PAUSES THE WHOLE QUEUE — which is exactly what happened. Environmental
+      // also buys the right remedy: auto-restart (restart nulls
+      // branch/worktreePath, so setup carves a fresh worktree), with an
+      // `env-incident` row rather than a pause once the cap is hit.
+      {
+        signature: 'verify:worktree-missing/unclassified',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'Task worktree was reclaimed before verify could run',
+        verboseReason:
+          "The verify step found the task's worktree directory gone and its branch deleted, so there was nothing left to verify in place. This usually means a recovery sharing the worktree merged and cleanup reclaimed it. Infrastructure, not a coder error — the task is restarted onto a fresh worktree.",
+        actions: WORKTREE_MISSING_ACTIONS,
+      },
       {
         signature: 'verify:worktree-hygiene/unclassified',
         staticEncodable: notEncodable('environmental'),
