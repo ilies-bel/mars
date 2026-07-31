@@ -552,12 +552,9 @@ export interface ParkedCommit {
  * What to do when replaying the task branch onto the integration tip conflicts.
  *
  * `'escalate'` — abort, restore the tree exactly as found, throw
- * {@link WorktreeRebaseConflictError}. Correct wherever the branch's existing
- * commits ARE the premise of the run: a recovery (`kind:'fix'`) attached to its
- * origin's worktree to continue that work in place, a main-commiter worktree
- * carrying the integration checkout's migrated dirty state, or a
- * checkpoint-resume whose prompt tells the coder "prior progress is already in
- * this worktree". Recreating under any of those silently guts the premise.
+ * {@link WorktreeRebaseConflictError}. The conservative default, and correct
+ * where a conflict cannot arise anyway (a main-commiter worktree is carved off
+ * the integration tip, so it is current by construction).
  *
  * `'recreate'` — park the old tip on `refs/mars/parked/<id>-<sha>` and reset the
  * branch onto the integration tip, so the coder redoes the work against current
@@ -568,8 +565,26 @@ export interface ParkedCommit {
  * avoid losing committed work … cherry-pick or purge"). Reusing that archive as
  * the live work branch was the original defect; parking it on a ref honours the
  * archive obligation without dragging superseded commits forward.
+ *
+ * `'reconcile'` — hand the in-progress conflicted rebase to the vcs-supervisor
+ * (Vega), the agent this repo already uses for exactly this problem at merge
+ * time; fall back to `'escalate'` if it cannot finish. Correct wherever the
+ * branch's existing commits ARE the premise of the run and therefore must not
+ * be reset: a recovery (`kind:'fix'`) attached to its origin's worktree to
+ * continue that work in place, or a checkpoint-resume whose prompt tells the
+ * coder "prior progress is already in this worktree".
+ *
+ * Those two used to be `'escalate'`, which was a DEAD END. A recovery exists to
+ * fix its origin's work; if the origin's branch conflicts with integration the
+ * recovery could never start, so it failed, and its origin sat `blocked` behind
+ * a permanently-failed blocker forever (17 tasks stranded this way in one
+ * session). Refusing to reset that work was right — but refusing to reconcile
+ * it was not: a genuine content conflict is precisely what a conflict resolver
+ * is for, and Vega's prompt is written about the git state ("a `git rebase
+ * <target>` of <source> just conflicted in this worktree"), not about the merge
+ * phase, so it is accurate here verbatim.
  */
-export type WorktreeConflictPolicy = 'escalate' | 'recreate'
+export type WorktreeConflictPolicy = 'escalate' | 'recreate' | 'reconcile'
 
 export type WorktreeSyncOutcome =
   | { kind: 'already-current' }
@@ -581,6 +596,17 @@ export type WorktreeSyncOutcome =
       to: string
       /** Checkpoint ref the uncommitted work was parked on, or null. */
       checkpointRef: string | null
+    }
+  | {
+      kind: 'reconciled'
+      /** Task-branch tip before the replay. */
+      from: string
+      /** Task-branch tip after Vega finished the rebase. */
+      to: string
+      /** Checkpoint ref the uncommitted work was parked on, or null. */
+      checkpointRef: string | null
+      /** Vega's session id, when the conversation carried one. */
+      vegaSessionId: string | null
     }
   | {
       kind: 'recreated'
@@ -678,6 +704,79 @@ const isRebaseInProgress = async (
 }
 
 /**
+ * Hand a live, conflicted rebase to the vcs-supervisor and verify the result
+ * against git rather than against Vega's own account of it.
+ *
+ * The acceptance test is lifted verbatim from `mergeBranch`'s conflict branch,
+ * because the same three lies are possible: the agent can stop mid-rebase, can
+ * claim success without advancing the branch, or can leave conflict markers
+ * staged. Any of those, and we abort the rebase and report failure — the caller
+ * then escalates with the worktree untouched.
+ *
+ * @returns the new tip on success, or `null` when Vega could not finish (the
+ *   rebase has been aborted by then, so the caller must not abort again).
+ */
+const reconcileWithSupervisor = async (args: {
+  git: string
+  taskId: string
+  path: string
+  branch: string
+  integrationBranch: string
+  /** Branch tip before the rebase started. */
+  from: string
+  ctx: TraceCtx | undefined
+}): Promise<{ to: string; vegaSessionId: string | null } | null> => {
+  const { git, taskId, path, branch, integrationBranch, from, ctx } = args
+  const { invokeVcsSupervisor, VCS_SUPERVISOR_TIMEOUT_MS } = await import('./merge')
+  const { extractSessionIdFromConversation } = await import('./claude')
+
+  console.log(
+    `[worktree-sync] task ${taskId}: ${branch} conflicts with ${integrationBranch}; ` +
+      `dispatching vcs-supervisor to reconcile the in-progress rebase`,
+  )
+
+  const sup = await invokeVcsSupervisor(
+    branch,
+    integrationBranch,
+    path,
+    VCS_SUPERVISOR_TIMEOUT_MS,
+  ).catch((err: unknown) => {
+    console.error(`[worktree-sync] task ${taskId}: vcs-supervisor spawn failed:`, err)
+    return null
+  })
+
+  const stillInProgress = await isRebaseInProgress(git, path, ctx)
+  const to =
+    sup === null
+      ? from
+      : (await execProbe(git, ['rev-parse', 'HEAD'], { cwd: path }, ctx)).stdout.trim()
+  const advanced = to !== from && to.length > 0
+  const treeClean = await (async (): Promise<boolean> => {
+    const unstaged = await execProbe(git, ['diff', '--quiet'], { cwd: path }, ctx)
+    if (unstaged.exitCode !== 0) return false
+    const staged = await execProbe(git, ['diff', '--cached', '--quiet'], { cwd: path }, ctx)
+    return staged.exitCode === 0
+  })()
+
+  if (sup === null || stillInProgress || !advanced || !treeClean) {
+    console.warn(
+      `[worktree-sync] task ${taskId}: vcs-supervisor outcome rejected by git ` +
+        `(spawned=${sup !== null}, stillInProgress=${stillInProgress}, advanced=${advanced}, ` +
+        `treeClean=${treeClean}); aborting the rebase and escalating`,
+    )
+    await execProbe(git, ['rebase', '--abort'], { cwd: path }, ctx).catch(() => {})
+    return null
+  }
+
+  const vegaSessionId = extractSessionIdFromConversation(sup.conversation)
+  console.log(
+    `[worktree-sync] task ${taskId}: vcs-supervisor reconciled ${branch} onto ` +
+      `${integrationBranch} (${from.slice(0, 9)} -> ${to.slice(0, 9)})`,
+  )
+  return { to, vegaSessionId }
+}
+
+/**
  * `<shortSha> <subject>` for every commit on HEAD that is not in `baseSha`.
  * Best-effort: a failure here must never block the reset it merely annotates.
  */
@@ -762,17 +861,48 @@ export const syncWorktreeToIntegration = async (args: {
 
   const rebase = await execProbe(git, ['rebase', integrationSha], { cwd: path }, ctx)
   if (rebase.exitCode !== 0) {
-    // Never leave a half-rebased worktree behind. This runs before the policy
-    // branch because BOTH outcomes require a settled tree.
+    // Probe the on-disk rebase state BEFORE deciding anything: `'reconcile'`
+    // hands the LIVE rebase to Vega, whose prompt asserts one is in progress,
+    // so aborting first would make that premise false. A rebase can also exit
+    // non-zero WITHOUT creating any state (bad upstream ref, empty-commit
+    // stop) — mergeBranch guards the same way — and then there is nothing for
+    // a resolver to reconcile.
+    const conflictInProgress = await isRebaseInProgress(git, path, ctx)
+
+    if (onConflict === 'reconcile' && conflictInProgress) {
+      const reconciled = await reconcileWithSupervisor({
+        git,
+        taskId,
+        path,
+        branch,
+        integrationBranch,
+        from,
+        ctx,
+      })
+      if (reconciled !== null) {
+        if (checkpoint !== null) {
+          await restoreCheckpoint({ cwd: path, checkpoint, traceCtx: ctx })
+        }
+        return {
+          kind: 'reconciled',
+          from,
+          to: reconciled.to,
+          checkpointRef: checkpoint?.ref ?? null,
+          vegaSessionId: reconciled.vegaSessionId,
+        }
+      }
+      // Vega could not finish; it has already aborted the rebase. Fall through
+      // to the escalate tail below, which restores the tree and throws.
+    }
+
+    // Never leave a half-rebased worktree behind.
     await execProbe(git, ['rebase', '--abort'], { cwd: path }, ctx).catch(() => {})
 
     // Confirm the abort actually settled. `--abort` exits non-zero when no
-    // rebase was in progress (a rebase can fail before creating any state —
-    // see the same guard in mergeBranch), which is harmless. What is NOT
-    // harmless is rebase state SURVIVING the abort: `reset --hard` would then
-    // repoint the branch while leaving the worktree mid-rebase. Refuse to
-    // recreate in that case and fall through to escalate, which touches
-    // nothing.
+    // rebase was in progress, which is harmless. What is NOT harmless is
+    // rebase state SURVIVING the abort: `reset --hard` would then repoint the
+    // branch while leaving the worktree mid-rebase. Refuse to recreate in that
+    // case and fall through to escalate, which touches nothing.
     const rebaseStillInProgress = await isRebaseInProgress(git, path, ctx)
 
     if (onConflict === 'recreate' && !rebaseStillInProgress) {

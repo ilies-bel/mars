@@ -283,6 +283,14 @@ const captureHasDiffDiagnostics = async (
   return lines.join('\n')
 }
 
+/**
+ * Step name for a pre-verify worktree-hygiene failure (missing directory,
+ * wrong branch checked out, stale rebase state). Distinct from `has-diff`,
+ * which is a verdict about the branch's DIFF — conflating them made every
+ * hygiene problem read as a diff problem.
+ */
+export const WORKTREE_HYGIENE_STEP = 'worktree-hygiene'
+
 export const checkBranchHasDiff = async (
   cwd: string,
   branch: string,
@@ -486,7 +494,15 @@ export const verifyChanges = async (
       await assertWorktreeHygieneForVerify(args.cwd, args.branch, verifyCtx)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      return { passed: false, steps: [{ name: 'has-diff', passed: false, output: msg }] }
+      // Report under its OWN name, not `has-diff`. Labelling every hygiene
+      // failure `has-diff` meant a missing worktree, a wrong checked-out
+      // branch and stale rebase state all surfaced as
+      // `verify:has-diff failed` — on a diff that was never examined — which
+      // turned a log read into a forensics exercise more than once.
+      return {
+        passed: false,
+        steps: [{ name: WORKTREE_HYGIENE_STEP, passed: false, output: msg }],
+      }
     }
   }
 

@@ -313,11 +313,31 @@ Resolve every conflict per your protocol — read both sides, reconcile intent, 
 End with the Completion Report block exactly as specified above.`
 }
 
-interface InvokeSupervisorResult extends RunSubprocessResult {
+export interface InvokeSupervisorResult extends RunSubprocessResult {
   conversation: ClaudeEvent[]
 }
 
-const invokeVcsSupervisor = async (
+/**
+ * Wall-clock budget for one vcs-supervisor session. Shared by every caller so
+ * the two dispatch sites (the merge step's rebase, and the setup step's
+ * bring-the-worktree-current rebase) cannot drift apart.
+ */
+export const VCS_SUPERVISOR_TIMEOUT_MS = 30 * 60 * 1000
+
+/**
+ * Spawn Vega against a rebase that is CURRENTLY IN PROGRESS in `cwd`.
+ *
+ * The prompt asserts "a `git rebase <target>` of <source> just conflicted in
+ * this worktree; the rebase is in progress" — so the caller must NOT have run
+ * `git rebase --abort` first, and must have confirmed the on-disk rebase state
+ * exists. Dispatching against a false premise produces a refusal that matches
+ * no classifier rule (see the guard at the merge step's conflict branch).
+ *
+ * Exported because the setup step reuses this verbatim: a conflicted rebase is
+ * the same problem wherever it happens, and the prompt is written about the
+ * git state, not about the merge phase.
+ */
+export const invokeVcsSupervisor = async (
   branch: string,
   integrationBranch: string,
   cwd: string,
@@ -709,12 +729,11 @@ export const mergeBranch = async ({
         ).stdout.trim()
 
         lastStep = 'vega-supervisor'
-        const supervisorTimeoutMs = 30 * 60 * 1000
         const sup = await invokeVcsSupervisor(
           branch,
           integrationBranch,
           worktreePath,
-          supervisorTimeoutMs,
+          VCS_SUPERVISOR_TIMEOUT_MS,
           onSupervisorEvent,
         )
         supervisorConversation.push(...sup.conversation)

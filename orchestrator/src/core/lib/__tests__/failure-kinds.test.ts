@@ -30,9 +30,9 @@ describe('FAILURE_KINDS registry', () => {
     )
   })
 
-  it('contains an entry for verify:has-diff/worktree-missing', () => {
+  it('contains an entry for verify:worktree-hygiene/worktree-missing', () => {
     expect(FAILURE_KINDS.map((k) => k.signature)).toContain(
-      'verify:has-diff/worktree-missing',
+      'verify:worktree-hygiene/worktree-missing',
     )
   })
 
@@ -310,32 +310,32 @@ describe('new catalog entries for previously-unmatched signatures', () => {
     expect(entry!.verboseReason).not.toContain('unrecognised')
   })
 
-  it('verify:has-diff/worktree-missing has the infrastructure-condition warm title', () => {
-    const entry = lookupFailureKind('verify:has-diff/worktree-missing')
+  it('verify:worktree-hygiene/worktree-missing has the infrastructure-condition warm title', () => {
+    const entry = lookupFailureKind('verify:worktree-hygiene/worktree-missing')
     expect(entry).not.toBeNull()
     expect(entry!.warmTitle).toBe('Task worktree disappeared before verify could run')
   })
 
-  it('verify:has-diff/worktree-missing verboseReason mentions infrastructure and restart, not coder error', () => {
-    const entry = lookupFailureKind('verify:has-diff/worktree-missing')
+  it('verify:worktree-hygiene/worktree-missing verboseReason mentions infrastructure and restart, not coder error', () => {
+    const entry = lookupFailureKind('verify:worktree-hygiene/worktree-missing')
     expect(entry).not.toBeNull()
     expect(entry!.verboseReason.toLowerCase()).toContain('infrastructure')
     expect(entry!.verboseReason.toLowerCase()).toContain('restart')
     expect(entry!.verboseReason.toLowerCase()).not.toContain('coder may have')
   })
 
-  it('verify:has-diff/worktree-missing does NOT render the misleading "did not produce any changes" copy', () => {
-    const entry = lookupFailureKind('verify:has-diff/worktree-missing')
+  it('verify:worktree-hygiene/worktree-missing does NOT render the misleading "did not produce any changes" copy', () => {
+    const entry = lookupFailureKind('verify:worktree-hygiene/worktree-missing')
     expect(entry).not.toBeNull()
     expect(entry!.warmTitle).not.toBe('The coder did not produce any changes')
     expect(entry!.verboseReason).not.toContain('The coder may have encountered an error')
   })
 
-  it('verify:has-diff/worktree-missing action list has no diagnose-failure and contains exactly restart and purge', () => {
+  it('verify:worktree-hygiene/worktree-missing action list has no diagnose-failure and contains exactly restart and purge', () => {
     // When the worktree is gone there is nothing left to investigate — the
     // only meaningful repairs are re-provisioning (restart) or dropping
     // (purge). The Investigate action must NOT appear in this menu.
-    const entry = lookupFailureKind('verify:has-diff/worktree-missing')
+    const entry = lookupFailureKind('verify:worktree-hygiene/worktree-missing')
     expect(entry).not.toBeNull()
     expect(entry!.actions.every((a) => a.op !== 'diagnose-failure')).toBe(true)
     const ops = entry!.actions.map((a) => a.op)

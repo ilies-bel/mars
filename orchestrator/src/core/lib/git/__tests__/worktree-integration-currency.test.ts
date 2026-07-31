@@ -542,3 +542,198 @@ describe('syncWorktreeToIntegration — recreate-on-conflict (setup, own branch)
     }
   })
 })
+
+/**
+ * `'reconcile'` — the exit from the dead end `'escalate'` created.
+ *
+ * A recovery (kind=fix) attaches to its ORIGIN's worktree to continue that
+ * work in place, so its commits must never be reset. But escalating on
+ * conflict meant the recovery could not start at all: it failed at setup, and
+ * its origin then sat `blocked` behind a permanently-failed blocker forever.
+ * Three recoveries died this way in minutes (fix-671815ea, fix-ec2f6c04,
+ * fix-a77c0f2f), each in ~4s, each terminal.
+ *
+ * The live case also refutes the "recreate when the commits are only
+ * superseded auto-commits" alternative: fix-ec2f6c04's origin mars-76fef59f
+ * was believed to carry an auto-commit partial turn, but its one unique commit
+ * is `fix(ui): preserve persisted action queue kinds` — a deliberate coder
+ * commit, conflicting in exactly one test file. Resetting it would have
+ * destroyed real work.
+ *
+ * So the branch is neither reset nor abandoned: the LIVE conflicted rebase
+ * goes to the vcs-supervisor, and only a supervisor that cannot finish
+ * escalates. Vega is stubbed here — these assert the contract around it (what
+ * it is handed, and whether git is believed over its own account), never a
+ * real agent.
+ */
+describe('syncWorktreeToIntegration — reconcile-on-conflict (recovery / resume)', () => {
+  /**
+   * Replace the vcs-supervisor with a scripted stand-in. `resolve` runs with
+   * the worktree mid-rebase, exactly as Vega would find it.
+   */
+  const withStubbedSupervisor = async (
+    resolveFn: (worktreePath: string) => void,
+  ): Promise<{ calls: { branch: string; integrationBranch: string; cwd: string }[] }> => {
+    const calls: { branch: string; integrationBranch: string; cwd: string }[] = []
+    const { vi } = await import('vitest')
+    vi.resetModules()
+    vi.doMock('../merge', async () => {
+      const actual = await vi.importActual<typeof import('../merge')>('../merge')
+      return {
+        ...actual,
+        VCS_SUPERVISOR_TIMEOUT_MS: 1000,
+        invokeVcsSupervisor: vi.fn(
+          async (branch: string, integrationBranch: string, cwd: string) => {
+            calls.push({ branch, integrationBranch, cwd })
+            resolveFn(cwd)
+            return { exitCode: 0, stdout: '', stderr: '', conversation: [] }
+          },
+        ),
+      }
+    })
+    return { calls }
+  }
+
+  afterEach(async () => {
+    const { vi } = await import('vitest')
+    vi.doUnmock('../merge')
+    vi.resetModules()
+  })
+
+  it('hands the LIVE conflicted rebase to the supervisor, not an aborted one', async () => {
+    const { calls } = await withStubbedSupervisor((wt) => {
+      // Vega's prompt asserts a rebase is in progress. Prove it actually is.
+      expect(existsSync(resolve(wt, '.git'))).toBe(true)
+      const inProgress = git(['status', '--porcelain'], wt)
+      expect(inProgress).toContain('U')
+      // Resolve the conflict the way Vega would, then continue the rebase.
+      writeFileSync(resolve(wt, 'shared.txt'), 'reconciled by vega\n')
+      git(['add', 'shared.txt'], wt)
+      execFileSync('git', ['-c', 'core.editor=true', 'rebase', '--continue'], {
+        cwd: wt,
+        encoding: 'utf-8',
+        env: { ...process.env, GIT_EDITOR: 'true' },
+      })
+    })
+
+    const { syncWorktreeToIntegration } = await import('../worktree')
+    const ref = await stageRestartedTaskOnStaleBranch({
+      taskId: 'mars-recon1',
+      mainCommits: 2,
+      conflicting: true,
+    })
+
+    const outcome = await syncWorktreeToIntegration({
+      taskId: 'mars-recon1',
+      ref,
+      integrationBranch: 'main',
+      onConflict: 'reconcile',
+    })
+
+    expect(outcome.kind).toBe('reconciled')
+    expect(calls).toHaveLength(1)
+    // It is told about the branch and the target, and pointed at the worktree.
+    expect(calls[0]).toMatchObject({
+      branch: ref.branch,
+      integrationBranch: 'main',
+    })
+    expect(calls[0]?.cwd).toBe(ref.path)
+
+    // The origin's work survives ON the current base — the whole point.
+    expect(isAncestor('main', ref.branch, repoRoot)).toBe(true)
+    expect(countAhead('main', ref.branch)).toBe(1)
+    expect(readFileSync(resolve(ref.path, 'shared.txt'), 'utf-8')).toBe(
+      'reconciled by vega\n',
+    )
+    expect(git(['status', '--porcelain'], ref.path).trim()).toBe('')
+    // Nothing was parked: reconcile preserves in place, it does not archive.
+    expect(
+      git(['for-each-ref', '--format=%(refname)', 'refs/mars/parked'], repoRoot),
+    ).not.toContain('mars-recon1')
+  })
+
+  it('believes git, not the supervisor: a claimed fix that left the rebase running is rejected', async () => {
+    await withStubbedSupervisor(() => {
+      // Vega "succeeds" but does nothing — the rebase is still in progress.
+    })
+
+    const { syncWorktreeToIntegration, WorktreeRebaseConflictError } = await import(
+      '../worktree'
+    )
+    const ref = await stageRestartedTaskOnStaleBranch({
+      taskId: 'mars-recon2',
+      mainCommits: 2,
+      conflicting: true,
+    })
+    const tipBefore = git(['rev-parse', ref.branch], repoRoot).trim()
+
+    await expect(
+      syncWorktreeToIntegration({
+        taskId: 'mars-recon2',
+        ref,
+        integrationBranch: 'main',
+        onConflict: 'reconcile',
+      }),
+    ).rejects.toBeInstanceOf(WorktreeRebaseConflictError)
+
+    // Escalation is the fallback, and it leaves the worktree exactly as found:
+    // no rebase in progress, branch at its original tip, tree clean.
+    expect(
+      existsSync(resolve(repoRoot, '.git/worktrees/mars-recon2/rebase-merge')),
+    ).toBe(false)
+    expect(git(['rev-parse', ref.branch], repoRoot).trim()).toBe(tipBefore)
+    expect(git(['status', '--porcelain'], ref.path).trim()).toBe('')
+    expect(countAhead('main', ref.branch)).toBe(1)
+  })
+
+  it('never resets the branch — a reconcile failure preserves every origin commit', async () => {
+    await withStubbedSupervisor(() => {})
+
+    const { syncWorktreeToIntegration } = await import('../worktree')
+    const ref = await stageRestartedTaskOnStaleBranch({
+      taskId: 'mars-recon3',
+      mainCommits: 2,
+      conflicting: true,
+    })
+
+    await syncWorktreeToIntegration({
+      taskId: 'mars-recon3',
+      ref,
+      integrationBranch: 'main',
+      onConflict: 'reconcile',
+    }).catch(() => {})
+
+    // This is the invariant that made 'escalate' correct in the first place and
+    // that 'reconcile' must not weaken: the origin's commit is still on the
+    // branch and still reachable, never parked away behind its back.
+    expect(git(['log', '--format=%s', `main..${ref.branch}`], repoRoot).trim()).toBe(
+      'chore(auto-commit): coder finished but did not commit',
+    )
+    expect(readFileSync(resolve(ref.path, 'shared.txt'), 'utf-8')).toBe(
+      'coder version mars-recon3\n',
+    )
+  })
+
+  it('does not invoke the supervisor at all when the rebase applies cleanly', async () => {
+    const { calls } = await withStubbedSupervisor(() => {})
+
+    const { syncWorktreeToIntegration } = await import('../worktree')
+    const ref = await stageRestartedTaskOnStaleBranch({
+      taskId: 'mars-recon4',
+      mainCommits: 3,
+      conflicting: false,
+    })
+
+    const outcome = await syncWorktreeToIntegration({
+      taskId: 'mars-recon4',
+      ref,
+      integrationBranch: 'main',
+      onConflict: 'reconcile',
+    })
+
+    // A plain rebase costs nothing; Vega is a Claude session. It must fire only
+    // on a genuine conflict.
+    expect(outcome.kind).toBe('rebased')
+    expect(calls).toHaveLength(0)
+  })
+})

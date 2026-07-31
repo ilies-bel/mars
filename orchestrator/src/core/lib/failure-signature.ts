@@ -674,7 +674,7 @@ const causeSentencesBySignature: Readonly<Record<string, CauseRenderer>> = {
   'verify:has-diff/no-commits-ahead': () =>
     `task branch has no commits ahead of integration — the agent didn't commit; needs a new task or restart`,
   // Infrastructure-owned: the worktree was pruned before verify could inspect it.
-  'verify:has-diff/worktree-missing': (taskId) =>
+  'verify:worktree-hygiene/worktree-missing': (taskId) =>
     `task worktree was pruned before verify could run (likely a daemon restart) — infrastructure condition; mars restart ${taskId}`,
   // Agent-owned: the behaviour-verify step observed a Definition-of-Done
   // criterion contradicted on the live surface; a recovery Chore was spawned.

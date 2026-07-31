@@ -159,16 +159,46 @@ describe('checkBranchHasDiff (zero-ahead is benign)', () => {
 
   it('verifyChanges still short-circuits when the has-diff gate cannot compute the range', async () => {
     // A genuine gate error (unknown integration ref) must still fail fast,
-    // before any configured step runs.
+    // before any configured step runs — and must be reported as `has-diff`,
+    // because the gate genuinely ran and genuinely could not compute a range.
+    //
+    // Check out the task branch first so the pre-verify hygiene probe passes.
+    // Without this the probe fails on branch drift and short-circuits BEFORE
+    // the has-diff gate, so the assertion below would be satisfied by a
+    // hygiene failure wearing the has-diff label rather than by the gate
+    // error this test is about. That mislabelling is exactly what the
+    // `worktree-hygiene` step name was introduced to end.
+    execFileSync('git', ['checkout', '-q', 'task/empty'], { cwd: repo })
+    let r: { passed: boolean; steps: { name: string }[] }
+    try {
+      r = await verifyChanges({
+        cwd: repo,
+        branch: 'task/empty',
+        integrationBranch: 'no-such-ref',
+        steps: [{ name: 'should-not-run', ...truthyCmd, required: true }],
+      })
+    } finally {
+      execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    }
+    expect(r.passed).toBe(false)
+    expect(r.steps).toHaveLength(1)
+    expect(r.steps[0].name).toBe('has-diff')
+  })
+
+  it('reports a hygiene failure under its own name, never as has-diff', async () => {
+    // The repo is checked out on `main`, so the task branch is not present in
+    // the working tree — a branch-drift hygiene failure. It must NOT masquerade
+    // as a verdict about the branch's diff, which was never examined.
     const r = await verifyChanges({
       cwd: repo,
       branch: 'task/empty',
-      integrationBranch: 'no-such-ref',
+      integrationBranch: 'main',
       steps: [{ name: 'should-not-run', ...truthyCmd, required: true }],
     })
     expect(r.passed).toBe(false)
     expect(r.steps).toHaveLength(1)
-    expect(r.steps[0].name).toBe('has-diff')
+    expect(r.steps[0].name).toBe('worktree-hygiene')
+    expect(r.steps[0].output).toContain('wrong branch')
   })
 
   // Regression guard for the systemic `verify:has-diff/no-commits-ahead`
