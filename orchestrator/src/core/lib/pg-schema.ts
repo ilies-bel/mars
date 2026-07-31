@@ -948,6 +948,17 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_mcp_worker_audit_task_created
      ON mcp_worker_audit(task_id, created_at DESC)`,
+
+  // ── dispatch deferrals (slice 5 of PRD 9888811c) ─────────────────────────
+  // One current scheduling decision per task. Repeated daemon boots update the
+  // same row rather than accumulating stale copies of a deferred task.
+  `CREATE TABLE IF NOT EXISTS deferrals (
+    task_id           text PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    deferred_at       timestamptz NOT NULL,
+    reason            text NOT NULL,
+    target_window_end timestamptz,
+    pressure          text NOT NULL
+  )`,
 ]
 
 /**
@@ -1018,6 +1029,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'usage_snapshots',
   'mcp_worker_audit',
   'daemon_heartbeat',
+  'deferrals',
 ]
 
 /**

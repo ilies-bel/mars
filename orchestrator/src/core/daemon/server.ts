@@ -135,6 +135,10 @@ import { getDefaultMergeJobStore } from '../store/merge-job-store'
 import { startHeartbeatWriter, type HeartbeatHandle } from './heartbeat-writer'
 import { loadSpendControl, upsertSpendControl } from './spend-control/store'
 import { recordClaudeEvent } from './usage-accumulator'
+import { getLatestUsageSnapshot } from '../lib/usage-snapshot-store'
+import { computeBudgetPressure, getBudgetPressureConfig } from '../lib/budget-pressure'
+import { upsertDeferral } from '../lib/deferral-store'
+import { shouldDeferDispatch } from '../lib/dispatch-gate'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -1069,6 +1073,29 @@ export const startDaemon = async (
   const dispatchImplement = async (task: Task): Promise<void> => {
     if (tracker.isInFlight(task.id)) return
     tracker.removePending(task.id, 'implement')
+    const usageSnapshot = await getLatestUsageSnapshot(dbClient)
+    const deferral = shouldDeferDispatch(
+      task,
+      usageSnapshot,
+      getBudgetPressureConfig(),
+    )
+    if (deferral.defer) {
+      const targetWindowEnd =
+        typeof usageSnapshot?.rawJson.nextResetAt === 'string'
+          ? usageSnapshot.rawJson.nextResetAt
+          : null
+      await upsertDeferral({
+        taskId: task.id,
+        reason: deferral.reason ?? 'usage pressure requires deferral',
+        targetWindowEnd,
+        pressure: usageSnapshot === null
+          ? 'ok'
+          : computeBudgetPressure(usageSnapshot, getBudgetPressureConfig()),
+      }, dbClient)
+      tracker.unclaim(task.id, 'implement')
+      log(`[implement] ${task.id} deferred: ${deferral.reason}`)
+      return
+    }
     await acquire(sems.implement)
     // commitInFlight records the inFlight entry AND clears the matching claim
     // in one step (claim-clears-after-commit); see dispatchTriage.
