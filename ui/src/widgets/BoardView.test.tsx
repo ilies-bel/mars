@@ -100,6 +100,39 @@ describe('buildArcsByCluster', () => {
     expect(arcs.Failed).toHaveLength(0)
   })
 
+  it('shows an arc with only blocked work in the Blocked column', () => {
+    const blocked = task({
+      id: 'blocked-1',
+      cluster: 'Blocked',
+      status: 'blocked',
+      originId: 'blocked-1',
+    })
+
+    const arcs = buildArcsByCluster([blocked], [])
+
+    expect(arcs.Blocked).toHaveLength(1)
+    expect(arcs.Failed).toHaveLength(0)
+  })
+
+  it('does not render an arc when all of its tasks are done', () => {
+    const completedOrigin = task({
+      id: 'done-1',
+      cluster: 'Done',
+      status: 'done',
+      originId: 'done-1',
+    })
+    const completedDependent = task({
+      id: 'done-2',
+      cluster: 'Done',
+      status: 'done',
+      originId: 'done-1',
+    })
+
+    const arcs = buildArcsByCluster([completedOrigin, completedDependent], [])
+
+    expect(Object.values(arcs).flat()).toEqual([])
+  })
+
   it('keeps legacy tasks without origin ids as individual arcs', () => {
     const first = task({ id: 'legacy-1', cluster: 'Queued' })
     const second = task({ id: 'legacy-2', cluster: 'Queued' })
