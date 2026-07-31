@@ -104,6 +104,7 @@ import {
   persistPaused,
   readPersistedPaused,
 } from './config'
+import { createPauseController } from './pause-state'
 import { setInstallSemCap } from '../lib/worktree-install'
 import { probeDuckDBLock } from './duckdb-lock'
 import {
@@ -909,20 +910,41 @@ export const startDaemon = async (
   // refused. Flipped by `shutdown { drain: true }` so in-flight tasks
   // finish without any new work landing on top of them.
   let acceptingWork = true
-  // When true, the dispatch loop is suspended by an operator `mars daemon pause`.
-  // Unlike acceptingWork=false (shutdown), tasks added while paused still reach
-  // the pending sets so resume immediately dispatches them. In-flight tasks
-  // continue to completion. Persisted to daemon.json so the intent survives a
+  // The ONE authoritative dispatch-pause state, with the reason recorded on it
+  // ('operator' | 'storm' | 'quota'). Unlike acceptingWork=false (shutdown),
+  // tasks added while paused still reach the pending sets so resume dispatches
+  // them immediately; in-flight tasks continue to completion. The storm
+  // breaker's durable `tripped` row is reconciled against this state at
+  // startup and cleared alongside it on resume, so the two cannot drift.
+  //
+  // Every transition also re-publishes dispatch-enabled to the heartbeat
+  // writer, so the heartbeat can never disagree with the pause state — that
+  // side-effect used to live in a hand-rolled `setDaemonPaused` next to the
+  // old `isPaused` boolean and is now owned by the controller.
+  const pause = createPauseController({
+    onChange: (state) => {
+      heartbeatHandle?.setDispatchEnabled(acceptingWork && !state.paused)
+      log(
+        state.paused
+          ? `[pause] dispatch paused (reason=${state.reason}${
+              state.detail !== null ? `: ${state.detail}` : ''
+            })`
+          : '[pause] dispatch resumed',
+      )
+    },
+  })
+  // An OPERATOR pause is persisted to daemon.json so the intent survives a
   // daemon auto-respawn (ADR-0058): a new process coming up unpaused could
-  // trigger a merge-step git reset --hard on uncommitted operator work.
-  let isPaused = readPersistedPaused()
-  const setDaemonPaused = (paused: boolean): void => {
-    isPaused = paused
-    heartbeatHandle?.setDispatchEnabled(acceptingWork && !paused)
+  // trigger a merge-step git reset --hard on uncommitted operator work. It is
+  // restored first, so it wins the first-cause slot over a storm pause
+  // restored later from the breaker's durable `tripped` flag.
+  const restoredOperatorPause = readPersistedPaused()
+  if (restoredOperatorPause) {
+    pause.pause('operator', 'restored from daemon.json')
   }
   // Heartbeat startup deliberately begins with dispatch disabled: initialization
   // work is not a period in which queued tasks can make progress.
-  heartbeatHandle?.setDispatchEnabled(acceptingWork && !isPaused)
+  heartbeatHandle?.setDispatchEnabled(acceptingWork && !pause.isPaused())
 
   // Per-kind concurrency caps. glossary-write and adr-add share one pool
   // because they both contend on the same merge lock downstream — a second
@@ -955,7 +977,7 @@ export const startDaemon = async (
   log(
     `concurrency caps: implement=${sems.implement.limit} triage=${sems.triage.limit} refine=${sems.refine.limit} structured-write=${structuredWriteSem.limit} setup-install=${initialCaps.setupInstall} verify=${verifySem.limit}`,
   )
-  if (isPaused) {
+  if (restoredOperatorPause) {
     log(
       '[pause] restored persisted paused state from daemon.json — dispatch suspended. Run `mars daemon resume` to re-enable dispatch.',
     )
@@ -1827,7 +1849,7 @@ export const startDaemon = async (
   // the running drain re-enters once it finishes — no double-pick races.
   drain = async (): Promise<void> => {
     if (!acceptingWork) return
-    if (isPaused) return
+    if (pause.isPaused()) return
     if (drainRunning) {
       drainAgain = true
       return
@@ -1928,7 +1950,8 @@ export const startDaemon = async (
   // extraction.
   //
   // Contract:
-  // - Sets isPaused=true so drain() is a no-op until resume fires.
+  // - Pauses dispatch with reason 'quota' so drain() is a no-op until resume
+  //   fires and `mars daemon status` can name the cause.
   // - Raises exactly ONE level-triggered 'provider-rate-limited' action-queue
   //   row (idempotent raises bump seen_count, so a burst of rejections produces
   //   one row, not one per task).
@@ -1937,12 +1960,6 @@ export const startDaemon = async (
   //   even when the API does not supply a reset timestamp.
   // - Best-effort only — a DB hiccup must not crash the daemon.
   const handleQuotaRejection = async (resetsAt: number): Promise<void> => {
-    if (isPaused) {
-      // Already paused (burst of concurrent rejections). The timer already
-      // running will resume. Do not raise a second action-queue row.
-      return
-    }
-    setDaemonPaused(true)
     const FALLBACK_PAUSE_MS = 30 * 60_000 // 30 min when resetsAt is unknown
     const JITTER_MS = 60_000 // 60-second cushion past resetsAt
     const nowMs = Date.now()
@@ -1951,9 +1968,15 @@ export const startDaemon = async (
         ? Math.max(resetsAt * 1000 + JITTER_MS, nowMs + 5_000)
         : nowMs + FALLBACK_PAUSE_MS
     const resumeIso = new Date(resumeMs).toISOString()
+    if (!pause.pause('quota', `provider rate/spend limit; auto-resume at ${resumeIso}`)) {
+      // Already paused (burst of concurrent rejections, or a storm). The timer
+      // already running will resume. Do not raise a second action-queue row.
+      return
+    }
     log(`[quota] dispatch paused; will auto-resume at ${resumeIso}`)
     const resumeTimer = setTimeout(() => {
-      setDaemonPaused(false)
+      if (pause.get().reason !== 'quota') return
+      pause.resume()
       log(`[quota] dispatch resumed after rate-limit window`)
       viewStreamHub.broadcast('tasks')
       void drain()
@@ -1987,10 +2010,16 @@ export const startDaemon = async (
 
   // ── Signature-storm circuit breaker ──────────────────────────────────────
   // Called by the recovery-spawner when the all-gate consecutive-failure-
-  // signature circuit breaker first trips. Mirrors handleQuotaRejection:
-  //  - Sets isPaused=true so drain() is a no-op until the operator resumes.
-  //  - Spawns the steward (investigateWorktree) exactly once on the last
-  //    failing task's worktree to diagnose/fix the systemic root cause.
+  // signature circuit breaker first trips, and at startup when the durable
+  // `tripped` flag says a previous daemon tripped it. Mirrors
+  // handleQuotaRejection:
+  //  - Pauses dispatch with reason 'storm' so drain() is a no-op and status
+  //    can name the cause.
+  //  - Arms a BOUNDED fallback resume timer so dispatch can never stay dead
+  //    when the Steward fails, dies, or the daemon simply never hears back.
+  //  - Wakes the WRITE-CAPABLE Steward in its own worktree with a structured
+  //    brief (signature, streak, affected task ids, failure excerpts). On
+  //    success it resumes dispatch and resolves the storm row by id.
   //  - Broadcasts the action-queue view so the UI reflects the new row
   //    (the row itself was already raised inside recordFailureSignature).
   //  - Best-effort only — a hiccup here must not crash the daemon.
@@ -1999,7 +2028,213 @@ export const startDaemon = async (
   // ensures `handleTaskFailureWithFixTask` returns `signature-storm-tripped`
   // exactly once per episode; subsequent calls return `alreadyTripped=true`
   // so the subscriber never calls this handler again for the same storm.
-  // The `isPaused` guard provides a secondary in-process safety net.
+  // The pause-state guard provides a secondary in-process safety net.
+
+  // How long dispatch may stay paused on a storm before the fallback resume
+  // fires. Bounded on purpose: a Steward that crashes must not wedge the queue
+  // until a human notices. Override with MARS_STORM_RESUME_MS.
+  const STORM_FALLBACK_RESUME_MS = (() => {
+    const raw = Number(process.env.MARS_STORM_RESUME_MS)
+    return Number.isFinite(raw) && raw > 0 ? raw : 30 * 60_000
+  })()
+  let stormFallbackTimer: NodeJS.Timeout | null = null
+
+  const clearStormFallbackTimer = (): void => {
+    if (stormFallbackTimer !== null) {
+      clearTimeout(stormFallbackTimer)
+      stormFallbackTimer = null
+    }
+  }
+
+  /**
+   * Release a storm pause: clear the in-memory pause AND the durable breaker
+   * flag in one step so the two halves of the pause state cannot drift.
+   * No-op when the current pause is not a storm pause.
+   */
+  const resumeFromStorm = async (by: string): Promise<void> => {
+    clearStormFallbackTimer()
+    if (pause.get().reason !== 'storm') return
+    pause.resume()
+    try {
+      const { resetFailureSignatureStreak } = await import('../lib/signature-storm-monitor')
+      await resetFailureSignatureStreak(await getDefaultTaskStore())
+    } catch (err) {
+      log(
+        `[signature-storm] breaker reset failed (non-fatal): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    }
+    log(`[signature-storm] dispatch resumed (${by})`)
+    viewStreamHub.broadcast('tasks')
+    viewStreamHub.broadcast('action-queue')
+    void drain()
+  }
+
+  const armStormFallbackResume = (signature: string): void => {
+    if (stormFallbackTimer !== null) return
+    const at = new Date(Date.now() + STORM_FALLBACK_RESUME_MS).toISOString()
+    log(`[signature-storm] fallback resume armed for ${at}`)
+    stormFallbackTimer = setTimeout(() => {
+      stormFallbackTimer = null
+      log(
+        `[signature-storm] fallback resume firing — "${signature}" held dispatch for the full bound`,
+      )
+      void resumeFromStorm('fallback timer')
+    }, STORM_FALLBACK_RESUME_MS)
+    stormFallbackTimer.unref()
+  }
+
+  /** Gather the tasks that failed with this signature, newest first. */
+  const collectStormContext = async (
+    signature: string,
+    lastTaskId: string,
+  ): Promise<{
+    affectedTaskIds: string[]
+    failureExcerpts: Array<{ taskId: string; signature: string; excerpt: string }>
+  }> => {
+    const affectedTaskIds: string[] = []
+    const failureExcerpts: Array<{ taskId: string; signature: string; excerpt: string }> = []
+    try {
+      const store = await getDefaultTaskStore()
+      const rows = await store.execute({
+        sql: `SELECT id, failure_signature, failure_reason, error
+                FROM tasks
+               WHERE failure_signature = ? OR failure_reason_code = ?
+               ORDER BY updated_at DESC
+               LIMIT 5`,
+        args: [signature, signature],
+      })
+      for (const raw of rows.rows) {
+        const row = raw as unknown as {
+          id: string
+          failure_signature: string | null
+          failure_reason: string | null
+          error: string | null
+        }
+        affectedTaskIds.push(row.id)
+        failureExcerpts.push({
+          taskId: row.id,
+          signature: row.failure_signature ?? row.failure_reason ?? signature,
+          excerpt: (row.error ?? '(no error output recorded)').slice(-2_000),
+        })
+      }
+    } catch (err) {
+      log(
+        `[signature-storm] failure-context lookup failed (non-fatal): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    }
+    if (!affectedTaskIds.includes(lastTaskId)) affectedTaskIds.unshift(lastTaskId)
+    return { affectedTaskIds, failureExcerpts }
+  }
+
+  /**
+   * Wake the write-capable Steward on its own worktree and let it land a fix.
+   * Returns true when the run succeeded; the caller resumes dispatch on true
+   * and leaves the fallback timer to cover every other outcome.
+   */
+  const dispatchStormSteward = async (
+    signature: string,
+    streak: number,
+    lastTaskId: string,
+  ): Promise<void> => {
+    const { StewardEventSchema, renderStewardStormBrief, stewardAgent, STEWARD_STORM_TIMEOUT_MS } =
+      await import('../agents/steward')
+    const { createWorktree } = await import('../lib/git/worktree')
+    const { runClaudeCode } = await import('../lib/git/claude')
+    const {
+      findOpenActionQueueItemIdBySignature,
+      patchActionQueuePayloadById,
+      setActionQueueState,
+    } = await import('../lib/action-queue')
+
+    const rowId = await findOpenActionQueueItemIdBySignature(
+      'signature-storm',
+      `signature-storm:${signature}`,
+    ).catch(() => null)
+
+    const { affectedTaskIds, failureExcerpts } = await collectStormContext(signature, lastTaskId)
+    const brief = StewardEventSchema.parse({
+      kind: 'signature-storm',
+      signature,
+      streak,
+      affectedTaskIds,
+      failureExcerpts,
+    })
+    if (brief.kind !== 'signature-storm') return
+
+    const stewardId = `steward-storm-${Date.now().toString(36)}`
+    const worktree = await createWorktree({ taskId: stewardId, integrationBranch })
+    log(
+      `[signature-storm] steward ${stewardId} dispatched write-capable on ${worktree.branch} for "${signature}"`,
+    )
+    if (rowId !== null) {
+      await patchActionQueuePayloadById(rowId, {
+        steward: {
+          id: stewardId,
+          branch: worktree.branch,
+          worktree: worktree.path,
+          startedAt: new Date().toISOString(),
+          affectedTaskIds,
+        },
+      }).catch(() => false)
+    }
+
+    const result = await runClaudeCode({
+      cwd: worktree.path,
+      prompt: renderStewardStormBrief(brief),
+      systemPrompt: stewardAgent.systemPrompt,
+      model: stewardAgent.model,
+      // Write-capable: the whole point of this dispatch is landing a fix.
+      permissionMode: 'acceptEdits',
+      timeoutMs: STEWARD_STORM_TIMEOUT_MS,
+    })
+
+    let report = ''
+    let modelErrored = false
+    for (const event of result.conversation) {
+      if (event.type === 'result') {
+        if (event.is_error === true) modelErrored = true
+        if (typeof event.result === 'string') report = event.result
+      }
+    }
+    const succeeded =
+      result.exitCode === 0 && !modelErrored && result.quotaRejected === null
+
+    if (!succeeded) {
+      // Do NOT swallow: name the failure and leave the fallback timer armed.
+      throw new Error(
+        `steward ${stewardId} failed (exit=${result.exitCode}, modelError=${modelErrored}, quotaRejected=${
+          result.quotaRejected !== null
+        })`,
+      )
+    }
+
+    log(`[signature-storm] steward ${stewardId} landed a fix on ${worktree.branch}`)
+    if (rowId !== null) {
+      // Patch the EXISTING signature-keyed row by id — raising again would
+      // only bump seen_count and leave the payload stale.
+      await patchActionQueuePayloadById(rowId, {
+        steward: {
+          id: stewardId,
+          branch: worktree.branch,
+          worktree: worktree.path,
+          finishedAt: new Date().toISOString(),
+          report: report.slice(0, 4_000),
+          affectedTaskIds,
+        },
+      }).catch(() => false)
+      await setActionQueueState(rowId, 'resolved', {
+        resolution: 'steward-fixed',
+        note: `steward ${stewardId} landed a fix on ${worktree.branch}; dispatch auto-resumed`,
+        by: 'daemon:signature-storm-steward',
+      }).catch(() => {})
+    }
+    await resumeFromStorm(`steward ${stewardId} landed a fix`)
+  }
+
   const handleSignatureStorm = ({
     signature,
     streak,
@@ -2009,22 +2244,27 @@ export const startDaemon = async (
     streak: number
     lastTaskId: string
   }): void => {
-    if (isPaused) {
+    if (!pause.pause('storm', `signature storm: ${signature} x${streak}`)) {
       // Already paused (e.g. concurrent storm or quota rejection). The
       // action-queue row is already up; no duplicate side-effects needed.
       log(
-        `[signature-storm] already paused — storm for "${signature}" x${streak} noted (no-op)`,
+        `[signature-storm] already paused (${pause.get().reason}) — storm for "${signature}" x${streak} noted (no-op)`,
       )
       return
     }
-    setDaemonPaused(true)
     log(
-      `[signature-storm] dispatch paused — "${signature}" failed ${streak} consecutive tasks; steward dispatched for ${lastTaskId}`,
+      `[signature-storm] dispatch paused — "${signature}" failed ${streak} consecutive tasks; waking write-capable steward`,
     )
-    // Spawn the steward fire-and-forget. investigateWorktree is a one-active-
-    // investigation-per-id guard; a second call for the same id returns
-    // immediately with "(investigation already in progress)".
-    void investigateWorktree(lastTaskId)
+    // Bound the pause FIRST: whatever happens to the steward below, dispatch
+    // comes back on its own.
+    armStormFallbackResume(signature)
+    void dispatchStormSteward(signature, streak, lastTaskId).catch((err: unknown) => {
+      log(
+        `[signature-storm] steward dispatch failed: ${
+          err instanceof Error ? err.message : String(err)
+        } — dispatch stays paused until the fallback timer fires or an operator resumes`,
+      )
+    })
     viewStreamHub.broadcast('action-queue')
     viewStreamHub.broadcast('tasks')
   }
@@ -2061,7 +2301,9 @@ export const startDaemon = async (
 
   // Signature-storm streak reset: a successful task completion clears the
   // consecutive-failure streak so a future storm (same or different signature)
-  // can trip independently. Does NOT resume the queue — resume is manual.
+  // can trip independently. When dispatch is paused BECAUSE of that storm, the
+  // reset also lifts the pause — leaving one half cleared is exactly the drift
+  // this pause state exists to prevent.
   // Best-effort: a DB hiccup must not affect the dispatch path.
   bus.on('task.completed', (e: { taskId: string; status?: string }) => {
     if (e.status !== 'done') return
@@ -2071,6 +2313,9 @@ export const startDaemon = async (
         const storeForReset = await getDefaultTaskStore()
         await resetFailureSignatureStreak(storeForReset)
         log(`[signature-storm] streak reset after successful task ${e.taskId}`)
+        if (pause.get().reason === 'storm') {
+          await resumeFromStorm(`successful task ${e.taskId}`)
+        }
       } catch (err) {
         log(
           `[signature-storm] streak reset failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
@@ -3066,7 +3311,7 @@ export const startDaemon = async (
       sourceSha,
       currentSha,
       isStale,
-      isPaused,
+      pause: pause.get(),
     }
   }
 
@@ -3547,12 +3792,22 @@ export const startDaemon = async (
     getAcceptingWork: () => acceptingWork,
     setAcceptingWork: (value: boolean) => {
       acceptingWork = value
-      heartbeatHandle?.setDispatchEnabled(acceptingWork && !isPaused)
+      heartbeatHandle?.setDispatchEnabled(acceptingWork && !pause.isPaused())
     },
-    getIsPaused: () => isPaused,
-    setIsPaused: (value: boolean) => {
-      setDaemonPaused(value)
+    getPauseState: () => pause.get(),
+    pauseDispatch: (reason, detail) => pause.pause(reason, detail),
+    // Operator resume clears BOTH halves of a storm pause (in-memory pause and
+    // the durable breaker flag); every other reason is a plain clear.
+    resumeDispatch: () => {
+      if (pause.get().reason === 'storm') {
+        void resumeFromStorm('operator resume')
+        return
+      }
+      pause.resume()
     },
+    // Persist ONLY the operator pause to daemon.json (ADR-0058) so a daemon
+    // auto-respawn does not come up dispatching against work the operator
+    // deliberately stopped.
     persistIsPaused: (value: boolean) => {
       persistPaused(value)
     },
@@ -4105,31 +4360,48 @@ export const startDaemon = async (
   writeFileSync(httpPortFile, String(httpHandle.port), 'utf8')
   log(`HTTP action endpoint on http://127.0.0.1:${httpHandle.port} (port → ${httpPortFile})`)
 
-  // ── Signature-storm pause recovery ───────────────────────────────────────
-  // The circuit breaker's `tripped` flag is persisted across daemon restarts
-  // (in the `failure_signature_streak` singleton row). `isPaused`, however,
-  // is in-memory only and always starts as `false`. If the prior daemon trip
-  // the breaker, we must restore `isPaused = true` NOW — before reconcile()
-  // triggers the first drain() — so queued tasks don't dispatch during an
-  // active storm episode.
+  // ── Storm-breaker ⇄ pause-state reconcile ────────────────────────────────
+  // The breaker's `tripped` flag is durable (the `failure_signature_streak`
+  // singleton row); the pause is in-memory. A daemon that came up with
+  // `tripped=true` used to dispatch happily while the DB still said the fleet
+  // was stormed — the exact drift that made `mars daemon status` report PAUSED
+  // with nothing on disk to explain it. Restore the pause WITH its reason
+  // ('storm') and re-arm the bounded fallback so the restart cannot leave
+  // dispatch dead forever either.
+  //
+  // Awaited deliberately, BEFORE reconcile() triggers the first drain(), so
+  // queued tasks cannot dispatch through the gap during an active storm.
   //
   // Single source of truth: `tripped` drives both "never re-raise the action-
-  // queue row" (handled by recordFailureSignature's alreadyTripped guard) and
-  // "keep the queue paused" (handled here).  Persisting a separate `isPaused`
-  // column would introduce the same two-flag drift this fix is designed to
-  // eliminate.
+  // queue row" (recordFailureSignature's alreadyTripped guard) and "keep the
+  // queue paused" (here). Note the operator pause restored from daemon.json
+  // above already holds the first-cause slot when both are set — one resume
+  // then clears the pause and this flag together.
   //
-  // Resume path: `mars daemon resume` calls resetSignatureStorm(), which
-  // zeroes the streak and clears `tripped`, so the NEXT restart does NOT
-  // re-pause the queue the operator deliberately unblocked.
+  // Resume path: `mars daemon resume` clears `tripped` and zeroes the streak,
+  // so the NEXT restart does NOT re-pause a queue the operator unblocked.
   try {
-    const { isSignatureStormTripped } = await import('../lib/signature-storm-monitor')
-    if (await isSignatureStormTripped(getCompositionRootClient())) {
-      setDaemonPaused(true)
-      log('[signature-storm] startup: tripped flag found in DB — dispatch remains paused; run `mars daemon resume` to re-enable')
+    const { readSignatureStormState } = await import('../lib/signature-storm-monitor')
+    const stormState = await readSignatureStormState(getCompositionRootClient())
+    if (stormState.tripped) {
+      const sig = stormState.signature ?? 'unknown'
+      if (pause.pause('storm', `signature storm: ${sig} x${stormState.streak} (restored at startup)`)) {
+        log(`[signature-storm] breaker was tripped on "${sig}" — dispatch restored to paused`)
+      } else {
+        log(
+          `[signature-storm] breaker was tripped on "${sig}" — dispatch already paused (reason=${pause.get().reason})`,
+        )
+      }
+      // Armed in both branches: whichever cause holds the pause, the durable
+      // breaker flag must not be able to wedge dispatch indefinitely.
+      armStormFallbackResume(sig)
     }
   } catch (err) {
-    log(`[signature-storm] startup: failed to read streak row (non-fatal): ${(err as Error).message}`)
+    log(
+      `[signature-storm] startup breaker reconcile failed (non-fatal): ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    )
   }
 
   // Boot reconcile after server is listening (so any reconcile-driven dispatch
@@ -4356,7 +4628,7 @@ export const startDaemon = async (
   // See orchestrator/src/core/daemon/requeue-ceiling.ts for the ceiling logic.
   const POLL_FALLBACK_MS = Number(process.env.MARS_DRAIN_POLL_MS ?? 30_000)
   const pollFallback = setInterval(() => {
-    if (!acceptingWork || isPaused || drainRunning || tracker.inFlightCount() > 0) return
+    if (!acceptingWork || pause.isPaused() || drainRunning || tracker.inFlightCount() > 0) return
     void (async () => {
       try {
         const [drafts, queued] = await Promise.all([

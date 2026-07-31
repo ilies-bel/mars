@@ -19,6 +19,8 @@ import {
   readDaemonConfigFile,
 } from '../../core/daemon/config'
 import type { AutonomyLevel } from '../../core/daemon/config'
+import { describePauseState } from '../../core/daemon/pause-state'
+import type { DispatchPauseState } from '../../core/daemon/pause-state'
 import {
   daemonPaths,
   isDaemonAlive,
@@ -220,9 +222,9 @@ const daemonPause: Command = {
     try {
       const data = (await deps.daemon.sendRequest(
         { op: 'pause' },
-      )) as { paused: boolean; inFlight: number }
+      )) as { paused: boolean; reason: string | null; inFlight: number }
       deps.out(
-        `daemon paused: dispatch suspended (${data.inFlight} task(s) in flight). Run \`mars daemon resume\` to resume.`,
+        `daemon paused (reason: ${data.reason ?? 'operator'}): dispatch suspended (${data.inFlight} task(s) in flight). Run \`mars daemon resume\` to resume.`,
       )
     } catch (err) {
       const msg = errorMessage(err)
@@ -242,8 +244,15 @@ const daemonResume: Command = {
   usage: 'usage: mars daemon resume',
   run: async (_args, deps) => {
     try {
-      await deps.daemon.sendRequest({ op: 'resume' })
-      deps.out('daemon resumed: dispatch re-enabled')
+      const data = (await deps.daemon.sendRequest({ op: 'resume' })) as {
+        paused: boolean
+        clearedReason: string | null
+      }
+      deps.out(
+        data.clearedReason !== null
+          ? `daemon resumed: dispatch re-enabled (cleared ${data.clearedReason} pause)`
+          : 'daemon resumed: dispatch re-enabled (was not paused)',
+      )
     } catch (err) {
       const msg = errorMessage(err)
       if (isDaemonDownError(msg)) {
@@ -282,10 +291,13 @@ const daemonStatus: Command = {
       sourceSha: string | null
       currentSha: string | null
       isStale: boolean
-      isPaused: boolean
+      pause: DispatchPauseState
     }
-    if (data.isPaused) {
-      deps.out('⏸ PAUSED — dispatch suspended; run `mars daemon resume` to resume')
+    const pauseLine = describePauseState(data.pause)
+    if (pauseLine !== null) {
+      deps.out(
+        `⏸ PAUSED (${pauseLine}) — dispatch suspended; run \`mars daemon resume\` to resume`,
+      )
     }
     deps.out(`pid:        ${data.pid}`)
     deps.out(`startedAt:  ${data.startedAt}`)

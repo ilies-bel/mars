@@ -29,10 +29,15 @@ export interface MonitorDb {
  *      the operator that the queue is paused and that a steward has been
  *      dispatched.
  *  (b) The `tripped` flag is persisted so daemon restarts do not re-trip and
- *      raise a duplicate row for the same episode.
- *  (c) The CALLER (daemon-side) is responsible for calling `setIsPaused(true)`
- *      and spawning the steward (`investigateWorktree`). `recordFailureSignature`
- *      signals the first trip via `{ tripped: true, alreadyTripped: false }`.
+ *      raise a duplicate row for the same episode. It is the DURABLE half of
+ *      the daemon's single pause state: a daemon that starts with
+ *      `tripped=true` comes up paused with reason `storm`
+ *      (see {@link readSignatureStormState}), and clearing the pause clears
+ *      this flag in the same step, so the two can never drift.
+ *  (c) The CALLER (daemon-side) is responsible for pausing dispatch with
+ *      reason `storm` and waking the write-capable Steward.
+ *      `recordFailureSignature` signals the first trip via
+ *      `{ tripped: true, alreadyTripped: false }`.
  *
  * Streak rules (identical to gate-meta-monitor):
  *  - A different signature resets the streak to 1.
@@ -41,8 +46,10 @@ export interface MonitorDb {
  *    NOT advance it — the requirement is distinct tasks.
  *
  * Reset: any successful task completion calls {@link resetFailureSignatureStreak}
- * which zeroes the streak and clears `tripped`. Resume is MANUAL via
- * `mars daemon resume` — this monitor does not auto-resume the queue.
+ * which zeroes the streak and clears `tripped`. Dispatch itself resumes when
+ * the Steward lands a fix, when the daemon's bounded fallback timer fires, or
+ * when the operator runs `mars daemon resume` — all three clear this flag and
+ * the pause together.
  */
 
 /**
@@ -137,29 +144,88 @@ export interface RecordFailureSignatureResult {
  * without raising another row — idempotent per episode.
  */
 /**
- * Does `signature` actually name a failure KIND, or is it a placeholder?
+ * Signature segments that carry NO diagnostic information. A signature whose
+ * only classified slot holds one of these records that classification failed,
+ * not what failed.
+ */
+const NON_DIAGNOSTIC_SEGMENTS: ReadonlySet<string> = new Set(['', 'unknown', 'unclassified'])
+
+/**
+ * Does `signature` actually name a failure cause, or is it a placeholder?
  *
- * Signatures look like `<step>:<kind>/<class>` (or `<kind>/<class>`). The
- * breaker's whole premise is "the SAME signature failed N consecutive tasks,
- * therefore one systemic cause" — which only holds when the signature
- * identifies a cause. `unknown/unclassified`, `/unclassified` and
- * `recovery_exhausted:/unclassified/unclassified` all have an EMPTY or
- * `unknown` kind slot: they record that classification failed. Three unrelated
- * unclassified failures share nothing, so streaking them together trips the
- * breaker on noise and pauses dispatch until a human notices.
+ * Grammar (see {@link computeFailureSignature}): a signature is
+ * `<failingStep>/<errorClass>`, where `<failingStep>` is a colon-separated
+ * step id — a bare gate name (`code`, `verify`, `setup`, `merge`, `unknown`)
+ * optionally followed by a KIND segment (`verify:has-diff`,
+ * `setup:origin-worktree-missing`, `merge:vcs-supervisor-aborted`).
+ *
+ * The breaker's whole premise is "the SAME signature failed N consecutive
+ * tasks, therefore one systemic cause" — which only holds when the signature
+ * identifies a cause. Two slots can supply one:
+ *
+ *  - the KIND segment of the failing step, when the step carries one; or
+ *  - the ERROR CLASS, when the step is a bare gate name.
+ *
+ * So the diagnostic slot is the kind when the step has a colon, and the error
+ * class otherwise — and a signature is diagnostic only when that slot names
+ * something. `code/unclassified` and `verify/unclassified` are the two most
+ * generic buckets in the system: a bare gate name plus "we could not classify
+ * this". They share nothing but the gate they died in, so streaking them
+ * together trips the breaker on noise and pauses dispatch until a human
+ * notices. Same for `unknown/unclassified`, `/unclassified`, `code/unknown`
+ * and `recovery_exhausted:/unclassified/unclassified` (an empty kind slot).
  *
  * That is not hypothetical — a daemon restart emits a burst of reconcile
- * artifacts (orphaned origins, dirty-main parks) that all classify as
- * `unknown/unclassified`, so routine restarts silently wedged the queue.
+ * artifacts (orphaned origins, dirty-main parks) that all classify into these
+ * generic buckets, so routine restarts silently wedged the queue.
  *
  * Signatures with a real kind (`setup:origin-worktree-missing/unclassified`,
- * `merge:vcs-supervisor-aborted/rebase-dirty-worktree`) still streak normally,
+ * `merge:vcs-supervisor-aborted/rebase-dirty-worktree`) still streak normally
  * even though their CLASS is unclassified — the kind is the diagnostic part.
+ * So do bare-gate signatures with a real class (`verify/no-commits-ahead`) —
+ * there the class is the diagnostic part.
  */
 export const isDiagnosticSignature = (signature: string): boolean => {
-  const afterStep = signature.slice(signature.lastIndexOf(':') + 1)
-  const kind = afterStep.split('/')[0] ?? ''
-  return kind !== '' && kind !== 'unknown'
+  const slash = signature.indexOf('/')
+  const failingStep = slash === -1 ? signature : signature.slice(0, slash)
+  // The error class is the first segment after the step; a signature with no
+  // slash (e.g. `setup:origin-worktree-missing`) has no class at all.
+  const errorClass = slash === -1 ? '' : signature.slice(slash + 1).split('/')[0] ?? ''
+  const colon = failingStep.lastIndexOf(':')
+  // A colon means the step declares a kind slot — that slot is then the only
+  // diagnostic part, even when it is empty (an empty slot is a placeholder).
+  const diagnosticSlot = colon === -1 ? errorClass : failingStep.slice(colon + 1)
+  return !NON_DIAGNOSTIC_SEGMENTS.has(diagnosticSlot)
+}
+
+/** Durable state of the signature-storm circuit breaker. */
+export interface SignatureStormState {
+  /** True while the breaker is tripped (dispatch is expected to be paused). */
+  tripped: boolean
+  /** The signature the breaker tripped on, or null when it never tripped. */
+  signature: string | null
+  /** The streak count at the moment of the read. */
+  streak: number
+  /** The last task id observed for the current signature. */
+  lastTaskId: string | null
+}
+
+/**
+ * Read the durable breaker state. The daemon calls this at startup so the
+ * in-memory pause state and the persisted `tripped` flag cannot drift apart:
+ * a daemon that comes up with `tripped=true` comes up paused, with `storm`
+ * recorded as the pause reason.
+ */
+export const readSignatureStormState = async (
+  client: MonitorDb,
+): Promise<SignatureStormState> => {
+  const row = await readStreakRow(client)
+  return {
+    tripped: row.tripped === true,
+    signature: row.current_signature,
+    streak: row.streak_count,
+    lastTaskId: row.last_task_id,
+  }
 }
 
 export const recordFailureSignature = async (
@@ -227,25 +293,13 @@ export const recordFailureSignature = async (
 }
 
 /**
- * Returns `true` when the `failure_signature_streak` singleton row exists and
- * has `tripped = true`.
- *
- * Called at daemon startup to restore the in-memory `isPaused` flag from the
- * durable DB state. Without this check, `isPaused` resets to `false` on every
- * daemon restart while `tripped` stays `true` — the two halves of the circuit
- * breaker disagree and the queue drains at full rate during an active storm.
- */
-export const isSignatureStormTripped = async (client: MonitorDb): Promise<boolean> => {
-  const row = await readStreakRow(client)
-  return row.tripped
-}
-
-/**
  * Reset the failure-signature streak. Call on any successful task completion
  * so the storm episode ends and a future storm (different signature or the
  * same one after a fix) can trip independently.
  *
- * Does NOT resume the queue — resume is manual via `mars daemon resume`.
+ * Does NOT itself resume the queue — the daemon owns the pause state and
+ * clears it alongside this flag (Steward success, fallback timer, or
+ * `mars daemon resume`).
  */
 export const resetFailureSignatureStreak = async (
   client: MonitorDb,
@@ -282,10 +336,12 @@ const raiseSignatureStormRow = async (
       `The failure signature '${signature}' has appeared on ${streak} consecutive tasks across ` +
       `different task ids. This is the signature of a systemic / environmental failure ` +
       `(e.g. disk full, network partition, broken CI infra) rather than a per-task regression. ` +
-      `\n\nThe dispatch queue has been PAUSED — in-flight tasks finish but no new tasks start. ` +
-      `A steward has been dispatched to diagnose the root cause. ` +
-      `\n\nResume is MANUAL: once the environment is healthy, run \`mars daemon resume\` to ` +
-      `restart dispatch. The streak resets automatically when the first task completes successfully.`,
+      `\n\nThe dispatch queue has been PAUSED (reason: storm) — in-flight tasks finish but no ` +
+      `new tasks start. A write-capable Steward has been dispatched into its own worktree to ` +
+      `diagnose the root cause and land a fix. ` +
+      `\n\nResume is AUTOMATIC on two paths: the Steward landing a fix (which also resolves this ` +
+      `row), or a bounded fallback timer so dispatch can never stay dead if the Steward fails. ` +
+      `\`mars daemon resume\` resumes immediately and clears the breaker.`,
     payload: { signature, streak },
     context: {},
     raisedBy: 'daemon:signature-storm-monitor',

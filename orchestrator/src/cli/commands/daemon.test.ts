@@ -90,7 +90,8 @@ const statusPayload = {
   sourceSha: null,
   currentSha: null,
   isStale: false,
-  isPaused: false,
+  implementCap: { configured: 12, effective: 12, reason: null },
+  pause: { paused: false, reason: null, since: null, detail: null },
 }
 
 const createGitRepo = (branch: string): string => {

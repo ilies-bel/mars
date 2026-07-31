@@ -2,6 +2,7 @@ import type { Socket } from 'node:net'
 import type { Author } from '../author'
 import type { Task, TaskPlan, TaskTag, TaskSpec } from '../queue'
 import type { RunInitOptions, RunInitResult } from '../../workflows/init-workflow'
+import type { DispatchPauseState } from './pause-state'
 
 export type DaemonRequest =
   | {
@@ -172,11 +173,14 @@ export interface DaemonStatusPayload {
    */
   isStale: boolean
   /**
-   * True when the operator has called `mars daemon pause` and the dispatch
-   * loop is suspended. In-flight tasks continue; no new work is dispatched.
-   * Cleared by `mars daemon resume`. Does NOT survive a daemon restart.
+   * The daemon's ONE dispatch-pause state, carrying the reason dispatch is
+   * suspended ('operator' | 'storm' | 'quota') so status can say WHY rather
+   * than just that it is paused. In-flight tasks continue; no new work is
+   * dispatched. Cleared by `mars daemon resume` — which also clears the
+   * signature-storm breaker when that is what paused dispatch. A `storm`
+   * pause is restored at startup from the durable breaker flag.
    */
-  isPaused: boolean
+  pause: DispatchPauseState
 }
 
 const NEWLINE = 0x0a

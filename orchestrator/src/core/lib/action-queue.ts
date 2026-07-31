@@ -819,6 +819,30 @@ export const patchActionQueuePayloadById = async (
 }
 
 /**
+ * Resolve the id of the single OPEN row for a (kind, signature) pair, or null
+ * when none is open. Signature-keyed rows are level-triggered singletons — a
+ * repeat raise bumps `seen_count` on the same row — so callers that need to
+ * annotate or close "the row I raised earlier" must address it BY ID rather
+ * than raising again, which would only bump the counter and leave the payload
+ * stale. Used by the signature-storm handler to patch and resolve its own row.
+ */
+export const findOpenActionQueueItemIdBySignature = async (
+  kind: ActionQueueKind,
+  signature: string,
+): Promise<string | null> => {
+  const c = stateClient()
+  const r = await c.execute({
+    sql: `SELECT id FROM action_queue_items
+           WHERE kind = ? AND signature = ? AND state = 'open'
+           ORDER BY raised_at ASC
+           LIMIT 1`,
+    args: [kind, signature],
+  })
+  if (r.rows.length === 0) return null
+  return (r.rows[0] as unknown as { id: string }).id
+}
+
+/**
  * Default live-task lookup: dynamically imports `getTask` from the queue
  * module and returns `{ status }` for the task. Returns `null` when the task
  * is not found or when the queue DB is unavailable (non-fatal degradation).

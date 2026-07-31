@@ -558,28 +558,45 @@ const spendControlSetHandler = handler('spend-control.set', async (req, deps) =>
 })
 
 const pauseHandler = handler('pause', async (_req, deps) => {
-  deps.setIsPaused(true)
+  // First cause wins: when the storm breaker or a quota rejection already
+  // paused dispatch, an operator pause does not overwrite that reason —
+  // status keeps naming the real cause, and one resume clears it.
+  deps.pauseDispatch('operator')
+  const state = deps.getPauseState()
+  // Persist so the pause survives a daemon restart. The operator asked for a
+  // stopped queue; a respawn must not silently resume it.
   deps.persistIsPaused(true)
   deps.log(
-    `daemon paused; dispatch suspended (inFlight=${deps.tracker.inFlightCount()})`,
+    `daemon paused; dispatch suspended (reason=${state.reason}, inFlight=${deps.tracker.inFlightCount()})`,
   )
   return {
     ok: true,
-    data: { paused: true, inFlight: deps.tracker.inFlightCount() },
+    data: {
+      paused: true,
+      reason: state.reason,
+      inFlight: deps.tracker.inFlightCount(),
+    },
   }
 })
 
 const resumeHandler = handler('resume', async (_req, deps) => {
-  deps.setIsPaused(false)
+  const previous = deps.getPauseState()
+  deps.resumeDispatch()
   deps.persistIsPaused(false)
   // Clear the persisted signature-storm tripped flag so a subsequent daemon
   // restart does not re-pause a queue the operator deliberately resumed.
-  // Idempotent when no storm was active: the UPDATE is a no-op when the row
-  // has tripped=false or does not exist.
+  // `resumeDispatch` already clears it for a pause whose reason IS 'storm';
+  // this covers the case where an earlier cause (operator, quota) won the
+  // pause slot while the breaker tripped underneath it, leaving the durable
+  // flag armed with nothing in memory pointing at it. Idempotent when no
+  // storm was active: the UPDATE is a no-op when the row has tripped=false
+  // or does not exist.
   await deps.resetSignatureStorm()
   void deps.drain()
-  deps.log('daemon resumed; dispatch re-enabled')
-  return { ok: true, data: { paused: false } }
+  deps.log(
+    `daemon resumed; dispatch re-enabled (cleared reason=${previous.reason ?? 'none'})`,
+  )
+  return { ok: true, data: { paused: false, clearedReason: previous.reason } }
 })
 
 const taskContextForWorkerHandler = handler('task.contextForWorker', async (req, _deps) => {
