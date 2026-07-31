@@ -118,6 +118,20 @@ describe('createTaskStore', () => {
     expect(prompts).toContain('task-two')
   })
 
+  it('listAllTaskIds returns every task id without loading task details', async () => {
+    const { storeModule, queueModule } = await loadDeps(repo)
+    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+
+    const first = await store.enqueueTask('first task', undefined, { skipTriage: true })
+    const second = await store.enqueueTask('second task', undefined, { skipTriage: true })
+
+    await queueModule.updateTask(second.id, { status: 'done' })
+
+    await expect(store.listAllTaskIds()).resolves.toEqual(
+      expect.arrayContaining([first.id, second.id]),
+    )
+  })
+
   it('listTasksPaged returns tasks with total count', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
     const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
@@ -152,6 +166,7 @@ describe('createTaskStore', () => {
       'getTask',
       'listTasks',
       'listTasksPaged',
+      'listAllTaskIds',
       'enqueueTask',
       'updateTask',
       'dropTask',

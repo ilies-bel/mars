@@ -457,8 +457,8 @@ describe('triage workflow', () => {
 //  • Rule precedence: has-blockers wins when a task satisfies both rules.
 //  • listNonDoneTasks returns newest-first; reversed gives the pre-change
 //    display order (oldest-first).
-//  • filterExistingTaskIds drops unknown ids and is not called when the LLM
-//    returns an empty blockerTaskIds list; it receives at most MAX_BLOCKERS ids.
+//  • known task ids reject hallucinated blocker references and only the first
+//    MAX_BLOCKERS valid references are persisted.
 
 describe('triage workflow — optimised data access', () => {
   let repo: string
@@ -659,30 +659,34 @@ describe('triage workflow — optimised data access', () => {
     expect(spy).not.toHaveBeenCalled()
   })
 
-  it('filterExistingTaskIds receives at most MAX_BLOCKERS (10) ids', async () => {
-    // LLM returns 15 blocker ids; the workflow pre-slices to MAX_BLOCKERS=10
-    const manyBlockerIds = Array.from({ length: 15 }, (_, i) => `fake-blocker-${i}`)
-    setClaudeStub({
-      exitCode: 0,
-      stdout: envelope({ actionable: false, reason: 'many deps', blockerTaskIds: manyBlockerIds }),
-    })
+  it('records only the first ten valid blocker references', async () => {
     vi.resetModules()
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
     await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('main task')
+    const blockers = []
+    for (let i = 0; i < 11; i++) {
+      blockers.push(await queue.enqueueTask(`blocker ${i}`))
+    }
 
-    const { createTaskStore, getCompositionRootClient } = await import(
-      '../../../core/store/task-store'
-    )
-    const store = createTaskStore(getCompositionRootClient())
-    const spy = vi.spyOn(store, 'filterExistingTaskIds')
+    vi.resetModules()
+    setClaudeStub({
+      exitCode: 0,
+      stdout: envelope({
+        actionable: false,
+        reason: 'many deps',
+        blockerTaskIds: blockers.map((blocker) => blocker.id),
+      }),
+    })
 
+    const queue2 = await import('../../queue')
     const triage = await import('../../../workflows/triage-workflow')
-    await triage.runTriage(task.id, store)
+    const result = await triage.runTriage(task.id)
 
-    expect(spy).toHaveBeenCalledOnce()
-    const [receivedIds] = spy.mock.calls[0]!
-    expect(receivedIds.length).toBeLessThanOrEqual(10)
+    expect(result.blockerCount).toBe(10)
+    expect(await queue2.listBlockers(task.id)).toEqual(
+      blockers.slice(0, 10).map((blocker) => blocker.id),
+    )
   })
 })

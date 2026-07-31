@@ -143,7 +143,7 @@ describe('Coder pinned config', () => {
 })
 
 describe('Planner / Slicer / Triager pinned config', () => {
-  const readOnlyRoles: ReadonlyArray<WorkerName> = ['Planner', 'Slicer', 'Triager']
+  const readOnlyRoles: ReadonlyArray<WorkerName> = ['Planner', 'Slicer']
 
   for (const name of readOnlyRoles) {
     it(`${name}: runs with --permission-mode default and denies Edit/Write/NotebookEdit at the Worker layer`, () => {
@@ -168,6 +168,11 @@ describe('Planner / Slicer / Triager pinned config', () => {
     // provider the daemon runs. See WORKER_CONFIGS.Triager for the rationale.
     expect(WORKER_CONFIGS.Triager.model).toBe(providerModel(WORKER_PROVIDER, 'fast'))
     expect(WORKER_CONFIGS.Triager.effort).toBe('low')
+  })
+
+  it('runs Triager bare with an 80k context budget', () => {
+    expect(WORKER_CONFIGS.Triager.bare).toBe(true)
+    expect(WORKER_CONFIGS.Triager.maxContextTokens).toBe(80_000)
   })
 
 

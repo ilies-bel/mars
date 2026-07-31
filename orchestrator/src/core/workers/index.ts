@@ -349,24 +349,18 @@ export const CODER_MODEL: string =
 // Planner, Slicer, and Triager are read-only synthesis stages: default
 // permissions, Edit/Write/NotebookEdit denied. Triager goes further — fast
 // tier, low effort, and the whole tool surface denied; see its entry below.
-// Bare mode is disabled because
-// the locally installed claude CLI 2.1.142 fails authentication when --bare
-// is set (returns "Not logged in") even though keychain auth is valid in
-// non-bare invocations.
 // Per-worker context token budgets. These are intentionally below the model's
 // real context window (200k tokens for Claude Sonnet/Opus) to kill a run
 // before Claude Code would auto-compact. The 80% warn fires at 144k tokens
 // (well inside the window); the kill fires at 180k — leaving 20k of headroom
 // before the model's 200k limit so compaction never gets a chance to trigger.
-// Every budget must clear HARNESS_CONTEXT_FLOOR_TOKENS: the old 50k values for
-// Triager and Scorer sat BELOW the harness's own baseline occupancy, so the
-// moment the guard was actually enforced it would have killed those runs
-// before they read a single line of their prompt. 100k leaves ~40k of genuine
-// working room above the floor for the two focused read-only roles, and still
-// sits far enough under the 200k window that compaction never triggers.
+// Triager runs bare because its prompt is self-contained; 80k gives a wide
+// safety margin without loading repository instructions into its budget.
+// Other focused read-only roles retain 100k to clear the harness floor.
 const CODER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(180_000)
 const GENEROUS_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(180_000)
 const FOCUSED_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(100_000)
+const TRIAGER_CONTEXT_TOKENS = resolveWorkerMaxContextTokens(80_000)
 
 export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   Coder: {
@@ -424,10 +418,10 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
     model: providerModel(WORKER_PROVIDER, 'fast'),
     effort: 'low',
     permissionMode: 'default',
-    bare: false,
+    bare: true,
     disallowedTools: NO_TOOL_USE_DENIED_TOOLS,
     outputFormat: 'stream-json',
-    maxContextTokens: FOCUSED_CONTEXT_TOKENS,
+    maxContextTokens: TRIAGER_CONTEXT_TOKENS,
     runtime: 'headless',
     provider: WORKER_PROVIDER,
     tags: ['triager'],

@@ -215,6 +215,8 @@ export interface DomainTaskStore {
    * display order should reverse the result.
    */
   listNonDoneTasks(excludeId: string, limit: number): Promise<Task[]>
+  /** Return every task id without loading task prompts or metadata. */
+  listAllTaskIds(): Promise<string[]>
   /**
    * Return the subset of `ids` that refer to existing task rows.  Returns `[]`
    * without issuing a query when `ids` is empty.  Callers must pre-filter and
@@ -503,6 +505,10 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     listTasks: (status) => queueListTasks(status),
     listTasksPaged: (status, limit) => queueListTasksPaged(status, limit),
     listNonDoneTasks: (excludeId, limit) => queueListNonDoneTasks(excludeId, limit),
+    listAllTaskIds: async () => {
+      const r = await guardClient().execute('SELECT id FROM tasks')
+      return r.rows.map((row) => (row as { id: string }).id)
+    },
     filterExistingTaskIds: (ids) => queueFilterExistingTaskIds(ids),
     // Arc.createOrigin is the origin write funnel; pass `store` so persistence
     // routes through this seam rather than the process-wide default.

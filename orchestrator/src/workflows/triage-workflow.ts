@@ -20,11 +20,11 @@ const PROMPT_PREVIEW_CHARS = 200
  *
  * The graph size counted here is the row count from
  * `listNonDoneTasks(task.id, TASK_GRAPH_LIMIT)` — the non-done tasks other than
- * the one being triaged, capped at the number the prompt can render. That set
- * is also the ONLY thing the LLM can legitimately return: `blockerTaskIds` is
- * filtered against existing ids and the self-id before it is written, so a
- * verdict can only ever name a member of this set. (The threshold sits well
- * below TASK_GRAPH_LIMIT, so the cap never distorts the comparison.)
+ * the one being triaged, capped at the number the prompt can render. The LLM's
+ * blocker references are checked against the ID-only task index before they
+ * are written, so a verdict can only ever name an existing task other than
+ * itself. (The threshold sits well below TASK_GRAPH_LIMIT, so the cap never
+ * distorts the comparison.)
  *
  * Set to 5. Rationale:
  *  - 0 (the previous value) means "skip only when the graph is empty", i.e.
@@ -204,6 +204,7 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
       // listNonDoneTasks returns newest-first (DESC); reverse to render
       // oldest-first, matching the pre-optimisation display order.
       const taskGraph = buildTaskGraph([...graphTasks].reverse())
+      const knownIds = new Set(await store.listAllTaskIds())
 
       const r = await runWorkerWithSpan({
         worker: Workers.Triager,
@@ -225,15 +226,13 @@ export const triageWorkflow = defineWorkflow<TriageInput, TriageResult, TriageSe
         parseWorkerJsonResult(Workers.Triager.config.provider, r.stdout),
       )
 
-      // Pre-filter before querying so filterExistingTaskIds never receives more
-      // than MAX_BLOCKERS ids.
-      const candidateBlockers = parsed.blockerTaskIds
+      // Cap the LLM output before validating it, then retain only real task
+      // references. listAllTaskIds returns scalar ids rather than full tasks,
+      // avoiding prompt/transcript loading for this validation step.
+      const filteredBlockers = parsed.blockerTaskIds
         .filter((id) => id !== task.id)
         .slice(0, MAX_BLOCKERS)
-      const filteredBlockers =
-        candidateBlockers.length > 0
-          ? await store.filterExistingTaskIds(candidateBlockers)
-          : []
+        .filter((id) => knownIds.has(id))
 
       await store.clearBlockers(task.id)
       await store.addBlockers(task.id, filteredBlockers)
