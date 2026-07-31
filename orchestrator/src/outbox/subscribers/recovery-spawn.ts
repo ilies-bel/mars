@@ -7,6 +7,7 @@ import {
   hasUsableWorktree,
 } from '../../core/queue-fix-tasks.js'
 import { getTask, reopenTerminalTask, updateTask } from '../../core/queue.js'
+import { isOriginRecoveryFailedReason } from '../../core/blocker-resolution.js'
 import { apiCircuitBreaker } from '../../core/lib/api-circuit-breaker.js'
 import { asStepId, UNKNOWN_STEP_ID } from '../../core/lib/failure-signature.js'
 import { registerSubscriberName } from '../registry.js'
@@ -161,6 +162,21 @@ export async function drainRecoverySpawner(
       if (task.fixForTaskId !== null) {
         await dispatchFailure()
         return true
+      }
+
+      // ── An origin failed BY its dead recovery is terminal too ────────────────
+      // `Arc.failStrandedOriginOnRecoveryFailure` fails the origin when its
+      // one-shot recovery Chore dies (ADR-0040). That write emits a `task.failed`
+      // for the ORIGIN, which lands right back here — and by then the origin's
+      // recovery is terminal, so the outstanding-fix dedup inside
+      // `handleTaskFailureWithFixTask` no longer suppresses a spawn. Without this
+      // gate the repair would reopen the origin and hand it a SECOND recovery,
+      // violating the exactly-one-recovery-per-origin-failure rule and starting
+      // the strand cycle over. The recovery slot is spent; the operator owns it
+      // now (the escalation row is already raised).
+      if (isOriginRecoveryFailedReason(task.failureReason)) {
+        log?.(`origin ${taskId} failed by dead recovery — recovery slot spent, no respawn`)
+        return false
       }
 
       // Failures that happen before setup have no origin worktree for a fix

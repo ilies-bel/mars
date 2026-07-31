@@ -56,6 +56,7 @@ import { buildEventInsert, publish, withWriteTx } from './lib/outbox'
 import { assertNotRecoveryEdge } from './lib/blocker-invariant'
 import {
   MAIN_COMMITER_RECIPE,
+  parseMainCommiterPayload,
   SOURCE_ERROR_SUMMARY,
   VERIFY_MAIN_DIRTY_CODE,
   serialiseMainCommiterPayload,
@@ -75,6 +76,7 @@ import {
 import {
   CANCELLED_CASCADE_ACTION_QUEUE_KIND,
   CANCELLED_CASCADE_FAILURE_REASON,
+  composeOriginRecoveryFailedReason,
   ORPHANED_ORIGIN_FAILURE_REASON,
   PREREQUISITE_FAILED_ACTION_QUEUE_KIND,
   WORKTREE_AHEAD_FAILURE_REASON,
@@ -86,6 +88,8 @@ import {
   type BlockByFailureOutcome,
   type BlockByFailureResult,
   type BlockedDependentRow,
+  type FailStrandedOriginOutcome,
+  type FailStrandedOriginResult,
   type PropagateRecoveryDoneResult,
   type RecoverAllBlockedTasksResult,
   type RecoverBlockedTaskOutcome,
@@ -2539,6 +2543,89 @@ export class Arc {
     }
 
     return { failedBlockerTaskId, outcomes }
+  }
+
+  /**
+   * Dead-recovery write funnel (ADR-0040 / ADR-0052 sole-writer). When a
+   * recovery Chore lands `failed`, the ORIGIN it was spawned for must land
+   * `failed` too — CLAUDE.md § Blockers: "A recovery task is itself
+   * non-recoverable: if it fails for any reason … the origin goes to `failed`
+   * with one actionable action queue item and the operator resolves it
+   * explicitly (e.g. `mars restart`)."
+   *
+   * Without this the origin sat in `blocked` forever, waiting on the one
+   * blocker edge that can never reach `done` (a recovery Chore is a leaf and is
+   * never re-run). `blocked` is not terminal, so `mars purge` and `mars
+   * restart` both refuse it: the arc was unrecoverable without raw SQL.
+   *
+   * Scope — the origin↔its-own-recovery edge ONLY:
+   *  - the completing task must be a recovery (`fix_for_task_id` set) that is
+   *    actually `failed`; anything else is a no-op;
+   *  - only the recovery's own origin (`fix_for_task_id`) is failed, and only
+   *    while it is still `blocked`. Other dependents of the recovery — and the
+   *    origin's own dependents — are untouched. The failure does NOT cascade
+   *    down the chain; a failed blocker leaving its dependents waiting in
+   *    `blocked` is existing intended behaviour.
+   *
+   * Excluded — `main-commiter` recoveries. A main-committer does NOT carry the
+   * origin's work; it cleans the integration branch. Its failure is owned by the
+   * dedicated dead-committer path (`raiseAggregatedMainCommiterFailureRow` +
+   * `releaseMainCommitterDependents`, replayed by the
+   * `failed-committer-dependent-release` reconciler), which RE-QUEUES the source
+   * task once main is clean. Failing the source here would kill work that path
+   * intends to resume.
+   *
+   * Escalation is NOT raised here: `handleTaskFailureWithFixTask` already
+   * raises the origin-keyed `Fix and retry <recovery>, or abandon <origin>` row
+   * (and the repopulator's origin-fingerprint dedup bumps `seen_count` rather
+   * than inserting a second row when the origin's own `task.failed` lands).
+   * Only the status transition was missing.
+   *
+   * Idempotent: the transition is guarded on `status = 'blocked'`, so a replay
+   * (or the startup reconcile sweep running over an already-repaired row)
+   * reports `noop`.
+   */
+  static async failStrandedOriginOnRecoveryFailure(
+    recoveryTaskId: string,
+  ): Promise<FailStrandedOriginResult> {
+    const outcomes: FailStrandedOriginOutcome[] = []
+
+    const recovery = await getTask(recoveryTaskId)
+    // Only a genuinely failed recovery Chore strands an origin. A recovery that
+    // is still running, or that reached `done`, is handled by the ordinary
+    // unblock-by-completion path.
+    if (!recovery || recovery.fixForTaskId === null || recovery.status !== 'failed') {
+      return { recoveryTaskId, outcomes }
+    }
+
+    // Main-committers are branch janitors, not carriers of the origin's work —
+    // their failure is released, not propagated. See the docblock.
+    if (parseMainCommiterPayload(recovery.recoveryPayload)?.recipe === MAIN_COMMITER_RECIPE) {
+      return { recoveryTaskId, outcomes }
+    }
+
+    const originId = recovery.fixForTaskId
+    const origin = await getTask(originId)
+    // `blocked` is the only state this repair owns. An origin that already
+    // reached a terminal state (or was restarted back into the queue) is not
+    // stranded, and the terminal-transition trigger would reject the write.
+    if (!origin || origin.status !== 'blocked') {
+      outcomes.push({ originTaskId: originId, recoveryTaskId, outcome: 'noop' })
+      return { recoveryTaskId, outcomes }
+    }
+
+    // Route through the audited terminal seam: `markTaskFailed` -> `updateTask`
+    // (the single validated status chokepoint, which also emits the paired
+    // `task.failed` + `task.terminal` events), then clears the origin's now-dead
+    // outbound blocker edges and blocks any QUEUED downstreams. `blocked` is not
+    // terminal, so the `reject_terminal_task_transition` trigger permits it.
+    await markTaskFailed(
+      originId,
+      composeOriginRecoveryFailedReason(recoveryTaskId),
+      recovery.failureSignature ?? recovery.failureReasonCode ?? null,
+    )
+    outcomes.push({ originTaskId: originId, recoveryTaskId, outcome: 'failed' })
+    return { recoveryTaskId, outcomes }
   }
 
   /**

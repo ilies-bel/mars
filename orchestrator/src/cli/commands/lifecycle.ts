@@ -332,6 +332,10 @@ const printReconcile = (
     deps.out(`  daemon-killed alerts raised: ${summary.daemonKilledAlerts}`)
   if (summary.blockerDriftRepaired > 0)
     deps.out(`  blocker-drift repaired: ${summary.blockerDriftRepaired}`)
+  if (summary.strandedOriginsFailed > 0)
+    deps.out(
+      `  origins stranded on a failed recovery, now failed: ${summary.strandedOriginsFailed}`,
+    )
   if (summary.orphanedBlockedRequeued > 0)
     deps.out(`  orphaned-blocked re-queued: ${summary.orphanedBlockedRequeued}`)
   if (summary.runningRequeued > 0)
@@ -350,6 +354,7 @@ const printReconcile = (
   const anyWork =
     summary.daemonKilledAlerts +
       summary.blockerDriftRepaired +
+      summary.strandedOriginsFailed +
       summary.orphanedBlockedRequeued +
       summary.runningRequeued +
       summary.orphanSpansSwept +

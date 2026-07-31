@@ -145,6 +145,36 @@ const blockerDriftRepair: Reconciler = {
 }
 
 /**
+ * 3b. Stranded-origin repair — fail any origin sitting in `blocked` behind its
+ *     OWN failed recovery Chore. A recovery is a leaf that is never re-run
+ *     (ADR-0040), so that blocker edge can never reach `done`: the origin was
+ *     stuck forever in a non-terminal status neither `mars purge` nor
+ *     `mars restart` accepts.
+ *
+ *     Must run BEFORE the orphaned-blocked scan so a stranded origin is failed
+ *     rather than re-queued once its dead edge is cleared, and before the
+ *     dispatch re-seed so nothing dispatches off a repaired row mid-pass.
+ */
+const strandedOriginRecoveryRepair: Reconciler = {
+  name: 'stranded-origin-recovery-repair',
+  async run({ log }) {
+    try {
+      const { failOriginsStrandedOnFailedRecovery } = await import('./reconcile-blocker-drift')
+      const failed = await failOriginsStrandedOnFailedRecovery()
+      for (const taskId of failed) {
+        log(
+          `[reconcile] origin ${taskId} was blocked on its own failed recovery — failed (ADR-0040)`,
+        )
+      }
+      return { strandedOriginsFailed: failed.length }
+    } catch (err) {
+      log(`[reconcile] stranded-origin recovery repair failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * A Chore can only use an origin worktree while that origin remains live.
  * Repair legacy rows left by the former dispatch race before reseeding work:
  * reopen any already-failed Chore through the sole audited seam, then drop it
@@ -860,6 +890,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   orphanedChatRunSweep,
   deadThreadEviction,
   blockerDriftRepair,
+  strandedOriginRecoveryRepair,
   terminalOriginChoreRepair,
   mergeJobsStartupReconcile,
   orphanedBlockedScan,
