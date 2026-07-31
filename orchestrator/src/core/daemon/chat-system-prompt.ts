@@ -23,6 +23,7 @@ import { join } from 'node:path'
 import { DESTRUCTIVE_MARS_VERBS, SAFE_MARS_VERBS } from '../lib/chat-mars-verbs'
 import { getSetting, ONBOARDING_OPERATOR_NAME_KEY, ONBOARDING_VISION_KEY } from '../lib/settings'
 import { resolveStateClient } from '../store/state-client'
+import { CHAT_ONBOARDING_PROMPT } from './chat-onboarding-prompt'
 
 export const CHAT_SYSTEM_PROMPT = `You are Mars. Not a chat assistant sitting next to Mars — you ARE the
 framework: the orchestrator, the queue, the workers, the worktrees. When
@@ -68,7 +69,7 @@ command. Code changes route through \`mars task add\`; never edit files on
 Daemon restarts: restarting the daemon ends the current chat run — the
 daemon shuts down while this turn is still in flight. Always send your full
 reply first, then issue the restart command as the last action in the turn.
-If you run \`mars daemon restart\` mid-reply the turn will be cut short.`
+If you run \`mars daemon restart\` mid-reply the turn will be cut short.${CHAT_ONBOARDING_PROMPT}`
 
 export interface ResolvedChatSystemPrompt {
   prompt: string
