@@ -164,7 +164,7 @@ const parsePorcelainPath = (line: string): string => {
  * changes (mode 160000 entries).
  *
  * Contamination rules (→ `'unrelated'`):
- *  - `XY === '!!'`           — ignored entries; `git stash` historically skips these
+ *  - `XY === '!!'`           — ignored entries; a checkpoint never captures these
  *  - `XY[0|1] === 'U'`       — unmerged/conflicted paths
  *  - mode 160000 paths       — submodule gitlink changes
  *  - `??` inside ignored dir — untracked files whose parent directory is ignored

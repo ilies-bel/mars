@@ -777,7 +777,7 @@ describe('main-committer verify: integration-clean check', () => {
     // point, the verify step must fail the committer task (non-recoverable).
     //
     // Scenario: main-committer ran but the integration branch working tree
-    // still has uncommitted files (e.g. git stash refused to capture them).
+    // still has uncommitted files (e.g. ignored files a checkpoint cannot hold).
     const { checkIntegrationBranchDirty } = await import('../main-dirty')
 
     // Simulate integration checkout still dirty.
@@ -796,7 +796,7 @@ describe('main-committer verify: integration-clean check', () => {
 
   it('committer cleaned successfully: returns clean when integration checkout is empty after committer ran', async () => {
     // Simulates the verify-time check after the committer successfully committed
-    // or stashed all dirty files. The integration checkout is clean →
+    // or parked all dirty files. The integration checkout is clean →
     // checkIntegrationBranchDirty returns dirty:false → verify passes.
     const { checkIntegrationBranchDirty } = await import('../main-dirty')
 
@@ -905,7 +905,8 @@ describe('provisionCommitterWorktree carries dirty state into the new tree', () 
 // its origin" with "use the generic createWorktree()". A main-committer fix
 // does not attach to an origin (recoveryAttachesToOrigin === false), but it
 // MUST provision via provisionCommitterWorktree so the integration branch's
-// dirty state is stashed off repoRoot and popped INTO the fix worktree. Routing
+// dirty state is checkpointed off repoRoot and applied INTO the fix worktree
+// (per-task ref, never the shared stash stack). Routing
 // it through createWorktree() instead branches off the clean integration tip
 // and strands the dirty state on the integration checkout — so the committer
 // coder sees nothing to commit and every downstream task fails
@@ -979,12 +980,18 @@ describe('setup provisioning choice for a main-committer fix', () => {
       encoding: 'utf8',
     })
     expect(committerStatus).toContain('leaked.ts')
-    // And the stash pop moved it OFF the integration checkout.
+    // And the migration moved it OFF the integration checkout...
     const mainStatus = execFileSync('git', ['status', '--porcelain'], {
       cwd: repo,
       encoding: 'utf8',
     })
     expect(mainStatus).not.toContain('leaked.ts')
+    // ...via a per-task checkpoint ref, never the shared stash stack.
+    const stashList = execFileSync('git', ['stash', 'list'], {
+      cwd: repo,
+      encoding: 'utf8',
+    })
+    expect(stashList.trim()).toBe('')
     execFileSync('git', ['worktree', 'remove', '--force', committer.path], {
       cwd: repo,
     })

@@ -174,8 +174,10 @@ export const raiseAggregatedMainCommiterFailureRow = async (
     fix.error ? `Last committer error (truncated):\n\`\`\`\n${fix.error}\n\`\`\`` : null,
     // Without this the operator has no way to find their own work. Spawning a
     // committer MOVES the integration branch's uncommitted changes into the
-    // committer's worktree (stash push on the repo root -> stash pop in the
-    // worktree). When the committer then fails — which the recipe is SUPPOSED
+    // committer's worktree (checkpoint capture on the repo root -> apply by
+    // object id in the worktree, see `core/lib/git/checkpoint.ts`; the
+    // checkpoint ref survives as a second copy either way).
+    // When the committer then fails — which the recipe is SUPPOSED
     // to do whenever the diff is ambiguous, e.g. edits spanning unrelated
     // subsystems — those changes stay behind in a hidden `.mars/worktrees/`
     // path. `git status` on the integration branch is clean and the edits look
@@ -407,7 +409,7 @@ export const handleCommitterStillDirty = async (
       pathLines,
       '',
       'The committer exited without fully cleaning the integration checkout',
-      '(e.g. git stash refused to capture some files, or the committer did not commit).',
+      '(e.g. ignored files remain, which a checkpoint never captures, or the committer did not commit).',
       'No automatic recovery is possible — operator review is required.',
       '',
       'To resolve:',

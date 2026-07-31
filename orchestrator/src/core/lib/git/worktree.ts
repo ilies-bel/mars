@@ -13,6 +13,11 @@ import {
   type TraceCtx,
   type RegisteredWorktree,
 } from './internal'
+import {
+  captureCheckpoint,
+  discardWorkingTreeChanges,
+  restoreCheckpoint,
+} from './checkpoint'
 
 export interface CreateWorktreeArgs {
   taskId: string
@@ -270,24 +275,36 @@ export const attachToOriginWorktree = async (
 /**
  * Slice F.2 (main-commiter): provision a worktree the committer recovery
  * runs inside. The committer's whole purpose is to read the dirty state of
- * the integration branch and commit / stash it; the dirty state lives on
+ * the integration branch and dispose of it; the dirty state lives on
  * the repo's main checkout (`getRepoRoot()`), so a vanilla `createWorktree`
  * pointing at a `task/<id>` branch would land the committer in a CLEAN tree
  * — the wrong workspace.
  *
- * Approach: stash the dirty state in `repoRoot` (with `--include-untracked`),
- * spin up a fresh worktree at `.mars/worktrees/<recoveryTaskId>/` on a new
- * branch off `integrationBranch`, then pop the stash inside that worktree.
- * The result is that the recovery agent sees exactly the same `git status`
- * it would have seen in `repoRoot`, but in its own isolated working tree
- * (so concurrent task worktrees branched off main aren't affected by the
- * committer's edits until it commits on the integration branch via
- * `git -C <committerWorktree> commit` and the orchestrator later merges).
+ * Approach: capture the dirty state of `repoRoot` as a per-task CHECKPOINT
+ * (`refs/mars/checkpoint/<recoveryTaskId>` — see `checkpoint.ts`), spin up a
+ * fresh worktree at `.mars/worktrees/<recoveryTaskId>/` on a new branch off
+ * `integrationBranch`, apply the checkpoint by naming its exact commit object
+ * inside that worktree, and only then clear `repoRoot`. The result is that the
+ * recovery agent sees the same `git status` it would have seen in `repoRoot`,
+ * but in its own isolated working tree.
  *
- * If `git stash` produces no entry (e.g. only untracked-ignored files exist
- * which the stash refuses to capture), the worktree is still created on
- * the integration branch — the recipe re-checks `git status` at start and
- * exits successfully on a clean tree.
+ * This deliberately does NOT use `git stash`: `refs/stash` is shared by every
+ * linked worktree in the repo and is addressed by shifting positions, so with
+ * tasks running in parallel a `stash pop` here could consume an entry pushed by
+ * an unrelated task. A checkpoint ref is per-task and is restored by object id,
+ * so one task's checkpoint is un-poppable by another.
+ *
+ * Ordering is chosen so no failure can lose work:
+ *  1. capture   — `repoRoot` untouched; the state now also exists as a commit.
+ *  2. worktree  — created off the integration tip.
+ *  3. restore   — throws loudly (`CheckpointRestoreError`) on conflict, leaving
+ *                 `repoRoot` still dirty and the checkpoint ref intact.
+ *  4. discard   — only once the state is provably present in the worktree.
+ *
+ * If there is nothing to capture (e.g. only ignored files are dirty, which a
+ * checkpoint deliberately never holds) the worktree is still created on the
+ * integration branch — the recipe re-checks `git status` at start and exits
+ * successfully on a clean tree.
  */
 export interface CommitterWorktreeArgs {
   /** Recovery task id used for path + branch naming. */
@@ -304,11 +321,13 @@ export const provisionCommitterWorktree = async (
     ? { ...args.traceCtx, phase: args.traceCtx.phase ?? 'setup' }
     : undefined
 
-  // Defense-in-depth guard (ADR-0058 / fix-b): refuse to stash uncommitted
+  // Defense-in-depth guard (ADR-0058 / fix-b): refuse to migrate uncommitted
   // work off the primary checkout when the daemon was paused. A paused daemon
   // signals that an operator is actively working in the integration tree;
-  // silently stashing their edits to migrate them into the committer worktree
-  // is how the 2026-07-28 data-loss incident occurred.
+  // silently capturing their edits to migrate them into the committer worktree
+  // is how the 2026-07-28 data-loss incident occurred. This guard is orthogonal
+  // to the capture mechanism — per-task checkpoint refs removed the shared-stash
+  // collision, but they do not make it correct to move an operator's live edits.
   //
   // Under normal operation fix-(a) is the primary protection: the persisted
   // pause flag makes a restarted daemon come up paused so drain() never fires
@@ -321,29 +340,24 @@ export const provisionCommitterWorktree = async (
   const { readPersistedPaused } = await import('../../daemon/config')
   if (readPersistedPaused()) {
     throw new Error(
-      'provisionCommitterWorktree: daemon is paused — refusing to stash and migrate ' +
+      'provisionCommitterWorktree: daemon is paused — refusing to capture and migrate ' +
         'uncommitted changes off the integration checkout. Run `mars daemon resume` once ' +
         'the working tree is ready to be processed.',
     )
   }
 
-  // Stash the dirty state in the main checkout. `--include-untracked` covers
-  // untracked-but-not-ignored files so the committer sees the full picture.
-  // `git stash push` returns non-zero when there is nothing to stash; treat
-  // that as a benign skip so a stale-detection race (state cleaned between
-  // our probe and this call) doesn't hard-fail the recovery spawn.
-  const stashMessage = `mars main-commiter spawn ${args.recoveryTaskId}`
-  const stashed = await execProbe(
-    resolveGitBin(),
-    ['stash', 'push', '--include-untracked', '-m', stashMessage],
-    { cwd },
-    ctx,
-  )
-  // Standard git output: "No local changes to save" means we have nothing
-  // to migrate; stick with the clean integration branch and let the
-  // recipe re-check.
-  const haveStash =
-    stashed.exitCode === 0 && !/No local changes to save/i.test(stashed.stdout)
+  // Capture the dirty state of the main checkout onto this recovery task's own
+  // checkpoint ref. Untracked-but-not-ignored files are included so the
+  // committer sees the full picture; ignored files are never captured (and are
+  // left on disk by the discard below). A `null` result means there was nothing
+  // to migrate — a stale-detection race, or ignored-only dirt — so we stick
+  // with the clean integration branch and let the recipe re-check.
+  const checkpoint = await captureCheckpoint({
+    cwd,
+    key: args.recoveryTaskId,
+    message: `mars main-commiter spawn ${args.recoveryTaskId}`,
+    traceCtx: ctx,
+  })
 
   // Build the worktree on a fresh branch off the integration tip via the
   // standard `createWorktree`. The branch is `task/<recoveryTaskId>` and
@@ -355,12 +369,14 @@ export const provisionCommitterWorktree = async (
     traceCtx: ctx,
   })
 
-  if (haveStash) {
-    // Pop the stash into the new worktree. `stash pop` on conflicts is a
-    // recoverable state for the agent (it sees the conflicted files in
-    // `git status`); we surface the exit code as a probe rather than
-    // throwing, so the recipe can decide what to do.
-    await execProbe(resolveGitBin(), ['stash', 'pop'], { cwd: worktree.path }, ctx)
+  if (checkpoint !== null) {
+    // Apply by object id — never by stack position. Throws on conflict or on a
+    // no-op apply, which leaves `repoRoot` dirty and the ref intact rather than
+    // silently stranding the operator's work.
+    await restoreCheckpoint({ cwd: worktree.path, checkpoint, traceCtx: ctx })
+    // The state is now provably in the committer's worktree, so clearing the
+    // integration checkout cannot lose it.
+    await discardWorkingTreeChanges({ cwd, traceCtx: ctx })
   }
 
   return worktree

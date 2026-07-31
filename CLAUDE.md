@@ -298,6 +298,15 @@ recovery-spawn path itself.
   `setup:origin-worktree-missing` cascade (this has already happened once
   at a scale of 170 tasks). Bulk deletes are slow (~1-3 s each) — run them
   backgrounded in batches, never as one foreground command.
+- **Never `git stash`.** `refs/stash` lives in the common git dir, so every
+  worktree in this repo shares one stack addressed by shifting positions
+  (`stash@{0}`, `stash@{1}`) — and the orchestrator's own checkpoints used to
+  live there, so a `pop` can hand you another task's uncommitted work. To park
+  changes temporarily, restore individual paths with `git checkout <ref> --
+  <paths>` (e.g. `git checkout $(git merge-base HEAD origin/main) -- <file>`),
+  commit a wip commit on your own branch, or work in a scratch clone. The
+  orchestrator checkpoints to per-task refs (`refs/mars/checkpoint/<task-id>`,
+  see `orchestrator/src/core/lib/git/checkpoint.ts`), never to the stash.
 - Never `cd`. Bash CWD persists across tool calls, and `mars` resolves
   the repo from CWD upward — once shifted into `.mars/worktrees/<id>/`,
   every later `mars` call silently binds to that worktree's `.mars/` and

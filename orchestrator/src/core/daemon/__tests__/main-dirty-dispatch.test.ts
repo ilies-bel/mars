@@ -120,7 +120,7 @@ describe('runMainDirtyDispatchCheck', () => {
       expect(committerRes.spawned).toBe(true)
 
       // Mark the committer done (simulates it completing — but main is still dirty
-      // because e.g. git stash couldn't capture all files).
+      // because e.g. ignored files remain, which a checkpoint never captures).
       await queue.updateTask(committerRes.fixTaskId, { status: 'done' })
 
       // --- test phase ---
