@@ -130,7 +130,11 @@ const EXCERPT_MAX_CHARS = 1_500
  * task's `error` column instead of captured output. A chain of these repeated
  * until truncation carries zero diagnostic content.
  */
-const STATUS_ECHO_TOKEN = /(?:recovery_failed|recovery_exhausted|requeue_ceiling)[^\s:]*:\s*/g
+// `[^\s]*` deliberately swallows the whole signature that follows the prefix
+// (signatures embed colons and slashes: `code:coder-exit-nonzero/unclassified`),
+// so a `recovery_failed:<sig>: recovery_failed:<sig>: …` chain strips to
+// nothing while a real error merely PREFIXED with one keeps its body.
+const STATUS_ECHO_TOKEN = /(?:recovery_failed|recovery_exhausted|requeue_ceiling):[^\s]*\s*/g
 
 /** Shortest remainder that could plausibly be real captured output. */
 const MIN_DIAGNOSTIC_CHARS = 40
