@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { emptyUsageTotals, summarizeUsage, getLatestContextSize } from '../claude-usage'
+import {
+  emptyUsageTotals,
+  summarizeUsage,
+  getLatestContextSize,
+  getCumulativeTokenSpend,
+  buildContextTokenSignals,
+} from '../claude-usage'
 import type { ClaudeEvent } from '../claude-stream'
 
 const assistant = (usage: Record<string, unknown>): ClaudeEvent => ({
@@ -186,5 +192,86 @@ describe('getLatestContextSize', () => {
       assistantWithContext(300),
     ]
     expect(getLatestContextSize(events)).toBe(300)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Provider-aware usage semantics
+// ---------------------------------------------------------------------------
+
+// A `codex exec --json` turn.completed event as parseCodexEventLine normalises
+// it: a single result event whose usage is CUMULATIVE spend for the whole turn.
+const codexTurnCompleted = (usage: Record<string, unknown>): ClaudeEvent => ({
+  type: 'result',
+  is_error: false,
+  usage,
+})
+
+describe('getCumulativeTokenSpend', () => {
+  it('returns 0 when no result event carries usage', () => {
+    expect(getCumulativeTokenSpend([])).toBe(0)
+    expect(getCumulativeTokenSpend([assistantWithContext(500)])).toBe(0)
+    expect(getCumulativeTokenSpend([{ type: 'result', is_error: false }])).toBe(0)
+  })
+
+  it('sums every token bucket on the terminal result event (codex spelling)', () => {
+    const events: ClaudeEvent[] = [
+      codexTurnCompleted({
+        input_tokens: 200_000,
+        cached_input_tokens: 80_000,
+        output_tokens: 9_216,
+      }),
+    ]
+    expect(getCumulativeTokenSpend(events)).toBe(289_216)
+  })
+
+  it('also accepts the Anthropic cache_* spelling', () => {
+    const events: ClaudeEvent[] = [
+      codexTurnCompleted({
+        input_tokens: 100,
+        cache_read_input_tokens: 20,
+        cache_creation_input_tokens: 5,
+        output_tokens: 10,
+      }),
+    ]
+    expect(getCumulativeTokenSpend(events)).toBe(135)
+  })
+
+  it('reads the LATEST result event', () => {
+    const events: ClaudeEvent[] = [
+      codexTurnCompleted({ input_tokens: 10 }),
+      codexTurnCompleted({ input_tokens: 40 }),
+    ]
+    expect(getCumulativeTokenSpend(events)).toBe(40)
+  })
+})
+
+describe('buildContextTokenSignals', () => {
+  it('per-request provider reports contextTokens (occupancy) and nothing else', () => {
+    const signals = buildContextTokenSignals('per-request', [
+      assistantWithContext(100),
+      assistantWithContext(300),
+    ])
+    expect(signals).toEqual({ contextTokens: 300 })
+    expect(signals.cumulativeTokens).toBeUndefined()
+  })
+
+  it('cumulative provider reports cumulativeTokens and NEVER contextTokens', () => {
+    // The bug this guards: 289,216 cumulative codex tokens were reported as a
+    // context size against a 50,000-token budget (`289216/50000`), tripping
+    // context-overflow handling on a run that had overflowed nothing.
+    const signals = buildContextTokenSignals('cumulative', [
+      codexTurnCompleted({
+        input_tokens: 200_000,
+        cached_input_tokens: 80_000,
+        output_tokens: 9_216,
+      }),
+    ])
+    expect(signals).toEqual({ cumulativeTokens: 289_216 })
+    expect(signals.contextTokens).toBeUndefined()
+  })
+
+  it('a provider reporting no usage gets neither field', () => {
+    expect(buildContextTokenSignals('none', [assistantWithContext(300)])).toEqual({})
   })
 })

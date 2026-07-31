@@ -12,6 +12,7 @@ import {
   type ClaudePermissionMode,
 } from '../lib/git/claude'
 import { readClaudeOutput, type ClaudeEvent } from '../lib/claude-stream'
+import type { ProviderUsageSemantics } from '../lib/claude-usage'
 import { codexHeadless } from './providers/codex-headless'
 import { geminiHeadless } from './providers/gemini-headless'
 
@@ -85,15 +86,18 @@ export type HeadlessRunOpts = Readonly<{
 // fast at runtime rather than silently falling back to an unintended path.
 //
 // The `capabilities` descriptor advertises which result fields the adapter
-// populates so dispatch logic can branch without inspecting the return value
-// at runtime. All three flags are true for the Claude adapter because
-// runClaudeCode extracts the session_id, detects quota-rejection, and tracks
-// context token usage.
+// populates, and HOW its usage numbers must be read, so dispatch and telemetry
+// logic can branch without inspecting the return value at runtime.
+//
+// `usageSemantics` is the load-bearing one: a provider that reports cumulative
+// turn spend (codex) must never have that number read as context occupancy —
+// see ProviderUsageSemantics in ../lib/claude-usage.
 export interface HeadlessAdapter {
   run(prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult>
   /** Decode this provider's complete stdout into normalized stream events. */
   readOutput(stdout: string): ClaudeEvent[]
   readonly capabilities: {
+    readonly usageSemantics: ProviderUsageSemantics
     readonly quotaRejected: boolean
     readonly sessionId: boolean
   }
@@ -105,6 +109,17 @@ export type RunHeadlessProviderOpts = Omit<HeadlessRunOpts, 'model'> & {
   readonly modelTier?: ProviderModelTier
   readonly timeoutMs?: number
 }
+
+/**
+ * True when this provider can report current context occupancy, and therefore
+ * when in-run context-overflow handling (warn at 80%, abort at 100% of a
+ * worker's maxContextTokens) is meaningful. A provider that reports only
+ * cumulative spend — or nothing at all — must be skipped by that logic; its
+ * budget is enforced on the INPUT side by the pre-flight prompt check in
+ * ../workers (see estimatePromptTokens).
+ */
+export const reportsContextOccupancy = (adapter: HeadlessAdapter): boolean =>
+  adapter.capabilities.usageSemantics === 'per-request'
 
 // Runtime options forwarded to spawnArgv when the orchestrator launches
 // a Provider process. Named fields instead of a plain record so callers
@@ -275,11 +290,13 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
       buf.includes('❯') &&
       /bypass permissions|shift\+tab to cycle|Haiku|Sonnet|Opus/i.test(buf),
     // Headless adapter: delegates directly to runClaudeCode so the headless
-    // dispatch path is bit-identical to the pre-seam behaviour. All three
-    // capability flags are true because runClaudeCode extracts the session_id,
-    // detects quota-rejection, and tracks context token usage.
+    // dispatch path is bit-identical to the pre-seam behaviour. runClaudeCode
+    // extracts the session_id and detects quota-rejection, and Claude Code
+    // stamps per-request usage on every assistant event — so the latest one is
+    // genuine context occupancy ('per-request').
     headless: {
       capabilities: {
+        usageSemantics: 'per-request',
         quotaRejected: true,
         sessionId: true,
       },

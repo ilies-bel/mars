@@ -3,6 +3,11 @@
 // unchanged. Authentication is deliberately delegated to Codex CLI: a local
 // `codex login` ChatGPT OAuth session (or another CLI-supported auth method) is
 // reused automatically and MARS never reads or copies credential material.
+//
+// Usage semantics are 'cumulative': the ONLY usage-bearing event is the
+// terminal `turn.completed`, and its `usage` block is total spend for the
+// whole turn — not context occupancy. Reading it as occupancy is what
+// produced fabricated readouts like `289216/50000` and ctx% above 300%.
 
 import { runSubprocessStreaming, buildWorkerEnv, type RunClaudeResult } from '../../lib/git/claude'
 import type { ClaudeEvent } from '../../lib/claude-stream'
@@ -88,6 +93,7 @@ export const readCodexOutput = (stdout: string): ClaudeEvent[] =>
 
 export const codexHeadless: HeadlessAdapter = {
   capabilities: {
+    usageSemantics: 'cumulative',
     quotaRejected: false,
     sessionId: false,
   },

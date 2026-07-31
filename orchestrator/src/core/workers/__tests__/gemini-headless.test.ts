@@ -210,8 +210,9 @@ describe('geminiHeadless.run — (d) null signals', () => {
 // ---------------------------------------------------------------------------
 
 describe('geminiHeadless capabilities', () => {
-  it('exposes quotaRejected: false and sessionId: false', () => {
+  it("exposes usageSemantics: 'none', quotaRejected: false, sessionId: false", () => {
     const { capabilities } = geminiHeadless
+    expect(capabilities.usageSemantics).toBe('none')
     expect(capabilities.quotaRejected).toBe(false)
     expect(capabilities.sessionId).toBe(false)
   })

@@ -70,11 +70,30 @@ function llmEvaluators(): StepEvaluator[] {
       compute(payload) {
         const s = usageSignals(payload)
         if (!s) return null
-        const ctx = toNum(s.contextTokens)
+        // `contextTokens` is present ONLY for a provider whose usage is
+        // per-request (see ProviderUsageSemantics). Absent means the provider
+        // cannot report occupancy — report nothing rather than a fabricated
+        // 0%, and never fall back to `cumulativeTokens`, which is spend and
+        // routinely exceeds the window several times over.
+        const ctx = s.contextTokens
+        if (typeof ctx !== 'number') return null
         return Math.round((ctx / CONTEXT_WINDOW_TOKENS) * 100 * 10) / 10
       },
       format: (v) => `${v}%`,
       warn: (v) => (v as number) >= 80,
+    },
+    {
+      // Total token spend for the run, reported by providers whose usage is
+      // cumulative (codex). Deliberately NOT a percentage of anything.
+      label: 'spend',
+      compute(payload) {
+        const s = usageSignals(payload)
+        if (!s) return null
+        const spent = s.cumulativeTokens
+        if (typeof spent !== 'number') return null
+        return spent
+      },
+      format: (v) => `${Math.round((v as number) / 100) / 10}k tok`,
     },
     {
       label: 'out/in',
