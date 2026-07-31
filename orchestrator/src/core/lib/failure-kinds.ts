@@ -445,6 +445,20 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
 
+      // ── code:commit-contract ─────────────────────────────────────────────
+      // The coder committed some work but exited without committing every path.
+      // The gate (`detectPostCoderState` → `dirty-with-commits`) catches this
+      // before verify runs. A recovery fix task is dispatched with the
+      // purpose-built recipe to commit the remaining paths.
+      {
+        signature: 'code:commit-contract/uncommitted-changes',
+        staticEncodable: notEncodable('orchestration'),
+        warmTitle: 'The coder left some files uncommitted',
+        verboseReason:
+          'The code step completed with commits ahead of integration, but some file paths were still uncommitted in the worktree when the coder exited. A recovery task has been dispatched to commit the remaining paths.',
+        actions: DEFAULT_ACTIONS,
+      },
+
       // ── verify:typecheck ─────────────────────────────────────────────────
       // One entry per registered typecheck-* error-class slug in
       // failure-signature.ts, plus a generic unclassified fallback.

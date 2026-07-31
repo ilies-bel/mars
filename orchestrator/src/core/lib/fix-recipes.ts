@@ -1007,6 +1007,79 @@ const testNoSuiteFoundRecipe: FixRecipe = {
   },
 }
 
+/**
+ * The previous coder committed some work but exited without committing the
+ * remaining paths — the `code:commit-contract` gate detected a `dirty-with-commits`
+ * worktree and stamped the failure. The fix is mechanical: commit every
+ * remaining uncommitted path. No new code is needed.
+ *
+ * `ctx.statusOutput` contains the dirty-file list captured at failure time
+ * (one relative path per line, from `postState.dirtyFiles.join('\n')`). The
+ * fix agent is attached to the ORIGIN worktree so it can stage and commit
+ * directly without lifting a diff.
+ */
+const codeCommitContractRecipe: FixRecipe = {
+  signature: 'code:commit-contract/uncommitted-changes',
+  title: (ctx) => {
+    const count = ctx.statusOutput.trim().split('\n').filter(Boolean).length
+    return `Commit ${count} path(s) the coder left uncommitted on ${ctx.targetBranch}`
+  },
+  buildPrompt: (ctx) => {
+    const integration = ctx.integrationBranch ?? 'main'
+    const dirtyFiles = ctx.statusOutput.trim().split('\n').filter(Boolean)
+    const fileList =
+      dirtyFiles.length > 0
+        ? dirtyFiles.map((f) => `  ${f}`).join('\n')
+        : '  (re-check with `git status` — the snapshot below may be stale)'
+    const countCmd = `git rev-list --count ${integration}..HEAD`
+    const sourcePromptSection =
+      ctx.originalPrompt.trim().length > 0
+        ? [
+            `## Original task (inlined — do not re-query the Mars DB via psql "$(cat .mars/pg.dsn)")`,
+            '',
+            ctx.originalPrompt.trim(),
+            '',
+          ]
+        : []
+    return [
+      `The previous coder on branch \`${ctx.targetBranch}\` committed some work but exited without committing these path(s):`,
+      '',
+      fileList,
+      '',
+      `You are attached to the origin task's worktree at ${ctx.targetPath} on branch \`${ctx.targetBranch}\`. The prior commits are already here — continue from them. Your ONLY job is to commit every remaining uncommitted path. Do NOT make any other change. Do NOT touch paths unrelated to the uncommitted files listed above.`,
+      '',
+      ...renderReproSection(ctx.reproCommand),
+      `STEP 1 — Sanity-check. Run \`git status --porcelain\` from your working directory.`,
+      ` - If the output is **empty**, the worktree is already clean: exit successfully WITHOUT committing anything.`,
+      ` - If the output is **non-empty**, continue to STEP 2 with the CURRENT status (the snapshot above may be stale — trust \`git status\`, not the list above).`,
+      '',
+      `STEP 2 — Commit ALL uncommitted paths. Run:`,
+      '',
+      '```bash',
+      `git add -A`,
+      `git commit -m "chore: commit paths left uncommitted by prior coder turn"`,
+      '```',
+      '',
+      `⚠️  CRITICAL: Use \`git add -A\` — stage EVERYTHING, then commit. Do NOT use \`git add <specific-file>\` unless you have a deliberate reason to exclude a path. This failure was caused by a partial commit; staging only some paths causes the EXACT SAME failure again and the task re-enters the failure loop.`,
+      '',
+      `STEP 3 — Verify the commit landed. Run \`${countCmd}\`. It MUST print a **non-zero integer**. If it prints \`0\`, the commit did not land on this branch — fix that before exiting.`,
+      '',
+      `STEP 4 — Run \`git status --porcelain\` one final time. The output MUST be empty. If any paths remain (staged, unstaged, or untracked), commit them now with \`git add -A && git commit\` before exiting.`,
+      '',
+      `Do NOT run tests. Do NOT refactor. Do NOT investigate the prior coder's implementation. This task's sole goal is to leave a clean worktree — every file committed, zero uncommitted paths.`,
+      '',
+      `If committing fails (e.g. a pre-commit hook rejects a file), emit a high-priority action-queue item via \`mars action-queue raise --from -\` explaining exactly what blocked the commit, then exit. Do NOT make workaround edits to silence a hook — that is out of scope.`,
+      '',
+      ...sourcePromptSection,
+      `Worktree: ${ctx.targetPath}`,
+      `Branch: ${ctx.targetBranch}`,
+      `Integration branch: ${integration}`,
+      '',
+      `Save your work — the orchestrator does NOT commit on your behalf.`,
+    ].join('\n')
+  },
+}
+
 // NOTE — intentionally absent entries (documented so future investigators don't
 // re-open these):
 //
@@ -1333,6 +1406,7 @@ const behaviourDodUnmetRecipe: FixRecipe = {
 }
 
 const recipeList: readonly FixRecipe[] = [
+  codeCommitContractRecipe,
   dirtyMergeTargetRecipe,
   behaviourDodUnmetRecipe,
   worktreeInstallFrozenLockfileRecipe,
