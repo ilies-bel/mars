@@ -15,6 +15,7 @@ import {
   assertPromptFitsContextBudget,
   HARNESS_CONTEXT_FLOOR_TOKENS,
   NO_TOOL_USE_DENIED_TOOLS,
+  deniesAllToolUse,
   providerModel,
   WORKER_PROVIDER,
   type WorkerName,
@@ -156,6 +157,32 @@ describe('Triager is pinned as a cheap classification call', () => {
     expect(cfg.model).toBe(providerModel(WORKER_PROVIDER, 'fast'))
     expect(cfg.model).toBe(PROVIDER_MODELS[WORKER_PROVIDER].fast)
     expect(cfg.effort).toBe('low')
+  })
+
+  it('gets no MCP servers injected — deny-listing tools cannot name mcp__* tools', async () => {
+    // A taskId on the dispatch is what injects the mars-worker (and with it
+    // codegraph) MCP servers. Handing those to a no-tools Worker would give
+    // back exactly the repo-browsing surface the deny-list removed.
+    expect(deniesAllToolUse(WORKER_CONFIGS.Triager)).toBe(true)
+    expect(deniesAllToolUse(WORKER_CONFIGS.Coder)).toBe(false)
+
+    const adapter = PROVIDERS.claude.headless as {
+      run: (prompt: string, opts: HeadlessRunOpts) => Promise<RunClaudeResult>
+    }
+    const original = adapter.run
+    let seenTaskId: string | undefined = 'unset'
+    adapter.run = async (_prompt, opts) => {
+      seenTaskId = opts.taskId
+      throw new Error('stop')
+    }
+    try {
+      await expect(
+        Workers.Triager.run('hi', { cwd: process.cwd(), taskId: 'mars-123' }),
+      ).rejects.toThrow('stop')
+    } finally {
+      adapter.run = original
+    }
+    expect(seenTaskId).toBeUndefined()
   })
 
   it('is denied the entire tool surface — it answers from its prompt', () => {
