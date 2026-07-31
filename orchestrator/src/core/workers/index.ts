@@ -156,12 +156,23 @@ export interface WorkerConfig {
   readonly tools?: readonly string[]
   // Normalized wire format for streamed provider output.
   readonly outputFormat: ClaudeOutputFormat
-  // Per-Worker context token budget. Compared against the LATEST assistant
-  // event's input-side token count (input + cache_read + cache_creation) on
-  // each turn; 0 = disabled. Set intentionally below the model's real context
-  // window to kill a run before the provider auto-compacts. A compression-
-  // induced kill is treated as a FAILURE (reason: context-exhausted) and
-  // routed through the normal recovery flow.
+  // Per-Worker context token budget; 0 = disabled. Enforced on two sides:
+  //
+  //   input — before dispatch, the estimated prompt cost is compared against
+  //           this value and an impossible run fails fast
+  //           (assertPromptFitsContextBudget). Applies to EVERY provider.
+  //   in-run — for a provider that reports context occupancy (see
+  //           reportsContextOccupancy) the LATEST assistant event's input-side
+  //           token count (input + cache_read + cache_creation) is compared
+  //           each turn, warning at 80% and killing at 100%. A provider that
+  //           reports only cumulative spend is skipped here: comparing spend
+  //           against a window aborts runs nowhere near the limit.
+  //
+  // Set intentionally below the model's real context window to kill a run
+  // before the provider auto-compacts, and above HARNESS_CONTEXT_FLOOR_TOKENS
+  // so the budget is reachable at all. A compression-induced kill is treated
+  // as a FAILURE (reason: context-exhausted) and routed through the normal
+  // recovery flow.
   readonly maxContextTokens: number
   // Execution runtime for this Worker. All built-in Workers use 'headless'
   // (dispatched via the selected CLI in a non-interactive subprocess). 'pty' is the
@@ -284,7 +295,8 @@ export interface RunOptions {
    * The task id this invocation is dispatched for. Forwarded to
    * {@link runClaudeCode} so the worker env is stamped with
    * `MARS_MCP_TASK_ID` and the mars-worker MCP server is injected into the
-   * inline `--mcp-config` JSON.
+   * inline `--mcp-config` JSON. Withheld for a Worker that denies the whole
+   * tool surface — see {@link deniesAllToolUse}.
    */
   readonly taskId?: string
 }
