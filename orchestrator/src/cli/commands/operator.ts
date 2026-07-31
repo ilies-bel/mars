@@ -18,7 +18,8 @@
  */
 
 import type { Command } from '../command'
-import { readControlLevers, writeControlLever } from '../../core/daemon/config'
+import { loadDaemonConfig, writeControlLever } from '../../core/daemon/config'
+import { isDaemonAlive } from '../../core/daemon/paths'
 import {
   computeBudgetStatus,
   parseDurationToMs,
@@ -33,10 +34,19 @@ const operatorStatus: Command = {
   summary: 'print current operator control lever values',
   usage: 'usage: mars operator status',
   run: async (_args, deps) => {
-    const levers = readControlLevers()
+    const liveness = await isDaemonAlive()
+    const levers = loadDaemonConfig().controlLevers
     deps.out(`recovery: ${levers.recovery}`)
     deps.out(`scoring: ${levers.scoring}`)
     deps.out(`auto-reflect: ${levers.autoReflect}`)
+    if (!liveness.alive) {
+      deps.out('dispatch: on  in-flight: unavailable (daemon down)')
+    } else {
+      const status = (await deps.daemon.sendRequest({ op: 'status' })) as {
+        inFlight: ReadonlyArray<unknown>
+      }
+      deps.out(`dispatch: on  in-flight: ${status.inFlight.length}`)
+    }
     renderBudgetStatus(await computeBudgetStatus(deps.store), deps.out)
     return { code: 0 }
   },
