@@ -83,7 +83,7 @@ const { runAgent } = await import('../index')
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeCtx(taskId: string, store: object) {
+function makeCtx(taskId: string, store: object, traceStore: object | null = null) {
   return {
     runId: taskId,
     workflowId: 'task',
@@ -97,7 +97,7 @@ function makeCtx(taskId: string, store: object) {
     signal: new AbortController().signal,
     services: {
       store,
-      traceStore: null,
+      traceStore,
       onPid: vi.fn(),
     },
     currentStep: null,
@@ -171,6 +171,7 @@ describe('auto-commit fast path for coder-left-uncommitted', () => {
   })
 
   afterEach(() => {
+    mockRunWorkerWithSpan.mockReset()
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -193,6 +194,23 @@ describe('auto-commit fast path for coder-left-uncommitted', () => {
 
     expect(mockHandleTaskFailureWithFixTask).not.toHaveBeenCalled()
     expect(mockRaiseActionQueueItem).not.toHaveBeenCalled()
+  })
+
+  it('gives the coder one corrective commit turn before the auto-commit net', async () => {
+    writeFileSync(resolve(repo, 'feature.ts'), 'export const x = 1\n')
+    mockRunWorkerWithSpan
+      .mockResolvedValueOnce(cleanCoderResult())
+      .mockImplementationOnce(async () => {
+        execFileSync('git', ['add', '-A'], { cwd: repo })
+        execFileSync('git', ['commit', '-q', '-m', 'feat: coder committed on correction'], { cwd: repo })
+        return cleanCoderResult()
+      })
+
+    await runAgent(makeCtx('test-auto', makeStore()), {
+      worktree: { path: repo, branch: 'task/test-auto' },
+    })
+
+    expect(gitLogSubjects(repo)).toEqual(['feat: coder committed on correction'])
   })
 
   it('auto-commit message includes the file count', async () => {
@@ -241,6 +259,30 @@ describe('auto-commit fast path for coder-left-uncommitted', () => {
     const subjects = gitLogSubjects(repo)
     expect(subjects).toHaveLength(1)
     expect(subjects[0]).toBe('feat: done')
+  })
+
+  it('records provider, commit source, and metered context for the task', async () => {
+    writeFileSync(resolve(repo, 'done.ts'), 'export const done = true\n')
+    execFileSync('git', ['add', 'done.ts'], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'feat: done'], { cwd: repo })
+    mockRunWorkerWithSpan.mockResolvedValue({
+      ...cleanCoderResult(),
+      conversation: [{ type: 'result', usage: { input_tokens: 1234 } }],
+    })
+    const traceStore = { record: vi.fn().mockResolvedValue(undefined) }
+
+    await runAgent(makeCtx('test-auto', makeStore(), traceStore), {
+      worktree: { path: repo, branch: 'task/test-auto' },
+    })
+
+    expect(traceStore.record).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'post-coder-commit',
+      payload: expect.objectContaining({
+        provider: expect.any(String),
+        commitSource: 'self',
+        contextTokens: 1234,
+      }),
+    }))
   })
 })
 

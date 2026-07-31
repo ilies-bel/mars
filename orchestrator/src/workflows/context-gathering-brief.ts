@@ -30,7 +30,7 @@ export const CONTEXT_GATHERING_BRIEF = [
   '',
   "**Rule 1 — At most one Explore subagent per turn.** When you need to look something up, combine all surface questions into a single Explore call. Do NOT launch multiple Explore subagents in the same assistant turn. If you have distinct follow-up questions after seeing Explore's answer, sequence them across turns — one Explore call per turn.",
   '',
-  '**Rule 2 — Choose the tool by intent.** For broad discovery ("where is X defined?", "which files reference Y?") use Explore (or codegraph when available). For a known target file whose full contents you need to write an edit, Read it directly — routing through Explore costs an extra round-trip and returns only excerpts. If Explore has already surfaced a file\'s contents, do not Read it again unless you are about to Edit it.',
+  '**Rule 2 — Choose the tool by intent.** For broad discovery ("where is X defined?", "which files reference Y?") use Explore (or codegraph when available). For a known target file whose full contents you need to write an edit, Read it directly — routing through Explore costs an extra round-trip and returns only excerpts. Do not Read a file Explore already surfaced unless you are about to Edit it.',
   '',
   '**Rule 3 — codegraph-first exploration (when available).** If `codegraph` is on PATH, prefer it over `rg`/grep+Read sweeps when answering "where is X defined?", "what calls Y?", or "how does Z work?" questions. Three invocations cover most needs:',
   '',

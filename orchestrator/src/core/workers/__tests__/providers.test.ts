@@ -182,9 +182,8 @@ describe("PROVIDERS.gemini headless adapter", () => {
     expect(typeof PROVIDERS.gemini.headless.run).toBe('function')
   })
 
-  it('capabilities has contextTokenMetering: false, quotaRejected: false, sessionId: false', () => {
+  it('capabilities has quotaRejected: false and sessionId: false', () => {
     const { capabilities } = PROVIDERS.gemini.headless
-    expect(capabilities.contextTokenMetering).toBe(false)
     expect(capabilities.quotaRejected).toBe(false)
     expect(capabilities.sessionId).toBe(false)
   })
@@ -196,9 +195,8 @@ describe("PROVIDERS.claude headless adapter", () => {
     expect(typeof PROVIDERS.claude.headless.run).toBe('function')
   })
 
-  it('capabilities has contextTokenMetering: true, quotaRejected: true, sessionId: true', () => {
+  it('capabilities has quotaRejected: true and sessionId: true', () => {
     const { capabilities } = PROVIDERS.claude.headless
-    expect(capabilities.contextTokenMetering).toBe(true)
     expect(capabilities.quotaRejected).toBe(true)
     expect(capabilities.sessionId).toBe(true)
   })

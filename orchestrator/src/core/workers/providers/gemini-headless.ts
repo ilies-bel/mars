@@ -44,7 +44,6 @@ export const readGeminiOutput = (stdout: string): ClaudeEvent[] =>
 
 export const geminiHeadless: HeadlessAdapter = {
   capabilities: {
-    contextTokenMetering: false,
     quotaRejected: false,
     sessionId: false,
   },

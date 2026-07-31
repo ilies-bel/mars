@@ -5,6 +5,7 @@
 // reused automatically and MARS never reads or copies credential material.
 
 import { runSubprocessStreaming, buildWorkerEnv, type RunClaudeResult } from '../../lib/git/claude'
+import { getLatestContextSize } from '../../lib/claude-usage'
 import type { ClaudeEvent } from '../../lib/claude-stream'
 import type { HeadlessAdapter, HeadlessRunOpts } from '../providers'
 
@@ -21,6 +22,10 @@ const isReadOnlyRun = (opts: HeadlessRunOpts): boolean => {
   return denied.has('Edit') && denied.has('Write')
 }
 
+// `codex exec --help` exposes no system-instruction argument. Keep the
+// unavoidable inlining explicit at this call site: Codex receives these as
+// ordinary user text, so the user prompt must put non-negotiable exit
+// conditions first rather than relying on system-role precedence.
 const composePrompt = (prompt: string, systemPrompt?: string): string =>
   systemPrompt?.trim()
     ? `<mars_system_instructions>\n${systemPrompt.trim()}\n</mars_system_instructions>\n\n${prompt}`
@@ -84,7 +89,6 @@ export const readCodexOutput = (stdout: string): ClaudeEvent[] =>
 
 export const codexHeadless: HeadlessAdapter = {
   capabilities: {
-    contextTokenMetering: false,
     quotaRejected: false,
     sessionId: false,
   },
@@ -93,12 +97,22 @@ export const codexHeadless: HeadlessAdapter = {
   run: async (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> => {
     const conversation: ClaudeEvent[] = []
     const abort = new AbortController()
+    const budget = opts.maxContextTokens ?? 0
+    const budgetEnabled = Number.isInteger(budget) && budget > 0
+    const warnAt = budgetEnabled ? Math.floor(budget * 0.8) : Number.POSITIVE_INFINITY
+    let warned = false
+    let contextExhausted = false
+    let externalAborted = false
 
     if (opts.externalAbort) {
       if (opts.externalAbort.aborted) {
+        externalAborted = true
         abort.abort()
       } else {
-        opts.externalAbort.addEventListener('abort', () => abort.abort(), { once: true })
+        opts.externalAbort.addEventListener('abort', () => {
+          externalAborted = true
+          abort.abort()
+        }, { once: true })
       }
     }
 
@@ -121,13 +135,48 @@ export const codexHeadless: HeadlessAdapter = {
         if (stream !== 'stdout') return
         const ev = parseCodexEventLine(line)
         if (!ev) return
+        if (contextExhausted) return
         conversation.push(ev)
         if (opts.onEvent) await opts.onEvent(ev)
+        if (!budgetEnabled) return
+        const contextSize = getLatestContextSize(conversation)
+        if (!warned && contextSize >= warnAt) {
+          warned = true
+          console.warn(
+            `[mars] codex run context at ${contextSize} tokens crossed 80% warn (${warnAt}/${budget})`,
+          )
+        }
+        if (contextSize >= budget) {
+          contextExhausted = true
+          abort.abort()
+        }
       },
       abort.signal,
       buildWorkerEnv(),
       opts.onPid,
     )
+
+    if (contextExhausted) {
+      return {
+        exitCode: 138,
+        stdout: result.stdout,
+        stderr: `codex exec aborted: context budget exhausted (${getLatestContextSize(conversation)}/${budget} tokens)`,
+        sessionId: null,
+        conversation,
+        quotaRejected: null,
+      }
+    }
+
+    if (externalAborted) {
+      return {
+        exitCode: 138,
+        stdout: result.stdout,
+        stderr: 'codex exec aborted by caller (read/grep span watcher)',
+        sessionId: null,
+        conversation,
+        quotaRejected: null,
+      }
+    }
 
     return {
       ...result,

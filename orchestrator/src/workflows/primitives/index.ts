@@ -84,7 +84,7 @@ import { resolveOriginIdForTask } from '../../core/lib/origin'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
 import { AWAIT_HUMAN_SENTINEL } from '../../core/lib/sentinels'
-import { summarizeUsage } from '../../core/lib/claude-usage'
+import { getLatestContextSize, summarizeUsage } from '../../core/lib/claude-usage'
 import { recordSignals } from '../../core/lib/reflect-signals'
 import {
   resolveTaskDomains,
@@ -1182,6 +1182,7 @@ export const runAgent = async (
   // Classifier failures (`error`) stay best-effort: log and fall through, so a
   // transient git hiccup never blocks an otherwise-good run.
   let postState: Awaited<ReturnType<typeof detectPostCoderState>> | null = null
+  let commitSource: 'self' | 'corrected' | 'net' | 'no-work' | 'unknown' = 'unknown'
   try {
     postState = await detectPostCoderState({
       worktreePath,
@@ -1193,6 +1194,8 @@ export const runAgent = async (
         `[post-coder] task ${taskId}: classifier error: ${postState.error}`,
       )
     }
+    if (postState.kind === 'clean-with-commits') commitSource = 'self'
+    if (postState.kind === 'clean-no-work') commitSource = 'no-work'
   } catch (err) {
     console.warn(
       `[post-coder] task ${taskId}: classifier threw, continuing:`,
@@ -1206,6 +1209,55 @@ export const runAgent = async (
       `[post-coder] task ${taskId}: dirty tree with 0 commits ahead of ${integrationBranch} — coder left ${postState.dirtyFiles.length} uncommitted path(s):\n  ${dirtyList}`,
     )
 
+    // A clean process exit with a dirty worktree is a recoverable instruction
+    // adherence failure, not a reason to immediately take authorship of the
+    // change. Give the same Coder one short, worktree-backed correction turn
+    // first. Codex exec is ephemeral, so this deliberately starts a second
+    // process; the worktree is the continuation state.
+    const correction = await runWorkerWithSpan({
+      worker,
+      prompt: `Your previous pass left uncommitted changes in these paths:\n  ${dirtyList}\n\nCommit them now. Do not make unrelated changes.`,
+      runOptions: {
+        cwd: worktreePath,
+        systemPrompt: resolveWorkerSystemPrompt(primaryTag),
+        onEvent: async (event) => emit?.(event),
+        onPid: ctx.services.onPid,
+      },
+      traceStore: spanStore(trace),
+      stepName: 'commit-correction',
+      workflowInstanceId: trace.workflowInstanceId,
+      originId,
+      taskId,
+      phase: 'code',
+    })
+
+    try {
+      const correctedState = await detectPostCoderState({
+        worktreePath,
+        integrationBranch,
+        traceCtx: buildPhaseCtx(trace, taskId, 'code'),
+      })
+      if (correctedState.kind === 'clean-with-commits') {
+        postState = correctedState
+        commitSource = 'corrected'
+        console.log(
+          `[post-coder] task ${taskId}: coder committed ${correctedState.commitsAhead} change(s) on corrective turn`,
+        )
+      } else if (correctedState.kind === 'error') {
+        console.warn(`[post-coder] task ${taskId}: corrective classifier error: ${correctedState.error}`)
+      } else {
+        postState = correctedState
+        console.warn(
+          `[post-coder] task ${taskId}: corrective commit turn exited ${correction.exitCode} without a commit; using the auto-commit net`,
+        )
+      }
+    } catch (err) {
+      console.warn(`[post-coder] task ${taskId}: corrective classifier threw; using the auto-commit net:`, err)
+    }
+  }
+
+  if (postState?.kind === 'dirty-no-commits') {
+    const dirtyList = postState.dirtyFiles.join('\n  ')
     const autoResult = await autoCommitWorktreeIfDeterministic({
       worktreePath,
       dirtyFiles: postState.dirtyFiles,
@@ -1213,6 +1265,7 @@ export const runAgent = async (
     })
 
     if (autoResult.committed) {
+      commitSource = 'net'
       console.log(
         `[post-coder] task ${taskId}: auto-committed ${postState.dirtyFiles.length} path(s) as ${autoResult.sha.slice(0, 8)}`,
       )
@@ -1262,6 +1315,22 @@ export const runAgent = async (
       throw new WorkflowTerminalError('coder-uncommitted', CODER_UNCOMMITTED_ABORT_MESSAGE(taskId))
     }
   }
+
+  await trace.traceStore
+    .record({
+      kind: 'post-coder-commit',
+      taskId,
+      originId,
+      phase: 'code',
+      payload: {
+        provider: worker.config.provider,
+        commitSource,
+        contextTokens: getLatestContextSize(r.conversation),
+      },
+    })
+    .catch(() => {
+      // Telemetry must never change the completion result.
+    })
 
   const usage = summarizeUsage(r.conversation)
   if (r.sessionId) {

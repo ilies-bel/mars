@@ -125,6 +125,22 @@ describe('getLatestContextSize', () => {
     expect(getLatestContextSize(events)).toBe(0)
   })
 
+  it('reads the final context size reported by a Codex turn.completed event', () => {
+    const events: ClaudeEvent[] = [
+      { type: 'assistant', message: { content: [] } },
+      {
+        type: 'result',
+        usage: {
+          input_tokens: 180_000,
+          cache_read_input_tokens: 2_000,
+          cache_creation_input_tokens: 500,
+        },
+      },
+    ]
+
+    expect(getLatestContextSize(events)).toBe(182_500)
+  })
+
   it('returns input_tokens alone when no cache tokens are present', () => {
     expect(getLatestContextSize([assistantWithContext(500)])).toBe(500)
   })

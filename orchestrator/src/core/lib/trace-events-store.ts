@@ -35,6 +35,7 @@ export const TRACE_EVENT_KINDS = [
   'tool_invoked',
   'log_line',
   'worker-model-mismatch',
+  'post-coder-commit',
   'cli-invocation',
   'scorer_result',
 ] as const

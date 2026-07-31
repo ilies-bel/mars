@@ -94,7 +94,6 @@ export interface HeadlessAdapter {
   /** Decode this provider's complete stdout into normalized stream events. */
   readOutput(stdout: string): ClaudeEvent[]
   readonly capabilities: {
-    readonly contextTokenMetering: boolean
     readonly quotaRejected: boolean
     readonly sessionId: boolean
   }
@@ -281,7 +280,6 @@ export const PROVIDERS: Readonly<Record<ProviderName, Provider>> = {
     // detects quota-rejection, and tracks context token usage.
     headless: {
       capabilities: {
-        contextTokenMetering: true,
         quotaRejected: true,
         sessionId: true,
       },

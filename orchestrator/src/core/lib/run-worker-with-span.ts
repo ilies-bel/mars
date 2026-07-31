@@ -110,6 +110,7 @@ export const runWorkerWithSpan = async (
       stepName,
       workflowInstanceId,
       workerName: worker.config.name,
+      provider: worker.config.provider,
       // The EXACT composed prompt sent to this step's worker (resume banner,
       // plan sections, orientation, structured spec, discipline briefs — all
       // of it). Persisted at emit time so "what did we actually ask it?" is
@@ -274,6 +275,7 @@ export const runWorkerWithSpan = async (
     stepName,
     workflowInstanceId,
     workerName: worker.config.name,
+    provider: worker.config.provider,
     outcome,
     ...(failureReason !== undefined ? { failureReason } : {}),
     sessionId: result.sessionId ?? null,

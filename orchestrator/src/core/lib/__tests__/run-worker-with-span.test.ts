@@ -131,6 +131,7 @@ describe('runWorkerWithSpan — Coder run', () => {
 
     const ended = (await traceStore.query({ taskId: 'task-coder-ghi', kind: ['step_ended'] }))[0]
     expect(ended.payload.outcome).toBe('completed')
+    expect(ended.payload.provider).toBe('claude')
     expect(ended.severity).toBe('info')
     expect(typeof ended.payload.durationMs).toBe('number')
   })

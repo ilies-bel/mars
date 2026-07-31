@@ -133,9 +133,17 @@ export const AWAIT_HUMAN_MESSAGE = (taskId: string, stepName: string): string =>
 // Prompt briefs + system-prompt assembly
 // ---------------------------------------------------------------------------
 
-// Mandatory footer appended to every implementor prompt.
+// Mandatory exit condition placed before every implementor prompt. It is
+// deliberately user-role text: Codex has no system-instruction argument.
+export const COMMIT_EXIT_CONDITION = [
+  '## Commit exit condition',
+  '',
+  'This run is not complete until `git rev-list --count main..HEAD` returns greater than `0`. Commit before you exit.',
+].join('\n')
+
+// Mandatory detailed commit procedure appended to every implementor prompt.
 export const COMMIT_FOOTER = [
-  '## Save your work',
+  '## Commit procedure',
   '',
   'Before exiting, stage and commit every file you intend to land:',
   '',
@@ -146,19 +154,7 @@ export const COMMIT_FOOTER = [
   '',
   '`git add` alone is not enough — staged-but-uncommitted changes are invisible to verify and the merge step. You must run `git commit`.',
   '',
-  'Then, as the final action before exiting, self-check that the commit landed on your branch. Run:',
-  '',
-  '```',
-  'git rev-list --count HEAD ^$(git merge-base HEAD @{upstream} 2>/dev/null || git rev-parse origin/main 2>/dev/null || echo HEAD)',
-  '```',
-  '',
-  'or, more simply, count commits since branching off integration:',
-  '',
-  '```',
-  'git rev-list --count $(git rev-parse --abbrev-ref HEAD)@{u}..HEAD 2>/dev/null || git rev-list --count main..HEAD',
-  '```',
-  '',
-  'The number MUST be greater than `0`. If it prints `0`, you have not committed your work — re-run `git commit` and re-check. Do not exit while this number is `0`; the verify step rejects such runs with `verify:has-diff/no-commits-ahead`, which means the agent did not commit.',
+  'Then, as the final action before exiting, run the commit exit-condition command above. If it prints `0`, you have not committed your work — re-run `git commit` and re-check. Do not exit while it is `0`; the verify step rejects such runs with `verify:has-diff/no-commits-ahead`, which means the agent did not commit.',
   '',
   'A separate failure mode, `verify:dirty-main`, means the merge target was already dirty before your branch landed. That is an operator-owned condition, not your responsibility.',
   '',
@@ -193,7 +189,7 @@ export const DEVIATION_RULES = [
   '  1. STOP. Do not silently expand scope.',
   '  2. Run `mars task add "<self-contained prompt>" --blocked-by $TASK_ID` to create a follow-up. Set the parent (this task) as a blocker so the parent waits for the new work.',
   '  3. For deferred refactors / observed cleanups that should NOT block this slice, run `mars proposal add "<observation>"` so the loose end is captured but parked in the proposal backlog.',
-  '  4. Commit whatever in-scope work is already complete, then exit. The orchestrator will re-dispatch this task once the new blocker resolves.',
+  '  4. Stop after filing the follow-up. The orchestrator will re-dispatch this task once the new blocker resolves.',
   '',
   '**Scope boundary.** Only fix issues your changes touch. Pre-existing warnings, linting errors, or failures in unrelated files are out of scope — file them with `mars proposal add "<observation>"` if interesting; do NOT fix them inline.',
   '',
@@ -321,7 +317,7 @@ export const composePrompt = (
 ): string => {
   // Diagnose Chore short-circuit: the prompt arrives fully composed.
   if (kind === 'diagnose') return prompt.trim()
-  const sections: string[] = [prompt.trim()]
+  const sections: string[] = [COMMIT_EXIT_CONDITION, prompt.trim()]
   if (plan?.functional?.trim()) {
     sections.push(`## Functional plan\n\n${plan.functional.trim()}`)
   }

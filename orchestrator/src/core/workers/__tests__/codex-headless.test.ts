@@ -328,6 +328,17 @@ describe('codexHeadless.run — (d) null signals', () => {
     const result = await codexHeadless.run('task', { cwd: '/tmp', model: 'gpt-5.5' })
     expect(result.exitCode).toBe(1)
   })
+
+  it('reports context exhaustion when Codex reports a context over the configured budget', async () => {
+    const result = await codexHeadless.run('task', {
+      cwd: '/tmp',
+      model: 'gpt-5.5',
+      maxContextTokens: 40,
+    })
+
+    expect(result.exitCode).toBe(138)
+    expect(result.stderr).toContain('context budget exhausted')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -335,9 +346,8 @@ describe('codexHeadless.run — (d) null signals', () => {
 // ---------------------------------------------------------------------------
 
 describe('codexHeadless capabilities', () => {
-  it('exposes contextTokenMetering: false, quotaRejected: false, sessionId: false', () => {
+  it('exposes no unsupported quota-rejection or session-id signals', () => {
     const { capabilities } = codexHeadless
-    expect(capabilities.contextTokenMetering).toBe(false)
     expect(capabilities.quotaRejected).toBe(false)
     expect(capabilities.sessionId).toBe(false)
   })

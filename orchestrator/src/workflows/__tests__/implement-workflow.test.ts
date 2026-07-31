@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
   COMMIT_FOOTER,
+  COMMIT_EXIT_CONDITION,
   CODING_DISCIPLINE,
   BLOCKERS_ABORT_MESSAGE,
   DEVIATION_RULES,
@@ -31,12 +32,21 @@ describe('workflow verify cwd', () => {
 })
 
 describe('composePrompt — coder default', () => {
-  it('appends the commit footer to a bare prompt', () => {
+  it('front-loads the commit exit condition before a bare prompt', () => {
     const out = composePrompt('do the thing', null)
-    expect(out.startsWith('do the thing')).toBe(true)
+    expect(out.startsWith(COMMIT_EXIT_CONDITION)).toBe(true)
+    expect(out.indexOf('do the thing')).toBeGreaterThan(COMMIT_EXIT_CONDITION.length)
     // COMMIT_FOOTER is always present.
     const commitIdx = out.indexOf(COMMIT_FOOTER)
     expect(commitIdx).toBeGreaterThan(-1)
+  })
+
+  it('has one authoritative commit verification command', () => {
+    expect(composePrompt('do the thing', null).match(/git rev-list --count/g)).toHaveLength(1)
+  })
+
+  it('does not repeat the commit instruction in the system deviation rules', () => {
+    expect(DEVIATION_RULES).not.toMatch(/commit whatever in-scope work/i)
   })
 
   it('appends the commit footer after the plan sections', () => {
