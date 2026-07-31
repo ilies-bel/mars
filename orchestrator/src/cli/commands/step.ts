@@ -86,7 +86,9 @@ const stepDone: Command = {
       )
       if (gitResult.status === 0 && (gitResult.stdout ?? '').trim() !== '') {
         deps.err(`worktree ${worktreePath} has uncommitted changes`)
-        deps.err('commit or stash your changes before completing the step')
+        deps.err(
+          'commit your changes before completing the step, or restore individual paths with `git checkout <ref> -- <paths>` (never `git stash` — the stash is shared by every worktree in this repo)',
+        )
         return { code: 1 }
       }
     }

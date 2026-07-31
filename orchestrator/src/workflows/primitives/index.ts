@@ -105,6 +105,7 @@ import {
   BLOCKERS_ABORT_MESSAGE,
   CODER_EXIT_NONZERO_ABORT_MESSAGE,
   CODER_UNCOMMITTED_ABORT_MESSAGE,
+  CODER_UNCOMMITTED_SIGNATURE,
   CONTEXT_EXHAUSTED_ABORT_MESSAGE,
   MAIN_DIRTY_VERIFY_MESSAGE,
   MAIN_DIRTY_MERGE_MESSAGE,
@@ -1185,6 +1186,11 @@ export const runAgent = async (
           failedPhase: 'code',
           failureReason: 'coder-left-uncommitted',
           failureReasonCode: 'orchestration:coder-left-uncommitted-unfixable',
+          // Stamp the structured signature so the action queue can name this
+          // failure (failure-kinds.ts) and self-heal can find its recipe
+          // (fix-recipes.ts `code/uncommitted-changes`). Without it the row
+          // resolves to the generic "A pipeline step did not complete".
+          failureSignature: CODER_UNCOMMITTED_SIGNATURE,
         },
         store,
       )
@@ -2389,7 +2395,7 @@ export const merge = async (
                   `The \`${MAIN_COMMITER_RECIPE}\` recipe is missing from the catalog, so automatic recovery could not be spawned.`,
                   '',
                   `**To unblock:**`,
-                  `1. Clean \`${integrationBranch}\`: commit, stash, or discard the uncommitted changes listed below.`,
+                  `1. Clean \`${integrationBranch}\`: commit the uncommitted changes listed below, or restore the paths you do not want with \`git checkout <ref> -- <paths>\`. Do NOT \`git stash\` — the stash is shared by every worktree in this repo, so a later \`pop\` can hand you another task's work.`,
                   `2. Run \`mars continue ${taskId}\` — this re-attempts just the merge step without re-running the coder.`,
                   `   (\`mars restart ${taskId}\` also works but discards the committed branch and re-runs from scratch.)`,
                   '',

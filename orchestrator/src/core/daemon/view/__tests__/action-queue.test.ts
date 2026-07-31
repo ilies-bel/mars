@@ -86,7 +86,11 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     })
 
     expect(rows).toHaveLength(1)
-    expect(rows[0]!.title).toBe('The coding environment could not be set up')
+    // The title carries every discriminator that exists: the signature, the
+    // warm reason, and the failed task's short id.
+    expect(rows[0]!.title).toBe(
+      'setup:install/install-frozen-lockfile — The coding environment could not be set up [task task-1]',
+    )
   })
 
   it('derives body from verboseReason for a known failure signature', async () => {
@@ -104,10 +108,10 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     )
   })
 
-  it('no-recipe row: leads with the full failure signature for an unregistered signature', async () => {
-    // 'verify:test/unclassified' is not in the registry and has no recipe.
-    // The title must lead with the signature so the operator sees WHAT failed
-    // rather than a generic group label or a recovery-agent prompt.
+  it('unregistered signature: still leads with the signature and flags the registry gap', async () => {
+    // 'verify:test/unclassified' is not in the failure-kind registry. The
+    // title must lead with the signature so the operator sees WHAT failed
+    // rather than a generic group label, and must say the record is missing.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
@@ -117,13 +121,14 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('no recipe for verify:test/unclassified')
+    expect(rows[0]!.title).toBe(
+      'verify:test/unclassified — A verification check did not pass (no failure-kind record) [task task-1]',
+    )
   })
 
-  it('no-recipe row: merge-step unregistered signature leads with the signature', async () => {
-    // 'merge:unknown/unclassified' is not in the registry — verify that the
-    // unregistered-signature fallback ("no recipe for <sig>") fires for merge-step
-    // failures too, not just verify-step ones.
+  it('unregistered signature: merge-step failures lead with the signature too', async () => {
+    // 'merge:unknown/unclassified' is not in the registry — verify the
+    // unregistered-signature path fires for merge-step failures as well.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
@@ -133,23 +138,177 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('no recipe for merge:unknown/unclassified')
+    expect(rows[0]!.title).toContain('merge:unknown/unclassified')
+    expect(rows[0]!.title).toContain('[task task-1]')
   })
 
-  it('known-recipe row: still uses the registry warmTitle, not the signature prefix', async () => {
-    // 'setup:install/install-frozen-lockfile' has both a FailureKind and a recipe.
-    // The warmTitle must be used — the signature prefix is for no-recipe rows only.
+  it('two failures with different signatures produce two distinguishable titles', async () => {
+    // The whole point: an operator triaging a queue of failures must be able
+    // to tell the rows apart at a glance.
     const rows = await buildActionQueueView({
-      stateStore: makeStateStore([makeRow()]),
+      stateStore: makeStateStore([
+        makeRow({ id: 'row-1', payload: { taskId: 'task-1' } }),
+        makeRow({ id: 'row-2', payload: { taskId: 'task-2' } }),
+      ]),
       taskStore: makeTaskStore([
-        makeTask({ failureSignature: 'setup:install/install-frozen-lockfile' }),
+        makeTask({ id: 'task-1', failureSignature: 'verify:test/test-assertion-error' }),
+        makeTask({ id: 'task-2', failureSignature: 'code/uncommitted-changes' }),
       ]),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
 
-    expect(rows[0]!.title).not.toMatch(/^no recipe for/)
-    expect(rows[0]!.title).toBe('The coding environment could not be set up')
+    const titles = rows.map((r) => r.title)
+    expect(new Set(titles).size).toBe(2)
+    expect(titles.some((t) => t.includes('verify:test/test-assertion-error'))).toBe(true)
+    expect(titles.some((t) => t.includes('code/uncommitted-changes'))).toBe(true)
+    expect(titles.every((t) => t !== 'A pipeline step did not complete')).toBe(true)
+  })
+
+  it('no signature: falls back to the captured error head plus the task id', async () => {
+    // The generic wording alone is the last resort — when the failure has no
+    // structured signature, the first line of the captured error still
+    // discriminates the row.
+    const rows = await buildActionQueueView({
+      // A persisted title that carries no information — the generic label the
+      // raiser fell back to. Derived copy is free to replace it.
+      stateStore: makeStateStore([
+        makeRow({ title: 'A pipeline step did not complete' }),
+      ]),
+      taskStore: makeTaskStore([
+        makeTask({
+          failureSignature: null,
+          lastErrorOutput: '\n  ENOSPC: no space left on device, write\nmore detail\n',
+        }),
+      ]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    expect(rows[0]!.title).toBe(
+      'A pipeline step did not complete: ENOSPC: no space left on device, write [task task-1]',
+    )
+  })
+
+  it('no signature and no captured error: generic wording, still task-identified', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({ title: 'A pipeline step did not complete' }),
+      ]),
+      taskStore: makeTaskStore([makeTask({ failureSignature: null })]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    expect(rows[0]!.title).toBe('A pipeline step did not complete [task task-1]')
+  })
+
+  it('keeps a purpose-built persisted title on a failed row with no signature', async () => {
+    // The merge-preflight raiser writes specific operator copy. With no
+    // structured signature the registry can only produce the generic label,
+    // so the raiser's title must survive — only the task tag is added.
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({ title: 'Merge blocked: main has uncommitted changes' }),
+      ]),
+      taskStore: makeTaskStore([makeTask({ failureSignature: null })]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    expect(rows[0]!.title).toBe(
+      'Merge blocked: main has uncommitted changes [task task-1]',
+    )
+    expect(rows[0]!.body).toBe('Legacy persisted body')
+  })
+})
+
+// ── purpose-built alert kinds keep their own copy ─────────────────────────────
+
+describe('buildActionQueueView — non-failure kinds keep their raiser copy', () => {
+  // toUiKind funnels every unrecognised kind into 'failed-task'. These kinds
+  // are alerts, not task failures: their raisers already write specific
+  // operator copy, which derived failure copy must never overwrite.
+
+  it('daemon-code-drift keeps the running-vs-head SHA title', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({
+          kind: 'daemon-code-drift',
+          title: 'Daemon running stale code — a1b2c3d → e4f5g6h',
+          body: 'daemon running a1b2c3d, main is at e4f5g6h — run `mars daemon restart`',
+          payload: { sourceSha: 'a1b2c3d', currentSha: 'e4f5g6h' },
+          signature: 'daemon-code-drift',
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    expect(rows[0]!.title).toBe('Daemon running stale code — a1b2c3d → e4f5g6h')
+    expect(rows[0]!.title).not.toContain('A pipeline step did not complete')
+    expect(rows[0]!.body).toContain('mars daemon restart')
+  })
+
+  it('plan-approval keeps the slice-count / PRD title', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({
+          kind: 'plan-approval',
+          title: 'Plan review: 3 slices for PRD prop-42',
+          body: 'slice summary…',
+          payload: { proposalId: 'prop-42', sliceCount: 3 },
+          signature: 'plan-approval:prop-42',
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    expect(rows[0]!.title).toBe('Plan review: 3 slices for PRD prop-42')
+    expect(rows[0]!.title).not.toContain('A pipeline step did not complete')
+  })
+
+  it('signature-storm keeps the storm title naming the signature', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({
+          kind: 'signature-storm',
+          title: '3 tasks failed with `code/uncommitted-changes`; dispatch is paused',
+          body: 'dispatch paused after 3 consecutive failures',
+          payload: { signature: 'code/uncommitted-changes', streak: 3 },
+          signature: 'signature-storm:code/uncommitted-changes',
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    expect(rows[0]!.title).toBe(
+      '3 tasks failed with `code/uncommitted-changes`; dispatch is paused',
+    )
+  })
+
+  it('a task-backed non-failure kind is tagged with its task but not retitled', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeRow({
+          kind: 'requeue-ceiling',
+          title: 'Re-queue ceiling exceeded',
+          payload: { taskId: 'task-1' },
+        }),
+      ]),
+      taskStore: makeTaskStore([
+        makeTask({ failureSignature: 'verify:test/test-assertion-error' }),
+      ]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    expect(rows[0]!.title).toBe('Re-queue ceiling exceeded [task task-1]')
   })
 
   it('non-failed-task rows (stale-worktree) still use the persisted title/body', async () => {
@@ -325,10 +484,16 @@ describe('buildActionQueueView — daemon-killed batch row', () => {
       filter: 'open',
     })
 
-    // Only 1 daemon-killed row → no batch synthesis, just the individual row
+    // Only 1 daemon-killed row → no batch synthesis, just the individual row.
+    // daemon-killed is a structured task failure, so the registry owns its
+    // copy — rendered with the signature and the task id like any other.
     const taskRow = rows.find((r) => r.entityId === 'task-1')
     expect(taskRow).toBeDefined()
-    expect(taskRow!.title).toBe('Mars was shut down while this task was still running')
+    expect(taskRow!.title).toContain(
+      'Mars was shut down while this task was still running',
+    )
+    expect(taskRow!.title).toContain(DAEMON_KILLED_SIGNATURE)
+    expect(taskRow!.title).toContain('[task task-1]')
   })
 
   it('exposes restart-all-daemon-killed on the synthetic batch row', async () => {

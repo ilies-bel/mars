@@ -107,6 +107,13 @@ export const CODER_EXIT_NONZERO_ABORT_MESSAGE = (
 export const CODER_UNCOMMITTED_ABORT_MESSAGE = (taskId: string): string =>
   `coder for task ${taskId} left uncommitted work (dirty tree, 0 commits ahead)`
 
+// Structured failure signature stamped on the task when the coder left work
+// uncommitted AND the orchestrator's deterministic auto-commit was refused.
+// Registered in both `failure-kinds.ts` (operator-facing copy + action menu)
+// and `fix-recipes.ts` (the recovery prompt), so the action queue can name the
+// failure and self-heal knows how to fix it.
+export const CODER_UNCOMMITTED_SIGNATURE = 'code/uncommitted-changes'
+
 // Thrown by the code step when the provider rejects the run due to a rate or
 // spend limit (NOT a code failure). The task is re-queued with its worktree
 // intact; no recovery fix-task is spawned. The daemon catches this sentinel to
@@ -203,9 +210,9 @@ export const DEVIATION_RULES = [
   '',
   '**Rule 6 — Prove pre-existing test failures against the merge base.** If the test suite ends with failures you believe are pre-existing (inherited from the merge base and unrelated to your change), you MUST prove this claim before asserting `tests pass`:',
   '',
-  '  1. Run `git stash --include-untracked && npx vitest run <failing-file>; git stash pop` (or the equivalent `git checkout $(git merge-base HEAD origin/main) -- <file>` pattern) to reproduce the failure against the merge base.',
+  '  1. Reproduce the failure against the merge base WITHOUT `git stash` (banned in this repo — `refs/stash` is shared by every worktree, so a `pop` can hand you another task\'s work). Restore just the files under test to the baseline, run the suite, then restore your own version: `git checkout $(git merge-base HEAD origin/main) -- <file> && npx vitest run <failing-file>; git checkout HEAD -- <file>`. Committing a wip commit first and running the suite against the merge base in a scratch checkout also works.',
   '  2. Quote BOTH result summaries verbatim in your final message: the branch-tip run result and the merge-base baseline run result.',
-  '  3. If the baseline check cannot be run (dirty stash conflict, missing merge base, harness restriction), your final message MUST use the literal phrase `pre-existing UNVERIFIED` instead of `tests pass`.',
+  '  3. If the baseline check cannot be run (checkout conflict, missing merge base, harness restriction), your final message MUST use the literal phrase `pre-existing UNVERIFIED` instead of `tests pass`.',
   '',
   '`$TASK_ID` is the id of the task you are executing right now; the orchestrator passes it to you in the brief below.',
 ].join('\n')

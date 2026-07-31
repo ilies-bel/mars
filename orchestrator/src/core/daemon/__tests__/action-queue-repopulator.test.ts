@@ -416,8 +416,12 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    // title and body come from the single Failure kind record keyed on signature
-    expect(row!.title).toBe('The changes did not pass type-checking')
+    // title and body come from the single Failure kind record keyed on
+    // signature; the title also carries the signature and the failed task's
+    // short id so a queue of failures is triageable row by row.
+    expect(row!.title).toBe(
+      'verify:typecheck/typecheck-cannot-find-name — The changes did not pass type-checking [task T-typech]',
+    )
     expect(row!.body).toBe(
       'The verify step failed because the code references a name that is not in scope (TS2304).',
     )
@@ -474,9 +478,10 @@ describe('action-queue-repopulator outbox subscriber', () => {
     const openItems = await actionQueue.listActionQueueItems('open')
     const row = openItems.find((i) => i.payload['taskId'] === taskId)
     expect(row).toBeDefined()
-    // No failureSignature → unknownFailureKind('unknown', ...) provides title.
+    // No failureSignature and no captured error → the generic wording, which
+    // is the genuine last resort. It still names the task.
     // The fallback emits plain-English text — no raw step ids ('unknown').
-    expect(row!.title).toBe('A pipeline step did not complete')
+    expect(row!.title).toBe('A pipeline step did not complete [task T-unknow]')
     // Body is the verboseReason from unknownFailureKind.
     expect(row!.body).toContain('A pipeline step did not complete')
     // Payload's failureReasonCode mirrors the synthesised unknown signature.

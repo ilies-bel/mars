@@ -94,7 +94,7 @@ describe('merge:preflight/uncommitted-changes — recovery budget preserved', ()
           `but the merge target (\`main\`) has uncommitted tracked changes on paths that the fast-forward would update.`,
           '',
           `**To unblock:**`,
-          `1. Clean \`main\`: commit, stash, or discard the uncommitted changes listed below.`,
+          `1. Clean \`main\`: commit the uncommitted changes listed below, or restore the paths you do not want with \`git checkout <ref> -- <paths>\`.`,
           `2. Run \`mars continue ${task.id}\` — this re-attempts just the merge step without re-running the coder.`,
           '',
           '```',

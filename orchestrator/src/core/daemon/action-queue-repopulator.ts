@@ -2,7 +2,7 @@ import type { DbClient } from '../lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { drainWithStall } from './subscriber-drain.js'
-import { resolveFailureKind } from '../lib/failure-kinds'
+import { resolveFailureKind, failedTaskTitle } from '../lib/failure-kinds'
 import {
   raiseActionQueueItem,
   resolveAllRowsForTask,
@@ -173,7 +173,14 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
       kind: 'failed',
       category: 'orchestrator',
       priority: 'high',
-      title: fk.warmTitle,
+      // The persisted title carries the same discriminators the derived view
+      // renders (signature + short task id), so an operator reading the raw
+      // row and one reading `mars action-queue list` see the same thing.
+      title: failedTaskTitle({
+        signature: sig,
+        taskId,
+        capturedError: task.error ?? '',
+      }),
       body: fk.verboseReason,
       payload: {
         taskId,

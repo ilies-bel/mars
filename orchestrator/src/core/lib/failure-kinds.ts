@@ -464,6 +464,37 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         actions: DEFAULT_ACTIONS,
       },
 
+      // ── verify:test ──────────────────────────────────────────────────────
+      // The verify step ran the project's test suite and it failed. The
+      // assertion sub-class has a registered recovery recipe of the same
+      // signature (fix-recipes.ts) — without this entry the action queue
+      // rendered it as an unregistered failure even though self-heal knew
+      // exactly how to fix it.
+      {
+        signature: 'verify:test/test-assertion-error',
+        staticEncodable: ENCODABLE_COMMAND,
+        warmTitle: 'The changes did not pass the tests',
+        verboseReason:
+          'The verify step ran the test suite and an assertion failed — the implementation does not produce what the tests expect. A recovery task fixes the implementation without touching the test files.',
+        actions: DEFAULT_ACTIONS,
+      },
+
+      // ── code/uncommitted-changes ─────────────────────────────────────────
+      // The coder exited cleanly but left real work uncommitted in the
+      // worktree AND the orchestrator's deterministic auto-commit
+      // (autoCommitWorktreeIfDeterministic) could not land it either — a
+      // pre-commit hook rejected it, nothing was stageable, or git refused
+      // the commit. The work is still on disk in the worktree; recovery has
+      // to clear whatever blocked the commit and land it.
+      {
+        signature: 'code/uncommitted-changes',
+        staticEncodable: notEncodable('orchestration'),
+        warmTitle: 'The coder left work uncommitted and it could not be committed automatically',
+        verboseReason:
+          "The code step finished with changes still uncommitted in the task worktree, and the orchestrator's automatic commit was refused (commonly a pre-commit hook, or nothing stageable). The work is still on disk; a recovery task clears the blocker and commits it.",
+        actions: DEFAULT_ACTIONS,
+      },
+
       // ── behaviour-verify:dod-unmet ───────────────────────────────────────
       // Behaviour verification (the pre-merge behaviour-verify step) reached
       // the live surface and found a Definition-of-Done criterion observably
@@ -607,6 +638,38 @@ export const failingStepFromSignature = (sig: string | null): string => {
 }
 
 /**
+ * The last-resort label used when nothing about a failure is known — not even
+ * which step family it came from. Seeing this in the action queue means the
+ * failure carried no signature and no captured output.
+ */
+export const GENERIC_FAILURE_LABEL = 'A pipeline step did not complete'
+
+/**
+ * Plain-English group labels keyed by step family (the substring of the
+ * failing step before the first ':'). Used when a signature has no registered
+ * `FailureKind` — raw step ids must never reach an operator-facing field.
+ */
+const STEP_FAMILY_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  verify: 'A verification check did not pass',
+  setup: 'The coding environment could not be set up',
+  code: 'The coder did not complete successfully',
+  merge: 'The changes could not be merged',
+  triage: 'The task could not be triaged',
+})
+
+/**
+ * True when `title` is one of the synthesised group labels rather than copy an
+ * alert-raiser wrote on purpose. The action-queue view uses this to decide
+ * whether a persisted title carries real information: a purpose-built title
+ * (`Plan review: 3 slices for PRD …`) must never be overwritten by derived
+ * copy, but a generic label may be.
+ */
+export const isGenericFailureLabel = (title: string): boolean => {
+  const t = title.trim()
+  return t === GENERIC_FAILURE_LABEL || Object.values(STEP_FAMILY_LABELS).includes(t)
+}
+
+/**
  * Synthesise a FailureKind for a signature that is not in the registry.
  *
  * `warmTitle` is a plain-English group label derived from the failing step's
@@ -630,20 +693,7 @@ export const unknownFailureKind = (
 
   // Map the step family to a plain-English label. Raw step ids must not appear
   // in warmTitle or verboseReason — the technical id belongs in details/traces.
-  let groupLabel: string
-  if (family === 'verify') {
-    groupLabel = 'A verification check did not pass'
-  } else if (family === 'setup') {
-    groupLabel = 'The coding environment could not be set up'
-  } else if (family === 'code') {
-    groupLabel = 'The coder did not complete successfully'
-  } else if (family === 'merge') {
-    groupLabel = 'The changes could not be merged'
-  } else if (family === 'triage') {
-    groupLabel = 'The task could not be triaged'
-  } else {
-    groupLabel = 'A pipeline step did not complete'
-  }
+  const groupLabel = STEP_FAMILY_LABELS[family] ?? GENERIC_FAILURE_LABEL
 
   return {
     signature: `${failingStep}/unknown`,
@@ -685,4 +735,63 @@ export const resolveFailureKind = (
     return unknownFailureKind(failingStepFromSignature(signature), capturedError)
   }
   return unknownFailureKind('unknown', capturedError)
+}
+
+/** Chars of `taskId` shown in a failed-row title (repo-wide short-id convention). */
+const TITLE_TASK_ID_CHARS = 8
+
+/** Max chars of the captured error head folded into a signature-less title. */
+const TITLE_ERROR_HEAD_MAX = 100
+
+/**
+ * Compose the operator-facing action-queue title for a FAILED task.
+ *
+ * A queue of sixteen failures is only triageable if each row says WHICH task
+ * failed and WHAT the failure was, so the title always carries every
+ * discriminator that exists:
+ *
+ *   `<signature> — <warm reason> [task <id8>]`
+ *
+ * and, when no structured signature was written at failure time, degrades to
+ * the next-best discriminator — the first line of the captured error:
+ *
+ *   `<warm reason>: <first line of the error> [task <id8>]`
+ *
+ * The bare warm reason (`A pipeline step did not complete`) is emitted ONLY
+ * when there is genuinely nothing else to say: no signature, no captured
+ * error, no task id. A signature with no `FAILURE_KINDS` record is still
+ * shown in full and flagged `(no failure-kind record)` so the registry gap is
+ * visible to whoever triages it.
+ */
+export const failedTaskTitle = (args: {
+  /** `tasks.failure_signature` as written at failure time, or null. */
+  signature: string | null
+  /** The failed task's id — rendered short. Omit/null when not task-backed. */
+  taskId?: string | null
+  /** Captured stderr/stdout from the failing step; used only as a fallback. */
+  capturedError?: string
+}): string => {
+  const { signature, taskId = null, capturedError = '' } = args
+  const idPart =
+    taskId !== null && taskId.length > 0
+      ? ` [task ${taskId.slice(0, TITLE_TASK_ID_CHARS)}]`
+      : ''
+
+  if (signature !== null && signature.length > 0) {
+    const kind = lookupFailureKind(signature)
+    const reason =
+      kind !== null
+        ? kind.warmTitle
+        : `${unknownFailureKind(failingStepFromSignature(signature), capturedError).warmTitle} (no failure-kind record)`
+    return `${signature} — ${reason}${idPart}`
+  }
+
+  const reason = unknownFailureKind('unknown', capturedError).warmTitle
+  const head = firstNonBlankLine(capturedError)
+  if (head.length === 0) return `${reason}${idPart}`
+  const clipped =
+    head.length > TITLE_ERROR_HEAD_MAX
+      ? `${head.slice(0, TITLE_ERROR_HEAD_MAX - 1)}…`
+      : head
+  return `${reason}: ${clipped}${idPart}`
 }

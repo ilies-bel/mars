@@ -88,9 +88,10 @@ describe('buildActionQueueView — failed-task row', () => {
     expect(row.entityId).toBe('task-1')
     expect(row.priority).toBe('high')
     // title and body are now derived from the Failure kind registry; with
-    // failureSignature: null the unknownFailureKind fallback is used.
-    // The fallback emits plain-English text — no raw step ids.
-    expect(row.title).toBe('A pipeline step did not complete')
+    // failureSignature: null and no captured error the generic fallback is
+    // used — still tagged with the failed task's id so the row is
+    // identifiable. The fallback emits plain-English text — no raw step ids.
+    expect(row.title).toBe('A pipeline step did not complete [task task-1]')
     expect(row.body).toContain('A pipeline step did not complete')
     expect(row.errorKind).toBe('failed-task')
     expect(row.staleWorktreeDetail).toBeNull()

@@ -1638,3 +1638,111 @@ describe('lift-diff stale-baseline guard (all five lift-diff / re-land recipe si
     })
   }
 })
+
+describe('code/uncommitted-changes recipe', () => {
+  const ctx = {
+    targetPath: '/tmp/worktrees/task-abc',
+    statusOutput:
+      ' M src/core/queue.ts\n?? src/core/new-module.ts\nauto-commit failed: git commit failed: pre-commit hook rejected the commit\n',
+    targetBranch: 'task/abc',
+    integrationBranch: 'main',
+    originalPrompt: '',
+  }
+
+  it('is registered under the signature the code step stamps', () => {
+    expect(hasRecipe('code/uncommitted-changes')).toBe(true)
+    expect(getRecipeOrGeneric('code/uncommitted-changes')).not.toBe(
+      genericRecoveryRecipe,
+    )
+    expect(recipes['code/uncommitted-changes']!.signature).toBe(
+      'code/uncommitted-changes',
+    )
+  })
+
+  it('produces a stable title that names the failing branch', () => {
+    const recipe = getRecipe('code/uncommitted-changes')
+    expect(recipe.title(ctx)).toBe(
+      'Commit the work the coder left uncommitted on task/abc',
+    )
+  })
+
+  it('embeds the worktree, both branches, and the captured auto-commit error', () => {
+    const recipe = getRecipe('code/uncommitted-changes')
+    const prompt = recipe.buildPrompt(ctx)
+    expect(prompt).toContain(ctx.targetPath)
+    expect(prompt).toContain(ctx.targetBranch)
+    expect(prompt).toContain(ctx.integrationBranch)
+    expect(prompt).toContain('pre-commit hook rejected the commit')
+    expect(prompt).toContain('Save your work')
+  })
+
+  it('states that the deterministic auto-commit already ran and was refused', () => {
+    // The policy this recipe must not contradict: the code step ALWAYS tries
+    // `git add -A && git commit` first (commit-main.ts) and only fails the
+    // task when git refuses it. Re-running that command blind is the one
+    // thing that cannot work, so the prompt has to say so.
+    const recipe = getRecipe('code/uncommitted-changes')
+    const prompt = recipe.buildPrompt(ctx)
+    expect(prompt).toContain('REFUSED')
+    expect(prompt).toMatch(/re-running it unchanged will fail the same way/i)
+  })
+
+  it('lists the concrete refusal causes instead of telling the agent to retry', () => {
+    const recipe = getRecipe('code/uncommitted-changes')
+    const prompt = recipe.buildPrompt(ctx)
+    expect(prompt).toMatch(/pre-commit hook/i)
+    expect(prompt).toMatch(/nothing was stageable/i)
+    expect(prompt).toMatch(/index lock/i)
+    expect(prompt).toMatch(/never bypass it with `--no-verify`/i)
+  })
+
+  it('keeps the agent in the origin worktree where the uncommitted work lives', () => {
+    const recipe = getRecipe('code/uncommitted-changes')
+    const prompt = recipe.buildPrompt(ctx)
+    expect(prompt).toMatch(/attached to the origin task's worktree/i)
+    expect(prompt).toMatch(/do not redo the task from scratch/i)
+  })
+
+  it('bans git stash and offers the path-restore alternative instead', () => {
+    const recipe = getRecipe('code/uncommitted-changes')
+    const prompt = recipe.buildPrompt(ctx)
+    expect(prompt).toContain('`git stash` is BANNED')
+    expect(prompt).toContain('git checkout main -- <paths>')
+    expect(prompt).not.toMatch(/git stash (push|pop)/)
+  })
+
+  it('requires a non-zero rev-list count before the agent may exit', () => {
+    const recipe = getRecipe('code/uncommitted-changes')
+    const prompt = recipe.buildPrompt(ctx)
+    expect(prompt).toContain('git rev-list --count main..HEAD')
+    expect(prompt).toMatch(/MUST print a non-zero integer before you exit/i)
+  })
+
+  it('inlines the original task prompt only when one was recorded', () => {
+    const recipe = getRecipe('code/uncommitted-changes')
+    const withSource = recipe.buildPrompt({
+      ...ctx,
+      originalPrompt: 'add the writer entry to the agent registry',
+    })
+    expect(withSource).toContain('add the writer entry to the agent registry')
+    expect(withSource).toMatch(/inlined/i)
+    expect(recipe.buildPrompt(ctx)).not.toContain(
+      'add the writer entry to the agent registry',
+    )
+  })
+
+  it('degrades to a placeholder when no evidence was captured', () => {
+    const recipe = getRecipe('code/uncommitted-changes')
+    const prompt = recipe.buildPrompt({ ...ctx, statusOutput: '' })
+    expect(prompt).toContain('(no dirty-file list or auto-commit error captured)')
+  })
+})
+
+describe('verify:test/test-assertion-error recipe registration', () => {
+  it('is registered so a failing test assertion is never an un-recipe-d failure', () => {
+    expect(hasRecipe('verify:test/test-assertion-error')).toBe(true)
+    expect(getRecipeOrGeneric('verify:test/test-assertion-error')).not.toBe(
+      genericRecoveryRecipe,
+    )
+  })
+})
