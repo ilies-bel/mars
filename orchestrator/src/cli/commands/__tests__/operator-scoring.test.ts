@@ -80,6 +80,24 @@ describe('mars operator status — scoring lever', () => {
   })
 })
 
+describe('mars operator auto-reflect lever', () => {
+  it('persists off and reports it in status', async () => {
+    const deps = await loadDeps()
+    const fake = await makeFake()
+
+    const set = await run(['operator', 'set', 'auto-reflect', 'off'], {
+      ...deps,
+      daemon: fake,
+    })
+    const status = await run(['operator', 'status'], { ...deps, daemon: fake })
+
+    expect(set.code).toBe(0)
+    expect(set.out.join('\n')).toContain('auto-reflect: off')
+    expect(status.code).toBe(0)
+    expect(status.out.join('\n')).toContain('auto-reflect: off')
+  })
+})
+
 describe('mars operator set scoring', () => {
   it('exits 0 and prints "scoring: off"', async () => {
     const deps = await loadDeps()

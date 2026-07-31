@@ -10,6 +10,7 @@ import { enqueueTask } from '../queue'
 import type { ReflectCorpus } from './reflect-query'
 import type { SelfEvolveConfig } from '../daemon/config'
 import { isReflectDisabled } from './reflect-signals'
+import { isAutoReflectDisabled } from './auto-reflect-gate'
 import { insertMemoryPacket } from '../store/memory-packet-store'
 import { loadImprovementRecipes, formatRecipeCatalog } from './improvement-recipes'
 
@@ -585,7 +586,7 @@ export const persistSuggestions = async (
     } else {
       await persistOneSuggestion(s)
     }
-    if (!isReflectDisabled()) {
+    if (!isAutoReflectDisabled() && !isReflectDisabled()) {
       await insertMemoryPacket({
         domain: 'general',
         text: s.prompt,

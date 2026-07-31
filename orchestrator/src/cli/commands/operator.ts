@@ -36,6 +36,7 @@ const operatorStatus: Command = {
     const levers = readControlLevers()
     deps.out(`recovery: ${levers.recovery}`)
     deps.out(`scoring: ${levers.scoring}`)
+    deps.out(`auto-reflect: ${levers.autoReflect}`)
     renderBudgetStatus(await computeBudgetStatus(deps.store), deps.out)
     return { code: 0 }
   },
@@ -73,7 +74,7 @@ const operatorSet: Command = {
       deps.err(`mars operator set: ${errorMessage(err)}`)
       return { code: 2 }
     }
-    const validLevers = ['recovery', 'scoring'] as const
+    const validLevers = ['recovery', 'scoring', 'auto-reflect'] as const
     type LeverName = (typeof validLevers)[number]
     if (!validLevers.includes(lever as LeverName)) {
       deps.err(
@@ -86,13 +87,17 @@ const operatorSet: Command = {
       return { code: 2 }
     }
     const leverName = lever as LeverName
-    writeControlLever(leverName, value)
-    try {
-      await deps.daemon.sendRequest({ op: 'apply-lever', name: leverName, value })
-    } catch (err) {
-      const msg = errorMessage(err)
-      if (!isDaemonDownError(msg)) {
-        deps.err(`warning: lever written but live apply failed: ${msg}`)
+    const configLeverName =
+      leverName === 'auto-reflect' ? 'autoReflect' : leverName
+    writeControlLever(configLeverName, value)
+    if (configLeverName !== 'autoReflect') {
+      try {
+        await deps.daemon.sendRequest({ op: 'apply-lever', name: configLeverName, value })
+      } catch (err) {
+        const msg = errorMessage(err)
+        if (!isDaemonDownError(msg)) {
+          deps.err(`warning: lever written but live apply failed: ${msg}`)
+        }
       }
     }
     deps.out(`${leverName}: ${value}`)

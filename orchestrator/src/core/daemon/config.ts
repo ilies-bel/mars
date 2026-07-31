@@ -33,6 +33,7 @@ export type ControlLeverValue = 'on' | 'off'
 export interface ControlLevers {
   recovery: ControlLeverValue
   scoring: ControlLeverValue
+  autoReflect: ControlLeverValue
 }
 
 export interface DaemonCaps {
@@ -141,7 +142,11 @@ const DEFAULT_AUTO_APPROVE_PLANS = false
 
 const DEFAULT_PROVIDER: ProviderName = 'codex'
 
-const DEFAULT_CONTROL_LEVERS: ControlLevers = { recovery: 'on', scoring: 'on' }
+const DEFAULT_CONTROL_LEVERS: ControlLevers = {
+  recovery: 'on',
+  scoring: 'on',
+  autoReflect: 'on',
+}
 
 const VALID_PROVIDER_NAMES = new Set<string>(['claude', 'gemini', 'codex'])
 
@@ -382,6 +387,9 @@ export const readControlLevers = (): ControlLevers => {
     }
     if (record.scoring === 'on' || record.scoring === 'off') {
       result.scoring = record.scoring
+    }
+    if (record.autoReflect === 'on' || record.autoReflect === 'off') {
+      result.autoReflect = record.autoReflect
     }
   }
   return result

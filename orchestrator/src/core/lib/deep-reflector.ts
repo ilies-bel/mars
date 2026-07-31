@@ -14,6 +14,7 @@ import type { ClaudeEvent } from './claude-stream'
 import { digestArc } from './arc-digest'
 import { insertMemoryPacket } from '../store/memory-packet-store'
 import { getTask } from '../queue'
+import { isAutoReflectDisabled } from './auto-reflect-gate'
 
 export interface DissonantCall {
   taskId: string | null
@@ -990,9 +991,14 @@ export const runDeepReflectorArc = async (
   const report = parseDeepReflectionReport(text)
 
   // Persist save-verdict suggestions as domain-scoped memory packets.
-  // Gated by MARS_REFLECT_DISABLED=1 (same env-var guard used by CLI commands)
-  // and only when the reflector exited cleanly with a parseable report.
-  if (process.env.MARS_REFLECT_DISABLED !== '1' && r.exitCode === 0 && report !== null) {
+  // Auto-reflect and MARS_REFLECT_DISABLED independently gate this automatic
+  // follow-on; the report itself remains available to manual CLI commands.
+  if (
+    !isAutoReflectDisabled() &&
+    process.env.MARS_REFLECT_DISABLED !== '1' &&
+    r.exitCode === 0 &&
+    report !== null
+  ) {
     const domain = await resolveArcDomain(arc.originId)
     for (const suggestion of report.suggestions) {
       if (suggestion.verdict === 'save') {
