@@ -76,7 +76,7 @@ import {
 } from '../../core/lib/worktree-install'
 import { extractLastStreamText, type ClaudeEvent } from '../../core/lib/claude-stream'
 import { readWorkerOutputText } from '../../core/lib/worker-json'
-import { getTask, hasIncompleteBlockers, updateTask } from '../../core/queue'
+import { getTask, hasIncompleteBlockers, TERMINAL_TASK_STATUSES, updateTask } from '../../core/queue'
 import { Arc } from '../../core/arc'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
 import { computeFailureSignature } from '../../core/lib/failure-signature'
@@ -517,6 +517,20 @@ export const setupWorktree = async (
       )
     }
     const origin = await getTask(originTaskId, store)
+    if (origin !== null && TERMINAL_TASK_STATUSES.has(origin.status)) {
+      await updateTask(
+        taskId,
+        {
+          status: 'dropped',
+          dropReason: origin.status === 'done' ? 'origin-succeeded' : 'arc-rescued',
+        },
+        store,
+      )
+      throw new WorkflowTerminalError(
+        'origin-terminal',
+        `Chore ${taskId} was dropped because origin ${originTaskId} is already ${origin.status}`,
+      )
+    }
     const originBranch = origin?.branch ?? null
     const originWorktreePath = origin?.worktreePath ?? null
     try {

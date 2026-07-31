@@ -16,6 +16,7 @@ export type WorkflowTerminalKind =
   | 'blockers-abort'
   | 'context-exhausted'
   | 'origin-worktree-missing'
+  | 'origin-terminal'
   | 'coder-exit-nonzero'
   | 'coder-uncommitted'
   | 'quota-rejected'

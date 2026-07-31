@@ -1,5 +1,5 @@
 import type { WorkflowStore } from '@mars/workflow'
-import { getTask, hasIncompleteBlockers, removeBlocker, updateTask } from '../queue'
+import { getTask, hasIncompleteBlockers, removeBlocker, TERMINAL_TASK_STATUSES, updateTask } from '../queue'
 import { supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
 import { getDefaultTaskStore } from '../store/task-store'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
@@ -276,17 +276,11 @@ export const coreRestartTask = async (
   // invariant (status='queued' requires ALL blockers to be 'done').
   const hasBlockers = await hasIncompleteBlockers(id)
   const resultStatus: 'queued' | 'blocked' = hasBlockers ? 'blocked' : 'queued'
-  // `done` is terminal for ordinary lifecycle writes, but an explicit
-  // operator restart is the one supported escape hatch. Move it through a
-  // private transitional state before calling updateTask so terminal
-  // immutability remains enforced everywhere else while `mars restart` keeps
-  // its documented done-task contract. The subsequent updateTask call emits
-  // the normal queued/blocked lifecycle event.
-  if (task.status === 'done') {
-    await taskStore.execute({
-      sql: `UPDATE tasks SET status = 'failed', updated_at = ? WHERE id = ? AND status = 'done'`,
-      args: [new Date().toISOString(), id],
-    })
+  // This is the only operator path that may leave a terminal task state.
+  // The audited store seam creates the database-authorized transition; no
+  // general update or ad-hoc transitional status can bypass the invariant.
+  if (TERMINAL_TASK_STATUSES.has(task.status)) {
+    await taskStore.reopenTerminalTask(id, 'mars restart')
   }
   // Clear all failure markers so a requeued task is never mistakenly tagged as
   // daemon-killed (or any other failure). A non-terminal task (queued/blocked)

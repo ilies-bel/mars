@@ -69,6 +69,8 @@ export interface ReconcileSummary {
   /** Action-queue items raised (or bumped) for unclean daemon exits. */
   daemonDiedAlerts: number
   blockerDriftRepaired: number
+  /** Chores dropped because their origin had already reached a terminal state. */
+  terminalOriginChoresDropped: number
   /** Tasks flipped from blocked→queued because they had zero live blocker edges. */
   orphanedBlockedRequeued: number
   runningRequeued: number
@@ -178,6 +180,7 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   daemonKilledAlerts: 0,
   daemonDiedAlerts: 0,
   blockerDriftRepaired: 0,
+  terminalOriginChoresDropped: 0,
   orphanedBlockedRequeued: 0,
   runningRequeued: 0,
   orphanSpansSwept: 0,

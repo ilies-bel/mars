@@ -44,6 +44,7 @@ import {
   listNonDoneTasks as queueListNonDoneTasks,
   filterExistingTaskIds as queueFilterExistingTaskIds,
   updateTask as queueUpdateTask,
+  reopenTerminalTask as queueReopenTerminalTask,
   setTaskPriority as queueSetTaskPriority,
   addPendingReviewBlockers as queueAddPendingReviewBlockers,
   clearBlockers as queueClearBlockers,
@@ -217,6 +218,7 @@ export interface DomainTaskStore {
     opts?: EnqueueTaskOptions,
   ): Promise<Task>
   updateTask(id: string, patch: UpdateTaskPatch): Promise<void>
+  reopenTerminalTask(id: string, reason: string): Promise<void>
   dropTask(id: string): Promise<DropTaskResult>
   setTaskPriority(id: string, priority: number): Promise<Task>
   insertReflectionTask(corpusSize: number): Promise<string>
@@ -505,6 +507,7 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     // rich atomic event set (terminal pairs, blocked, under_investigation) are
     // preserved; a status-only patch is exactly Arc.transition's funnel.
     updateTask: (id, patch) => queueUpdateTask(id, patch),
+    reopenTerminalTask: (id, reason) => queueReopenTerminalTask(id, reason, store),
     dropTask: (id) => Arc.load(id, store).drop(),
     setTaskPriority: (id, priority) => queueSetTaskPriority(id, priority),
     insertReflectionTask: (corpusSize) =>

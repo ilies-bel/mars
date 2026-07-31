@@ -145,6 +145,48 @@ const blockerDriftRepair: Reconciler = {
 }
 
 /**
+ * A Chore can only use an origin worktree while that origin remains live.
+ * Repair legacy rows left by the former dispatch race before reseeding work:
+ * reopen any already-failed Chore through the sole audited seam, then drop it
+ * with the typed reason.  This also clears the obsolete escalation row.
+ */
+const terminalOriginChoreRepair: Reconciler = {
+  name: 'terminal-origin-chore-repair',
+  async run({ log }) {
+    try {
+      const store = getDefaultDomainTaskStore()
+      const rows = await store.query({
+        sql: `SELECT chore.id, chore.status, origin.status AS origin_status
+                FROM tasks chore
+                JOIN tasks origin ON origin.id = chore.fix_for_task_id
+               WHERE chore.kind = 'fix'
+                 AND chore.status NOT IN ('done', 'dropped')
+                 AND origin.status IN ('done', 'failed', 'dropped')`,
+      })
+      const { resolveAllRowsForTask } = await import('../lib/action-queue')
+      let dropped = 0
+      for (const row of rows.rows) {
+        const chore = row as unknown as { id: string; status: string; origin_status: string }
+        if (chore.status === 'failed') {
+          await store.reopenTerminalTask(chore.id, 'startup reconcile: origin already terminal')
+        }
+        await store.updateTask(chore.id, {
+          status: 'dropped',
+          dropReason: chore.origin_status === 'done' ? 'origin-succeeded' : 'arc-rescued',
+        })
+        await resolveAllRowsForTask(chore.id)
+        log(`[reconcile] dropped Chore ${chore.id}: origin is already ${chore.origin_status}`)
+        dropped++
+      }
+      return { terminalOriginChoresDropped: dropped }
+    } catch (err) {
+      log(`[reconcile] terminal-origin-chore repair failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * 3a. Merge-jobs startup reconcile — re-hydrate the durable merge queue from
  *     task state left by the prior daemon.  Two operations:
  *
@@ -818,6 +860,7 @@ export const RECONCILERS: readonly Reconciler[] = [
   orphanedChatRunSweep,
   deadThreadEviction,
   blockerDriftRepair,
+  terminalOriginChoreRepair,
   mergeJobsStartupReconcile,
   orphanedBlockedScan,
   recoveryDonePropagation,

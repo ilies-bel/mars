@@ -176,6 +176,36 @@ const DDL: readonly string[] = [
   // downtime without refunding previously accumulated progress time.
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requeue_dispatch_uptime_ms bigint`,
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS stall_diagnostics jsonb`,
+  // Terminal task states are absorbing.  The application preflights this
+  // invariant for a typed error, while this trigger protects every other SQL
+  // writer (including future code paths and operational scripts).
+  `CREATE TABLE IF NOT EXISTS task_terminal_reopens (
+    id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    task_id     text NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    reason      text NOT NULL,
+    reopened_by text NOT NULL,
+    reopened_at timestamptz NOT NULL DEFAULT now(),
+    consumed_at timestamptz
+  )`,
+  `CREATE OR REPLACE FUNCTION reject_terminal_task_transition()
+   RETURNS trigger AS $$
+   BEGIN
+     IF OLD.status IN ('done', 'failed', 'dropped')
+        AND NEW.status IS DISTINCT FROM OLD.status
+        AND NOT EXISTS (
+          SELECT 1 FROM task_terminal_reopens
+          WHERE task_id = OLD.id AND consumed_at IS NULL
+        ) THEN
+       RAISE EXCEPTION 'terminal task % cannot transition from % to %', OLD.id, OLD.status, NEW.status
+         USING ERRCODE = 'P0001';
+     END IF;
+     RETURN NEW;
+   END;
+   $$ LANGUAGE plpgsql`,
+  `DROP TRIGGER IF EXISTS tasks_reject_terminal_transition ON tasks`,
+  `CREATE TRIGGER tasks_reject_terminal_transition
+     BEFORE UPDATE OF status ON tasks
+     FOR EACH ROW EXECUTE FUNCTION reject_terminal_task_transition()`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created
      ON tasks(priority DESC, created_at ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for

@@ -1352,6 +1352,10 @@ export const startDaemon = async (
             log(`[implement] ${task.id} failed: origin worktree missing; recovery cannot attach (action-queue item raised)`)
             return
 
+          case 'origin-terminal':
+            log(`[implement] ${task.id} dropped: its Chore origin already reached a terminal state`)
+            return
+
           case 'await-human': {
             // The primitive parked the task in 'awaiting-human', raised the
             // action-queue row, and threw this sentinel so the step does NOT
@@ -1426,6 +1430,9 @@ export const startDaemon = async (
           case 'origin-worktree-missing':
             // The setup step already marked this fix task failed and raised an item.
             log(`[implement] ${task.id} origin-worktree-missing abort (exception path); task already marked failed, item raised`)
+            break
+          case 'origin-terminal':
+            log(`[implement] ${task.id} origin-terminal abort (exception path); Chore already dropped`)
             break
           case 'coder-exit-nonzero':
           case 'coder-uncommitted':
@@ -3730,7 +3737,7 @@ export const startDaemon = async (
     chatRunner,
     chatStreamHub,
     restartTask: async (id) => {
-      const result = await coreRestart(id, new Set(['failed', 'vega-reconciling', 'merging']), makeWorkflowStore())
+      const result = await coreRestart(id, new Set(['failed', 'done', 'vega-reconciling', 'merging']), makeWorkflowStore())
       if (result.status === 'queued') {
         bus.emit('task.queued', { taskId: id })
       }

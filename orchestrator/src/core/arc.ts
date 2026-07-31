@@ -37,6 +37,7 @@ import {
   type Task,
   type TaskPlan,
   type TaskStatus,
+  type TaskDropReason,
   type TaskKind,
   type TaskTag,
   type EnqueueTaskOptions,
@@ -784,7 +785,7 @@ export class Arc {
   static async setTaskStatus(
     taskId: string,
     newStatus: TaskStatus,
-    extras?: { error?: string; result?: unknown; dropReason?: string },
+    extras?: { error?: string; result?: unknown; dropReason?: TaskDropReason },
     store?: DomainTaskStore,
   ): Promise<void> {
     const now = new Date().toISOString()
@@ -881,7 +882,7 @@ export class Arc {
     extras?: {
       error?: string
       result?: unknown
-      dropReason?: string
+      dropReason?: TaskDropReason
       failureReason?: string | null
       failureReasonCode?: string | null
       failureSignature?: string | null
@@ -894,6 +895,7 @@ export class Arc {
     await updateTask(taskId, {
       status: to,
       ...(extras?.error !== undefined ? { error: extras.error } : {}),
+      ...(extras?.dropReason !== undefined ? { dropReason: extras.dropReason } : {}),
       ...(failureReason !== undefined ? { failureReason } : {}),
       ...(extras?.failureReasonCode !== undefined
         ? { failureReasonCode: extras.failureReasonCode }
@@ -2178,7 +2180,7 @@ export class Arc {
   static async dropTasksForProposal(
     taskStore: DomainTaskStore,
     ids: string[],
-    dropReason: string,
+    dropReason: TaskDropReason,
   ): Promise<void> {
     for (const id of ids) {
       await taskStore.atomic(async (scope) => {
@@ -2226,7 +2228,7 @@ export class Arc {
   static async dropProposalSlices(
     taskStore: DomainTaskStore,
     proposalId: string,
-    dropReason: string,
+    dropReason: TaskDropReason,
   ): Promise<void> {
     const orphanRows = await taskStore.query({
       sql: `SELECT id FROM tasks WHERE parent_proposal_id = ?`,
@@ -2969,10 +2971,9 @@ export class Arc {
         actionQueueItemsClosed,
       }
     }
-    if (origin.status === 'done') {
-      // True idempotent no-op: origin is already in the desired terminal state.
-      // An already-done origin has no open failed-task action-queue row, so
-      // actionQueueItemsClosed is 0 here (the supersede above was a no-op).
+    if (origin.status === 'done' || origin.status === 'failed' || origin.status === 'dropped') {
+      // Terminal origin rows are absorbing.  The Chore contributes to the
+      // stateless Arc rollup; it must not resurrect or overwrite the origin.
       return {
         originTaskId,
         originFlipped: false,
