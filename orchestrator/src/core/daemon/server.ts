@@ -146,6 +146,7 @@ import { getLatestUsageSnapshot } from '../lib/usage-snapshot-store'
 import { computeBudgetPressure, getBudgetPressureConfig } from '../lib/budget-pressure'
 import { deleteDeferral, upsertDeferral } from '../lib/deferral-store'
 import { shouldDeferDispatch } from '../lib/dispatch-gate'
+import { startDeferralWakeSweeper } from './deferral-wake-sweeper'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
 
@@ -4549,9 +4550,24 @@ export const startDaemon = async (
     )
   }
 
+  // Re-check durable usage deferrals at the same cadence as the other daemon
+  // sweepers. The flight tracker retains ownership of its pending set, so the
+  // sweeper gets only the narrow capability it needs to re-queue a task.
+  const deferralWakeSweeper = startDeferralWakeSweeper({
+    drain,
+    pendingImplement: {
+      add: (taskId) => tracker.enqueuePending(taskId, 'implement'),
+    },
+    getLatestSnapshot: () => getLatestUsageSnapshot(dbClient),
+    getTask,
+  })
+
   // Boot reconcile after server is listening (so any reconcile-driven dispatch
-  // is fully wired) — fire-and-forget; errors logged inside.
-  void reconcile().catch((err) => log(`[reconcile] failed: ${(err as Error).message}`))
+  // is fully wired). Once it is complete, reconcile durable deferrals as well:
+  // a daemon that was down over a reset window can immediately resume work.
+  void reconcile()
+    .then(() => deferralWakeSweeper.tick())
+    .catch((err) => log(`[reconcile] failed: ${(err as Error).message}`))
 
   // ── API endpoint probe ────────────────────────────────────────────────────
   // While the circuit breaker is open, probe the Anthropic API every 30 s
@@ -5571,7 +5587,11 @@ export const startDaemon = async (
 
   // ── Usage snapshot sampler ────────────────────────────────────────────────
   const { startUsageSampler } = await import('./usage-sampler')
-  const usageSamplerInterval = startUsageSampler(getCompositionRootClient(), log)
+  const usageSamplerInterval = startUsageSampler(
+    getCompositionRootClient(),
+    log,
+    () => deferralWakeSweeper.tick(),
+  )
   usageSamplerInterval.unref()
 
   // ── Shutdown ──────────────────────────────────────────────────────────────
@@ -5597,6 +5617,7 @@ export const startDaemon = async (
     clearInterval(recoverySpawnerDrain)
     clearInterval(arcVerifierDrain)
     clearInterval(usageSamplerInterval)
+    deferralWakeSweeper.stop()
     // Drop the dispatch hint before the tracker is torn down, so a writer that
     // creates a task during shutdown does not fan out into a dead tracker.
     unregisterDispatchHint()

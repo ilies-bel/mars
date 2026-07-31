@@ -26,6 +26,7 @@ import { getAccumulatedTotals } from './usage-accumulator.js'
 export function startUsageSampler(
   client: DbClient,
   log: (line: string) => void,
+  onSnapshotInserted?: () => void | Promise<void>,
 ): ReturnType<typeof setInterval> {
   const intervalSec = Number(process.env.MARS_USAGE_SAMPLE_SEC ?? 60)
   const intervalMs = Math.max(1, intervalSec) * 1000
@@ -53,6 +54,7 @@ export function startUsageSampler(
         },
         client,
       )
+      await onSnapshotInserted?.()
     } catch (err) {
       log(`[usage-sampler] errored: ${(err as Error).message}`)
     }
