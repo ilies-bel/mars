@@ -32,6 +32,7 @@ import {
   resolveProviderName,
   reportsContextOccupancy,
 } from './providers'
+import { contextGuardMode } from '../lib/claude-usage'
 import { runPtySession } from './run-pty-session'
 import {
   RESCUE_OPERATOR_SYSTEM_PROMPT,
@@ -550,6 +551,10 @@ const buildWorker = (config: WorkerConfig): Worker => {
   const meteredContextBudget = reportsContextOccupancy(provider.headless)
     ? config.maxContextTokens
     : 0
+  const guardMode = contextGuardMode(
+    provider.headless.capabilities.usageSemantics,
+    config.maxContextTokens,
+  )
   return {
     config,
     runtime: config.runtime,
@@ -557,6 +562,21 @@ const buildWorker = (config: WorkerConfig): Worker => {
     // than a synchronous throw — callers hold `run()` to the Promise contract.
     run: async (prompt, options) => {
       assertPromptFitsContextBudget(config, prompt)
+      // Say out loud, once per dispatch, that the configured ceiling is NOT
+      // armed in-run on this provider. Silently withholding the budget (which
+      // is what a cumulative provider requires — its numbers are spend, not
+      // occupancy) would leave the operator believing a ceiling is enforced
+      // when nothing can abort the run mid-way. The same fact is stamped on
+      // every span as `contextGuard` so it is queryable, not just logged.
+      if (guardMode === 'in-run-inapplicable') {
+        console.warn(
+          `[mars] Worker ${config.name} on provider ${config.provider}: in-run context ceiling NOT enforced ` +
+            `(maxContextTokens=${config.maxContextTokens}). ${config.provider} reports ` +
+            `'${provider.headless.capabilities.usageSemantics}' usage — context occupancy is never observable ` +
+            `mid-run, so no turn can be compared against the window. Enforced instead: the pre-flight prompt-fit ` +
+            `check (input side) and the window/arc token ceilings ('mars budget'), which bound SPEND after each run.`,
+        )
+      }
       return config.runtime === 'pty'
         ? runPtySession({
             provider,

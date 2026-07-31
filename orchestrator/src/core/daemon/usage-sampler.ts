@@ -33,8 +33,10 @@ export function startUsageSampler(
   const sample = async (): Promise<void> => {
     try {
       // Read cumulative token totals from the in-memory accumulator. The
-      // accumulator is fed by recordClaudeEvent() calls in the daemon's
-      // onEvent handler as coder sessions stream their assistant turns.
+      // accumulator is fed by recordUsageEvent() from runWorkerWithSpan, which
+      // knows each Worker's Provider and therefore WHERE usage rides that
+      // provider's stream (assistant turns for Claude, one terminal
+      // `turn.completed` for Codex).
       const totals = getAccumulatedTotals()
       await insertUsageSnapshot(
         {

@@ -121,6 +121,15 @@ export type RunHeadlessProviderOpts = Omit<HeadlessRunOpts, 'model'> & {
 export const reportsContextOccupancy = (adapter: HeadlessAdapter): boolean =>
   adapter.capabilities.usageSemantics === 'per-request'
 
+/**
+ * The usage semantics of a Provider by name. The single lookup every telemetry
+ * call site uses to decide HOW to read a run's token numbers — reading the
+ * per-request (assistant-event) shape unconditionally is what made every Codex
+ * run report zero tokens everywhere.
+ */
+export const usageSemanticsOf = (provider: ProviderName): ProviderUsageSemantics =>
+  PROVIDERS[provider].headless.capabilities.usageSemantics
+
 // Runtime options forwarded to spawnArgv when the orchestrator launches
 // a Provider process. Named fields instead of a plain record so callers
 // get type-checked values and providers can safely destructure by name.

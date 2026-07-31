@@ -40,6 +40,25 @@ export const composeCodexPrompt = (prompt: string, systemPrompt?: string): strin
  *   item.completed(reasoning)     → null (dropped; opaque to downstream readers)
  *   turn.completed                → result event; is_error reflects the codex error field
  *   everything else               → null
+ *
+ * NOTHING usage-bearing is dropped here. Verified against codex-cli 0.145.0 by
+ * capturing a full `codex exec --json` run (one prompt, one shell tool call):
+ *
+ *   {"type":"thread.started","thread_id":"…"}
+ *   {"type":"turn.started"}
+ *   {"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"…"}}
+ *   {"type":"item.started","item":{"id":"item_1","type":"command_execution",…}}
+ *   {"type":"item.completed","item":{"id":"item_1","type":"command_execution",…}}
+ *   {"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"done"}}
+ *   {"type":"turn.completed","usage":{"input_tokens":31864,"cached_input_tokens":25088,
+ *                                     "cache_write_input_tokens":0,"output_tokens":118,
+ *                                     "reasoning_output_tokens":0}}
+ *
+ * No token/usage field appears on any item event, and `codex exec --help` on
+ * this version exposes no incremental-usage or raw-protocol-event flag. The
+ * terminal `turn.completed` really is the ONLY usage signal, which is why the
+ * adapter declares 'cumulative' semantics and why no mid-run ceiling can exist
+ * on this provider — see ContextGuardMode in ../../lib/claude-usage.
  */
 export const parseCodexEventLine = (line: string): ClaudeEvent | null => {
   const trimmed = line.trim()
