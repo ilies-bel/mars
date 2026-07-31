@@ -507,6 +507,7 @@ describe('action-queue show', () => {
 
     expect(r.code).toBe(1)
     expect(r.err.join('\n')).toContain('no action queue item matching aq-missing')
+    expect(r.out).toHaveLength(0)
   })
 
   it('fails with daemon-not-running message when http.port is absent', async () => {
