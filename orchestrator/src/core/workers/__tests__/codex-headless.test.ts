@@ -329,15 +329,15 @@ describe('codexHeadless.run — (d) null signals', () => {
     expect(result.exitCode).toBe(1)
   })
 
-  it('reports context exhaustion when Codex reports a context over the configured budget', async () => {
+  it('does not treat terminal cumulative usage as a live context measurement', async () => {
     const result = await codexHeadless.run('task', {
       cwd: '/tmp',
       model: 'gpt-5.5',
       maxContextTokens: 40,
     })
 
-    expect(result.exitCode).toBe(138)
-    expect(result.stderr).toContain('context budget exhausted')
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).not.toContain('context budget exhausted')
   })
 })
 

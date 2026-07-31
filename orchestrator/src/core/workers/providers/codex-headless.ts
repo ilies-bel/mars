@@ -5,7 +5,6 @@
 // reused automatically and MARS never reads or copies credential material.
 
 import { runSubprocessStreaming, buildWorkerEnv, type RunClaudeResult } from '../../lib/git/claude'
-import { getLatestContextSize } from '../../lib/claude-usage'
 import type { ClaudeEvent } from '../../lib/claude-stream'
 import type { HeadlessAdapter, HeadlessRunOpts } from '../providers'
 
@@ -97,11 +96,6 @@ export const codexHeadless: HeadlessAdapter = {
   run: async (prompt: string, opts: HeadlessRunOpts): Promise<RunClaudeResult> => {
     const conversation: ClaudeEvent[] = []
     const abort = new AbortController()
-    const budget = opts.maxContextTokens ?? 0
-    const budgetEnabled = Number.isInteger(budget) && budget > 0
-    const warnAt = budgetEnabled ? Math.floor(budget * 0.8) : Number.POSITIVE_INFINITY
-    let warned = false
-    let contextExhausted = false
     let externalAborted = false
 
     if (opts.externalAbort) {
@@ -135,37 +129,13 @@ export const codexHeadless: HeadlessAdapter = {
         if (stream !== 'stdout') return
         const ev = parseCodexEventLine(line)
         if (!ev) return
-        if (contextExhausted) return
         conversation.push(ev)
         if (opts.onEvent) await opts.onEvent(ev)
-        if (!budgetEnabled) return
-        const contextSize = getLatestContextSize(conversation)
-        if (!warned && contextSize >= warnAt) {
-          warned = true
-          console.warn(
-            `[mars] codex run context at ${contextSize} tokens crossed 80% warn (${warnAt}/${budget})`,
-          )
-        }
-        if (contextSize >= budget) {
-          contextExhausted = true
-          abort.abort()
-        }
       },
       abort.signal,
       buildWorkerEnv(),
       opts.onPid,
     )
-
-    if (contextExhausted) {
-      return {
-        exitCode: 138,
-        stdout: result.stdout,
-        stderr: `codex exec aborted: context budget exhausted (${getLatestContextSize(conversation)}/${budget} tokens)`,
-        sessionId: null,
-        conversation,
-        quotaRejected: null,
-      }
-    }
 
     if (externalAborted) {
       return {

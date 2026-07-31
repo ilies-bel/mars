@@ -14,7 +14,7 @@ describe('codexHeadless context budget', () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
   })
 
-  it('enforces the budget against a spawned codex executable reporting turn.completed usage', async () => {
+  it('does not misclassify completed cumulative usage as live context exhaustion', async () => {
     const dir = mkdtempSync(resolve(tmpdir(), 'mars-codex-budget-'))
     dirs.push(dir)
     const bin = resolve(dir, 'codex')
@@ -30,7 +30,7 @@ describe('codexHeadless context budget', () => {
       maxContextTokens: 1_000,
     })
 
-    expect(result.exitCode).toBe(138)
-    expect(result.stderr).toContain('context budget exhausted (1001/1000 tokens)')
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).not.toContain('context budget exhausted')
   })
 })
