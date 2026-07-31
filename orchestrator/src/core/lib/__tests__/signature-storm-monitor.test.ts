@@ -169,6 +169,37 @@ describe('signature-storm-monitor — unit', () => {
     expect(r.tripped).toBe(false)
   })
 
+  it('streaks the coarse and step-qualified forms of ONE failure together', async () => {
+    const { sm, client } = await loadModules(repo)
+    // The same commit-contract failure, as the inline call site records it
+    // (fine) and as the durable recovery-spawn subscriber records it (coarse,
+    // because it can only recover `failed_phase` from the DB).
+    const fine = 'code:commit-contract/uncommitted-changes'
+    const coarse = 'code/uncommitted-changes'
+
+    const r1 = await sm.recordFailureSignature(client, 'task-1', fine)
+    expect(r1.streak).toBe(1)
+    // Under string equality this reset the streak to 1 — one failure counted
+    // as two unrelated ones, and whichever form tripped was then the only form
+    // the Steward's evidence lookup searched for.
+    const r2 = await sm.recordFailureSignature(client, 'task-2', coarse)
+    expect(r2.streak).toBe(2)
+    const r3 = await sm.recordFailureSignature(client, 'task-3', fine)
+    expect(r3.streak).toBe(3)
+  })
+
+  it('keeps a different error class in the same gate on its own streak', async () => {
+    const { sm, client } = await loadModules(repo)
+
+    await sm.recordFailureSignature(client, 'task-1', 'code:commit-contract/uncommitted-changes')
+    const r = await sm.recordFailureSignature(
+      client,
+      'task-2',
+      'code:coder-exit-nonzero/api-unreachable',
+    )
+    expect(r.streak).toBe(1)
+  })
+
   it('trips at SIGNATURE_STORM_TRIP_THRESHOLD and returns tripped=true, alreadyTripped=false', async () => {
     const { sm, aq, client } = await loadModules(repo)
     const sig = 'setup:install-failed/unclassified'

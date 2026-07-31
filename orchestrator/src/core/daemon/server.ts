@@ -112,6 +112,7 @@ import {
   type StormStewardOutcome,
   type StormStewardReport,
 } from './storm-breaker'
+import { collectStormEvidence, type StormEvidence } from './storm-evidence'
 import { setInstallSemCap } from '../lib/worktree-install'
 import { probeDuckDBLock } from './duckdb-lock'
 import {
@@ -2067,75 +2068,29 @@ export const startDaemon = async (
   // so the subscriber never calls this handler again for the same storm.
   // The pause-state guard provides a secondary in-process safety net.
 
-  /** Gather the tasks that failed with this signature, newest first. */
+  /**
+   * Gather the tasks that failed with this signature, best evidence first.
+   * The row-matching rule lives in `./storm-evidence` alongside the shared
+   * family helper the streak counter uses, so the evidence lookup and the
+   * counter can never again disagree about which rows belong to a storm.
+   */
   const collectStormContext = async (
     signature: string,
     lastTaskId: string,
-  ): Promise<{
-    affectedTaskIds: string[]
-    failureExcerpts: Array<{
-      taskId: string
-      signature: string
-      excerpt: string
-      usable: boolean
-    }>
-    /** How many excerpts carry real captured output rather than status padding. */
-    usableEvidenceCount: number
-  }> => {
-    const { assessStormExcerpt } = await import('../agents/steward')
-    const affectedTaskIds: string[] = []
-    const failureExcerpts: Array<{
-      taskId: string
-      signature: string
-      excerpt: string
-      usable: boolean
-    }> = []
-    let usableEvidenceCount = 0
+  ): Promise<StormEvidence> => {
     try {
       const store = await getDefaultTaskStore()
-      const rows = await store.execute({
-        sql: `SELECT id, failure_signature, failure_reason, error
-                FROM tasks
-               WHERE failure_signature = ? OR failure_reason_code = ?
-               ORDER BY updated_at DESC
-               LIMIT 5`,
-        args: [signature, signature],
-      })
-      for (const raw of rows.rows) {
-        const row = raw as unknown as {
-          id: string
-          failure_signature: string | null
-          failure_reason: string | null
-          error: string | null
-        }
-        affectedTaskIds.push(row.id)
-        // Guard the brief: `error` is not always captured output. A sweep that
-        // re-drives already-failed tasks can overwrite it with a repeated
-        // `recovery_failed:<sig>:` chain, and `slice(-2_000)` of that is pure
-        // padding. Attach the assessment's verdict instead of pretending.
-        const assessment = assessStormExcerpt(row.error?.slice(-2_000))
-        if (assessment.usable) usableEvidenceCount += 1
-        failureExcerpts.push({
-          taskId: row.id,
-          signature: row.failure_signature ?? row.failure_reason ?? signature,
-          excerpt: assessment.excerpt,
-          usable: assessment.usable,
-        })
-      }
+      return await collectStormEvidence({ db: store, signature, lastTaskId, log })
     } catch (err) {
+      // Non-fatal, as before: a Steward briefed with no excerpts is still worth
+      // dispatching; a thrown store error would abort the whole episode.
       log(
         `[signature-storm] failure-context lookup failed (non-fatal): ${
           err instanceof Error ? err.message : String(err)
         }`,
       )
+      return { affectedTaskIds: [lastTaskId], failureExcerpts: [], usableEvidenceCount: 0 }
     }
-    if (!affectedTaskIds.includes(lastTaskId)) affectedTaskIds.unshift(lastTaskId)
-    if (failureExcerpts.length > 0 && usableEvidenceCount === 0) {
-      log(
-        `[signature-storm] no usable failure output for "${signature}" — the Steward brief will say so explicitly`,
-      )
-    }
-    return { affectedTaskIds, failureExcerpts, usableEvidenceCount }
   }
 
   /**

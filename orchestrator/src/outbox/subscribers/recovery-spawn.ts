@@ -118,6 +118,37 @@ export async function drainRecoverySpawner(
       const failingStep =
         asStepId(task.failureReason) ?? asStepId(task.failedPhase) ?? UNKNOWN_STEP_ID
 
+      /**
+       * Run the shared failure handler and, when the signature-storm circuit
+       * breaker FIRST trips, signal the daemon so it pauses dispatch and wakes
+       * the Steward. The `alreadyTripped` guard inside the handler makes this
+       * fire exactly once per episode, even across drains.
+       *
+       * Every branch below routes through this. Two of them used to call the
+       * handler and drop its result on the floor — the failed-recovery leaf and
+       * the no-worktree escalation — so a storm made of pre-setup failures
+       * (`setup:*`, the commonest systemic shape) set the durable `tripped`
+       * flag and raised the action-queue row while dispatch kept running and no
+       * Steward was ever dispatched.
+       */
+      const dispatchFailure = async (): Promise<void> => {
+        const result = await handleTaskFailureWithFixTask({
+          taskId,
+          failingStep,
+          errorOutput: error,
+          // Carry the optional QA note from the `task.failed` event through to
+          // the fix-task prompt so the recovery agent sees the operator feedback.
+          qaNote: note,
+        })
+        if (result.outcome === 'signature-storm-tripped' && onStormTripped) {
+          onStormTripped({
+            signature: result.failureSignature ?? failingStep,
+            streak: result.stormStreak ?? 0,
+            lastTaskId: taskId,
+          })
+        }
+      }
+
       // ── A failed RECOVERY task is terminal (ADR-0040) ────────────────────────
       // A recovery Chore is a leaf: it is never re-run, so there is nothing to
       // reopen it FOR. Reopening it here was a live self-feeding loop — the
@@ -128,12 +159,7 @@ export async function drainRecoverySpawner(
       // and one more rescue-operator spawn every tick, forever. Escalate without
       // reopening; the handler's escalate-once gate makes a repeat call a no-op.
       if (task.fixForTaskId !== null) {
-        await handleTaskFailureWithFixTask({
-          taskId,
-          failingStep,
-          errorOutput: error,
-          qaNote: note,
-        })
+        await dispatchFailure()
         return true
       }
 
@@ -141,12 +167,7 @@ export async function drainRecoverySpawner(
       // task to reuse. Route them directly through the shared escalation before
       // spend-control or outage gates can produce a less actionable notice.
       if (!(await hasUsableWorktree(task))) {
-        await handleTaskFailureWithFixTask({
-          taskId,
-          failingStep,
-          errorOutput: error,
-          qaNote: note,
-        })
+        await dispatchFailure()
         return true
       }
 
@@ -239,26 +260,7 @@ export async function drainRecoverySpawner(
       // live INSIDE handleTaskFailureWithFixTask (the shared chokepoint) so they
       // apply to the inline verify dispatch too, which fires before this
       // subscriber does — see the module docblock.
-      const result = await handleTaskFailureWithFixTask({
-        taskId,
-        failingStep,
-        errorOutput: error,
-        // Carry the optional QA note from the `task.failed` event through to
-        // the fix-task prompt so the recovery agent sees the operator feedback.
-        qaNote: note,
-      })
-
-      // When the signature-storm circuit breaker first trips, signal the
-      // daemon-side caller so it can pause dispatch and spawn the steward.
-      // The `alreadyTripped` guard inside handleTaskFailureWithFixTask ensures
-      // this outcome fires exactly once per storm episode, even across drains.
-      if (result.outcome === 'signature-storm-tripped' && onStormTripped) {
-        onStormTripped({
-          signature: result.failureSignature ?? failingStep,
-          streak: result.stormStreak ?? 0,
-          lastTaskId: taskId,
-        })
-      }
+      await dispatchFailure()
 
       return true
     },

@@ -1,5 +1,6 @@
 import type { DbResultSet, DbStatement } from './db.js'
 import { raiseActionQueueItem } from './action-queue'
+import { isSameFailureFamily } from './failure-signature.js'
 
 /**
  * Minimal write/read seam the monitor needs. Satisfied structurally by both a
@@ -40,10 +41,21 @@ export interface MonitorDb {
  *      `{ tripped: true, alreadyTripped: false }`.
  *
  * Streak rules (identical to gate-meta-monitor):
- *  - A different signature resets the streak to 1.
+ *  - A signature from a different FAMILY resets the streak to 1.
  *  - The same signature from a DIFFERENT task advances the streak by 1.
  *  - The same signature from the SAME task (`taskId === last_task_id`) does
  *    NOT advance it — the requirement is distinct tasks.
+ *
+ * "Same signature" means {@link isSameFailureFamily}, not string equality. One
+ * failure reaches this monitor at two step granularities — the inline call site
+ * knows the fine step (`code:commit-contract/uncommitted-changes`) while the
+ * durable recovery-spawn subscriber recovers only the coarse gate from the DB
+ * (`code/uncommitted-changes`). Under string equality the two forms of ONE
+ * failure reset each other's streak, and whichever form happened to trip was
+ * then the only form the Steward's evidence lookup searched for. Family
+ * comparison is the SHARED rule: this counter and `collectStormEvidence` use
+ * the same helper, so the rows the streak counted are exactly the rows the
+ * brief can quote.
  *
  * Reset: any successful task completion calls {@link resetFailureSignatureStreak}
  * which zeroes the streak and clears `tripped`. Dispatch itself resumes when
@@ -238,9 +250,12 @@ export const recordFailureSignature = async (
     return { streak: 0, tripped: false, alreadyTripped: false }
   }
   const row = await readStreakRow(client)
+  // Same failure, possibly a coarser/finer step id — see the module docblock.
+  const sameFailure =
+    row.current_signature !== null && isSameFailureFamily(row.current_signature, signature)
 
-  // If already tripped for THIS signature, return idempotent result.
-  if (row.tripped && row.current_signature === signature) {
+  // If already tripped for THIS failure, return idempotent result.
+  if (row.tripped && sameFailure) {
     // Still advance last_task_id so the row stays fresh, but do NOT
     // bump streak_count (it's beyond the threshold; capping prevents overflow).
     await writeStreakRow(client, {
@@ -253,8 +268,8 @@ export const recordFailureSignature = async (
   let streak: number
   let lastTaskId: string
 
-  if (row.current_signature !== signature) {
-    // Signature changed (or first ever) → fresh streak.
+  if (!sameFailure) {
+    // A different failure family (or the first ever) → fresh streak.
     streak = 1
     lastTaskId = taskId
   } else if (row.last_task_id === taskId) {
