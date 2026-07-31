@@ -590,8 +590,9 @@ export const setupWorktree = async (
         isMainCommiterFix,
       )
       // A main-commiter recovery MUST carry the integration branch's dirty
-      // state into its fresh worktree (stash push on repoRoot → pop in the
-      // worktree) so the committer coder sees the files it is meant to commit.
+      // state into its fresh worktree (checkpoint capture on repoRoot → apply
+      // by object id in the worktree, see `core/lib/git/checkpoint.ts`) so the
+      // committer coder sees the files it is meant to commit.
       // The generic createWorktree() branches off the clean integration tip
       // and leaves the dirty state stranded on the integration checkout —
       // every downstream task then fails verify:main-dirty forever.
@@ -1835,8 +1836,9 @@ export const review = async (
       // the committer ran. A committer task may only succeed if
       // `git status --porcelain` on the integration branch's primary checkout
       // (repoRoot, not the committer worktree) is empty. If the checkout is
-      // still dirty — e.g. because git stash refused to capture ignored files,
-      // or the committer exited without committing anything meaningful — the
+      // still dirty — e.g. because ignored files remain (a checkpoint never
+      // captures those), or the committer exited without committing anything
+      // meaningful — the
       // verify step must fail so the task escalates to the action queue for
       // operator review (non-recoverable per ADR-0040).
       //

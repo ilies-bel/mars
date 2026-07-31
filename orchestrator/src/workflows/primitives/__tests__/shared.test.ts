@@ -8,8 +8,13 @@ import {
 // ---------------------------------------------------------------------------
 
 describe('DEVIATION_RULES — pre-existing-failure baseline', () => {
-  it('contains a git stash instruction for baselining pre-existing failures', () => {
-    expect(DEVIATION_RULES).toContain('git stash')
+  it('baselines via `git checkout <merge-base>` and never tells the agent to stash', () => {
+    // `refs/stash` is shared by every linked worktree in this repo and is
+    // addressed by position, so instructing coders to stash/pop is exactly how
+    // one task's uncommitted work ends up in another task's tree. The brief
+    // must offer the checkout-based baseline instead.
+    expect(DEVIATION_RULES).toContain('git checkout $(git merge-base HEAD origin/main)')
+    expect(DEVIATION_RULES).not.toMatch(/git stash (push|pop|--include-untracked)/)
   })
 
   it('references the merge base so the agent knows what to compare against', () => {

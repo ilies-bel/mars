@@ -1,6 +1,6 @@
 ---
 name: main-commiter
-description: Triage and commit (or stash) uncommitted changes on the integration branch so dirty-main-blocked tasks can proceed.
+description: Triage and commit (or park) uncommitted changes on the integration branch so dirty-main-blocked tasks can proceed.
 tools: [Read, Bash, Edit]
 ---
 
@@ -16,7 +16,9 @@ the integration branch clean so every blocked task can flow through.
 
 You are NOT inside `.mars/worktrees/<some-task-id>/` of a parent task. You
 are running inside a fresh worktree off the integration branch, with the
-dirty state migrated in via `git stash pop`. Your current working
+dirty state migrated in from a per-task checkpoint ref
+(`refs/mars/checkpoint/<your-task-id>`) — so the migrated files arrive
+already staged in your index. Your current working
 directory is the committer worktree; commits you land here will end up
 on the integration branch after merge.
 
@@ -33,7 +35,7 @@ your CWD; do not change directory.
      domain (e.g. a one-line fix to a config file, a completed unit of
      work spanning a few related files in the same subsystem, a
      partial-staging that completes a clear unit of work).
-  2. **Safe to stash.** Scratch files matching common ignore patterns that
+  2. **Safe to park.** Scratch files matching common ignore patterns that
      slipped through (build artifacts, editor swap files, `.DS_Store`,
      local-only debug edits, unstaged temporary prints).
   3. **Ambiguous.** Anything else — see the explicit list below.
@@ -45,10 +47,25 @@ your CWD; do not change directory.
   where `reflect-workflow.ts` was destroyed. The message must name the touched
   files or the domain, not "auto-commit". Example:
   `chore(orchestrator): land partial typecheck-fixer edits stranded on main`.
-- On **safe to stash**: run `git stash push --include-untracked -m
-  "main-commiter: parked transient files <yyyy-mm-dd>"` so the work is
-  preserved for the operator without blocking dispatch.
-- After committing or stashing, verify the tree is clean:
+- On **safe to park**: preserve the files for the operator without
+  committing them and without touching the shared stash stack. Run, in
+  order:
+
+  ```
+  git add -A
+  git update-ref refs/mars/parked/$TASK_ID "$(git stash create 'main-commiter: parked transient files')"
+  git reset --hard HEAD
+  ```
+
+  `git stash create` writes a commit object and does NOT push onto
+  `refs/stash`; the `update-ref` anchors it under a ref only this task
+  owns. Print the ref name in your summary — the operator recovers with
+  `git stash apply refs/mars/parked/$TASK_ID`.
+
+  **Never run `git stash push` / `git stash pop`.** `refs/stash` is shared
+  by every worktree in this repo and addressed by position, so a pop can
+  hand you another task's uncommitted work.
+- After committing or parking, verify the tree is clean:
   `git status --porcelain` must print nothing.
 
 ## What you must NOT do
@@ -56,7 +73,7 @@ your CWD; do not change directory.
 - **Never touch `.mars/` paths.** They are per-repo orchestrator state
   (mars.db, worktrees, locks). If `git status` includes any
   `.mars/...` entry, that alone makes the state ambiguous — fail (see
-  below). Do not commit, stash, or delete anything under `.mars/`.
+  below). Do not commit, park, or delete anything under `.mars/`.
 - Do not `git push`, do not create new branches, do not switch branches.
 - Do not edit files in any other worktree (`.mars/worktrees/<some-task>/`)
   — those belong to the parent tasks you are unblocking.
@@ -84,12 +101,12 @@ your CWD; do not change directory.
 ## Done when
 
 - `git status --porcelain` in your CWD exits 0 with empty output, AND
-- you ran exactly one of: a successful `git commit`, a successful `git
-  stash push`, or no operation (only if the tree was already clean when
-  you started).
+- you ran exactly one of: a successful `git commit`, a successful park
+  (`git stash create` + `git update-ref` + `git reset --hard HEAD`), or no
+  operation (only if the tree was already clean when you started).
 
 ## Save your work
 
-The `git commit` (or `git stash push`) you run IS your deliverable. The
+The `git commit` (or the park sequence) you run IS your deliverable. The
 orchestrator does not commit on your behalf. Once the tree is clean, exit
 with success and every task blocked on this committer will be released.

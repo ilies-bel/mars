@@ -197,6 +197,12 @@ Each task prompt must stand alone. Include:
 ## Conventions
 
 - Never commit `.env` or `.mars/`.
+- **Never `git stash`.** `refs/stash` lives in the common git dir, so every
+  Mars worktree shares one stack addressed by shifting positions
+  (`stash@{0}`, `stash@{1}`) — a `pop` in one worktree can restore an entry
+  pushed by a different task and silently move its uncommitted work into your
+  tree. Park changes with `git checkout <ref> -- <paths>`, a wip commit on your
+  own branch, or a scratch clone instead.
 - Never `cd` between Mars worktrees. Bash CWD persists across tool
   calls, and `mars` resolves the repo from CWD upward — once shifted
   into `.mars/worktrees/<id>/`, every later `mars` call silently binds

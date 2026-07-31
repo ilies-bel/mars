@@ -13,9 +13,14 @@
  * vanished mid-session, twice, while unrelated tasks merged in the background.
  *
  * The tree still has to end up clean (a dirty integration checkout parks the
- * whole queue behind the dispatch-time dirty-main guard), so the fix stashes
- * rather than resets. We assert both halves: the tree is clean afterwards AND
- * the edit is recoverable from the stash.
+ * whole queue behind the dispatch-time dirty-main guard), so the fix
+ * checkpoints rather than resets. We assert both halves: the tree is clean
+ * afterwards AND the edit is recoverable from the checkpoint ref.
+ *
+ * The preservation deliberately does NOT use `git stash`: `refs/stash` is
+ * shared by every linked worktree and addressed by position, so a parallel
+ * task's pop could swallow the operator's edits. This test also pins that the
+ * stash stack stays empty.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -77,7 +82,7 @@ afterAll(() => {
 })
 
 describe('mergeBranch — uncommitted operator edits on the integration checkout', () => {
-  it('preserves the edit via stash instead of resetting it away', async () => {
+  it('preserves the edit on a checkpoint ref instead of resetting it away', async () => {
     // The operator edits a tracked file on main and does not commit.
     writeFileSync(resolve(repoDir, 'operator.txt'), 'PRECIOUS UNCOMMITTED WORK')
     expect(git('status', '--porcelain', '--untracked-files=no')).not.toBe('')
@@ -96,11 +101,20 @@ describe('mergeBranch — uncommitted operator edits on the integration checkout
     // The tree must be clean so the dirty-main guard does not park the queue.
     expect(git('status', '--porcelain', '--untracked-files=no')).toBe('')
 
-    // ...and the edit must be recoverable, NOT destroyed.
-    const stashList = git('stash', 'list')
-    expect(stashList).toContain('mars: preserved operator edits')
+    // ...and the edit must be recoverable, NOT destroyed — from a per-merge
+    // checkpoint ref, addressed by name rather than by stack position.
+    const refs = git('for-each-ref', '--format=%(refname)', 'refs/mars/checkpoint')
+      .split('\n')
+      .filter((l) => l.length > 0)
+    expect(refs).toHaveLength(1)
+    expect(git('log', '-1', '--format=%s', refs[0])).toContain(
+      'mars: preserved operator edits',
+    )
 
-    git('stash', 'pop')
+    // The shared stash stack was never touched.
+    expect(git('stash', 'list')).toBe('')
+
+    git('cherry-pick', '-n', refs[0])
     expect(readFileSync(resolve(repoDir, 'operator.txt'), 'utf8')).toBe(
       'PRECIOUS UNCOMMITTED WORK',
     )
