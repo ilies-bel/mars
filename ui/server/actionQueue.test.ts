@@ -194,13 +194,37 @@ describe('GET /api/action-queue (persisted view)', () => {
     expect(row?.priority).toBe('high')
     // errorKind preserved from persisted kind
     expect(row?.errorKind).toBe('failed-task')
-    // title/body and actions are derived by the canonical buildActionQueueView
-    // from the Failure-kind registry (no signature → unknownFailureKind copy),
-    // not passed through from the persisted row. The exact wording is asserted
-    // in the orchestrator's view/__tests__/action-queue.test.ts; here we only
-    // confirm the proxy relays the derived (non-empty, non-passthrough) values.
-    expect(row?.title).toBe('A pipeline step did not complete')
+    // The row's task carries no failure signature, so the registry can only
+    // produce the generic label — and a persisted title the raiser wrote on
+    // purpose beats the generic label and survives verbatim. (The task itself
+    // is not in `tasks` here, so no ` [task …]` tag is appended.)
+    expect(row?.title).toBe('Task t-failed failed')
+    // actions ARE derived by the canonical buildActionQueueView — the persisted
+    // row carries none — so their presence proves the proxy relays the daemon
+    // projection rather than the raw SQLite row.
     expect(row?.actions.some((a) => a.op === 'diagnose-failure')).toBe(true)
+  })
+
+  it('replaces a generic persisted title with the derived failure copy', async () => {
+    // The other half of the title contract: when the raiser fell back to the
+    // generic label it says nothing the derived copy would not, so the
+    // canonical view overwrites it. Asserting the exact derived string here is
+    // what proves the proxy serves buildActionQueueView output, not passthrough.
+    const c = createClient({ url: `file:${dbPath(repo)}` })
+    await insertActionQueueItem(c, {
+      id: 'test-row-generic',
+      kind: 'failed',
+      priority: 'high',
+      title: 'Mars could not determine why this task failed',
+      body: '',
+      payload: { taskId: 't-failed', eventType: 'task.failed' },
+    })
+    c.close()
+
+    const body = await fetchQueue()
+    const row = body.find((r) => r.id === 'test-row-generic')
+    expect(row).toBeDefined()
+    expect(row?.title).toBe('Mars could not determine why this task failed [task t-failed]')
   })
 
   it('a non-task-keyed failed row gets a non-empty entityId (origins-400 regression)', async () => {
