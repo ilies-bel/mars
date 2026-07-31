@@ -34,6 +34,26 @@ const emptyByCluster = () => ({
 })
 
 describe('buildArcsByCluster', () => {
+  it('shows an arc with a failed task and blocked dependent in the Failed column', () => {
+    const failedOrigin = task({
+      id: 'origin-1',
+      cluster: 'Failed',
+      status: 'failed',
+      originId: 'origin-1',
+    })
+    const blockedDependent = task({
+      id: 'dependent-1',
+      cluster: 'Blocked',
+      status: 'blocked',
+      originId: 'origin-1',
+    })
+
+    const arcs = buildArcsByCluster([failedOrigin, blockedDependent], [])
+
+    expect(arcs.Failed).toHaveLength(1)
+    expect(arcs.Blocked).toHaveLength(0)
+  })
+
   it('shows a recovery Arc once, using its current queued state rather than an older failure', () => {
     const failedOrigin = task({
       id: 'origin-1',
@@ -58,6 +78,26 @@ describe('buildArcsByCluster', () => {
     expect(arcs.Queued).toHaveLength(1)
     expect(arcs.Queued[0]).toMatchObject({ id: 'origin-1', cluster: 'Queued' })
     expect(arcs.Queued[0]?.tasks.map((t) => t.id)).toEqual(['origin-1', 'fix-1'])
+  })
+
+  it('shows an arc with a failed task and running recovery in the In progress column', () => {
+    const failedOrigin = task({
+      id: 'origin-1',
+      cluster: 'Failed',
+      status: 'failed',
+      originId: 'origin-1',
+    })
+    const runningRecovery = task({
+      id: 'recovery-1',
+      cluster: 'In progress',
+      status: 'running',
+      originId: 'origin-1',
+    })
+
+    const arcs = buildArcsByCluster([failedOrigin, runningRecovery], [])
+
+    expect(arcs['In progress']).toHaveLength(1)
+    expect(arcs.Failed).toHaveLength(0)
   })
 
   it('keeps legacy tasks without origin ids as individual arcs', () => {
@@ -620,9 +660,9 @@ describe('buildArcsByCluster — done origin regression', () => {
 
     const arcs = buildArcsByCluster([doneOrigin, runningSlice, blockedSlice], [])
 
-    // Arc is placed in Blocked (higher attention priority than In progress)
-    expect(arcs.Blocked).toHaveLength(1)
-    const arc = arcs.Blocked[0]!
+    // Live work outranks Blocked so an executing sibling remains visible.
+    expect(arcs['In progress']).toHaveLength(1)
+    const arc = arcs['In progress'][0]!
     expect(arc.id).toBe('origin-done')
     expect(arc.hasOrphanedOrigin).toBe(false)
     expect(arc.title).toBe('Implement the feature')
@@ -869,7 +909,7 @@ describe('BoardView — proposal-rooted arc rendering', () => {
 })
 
 describe('BoardView — done origin regression rendering', () => {
-  it('renders arc in Blocked column with no "origin force-purged" when origin is Done', () => {
+  it('renders arc in In progress with no "origin force-purged" when origin is Done', () => {
     const doneOrigin = task({
       id: 'origin-done',
       prompt: 'Ship the widget feature',
@@ -901,8 +941,8 @@ describe('BoardView — done origin regression rendering', () => {
       <BoardView byCluster={byCluster} proposals={[]} error={null} selectedProposalId={null} />,
     )
 
-    // Arc must be rendered in Blocked column
-    expect(html).toContain('data-arc-status="Blocked"')
+    // Live work outranks a blocked sibling.
+    expect(html).toContain('data-arc-status="In progress"')
     // hasOrphanedOrigin=false → no "origin force-purged" subtitle
     expect(html).not.toContain('origin force-purged')
     // Title comes from origin prompt, not "Abandoned arc …"
