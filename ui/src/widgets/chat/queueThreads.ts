@@ -64,6 +64,11 @@ export interface ThreadListFilters {
   origin: 'all' | 'alerts' | 'operator'
 }
 
+/** Operational action-queue rows, excluding draft proposals. */
+export function isAlertQueueItem(item: Pick<ActionQueueItem, 'kind'>): boolean {
+  return item.kind !== 'draft-proposal'
+}
+
 /**
  * Draft-proposal rows carry the full multi-paragraph PRD body in `item.title`.
  * A queue row must show only a scannable headline: the first sentence

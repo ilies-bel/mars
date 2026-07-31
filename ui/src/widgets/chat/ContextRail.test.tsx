@@ -3,7 +3,7 @@
  *
  * Covers observable behaviour through the public interface:
  *   - The "Live tasks" panel is absent from the rail (replaced by session context).
- *   - The always-visible artifact rail presents Tasks, Files, ADRs, and Meta.
+ *   - The always-visible artifact rail presents Tasks, Files, and Meta.
  *   - Focus panel: renders the active thread title + status chip, or a
  *     "No active thread" placeholder when no thread is active.
  *
@@ -219,32 +219,28 @@ describe('ContextRail – Focus panel', () => {
 
 
 describe('ContextRail – artifact rail', () => {
-  it('renders four linked artifact sections for this session', () => {
+  it('renders linked task, file, and project-meta sections', () => {
     const html = renderToStaticMarkup(
       <ArtifactsRail
         tasks={['mars-aabbccdd']}
         files={[{ type: 'attachment', path: 'thread-1/design.png', mimeType: 'image/png', name: 'Design draft' }]}
-        adrs={[{ number: 42, title: 'Keep the rail focused', slug: 'keep-the-rail-focused', path: 'docs/adr/0042-keep-the-rail-focused.md' }]}
         meta={{ vision: 'One operator surface', theme: 'Lean and local-first' }}
       />,
     )
 
     expect(html).toContain('Tasks')
     expect(html).toContain('Files')
-    expect(html).toContain('ADRs')
     expect(html).toContain('Meta')
     expect(html).toContain('Task mars-aabbccdd')
     expect(html).toContain('Design draft')
-    expect(html).toContain('Keep the rail focused')
     expect(html).toContain('Project vision')
     expect(html).toContain('Project theme')
     expect(html).toContain('#/task/mars-aabbccdd?from=chat')
     expect(html).toContain('/api/chat/uploads/thread-1%2Fdesign.png')
-    expect(html).toContain('/api/project/adrs/docs%2Fadr%2F0042-keep-the-rail-focused.md')
   })
 
   const renderEmptyArtifactRail = () => renderToStaticMarkup(
-    <ArtifactsRail tasks={[]} files={[]} adrs={[]} meta={{ vision: null, theme: null }} />,
+    <ArtifactsRail tasks={[]} files={[]} meta={{ vision: null, theme: null }} />,
   )
 
   describe('Tasks section', () => {
@@ -256,12 +252,6 @@ describe('ContextRail – artifact rail', () => {
   describe('Files section', () => {
     it('keeps a subdued placeholder when the thread has no attachments', () => {
       expect(renderEmptyArtifactRail()).toContain('No files shared in this thread')
-    })
-  })
-
-  describe('ADRs section', () => {
-    it('keeps a subdued placeholder when the session produced no ADRs', () => {
-      expect(renderEmptyArtifactRail()).toContain('No ADRs recorded this session')
     })
   })
 

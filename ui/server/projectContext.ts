@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { TaskDb, StateDb } from './db.ts'
 import { resolveRepo } from './repo.ts'
@@ -14,43 +14,9 @@ export interface ProjectContextEntry {
   hub: SseHub
 }
 
-export interface ProjectAdrEntry {
-  number: number
-  title: string
-  slug: string
-  path: string
-}
-
 export interface ProjectMeta {
   vision: string | null
   theme: string | null
-}
-
-/** ADR files written during one browser session, newest decision first. */
-export const readSessionAdrs = (
-  ctx: RepoContext,
-  sessionStartedAt: number,
-): ProjectAdrEntry[] => {
-  const adrDir = join(ctx.repoRoot, 'docs', 'adr')
-  if (!existsSync(adrDir)) return []
-
-  return readdirSync(adrDir)
-    .filter((filename) => filename.endsWith('.md'))
-    .map((filename) => ({ filename, stat: statSync(join(adrDir, filename)) }))
-    .filter(({ stat }) => stat.isFile() && stat.mtimeMs >= sessionStartedAt)
-    .map(({ filename }) => {
-      const match = filename.match(/^(\d+)-(.*)\.md$/)
-      if (!match) return null
-      const [, number, slug] = match
-      return {
-        number: Number(number),
-        title: slug.replace(/-/g, ' '),
-        slug,
-        path: `docs/adr/${filename}`,
-      }
-    })
-    .filter((adr): adr is ProjectAdrEntry => adr !== null)
-    .sort((a, b) => b.number - a.number)
 }
 
 /** Product context is optional so new projects can grow it through chat. */

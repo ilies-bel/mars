@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { createProjectContextCache } from './projectContext.ts'
+import { createProjectContextCache, readProjectAdr } from './projectContext.ts'
 import { UnknownProjectError } from './repo.ts'
 
 const makeRepo = (): string => {
@@ -113,6 +113,25 @@ describe('createProjectContextCache', () => {
       expect(projectCtx.ctx.repoRoot).toBe(otherRepo)
     } finally {
       rmSync(otherRepo, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('readProjectAdr', () => {
+  it('reads an ADR at the path derived from its number and slug', () => {
+    const repo = makeRepo()
+    try {
+      mkdirSync(resolve(repo, 'docs', 'adr'), { recursive: true })
+      writeFileSync(resolve(repo, 'docs', 'adr', '0042-keep-the-rail-focused.md'), '# Keep the rail focused')
+
+      expect(
+        readProjectAdr(
+          { repoRoot: repo } as Parameters<typeof readProjectAdr>[0],
+          'docs/adr/0042-keep-the-rail-focused.md',
+        ),
+      ).toBe('# Keep the rail focused')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
     }
   })
 })

@@ -38,7 +38,6 @@ import {
   fetchChatHistory,
   fetchCodexAuthState,
   fetchProjectMeta,
-  fetchSessionAdrs,
   refreshCodexAuth,
   invokeAction,
   ApiError,
@@ -2611,12 +2610,6 @@ export const ChatPage = () => {
     [activeThreadDetail],
   )
 
-  const { data: sessionAdrs = [] } = useQuery({
-    queryKey: ['project-adrs', projectId, sessionStartedAt],
-    queryFn: () => fetchSessionAdrs(sessionStartedAt, projectId ?? undefined),
-    staleTime: 30_000,
-  })
-
   const { data: projectMeta = { vision: null, theme: null } } = useQuery({
     queryKey: ['project-context', projectId],
     queryFn: () => fetchProjectMeta(projectId ?? undefined),
@@ -3038,7 +3031,6 @@ export const ChatPage = () => {
         projectId={projectId}
         tasks={sessionTaskIds}
         files={threadAttachments}
-        adrs={sessionAdrs}
         meta={projectMeta}
         threadId={selectedThreadId ?? undefined}
         activeThreadId={selectedThreadId ?? undefined}
@@ -3047,6 +3039,7 @@ export const ChatPage = () => {
         liveBuffer={activeLiveBuffer}
         sessionStartedAt={sessionStartedAt}
         onInsertPrompt={handleInsertPrompt}
+        onOpenAlert={handleOpenSubject}
         collapsed={railCollapsed}
         onToggleCollapse={() => setRailCollapsed((v) => !v)}
       />

@@ -20,7 +20,6 @@ import {
   createProjectContextCache,
   readProjectAdr,
   readProjectMeta,
-  readSessionAdrs,
   type ProjectContextEntry,
 } from './projectContext.ts'
 import { probeDaemonHealth } from './projectHealth.ts'
@@ -390,14 +389,6 @@ export const startServer = async (
         if (path === '/api/adrs' && req.method === 'GET') {
           const r = await proxyGet(ctx.stateDir, '/view/adrs')
           return jsonResponse(r.status, r.body)
-        }
-
-        // GET /api/project/adrs?since=<epoch-ms> — ADR files authored during
-        // the current browser session. Unlike /api/adrs this is a filesystem
-        // view, so it includes a safe, directly linkable project-relative path.
-        if (path === '/api/project/adrs' && req.method === 'GET') {
-          const since = Number(url.searchParams.get('since'))
-          return jsonResponse(200, { adrs: readSessionAdrs(ctx, Number.isFinite(since) ? since : 0) })
         }
 
         if (path.startsWith('/api/project/adrs/') && req.method === 'GET') {

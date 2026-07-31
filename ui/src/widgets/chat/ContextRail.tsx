@@ -3,9 +3,8 @@
  *
  * Stacked panels:
  *   - Focus           : the active thread's title and status chip.
- *   - Session context: artifacts/cards created during the current chat session
- *                      (files, created task chips) plus the project vision from
- *                      VISION.md. This is the primary panel, open by default.
+ *   - Project context: session artifacts, open operator alerts, ADRs, and
+ *                      project vision/theme.
  *   - Glossary        : searchable term list from /api/glossary; definition +
  *                       avoid-aliases on expand.
  *   - Skills          : list from /api/skills; clicking a skill inserts its slash
@@ -18,12 +17,16 @@
 
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchGlossary, fetchSkills } from '@/shared/api'
+import { fetchAdrs, fetchGlossary, fetchSkills } from '@/shared/api'
+import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { kindBadgeLabel } from '@/shared/actionQueueDetail'
 import { useThreadFocus } from './useThreadFocus'
 import { buildActivityFeed } from './activityFeed'
 import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
+import { priorityBadgeClass } from './QueueThreadRow'
+import { isAlertQueueItem } from './queueThreads'
 
-import type { GlossaryTerm, Skill, ChatSegmentAttachment, ChatThreadDetail, ProgressTask, ActionQueueItem } from '@/shared/schemas'
+import type { GlossaryTerm, Skill, ChatSegmentAttachment, ChatThreadDetail, ProgressTask, ActionQueueItem, AdrEntry } from '@/shared/schemas'
 import type { ThreadFocusResult } from './useThreadFocus'
 import type { LiveBuffer } from '@/shared/chatBuffer'
 import type { ActivityEntry } from './activityFeed'
@@ -395,13 +398,6 @@ const SkillsPanel = ({ onInsertPrompt }: SkillsPanelProps) => {
 // Session artifact rail
 // ---------------------------------------------------------------------------
 
-export interface ProjectAdr {
-  number: number
-  title: string
-  slug: string
-  path: string
-}
-
 export interface ProjectMeta {
   vision: string | null
   theme: string | null
@@ -410,7 +406,6 @@ export interface ProjectMeta {
 export interface ArtifactsRailProps {
   tasks: string[]
   files: ChatSegmentAttachment[]
-  adrs: ProjectAdr[]
   meta: ProjectMeta
   projectId?: string
 }
@@ -433,8 +428,116 @@ const emptyArtifacts = (text: string) => (
   <p className="font-mono text-[10px] text-muted-foreground/50">{text}</p>
 )
 
-export const ArtifactsRail = ({ tasks, files, adrs, meta, projectId }: ArtifactsRailProps) => {
+interface RailPileProps {
+  title: string
+  count: number
+  children: (visibleCount: number) => React.ReactNode
+}
+
+const RailPile = ({ title, count, children }: RailPileProps) => {
+  const [expanded, setExpanded] = useState(false)
+  const showToggle = count > 3
+  const visibleCount = expanded ? count : Math.min(count, 3)
+
+  return (
+    <RailSection title={title}>
+      {children(visibleCount)}
+      {showToggle && (
+        <button
+          type="button"
+          className="mt-1 font-mono text-[10px] text-muted-foreground hover:text-foreground hover:underline"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded ? 'Show less ▴' : `See all ${count} ▾`}
+        </button>
+      )}
+    </RailSection>
+  )
+}
+
+interface AlertsPileProps {
+  items: ActionQueueItem[]
+  onOpenAlert?: (item: ActionQueueItem) => void
+}
+
+const AlertsPile = ({ items, onOpenAlert }: AlertsPileProps) => (
+  <RailPile title="Alerts" count={items.length}>
+    {(visibleCount) =>
+      items.length === 0 ? (
+        emptyArtifacts('No alerts')
+      ) : (
+        <ul className="flex flex-col gap-0.5">
+          {items.slice(0, visibleCount).map((item) => (
+            <li key={item.id}>
+              <button
+                type="button"
+                className="flex w-full items-center gap-1 text-left font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                onClick={() => onOpenAlert?.(item)}
+                data-testid="context-rail-alert-row"
+              >
+                <span className={`shrink-0 uppercase ${priorityBadgeClass(item.priority)}`}>
+                  {item.priority} · {kindBadgeLabel(item.kind)}
+                </span>
+                <span className="min-w-0 truncate">{item.title}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )
+    }
+  </RailPile>
+)
+
+interface AdrsPileProps {
+  adrs: AdrEntry[]
+  projectId?: string
+}
+
+const AdrsPile = ({ adrs, projectId }: AdrsPileProps) => {
   const projectQuery = projectId ? `?project=${encodeURIComponent(projectId)}` : ''
+  const sortedAdrs = useMemo(
+    () => [...adrs].sort((a, b) => b.number - a.number),
+    [adrs],
+  )
+
+  return (
+    <RailPile title="ADRs" count={sortedAdrs.length}>
+      {(visibleCount) =>
+        sortedAdrs.length === 0 ? (
+          emptyArtifacts('No ADRs')
+        ) : (
+          <ul className="flex flex-col gap-0.5">
+            {sortedAdrs.slice(0, visibleCount).map((adr) => {
+              const path = `docs/adr/${String(adr.number).padStart(4, '0')}-${adr.slug}.md`
+              return (
+                <li key={path}>
+                  <a
+                    href={`/api/project/adrs/${encodeURIComponent(path)}${projectQuery}`}
+                    className="block truncate font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-testid="context-rail-adr-row"
+                  >
+                    ADR {adr.number}: {adr.title}
+                  </a>
+                </li>
+              )
+            })}
+          </ul>
+        )
+      }
+    </RailPile>
+  )
+}
+
+export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailProps) => {
+  const projectQuery = projectId ? `?project=${encodeURIComponent(projectId)}` : ''
+  const { data: adrs = [] } = useQuery({
+    queryKey: ['adrs', projectId],
+    queryFn: () => fetchAdrs(projectId),
+    staleTime: 60_000,
+  })
 
   return (
     <div data-testid="artifacts-rail">
@@ -478,26 +581,7 @@ export const ArtifactsRail = ({ tasks, files, adrs, meta, projectId }: Artifacts
         )}
       </RailSection>
 
-      <RailSection title="ADRs">
-        {adrs.length === 0 ? (
-          emptyArtifacts('No ADRs recorded this session')
-        ) : (
-          <ul className="flex flex-col gap-0.5">
-            {adrs.map((adr) => (
-              <li key={adr.path}>
-                <a
-                  href={`/api/project/adrs/${encodeURIComponent(adr.path)}${projectQuery}`}
-                  className="font-mono text-[10px] text-foreground/80 hover:text-foreground hover:underline"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  ADR {adr.number}: {adr.title}
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
-      </RailSection>
+      <AdrsPile adrs={adrs} projectId={projectId} />
 
       <RailSection title="Meta">
         {meta.vision || meta.theme ? (
@@ -622,8 +706,6 @@ export interface ContextRailProps {
   tasks?: string[]
   /** Attachments shared by the selected thread. */
   files?: ChatSegmentAttachment[]
-  /** ADR files created or modified after this ChatPage mounted. */
-  adrs?: ProjectAdr[]
   /** Stable project context surfaced alongside session artifacts. */
   meta?: ProjectMeta
   /** The currently selected chat thread. Used to scope session-artifact data. */
@@ -642,6 +724,8 @@ export interface ContextRailProps {
   sessionStartedAt: number
   /** Called when a skill row is clicked; inserts the prompt into the composer. */
   onInsertPrompt: (prompt: string) => void
+  /** Opens an operational alert's Subject in the chat pane. */
+  onOpenAlert?: (item: ActionQueueItem) => void
   /** When true the rail collapses to a narrow icon strip. */
   collapsed?: boolean
   /** Callback to toggle the collapsed state from outside. */
@@ -652,17 +736,29 @@ export const ContextRail = ({
   projectId,
   tasks = [],
   files = [],
-  adrs = [],
   meta = { vision: null, theme: null },
   activeThreadId,
   threadDetail,
   isStreaming,
   liveBuffer,
   onInsertPrompt,
+  onOpenAlert,
   collapsed = false,
   onToggleCollapse,
 }: ContextRailProps) => {
   const focusResult = useThreadFocus(threadDetail?.thread)
+  const { items: queueItems } = useActionQueue()
+  const alertItems = useMemo(
+    () =>
+      queueItems
+        .filter((item) => isAlertQueueItem(item) && item.resolution == null)
+        .sort((a, b) => {
+          const priorityRank = { high: 3, normal: 2, low: 1 }
+          const priorityDifference = priorityRank[b.priority] - priorityRank[a.priority]
+          return priorityDifference || b.at.localeCompare(a.at)
+        }),
+    [queueItems],
+  )
 
   // Build the activity feed from live buffer + persisted thread history.
   // Only computed when there is an active thread to avoid unnecessary work.
@@ -731,10 +827,11 @@ export const ContextRail = ({
         </PanelSection>
       )}
 
+      <AlertsPile items={alertItems} onOpenAlert={onOpenAlert} />
+
       <ArtifactsRail
         tasks={tasks}
         files={files}
-        adrs={adrs}
         meta={meta}
         projectId={projectId}
       />

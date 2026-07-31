@@ -1,4 +1,5 @@
 import { kindBadgeLabel } from '@/shared/actionQueueDetail'
+import { isAlertQueueItem } from './queueThreads'
 
 /**
  * Minimal row shape needed to render the opening queue summary.
@@ -33,7 +34,7 @@ interface Group {
  * distinct states and conflating them misleads the operator.
  */
 function groupQueueItems(rows: DisplayRow[]): Group[] {
-  const alerts = rows.filter((r) => r.kind !== 'blocked' && r.kind !== 'draft-proposal')
+  const alerts = rows.filter((r) => r.kind !== 'blocked' && isAlertQueueItem(r))
   const blocked = rows.filter((r) => r.kind === 'blocked')
   const proposals = rows.filter((r) => r.kind === 'draft-proposal')
 
