@@ -482,6 +482,8 @@ export interface Task {
    * rows and legacy rows created before this column was added).
    */
   requeueAnchorMs?: number | null
+  /** Cumulative dispatch uptime at the first dispatch of this re-queue episode. */
+  requeueDispatchUptimeMs?: number | null
   /**
    * Structured QA report persisted by behaviour-verify. Contains per-criterion
    * verdicts, screenshot paths, and timing data. Null when no behaviour-verify
@@ -748,6 +750,7 @@ SELECT
   t.compensates_arc_id,
   t.qa,
   t.requeue_anchor_ms,
+  t.requeue_dispatch_uptime_ms,
   t.qa_report_json,
   t.deferrable,
   t.created_at, t.updated_at
@@ -831,6 +834,10 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
       row.requeue_anchor_ms === null || row.requeue_anchor_ms === undefined
         ? null
         : Number(row.requeue_anchor_ms),
+    requeueDispatchUptimeMs:
+      row.requeue_dispatch_uptime_ms === null || row.requeue_dispatch_uptime_ms === undefined
+        ? null
+        : Number(row.requeue_dispatch_uptime_ms),
     qaReport: parseQaReport(row.qa_report_json),
     deferrable: Number(row.deferrable ?? 0) === 1,
     createdAt: row.created_at as string,
@@ -1047,6 +1054,7 @@ export const updateTask = async (
       | 'envRestartCount'
       | 'workflow'
       | 'requeueAnchorMs'
+      | 'requeueDispatchUptimeMs'
       | 'stallDiagnostics'
     > & {
       /**
@@ -1284,6 +1292,10 @@ export const updateTask = async (
   if (patch.requeueAnchorMs !== undefined) {
     fields.push('requeue_anchor_ms = ?')
     args.push(patch.requeueAnchorMs)
+  }
+  if (patch.requeueDispatchUptimeMs !== undefined) {
+    fields.push('requeue_dispatch_uptime_ms = ?')
+    args.push(patch.requeueDispatchUptimeMs)
   }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())

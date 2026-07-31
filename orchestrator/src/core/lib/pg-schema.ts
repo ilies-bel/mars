@@ -156,6 +156,7 @@ const DDL: readonly string[] = [
     env_restart_count    bigint NOT NULL DEFAULT 0,
     arc_rescue_attempts  bigint NOT NULL DEFAULT 0,
     requeue_anchor_ms    bigint,
+    requeue_dispatch_uptime_ms bigint,
     created_at           timestamptz NOT NULL,
     updated_at           timestamptz NOT NULL
   )`,
@@ -170,6 +171,10 @@ const DDL: readonly string[] = [
   // added. IF NOT EXISTS makes this idempotent on fresh databases (where the
   // column already exists from the CREATE TABLE above).
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requeue_anchor_ms bigint`,
+  // Snapshot of the daemon's cumulative dispatch uptime when this re-queue
+  // episode first dispatched. This lets the ceiling exclude pauses and daemon
+  // downtime without refunding previously accumulated progress time.
+  `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS requeue_dispatch_uptime_ms bigint`,
   `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS stall_diagnostics jsonb`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_priority_created
      ON tasks(priority DESC, created_at ASC)`,
@@ -807,6 +812,9 @@ const DDL: readonly string[] = [
   // recent boot. Written by startHeartbeatWriter so elapsed-time watchdogs
   // can rebase task deadlines after a prolonged downtime.
   `ALTER TABLE IF EXISTS daemon_heartbeat ADD COLUMN IF NOT EXISTS prev_gap_ms bigint`,
+  // Cumulative milliseconds for which a live daemon had dispatch enabled.
+  // Unlike wall clock, this does not advance while paused or between boots.
+  `ALTER TABLE IF EXISTS daemon_heartbeat ADD COLUMN IF NOT EXISTS dispatch_uptime_ms bigint NOT NULL DEFAULT 0`,
 
   // ── dispatch spend controller (migration 0003) ────────────────────────────
   // Single-row operator-set control levers for the dispatch spend controller.

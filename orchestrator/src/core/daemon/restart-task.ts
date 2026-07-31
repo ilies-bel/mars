@@ -308,6 +308,7 @@ export const coreRestartTask = async (
     // a previous `mars continue` call would anchor the ceiling to the
     // operator's continue time rather than the current run's start.
     requeueAnchorMs: null,
+    requeueDispatchUptimeMs: null,
     // When remerge set workflow to 'remerge' for routing purposes, a
     // subsequent restart must clear it so the next dispatch runs the full
     // pipeline (setup → code → verify → merge) rather than the remerge

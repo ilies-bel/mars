@@ -647,12 +647,11 @@ export const startDaemon = async (
   // so external observers can detect a stale/dead daemon. The handle is
   // stopped in shutdown() below.
   //
-  // Before overwriting the row, read the previous last_beat_ts so we can
-  // compute the outage gap (how long the daemon was offline). That gap is
-  // written to prev_gap_ms and used by elapsed-time watchdogs to rebase
-  // task deadlines instead of killing tasks that were only stalled by
-  // the downtime.
+  // Carry forward the persisted dispatch-uptime counter. It advances only
+  // while this live daemon can dispatch, so re-queue ceilings naturally
+  // exclude pauses and time between daemon processes.
   let heartbeatPrevGapMs = 0
+  let heartbeatDispatchUptimeMs = 0
   try {
     const { readDaemonHeartbeat } = await import('./heartbeat-writer').then(
       () => import('../store/state-store'),
@@ -660,6 +659,7 @@ export const startDaemon = async (
     const prevHb = await readDaemonHeartbeat(dbClient)
     if (prevHb) {
       heartbeatPrevGapMs = Math.max(0, Date.now() - prevHb.lastBeatTs)
+      heartbeatDispatchUptimeMs = prevHb.dispatchUptimeMs
     }
   } catch {
     // Non-fatal: if reading the previous row fails we simply assume no gap.
@@ -669,6 +669,7 @@ export const startDaemon = async (
     heartbeatHandle = await startHeartbeatWriter({
       db: dbClient,
       prevGapMs: heartbeatPrevGapMs,
+      dispatchUptimeMs: heartbeatDispatchUptimeMs,
     })
     log('[heartbeat] writer started')
   } catch (err) {
@@ -837,6 +838,13 @@ export const startDaemon = async (
   // daemon auto-respawn (ADR-0058): a new process coming up unpaused could
   // trigger a merge-step git reset --hard on uncommitted operator work.
   let isPaused = readPersistedPaused()
+  const setDaemonPaused = (paused: boolean): void => {
+    isPaused = paused
+    heartbeatHandle?.setDispatchEnabled(acceptingWork && !paused)
+  }
+  // Heartbeat startup deliberately begins with dispatch disabled: initialization
+  // work is not a period in which queued tasks can make progress.
+  heartbeatHandle?.setDispatchEnabled(acceptingWork && !isPaused)
 
   // Per-kind concurrency caps. glossary-write and adr-add share one pool
   // because they both contend on the same merge lock downstream — a second
@@ -1020,7 +1028,15 @@ export const startDaemon = async (
       // The setup-worktree step's own updateTask is still present — on a
       // checkpoint resume where setup is already done it is the only place the
       // status is set to 'running', so both writes are load-bearing.
-      await updateTask(task.id, { status: 'running' }).catch((err) => {
+      await updateTask(task.id, {
+        status: 'running',
+        // Persist the cumulative dispatch uptime once, at the beginning of a
+        // re-queue episode. Subsequent re-dispatches retain the same anchor so
+        // real retry churn continues to consume its original budget.
+        ...(task.requeueDispatchUptimeMs === null || task.requeueDispatchUptimeMs === undefined
+          ? { requeueDispatchUptimeMs: heartbeatHandle?.getDispatchUptimeMs() ?? null }
+          : {}),
+      }).catch((err) => {
         log(
           `[implement] ${task.id} eager-running update failed (non-fatal): ${
             err instanceof Error ? err.message : String(err)
@@ -1825,7 +1841,7 @@ export const startDaemon = async (
       // running will resume. Do not raise a second action-queue row.
       return
     }
-    isPaused = true
+    setDaemonPaused(true)
     const FALLBACK_PAUSE_MS = 30 * 60_000 // 30 min when resetsAt is unknown
     const JITTER_MS = 60_000 // 60-second cushion past resetsAt
     const nowMs = Date.now()
@@ -1836,7 +1852,7 @@ export const startDaemon = async (
     const resumeIso = new Date(resumeMs).toISOString()
     log(`[quota] dispatch paused; will auto-resume at ${resumeIso}`)
     const resumeTimer = setTimeout(() => {
-      isPaused = false
+      setDaemonPaused(false)
       log(`[quota] dispatch resumed after rate-limit window`)
       viewStreamHub.broadcast('tasks')
       void drain()
@@ -1900,7 +1916,7 @@ export const startDaemon = async (
       )
       return
     }
-    isPaused = true
+    setDaemonPaused(true)
     log(
       `[signature-storm] dispatch paused — "${signature}" failed ${streak} consecutive tasks; steward dispatched for ${lastTaskId}`,
     )
@@ -3407,10 +3423,11 @@ export const startDaemon = async (
     getAcceptingWork: () => acceptingWork,
     setAcceptingWork: (value: boolean) => {
       acceptingWork = value
+      heartbeatHandle?.setDispatchEnabled(acceptingWork && !isPaused)
     },
     getIsPaused: () => isPaused,
     setIsPaused: (value: boolean) => {
-      isPaused = value
+      setDaemonPaused(value)
     },
     persistIsPaused: (value: boolean) => {
       persistPaused(value)
@@ -3984,7 +4001,7 @@ export const startDaemon = async (
   try {
     const { isSignatureStormTripped } = await import('../lib/signature-storm-monitor')
     if (await isSignatureStormTripped(getCompositionRootClient())) {
-      isPaused = true
+      setDaemonPaused(true)
       log('[signature-storm] startup: tripped flag found in DB — dispatch remains paused; run `mars daemon resume` to re-enable')
     }
   } catch (err) {
@@ -4207,7 +4224,8 @@ export const startDaemon = async (
   //
   // Re-queue loop defence (mars-c11be862 post-mortem, 2026-07-02): before
   // re-seeding any queued task, we check its retry duration. A task retrying
-  // longer than MARS_REQUEUE_MAX_RETRY_MS (default 2 h) without completing is
+  // longer than MARS_REQUEUE_MAX_RETRY_MS of dispatch uptime (default 2 h)
+  // without completing is
   // escalated to 'failed' + an operator action-queue item rather than re-seeded.
   // Retry count and elapsed time are logged for any task that has been attempted
   // at least once so the state is visible before the bound is reached.
@@ -4233,7 +4251,13 @@ export const startDaemon = async (
         const wfStore = makeWFStore()
         for (const t of queued) {
           if (tracker.isInFlight(t.id)) continue
-          const escalated = await checkAndEscalateRequeueCeiling(t, wfStore, log, Date.now(), heartbeatPrevGapMs)
+          const escalated = await checkAndEscalateRequeueCeiling(
+            t,
+            wfStore,
+            log,
+            Date.now(),
+            heartbeatHandle?.getDispatchUptimeMs(),
+          )
           if (!escalated) tracker.enqueuePending(t.id, 'implement')
         }
         log(
@@ -4977,7 +5001,6 @@ export const startDaemon = async (
   const shutdown = async (force = false): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
-    heartbeatHandle?.stop()
     clearInterval(pollFallback)
     clearInterval(githubUpdatePoll)
     clearInterval(devStalenessCheck)
@@ -5000,6 +5023,11 @@ export const startDaemon = async (
     // explicitly requested — a SIGINT/SIGTERM that arrives while the
     // dispatcher is mid-pick must not strand an extra worktree.
     acceptingWork = false
+    heartbeatHandle?.setDispatchEnabled(false)
+    await heartbeatHandle?.flush().catch((err) => {
+      log(`[heartbeat] final flush failed (non-fatal): ${(err as Error).message}`)
+    })
+    heartbeatHandle?.stop()
     tracker.clearPending()
     log(`shutting down (force=${force}, inFlight=${tracker.inFlightCount()})`)
 

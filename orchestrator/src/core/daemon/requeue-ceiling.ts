@@ -9,7 +9,7 @@
  *
  * Fix 2 of 2: the poll-fallback calls {@link checkAndEscalateRequeueCeiling}
  * before re-seeding each queued task. If the task has been retrying beyond
- * {@link REQUEUE_MAX_RETRY_MS} wall-clock time without completing, the task is
+ * {@link REQUEUE_MAX_RETRY_MS} of dispatch-enabled daemon uptime without completing, the task is
  * moved to `failed` and an operator action-queue item is raised.
  *
  * A task with fewer than 1 step attempts is never escalated — it has not
@@ -38,7 +38,7 @@ import {
 import { RingBuffer, collectStallDiagnostics } from '../workers/stall-diagnostics'
 
 /**
- * Maximum wall-clock time (ms) a task may spend in the re-queue cycle before
+ * Maximum dispatch-enabled daemon uptime (ms) a task may spend in the re-queue cycle before
  * the poll-fallback escalates it to `failed`. Configurable via
  * `MARS_REQUEUE_MAX_RETRY_MS`; defaults to 2 hours.
  *
@@ -59,7 +59,7 @@ export const REQUEUE_WARN_RATIO: number = Number(
 )
 
 /**
- * Check whether task `t` has been retrying longer than the wall-clock bound.
+ * Check whether task `t` has been retrying longer than the dispatch-uptime bound.
  *
  * For any task that has been attempted at least once, this function logs the
  * current attempt count and elapsed retry time so the state is always visible.
@@ -74,10 +74,10 @@ export const REQUEUE_WARN_RATIO: number = Number(
  * queuedNeighbourCount }`.
  *
  * @param nowMs - injectable clock for testing; defaults to `Date.now()`.
- * @param prevGapMs - milliseconds the daemon was offline before this boot
- *   (read from `daemon_heartbeat.prev_gap_ms`). Subtracted from elapsed time
- *   so tasks that only appear to breach because of a downtime window are
- *   left running rather than killed. Defaults to 0 (no outage adjustment).
+ * @param dispatchUptimeMs - cumulative milliseconds that a live daemon had
+ *   dispatch enabled. This counter is persisted across daemon restarts and
+ *   stops advancing while paused, so its delta from the task's first dispatch
+ *   excludes both pauses and downtime.
  * @returns `true` if the task was escalated (caller must NOT re-seed it);
  *          `false` if the task is within the time bound or has not been
  *          attempted yet (caller may proceed to `tracker.enqueuePending`).
@@ -87,7 +87,7 @@ export const checkAndEscalateRequeueCeiling = async (
   store: WorkflowStore,
   log: (msg: string) => void,
   nowMs: number = Date.now(),
-  prevGapMs = 0,
+  dispatchUptimeMs?: number,
 ): Promise<boolean> => {
   const steps = await store.listSteps(t.id).catch(() => [])
   const maxAttempt =
@@ -118,30 +118,32 @@ export const checkAndEscalateRequeueCeiling = async (
         : new Date(t.createdAt).getTime()
 
   const elapsedMs = nowMs - retryStartMs
-  // Subtract any daemon outage gap so tasks that only appear to exceed the
-  // bound because the daemon was offline are not killed.
-  const effectiveElapsedMs = Math.max(0, elapsedMs - prevGapMs)
-  const elapsedMins = Math.round(elapsedMs / 60_000)
+  // Persisting the first observed counter for a legacy task is deliberately a
+  // one-time migration safety valve: rows dispatched before this field existed
+  // have no reliable way to reconstruct historic pauses or downtime.
+  if (
+    dispatchUptimeMs !== undefined &&
+    (t.requeueDispatchUptimeMs === null || t.requeueDispatchUptimeMs === undefined)
+  ) {
+    await updateTask(t.id, { requeueDispatchUptimeMs: dispatchUptimeMs }).catch(() => {})
+  }
+  const effectiveElapsedMs =
+    dispatchUptimeMs !== undefined &&
+    t.requeueDispatchUptimeMs !== null &&
+    t.requeueDispatchUptimeMs !== undefined
+      ? Math.max(0, dispatchUptimeMs - t.requeueDispatchUptimeMs)
+      : dispatchUptimeMs !== undefined
+        ? 0
+        : elapsedMs
+  const effectiveElapsedMins = Math.round(effectiveElapsedMs / 60_000)
 
   // Log retry extent on every poll cycle so the state is visible before
   // the time bound is reached.
   log(
-    `[dispatch] task ${t.id} still retrying: attempt ${maxAttempt}, ${elapsedMins}m elapsed`,
+    `[dispatch] task ${t.id} still retrying: attempt ${maxAttempt}, ${effectiveElapsedMins}m dispatch uptime elapsed`,
   )
 
   if (effectiveElapsedMs < REQUEUE_MAX_RETRY_MS) {
-    if (prevGapMs > 0 && elapsedMs >= REQUEUE_MAX_RETRY_MS) {
-      // The task would have breached without the outage adjustment — log the rebase.
-      const oldDeadlineMs = retryStartMs + REQUEUE_MAX_RETRY_MS
-      const newDeadlineMs = retryStartMs + prevGapMs + REQUEUE_MAX_RETRY_MS
-      log(
-        `[dispatch] task ${t.id} deadline rebased after daemon outage: ` +
-          `outageMs=${prevGapMs}, ` +
-          `oldDeadline=${new Date(oldDeadlineMs).toISOString()}, ` +
-          `newDeadline=${new Date(newDeadlineMs).toISOString()}`,
-      )
-    }
-
     // ── Early warning ───────────────────────────────────────────────────────
     if (
       REQUEUE_MAX_RETRY_MS > 0 &&
@@ -149,21 +151,21 @@ export const checkAndEscalateRequeueCeiling = async (
     ) {
       const boundMins = Math.round(REQUEUE_MAX_RETRY_MS / 60_000)
       const stepWindow = computeStepWindow(steps)
-      const breachClass = classifyRequeueBreach(t, stepWindow, 0, elapsedMs)
+      const breachClass = classifyRequeueBreach(t, stepWindow, 0, effectiveElapsedMs)
       await raiseActionQueueItem({
         kind: 'requeue-warning',
         category: 'orchestrator',
         priority: 'low',
         title: `Task ${t.id}: approaching requeue ceiling (${breachClass.kind})`,
         body:
-          `Elapsed ${elapsedMins}m of bound ${boundMins}m; ` +
+          `Dispatch uptime ${effectiveElapsedMins}m of bound ${boundMins}m; ` +
           `predicted class ${breachClass.kind}.`,
         payload: {
           taskId: t.id,
           diagnostics: {
             class: breachClass.kind,
             maxAttempt,
-            elapsedMs,
+            elapsedMs: effectiveElapsedMs,
             boundMs: REQUEUE_MAX_RETRY_MS,
           },
         },
@@ -182,7 +184,7 @@ export const checkAndEscalateRequeueCeiling = async (
   const attemptDensityPerMin =
     stepWindow != null ? computeAttemptDensity(stepWindow) : 0
   const blockedWaitMs = await computeBlockedWaitMs(t.id, nowMs).catch(() => 0)
-  const breachClass = classifyRequeueBreach(t, stepWindow, blockedWaitMs, elapsedMs)
+  const breachClass = classifyRequeueBreach(t, stepWindow, blockedWaitMs, effectiveElapsedMs)
   const queuedNeighbourCount = await listTasks('queued')
     .then((tasks) => tasks.filter((qt) => qt.id !== t.id).length)
     .catch(() => 0)
@@ -200,7 +202,7 @@ export const checkAndEscalateRequeueCeiling = async (
   const boundMins = Math.round(REQUEUE_MAX_RETRY_MS / 60_000)
   log(
     `[dispatch] poll-fallback: task ${t.id} exceeded retry time bound ` +
-      `(${elapsedMins}m elapsed, bound ${boundMins}m, ${maxAttempt} attempt(s), ` +
+      `(${effectiveElapsedMins}m dispatch uptime, bound ${boundMins}m, ${maxAttempt} attempt(s), ` +
       `class ${breachClass.kind}); escalating to failed`,
   )
 
@@ -248,7 +250,7 @@ export const checkAndEscalateRequeueCeiling = async (
     stallDiagnostics: stallDiagnosticsJson,
     error:
       `Re-queue time bound exceeded: task retried ${maxAttempt} time(s) ` +
-      `over ${elapsedMins} minutes without completing ` +
+      `over ${effectiveElapsedMins} dispatch-uptime minutes without completing ` +
       `(bound ${boundMins}m, class ${breachClass.kind}). ` +
       `Run \`mars restart ${t.id}\` to reset.`,
     failureReason: 'requeue:time-bound-exceeded',
@@ -261,14 +263,14 @@ export const checkAndEscalateRequeueCeiling = async (
     priority: 'high',
     title: `Task ${t.id}: re-queue ceiling exceeded (${breachClass.kind})`,
     body:
-      `Task was re-dispatched ${maxAttempt} time(s) over ${elapsedMins} minutes ` +
+      `Task was re-dispatched ${maxAttempt} time(s) over ${effectiveElapsedMins} dispatch-uptime minutes ` +
       `without completing (bound ${boundMins}m, class ${breachClass.kind}). ` +
       `${breachClass.reason} ` +
       `Run \`mars restart ${t.id}\` to reset.`,
     payload: {
       taskId: t.id,
       maxAttempt,
-      elapsedMs,
+      elapsedMs: effectiveElapsedMs,
       boundMs: REQUEUE_MAX_RETRY_MS,
       diagnostics: {
         class: breachClass.kind,

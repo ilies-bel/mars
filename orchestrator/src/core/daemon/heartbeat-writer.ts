@@ -14,6 +14,12 @@ import type { DbClient } from '../lib/db.js'
 
 export interface HeartbeatHandle {
   stop: () => void
+  /** Persist the settled counter before a graceful daemon shutdown. */
+  flush: () => Promise<void>
+  /** Whether this live daemon is currently able to dispatch queued work. */
+  setDispatchEnabled: (enabled: boolean) => void
+  /** Cumulative dispatch-enabled uptime, including the current live interval. */
+  getDispatchUptimeMs: () => number
 }
 
 export interface HeartbeatDeps {
@@ -27,6 +33,8 @@ export interface HeartbeatDeps {
    * Defaults to `null` (no outage recorded) when omitted.
    */
   prevGapMs?: number
+  /** Cumulative dispatch uptime carried forward from the previous daemon. */
+  dispatchUptimeMs?: number
 }
 
 /**
@@ -41,30 +49,65 @@ export const startHeartbeatWriter = async (
   const now = deps.now ?? (() => new Date())
   const intervalMs = Number(process.env.MARS_HEARTBEAT_MS ?? 5_000)
   const prevGapMs = deps.prevGapMs ?? null
+  let dispatchUptimeMs = deps.dispatchUptimeMs ?? 0
+  let dispatchEnabled = false
+  let lastObservedMs = now().getTime()
+
+  const settleDispatchUptime = (): number => {
+    const observedMs = now().getTime()
+    if (dispatchEnabled) {
+      dispatchUptimeMs += Math.max(0, observedMs - lastObservedMs)
+    }
+    lastObservedMs = observedMs
+    return dispatchUptimeMs
+  }
 
   // Upsert the boot row synchronously so callers see a fresh row
   // immediately after await.
   const boot = now()
+  lastObservedMs = boot.getTime()
   await db.execute({
-    sql: `INSERT INTO daemon_heartbeat (id, pid, boot_ts, last_beat_ts, prev_gap_ms)
-          VALUES (1, $1, $2, $2, $3)
+    sql: `INSERT INTO daemon_heartbeat (id, pid, boot_ts, last_beat_ts, prev_gap_ms, dispatch_uptime_ms)
+          VALUES (1, $1, $2, $2, $3, $4)
           ON CONFLICT (id) DO UPDATE
             SET pid          = EXCLUDED.pid,
                 boot_ts      = EXCLUDED.boot_ts,
                 last_beat_ts = EXCLUDED.last_beat_ts,
-                prev_gap_ms  = EXCLUDED.prev_gap_ms`,
-    args: [process.pid, boot.toISOString(), prevGapMs],
+                prev_gap_ms  = EXCLUDED.prev_gap_ms,
+                dispatch_uptime_ms = EXCLUDED.dispatch_uptime_ms`,
+    args: [process.pid, boot.toISOString(), prevGapMs, dispatchUptimeMs],
   })
 
-  const timer = setInterval(() => {
-    void db.execute({
-      sql: `UPDATE daemon_heartbeat SET last_beat_ts = $1 WHERE id = 1`,
-      args: [now().toISOString()],
+  const persistHeartbeat = async (timestamp: Date, uptimeMs: number): Promise<void> => {
+    await db.execute({
+      sql: `UPDATE daemon_heartbeat
+            SET last_beat_ts = $1, dispatch_uptime_ms = $2
+            WHERE id = 1`,
+      args: [timestamp.toISOString(), uptimeMs],
     })
+  }
+
+  const timer = setInterval(() => {
+    const timestamp = now()
+    const uptimeMs = settleDispatchUptime()
+    void persistHeartbeat(timestamp, uptimeMs)
   }, intervalMs)
 
   // Do not hold the event loop open once the daemon shuts down.
   timer.unref()
 
-  return { stop: () => clearInterval(timer) }
+  return {
+    stop: () => clearInterval(timer),
+    flush: async () => {
+      const timestamp = now()
+      await persistHeartbeat(timestamp, settleDispatchUptime())
+    },
+    setDispatchEnabled: (enabled) => {
+      const timestamp = now()
+      const uptimeMs = settleDispatchUptime()
+      dispatchEnabled = enabled
+      void persistHeartbeat(timestamp, uptimeMs)
+    },
+    getDispatchUptimeMs: () => settleDispatchUptime(),
+  }
 }

@@ -208,9 +208,9 @@ describe('computeAttemptDensity', () => {
 // classifyRequeueBreach — pure function, no DB setup needed
 // ──────────────────────────────────────────────────────────────────────────────
 
-// Minimal Task fixture: classifier only uses t.id in reason strings.
-const makeTask = (id: string = 'task-abc'): Task =>
-  ({ id } as unknown as Task)
+// Minimal Task fixture: retry count is part of the public diagnostic contract.
+const makeTask = (id: string = 'task-abc', retryCount = 3): Task =>
+  ({ id, retryCount } as unknown as Task)
 
 // Build a StepWindow fixture for density tests.
 const makeWindow = (attemptCount: number, spanMs: number): StepWindow => ({

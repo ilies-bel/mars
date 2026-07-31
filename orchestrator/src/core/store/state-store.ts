@@ -278,9 +278,11 @@ export const readDaemonHeartbeat = async (
   lastBeatTs: number
   /** Milliseconds the daemon was offline before the most recent boot (0 when unavailable). */
   prevGapMs: number
+  /** Cumulative milliseconds that a live daemon had dispatch enabled. */
+  dispatchUptimeMs: number
 } | null> => {
   const result = await db.execute(
-    'SELECT pid, boot_ts, last_beat_ts, prev_gap_ms FROM daemon_heartbeat WHERE id = 1',
+    'SELECT pid, boot_ts, last_beat_ts, prev_gap_ms, dispatch_uptime_ms FROM daemon_heartbeat WHERE id = 1',
   )
   if (result.rows.length === 0) return null
   const row = result.rows[0]
@@ -291,6 +293,10 @@ export const readDaemonHeartbeat = async (
     prevGapMs:
       row.prev_gap_ms !== null && row.prev_gap_ms !== undefined
         ? Number(row.prev_gap_ms)
+        : 0,
+    dispatchUptimeMs:
+      row.dispatch_uptime_ms !== null && row.dispatch_uptime_ms !== undefined
+        ? Number(row.dispatch_uptime_ms)
         : 0,
   }
 }

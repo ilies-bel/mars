@@ -1,16 +1,15 @@
 /**
- * Verifies that a daemon restart outage gap is stored in the heartbeat row
- * and used to rebase task deadlines so tasks are not killed solely because
- * of downtime.
+ * Verifies that the heartbeat retains restart-gap telemetry while the
+ * re-queue ceiling uses a cumulative dispatch-uptime counter to avoid
+ * charging tasks for downtime.
  *
  * Acceptance criteria:
  *  1. On boot, the daemon computes outageMs = boot_ts - prevLastBeatTs and
  *     stores it as prev_gap_ms on the daemon_heartbeat row.
- *  2. checkAndEscalateRequeueCeiling subtracts prev_gap_ms from elapsed
+ *  2. checkAndEscalateRequeueCeiling compares the delta of dispatch uptime
  *     before comparing to the hard bound; tasks that would only breach
- *     because of the outage are left running.
- *  3. A structured log line records each rebased task with taskId, outageMs,
- *     and the old vs new deadline.
+ *     because of an outage are left running.
+ *  3. A structured log line reports dispatch uptime for each checked task.
  *  4. readDaemonHeartbeat exposes outageMs (as prevGapMs) to callers.
  */
 
@@ -166,10 +165,10 @@ describe('readDaemonHeartbeat — prevGapMs', () => {
   })
 })
 
-// ── 3. checkAndEscalateRequeueCeiling — outage rebase ─────────────────────────
+// ── 3. checkAndEscalateRequeueCeiling — dispatch uptime ───────────────────────
 
 describe('checkAndEscalateRequeueCeiling — outage rebase', () => {
-  it('does NOT kill a task whose breach is entirely accounted for by the outage gap', async () => {
+  it('does NOT kill a task whose wall-clock span is mostly daemon downtime', async () => {
     // Task has been retrying for (REQUEUE_MAX_RETRY_MS + 30 min).
     // The daemon was down for (REQUEUE_MAX_RETRY_MS + 60 min) — more than
     // the excess — so effectiveElapsedMs < REQUEUE_MAX_RETRY_MS.
@@ -177,7 +176,10 @@ describe('checkAndEscalateRequeueCeiling — outage rebase', () => {
     const outageMs = REQUEUE_MAX_RETRY_MS + 60 * 60 * 1_000
     const retryStartMs = Date.now() - retryDurationMs
 
-    const task = makeTask('task-rebase-1', retryStartMs - 1000)
+    const task = {
+      ...makeTask('task-rebase-1', retryStartMs - 1000),
+      requeueDispatchUptimeMs: 1_000,
+    }
     const store = makeStubStore([{ attempt: 2, startedAt: retryStartMs }])
     const log = () => {}
 
@@ -186,20 +188,20 @@ describe('checkAndEscalateRequeueCeiling — outage rebase', () => {
       store,
       log,
       Date.now(),
-      outageMs,
+      1_000 + 30 * 60 * 1_000,
     )
 
     expect(escalated).toBe(false)
   })
 
-  it('DOES kill a task whose elapsed exceeds the bound even after subtracting the outage', async () => {
-    // Task retrying for (REQUEUE_MAX_RETRY_MS + 90 min), outage = 30 min.
-    // effectiveElapsedMs = REQUEUE_MAX_RETRY_MS + 60 min → still breaches.
+  it('DOES kill a task whose dispatch uptime exceeds the bound', async () => {
     const retryDurationMs = REQUEUE_MAX_RETRY_MS + 90 * 60 * 1_000
-    const outageMs = 30 * 60 * 1_000
     const retryStartMs = Date.now() - retryDurationMs
 
-    const task = makeTask('task-rebase-2', retryStartMs - 1000)
+    const task = {
+      ...makeTask('task-rebase-2', retryStartMs - 1000),
+      requeueDispatchUptimeMs: 1_000,
+    }
     // Store with startedAt = 0; we override nowMs so elapsed anchors on
     // retryStartMs via MIN(stepTimestamps). Use startedAt = retryStartMs.
     const store = makeStubStore([{ attempt: 1, startedAt: retryStartMs }])
@@ -213,30 +215,31 @@ describe('checkAndEscalateRequeueCeiling — outage rebase', () => {
       store,
       log,
       Date.now(),
-      outageMs,
+      1_000 + REQUEUE_MAX_RETRY_MS + 60 * 60 * 1_000,
     ).catch(() => true) // treat unhandled rejection as "did not crash cleanly"
 
     expect(escalated).toBe(true)
   })
 
-  // ── 4. Structured log line on rebase ───────────────────────────────────────
+  // ── 4. Dispatch-uptime logging ─────────────────────────────────────────────
 
-  it('emits a log line mentioning taskId and outageMs when rebasing', async () => {
-    const retryDurationMs = REQUEUE_MAX_RETRY_MS + 1_000
-    const outageMs = REQUEUE_MAX_RETRY_MS + 10_000 // enough to cover the breach
-    const retryStartMs = Date.now() - retryDurationMs
+  it('emits a log line mentioning taskId and dispatch uptime', async () => {
+    const retryStartMs = Date.now() - 1_000
     const taskId = 'task-log-check'
 
-    const task = makeTask(taskId, retryStartMs - 1000)
+    const task = {
+      ...makeTask(taskId, retryStartMs - 1000),
+      requeueDispatchUptimeMs: 1_000,
+    }
     const store = makeStubStore([{ attempt: 1, startedAt: retryStartMs }])
     const logs: string[] = []
     const log = (msg: string) => logs.push(msg)
 
-    await checkAndEscalateRequeueCeiling(task, store, log, Date.now(), outageMs)
+    await checkAndEscalateRequeueCeiling(task, store, log, Date.now(), 1_001)
 
-    const rebased = logs.some(
-      (m) => m.includes(taskId) && /outage/i.test(m),
+    const reportsDispatchUptime = logs.some(
+      (m) => m.includes(taskId) && /dispatch uptime/i.test(m),
     )
-    expect(rebased, `expected a rebase log line mentioning ${taskId} and "outage"`).toBe(true)
+    expect(reportsDispatchUptime).toBe(true)
   })
 })
