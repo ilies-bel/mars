@@ -1171,6 +1171,7 @@ export const glossaryTermSchema = z.object({
   term: z.string(),
   definition: z.string(),
   avoid: z.array(z.string()),
+  surfaceForms: z.array(z.string()).default([]),
 })
 
 export const glossaryResponseSchema = z.object({
