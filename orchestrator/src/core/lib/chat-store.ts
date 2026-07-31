@@ -12,6 +12,8 @@
 import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { resolveStateClient } from '../store/state-client'
+import { humanSummary } from './action-queue-recipes'
+import type { NoticeRow } from './notice-store'
 
 const stateClient = resolveStateClient
 
@@ -36,6 +38,17 @@ export type ThreadStatus = 'idle' | 'running' | 'throttled'
 export type AttentionStatus = 'generating' | 'ready' | 'drafting' | 'idle'
 export type MessageRole = 'user' | 'assistant'
 export type FeedbackRating = 'up' | 'down'
+
+/**
+ * A deterministic Mars-authored feed entry. The persistence adapter currently
+ * stores this as an assistant message, preserving the chat transport's
+ * user/assistant transcript contract.
+ */
+export interface ChatMessageDraft {
+  author: 'mars'
+  role: 'notice'
+  body: string
+}
 
 export interface ChatFeedback {
   message_id: string
@@ -149,6 +162,15 @@ export const computeAttentionStatus = (
   if (status === 'idle' && lastMessageRole === 'assistant') return 'ready'
   if (status === 'idle' && lastMessageRole === 'user') return 'drafting'
   return 'idle'
+}
+
+/** Render a Notice into the Mars voice used by the continuous chat feed. */
+export function noticeToChatMessage(notice: NoticeRow): ChatMessageDraft {
+  return {
+    author: 'mars',
+    role: 'notice',
+    body: humanSummary(notice.kind, notice.payload),
+  }
 }
 
 /** Convert a stored thread to its API view shape. */

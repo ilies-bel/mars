@@ -14,6 +14,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { resolveStateClient } from '../store/state-client'
+import type { ActionQueueKind } from './action-queue'
 
 const stateClient = resolveStateClient
 
@@ -25,17 +26,24 @@ export const initNoticeStore = async (): Promise<void> => {
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export interface Notice {
+export interface NoticeRow {
   id: string
+  kind: ActionQueueKind
+  payload: Record<string, unknown>
   body: string
   source: string | null
   createdAt: string
   acknowledgedAt: string | null
 }
 
+/** Public Notice view retained for the Bell and HTTP surfaces. */
+export type Notice = NoticeRow
+
 /** Snake_case shape as stored in the `notices` table. */
-interface NoticeRow {
+interface StoredNoticeRow {
   id: string
+  kind: ActionQueueKind
+  payload: string
   body: string
   source: string | null
   created_at: string
@@ -54,9 +62,21 @@ const now = (): string => new Date().toISOString()
 const generateNoticeId = (): string => randomUUID().slice(0, 8)
 
 const rowToNotice = (row: Record<string, unknown>): Notice => {
-  const r = row as unknown as NoticeRow
+  const r = row as unknown as StoredNoticeRow
+  let payload: Record<string, unknown> = {}
+  try {
+    const parsed: unknown = JSON.parse(r.payload)
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      payload = parsed as Record<string, unknown>
+    }
+  } catch {
+    // A malformed legacy row should remain visible in the Bell; its recipe sees
+    // an empty payload rather than making the entire notice projection fail.
+  }
   return {
     id: r.id,
+    kind: r.kind,
+    payload,
     body: r.body,
     source: r.source ?? null,
     createdAt: r.created_at,
@@ -66,23 +86,47 @@ const rowToNotice = (row: Record<string, unknown>): Notice => {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/** Create a new Notice. Returns the stored row. */
-export const createNotice = async (body: string, source: string): Promise<Notice> => {
+/**
+ * Mint a Notice and mirror its recipe-rendered copy into the most recently
+ * active chat feed. Both surfaces receive the same deterministic text; no LLM
+ * work is involved in this path.
+ */
+export const createNotice = async (
+  kind: ActionQueueKind,
+  payload: Record<string, unknown>,
+  source: string,
+): Promise<Notice> => {
   const c = stateClient()
   const id = generateNoticeId()
   const ts = now()
-  await c.execute({
-    sql: `INSERT INTO notices (id, body, source, created_at, acknowledged_at)
-          VALUES (?, ?, ?, ?, NULL)`,
-    args: [id, body, source, ts],
-  })
-  return {
+  const notice: Notice = {
     id,
-    body,
+    kind,
+    payload,
+    body: '',
     source,
     createdAt: ts,
     acknowledgedAt: null,
   }
+  const { noticeToChatMessage, appendMessage } = await import('./chat-store.js')
+  const message = noticeToChatMessage(notice)
+  notice.body = message.body
+  await c.execute({
+    sql: `INSERT INTO notices (id, kind, payload, body, source, created_at, acknowledged_at)
+          VALUES (?, ?, ?, ?, ?, ?, NULL)`,
+    args: [id, kind, JSON.stringify(payload), message.body, source, ts],
+  })
+  const currentFeed = await c.execute(`
+    SELECT id FROM chat_threads
+     WHERE evaporated_at IS NULL
+     ORDER BY updated_at DESC, created_at DESC, id DESC
+     LIMIT 1
+  `)
+  const threadId = (currentFeed.rows[0] as { id?: unknown } | undefined)?.id
+  if (typeof threadId === 'string') {
+    await appendMessage(threadId, 'assistant', message.body)
+  }
+  return notice
 }
 
 /** List every open (unacknowledged) Notice, newest-first. */

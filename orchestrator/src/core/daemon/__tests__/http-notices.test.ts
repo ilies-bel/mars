@@ -102,6 +102,8 @@ describe('GET /notices', () => {
     const fixture: Notice[] = [
       {
         id: 'notice01',
+        kind: 'spend-control-notice',
+        payload: { direction: 'paused' },
         body: 'the Steward raised the concurrency limit',
         source: 'steward',
         createdAt: '2026-07-24T00:00:00.000Z',

@@ -57,21 +57,21 @@ describe('notice-store', () => {
 
   it('create → list surfaces the notice as open', async () => {
     const { createNotice, listOpenNotices } = await loadNoticeStore(repo)
-    const created = await createNotice('the Steward raised the concurrency limit', 'steward')
+    const created = await createNotice('spend-control-notice', { direction: 'paused' }, 'steward')
     expect(created.acknowledgedAt).toBeNull()
     expect(created.source).toBe('steward')
 
     const open = await listOpenNotices()
     expect(open).toHaveLength(1)
     expect(open[0].id).toBe(created.id)
-    expect(open[0].body).toBe('the Steward raised the concurrency limit')
+    expect(open[0].body).toBe('The spend controller has paused dispatch — token spend crossed the configured threshold.')
   })
 
   it('lists open notices newest-first', async () => {
     const { createNotice, listOpenNotices } = await loadNoticeStore(repo)
-    const first = await createNotice('first', 'operator')
-    const second = await createNotice('second', 'operator')
-    const third = await createNotice('third', 'operator')
+    const first = await createNotice('spend-control-notice', { direction: 'paused' }, 'operator')
+    const second = await createNotice('spend-control-notice', { direction: 'paused' }, 'operator')
+    const third = await createNotice('spend-control-notice', { direction: 'paused' }, 'operator')
 
     const open = await listOpenNotices()
     expect(open.map((n) => n.id)).toEqual([third.id, second.id, first.id])
@@ -79,8 +79,8 @@ describe('notice-store', () => {
 
   it('ack removes a notice from the open list', async () => {
     const { createNotice, listOpenNotices, ackNotice } = await loadNoticeStore(repo)
-    const a = await createNotice('ack me', 'operator')
-    const b = await createNotice('keep me', 'operator')
+    const a = await createNotice('spend-control-notice', { direction: 'paused' }, 'operator')
+    const b = await createNotice('spend-control-notice', { direction: 'paused' }, 'operator')
 
     const acked = await ackNotice(a.id)
     expect(acked).toBe(true)
@@ -91,7 +91,7 @@ describe('notice-store', () => {
 
   it('ack is idempotent: a second ack of the same notice returns false', async () => {
     const { createNotice, ackNotice } = await loadNoticeStore(repo)
-    const n = await createNotice('once', 'operator')
+    const n = await createNotice('spend-control-notice', { direction: 'paused' }, 'operator')
 
     expect(await ackNotice(n.id)).toBe(true)
     expect(await ackNotice(n.id)).toBe(false)

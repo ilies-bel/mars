@@ -808,6 +808,35 @@ export const registeredKinds = (): ActionQueueKind[] =>
   Object.keys(REGISTRY) as ActionQueueKind[]
 
 /**
+ * Render the plain-language copy for an operational event without involving an
+ * LLM. Notices carry only a kind and payload, so this adapter supplies the
+ * recipe context fields that are conventionally embedded in that payload.
+ */
+export const humanSummary = (
+  kind: ActionQueueKind,
+  payload: Record<string, unknown>,
+): string => {
+  const entityId =
+    str(payload['entityId']) ||
+    str(payload['taskId']) ||
+    str(payload['proposalId']) ||
+    kind
+  const context = payload['context']
+  return lookupRecipe(kind).humanSummary({
+    kind,
+    entityId,
+    payload,
+    context:
+      typeof context === 'object' && context !== null && !Array.isArray(context)
+        ? context as Record<string, unknown>
+        : {},
+    title: str(payload['title']),
+    body: str(payload['body']),
+    raisedAt: str(payload['raisedAt']),
+  })
+}
+
+/**
  * Human-friendly Mars opening message used when the action queue is empty.
  * Rendered as the seeded first message in the chat feed (slice 2 of the
  * collapse-hero PRD) and available to any CLI/UI surface that needs a

@@ -520,11 +520,17 @@ const DDL: readonly string[] = [
   // `acknowledged_at` stamps that gesture.
   `CREATE TABLE IF NOT EXISTS notices (
     id              text PRIMARY KEY,
+    kind            text NOT NULL,
+    payload         text NOT NULL DEFAULT '{}',
     body            text NOT NULL,
     source          text,
     created_at      text NOT NULL,
     acknowledged_at text
   )`,
+  // Existing Notice rows predate recipe-backed rendering. Keep them readable
+  // while new writes always provide their own typed kind and payload.
+  `ALTER TABLE IF EXISTS notices ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'spend-control-notice'`,
+  `ALTER TABLE IF EXISTS notices ADD COLUMN IF NOT EXISTS payload text NOT NULL DEFAULT '{}'`,
   `CREATE INDEX IF NOT EXISTS idx_notices_acknowledged_at ON notices(acknowledged_at)`,
 
   // ── settings / preferences ────────────────────────────────────────────────

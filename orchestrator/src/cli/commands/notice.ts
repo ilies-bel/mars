@@ -13,6 +13,7 @@
  */
 
 import { createNotice } from '../../core/lib/notice-store'
+import { isActionQueueKind } from '../../core/lib/action-queue'
 import type { Command } from '../command'
 import { errorMessage, readDaemonPort } from './shared'
 import type { Notice } from '../../core/lib/notice-store'
@@ -23,16 +24,28 @@ const NO_DAEMON_MSG =
 const noticeAdd: Command = {
   path: 'notice add',
   summary: 'add an informational bell notice',
-  usage: 'usage: mars notice add "<body>" [--source <s>]',
+  usage: 'usage: mars notice add <kind> [--payload <json>] [--source <s>]',
   run: async (args, deps) => {
-    const body = args.positional[0]
-    if (!body) {
-      deps.err('usage: mars notice add "<body>" [--source <s>]')
+    const kind = args.positional[0]
+    if (!isActionQueueKind(kind)) {
+      deps.err('usage: mars notice add <kind> [--payload <json>] [--source <s>]')
       return { code: 2 }
+    }
+    let payload: Record<string, unknown> = {}
+    const rawPayload = args.flags['--payload']
+    if (rawPayload) {
+      try {
+        const parsed: unknown = JSON.parse(rawPayload)
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error()
+        payload = parsed as Record<string, unknown>
+      } catch {
+        deps.err('notice add: --payload must be a JSON object')
+        return { code: 2 }
+      }
     }
     const source = args.flags['--source'] ?? 'operator'
     try {
-      const notice = await createNotice(body, source)
+      const notice = await createNotice(kind, payload, source)
       deps.out(notice.id)
     } catch (err) {
       deps.err(`notice add: ${errorMessage(err)}`)
@@ -117,7 +130,7 @@ const noticeAck: Command = {
 const noticeDefault: Command = {
   path: 'notice',
   summary: 'list open notices (alias for `list`)',
-  usage: 'usage: mars notice [add "<body>" [--source <s>] | list | ack <id>]',
+  usage: 'usage: mars notice [add <kind> [--payload <json>] [--source <s>] | list | ack <id>]',
   run: (args, deps) => noticeList.run(args, deps),
 }
 
