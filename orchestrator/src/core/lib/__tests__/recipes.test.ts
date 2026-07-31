@@ -92,6 +92,41 @@ describe('recipe catalog', () => {
         expect(recipe.prompt.trimStart().startsWith('#')).toBe(true)
       }
     })
+
+    /**
+     * `refs/stash` lives in the repository's COMMON git dir, so every linked
+     * worktree in this repo shares one stack addressed by shifting position.
+     * A recipe that tells a recovery agent to run any `git stash` verb hands
+     * it a mechanism that can swallow — or hand it — another in-flight task's
+     * uncommitted work (the 2026-07-28 data-loss incident). Recipes park work
+     * on per-task refs via `git commit-tree` + `git update-ref` instead.
+     *
+     * The assertion targets *invocations* (`git stash <verb>`), so prose that
+     * explains the ban ("never run any `git stash` verb") still passes.
+     */
+    it('no built-in recipe instructs an agent to invoke a git stash verb', async () => {
+      const cat = await loadRecipeCatalog(stateDir)
+      const invocation = /git stash (push|pop|create|apply|save|branch|store)/
+      for (const recipe of cat.list()) {
+        expect(
+          recipe.prompt,
+          `built-in recipe '${recipe.name}' invokes git stash`,
+        ).not.toMatch(invocation)
+      }
+    })
+
+    it('main-commiter parks work on a per-task ref, never the shared stash stack', async () => {
+      const cat = await loadRecipeCatalog(stateDir)
+      const prompt = cat.get('main-commiter')?.prompt ?? ''
+      expect(prompt).not.toBe('')
+      // The park sequence is the checkpoint plumbing: a temporary index
+      // seeded from HEAD, a commit object, and a ref named after this task.
+      expect(prompt).toContain('GIT_INDEX_FILE')
+      expect(prompt).toContain('git commit-tree')
+      expect(prompt).toContain('git update-ref refs/mars/parked/$TASK_ID')
+      // Recovery names the ref, never a stack position.
+      expect(prompt).toContain('git cherry-pick -n refs/mars/parked/$TASK_ID')
+    })
   })
 
   describe('overrides', () => {

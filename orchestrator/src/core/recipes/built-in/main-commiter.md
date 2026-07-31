@@ -49,23 +49,40 @@ your CWD; do not change directory.
   files or the domain, not "auto-commit". Example:
   `chore(orchestrator): land partial typecheck-fixer edits stranded on main`.
 - On **safe to park**: preserve the files for the operator without
-  committing them and without touching the shared stash stack. Run, in
-  order:
+  committing them and without going anywhere near `git stash`. Park them
+  as a commit object anchored under a ref only this task owns — the same
+  mechanism the orchestrator uses for checkpoints. Run, in order:
 
   ```
-  git add -A
-  git update-ref refs/mars/parked/$TASK_ID "$(git stash create 'main-commiter: parked transient files')"
+  IDX="$(mktemp -d)/index"
+  GIT_INDEX_FILE="$IDX" git read-tree HEAD
+  GIT_INDEX_FILE="$IDX" git add -A
+  TREE="$(GIT_INDEX_FILE="$IDX" git write-tree)"
+  SHA="$(git commit-tree "$TREE" -p HEAD -m 'main-commiter: parked transient files')"
+  git update-ref refs/mars/parked/$TASK_ID "$SHA"
   git reset --hard HEAD
+  git clean -fd
   ```
 
-  `git stash create` writes a commit object and does NOT push onto
-  `refs/stash`; the `update-ref` anchors it under a ref only this task
-  owns. Print the ref name in your summary — the operator recovers with
-  `git stash apply refs/mars/parked/$TASK_ID`.
+  `git commit-tree` writes a plain commit object out of a TEMPORARY index
+  seeded from HEAD, so the park never disturbs your real index and never
+  appends to any stack. `git add -A` honours `.gitignore`, so ignored
+  files are not parked — and the `git clean -fd` deliberately omits `-x`
+  so they are left on disk rather than deleted. The `update-ref` anchors
+  the object under `refs/mars/parked/$TASK_ID`, a ref named after this
+  task alone, so no other task in flight can address it. Print the ref
+  name in your summary — the operator recovers by naming the ref, never a
+  stack position:
 
-  **Never run `git stash push` / `git stash pop`.** `refs/stash` is shared
-  by every worktree in this repo and addressed by position, so a pop can
-  hand you another task's uncommitted work.
+  ```
+  git cherry-pick -n refs/mars/parked/$TASK_ID && git cherry-pick --quit
+  ```
+
+  **Never run any `git stash` verb — not `push`, `pop`, `create`, or
+  `apply`.** `refs/stash` lives in the repo's common git dir and is shared
+  by every worktree here, addressed by shifting position (`stash@{0}`,
+  `stash@{1}`), so a pop can hand you another task's uncommitted work.
+  That caused a real data-loss incident on 2026-07-28.
 - After committing or parking, verify the tree is clean:
   `git status --porcelain` must print nothing.
 
@@ -103,8 +120,9 @@ your CWD; do not change directory.
 
 - `git status --porcelain` in your CWD exits 0 with empty output, AND
 - you ran exactly one of: a successful `git commit`, a successful park
-  (`git stash create` + `git update-ref` + `git reset --hard HEAD`), or no
-  operation (only if the tree was already clean when you started).
+  (temporary-index `git commit-tree` + `git update-ref` + `git reset
+  --hard HEAD` + `git clean -fd`), or no operation (only if the tree was
+  already clean when you started).
 
 ## Save your work
 
