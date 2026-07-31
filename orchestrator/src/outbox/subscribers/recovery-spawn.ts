@@ -111,16 +111,36 @@ export async function drainRecoverySpawner(
       // attach a recovery to the new queued episode.
       if (task.status !== 'failed') return false
 
+      // `failure_reason` doubles as the fine-grained failing step (`verify:<gate>`)
+      // stamped by the primitives; `asStepId` rejects prose so terminal paths that
+      // write a sentence fall back to `failed_phase` / UNKNOWN_STEP_ID. See the
+      // longer note at the second use below.
+      const failingStep =
+        asStepId(task.failureReason) ?? asStepId(task.failedPhase) ?? UNKNOWN_STEP_ID
+
+      // ── A failed RECOVERY task is terminal (ADR-0040) ────────────────────────
+      // A recovery Chore is a leaf: it is never re-run, so there is nothing to
+      // reopen it FOR. Reopening it here was a live self-feeding loop — the
+      // reopen flipped the row to `queued`, the escalation immediately wrote it
+      // back to `failed`, that status change emitted a NEW `task.failed` carrying
+      // the composed reason, and the next 30 s drain fed that reason straight
+      // back in: one more `recovery_failed:` prefix, one more action-queue row
+      // and one more rescue-operator spawn every tick, forever. Escalate without
+      // reopening; the handler's escalate-once gate makes a repeat call a no-op.
+      if (task.fixForTaskId !== null) {
+        await handleTaskFailureWithFixTask({
+          taskId,
+          failingStep,
+          errorOutput: error,
+          qaNote: note,
+        })
+        return true
+      }
+
       // Failures that happen before setup have no origin worktree for a fix
       // task to reuse. Route them directly through the shared escalation before
       // spend-control or outage gates can produce a less actionable notice.
-      if (
-        task.status === 'failed' &&
-        task.fixForTaskId === null &&
-        !(await hasUsableWorktree(task))
-      ) {
-        const failingStep =
-          asStepId(task.failureReason) ?? asStepId(task.failedPhase) ?? UNKNOWN_STEP_ID
+      if (!(await hasUsableWorktree(task))) {
         await handleTaskFailureWithFixTask({
           taskId,
           failingStep,
@@ -135,6 +155,7 @@ export async function drainRecoverySpawner(
       // it. Recovery is the one explicit automated reopen path, so record the
       // audited reopen before handing the now-queued origin to the recovery
       // handler. This also lets environmental paths legitimately re-queue it.
+      // Only ORIGIN tasks reach here — a failed recovery returned above.
       await reopenTerminalTask(taskId, 'recovery-spawner')
 
       // If the API circuit breaker is open — or was opened within a 60 s grace
@@ -212,8 +233,7 @@ export async function drainRecoverySpawner(
       // prose to `failure_reason`; `asStepId` returns null for those, falling
       // back to `failed_phase` (also validated) or `UNKNOWN_STEP_ID` so no
       // prose ever reaches `computeFailureSignature` as the step half.
-      const failingStep =
-        asStepId(task.failureReason) ?? asStepId(task.failedPhase) ?? UNKNOWN_STEP_ID
+      // (Resolved once, above the recovery-leaf branch.)
 
       // Gate meta-monitor suppression AND signature-storm circuit breaker both
       // live INSIDE handleTaskFailureWithFixTask (the shared chokepoint) so they

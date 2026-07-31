@@ -26,6 +26,11 @@ import {
   type UpsertFixTaskResult,
   type AttachToExistingFixTaskInput,
 } from './arc'
+import {
+  composeRecoveryFailureReason,
+  isRecoveryFailedReason,
+  stripRecoveryFailedPrefixes,
+} from './lib/failure-signature'
 import { isEnvironmentalSignature } from './lib/failure-kinds'
 import { classifyFailure } from './lib/failure-class'
 import { maybeSpawnRescueOperator } from './rescue-operator-spawn'
@@ -556,15 +561,41 @@ export const handleTaskFailureWithFixTask = async (
   // the systemic incident the breaker is meant to stop from flooding the
   // action queue.
   if (task.fixForTaskId !== null) {
-    // Guard: do not double-prepend if failureSignature somehow already carries
-    // the prefix (defence-in-depth against any future path that re-enters here
-    // with a pre-composed reason string).
-    const recoveryFailureReason = failureSignature.startsWith('recovery_failed:')
-      ? `${failureSignature}: ${truncatedError.slice(0, 500)}`
-      : `recovery_failed:${failureSignature}: ${truncatedError.slice(0, 500)}`
+    // ── Escalate-once gate (ADR-0040) ────────────────────────────────────────
+    // A recovery Chore is a leaf: its failure is escalated EXACTLY once and the
+    // row is terminal from that moment. Re-entry is not hypothetical — the
+    // durable recovery-spawner drain re-drives already-terminal rows every 30 s
+    // (each escalation writes `status='failed'` again, which emits a fresh
+    // `task.failed` carrying the composed reason, which the next drain feeds
+    // straight back in). Without this gate every pass re-prefixed the reason,
+    // re-raised the escalation row, re-recorded a storm verdict and re-spawned
+    // the rescue operator. `failed` + an already-stamped `recovery_failed:`
+    // reason IS the "already escalated" fact, so no counter is needed.
+    if (task.status === 'failed' && isRecoveryFailedReason(task.failureReason)) {
+      return {
+        outcome: 'escalated',
+        failureSignature,
+        retryCount: task.retryCount,
+      }
+    }
+    // Never nest the prefix: `truncatedError` may itself be a previously
+    // composed reason (the `task.failed` event carries `error`, which used to
+    // hold the composed string), so strip before composing.
+    const capturedError = stripRecoveryFailedPrefixes(truncatedError)
+    const recoveryFailureReason = composeRecoveryFailureReason(
+      failureSignature,
+      capturedError,
+    )
     await updateTask(input.taskId, {
       status: 'failed',
-      error: recoveryFailureReason,
+      // `error` holds CAPTURED PROCESS OUTPUT and must never be overwritten
+      // with a derived status string. Writing the composed reason here erased
+      // the real failure output (observed: ~3 KB of vitest output replaced by
+      // 542 chars of `recovery_failed:` padding), and `collectStormContext`
+      // reads the tail of this column to brief the storm Steward — so the
+      // Steward was handed nothing but padding. The derived string belongs in
+      // `failure_reason` alone.
+      error: capturedError,
       failureReason: recoveryFailureReason,
       failureSignature,
       failureReasonCode: failureSignature,

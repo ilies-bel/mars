@@ -476,6 +476,69 @@ export const classifyError = (errorOutput: string): string => {
 const RECOVERY_REASON_PREFIX_RE = /^recovery_(?:exhausted|failed):/
 
 /**
+ * The one prefix a recovery-task escalation stamps onto `failure_reason` /
+ * `error`. Composed form:
+ *
+ *   `recovery_failed:<failureSignature>: <truncated error>`
+ *
+ * The signature half never contains whitespace, so `': '` is an unambiguous
+ * separator between the prefix and the error tail — that is what makes
+ * {@link stripRecoveryFailedPrefixes} exact rather than heuristic.
+ */
+export const RECOVERY_FAILED_PREFIX = 'recovery_failed:'
+
+/**
+ * True when `reason` is already a composed recovery-failure reason.
+ *
+ * Callers use this as the terminality test for a recovery task: a recovery
+ * Chore is a leaf (ADR-0040) whose failure is escalated exactly once, so a row
+ * that is `failed` AND carries this prefix has already been through the
+ * escalation and must not be re-driven.
+ */
+export const isRecoveryFailedReason = (
+  reason: string | null | undefined,
+): reason is string =>
+  typeof reason === 'string' && reason.startsWith(RECOVERY_FAILED_PREFIX)
+
+/**
+ * Remove every leading `recovery_failed:<signature>: ` segment, returning the
+ * bare error text underneath.
+ *
+ * Needed because the composed reason is written to BOTH `failure_reason` and
+ * `error`, and `error` is what the `task.failed` outbox event carries — so any
+ * path that re-enters the failure handler with a previously composed reason
+ * would otherwise prepend a second prefix, then a third, … Each pass also
+ * truncates the tail to 500 chars, so the nesting silently eats the real error
+ * instead of growing the string (observed: `failure_reason` pinned at ~542
+ * chars, ten prefixes deep, original error gone).
+ */
+export const stripRecoveryFailedPrefixes = (reason: string): string => {
+  let out = reason
+  while (out.startsWith(RECOVERY_FAILED_PREFIX)) {
+    const sep = out.indexOf(': ', RECOVERY_FAILED_PREFIX.length)
+    if (sep === -1) break
+    out = out.slice(sep + 2)
+  }
+  return out
+}
+
+/**
+ * Compose the single, never-nested recovery-failure reason for a recovery task.
+ *
+ * Idempotent by construction:
+ * `compose(sig, compose(sig, e)) === compose(sig, e)` — any prefixes already
+ * present on `errorText` are stripped before the one prefix is applied.
+ */
+export const composeRecoveryFailureReason = (
+  failureSignature: string,
+  errorText: string,
+  maxErrorChars = 500,
+): string =>
+  `${RECOVERY_FAILED_PREFIX}${failureSignature}: ${stripRecoveryFailedPrefixes(
+    errorText,
+  ).slice(0, maxErrorChars)}`
+
+/**
  * Returns the `<failingStep>/<errorClass>` failure signature.
  *
  * Idempotent: if `errorOutput` is already a composed reason string that
