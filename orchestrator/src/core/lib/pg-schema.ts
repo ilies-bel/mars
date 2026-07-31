@@ -38,7 +38,7 @@ import type { DbClient } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0008'
+export const SCHEMA_VERSION = '0009'
 
 /** Current epoch time in milliseconds for bigint operational timestamps. */
 const EPOCH_NOW = "floor(extract(epoch from now()) * 1000)::bigint"
@@ -158,7 +158,6 @@ const DDL: readonly string[] = [
     activity_detail      text,
     review_packet_json   text,
     env_restart_count    bigint NOT NULL DEFAULT 0,
-    arc_rescue_attempts  bigint NOT NULL DEFAULT 0,
     requeue_anchor_ms    bigint,
     requeue_dispatch_uptime_ms bigint,
     created_at           timestamptz NOT NULL,
@@ -547,7 +546,23 @@ const DDL: readonly string[] = [
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS compensates_arc_id text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS activity_detail text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS env_restart_count bigint NOT NULL DEFAULT 0`,
-  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS arc_rescue_attempts bigint NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS arc_rescue_attempts (
+    origin_id  text PRIMARY KEY,
+    attempts   bigint NOT NULL DEFAULT 0,
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`,
+  // Backfill every pre-existing rescue task once. ON CONFLICT deliberately
+  // preserves live counter values on later startups: the counter is monotonic.
+  `INSERT INTO arc_rescue_attempts (origin_id, attempts)
+     SELECT origin_id, COUNT(*)
+       FROM tasks
+      WHERE origin_id IS NOT NULL
+        AND tags_json LIKE '%rescue-operator%'
+      GROUP BY origin_id
+     ON CONFLICT (origin_id) DO NOTHING`,
+  // Rescue counters no longer belong to an origin task row: proposal-slug arcs
+  // have no such row. Remove the obsolete per-task storage in the same cut.
+  `ALTER TABLE IF EXISTS tasks DROP COLUMN IF EXISTS arc_rescue_attempts`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS review_packet_json text`,
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS qa_report_json text`,
   // `stall_diagnostics` and `deferrable` are SELECTed by core/queue.ts but were

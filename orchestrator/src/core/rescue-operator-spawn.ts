@@ -6,8 +6,9 @@
  *    registered, OR
  *  - a recovery Chore (fix_for_task_id !== null) itself fails.
  *
- * At most ONE rescue-operator task is spawned per Arc. The counter is keyed on
- * the origin task's `arc_rescue_attempts` column.
+ * At most ONE rescue-operator task is spawned per Arc. A durable counter is
+ * keyed by the Arc's text origin id, so task-id and proposal-slug arcs share
+ * the same invariant.
  *
  * IMPORTANT: `store.getArcRescueAttempts` / `store.incrementArcRescueAttempts`
  * are called ONLY from this module. The ordinary dispatch path (dispatch.ts and
@@ -50,8 +51,8 @@ export interface MaybeSpawnRescueOperatorResult {
 /**
  * Enqueues a rescue-operator agent task when an Arc has no automatic move left.
  *
- * Idempotent per Arc: when `arc_rescue_attempts >= 1` on the origin task row,
- * returns `{ spawned: false }` without side effects.
+ * Idempotent per Arc: when the durable `arc_rescue_attempts` counter is already
+ * at least one, returns `{ spawned: false }` without side effects.
  *
  * Call sites:
  *  - `queue-fix-tasks.ts` recovery-chore-failed branch (`task.fixForTaskId !== null`)
@@ -87,15 +88,6 @@ export const maybeSpawnRescueOperator = async (
     return { spawned: false }
   }
 
-  // Secondary guard for proposal-based arcs (originId is a proposal slug with
-  // no task row). For these arcs, getArcRescueAttempts always returns 0 and
-  // incrementArcRescueAttempts is a no-op — so without this check, a new
-  // rescue task would be spawned on every subsequent failure, producing an
-  // infinite re-spawn loop. Count existing active rescue tasks instead.
-  if ((await store.countActiveRescueTasksForArc(originId)) >= 1) {
-    return { spawned: false }
-  }
-
   // The rescue task itself passes through the tight-budget triage worker
   // before it reaches RescueOperator. Build its bounded, newest-first arc
   // context before incrementing the guard so an assembly failure cannot leave
@@ -113,9 +105,13 @@ export const maybeSpawnRescueOperator = async (
       `${estimateRescueTriagePromptTokens(prompt)} estimated tokens, ${arcMembers.length} arc members`,
   )
 
-  // Increment before dispatch to prevent a concurrent failure event from
-  // spawning a second rescue on the same arc.
-  await store.incrementArcRescueAttempts(originId)
+  // Increment before dispatch to claim the Arc atomically. Two concurrent
+  // failures can both observe zero above, but only the caller that receives
+  // attempt 1 may enqueue; the durable counter never reopens after a rescue
+  // later fails or is dropped.
+  if ((await store.incrementArcRescueAttempts(originId)) !== 1) {
+    return { spawned: false }
+  }
   await incrementRescueAttempts(store)
 
   // `skipTriage: true` lands the row directly in `'queued'` instead of

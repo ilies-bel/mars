@@ -494,8 +494,8 @@ export const WORKER_CONFIGS: Readonly<Record<WorkerName, WorkerConfig>> = {
   // run mars CLI commands headlessly; RESCUE_OPERATOR_DENIED_TOOLS blocks
   // backlog-mutation commands outside the three permitted actions.
   // Sonnet / high effort — targeted recovery work, same posture as Fixer.
-  // At most one RescueOperator task fires per Arc (arc_rescue_attempts >= 1
-  // guard in rescue-operator-spawn.ts). See PRD 94e2a82a.
+  // At most one RescueOperator task fires per Arc (the durable
+  // arc_rescue_attempts guard in rescue-operator-spawn.ts). See PRD 94e2a82a.
   RescueOperator: {
     name: 'RescueOperator',
     model: providerModel(WORKER_PROVIDER, 'balanced'),

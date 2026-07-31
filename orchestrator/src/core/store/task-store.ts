@@ -313,27 +313,16 @@ export interface DomainTaskStore {
   // ── Arc rescue counter ───────────────────────────────────────────────────
   /**
    * Return the number of times the rescue operator has run against the arc
-   * whose origin task id is `originId`. Throws when `originId` does not
-   * identify an origin task (i.e. its `fix_for_task_id` is non-null).
+   * keyed by `originId`. The durable counter works for task-id and proposal
+   * slug arcs alike. Throws when `originId` identifies a recovery/fix task.
    */
   getArcRescueAttempts(originId: string): Promise<number>
 
   /**
-   * Atomically increment `arc_rescue_attempts` on the origin task row for
-   * `originId` and return the new value. Throws when `originId` does not
-   * identify an origin task (i.e. its `fix_for_task_id` is non-null).
+   * Atomically increment the durable counter for `originId` and return the
+   * new value. Throws when `originId` identifies a recovery/fix task.
    */
   incrementArcRescueAttempts(originId: string): Promise<number>
-
-  /**
-   * Count rescue-operator tasks for the arc rooted at `originId` that are
-   * not in a terminal state (`failed` or `dropped`).
-   *
-   * Used by `maybeSpawnRescueOperator` as a secondary guard for proposal-based
-   * arcs where `arc_rescue_attempts` cannot be incremented (no task row for
-   * the proposal slug). Returns 0 when no such tasks exist.
-   */
-  countActiveRescueTasksForArc(originId: string): Promise<number>
 
   // ── Arc rollup ───────────────────────────────────────────────────────────
   /**
@@ -494,6 +483,19 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     return client
   }
 
+  const assertArcOrigin = async (c: DbClient, originId: string): Promise<void> => {
+    const result = await c.execute({
+      sql: `SELECT fix_for_task_id FROM tasks WHERE id = ?`,
+      args: [originId],
+    })
+    const row = result.rows[0] as unknown as { fix_for_task_id: string | null } | undefined
+    if (row !== undefined && row.fix_for_task_id !== null) {
+      throw new Error(
+        'arc rescue counter can only be read on an origin task, not a recovery/fix task',
+      )
+    }
+  }
+
   // The facade is inverted onto the Arc aggregate (ADR-0052): domain methods
   // that have an arc-shaped write funnel route through {@link Arc} directly,
   // bound to THIS store's client (so a `:memory:`/file-URL test store hits its
@@ -613,65 +615,33 @@ export const createTaskStore = (client: DbClient | null): DomainTaskStore => {
     getTranscript: (taskId) => queueGetTranscript(taskId),
 
     // ── Arc rescue counter ─────────────────────────────────────────────────
-    // An arc is keyed by `origin_id`, which is NOT always a task id: slices cut
-    // from a PRD carry the parent proposal's slug (e.g.
-    // 'b625d966-add-pre-rebase-worktree-hygiene-check'). Such an arc has no
-    // origin task row and therefore no rescue counter — that is a normal shape,
-    // not an error, so both accessors report 0 for it. Only a caller that hands
-    // in a real task row belonging to a recovery/fix task is misusing the API,
-    // and that case still throws.
+    // Arcs can be rooted by either a task id or a proposal slug. The counter is
+    // therefore stored independently of tasks; only an actual recovery/fix
+    // task id is invalid input for these origin-oriented accessors.
     getArcRescueAttempts: async (originId) => {
       const c = guardClient()
-      const r = await c.execute({
-        sql: `SELECT arc_rescue_attempts, fix_for_task_id FROM tasks WHERE id = ?`,
+      await assertArcOrigin(c, originId)
+      const result = await c.execute({
+        sql: `SELECT attempts FROM arc_rescue_attempts WHERE origin_id = ?`,
         args: [originId],
       })
-      if (r.rows.length === 0) return 0
-      const row = r.rows[0] as unknown as {
-        arc_rescue_attempts: number | bigint
-        fix_for_task_id: string | null
-      }
-      if (row.fix_for_task_id !== null) {
-        throw new Error(
-          'arc rescue counter can only be read on an origin task, not a recovery/fix task',
-        )
-      }
-      return Number(row.arc_rescue_attempts)
+      if (result.rows.length === 0) return 0
+      return Number((result.rows[0] as unknown as { attempts: number | bigint }).attempts)
     },
 
     incrementArcRescueAttempts: async (originId) => {
       const c = guardClient()
-      const existing = await c.execute({
-        sql: `SELECT fix_for_task_id FROM tasks WHERE id = ?`,
+      await assertArcOrigin(c, originId)
+      const result = await c.execute({
+        sql: `INSERT INTO arc_rescue_attempts (origin_id, attempts)
+              VALUES (?, 1)
+              ON CONFLICT (origin_id) DO UPDATE
+                SET attempts = arc_rescue_attempts.attempts + 1,
+                    updated_at = now()
+              RETURNING attempts`,
         args: [originId],
       })
-      if (existing.rows.length === 0) return 0
-      const existingRow = existing.rows[0] as unknown as {
-        fix_for_task_id: string | null
-      }
-      if (existingRow.fix_for_task_id !== null) {
-        throw new Error(
-          'arc rescue counter can only be read on an origin task, not a recovery/fix task',
-        )
-      }
-      const r = await c.execute({
-        sql: `UPDATE tasks SET arc_rescue_attempts = arc_rescue_attempts + 1 WHERE id = ? AND fix_for_task_id IS NULL RETURNING arc_rescue_attempts`,
-        args: [originId],
-      })
-      const row = r.rows[0] as unknown as { arc_rescue_attempts: number | bigint }
-      return Number(row.arc_rescue_attempts)
-    },
-
-    countActiveRescueTasksForArc: async (originId) => {
-      const c = guardClient()
-      const r = await c.execute({
-        sql: `SELECT COUNT(*) AS n FROM tasks
-              WHERE origin_id = ?
-                AND tags_json LIKE '%rescue-operator%'
-                AND status NOT IN ('failed', 'dropped')`,
-        args: [originId],
-      })
-      return Number((r.rows[0] as unknown as { n: number | bigint }).n)
+      return Number((result.rows[0] as unknown as { attempts: number | bigint }).attempts)
     },
 
     // ── Arc rollup ─────────────────────────────────────────────────────────

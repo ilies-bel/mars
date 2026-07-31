@@ -192,7 +192,6 @@ describe('createTaskStore', () => {
       'getTranscript',
       'getArcRescueAttempts',
       'incrementArcRescueAttempts',
-      'countActiveRescueTasksForArc',
       'query',
       'execute',
       'atomic',
@@ -421,72 +420,41 @@ describe('getArcRescueAttempts and incrementArcRescueAttempts', () => {
     )
   })
 
-  // Regression: slices cut from a PRD carry the parent proposal's slug in
-  // origin_id, so resolveOriginIdForTask hands the accessors an id with no task
-  // row at all. That used to throw the recovery/fix guard error, which wedged the
-  // arc-verifier subscriber's cursor on the first such task.terminal event and
-  // stalled the whole pipeline (no dead-letter by ADR-0032). A missing arc origin
-  // row is a normal shape and must read as 0.
-  it('arc rescue accessors report 0 for an origin id with no task row (PRD slug)', async () => {
+  it('persists rescue attempts for an origin id with no task row (PRD slug)', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
     const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
 
     const proposalSlug = 'b625d966-add-pre-rebase-worktree-hygiene-check'
 
     await expect(store.getArcRescueAttempts(proposalSlug)).resolves.toBe(0)
-    await expect(store.incrementArcRescueAttempts(proposalSlug)).resolves.toBe(0)
+    await expect(store.incrementArcRescueAttempts(proposalSlug)).resolves.toBe(1)
+    await expect(store.incrementArcRescueAttempts(proposalSlug)).resolves.toBe(2)
+    await expect(store.getArcRescueAttempts(proposalSlug)).resolves.toBe(2)
   })
 
-  it('countActiveRescueTasksForArc returns 0 when no rescue tasks exist', async () => {
+  it('backfills the durable counter from rescue tasks during schema migration', async () => {
     const { storeModule, queueModule } = await loadDeps(repo)
     const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
+    const originId = 'backfill-proposal-slug'
 
-    const task = await store.enqueueTask('original work', undefined, { skipTriage: true })
-    await expect(store.countActiveRescueTasksForArc(task.id)).resolves.toBe(0)
-  })
-
-  it('countActiveRescueTasksForArc returns 1 after a rescue task is enqueued', async () => {
-    const { storeModule, queueModule } = await loadDeps(repo)
-    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
-
-    const task = await store.enqueueTask('original work', undefined, { skipTriage: true })
-    // Enqueue a rescue-operator task for this arc
-    await store.enqueueTask('rescue prompt', undefined, {
+    await store.enqueueTask('first existing rescue', undefined, {
       skipTriage: true,
-      originId: task.id,
+      originId,
       tags: ['rescue-operator'],
     })
-    await expect(store.countActiveRescueTasksForArc(task.id)).resolves.toBe(1)
-  })
-
-  it('countActiveRescueTasksForArc excludes failed and dropped rescue tasks', async () => {
-    const { storeModule, queueModule } = await loadDeps(repo)
-    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
-
-    const task = await store.enqueueTask('original work', undefined, { skipTriage: true })
-    const rescue = await store.enqueueTask('rescue prompt', undefined, {
+    await store.enqueueTask('second existing rescue', undefined, {
       skipTriage: true,
-      originId: task.id,
+      originId,
       tags: ['rescue-operator'],
     })
-    await store.updateTask(rescue.id, { status: 'failed' })
-    // After the rescue task fails, count should be 0 again
-    await expect(store.countActiveRescueTasksForArc(task.id)).resolves.toBe(0)
+
+    await store.execute('DROP TABLE arc_rescue_attempts')
+    const { ensureSchema } = await import('../../lib/pg-schema')
+    await ensureSchema(queueModule.resolveQueueClient())
+
+    await expect(store.getArcRescueAttempts(originId)).resolves.toBe(2)
   })
 
-  it('countActiveRescueTasksForArc works for proposal-slug origins with no task row', async () => {
-    const { storeModule, queueModule } = await loadDeps(repo)
-    const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
-
-    const proposalSlug = 'abc123-proposal-slug'
-    // Enqueue a task with proposal origin_id and rescue-operator tag
-    await store.enqueueTask('rescue for slice', undefined, {
-      skipTriage: true,
-      originId: proposalSlug,
-      tags: ['rescue-operator'],
-    })
-    await expect(store.countActiveRescueTasksForArc(proposalSlug)).resolves.toBe(1)
-  })
 })
 
 describe('task_deployments', () => {

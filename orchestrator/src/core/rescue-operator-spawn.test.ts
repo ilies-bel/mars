@@ -11,6 +11,7 @@ import {
 interface QueueModule {
   enqueueTask: typeof import('./queue').enqueueTask
   getTask: typeof import('./queue').getTask
+  updateTask: typeof import('./queue').updateTask
   listBlockers: typeof import('./queue').listBlockers
   isDispatchableStatus: typeof import('./queue').isDispatchableStatus
   resolveQueueClient: typeof import('./queue').resolveQueueClient
@@ -106,14 +107,14 @@ const countRescueTasks = async (q: QueueModule): Promise<number> => {
   return Number((r.rows[0] as unknown as { n: number | bigint }).n)
 }
 
-/** Read the arc_rescue_attempts counter for the given origin task id. */
-const readArcRescueAttempts = async (q: QueueModule, taskId: string): Promise<number> => {
+/** Read the durable rescue counter for an Arc, including proposal-slug arcs. */
+const readArcRescueAttempts = async (q: QueueModule, originId: string): Promise<number> => {
   const r = await q.resolveQueueClient().execute({
-    sql: `SELECT arc_rescue_attempts FROM tasks WHERE id = ?`,
-    args: [taskId],
+    sql: `SELECT attempts FROM arc_rescue_attempts WHERE origin_id = ?`,
+    args: [originId],
   })
-  if (r.rows.length === 0) throw new Error(`task ${taskId} not found`)
-  return Number((r.rows[0] as unknown as { arc_rescue_attempts: number | bigint }).arc_rescue_attempts)
+  if (r.rows.length === 0) return 0
+  return Number((r.rows[0] as unknown as { attempts: number | bigint }).attempts)
 }
 
 describe('rescue-operator-spawn', () => {
@@ -134,7 +135,7 @@ describe('rescue-operator-spawn', () => {
 
   // ── (a) No-recipe origin failure → rescue enqueued ────────────────────────
 
-  it('(a) no-recipe origin failure: rescue-operator task enqueued, arc_rescue_attempts becomes 1', async () => {
+  it('(a) no-recipe origin failure: rescue-operator task enqueued, durable arc counter becomes 1', async () => {
     const { q, ft } = await loadModules(repo)
     const task = await q.enqueueTask('do a thing', undefined, { skipTriage: true })
 
@@ -159,7 +160,7 @@ describe('rescue-operator-spawn', () => {
     const rescueRow = rescueRows.rows[0] as unknown as { origin_id: string }
     expect(rescueRow.origin_id).toBe(task.id)
 
-    // arc_rescue_attempts is 1 on the origin task
+    // The durable arc counter is 1.
     expect(await readArcRescueAttempts(q, task.id)).toBe(1)
   })
 
@@ -181,13 +182,13 @@ describe('rescue-operator-spawn', () => {
     // No rescue-operator tasks
     expect(await countRescueTasks(q)).toBe(0)
 
-    // arc_rescue_attempts stays 0
+    // The durable arc counter stays 0.
     expect(await readArcRescueAttempts(q, task.id)).toBe(0)
   })
 
   // ── (c) Recovery Chore failure → rescue enqueued ──────────────────────────
 
-  it('(c) recovery Chore failure: rescue-operator task enqueued against origin, arc_rescue_attempts becomes 1', async () => {
+  it('(c) recovery Chore failure: rescue-operator task enqueued against origin, durable arc counter becomes 1', async () => {
     const { q, ft, rc } = await loadModules(repo)
 
     // Create origin task and a fix task for it
@@ -233,7 +234,7 @@ describe('rescue-operator-spawn', () => {
     const rescueRow = rescueRows.rows[0] as unknown as { origin_id: string }
     expect(rescueRow.origin_id).toBe(origin.id)
 
-    // arc_rescue_attempts is 1 on the origin task
+    // The durable arc counter is 1.
     expect(await readArcRescueAttempts(q, origin.id)).toBe(1)
   })
 
@@ -265,7 +266,7 @@ describe('rescue-operator-spawn', () => {
     // Still exactly one rescue task
     expect(await countRescueTasks(q)).toBe(1)
 
-    // arc_rescue_attempts is still 1
+    // The durable arc counter is still 1.
     expect(await readArcRescueAttempts(q, task.id)).toBe(1)
   })
 
@@ -438,15 +439,9 @@ describe('rescue-operator-spawn', () => {
     expect(rescueTask!.prompt).not.toContain('full transcript material that must stay out of triage')
   })
 
-  // ── (e) Proposal-based arc → no second rescue after first ─────────────────
-  // For arcs whose origin_id is a proposal slug (no task row), arc_rescue_attempts
-  // is always 0 and incrementArcRescueAttempts is a no-op. Without the secondary
-  // guard, maybeSpawnRescueOperator would spawn a new rescue on every failure.
-
-  it('(e) proposal-based arc: second call to maybeSpawnRescueOperator is a no-op', async () => {
+  it('does not respawn a failed rescue for a proposal-slug arc', async () => {
     const { q, rescue } = await loadModules(repo)
 
-    // Create a task whose origin_id is a proposal slug (no task row for that id).
     const proposalSlug = 'abc123-test-proposal-slug'
     const task = await q.enqueueTask('slice task do a thing', undefined, {
       skipTriage: true,
@@ -456,23 +451,79 @@ describe('rescue-operator-spawn', () => {
     const loaded = await q.getTask(task.id)
     if (!loaded) throw new Error('task not found')
 
-    // First rescue — should spawn
     const first = await rescue.maybeSpawnRescueOperator({
       failedTask: loaded,
       failureSignature: 'code/unclassified',
     })
     expect(first.spawned).toBe(true)
-    expect(first.rescueTaskId).toBeDefined()
+    await q.updateTask(first.rescueTaskId!, { status: 'failed' })
 
-    // Second rescue on the same proposal-based arc — must be a no-op
     const second = await rescue.maybeSpawnRescueOperator({
       failedTask: loaded,
       failureSignature: 'code/unclassified',
     })
+    const third = await rescue.maybeSpawnRescueOperator({
+      failedTask: loaded,
+      failureSignature: 'code/unclassified',
+    })
     expect(second.spawned).toBe(false)
-    expect(second.rescueTaskId).toBeUndefined()
+    expect(third.spawned).toBe(false)
+    expect(await countRescueTasks(q)).toBe(1)
+    expect(await readArcRescueAttempts(q, proposalSlug)).toBe(1)
+  })
 
-    // Still exactly one rescue task
+  it('does not respawn a failed rescue for a task-id arc', async () => {
+    const { q, rescue } = await loadModules(repo)
+    const task = await q.enqueueTask('do a thing', undefined, { skipTriage: true })
+    const loaded = await q.getTask(task.id)
+    if (!loaded) throw new Error('task not found')
+
+    const first = await rescue.maybeSpawnRescueOperator({
+      failedTask: loaded,
+      failureSignature: 'code/unclassified',
+    })
+    expect(first.spawned).toBe(true)
+    await q.updateTask(first.rescueTaskId!, { status: 'failed' })
+
+    await expect(
+      rescue.maybeSpawnRescueOperator({ failedTask: loaded, failureSignature: 'code/unclassified' }),
+    ).resolves.toEqual({ spawned: false })
+    await expect(
+      rescue.maybeSpawnRescueOperator({ failedTask: loaded, failureSignature: 'code/unclassified' }),
+    ).resolves.toEqual({ spawned: false })
+    expect(await countRescueTasks(q)).toBe(1)
+  })
+
+  it('does not respawn a dropped rescue task', async () => {
+    const { q, rescue } = await loadModules(repo)
+    const task = await q.enqueueTask('do a thing', undefined, { skipTriage: true })
+    const loaded = await q.getTask(task.id)
+    if (!loaded) throw new Error('task not found')
+
+    const first = await rescue.maybeSpawnRescueOperator({
+      failedTask: loaded,
+      failureSignature: 'code/unclassified',
+    })
+    await q.updateTask(first.rescueTaskId!, { status: 'dropped' })
+
+    await expect(
+      rescue.maybeSpawnRescueOperator({ failedTask: loaded, failureSignature: 'code/unclassified' }),
+    ).resolves.toEqual({ spawned: false })
+    expect(await countRescueTasks(q)).toBe(1)
+  })
+
+  it('atomically admits only one rescue when failures arrive concurrently', async () => {
+    const { q, rescue } = await loadModules(repo)
+    const task = await q.enqueueTask('do a thing', undefined, { skipTriage: true })
+    const loaded = await q.getTask(task.id)
+    if (!loaded) throw new Error('task not found')
+
+    const results = await Promise.all([
+      rescue.maybeSpawnRescueOperator({ failedTask: loaded, failureSignature: 'code/unclassified' }),
+      rescue.maybeSpawnRescueOperator({ failedTask: loaded, failureSignature: 'code/unclassified' }),
+    ])
+
+    expect(results.filter((result) => result.spawned)).toHaveLength(1)
     expect(await countRescueTasks(q)).toBe(1)
   })
 })
