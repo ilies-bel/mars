@@ -66,7 +66,7 @@ const loadOpts = async (repoDir: string): Promise<InProcessOptions> => {
 const makeRow = (
   overrides: Partial<ActionQueueRow> & Pick<ActionQueueRow, 'id'>,
 ): ActionQueueRow => ({
-  kind: 'failed-task',
+  kind: 'failed',
   entityId: `entity-${overrides.id}`,
   priority: 'normal',
   title: `Title for ${overrides.id}`,
@@ -115,7 +115,7 @@ afterEach(() => {
 describe('action-queue list', () => {
   it('fetches from daemon and formats rows tab-separated', async () => {
     const rows: ActionQueueRow[] = [
-      makeRow({ id: 'aq-abc', priority: 'high', kind: 'failed-task', title: 'Task A' }),
+      makeRow({ id: 'aq-abc', priority: 'high', kind: 'failed', title: 'Task A' }),
       makeRow({ id: 'aq-def', priority: 'low', kind: 'draft-proposal', title: 'Prop B' }),
     ]
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
@@ -128,7 +128,7 @@ describe('action-queue list', () => {
     const r = await runCommandInProcess(['action-queue', 'list', 'open'], opts)
 
     expect(r.code).toBe(0)
-    expect(r.out).toContain('aq-abc\thigh\tfailed-task\tTask A')
+    expect(r.out).toContain('aq-abc\thigh\tfailed\tTask A')
     expect(r.out).toContain('aq-def\tlow\tdraft-proposal\tProp B')
   })
 
@@ -260,10 +260,10 @@ describe('action-queue list', () => {
 
   it('--kind filters rows to the specified kinds and omits others', async () => {
     const rows: ActionQueueRow[] = [
-      makeRow({ id: 'aq-f1', kind: 'failed-task', title: 'Failed 1' }),
+      makeRow({ id: 'aq-f1', kind: 'failed', title: 'Failed 1' }),
       makeRow({ id: 'aq-s1', kind: 'stale-worktree', title: 'Stale 1' }),
       makeRow({ id: 'aq-d1', kind: 'draft-proposal', title: 'Draft 1' }),
-      makeRow({ id: 'aq-f2', kind: 'failed-task', title: 'Failed 2' }),
+      makeRow({ id: 'aq-f2', kind: 'failed', title: 'Failed 2' }),
     ]
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
@@ -272,7 +272,7 @@ describe('action-queue list', () => {
     writeDaemonPort(repo, FAKE_PORT)
     const opts = await loadOpts(repo)
 
-    const r = await runCommandInProcess(['action-queue', 'list', 'open', '--kind', 'failed-task,stale-worktree'], opts)
+    const r = await runCommandInProcess(['action-queue', 'list', 'open', '--kind', 'failed,stale-worktree'], opts)
 
     expect(r.code).toBe(0)
     const combined = r.out.join('\n')
@@ -282,7 +282,7 @@ describe('action-queue list', () => {
     expect(combined).not.toContain('aq-d1')
   })
 
-  it('--kind with a value that matches nothing prints the empty-queue line', async () => {
+  it('rejects an unknown --kind value instead of reporting an empty queue', async () => {
     const rows: ActionQueueRow[] = [
       makeRow({ id: 'aq-d1', kind: 'draft-proposal', title: 'Draft 1' }),
       makeRow({ id: 'aq-d2', kind: 'draft-proposal', title: 'Draft 2' }),
@@ -296,22 +296,41 @@ describe('action-queue list', () => {
 
     const r = await runCommandInProcess(['action-queue', 'list', 'open', '--kind', 'failed-task'], opts)
 
-    expect(r.code).toBe(0)
-    expect(r.out.join('\n')).toContain('action queue empty')
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain("unknown action-queue kind 'failed-task'")
+    expect(r.err.join('\n')).toContain('valid kinds:')
+  })
+
+  it('rejects a mixed --kind list instead of returning the valid subset', async () => {
+    const rows: ActionQueueRow[] = [
+      makeRow({ id: 'aq-f1', kind: 'failed', title: 'Failed 1' }),
+    ]
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => rows,
+    }))
+    writeDaemonPort(repo, FAKE_PORT)
+    const opts = await loadOpts(repo)
+
+    const r = await runCommandInProcess(['action-queue', 'list', 'open', '--kind', 'failed,unknown-kind'], opts)
+
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain("unknown action-queue kind 'unknown-kind'")
+    expect(r.out).toHaveLength(0)
   })
 
   it('--kind composes with open|all filter (passes filter to daemon, then filters client-side)', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [
-        makeRow({ id: 'aq-f1', kind: 'failed-task', title: 'Failed 1' }),
+        makeRow({ id: 'aq-f1', kind: 'failed', title: 'Failed 1' }),
       ],
     })
     vi.stubGlobal('fetch', mockFetch)
     writeDaemonPort(repo, FAKE_PORT)
     const opts = await loadOpts(repo)
 
-    const r = await runCommandInProcess(['action-queue', 'list', 'all', '--kind', 'failed-task'], opts)
+    const r = await runCommandInProcess(['action-queue', 'list', 'all', '--kind', 'failed'], opts)
 
     expect(r.code).toBe(0)
     expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('filter=all'), expect.anything())
@@ -320,10 +339,10 @@ describe('action-queue list', () => {
 
   it('--lean prints summary line and first 3 rows', async () => {
     const rows: ActionQueueRow[] = [
-      makeRow({ id: 'aq-1', kind: 'failed-task', title: 'T1' }),
-      makeRow({ id: 'aq-2', kind: 'failed-task', title: 'T2' }),
+      makeRow({ id: 'aq-1', kind: 'failed', title: 'T1' }),
+      makeRow({ id: 'aq-2', kind: 'failed', title: 'T2' }),
       makeRow({ id: 'aq-3', kind: 'stale-worktree', title: 'T3' }),
-      makeRow({ id: 'aq-4', kind: 'failed-task', title: 'T4' }),
+      makeRow({ id: 'aq-4', kind: 'failed', title: 'T4' }),
     ]
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
@@ -337,7 +356,7 @@ describe('action-queue list', () => {
     expect(r.code).toBe(0)
     const combined = r.out.join('\n')
     expect(combined).toContain('action queue 4')
-    expect(combined).toContain('failed-task:3')
+    expect(combined).toContain('failed:3')
     expect(combined).toContain('stale-worktree:1')
     expect(combined).toContain('... +1 more')
     // First 3 rows should appear, 4th should not be listed individually

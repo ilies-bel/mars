@@ -16,6 +16,8 @@
 
 import { readFileSync } from 'node:fs'
 import {
+  ACTION_QUEUE_KINDS,
+  isActionQueueKind,
   raiseActionQueueItem,
 } from '../../core/lib/action-queue'
 import { actionQueueRaiseSchema } from '../action-queue-raise-schema'
@@ -102,6 +104,12 @@ const actionQueueList: Command = {
     const kindSet: Set<string> = kindRaw
       ? new Set(kindRaw.split(',').map((k) => k.trim()).filter(Boolean))
       : new Set()
+    const unknownKind = [...kindSet].find((kind) => !isActionQueueKind(kind))
+    if (unknownKind) {
+      deps.err(`error: unknown action-queue kind '${unknownKind}'`)
+      deps.err(`valid kinds: ${ACTION_QUEUE_KINDS.join(', ')}`)
+      return { code: 2 }
+    }
     const port = await readDaemonPort(deps.ctx.stateDir)
     if (port === null) {
       deps.err(NO_DAEMON_MSG)

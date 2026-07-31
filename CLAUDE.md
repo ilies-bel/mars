@@ -142,8 +142,8 @@ message. Pick one via `mars action-queue list` or `/mars:action-queue`; the acti
 dispatches to the right resolver (`/mars:unblock`, `/mars:grill`, or
 terminal restart/purge — the queue is a pure projection, no operator gesture closes a row). To see pending work, run `/mars:chat` or `/mars:action-queue`.
 
-**Watch for alerts; don't wait to be asked.** Alerts (kinds `failed-task`
-and `stale-worktree`) arrive on their own schedule — a background task can
+**Watch for alerts; don't wait to be asked.** Alerts (kinds `failed`
+and `stale-queued`) arrive on their own schedule — a background task can
 fail minutes after you enqueued it and moved on. Check at natural
 checkpoints, not continuously: at session start, after `mars task add`,
 before reporting a batch of work as done, and whenever the user asks what
@@ -152,7 +152,7 @@ is happening.
 Poll with the filtered listing — never by tailing the event stream:
 
 ```
-mars action-queue list open --kind failed-task,stale-worktree
+mars action-queue list open --kind failed,stale-queued
 ```
 
 It prints one tab-separated line per alert (`id  priority  kind  title`)
