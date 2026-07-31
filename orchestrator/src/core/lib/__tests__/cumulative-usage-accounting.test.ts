@@ -10,6 +10,8 @@
 //   3. The in-run context ceiling is unenforceable on codex, and was withheld
 //      SILENTLY — an operator had no way to see the ceiling was not armed.
 
+import { chmodSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { runWorkerWithSpan } from '../run-worker-with-span'
@@ -169,6 +171,61 @@ describe('cumulative-provider token accounting', () => {
     const sink: Recorded[] = []
     await runSpan(streamingWorker('codex', [codexTurnCompleted], 0), sink)
     expect(payloadOf(sink, 'step_ended').contextGuard).toBe('disabled')
+  })
+})
+
+// The unit tests above call runWorkerWithSpan with a stub Worker. That is not
+// enough: production recorded zero while those tests passed, because the
+// defect lived between the REAL dispatch chain and the accumulator. This suite
+// spawns the real chain — createWorker → codexHeadless → runSubprocessStreaming
+// → the span's onEvent — against a fake `codex` binary emitting a real event
+// stream, and asserts the daemon's spend meter actually moved.
+describe('the real dispatch path feeds the spend meter', () => {
+  const fakeCodex = fileURLToPath(new URL('./fixtures/fake-codex-exec.mjs', import.meta.url))
+  const originalBin = process.env.MARS_CODEX_BIN
+
+  beforeEach(() => {
+    chmodSync(fakeCodex, 0o755)
+    process.env.MARS_CODEX_BIN = fakeCodex
+    resetAccumulatedTotals()
+  })
+  afterEach(() => {
+    if (originalBin === undefined) delete process.env.MARS_CODEX_BIN
+    else process.env.MARS_CODEX_BIN = originalBin
+    resetAccumulatedTotals()
+  })
+
+  it('records the run through a real createWorker + codex adapter dispatch', async () => {
+    const { createWorker, WORKER_CONFIGS } = await import('../../workers')
+
+    const worker = createWorker({ ...WORKER_CONFIGS.Coder, provider: 'codex' })
+    const sink: Recorded[] = []
+    const result = await runWorkerWithSpan({
+      worker,
+      prompt: 'do the thing',
+      runOptions: { cwd: process.cwd() },
+      traceStore: recordingStore(sink),
+      stepName: 'run-claude-code',
+      workflowInstanceId: 'wf-real',
+      originId: 'origin-real',
+      taskId: 'task-real',
+      phase: 'code',
+    })
+
+    expect(result.exitCode).toBe(0)
+    // The stream really did carry the terminal usage event...
+    expect(result.conversation.some((e) => e.type === 'result')).toBe(true)
+    // ...the span recorded it...
+    const signals = payloadOf(sink, 'step_ended').usageSignals as Record<string, number>
+    expect(signals.inputTokens).toBe(6_776)
+    // ...and — the part production got wrong — so did the daemon's spend meter,
+    // which is what `usage_snapshots` samples once a minute.
+    expect(getAccumulatedTotals()).toEqual({
+      inputTokens: 6_776,
+      outputTokens: 118,
+      cacheCreateTokens: 0,
+      cacheReadTokens: 25_088,
+    })
   })
 })
 
