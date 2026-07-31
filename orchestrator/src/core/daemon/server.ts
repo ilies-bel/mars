@@ -724,12 +724,12 @@ export const startDaemon = async (
   // every later spawn reuses this absolute path instead of re-reading PATH.
   {
     const { checkProviderBin } = await import('../workers/provider-bin')
-    const { CODER_PROVIDER } = await import('../workers/index')
-    // MARS_WORKER_PROVIDER (already folded into CODER_PROVIDER) wins over the
+    const { WORKER_PROVIDER } = await import('../workers/index')
+    // MARS_WORKER_PROVIDER (already folded into WORKER_PROVIDER) wins over the
     // persisted defaultProvider.
     const effectiveProvider =
       process.env.MARS_WORKER_PROVIDER !== undefined
-        ? CODER_PROVIDER
+        ? WORKER_PROVIDER
         : loadDaemonConfig().defaultProvider
     const probe = checkProviderBin(effectiveProvider)
     if (!probe.ok) {
