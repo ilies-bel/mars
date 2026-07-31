@@ -122,8 +122,10 @@ export const runMainDirtyDispatchCheck = async (
   log(
     `[main-dirty] dispatch-time: task ${task.id} parked blocked on main-commiter ${resolution.fixTaskId} (${
       resolution.spawned
-        ? 'spawned fresh'
-        : `attached to existing committer in status=${resolution.attachedToStatus}`
+        ? resolution.reapedZombieCommitterId
+          ? `spawned fresh, replacing zombie committer ${resolution.reapedZombieCommitterId}`
+          : 'spawned fresh'
+        : `attached to live committer in status=${resolution.attachedToStatus}`
     })`,
   )
   return { parked: true, fixTaskId: resolution.fixTaskId, spawned: resolution.spawned }

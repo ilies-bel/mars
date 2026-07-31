@@ -2109,8 +2109,10 @@ export const review = async (
               console.log(
                 `[main-dirty] verify-time: task ${taskId} parked blocked on main-commiter ${resolution.fixTaskId} (${
                   resolution.spawned
-                    ? 'spawned fresh'
-                    : `attached to existing committer in status=${resolution.attachedToStatus}`
+                    ? resolution.reapedZombieCommitterId
+                      ? `spawned fresh, replacing zombie committer ${resolution.reapedZombieCommitterId}`
+                      : 'spawned fresh'
+                    : `attached to live committer in status=${resolution.attachedToStatus}`
                 })`,
               )
               throw new WorkflowTerminalError(
@@ -2861,8 +2863,10 @@ export const merge = async (
               console.log(
                 `[main-dirty] merge-time: task ${taskId} parked blocked on main-commiter ${resolution.fixTaskId} (${
                   resolution.spawned
-                    ? 'spawned fresh'
-                    : `attached to existing committer in status=${resolution.attachedToStatus}`
+                    ? resolution.reapedZombieCommitterId
+                      ? `spawned fresh, replacing zombie committer ${resolution.reapedZombieCommitterId}`
+                      : 'spawned fresh'
+                    : `attached to live committer in status=${resolution.attachedToStatus}`
                 })`,
               )
               throw new WorkflowTerminalError(

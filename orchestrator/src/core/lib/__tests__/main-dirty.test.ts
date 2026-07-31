@@ -274,7 +274,7 @@ describe('spawnOrAttachMainCommitter', () => {
   it('respawns when the existing committer for the same branch FAILED (never attach to a dead committer)', async () => {
     // A failed committer must never become a new blocker. 'failed' is not in
     // ACTIVE_COMMITTER_STATUSES so a dead task is invisible to
-    // findActiveMainCommitter and a fresh one is always spawned. This prevents
+    // resolveActiveMainCommitter and a fresh one is always spawned. This prevents
     // the deadlock where tasks are permanently blocked on a committer that can
     // never succeed.
     const queue = await import('../../queue')
