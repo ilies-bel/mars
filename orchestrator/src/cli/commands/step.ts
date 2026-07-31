@@ -86,7 +86,7 @@ const stepDone: Command = {
       )
       if (gitResult.status === 0 && (gitResult.stdout ?? '').trim() !== '') {
         deps.err(`worktree ${worktreePath} has uncommitted changes`)
-        deps.err('commit or stash your changes before completing the step')
+        deps.err('commit or discard your changes before completing the step')
         return { code: 1 }
       }
     }

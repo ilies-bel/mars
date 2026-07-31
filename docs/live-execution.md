@@ -56,9 +56,11 @@ Both `mars release` and `mars step done` refuse to proceed if the worktree is di
 
 ```
 error: worktree .mars/worktrees/<id> has uncommitted changes
-hint: commit or stash your changes before releasing the lease
+hint: commit or discard your changes before releasing the lease
 ```
 
-This is a hard gate, not a warning. Commit or stash first, then re-run.
+This is a hard gate, not a warning. Commit or discard first, then re-run.
+Do **not** `git stash`: `refs/stash` is shared by every worktree in the repo,
+so a later `pop` can hand you another task's uncommitted work.
 
 Once released cleanly, the pipeline continues from verify — exactly as it would for an agent run. Mars checks `commits-ahead`, runs the verify command, and merges the branch into `main`. No special human path; the same gate, the same merge.

@@ -727,7 +727,7 @@ const release: Command = {
       )
       if (gitResult.status === 0 && (gitResult.stdout ?? '').trim() !== '') {
         deps.err(`worktree ${worktreePath} has uncommitted changes`)
-        deps.err('commit or stash your changes before releasing the lease')
+        deps.err('commit or discard your changes before releasing the lease')
         return { code: 1 }
       }
     }
