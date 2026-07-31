@@ -425,6 +425,8 @@ const DDL: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS idx_action_queue_fingerprint_state
      ON action_queue_items(fingerprint, state)`,
   `CREATE INDEX IF NOT EXISTS idx_action_queue_state ON action_queue_items(state)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_queue_open_snoozed_until
+     ON action_queue_items(snoozed_until, raised_at DESC) WHERE state = 'open'`,
   // "by" is a reserved word in PostgreSQL — quoted here, and call sites must
   // quote it too (all-lowercase, so quoting does not change identity).
   `CREATE TABLE IF NOT EXISTS action_queue_history (

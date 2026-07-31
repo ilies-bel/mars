@@ -237,6 +237,7 @@ describe('ensureSchema', () => {
       'idx_proposals_fingerprint', 'idx_scorer_results_scorer_task',
       'idx_promotion_ledger_workflow', 'idx_memory_packets_domain_salience',
       'idx_action_queue_fingerprint_state', 'idx_action_queue_state',
+      'idx_action_queue_open_snoozed_until',
       'idx_action_queue_history_item', 'idx_kpi_snapshots_taken_at',
       'idx_self_heal_attempts_parent_signature',
       'idx_self_heal_attempts_fix_task', 'idx_tool_promotion_status',

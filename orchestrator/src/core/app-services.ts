@@ -77,7 +77,12 @@ import {
 } from './daemon/kpi-store'
 import type { TraceEventStore } from './lib/trace-events-store'
 import type { Proposal } from './proposals'
-import type { ActionQueueRow, DerivedActionQueueFilter } from './daemon/view/action-queue'
+import type {
+  ActionQueueRow,
+  DerivedActionQueueFilter,
+  PersistedActionQueueRow,
+  TaskForActionQueue,
+} from './daemon/view/action-queue'
 import type { TerminalEvent } from './daemon/view/terminal-events'
 import type { ReleaseNoteEntry } from './daemon/view/release-notes'
 import type { Session } from './daemon/view/sessions'
@@ -884,6 +889,65 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return alerts[0] ?? null
   }
 
+  const listActionQueueTaskGraph = async (
+    rows: readonly PersistedActionQueueRow[],
+  ): Promise<TaskForActionQueue[]> => {
+    const { getActionQueueEntityId } = await import('./daemon/view/action-queue')
+    const entityIds = [...new Set(rows.map(getActionQueueEntityId))]
+    if (entityIds.length === 0) return []
+
+    const c = getCompositionRootClient()
+    const result = await c.execute({
+      sql: `WITH input_ids(id) AS (
+              SELECT unnest(?::text[])
+            ), related_ids(id) AS (
+              SELECT id FROM input_ids
+              UNION
+              SELECT t.fix_for_task_id
+                FROM tasks t JOIN input_ids i ON t.id = i.id
+               WHERE t.fix_for_task_id IS NOT NULL
+              UNION
+              SELECT b.task_id
+                FROM task_blockers b JOIN input_ids i ON b.blocker_task_id = i.id
+              UNION
+              SELECT b.blocker_task_id
+                FROM task_blockers b JOIN input_ids i ON b.task_id = i.id
+              UNION
+              SELECT t.id
+                FROM tasks t JOIN input_ids i ON t.fix_for_task_id = i.id
+            )
+            SELECT t.id, t.status, t.prompt, t.failure_signature, t.branch,
+                   t.updated_at, t.parent_proposal_id, t.fix_for_task_id,
+                   t.lease_owner, t.leased_at, t.lease_note,
+                   COALESCE(array_agg(b.blocker_task_id)
+                     FILTER (WHERE b.blocker_task_id IS NOT NULL), '{}') AS blocked_by
+              FROM tasks t
+              JOIN related_ids r ON r.id = t.id
+              LEFT JOIN task_blockers b ON b.task_id = t.id
+             GROUP BY t.id, t.status, t.prompt, t.failure_signature, t.branch,
+                      t.updated_at, t.parent_proposal_id, t.fix_for_task_id,
+                      t.lease_owner, t.leased_at, t.lease_note`,
+      args: [entityIds],
+    })
+    return result.rows.map((row) => {
+      const task = row as Record<string, unknown>
+      return {
+        id: task.id as string,
+        status: task.status as string,
+        prompt: task.prompt as string,
+        blockedBy: (task.blocked_by as string[]) ?? [],
+        parentProposalId: (task.parent_proposal_id as string | null) ?? null,
+        failureSignature: (task.failure_signature as string | null) ?? null,
+        branch: (task.branch as string | null) ?? null,
+        updatedAt: task.updated_at as string,
+        fixForTaskId: (task.fix_for_task_id as string | null) ?? null,
+        leaseOwner: (task.lease_owner as string | null) ?? null,
+        leasedAt: (task.leased_at as string | null) ?? null,
+        leaseNote: (task.lease_note as string | null) ?? null,
+      }
+    })
+  }
+
   const listNotices: AppServices['listNotices'] = async () => {
     const { listOpenNotices } = await import('./lib/notice-store')
     return listOpenNotices()
@@ -896,22 +960,14 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
 
   const viewActionQueue: AppServices['viewActionQueue'] = async (filter) => {
     const { buildActionQueueView } = await import('./daemon/view/action-queue')
-    const { listActionQueueItems } = await import('./lib/action-queue')
-    const { listTasks: qListTasks } = await import('./queue')
-    const getQueueClient = getCompositionRootClient
+    const { listVisibleActionQueueItems } = await import('./lib/action-queue')
 
     await runCompositionRootMigrations()
 
     // Build the state store adapter.
     const stateStore = {
       listOpenActionQueueItems: async () => {
-        const now = new Date()
-        const items = (await listActionQueueItems('all')).filter(
-          (item) =>
-            item.state === 'open' &&
-            (item.snoozedUntil === null ||
-              new Date(item.snoozedUntil) <= now),
-        )
+        const items = await listVisibleActionQueueItems()
         return items.map((item) => ({
           id: item.id,
           kind: item.kind as string,
@@ -931,51 +987,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
 
     // Build the task store adapter: tasks + blocker info + parentProposalId.
     const taskStore = {
-      listTasks: async () => {
-        const tasks = await qListTasks()
-        const c = getQueueClient()
-        // Build blockedBy map from task_blockers.
-        let blockedByMap = new Map<string, string[]>()
-        let proposalMap = new Map<string, string | null>()
-        try {
-          const blockersResult = await c.execute(
-            `SELECT task_id, blocker_task_id FROM task_blockers`,
-          )
-          for (const row of blockersResult.rows) {
-            const r = row as unknown as { task_id: string; blocker_task_id: string }
-            const arr = blockedByMap.get(r.task_id) ?? []
-            arr.push(r.blocker_task_id)
-            blockedByMap.set(r.task_id, arr)
-          }
-        } catch {
-          // task_blockers may not exist on a fresh repo — empty map.
-        }
-        try {
-          const proposalResult = await c.execute(
-            `SELECT id, parent_proposal_id FROM tasks WHERE parent_proposal_id IS NOT NULL`,
-          )
-          for (const row of proposalResult.rows) {
-            const r = row as unknown as { id: string; parent_proposal_id: string | null }
-            proposalMap.set(r.id, r.parent_proposal_id)
-          }
-        } catch {
-          // Tolerate missing column on legacy repos.
-        }
-        return tasks.map((t) => ({
-          id: t.id,
-          status: t.status,
-          prompt: t.prompt,
-          blockedBy: blockedByMap.get(t.id) ?? [],
-          parentProposalId: proposalMap.get(t.id) ?? null,
-          failureSignature: t.failureSignature,
-          branch: t.branch,
-          updatedAt: t.updatedAt,
-          fixForTaskId: t.fixForTaskId ?? null,
-          leaseOwner: t.leaseOwner,
-          leasedAt: t.leasedAt,
-          leaseNote: t.leaseNote,
-        }))
-      },
+      listTasksForActionQueueItems: listActionQueueTaskGraph,
     }
 
     return buildActionQueueView({
@@ -992,8 +1004,6 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   }) => {
     const { buildActionQueueHistoryView } = await import('./daemon/view/action-queue')
     const { listResolvedActionQueueItems } = await import('./lib/action-queue')
-    const { listTasks: qListTasks } = await import('./queue')
-    const getQueueClient = getCompositionRootClient
 
     await runCompositionRootMigrations()
 
@@ -1028,50 +1038,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     }
 
     const taskStore = {
-      listTasks: async () => {
-        const tasks = await qListTasks()
-        const c = getQueueClient()
-        let blockedByMap = new Map<string, string[]>()
-        let proposalMap = new Map<string, string | null>()
-        try {
-          const blockersResult = await c.execute(
-            `SELECT task_id, blocker_task_id FROM task_blockers`,
-          )
-          for (const row of blockersResult.rows) {
-            const r = row as unknown as { task_id: string; blocker_task_id: string }
-            const arr = blockedByMap.get(r.task_id) ?? []
-            arr.push(r.blocker_task_id)
-            blockedByMap.set(r.task_id, arr)
-          }
-        } catch {
-          // task_blockers may not exist on a fresh repo — empty map.
-        }
-        try {
-          const proposalResult = await c.execute(
-            `SELECT id, parent_proposal_id FROM tasks WHERE parent_proposal_id IS NOT NULL`,
-          )
-          for (const row of proposalResult.rows) {
-            const r = row as unknown as { id: string; parent_proposal_id: string | null }
-            proposalMap.set(r.id, r.parent_proposal_id)
-          }
-        } catch {
-          // Tolerate missing column on legacy repos.
-        }
-        return tasks.map((t) => ({
-          id: t.id,
-          status: t.status,
-          prompt: t.prompt,
-          blockedBy: blockedByMap.get(t.id) ?? [],
-          parentProposalId: proposalMap.get(t.id) ?? null,
-          failureSignature: t.failureSignature,
-          branch: t.branch,
-          updatedAt: t.updatedAt,
-          fixForTaskId: t.fixForTaskId ?? null,
-          leaseOwner: t.leaseOwner,
-          leasedAt: t.leasedAt,
-          leaseNote: t.leaseNote,
-        }))
-      },
+      listTasksForActionQueueItems: listActionQueueTaskGraph,
     }
 
     return buildActionQueueHistoryView({

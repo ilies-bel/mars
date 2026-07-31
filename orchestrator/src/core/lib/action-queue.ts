@@ -913,6 +913,24 @@ export const listActionQueueItems = async (
   return fetchByState(state)
 }
 
+/**
+ * Read the rows an operator can act on without loading resolution history.
+ *
+ * The action-queue view only needs the current projection, so joining each
+ * row to `action_queue_history` would turn a small visible list into an N+1
+ * scan over every historical item. History has its own paged reader.
+ */
+export const listVisibleActionQueueItems = async (): Promise<ActionQueueItem[]> => {
+  const c = stateClient()
+  const r = await c.execute(`SELECT * FROM action_queue_items
+    WHERE state = 'open'
+      AND (snoozed_until IS NULL OR snoozed_until <= CURRENT_TIMESTAMP)
+    ORDER BY raised_at DESC`)
+  return r.rows.map((row) =>
+    rowToActionQueueItem(row as unknown as Record<string, unknown>, []),
+  )
+}
+
 const isTerminal = (state: ActionQueueState): boolean =>
   state === 'resolved'
 

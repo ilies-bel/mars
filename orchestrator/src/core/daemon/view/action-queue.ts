@@ -272,7 +272,10 @@ export interface ActionQueueStateStore {
  * The daemon builds this from queue.ts + a task_blockers query.
  */
 export interface ActionQueueTaskStore {
-  listTasks(): Promise<TaskForActionQueue[]>
+  /** Loads only the task graph required by the supplied visible queue rows. */
+  listTasksForActionQueueItems(
+    rows: readonly PersistedActionQueueRow[],
+  ): Promise<TaskForActionQueue[]>
 }
 
 export interface BuildActionQueueViewParams {
@@ -290,6 +293,30 @@ export interface BuildActionQueueHistoryViewParams {
   repoRoot: string
   limit?: number
   cursor?: string | null
+}
+
+/** Extract the task, proposal, worktree, or synthetic entity an action row represents. */
+export const getActionQueueEntityId = (row: PersistedActionQueueRow): string => {
+  if (row.kind === 'stale-worktree') {
+    if (typeof row.context.taskId === 'string') return row.context.taskId
+  }
+  if (row.kind === 'draft-proposal') {
+    if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+  }
+  if (row.kind === 'scorer-suggested') {
+    if (typeof row.payload.scorerId === 'string') return row.payload.scorerId
+  }
+  if (row.kind === 'slices-dropped') {
+    if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
+  }
+  if (row.kind === 'reflect-recommended') return row.signature ?? row.id
+  if (row.kind === 'workflow-draft-pending') {
+    if (typeof row.payload.workflowName === 'string') return row.payload.workflowName
+    return row.signature ?? row.id
+  }
+  if (typeof row.payload.taskId === 'string') return row.payload.taskId
+  if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
+  return row.signature ?? row.id
 }
 
 /**
@@ -344,9 +371,12 @@ export const buildActionQueueView = async ({
   repoRoot,
   filter: _filter,
 }: BuildActionQueueViewParams): Promise<ActionQueueRow[]> => {
+  const profileStart = performance.now()
   const persistedRows = await stateStore.listOpenActionQueueItems()
+  const persistedRowsLoadedAt = performance.now()
 
-  const allTasks = await taskStore.listTasks()
+  const allTasks = await taskStore.listTasksForActionQueueItems(persistedRows)
+  const taskGraphLoadedAt = performance.now()
   const taskById = new Map(allTasks.map((t) => [t.id, t]))
   const blockingMap = new Map<string, string[]>()
   for (const t of allTasks) {
@@ -366,39 +396,6 @@ export const buildActionQueueView = async ({
       arr.push(t.id)
       fixForTaskMap.set(t.fixForTaskId, arr)
     }
-  }
-
-  // Extract the entity id (task id, worktree id, proposal id, or scorer id)
-  // from a row.
-  const extractEntityId = (row: PersistedActionQueueRow): string => {
-    if (row.kind === 'stale-worktree') {
-      if (typeof row.context.taskId === 'string') return row.context.taskId
-    }
-    if (row.kind === 'draft-proposal') {
-      if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
-    }
-    if (row.kind === 'scorer-suggested') {
-      if (typeof row.payload.scorerId === 'string') return row.payload.scorerId
-    }
-    // slices-dropped is keyed to a proposal, not a task — surface the proposal id
-    // rather than falling back to the opaque row id.
-    if (row.kind === 'slices-dropped') {
-      if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
-    }
-    // reflect-recommended is not task-keyed — use its dedup signature.
-    if (row.kind === 'reflect-recommended') {
-      return row.signature ?? row.id
-    }
-    // workflow-draft-pending is keyed to the workflow name, not a task.
-    if (row.kind === 'workflow-draft-pending') {
-      if (typeof row.payload.workflowName === 'string') return row.payload.workflowName
-      return row.signature ?? row.id
-    }
-    if (typeof row.payload.taskId === 'string') return row.payload.taskId
-    if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
-    // Synthetic / non-task-keyed items (e.g. observability-store-oversize,
-    // subscriber-stalled) carry a dedup signature but no task id in payload.
-    return row.signature ?? row.id
   }
 
   const toUiPriority = (p: string): 'high' | 'normal' | 'low' => {
@@ -432,7 +429,7 @@ export const buildActionQueueView = async ({
   for (const row of persistedRows) {
     const uiKind = row.kind
     const isTaskFailure = isTaskFailureKind(row.kind)
-    const entityId = extractEntityId(row)
+    const entityId = getActionQueueEntityId(row)
     const errorKind = toErrorKind(row.kind)
 
     // For failed-task rows, actions come from the FailureKind registry so
@@ -871,6 +868,17 @@ export const buildActionQueueView = async ({
     })
   }
 
+  if (process.env.MARS_ACTION_QUEUE_VIEW_PROFILE === '1') {
+    const finishedAt = performance.now()
+    console.info(
+      `[action-queue-view] visible_rows=${persistedRows.length} task_graph_rows=${allTasks.length} ` +
+        `visible_rows_ms=${(persistedRowsLoadedAt - profileStart).toFixed(1)} ` +
+        `task_graph_ms=${(taskGraphLoadedAt - persistedRowsLoadedAt).toFixed(1)} ` +
+        `derive_ms=${(finishedAt - taskGraphLoadedAt).toFixed(1)} ` +
+        `total_ms=${(finishedAt - profileStart).toFixed(1)}`,
+    )
+  }
+
   return filtered
 }
 
@@ -896,7 +904,7 @@ export const buildActionQueueHistoryView = async ({
   const { items: persistedRows, nextCursor } =
     await stateStore.listResolvedActionQueueItems({ limit, cursor })
 
-  const allTasks = await taskStore.listTasks()
+  const allTasks = await taskStore.listTasksForActionQueueItems(persistedRows)
   const taskById = new Map(allTasks.map((t) => [t.id, t]))
   const blockingMap = new Map<string, string[]>()
   for (const t of allTasks) {
@@ -913,27 +921,6 @@ export const buildActionQueueHistoryView = async ({
       arr.push(t.id)
       fixForTaskMap.set(t.fixForTaskId, arr)
     }
-  }
-
-  const extractEntityId = (row: PersistedActionQueueRow): string => {
-    if (row.kind === 'stale-worktree') {
-      if (typeof row.context.taskId === 'string') return row.context.taskId
-    }
-    if (row.kind === 'draft-proposal') {
-      if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
-    }
-    if (row.kind === 'scorer-suggested') {
-      if (typeof row.payload.scorerId === 'string') return row.payload.scorerId
-    }
-    if (row.kind === 'slices-dropped') {
-      if (typeof row.payload.proposalId === 'string') return row.payload.proposalId
-    }
-    if (row.kind === 'reflect-recommended') {
-      return row.signature ?? row.id
-    }
-    if (typeof row.payload.taskId === 'string') return row.payload.taskId
-    if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
-    return row.signature ?? row.id
   }
 
   const toUiPriority = (p: string): 'high' | 'normal' | 'low' => {
@@ -964,7 +951,7 @@ export const buildActionQueueHistoryView = async ({
   for (const row of persistedRows) {
     const uiKind = row.kind
     const isTaskFailure = isTaskFailureKind(row.kind)
-    const entityId = extractEntityId(row)
+    const entityId = getActionQueueEntityId(row)
     const errorKind = toErrorKind(row.kind)
 
     // DAG enrichment (same as live view).

@@ -67,7 +67,7 @@ const makeStateStore = (
 })
 
 const makeTaskStore = (tasks: TaskForActionQueue[] = []): ActionQueueTaskStore => ({
-  listTasks: async () => tasks,
+  listTasksForActionQueueItems: async () => tasks,
 })
 
 // ── /buildActionQueueView: failed-task row + DAG ────────────────────────────────

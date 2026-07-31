@@ -64,7 +64,7 @@ const makeStateStore = (
 const makeTaskStore = (
   tasks: TaskForActionQueue[] = [],
 ): ActionQueueTaskStore => ({
-  listTasks: async () => tasks,
+  listTasksForActionQueueItems: async () => tasks,
 })
 
 const BASE_PARAMS = {

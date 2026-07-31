@@ -147,7 +147,7 @@ describe('action-queue list', () => {
         listOpenActionQueueItems: async () => persistedRows,
         listResolvedActionQueueItems: async () => ({ items: [], nextCursor: null }),
       },
-      taskStore: { listTasks: async () => [] },
+      taskStore: { listTasksForActionQueueItems: async () => [] },
       repoRoot: repo,
       filter: 'open',
     })
