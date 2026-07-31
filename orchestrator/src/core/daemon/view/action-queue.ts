@@ -268,6 +268,7 @@ const OPERATIONAL_ALERT_COPY: Record<
   'slices-dropped': null,
   'hitl-slice-needs-operator': null,
   'awaiting-validation': null,
+  'awaiting-validation-preview-gone': null,
   'awaiting-human': null,
   'behaviour-unverified': null,
   'subscriber-stalled': (row) => {

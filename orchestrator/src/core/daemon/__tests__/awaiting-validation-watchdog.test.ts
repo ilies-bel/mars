@@ -119,4 +119,17 @@ describe('runAwaitingValidationSweep', () => {
     })
     expect(await actionQueue.listActionQueueItems('open')).toHaveLength(0)
   })
+
+  it('does not report an already-demoted preview as newly unavailable again', async () => {
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    await parkAtClosedPreview(q, actionQueue, nowMs)
+
+    await watchdog.runAwaitingValidationSweep({ nowMs })
+    const result = await watchdog.runAwaitingValidationSweep({ nowMs: nowMs + 60_000 })
+
+    expect(result.demoted).toEqual([])
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items[0].payload.previewUnavailableAt).toBe(new Date(nowMs).toISOString())
+  })
 })

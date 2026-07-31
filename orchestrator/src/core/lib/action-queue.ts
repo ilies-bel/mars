@@ -807,12 +807,12 @@ export const patchOpenActionQueuePayload = async (
 export const demoteAwaitingValidationAction = async (
   taskId: string,
   previewUrl: string | null,
-  detectedAt: string,
+  detectedAtMs: number,
 ): Promise<string | null> => {
   const c = stateClient()
   const fingerprint = await resolvedOriginFingerprint(taskId)
   const existing = await c.execute({
-    sql: `SELECT id, payload FROM action_queue_items
+    sql: `SELECT id, kind, payload FROM action_queue_items
            WHERE fingerprint = ?
              AND state = 'open'
              AND kind IN ('awaiting-validation', 'awaiting-validation-preview-gone')
@@ -821,10 +821,18 @@ export const demoteAwaitingValidationAction = async (
     args: [fingerprint],
   })
   if (existing.rows.length === 0) return null
-  const row = existing.rows[0] as unknown as { id: string; payload: string | null }
+  const row = existing.rows[0] as unknown as {
+    id: string
+    kind: ActionQueueKind
+    payload: string | null
+  }
+  // The first sweep turns the high-priority "ready" action into the normal
+  // priority "preview gone" action. Later sweeps must not make the same
+  // condition look newly detected, nor churn its timestamp.
+  if (row.kind === 'awaiting-validation-preview-gone') return null
   const payload = {
     ...parseJsonObject(row.payload),
-    previewUnavailableAt: detectedAt,
+    previewUnavailableAt: new Date(detectedAtMs).toISOString(),
     ...(previewUrl === null ? {} : { devServerUrl: previewUrl }),
   }
   await c.execute({
@@ -839,7 +847,7 @@ export const demoteAwaitingValidationAction = async (
         ? 'The preview URL is missing or no longer available. Decide whether to validate from prior evidence or reject the task.'
         : `The preview at ${previewUrl} is unreachable. Decide whether to validate from prior evidence or reject the task.`,
       JSON.stringify(payload),
-      detectedAt,
+      detectedAtMs,
       row.id,
     ],
   })

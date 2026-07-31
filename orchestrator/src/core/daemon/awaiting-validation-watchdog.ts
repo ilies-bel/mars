@@ -28,7 +28,6 @@ export const runAwaitingValidationSweep = async (
   deps: AwaitingValidationSweepDeps = {},
 ): Promise<{ demoted: string[]; failed: string[] }> => {
   const nowMs = deps.nowMs ?? Date.now()
-  const now = new Date(nowMs).toISOString()
   const configuredMaxAge = Number(process.env.MARS_AWAITING_VALIDATION_MAX_AGE_MS ?? '')
   const maxAgeMs =
     Number.isFinite(configuredMaxAge) && configuredMaxAge > 0
@@ -65,7 +64,7 @@ export const runAwaitingValidationSweep = async (
     }
 
     if (!reachable) {
-      const demotedId = await demoteAwaitingValidationAction(task.id, previewUrl, now)
+      const demotedId = await demoteAwaitingValidationAction(task.id, previewUrl, nowMs)
       if (demotedId !== null) demoted.push(task.id)
     }
 
