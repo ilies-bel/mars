@@ -137,7 +137,7 @@ import { loadSpendControl, upsertSpendControl } from './spend-control/store'
 import { recordClaudeEvent } from './usage-accumulator'
 import { getLatestUsageSnapshot } from '../lib/usage-snapshot-store'
 import { computeBudgetPressure, getBudgetPressureConfig } from '../lib/budget-pressure'
-import { upsertDeferral } from '../lib/deferral-store'
+import { deleteDeferral, upsertDeferral } from '../lib/deferral-store'
 import { shouldDeferDispatch } from '../lib/dispatch-gate'
 
 const LOG_ROTATE_BYTES = 10 * 1024 * 1024
@@ -1096,6 +1096,7 @@ export const startDaemon = async (
       log(`[implement] ${task.id} deferred: ${deferral.reason}`)
       return
     }
+    await deleteDeferral(task.id, dbClient)
     await acquire(sems.implement)
     // commitInFlight records the inFlight entry AND clears the matching claim
     // in one step (claim-clears-after-commit); see dispatchTriage.

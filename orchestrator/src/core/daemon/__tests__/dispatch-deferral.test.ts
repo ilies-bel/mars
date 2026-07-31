@@ -146,9 +146,6 @@ describe('dispatch deferral', () => {
     } catch (error) {
       throw new Error(`${(error as Error).message}; status=${(await queue.getTask(taskId))?.status}`)
     }
-    expect((await deferrals.listDeferrals(client))[0]).toMatchObject({
-      reason: 'usage pressure is critical',
-      pressure: 'critical',
-    })
+    expect(await deferrals.listDeferrals(client)).toEqual([])
   })
 })

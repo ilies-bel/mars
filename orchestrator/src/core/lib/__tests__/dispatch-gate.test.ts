@@ -47,6 +47,17 @@ describe('shouldDeferDispatch', () => {
     vi.useRealTimers()
   })
 
+  it('keeps urgent work dispatchable when pressure is tight', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime('2026-07-31T12:00:00.000Z')
+
+    expect(
+      shouldDeferDispatch(task({ priority: 1, deferrable: true }), snapshot(70), config),
+    ).toEqual({ defer: false })
+
+    vi.useRealTimers()
+  })
+
   it('never defers recovery work', () => {
     vi.useFakeTimers()
     vi.setSystemTime('2026-07-31T12:00:00.000Z')

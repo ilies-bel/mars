@@ -23,7 +23,9 @@ export const shouldDeferDispatch = (
   if (task.fixForTaskId != null || snapshot === null) return { defer: false }
 
   const pressure = computeBudgetPressure(snapshot, cfg)
-  if (pressure === 'ok' || (!task.deferrable && task.priority > 0)) {
+  // Priority one and above is urgent work. It must retain its dispatch lane
+  // even if a caller has also marked the task deferrable.
+  if (pressure === 'ok' || task.priority >= 1) {
     return { defer: false }
   }
 
