@@ -99,7 +99,7 @@ Commands:
                                 is detected from env/git when omitted: human if
                                 running interactively, agent if MARS_AGENT_NAME
                                 or CLAUDE_CODE/CLAUDECODE is set.
-  proposal list [--source reflection|human|planner] [--status <status>]
+  proposal list [--source <source>] [--status <status>]
                                 list proposals; filter by source and/or status
   proposal show <id>            show a proposal from the Mars database
   proposal delete <id>          remove a proposal row from the Mars database
@@ -731,7 +731,7 @@ Subcommands:
       and git when omitted (agent if MARS_AGENT_NAME/CLAUDE_CODE is set,
       otherwise human with git user.email). Use --author to override,
       e.g. --author agent:vega.
-  list [--source reflection|human|planner] [--status <status>]
+  list [--source <source>] [--status <status>]
       List proposals. Filter by source and/or status.
   show <id>
       Show a proposal from the Mars database. <id> accepts a full id or a unique prefix.

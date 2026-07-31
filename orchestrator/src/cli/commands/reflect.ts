@@ -224,9 +224,8 @@ const arcReflect: Command = {
       '../../core/lib/deep-reflect-query'
     )
     const { runDeepReflectorArc } = await import('../../core/lib/deep-reflector')
-    const { applyVerdicts, applyScorerVerdicts } = await import(
-      '../../core/lib/reflector'
-    )
+    const { applyVerdicts, applyScorerVerdicts, applyCapabilityGapVerdicts } =
+      await import('../../core/lib/reflector')
 
     const originId = await resolveOriginIdForTaskOrSelf(chosenOriginInput)
     const arc = await loadDeepReflectArc(originId)
@@ -297,6 +296,10 @@ const arcReflect: Command = {
       report.scorerSuggestions,
       { originArcId: originId, reportPath: outPath },
     )
+    const capabilityGapResult = await applyCapabilityGapVerdicts(
+      report.capabilityGapSuggestions,
+      { originArcId: originId },
+    )
 
     await writeFile(
       outPath,
@@ -317,6 +320,12 @@ const arcReflect: Command = {
             absorbed: scorerVerdictResult.absorbed,
             dropped: scorerVerdictResult.dropped,
             suggestedScorerIds: scorerVerdictResult.suggestedScorerIds,
+          },
+          capabilityGapResult: {
+            saved: capabilityGapResult.saved,
+            absorbed: capabilityGapResult.absorbed,
+            dropped: capabilityGapResult.dropped,
+            proposalIds: capabilityGapResult.proposalIds,
           },
           rawOutput: result.rawOutput,
         },
@@ -365,6 +374,14 @@ const arcReflect: Command = {
     for (const scorerId of scorerVerdictResult.suggestedScorerIds) {
       deps.out(
         `  suggested Scorer ${scorerId} — review with 'mars scorer show ${scorerId}'`,
+      )
+    }
+    deps.out(
+      `Capability gaps: ${capabilityGapResult.saved} saved, ${capabilityGapResult.absorbed} absorbed, ${capabilityGapResult.dropped} dropped`,
+    )
+    for (const proposalId of capabilityGapResult.proposalIds) {
+      deps.out(
+        `  capability-gap draft ${proposalId} — review with 'mars proposal show ${proposalId}'`,
       )
     }
     deps.out(`Full report: ${outPath}`)

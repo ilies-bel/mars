@@ -14,7 +14,17 @@ const taskStatusSchema = z.enum([
   'under_investigation',
 ])
 
-const proposalSourceSchema = z.enum(['reflection', 'human', 'planner'])
+// Mirrors ProposalSource in orchestrator/src/core/proposals.ts. Kept as a
+// literal list rather than an import so the browser bundle never pulls the
+// orchestrator's node-only modules in; add every new producer here too.
+const proposalSourceSchema = z.enum([
+  'reflection',
+  'arc-verifier',
+  'human',
+  'planner',
+  'skill-forge',
+  'failure-reflector',
+])
 
 const draftFeatureSchema = z.object({
   id: z.string(),

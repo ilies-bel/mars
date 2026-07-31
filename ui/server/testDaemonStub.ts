@@ -58,6 +58,10 @@ import {
 } from '../../orchestrator/src/core/daemon/view/release-notes.ts'
 import { openTraceEventStore } from '../../orchestrator/src/core/lib/trace-events-store.ts'
 import { MARS_VERSION } from '../../orchestrator/src/version.ts'
+import {
+  isProposalSource,
+  type ProposalSource,
+} from '../../orchestrator/src/core/proposals.ts'
 import type {
   DraftFeature,
   StaleWorktreeAlert,
@@ -392,8 +396,7 @@ const makeProposalReader = (client: Client): ProposalReader => ({
       return r.rows.map((row) => {
         const ro = row as unknown as Record<string, unknown>
         const src = ro.source
-        const source: 'reflection' | 'human' | 'planner' =
-          src === 'reflection' || src === 'planner' ? src : 'human'
+        const source: ProposalSource = isProposalSource(src) ? src : 'human'
         return {
           id: ro.id as string,
           title: (ro.title as string | null) ?? '',
@@ -571,8 +574,7 @@ const viewProposals = async (
       for (const row of r.rows) {
         const r0 = row as unknown as Record<string, unknown>
         const src = r0.source
-        const source: DraftFeature['source'] =
-          src === 'reflection' || src === 'planner' || src === 'human' ? src : 'human'
+        const source: DraftFeature['source'] = isProposalSource(src) ? src : 'human'
         const stories = storiesMap.get(r0.id as string) ?? []
         drafts.push({
           id: r0.id as string,

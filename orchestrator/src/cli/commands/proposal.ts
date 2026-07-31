@@ -21,6 +21,9 @@ import {
   removeProposalDependency,
   listProposalDependencies,
   validateProposalShaped,
+  VALID_SOURCES,
+  isProposalSource,
+  type ProposalSource,
 } from '../../core/proposals'
 import { isDaemonReachable } from '../../core/daemon/paths'
 import { getDefaultTaskStore } from '../../core/store/task-store'
@@ -435,23 +438,21 @@ const proposalDelete: Command = {
 const proposalList: Command = {
   path: 'proposal list',
   summary: 'list proposals; filter by source and/or status',
-  usage:
-    'usage: mars proposal list [--source reflection|human|planner] [--status <status>]',
+  usage: `usage: mars proposal list [--source ${VALID_SOURCES.join('|')}] [--status <status>]`,
   run: async (args, deps) => {
     const sourceFlag = args.flags['--source']
     const statusFlag = args.flags['--status']
-    const allowedSource = new Set(['reflection', 'human', 'planner'])
-    if (sourceFlag !== undefined && !allowedSource.has(sourceFlag)) {
+    if (sourceFlag !== undefined && !isProposalSource(sourceFlag)) {
       deps.err(
-        `--source must be one of: reflection|human|planner; got '${sourceFlag}'`,
+        `--source must be one of: ${VALID_SOURCES.join('|')}; got '${sourceFlag}'`,
       )
       return { code: 2 }
     }
     const filter: {
-      source?: 'reflection' | 'human' | 'planner'
+      source?: ProposalSource
       status?: string
     } = {}
-    if (sourceFlag) filter.source = sourceFlag as 'reflection' | 'human' | 'planner'
+    if (sourceFlag) filter.source = sourceFlag
     if (statusFlag) filter.status = statusFlag
     const ideas = await listProposals(filter)
     if (ideas.length === 0) {
