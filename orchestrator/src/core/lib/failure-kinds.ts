@@ -636,6 +636,21 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         recipe: null,
         actions: DAEMON_KILLED_ACTIONS,
       },
+      // ── requeue:time-bound-exceeded/unclassified ─────────────────────────
+      // The poll fallback stopped re-dispatching this task after it exceeded
+      // its retry-time ceiling. This is often operational rather than a code
+      // defect: pausing or restarting Mars can leave queued work old enough to
+      // breach the bound on the next poll. There is no mechanical fix recipe;
+      // keep the normal investigate/restart/drop choices available.
+      {
+        signature: 'requeue:time-bound-exceeded/unclassified',
+        staticEncodable: notEncodable('orchestration'),
+        warmTitle: 'The task was repeatedly re-dispatched but did not finish',
+        verboseReason:
+          'The task was re-dispatched repeatedly without completing. This can happen when Mars was paused or restarted and queued work aged past its time limit; investigate the task, then restart it to try again.',
+        recipe: null,
+        actions: DEFAULT_ACTIONS,
+      },
       // ── orchestration:main-committer-still-dirty ───────────────────────────
       // Raised when the post-verify clean check finds the integration branch
       // still dirty after the main-committer task ran. This is an orchestration
@@ -705,7 +720,10 @@ export const failingStepFromSignature = (sig: string | null): string => {
  * which step family it came from. Seeing this in the action queue means the
  * failure carried no signature and no captured output.
  */
-export const GENERIC_FAILURE_LABEL = 'A pipeline step did not complete'
+export const GENERIC_FAILURE_LABEL = 'Mars could not determine why this task failed'
+
+/** Older persisted fallback title, retained only so the view can replace it. */
+const LEGACY_GENERIC_FAILURE_LABEL = 'A pipeline step did not complete'
 
 /**
  * Plain-English group labels keyed by step family (the substring of the
@@ -729,7 +747,11 @@ const STEP_FAMILY_LABELS: Readonly<Record<string, string>> = Object.freeze({
  */
 export const isGenericFailureLabel = (title: string): boolean => {
   const t = title.trim()
-  return t === GENERIC_FAILURE_LABEL || Object.values(STEP_FAMILY_LABELS).includes(t)
+  return (
+    t === GENERIC_FAILURE_LABEL ||
+    t === LEGACY_GENERIC_FAILURE_LABEL ||
+    Object.values(STEP_FAMILY_LABELS).includes(t)
+  )
 }
 
 /**
@@ -802,7 +824,7 @@ export const resolveFailureKind = (
 const TITLE_TASK_ID_CHARS = 8
 
 /** Max chars of the captured error head folded into a signature-less title. */
-const TITLE_ERROR_HEAD_MAX = 100
+const TITLE_ERROR_HEAD_MAX = 98
 
 /**
  * Compose the operator-facing action-queue title for a FAILED task.
@@ -818,11 +840,11 @@ const TITLE_ERROR_HEAD_MAX = 100
  *
  *   `<warm reason>: <first line of the error> [task <id8>]`
  *
- * The bare warm reason (`A pipeline step did not complete`) is emitted ONLY
+ * The bare warm reason (`Mars could not determine why this task failed`) is emitted ONLY
  * when there is genuinely nothing else to say: no signature, no captured
- * error, no task id. A signature with no `FAILURE_KINDS` record is still
- * shown in full and flagged `(no failure-kind record)` so the registry gap is
- * visible to whoever triages it.
+ * error, no task id. A signature with no `FAILURE_KINDS` record uses the
+ * step-family's plain-English label; the action-queue detail retains the
+ * technical signature as the drill-down key.
  */
 export const failedTaskTitle = (args: {
   /** `tasks.failure_signature` as written at failure time, or null. */
@@ -843,8 +865,8 @@ export const failedTaskTitle = (args: {
     const reason =
       kind !== null
         ? kind.warmTitle
-        : `${unknownFailureKind(failingStepFromSignature(signature), capturedError).warmTitle} (no failure-kind record)`
-    return `${signature} — ${reason}${idPart}`
+        : unknownFailureKind(failingStepFromSignature(signature), capturedError).warmTitle
+    return kind !== null ? `${signature} — ${reason}${idPart}` : `${reason}${idPart}`
   }
 
   const reason = unknownFailureKind('unknown', capturedError).warmTitle

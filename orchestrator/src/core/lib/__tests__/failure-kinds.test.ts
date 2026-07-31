@@ -78,6 +78,22 @@ describe('FAILURE_KINDS registry', () => {
       DAEMON_KILLED_SIGNATURE,
     )
   })
+
+  it('contains an operational entry for the re-queue time ceiling', () => {
+    const entry = lookupFailureKind('requeue:time-bound-exceeded/unclassified')
+
+    expect(entry).not.toBeNull()
+    expect(entry!.warmTitle).toBe(
+      'The task was repeatedly re-dispatched but did not finish',
+    )
+    expect(entry!.verboseReason).toContain('paused or restarted')
+    expect(entry!.recipe).toBeNull()
+    expect(entry!.actions.map((action) => action.op)).toEqual([
+      'diagnose-failure',
+      'restart',
+      'purge',
+    ])
+  })
 })
 
 describe('warmTitle values match the PRD-agreed copy', () => {
@@ -217,9 +233,9 @@ describe('unknownFailureKind — plain-English fallback (no raw step ids, no jar
     expect(kind.warmTitle).not.toContain('verify:has-diff')
   })
 
-  it('warmTitle for "unknown" step does not contain the word "unknown"', () => {
+  it('warmTitle for "unknown" step admits uncertainty without technical jargon', () => {
     const kind = unknownFailureKind('unknown', '')
-    expect(kind.warmTitle).not.toMatch(/\bunknown\b/i)
+    expect(kind.warmTitle).toBe('Mars could not determine why this task failed')
   })
 
   it('verboseReason fallback does not contain raw step ids', () => {
@@ -434,13 +450,13 @@ describe('failedTaskTitle', () => {
     )
   })
 
-  it('still leads with the signature when no failure-kind record exists, and says so', () => {
+  it('uses a plain-English title when no failure-kind record exists', () => {
     const title = failedTaskTitle({
       signature: 'verify:test/unclassified',
       taskId: 'task-1234567890',
     })
-    expect(title).toContain('verify:test/unclassified')
-    expect(title).toContain('(no failure-kind record)')
+    expect(title).toBe('A verification check did not pass [task task-123]')
+    expect(title).not.toContain('verify:test/unclassified')
     expect(title).toContain('[task task-123]')
   })
 
@@ -452,7 +468,7 @@ describe('failedTaskTitle', () => {
         capturedError: '\n\n  ENOSPC: no space left on device\nsecond line\n',
       }),
     ).toBe(
-      'A pipeline step did not complete: ENOSPC: no space left on device [task abcdefgh]',
+      'Mars could not determine why this task failed: ENOSPC: no space left on device [task abcdefgh]',
     )
   })
 
@@ -466,7 +482,7 @@ describe('failedTaskTitle', () => {
         capturedError:
           'recovery_failed:verify:test/test-assertion-error: recovery_failed:verify:test/test-assertion-error: expected 2 to be 3',
       }),
-    ).toBe('A pipeline step did not complete: expected 2 to be 3 [task task-1]')
+    ).toBe('Mars could not determine why this task failed: expected 2 to be 3 [task task-1]')
   })
 
   it('clips a very long error head so the row stays scannable', () => {
@@ -479,12 +495,12 @@ describe('failedTaskTitle', () => {
     expect(title).toContain('…')
   })
 
-  it('emits the bare generic label only when nothing at all is known', () => {
+  it('admits uncertainty when nothing at all is known', () => {
     expect(failedTaskTitle({ signature: null })).toBe(
-      'A pipeline step did not complete',
+      'Mars could not determine why this task failed',
     )
     expect(failedTaskTitle({ signature: null, taskId: 'task-1' })).toBe(
-      'A pipeline step did not complete [task task-1]',
+      'Mars could not determine why this task failed [task task-1]',
     )
   })
 
@@ -531,7 +547,7 @@ describe('unknownFailureKind — triage family and colon-less step forms', () =>
 
   it('unrecognised family still hits the generic fallback', () => {
     const kind = unknownFailureKind('xyzzy:warp', '')
-    expect(kind.warmTitle).toBe('A pipeline step did not complete')
+    expect(kind.warmTitle).toBe('Mars could not determine why this task failed')
   })
 
   it('no warmTitle contains a colon', () => {

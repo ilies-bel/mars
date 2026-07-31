@@ -108,10 +108,33 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     )
   })
 
-  it('unregistered signature: still leads with the signature and flags the registry gap', async () => {
-    // 'verify:test/unclassified' is not in the failure-kind registry. The
-    // title must lead with the signature so the operator sees WHAT failed
-    // rather than a generic group label, and must say the record is missing.
+  it('gives the re-queue time ceiling an operational explanation and recovery actions', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([
+        makeTask({
+          failureSignature: 'requeue:time-bound-exceeded/unclassified',
+        }),
+      ]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+    expect(rows[0]!.title).toContain(
+      'The task was repeatedly re-dispatched but did not finish',
+    )
+    expect(rows[0]!.title).not.toContain('no recipe')
+    expect(rows[0]!.body).toContain('paused or restarted')
+    expect(rows[0]!.actions.map((action) => action.op)).toEqual([
+      'diagnose-failure',
+      'restart',
+      'purge',
+    ])
+  })
+
+  it('unregistered signature: uses plain-English headline and keeps the key in detail', async () => {
+    // The signature remains available for drill-down, but a non-expert sees
+    // the step-family explanation before the technical key.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
@@ -121,14 +144,11 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe(
-      'verify:test/unclassified — A verification check did not pass (no failure-kind record) [task task-1]',
-    )
+    expect(rows[0]!.title).toBe('A verification check did not pass [task task-1]')
+    expect(rows[0]!.body).toContain('Failure signature: verify:test/unclassified.')
   })
 
-  it('unregistered signature: merge-step failures lead with the signature too', async () => {
-    // 'merge:unknown/unclassified' is not in the registry — verify the
-    // unregistered-signature path fires for merge-step failures as well.
+  it('unregistered signature: merge failures keep their key in detail too', async () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
       taskStore: makeTaskStore([
@@ -138,7 +158,9 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toContain('merge:unknown/unclassified')
+    expect(rows[0]!.title).toContain('The changes could not be merged')
+    expect(rows[0]!.title).not.toContain('merge:unknown/unclassified')
+    expect(rows[0]!.body).toContain('Failure signature: merge:unknown/unclassified.')
     expect(rows[0]!.title).toContain('[task task-1]')
   })
 
@@ -186,7 +208,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     })
 
     expect(rows[0]!.title).toBe(
-      'A pipeline step did not complete: ENOSPC: no space left on device, write [task task-1]',
+      'Mars could not determine why this task failed: ENOSPC: no space left on device, write [task task-1]',
     )
   })
 
@@ -200,7 +222,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('A pipeline step did not complete [task task-1]')
+    expect(rows[0]!.title).toBe('Mars could not determine why this task failed [task task-1]')
   })
 
   it('keeps a purpose-built persisted title on a failed row with no signature', async () => {

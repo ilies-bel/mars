@@ -582,13 +582,18 @@ const failedRowCopy = (
   }
 
   const kind = signature !== null ? lookupFailureKind(signature) : null
+  const fallbackKind =
+    kind === null
+      ? unknownFailureKind(failingStepFromSignature(signature), capturedError)
+      : null
   return {
     title: failedTaskTitle({ signature, taskId: entityId, capturedError }),
     body:
       kind !== null
         ? kind.verboseReason
-        : unknownFailureKind(failingStepFromSignature(signature), capturedError)
-            .verboseReason,
+        : signature !== null
+          ? `Failure signature: ${signature}.\n${fallbackKind!.verboseReason}`
+          : fallbackKind!.verboseReason,
   }
 }
 
