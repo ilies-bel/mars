@@ -90,6 +90,7 @@ import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
 import { resolveMediaKind, fileMediaKind, relativeTime, smartTitle } from './chatPageUtils'
 import { OpeningNextMoves } from '@/widgets/chat/OpeningNextMoves'
+import { PastSubjectsColumn } from '@/widgets/chat/PastSubjectsColumn'
 import type { DisplayRow } from '@/widgets/chat/OpeningNextMoves'
 import { useTasks } from '@/hooks/useTasks'
 import { SkeletonList } from '@/components/Skeleton'
@@ -2578,6 +2579,14 @@ export const ChatPage = () => {
     queryFn: () => fetchChatThreads(projectId),
   })
 
+  // The history endpoint is the daemon's evaporated-thread projection for the
+  // current session. Render it in the feed immediately above the active Subject.
+  const { data: pastThreads = [] } = useQuery({
+    queryKey: ['chat-history', projectId],
+    queryFn: () => fetchChatHistory(projectId),
+    staleTime: 30_000,
+  })
+
   // Thread detail for the active thread, shared with ContextRail so the Focus
   // panel can display the title and status. React Query dedupes this against
   // ChatConversation's identical query — no extra network request.
@@ -2956,6 +2965,7 @@ export const ChatPage = () => {
                   </p>
                 )}
               </div>
+              <PastSubjectsColumn pastThreads={pastThreads} projectId={projectId} />
               {activeSubjectThreadId && (
                 <div
                   data-testid="active-subject"

@@ -25,6 +25,8 @@ import { ThreadSidebar, ChatPage } from './ChatPage'
 import { relativeTime, smartTitle } from './chatPageUtils'
 import type { ChatThread, ActionQueueItem } from '@/shared/schemas'
 
+const mockFetchChatHistory = vi.hoisted(() => vi.fn())
+
 // ---------------------------------------------------------------------------
 // window.matchMedia stub (happy-dom doesn't implement it)
 // ---------------------------------------------------------------------------
@@ -87,7 +89,7 @@ vi.mock('@/shared/useFocusedProject', () => ({
 vi.mock('@/shared/api', () => ({
   fetchChatThreads: vi.fn().mockResolvedValue([]),
   fetchChatThread: vi.fn().mockResolvedValue(null),
-  fetchChatHistory: vi.fn().mockResolvedValue([]),
+  fetchChatHistory: (...args: unknown[]) => mockFetchChatHistory(...args),
   fetchCodexAuthState: vi.fn().mockResolvedValue(null),
   refreshCodexAuth: vi.fn().mockResolvedValue(null),
   fetchGlossary: vi.fn().mockResolvedValue([]),
@@ -344,6 +346,7 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
   let root: ReturnType<typeof createRoot>
 
   beforeEach(() => {
+    mockFetchChatHistory.mockResolvedValue([])
     mockStartThreadFromAlert.mockResolvedValue({ threadId: 'subject-thread-123' })
     mockUseActionQueue.mockReturnValue({
       items: [],
@@ -447,5 +450,48 @@ describe('ChatPage – handleOpenSubject: chip opens Subject inline', () => {
     // The active subject still shows the (same) thread id
     const subject = container.querySelector('[data-testid="active-subject"]')
     expect(subject?.getAttribute('data-thread-id')).toBe('subject-thread-123')
+  })
+
+  it('keeps evaporated Subjects above the newly opened Subject', async () => {
+    mockFetchChatHistory.mockResolvedValue([
+      makeThread({ id: 'past-second', title: 'Second past Subject', createdAt: '2026-07-31T09:00:00.000Z' }),
+      makeThread({ id: 'past-first', title: 'First past Subject', createdAt: '2026-07-31T08:00:00.000Z' }),
+    ])
+    const arcItem = makeArcFailedItem()
+    mockUseActionQueue.mockReturnValue({
+      items: [arcItem],
+      error: null,
+      projectsError: null,
+      projectsEmpty: false,
+    })
+
+    await act(async () => {
+      root.render(
+        createElement(QueryClientProvider, { client: makeQc() }, createElement(ChatPage)),
+      )
+      await Promise.resolve()
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const pastColumn = container.querySelector('[data-testid="past-subjects-column"]')
+    expect(pastColumn?.textContent).toContain('First past Subject')
+    expect(pastColumn?.textContent).toContain('Second past Subject')
+    expect(pastColumn?.textContent!.indexOf('First past Subject')).toBeLessThan(
+      pastColumn?.textContent!.indexOf('Second past Subject') ?? -1,
+    )
+
+    await act(async () => {
+      container.querySelector('[data-testid="next-move-chip"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(container.querySelector('[data-testid="active-subject"]')).not.toBeNull()
+    expect(container.innerHTML.indexOf('data-testid="past-subjects-column"')).toBeLessThan(
+      container.innerHTML.indexOf('data-testid="active-subject"'),
+    )
   })
 })
