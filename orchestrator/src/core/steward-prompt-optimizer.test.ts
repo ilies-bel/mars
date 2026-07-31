@@ -45,6 +45,7 @@ describe('Steward prompt optimizer', () => {
     expect(codex.assembly).toBe('codex-inlined-mars-system-instructions')
     expect(codex.duplicatedDirectives).toContain('always commit the in-scope work before you exit.')
     expect(claude.assembly).toBe('claude-append-system-prompt')
+    expect(codex.sections.find((section) => section.name === '## Save your work')?.depthPercent).toBeGreaterThan(80)
   })
 
   it('applies autonomously once per content version, records prior text, and announces the edit', async () => {

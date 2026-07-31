@@ -4515,6 +4515,11 @@ export const startDaemon = async (
     baselineCap: initialCaps.implement,
     log,
   })
+  // Prompt health follows the same daemon event bus as the other autonomous
+  // Steward capabilities. Its own autonomy lever decides whether a degraded
+  // prompt is merely proposed or changed.
+  const { startStewardPromptOptimization } = await import('../steward-prompt-optimizer')
+  startStewardPromptOptimization(bus)
   const backlogCheck = setInterval(() => {
     const pending = tracker.pendingCount('implement')
     const threshold = Math.floor(sems.implement.limit * 0.75)

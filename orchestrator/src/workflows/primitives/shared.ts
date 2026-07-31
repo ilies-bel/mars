@@ -437,19 +437,19 @@ export const measureWorkerDispatchPrompt = (
     provider === 'codex'
       ? composeCodexPrompt(user, system)
       : `${system}\n\n${user}`
-  const systemOffset = provider === 'codex' ? Buffer.byteLength(inlinedPrefix) : 0
-  const userOffset =
-    provider === 'codex'
-      ? Buffer.byteLength(`${inlinedPrefix}${system}${inlinedSuffix}`)
-      : Buffer.byteLength(`${system}\n\n`)
   const totalBytes = Buffer.byteLength(wire)
   const totalTokens = estimatedTokens(wire)
-  const systemBytes = Buffer.byteLength(system)
-  const userBytes = Buffer.byteLength(user)
   const sections = [...markdownSections(system, 'system'), ...markdownSections(user, 'user')].map((section) => {
-    const prefix = section.channel === 'system' ? system.slice(0, section.start) : user.slice(0, section.start)
-    const byteOffset = (section.channel === 'system' ? systemOffset : userOffset) + Buffer.byteLength(prefix)
-    const tokenOffset = estimatedTokens(wire.slice(0, byteOffset))
+    const wirePrefix =
+      section.channel === 'system'
+        ? provider === 'codex'
+          ? `${inlinedPrefix}${system.slice(0, section.start)}`
+          : system.slice(0, section.start)
+        : provider === 'codex'
+          ? `${inlinedPrefix}${system}${inlinedSuffix}${user.slice(0, section.start)}`
+          : `${system}\n\n${user.slice(0, section.start)}`
+    const byteOffset = Buffer.byteLength(wirePrefix)
+    const tokenOffset = estimatedTokens(wirePrefix)
     const bytes = Buffer.byteLength(section.text)
     const tokens = estimatedTokens(section.text)
     return {
@@ -473,7 +473,7 @@ export const measureWorkerDispatchPrompt = (
         : 'claude-append-system-prompt',
     totalBytes,
     totalTokens,
-    boilerplateToTaskRatio: taskPrompt.trim().length === 0 ? Infinity : (systemBytes + userBytes - Buffer.byteLength(taskPrompt.trim())) / Buffer.byteLength(taskPrompt.trim()),
+    boilerplateToTaskRatio: taskPrompt.trim().length === 0 ? Infinity : (totalBytes - Buffer.byteLength(taskPrompt.trim())) / Buffer.byteLength(taskPrompt.trim()),
     sections,
     duplicatedDirectives,
   }
