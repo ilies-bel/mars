@@ -22,7 +22,7 @@ import {
   type RecipeHumanDetail,
   type RecipeVerb,
 } from '../../lib/action-queue-recipes'
-import { isActionQueueKind } from '../../lib/action-queue'
+import { isActionQueueKind, type ActionQueueKind } from '../../lib/action-queue'
 
 /**
  * The display kind is the persisted action-queue kind. It is deliberately not
@@ -216,6 +216,178 @@ export interface PersistedActionQueueRow {
   rootCause?: string | null
   resolvedBy?: string | null
 }
+
+const formatOperationalDuration = (milliseconds: number): string => {
+  const minutes = Math.max(0, Math.round(milliseconds / 60_000))
+  if (minutes < 60) return `${minutes} min`
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  return remainingMinutes === 0
+    ? `${hours} hr`
+    : `${hours} hr ${remainingMinutes} min`
+}
+
+/**
+ * Copy owned by operational alerts rather than a failed task's FailureKind.
+ *
+ * The explicit Record is intentional: a new ActionQueueKind cannot land
+ * without choosing whether it needs a specialised renderer (and adding one)
+ * or deliberately preserving its persisted copy. That keeps a new operational
+ * alert from silently falling back to the generic task-failure message.
+ */
+const OPERATIONAL_ALERT_COPY: Record<
+  ActionQueueKind,
+  ((row: PersistedActionQueueRow) => { title: string; body: string }) | null
+> = {
+  failed: null,
+  'cancelled-blocker-cascade': null,
+  'diagnose-inconclusive': null,
+  'daemon-killed': null,
+  'coder-question': null,
+  'daemon-died': (row) => {
+    const pid = typeof row.payload.pid === 'number' ? row.payload.pid : 'unknown'
+    const detectedAt =
+      typeof row.payload.crashDetectedAt === 'string'
+        ? row.payload.crashDetectedAt
+        : row.lastSeenAt
+    return {
+      title: `Daemon pid ${pid} exited unexpectedly; restarted at ${detectedAt}`,
+      body:
+        `The daemon crash was detected at ${detectedAt} and the current daemon has already respawned. ` +
+        `There is no task transcript for this daemon-level alert. Inspect \`.mars/watch.log\` for the crash, then run \`mars list\` to find interrupted tasks.`,
+    }
+  },
+  'stale-worktree': null,
+  'worktree-ahead': null,
+  'prerequisite-failed': null,
+  'draft-proposal': null,
+  'slices-dropped': null,
+  'hitl-slice-needs-operator': null,
+  'awaiting-validation': null,
+  'awaiting-human': null,
+  'behaviour-unverified': null,
+  'subscriber-stalled': (row) => {
+    const rawSubscriber =
+      typeof row.payload.subscriberId === 'string'
+        ? row.payload.subscriberId
+        : (row.signature?.replace(/^subscriber-stalled:/, '') ?? 'unknown subscriber')
+    const pidMatch = rawSubscriber.match(/^(.*):(\d+)$/)
+    const subscriber = pidMatch
+      ? `${pidMatch[1]} (pid ${pidMatch[2]})`
+      : rawSubscriber
+    const raisedAt = Date.parse(row.raisedAt)
+    const lastSeenAt = Date.parse(row.lastSeenAt)
+    const stalledFor =
+      Number.isFinite(raisedAt) && Number.isFinite(lastSeenAt)
+        ? formatOperationalDuration(Math.max(0, lastSeenAt - raisedAt))
+        : 'an unknown duration'
+    return {
+      title: `Subscriber ${subscriber} is stalled for ${stalledFor}`,
+      body:
+        `Subscriber ${subscriber} has not advanced for ${stalledFor}. There is no task transcript for this subscriber-level alert. ` +
+        `Inspect \`.mars/watch.log\` and the subscriber cursor before restarting the daemon.`,
+    }
+  },
+  'observability-store-oversize': null,
+  'orphaned-origin': null,
+  'phantom-task': (row) => {
+    const taskId =
+      typeof row.payload.taskId === 'string' ? row.payload.taskId : (row.signature ?? 'unknown task')
+    const status =
+      typeof row.payload.previousStatus === 'string' ? row.payload.previousStatus : 'running'
+    const age =
+      typeof row.payload.ageMinutes === 'number'
+        ? `${row.payload.ageMinutes} min`
+        : 'an unknown duration'
+    const reason = typeof row.payload.reason === 'string' ? row.payload.reason : 'watchdog timeout'
+    return {
+      title: `Task ${taskId} is stuck in ${status} for ${age}`,
+      body:
+        `Task ${taskId} was auto-failed by the phantom-task watchdog (${reason}). ` +
+        `Inspect task ${taskId} and its worktree or log, then restart it with \`mars restart ${taskId}\` when the cause is clear.`,
+    }
+  },
+  'outbox-lag': null,
+  'reflect-recommended': null,
+  'plan-approval': null,
+  'done-with-unmerged-commits': null,
+  'api-outage': null,
+  'daemon-code-drift': null,
+  'workflow-install-drift': null,
+  'provider-rate-limited': null,
+  'gate-broken': (row) => {
+    const verdict =
+      typeof row.payload.verdict === 'string'
+        ? row.payload.verdict
+        : (row.signature?.replace(/^gate-broken:/, '') ?? 'unknown verdict')
+    const gate =
+      typeof row.payload.gate === 'string'
+        ? row.payload.gate
+        : (verdict.match(/^verify:([^/]+)/)?.[1] ?? 'unknown')
+    const streak = typeof row.payload.streak === 'number' ? ` (${row.payload.streak} tasks)` : ''
+    return {
+      title: `Gate ${gate} is failing with \`${verdict}\`${streak}`,
+      body:
+        `The ${gate} gate repeatedly produced \`${verdict}\`. Recovery is suppressed while it is broken. ` +
+        `Inspect \`.mars/watch.log\`, fix or disable the gate, then restart the affected tasks.`,
+    }
+  },
+  'workflow-draft-pending': null,
+  'gate-enrichment': null,
+  'budget-window': null,
+  'budget-arc': null,
+  'scorer-suggested': null,
+  'promotion-decision': null,
+  'tool-promotion': null,
+  'arc-verification-failed': null,
+  'signature-storm': (row) => {
+    const signature =
+      typeof row.payload.signature === 'string'
+        ? row.payload.signature
+        : (row.signature?.replace(/^signature-storm:/, '') ?? 'unknown signature')
+    const streak = typeof row.payload.streak === 'number' ? row.payload.streak : 'multiple'
+    return {
+      title: `${streak} tasks failed with \`${signature}\`; dispatch is paused`,
+      body:
+        `The same failure signature is recurring across tasks, so dispatch is paused. ` +
+        `There is no single task transcript for this incident. Inspect \`.mars/watch.log\`, correct the shared cause, then run \`mars daemon resume\`.`,
+    }
+  },
+  'gate-enrichment-stale': null,
+  'env-incident': null,
+  'stale-queued': (row) => {
+    const taskId =
+      typeof row.payload.taskId === 'string' ? row.payload.taskId : (row.signature ?? 'unknown task')
+    const age =
+      typeof row.payload.queuedAgeMs === 'number'
+        ? formatOperationalDuration(row.payload.queuedAgeMs)
+        : 'an unknown duration'
+    return {
+      title: `Task ${taskId} has been queued for ${age}`,
+      body:
+        `Task ${taskId} is still queued after ${age}; inspect it with \`mars list\` and check \`.mars/watch.log\` for dispatcher decisions. ` +
+        `No task transcript exists until dispatch starts.`,
+    }
+  },
+  'stale-queued-summary': (row) => {
+    const suppressed =
+      typeof row.payload.suppressedCount === 'number' ? row.payload.suppressedCount : 'Additional'
+    const queueDepth = typeof row.payload.queueDepth === 'number' ? ` Queue depth is ${row.payload.queueDepth}.` : ''
+    return {
+      title: `${suppressed} queued tasks were suppressed from the alert list`,
+      body:
+        `The watchdog limited this sweep to individual alerts for the oldest tasks.${queueDepth} ` +
+        `Run \`mars action-queue list open --kind stale-queued\` to see the surfaced tasks; there is no transcript for this aggregate alert.`,
+    }
+  },
+  'spend-control-notice': null,
+  'requeue-warning': null,
+}
+
+const renderOperationalAlertCopy = (
+  row: PersistedActionQueueRow,
+): { title: string; body: string } | null =>
+  isActionQueueKind(row.kind) ? OPERATIONAL_ALERT_COPY[row.kind]?.(row) ?? null : null
 
 /** Narrow task shape `buildActionQueueView` needs — a subset of the queue Task. */
 export interface TaskForActionQueue {
@@ -646,6 +818,15 @@ export const buildActionQueueView = async ({
         title = ufk.warmTitle
         body = ufk.verboseReason
       }
+    }
+
+    // Operational rows are not task-failure rows, even when they name a task.
+    // Their renderer owns the diagnosis and pointer instead of the FailureKind
+    // fallback, which only understands a task's failure signature.
+    const operationalCopy = renderOperationalAlertCopy(row)
+    if (operationalCopy !== null) {
+      title = operationalCopy.title
+      body = operationalCopy.body
     }
 
     // Propagate fixForTaskId so the UI can render an "origin" link on recovery rows.
@@ -1119,6 +1300,12 @@ export const buildActionQueueHistoryView = async ({
         title = ufk.warmTitle
         body = ufk.verboseReason
       }
+    }
+
+    const operationalCopy = renderOperationalAlertCopy(row)
+    if (operationalCopy !== null) {
+      title = operationalCopy.title
+      body = operationalCopy.body
     }
 
     const fixForTaskId =
