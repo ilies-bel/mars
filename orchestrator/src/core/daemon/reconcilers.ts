@@ -20,6 +20,9 @@ import { getDefaultDomainTaskStore } from '../store/task-store'
 import { listProposals } from '../proposals'
 import { sweepOrphanRunningSpans } from '../lib/trace-events-store'
 import { Arc } from '../arc'
+import { existsSync } from 'node:fs'
+import { planWorkflowCopies } from '../../init/scaffold-workflows'
+import { resolveContext } from '../context'
 import type { Reconciler } from './reconciler'
 
 /**
@@ -675,7 +678,64 @@ const codeDriftClearSweep: Reconciler = {
 }
 
 /**
- * 13. Ghost-subscriber sweep — delete rows from the `subscribers` table whose
+ * 13. Workflow-install drift sweep — compare every bundled Workflow template
+ * against the corresponding user-facing `.mars/workflows` file. Dispatch never
+ * substitutes a fallback for a missing file, so this is a level-triggered
+ * operator alert rather than a late dispatch failure. The singleton signature
+ * keeps a persistent gap to one row and allows its body to name every missing
+ * kind. Once all files exist, the same startup pass closes the stale row.
+ */
+const workflowInstallDriftSweep: Reconciler = {
+  name: 'workflow-install-drift-sweep',
+  async run({ log }) {
+    try {
+      const missingKinds = planWorkflowCopies(resolveContext().repoRoot)
+        .filter((workflow) => !existsSync(workflow.dest))
+        .map((workflow) =>
+          workflow.rel
+            .replace(/^\.mars\/workflows\//, '')
+            .replace(/-workflow\.js$/, ''),
+        )
+
+      const { raiseActionQueueItem, supersedeActionQueueItemsBySignature } = await import('../lib/action-queue')
+      if (missingKinds.length === 0) {
+        const closed = await supersedeActionQueueItemsBySignature(
+          'workflow-install-drift',
+          'workflow-install-drift',
+          'workflow-install-restored',
+          'reconcile:workflow-install-drift',
+        )
+        if (closed.length > 0) {
+          log(`[reconcile] cleared ${closed.length} workflow-install-drift alert(s); all bundled Workflows are installed`)
+        }
+        return { workflowInstallAlertsReconciled: closed.length }
+      }
+
+      await raiseActionQueueItem({
+        kind: 'workflow-install-drift',
+        category: 'daemon',
+        priority: 'high',
+        title: `Workflow installation incomplete — missing: ${missingKinds.join(', ')}`,
+        body:
+          `Missing Workflow kinds: ${missingKinds.join(', ')}. ` +
+          'Tasks routed to these kinds cannot dispatch. Run `mars update --yes` to scaffold the missing Workflows while keeping any user-modified files.',
+        payload: { missingKinds, fixCommand: 'mars update --yes' },
+        context: {},
+        raisedBy: 'reconcile:workflow-install-drift',
+        signature: 'workflow-install-drift',
+        occurrence: { detectedAt: new Date().toISOString() },
+      })
+      log(`[reconcile] workflow-install-drift: missing ${missingKinds.join(', ')}`)
+      return { workflowInstallAlertsReconciled: 1 }
+    } catch (err) {
+      log(`[reconcile] workflow-install-drift-sweep failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
+ * 14. Ghost-subscriber sweep — delete rows from the `subscribers` table whose
  *    name is not among the currently code-declared subscribers, together with
  *    any matching rows in `subscriber_processed_events`. A ghost row is a
  *    subscriber that was renamed or removed from the codebase; its stale cursor
@@ -772,5 +832,6 @@ export const RECONCILERS: readonly Reconciler[] = [
   stalledProposalSlice,
   staleActionQueueSweep,
   codeDriftClearSweep,
+  workflowInstallDriftSweep,
   ghostSubscriberSweep,
 ]

@@ -383,6 +383,24 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = {
     verbs: [{ op: 'restart-daemon', label: 'Restart engine', style: 'primary' }],
   },
 
+  'workflow-install-drift': {
+    humanSummary: (ctx) => {
+      const missing = Array.isArray(ctx.payload['missingKinds'])
+        ? ctx.payload['missingKinds'].filter((kind): kind is string => typeof kind === 'string')
+        : []
+      return missing.length === 1
+        ? `The "${missing[0]}" Workflow is not installed, so tasks routed to it cannot dispatch.`
+        : 'Some built-in Workflows are not installed, so tasks routed to them cannot dispatch.'
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      missingKinds: ctx.payload['missingKinds'],
+      fixCommand: str(ctx.payload['fixCommand']),
+    }),
+    verbs: [],
+  },
+
   'subscriber-stalled': {
     humanSummary: () =>
       'An internal event processor keeps failing on the same event and has stopped — fix the underlying error to unblock it.',

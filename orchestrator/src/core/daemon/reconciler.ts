@@ -113,6 +113,8 @@ export interface ReconcileSummary {
    * (the new daemon is running current code). This count is normally 0 or 1.
    */
   codeDriftAlertsCleared: number
+  /** Workflow-install drift rows raised or closed at startup. */
+  workflowInstallAlertsReconciled: number
   /**
    * Subscriber rows deleted from the `subscribers` table (and their
    * `subscriber_processed_events` rows) because their name no longer
@@ -190,6 +192,7 @@ export const emptyReconcileSummary = (): ReconcileSummary => ({
   recoveryDependentsRequeued: 0,
   staleActionQueueItemsResolved: 0,
   codeDriftAlertsCleared: 0,
+  workflowInstallAlertsReconciled: 0,
   ghostSubscribersSwept: 0,
   orphanedChatRunsRecovered: 0,
   deadThreadsEvaporated: 0,

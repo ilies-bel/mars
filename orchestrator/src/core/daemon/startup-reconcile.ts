@@ -154,6 +154,8 @@ export const reconcileMergeJobs = async (deps: {
  *     (or finalize to done if the branch already landed).
  * 10. Stalled-proposal slice — pick up prd-ready proposals that were
  *     promoted while the daemon was offline.
+ * 11. Workflow-install drift — raise one operator alert for every bundled
+ *     Workflow missing from `.mars/workflows`, or resolve it once restored.
  *
  * Error semantics are preserved verbatim from the original hand-called
  * sequence: steps 1, 2, 3, 4, 7 and 10 swallow their own errors (log + continue);

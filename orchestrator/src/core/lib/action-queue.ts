@@ -139,6 +139,12 @@ export const ACTION_QUEUE_KINDS = [
   // daemon runs current code). One row per daemon lifetime — idempotent raises
   // bump seen_count rather than inserting siblings.
   'daemon-code-drift',
+  // A bundled Workflow kind has no corresponding `.mars/workflows/<kind>-workflow.js`
+  // file. There is intentionally no dispatch fallback (ADR-0067), so tasks
+  // routed to the missing kind would otherwise fail only when dispatched.
+  // Level-triggered: one singleton row lists every missing kind, is updated on
+  // each startup reconcile, and closes once all bundled Workflows are present.
+  'workflow-install-drift',
   // The provider (Claude API) rejected dispatched runs due to rate or spend
   // limits. Level-triggered (ADR-0048): exactly one row per rate-limit episode;
   // idempotent raises bump seen_count. Cleared when the operator acknowledges
@@ -1026,6 +1032,8 @@ export type SupersedeReason =
   | 'hitl-orphan-no-slice-task'
   /** daemon-code-drift row cleared because the daemon restarted and is now running current code. */
   | 'daemon-restarted'
+  /** workflow-install-drift row cleared because every bundled Workflow is installed. */
+  | 'workflow-install-restored'
   /** workflow-draft-pending row cleared because the operator approved the draft. */
   | 'workflow-approved'
   /** gate-enrichment row cleared because the operator approved or retired the candidate (ADR-0048 entity mutation). */
