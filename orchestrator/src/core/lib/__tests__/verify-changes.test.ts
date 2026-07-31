@@ -449,6 +449,76 @@ describe('getChangedFiles', () => {
   })
 })
 
+// Regression: a task branch that is BEHIND the integration branch (the normal
+// state — tasks code in parallel while `main` keeps advancing) must report
+// only the files it changed itself. A two-dot `main..branch` diff compares the
+// two tips and therefore also reports everything `main` changed after the
+// fork, inflating the list and making selectVerifySteps pull in verify scopes
+// the task never touched. Only three-dot (merge-base) semantics is correct.
+describe('getChangedFiles on a branch behind the integration branch', () => {
+  let repo: string
+
+  beforeAll(() => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-changed-files-behind-'))
+    const git = (...args: string[]) =>
+      execFileSync('git', args, { cwd: repo })
+    git('init', '-q', '-b', 'main')
+    git('config', 'user.email', 'test@example.com')
+    git('config', 'user.name', 'test')
+    mkdirSync(resolve(repo, 'orchestrator'), { recursive: true })
+    mkdirSync(resolve(repo, 'ui'), { recursive: true })
+    writeFileSync(resolve(repo, 'README.md'), 'hello\n')
+    writeFileSync(resolve(repo, 'ui/App.tsx'), 'base\n')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'init')
+
+    // Fork the task branch here and give it one orchestrator-only commit.
+    git('checkout', '-q', '-b', 'task/behind', 'main')
+    writeFileSync(resolve(repo, 'orchestrator/task-change.ts'), 'task\n')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'task change (orchestrator only)')
+
+    // Now advance `main` underneath it: main touches ui/ and adds files the
+    // task branch has never seen. The task branch is 1 ahead, 2 behind.
+    git('checkout', '-q', 'main')
+    writeFileSync(resolve(repo, 'ui/App.tsx'), 'moved on\n')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'main advances ui/')
+    writeFileSync(resolve(repo, 'ui/Extra.tsx'), 'new on main\n')
+    writeFileSync(resolve(repo, 'services-note.md'), 'new on main\n')
+    git('add', '-A')
+    git('commit', '-q', '-m', 'main adds more files')
+  })
+
+  afterAll(() => {
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it("reports only the branch's own changes, not the integration branch's", async () => {
+    const files = await getChangedFiles(repo, 'main', 'task/behind')
+    expect([...files].sort()).toEqual(['orchestrator/task-change.ts'])
+  })
+
+  it('does not select verify scopes the task never touched', async () => {
+    const changed = await getChangedFiles(repo, 'main', 'task/behind')
+    const mkStep = (name: string, dir: string) => ({
+      name,
+      cmd: name,
+      args: [] as string[],
+      required: true,
+      dir,
+    })
+    const scopes: VerifyScope[] = [
+      { scope: '.', steps: [mkStep('root-lint', '.')] },
+      { scope: 'orchestrator', steps: [mkStep('orch-test', 'orchestrator')] },
+      { scope: 'ui', steps: [mkStep('ui-test', 'ui')] },
+    ]
+    const selected = selectVerifySteps(scopes, changed).map((s) => s.name)
+    expect(selected).toEqual(['root-lint', 'orch-test'])
+    expect(selected).not.toContain('ui-test')
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Tier-gate model (ADR: gate stack with per-gate tiers)
 // ---------------------------------------------------------------------------
