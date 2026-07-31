@@ -9,7 +9,7 @@ import { type FixRecipeContext, hasRecipe } from './lib/fix-recipes'
 import { type ActionQueueKind, raiseActionQueueItem } from './lib/action-queue'
 import { truncateFailure } from './lib/truncate-failure'
 import { internalBus } from '../internal-bus'
-import { getTask, updateTask, type Task } from './queue'
+import { getTask, reopenTerminalTask, updateTask, type Task } from './queue'
 import {
   getRetryBudget,
   markTaskFailed,
@@ -72,6 +72,46 @@ export const hasUsableWorktree = async (
   } catch {
     return false
   }
+}
+
+/**
+ * Re-queue an origin from setup after a failure this handler decided not to
+ * recover (environmental restart, phantom kill, non-code failure).
+ *
+ * `failed` is terminal and `updateTask` refuses to move a task out of it, so
+ * the reopen has to go through the audited seam. `reopenTerminalTask` records
+ * the reopen and clears status/error/failure_reason/failure_signature/
+ * failure_reason_code in one transaction, but leaves `failed_phase` and any
+ * caller-specific columns alone — those are written by the follow-up patch.
+ *
+ * The task is NOT always terminal here: when the recovery spawner routes an
+ * origin that still has its worktree it reopens the row before calling this
+ * handler, so the status is already `queued`. Reopening again would throw, so
+ * the seam is used only from a genuinely terminal status.
+ */
+const requeueOrigin = async (
+  taskId: string,
+  reason: string,
+  patch: Parameters<typeof updateTask>[1],
+  s?: TaskStore,
+): Promise<void> => {
+  const current = await getTask(taskId, s)
+  if (current !== null && current.status === 'failed') {
+    await reopenTerminalTask(taskId, reason, s)
+  }
+  await updateTask(
+    taskId,
+    {
+      status: 'queued',
+      error: null,
+      failedPhase: null,
+      failureReason: null,
+      failureSignature: null,
+      failureReasonCode: null,
+      ...patch,
+    },
+    s,
+  )
 }
 
 /**
@@ -690,52 +730,13 @@ export const handleTaskFailureWithFixTask = async (
     }
   }
 
-  // Workflow failures are persisted as `failed` before this shared handler is
-  // called. A recovery would attach to the origin's worktree, so a task that
-  // failed before setup (or whose worktree later vanished) cannot host one.
-  // Escalate the origin directly and leave its recovery slot untouched.
-  if (task.status === 'failed' && !(await hasUsableWorktree(task))) {
-    const actionQueueItemId = await raiseActionQueueItem({
-      kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
-      category: 'orchestrator',
-      priority: 'high',
-      title: capTitle(`Task ${input.taskId} failed before it had a usable worktree`),
-      body: [
-        `Task ${input.taskId} failed at ${input.failingStep} before the orchestrator recorded a usable worktree and branch.`,
-        '',
-        'No recovery task was created because recoveries run in the origin worktree and would fail during setup.',
-        `Resolve the original failure, then restart the task: \`mars restart ${input.taskId}\`.`,
-        '',
-        'Last error output (tail-truncated):',
-        '```',
-        truncatedError,
-        '```',
-      ].join('\n'),
-      payload: {
-        taskId: input.taskId,
-        originTaskId: task.originId,
-        failingStep: input.failingStep,
-        failureSignature,
-        branch: task.branch,
-        worktreePath: task.worktreePath,
-      },
-      context: { repoRoot: process.env.MARS_REPO ?? null },
-      raisedBy: 'agent:fail-fix-handler',
-      signature: `origin-worktree-missing:${task.originId}`,
-      originTaskId: task.originId,
-      occurrence: {
-        at: new Date().toISOString(),
-        taskId: input.taskId,
-        failingStep: input.failingStep,
-      },
-    })
-    return {
-      outcome: 'failed',
-      failureSignature,
-      retryCount: task.retryCount,
-      actionQueueItemId,
-    }
-  }
+  // NOTE: the "no usable worktree" escalation does NOT belong here. It gates
+  // the recovery SPAWN only, and lives immediately before `upsertFixTask`
+  // below. Placing it at the top of the origin path made every non-spawning
+  // route unreachable — environmental auto-restart (ADR-0080), gate
+  // suppression, phantom-kill re-queue and the non-code re-queue all fire
+  // precisely when the origin has no worktree, and all of them re-queue from
+  // setup rather than attaching to one. See the comment at the moved gate.
 
   // Environmental auto-restart (ADR-0080). Reached only for NON-recovery origin
   // tasks (the fixForTaskId branch above returned). When the failure signature is
@@ -753,17 +754,10 @@ export const handleTaskFailureWithFixTask = async (
   if (isEnvironmentalSignature(failureSignature)) {
     if (task.envRestartCount < MAX_ENV_RESTART_ATTEMPTS) {
       const nextEnvRestartCount = task.envRestartCount + 1
-      await updateTask(
+      await requeueOrigin(
         input.taskId,
-        {
-          status: 'queued',
-          error: null,
-          failedPhase: null,
-          failureReason: null,
-          failureSignature: null,
-          failureReasonCode: null,
-          envRestartCount: nextEnvRestartCount,
-        },
+        `environmental restart #${nextEnvRestartCount} (${failureSignature})`,
+        { envRestartCount: nextEnvRestartCount },
         s,
       )
       // eslint-disable-next-line no-console
@@ -1024,15 +1018,10 @@ export const handleTaskFailureWithFixTask = async (
       })
       return { outcome: 'non-code-retry-exhausted', failureSignature, retryCount: task.retryCount }
     }
-    await updateTask(
+    await requeueOrigin(
       input.taskId,
-      {
-        status: 'queued',
-        error: null,
-        failedPhase: null,
-        failureSignature: null,
-        failureReasonCode: null,
-      },
+      `phantom-kill non-code re-queue #${nonCodeCount}/${nonCodeCap} (${failureSignature})`,
+      {},
       s,
     )
     // eslint-disable-next-line no-console
@@ -1072,15 +1061,10 @@ export const handleTaskFailureWithFixTask = async (
       })
       return { outcome: 'non-code-retry-exhausted', failureSignature, retryCount: task.retryCount }
     }
-    await updateTask(
+    await requeueOrigin(
       input.taskId,
-      {
-        status: 'queued',
-        error: null,
-        failedPhase: null,
-        failureSignature: null,
-        failureReasonCode: null,
-      },
+      `non-code re-queue #${nonCodeCount}/${nonCodeCap} (${failureCategory}:${failureSignature})`,
+      {},
       s,
     )
     // eslint-disable-next-line no-console
@@ -1229,6 +1213,63 @@ export const handleTaskFailureWithFixTask = async (
       retryCount: task.retryCount,
       actionQueueItemId,
       attempts: priorAttempts,
+    }
+  }
+
+  // ── No usable worktree → escalate instead of spawning a doomed recovery ───
+  // A recovery Chore runs INSIDE its origin's worktree, so an origin that
+  // failed before setup ran (branch and worktreePath both unrecorded), or whose
+  // worktree has since been pruned, cannot host one: the recovery would die at
+  // `setup:origin-worktree-missing` and burn the origin's single recovery slot
+  // (ADR-0040) for nothing. Escalate to the operator and leave the slot intact.
+  //
+  // ORDERING IS LOAD-BEARING: this gate must stay BELOW every route that does
+  // not spawn a recovery — environmental auto-restart, gate suppression, the
+  // phantom-kill re-queue and the non-code re-queue. Those paths re-queue the
+  // origin from setup, which needs no pre-existing worktree, and the phantom
+  // and environmental branches are entered *because* the worktree is absent.
+  // Hoisting this check above them makes them dead code and converts work that
+  // should be retried into terminal failures.
+  if (task.status === 'failed' && !(await hasUsableWorktree(task))) {
+    const actionQueueItemId = await raiseActionQueueItem({
+      kind: UNKNOWN_FAILURE_ACTION_QUEUE_KIND,
+      category: 'orchestrator',
+      priority: 'high',
+      title: capTitle(`Task ${input.taskId} failed before it had a usable worktree`),
+      body: [
+        `Task ${input.taskId} failed at ${input.failingStep} before the orchestrator recorded a usable worktree and branch.`,
+        '',
+        'No recovery task was created because recoveries run in the origin worktree and would fail during setup.',
+        `Resolve the original failure, then restart the task: \`mars restart ${input.taskId}\`.`,
+        '',
+        'Last error output (tail-truncated):',
+        '```',
+        truncatedError,
+        '```',
+      ].join('\n'),
+      payload: {
+        taskId: input.taskId,
+        originTaskId: task.originId,
+        failingStep: input.failingStep,
+        failureSignature,
+        branch: task.branch,
+        worktreePath: task.worktreePath,
+      },
+      context: { repoRoot: process.env.MARS_REPO ?? null },
+      raisedBy: 'agent:fail-fix-handler',
+      signature: `origin-worktree-missing:${task.originId}`,
+      originTaskId: task.originId,
+      occurrence: {
+        at: new Date().toISOString(),
+        taskId: input.taskId,
+        failingStep: input.failingStep,
+      },
+    })
+    return {
+      outcome: 'failed',
+      failureSignature,
+      retryCount: task.retryCount,
+      actionQueueItemId,
     }
   }
 
