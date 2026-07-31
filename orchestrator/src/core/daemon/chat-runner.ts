@@ -28,10 +28,10 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import { integrationBranchName } from '../blocker-resolution'
-import { buildWorkerEnv, runSubprocessStreaming } from '../lib/git/claude'
 import { createProposal } from '../proposals'
 import { enqueueTask, getTask, updateTask } from '../queue'
 import { ChatMcpManager, type McpToolInfo } from './chat-mcp'
+import { runShellCommand } from './chat-shell'
 import { buildSkillsSection, discoverSkills, loadSkill } from './chat-skills'
 import { corePurgeTask } from './purge-task'
 import {
@@ -208,7 +208,7 @@ const SHELL_TOOL: FunctionToolDef = {
   parameters: {
     type: 'object',
     properties: {
-      command: { type: 'string', description: 'The shell command to run (passed to bash -lc).' },
+      command: { type: 'string', description: 'The shell command to run (passed to zsh -lc).' },
     },
     required: ['command'],
     additionalProperties: false,
@@ -384,7 +384,7 @@ export const executeToolCall = async (
       if (command === null) {
         return { content: { stdout: '', stderr: 'invalid shell arguments: missing "command"', exitCode: 1 }, isError: true }
       }
-      const r = await runSubprocessStreaming('bash', ['-lc', command], repoRoot, undefined, signal, buildWorkerEnv())
+      const r = await runShellCommand(command, repoRoot, signal)
       return {
         content: {
           stdout: truncate(r.stdout, TOOL_OUTPUT_CHAR_CAP),

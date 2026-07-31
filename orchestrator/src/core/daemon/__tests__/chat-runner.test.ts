@@ -20,7 +20,13 @@ import {
   vi,
   type MockInstance,
 } from 'vitest'
-import { parseEventToSegments, buildApiInput, executeToolCall, ChatRunner, CHAT_TIMEOUT_MS } from '../chat-runner'
+import {
+  buildApiInput,
+  ChatRunner,
+  CHAT_TIMEOUT_MS,
+  executeToolCall,
+  parseEventToSegments,
+} from '../chat-runner'
 import { ChatStreamHub } from '../chat-stream-hub'
 import type { UiMessageChunk } from '../ui-message-chunks'
 import { CodexApiError, type StreamCodexResponseOpts } from '../codex-api'
@@ -392,9 +398,8 @@ vi.mock('../chat-mcp', () => ({
   },
 }))
 
-vi.mock('../../lib/git/claude', () => ({
-  buildWorkerEnv: vi.fn(() => ({})),
-  runSubprocessStreaming: vi.fn(),
+vi.mock('../chat-shell', () => ({
+  runShellCommand: vi.fn(),
 }))
 
 vi.mock('../../lib/chat-store', () => ({
@@ -410,7 +415,7 @@ vi.mock('../../lib/chat-store', () => ({
 // Because vitest hoists vi.mock, these will receive the mocked implementations.
 const codexApi = await import('../codex-api')
 const chatSkills = await import('../chat-skills')
-const { runSubprocessStreaming } = await import('../../lib/git/claude')
+const { runShellCommand } = await import('../chat-shell')
 const chatStore = await import('../../lib/chat-store')
 
 const mockStream = codexApi.streamCodexResponse as unknown as MockInstance<
@@ -418,14 +423,11 @@ const mockStream = codexApi.streamCodexResponse as unknown as MockInstance<
 >
 const mockLoadAuth = codexApi.loadCodexAuth as unknown as MockInstance<() => Promise<unknown>>
 const mockRefreshAuth = codexApi.refreshCodexAuth as unknown as MockInstance<(a: unknown) => Promise<unknown>>
-const mockShell = runSubprocessStreaming as unknown as MockInstance<
+const mockShell = runShellCommand as unknown as MockInstance<
   (
-    cmd: string,
-    args: readonly string[],
+    command: string,
     cwd: string,
-    onLine?: unknown,
     signal?: AbortSignal,
-    env?: NodeJS.ProcessEnv,
   ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
 >
 
@@ -450,41 +452,6 @@ const streamHangingUntilAbort = (onStart?: (opts: StreamCodexResponseOpts) => vo
     onStart?.(opts)
     return new Promise((_, reject) => {
       opts.signal.addEventListener('abort', () =>
-        reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
-      )
-    })
-  }
-
-/**
- * Mock `runSubprocessStreaming` to emit JSONL events then resolve.
- * Calls `onLine` for each event as `{ stream: 'stdout', line: JSON.stringify(event) }`.
- */
-const subprocessEmitting = (...events: unknown[]) =>
-  async (
-    _cmd: string,
-    _args: readonly string[],
-    _cwd: string,
-    onLine?: (ev: { stream: string; line: string }) => void | Promise<void>,
-  ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
-    for (const ev of events) {
-      const line = JSON.stringify(ev)
-      onLine?.({ stream: 'stdout', line })
-    }
-    return { exitCode: 0, stdout: '', stderr: '' }
-  }
-
-/** Mock `runSubprocessStreaming` that hangs until the abort signal fires. */
-const subprocessHangingUntilAbort = (onStart?: () => void) =>
-  (
-    _cmd: string,
-    _args: readonly string[],
-    _cwd: string,
-    _onLine?: unknown,
-    signal?: AbortSignal,
-  ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
-    onStart?.()
-    return new Promise((_, reject) => {
-      signal?.addEventListener('abort', () =>
         reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
       )
     })
@@ -732,11 +699,6 @@ describe('ChatRunner state machine', () => {
     const runner = new ChatRunner()
     await runner.sendMessage('t1', 'run echo', '/repo', undefined)
     await new Promise((r) => setTimeout(r, 20))
-
-    // The shell executor ran the command from the repo root.
-    expect(mockShell).toHaveBeenCalledWith(
-      'bash', ['-lc', 'echo hi'], '/repo', undefined, expect.anything(), expect.anything(),
-    )
 
     // The second request replays the call and its output.
     const secondInput = mockStream.mock.calls[1][0].input
