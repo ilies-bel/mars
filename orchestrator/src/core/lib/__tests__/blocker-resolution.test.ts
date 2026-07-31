@@ -754,7 +754,17 @@ describe('blocker-resolution (task_blockers)', () => {
       )
       expect(ahead).toBeDefined()
       expect(ahead!.payload.taskId).toBe(dep.id)
-      expect(ahead!.payload.aheadCount).toBe(1)
+      // The typed payload carries the actual unique commits ahead of the
+      // integration branch (the scalar `aheadCount` field was replaced by this
+      // richer list in the WorktreeAheadPayload hard cut); the human-readable
+      // count still reaches the operator through the body copy.
+      const commitsAhead = ahead!.payload.commitsAhead as Array<{
+        shortSha: string
+        subject: string
+      }>
+      expect(commitsAhead).toHaveLength(1)
+      expect(commitsAhead[0].subject).toBe('dep ahead')
+      expect(ahead!.body).toContain('is 1 commit(s) ahead of main')
     })
 
     it('skips reset cleanly when the dependent has no worktree yet (fresh row, no prior setup)', async () => {
@@ -812,8 +822,13 @@ describe('blocker-resolution (task_blockers)', () => {
       // Payload schema is unchanged.
       expect(item!.payload.failureReason).toBe('worktree_ahead_of_integration_at_unblock')
       expect(item!.payload.worktreePath).toBe(worktreePath)
-      expect(item!.payload.aheadCount).toBe(1)
       expect(item!.payload.integrationBranch).toBe('main')
+      expect(item!.payload.onMainLean).toBe('on-main')
+      // The branch was fast-forwarded into main, so it has no unique commits
+      // left ahead of the integration branch — which is exactly why the lean is
+      // PURGE. The caller-supplied count still shows up in the body copy.
+      expect(item!.payload.commitsAhead).toEqual([])
+      expect(item!.body).toContain('is 1 commit(s) ahead of main')
     })
 
     it('appends "lean RESTART" when the worktree branch tip is NOT reachable from the integration branch', async () => {
@@ -872,7 +887,12 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(item!.body).not.toContain('lean RESTART')
       // The item is still fully formed.
       expect(item!.payload.failureReason).toBe('worktree_ahead_of_integration_at_unblock')
-      expect(item!.payload.aheadCount).toBe(1)
+      expect(item!.payload.worktreePath).toBe(missingPath)
+      // No worktree on disk and no such branch → the lean is unknown and the
+      // commit list degrades to empty rather than throwing.
+      expect(item!.payload.onMainLean).toBe('unknown')
+      expect(item!.payload.commitsAhead).toEqual([])
+      expect(item!.body).toContain('is 1 commit(s) ahead of main')
     })
   })
 
